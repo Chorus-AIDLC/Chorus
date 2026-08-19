@@ -141,6 +141,40 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(JSON.parse(fetchImpl.mock.calls[1][1].body).backendSessionId).toBe("thread-1");
   });
 
+  it("turnAdvance unwraps the running response turn UUID and sends correlation later", async () => {
+    const fetchImpl = okFetch(200, {
+      success: true,
+      data: { turn: { uuid: "turn-7" } },
+    });
+    const client = makeClient({ fetchImpl });
+
+    const running = await client.turnAdvance({
+      sessionId: "idea-1",
+      status: "running",
+    });
+    await client.turnAdvance({
+      sessionId: "idea-1",
+      turnUuid: running.data?.turnUuid,
+      status: "ended",
+      backendSessionId: "thread-7",
+    });
+
+    expect(running.data).toEqual({ turnUuid: "turn-7" });
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toMatchObject({
+      sessionId: "idea-1",
+      turnUuid: "turn-7",
+      status: "ended",
+      backendSessionId: "thread-7",
+    });
+  });
+
+  it("turnAdvance keeps legacy FIFO fallback when a running response has no turn UUID", async () => {
+    const client = makeClient({ fetchImpl: okFetch(200, { success: true }) });
+    const running = await client.turnAdvance({ sessionId: "idea-1", status: "running" });
+    expect(running).toMatchObject({ ok: true, status: 200 });
+    expect(running).not.toHaveProperty("data");
+  });
+
   it("transcript POSTs { sessionId, messages } and needs no connectionUuid", async () => {
     const fetchImpl = okFetch();
     // No getConnectionUuid wired — transcript must still POST (agent key + sessionId

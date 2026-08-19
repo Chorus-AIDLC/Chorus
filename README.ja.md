@@ -99,7 +99,7 @@ PM エージェントが要件を分析し、PRD と課題 DAG を含む提案�
 
 ## AI エージェントを接続する
 
-最も手早い方法は、アプリ内のセットアップウィザードです：**Settings → Setup Guide** を開いてください。ウィザードが API キーを作成し、お使いのクライアント（Claude Code、Codex、Kiro、OpenCode、OpenClaw、Pi、その他 MCP 互換のエージェント）向けの正確なコマンドを表示します。
+最も手早い方法は、アプリ内のセットアップウィザードです：**Settings → Setup Guide** を開いてください。ウィザードが API キーを作成し、お使いのクライアント（Claude Code、Codex、Kiro、dsh、OpenCode、OpenClaw、Pi、その他 MCP 互換のエージェント）向けの正確なコマンドを表示します。
 
 クライアントごとの詳細なガイド → **[エージェントプラットフォーム](https://doc.chorus-ai.dev/ja/reference/agents/)**。
 

@@ -112,8 +112,8 @@ beforeEach(() => {
 
 // ===== Constants =====
 describe("constants", () => {
-  it("DAEMON_CLIENT_TYPES are claude_code + openclaw + codex + kiro", () => {
-    expect(DAEMON_CLIENT_TYPES).toEqual(["claude_code", "openclaw", "codex", "kiro"]);
+  it("DAEMON_CLIENT_TYPES are claude_code + openclaw + codex + kiro + dsh", () => {
+    expect(DAEMON_CLIENT_TYPES).toEqual(["claude_code", "openclaw", "codex", "kiro", "dsh"]);
   });
 
   it("STALE_THRESHOLD_MS is 90s (3x the 30s heartbeat)", () => {
@@ -175,6 +175,34 @@ describe("parseSelfReport", () => {
   it("parses an empty-string startedAt to null", () => {
     const params = new URLSearchParams({ clientType: "claude_code", startedAt: "" });
     expect(parseSelfReport(params).startedAt).toBeNull();
+  });
+});
+
+describe("dsh registration", () => {
+  it("accepts a parsed dsh self-report through the real registration gate", async () => {
+    mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+    const report = parseSelfReport(
+      new URLSearchParams({
+        clientType: "dsh",
+        host: "dsh.local",
+        cwd: "/workspace/dsh",
+        startedAt: "2026-06-15T03:00:00.000Z",
+      }),
+    );
+
+    await expect(registerConnection(companyUuid, agentUuid, report)).resolves.toEqual(handle);
+    expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          agentUuid_clientType_host_cwd: {
+            agentUuid,
+            clientType: "dsh",
+            host: "dsh.local",
+            cwd: "/workspace/dsh",
+          },
+        },
+      }),
+    );
   });
 });
 

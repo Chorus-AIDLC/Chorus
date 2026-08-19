@@ -21,7 +21,7 @@ import logger from "@/lib/logger";
 // The `clientType` column also reserves "browser" / "other" (see schema) so
 // browser registration can be added later without a migration, but only these
 // machine daemon types are registered now.
-export const DAEMON_CLIENT_TYPES = ["claude_code", "openclaw", "codex", "kiro"] as const;
+export const DAEMON_CLIENT_TYPES = ["claude_code", "openclaw", "codex", "kiro", "dsh"] as const;
 export type DaemonClientType = (typeof DAEMON_CLIENT_TYPES)[number];
 
 // Staleness threshold for the liveness rule a downstream reader MUST apply:

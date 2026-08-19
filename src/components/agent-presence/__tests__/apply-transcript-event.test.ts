@@ -24,6 +24,7 @@ function turn(
 ): TurnWithMessagesView {
   return {
     sessionUuid: "s1",
+    backendSessionId: null,
     seq: 1,
     trigger: "task_assigned",
     promptText: null,

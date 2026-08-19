@@ -43,10 +43,16 @@ describe("resolveAgentType — known backends", () => {
     expect(resolveAgentType({}, { CHORUS_AGENT: "kiro" })).toEqual({ ok: true, agent: "kiro" });
   });
 
+  it("accepts dsh via --agent flag and CHORUS_AGENT env", () => {
+    expect(resolveAgentType({ agent: "dsh" }, {})).toEqual({ ok: true, agent: "dsh" });
+    expect(resolveAgentType({}, { CHORUS_AGENT: "dsh" })).toEqual({ ok: true, agent: "dsh" });
+  });
+
   it("lists all backends in KNOWN_AGENTS and keeps claude-code default", () => {
     expect(KNOWN_AGENTS).toContain("claude-code");
     expect(KNOWN_AGENTS).toContain("codex");
     expect(KNOWN_AGENTS).toContain("kiro");
+    expect(KNOWN_AGENTS).toContain("dsh");
     expect(DEFAULT_AGENT).toBe("claude-code");
   });
 });
@@ -141,6 +147,9 @@ describe("backendClientType — agentType → self-reported clientType", () => {
   it("maps kiro → kiro", () => {
     expect(backendClientType("kiro")).toBe("kiro");
   });
+  it("maps dsh → dsh", () => {
+    expect(backendClientType("dsh")).toBe("dsh");
+  });
   it("maps claude-code → claude_code", () => {
     expect(backendClientType("claude-code")).toBe("claude_code");
   });
@@ -156,6 +165,9 @@ describe("backendCli — agentType → executable descriptor", () => {
   });
   it("maps kiro → kiro-cli / CHORUS_KIRO_PATH", () => {
     expect(backendCli("kiro")).toEqual({ name: "kiro-cli", envVar: "CHORUS_KIRO_PATH" });
+  });
+  it("maps dsh → dsh-jsonrpc-agent / CHORUS_DSH_PATH", () => {
+    expect(backendCli("dsh")).toEqual({ name: "dsh-jsonrpc-agent", envVar: "CHORUS_DSH_PATH" });
   });
   it("falls back to claude / CHORUS_CLAUDE_PATH for default/unknown", () => {
     expect(backendCli("claude-code")).toEqual({ name: "claude", envVar: "CHORUS_CLAUDE_PATH" });

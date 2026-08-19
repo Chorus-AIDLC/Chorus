@@ -1,41 +1,45 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Prisma mock =====
-const mockPrisma = vi.hoisted(() => ({
-  daemonSession: {
+const mockPrisma = vi.hoisted(() => {
+  const client = {
+    daemonSession: {
     upsert: vi.fn(),
     findUnique: vi.fn(),
     findFirst: vi.fn(),
     findMany: vi.fn(),
     update: vi.fn(),
     updateMany: vi.fn(),
-  },
-  daemonSessionTurn: {
+    },
+    daemonSessionTurn: {
     findFirst: vi.fn(),
     findUnique: vi.fn(),
     findMany: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
     updateMany: vi.fn(),
-  },
-  daemonTranscriptMessage: {
+    },
+    daemonTranscriptMessage: {
     findFirst: vi.fn(),
     findMany: vi.fn(),
     create: vi.fn(),
     count: vi.fn(),
     deleteMany: vi.fn(),
-  },
-  daemonConnection: {
+    },
+    daemonConnection: {
     findFirst: vi.fn(),
-  },
-  daemonExecution: {
+    },
+    daemonExecution: {
     findFirst: vi.fn(),
-  },
-  // The usage-write path (daemon-token-usage) batches the turn update + the session rollup
-  // increment in one $transaction. The mock resolves the array of operations in order — the
-  // service reads the first element (the turn row).
-  $transaction: vi.fn(async (ops: Array<Promise<unknown>>) => Promise.all(ops)),
-}));
+    },
+  } as Record<string, any>;
+  client.$transaction = vi.fn(async (operation: unknown) =>
+    typeof operation === "function"
+      ? operation(client)
+      : Promise.all(operation as Array<Promise<unknown>>),
+  );
+  return client;
+});
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 const mockLogger = vi.hoisted(() => ({
@@ -126,6 +130,7 @@ function turnRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     uuid: turnUuid,
     sessionUuid,
+    backendSessionId: null,
     seq: 1,
     trigger: "task_assigned",
     promptText: null,
@@ -1860,9 +1865,13 @@ describe("appendTranscriptMessages", () => {
     expect(result.ok && result.appended).toBe(2);
     // Exactly two creates — the two text messages.
     expect(mockPrisma.daemonTranscriptMessage.create).toHaveBeenCalledTimes(2);
-    const texts = mockPrisma.daemonTranscriptMessage.create.mock.calls.map((c) => c[0].data.text);
+    const texts = mockPrisma.daemonTranscriptMessage.create.mock.calls.map(
+      (c: any[]) => c[0].data.text,
+    );
     expect(texts).toEqual(["real user text", "real assistant text"]);
-    const roles = mockPrisma.daemonTranscriptMessage.create.mock.calls.map((c) => c[0].data.role);
+    const roles = mockPrisma.daemonTranscriptMessage.create.mock.calls.map(
+      (c: any[]) => c[0].data.role,
+    );
     expect(roles).toEqual(["user", "assistant"]);
   });
 
@@ -1879,7 +1888,9 @@ describe("appendTranscriptMessages", () => {
         { role: "assistant", text: "b" },
       ],
     });
-    const seqs = mockPrisma.daemonTranscriptMessage.create.mock.calls.map((c) => c[0].data.seq);
+    const seqs = mockPrisma.daemonTranscriptMessage.create.mock.calls.map(
+      (c: any[]) => c[0].data.seq,
+    );
     expect(seqs).toEqual([8, 9]);
     // seq lookup ordered seq desc to read the current max off the index.
     expect(mockPrisma.daemonTranscriptMessage.findFirst.mock.calls[0][0].orderBy).toEqual({
@@ -2026,27 +2037,32 @@ describe("advanceTurnForWake", () => {
   // Resolve the agent's own session, then the turn matching the FROM-status (pending for
   // →running, running for →ended), so advanceTurn (which findUnique's the turn) succeeds.
   function ownedSessionWithLatestTurn(turnStatus = "pending") {
+    let persistedTurn: Record<string, unknown> = turnRow({
+      uuid: turnUuid,
+      status: turnStatus,
+      seq: 3,
+    });
     mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
     // findFirst resolves the turn by status (oldest-first) — return the matching turn.
-    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue({ uuid: turnUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockImplementation(async () => persistedTurn);
     // advanceTurn's own lookups:
-    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
-      uuid: turnUuid,
-      sessionUuid,
-      status: turnStatus,
-    });
-    mockPrisma.daemonSessionTurn.update.mockResolvedValue({
-      uuid: turnUuid,
-      sessionUuid,
-      seq: 3,
-      trigger: "human_instruction",
-      promptText: "do X",
-      status: turnStatus === "pending" ? "running" : "ended",
-      executionUuid: "exec-1",
-      startedAt: new Date("2026-06-19T06:00:00.000Z"),
-      endedAt: null,
-      createdAt: new Date("2026-06-19T05:59:00.000Z"),
-    });
+    mockPrisma.daemonSessionTurn.findUnique.mockImplementation(
+      async ({ select }: { select?: Record<string, boolean> }) =>
+        select
+          ? Object.fromEntries(
+              Object.keys(select).map((key) => [key, persistedTurn[key]]),
+            )
+          : persistedTurn,
+    );
+    mockPrisma.daemonSessionTurn.updateMany.mockImplementation(
+      async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        if (where.status !== undefined && persistedTurn.status !== where.status) {
+          return { count: 0 };
+        }
+        persistedTurn = { ...persistedTurn, ...data };
+        return { count: 1 };
+      },
+    );
     mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
   }
 
@@ -2076,7 +2092,9 @@ describe("advanceTurnForWake", () => {
       select: { uuid: true },
     });
     // advanceTurn wrote running + a startedAt + the resolved executionUuid.
-    const updateArg = mockPrisma.daemonSessionTurn.update.mock.calls[0][0];
+    const updateArg = mockPrisma.daemonSessionTurn.updateMany.mock.calls.find(
+      (call: any[]) => call[0].data.status === "running",
+    )![0];
     expect(updateArg.data.status).toBe("running");
     expect(updateArg.data.executionUuid).toBe("exec-1");
     expect(updateArg.data.startedAt).toBeInstanceOf(Date);
@@ -2116,14 +2134,16 @@ describe("advanceTurnForWake", () => {
 
     expect(res).toMatchObject({ ok: true });
     expect(mockPrisma.daemonExecution.findFirst).not.toHaveBeenCalled();
-    const updateArg = mockPrisma.daemonSessionTurn.update.mock.calls[0][0];
+    const updateArg = mockPrisma.daemonSessionTurn.updateMany.mock.calls.find(
+      (call: any[]) => call[0].data.status === "ended",
+    )![0];
     expect(updateArg.data.status).toBe("ended");
     expect(updateArg.data.endedAt).toBeInstanceOf(Date);
     // executionUuid is left untouched (undefined) when no entity is supplied.
     expect(updateArg.data).not.toHaveProperty("executionUuid");
   });
 
-  it("atomically persists a backend session ID under the authenticated agent session fence", async () => {
+  it("atomically binds a backend ID to the resolved turn and initializes the session first value", async () => {
     ownedSessionWithLatestTurn("running");
     mockPrisma.daemonSession.updateMany.mockResolvedValue({ count: 1 });
 
@@ -2141,18 +2161,22 @@ describe("advanceTurnForWake", () => {
       where: { agentUuid, companyUuid, sessionId },
       select: { uuid: true },
     });
-    expect(mockPrisma.daemonSession.updateMany).toHaveBeenCalledWith({
+    expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
       where: {
-        uuid: sessionUuid,
+        uuid: turnUuid,
         OR: [{ backendSessionId: null }, { backendSessionId: "thread-1" }],
       },
       data: { backendSessionId: "thread-1" },
     });
+    expect(mockPrisma.daemonSession.updateMany).toHaveBeenCalledWith({
+      where: { uuid: sessionUuid, backendSessionId: null },
+      data: { backendSessionId: "thread-1" },
+    });
   });
 
-  it("accepts an idempotent backend ID report through the same atomic guard", async () => {
+  it("accepts an idempotent same-turn backend ID binding through the turn guard", async () => {
     ownedSessionWithLatestTurn("running");
-    mockPrisma.daemonSession.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.daemonSession.updateMany.mockResolvedValue({ count: 0 });
 
     const res = await advanceTurnForWake({
       companyUuid,
@@ -2168,7 +2192,7 @@ describe("advanceTurnForWake", () => {
 
   it("rejects a conflicting backend ID without advancing the turn or overwriting it", async () => {
     ownedSessionWithLatestTurn("running");
-    mockPrisma.daemonSession.updateMany.mockResolvedValue({ count: 0 });
+    mockPrisma.daemonSessionTurn.updateMany.mockResolvedValue({ count: 0 });
 
     const res = await advanceTurnForWake({
       companyUuid,
@@ -2180,8 +2204,245 @@ describe("advanceTurnForWake", () => {
     });
 
     expect(res).toEqual({ ok: false, reason: "backend_session_conflict" });
-    expect(mockPrisma.daemonSessionTurn.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.daemonSession.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+
+  it("fences an exact correlated turn by the authenticated session", async () => {
+    ownedSessionWithLatestTurn("running");
+
+    await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      turnUuid,
+      status: "ended",
+    });
+
+    expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
+      where: { uuid: turnUuid, sessionUuid },
+      orderBy: { seq: "asc" },
+    });
+  });
+
+  it("returns an already-terminal correlated replay without repeating writes or usage rollups", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(
+      turnRow({ status: "ended", backendSessionId: "thread-1" }),
+    );
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      turnUuid,
+      backendSessionId: "thread-1",
+      status: "ended",
+      usage: {
+        inputTokens: 10,
+        outputTokens: 20,
+        cacheCreationTokens: null,
+        cacheReadTokens: null,
+        model: "m",
+        source: "dsh",
+      },
+    });
+
+    expect(res).toMatchObject({
+      ok: true,
+      turn: { uuid: turnUuid, status: "ended", backendSessionId: "thread-1" },
+    });
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates concurrent identical terminal reports to one rollup and one SSE event", async () => {
+    let persistedStatus = "running";
+    let persistedBackendSessionId: string | null = null;
+    let persistedUsage: unknown = null;
+    let initialStatusReads = 0;
+    let releaseStatusReads!: () => void;
+    const bothStatusReadsStarted = new Promise<void>((resolve) => {
+      releaseStatusReads = resolve;
+    });
+
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockImplementation(async () =>
+      turnRow({
+        status: persistedStatus,
+        backendSessionId: persistedBackendSessionId,
+        usage: persistedUsage,
+      }),
+    );
+    mockPrisma.daemonSessionTurn.findUnique.mockImplementation(async (args: {
+      select?: Record<string, boolean>;
+    }) => {
+      if (args.select?.uuid) {
+        const observedStatus = persistedStatus;
+        initialStatusReads += 1;
+        if (initialStatusReads === 2) releaseStatusReads();
+        await bothStatusReadsStarted;
+        return { uuid: turnUuid, sessionUuid, status: observedStatus };
+      }
+      if (args.select?.status) return { status: persistedStatus };
+      return turnRow({
+        status: persistedStatus,
+        backendSessionId: persistedBackendSessionId,
+        usage: persistedUsage,
+      });
+    });
+    mockPrisma.daemonSessionTurn.updateMany.mockImplementation(
+      async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+        if (typeof data.backendSessionId === "string") {
+          if (
+            persistedBackendSessionId !== null &&
+            persistedBackendSessionId !== data.backendSessionId
+          ) {
+            return { count: 0 };
+          }
+          persistedBackendSessionId = data.backendSessionId;
+          return { count: 1 };
+        }
+        if (typeof data.status === "string") {
+          if (persistedStatus !== where.status) return { count: 0 };
+          persistedStatus = data.status;
+          persistedUsage = data.usage ?? persistedUsage;
+          return { count: 1 };
+        }
+        return { count: 0 };
+      },
+    );
+    mockPrisma.daemonSession.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.daemonSession.update.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+
+    const usage = {
+      inputTokens: 10,
+      outputTokens: 20,
+      cacheCreationTokens: null,
+      cacheReadTokens: null,
+      model: "m",
+      source: "dsh",
+    };
+    const report = () =>
+      advanceTurnForWake({
+        companyUuid,
+        agentUuid,
+        connectionUuid,
+        sessionId,
+        turnUuid,
+        backendSessionId: "thread-1",
+        status: "ended",
+        usage,
+      });
+
+    const results = await Promise.all([report(), report()]);
+
+    expect(results).toEqual([
+      expect.objectContaining({ ok: true, turn: expect.objectContaining({ status: "ended" }) }),
+      expect.objectContaining({ ok: true, turn: expect.objectContaining({ status: "ended" }) }),
+    ]);
+    expect(mockPrisma.daemonSession.update).toHaveBeenCalledTimes(1);
+    expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+    expect(persistedUsage).toEqual(usage);
+  });
+
+  it("a completed turn replay cannot bind its ID to or advance a newer running turn", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(
+      turnRow({ uuid: "turn-1", status: "ended", backendSessionId: "thread-A" }),
+    );
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      turnUuid: "turn-1",
+      backendSessionId: "thread-A",
+      status: "ended",
+    });
+
+    expect(res).toMatchObject({ ok: true, turn: { uuid: "turn-1" } });
+    expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
+      where: { uuid: "turn-1", sessionUuid },
+      orderBy: { seq: "asc" },
+    });
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a different backend ID on an already-terminal correlated turn", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(
+      turnRow({ status: "ended", backendSessionId: "thread-A" }),
+    );
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      turnUuid,
+      backendSessionId: "thread-B",
+      status: "ended",
+    });
+
+    expect(res).toEqual({ ok: false, reason: "backend_session_conflict" });
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects an omitted backend ID when a correlated terminal turn stores one", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(
+      turnRow({ status: "ended", backendSessionId: "thread-A" }),
+    );
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      turnUuid,
+      status: "ended",
+    });
+
+    expect(res).toEqual({ ok: false, reason: "backend_session_conflict" });
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a different terminal status on an already-terminal correlated turn", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(
+      turnRow({ status: "ended" }),
+    );
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue({
+      uuid: turnUuid,
+      sessionUuid,
+      status: "ended",
+    });
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      turnUuid,
+      status: "interrupted",
+    });
+
+    expect(res).toEqual({
+      ok: false,
+      reason: "invalid_transition",
+      from: "ended",
+      to: "interrupted",
+    });
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
   });
 
   it("running→interrupted resolves the RUNNING turn, defaults endedAt, and persists the reason", async () => {
@@ -2200,7 +2461,9 @@ describe("advanceTurnForWake", () => {
     // → interrupted leaves from the same state as → ended: the running turn.
     const resolve = mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0];
     expect(resolve.where).toEqual({ sessionUuid, status: "running" });
-    const updateArg = mockPrisma.daemonSessionTurn.update.mock.calls[0][0];
+    const updateArg = mockPrisma.daemonSessionTurn.updateMany.mock.calls.find(
+      (call: any[]) => call[0].data.status === "interrupted",
+    )![0];
     expect(updateArg.data.status).toBe("interrupted");
     expect(updateArg.data.interruptedReason).toBe("shutdown");
     expect(updateArg.data.endedAt).toBeInstanceOf(Date);
@@ -2219,7 +2482,9 @@ describe("advanceTurnForWake", () => {
     });
 
     expect(res).toMatchObject({ ok: true });
-    const updateArg = mockPrisma.daemonSessionTurn.update.mock.calls[0][0];
+    const updateArg = mockPrisma.daemonSessionTurn.updateMany.mock.calls.find(
+      (call: any[]) => call[0].data.status === "ended",
+    )![0];
     expect(updateArg.data.status).toBe("ended");
     expect(updateArg.data.relayError).toBe("transcript upload returned 502");
   });
@@ -2285,11 +2550,10 @@ describe("advanceTurnForWake — coalescedCount settlement of superseded pending
     mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
   }
 
-  it("resolves the running turn's seq (findFirst select includes seq) so the settlement can filter seq > X", async () => {
+  it("resolves the full running turn row so its seq can anchor settlement and its backend ID can be projected", async () => {
     runningTransition(10);
     await advanceTurnForWake({ companyUuid, agentUuid, connectionUuid, sessionId, status: "running", coalescedCount: 2 });
-    // The FROM-status resolve must select seq (the settlement's seq>X anchor).
-    expect(mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0].select).toEqual({ uuid: true, seq: true });
+    expect(mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0]).not.toHaveProperty("select");
   });
 
   it("on →running with coalescedCount=N, settles the next N-1 pending turns of the SAME session (by ascending seq, seq > X) to 'merged'", async () => {

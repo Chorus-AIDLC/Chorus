@@ -715,6 +715,9 @@ model DaemonSessionTurn {
   uuid              String                    @unique @default(uuid())
   sessionUuid       String
   session           DaemonSession             @relation(fields: [sessionUuid], references: [uuid], onDelete: Cascade)
+  // Backend-owned identity for this wake. DaemonSession.backendSessionId remains the
+  // immutable first-wake compatibility anchor.
+  backendSessionId  String?
   seq               Int // monotonic per session
   trigger           String // task_assigned | mentioned | elaboration | elaboration_verified | start_development | yolo_requested | resume | human_instruction
   promptText        String? // free-text body for human_instruction; null otherwise (canonical source)

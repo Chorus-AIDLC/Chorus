@@ -58,6 +58,35 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     });
   });
 
+  it("turnAdvance unwraps running correlation and sends turnUuid on the terminal report", async () => {
+    const { fetchImpl, calls } = makeFetch(() =>
+      new Response(
+        JSON.stringify({ success: true, data: { turn: { uuid: "turn-7" } } }),
+        { status: 200 },
+      ),
+    );
+    const client = createDaemonRestClient({
+      ...BASE,
+      getConnectionUuid: () => "conn-1",
+      fetchImpl,
+    });
+
+    const running = await client.turnAdvance({ sessionId: "s", status: "running" });
+    await client.turnAdvance({
+      sessionId: "s",
+      turnUuid: running.data?.turnUuid,
+      status: "ended",
+    });
+
+    expect(running.data).toEqual({ turnUuid: "turn-7" });
+    expect(JSON.parse((calls[1].init as RequestInit).body as string)).toEqual({
+      connectionUuid: "conn-1",
+      sessionId: "s",
+      status: "ended",
+      turnUuid: "turn-7",
+    });
+  });
+
   it("transcript POSTs { sessionId, messages } and needs no connectionUuid", async () => {
     const { fetchImpl, calls } = makeFetch();
     const client = createDaemonRestClient({ ...BASE, getConnectionUuid: () => null, fetchImpl });

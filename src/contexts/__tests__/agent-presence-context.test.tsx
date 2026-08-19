@@ -117,6 +117,7 @@ function transcriptEvent(over: Partial<TranscriptEvent> = {}): TranscriptEvent {
     turn: {
       uuid: "turn-1",
       sessionUuid: "sess-1",
+      backendSessionId: null,
       seq: 1,
       trigger: "task_assigned",
       promptText: null,

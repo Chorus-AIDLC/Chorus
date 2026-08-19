@@ -90,7 +90,7 @@ Kanban 看板随 Agent 工作进度自动更新，任务卡片在 To Do → In P
 
 ## 连接 Agent
 
-最快的方式是应用内的 setup 向导：打开 **Settings → Setup Guide**。它会创建 API Key，并给出适配你所用客户端的完整命令，无论是 Claude Code、Codex、Kiro、OpenCode、OpenClaw、Pi，还是任何兼容 MCP 的 agent。
+最快的方式是应用内的 setup 向导：打开 **Settings → Setup Guide**。它会创建 API Key，并给出适配你所用客户端的完整命令，无论是 Claude Code、Codex、Kiro、dsh、OpenCode、OpenClaw、Pi，还是任何兼容 MCP 的 agent。
 
 按客户端分的完整接入指南 → **[Agent 接入平台](https://doc.chorus-ai.dev/zh/reference/agents/)**。
 

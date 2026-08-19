@@ -28,6 +28,7 @@ function turn(overrides: Partial<TurnWithMessagesView> = {}): TurnWithMessagesVi
   return {
     uuid: "t1",
     sessionUuid: "s1",
+    backendSessionId: null,
     seq: 1,
     trigger: "task_assigned",
     promptText: null,

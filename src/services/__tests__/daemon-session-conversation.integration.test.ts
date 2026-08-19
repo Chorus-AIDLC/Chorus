@@ -82,6 +82,15 @@ type Store = ReturnType<typeof makeStore>;
 function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: Row): boolean {
   for (const [key, cond] of Object.entries(where ?? {})) {
     if (cond === undefined) continue;
+    if (key === "OR") {
+      if (
+        !Array.isArray(cond) ||
+        !cond.some((branch) => matchWhere(store, model, row, branch as Row))
+      ) {
+        return false;
+      }
+      continue;
+    }
 
     // Nested relation filters.
     if (key === "session" && model === "daemonSessionTurn") {
@@ -98,7 +107,11 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
     }
 
     const val = row[key];
-    if (cond !== null && typeof cond === "object") {
+    if (cond === null) {
+      if (val != null) return false;
+      continue;
+    }
+    if (typeof cond === "object") {
       const c = cond as Row;
       if ("not" in c) {
         if (val === c.not) return false;
@@ -199,7 +212,7 @@ function buildPrismaFake(store: Store) {
     return store.data[model].filter((r) => matchWhere(store, model, r, (args.where as Row) ?? {})).length;
   }
 
-  return {
+  const client = {
     daemonSession: {
       upsert: vi.fn(async (args: Row) => {
         const where = (args.where as Row).agentUuid_sessionId as Row;
@@ -216,6 +229,7 @@ function buildPrismaFake(store: Store) {
           uuid: store.nextUuid("session"),
           status: "active",
           title: null,
+          backendSessionId: null,
           directIdeaUuid: null,
           lastTurnAt: now,
           createdAt: now,
@@ -236,6 +250,13 @@ function buildPrismaFake(store: Store) {
         Object.assign(row, args.data as Row, { updatedAt: new Date() });
         return { ...row };
       }),
+      updateMany: vi.fn(async (args: Row) => {
+        const rows = store.data.daemonSession.filter((row) =>
+          matchWhere(store, "daemonSession", row, (args.where as Row) ?? {}),
+        );
+        for (const row of rows) Object.assign(row, args.data as Row, { updatedAt: new Date() });
+        return { count: rows.length };
+      }),
     },
     daemonSessionTurn: {
       findFirst: vi.fn(async (args: Row) => findFirst("daemonSessionTurn", args)),
@@ -247,6 +268,7 @@ function buildPrismaFake(store: Store) {
         const row: Row = {
           id: store.nextId(),
           uuid: store.nextUuid("turn"),
+          backendSessionId: null,
           promptText: null,
           executionUuid: null,
           startedAt: null,
@@ -262,6 +284,13 @@ function buildPrismaFake(store: Store) {
         if (!row) throw new Error("turn not found for update");
         Object.assign(row, args.data as Row);
         return { ...row };
+      }),
+      updateMany: vi.fn(async (args: Row) => {
+        const rows = store.data.daemonSessionTurn.filter((row) =>
+          matchWhere(store, "daemonSessionTurn", row, (args.where as Row) ?? {}),
+        );
+        for (const row of rows) Object.assign(row, args.data as Row);
+        return { count: rows.length };
       }),
     },
     daemonTranscriptMessage: {
@@ -335,7 +364,13 @@ function buildPrismaFake(store: Store) {
       count: vi.fn(async (args: Row) => count("notification", args)),
       findMany: vi.fn(async (args: Row) => findMany("notification", args)),
     },
-  };
+  } as Record<string, any>;
+  client.$transaction = vi.fn(async (operation: unknown) =>
+    typeof operation === "function"
+      ? operation(client)
+      : Promise.all(operation as Array<Promise<unknown>>),
+  );
+  return client;
 }
 
 // ===== Module mocks =====
@@ -540,17 +575,23 @@ describe("integration: autonomous + human turns on ONE DaemonSession, distinguis
       }),
     );
     expect(run1.status).toBe(200);
+    const run1Body = await run1.json();
+    const turn1Uuid = run1Body.data.turn.uuid as string;
     expect((store.data.daemonSessionTurn[0]).status).toBe("running");
 
     const end1 = await turnAdvancePOST(
       postReq("/api/daemon/turn-advance", {
         connectionUuid: ORIGIN_CONN,
         sessionId: IDEA,
+        turnUuid: turn1Uuid,
+        backendSessionId: "backend-A",
         status: "ended",
       }),
     );
     expect(end1.status).toBe(200);
     expect((store.data.daemonSessionTurn[0]).status).toBe("ended");
+    expect((store.data.daemonSessionTurn[0]).backendSessionId).toBe("backend-A");
+    expect(store.data.daemonSession[0].backendSessionId).toBe("backend-A");
 
     // --- Thread 2: a human_instruction wake — notification carries instructionText ---
     const INSTRUCTION = "Please also update the changelog.";
@@ -580,13 +621,41 @@ describe("integration: autonomous + human turns on ONE DaemonSession, distinguis
     expect(triggers).toEqual(["task_assigned", "human_instruction"]);
 
     // Daemon advances turn 2 (the most-recent turn) pending → running → ended.
-    await turnAdvancePOST(
+    const run2 = await turnAdvancePOST(
       postReq("/api/daemon/turn-advance", { connectionUuid: ORIGIN_CONN, sessionId: IDEA, status: "running" }),
     );
-    await turnAdvancePOST(
-      postReq("/api/daemon/turn-advance", { connectionUuid: ORIGIN_CONN, sessionId: IDEA, status: "ended" }),
+    const run2Body = await run2.json();
+    const turn2Uuid = run2Body.data.turn.uuid as string;
+    expect(store.data.daemonSessionTurn[1].status).toBe("running");
+
+    // A lost-response retry from turn 1 is correlated to turn 1 and cannot bind its
+    // backend ID to or settle the newer running turn 2.
+    const replay1 = await turnAdvancePOST(
+      postReq("/api/daemon/turn-advance", {
+        connectionUuid: ORIGIN_CONN,
+        sessionId: IDEA,
+        turnUuid: turn1Uuid,
+        backendSessionId: "backend-A",
+        status: "ended",
+      }),
     );
+    expect(replay1.status).toBe(200);
+    expect(store.data.daemonSessionTurn[1].status).toBe("running");
+    expect(store.data.daemonSessionTurn[1].backendSessionId ?? null).toBeNull();
+
+    const end2 = await turnAdvancePOST(
+      postReq("/api/daemon/turn-advance", {
+        connectionUuid: ORIGIN_CONN,
+        sessionId: IDEA,
+        turnUuid: turn2Uuid,
+        backendSessionId: "backend-B",
+        status: "ended",
+      }),
+    );
+    expect(end2.status).toBe(200);
     expect((store.data.daemonSessionTurn[1]).status).toBe("ended");
+    expect(store.data.daemonSessionTurn[1].backendSessionId).toBe("backend-B");
+    expect(store.data.daemonSession[0].backendSessionId).toBe("backend-A");
 
     // SSE: turn_status_changed fired for the advances we captured (turn1 ended onward +
     // turn2 created/advances). At minimum we saw turn_created for turn 2 and

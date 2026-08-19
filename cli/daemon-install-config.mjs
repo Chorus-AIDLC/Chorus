@@ -30,6 +30,7 @@ import { KNOWN_AGENTS, DEFAULT_AGENT } from "./daemon-agent.mjs";
 import { agentNotFoundWarningLine } from "./daemon-banner.mjs";
 import { resolveClaudePath } from "./claude-spawner.mjs";
 import { resolveCodexPath } from "./codex-spawner.mjs";
+import { resolveDshPath } from "./dsh-spawner.mjs";
 import { resolveKiroPath } from "./kiro-spawner.mjs";
 import { readFileSync } from "node:fs";
 
@@ -242,7 +243,6 @@ export async function resolveInstallCwds(flags = {}, opts = {}) {
   const first = nonEmpty(await ask(`Working directory [${defaultCwd}] (Enter to accept the default): `));
   collected.push(first ?? defaultCwd);
   // subsequent adds
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const next = nonEmpty(await ask("Add another working directory (blank to finish): "));
     if (!next) break;
@@ -289,6 +289,9 @@ const AGENT_MENU = [
   { value: "claude-code", label: "Claude Code (default)" },
   { value: "codex", label: "Codex CLI" },
   { value: "kiro", label: "Kiro CLI" },
+  // NOTE: the dsh JSON-RPC daemon backend is temporarily de-advertised (offline).
+  // The code path (probeAgentCli/resolveDshPath, spawner-select, dsh-spawner) is
+  // kept dormant — re-add this menu entry to bring it back online. See CONNECT_DSH.
 ];
 
 /** Probe the selected backend's CLI on PATH. Returns the resolved path or null.
@@ -296,9 +299,11 @@ const AGENT_MENU = [
 function probeAgentCli(agent, probes = {}) {
   const findClaude = probes.resolveClaudePath ?? resolveClaudePath;
   const findCodex = probes.resolveCodexPath ?? resolveCodexPath;
+  const findDsh = probes.resolveDshPath ?? resolveDshPath;
   const findKiro = probes.resolveKiroPath ?? resolveKiroPath;
   if (agent === "codex") return findCodex();
   if (agent === "kiro") return findKiro();
+  if (agent === "dsh") return findDsh();
   return findClaude();
 }
 
@@ -331,7 +336,7 @@ function probeAgentCli(agent, probes = {}) {
  *   loginPath?: string,
  *   writeConfig?: (partial: Record<string, unknown>) => string,
  *   prompt?: typeof defaultPrompt,
- *   probes?: { resolveClaudePath?: Function, resolveCodexPath?: Function, resolveKiroPath?: Function },
+ *   probes?: { resolveClaudePath?: Function, resolveCodexPath?: Function, resolveKiroPath?: Function, resolveDshPath?: Function },
  *   log?: (m: string) => void,
  *   errLog?: (m: string) => void,
  * }} [opts]

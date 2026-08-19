@@ -14,10 +14,10 @@
 export const DAEMON_ACTIONS = new Set(["stop", "status", "restart", "logs", "install", "uninstall"]);
 
 /** Known agent backends, kept in sync with the authoritative list in
- * daemon-agent.mjs (`claude-code`, `codex`, `kiro` — all implemented). This copy
+ * daemon-agent.mjs (`claude-code`, `codex`, `kiro`, `dsh` — all implemented). This copy
  * is informational only: parsing here does not validate the value (the resolver
  * in daemon-agent.mjs is the single source of truth for validation). */
-export const KNOWN_AGENTS = new Set(["claude-code", "codex", "kiro"]);
+export const KNOWN_AGENTS = new Set(["claude-code", "codex", "kiro", "dsh"]);
 
 /**
  * Parse the client-subcommand flags out of an arg list. Recognizes the

@@ -24,23 +24,26 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
     <Card className="w-full">
       <CardContent className="p-6">
         <Tabs defaultValue="claude-code" className="w-full">
-          <TabsList className="w-full">
-            <TabsTrigger value="claude-code" className="flex-1">
+          <TabsList className="w-full justify-start overflow-x-auto">
+            <TabsTrigger value="claude-code" className="shrink-0">
               {t("install.tabs.claudeCode")}
             </TabsTrigger>
-            <TabsTrigger value="codex" className="flex-1">
+            <TabsTrigger value="codex" className="shrink-0">
               {t("install.tabs.codex")}
             </TabsTrigger>
-            <TabsTrigger value="kiro" className="flex-1">
+            <TabsTrigger value="kiro" className="shrink-0">
               {t("install.tabs.kiro")}
             </TabsTrigger>
-            <TabsTrigger value="opencode" className="flex-1">
+            <TabsTrigger value="dsh" className="shrink-0">
+              {t("install.tabs.dsh")}
+            </TabsTrigger>
+            <TabsTrigger value="opencode" className="shrink-0">
               {t("install.tabs.opencode")}
             </TabsTrigger>
-            <TabsTrigger value="openclaw" className="flex-1">
+            <TabsTrigger value="openclaw" className="shrink-0">
               {t("install.tabs.openClaw")}
             </TabsTrigger>
-            <TabsTrigger value="other" className="flex-1">
+            <TabsTrigger value="other" className="shrink-0">
               {t("install.tabs.other")}
             </TabsTrigger>
           </TabsList>
@@ -143,6 +146,57 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <p className="text-sm text-muted-foreground">
                 {t("install.kiro.step3Desc")}
+              </p>
+            </div>
+          </TabsContent>
+
+          {/* dsh Tab */}
+          <TabsContent value="dsh" className="mt-4 space-y-4">
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.dsh.step1Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code={`export CHORUS_URL="${origin}"\nexport CHORUS_API_KEY="${displayKey}"`}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.dsh.step1Tip")}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.dsh.step2Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code="dsh plugin --profile <name> add @chorus-aidlc/chorus-dsh -w"
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.dsh.step2Tip", { name: "<name>" })}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.dsh.step3Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code={`bash <(curl -fsSL ${origin}/dsh-credentials.sh)`}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.dsh.step3Tip")}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.dsh.step4Title")}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                {t("install.dsh.step4Desc", { name: "<name>" })}
               </p>
             </div>
           </TabsContent>

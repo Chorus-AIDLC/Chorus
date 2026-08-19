@@ -1,16 +1,16 @@
 ---
 name: plugin-maintenance
-description: Guide for modifying the Chorus plugin (Claude Code, Codex, OpenClaw, Kiro, and Pi ports), updating skill documentation, and releasing new plugin versions.
+description: Guide for modifying the Chorus plugin (Claude Code, Codex, OpenClaw, Kiro, Pi, and dsh ports), updating skill documentation, and releasing new plugin versions.
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.4.0"
+  version: "0.5.0"
   category: development
 ---
 
 # Chorus Plugin & Skill Maintenance
 
-How to modify the Chorus plugin, update skill documentation, and release new versions. **Five plugin packages** are maintained in parallel — Claude Code, Codex, OpenClaw, Kiro, and Pi — plus the standalone skill surface. That is **six skill surfaces total**; when you change skill content, sweep all six (see [Skill Content Changes — Six Surfaces](#skill-content-changes--six-surfaces)).
+How to modify the Chorus plugin, update skill documentation, and release new versions. **Six plugin packages** are maintained in parallel — Claude Code, Codex, OpenClaw, Kiro, Pi, and dsh (DeepSeek Harness) — plus the standalone skill surface. That is **seven skill surfaces total**; when you change skill content, sweep all seven (see [Skill Content Changes — Seven Surfaces](#skill-content-changes--seven-surfaces)).
 
 ## File Structure
 
@@ -81,6 +81,17 @@ packages/chorus-pi/             ← Pi coding agent package (TS extension + skil
   agents/                       ← 3 read-only reviewer agents copied to ~/.pi/agent/agents/
   test/                         ← Static, helper-unit, extension-event, and manual-session verification
 
+packages/chorus-dsh/            ← DeepSeek Harness (dsh) plugin — published npm bundle @chorus-aidlc/chorus-dsh
+  package.json                  ← npm package + dsh bundle patch (version here; tracks the APP version, e.g. 0.16.3)
+  src/index.ts                  ← Cordis plugin apply(): injects skills/persona/MCP wrapper; daemon-backend gate
+  cordis.patch.yml              ← dsh composition patch shipped in the bundle
+  bin/chorus-mcp-call.mjs       ← Node MCP-over-HTTP helper (clientInfo.version auto-read from package.json — no manual bump)
+  skills/
+    chorus/SKILL.md             ← Core overview (dsh HAS a chorus/ overview, unlike Kiro)
+    <stage>-chorus/SKILL.md     ← 13 stage/reviewer skills, `-chorus` SUFFIX (brainstorm/develop/idea/
+                                  proposal/quick-dev/review/yolo/docs/orchestrate/openspec-aware/
+                                  code-reviewer/proposal-reviewer/task-reviewer)
+
 public/skill/                   ← Standalone skill (any MCP-compatible agent)
   chorus/SKILL.md               ← Same structure, softer language, IDE-agnostic
   proposal-chorus/SKILL.md
@@ -104,19 +115,21 @@ public/skill/                   ← Standalone skill (any MCP-compatible agent)
 
 When porting a change between plugins, preserve these intentional differences. Don't add state files to the Codex/OpenClaw plugins, don't use `$`-prefix outside Codex, keep OpenClaw's `chorus__` names and manual-session/inline-detection wording, and preserve Kiro's `chorus-` skill prefix, `@chorus/<tool>` matchers, and `__CHORUS_BIN__` placeholder. For Pi, use `/skill:<name>`, `subagent_spawn`, native extension events, and plain-text interaction; do not introduce Claude hooks or Codex session wording.
 
+**dsh (DeepSeek Harness)** is a published npm bundle (`@chorus-aidlc/chorus-dsh`) added to a dsh profile via `dsh plugin --profile <name> add -w`. It is Cordis-based: `src/index.ts`'s `apply()` injects the `-chorus`-suffixed skills, persona, and a Node MCP wrapper. Skills use the `-chorus` **suffix** (like standalone) but it keeps a `chorus/SKILL.md` overview. Its version tracks the **app version** (0.16.3+), NOT the 0.9.x skill sequence. The dsh **daemon backend** (`cli/dsh-spawner.mjs` / `dsh-managed-config.mjs`) is currently **de-listed / offline** — kept dormant, not advertised; do NOT re-add it to the daemon install menu, CLI `--agent` help, or `DAEMON.md` / `MCP_TOOLS.md` without bringing the backend back online.
+
 ## When to Update What
 
-"All five plugin skills" = Claude Code + Codex + OpenClaw + Kiro + Pi. "All six surfaces" additionally includes standalone `public/skill/`. Note the Kiro surface has **no `chorus/SKILL.md`** — its overview lives in `steering/chorus.md`, and its stage skills are `chorus-`prefixed.
+"All six plugin skills" = Claude Code + Codex + OpenClaw + Kiro + Pi + dsh. "All seven surfaces" additionally includes standalone `public/skill/`. Note the Kiro surface has **no `chorus/SKILL.md`** — its overview lives in `steering/chorus.md`, and its stage skills are `chorus-`prefixed; dsh keeps a `chorus/SKILL.md` overview and uses `-chorus`-**suffixed** stage skills.
 
 | Change | Files to update |
 |--------|----------------|
-| New MCP tool added | `src/mcp/tools/*.ts` + `docs/MCP_TOOLS.md` + all five plugin overviews (Kiro: `steering/chorus.md`) + standalone overview |
+| New MCP tool added | `src/mcp/tools/*.ts` + `docs/MCP_TOOLS.md` + all six plugin overviews (Kiro: `steering/chorus.md`) + standalone overview |
 | MCP tool description changed | `src/mcp/tools/*.ts` only (skill docs reference tool names, not descriptions) |
-| Skill content / wording (e.g. AC now required) | The matching stage skill in **all six surfaces** |
-| New workflow step | All five plugin stage skills + standalone equivalent |
-| New Idea/Task status | All five plugin overviews + standalone overview + locale messages |
-| New execution rule | All five plugin overviews + standalone overview (softer wording) |
-| Permission model change | All five plugin overviews + affected stage skills + runtime checks where applicable |
+| Skill content / wording (e.g. AC now required) | The matching stage skill in **all seven surfaces** |
+| New workflow step | All six plugin stage skills + standalone equivalent |
+| New Idea/Task status | All six plugin overviews + standalone overview + locale messages |
+| New execution rule | All six plugin overviews + standalone overview (softer wording) |
+| Permission model change | All six plugin overviews + affected stage skills + runtime checks where applicable |
 | Hook script change (Claude Code) | `public/chorus-plugin/bin/*.sh` + `hooks.json` if new hook. **Never copy hook changes blindly into `plugins/chorus/hooks/`** — Codex hooks are intentionally stateless and lack subagent events. OpenClaw has no bash hooks at all. |
 | Hook script change (Codex) | `plugins/chorus/hooks/*.sh` — rarely needed; session-start, post-submit-proposal, post-submit-for-verify are the only three. If bumping plugin version, also update the hardcoded `clientInfo.version` in `chorus-mcp-call.sh`. |
 | OpenClaw runtime change | `packages/openclaw-plugin/src/*.ts` (TS SSE/MCP runtime) + `npm run typecheck` + `npm run test`. Not bash hooks — this is a compiled TypeScript extension. |
@@ -127,7 +140,7 @@ When porting a change between plugins, preserve these intentional differences. D
 
 Every time **any** plugin package changes, bump the version in **all** of that package's locations. There are two version sequences in play:
 
-- **Skill-frontmatter sequence** — shared by corresponding `SKILL.md` files across the five plugin ports. When the same skill content ships to multiple plugins, bump them together.
+- **Skill-frontmatter sequence** — shared by corresponding `SKILL.md` files across the six plugin ports. When the same skill content ships to multiple plugins, bump them together.
 - **Per-package plugin sequences** — Claude Code + Codex share one (`marketplace.json` / both `plugin.json`, currently `0.9.x`); OpenClaw's `package.json` has its **own** sequence (currently `0.5.x`). These are independent files — edit each.
 
 ### Claude Code plugin — bump together
@@ -155,6 +168,12 @@ Kiro has **no plugin.json / marketplace registry** (it reads loose `.kiro/` file
 13. Every skill under `packages/chorus-pi/skills/*/SKILL.md` — `metadata.version: "X.Y.Z"`, including `openspec-aware`.
 14. `packages/chorus-pi/extensions/chorus.ts` — hardcoded MCP `clientInfo.version`.
 
+### dsh (DeepSeek Harness) plugin — bump together
+dsh tracks the **app version** (currently `0.16.3`), NOT the 0.9.x skill sequence.
+16. `packages/chorus-dsh/package.json` — `"version": "X.Y.Z"` (the published `@chorus-aidlc/chorus-dsh` bundle).
+17. Every skill under `packages/chorus-dsh/skills/*/SKILL.md` — `metadata.version: "X.Y.Z"` (the `chorus/` overview + all 13 `-chorus`-suffixed stage/reviewer skills).
+   - **Do NOT** hardcode a version in `bin/chorus-mcp-call.mjs` — its `clientInfo.version` is auto-read from `package.json`, so it never drifts.
+
 ### Standalone skills — independent versioning
 15. `public/skill/*/SKILL.md` — bump only the standalone skills that changed, using their own version sequence.
 
@@ -174,6 +193,8 @@ grep -rn '"version"\|^  version:\|^version:\|clientInfo' \
   packages/chorus-pi/package.json \
   packages/chorus-pi/skills/*/SKILL.md \
   packages/chorus-pi/extensions/chorus.ts \
+  packages/chorus-dsh/package.json \
+  packages/chorus-dsh/skills/*/SKILL.md \
   public/skill/*/SKILL.md
 ```
 
@@ -188,23 +209,24 @@ codex plugin update chorus@chorus-plugins      # Codex
 
 Pi accepts GitHub sources such as `pi install git:github.com/user/repo@ref`, but it does not support selecting a package subdirectory. Do not point it at the Chorus monorepo root: Pi would inspect the root `package.json`, not `packages/chorus-pi/package.json`. Until Pi is published from a dedicated package-root repository or branch, clone/pull Chorus and install the package by local path.
 
-## Skill Content Changes — Six Surfaces
+## Skill Content Changes — Seven Surfaces
 
-Chorus skill content lives in **six parallel surfaces**. A content change must sweep all six:
+Chorus skill content lives in **seven parallel surfaces**. A content change must sweep all seven:
 
 1. `public/chorus-plugin/skills/<skill>/SKILL.md` — Claude Code
 2. `plugins/chorus/skills/<skill>/SKILL.md` — Codex
 3. `packages/openclaw-plugin/skills/<skill>/SKILL.md` — OpenClaw
 4. `public/kiro-plugin/.kiro/skills/chorus-<skill>/SKILL.md` — Kiro (note the `chorus-` **prefix**; the overview lives in `steering/chorus.md`, not a `chorus/SKILL.md`)
 5. `packages/chorus-pi/skills/<skill>/SKILL.md` — Pi
-6. `public/skill/<skill>-chorus/SKILL.md` — standalone (note the `-chorus` suffix and flatter set)
+6. `packages/chorus-dsh/skills/<skill>-chorus/SKILL.md` — dsh (note the `-chorus` **suffix**; keeps a `chorus/SKILL.md` overview)
+7. `public/skill/<skill>-chorus/SKILL.md` — standalone (note the `-chorus` suffix and flatter set)
 
 **Sweep command** — find every occurrence before editing so nothing is missed:
 ```bash
 grep -rniE "<your-search-term>" \
   public/chorus-plugin/skills/ plugins/chorus/skills/ \
   packages/openclaw-plugin/skills/ public/kiro-plugin/.kiro/skills/ \
-  packages/chorus-pi/skills/ public/skill/
+  packages/chorus-pi/skills/ packages/chorus-dsh/skills/ public/skill/
 ```
 
 Then bump the relevant version sequences (shared skill frontmatter across plugin surfaces 1–5, independent standalone version for #6, and per-package versions as needed).
@@ -243,14 +265,15 @@ The plugin skill targets Claude Code specifically. The standalone skill targets 
 
 1. Implement in `src/mcp/tools/*.ts` (pm.ts, public.ts, etc.)
 2. Add to `docs/MCP_TOOLS.md`
-3. Update permission tables and tool lists in all six overview surfaces:
+3. Update permission tables and tool lists in all seven overview surfaces:
    - `public/chorus-plugin/skills/chorus/SKILL.md`
    - `plugins/chorus/skills/chorus/SKILL.md`
    - `packages/openclaw-plugin/skills/chorus/SKILL.md` (use the `chorus__<tool>` namespaced form)
    - `public/kiro-plugin/.kiro/steering/chorus.md` (Kiro has no `chorus/SKILL.md` — the overview is the steering doc)
    - `packages/chorus-pi/skills/chorus/SKILL.md`
+   - `packages/chorus-dsh/skills/chorus/SKILL.md`
    - `public/skill/chorus/SKILL.md`
-4. If it changes a stage workflow, update the matching stage skill in all six locations.
+4. If it changes a stage workflow, update the matching stage skill in all seven locations.
 5. Bump every affected plugin's versions (see Version Bump Checklist)
 6. Run `npx tsc --noEmit` to verify
 
@@ -350,4 +373,7 @@ bash public/kiro-plugin/bin/test-syntax.sh
 
 # Pi — static checks + helper and extension-event tests
 cd packages/chorus-pi && bash test/all.sh
+
+# dsh — typecheck + lint + unit tests + published-bundle validation
+cd packages/chorus-dsh && pnpm run typecheck && pnpm run lint && pnpm test && pnpm run check:package
 ```

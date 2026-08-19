@@ -1161,6 +1161,7 @@
         "claudeCode": "Claude Code",
         "codex": "Codex",
         "kiro": "Kiro",
+        "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
         "other": "其他智能体"
@@ -1185,6 +1186,16 @@
         "step2Tip": "默认全局安装到 ~/.kiro/，Chorus 在任意目录下均可用。若只想安装到当前项目目录下的 .kiro/，请追加参数：bash -s -- --workspace。",
         "step3Title": "第 3 步：验证连接",
         "step3Desc": "打开 Kiro CLI 并激活 /chorus-idea 技能，或直接以 Chorus agent 启动：kiro-cli --agent chorus。"
+      },
+      "dsh": {
+        "step1Title": "第 1 步：设置环境变量",
+        "step1Tip": "前置条件：PATH 中必须能找到 dsh 0.1.0-rc.7 和 pnpm。凭证仅保留在 shell 环境变量中。",
+        "step2Title": "第 2 步：添加 Chorus bundle",
+        "step2Tip": "将 {name} 替换为要使用的 dsh profile。必须带 -w，因为 dsh 的 profile 是一个 pnpm workspace 根。profile 包状态由 dsh 管理，并由 dsh 满足 bundle 的 peer 插件。",
+        "step3Title": "第 3 步：写入凭证",
+        "step3Tip": "把 CHORUS_URL 和 CHORUS_API_KEY 写入 $DSH_HOME/.env（权限 0600）。dsh 会把凭据形状的变量从工具子进程里擦掉，所以文档镜像 wrapper 从这个文件读取，而不是从 shell。",
+        "step4Title": "第 4 步：启动并验证",
+        "step4Desc": "运行 dsh --profile {name}，然后让它执行 \"check in to chorus\"。"
       },
       "opencode": {
         "step1Title": "第 1 步：设置环境变量",
@@ -1490,6 +1501,7 @@
     "clientOpenclaw": "OpenClaw",
     "clientCodex": "Codex",
     "clientKiro": "Kiro",
+    "clientDsh": "DeepSeek Harness",
     "clientUnknown": "未知客户端",
     "uptimeMonoDays": "{days}天 {time}",
     "mobileBack": "返回连接列表",

@@ -19,7 +19,7 @@ import { backendCli } from "./daemon-agent.mjs";
  * @property {string} agentUuid        authenticated agent uuid.
  * @property {"yolo"|"chorus"} permissionMode
  * @property {string} credentialSource resolved credential source (flag/env/login-file/…).
- * @property {string} agentType        local agent backend (claude-code | codex) — drives the CLI row label.
+ * @property {string} agentType        local agent backend (claude-code | codex | kiro | dsh) — drives the CLI row label.
  * @property {string|null} cliPath     resolved path of the SELECTED backend's CLI, or null when not found.
  * @property {string} [connection]     connection state line (default "connecting…").
  * @property {string} [configPath]     absolute path to the daemon.json the CLI reads.
@@ -42,8 +42,8 @@ export function bannerRows(info) {
     info.permissionMode === "yolo"
       ? "YOLO ⚠  (full autonomy — Bash/write/any command)"
       : "chorus-only (Chorus MCP tools only)";
-  // The CLI row names the SELECTED backend (claude-code → "claude", codex →
-  // "codex") so a `--agent codex` run never mislabels itself as claude.
+  // The CLI row names the selected backend so non-Claude runs are never
+  // mislabeled and their own executable override is actionable.
   const cli = backendCli(info.agentType);
   const cliValue = info.cliPath
     ? `found: ${info.cliPath}`

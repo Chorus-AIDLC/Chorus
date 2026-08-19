@@ -193,6 +193,7 @@ describe("resolveInstallAgent", () => {
         resolveClaudePath: () => "/bin/claude",
         resolveCodexPath: () => "/bin/codex",
         resolveKiroPath: () => "/bin/kiro-cli",
+        resolveDshPath: () => "/bin/dsh-jsonrpc-agent",
       },
       log: vi.fn(),
       errLog: vi.fn(),
@@ -263,6 +264,26 @@ describe("resolveInstallAgent", () => {
     const o = baseOpts({ prompt });
     const r = await resolveInstallAgent({}, {}, { ...o, isTTY: true, skip: false });
     expect(r.agent).toBe("kiro");
+  });
+
+  it("no longer offers the (de-listed) dsh backend in the interactive menu", async () => {
+    // dsh daemon backend is temporarily offline: it was removed from AGENT_MENU.
+    // The old dsh slot ("4") is now out of range → falls back to the claude-code
+    // default, and the dsh probe is never consulted. (resolveDshPath is retained
+    // dormant for when the backend is brought back online.)
+    const findDsh = vi.fn(() => "/opt/dsh-jsonrpc-agent");
+    const o = baseOpts({
+      prompt: vi.fn(async () => "4"),
+      probes: {
+        resolveClaudePath: () => "/bin/claude",
+        resolveCodexPath: () => "/bin/codex",
+        resolveKiroPath: () => "/bin/kiro-cli",
+        resolveDshPath: findDsh,
+      },
+    });
+    const r = await resolveInstallAgent({}, {}, { ...o, isTTY: true, skip: false });
+    expect(r.agent).toBe("claude-code");
+    expect(findDsh).not.toHaveBeenCalled();
   });
 
   it("interactive menu: an out-of-range / garbage answer falls back to the default", async () => {
