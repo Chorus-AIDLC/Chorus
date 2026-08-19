@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.16.4](https://chorus-ai.dev/zh/blog/chorus-v0.16.4-release/)** — DeepSeek Harness（dsh）成为第六种接入方式：`@chorus-aidlc/chorus-dsh` bundle 把 Chorus 的 skill、persona 和 MCP 配置装进任意 dsh profile。目前仅交互式使用，daemon 唤醒稍后支持。
+
 **[v0.16.1](https://chorus-ai.dev/zh/blog/chorus-v0.16.1-release/)** — 一个 `chorus daemon` 现在可以同时服务多个互相独立的 agent，每个都有自己的密钥、工作目录、后端和权限（通过 `agents[]` 配置）；agent 之间还能通过 @ 把活递给对方，每次唤醒都落在该 agent 自己的项目目录里。
 
 **[v0.16.0](https://chorus-ai.dev/zh/blog/chorus-v0.16.0-release/)** — 新增 `docs` skill，引导 Agent 查阅文档站点（[doc.chorus-ai.dev](https://doc.chorus-ai.dev)），基于当前文档作答，而不是凭记忆复述。
