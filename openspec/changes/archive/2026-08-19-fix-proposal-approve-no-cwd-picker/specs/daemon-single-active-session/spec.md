@@ -1,12 +1,5 @@
-# daemon-single-active-session Specification
+## MODIFIED Requirements
 
-## Purpose
-Guarantee that when the same agent has multiple online daemon connections, an un-pinned
-autonomous idea-anchored wake advances an entity on at most ONE connection — deterministically
-narrowing the wake instead of broadcasting to every connection — so concurrent sessions of one
-agent never duplicate work (duplicate elaboration rounds, near-duplicate comments) on the same
-entity.
-## Requirements
 ### Requirement: Deterministic single-connection narrow for autonomous idea-anchored wakes
 
 The wake chokepoint SHALL, for a residual-family (autonomous idea-anchored, including
@@ -83,4 +76,3 @@ is unchanged.
   `proposal_rejected` wake that resolves to `online_first`
 - **THEN** the narrow still applies and the wake is delivered to that single connection as a
   directed wake, unchanged
-
