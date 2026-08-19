@@ -47,9 +47,12 @@ describe("getAdapter / orderedSteps", () => {
     expect(getAdapter("codex")?.id).toBe("codex");
     expect(getAdapter("nope")).toBeUndefined();
   });
-  it("orderedSteps is empty until steps are registered by later tasks", () => {
-    // (credential-seed + plugin-install register themselves in their own tasks)
-    expect(Array.isArray(orderedSteps())).toBe(true);
+  it("orderedSteps returns the registered steps sorted by order", () => {
+    const steps = orderedSteps();
+    expect(Array.isArray(steps)).toBe(true);
+    // credential-seed (10) before plugin-install (20)
+    const orders = steps.map((s) => s.order);
+    expect([...orders]).toEqual([...orders].sort((a, b) => a - b));
   });
 });
 
