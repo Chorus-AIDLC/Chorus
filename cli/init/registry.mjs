@@ -14,15 +14,18 @@
 // functions below are the stable interface runInit (cli/init.mjs) depends on,
 // so the command is importable and testable at every step of the build.
 
+import { ADAPTERS } from "./adapters.mjs";
+
 /** @typedef {import("./contracts.mjs").AgentAdapter} AgentAdapter */
 /** @typedef {import("./contracts.mjs").InitStep} InitStep */
 /** @typedef {import("./contracts.mjs").AgentDetection} AgentDetection */
 
 /**
- * Supported coding-agent adapters. POPULATED by the detection/adapter task.
+ * Supported coding-agent adapters — the single source of the supported set.
+ * Built from cli/init/adapters.mjs; add a new agent = add a descriptor there.
  * @type {AgentAdapter[]}
  */
-export const AGENT_REGISTRY = [];
+export const AGENT_REGISTRY = [...ADAPTERS];
 
 /**
  * Configuration steps. POPULATED by the credential-seed and plugin-install tasks.
