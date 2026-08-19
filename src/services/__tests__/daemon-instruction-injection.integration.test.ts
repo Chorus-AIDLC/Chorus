@@ -213,8 +213,15 @@ function buildPrismaFake(store: Store) {
   function count(model: keyof Store["data"], args: Row = {}) {
     return store.data[model].filter((r) => matchWhere(store, model, r, (args.where as Row) ?? {})).length;
   }
+  // Mutating claim used by advanceTurn's status-guarded transaction. Updates the ACTUAL
+  // store rows (references, not copies) so subsequent reads observe the new status.
+  function updateMany(model: keyof Store["data"], args: Row = {}) {
+    const rows = store.data[model].filter((r) => matchWhere(store, model, r, (args.where as Row) ?? {}));
+    for (const r of rows) Object.assign(r, (args.data as Row) ?? {});
+    return { count: rows.length };
+  }
 
-  return {
+  const fake: any = {
     daemonSession: {
       upsert: vi.fn(async (args: Row) => {
         const where = (args.where as Row).agentUuid_sessionId as Row;
@@ -249,6 +256,7 @@ function buildPrismaFake(store: Store) {
         Object.assign(row, args.data as Row, { updatedAt: new Date() });
         return { ...row };
       }),
+      updateMany: vi.fn(async (args: Row) => updateMany("daemonSession", args)),
     },
     daemonSessionTurn: {
       findFirst: vi.fn(async (args: Row) => findFirst("daemonSessionTurn", args)),
@@ -276,6 +284,7 @@ function buildPrismaFake(store: Store) {
         Object.assign(row, args.data as Row);
         return { ...row };
       }),
+      updateMany: vi.fn(async (args: Row) => updateMany("daemonSessionTurn", args)),
     },
     daemonConnection: {
       findFirst: vi.fn(async (args: Row) => findFirst("daemonConnection", args)),
@@ -317,6 +326,13 @@ function buildPrismaFake(store: Store) {
       count: vi.fn(async (args: Row) => count("agent", args)),
     },
   };
+  // advanceTurn claims status transitions inside prisma.$transaction (callback form) and
+  // batches the usage rollup (array form). Support both so the real service code runs.
+  fake.$transaction = async (arg: unknown) =>
+    typeof arg === "function"
+      ? await (arg as (tx: unknown) => unknown)(fake)
+      : Promise.all(arg as Promise<unknown>[]);
+  return fake;
 }
 
 // ===== Module mocks =====
