@@ -98,7 +98,10 @@ export async function runInit(argv = [], deps = {}) {
   io.log(`[chorus init] Configuring: ${selectedIds.join(", ")}`);
 
   const steps = await orderedSteps();
-  const baseCtx = { selection: selectedIds, flags, io, env, backup };
+  // `ctxExtras` lets a caller/test inject step-context collaborators (e.g. a
+  // fake credential validator or command runner) so an end-to-end run is
+  // hermetic; production passes none and steps use their real defaults.
+  const baseCtx = { selection: selectedIds, flags, io, env, backup, ...(deps.ctxExtras ?? {}) };
   /** @type {import("./init/contracts.mjs").StepOutcome[]} */
   const outcomes = [];
 
