@@ -2144,27 +2144,25 @@ describe("createTurnAndResolveTarget — generalized idea-session-origin upgrade
 
   // ----- FALLBACKS: no session / offline origin → Step 4b narrow to online-first (directed) -----
 
-  it("proposal_approved with NO existing idea session narrows to online-first (Step 4b directed)", async () => {
-    const onlineFirst = "conn-online-first";
+  it("proposal_approved with NO existing idea session and TWO online connections is notify-only (proposal-review ambiguity suppression, idea 146a7a9b)", async () => {
     mockListConnectionsForAgent.mockResolvedValue([
-      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: "conn-online-first", host: "host-A", cwd: "/home/u/dev/a" }),
       onlineConn({ uuid: "conn-second", host: "host-B", cwd: "/home/u/dev/b" }),
     ]);
-    // Default mockDaemonSessionFindFirst → null (no existing idea session) → step 4 declines,
-    // Step 4b narrows.
+    // Default mockDaemonSessionFindFirst → null (no existing idea session) → step 4 declines.
+    // The proposal-review carve-out (step 4a-bis) now SUPPRESSES on ≥2 online instead of the
+    // step-4b narrow to first-online (the removed cwd picker's arbitrary pick — the owner
+    // rejected auto-picking a cwd at the approve/reject gate).
 
-    const { turn, targetConnectionUuid } = await createTurnAndResolveTarget(
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
       ctx({ action: "proposal_approved", entityType: "proposal", entityUuid: "proposal-1" }),
     );
 
-    expect(turn?.status).toBe("pending");
-    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineFirst }),
-    );
-    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
-      expect.objectContaining({ originConnectionUuid: onlineFirst, turnUuid: turn?.uuid }),
-    );
-    expect(targetConnectionUuid).toBe(onlineFirst);
+    expect(turn).toBeNull();
+    expect(targetConnectionUuid).toBeNull();
+    expect(suppressWake).toBe(true);
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
   });
 
   it("proposal_approved whose idea session origin is OFFLINE narrows to online-first, NOT the dead origin (Step 4b)", async () => {
@@ -2615,6 +2613,195 @@ describe("createTurnAndResolveTarget — Step 4b single-active-session narrow", 
     expect(suppressWake).toBe(false);
     expect(mockDeliverTurnPing).toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: only, turnUuid: turn?.uuid }),
+    );
+  });
+});
+
+// ===== Step 4a-bis — proposal-review ambiguity suppression (idea 146a7a9b) =====
+//
+// Approving / rejecting a proposal in the UI must resolve the assignee wake WITHOUT a cwd
+// picker (the client dialog is removed). The server carve-out sits BETWEEN step 4a (project-
+// owner pin) and step 4b (single-active narrow): for a `proposal_approved` / `proposal_rejected`
+// wake that is STILL `online_first` after steps 3/4/4a (no instance/mention pin, no online idea
+// session-origin, no agent-owner project cwd pin), it wakes ONLY when the online target is
+// unambiguous — exactly one online connection (falls through to step 4b, directed) — and
+// SUPPRESSES (notify-only, offline-pin-shaped result) when two-or-more connections are online.
+// It NEVER narrows to an arbitrary first-online (the removed dialog's job), NEVER persists a
+// durable idea pin, and is gated on `ctx.action` so it carves out ONLY the two proposal actions.
+describe("createTurnAndResolveTarget — proposal-review ambiguity suppression (idea 146a7a9b)", () => {
+  // A proposal entity: its lineage resolves to the canonical idea anchor (default
+  // mockResolveRootIdea / mockResolveDirectIdeaUuid → ideaUuid, a plain-agent idea → no pin).
+  const proposalCtx = (overrides: Partial<WakeNotificationContext> = {}) =>
+    ctx({ entityType: "proposal", entityUuid: "proposal-1", ...overrides });
+
+  // ----- ≥2 online, no pin → notify-only (SUPPRESS) for approve AND reject -----
+
+  for (const action of ["proposal_approved", "proposal_rejected"]) {
+    it(`${action} with no pin and TWO online connections is notify-only (suppressWake, no turn, no pin persisted)`, async () => {
+      mockListConnectionsForAgent.mockResolvedValue([
+        onlineConn({ uuid: "conn-A", host: "host-A", cwd: "/home/u/dev/a" }),
+        onlineConn({ uuid: "conn-B", host: "host-B", cwd: "/home/u/dev/b" }),
+      ]);
+      // Defaults: proposal lineage → ideaUuid (plain agent, no instance pin), no idea session
+      // origin (mockDaemonSessionFindFirst → null), projectUuid unset → step 4a skipped.
+
+      const { turn, targetConnectionUuid, runtimeCwd, suppressWake } =
+        await createTurnAndResolveTarget(proposalCtx({ action }));
+
+      // Offline-pin-shaped result: NO turn, NO target, suppressWake TRUE (every connection
+      // suppresses its broadcast copy via cli/event-router.mjs). The notification stands.
+      expect(turn).toBeNull();
+      expect(targetConnectionUuid).toBeNull();
+      expect(runtimeCwd).toBeNull();
+      expect(suppressWake).toBe(true);
+      // Ambiguity suppression, NOT the step-4b narrow: no connection is woken.
+      expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+      expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+      expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+      // The server NEVER writes a durable idea/instance pin (no session re-point either).
+      expect(mockDaemonSessionUpdate).not.toHaveBeenCalled();
+      // Notify-only is normal, not an error.
+      expect(mockLoggerError).not.toHaveBeenCalled();
+    });
+  }
+
+  // ----- exactly 1 online, no pin → directed to it (falls through to step 4b) -----
+
+  for (const action of ["proposal_approved", "proposal_rejected"]) {
+    it(`${action} with no pin and EXACTLY ONE online connection is directed to it (turn created, no pin persisted)`, async () => {
+      const only = "conn-only";
+      mockListConnectionsForAgent.mockResolvedValue([
+        onlineConn({ uuid: only, host: "host-A", cwd: "/home/u/dev/a" }),
+      ]);
+
+      const { turn, targetConnectionUuid, suppressWake } =
+        await createTurnAndResolveTarget(proposalCtx({ action }));
+
+      // Exactly one online → unambiguous → step 4b promotes online_first → directed on it.
+      expect(turn?.status).toBe("pending");
+      expect(targetConnectionUuid).toBe(only);
+      expect(suppressWake).toBe(false);
+      expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({ originConnectionUuid: only }),
+      );
+      expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+        expect.objectContaining({ originConnectionUuid: only, turnUuid: turn?.uuid }),
+      );
+      // No durable idea pin is persisted for the single-online wake.
+      expect(mockDaemonSessionUpdate).not.toHaveBeenCalled();
+    });
+  }
+
+  // ----- Regression: any resolved pin/origin still directs the wake (block skipped) -----
+
+  it("proposal_approved with an ONLINE idea instance pin is directed to the pin (new block skipped)", async () => {
+    const pinnedHost = "pin-host";
+    const pinnedCwd = "/home/u/dev/pinned";
+    const pinnedConnUuid = "conn-pinned";
+    // The root idea is pinned to a same-agent instance → resolvePinnedTarget (step 3) resolves
+    // it, selection is `directed` BEFORE the new online_first-gated block.
+    pinIdeaToInstance(pinnedHost, pinnedCwd);
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "x", cwd: "/x" }),
+      onlineConn({ uuid: pinnedConnUuid, host: pinnedHost, cwd: pinnedCwd }),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } =
+      await createTurnAndResolveTarget(proposalCtx({ action: "proposal_approved" }));
+
+    // Directed to the pin even though 2 connections are online — the suppression block only
+    // fires on `online_first`.
+    expect(targetConnectionUuid).toBe(pinnedConnUuid);
+    expect(suppressWake).toBe(false);
+    expect(turn?.status).toBe("pending");
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: pinnedConnUuid }),
+    );
+  });
+
+  it("proposal_approved with an ONLINE idea session-origin is directed there (new block skipped)", async () => {
+    const ideaOriginConn = "conn-idea-origin";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: ideaOriginConn, host: "host-B", cwd: "/home/u/dev/idea" }),
+    ]);
+    // The idea already has an online session origin → step 4 upgrades selection to `directed`.
+    mockDaemonSessionFindFirst.mockResolvedValue({ originConnectionUuid: ideaOriginConn });
+
+    const { targetConnectionUuid, suppressWake } =
+      await createTurnAndResolveTarget(proposalCtx({ action: "proposal_approved" }));
+
+    expect(targetConnectionUuid).toBe(ideaOriginConn);
+    expect(suppressWake).toBe(false);
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: ideaOriginConn }),
+    );
+  });
+
+  it("proposal_approved with an agent-owner project-fixed cwd is directed there (new block skipped)", async () => {
+    const projHost = "proj-host";
+    const projCwd = "/home/u/dev/project-cwd";
+    const projConnUuid = "conn-project-pin";
+    const projectUuid = "project-x";
+    mockAgentFindFirst.mockResolvedValue({ ownerUuid: "owner-1" });
+    mockPreferenceFindFirst.mockResolvedValue({ host: projHost, cwd: projCwd });
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: "conn-online-first", host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: projConnUuid, host: projHost, cwd: projCwd }),
+    ]);
+    // No idea session origin (default null) → step 4 declines; step 4a resolves the project pin
+    // to `directed` BEFORE the new block, so it is skipped even with 2 connections online.
+
+    const { targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+      proposalCtx({ action: "proposal_approved", projectUuid }),
+    );
+
+    expect(targetConnectionUuid).toBe(projConnUuid);
+    expect(suppressWake).toBe(false);
+    expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: projConnUuid }),
+    );
+  });
+
+  it("proposal_approved for a fully-offline agent yields none (no turn, suppressWake FALSE)", async () => {
+    // No online connection at all → selection is `none`, not `online_first`, so the new block
+    // is skipped and the fully-offline notify-only path runs (suppressWake stays FALSE — nobody
+    // is connected to suppress; distinct from the ≥2-online ambiguity suppression).
+    mockListConnectionsForAgent.mockResolvedValue([
+      offlineConn({ uuid: "conn-offline", host: "host-A", cwd: "/home/u/dev/a" }),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } =
+      await createTurnAndResolveTarget(proposalCtx({ action: "proposal_approved" }));
+
+    expect(turn).toBeNull();
+    expect(targetConnectionUuid).toBeNull();
+    expect(suppressWake).toBe(false);
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  // ----- Control: the carve-out is gated on ctx.action — non-proposal wakes still narrow -----
+
+  it("control: a NON-proposal task_assigned with no pin and TWO online connections still narrows to exactly one (single-active intact)", async () => {
+    const onlineFirst = "conn-online-first";
+    mockListConnectionsForAgent.mockResolvedValue([
+      onlineConn({ uuid: onlineFirst, host: "host-A", cwd: "/home/u/dev/a" }),
+      onlineConn({ uuid: "conn-second", host: "host-B", cwd: "/home/u/dev/b" }),
+    ]);
+
+    const { turn, targetConnectionUuid, suppressWake } = await createTurnAndResolveTarget(
+      ctx({ action: "task_assigned", entityType: "task", entityUuid: taskUuid }),
+    );
+
+    // task_assigned is NOT a proposal-review action → the carve-out is skipped and Step 4b
+    // narrows to the deterministic online-first connection (directed), NOT suppressed.
+    expect(turn?.status).toBe("pending");
+    expect(targetConnectionUuid).toBe(onlineFirst);
+    expect(suppressWake).toBe(false);
+    expect(mockDeliverTurnPing).toHaveBeenCalledWith(
+      expect.objectContaining({ originConnectionUuid: onlineFirst, turnUuid: turn?.uuid }),
     );
   });
 });
