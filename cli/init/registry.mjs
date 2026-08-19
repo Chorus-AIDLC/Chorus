@@ -15,6 +15,7 @@
 // so the command is importable and testable at every step of the build.
 
 import { ADAPTERS } from "./adapters.mjs";
+import { pluginInstallStep } from "./steps/plugin-install.mjs";
 
 /** @typedef {import("./contracts.mjs").AgentAdapter} AgentAdapter */
 /** @typedef {import("./contracts.mjs").InitStep} InitStep */
@@ -28,10 +29,12 @@ import { ADAPTERS } from "./adapters.mjs";
 export const AGENT_REGISTRY = [...ADAPTERS];
 
 /**
- * Configuration steps. POPULATED by the credential-seed and plugin-install tasks.
+ * Configuration steps, run in ascending `order`. The credential-seed step
+ * (order 10) is registered by its own task; the plugin-install step (order 20)
+ * is registered here. Sibling ideas push their steps too.
  * @type {InitStep[]}
  */
-export const STEP_REGISTRY = [];
+export const STEP_REGISTRY = [pluginInstallStep];
 
 /**
  * Run every adapter's detection and return one AgentDetection per supported agent.

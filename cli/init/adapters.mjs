@@ -27,12 +27,20 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { detectSignals } from "./detect.mjs";
 import { OUTCOME_ACTIONS } from "./contracts.mjs";
+import { CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME, CHORUS_MARKETPLACE_SOURCE } from "./chorus-plugin-consts.mjs";
+import {
+  installClaude,
+  installCodex,
+  installOpencode,
+  readCodexInstallState,
+  readOpencodeInstallState,
+  guided,
+  GUIDED_MESSAGES,
+} from "./install-methods.mjs";
 
-/** Canonical Chorus marketplace identifiers, shared by every adapter/step. */
-export const CHORUS_PLUGIN_ID = "chorus@chorus-plugins";
-export const CHORUS_MARKETPLACE_NAME = "chorus-plugins";
-/** Remote marketplace source (owner decision: native REMOTE marketplace, not a local bundle). */
-export const CHORUS_MARKETPLACE_SOURCE = "https://github.com/Chorus-AIDLC/Chorus";
+// Re-export the shared marketplace identifiers from their canonical home so
+// existing importers of these names from adapters.mjs keep working.
+export { CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME, CHORUS_MARKETPLACE_SOURCE };
 
 /** Read + JSON-parse a file, or null on any error. Never throws. */
 function readJsonSafe(path) {
@@ -76,13 +84,13 @@ export function readClaudeInstallState({ home = homedir(), readJson = readJsonSa
  * }>}
  */
 export const AGENT_DESCRIPTORS = [
-  { id: "claude", displayName: "Claude Code", binaries: ["claude"], configDirs: ["~/.claude"], readState: readClaudeInstallState },
-  { id: "codex", displayName: "Codex CLI", binaries: ["codex"], configDirs: ["~/.codex"] },
-  { id: "kiro", displayName: "Kiro CLI", binaries: ["kiro"], configDirs: ["~/.kiro"] },
-  { id: "opencode", displayName: "opencode", binaries: ["opencode"], configDirs: ["~/.config/opencode", "~/.opencode"] },
-  { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"] },
-  { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"] },
-  { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"] },
+  { id: "claude", displayName: "Claude Code", binaries: ["claude"], configDirs: ["~/.claude"], readState: readClaudeInstallState, install: installClaude },
+  { id: "codex", displayName: "Codex CLI", binaries: ["codex"], configDirs: ["~/.codex"], readState: readCodexInstallState, install: installCodex },
+  { id: "kiro", displayName: "Kiro CLI", binaries: ["kiro"], configDirs: ["~/.kiro"], install: guided("kiro", GUIDED_MESSAGES.kiro) },
+  { id: "opencode", displayName: "opencode", binaries: ["opencode"], configDirs: ["~/.config/opencode", "~/.opencode"], readState: readOpencodeInstallState, install: installOpencode },
+  { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"], install: guided("openclaw", GUIDED_MESSAGES.openclaw) },
+  { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], install: guided("pi", GUIDED_MESSAGES.pi) },
+  { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"], install: guided("dsh", GUIDED_MESSAGES.dsh) },
 ];
 
 /**
