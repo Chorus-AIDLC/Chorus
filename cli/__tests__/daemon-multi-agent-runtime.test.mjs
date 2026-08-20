@@ -238,6 +238,52 @@ describe("buildMultiAgentDaemon — offline agents are never wakeable connection
   });
 });
 
+describe("buildMultiAgentDaemon — daemonWake opt-in gates waking (orthogonal to agentType)", () => {
+  // daemon-multi-agent spec: wake iff isWakeableAgentType(agentType) && daemonWake !== false.
+  it("skips a wakeable backend with daemonWake:false the SAME as offline (no runtime/connection)", () => {
+    const build = vi.fn((creds, deps) => fakeDaemon(creds.apiKey, { connections: deps.cwds.length }));
+    const d = buildMultiAgentDaemon(
+      [
+        CFG({ apiKey: "on", agentType: "kiro", cwds: ["/a"], daemonWake: true, label: "agents[0]" }),
+        CFG({ apiKey: "off", agentType: "kiro", cwds: ["/b", "/c"], daemonWake: false, label: "agents[1]" }),
+      ],
+      { build, logger: silent },
+    );
+    // Only the opted-in agent got a runtime; the daemonWake:false agent was skipped.
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(build.mock.calls[0][0]).toEqual({ url: "https://c", apiKey: "on" });
+    expect(d.agents).toHaveLength(1);
+    expect(d.connections).toHaveLength(1); // only the opted-in agent's 1 cwd
+  });
+
+  it("wakes a wakeable backend when daemonWake is ABSENT (back-compat with pre-field entries)", () => {
+    const build = vi.fn((creds, deps) => fakeDaemon(creds.apiKey, { connections: deps.cwds.length }));
+    const d = buildMultiAgentDaemon(
+      [CFG({ apiKey: "k", agentType: "kiro", cwds: ["/a"] })], // no daemonWake field
+      { build, logger: silent },
+    );
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(d.agents).toHaveLength(1);
+  });
+
+  it("all-not-woken (offline + wakeable-with-daemonWake:false) → idle no-op daemon", async () => {
+    const build = vi.fn();
+    const warn = vi.fn();
+    const d = buildMultiAgentDaemon(
+      [
+        CFG({ apiKey: "o", agentType: "offline" }),
+        CFG({ apiKey: "d", agentType: "kiro", daemonWake: false }),
+      ],
+      { build, logger: { ...silent, warn } },
+    );
+    expect(build).not.toHaveBeenCalled();
+    expect(d.agents).toEqual([]);
+    expect(d.connections).toEqual([]);
+    await expect(d.start()).resolves.toBeUndefined();
+    await expect(d.stop()).resolves.toBeUndefined();
+  });
+});
+
 describe("runDaemon — multi-agent branch", () => {
   const baseDeps = (over = {}) => ({
     env: {},
