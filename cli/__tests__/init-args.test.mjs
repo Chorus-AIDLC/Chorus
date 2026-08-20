@@ -47,6 +47,12 @@ describe("parseInitFlags", () => {
     });
   });
 
+  it("parses --dsh-profile (space + = forms)", () => {
+    expect(parseInitFlags(["--dsh-profile", "work"]).dshProfile).toBe("work");
+    expect(parseInitFlags(["--dsh-profile=personal"]).dshProfile).toBe("personal");
+    expect(parseInitFlags([]).dshProfile).toBeUndefined();
+  });
+
   it("parses --help / -h", () => {
     expect(parseInitFlags(["--help"]).help).toBe(true);
     expect(parseInitFlags(["-h"]).help).toBe(true);

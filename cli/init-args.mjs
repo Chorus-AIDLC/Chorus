@@ -21,7 +21,7 @@
  *
  * @param {string[]} argv
  * @returns {{ agents?: string[], all?: boolean, yes?: boolean, url?: string,
- *   apiKey?: string, daemonAutostart?: boolean, help?: boolean }}
+ *   apiKey?: string, dshProfile?: string, daemonAutostart?: boolean, help?: boolean }}
  */
 export function parseInitFlags(argv) {
   const out = {};
@@ -38,6 +38,8 @@ export function parseInitFlags(argv) {
     else if (a.startsWith("--url=")) out.url = a.slice("--url=".length);
     else if (a === "--api-key") out.apiKey = argv[i + 1];
     else if (a.startsWith("--api-key=")) out.apiKey = a.slice("--api-key=".length);
+    else if (a === "--dsh-profile") out.dshProfile = argv[i + 1];
+    else if (a.startsWith("--dsh-profile=")) out.dshProfile = a.slice("--dsh-profile=".length);
     else if (a === "--help" || a === "-h") out.help = true;
   }
   if (agentTokens.length) {
@@ -86,6 +88,9 @@ OPTIONS
   --all                    Configure every supported agent.
   --url <url>              Chorus server URL     (env: CHORUS_URL) — seeded once.
   --api-key <cho_...>      Agent API key         (env: CHORUS_API_KEY) — seeded once.
+  --dsh-profile <name>     dsh profile to install the Chorus bundle into
+                           (env: CHORUS_DSH_PROFILE). Required for dsh in a
+                           non-interactive run; prompted on a TTY.
   --daemon-autostart       Install & enable the daemon boot service (Linux systemd /
                            macOS launchd) in a non-interactive run. Ignored where
                            auto-start is unsupported (e.g. Windows). In an

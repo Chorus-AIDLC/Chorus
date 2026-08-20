@@ -12,8 +12,10 @@ import {
   installClaude,
   installCodex,
   installOpencode,
+  installDsh,
   readCodexInstallState,
   readOpencodeInstallState,
+  readDshInstallState,
   guided,
   GUIDED_MESSAGES,
 } from "../init/install-methods.mjs";
@@ -32,12 +34,15 @@ function fakeRun(script = () => ({ ok: true, code: 0, stdout: "", stderr: "" }))
   return run;
 }
 
-function ctxFor(agentId, { state = {}, run, backup, env = {} } = {}) {
+function ctxFor(agentId, { state = {}, run, backup, env = {}, io, flags, binaryOnPath } = {}) {
   return {
     agentId,
     env,
     run,
     backup,
+    io,
+    flags,
+    binaryOnPath,
     adapter: { id: agentId, installPlugin: () => {}, readInstallState: () => state },
   };
 }
@@ -125,13 +130,120 @@ describe("installOpencode (verified opencode 1.14.33)", () => {
   });
 });
 
+describe("installDsh (verified docs/CONNECT_DSH.md — dsh 0.1.0-rc.7)", () => {
+  const CMD = ["plugin", "--profile", "work", "add", "@chorus-aidlc/chorus-dsh", "-w"];
+
+  it("adds the bundle into the flag-supplied profile with the mandatory -w", async () => {
+    const run = fakeRun();
+    const res = await installDsh(ctxFor("dsh", {
+      state: { pluginInstalled: false },
+      run,
+      binaryOnPath: () => true,
+      flags: { dshProfile: "work" },
+    }));
+    expect(res.action).toBe(INSTALLED);
+    expect(run.calls).toHaveLength(1);
+    expect(run.calls[0].cmd).toBe("dsh");
+    expect(run.calls[0].args).toEqual(CMD);
+  });
+
+  it("resolves the profile from CHORUS_DSH_PROFILE when no flag is given", async () => {
+    const run = fakeRun();
+    const res = await installDsh(ctxFor("dsh", {
+      state: {},
+      run,
+      binaryOnPath: () => true,
+      env: { CHORUS_DSH_PROFILE: "envprof" },
+    }));
+    expect(res.action).toBe(INSTALLED);
+    expect(run.calls[0].args[2]).toBe("envprof");
+  });
+
+  it("prompts for the profile name on a TTY (no store enumeration)", async () => {
+    const run = fakeRun();
+    const asked = [];
+    const io = { isTTY: true, ask: async (q) => { asked.push(q); return "picked"; } };
+    const res = await installDsh(ctxFor("dsh", { state: {}, run, binaryOnPath: () => true, io }));
+    expect(res.action).toBe(INSTALLED);
+    expect(asked).toHaveLength(1);
+    expect(run.calls[0].args).toEqual(["plugin", "--profile", "picked", "add", "@chorus-aidlc/chorus-dsh", "-w"]);
+  });
+
+  it("fails naming the pnpm prereq and runs NO command when pnpm is missing", async () => {
+    // No injected binaryOnPath + empty PATH → the REAL PATH probe returns false.
+    const run = fakeRun();
+    const res = await installDsh(ctxFor("dsh", { run, env: { PATH: "" }, flags: { dshProfile: "work" } }));
+    expect(res.action).toBe(FAILED);
+    expect(res.detail).toMatch(/pnpm/);
+    expect(run.calls).toHaveLength(0);
+  });
+
+  it("skips when the chosen profile already carries the bundle", async () => {
+    const run = fakeRun();
+    const res = await installDsh(ctxFor("dsh", {
+      state: { pluginInstalled: true },
+      run,
+      binaryOnPath: () => true,
+      flags: { dshProfile: "work" },
+    }));
+    expect(res.action).toBe(SKIPPED);
+    expect(run.calls).toHaveLength(0);
+  });
+
+  it("fails (never guesses) in a non-TTY run with no explicit profile", async () => {
+    const run = fakeRun();
+    const res = await installDsh(ctxFor("dsh", {
+      run,
+      binaryOnPath: () => true,
+      io: { isTTY: false },
+    }));
+    expect(res.action).toBe(FAILED);
+    expect(res.detail).toMatch(/profile/);
+    expect(run.calls).toHaveLength(0);
+  });
+
+  it("fails on a TTY that has no ask function and no explicit profile", async () => {
+    const run = fakeRun();
+    const res = await installDsh(ctxFor("dsh", { run, binaryOnPath: () => true, io: { isTTY: true } }));
+    expect(res.action).toBe(FAILED);
+    expect(run.calls).toHaveLength(0);
+  });
+
+  it("fails when the TTY prompt yields an empty name", async () => {
+    const run = fakeRun();
+    const res = await installDsh(ctxFor("dsh", {
+      run,
+      binaryOnPath: () => true,
+      io: { isTTY: true, ask: async () => "   " },
+    }));
+    expect(res.action).toBe(FAILED);
+    expect(run.calls).toHaveLength(0);
+  });
+
+  it("fails with the CLI error when `dsh plugin add` fails", async () => {
+    const run = fakeRun(() => ({ ok: false, code: 1, stderr: "registry unreachable" }));
+    const res = await installDsh(ctxFor("dsh", {
+      state: {},
+      run,
+      binaryOnPath: () => true,
+      flags: { dshProfile: "work" },
+    }));
+    expect(res.action).toBe(FAILED);
+    expect(res.detail).toContain("registry unreachable");
+  });
+});
+
 describe("guided (unverified agents)", () => {
   it("returns an UNSUPPORTED outcome with the guidance message", () => {
-    for (const id of ["kiro", "openclaw", "pi", "dsh"]) {
+    // dsh is NO LONGER guided — it has a real installer (installDsh) below.
+    for (const id of ["kiro", "openclaw", "pi"]) {
       const res = guided(id, GUIDED_MESSAGES[id])();
       expect(res.action).toBe(UNSUPPORTED);
       expect(res.detail).toBe(GUIDED_MESSAGES[id]);
     }
+  });
+  it("no longer carries a stale dsh guided message", () => {
+    expect(GUIDED_MESSAGES.dsh).toBeUndefined();
   });
 });
 
@@ -158,5 +270,32 @@ describe("state readers (temp fixtures)", () => {
     const empty = mkdtempSync(join(tmpdir(), "oc2-"));
     mkdirSync(empty, { recursive: true });
     expect(readOpencodeInstallState({ env: { OPENCODE_CONFIG_DIR: empty } }).pluginInstalled).toBe(false);
+  });
+  it("readDshInstallState detects the bundle in a profile's package.json (deps + devDeps)", () => {
+    const dshHome = mkdtempSync(join(tmpdir(), "dsh-"));
+    mkdirSync(join(dshHome, "work"), { recursive: true });
+    writeFileSync(
+      join(dshHome, "work", "package.json"),
+      JSON.stringify({ dependencies: { "@chorus-aidlc/chorus-dsh": "^0.1.0" } }),
+    );
+    mkdirSync(join(dshHome, "devprof"), { recursive: true });
+    writeFileSync(
+      join(dshHome, "devprof", "package.json"),
+      JSON.stringify({ devDependencies: { "@chorus-aidlc/chorus-dsh": "^0.1.0" } }),
+    );
+    mkdirSync(join(dshHome, "bare"), { recursive: true });
+    writeFileSync(join(dshHome, "bare", "package.json"), JSON.stringify({ dependencies: { lodash: "^4" } }));
+
+    expect(readDshInstallState({ env: { DSH_HOME: dshHome }, profile: "work" }).pluginInstalled).toBe(true);
+    expect(readDshInstallState({ env: { DSH_HOME: dshHome }, profile: "devprof" }).pluginInstalled).toBe(true);
+    expect(readDshInstallState({ env: { DSH_HOME: dshHome }, profile: "bare" }).pluginInstalled).toBe(false);
+    // Missing profile dir → best-effort probe reports not-installed (no throw).
+    expect(readDshInstallState({ env: { DSH_HOME: dshHome }, profile: "ghost" }).pluginInstalled).toBe(false);
+  });
+  it("readDshInstallState reports not-installed without a profile and falls back to ~/.dsh", () => {
+    // No profile at all → cannot resolve which workspace, so not-installed.
+    expect(readDshInstallState({ env: { DSH_HOME: "/nope" } }).pluginInstalled).toBe(false);
+    // DSH_HOME + HOME unset → falls back to <home>/.dsh, which won't have the bundle.
+    expect(readDshInstallState({ env: {}, profile: "work" }).pluginInstalled).toBe(false);
   });
 });

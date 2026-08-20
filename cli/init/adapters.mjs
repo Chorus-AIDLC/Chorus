@@ -32,8 +32,10 @@ import {
   installClaude,
   installCodex,
   installOpencode,
+  installDsh,
   readCodexInstallState,
   readOpencodeInstallState,
+  readDshInstallState,
   guided,
   GUIDED_MESSAGES,
 } from "./install-methods.mjs";
@@ -90,7 +92,7 @@ export const AGENT_DESCRIPTORS = [
   { id: "opencode", displayName: "opencode", binaries: ["opencode"], configDirs: ["~/.config/opencode", "~/.opencode"], readState: readOpencodeInstallState, install: installOpencode },
   { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"], install: guided("openclaw", GUIDED_MESSAGES.openclaw) },
   { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], install: guided("pi", GUIDED_MESSAGES.pi) },
-  { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"], install: guided("dsh", GUIDED_MESSAGES.dsh) },
+  { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"], readState: readDshInstallState, install: installDsh },
 ];
 
 /**
