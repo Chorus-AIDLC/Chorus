@@ -199,8 +199,13 @@ export async function installFileTemplate({
     files.set(join(chorusBinAbs, h), { text: await fetchText(`bin/${h}`), exec: true });
   }
 
-  // The chorus server object is single-sourced from the downloaded template
-  // (its url/auth are already ${...} env references — never literals).
+  // The chorus server object is single-sourced from the downloaded template, but
+  // its `url` MUST be the CONCRETE endpoint, not the template's
+  // `${CHORUS_URL}/api/mcp` token: kiro does NOT interpolate a bare `${...}` in the
+  // url field (only `${env:...}`, as the Authorization header uses), so leaving a
+  // token here makes kiro fail the server with "relative URL without a base". Bake
+  // the resolved `<assetBase>/api/mcp`; the API key stays the `${env:CHORUS_API_KEY}`
+  // ref — kiro DOES resolve that, and it keeps the secret off disk + per-agent.
   let serverObj;
   try {
     serverObj = JSON.parse(mcpTemplateText)?.mcpServers?.chorus;
@@ -210,6 +215,7 @@ export async function installFileTemplate({
   if (!serverObj || typeof serverObj !== "object") {
     throw new Error("downloaded settings/mcp.json template has no mcpServers.chorus entry to merge");
   }
+  serverObj.url = `${assetBase}/api/mcp`;
 
   // ---- phase 2: write to disk (every fetch already verified) ----
   for (const [dest, { text, exec }] of files) {

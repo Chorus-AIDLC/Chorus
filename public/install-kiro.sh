@@ -328,13 +328,15 @@ if [ ! -f "$MCP_JSON.chorus-bak" ]; then
   ok "Backed up original to ${MCP_JSON}.chorus-bak"
 fi
 
-# The chorus server object. BOTH the URL and the API key stay ${...} references
-# (not baked literals) so Kiro CLI interpolates them from the environment at
-# runtime — this is what makes a single daemon serving MULTIPLE agents work: each
-# woken Kiro child inherits that agent's own CHORUS_URL / CHORUS_API_KEY, so the
-# same mcp.json resolves to the right server + key per agent. The API key is never
-# written to disk. Single-quote both refs so the shell never expands ${...} here.
-URL_REF='${CHORUS_URL}/api/mcp'
+# The chorus server object. The URL is BAKED to the concrete MCP endpoint: kiro
+# does NOT interpolate a bare ${CHORUS_URL} in the `url` field (only ${env:...},
+# as the Authorization header uses), so a token there fails the server with
+# "relative URL without a base". The API key STAYS a ${env:CHORUS_API_KEY}
+# reference — kiro resolves it at runtime, it never touches disk, and it stays
+# per-agent so one daemon serving MULTIPLE agents resolves the right key per woken
+# child. $url is already normalized to end in exactly one /api/mcp; single-quote
+# only AUTH_REF so the shell never expands ${env:...} here.
+URL_REF="$url"
 AUTH_REF='Bearer ${env:CHORUS_API_KEY}'
 
 merged=""

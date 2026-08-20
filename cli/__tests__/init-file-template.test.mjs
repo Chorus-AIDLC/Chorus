@@ -185,9 +185,13 @@ describe("installFileTemplate (temp dir + faked fetch)", () => {
     expect(existsSync(hook)).toBe(true);
     if (process.platform !== "win32") expect(statSync(hook).mode & 0o111).toBeGreaterThan(0);
 
-    // chorus server merged with the env-reference url/auth kept as ${...} literals
+    // chorus server merged: url is BAKED to the concrete endpoint (kiro can't
+    // interpolate a bare ${CHORUS_URL} in the url field → "relative URL without a
+    // base"), while the API key STAYS the ${env:...} ref kiro does resolve.
     const mcp = JSON.parse(readFileSync(join(kiroDir, "settings", "mcp.json"), "utf8"));
-    expect(mcp.mcpServers.chorus.url).toBe("${CHORUS_URL}/api/mcp");
+    expect(mcp.mcpServers.chorus.url).toBe("https://x.dev/api/mcp");
+    expect(mcp.mcpServers.chorus.url).not.toContain("${"); // no un-interpolable token
+    expect(mcp.mcpServers.chorus.url).toMatch(/^https?:\/\//); // absolute (has a scheme)
     expect(mcp.mcpServers.chorus.headers.Authorization).toBe("Bearer ${env:CHORUS_API_KEY}");
   });
 
