@@ -131,6 +131,17 @@ describe("runMcp — whoami / list", () => {
     await runMcp(["list"], o);
     expect(stderr.get()).toMatch(/acting as agent "worker-a"/);
   });
+
+  it("whoami surfaces the acting agent label on stderr for a named agent (UUID stays clean on stdout)", async () => {
+    const { o, stdout, stderr } = opts(
+      { checkin: { agent: { uuid: "u-9" } } },
+      { creds: { url: "u", apiKey: "k", label: "worker-b" } },
+    );
+    const code = await runMcp(["whoami"], o);
+    expect(code).toBe(0);
+    expect(stdout.get()).toBe("u-9\n"); // stdout stays exactly the bare UUID
+    expect(stderr.get()).toMatch(/acting as agent "worker-b"/);
+  });
 });
 
 describe("runMcp — help & errors", () => {

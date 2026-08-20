@@ -164,6 +164,8 @@ USAGE
   chorus daemon [--url --api-key]  Connect to a remote Chorus server, subscribe to the
                                    agent notification stream, and wake a local headless
                                    Claude Code on task dispatch
+  chorus mcp <call|whoami|list>    Native MCP client — call any tool, print this agent's
+                                   UUID, or list callable tools (see 'chorus mcp --help')
 
 SERVER OPTIONS
   -p, --port <port>        HTTP server port             (default: 8637, env: PORT)
@@ -217,6 +219,9 @@ EXAMPLES
   chorus daemon                              # Connect & wake local Claude Code (full autonomy by default)
   chorus daemon --chorus-only                # Restrict the woken Claude to Chorus MCP tools only
   CHORUS_URL=https://... CHORUS_API_KEY=cho_... chorus daemon
+  chorus mcp whoami                          # Print this agent's own UUID
+  chorus mcp call chorus_get_task '{"taskUuid":"..."}'      # Call a tool with JSON args
+  chorus mcp call chorus_pm_add_document_draft --arg proposalUuid=P1 --arg type=prd --arg-file content=@doc.md
 `);
   process.exit(0);
 }

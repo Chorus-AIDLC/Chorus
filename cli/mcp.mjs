@@ -22,6 +22,18 @@ function firstLine(s) {
 }
 
 /**
+ * Announce the acting agent on stderr for the identity-oriented actions
+ * (whoami / list) when a NAMED agent was selected from daemon.json agents[].
+ * Never emitted for the flag/env path (label "flag"/"env") and never on
+ * `call` (whose stdout must stay a byte-exact tool payload).
+ */
+function noticeActingAs(creds, err) {
+  if (creds.label && creds.label !== "flag" && creds.label !== "env") {
+    err.write(`(acting as agent "${creds.label}")\n`);
+  }
+}
+
+/**
  * Run `chorus mcp <action> …`. Returns an exit code — never calls
  * `process.exit` (the entry module owns process lifetime).
  *
@@ -107,6 +119,7 @@ export async function runMcp(argv, opts = {}) {
   }
 
   if (parsed.action === "whoami") {
+    noticeActingAs(creds, err);
     try {
       // Fresh identity via chorus_checkin every call — no on-disk cache.
       const identity = await validateAndFetchIdentity(
@@ -122,9 +135,7 @@ export async function runMcp(argv, opts = {}) {
   }
 
   if (parsed.action === "list") {
-    if (creds.label && creds.label !== "flag" && creds.label !== "env") {
-      err.write(`(acting as agent "${creds.label}")\n`);
-    }
+    noticeActingAs(creds, err);
     const client = makeClient({ url: creds.url, apiKey: creds.apiKey });
     try {
       const tools = await client.listTools();
