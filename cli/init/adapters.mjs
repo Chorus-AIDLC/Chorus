@@ -33,9 +33,11 @@ import {
   installCodex,
   installOpencode,
   installDsh,
+  installOpenclaw,
   readCodexInstallState,
   readOpencodeInstallState,
   readDshInstallState,
+  readOpenclawInstallState,
   guided,
   GUIDED_MESSAGES,
 } from "./install-methods.mjs";
@@ -90,7 +92,7 @@ export const AGENT_DESCRIPTORS = [
   { id: "codex", displayName: "Codex CLI", binaries: ["codex"], configDirs: ["~/.codex"], readState: readCodexInstallState, install: installCodex },
   { id: "kiro", displayName: "Kiro CLI", binaries: ["kiro"], configDirs: ["~/.kiro"], install: guided("kiro", GUIDED_MESSAGES.kiro) },
   { id: "opencode", displayName: "opencode", binaries: ["opencode"], configDirs: ["~/.config/opencode", "~/.opencode"], readState: readOpencodeInstallState, install: installOpencode },
-  { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"], install: guided("openclaw", GUIDED_MESSAGES.openclaw) },
+  { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"], readState: readOpenclawInstallState, install: installOpenclaw },
   { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], install: guided("pi", GUIDED_MESSAGES.pi) },
   { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"], readState: readDshInstallState, install: installDsh },
 ];

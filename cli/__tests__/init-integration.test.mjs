@@ -20,9 +20,10 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     const identity = { uuid: "agent-1", name: "Agent One" };
     let credWrites = 0;
 
-    // kiro + dsh are both guided (deterministic UNSUPPORTED) → no real CLI call.
+    // kiro + pi are both guided (deterministic UNSUPPORTED) → no real CLI call.
+    // (dsh is no longer guided — it has a real installer now.)
     const code = await runInit(
-      ["--agents", "kiro,dsh", "--url", "https://c", "--api-key", "cho_k", "--yes"],
+      ["--agents", "kiro,pi", "--url", "https://c", "--api-key", "cho_k", "--yes"],
       {
         io,
         version: "9.9.9",
@@ -43,7 +44,7 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(text).toContain("seeded credentials for Agent One");
     // plugin-install ran per selected agent (both guided → unsupported)
     expect(text).toContain("kiro: unsupported");
-    expect(text).toContain("dsh: unsupported");
+    expect(text).toContain("pi: unsupported");
     // summary + next-step hint
     expect(text).toContain("Summary");
     expect(text).toContain("Next:");

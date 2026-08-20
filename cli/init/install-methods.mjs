@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runCommand } from "./run-command.mjs";
 import { binaryOnPath } from "./detect.mjs";
 import { OUTCOME_ACTIONS } from "./contracts.mjs";
@@ -232,6 +233,132 @@ export async function installDsh(ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// OpenClaw — VERIFIED against packages/openclaw-plugin/README.md (Installation §,
+// lines 32-35) + package.json `openclaw.install`:
+//   `openclaw plugins install npm:@chorus-aidlc/chorus-openclaw-plugin`
+//   `openclaw plugins enable chorus-openclaw-plugin`
+// The install SOURCE carries the `npm:` prefix; the enable/disable/uninstall ARG
+// is the bare plugin id `chorus-openclaw-plugin` (README line 60). OpenClaw
+// installs from npm — there is NO marketplace step (unlike claude/codex).
+//
+// Host-version guard: the npm install path ships COMPILED runtimeExtensions
+// (dist/index.js) that bind to OpenClaw SDK APIs added in a specific host
+// version (`activation.onStartup`, 2026.4.27); a below-floor host cannot load the
+// plugin. The floor is READ from the plugin package's `openclaw.install.minHostVersion`
+// (openclawMinHostVersion) — never hardcoded here — and enforced BEFORE any
+// install/enable, so an old host gets a precise "upgrade" message and ZERO mutation.
+//
+// VERIFIED-gap: the openclaw CLI is NOT present on this build host, so (a) the exact
+// `openclaw --version` output shape is not confirmed — parseOpenclawVersion extracts
+// the first dotted-numeric token defensively rather than assuming a fixed format; and
+// (b) plugin state is read from ~/.openclaw/openclaw.json under
+// `plugins.entries.chorus-openclaw-plugin` (README "Where config lives", lines 66-72),
+// degrading to "not installed" if absent — never a false positive. `openclaw --version`
+// is the task-directed probe.
+// ---------------------------------------------------------------------------
+const OPENCLAW_PLUGIN_ID = "chorus-openclaw-plugin";
+const OPENCLAW_NPM_SPEC = "npm:@chorus-aidlc/chorus-openclaw-plugin";
+
+// The chorus CLI is published (root package.json `files`) WITHOUT packages/, so
+// this file is not co-located in a published npm layout — openclawMinHostVersion
+// degrades to this documented mirror of packages/openclaw-plugin/package.json →
+// openclaw.install.minHostVersion. In the repo/dev tree the package block itself
+// is the source of truth (read below); keep this in sync with it.
+const OPENCLAW_MIN_HOST_VERSION_FALLBACK = "2026.4.27";
+const OPENCLAW_PACKAGE_JSON_URL = new URL("../../packages/openclaw-plugin/package.json", import.meta.url);
+
+/** The OpenClaw host-version floor, READ from the plugin package's
+ *  `openclaw.install.minHostVersion` (NOT hardcoded). Strips a leading range
+ *  operator (`>=`) to a bare dotted version. Degrades to the documented mirror
+ *  only when the package.json cannot be read (stripped npm layout). `pkgUrl` is
+ *  injectable for tests. */
+export function openclawMinHostVersion({ pkgUrl = OPENCLAW_PACKAGE_JSON_URL } = {}) {
+  let raw;
+  try {
+    const pkg = JSON.parse(readFileSync(fileURLToPath(pkgUrl), "utf8"));
+    raw = pkg?.openclaw?.install?.minHostVersion;
+  } catch {
+    raw = undefined;
+  }
+  const cleaned = typeof raw === "string" ? raw.replace(/[^\d.]/g, "").trim() : "";
+  return cleaned || OPENCLAW_MIN_HOST_VERSION_FALLBACK;
+}
+
+/** First dotted-numeric token in `openclaw --version` output, or null. Tolerant
+ *  of `openclaw 2026.4.27`, `v2026.4.27`, `2026.4.27-rc.1`, etc. */
+function parseOpenclawVersion(text) {
+  const m = String(text ?? "").match(/\d+(?:\.\d+)+/);
+  return m ? m[0] : null;
+}
+
+/** Compare two dotted-numeric versions → -1 / 0 / 1 (a<b / a==b / a>b).
+ *  Zero-dependency; covers OpenClaw CalVer (`2026.4.27`) and plain semver. */
+function compareVersions(a, b) {
+  const pa = String(a).split(".");
+  const pb = String(b).split(".");
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const na = parseInt(pa[i] ?? "0", 10) || 0;
+    const nb = parseInt(pb[i] ?? "0", 10) || 0;
+    if (na !== nb) return na < nb ? -1 : 1;
+  }
+  return 0;
+}
+
+export function readOpenclawInstallState({ env = process.env } = {}) {
+  const home = env.HOME || homedir();
+  const dir = env.OPENCLAW_CONFIG_DIR || join(home, ".openclaw");
+  const cfg = readJsonSafe(join(dir, "openclaw.json"));
+  const entry = cfg?.plugins?.entries?.[OPENCLAW_PLUGIN_ID];
+  const pluginInstalled = !!entry && typeof entry === "object";
+  return {
+    marketplaceRegistered: false, // openclaw installs from npm — no marketplace concept
+    pluginInstalled,
+    // `enabled` is an explicit boolean in the config; absent/false ⇒ installed-but-disabled.
+    pluginEnabled: pluginInstalled && entry.enabled === true,
+  };
+}
+
+export function installOpenclaw(ctx) {
+  const run = ctx.run ?? runCommand;
+  const env = ctx.env ?? process.env;
+  const state = safeState(ctx);
+
+  // Already installed AND enabled → nothing to do. No version probe needed: an
+  // enabled-and-loaded plugin necessarily already satisfied the host floor.
+  if (state.pluginInstalled && state.pluginEnabled) {
+    return out("openclaw", SKIPPED, "already installed and enabled");
+  }
+
+  // Host-version guard BEFORE any mutation (install OR enable). A below-floor host
+  // cannot load the compiled plugin, so refuse with a precise upgrade message and
+  // run NOTHING rather than leave an "enabled"-but-nonloading plugin.
+  const minVersion = ctx.minHostVersion ?? openclawMinHostVersion();
+  const vr = run("openclaw", ["--version"], { env });
+  const hostVersion = parseOpenclawVersion(`${vr?.stdout ?? ""}\n${vr?.stderr ?? ""}`);
+  if (!vr?.ok || !hostVersion) {
+    return out("openclaw", FAILED, `could not determine openclaw version (need >=${minVersion}): ${errText(vr)}`);
+  }
+  if (compareVersions(hostVersion, minVersion) < 0) {
+    return out("openclaw", UNSUPPORTED, `openclaw ${hostVersion} is below the required >=${minVersion} for the Chorus plugin — upgrade openclaw and re-run (no install attempted)`);
+  }
+
+  // Installed-but-disabled → enable only (repair).
+  if (state.pluginInstalled) {
+    const re = run("openclaw", ["plugins", "enable", OPENCLAW_PLUGIN_ID], { env });
+    if (!re.ok) return out("openclaw", FAILED, `openclaw plugins enable failed: ${errText(re)}`);
+    return out("openclaw", REPAIRED, `enabled ${OPENCLAW_PLUGIN_ID} (was installed but disabled)`);
+  }
+
+  // Fresh → install from npm, then enable.
+  const ri = run("openclaw", ["plugins", "install", OPENCLAW_NPM_SPEC], { env });
+  if (!ri.ok) return out("openclaw", FAILED, `openclaw plugins install failed: ${errText(ri)}`);
+  const re = run("openclaw", ["plugins", "enable", OPENCLAW_PLUGIN_ID], { env });
+  if (!re.ok) return out("openclaw", FAILED, `openclaw plugins enable failed: ${errText(re)}`);
+  return out("openclaw", INSTALLED, `installed ${OPENCLAW_NPM_SPEC} and enabled ${OPENCLAW_PLUGIN_ID}`);
+}
+
+// ---------------------------------------------------------------------------
 // Guided (not automated). These agents have no verified native REMOTE-marketplace
 // install path, so — per the "no guessed command" rule — we surface a precise
 // next step instead of running an unverified command.
@@ -242,6 +369,5 @@ export function guided(agentId, detail) {
 
 export const GUIDED_MESSAGES = {
   kiro: "Kiro uses a file-template install (.kiro/ directory), not a remote marketplace — run the Kiro installer (public/install-kiro.sh) to drop the Chorus .kiro/ template.",
-  openclaw: "OpenClaw loads its plugin from a linked/compiled directory (no remote-marketplace CLI) — install the OpenClaw Chorus plugin per its plugin docs.",
   pi: "Pi installs extensions via `pi install <source>`; the Chorus Pi extension source is not wired into chorus init yet — install it manually with `pi install <source>`.",
 };
