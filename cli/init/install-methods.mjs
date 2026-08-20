@@ -9,12 +9,13 @@
 // unit-tests without executing anything. Nothing here writes MCP config or
 // credentials — plugin surface only.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCommand } from "./run-command.mjs";
 import { binaryOnPath } from "./detect.mjs";
+import { installFileTemplate } from "./file-template.mjs";
 import { OUTCOME_ACTIONS } from "./contracts.mjs";
 import { CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME, CHORUS_MARKETPLACE_SOURCE } from "./chorus-plugin-consts.mjs";
 
@@ -359,15 +360,89 @@ export function installOpenclaw(ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Guided (not automated). These agents have no verified native REMOTE-marketplace
-// install path, so — per the "no guessed command" rule — we surface a precise
-// next step instead of running an unverified command.
+// Kiro — NATIVE FILE-TEMPLATE install (Kiro has NO plugin CLI). Its "plugin" is a
+// set of loose files under .kiro/ (what public/install-kiro.sh drops). We
+// re-implement that drop cross-platform in pure JS (no bash/curl), downloading
+// the assets from the connected Chorus instance via file-template.mjs.
+//
+// The .kiro/ layout is mirrored verbatim from install-kiro.sh (the VERIFIED
+// reference): KIRO_DIR = ~/.kiro (global) unless env.KIRO_DIR overrides it;
+// skills/agents/steering/hooks + __CHORUS_BIN__ substitution + a `chorus` server
+// merged (non-destructively) into settings/mcp.json with the key kept as a
+// ${env:...} reference. "Installed" = skills + agents/chorus.json + the chorus
+// mcp server all present; a re-run repairs only the missing delta.
+// ---------------------------------------------------------------------------
+/** True when <skillsDir> holds at least one <name>/SKILL.md (manifest-agnostic so
+ *  it stays correct in the stripped npm package where the manifest isn't bundled). */
+function kiroSkillsPopulated(skillsDir) {
+  try {
+    return readdirSync(skillsDir).some((name) => existsSync(join(skillsDir, name, "SKILL.md")));
+  } catch {
+    return false;
+  }
+}
+
+export function readKiroInstallState({ env = process.env } = {}) {
+  const home = env.HOME || homedir();
+  const kiroDir = env.KIRO_DIR || join(home, ".kiro");
+  const agentPresent = existsSync(join(kiroDir, "agents", "chorus.json"));
+  const mcp = readJsonSafe(join(kiroDir, "settings", "mcp.json"));
+  const mcpServerPresent = !!(mcp && typeof mcp === "object" && mcp.mcpServers && mcp.mcpServers.chorus);
+  const skillsPresent = kiroSkillsPopulated(join(kiroDir, "skills"));
+  return {
+    marketplaceRegistered: false, // kiro has no marketplace concept — it's a file drop
+    pluginInstalled: skillsPresent && agentPresent && mcpServerPresent,
+    skillsPresent,
+    agentPresent,
+    mcpServerPresent,
+  };
+}
+
+export async function installKiro(ctx) {
+  const env = ctx.env ?? process.env;
+  const home = env.HOME || homedir();
+  const kiroDir = env.KIRO_DIR || join(home, ".kiro");
+  // chorus init already holds the connection URL (flag/env); the .kiro/ template
+  // is downloaded from that instance, so a missing URL is a hard failure.
+  const chorusUrl = nonEmpty(ctx.flags?.url) ?? nonEmpty(env.CHORUS_URL);
+
+  const state = safeState(ctx);
+  if (state.pluginInstalled) return out("kiro", SKIPPED, `already installed (${kiroDir})`);
+
+  if (!chorusUrl) {
+    return out("kiro", FAILED, "no Chorus URL — pass --url or set CHORUS_URL so the .kiro/ template can be downloaded from the connected instance");
+  }
+
+  // Any chorus-* asset already present ⇒ this is a delta repair, not a fresh drop.
+  const repairing = !!(state.skillsPresent || state.agentPresent || state.mcpServerPresent);
+  try {
+    const res = await installFileTemplate({
+      chorusUrl,
+      kiroDir,
+      fetchImpl: ctx.fetch,
+      backup: ctx.backup,
+      platform: ctx.platform,
+      log: ctx.io?.log,
+    });
+    return out(
+      "kiro",
+      repairing ? REPAIRED : INSTALLED,
+      `${repairing ? "repaired" : "installed"} the .kiro/ template (${res.skills} skills, ${res.reviewerAgents} reviewer agents, ${res.hookScripts} hooks) → ${kiroDir}; merged the chorus server into settings/mcp.json`,
+    );
+  } catch (err) {
+    return out("kiro", FAILED, err?.message ?? String(err));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Guided (not automated). These agents have no verified native install path, so
+// — per the "no guessed command" rule — we surface a precise next step instead
+// of running an unverified command.
 // ---------------------------------------------------------------------------
 export function guided(agentId, detail) {
   return () => out(agentId, UNSUPPORTED, detail);
 }
 
 export const GUIDED_MESSAGES = {
-  kiro: "Kiro uses a file-template install (.kiro/ directory), not a remote marketplace — run the Kiro installer (public/install-kiro.sh) to drop the Chorus .kiro/ template.",
   pi: "Pi installs extensions via `pi install <source>`; the Chorus Pi extension source is not wired into chorus init yet — install it manually with `pi install <source>`.",
 };

@@ -34,10 +34,12 @@ import {
   installOpencode,
   installDsh,
   installOpenclaw,
+  installKiro,
   readCodexInstallState,
   readOpencodeInstallState,
   readDshInstallState,
   readOpenclawInstallState,
+  readKiroInstallState,
   guided,
   GUIDED_MESSAGES,
 } from "./install-methods.mjs";
@@ -90,7 +92,7 @@ export function readClaudeInstallState({ home = homedir(), readJson = readJsonSa
 export const AGENT_DESCRIPTORS = [
   { id: "claude", displayName: "Claude Code", binaries: ["claude"], configDirs: ["~/.claude"], readState: readClaudeInstallState, install: installClaude },
   { id: "codex", displayName: "Codex CLI", binaries: ["codex"], configDirs: ["~/.codex"], readState: readCodexInstallState, install: installCodex },
-  { id: "kiro", displayName: "Kiro CLI", binaries: ["kiro"], configDirs: ["~/.kiro"], install: guided("kiro", GUIDED_MESSAGES.kiro) },
+  { id: "kiro", displayName: "Kiro CLI", binaries: ["kiro"], configDirs: ["~/.kiro"], readState: readKiroInstallState, install: installKiro },
   { id: "opencode", displayName: "opencode", binaries: ["opencode"], configDirs: ["~/.config/opencode", "~/.opencode"], readState: readOpencodeInstallState, install: installOpencode },
   { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"], readState: readOpenclawInstallState, install: installOpenclaw },
   { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], install: guided("pi", GUIDED_MESSAGES.pi) },

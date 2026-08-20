@@ -351,16 +351,18 @@ describe("openclawMinHostVersion (read from the package, not hardcoded)", () => 
 
 describe("guided (unverified agents)", () => {
   it("returns an UNSUPPORTED outcome with the guidance message", () => {
-    // dsh + openclaw are NO LONGER guided — they have real installers now.
-    for (const id of ["kiro", "pi"]) {
+    // dsh + openclaw + kiro are NO LONGER guided — they have real installers now.
+    // Only pi remains guided (deferred).
+    for (const id of ["pi"]) {
       const res = guided(id, GUIDED_MESSAGES[id])();
       expect(res.action).toBe(UNSUPPORTED);
       expect(res.detail).toBe(GUIDED_MESSAGES[id]);
     }
   });
-  it("no longer carries stale dsh / openclaw guided messages", () => {
+  it("no longer carries stale dsh / openclaw / kiro guided messages", () => {
     expect(GUIDED_MESSAGES.dsh).toBeUndefined();
     expect(GUIDED_MESSAGES.openclaw).toBeUndefined();
+    expect(GUIDED_MESSAGES.kiro).toBeUndefined();
   });
 });
 
