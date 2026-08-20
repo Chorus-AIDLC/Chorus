@@ -113,9 +113,13 @@ export function buildAdapter(d) {
       const base = typeof d.readState === "function"
         ? d.readState(deps)
         : { marketplaceRegistered: false, pluginInstalled: false };
-      // `supported` = an automated install path exists for this agent (wired by
-      // the plugin-install task via descriptor.install).
-      return { supported: typeof d.install === "function", ...base };
+      // `supported` = a REAL automated install path exists for this agent. A
+      // `guided()` fallback also returns a function (so `typeof d.install ===
+      // "function"` alone would report every fallback agent as supported — the
+      // pre-existing latent bug); guided installers are tagged `.guided === true`,
+      // so exclude them here. Real installers (claude/codex/opencode + dsh/openclaw/
+      // kiro) → true; guided (pi) → false.
+      return { supported: typeof d.install === "function" && d.install.guided !== true, ...base };
     },
     installPlugin: (ctx = {}) =>
       typeof d.install === "function"

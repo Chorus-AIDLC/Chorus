@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { AGENT_REGISTRY, detectAgents, getAdapter, orderedSteps } from "../init/registry.mjs";
 import { buildAdapter, readClaudeInstallState, CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME } from "../init/adapters.mjs";
+import { guided } from "../init/install-methods.mjs";
 import { OUTCOME_ACTIONS } from "../init/contracts.mjs";
 
 const EXPECTED_IDS = ["claude", "codex", "kiro", "opencode", "openclaw", "pi", "dsh"];
@@ -61,6 +62,33 @@ describe("buildAdapter defaults (no install fn yet)", () => {
     const a = buildAdapter({ id: "x", displayName: "X", binaries: ["x"], configDirs: ["~/.x"] });
     expect(a.readInstallState().supported).toBe(false);
     expect(a.installPlugin({}).action).toBe(OUTCOME_ACTIONS.UNSUPPORTED);
+  });
+});
+
+describe("readInstallState.supported — real installer vs guided fallback", () => {
+  // The `supported` flag must distinguish a REAL automated installer from a
+  // `guided()` fallback: both are `typeof install === "function"`, but only a real
+  // installer flips supported:true (guided ones are tagged `.guided === true`).
+  // A hermetic env/home keeps the state readers from touching the real machine.
+  const supportedOf = (id) =>
+    getAdapter(id).readInstallState({ env: {}, home: "/nonexistent-xyz" }).supported;
+
+  it("is true for every agent with a real automated installer", () => {
+    for (const id of ["claude", "codex", "opencode", "dsh", "openclaw", "kiro"]) {
+      expect(supportedOf(id)).toBe(true);
+    }
+  });
+
+  it("is false for a guided-only agent (pi)", () => {
+    expect(supportedOf("pi")).toBe(false);
+  });
+
+  it("a guided() install is tagged so buildAdapter can exclude it", () => {
+    // buildAdapter with a guided() install → supported false; with a plain fn → true.
+    const g = buildAdapter({ id: "g", displayName: "G", binaries: ["g"], configDirs: ["~/.g"], install: guided("g", "manual") });
+    const real = buildAdapter({ id: "r", displayName: "R", binaries: ["r"], configDirs: ["~/.r"], install: () => ({}) });
+    expect(g.readInstallState().supported).toBe(false);
+    expect(real.readInstallState().supported).toBe(true);
   });
 });
 

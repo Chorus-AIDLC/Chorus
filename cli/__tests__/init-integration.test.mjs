@@ -110,6 +110,182 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(text).toContain("Next:");
   });
 
+  it("broadened set (claude,dsh,openclaw,kiro,pi) — install outcomes, agentType mapping, failure isolation, no daemon re-prompt", async () => {
+    // Drives the FULL broadened selection with claude INCLUDED so the
+    // claude→claude-code agentType rename is exercised (not just same-name
+    // backends). openclaw's plugin install is forced to FAIL (its --version passes
+    // the host-floor, its install command does not) to prove per-agent isolation:
+    // kiro (processed AFTER it) and pi still run. All CLIs/fetch/prompts are faked.
+    const lines = [];
+    const io = { log: (m) => lines.push(String(m)), isTTY: true, ask: async () => "", lines };
+    const kiroDir = join(mkdtempSync(join(tmpdir(), "init-int-")), ".kiro");
+    const dshHome = mkdtempSync(join(tmpdir(), "init-dsh-"));
+    const openclawDir = mkdtempSync(join(tmpdir(), "init-ocw-"));
+
+    const appended = [];
+    let keyN = 0;
+    let agentPassedToDaemon; // captures the backend daemon-setup derived (no re-prompt)
+    let daemonResolveAgentCalls = 0;
+
+    // One shared command runner for every installer. openclaw's INSTALL fails
+    // (version probe passes); everything else succeeds.
+    const run = (cmd, args = []) => {
+      if (cmd === "openclaw" && args[0] === "--version") return { ok: true, stdout: "openclaw 2026.9.9" };
+      if (cmd === "openclaw" && args[0] === "plugins" && args[1] === "install") {
+        return { ok: false, stderr: "simulated openclaw install failure" };
+      }
+      return { ok: true, stdout: "" };
+    };
+
+    const code = await runInit(
+      ["--agents", "claude,dsh,openclaw,kiro,pi", "--url", "https://c", "--api-key", "cho_claude", "--yes"],
+      {
+        io,
+        version: "9.9.9",
+        env: {
+          ...process.env,
+          KIRO_DIR: kiroDir,
+          DSH_HOME: dshHome,
+          CHORUS_DSH_PROFILE: "default",
+          OPENCLAW_CONFIG_DIR: openclawDir,
+        },
+        detectAgents, // real
+        orderedSteps, // real
+        getAdapter, // real
+        backup: () => null,
+        ctxExtras: {
+          // credential-seed: distinct key per agent (claude pre-fills from --api-key).
+          validateCredentials: async ({ apiKey }) => ({ uuid: `u-${apiKey}`, name: `A-${apiKey}` }),
+          appendAgent: (obj) => {
+            appended.push(obj);
+            return { ok: true, path: "/x/daemon.json", agents: appended, index: appended.length - 1 };
+          },
+          writeLogin: () => {},
+          promptFn: async () => `cho_${(keyN += 1)}`,
+          // plugin-install collaborators (hermetic): shared runner + kiro fetch + a
+          // pnpm-present probe so dsh installs without a real pnpm on PATH.
+          run,
+          fetch: fakeKiroFetch(),
+          binaryOnPath: () => true,
+          // daemon-setup collaborators (hermetic): a wakeable agent IS selected, so
+          // resolveInstallAgent must receive the DERIVED backend (claude-code) — proving
+          // it does NOT re-render the "which backend?" menu the operator already answered.
+          resolveInstallCwds: async () => ({ cwds: ["/a"] }),
+          resolveInstallAgent: async (flags) => {
+            daemonResolveAgentCalls += 1;
+            agentPassedToDaemon = flags.agent;
+            return { ok: true, agent: flags.agent, cliFound: false };
+          },
+          autostartCapability: () => "systemd",
+          detectSupervisor: () => ({ kind: "none" }),
+        },
+      },
+    );
+
+    const text = io.lines.join("\n");
+
+    // Exit 1: openclaw's plugin install FAILED (the only FAILED outcome; unsupported
+    // pi is not a failure).
+    expect(code).toBe(1);
+
+    // agentType written per agent — the load-bearing mapping, incl. claude→claude-code
+    // (explicit rename) and opencode/openclaw/pi/dsh→offline (kiro stays wakeable).
+    expect(appended.map((a) => a.agentType)).toEqual([
+      "claude-code", // claude — the rename actually exercised
+      "offline", // dsh (de-advertised)
+      "offline", // openclaw
+      "kiro", // kiro (wakeable)
+      "offline", // pi
+    ]);
+    expect(appended).toHaveLength(5);
+
+    // Per-agent install outcomes, and per-agent failure isolation: openclaw FAILED,
+    // yet dsh (before it) AND kiro/pi (after it) all produced their own outcome.
+    expect(text).toMatch(/claude: (installed|repaired|skipped)/); // clean HOME → installed
+    expect(text).toContain("dsh: installed");
+    expect(text).toContain("openclaw: failed");
+    expect(text).toContain("kiro: installed");
+    expect(text).toContain("pi: unsupported");
+
+    // supported flips: real installers (dsh/openclaw/kiro) true; guided pi false.
+    const supportedOf = (id) => getAdapter(id).readInstallState({ env: {}, home: "/nonexistent-xyz" }).supported;
+    expect(supportedOf("dsh")).toBe(true);
+    expect(supportedOf("openclaw")).toBe(true);
+    expect(supportedOf("kiro")).toBe(true);
+    expect(supportedOf("pi")).toBe(false);
+
+    // daemon-setup did NOT re-prompt the backend: it derived claude-code (first
+    // wakeable selected agent) and passed it into resolveInstallAgent, suppressing
+    // the menu. A wakeable agent is present, so the step wrote config then skipped
+    // the (opt-in) boot service.
+    expect(daemonResolveAgentCalls).toBe(1);
+    expect(agentPassedToDaemon).toBe("claude-code");
+    expect(text).toContain("--daemon-autostart");
+  });
+
+  it("all-offline selection (opencode,pi) skips the daemon auto-start prompt", async () => {
+    // No wakeable agent selected → daemon-setup persists the agents[] entries but
+    // SKIPS both the backend resolve/menu and the auto-start prompt (even on a TTY,
+    // no --yes). opencode installs (offline classification is orthogonal to whether
+    // its plugin installs); pi is guided.
+    const lines = [];
+    let askedAutostart = false;
+    const io = {
+      log: (m) => lines.push(String(m)),
+      isTTY: true,
+      ask: async (q) => {
+        if (/auto-start/i.test(String(q))) askedAutostart = true;
+        return "";
+      },
+      lines,
+    };
+    const opencodeDir = mkdtempSync(join(tmpdir(), "init-oc-"));
+    const appended = [];
+    let daemonResolveAgentCalls = 0;
+
+    const code = await runInit(
+      ["--agents", "opencode,pi", "--url", "https://c", "--api-key", "cho_oc"],
+      {
+        io,
+        version: "9.9.9",
+        env: { ...process.env, OPENCODE_CONFIG_DIR: opencodeDir },
+        detectAgents,
+        orderedSteps,
+        getAdapter,
+        backup: () => null,
+        ctxExtras: {
+          validateCredentials: async ({ apiKey }) => ({ uuid: `u-${apiKey}`, name: `A-${apiKey}` }),
+          appendAgent: (obj) => {
+            appended.push(obj);
+            return { ok: true, path: "/x/daemon.json", agents: appended, index: appended.length - 1 };
+          },
+          writeLogin: () => {},
+          promptFn: async () => "cho_pi",
+          run: () => ({ ok: true, stdout: "" }),
+          resolveInstallCwds: async () => ({ cwds: ["/a"] }),
+          resolveInstallAgent: async (flags) => {
+            daemonResolveAgentCalls += 1;
+            return { ok: true, agent: flags.agent, cliFound: false };
+          },
+          autostartCapability: () => "systemd",
+          detectSupervisor: () => ({ kind: "none" }),
+        },
+      },
+    );
+
+    const text = io.lines.join("\n");
+    // opencode installed + pi unsupported → no FAILED outcome → exit 0.
+    expect(code).toBe(0);
+    // Both agents parked as offline for the `chorus mcp` proxy.
+    expect(appended.map((a) => a.agentType)).toEqual(["offline", "offline"]);
+    expect(text).toContain("opencode: installed");
+    expect(text).toContain("pi: unsupported");
+    // The auto-start gate: all-offline → no backend resolve, no auto-start prompt.
+    expect(text).toContain("no daemon-wakeable agent selected");
+    expect(daemonResolveAgentCalls).toBe(0);
+    expect(askedAutostart).toBe(false);
+  });
+
   it("credential-seed runs before plugin-install (declared order honored)", () => {
     const ordered = orderedSteps();
     const ids = ordered.map((s) => s.id);

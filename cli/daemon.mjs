@@ -634,6 +634,21 @@ export function buildMultiAgentDaemon(agentConfigs, deps = {}) {
 
   const agents = agentConfigs
     .map((cfg, i) => {
+      // Offline agents are proxy-only: their key is parked in daemon.json solely so
+      // `chorus mcp` can act under that identity (it reads the file directly, not via
+      // this runtime). The daemon-multi-agent spec says the daemon SHALL NOT construct
+      // a spawner, dispatch wakes, OR register it as a wakeable connection. Building a
+      // runtime here would open an SSE stream that self-reports a connection — so we
+      // SKIP the offline agent entirely (no runtime, no connection, no self-report),
+      // which is what closes the T4-review registration gap. Returning null (kept in
+      // step with a build failure) preserves the original index `i` for the per-agent
+      // injected-dep alignment below (map keeps the index; the filter drops the null).
+      if (cfg.agentType === "offline") {
+        logger.info?.(
+          `[Chorus] agent ${cfg.label}: offline — proxy-only key, no wakeable connection registered`,
+        );
+        return null;
+      }
       // Per-agent deps: cfg fields drive the per-agent runtime; injectable fakes are
       // indexed per agent. `cwd` (singular) is cleared so a caller's single value can
       // never leak across agents — each agent's `cwds` is authoritative.
@@ -668,6 +683,31 @@ export function buildMultiAgentDaemon(agentConfigs, deps = {}) {
     .filter(Boolean);
 
   if (agents.length === 0) {
+    // Distinguish "all offline" (nothing wakeable to serve — not an error) from
+    // "every wakeable runtime threw" (a real build failure). An all-offline config
+    // is a legitimate proxy-only setup: return an idle no-op daemon so the process
+    // stays up (its offline keys remain available to `chorus mcp`) rather than
+    // crashing with a misleading "all runtimes failed" error.
+    const anyWakeable = agentConfigs.some((cfg) => cfg.agentType !== "offline");
+    if (!anyWakeable) {
+      logger.warn?.(
+        "[Chorus] all configured agents are offline — no daemon-wakeable backend to serve. " +
+          "Offline keys remain in daemon.json for `chorus mcp`; the daemon has nothing to wake.",
+      );
+      return {
+        agents: [],
+        connections: [],
+        // No wakeable connection was registered, so there are no back-compat aliases.
+        waker: undefined,
+        router: undefined,
+        sseListener: undefined,
+        // Never settles: an idle daemon simply waits (it registered no connection, so
+        // it can never be "all-conflicted"). runDaemon keeps it alive on waitForever.
+        allConflict: new Promise(() => {}),
+        async start() {},
+        async stop() {},
+      };
+    }
     throw new Error("buildMultiAgentDaemon: all agent runtimes failed to build");
   }
 

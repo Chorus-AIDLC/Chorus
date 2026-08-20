@@ -440,9 +440,19 @@ export async function installKiro(ctx) {
 // of running an unverified command.
 // ---------------------------------------------------------------------------
 export function guided(agentId, detail) {
-  return () => out(agentId, UNSUPPORTED, detail);
+  // Tag the returned function so adapters.mjs can tell a GUIDED (unsupported)
+  // install apart from a real automated one — both are `typeof === "function"`,
+  // but only a real installer sets `supported: true`. Without this marker every
+  // guided agent would report supported:true (the pre-existing latent bug).
+  const fn = () => out(agentId, UNSUPPORTED, detail);
+  fn.guided = true;
+  return fn;
 }
 
 export const GUIDED_MESSAGES = {
-  pi: "Pi installs extensions via `pi install <source>`; the Chorus Pi extension source is not wired into chorus init yet — install it manually with `pi install <source>`.",
+  // Pi HAS an extension surface (`pi install <source>`) — this message must NOT
+  // claim otherwise. What's missing is a published Chorus Pi extension for
+  // `chorus init` to install automatically, so the accurate guidance is the real
+  // manual command against that source once it's available.
+  pi: "Pi installs extensions with `pi install <source>`; Chorus does not yet publish a Pi extension for `chorus init` to automate, so install it manually with `pi install <source>` when a Chorus Pi source is available.",
 };
