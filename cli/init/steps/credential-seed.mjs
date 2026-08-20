@@ -13,11 +13,13 @@
 //     `agents[]` without disturbing any other agent (migration + dedup handled
 //     there), all through the MERGE-SAFE updateDaemonConfig writer that preserves
 //     yoloAckAt / cwds / sigintTimeoutMs.
-//   - writeLoginFile (cli/login.mjs) to also persist the FIRST validated agent's
-//     credentials as the flat top-level url/apiKey (+ identity). That flat pair is
-//     what `resolveCredentials` reads — the daemon-setup step's credential gate and
-//     other single-credential consumers rely on it, so we keep it populated even
-//     though every agent also lives in `agents[]`.
+//
+// It writes credentials ONLY into `agents[]` — the flat top-level url/apiKey
+// (+ identity) agent config is DEPRECATED and is no longer written here (writing
+// both duplicated the first agent: once flat, once in agents[]). Single-credential
+// consumers still resolve fine: `resolveCredentials` (cli/credentials.mjs) falls
+// back to `agents[0]` when the flat pair is absent, and the multi-agent resolver
+// reads `agents[]` directly.
 //
 // Key handling: keys are validated then written 0600 (via updateDaemonConfig) and
 // never echoed. A subsequent selected agent is NEVER given the first agent's key —
@@ -30,7 +32,6 @@
 import { STEP_SCOPES, OUTCOME_ACTIONS } from "../contracts.mjs";
 import {
   prompt as defaultPrompt,
-  writeLoginFile as defaultWriteLoginFile,
   appendAgentConfig as defaultAppendAgentConfig,
 } from "../../login.mjs";
 import { validateAndFetchIdentity } from "../../chorus-client.mjs";
@@ -59,7 +60,6 @@ export async function seedCredentials(ctx) {
   const flags = ctx.flags ?? {};
   const validate = ctx.validateCredentials ?? validateAndFetchIdentity;
   const append = ctx.appendAgent ?? defaultAppendAgentConfig;
-  const write = ctx.writeLogin ?? defaultWriteLoginFile;
   const ask = ctx.promptFn ?? defaultPrompt;
 
   const selection = Array.isArray(ctx.selection) ? ctx.selection.filter((id) => nonEmpty(id)) : [];
@@ -76,10 +76,6 @@ export async function seedCredentials(ctx) {
 
   /** @type {import("../contracts.mjs").StepOutcome[]} */
   const outcomes = [];
-  // The first agent that validates seeds the flat top-level url/apiKey (+ identity)
-  // — persisted AFTER the append loop so appendAgentConfig sees agents[] already
-  // populated (no flat→agents[0] migration surprises). Left null if none validate.
-  let flatCreds = null;
 
   for (let i = 0; i < selection.length; i += 1) {
     const id = selection[i];
@@ -114,12 +110,6 @@ export async function seedCredentials(ctx) {
       continue;
     }
 
-    // First validated agent seeds the flat top-level defaults (regardless of whether
-    // the append below is a fresh add or an idempotent duplicate).
-    if (!flatCreds) {
-      flatCreds = { url, apiKey, agentUuid: identity.uuid, agentName: identity.name };
-    }
-
     // Append as its own agents[] entry, tagged with the mapped daemon agentType
     // (offline when the backend isn't daemon-wakeable). Merge-safe; dedups on key.
     const res = append({ url, apiKey, agentType, agentUuid: identity.uuid, agentName: identity.name });
@@ -136,10 +126,6 @@ export async function seedCredentials(ctx) {
       ),
     );
   }
-
-  // Persist the flat top-level defaults last (merge-safe: preserves agents[],
-  // yoloAckAt, cwds). Skipped entirely when no agent validated.
-  if (flatCreds) write(flatCreds);
 
   return outcomes;
 }

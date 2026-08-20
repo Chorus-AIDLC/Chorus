@@ -67,10 +67,9 @@ describe("seedCredentials — single agent", () => {
     expect(outcomes[0].action).toBe(SEEDED);
     // claude → claude-code (explicit rename), appended as an agents[] entry.
     expect(append.calls[0]).toMatchObject({ url: "https://c", apiKey: "cho_k", agentType: "claude-code" });
-    // Flat top-level creds also persisted (resolveCredentials / daemon-setup gate rely on it).
-    expect(writeLogin).toHaveBeenCalledWith(
-      expect.objectContaining({ url: "https://c", apiKey: "cho_k", agentUuid: "uuid-cho_k" }),
-    );
+    // The flat top-level agent config is DEPRECATED — credentials go ONLY into
+    // agents[], never the flat url/apiKey (that duplicated the first agent).
+    expect(writeLogin).not.toHaveBeenCalled();
   });
 
   it("pre-fills the first agent from CHORUS_URL/CHORUS_API_KEY env when no flags", async () => {
@@ -241,9 +240,10 @@ describe("seedCredentials — real appendAgentConfig + writeLoginFile (agents[] 
       agentType: "claude-code",
       agentUuid: "uuid-cho_k",
     });
-    // Flat top-level creds present (for resolveCredentials / daemon-setup gate).
-    expect(after.url).toBe("https://c");
-    expect(after.apiKey).toBe("cho_k");
+    // Flat top-level creds are NOT written (deprecated) — credentials live ONLY in
+    // agents[]; resolveCredentials falls back to agents[0] for the flat consumers.
+    expect(after.url).toBeUndefined();
+    expect(after.apiKey).toBeUndefined();
     // Pre-existing fields preserved.
     expect(after.yoloAckAt).toBe("2026-01-01T00:00:00Z");
     expect(after.cwds).toEqual(["/repo"]);

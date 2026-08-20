@@ -50,6 +50,36 @@ describe("resolveCredentials precedence", () => {
     expect(r).toEqual({ url: "https://file", apiKey: "cho_file", source: "login-file" });
   });
 
+  it("login file falls back to agents[0] when the flat top-level pair is absent (deprecated)", () => {
+    const r = resolveCredentials(
+      {},
+      deps({
+        files: {
+          [LOGIN_PATH]: {
+            cwds: ["/repo"],
+            agents: [
+              { url: "https://a0", apiKey: "cho_a0", agentType: "claude-code" },
+              { url: "https://a1", apiKey: "cho_a1", agentType: "kiro" },
+            ],
+          },
+        },
+      })
+    );
+    expect(r).toEqual({ url: "https://a0", apiKey: "cho_a0", source: "login-file" });
+  });
+
+  it("flat top-level pair still wins over agents[] when present", () => {
+    const r = resolveCredentials(
+      {},
+      deps({
+        files: {
+          [LOGIN_PATH]: { url: "https://flat", apiKey: "cho_flat", agents: [{ url: "https://a0", apiKey: "cho_a0" }] },
+        },
+      })
+    );
+    expect(r).toEqual({ url: "https://flat", apiKey: "cho_flat", source: "login-file" });
+  });
+
   it("plugin settings env block used as last resort", () => {
     const r = resolveCredentials(
       {},

@@ -94,8 +94,9 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
       ["cho_kiro", "kiro"],
       ["cho_pi", "offline"],
     ]);
-    // Flat top-level creds seeded once (from the first agent).
-    expect(credWrites).toBe(1);
+    // Flat top-level creds are DEPRECATED — credential-seed never writes them
+    // (credentials live only in agents[]; that duplicated the first agent before).
+    expect(credWrites).toBe(0);
     expect(text).toContain("kiro: seeded");
     expect(text).toContain("pi: seeded");
     // plugin-install ran per selected agent: kiro installed its .kiro/ file

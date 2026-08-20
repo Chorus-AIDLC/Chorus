@@ -159,13 +159,26 @@ export function resolveCredentials(flags = {}, deps = {}) {
     if (url && apiKey) return { url, apiKey, source: "env" };
   }
 
-  // 3. Login file (~/.chorus/daemon.json)
+  // 3. Login file (~/.chorus/daemon.json): the flat top-level url/apiKey, else the
+  //    first agents[] entry. The flat top-level agent config is DEPRECATED — `chorus
+  //    init` now writes credentials only into agents[] — so fall back to agents[0]
+  //    so this single-credential resolver (install/daemon-setup gate, legacy flat
+  //    daemon) still resolves from an agents[]-only daemon.json.
   tried.push(`login file (${loginPath}, run \`chorus login\`)`);
   {
     const file = readJson(loginPath);
     if (file) {
-      const url = nonEmpty(file.url);
-      const apiKey = nonEmpty(file.apiKey);
+      let url = nonEmpty(file.url);
+      let apiKey = nonEmpty(file.apiKey);
+      if (!(url && apiKey) && Array.isArray(file.agents)) {
+        const a0 = file.agents.find(
+          (a) => a && typeof a === "object" && nonEmpty(a.url) && nonEmpty(a.apiKey),
+        );
+        if (a0) {
+          url = nonEmpty(a0.url);
+          apiKey = nonEmpty(a0.apiKey);
+        }
+      }
       if (url && apiKey) return { url, apiKey, source: "login-file" };
     }
   }
