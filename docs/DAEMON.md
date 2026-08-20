@@ -404,4 +404,5 @@ unattended posture.
 | Choose agent backend | `--agent claude-code|codex|kiro` / `CHORUS_AGENT` |
 | Point at a `claude` binary | `CHORUS_CLAUDE_PATH=/path/to/claude` |
 | Save credentials | `chorus login` (or interactive on first `chorus daemon`) |
-| Per-subcommand help | `chorus daemon --help`, `chorus login --help` |
+| Call MCP tools directly | `chorus mcp call|whoami|list` — see [MCP_CLIENT.md](./MCP_CLIENT.md) (reuses these same credentials + `--agent`) |
+| Per-subcommand help | `chorus daemon --help`, `chorus login --help`, `chorus mcp --help` |

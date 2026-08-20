@@ -194,3 +194,114 @@ export function resolveCredentials(flags = {}, deps = {}) {
       "  • login:   chorus login   (persists to ~/.chorus/daemon.json)\n"
   );
 }
+
+/**
+ * @typedef {Object} McpCredentials
+ * @property {string} url
+ * @property {string} apiKey
+ * @property {string} label  Diagnostic label for the acting identity ("flag" /
+ *   "env" / a `~/.chorus/daemon.json` agent label / the flat-resolution source).
+ */
+
+/**
+ * Resolve the url + `cho_` API key AND the acting agent identity for the
+ * `chorus mcp` command group. Unlike `resolveCredentials`, this understands the
+ * multi-agent `agents[]` model and refuses to guess which agent to act as.
+ *
+ * Precedence:
+ *   1. Explicit `--url` + `--api-key` flags → used directly (identity is
+ *      explicit); `--agent` is NOT consulted.
+ *   2. `CHORUS_URL` + `CHORUS_API_KEY` env → used directly (the plugin-hook
+ *      path); `--agent` is NOT consulted.
+ *   3. `~/.chorus/daemon.json` with a non-empty `agents[]`:
+ *        - `--agent <label>` selects the entry whose `label`/`name` matches
+ *          exactly (else throws, listing available labels);
+ *        - exactly one agent + no `--agent` → that agent;
+ *        - more than one agent + no `--agent` → hard error (never pick silently),
+ *          listing the available labels.
+ *      Each selected agent's `url`/`apiKey` merges over the top-level per-field
+ *      defaults (`resolveCredentialDefaults`), so an agent that omits a field
+ *      inherits it.
+ *   4. No `agents[]` → flat resolution via `resolveCredentials` (login-file
+ *      top-level / plugin fallback). Passing `--agent` here (nothing to match)
+ *      is an error.
+ *
+ * This never imports `cli/daemon-config.mjs` (which imports THIS module) — it
+ * reads `agents[]` directly to stay cycle-free; only url/apiKey/label matter for
+ * MCP, so per-agent agentType/permissionMode validation is intentionally skipped.
+ *
+ * @param {{ url?: string, apiKey?: string, agent?: string }} flags
+ * @param {ResolveDeps} [deps]
+ * @returns {McpCredentials}
+ * @throws {Error} on ambiguity, a missing `--agent` label, or nothing resolvable.
+ */
+export function resolveMcpCredentials(flags = {}, deps = {}) {
+  const env = deps.env ?? process.env;
+  const readJson = deps.readJson ?? readJsonSafe;
+  const loginPath = deps.loginPath ?? loginFilePath();
+  const wanted = nonEmpty(flags.agent);
+
+  // 1. Explicit flag pair — identity is explicit; agents[] not consulted.
+  {
+    const url = nonEmpty(flags.url);
+    const apiKey = nonEmpty(flags.apiKey);
+    if (url && apiKey) return { url, apiKey, label: wanted ?? "flag" };
+  }
+
+  // 2. Env pair — the plugin-hook path; agents[] not consulted.
+  {
+    const url = nonEmpty(env.CHORUS_URL);
+    const apiKey = nonEmpty(env.CHORUS_API_KEY);
+    if (url && apiKey) return { url, apiKey, label: wanted ?? "env" };
+  }
+
+  // 3. Multi-agent daemon.json agents[].
+  const file = readJson(loginPath);
+  const agentEntries =
+    file && Array.isArray(file.agents)
+      ? file.agents.filter((a) => a && typeof a === "object")
+      : [];
+
+  if (agentEntries.length > 0) {
+    const defaults = resolveCredentialDefaults(flags, deps);
+    const labelOf = (entry, i) => nonEmpty(entry.label) ?? nonEmpty(entry.name) ?? `agents[${i}]`;
+    const resolved = agentEntries.map((entry, i) => ({
+      label: labelOf(entry, i),
+      url: nonEmpty(entry.url) ?? defaults.url,
+      apiKey: nonEmpty(entry.apiKey) ?? defaults.apiKey,
+    }));
+    const labels = resolved.map((a) => a.label).join(", ");
+
+    const pick = (a) => {
+      if (!a.url || !a.apiKey) {
+        throw new Error(
+          `Agent "${a.label}" in ${loginPath} is missing a url or apiKey (and no top-level default supplies it).`,
+        );
+      }
+      return { url: a.url, apiKey: a.apiKey, label: a.label };
+    };
+
+    if (wanted) {
+      const match = resolved.find((a) => a.label === wanted);
+      if (!match) {
+        throw new Error(`--agent "${wanted}" not found in ${loginPath} agents[]. Available: ${labels}.`);
+      }
+      return pick(match);
+    }
+    if (resolved.length === 1) return pick(resolved[0]);
+    throw new Error(
+      `Multiple agents are configured in ${loginPath} (${labels}). ` +
+        `Specify which one to act as with --agent <label>.`,
+    );
+  }
+
+  // 4. No agents[] → flat resolution. --agent has nothing to match here.
+  if (wanted) {
+    throw new Error(
+      `--agent "${wanted}" was given but ${loginPath} declares no agents[]. ` +
+        `Remove --agent, or configure an agents[] list.`,
+    );
+  }
+  const flat = resolveCredentials(flags, deps); // throws the detailed "could not resolve" error
+  return { url: flat.url, apiKey: flat.apiKey, label: flat.source };
+}

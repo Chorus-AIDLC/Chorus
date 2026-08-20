@@ -24,7 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // client commands that connect OUT to a remote Chorus server. Their modules are
 // lazy-imported so the server-launch path pays no startup cost.
 
-const SUBCOMMANDS = new Set(["daemon", "login", "init"]);
+const SUBCOMMANDS = new Set(["daemon", "login", "init", "mcp"]);
 
 // Client-subcommand arg parsing + help text live in cli/client-args.mjs so they
 // are pure and unit-testable (this entry module runs side effects at import).
@@ -54,11 +54,16 @@ function pkgVersion() {
 }
 
 async function runSubcommand(name, rest) {
-  // `init` has its own arg parser + help (runInit handles --help itself), so it
-  // is dispatched before the shared client-flag/help block below.
+  // `init` and `mcp` own their arg parsing + help (they handle `--help`
+  // themselves), so they are dispatched before the shared client-flag/help
+  // block below.
   if (name === "init") {
     const { runInit } = await import("./cli/init.mjs");
     return runInit(rest, { version: pkgVersion() });
+  }
+  if (name === "mcp") {
+    const { runMcp } = await import("./cli/mcp.mjs");
+    return runMcp(rest, { version: pkgVersion() });
   }
 
   const flags = parseClientFlags(rest);
@@ -159,6 +164,8 @@ USAGE
   chorus daemon [--url --api-key]  Connect to a remote Chorus server, subscribe to the
                                    agent notification stream, and wake a local headless
                                    Claude Code on task dispatch
+  chorus mcp <call|whoami|list>    Native MCP client — call any tool, print this agent's
+                                   UUID, or list callable tools (see 'chorus mcp --help')
 
 SERVER OPTIONS
   -p, --port <port>        HTTP server port             (default: 8637, env: PORT)
@@ -212,6 +219,9 @@ EXAMPLES
   chorus daemon                              # Connect & wake local Claude Code (full autonomy by default)
   chorus daemon --chorus-only                # Restrict the woken Claude to Chorus MCP tools only
   CHORUS_URL=https://... CHORUS_API_KEY=cho_... chorus daemon
+  chorus mcp whoami                          # Print this agent's own UUID
+  chorus mcp call chorus_get_task '{"taskUuid":"..."}'      # Call a tool with JSON args
+  chorus mcp call chorus_pm_add_document_draft --arg proposalUuid=P1 --arg type=prd --arg-file content=@doc.md
 `);
   process.exit(0);
 }
