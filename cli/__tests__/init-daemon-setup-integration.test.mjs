@@ -43,7 +43,9 @@ describe("chorus init → daemon-setup → installService (integration, linux)",
         serviceIo,
         // Hermetic preflight IO threaded into the REAL resolveInstall* resolvers.
         writeConfig: (partial) => { configWrites.push(partial); return "/home/u/.chorus/daemon.json"; },
-        readJson: () => null, // unconfigured → cwds default to process cwd, agent → default
+        // credential-seed (not run in this daemon-setup-only test) would have written a
+        // woken agent; simulate it so the auto-start "will be woken" gate proceeds.
+        readJson: () => ({ agents: [{ agentType: "claude-code", daemonWake: true }] }),
         resolve: () => ({ url: "https://c.example", apiKey: "cho_k", source: "env" }),
         validate: async () => ({ uuid: "agent-1", name: "Bot" }),
         processCwd: "/proj",

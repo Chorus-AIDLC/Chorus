@@ -36,7 +36,7 @@ import {
 } from "../../login.mjs";
 import { resolveInstallCwds as defaultResolveInstallCwds } from "../../daemon-install-config.mjs";
 import { validateAndFetchIdentity } from "../../chorus-client.mjs";
-import { agentTypeForSelection } from "../agent-type-map.mjs";
+import { agentTypeForSelection, isWakeableAgentType } from "../agent-type-map.mjs";
 
 const STEP_ID = "credential-seed";
 const { SEEDED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
@@ -133,9 +133,30 @@ export async function seedCredentials(ctx) {
       continue;
     }
 
+    // daemon-wake opt-in (only for a daemon-wakeable backend; offline agents can never
+    // be woken, so they get NO daemonWake field). DEFAULT off: an added agent is parked
+    // (its key serves `chorus mcp`) but not woken until the operator opts in — via
+    // `--daemon-wake <ids>` / `--daemon-wake-all`, or a per-agent prompt on a TTY.
+    let daemonWake;
+    if (isWakeableAgentType(agentType)) {
+      const flaggedAll = flags.daemonWakeAll === true;
+      const flaggedThis = Array.isArray(flags.daemonWake) && flags.daemonWake.includes(id);
+      if (flaggedAll || flaggedThis) {
+        daemonWake = true;
+      } else if (isTTY && typeof ask === "function") {
+        const ans = String(
+          (await ask(`Enable daemon waking for ${identity.name} (${agentType})? [y/N]: `)) ?? "",
+        ).trim();
+        daemonWake = /^y(es)?$/i.test(ans);
+      } else {
+        daemonWake = false; // non-TTY default: not woken
+      }
+    }
+
     // Append as its own agents[] entry, tagged with the mapped daemon agentType
-    // (offline when the backend isn't daemon-wakeable) and its OWN cwds. Merge-safe;
-    // dedups on key; only touches the newly-added entry (never rewrites other agents).
+    // (offline when the backend isn't daemon-wakeable), its OWN cwds, and the resolved
+    // daemonWake (explicit boolean for wakeable backends; omitted for offline).
+    // Merge-safe; dedups on key; only touches the newly-added entry.
     const res = append({
       url,
       apiKey,
@@ -143,6 +164,7 @@ export async function seedCredentials(ctx) {
       agentUuid: identity.uuid,
       agentName: identity.name,
       ...(cwds.length ? { cwds } : {}),
+      ...(daemonWake !== undefined ? { daemonWake } : {}),
     });
     if (!res.ok) {
       outcomes.push(

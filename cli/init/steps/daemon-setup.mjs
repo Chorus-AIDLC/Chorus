@@ -24,7 +24,9 @@
 // unit-tests with fakes; production uses the real daemon-service / install-config
 // modules, and an integration test can drive REAL installService against a fake io.
 
+import { readFileSync } from "node:fs";
 import { STEP_SCOPES, OUTCOME_ACTIONS } from "../contracts.mjs";
+import { loginFilePath } from "../../credentials.mjs";
 import {
   autostartCapability as defaultAutostartCapability,
   detectSupervisor as defaultDetectSupervisor,
@@ -36,7 +38,7 @@ import {
   resolveInstallCwds as defaultResolveInstallCwds,
   resolveInstallAgent as defaultResolveInstallAgent,
 } from "../../daemon-install-config.mjs";
-import { agentTypeForSelection, isWakeableAgentType } from "../agent-type-map.mjs";
+import { isWakeableAgentType } from "../agent-type-map.mjs";
 
 const STEP_ID = "daemon-setup";
 const { INSTALLED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
@@ -100,7 +102,27 @@ export async function setupDaemon(ctx) {
     ? ctx.selection.filter((id) => typeof id === "string" && id.trim())
     : [];
   const hasSelection = selection.length > 0;
-  const wakeableTypes = selection.map(agentTypeForSelection).filter(isWakeableAgentType);
+
+  // Will the daemon actually wake anything? credential-seed (order 10) just wrote each
+  // selected agent's `daemonWake` into daemon.json `agents[]` (a TTY opt-in lives there,
+  // NOT in flags), so read that file rather than re-derive from the selection/flags. An
+  // agent will be woken iff its backend is wakeable AND daemonWake is not false. offline
+  // OR daemonWake:false ⇒ not woken.
+  const readJson =
+    ctx.readJson ??
+    ((p) => {
+      try {
+        return JSON.parse(readFileSync(p, "utf8"));
+      } catch {
+        return null;
+      }
+    });
+  const cfgFile = readJson(ctx.loginPath ?? loginFilePath());
+  const configuredAgents =
+    cfgFile && Array.isArray(cfgFile.agents) ? cfgFile.agents.filter((a) => a && typeof a === "object") : [];
+  const willWake = configuredAgents.some(
+    (a) => isWakeableAgentType(a.agentType) && a.daemonWake !== false,
+  );
 
   // 1. Preflight. With an init SELECTION, credential-seed (order 10) already wrote
   //    each selected agent into daemon.json `agents[]` with its OWN cwds + agentType
@@ -119,14 +141,14 @@ export async function setupDaemon(ctx) {
     return out(FAILED, `daemon preflight failed: ${err?.message ?? String(err)}`);
   }
 
-  // 1b. Capability gate on the init selection: if the operator selected ONLY
-  //     offline (non-wakeable) agents, the daemon has no local backend to wake.
-  //     Their agents[] entries are already persisted (credential-seed) for the
-  //     `chorus mcp` proxy; skip the auto-start prompt AND the service install.
-  if (hasSelection && wakeableTypes.length === 0) {
-    log("[chorus init] no daemon-wakeable agent selected — the daemon would wake no local backend.");
-    log("[chorus init] offline agents' keys are configured in ~/.chorus/daemon.json for `chorus mcp`.");
-    return out(SKIPPED, "no daemon-wakeable agent selected — agents[] persisted; boot service not installed");
+  // 1b. Capability gate: if NO configured agent will be woken (every one is offline, or
+  //     a wakeable backend the operator left opted-out with daemonWake:false), the daemon
+  //     has nothing to wake. Their agents[] entries are already persisted (credential-seed)
+  //     for the `chorus mcp` proxy; skip the auto-start prompt AND the service install.
+  if (hasSelection && !willWake) {
+    log("[chorus init] no agent is enabled for daemon waking — the daemon would wake no local backend.");
+    log("[chorus init] agents' keys are configured in ~/.chorus/daemon.json for `chorus mcp`.");
+    return out(SKIPPED, "no agent enabled for daemon waking — agents[] persisted; boot service not installed");
   }
 
   const manual = () => {

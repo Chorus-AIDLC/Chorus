@@ -187,6 +187,54 @@ describe("seedCredentials — multiple agents (one key each)", () => {
   });
 });
 
+describe("seedCredentials — daemonWake opt-in (default off; offline omits the field)", () => {
+  it("defaults daemonWake:false for a wakeable agent (non-TTY, no flag)", async () => {
+    const append = fakeAppend();
+    await seedCredentials(baseCtx({ selection: ["kiro"], flags: { url: "https://c", apiKey: "cho_k" }, appendAgent: append }));
+    expect(append.calls[0].agentType).toBe("kiro");
+    expect(append.calls[0].daemonWake).toBe(false);
+  });
+
+  it("opts in via --daemon-wake <ids>", async () => {
+    const append = fakeAppend();
+    await seedCredentials(
+      baseCtx({ selection: ["kiro"], flags: { url: "https://c", apiKey: "cho_k", daemonWake: ["kiro"] }, appendAgent: append }),
+    );
+    expect(append.calls[0].daemonWake).toBe(true);
+  });
+
+  it("opts in via --daemon-wake-all", async () => {
+    const append = fakeAppend();
+    await seedCredentials(
+      baseCtx({ selection: ["kiro"], flags: { url: "https://c", apiKey: "cho_k", daemonWakeAll: true }, appendAgent: append }),
+    );
+    expect(append.calls[0].daemonWake).toBe(true);
+  });
+
+  it("prompts per wakeable agent on a TTY (Yes → true, default No)", async () => {
+    const append = fakeAppend();
+    await seedCredentials(
+      baseCtx({
+        selection: ["kiro"],
+        io: { log: () => {}, isTTY: true },
+        flags: { url: "https://c", apiKey: "cho_k" },
+        promptFn: async (q) => (String(q).includes("daemon waking") ? "y" : "cho_k"),
+        appendAgent: append,
+      }),
+    );
+    expect(append.calls[0].daemonWake).toBe(true);
+  });
+
+  it("an offline agent gets NO daemonWake field (can never wake)", async () => {
+    const append = fakeAppend();
+    await seedCredentials(
+      baseCtx({ selection: ["opencode"], flags: { url: "https://c", apiKey: "cho_o", daemonWakeAll: true }, appendAgent: append }),
+    );
+    expect(append.calls[0].agentType).toBe("offline");
+    expect(append.calls[0]).not.toHaveProperty("daemonWake");
+  });
+});
+
 describe("seedCredentials — failure & idempotency", () => {
   it("returns FAILED for an agent whose key fails validation and does NOT append it", async () => {
     const append = fakeAppend();

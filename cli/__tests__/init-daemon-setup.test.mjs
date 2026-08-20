@@ -22,6 +22,9 @@ function ctx(over = {}) {
     resolveInstallCwds: vi.fn(async () => ({ cwds: ["/a"] })),
     resolveInstallAgent: vi.fn(async () => ({ ok: true, agent: "claude-code", cliFound: true })),
     processCwd: "/proj",
+    // The daemon-setup auto-start gate reads daemon.json agents[] (written by
+    // credential-seed) to decide if anything WILL be woken. Default: one woken agent.
+    readJson: () => ({ agents: [{ agentType: "claude-code", daemonWake: true }] }),
     ...over,
   };
 }
@@ -172,19 +175,20 @@ describe("reuse init selection (no top-level cwds/agent writes, no backend re-pr
   });
 });
 
-describe("capability-gate on wakeability (all-offline selection)", () => {
-  it("all-offline selection SKIPS the prompt + service install (agents[] already persisted), never resolving the backend or creds", async () => {
+describe("capability-gate on will-be-woken (read from daemon.json agents[])", () => {
+  it("no agent will be woken (all offline OR daemonWake:false) → SKIPS prompt + install, never validating creds", async () => {
     const ask = vi.fn(async () => "y");
     const c = ctx({
       io: { log: vi.fn(), isTTY: true, ask },
-      selection: ["opencode", "pi"], // both → offline
+      selection: ["opencode", "kiro"],
       flags: { daemonAutostart: true },
+      // credential-seed wrote: opencode → offline; kiro → daemonWake:false (opted out).
+      readJson: () => ({ agents: [{ agentType: "offline" }, { agentType: "kiro", daemonWake: false }] }),
     });
     const r = await setupDaemon(c);
     expect(r.action).toBe(SKIPPED);
-    expect(r.detail).toMatch(/no daemon-wakeable agent selected/);
-    // Never prompts, never probes the backend, never validates creds, never installs,
-    // and never writes the deprecated top-level cwds/agent.
+    expect(r.detail).toMatch(/no agent enabled for daemon waking/);
+    // Never prompts, never probes the backend, never validates creds, never installs.
     expect(ask).not.toHaveBeenCalled();
     expect(c.resolveInstallAgent).not.toHaveBeenCalled();
     expect(c.resolveInstallCwds).not.toHaveBeenCalled();
@@ -192,12 +196,27 @@ describe("capability-gate on wakeability (all-offline selection)", () => {
     expect(c.installService).not.toHaveBeenCalled();
   });
 
-  it("a mixed selection with at least one wakeable agent does NOT hit the all-offline skip", async () => {
-    const c = ctx({ selection: ["opencode", "codex"], flags: { daemonAutostart: true } });
+  it("at least one agent WILL be woken (wakeable + daemonWake not false) → proceeds to install", async () => {
+    const c = ctx({
+      selection: ["opencode", "kiro"],
+      flags: { daemonAutostart: true },
+      // kiro opted in (daemonWake:true) → the daemon will wake it → auto-start offered.
+      readJson: () => ({ agents: [{ agentType: "offline" }, { agentType: "kiro", daemonWake: true }] }),
+    });
     const r = await setupDaemon(c);
     expect(r.action).toBe(INSTALLED);
     // Still no top-level cwds/agent write (per-agent config is authoritative).
     expect(c.resolveInstallAgent).not.toHaveBeenCalled();
+  });
+
+  it("an agent with a wakeable backend and ABSENT daemonWake still counts as woken (back-compat)", async () => {
+    const c = ctx({
+      selection: ["kiro"],
+      flags: { daemonAutostart: true },
+      readJson: () => ({ agents: [{ agentType: "kiro" }] }), // no daemonWake field
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(INSTALLED);
   });
 });
 
