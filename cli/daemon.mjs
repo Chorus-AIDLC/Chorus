@@ -75,6 +75,7 @@ import {
   uninstallService,
   systemctlUser,
   journalctlUser,
+  launchctl,
   resolveServicePaths,
   SERVICE_NAME,
 } from "./daemon-service.mjs";
@@ -783,6 +784,7 @@ export async function runDaemon(flags = {}, deps = {}) {
     uninstallService,
     systemctlUser,
     journalctlUser,
+    launchctl,
     resolveServicePaths: () => resolveServicePaths(env),
   };
   // The preflight dep bundle — built from the same seams runDaemon resolved, so
@@ -1118,11 +1120,13 @@ export async function preflight(ctx) {
 /**
  * Dispatch a daemon lifecycle subcommand. Two families:
  *   - install / uninstall — manage the boot-autostart supervisor service
- *     (systemd --user on Linux; a printed template on macOS/Windows).
+ *     (systemd --user on Linux; launchd LaunchAgent on macOS; a printed template
+ *     on Windows/other).
  *   - status / stop / restart / logs — when a supervisor unit is installed and
- *     active, DELEGATE to it (systemctl / journalctl) so a supervised daemon is
- *     never misreported as "not running"; otherwise operate on the
- *     pidfile/logfile-managed `-d` background daemon exactly as before.
+ *     active, DELEGATE to it (systemctl / journalctl on Linux, launchctl on
+ *     macOS) so a supervised daemon is never misreported as "not running";
+ *     otherwise operate on the pidfile/logfile-managed `-d` background daemon
+ *     exactly as before.
  * Each reports clearly (no silent failure). `restart` performs
  * stop-then-detached-start on the pidfile path.
  * @returns {Promise<number>} exit code
@@ -1239,21 +1243,26 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
       for (const s of r.steps) log(`[Chorus]   ${s}`);
       log(`[Chorus] it will now start automatically at login. Manage it with:`);
       log(`[Chorus]   chorus daemon status | stop | restart | logs`);
-      // A --user service only survives logout with lingering enabled; and a
-      // separately-started `chorus daemon -d` would hold the same paths and make
-      // this service exit-and-retry. Surface both so neither is a silent gotcha.
-      log(`[Chorus] to keep it running after you log out: loginctl enable-linger "$USER"`);
-      log(`[Chorus] if you previously ran 'chorus daemon -d', stop it first ('chorus daemon stop') so it doesn't hold the same paths.`);
+      if (r.platform === "linux") {
+        // A --user service only survives logout with lingering enabled; and a
+        // separately-started `chorus daemon -d` would hold the same paths and make
+        // this service exit-and-retry. Surface both so neither is a silent gotcha.
+        log(`[Chorus] to keep it running after you log out: loginctl enable-linger "$USER"`);
+        log(`[Chorus] if you previously ran 'chorus daemon -d', stop it first ('chorus daemon stop') so it doesn't hold the same paths.`);
+      } else if (r.platform === "darwin") {
+        log(`[Chorus] if you previously ran 'chorus daemon -d', stop it first ('chorus daemon stop') so it doesn't hold the same paths.`);
+      }
       return 0;
     }
-    if (r.platform === "linux") {
-      // Linux install actually failed (write / systemctl error) — surface it.
+    if (r.platform === "linux" || r.platform === "darwin") {
+      // A real install (systemd/launchd) actually failed — surface it, never a
+      // silent success or a misleading "not supported" message.
       errLog(`[Chorus] service install failed: ${r.error}`);
       for (const s of r.steps) errLog(`[Chorus]   (did: ${s})`);
       return 1;
     }
-    // macOS / Windows: not auto-installed by design — print the template + steps.
-    log(`[Chorus] automatic install is Linux-only. To run the daemon as a service on this platform:`);
+    // Windows / other: no first-class auto-install — print the template + steps.
+    log(`[Chorus] automatic install is not supported on this platform. To run the daemon as a service:`);
     for (const s of r.steps) log(`[Chorus]   ${s}`);
     log("");
     log(r.unitText);
@@ -1261,7 +1270,7 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
   }
   if (action === "uninstall") {
     const r = svc.uninstallService();
-    if (r.platform === "linux") {
+    if (r.platform === "linux" || r.platform === "darwin") {
       if (r.error) {
         errLog(`[Chorus] service uninstall failed: ${r.error}`);
         return 1;
@@ -1274,19 +1283,29 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
       }
       return 0;
     }
-    log(`[Chorus] automatic uninstall is Linux-only. To remove the service on this platform:`);
+    log(`[Chorus] automatic uninstall is not supported on this platform. To remove the service:`);
     for (const s of r.steps) log(`[Chorus]   ${s}`);
     return 0;
   }
 
   // For the control verbs, prefer a live supervisor unit over the pidfile.
+  // A supervisor is systemd (Linux) or launchd (macOS); both delegate the verbs
+  // to their service manager so a supervised daemon is never misreported as "not
+  // running" via the pidfile.
   const sup = svc.detectSupervisor();
-  const supervised = sup.kind === "systemd" && sup.installed;
+  const systemd = sup.kind === "systemd" && sup.installed;
+  const launchd = sup.kind === "launchd" && sup.installed;
 
   if (action === "status") {
-    if (supervised) {
+    if (systemd) {
       log(`[Chorus] daemon is managed by systemd (${SERVICE_NAME}.service) — ${sup.active ? "active" : "installed but NOT active"}.`);
       const r = svc.systemctlUser(["status", "--no-pager", `${SERVICE_NAME}.service`]);
+      if (r.stdout) log(r.stdout.trimEnd());
+      return sup.active ? 0 : 1;
+    }
+    if (launchd) {
+      log(`[Chorus] daemon is managed by launchd (${sup.label}) — ${sup.active ? "loaded" : "installed but NOT loaded"}.`);
+      const r = svc.launchctl(["list", sup.label]);
       if (r.stdout) log(r.stdout.trimEnd());
       return sup.active ? 0 : 1;
     }
@@ -1297,7 +1316,7 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
     return 0;
   }
   if (action === "logs") {
-    if (supervised) {
+    if (systemd) {
       const r = svc.journalctlUser(["-u", `${SERVICE_NAME}.service`, "--no-pager", "-n", "200"]);
       if (r.status !== 0 && !r.stdout) {
         errLog(`[Chorus] could not read the service journal: ${r.stderr.trim() || `exit ${r.status}`}`);
@@ -1306,6 +1325,8 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
       log(r.stdout.trimEnd());
       return 0;
     }
+    // launchd (and the pidfile path) both log to ~/.chorus/daemon.log — the plist
+    // routes stdout/stderr there — so the pidfile logfile reader serves both.
     const r = lifecycle.readLog();
     if (!r.ok) {
       errLog(`[Chorus] ${r.message}`);
@@ -1315,11 +1336,21 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
     return 0;
   }
   if (action === "stop") {
-    if (supervised) {
+    if (systemd) {
       const r = svc.systemctlUser(["stop", `${SERVICE_NAME}.service`]);
       if (r.status === 0) {
         log(`[Chorus] stopped the daemon service (systemctl --user stop ${SERVICE_NAME}.service).`);
         log(`[Chorus] note: it is still enabled and will start again at next login. To disable: chorus daemon uninstall`);
+        return 0;
+      }
+      errLog(`[Chorus] failed to stop the service: ${r.stderr.trim() || `exit ${r.status}`}`);
+      return 1;
+    }
+    if (launchd) {
+      const r = svc.launchctl(["unload", sup.plistPath]);
+      if (r.status === 0) {
+        log(`[Chorus] stopped the daemon service (launchctl unload ${sup.plistPath}).`);
+        log(`[Chorus] note: it will load again at next login. To disable: chorus daemon uninstall`);
         return 0;
       }
       errLog(`[Chorus] failed to stop the service: ${r.stderr.trim() || `exit ${r.status}`}`);
@@ -1336,10 +1367,21 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
     return ok ? 0 : 1;
   }
   if (action === "restart") {
-    if (supervised) {
+    if (systemd) {
       const r = svc.systemctlUser(["restart", `${SERVICE_NAME}.service`]);
       if (r.status === 0) {
         log(`[Chorus] restarted the daemon service (systemctl --user restart ${SERVICE_NAME}.service).`);
+        return 0;
+      }
+      errLog(`[Chorus] failed to restart the service: ${r.stderr.trim() || `exit ${r.status}`}`);
+      return 1;
+    }
+    if (launchd) {
+      // launchd has no atomic restart — unload then load the same plist.
+      svc.launchctl(["unload", sup.plistPath]);
+      const r = svc.launchctl(["load", sup.plistPath]);
+      if (r.status === 0) {
+        log(`[Chorus] restarted the daemon service (launchctl unload+load ${sup.plistPath}).`);
         return 0;
       }
       errLog(`[Chorus] failed to restart the service: ${r.stderr.trim() || `exit ${r.status}`}`);

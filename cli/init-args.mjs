@@ -21,7 +21,7 @@
  *
  * @param {string[]} argv
  * @returns {{ agents?: string[], all?: boolean, yes?: boolean, url?: string,
- *   apiKey?: string, help?: boolean }}
+ *   apiKey?: string, daemonAutostart?: boolean, help?: boolean }}
  */
 export function parseInitFlags(argv) {
   const out = {};
@@ -33,6 +33,7 @@ export function parseInitFlags(argv) {
     else if (a.startsWith("--agents=")) agentTokens.push(a.slice("--agents=".length));
     else if (a === "--all") out.all = true;
     else if (a === "--yes" || a === "-y") out.yes = true;
+    else if (a === "--daemon-autostart") out.daemonAutostart = true;
     else if (a === "--url") out.url = argv[i + 1];
     else if (a.startsWith("--url=")) out.url = a.slice("--url=".length);
     else if (a === "--api-key") out.apiKey = argv[i + 1];
@@ -85,21 +86,30 @@ OPTIONS
   --all                    Configure every supported agent.
   --url <url>              Chorus server URL     (env: CHORUS_URL) — seeded once.
   --api-key <cho_...>      Agent API key         (env: CHORUS_API_KEY) — seeded once.
+  --daemon-autostart       Install & enable the daemon boot service (Linux systemd /
+                           macOS launchd) in a non-interactive run. Ignored where
+                           auto-start is unsupported (e.g. Windows). In an
+                           interactive TTY run the daemon-setup step prompts instead
+                           (default: No).
   -y, --yes                Skip confirmation prompts (implied when non-TTY).
   -h, --help               Show this help message.
 
 NON-INTERACTIVE
   When stdin/stdout is not a TTY, you MUST pass --agents or --all — init will not
-  guess which agents to configure and aborts otherwise.
+  guess which agents to configure and aborts otherwise. The daemon boot service is
+  installed non-interactively ONLY when you pass --daemon-autostart; otherwise the
+  daemon config is written and you start it yourself with 'chorus daemon'.
 
 SCOPE
-  This installs the plugin SURFACE and seeds credentials into the daemon config.
-  Live MCP tools for each agent arrive with a sibling feature (the 'chorus mcp'
-  proxy). The legacy install-*.sh scripts are left untouched.
+  This installs the plugin SURFACE, seeds credentials into the daemon config, and
+  optionally configures + auto-starts the local daemon. Live MCP tools for each
+  agent arrive with a sibling feature (the 'chorus mcp' proxy). The legacy
+  install-*.sh scripts are left untouched.
 
 EXAMPLES
   chorus init
   chorus init --all --yes
   chorus init --agents claude,codex --url https://chorus.example.com --api-key cho_xxx --yes
+  chorus init --all --yes --daemon-autostart
 `;
 }

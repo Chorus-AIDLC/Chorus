@@ -5,15 +5,18 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   SERVICE_NAME,
+  LAUNCHD_LABEL,
   systemdUnitPath,
   launchdPlistPath,
   buildServiceArgs,
   renderSystemdUnit,
   renderLaunchdPlist,
   detectSupervisor,
+  autostartCapability,
   installService,
   uninstallService,
   systemctlUser,
+  launchctl,
   resolveServicePaths,
 } from "../daemon-service.mjs";
 
@@ -138,9 +141,9 @@ describe("detectSupervisor", () => {
     };
   }
 
-  it("returns kind:none off Linux", () => {
-    expect(detectSupervisor(io({ platform: "darwin" }))).toEqual({ kind: "none" });
+  it("returns kind:none on unsupported platforms (win32/other)", () => {
     expect(detectSupervisor(io({ platform: "win32" }))).toEqual({ kind: "none" });
+    expect(detectSupervisor(io({ platform: "aix" }))).toEqual({ kind: "none" });
   });
 
   it("installed + active when the unit exists and is-active says active", () => {
@@ -164,6 +167,75 @@ describe("detectSupervisor", () => {
   it("still reports systemd when inactive but the unit file is present", () => {
     const r = detectSupervisor(io({ existsSync: () => true, spawnSync: () => ({ status: 3, stdout: "unknown\n", stderr: "" }) }));
     expect(r).toMatchObject({ kind: "systemd", installed: true, active: false });
+  });
+
+  it("darwin: reports launchd when the plist exists and launchctl lists it loaded", () => {
+    const r = detectSupervisor(io({
+      platform: "darwin",
+      existsSync: () => true,
+      spawnSync: () => ({ status: 0, stdout: "{ ... };\n", stderr: "" }), // launchctl list ok
+    }));
+    expect(r).toMatchObject({ kind: "launchd", installed: true, active: true, label: LAUNCHD_LABEL });
+    expect(r.plistPath).toBe(launchdPlistPath({ home: "/home/u" }));
+  });
+
+  it("darwin: launchd installed-but-not-loaded when plist exists but launchctl list fails", () => {
+    const r = detectSupervisor(io({
+      platform: "darwin",
+      existsSync: () => true,
+      spawnSync: () => ({ status: 1, stdout: "", stderr: "Could not find service" }),
+    }));
+    expect(r).toMatchObject({ kind: "launchd", installed: true, active: false });
+  });
+
+  it("darwin: kind:none when neither the plist nor a loaded agent exists", () => {
+    const r = detectSupervisor(io({
+      platform: "darwin",
+      existsSync: () => false,
+      spawnSync: () => ({ status: 1, stdout: "", stderr: "" }),
+    }));
+    expect(r).toEqual({ kind: "none" });
+  });
+});
+
+describe("autostartCapability", () => {
+  it("returns launchd on darwin (launchctl is always present)", () => {
+    expect(autostartCapability({ platform: "darwin", spawnSync: vi.fn() })).toBe("launchd");
+  });
+
+  it("returns systemd on linux when systemctl --user --version succeeds", () => {
+    const io = { platform: "linux", spawnSync: vi.fn(() => ({ status: 0, stdout: "systemd 255\n", stderr: "" })) };
+    expect(autostartCapability(io)).toBe("systemd");
+  });
+
+  it("returns unsupported on linux when systemctl is unavailable (status null)", () => {
+    // spawnSync sets .error / null status when the binary is missing.
+    const io = { platform: "linux", spawnSync: vi.fn(() => ({ status: null, error: new Error("ENOENT"), stdout: "", stderr: "" })) };
+    expect(autostartCapability(io)).toBe("unsupported");
+  });
+
+  it("returns unsupported on linux when systemctl --version exits non-zero", () => {
+    const io = { platform: "linux", spawnSync: vi.fn(() => ({ status: 1, stdout: "", stderr: "no user bus" })) };
+    expect(autostartCapability(io)).toBe("unsupported");
+  });
+
+  it("returns unsupported on win32 and other platforms", () => {
+    expect(autostartCapability({ platform: "win32", spawnSync: vi.fn() })).toBe("unsupported");
+    expect(autostartCapability({ platform: "aix", spawnSync: vi.fn() })).toBe("unsupported");
+  });
+});
+
+describe("launchctl helper", () => {
+  it("never throws when spawnSync throws", () => {
+    const r = launchctl(["list"], { spawnSync: () => { throw new Error("no launchctl"); } });
+    expect(r.status).toBe(null);
+    expect(r.stderr).toMatch(/no launchctl/);
+  });
+
+  it("maps a spawnSync ENOENT error to a null status", () => {
+    const r = launchctl(["list"], { spawnSync: () => ({ error: new Error("spawn launchctl ENOENT"), status: null, stdout: "", stderr: "" }) });
+    expect(r.status).toBe(null);
+    expect(r.stderr).toMatch(/ENOENT/);
   });
 });
 
@@ -233,14 +305,61 @@ describe("installService", () => {
     expect(r.error).toMatch(/enable --now failed: nope/);
   });
 
-  it("darwin: does not write, returns a plist template + manual steps", () => {
-    const io = { platform: "darwin", home: "/home/u", writeFileSync: vi.fn(), mkdirSync: vi.fn(), spawnSync: vi.fn() };
+  function darwinIO(over = {}) {
+    const calls = [];
+    return {
+      io: {
+        platform: "darwin",
+        home: "/home/u",
+        mkdirSync: vi.fn(),
+        writeFileSync: vi.fn(),
+        readFileSync: vi.fn(() => "old-plist"),
+        existsSync: vi.fn(() => false),
+        unlinkSync: vi.fn(),
+        spawnSync: vi.fn((cmd, args) => {
+          calls.push([cmd, ...args]);
+          return { status: 0, stdout: "", stderr: "" };
+        }),
+        ...over,
+      },
+      calls,
+    };
+  }
+
+  it("darwin: writes the plist and runs launchctl load -w (real install)", () => {
+    const { io, calls } = darwinIO();
     const r = installService({ ...BASE }, io);
-    expect(r).toMatchObject({ platform: "darwin", installed: false });
-    expect(io.writeFileSync).not.toHaveBeenCalled();
-    expect(r.unitText).toContain("<plist");
-    expect(r.unitPath).toBe(launchdPlistPath({ home: "/home/u" }));
-    expect(r.steps.join(" ")).toMatch(/launchctl load/);
+    expect(r).toMatchObject({ platform: "darwin", installed: true });
+    const plistPath = launchdPlistPath({ home: "/home/u" });
+    const writeCall = io.writeFileSync.mock.calls.find(([p]) => p === plistPath);
+    expect(writeCall).toBeTruthy();
+    expect(writeCall[1]).toContain("<plist");
+    // load -w on the plist, preceded by a best-effort unload
+    expect(calls).toContainEqual(["launchctl", "load", "-w", plistPath]);
+    expect(calls.some((c) => c[0] === "launchctl" && c[1] === "unload")).toBe(true);
+  });
+
+  it("darwin: backs up an existing plist before overwrite", () => {
+    const { io } = darwinIO({ existsSync: vi.fn(() => true) });
+    installService({ ...BASE }, io);
+    const bak = io.writeFileSync.mock.calls.find(([p]) => String(p).endsWith(".chorus-bak"));
+    expect(bak).toBeTruthy();
+  });
+
+  it("darwin: returns installed:false + error when launchctl load -w fails", () => {
+    const { io } = darwinIO({
+      spawnSync: vi.fn((_c, args) => (args.includes("load") ? { status: 1, stdout: "", stderr: "Load failed: 5" } : { status: 0, stdout: "", stderr: "" })),
+    });
+    const r = installService({ ...BASE }, io);
+    expect(r.installed).toBe(false);
+    expect(r.error).toMatch(/launchctl load -w failed: Load failed: 5/);
+  });
+
+  it("darwin: never bakes credentials into the plist", () => {
+    const { io } = darwinIO();
+    const r = installService({ ...BASE }, io);
+    expect(r.unitText).not.toContain("CHORUS_API_KEY");
+    expect(r.unitText).not.toContain("CHORUS_URL");
   });
 
   it("other platform: returns the foreground command with no -d and no write", () => {
@@ -289,10 +408,36 @@ describe("uninstallService", () => {
     expect(io.unlinkSync).not.toHaveBeenCalled();
   });
 
-  it("darwin: returns manual unload/rm steps", () => {
-    const r = uninstallService({ platform: "darwin", home: "/home/u" });
-    expect(r).toMatchObject({ platform: "darwin", removed: false });
-    expect(r.steps.join(" ")).toMatch(/launchctl unload/);
+  it("darwin: unloads and removes the plist (real uninstall)", () => {
+    const calls = [];
+    const io = {
+      platform: "darwin",
+      home: "/home/u",
+      existsSync: vi.fn(() => true),
+      unlinkSync: vi.fn(),
+      spawnSync: vi.fn((cmd, args) => {
+        calls.push([cmd, ...args]);
+        return { status: 0, stdout: "", stderr: "" };
+      }),
+    };
+    const r = uninstallService(io);
+    const plistPath = launchdPlistPath({ home: "/home/u" });
+    expect(r).toMatchObject({ platform: "darwin", removed: true });
+    expect(calls).toContainEqual(["launchctl", "unload", "-w", plistPath]);
+    expect(io.unlinkSync).toHaveBeenCalledWith(plistPath);
+  });
+
+  it("darwin: reports nothing-to-remove when the plist is absent", () => {
+    const io = {
+      platform: "darwin",
+      home: "/home/u",
+      existsSync: vi.fn(() => false),
+      unlinkSync: vi.fn(),
+      spawnSync: vi.fn(() => ({ status: 1, stdout: "", stderr: "Could not find" })),
+    };
+    const r = uninstallService(io);
+    expect(r.removed).toBe(false);
+    expect(io.unlinkSync).not.toHaveBeenCalled();
   });
 });
 
