@@ -84,8 +84,9 @@ export async function promptAgentBackend({ ask, log = () => {}, isTTY = false } 
   if (Number.isInteger(n) && n >= 1 && n <= AGENT_MENU.length) {
     return AGENT_MENU[n - 1].value;
   }
-  // A backend typed by name (muscle memory). KNOWN_AGENTS includes de-advertised
-  // backends (dsh), so a by-name pick can still reach them.
+  // A backend typed by name (muscle memory). KNOWN_AGENTS includes the
+  // de-advertised `dsh` backend AND the non-wakeable `offline` classification, so a
+  // by-name pick can still reach either even though neither is in the numbered menu.
   if (KNOWN_AGENTS.includes(answer)) return answer;
 
   // Out-of-range / garbage → no explicit choice; the caller inherits the default.

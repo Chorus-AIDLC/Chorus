@@ -36,10 +36,16 @@ import {
   resolveInstallCwds as defaultResolveInstallCwds,
   resolveInstallAgent as defaultResolveInstallAgent,
 } from "../../daemon-install-config.mjs";
+import { agentTypeForSelection, isWakeableAgentType } from "../agent-type-map.mjs";
 
 const STEP_ID = "daemon-setup";
 const { INSTALLED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
 const out = (action, detail) => ({ stepId: STEP_ID, action, detail });
+
+/** A non-empty trimmed string, or undefined. */
+function nonEmpty(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
 
 /**
  * The daemon-setup step body.
@@ -87,14 +93,49 @@ export async function setupDaemon(ctx) {
     log,
   };
 
+  // Reuse the init step-1 selection (idea broaden-init-plugin-install): map each
+  // selected adapter id to its daemon agentType and record whether ANY is a
+  // daemon-wakeable backend. Each selected agent's own agents[] entry (with its
+  // agentType) was already written by the credential-seed step; here we only need
+  // the daemon-level default backend + the wakeability gate below. With NO
+  // selection (e.g. this step reused outside `chorus init`), the original
+  // prompt-driven behavior is preserved.
+  const selection = Array.isArray(ctx.selection)
+    ? ctx.selection.filter((id) => typeof id === "string" && id.trim())
+    : [];
+  const hasSelection = selection.length > 0;
+  const wakeableTypes = selection.map(agentTypeForSelection).filter(isWakeableAgentType);
+
   // 1. Full preflight (decision: full_preflight). Persist the served cwd set and
   //    the default backend agent into daemon.json (credentials were seeded by the
   //    credential-seed step at order 10). Connection-only: no provider secrets.
   try {
     await resolveCwds(flags, preflightOpts);
-    await resolveAgent(flags, env, { ...preflightOpts, errLog: log });
+    if (!hasSelection) {
+      // No init selection: original behavior — explicit --agent, else the menu.
+      await resolveAgent(flags, env, { ...preflightOpts, errLog: log });
+    } else if (wakeableTypes.length > 0) {
+      // Reuse the selection: derive the daemon's default backend from the first
+      // wakeable selected agent (an explicit --agent still wins) and pass it so
+      // resolveInstallAgent does NOT re-render the "which agent backend?" menu the
+      // operator already answered when selecting agents in init step 1.
+      const derivedAgent = nonEmpty(flags.agent) ?? wakeableTypes[0];
+      await resolveAgent({ ...flags, agent: derivedAgent }, env, { ...preflightOpts, errLog: log });
+    }
+    // All-offline selection: no wakeable backend to persist or probe — skip
+    // resolveAgent entirely (the gate below turns this into a clean SKIP).
   } catch (err) {
     return out(FAILED, `daemon preflight failed: ${err?.message ?? String(err)}`);
+  }
+
+  // 1b. Capability gate on the init selection: if the operator selected ONLY
+  //     offline (non-wakeable) agents, the daemon has no local backend to wake.
+  //     Their agents[] entries are already persisted (credential-seed) for the
+  //     `chorus mcp` proxy; skip the auto-start prompt AND the service install.
+  if (hasSelection && wakeableTypes.length === 0) {
+    log("[chorus init] no daemon-wakeable agent selected — the daemon would wake no local backend.");
+    log("[chorus init] offline agents' keys are configured in ~/.chorus/daemon.json for `chorus mcp`.");
+    return out(SKIPPED, "no daemon-wakeable agent selected — agents[] persisted; boot service not installed");
   }
 
   const manual = () => {

@@ -55,6 +55,20 @@ describe("resolveAgentType — known backends", () => {
     expect(KNOWN_AGENTS).toContain("dsh");
     expect(DEFAULT_AGENT).toBe("claude-code");
   });
+
+  it("accepts the non-wakeable 'offline' classification (KNOWN_AGENTS, flag/env/file), default unchanged", () => {
+    // 'offline' is a valid agentType so an agents[] entry / --agent can carry it;
+    // the daemon's fail-closed no-wake handling for it lives in spawner-select.
+    expect(KNOWN_AGENTS).toContain("offline");
+    expect(resolveAgentType({ agent: "offline" }, {})).toEqual({ ok: true, agent: "offline" });
+    expect(resolveAgentType({}, { CHORUS_AGENT: "offline" })).toEqual({ ok: true, agent: "offline" });
+    expect(resolveAgentType({}, {}, { readJson: () => ({ agent: "offline" }), loginPath: "/x" })).toEqual({
+      ok: true,
+      agent: "offline",
+    });
+    // Default is still claude-code — offline is never chosen implicitly.
+    expect(DEFAULT_AGENT).toBe("claude-code");
+  });
 });
 
 describe("resolveAgentType — unknown rejected (no silent fallback)", () => {

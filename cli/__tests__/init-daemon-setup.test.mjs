@@ -149,6 +149,67 @@ describe("idempotency (report_skip_repair)", () => {
   });
 });
 
+describe("reuse init selection (no second 'which agent backend?' prompt)", () => {
+  it("derives the daemon default backend from the first WAKEABLE selected agent and passes it to resolveInstallAgent", async () => {
+    // Selecting claude + opencode: claude→claude-code (wakeable) is the derived
+    // default; opencode→offline is ignored for the backend. Passing an explicit
+    // agent to resolveInstallAgent is what suppresses its interactive menu.
+    const c = ctx({ selection: ["claude", "opencode"], flags: { daemonAutostart: true } });
+    const r = await setupDaemon(c);
+    expect(c.resolveInstallAgent).toHaveBeenCalledOnce();
+    expect(c.resolveInstallAgent.mock.calls[0][0]).toMatchObject({ agent: "claude-code" });
+    expect(r.action).toBe(INSTALLED);
+  });
+
+  it("codex-only selection derives 'codex' as the default backend", async () => {
+    const c = ctx({ selection: ["codex"], flags: { daemonAutostart: true } });
+    await setupDaemon(c);
+    expect(c.resolveInstallAgent.mock.calls[0][0]).toMatchObject({ agent: "codex" });
+  });
+
+  it("an explicit --agent still wins over the selection-derived default (and still suppresses the menu)", async () => {
+    const c = ctx({ selection: ["claude"], flags: { agent: "kiro", daemonAutostart: true } });
+    await setupDaemon(c);
+    expect(c.resolveInstallAgent.mock.calls[0][0]).toMatchObject({ agent: "kiro" });
+  });
+
+  it("with NO selection, keeps the original prompt-driven resolveInstallAgent call", async () => {
+    const c = ctx({ flags: { daemonAutostart: true } }); // no selection
+    await setupDaemon(c);
+    expect(c.resolveInstallAgent).toHaveBeenCalledOnce();
+    // The operator's raw flags are forwarded unchanged (no injected agent).
+    expect(c.resolveInstallAgent.mock.calls[0][0]).not.toHaveProperty("agent");
+  });
+});
+
+describe("capability-gate on wakeability (all-offline selection)", () => {
+  it("all-offline selection SKIPS the prompt + service install (agents[] already persisted), never resolving the backend or creds", async () => {
+    const ask = vi.fn(async () => "y");
+    const c = ctx({
+      io: { log: vi.fn(), isTTY: true, ask },
+      selection: ["opencode", "pi"], // both → offline
+      flags: { daemonAutostart: true },
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(SKIPPED);
+    expect(r.detail).toMatch(/no daemon-wakeable agent selected/);
+    // Never prompts, never probes the backend, never validates creds, never installs.
+    expect(ask).not.toHaveBeenCalled();
+    expect(c.resolveInstallAgent).not.toHaveBeenCalled();
+    expect(c.resolveInstallCredentials).not.toHaveBeenCalled();
+    expect(c.installService).not.toHaveBeenCalled();
+    // But the served-cwd preflight still runs (config persistence is not gated).
+    expect(c.resolveInstallCwds).toHaveBeenCalledOnce();
+  });
+
+  it("a mixed selection with at least one wakeable agent does NOT hit the all-offline skip", async () => {
+    const c = ctx({ selection: ["opencode", "codex"], flags: { daemonAutostart: true } });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(INSTALLED);
+    expect(c.resolveInstallAgent.mock.calls[0][0]).toMatchObject({ agent: "codex" });
+  });
+});
+
 describe("install outcome", () => {
   it("surfaces a failed install as FAILED (non-zero)", async () => {
     const c = ctx({
