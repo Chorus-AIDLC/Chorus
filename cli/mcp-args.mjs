@@ -175,9 +175,23 @@ export function assembleArgs(parsed, io) {
   const consumeStdin = () => {
     if (stdinUsed) throw new UsageError("stdin (-) can only be consumed by one argument");
     stdinUsed = true;
-    return readStdin();
+    try {
+      return readStdin();
+    } catch (e) {
+      throw new UsageError(`cannot read stdin: ${/** @type {Error} */ (e).message}`);
+    }
   };
-  const readPath = (path) => (path === "-" ? consumeStdin() : readFile(path));
+  // A file-read failure (missing path, permissions) is a usage error, not a
+  // transport/tool error — wrap it as UsageError so the command layer maps it to
+  // the usage exit code (2), never the tool-error exit code (1).
+  const readPath = (path) => {
+    if (path === "-") return consumeStdin();
+    try {
+      return readFile(path);
+    } catch (e) {
+      throw new UsageError(`cannot read file "${path}": ${/** @type {Error} */ (e).message}`);
+    }
+  };
 
   // 1. Base object.
   if (parsed.positionalJson !== null && parsed.argsFile !== null) {

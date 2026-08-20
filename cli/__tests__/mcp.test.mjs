@@ -103,6 +103,15 @@ describe("runMcp — call", () => {
     expect(stderr.get()).toMatch(/error:/);
     expect(client.calls.callToolRaw.length).toBe(0);
   });
+
+  it("a missing --arg-file path → usage exit 2 (not the tool-error exit 1), no tool call", async () => {
+    const { o, stdout, stderr, client } = opts({}); // no files → readFile throws ENOENT
+    const code = await runMcp(["call", "t", "--arg-file", "content=./missing.md"], o);
+    expect(code).toBe(2);
+    expect(stdout.get()).toBe("");
+    expect(stderr.get()).toMatch(/cannot read file/);
+    expect(client.calls.callToolRaw.length).toBe(0);
+  });
 });
 
 describe("runMcp — whoami / list", () => {

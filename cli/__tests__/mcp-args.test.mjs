@@ -149,6 +149,12 @@ describe("assembleArgs — error paths", () => {
     expect(() => assembleArgs(parseMcpArgs(["call", "t", "[1,2]"]), io())).toThrow(/must be a JSON object/);
     expect(() => assembleArgs(parseMcpArgs(["call", "t", "42"]), io())).toThrow(/must be a JSON object/);
   });
+
+  it("a missing --arg-file / @file path → UsageError (usage, not a raw fs error)", () => {
+    // io()'s readFile throws ENOENT for unknown paths; it must surface as UsageError.
+    expect(() => assembleArgs(parseMcpArgs(["call", "t", "--arg-file", "c=./nope"]), io())).toThrow(UsageError);
+    expect(() => assembleArgs(parseMcpArgs(["call", "t", "--arg", "c=@./nope"]), io())).toThrow(/cannot read file "\.\/nope"/);
+  });
 });
 
 describe("mcpHelpText", () => {
