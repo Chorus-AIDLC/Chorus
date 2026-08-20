@@ -24,7 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // client commands that connect OUT to a remote Chorus server. Their modules are
 // lazy-imported so the server-launch path pays no startup cost.
 
-const SUBCOMMANDS = new Set(["daemon", "login", "init"]);
+const SUBCOMMANDS = new Set(["daemon", "login", "init", "mcp"]);
 
 // Client-subcommand arg parsing + help text live in cli/client-args.mjs so they
 // are pure and unit-testable (this entry module runs side effects at import).
@@ -54,11 +54,16 @@ function pkgVersion() {
 }
 
 async function runSubcommand(name, rest) {
-  // `init` has its own arg parser + help (runInit handles --help itself), so it
-  // is dispatched before the shared client-flag/help block below.
+  // `init` and `mcp` own their arg parsing + help (they handle `--help`
+  // themselves), so they are dispatched before the shared client-flag/help
+  // block below.
   if (name === "init") {
     const { runInit } = await import("./cli/init.mjs");
     return runInit(rest, { version: pkgVersion() });
+  }
+  if (name === "mcp") {
+    const { runMcp } = await import("./cli/mcp.mjs");
+    return runMcp(rest, { version: pkgVersion() });
   }
 
   const flags = parseClientFlags(rest);
