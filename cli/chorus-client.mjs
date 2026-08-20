@@ -76,6 +76,56 @@ export class ChorusClient {
     }
   }
 
+  /**
+   * Like {@link callTool} but returns the tool result's text content VERBATIM,
+   * never JSON-parsed — the byte-faithful form the `chorus mcp call` CLI prints
+   * to stay a drop-in for `chorus-api.sh mcp-tool` (which emits
+   * `.result.content[].text`). `text` is the newline-join of every `content[]`
+   * block whose `type` is `text`. Lazy-connects; retries once on a stateless
+   * 404 / session-expired error, mirroring {@link callTool}.
+   * @param {string} name
+   * @param {Record<string, unknown>} [args]
+   * @returns {Promise<{ isError: boolean, text: string }>}
+   */
+  async callToolRaw(name, args = {}) {
+    if (!this.client || this.status !== "connected") await this.connect();
+    try {
+      return await this.#doCallToolRaw(name, args);
+    } catch (err) {
+      if (this.#isSessionExpired(err)) {
+        this.logger.warn("MCP session expired, reconnecting...");
+        this.status = "reconnecting";
+        this.client = null;
+        this.transport = null;
+        await this.connect();
+        return await this.#doCallToolRaw(name, args);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * List the tools this connection's API key is permitted to see. Lazy-connects;
+   * retries once on a stateless 404 / session-expired error.
+   * @returns {Promise<Array<{ name: string, description: string }>>}
+   */
+  async listTools() {
+    if (!this.client || this.status !== "connected") await this.connect();
+    try {
+      return await this.#doListTools();
+    } catch (err) {
+      if (this.#isSessionExpired(err)) {
+        this.logger.warn("MCP session expired, reconnecting...");
+        this.status = "reconnecting";
+        this.client = null;
+        this.transport = null;
+        await this.connect();
+        return await this.#doListTools();
+      }
+      throw err;
+    }
+  }
+
   async disconnect() {
     if (this.client) {
       try {
@@ -87,6 +137,25 @@ export class ChorusClient {
     this.client = null;
     this.transport = null;
     this.status = "disconnected";
+  }
+
+  /** @param {string} name @param {Record<string, unknown>} args */
+  async #doCallToolRaw(name, args) {
+    if (!this.client) throw new Error("MCP client not connected");
+    const result = await this.client.callTool({ name, arguments: args });
+    const blocks = /** @type {Array<{type:string,text?:string}>} */ (result.content ?? []);
+    const text = blocks
+      .filter((c) => c.type === "text")
+      .map((c) => c.text ?? "")
+      .join("\n");
+    return { isError: Boolean(result.isError), text };
+  }
+
+  async #doListTools() {
+    if (!this.client) throw new Error("MCP client not connected");
+    const result = await this.client.listTools();
+    const tools = /** @type {Array<{name:string,description?:string}>} */ (result.tools ?? []);
+    return tools.map((t) => ({ name: t.name, description: t.description ?? "" }));
   }
 
   /** @param {string} name @param {Record<string, unknown>} args */
