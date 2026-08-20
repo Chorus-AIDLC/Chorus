@@ -215,12 +215,12 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(supportedOf("kiro")).toBe(true);
     expect(supportedOf("pi")).toBe(false);
 
-    // daemon-setup did NOT re-prompt the backend: it derived claude-code (first
-    // wakeable selected agent) and passed it into resolveInstallAgent, suppressing
-    // the menu. A wakeable agent is present, so the step wrote config then skipped
-    // the (opt-in) boot service.
-    expect(daemonResolveAgentCalls).toBe(1);
-    expect(agentPassedToDaemon).toBe("claude-code");
+    // daemon-setup did NOT re-prompt the backend AND did NOT write the deprecated
+    // top-level cwds/agent: with an init selection, per-agent cwds + agentType are
+    // already in agents[] (credential-seed), so daemon-setup never calls
+    // resolveInstallAgent at all (which is what suppresses the menu).
+    expect(daemonResolveAgentCalls).toBe(0);
+    expect(agentPassedToDaemon).toBeUndefined();
     expect(text).toContain("--daemon-autostart");
   });
 

@@ -4,14 +4,16 @@
 // the REAL installService, with only the leaf IO faked (io.platform="linux" + a
 // fake spawnSync/writeFileSync, and hermetic credential resolve/validate + a
 // capturing writeConfig). Asserts the modules COMPOSE — a coherent systemd unit is
-// rendered, daemon.json receives creds + cwds + agent, and `enable --now` runs.
+// rendered and `enable --now` runs — AND that on the init SELECTION path daemon-setup
+// writes NO deprecated top-level fields to daemon.json (per-agent creds/cwds/agentType
+// live in agents[], written by credential-seed; the gate validates without persisting).
 import { describe, it, expect } from "vitest";
 import { runInit } from "../init.mjs";
 import { daemonSetupStep } from "../init/steps/daemon-setup.mjs";
 import { systemdUnitPath } from "../daemon-service.mjs";
 
 describe("chorus init → daemon-setup → installService (integration, linux)", () => {
-  it("installs a coherent systemd unit and persists creds+cwds+agent to daemon.json", async () => {
+  it("installs a coherent systemd unit and (selection path) writes NO deprecated top-level fields to daemon.json", async () => {
     const spawnCalls = [];
     const fileWrites = [];
     const serviceIo = {
@@ -62,15 +64,18 @@ describe("chorus init → daemon-setup → installService (integration, linux)",
     expect(spawnCalls).toContainEqual(["systemctl", "--user", "daemon-reload"]);
     expect(spawnCalls).toContainEqual(["systemctl", "--user", "enable", "--now", "chorus-daemon.service"]);
 
-    // 3. daemon.json received creds (from the credential gate) + cwds + agent.
+    // 3. Selection path: daemon-setup persisted NOTHING top-level. Per-agent creds +
+    //    cwds + agentType are written by credential-seed into agents[] (not run here);
+    //    step 1 skips resolveInstallCwds/Agent, and the gate validates with a no-op
+    //    writeConfig — so the deprecated flat url/apiKey/agentUuid/cwds/agent never
+    //    reappear outside the array. The credentials were still server-validated
+    //    (the install proceeded, proving the gate ran) — just not persisted flat.
     const merged = Object.assign({}, ...configWrites);
-    expect(merged.url).toBe("https://c.example");
-    expect(merged.apiKey).toBe("cho_k");
-    expect(merged.agentUuid).toBe("agent-1");
-    expect(Array.isArray(merged.cwds) && merged.cwds.length > 0).toBe(true);
-    expect(merged.agent).toBe("claude-code");
+    expect(configWrites).toEqual([]);
+    for (const k of ["url", "apiKey", "agentUuid", "agentName", "cwds", "agent"]) {
+      expect(merged).not.toHaveProperty(k);
+    }
     // connection-only: never a provider-secret field.
-    expect(merged).not.toHaveProperty("ANTHROPIC_API_KEY");
-    expect(JSON.stringify(configWrites)).not.toMatch(/AWS_|BEDROCK/);
+    expect(JSON.stringify(configWrites)).not.toMatch(/AWS_|BEDROCK|ANTHROPIC/);
   });
 });

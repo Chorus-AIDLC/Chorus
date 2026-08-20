@@ -42,10 +42,6 @@ const STEP_ID = "daemon-setup";
 const { INSTALLED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
 const out = (action, detail) => ({ stepId: STEP_ID, action, detail });
 
-/** A non-empty trimmed string, or undefined. */
-function nonEmpty(value) {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
 
 /**
  * The daemon-setup step body.
@@ -106,24 +102,19 @@ export async function setupDaemon(ctx) {
   const hasSelection = selection.length > 0;
   const wakeableTypes = selection.map(agentTypeForSelection).filter(isWakeableAgentType);
 
-  // 1. Full preflight (decision: full_preflight). Persist the served cwd set and
-  //    the default backend agent into daemon.json (credentials were seeded by the
-  //    credential-seed step at order 10). Connection-only: no provider secrets.
+  // 1. Preflight. With an init SELECTION, credential-seed (order 10) already wrote
+  //    each selected agent into daemon.json `agents[]` with its OWN cwds + agentType
+  //    — the authoritative per-agent config. The flat top-level `cwds`/`agent` are a
+  //    DEPRECATED single-agent leftover (persisting them here leaked a duplicate agent
+  //    config OUTSIDE the array), so we do NOT write them for a selection. Without a
+  //    selection (this step reused outside `chorus init`) we keep the original
+  //    single-agent preflight: persist top-level cwds + the resolved/prompted backend.
+  //    Connection-only either way: no provider secrets.
   try {
-    await resolveCwds(flags, preflightOpts);
     if (!hasSelection) {
-      // No init selection: original behavior — explicit --agent, else the menu.
+      await resolveCwds(flags, preflightOpts);
       await resolveAgent(flags, env, { ...preflightOpts, errLog: log });
-    } else if (wakeableTypes.length > 0) {
-      // Reuse the selection: derive the daemon's default backend from the first
-      // wakeable selected agent (an explicit --agent still wins) and pass it so
-      // resolveInstallAgent does NOT re-render the "which agent backend?" menu the
-      // operator already answered when selecting agents in init step 1.
-      const derivedAgent = nonEmpty(flags.agent) ?? wakeableTypes[0];
-      await resolveAgent({ ...flags, agent: derivedAgent }, env, { ...preflightOpts, errLog: log });
     }
-    // All-offline selection: no wakeable backend to persist or probe — skip
-    // resolveAgent entirely (the gate below turns this into a clean SKIP).
   } catch (err) {
     return out(FAILED, `daemon preflight failed: ${err?.message ?? String(err)}`);
   }
@@ -179,9 +170,14 @@ export async function setupDaemon(ctx) {
 
   // 5. Credential validate-or-abort gate — reached only when actually installing.
   //    Reuse the SAME guarantee as `daemon install`: resolve → server-validate the
-  //    key → persist url+key+identity; abort (install nothing) on failure. This does
-  //    NOT lean on credential-seed, whose SKIPPED path performs no server validation
-  //    and whose FAILED outcome does not stop runInit.
+  //    key → (for the legacy single-agent path) persist url+key+identity; abort
+  //    (install nothing) on failure. With an init SELECTION the per-agent creds are
+  //    already in agents[] (credential-seed) and resolveCredentials falls back to
+  //    agents[0], so we VALIDATE ONLY (no-op writeConfig) — persisting the flat
+  //    top-level url/apiKey/identity here would re-introduce the deprecated
+  //    outside-the-array agent config. This does NOT lean on credential-seed, whose
+  //    SKIPPED path performs no server validation and whose FAILED outcome does not
+  //    stop runInit.
   let cred;
   try {
     cred = await resolveCreds(flags, env, {
@@ -189,7 +185,7 @@ export async function setupDaemon(ctx) {
       skip,
       resolve: ctx.resolve,
       validate: ctx.validate,
-      writeConfig: ctx.writeConfig,
+      writeConfig: hasSelection ? () => {} : ctx.writeConfig,
       prompt: io.ask,
       log,
       errLog: log,

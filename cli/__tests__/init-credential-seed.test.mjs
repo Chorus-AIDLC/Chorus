@@ -44,6 +44,10 @@ function baseCtx(over = {}) {
     validateCredentials: async ({ apiKey }) => identityFor(apiKey),
     appendAgent: fakeAppend(),
     writeLogin: vi.fn(),
+    // Default: no served cwds (per-agent cwds is opt-in via this resolver). Tests that
+    // check per-agent cwds override it. Stubbed so the real resolveInstallCwds (which
+    // reads process.cwd / daemon.json) never runs in unit tests.
+    resolveInstallCwds: async () => ({ cwds: [] }),
     ...over,
   };
 }
@@ -70,6 +74,32 @@ describe("seedCredentials — single agent", () => {
     // The flat top-level agent config is DEPRECATED — credentials go ONLY into
     // agents[], never the flat url/apiKey (that duplicated the first agent).
     expect(writeLogin).not.toHaveBeenCalled();
+  });
+
+  it("stamps the resolved cwds set PER-AGENT into each agents[] entry (not the top level)", async () => {
+    const append = fakeAppend();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["claude", "kiro"],
+        io: { log: () => {}, isTTY: true },
+        flags: { url: "https://c" },
+        promptFn: async (q) => (q.includes("claude") ? "cho_c" : "cho_k"),
+        appendAgent: append,
+        resolveInstallCwds: async () => ({ cwds: ["/repo", "/work"] }),
+      }),
+    );
+    expect([].concat(res).map((o) => o.action)).toEqual([SEEDED, SEEDED]);
+    // Each appended agent carries its OWN cwds (the daemon reads cwds per agent).
+    expect(append.calls[0].cwds).toEqual(["/repo", "/work"]);
+    expect(append.calls[1].cwds).toEqual(["/repo", "/work"]);
+  });
+
+  it("omits cwds from the entry when none resolve (daemon then defaults to the process cwd)", async () => {
+    const append = fakeAppend();
+    await seedCredentials(
+      baseCtx({ flags: { url: "https://c", apiKey: "cho_k" }, appendAgent: append, resolveInstallCwds: async () => ({ cwds: [] }) }),
+    );
+    expect(append.calls[0]).not.toHaveProperty("cwds");
   });
 
   it("pre-fills the first agent from CHORUS_URL/CHORUS_API_KEY env when no flags", async () => {

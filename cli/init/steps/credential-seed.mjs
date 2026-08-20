@@ -34,6 +34,7 @@ import {
   prompt as defaultPrompt,
   appendAgentConfig as defaultAppendAgentConfig,
 } from "../../login.mjs";
+import { resolveInstallCwds as defaultResolveInstallCwds } from "../../daemon-install-config.mjs";
 import { validateAndFetchIdentity } from "../../chorus-client.mjs";
 import { agentTypeForSelection } from "../agent-type-map.mjs";
 
@@ -60,6 +61,7 @@ export async function seedCredentials(ctx) {
   const flags = ctx.flags ?? {};
   const validate = ctx.validateCredentials ?? validateAndFetchIdentity;
   const append = ctx.appendAgent ?? defaultAppendAgentConfig;
+  const resolveCwds = ctx.resolveInstallCwds ?? defaultResolveInstallCwds;
   const ask = ctx.promptFn ?? defaultPrompt;
 
   const selection = Array.isArray(ctx.selection) ? ctx.selection.filter((id) => nonEmpty(id)) : [];
@@ -72,6 +74,27 @@ export async function seedCredentials(ctx) {
   let url = nonEmpty(flags.url) ?? nonEmpty(env.CHORUS_URL);
   if (!url && isTTY && typeof ask === "function") {
     url = nonEmpty(await ask("Chorus URL: "));
+  }
+
+  // Resolve the served working-directory SET once and stamp it PER-AGENT into each
+  // agents[] entry below. The daemon reads cwds per agent (cfg.cwds is authoritative);
+  // the flat top-level `cwds` is a deprecated single-agent leftover — writeConfig is a
+  // no-op here so we take only the resolved value, never a top-level write (daemon-setup
+  // no longer writes it either). Failure degrades to no cwds (daemon defaults to cwd).
+  let cwds = [];
+  try {
+    const resolved = await resolveCwds(flags, {
+      isTTY,
+      skip: !isTTY || flags.yes === true,
+      writeConfig: () => {},
+      readJson: ctx.readJson,
+      loginPath: ctx.loginPath,
+      prompt: ask,
+      log: typeof io.log === "function" ? io.log : () => {},
+    });
+    cwds = Array.isArray(resolved?.cwds) ? resolved.cwds : [];
+  } catch {
+    cwds = [];
   }
 
   /** @type {import("../contracts.mjs").StepOutcome[]} */
@@ -111,8 +134,16 @@ export async function seedCredentials(ctx) {
     }
 
     // Append as its own agents[] entry, tagged with the mapped daemon agentType
-    // (offline when the backend isn't daemon-wakeable). Merge-safe; dedups on key.
-    const res = append({ url, apiKey, agentType, agentUuid: identity.uuid, agentName: identity.name });
+    // (offline when the backend isn't daemon-wakeable) and its OWN cwds. Merge-safe;
+    // dedups on key; only touches the newly-added entry (never rewrites other agents).
+    const res = append({
+      url,
+      apiKey,
+      agentType,
+      agentUuid: identity.uuid,
+      agentName: identity.name,
+      ...(cwds.length ? { cwds } : {}),
+    });
     if (!res.ok) {
       outcomes.push(
         out(SKIPPED, `${id}: ${identity.name} (${identity.uuid}) already configured (same key) — left unchanged`),

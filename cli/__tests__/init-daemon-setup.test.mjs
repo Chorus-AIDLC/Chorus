@@ -149,33 +149,23 @@ describe("idempotency (report_skip_repair)", () => {
   });
 });
 
-describe("reuse init selection (no second 'which agent backend?' prompt)", () => {
-  it("derives the daemon default backend from the first WAKEABLE selected agent and passes it to resolveInstallAgent", async () => {
-    // Selecting claude + opencode: claude→claude-code (wakeable) is the derived
-    // default; opencode→offline is ignored for the backend. Passing an explicit
-    // agent to resolveInstallAgent is what suppresses its interactive menu.
+describe("reuse init selection (no top-level cwds/agent writes, no backend re-prompt)", () => {
+  it("with a selection, does NOT write the deprecated top-level cwds/agent (per-agent config is credential-seed's job) and never re-prompts the backend", async () => {
+    // credential-seed (order 10) already wrote each selected agent into agents[] with
+    // its OWN cwds + agentType (the authoritative per-agent config). daemon-setup must
+    // NOT persist the flat top-level cwds/agent — doing so leaked a duplicate agent
+    // config outside the array. Not calling resolveInstallAgent also means no re-prompt.
     const c = ctx({ selection: ["claude", "opencode"], flags: { daemonAutostart: true } });
     const r = await setupDaemon(c);
-    expect(c.resolveInstallAgent).toHaveBeenCalledOnce();
-    expect(c.resolveInstallAgent.mock.calls[0][0]).toMatchObject({ agent: "claude-code" });
+    expect(c.resolveInstallCwds).not.toHaveBeenCalled();
+    expect(c.resolveInstallAgent).not.toHaveBeenCalled();
     expect(r.action).toBe(INSTALLED);
   });
 
-  it("codex-only selection derives 'codex' as the default backend", async () => {
-    const c = ctx({ selection: ["codex"], flags: { daemonAutostart: true } });
-    await setupDaemon(c);
-    expect(c.resolveInstallAgent.mock.calls[0][0]).toMatchObject({ agent: "codex" });
-  });
-
-  it("an explicit --agent still wins over the selection-derived default (and still suppresses the menu)", async () => {
-    const c = ctx({ selection: ["claude"], flags: { agent: "kiro", daemonAutostart: true } });
-    await setupDaemon(c);
-    expect(c.resolveInstallAgent.mock.calls[0][0]).toMatchObject({ agent: "kiro" });
-  });
-
-  it("with NO selection, keeps the original prompt-driven resolveInstallAgent call", async () => {
+  it("with NO selection, keeps the original single-agent preflight (top-level cwds + prompt-driven backend)", async () => {
     const c = ctx({ flags: { daemonAutostart: true } }); // no selection
     await setupDaemon(c);
+    expect(c.resolveInstallCwds).toHaveBeenCalledOnce();
     expect(c.resolveInstallAgent).toHaveBeenCalledOnce();
     // The operator's raw flags are forwarded unchanged (no injected agent).
     expect(c.resolveInstallAgent.mock.calls[0][0]).not.toHaveProperty("agent");
@@ -193,20 +183,21 @@ describe("capability-gate on wakeability (all-offline selection)", () => {
     const r = await setupDaemon(c);
     expect(r.action).toBe(SKIPPED);
     expect(r.detail).toMatch(/no daemon-wakeable agent selected/);
-    // Never prompts, never probes the backend, never validates creds, never installs.
+    // Never prompts, never probes the backend, never validates creds, never installs,
+    // and never writes the deprecated top-level cwds/agent.
     expect(ask).not.toHaveBeenCalled();
     expect(c.resolveInstallAgent).not.toHaveBeenCalled();
+    expect(c.resolveInstallCwds).not.toHaveBeenCalled();
     expect(c.resolveInstallCredentials).not.toHaveBeenCalled();
     expect(c.installService).not.toHaveBeenCalled();
-    // But the served-cwd preflight still runs (config persistence is not gated).
-    expect(c.resolveInstallCwds).toHaveBeenCalledOnce();
   });
 
   it("a mixed selection with at least one wakeable agent does NOT hit the all-offline skip", async () => {
     const c = ctx({ selection: ["opencode", "codex"], flags: { daemonAutostart: true } });
     const r = await setupDaemon(c);
     expect(r.action).toBe(INSTALLED);
-    expect(c.resolveInstallAgent.mock.calls[0][0]).toMatchObject({ agent: "codex" });
+    // Still no top-level cwds/agent write (per-agent config is authoritative).
+    expect(c.resolveInstallAgent).not.toHaveBeenCalled();
   });
 });
 
