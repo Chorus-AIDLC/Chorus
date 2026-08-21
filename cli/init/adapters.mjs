@@ -32,8 +32,14 @@ import {
   installClaude,
   installCodex,
   installOpencode,
+  installDsh,
+  installOpenclaw,
+  installKiro,
   readCodexInstallState,
   readOpencodeInstallState,
+  readDshInstallState,
+  readOpenclawInstallState,
+  readKiroInstallState,
   guided,
   GUIDED_MESSAGES,
 } from "./install-methods.mjs";
@@ -86,11 +92,11 @@ export function readClaudeInstallState({ home = homedir(), readJson = readJsonSa
 export const AGENT_DESCRIPTORS = [
   { id: "claude", displayName: "Claude Code", binaries: ["claude"], configDirs: ["~/.claude"], readState: readClaudeInstallState, install: installClaude },
   { id: "codex", displayName: "Codex CLI", binaries: ["codex"], configDirs: ["~/.codex"], readState: readCodexInstallState, install: installCodex },
-  { id: "kiro", displayName: "Kiro CLI", binaries: ["kiro"], configDirs: ["~/.kiro"], install: guided("kiro", GUIDED_MESSAGES.kiro) },
+  { id: "kiro", displayName: "Kiro CLI", binaries: ["kiro"], configDirs: ["~/.kiro"], readState: readKiroInstallState, install: installKiro },
   { id: "opencode", displayName: "opencode", binaries: ["opencode"], configDirs: ["~/.config/opencode", "~/.opencode"], readState: readOpencodeInstallState, install: installOpencode },
-  { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"], install: guided("openclaw", GUIDED_MESSAGES.openclaw) },
+  { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"], readState: readOpenclawInstallState, install: installOpenclaw },
   { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], install: guided("pi", GUIDED_MESSAGES.pi) },
-  { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"], install: guided("dsh", GUIDED_MESSAGES.dsh) },
+  { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"], readState: readDshInstallState, install: installDsh },
 ];
 
 /**
@@ -107,9 +113,13 @@ export function buildAdapter(d) {
       const base = typeof d.readState === "function"
         ? d.readState(deps)
         : { marketplaceRegistered: false, pluginInstalled: false };
-      // `supported` = an automated install path exists for this agent (wired by
-      // the plugin-install task via descriptor.install).
-      return { supported: typeof d.install === "function", ...base };
+      // `supported` = a REAL automated install path exists for this agent. A
+      // `guided()` fallback also returns a function (so `typeof d.install ===
+      // "function"` alone would report every fallback agent as supported — the
+      // pre-existing latent bug); guided installers are tagged `.guided === true`,
+      // so exclude them here. Real installers (claude/codex/opencode + dsh/openclaw/
+      // kiro) → true; guided (pi) → false.
+      return { supported: typeof d.install === "function" && d.install.guided !== true, ...base };
     },
     installPlugin: (ctx = {}) =>
       typeof d.install === "function"

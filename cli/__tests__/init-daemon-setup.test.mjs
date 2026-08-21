@@ -22,6 +22,9 @@ function ctx(over = {}) {
     resolveInstallCwds: vi.fn(async () => ({ cwds: ["/a"] })),
     resolveInstallAgent: vi.fn(async () => ({ ok: true, agent: "claude-code", cliFound: true })),
     processCwd: "/proj",
+    // The daemon-setup auto-start gate reads daemon.json agents[] (written by
+    // credential-seed) to decide if anything WILL be woken. Default: one woken agent.
+    readJson: () => ({ agents: [{ agentType: "claude-code", daemonWake: true }] }),
     ...over,
   };
 }
@@ -146,6 +149,74 @@ describe("idempotency (report_skip_repair)", () => {
     const r = await setupDaemon(c);
     expect(r.action).toBe(SKIPPED);
     expect(c.installService).not.toHaveBeenCalled();
+  });
+});
+
+describe("reuse init selection (no top-level cwds/agent writes, no backend re-prompt)", () => {
+  it("with a selection, does NOT write the deprecated top-level cwds/agent (per-agent config is credential-seed's job) and never re-prompts the backend", async () => {
+    // credential-seed (order 10) already wrote each selected agent into agents[] with
+    // its OWN cwds + agentType (the authoritative per-agent config). daemon-setup must
+    // NOT persist the flat top-level cwds/agent — doing so leaked a duplicate agent
+    // config outside the array. Not calling resolveInstallAgent also means no re-prompt.
+    const c = ctx({ selection: ["claude", "opencode"], flags: { daemonAutostart: true } });
+    const r = await setupDaemon(c);
+    expect(c.resolveInstallCwds).not.toHaveBeenCalled();
+    expect(c.resolveInstallAgent).not.toHaveBeenCalled();
+    expect(r.action).toBe(INSTALLED);
+  });
+
+  it("with NO selection, keeps the original single-agent preflight (top-level cwds + prompt-driven backend)", async () => {
+    const c = ctx({ flags: { daemonAutostart: true } }); // no selection
+    await setupDaemon(c);
+    expect(c.resolveInstallCwds).toHaveBeenCalledOnce();
+    expect(c.resolveInstallAgent).toHaveBeenCalledOnce();
+    // The operator's raw flags are forwarded unchanged (no injected agent).
+    expect(c.resolveInstallAgent.mock.calls[0][0]).not.toHaveProperty("agent");
+  });
+});
+
+describe("capability-gate on will-be-woken (read from daemon.json agents[])", () => {
+  it("no agent will be woken (all offline OR daemonWake:false) → SKIPS prompt + install, never validating creds", async () => {
+    const ask = vi.fn(async () => "y");
+    const c = ctx({
+      io: { log: vi.fn(), isTTY: true, ask },
+      selection: ["opencode", "kiro"],
+      flags: { daemonAutostart: true },
+      // credential-seed wrote: opencode → offline; kiro → daemonWake:false (opted out).
+      readJson: () => ({ agents: [{ agentType: "offline" }, { agentType: "kiro", daemonWake: false }] }),
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(SKIPPED);
+    expect(r.detail).toMatch(/no agent enabled for daemon waking/);
+    // Never prompts, never probes the backend, never validates creds, never installs.
+    expect(ask).not.toHaveBeenCalled();
+    expect(c.resolveInstallAgent).not.toHaveBeenCalled();
+    expect(c.resolveInstallCwds).not.toHaveBeenCalled();
+    expect(c.resolveInstallCredentials).not.toHaveBeenCalled();
+    expect(c.installService).not.toHaveBeenCalled();
+  });
+
+  it("at least one agent WILL be woken (wakeable + daemonWake not false) → proceeds to install", async () => {
+    const c = ctx({
+      selection: ["opencode", "kiro"],
+      flags: { daemonAutostart: true },
+      // kiro opted in (daemonWake:true) → the daemon will wake it → auto-start offered.
+      readJson: () => ({ agents: [{ agentType: "offline" }, { agentType: "kiro", daemonWake: true }] }),
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(INSTALLED);
+    // Still no top-level cwds/agent write (per-agent config is authoritative).
+    expect(c.resolveInstallAgent).not.toHaveBeenCalled();
+  });
+
+  it("an agent with a wakeable backend and ABSENT daemonWake still counts as woken (back-compat)", async () => {
+    const c = ctx({
+      selection: ["kiro"],
+      flags: { daemonAutostart: true },
+      readJson: () => ({ agents: [{ agentType: "kiro" }] }), // no daemonWake field
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(INSTALLED);
   });
 });
 

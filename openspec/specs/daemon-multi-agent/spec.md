@@ -110,3 +110,45 @@ The CLI SHALL let a user add additional agents without hand-editing being the on
 - **WHEN** the user runs `chorus login --add` with an invalid or revoked key
 - **THEN** the command reports the authentication failure and does not modify `daemon.json`
 
+### Requirement: Offline agent type is a valid, never-woken agents[] entry
+
+An agent's `agentType` MAY be `"offline"`, denoting an agent that is configured in `daemon.json` (with its own validated Chorus key) purely so the local `chorus mcp` proxy can act under that agent's identity, but that the daemon SHALL NOT wake. For an `offline` agent the daemon SHALL NOT construct a spawner, SHALL NOT dispatch wakes, and SHALL NOT register it as a wakeable connection; it remains a first-class credential entry for CLI/MCP proxying. The set of accepted `agentType` values SHALL include `"offline"` alongside the daemon-wakeable backends, and validation SHALL accept it. `"offline"` is the fail-closed classification for any selected agent whose coding-agent backend is not daemon-wakeable (opencode, openclaw, pi, and dsh while its backend is de-advertised).
+
+#### Scenario: Offline agent is proxy-only, never woken
+- **WHEN** a configured agent has `agentType: "offline"`
+- **THEN** the daemon constructs no spawner and dispatches no wake for it, and `chorus mcp` can still resolve its key from `daemon.json` to proxy MCP calls under that agent's identity
+
+#### Scenario: Mixed wakeable and offline agents coexist
+- **WHEN** one configured agent is `agentType: claude-code` and another is `agentType: offline`
+- **THEN** the daemon wakes the claude-code agent normally and never attempts to wake the offline agent, and both keep independent credential entries
+
+#### Scenario: offline is an accepted agentType value
+- **WHEN** `agentType: "offline"` is written or validated
+- **THEN** it is accepted as a known value (not rejected as unknown), distinct from the wakeable backends
+
+### Requirement: Per-agent daemon-wake opt-in via a `daemonWake` field
+
+The daemon SHALL honor a per-agent boolean `daemonWake` on each `agents[]` entry that records whether it wakes that agent. `daemonWake` is orthogonal to `agentType`: `agentType` is the backend identity (a wakeable backend, or `offline` for a backend that cannot be daemon-woken), while `daemonWake` is the operator's opt-in for a *wakeable* backend.
+
+The daemon SHALL wake an agent only when `isWakeableAgentType(agentType)` is true AND `daemonWake` is not `false`. Concretely: an `offline` agent is never woken (regardless of `daemonWake`); a wakeable-backend agent with `daemonWake: false` is NOT woken and receives the same runtime treatment as an offline agent — the daemon builds no spawner, dispatches no wake, and registers no wakeable connection for it, while its key remains in `daemon.json` for the `chorus mcp` proxy; a wakeable-backend agent with `daemonWake: true` or with the field absent IS woken. An absent field MUST be treated as woken so that agent entries written before this field existed continue to be woken.
+
+#### Scenario: Wakeable agent opted out is proxy-only
+- **WHEN** an agents[] entry has a wakeable `agentType` (e.g. `kiro`) and `daemonWake: false`
+- **THEN** the daemon builds no spawner, dispatches no wake, and registers no wakeable connection for it, and its key remains available to `chorus mcp`
+
+#### Scenario: Wakeable agent opted in is woken
+- **WHEN** an agents[] entry has a wakeable `agentType` and `daemonWake: true`
+- **THEN** the daemon builds its spawner and wakes it normally
+
+#### Scenario: Absent field is treated as woken (backward compatibility)
+- **WHEN** an agents[] entry has a wakeable `agentType` and no `daemonWake` field
+- **THEN** the daemon wakes it (absent is not "opted out"), so entries written before the field existed keep working
+
+#### Scenario: Offline dominates the field
+- **WHEN** an agents[] entry has `agentType: "offline"`
+- **THEN** it is never woken irrespective of any `daemonWake` value
+
+#### Scenario: All selected agents are non-woken
+- **WHEN** every configured agent is either `offline` or a wakeable backend with `daemonWake: false`
+- **THEN** the daemon has nothing to wake and runs as an idle no-op process, keeping every agent's key available to `chorus mcp`
+

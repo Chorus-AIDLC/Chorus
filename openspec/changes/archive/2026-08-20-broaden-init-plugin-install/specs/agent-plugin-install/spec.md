@@ -1,19 +1,4 @@
-# agent-plugin-install Specification
-
-## Purpose
-TBD - created by archiving change chorus-init-foundation. Update Purpose after archive.
-## Requirements
-### Requirement: Pluggable per-agent adapter contract
-
-Chorus SHALL define a per-agent adapter contract and a registry that is the single source of the supported-agent set. Each adapter MUST expose a stable `id`, a display name, a `detect()` returning binary/config-dir signals, a `readInstallState()` for idempotency, and an `installPlugin()` operation. Adding support for a new agent MUST require only adding one adapter to the registry, with no change to the command core.
-
-#### Scenario: Registry drives the supported set
-- **WHEN** the command enumerates configurable agents
-- **THEN** the list comes from the adapter registry, and each entry reports detection and current install state via its adapter
-
-#### Scenario: New agent added via one adapter
-- **WHEN** a new adapter is registered
-- **THEN** it appears in detection, selection, and the plugin-install step with no edit to the orchestration core
+## MODIFIED Requirements
 
 ### Requirement: Plugin-surface install via each agent's native remote marketplace
 
@@ -33,17 +18,7 @@ Every command hardcoded by an installer MUST be verified against that agent's re
 - **WHEN** any agent's plugin surface is installed
 - **THEN** no Chorus API key is written as a literal into that agent's configuration; where an agent's plugin surface requires an MCP-server entry (kiro), the credential is stored as an environment reference (`${env:...}`), not a resolved value
 
-### Requirement: Idempotent, backed-up plugin installation
-
-The plugin-install step SHALL be idempotent per agent: it reads current install state, skips agents already installed and enabled, applies only the missing or repair delta for the rest, and backs up any config file before overwriting it. A failure for one agent MUST NOT abort configuration of the other selected agents; the step MUST record a per-agent outcome (installed / repaired / skipped / failed) for the final summary.
-
-#### Scenario: Already-installed agent is skipped
-- **WHEN** an agent's Chorus plugin is already installed and enabled
-- **THEN** the step reports `skipped` for that agent and performs no write
-
-#### Scenario: One agent's failure is isolated
-- **WHEN** installing the plugin for one selected agent fails (e.g. its marketplace is unreachable)
-- **THEN** the step records that agent as `failed` with a reason and continues installing the remaining selected agents
+## ADDED Requirements
 
 ### Requirement: dsh plugin installed via its npm-package plugin CLI
 
@@ -108,4 +83,3 @@ An agent with no verified automated install path MUST report `unsupported` with 
 #### Scenario: no stale "not a plugin surface" claim
 - **WHEN** an agent that does have a real install mechanism is described in guided copy anywhere in the installer
 - **THEN** the copy MUST NOT state the agent has no plugin surface or that `chorus init` cannot install it
-

@@ -24,7 +24,9 @@
 // unit-tests with fakes; production uses the real daemon-service / install-config
 // modules, and an integration test can drive REAL installService against a fake io.
 
+import { readFileSync } from "node:fs";
 import { STEP_SCOPES, OUTCOME_ACTIONS } from "../contracts.mjs";
+import { loginFilePath } from "../../credentials.mjs";
 import {
   autostartCapability as defaultAutostartCapability,
   detectSupervisor as defaultDetectSupervisor,
@@ -36,10 +38,12 @@ import {
   resolveInstallCwds as defaultResolveInstallCwds,
   resolveInstallAgent as defaultResolveInstallAgent,
 } from "../../daemon-install-config.mjs";
+import { isWakeableAgentType } from "../agent-type-map.mjs";
 
 const STEP_ID = "daemon-setup";
 const { INSTALLED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
 const out = (action, detail) => ({ stepId: STEP_ID, action, detail });
+
 
 /**
  * The daemon-setup step body.
@@ -87,14 +91,64 @@ export async function setupDaemon(ctx) {
     log,
   };
 
-  // 1. Full preflight (decision: full_preflight). Persist the served cwd set and
-  //    the default backend agent into daemon.json (credentials were seeded by the
-  //    credential-seed step at order 10). Connection-only: no provider secrets.
+  // Reuse the init step-1 selection (idea broaden-init-plugin-install): map each
+  // selected adapter id to its daemon agentType and record whether ANY is a
+  // daemon-wakeable backend. Each selected agent's own agents[] entry (with its
+  // agentType) was already written by the credential-seed step; here we only need
+  // the daemon-level default backend + the wakeability gate below. With NO
+  // selection (e.g. this step reused outside `chorus init`), the original
+  // prompt-driven behavior is preserved.
+  const selection = Array.isArray(ctx.selection)
+    ? ctx.selection.filter((id) => typeof id === "string" && id.trim())
+    : [];
+  const hasSelection = selection.length > 0;
+
+  // Will the daemon actually wake anything? credential-seed (order 10) just wrote each
+  // selected agent's `daemonWake` into daemon.json `agents[]` (a TTY opt-in lives there,
+  // NOT in flags), so read that file rather than re-derive from the selection/flags. An
+  // agent will be woken iff its backend is wakeable AND daemonWake is not false. offline
+  // OR daemonWake:false ⇒ not woken.
+  const readJson =
+    ctx.readJson ??
+    ((p) => {
+      try {
+        return JSON.parse(readFileSync(p, "utf8"));
+      } catch {
+        return null;
+      }
+    });
+  const cfgFile = readJson(ctx.loginPath ?? loginFilePath());
+  const configuredAgents =
+    cfgFile && Array.isArray(cfgFile.agents) ? cfgFile.agents.filter((a) => a && typeof a === "object") : [];
+  const willWake = configuredAgents.some(
+    (a) => isWakeableAgentType(a.agentType) && a.daemonWake !== false,
+  );
+
+  // 1. Preflight. With an init SELECTION, credential-seed (order 10) already wrote
+  //    each selected agent into daemon.json `agents[]` with its OWN cwds + agentType
+  //    — the authoritative per-agent config. The flat top-level `cwds`/`agent` are a
+  //    DEPRECATED single-agent leftover (persisting them here leaked a duplicate agent
+  //    config OUTSIDE the array), so we do NOT write them for a selection. Without a
+  //    selection (this step reused outside `chorus init`) we keep the original
+  //    single-agent preflight: persist top-level cwds + the resolved/prompted backend.
+  //    Connection-only either way: no provider secrets.
   try {
-    await resolveCwds(flags, preflightOpts);
-    await resolveAgent(flags, env, { ...preflightOpts, errLog: log });
+    if (!hasSelection) {
+      await resolveCwds(flags, preflightOpts);
+      await resolveAgent(flags, env, { ...preflightOpts, errLog: log });
+    }
   } catch (err) {
     return out(FAILED, `daemon preflight failed: ${err?.message ?? String(err)}`);
+  }
+
+  // 1b. Capability gate: if NO configured agent will be woken (every one is offline, or
+  //     a wakeable backend the operator left opted-out with daemonWake:false), the daemon
+  //     has nothing to wake. Their agents[] entries are already persisted (credential-seed)
+  //     for the `chorus mcp` proxy; skip the auto-start prompt AND the service install.
+  if (hasSelection && !willWake) {
+    log("[chorus init] no agent is enabled for daemon waking — the daemon would wake no local backend.");
+    log("[chorus init] agents' keys are configured in ~/.chorus/daemon.json for `chorus mcp`.");
+    return out(SKIPPED, "no agent enabled for daemon waking — agents[] persisted; boot service not installed");
   }
 
   const manual = () => {
@@ -138,9 +192,14 @@ export async function setupDaemon(ctx) {
 
   // 5. Credential validate-or-abort gate — reached only when actually installing.
   //    Reuse the SAME guarantee as `daemon install`: resolve → server-validate the
-  //    key → persist url+key+identity; abort (install nothing) on failure. This does
-  //    NOT lean on credential-seed, whose SKIPPED path performs no server validation
-  //    and whose FAILED outcome does not stop runInit.
+  //    key → (for the legacy single-agent path) persist url+key+identity; abort
+  //    (install nothing) on failure. With an init SELECTION the per-agent creds are
+  //    already in agents[] (credential-seed) and resolveCredentials falls back to
+  //    agents[0], so we VALIDATE ONLY (no-op writeConfig) — persisting the flat
+  //    top-level url/apiKey/identity here would re-introduce the deprecated
+  //    outside-the-array agent config. This does NOT lean on credential-seed, whose
+  //    SKIPPED path performs no server validation and whose FAILED outcome does not
+  //    stop runInit.
   let cred;
   try {
     cred = await resolveCreds(flags, env, {
@@ -148,7 +207,7 @@ export async function setupDaemon(ctx) {
       skip,
       resolve: ctx.resolve,
       validate: ctx.validate,
-      writeConfig: ctx.writeConfig,
+      writeConfig: hasSelection ? () => {} : ctx.writeConfig,
       prompt: io.ask,
       log,
       errLog: log,

@@ -78,6 +78,11 @@ describe("promptAgentBackend", () => {
     expect(r).toBe("dsh");
   });
 
+  it("accepts the non-wakeable 'offline' classification typed by name (it is a KNOWN agentType)", async () => {
+    const r = await promptAgentBackend(deps({ ask: vi.fn(async () => "offline") }));
+    expect(r).toBe("offline");
+  });
+
   it("an out-of-range number returns undefined (no explicit choice)", async () => {
     const r = await promptAgentBackend(deps({ ask: vi.fn(async () => "99") }));
     expect(r).toBeUndefined();

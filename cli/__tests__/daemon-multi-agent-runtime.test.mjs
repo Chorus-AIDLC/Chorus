@@ -155,6 +155,135 @@ describe("buildMultiAgentDaemon — fan-out composition", () => {
   });
 });
 
+describe("buildMultiAgentDaemon — offline agents are never wakeable connections", () => {
+  // daemon-multi-agent spec: an offline agent is proxy-only — the daemon SHALL NOT
+  // construct a spawner, dispatch wakes, OR register it as a wakeable connection.
+  // The fan-out must therefore build NO runtime for it (no SSE stream → no
+  // connection self-report). Closes the T4-review registration gap.
+  it("builds NO runtime/connection for an offline agent (mixed with a wakeable one)", () => {
+    const built = [];
+    const build = (creds, deps) => {
+      built.push({ apiKey: creds.apiKey, agentType: deps.agentType });
+      return fakeDaemon(creds.apiKey, { connections: deps.cwds.length });
+    };
+    const d = buildMultiAgentDaemon(
+      [
+        CFG({ apiKey: "wake", agentType: "claude-code", cwds: ["/a"], label: "agents[0]" }),
+        CFG({ apiKey: "off", agentType: "offline", cwds: ["/b", "/c"], label: "agents[1]" }),
+      ],
+      { build, logger: silent },
+    );
+    // Only the wakeable agent got a runtime; the offline agent was skipped entirely
+    // (build never invoked for it — so no ChorusClient, spawner, or connection).
+    expect(built.map((b) => b.agentType)).toEqual(["claude-code"]);
+    expect(d.agents).toHaveLength(1);
+    expect(d.agents[0].cfg.agentType).toBe("claude-code");
+    // Connections come only from the wakeable agent's 1 cwd — the offline agent's
+    // two cwds registered nothing.
+    expect(d.connections).toHaveLength(1);
+  });
+
+  it("with the REAL buildDaemon, an offline agent opens no SSE listener and self-reports nothing", async () => {
+    const listenerOpts = [];
+    const connect = vi.fn(async () => {});
+    const makeSseListener = (opts) => {
+      listenerOpts.push(opts);
+      return { connect, disconnect: () => {} };
+    };
+    const d = buildMultiAgentDaemon(
+      [
+        CFG({ apiKey: "wake", agentType: "claude-code", cwds: ["/a"], label: "agents[0]" }),
+        CFG({ apiKey: "off", agentType: "offline", cwds: ["/b"], label: "agents[1]" }),
+      ],
+      {
+        logger: silent,
+        makeSseListener,
+        spawner: { wake: async () => ({}) },
+        mcpClient: { disconnect: async () => {} },
+        lineage: {},
+        hooks: { onConnect: async () => {} },
+      },
+    );
+    await d.start();
+    // Exactly one connection registered — the wakeable agent's single cwd. The
+    // offline agent created NO listener (no registration attempt at all).
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(d.connections).toHaveLength(1);
+    // What DID register self-reported the wakeable clientType — never "offline"
+    // and never a spoofed claude_code for the offline agent.
+    expect(listenerOpts).toHaveLength(1);
+    expect(listenerOpts[0].clientType).toBe("claude_code");
+    expect(listenerOpts.some((o) => o.clientType === "offline")).toBe(false);
+  });
+
+  it("all-offline config returns an idle no-op daemon (no connections, no throw)", async () => {
+    const build = vi.fn();
+    const warn = vi.fn();
+    const d = buildMultiAgentDaemon(
+      [CFG({ apiKey: "o1", agentType: "offline" }), CFG({ apiKey: "o2", agentType: "offline" })],
+      { build, logger: { ...silent, warn } },
+    );
+    expect(build).not.toHaveBeenCalled(); // no wakeable runtime built
+    expect(d.agents).toEqual([]);
+    expect(d.connections).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("offline"));
+    // start/stop are no-ops and never throw; allConflict never settles (idle daemon).
+    await expect(d.start()).resolves.toBeUndefined();
+    await expect(d.stop()).resolves.toBeUndefined();
+    const raced = await Promise.race([
+      d.allConflict.then(() => "settled"),
+      new Promise((r) => setTimeout(() => r("pending"), 20)),
+    ]);
+    expect(raced).toBe("pending");
+  });
+});
+
+describe("buildMultiAgentDaemon — daemonWake opt-in gates waking (orthogonal to agentType)", () => {
+  // daemon-multi-agent spec: wake iff isWakeableAgentType(agentType) && daemonWake !== false.
+  it("skips a wakeable backend with daemonWake:false the SAME as offline (no runtime/connection)", () => {
+    const build = vi.fn((creds, deps) => fakeDaemon(creds.apiKey, { connections: deps.cwds.length }));
+    const d = buildMultiAgentDaemon(
+      [
+        CFG({ apiKey: "on", agentType: "kiro", cwds: ["/a"], daemonWake: true, label: "agents[0]" }),
+        CFG({ apiKey: "off", agentType: "kiro", cwds: ["/b", "/c"], daemonWake: false, label: "agents[1]" }),
+      ],
+      { build, logger: silent },
+    );
+    // Only the opted-in agent got a runtime; the daemonWake:false agent was skipped.
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(build.mock.calls[0][0]).toEqual({ url: "https://c", apiKey: "on" });
+    expect(d.agents).toHaveLength(1);
+    expect(d.connections).toHaveLength(1); // only the opted-in agent's 1 cwd
+  });
+
+  it("wakes a wakeable backend when daemonWake is ABSENT (back-compat with pre-field entries)", () => {
+    const build = vi.fn((creds, deps) => fakeDaemon(creds.apiKey, { connections: deps.cwds.length }));
+    const d = buildMultiAgentDaemon(
+      [CFG({ apiKey: "k", agentType: "kiro", cwds: ["/a"] })], // no daemonWake field
+      { build, logger: silent },
+    );
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(d.agents).toHaveLength(1);
+  });
+
+  it("all-not-woken (offline + wakeable-with-daemonWake:false) → idle no-op daemon", async () => {
+    const build = vi.fn();
+    const warn = vi.fn();
+    const d = buildMultiAgentDaemon(
+      [
+        CFG({ apiKey: "o", agentType: "offline" }),
+        CFG({ apiKey: "d", agentType: "kiro", daemonWake: false }),
+      ],
+      { build, logger: { ...silent, warn } },
+    );
+    expect(build).not.toHaveBeenCalled();
+    expect(d.agents).toEqual([]);
+    expect(d.connections).toEqual([]);
+    await expect(d.start()).resolves.toBeUndefined();
+    await expect(d.stop()).resolves.toBeUndefined();
+  });
+});
+
 describe("runDaemon — multi-agent branch", () => {
   const baseDeps = (over = {}) => ({
     env: {},

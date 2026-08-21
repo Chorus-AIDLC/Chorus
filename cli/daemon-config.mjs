@@ -306,7 +306,9 @@ function positiveInt(value) {
  * @typedef {Object} AgentConfig  One fully-resolved agent runtime config.
  * @property {string} url                       Chorus server URL for this agent.
  * @property {string} apiKey                    This agent's `cho_` API key.
- * @property {string} agentType                 Backend: claude-code | codex | kiro | dsh.
+ * @property {string} agentType                 Backend: claude-code | codex | kiro | dsh | offline.
+ * @property {boolean} [daemonWake]             Wake opt-in for a wakeable backend; only
+ *                                              `false` disables (absent/true ⇒ woken).
  * @property {Array<string|undefined>} cwds     Served paths (`undefined` ⇒ process cwd).
  * @property {"yolo"|"chorus"} permissionMode   Woken-agent permission posture.
  * @property {number} maxConcurrency            This agent's wake-queue cap.
@@ -433,6 +435,10 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
     const browseRoots =
       entry.browseRoots !== undefined ? cleanCwdList(entry.browseRoots, home) : defaultBrowseRoots;
 
-    return { url, apiKey, agentType, cwds, permissionMode, maxConcurrency, sigintTimeoutMs, browseRoots, label };
+    // daemonWake: per-agent opt-in for daemon waking (pass-through boolean). Only
+    // `=== false` disables waking; absent (undefined) or true ⇒ woken, so agent
+    // entries written before this field existed keep being woken. Orthogonal to
+    // agentType (offline is never woken regardless).
+    return { url, apiKey, agentType, cwds, permissionMode, maxConcurrency, sigintTimeoutMs, browseRoots, daemonWake: entry.daemonWake, label };
   });
 }

@@ -163,6 +163,21 @@ describe("resolveAgentConfigs — per-agent overrides", () => {
     expect(out[0].cwds).toEqual([undefined]);
   });
 
+  it("carries daemonWake per agent as a pass-through (true / false / absent→undefined)", () => {
+    const file = {
+      url: "https://t",
+      agents: [
+        { apiKey: "cho_on", agentType: "kiro", daemonWake: true },
+        { apiKey: "cho_off", agentType: "kiro", daemonWake: false },
+        { apiKey: "cho_abs", agentType: "kiro" }, // no daemonWake ⇒ undefined (woken)
+      ],
+    };
+    const out = resolveAgentConfigs({}, mkDeps(file));
+    expect(out[0].daemonWake).toBe(true);
+    expect(out[1].daemonWake).toBe(false);
+    expect(out[2].daemonWake).toBeUndefined();
+  });
+
   it("mixed backends resolve independently in one daemon", () => {
     const file = {
       url: "https://t",

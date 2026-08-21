@@ -47,6 +47,20 @@ describe("parseInitFlags", () => {
     });
   });
 
+  it("parses --dsh-profile (space + = forms)", () => {
+    expect(parseInitFlags(["--dsh-profile", "work"]).dshProfile).toBe("work");
+    expect(parseInitFlags(["--dsh-profile=personal"]).dshProfile).toBe("personal");
+    expect(parseInitFlags([]).dshProfile).toBeUndefined();
+  });
+
+  it("parses --daemon-wake (csv, repeatable, normalized) and --daemon-wake-all", () => {
+    expect(parseInitFlags(["--daemon-wake", "Kiro,Codex"]).daemonWake).toEqual(["kiro", "codex"]);
+    expect(parseInitFlags(["--daemon-wake=claude", "--daemon-wake", "kiro"]).daemonWake).toEqual(["claude", "kiro"]);
+    expect(parseInitFlags(["--daemon-wake-all"]).daemonWakeAll).toBe(true);
+    expect(parseInitFlags([]).daemonWake).toBeUndefined();
+    expect(parseInitFlags([]).daemonWakeAll).toBeUndefined();
+  });
+
   it("parses --help / -h", () => {
     expect(parseInitFlags(["--help"]).help).toBe(true);
     expect(parseInitFlags(["-h"]).help).toBe(true);

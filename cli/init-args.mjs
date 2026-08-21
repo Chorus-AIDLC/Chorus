@@ -21,12 +21,15 @@
  *
  * @param {string[]} argv
  * @returns {{ agents?: string[], all?: boolean, yes?: boolean, url?: string,
- *   apiKey?: string, daemonAutostart?: boolean, help?: boolean }}
+ *   apiKey?: string, dshProfile?: string, daemonAutostart?: boolean,
+ *   daemonWake?: string[], daemonWakeAll?: boolean, help?: boolean }}
  */
 export function parseInitFlags(argv) {
   const out = {};
   /** @type {string[]} */
   const agentTokens = [];
+  /** @type {string[]} */
+  const daemonWakeTokens = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--agents") agentTokens.push(argv[i + 1] ?? "");
@@ -34,17 +37,24 @@ export function parseInitFlags(argv) {
     else if (a === "--all") out.all = true;
     else if (a === "--yes" || a === "-y") out.yes = true;
     else if (a === "--daemon-autostart") out.daemonAutostart = true;
+    else if (a === "--daemon-wake-all") out.daemonWakeAll = true;
+    else if (a === "--daemon-wake") daemonWakeTokens.push(argv[i + 1] ?? "");
+    else if (a.startsWith("--daemon-wake=")) daemonWakeTokens.push(a.slice("--daemon-wake=".length));
     else if (a === "--url") out.url = argv[i + 1];
     else if (a.startsWith("--url=")) out.url = a.slice("--url=".length);
     else if (a === "--api-key") out.apiKey = argv[i + 1];
     else if (a.startsWith("--api-key=")) out.apiKey = a.slice("--api-key=".length);
+    else if (a === "--dsh-profile") out.dshProfile = argv[i + 1];
+    else if (a.startsWith("--dsh-profile=")) out.dshProfile = a.slice("--dsh-profile=".length);
     else if (a === "--help" || a === "-h") out.help = true;
   }
-  if (agentTokens.length) {
+  // Normalize a comma-separated, repeatable token list into a de-duped lowercased id
+  // array (shared shape for --agents and --daemon-wake).
+  const normalizeIds = (tokens) => {
     const seen = new Set();
     /** @type {string[]} */
     const ids = [];
-    for (const tok of agentTokens) {
+    for (const tok of tokens) {
       for (const raw of String(tok).split(",")) {
         const id = raw.trim().toLowerCase();
         if (id && !seen.has(id)) {
@@ -53,11 +63,15 @@ export function parseInitFlags(argv) {
         }
       }
     }
+    return ids;
+  };
+  if (agentTokens.length) {
     // Even a `--agents ""`/`--agents ,` that yields nothing still marks intent to
     // pass agents explicitly; expose the (possibly empty) array so the selector
     // can tell "user tried to specify agents" from "user gave no --agents at all".
-    out.agents = ids;
+    out.agents = normalizeIds(agentTokens);
   }
+  if (daemonWakeTokens.length) out.daemonWake = normalizeIds(daemonWakeTokens);
   return out;
 }
 
@@ -86,6 +100,14 @@ OPTIONS
   --all                    Configure every supported agent.
   --url <url>              Chorus server URL     (env: CHORUS_URL) — seeded once.
   --api-key <cho_...>      Agent API key         (env: CHORUS_API_KEY) — seeded once.
+  --dsh-profile <name>     dsh profile to install the Chorus bundle into
+                           (env: CHORUS_DSH_PROFILE). Required for dsh in a
+                           non-interactive run; prompted on a TTY.
+  --daemon-wake <a,b>      Enable daemon auto-waking for these selected agents
+                           (repeatable). Wakeable agents (claude/codex/kiro) default
+                           to NOT woken; this opts specific ones in. On a TTY you are
+                           prompted per agent instead.
+  --daemon-wake-all        Enable daemon auto-waking for every selected wakeable agent.
   --daemon-autostart       Install & enable the daemon boot service (Linux systemd /
                            macOS launchd) in a non-interactive run. Ignored where
                            auto-start is unsupported (e.g. Windows). In an

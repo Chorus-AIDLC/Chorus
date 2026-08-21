@@ -39,29 +39,74 @@ hdr()  { printf "\n${BOLD}%s${RESET}\n" "$*"; }
 
 is_tty() { [ -t 0 ] && [ -t 1 ]; }
 
-# ---------- config: the artifact manifest (single source of truth) ----------
-# These lists drive BOTH the local copy and the remote download, so the two
-# source modes can never diverge.
-SKILLS="chorus-idea chorus-proposal chorus-develop chorus-yolo chorus-review chorus-quick-dev chorus-brainstorm chorus-openspec-aware chorus-docs"
-REVIEWER_AGENTS="chorus-code-reviewer chorus-proposal-reviewer chorus-task-reviewer"
-HOOK_SCRIPTS="on-agent-spawn.sh on-stop.sh on-post-submit-proposal.sh on-post-submit-for-verify.sh on-post-verify-task.sh chorus-api.sh verify-document-roundtrip.sh test-syntax.sh"
+# ---------- config: the artifact manifest (single shared data file) ----------
+# The variable asset lists (skills / reviewer agents / hook scripts) are NOT
+# inlined here — they live in kiro-plugin/manifest.txt, the ONE data file shared
+# with the JS installer (cli/init/file-template.mjs) so the two can never drift.
+# load_manifest populates these three lists from that file at runtime.
+SKILLS=""
+REVIEWER_AGENTS=""
+HOOK_SCRIPTS=""
 
 CHORUS_URL_DEFAULT="${CHORUS_URL_DEFAULT:-http://localhost:8637/api/mcp}"
 
+# Parse the shared manifest into SKILLS / REVIEWER_AGENTS / HOOK_SCRIPTS. Format:
+# one "<kind> <name>" pair per line; blank lines and '#' comments ignored; kind is
+# skill|reviewer|hook. Bash 3.2 safe: `< file` redirection (no subshell pipe), no
+# associative arrays, no mapfile.
+load_manifest() {
+  local mf="$1" kind name _rest
+  [ -f "$mf" ] || die "Chorus kiro manifest not found: $mf"
+  SKILLS=""; REVIEWER_AGENTS=""; HOOK_SCRIPTS=""
+  while read -r kind name _rest; do
+    case "$kind" in
+      ''|\#*)   : ;;  # blank line or comment
+      skill)    SKILLS="$SKILLS $name" ;;
+      reviewer) REVIEWER_AGENTS="$REVIEWER_AGENTS $name" ;;
+      hook)     HOOK_SCRIPTS="$HOOK_SCRIPTS $name" ;;
+      *)        : ;;  # unknown kind — ignore (forward-compatible)
+    esac
+  done < "$mf"
+  # Drop the single leading space each accumulation leaves.
+  SKILLS="${SKILLS# }"; REVIEWER_AGENTS="${REVIEWER_AGENTS# }"; HOOK_SCRIPTS="${HOOK_SCRIPTS# }"
+  [ -n "$SKILLS$REVIEWER_AGENTS$HOOK_SCRIPTS" ] || die "Chorus kiro manifest resolved no assets: $mf"
+}
+
+# Resolve the local template root (the dir holding .kiro/ + manifest.txt) from
+# this script's own location. Sets SRC_ROOT="" when run via `curl | bash`.
+find_local_src_root() {
+  local src dir cand
+  SRC_ROOT=""
+  src="${BASH_SOURCE:-$0}"
+  [ -f "$src" ] || return 0
+  dir="$(cd "$(dirname "$src")" >/dev/null 2>&1 && pwd)" || return 0
+  for cand in "$dir/kiro-plugin" "$dir/public/kiro-plugin" "$dir/../public/kiro-plugin"; do
+    if [ -f "$cand/.kiro/settings/mcp.json" ] && [ -f "$cand/.kiro/agents/chorus.json" ]; then
+      SRC_ROOT="$(cd "$cand" >/dev/null 2>&1 && pwd)" || return 0
+      return 0
+    fi
+  done
+  return 0
+}
+
 # ---------- argument parsing ----------
 SCOPE="global"
+PRINT_MANIFEST=0
 for arg in "$@"; do
   case "$arg" in
     --workspace) SCOPE="workspace" ;;
     --global)    SCOPE="global" ;;
+    --print-manifest) PRINT_MANIFEST=1 ;;
     -h|--help)
       cat <<'USAGE'
 install-kiro.sh — install the Chorus plugin for Kiro CLI.
 
 Options:
-  --workspace   Write to <cwd>/.kiro/ (project-local) instead of ~/.kiro/.
-  --global      Write to ~/.kiro/ (default).
-  -h, --help    Show this help.
+  --workspace       Write to <cwd>/.kiro/ (project-local) instead of ~/.kiro/.
+  --global          Write to ~/.kiro/ (default).
+  --print-manifest  Print the resolved skill/reviewer/hook artifact lists from
+                    the shared manifest and exit (used by the parity test).
+  -h, --help        Show this help.
 
 Environment:
   CHORUS_URL      Chorus base URL (e.g. https://chorus.example.com). Normalized
@@ -74,6 +119,19 @@ USAGE
     *) die "Unknown argument: $arg (try --help)" ;;
   esac
 done
+
+# --print-manifest: resolve the shared manifest from the local checkout and print
+# the three artifact lists, then exit. This is the parity hook the JS test uses to
+# prove both installers read the SAME data file. Runs from a file (never curl|bash).
+if [ "$PRINT_MANIFEST" = "1" ]; then
+  find_local_src_root
+  [ -n "$SRC_ROOT" ] || die "--print-manifest requires a local checkout (no kiro-plugin/manifest.txt found next to this script)"
+  load_manifest "$SRC_ROOT/manifest.txt"
+  printf 'skills: %s\n' "$SKILLS"
+  printf 'reviewers: %s\n' "$REVIEWER_AGENTS"
+  printf 'hooks: %s\n' "$HOOK_SCRIPTS"
+  exit 0
+fi
 
 # If piped through `curl | bash`, stdin is the script body. Re-open from
 # /dev/tty so interactive prompts still work — but only when a real TTY is
@@ -158,30 +216,17 @@ ASSET_BASE="${url%/api/mcp}"
 # ---------- step 3: locate the template source ----------
 hdr "3/5  Locating the Chorus .kiro/ template"
 
-# Resolve the directory of this script (only meaningful when run from a file,
-# not via `curl | bash`).
-SCRIPT_SRC="${BASH_SOURCE:-$0}"
-SCRIPT_DIR=""
-if [ -f "$SCRIPT_SRC" ]; then
-  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SRC")" >/dev/null 2>&1 && pwd)"
-fi
-
-# Candidate local template roots (script lives in public/, or repo root).
-SRC_ROOT=""
-if [ -n "$SCRIPT_DIR" ]; then
-  for cand in "$SCRIPT_DIR/kiro-plugin" "$SCRIPT_DIR/public/kiro-plugin" "$SCRIPT_DIR/../public/kiro-plugin"; do
-    if [ -f "$cand/.kiro/settings/mcp.json" ] && [ -f "$cand/.kiro/agents/chorus.json" ]; then
-      SRC_ROOT="$(cd "$cand" >/dev/null 2>&1 && pwd)"
-      break
-    fi
-  done
-fi
+# Resolve the local template root (only meaningful when run from a file, not via
+# `curl | bash`).
+find_local_src_root
 
 CLEANUP_SRC=""
 if [ -n "$SRC_ROOT" ]; then
   ok "Using local template: $SRC_ROOT"
+  load_manifest "$SRC_ROOT/manifest.txt"
 else
-  # Remote mode: download the manifest from the Chorus instance's static assets.
+  # Remote mode: download the manifest + assets from the Chorus instance's static
+  # assets. The manifest drives every list-loop below, so it is fetched FIRST.
   command -v curl >/dev/null 2>&1 || die "No local template found and 'curl' is unavailable — cannot download the plugin. Run this from a Chorus checkout, or install curl."
   SRC_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/chorus-kiro.XXXXXX")"
   CLEANUP_SRC="$SRC_ROOT"
@@ -194,6 +239,9 @@ else
     curl -fsSL "${ASSET_BASE}/kiro-plugin/${rel}" -o "$dest" \
       || die "Failed to download kiro-plugin/${rel} from ${ASSET_BASE}. Is CHORUS_URL correct and reachable?"
   }
+
+  fetch "manifest.txt" "$SRC_ROOT/manifest.txt"
+  load_manifest "$SRC_ROOT/manifest.txt"
 
   fetch ".kiro/settings/mcp.json" "$SRC_ROOT/.kiro/settings/mcp.json"
   fetch ".kiro/steering/chorus.md" "$SRC_ROOT/.kiro/steering/chorus.md"
@@ -280,13 +328,15 @@ if [ ! -f "$MCP_JSON.chorus-bak" ]; then
   ok "Backed up original to ${MCP_JSON}.chorus-bak"
 fi
 
-# The chorus server object. BOTH the URL and the API key stay ${...} references
-# (not baked literals) so Kiro CLI interpolates them from the environment at
-# runtime — this is what makes a single daemon serving MULTIPLE agents work: each
-# woken Kiro child inherits that agent's own CHORUS_URL / CHORUS_API_KEY, so the
-# same mcp.json resolves to the right server + key per agent. The API key is never
-# written to disk. Single-quote both refs so the shell never expands ${...} here.
-URL_REF='${CHORUS_URL}/api/mcp'
+# The chorus server object. The URL is BAKED to the concrete MCP endpoint: kiro
+# does NOT interpolate a bare ${CHORUS_URL} in the `url` field (only ${env:...},
+# as the Authorization header uses), so a token there fails the server with
+# "relative URL without a base". The API key STAYS a ${env:CHORUS_API_KEY}
+# reference — kiro resolves it at runtime, it never touches disk, and it stays
+# per-agent so one daemon serving MULTIPLE agents resolves the right key per woken
+# child. $url is already normalized to end in exactly one /api/mcp; single-quote
+# only AUTH_REF so the shell never expands ${env:...} here.
+URL_REF="$url"
 AUTH_REF='Bearer ${env:CHORUS_API_KEY}'
 
 merged=""
