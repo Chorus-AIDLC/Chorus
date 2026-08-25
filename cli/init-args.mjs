@@ -76,22 +76,22 @@ export function parseInitFlags(argv) {
 }
 
 /**
- * Help text for `chorus init [--help]`. Pure — takes the version so the caller
- * (which already read package.json) does no IO here.
+ * Help text for `chorus agents add [--help]` (formerly `chorus init`). Pure —
+ * takes the version so the caller (which already read package.json) does no IO here.
  * @param {string} version
  * @returns {string}
  */
 export function initHelpText(version) {
   return `
-Chorus init v${version} — one command to configure this machine's coding agents
+Chorus agents add v${version} — one command to configure this machine's coding agents
 for Chorus. Detects installed agents, lets you pick which to configure, installs
 each one's Chorus plugin via that agent's own marketplace, and captures your
-Chorus credentials once into ~/.chorus/daemon.json.
+Chorus credentials once into ~/.chorus/daemon.json. (Formerly \`chorus init\`.)
 
 USAGE
-  chorus init                          Interactive: detect, select, configure
-  chorus init --all                    Configure every supported agent
-  chorus init --agents claude,codex    Configure only the named agents
+  chorus agents add                          Interactive: detect, select, configure
+  chorus agents add --all                    Configure every supported agent
+  chorus agents add --agents claude,codex    Configure only the named agents
 
 OPTIONS
   --agents <a,b>           Comma-separated agent ids to configure (repeatable).
@@ -117,8 +117,8 @@ OPTIONS
   -h, --help               Show this help message.
 
 NON-INTERACTIVE
-  When stdin/stdout is not a TTY, you MUST pass --agents or --all — init will not
-  guess which agents to configure and aborts otherwise. The daemon boot service is
+  When stdin/stdout is not a TTY, you MUST pass --agents or --all — the command
+  will not guess which agents to configure and aborts otherwise. The daemon boot service is
   installed non-interactively ONLY when you pass --daemon-autostart; otherwise the
   daemon config is written and you start it yourself with 'chorus daemon'.
 
@@ -129,9 +129,9 @@ SCOPE
   install-*.sh scripts are left untouched.
 
 EXAMPLES
-  chorus init
-  chorus init --all --yes
-  chorus init --agents claude,codex --url https://chorus.example.com --api-key cho_xxx --yes
-  chorus init --all --yes --daemon-autostart
+  chorus agents add
+  chorus agents add --all --yes
+  chorus agents add --agents claude,codex --url https://chorus.example.com --api-key cho_xxx --yes
+  chorus agents add --all --yes --daemon-autostart
 `;
 }

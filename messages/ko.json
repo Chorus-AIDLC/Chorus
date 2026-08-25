@@ -1166,26 +1166,27 @@
         "openClaw": "OpenClaw",
         "other": "기타 에이전트"
       },
+      "profileStep": {
+        "title": "3단계(선택): Chorus CLI의 기본 에이전트 설정",
+        "desc": "chorus agents add은 구성한 각 에이전트에 대해 export CHORUS_AGENT_PROFILE 줄을 출력합니다. 그중 한 줄을 셸에 추가하면 chorus CLI가 기본적으로 어떤 에이전트로 동작할지 설정할 수 있습니다. 키는 ~/.chorus/daemon.json에서 해석됩니다."
+      },
       "claudeCode": {
         "step1Title": "1단계: 환경 변수 설정",
         "step1Tip": "팁: 지속적으로 사용하려면 ~/.bashrc 또는 ~/.zshrc에 추가하세요.",
-        "step2Title": "2단계: Claude Code를 열고 다음을 실행하세요"
+        "step2Title": "2단계: chorus agents add 실행",
+        "step2Tip": "chorus agents add은 chorus-plugins 마켓플레이스를 등록하고 Chorus 플러그인을 Claude Code(~/.claude)에 설치하며 자격 증명을 저장합니다. CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다. 첫 번째 명령은 Chorus CLI를 전역으로 설치합니다(버전 0.17.0으로 고정)."
       },
       "codex": {
         "step1Title": "1단계: 환경 변수 설정",
         "step1Tip": "팁: 지속적으로 사용하려면 ~/.bashrc 또는 ~/.zshrc에 추가하세요.",
-        "step2Title": "2단계: Codex 설치 프로그램 실행",
-        "step2Tip": "이 스크립트는 플러그인 마켓플레이스를 등록하고 MCP 서버 항목을 ~/.codex/config.toml에 기록합니다.",
-        "step3Title": "3단계: 연결 확인",
-        "step3Desc": "Codex를 열고 Chorus에 체크인하도록 요청하세요 — 예: \"check in to chorus\"라고 입력합니다."
+        "step2Title": "2단계: chorus agents add 실행",
+        "step2Tip": "chorus agents add은 chorus-plugins 마켓플레이스를 등록하고 Chorus 플러그인을 Codex에 설치하며(MCP 서버 항목을 ~/.codex/config.toml에 기록), 자격 증명을 저장합니다. CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다. 첫 번째 명령은 Chorus CLI를 전역으로 설치합니다(버전 0.17.0으로 고정)."
       },
       "kiro": {
         "step1Title": "1단계: 환경 변수 설정",
         "step1Tip": "팁: Kiro CLI가 시작 시 읽을 수 있도록 ~/.bashrc 또는 ~/.zshrc에 추가하세요.",
-        "step2Title": "2단계: Kiro 설치 프로그램 실행",
-        "step2Tip": "기본적으로 ~/.kiro/에 전역 설치되어 모든 디렉터리에서 Chorus를 사용할 수 있습니다. 현재 디렉터리의 .kiro/에만 설치하려면 플래그를 추가하세요: bash -s -- --workspace.",
-        "step3Title": "3단계: 연결 확인",
-        "step3Desc": "Kiro CLI를 열고 /chorus-idea 스킬을 활성화하거나, Chorus 에이전트로 바로 시작하세요: kiro-cli --agent chorus."
+        "step2Title": "2단계: chorus agents add 실행",
+        "step2Tip": "chorus agents add은 Chorus의 skills, agents, steering 및 chorus MCP 서버를 ~/.kiro에 전역으로 설치하여 모든 디렉터리에서 Chorus를 사용할 수 있게 합니다. CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다. 다른 디렉터리에 설치하려면 실행 전에 KIRO_DIR을 설정하세요. 첫 번째 명령은 Chorus CLI를 전역으로 설치합니다(버전 0.17.0으로 고정)."
       },
       "dsh": {
         "step1Title": "1단계: 환경 변수 설정",
@@ -1193,17 +1194,15 @@
         "step2Title": "2단계: Chorus bundle 추가",
         "step2Tip": "{name}을 사용할 dsh profile 이름으로 바꾸세요. dsh profile은 pnpm workspace 루트이므로 -w가 필요합니다. profile package 상태와 peer plugin은 dsh가 관리합니다.",
         "step3Title": "3단계: 자격 증명 저장",
-        "step3Tip": "CHORUS_URL과 CHORUS_API_KEY를 $DSH_HOME/.env(모드 0600)에 씁니다. dsh는 자격 증명 형태의 변수를 도구 서브프로세스에서 제거하므로, 문서 미러 wrapper는 셸이 아니라 이 파일에서 읽습니다.",
+        "step3Tip": "chorus agents add은 키를 검증하고 CHORUS_URL과 CHORUS_API_KEY를 ~/.chorus/daemon.json(모드 0600)에 기록하며, 필요하면 Chorus bundle을 profile에 추가합니다. 2단계와 동일한 profile을 지정하려면 --dsh-profile {name}을 전달하세요. 자격 증명은 환경 변수(1단계)에서 읽습니다. 첫 번째 명령은 Chorus CLI를 전역으로 설치합니다(버전 0.17.0으로 고정).",
         "step4Title": "4단계: 실행 및 확인",
         "step4Desc": "dsh --profile {name}을 실행한 뒤 \"check in to chorus\"라고 요청하세요."
       },
       "opencode": {
         "step1Title": "1단계: 환경 변수 설정",
         "step1Tip": "팁: OpenCode 시작 시 플러그인이 읽을 수 있도록 ~/.bashrc 또는 ~/.zshrc에 추가하세요.",
-        "step2Title": "2단계: Chorus 플러그인 활성화",
-        "step2Tip": "설치 프로그램은 ~/.config/opencode/opencode.json의 \"plugin\" 배열에 \"opencode-chorus\"를 멱등하게 추가합니다. 셸 rc 파일은 건드리지 않습니다. OpenCode는 처음 실행 시 Bun을 통해 플러그인을 설치합니다.",
-        "step3Title": "3단계: 연결 확인",
-        "step3Desc": "OpenCode를 열고 에이전트에게 \"check in to chorus\"라고 요청하세요. 연결에 성공하면 이 단계는 자동으로 다음으로 넘어갑니다.",
+        "step2Title": "2단계: chorus agents add 실행",
+        "step2Tip": "chorus agents add은 ~/.config/opencode/opencode.json의 \"plugin\" 배열에 \"opencode-chorus\"를 멱등하게 추가합니다. 셸 rc 파일은 건드리지 않습니다. OpenCode는 처음 실행 시 Bun을 통해 플러그인을 설치합니다. CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다. 첫 번째 명령은 Chorus CLI를 전역으로 설치합니다(버전 0.17.0으로 고정).",
         "troubleshootingTitle": "문제 해결",
         "issueCache": {
           "title": "플러그인이 로드되지 않음",
@@ -1223,8 +1222,6 @@
         "step2Title": "2단계: ~/.openclaw/openclaw.json 편집",
         "step3Title": "3단계: OpenClaw 게이트웨이 재시작",
         "step3Desc": "새 설정을 적용하려면 OpenClaw 게이트웨이 프로세스를 재시작하세요.",
-        "step4Title": "4단계: 연결 확인",
-        "step4Desc": "OpenClaw 채팅 창에서 다음 명령어를 입력하세요:",
         "troubleshootingTitle": "문제 해결",
         "troubleshootingError": "\"Wake agent failed: HTTP 405\"",
         "troubleshootingFix": "이 오류는 훅(hooks)이 활성화되지 않았음을 의미합니다. openclaw.json 설정에서 \"hooks.enabled\"를 true로 설정하고 게이트웨이를 재시작하세요."

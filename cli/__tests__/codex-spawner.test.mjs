@@ -173,6 +173,7 @@ describe("CodexSpawner.wake — spawn orchestration", () => {
     getUsageSnapshot,
     setUsageSnapshot,
     codexPath = "/usr/bin/codex",
+    creds: credsOverride = creds,
   } = {}) {
     const calls = {};
     const spawnImpl = vi.fn((command, argv, opts) => {
@@ -185,7 +186,7 @@ describe("CodexSpawner.wake — spawn orchestration", () => {
       codexPath,
       spawnImpl,
       permissionMode,
-      creds,
+      creds: credsOverride,
       platform: "linux",
       logger: { info() {}, warn() {}, error() {} },
       getThreadIdFn: getThreadId ?? (() => null),
@@ -216,6 +217,8 @@ describe("CodexSpawner.wake — spawn orchestration", () => {
     expect(calls.opts.env.CHORUS_URL).toBe("https://chorus.test");
     expect(calls.opts.env.CHORUS_API_KEY).toBe("cho_secret");
     expect(calls.opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
+    // No identity on these creds → no profile exported (the wrapper falls back to url+key).
+    expect(calls.opts.env.CHORUS_AGENT_PROFILE).toBeUndefined();
     expect(calls.argv.join(" ")).not.toContain("cho_secret");
     // detached process group on POSIX (for interrupt parity)
     expect(calls.opts.detached).toBe(true);
@@ -226,6 +229,22 @@ describe("CodexSpawner.wake — spawn orchestration", () => {
     expect(result.exitCode).toBe(0);
     expect(result.sessionId).toBe(ANCHOR);
     expect(result.backendSessionId).toBe(TID);
+  });
+
+  it("exports the agent identity as CHORUS_AGENT_PROFILE (uuid) when creds carry it", async () => {
+    const child = makeFakeChild();
+    const { spawner, calls } = makeSpawner({
+      child,
+      creds: { url: "https://chorus.test", apiKey: "cho_secret", agentUuid: "u-codex", agentName: "Codex" },
+    });
+    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
+    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
+    child.emit("close", 0);
+    await p;
+    // The woken session gets its identity; the uuid is preferred over the name.
+    expect(calls.opts.env.CHORUS_AGENT_PROFILE).toBe("u-codex");
+    // …and never leaked into argv.
+    expect(calls.argv.join(" ")).not.toContain("u-codex");
   });
 
   it("overwrites stale inherited Chorus connection values", async () => {

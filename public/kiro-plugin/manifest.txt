@@ -1,11 +1,10 @@
 # Chorus Kiro plugin artifact manifest — the single source of truth for the
 # .kiro/ file-template's variable asset lists.
 #
-# Read at runtime by BOTH consumers so the two installers can never drift:
-#   - public/install-kiro.sh    (bash 3.2; parsed by load_manifest)
+# Read at runtime by the Kiro file-template installer:
 #   - cli/init/file-template.mjs (JS; parsed by parseManifest)
-# A parity test (cli/__tests__/init-file-template.test.mjs) asserts the JS side
-# and the bash side resolve the identical asset set.
+# (public/install-kiro.sh is now a deprecation stub that redirects to `chorus agents add`
+# and no longer reads this manifest — the JS installer is the sole consumer.)
 #
 # Format: one "<kind> <name>" pair per line. Blank lines and lines beginning
 # with '#' are ignored. kind is one of:
@@ -26,6 +25,7 @@ skill chorus-quick-dev
 skill chorus-brainstorm
 skill chorus-openspec-aware
 skill chorus-docs
+skill chorus-cli
 
 reviewer chorus-code-reviewer
 reviewer chorus-proposal-reviewer

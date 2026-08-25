@@ -212,6 +212,49 @@ describe("ClaudeSpawner.wake", () => {
     expect(child.stdin.end).toHaveBeenCalled();
   });
 
+  it("exports CHORUS_AGENT_PROFILE=<agentUuid> into the woken child env (identity, uuid preferred, never argv)", async () => {
+    const child = makeFakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const spawner = new ClaudeSpawner({
+      claudePath: "/usr/bin/claude",
+      spawnImpl,
+      logger: silent,
+      creds: {
+        url: "https://chorus.test",
+        apiKey: "cho_secret",
+        agentUuid: "daee0667-8487-4810-9cc0-8e4a0b2174c9",
+        agentName: "Admin Claude",
+      },
+    });
+
+    const p = spawner.wake({ prompt: "hi", sessionId: SID, isNew: true, mcpConfigPath: "/tmp/m.json" });
+    child.stdout.emit("data", `{"type":"system","session_id":"${SID}"}\n`);
+    child.emit("close", 0);
+    await p;
+
+    const [, args, opts] = spawnImpl.mock.calls[0];
+    expect(opts.env.CHORUS_AGENT_PROFILE).toBe("daee0667-8487-4810-9cc0-8e4a0b2174c9"); // uuid, not name
+    expect(opts.env.CHORUS_URL).toBe("https://chorus.test");
+    expect(args.join(" ")).not.toContain("daee0667"); // identity never on argv
+    expect(args.join(" ")).not.toContain("cho_secret");
+  });
+
+  it("omits CHORUS_AGENT_PROFILE when creds carry no identity", async () => {
+    const child = makeFakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const spawner = new ClaudeSpawner({
+      claudePath: "/usr/bin/claude",
+      spawnImpl,
+      logger: silent,
+      creds: { url: "https://chorus.test", apiKey: "cho_secret" },
+    });
+    const p = spawner.wake({ prompt: "hi", sessionId: SID, isNew: true, mcpConfigPath: "/tmp/m.json" });
+    child.stdout.emit("data", `{"type":"system","session_id":"${SID}"}\n`);
+    child.emit("close", 0);
+    await p;
+    expect(spawnImpl.mock.calls[0][2].env.CHORUS_AGENT_PROFILE).toBeUndefined();
+  });
+
   it("passes --resume for an existing session and captures observed session_id", async () => {
     const child = makeFakeChild();
     const spawnImpl = vi.fn(() => child);

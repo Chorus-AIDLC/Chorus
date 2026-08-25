@@ -23,22 +23,25 @@ export CHORUS_API_KEY="cho_your_api_key"
 
 ## 第 2 步：启用 Chorus 插件
 
-运行一键安装脚本：
+运行 `chorus agents add`：
 
 ```bash
-curl -fsSL "$CHORUS_URL/install-opencode.sh" | bash
+chorus agents add --agents opencode
 ```
 
-脚本幂等，可安全重复执行。它会：
+`chorus agents add` 会从环境变量（第 1 步）读取 `CHORUS_URL` / `CHORUS_API_KEY`。它幂等，可安全重复执行。它会：
 
 1. 检查 `opencode` 是否已安装（未安装则警告但仍会写配置）。
 2. 幂等地把 `"opencode-chorus"` 加入 `~/.config/opencode/opencode.json` 的 `plugin` 数组，已有的 plugin 条目会保留。
-3. 首次修改前备份原配置到 `opencode.json.chorus-bak`，并将文件权限设为 `600`。
+3. 首次修改前备份原配置到 `opencode.json.chorus-bak`。
+4. 把你的 Chorus 凭证一次性写入 `~/.chorus/daemon.json`。
 
-**脚本不做的事：**
+**`chorus agents add` 不做的事：**
 
 - **不会**写 `~/.bashrc` / `~/.zshrc`。你需要自己在启动 `opencode` 前 export 好 `CHORUS_URL` 和 `CHORUS_API_KEY`。
-- **不会**下载 `opencode-chorus` 包。OpenCode 在你修改 `opencode.json` 后首次启动时，通过 Bun 从 npm 拉取该包（缓存路径是 `~/.cache/opencode/packages/opencode-chorus@latest/`）。
+- **不会**把插件包 vendor 进仓库。OpenCode 会通过 Bun 从 npm 拉取 `opencode-chorus`（缓存路径是 `~/.cache/opencode/packages/opencode-chorus@latest/`）。
+
+> 还没安装 `chorus` CLI？先用 `npm install -g @chorus-aidlc/chorus@0.17.0` 全局安装，再运行 `chorus agents add --agents opencode`。
 
 ### 手动替代方案
 
@@ -83,7 +86,7 @@ check in to chorus
 
 - **`401 Unauthorized`。** API Key 错误或已撤销。去 设置 → Agents 重新生成，更新 shell rc 里的 `CHORUS_API_KEY`，然后重启 OpenCode。
 
-- **想回滚？** 安装脚本把你的原配置保存到了 `~/.config/opencode/opencode.json.chorus-bak`。恢复命令：
+- **想回滚？** `chorus agents add` 把你的原配置保存到了 `~/.config/opencode/opencode.json.chorus-bak`。恢复命令：
   ```bash
   mv ~/.config/opencode/opencode.json.chorus-bak ~/.config/opencode/opencode.json
   ```

@@ -146,14 +146,14 @@ export async function setupDaemon(ctx) {
   //     has nothing to wake. Their agents[] entries are already persisted (credential-seed)
   //     for the `chorus mcp` proxy; skip the auto-start prompt AND the service install.
   if (hasSelection && !willWake) {
-    log("[chorus init] no agent is enabled for daemon waking — the daemon would wake no local backend.");
-    log("[chorus init] agents' keys are configured in ~/.chorus/daemon.json for `chorus mcp`.");
+    log("[chorus agents add] no agent is enabled for daemon waking — the daemon would wake no local backend.");
+    log("[chorus agents add] agents' keys are configured in ~/.chorus/daemon.json for `chorus mcp`.");
     return out(SKIPPED, "no agent enabled for daemon waking — agents[] persisted; boot service not installed");
   }
 
   const manual = () => {
-    log("[chorus init] daemon config written to ~/.chorus/daemon.json.");
-    log("[chorus init] start the daemon yourself: `chorus daemon` (foreground) or `chorus daemon -d` (background).");
+    log("[chorus agents add] daemon config written to ~/.chorus/daemon.json.");
+    log("[chorus agents add] start the daemon yourself: `chorus daemon` (foreground) or `chorus daemon -d` (background).");
   };
 
   // 2. Capability gate (decision: linux_and_mac). Only offer auto-start where a real
@@ -230,8 +230,8 @@ export async function setupDaemon(ctx) {
   };
   const r = install(spec, serviceIo);
   if (r && r.installed) {
-    log("[chorus init] daemon installed & enabled — it will auto-start on boot.");
-    for (const s of r.steps ?? []) log(`[chorus init]   ${s}`);
+    log("[chorus agents add] daemon installed & enabled — it will auto-start on boot.");
+    for (const s of r.steps ?? []) log(`[chorus agents add]   ${s}`);
     return out(INSTALLED, `boot service installed (${r.platform}); manage with 'chorus daemon status|stop|restart|logs'`);
   }
   return out(FAILED, `service install failed: ${r?.error ?? "unknown error"}`);

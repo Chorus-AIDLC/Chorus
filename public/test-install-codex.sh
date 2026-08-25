@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Test public/install-codex.sh for macOS bash 3.2 compatibility.
+# Test public/install-codex.sh — now a DEPRECATION STUB that redirects to
+# `chorus agents add`. Verifies bash 3.2 compatibility + the stub shape:
+#   - names the replacement `npm install -g @chorus-aidlc/chorus@0.17.0` + `chorus agents add`
+#   - prints a deprecation notice
+#   - run non-interactively (no TTY, e.g. curl | bash in CI) it exits non-zero
+#   - installs nothing (writes no config.toml)
 #
 # Usage:
 #   bash public/test-install-codex.sh
@@ -24,7 +29,7 @@ else
   TEST_BASH="$(command -v bash)"
 fi
 
-BOLD=$'\033[1m'; GREEN=$'\033[32m'; RED=$'\033[31m'; DIM=$'\033[2m'; RESET=$'\033[0m'
+BOLD=$'\033[1m'; GREEN=$'\033[32m'; RED=$'\033[31m'; RESET=$'\033[0m'
 
 PASS=0; FAIL=0; FAIL_NOTES=""
 
@@ -36,8 +41,8 @@ echo "${BOLD}Testing:${RESET} $SCRIPT"
 echo "${BOLD}Using:${RESET}   $TEST_BASH ($("$TEST_BASH" --version | head -1))"
 echo ""
 
-# [1/4] Static scan — reject bash 4+ constructs
-echo "${BOLD}[1/4]${RESET} Static scan for bash 4+ constructs"
+# [1/3] Static scan — reject bash 4+ constructs
+echo "${BOLD}[1/3]${RESET} Static scan for bash 4+ constructs"
 scan() {
   local label="$1"; local pattern="$2"
   if grep -nE "$pattern" "$SCRIPT" >/tmp/install-codex-scan.$$ 2>/dev/null; then
@@ -55,9 +60,9 @@ scan 'no "&>" redirection'                    '[^|]&>[^>]'
 scan 'no "|&" redirection'                    '\|&'
 scan 'no ";;&" case fallthrough'              ';;&'
 
-# [2/4] Parse
+# [2/3] Parse
 echo ""
-echo "${BOLD}[2/4]${RESET} Parse with $TEST_BASH -n"
+echo "${BOLD}[2/3]${RESET} Parse with $TEST_BASH -n"
 if "$TEST_BASH" -n "$SCRIPT" 2>/tmp/install-codex-parse.$$; then
   pass "parses without syntax errors"
 else
@@ -66,99 +71,46 @@ else
 fi
 rm -f /tmp/install-codex-parse.$$
 
-# [3/4] End-to-end dry run with an isolated CODEX_HOME
+# [3/3] Non-interactive stub behavior: redirect to `chorus agents add`, exit non-zero,
+# install nothing. Stdin from /dev/null + stdout redirected to a file → neither
+# is a TTY, so the stub must take the print-and-fail path (never exec).
 echo ""
-echo "${BOLD}[3/4]${RESET} End-to-end dry run (isolated CODEX_HOME)"
+echo "${BOLD}[3/3]${RESET} Non-interactive stub behavior (no TTY → print + non-zero)"
 
 TMP_HOME="$(mktemp -d -t chorus-install-test.XXXXXX)"
 trap 'rm -rf "$TMP_HOME"' EXIT
 
-FAKE_BIN="$TMP_HOME/bin"
-mkdir -p "$FAKE_BIN"
-cat > "$FAKE_BIN/codex" <<'FAKE'
-#!/usr/bin/env bash
-case "${1:-}" in
-  --version) echo "codex 0.125.0-test" ;;
-  plugin)
-    if [ "${2:-}" = "marketplace" ] && [ "${3:-}" = "list" ]; then
-      echo ""
-      exit 0
-    fi
-    exit 0
-    ;;
-  *) exit 0 ;;
-esac
-FAKE
-chmod +x "$FAKE_BIN/codex"
-
 run_out="$TMP_HOME/run.log"
 set +e
 env \
-  PATH="$FAKE_BIN:$PATH" \
   HOME="$TMP_HOME" \
   CODEX_HOME="$TMP_HOME/.codex" \
-  CHORUS_URL="https://chorus.test/api/mcp" \
-  CHORUS_API_KEY="cho_test_key_abc123" \
-  CHORUS_MARKETPLACE_SOURCE="https://github.com/Chorus-AIDLC/Chorus" \
-  "$TEST_BASH" "$SCRIPT" >"$run_out" 2>&1
+  "$TEST_BASH" "$SCRIPT" </dev/null >"$run_out" 2>&1
 rc=$?
 set -e
 
 if [ "$rc" -ne 0 ]; then
-  fail "installer exited non-zero ($rc)"
+  pass "exits non-zero when non-interactive (rc=$rc)"
+else
+  fail "exited 0 (expected non-zero for a no-TTY deprecation stub)"
   sed 's/^/         /' "$run_out"
-else
-  pass "installer exited 0"
 fi
 
-cfg="$TMP_HOME/.codex/config.toml"
-if [ ! -f "$cfg" ]; then
-  fail "config.toml not created at $cfg"
-else
-  pass "config.toml created"
-  grep -q '^\[mcp_servers\.chorus\]' "$cfg" && pass "[mcp_servers.chorus] block present" || fail "[mcp_servers.chorus] missing"
-  grep -q 'url = "https://chorus.test/api/mcp"' "$cfg" && pass "url written literally" || fail "url not literal"
-  grep -q 'Authorization = "Bearer cho_test_key_abc123"' "$cfg" && pass "Authorization header literal" || fail "Authorization not literal"
-  grep -q '^hooks = true' "$cfg" && pass "hooks feature enabled" || fail "hooks feature not enabled"
-  grep -q '^codex_hooks =' "$cfg" && fail "deprecated codex_hooks key written" || pass "deprecated codex_hooks key not written"
-  [ ! -f "$TMP_HOME/.codex/hooks.json" ] && pass "installer does not write user hooks.json" || fail "installer wrote user hooks.json"
-  [ ! -e "$TMP_HOME/.codex/hooks/chorus/run-hook.sh" ] && pass "installer does not write hook wrapper" || fail "installer wrote hook wrapper"
-  if command -v stat >/dev/null 2>&1; then
-    mode="$(stat -c '%a' "$cfg" 2>/dev/null || stat -f '%OLp' "$cfg" 2>/dev/null || echo "")"
-    if [ "$mode" = "600" ]; then
-      pass "config.toml mode=600"
-    elif [ -n "$mode" ]; then
-      fail "config.toml mode=$mode (expected 600)"
-    fi
-  fi
-fi
+grep -q 'npm install -g @chorus-aidlc/chorus' "$run_out" \
+  && pass "names 'npm install -g @chorus-aidlc/chorus'" \
+  || { fail "did not print the npm install guidance"; sed 's/^/         /' "$run_out"; }
 
-# [4/4] Idempotent re-run with a rotated key
-echo ""
-echo "${BOLD}[4/4]${RESET} Idempotent re-run with a rotated key"
-set +e
-env \
-  PATH="$FAKE_BIN:$PATH" \
-  HOME="$TMP_HOME" \
-  CODEX_HOME="$TMP_HOME/.codex" \
-  CHORUS_URL="https://chorus.test/api/mcp" \
-  CHORUS_API_KEY="cho_rotated_key_xyz789" \
-  "$TEST_BASH" "$SCRIPT" >"$run_out" 2>&1
-rc=$?
-set -e
-[ "$rc" -eq 0 ] && pass "rerun exited 0" || { fail "rerun exited non-zero ($rc)"; sed 's/^/         /' "$run_out"; }
+grep -q 'chorus agents add' "$run_out" \
+  && pass "names 'chorus agents add'" \
+  || { fail "did not print the chorus agents add command"; sed 's/^/         /' "$run_out"; }
 
-blocks="$(grep -c '^\[mcp_servers\.chorus\]' "$cfg" 2>/dev/null || echo 0)"
-[ "$blocks" = "1" ] && pass "exactly one [mcp_servers.chorus] block" || fail "found $blocks [mcp_servers.chorus] blocks"
+grep -qi 'deprecat' "$run_out" \
+  && pass "prints a deprecation notice" \
+  || { fail "no deprecation notice printed"; sed 's/^/         /' "$run_out"; }
 
-hdr_blocks="$(grep -c '^\[mcp_servers\.chorus\.http_headers\]' "$cfg" 2>/dev/null || echo 0)"
-[ "$hdr_blocks" = "1" ] && pass "exactly one [mcp_servers.chorus.http_headers] block" || fail "found $hdr_blocks http_headers blocks"
-
-if grep -q 'Authorization = "Bearer cho_rotated_key_xyz789"' "$cfg" && ! grep -q 'cho_test_key_abc123' "$cfg"; then
-  pass "rotated key replaced the previous key"
-else
-  fail "rotated key not applied cleanly"
-fi
+[ ! -f "$TMP_HOME/.codex/config.toml" ] \
+  && pass "installs nothing (no config.toml written)" \
+  || fail "wrote config.toml (stub must install nothing)"
 
 echo ""
 echo "${BOLD}Summary:${RESET} $PASS passed, $FAIL failed"

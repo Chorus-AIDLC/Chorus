@@ -1,6 +1,6 @@
 # Codex 接入 Chorus
 
-本文档介绍如何把 [Codex CLI](https://github.com/openai/codex) 接入 Chorus 实例。Codex 有自己独立的 Chorus plugin（位于 `plugins/chorus`，通过 `.agents/plugins/marketplace.json` 发布），是和 Claude Code plugin 完全不同的一个包，支持的 skills 和功能也有差异。一键脚本会负责把它写进 Codex 的 `~/.codex/config.toml`。
+本文档介绍如何把 [Codex CLI](https://github.com/openai/codex) 接入 Chorus 实例。Codex 有自己独立的 Chorus plugin（位于 `plugins/chorus`，通过 `.agents/plugins/marketplace.json` 发布），是和 Claude Code plugin 完全不同的一个包，支持的 skills 和功能也有差异。`chorus agents add` 会把它写进 Codex 的 `~/.codex/config.toml`。
 
 > **提示：**应用内 setup 向导（**Settings → Setup Guide → 打开设置向导**）会用交互式方式引导你完成这些步骤，包括 API Key 的创建。如果你想要一份可以从头读到尾或脚本化的参考，就看本文档。
 
@@ -19,20 +19,20 @@ export CHORUS_API_KEY="cho_your_api_key"
 
 > 如果希望跨 shell 持久化，可以加入 `~/.bashrc` 或 `~/.zshrc`。
 
-## 第 2 步：运行安装脚本
+## 第 2 步：运行 chorus agents add
 
 ```bash
-curl -fsSL "$CHORUS_URL/install-codex.sh" | bash
+chorus agents add --agents codex
 ```
 
-脚本是幂等的，重复运行是安全的。它会：
+`chorus agents add` 会从环境变量（第 1 步）读取 `CHORUS_URL` / `CHORUS_API_KEY`。它是幂等的，重复运行是安全的。它会：
 
 1. 检查 `codex` 是否已安装。
 2. 注册 `chorus-plugins` marketplace（如果已注册则升级）。
-3. 把 `[mcp_servers.chorus]` 和 `[plugins."chorus@chorus-plugins"]` 写入 `~/.codex/config.toml`（权限 `600`，原文件首次备份到 `config.toml.chorus-bak`）。
-4. 用 `[features] hooks = true` 启用 Codex 生命周期 hook。Chorus hooks 随插件打包，插件安装并启用后由 Codex 自动加载。
+3. 通过 Codex 自己的 plugin CLI 安装 Chorus 插件，从而把 `[mcp_servers.chorus]` 和 `[plugins."chorus@chorus-plugins"]` 写入 `~/.codex/config.toml`（原文件首次备份），并启用 Codex 生命周期 hook。Chorus hooks 随插件打包，插件安装后由 Codex 自动加载。
+4. 把你的 Chorus 凭证一次性写入 `~/.chorus/daemon.json`。
 
-如果没有设置 `CHORUS_URL` / `CHORUS_API_KEY`，脚本会在有 TTY 的情况下交互式地询问你。
+如果环境里没有 `CHORUS_URL` / `CHORUS_API_KEY`，`chorus agents add` 会在有 TTY 时交互式询问。还没安装 `chorus` CLI？先用 `npm install -g @chorus-aidlc/chorus@0.17.0` 全局安装，再运行 `chorus agents add --agents codex`。
 
 ## 第 3 步：验证连接
 
@@ -46,18 +46,19 @@ Codex 会通过 MCP 调用 `chorus_checkin()`，返回你的 agent 身份、权�
 
 ## 非交互安装（CI / sandbox 环境）
 
-只要两个环境变量都有值，脚本不依赖 TTY 也能正常跑完：
+显式传入连接信息，并用 `--yes` 跳过交互提示，无需 TTY：
 
 ```bash
-CHORUS_URL=https://chorus.example.com \
-CHORUS_API_KEY=cho_xxx \
-  bash <(curl -fsSL https://chorus.example.com/install-codex.sh)
+npm install -g @chorus-aidlc/chorus@0.17.0
+chorus agents add --agents codex \
+  --url https://chorus.example.com \
+  --api-key cho_xxx --yes
 ```
 
 ## 故障排查
 
 - **`codex not found in PATH`** —— 先装 Codex：`npm i -g @openai/codex`。
-- **`check in` 返回 `401 Unauthorized`** —— API Key 错误或已失效。到 Settings → Agents 重新创建，然后重新跑安装脚本（或手改 `config.toml` 里的 `Authorization` 行）。
+- **`check in` 返回 `401 Unauthorized`** —— API Key 错误或已失效。到 Settings → Agents 重新创建，然后重新运行 `chorus agents add`（或手改 `config.toml` 里的 `Authorization` 行）。
 - **`URL must start with http:// or https://`** —— `CHORUS_URL` 缺了协议头，补上 `http://` 或 `https://`。
 - **Marketplace source conflict** —— 你之前用不同 URL 注册过 `chorus-plugins`。脚本会检测到并自动重新注册，留意它打印的 `!` 警告。
 - **Hook 在首次启动时没触发** —— 在 Codex 里打开 `/plugins`，确认 `chorus@chorus-plugins` 已安装并启用；再打开 `/hooks` review/trust Chorus 插件自带的 hooks。plugin cache 生成后，hook 会在后续工具调用时生效。

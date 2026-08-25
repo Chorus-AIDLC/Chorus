@@ -71,6 +71,7 @@ const PLUGIN_SKILLS = [
   { name: "review", description: "Approve/reject proposals, verify tasks, project governance" },
   { name: "yolo", description: "Full-auto AI-DLC pipeline — from prompt to done" },
   { name: "openspec-aware", description: "Opt-in OpenSpec authoring for PM workflows when the openspec CLI is present" },
+  { name: "chorus-cli", description: "Install, configure agents (chorus agents add|remove|list), env vars, and chorus mcp operations" },
 ] as const;
 
 // ===== Formatting helpers =====

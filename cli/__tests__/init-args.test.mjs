@@ -74,7 +74,7 @@ describe("parseInitFlags", () => {
 describe("initHelpText", () => {
   it("includes the version, usage, and the non-interactive rule", () => {
     const t = initHelpText("9.9.9");
-    expect(t).toContain("Chorus init v9.9.9");
+    expect(t).toContain("Chorus agents add v9.9.9");
     expect(t).toContain("USAGE");
     expect(t).toContain("--agents");
     expect(t).toContain("NON-INTERACTIVE");

@@ -4,7 +4,7 @@
 
 > **提示：**应用内 setup 向导（**Settings → Setup Guide → 打开设置向导**）会用交互式方式引导你完成这些步骤，包括 API Key 的创建。如果你想要一份可以从头读到尾或脚本化的参考，就看本文档。
 
-> **一条命令（实验性）：**`chorus init` 会探测本机已安装的 coding agent，让你选择要配置哪些，用各 agent 自己的插件 CLI 安装对应的 Chorus 插件，并把你的 Chorus 凭据一次性写入 `~/.chorus/daemon.json`。非交互用法：`chorus init --agents claude,codex --url <url> --api-key <cho_...> --yes`。它负责安装插件本体；下面的手动步骤始终可用，也仍受完整支持。
+> **一条命令（推荐）：**`chorus agents add` 会探测本机已安装的 coding agent，让你选择要配置哪些，用各 agent 自己的插件 CLI 安装对应的 Chorus 插件，并把你的 Chorus 凭据一次性写入 `~/.chorus/daemon.json`。非交互用法：`chorus agents add --agents claude,codex --url <url> --api-key <cho_...> --yes`。下面的第 2 步就是这条命令；手动的 TUI 方式作为备选折叠在其后。
 
 ## 前置条件
 
@@ -21,11 +21,34 @@ export CHORUS_API_KEY="cho_your_api_key"
 
 > 如果希望跨 shell 持久化，可以加入 `~/.bashrc` 或 `~/.zshrc`。
 
+> **可选 —— 把当前 shell 固定到某个 agent（`CHORUS_AGENT_PROFILE`）。** 当 `chorus agents add`
+> 把你的 agent 写入 `~/.chorus/daemon.json` 后，你可以指定这个 shell 的 Chorus hooks/skills
+> 以哪个 agent 身份行事，内置的 `chorus mcp` 客户端会从 `daemon.json` 里解析出该 agent 的密钥
+> —— hook / 文档镜像这条路径就不必再导出 API Key。`chorus agents add` 会在运行结束时打印出这行，
+> 把它加进你的 shell 配置即可：
+>
+> ```bash
+> export CHORUS_AGENT_PROFILE="<agent-uuid>"   # chorus agents add 打印的 UUID（用 agentName 也行）
+> ```
+>
+> 一台机器上配了多个 agent 时最有用（用来区分当前会话以哪个身份行事）。它是「附加」的
+> —— Claude Code 内置的 MCP 客户端仍然用第 1 步里的 `CHORUS_URL` / `CHORUS_API_KEY`。
+> 被 daemon 唤醒的会话会自动带上 `CHORUS_AGENT_PROFILE`。
+
 ## 第 2 步：安装 Chorus Plugin
 
-推荐用官方 Chorus plugin —— 除了底层 MCP 连接，它还打包了 hooks、skills、session 自动管理。
+先全局安装 Chorus CLI，再用 `chorus agents add` 为 Claude Code 安装插件——它会替你执行 Claude Code 自己的 `claude plugin` 命令（注册 marketplace、安装 `chorus@chorus-plugins`）并写入凭据：
 
-**从 plugin marketplace 安装**（推荐）：
+```bash
+npm install -g @chorus-aidlc/chorus@0.17.0
+chorus agents add --agents claude
+```
+
+`chorus agents add` 会从第 1 步的环境变量读取 `CHORUS_URL` / `CHORUS_API_KEY`（有 TTY 时也会交互询问）；幂等，可安全重跑。
+
+<details><summary>手动方式（备选）</summary>
+
+`chorus agents add --agents claude` 已经替你执行了下面这些；只有当你想留在 TUI 里时才需要手动做：
 
 ```bash
 claude
@@ -33,11 +56,13 @@ claude
 /plugin install chorus@chorus-plugins
 ```
 
-**从本地目录加载**（开发用）：
+或从本地目录加载（开发用）：
 
 ```bash
 claude --plugin-dir public/chorus-plugin
 ```
+
+</details>
 
 装完即可。下次启动 Claude Code 时，你就能看到 Chorus 的 MCP 工具（`chorus_checkin`、`chorus_pm_*`、`chorus_claim_task` 等）和 workflow slash 命令（`/chorus`、`/chorus:develop`、`/chorus:proposal`、`/chorus:yolo` 等）。
 

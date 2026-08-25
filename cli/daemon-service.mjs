@@ -316,7 +316,7 @@ export function launchctl(args, io = defaultIO()) {
 /**
  * Classify whether THIS host supports installing a real boot-autostart daemon
  * service, and via which supervisor. The single source of truth both
- * `chorus daemon install` and the `chorus init` daemon-setup step consult so they
+ * `chorus daemon install` and the `chorus agents add` daemon-setup step consult so they
  * cannot disagree about what "supported" means (add-chorus-init-daemon-setup).
  *   - "systemd"     — Linux where `systemctl --user` is usable.
  *   - "launchd"     — macOS (launchctl is always present).

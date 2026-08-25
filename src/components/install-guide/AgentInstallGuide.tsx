@@ -20,6 +20,22 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const displayKey = apiKey || "<YOUR_API_KEY>";
 
+  // Optional step, identical across every `chorus agents add` tab (Claude Code /
+  // Codex / Kiro / OpenCode): pick the default agent the chorus CLI acts as. dsh
+  // omits it (its profile is seeded into $DSH_HOME/.env and loaded by dsh);
+  // openClaw / other don't run `chorus agents add`, so no CLI profile applies.
+  const profileStep = (
+    <div>
+      <h3 className="mb-2 text-sm font-medium text-foreground">
+        {t("install.profileStep.title")}
+      </h3>
+      <CodeBlock language="bash" code={`export CHORUS_AGENT_PROFILE="<agent-uuid>"`} />
+      <p className="mt-2 text-xs text-muted-foreground">
+        {t("install.profileStep.desc")}
+      </p>
+    </div>
+  );
+
   return (
     <Card className="w-full">
       <CardContent className="p-6">
@@ -69,9 +85,14 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`/plugin marketplace add Chorus-AIDLC/chorus\n/plugin install chorus@chorus-plugins`}
+                code={`npm install -g @chorus-aidlc/chorus@0.17.0\nchorus agents add --agents claude`}
               />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.claudeCode.step2Tip")}
+              </p>
             </div>
+
+            {profileStep}
           </TabsContent>
 
           {/* Codex Tab */}
@@ -95,21 +116,14 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`curl -fsSL ${origin}/install-codex.sh | bash`}
+                code={`npm install -g @chorus-aidlc/chorus@0.17.0\nchorus agents add --agents codex`}
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("install.codex.step2Tip")}
               </p>
             </div>
 
-            <div>
-              <h3 className="mb-2 text-sm font-medium text-foreground">
-                {t("install.codex.step3Title")}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {t("install.codex.step3Desc")}
-              </p>
-            </div>
+            {profileStep}
           </TabsContent>
 
           {/* Kiro Tab */}
@@ -133,21 +147,14 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`curl -fsSL ${origin}/install-kiro.sh | bash`}
+                code={`npm install -g @chorus-aidlc/chorus@0.17.0\nchorus agents add --agents kiro`}
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("install.kiro.step2Tip")}
               </p>
             </div>
 
-            <div>
-              <h3 className="mb-2 text-sm font-medium text-foreground">
-                {t("install.kiro.step3Title")}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {t("install.kiro.step3Desc")}
-              </p>
-            </div>
+            {profileStep}
           </TabsContent>
 
           {/* dsh Tab */}
@@ -184,10 +191,10 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`bash <(curl -fsSL ${origin}/dsh-credentials.sh)`}
+                code={`npm install -g @chorus-aidlc/chorus@0.17.0\nchorus agents add --agents dsh --dsh-profile <name>`}
               />
               <p className="mt-2 text-xs text-muted-foreground">
-                {t("install.dsh.step3Tip")}
+                {t("install.dsh.step3Tip", { name: "<name>" })}
               </p>
             </div>
 
@@ -222,21 +229,14 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`curl -fsSL ${origin}/install-opencode.sh | bash`}
+                code={`npm install -g @chorus-aidlc/chorus@0.17.0\nchorus agents add --agents opencode`}
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("install.opencode.step2Tip")}
               </p>
             </div>
 
-            <div>
-              <h3 className="mb-2 text-sm font-medium text-foreground">
-                {t("install.opencode.step3Title")}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {t("install.opencode.step3Desc")}
-              </p>
-            </div>
+            {profileStep}
 
             {/* Troubleshooting collapsible */}
             <Collapsible>
@@ -319,16 +319,6 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               <p className="text-sm text-muted-foreground">
                 {t("install.openClaw.step3Desc")}
               </p>
-            </div>
-
-            <div>
-              <h3 className="mb-2 text-sm font-medium text-foreground">
-                {t("install.openClaw.step4Title")}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {t("install.openClaw.step4Desc")}
-              </p>
-              <CodeBlock code="/chorus status" />
             </div>
 
             {/* Troubleshooting collapsible */}

@@ -6,10 +6,15 @@
 // append / write are injected; two tests drive the REAL appendAgentConfig +
 // writeLoginFile against a temp file to prove agents[] shape + merge-safety.
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, statSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { seedCredentials, credentialSeedStep } from "../init/steps/credential-seed.mjs";
+import { parseEnv } from "node:util";
+import {
+  seedCredentials,
+  credentialSeedStep,
+  writeDshCredentialsEnv,
+} from "../init/steps/credential-seed.mjs";
 import { appendAgentConfig, writeLoginFile } from "../login.mjs";
 import { OUTCOME_ACTIONS } from "../init/contracts.mjs";
 
@@ -348,5 +353,153 @@ describe("seedCredentials — real appendAgentConfig + writeLoginFile (agents[] 
       ["cho_c", "claude-code"],
       ["cho_k", "kiro"],
     ]);
+  });
+});
+
+// dsh needs a SECOND credential sink beyond ~/.chorus/daemon.json — $DSH_HOME/.env,
+// the channel the retired public/dsh-credentials.sh used to write and the dsh
+// doc-mirror wrapper reads when the `chorus` CLI is off PATH. These tests exercise
+// the REAL writer against a temp $DSH_HOME (0600 + merge-preserving + idempotent),
+// and confirm non-dsh agents get NO .env.
+describe("seedCredentials — dsh $DSH_HOME/.env credential channel", () => {
+  it("dsh selection: seeds $DSH_HOME/.env (both keys, 0600) AND still seeds daemon.json unchanged; no secret in the outcome", async () => {
+    const dshHome = mkdtempSync(join(tmpdir(), "dsh-home-"));
+    const append = fakeAppend();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["dsh"],
+        env: { DSH_HOME: dshHome },
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: append,
+        // Fixed identity name (NOT derived from the key) so the leak assertion below
+        // tests the code, not the fake identity helper (which embeds the key in name).
+        validateCredentials: async () => ({ uuid: "u-dsh", name: "DSH Agent" }),
+      }),
+    );
+    const outcomes = [].concat(res);
+    expect(outcomes[0].action).toBe(SEEDED);
+
+    // daemon.json seeding is UNCHANGED — dsh still maps to the shared "offline"
+    // agentType and is appended to agents[] exactly as before.
+    expect(append.calls[0]).toMatchObject({ url: "https://c", apiKey: "cho_secret", agentType: "offline" });
+
+    // $DSH_HOME/.env carries both keys and is parseable by node:util parseEnv
+    // (matching how chorus-mcp-call.mjs reads it).
+    const envPath = join(dshHome, ".env");
+    expect(existsSync(envPath)).toBe(true);
+    const parsed = parseEnv(readFileSync(envPath, "utf8"));
+    expect(parsed.CHORUS_URL).toBe("https://c");
+    expect(parsed.CHORUS_API_KEY).toBe("cho_secret");
+    // The agent's UUID is persisted as CHORUS_AGENT_PROFILE (a UUID, not a secret) so
+    // dsh loads it into the session env; the wrapper reads it from process.env.
+    expect(parsed.CHORUS_AGENT_PROFILE).toBe("u-dsh");
+
+    // Owner-only permissions; the secret is NEVER in the reported outcome (only the path).
+    expect(statSync(envPath).mode & 0o777).toBe(0o600);
+    expect(outcomes[0].detail).not.toContain("cho_secret");
+    expect(outcomes[0].detail).toContain(envPath);
+    expect(outcomes[0].detail).toContain("CHORUS_AGENT_PROFILE");
+    // Flagged so init.mjs skips the manual `export CHORUS_AGENT_PROFILE=…` hint for dsh.
+    expect(outcomes[0].profileInEnv).toBe(true);
+  });
+
+  it("merge-preserving + idempotent: keeps unrelated keys, upserts CHORUS_* in place (no duplicate lines), stable across re-runs", async () => {
+    const dshHome = mkdtempSync(join(tmpdir(), "dsh-home-"));
+    const envPath = join(dshHome, ".env");
+    writeFileSync(envPath, "FOO=bar\nCHORUS_URL=http://old\nBAZ=qux\n");
+
+    const runSeed = () =>
+      seedCredentials(
+        baseCtx({
+          selection: ["dsh"],
+          env: { DSH_HOME: dshHome },
+          flags: { url: "https://new", apiKey: "cho_new" },
+          appendAgent: fakeAppend(),
+        }),
+      );
+
+    await runSeed();
+    const after1 = readFileSync(envPath, "utf8");
+    const parsed = parseEnv(after1);
+    expect(parsed.FOO).toBe("bar"); // unrelated line preserved
+    expect(parsed.BAZ).toBe("qux"); // unrelated line preserved
+    expect(parsed.CHORUS_URL).toBe("https://new"); // upserted in place
+    expect(parsed.CHORUS_API_KEY).toBe("cho_new"); // appended
+    expect(parsed.CHORUS_AGENT_PROFILE).toBe("uuid-cho_new"); // identity persisted
+    // Exactly one CHORUS_URL line — replaced in place, not duplicated.
+    expect((after1.match(/^CHORUS_URL=/gm) || []).length).toBe(1);
+    expect(after1).not.toContain("http://old");
+
+    // Idempotent: a second run reproduces byte-identical content and keeps 0600.
+    await runSeed();
+    expect(readFileSync(envPath, "utf8")).toBe(after1);
+    expect(statSync(envPath).mode & 0o777).toBe(0o600);
+  });
+
+  it("replaces an `export CHORUS_API_KEY=` line in place (dropping the export prefix), preserving other lines", async () => {
+    const dshHome = mkdtempSync(join(tmpdir(), "dsh-home-"));
+    const envPath = join(dshHome, ".env");
+    writeFileSync(envPath, "export CHORUS_API_KEY=cho_old\nOTHER=1\n");
+
+    await seedCredentials(
+      baseCtx({
+        selection: ["dsh"],
+        env: { DSH_HOME: dshHome },
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+      }),
+    );
+
+    const after = readFileSync(envPath, "utf8");
+    const parsed = parseEnv(after);
+    expect(parsed.OTHER).toBe("1");
+    expect(parsed.CHORUS_API_KEY).toBe("cho_secret");
+    expect(parsed.CHORUS_URL).toBe("https://c");
+    expect(after).not.toContain("cho_old");
+    expect((after.match(/CHORUS_API_KEY=/g) || []).length).toBe(1);
+  });
+
+  it("non-dsh selection: writes NO $DSH_HOME/.env even when DSH_HOME is set", async () => {
+    const dshHome = mkdtempSync(join(tmpdir(), "dsh-home-"));
+    await seedCredentials(
+      baseCtx({
+        selection: ["claude"],
+        env: { DSH_HOME: dshHome },
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+      }),
+    );
+    expect(existsSync(join(dshHome, ".env"))).toBe(false);
+  });
+
+  it("writeDshCredentialsEnv creates $DSH_HOME when absent and writes both keys at 0600", () => {
+    const base = mkdtempSync(join(tmpdir(), "dsh-base-"));
+    const dshHome = join(base, "nested", ".dsh"); // does not exist yet
+    const p = writeDshCredentialsEnv({ dshHome, url: "https://c", apiKey: "cho_k" });
+    expect(p).toBe(join(dshHome, ".env"));
+    expect(existsSync(p)).toBe(true);
+    expect(parseEnv(readFileSync(p, "utf8"))).toMatchObject({
+      CHORUS_URL: "https://c",
+      CHORUS_API_KEY: "cho_k",
+    });
+    // No agentProfile passed → no CHORUS_AGENT_PROFILE line (the key is optional).
+    expect(parseEnv(readFileSync(p, "utf8")).CHORUS_AGENT_PROFILE).toBeUndefined();
+    expect(statSync(p).mode & 0o777).toBe(0o600);
+  });
+
+  it("writeDshCredentialsEnv upserts CHORUS_AGENT_PROFILE when provided; a later profile-less write preserves it", () => {
+    const base = mkdtempSync(join(tmpdir(), "dsh-prof-"));
+    const dshHome = join(base, ".dsh");
+    const p = writeDshCredentialsEnv({ dshHome, url: "https://c", apiKey: "cho_k", agentProfile: "agent-uuid-1" });
+    expect(parseEnv(readFileSync(p, "utf8")).CHORUS_AGENT_PROFILE).toBe("agent-uuid-1");
+    // Exactly one profile line — no duplication.
+    expect((readFileSync(p, "utf8").match(/^CHORUS_AGENT_PROFILE=/gm) || []).length).toBe(1);
+    // A later write WITHOUT a profile upserts the credential keys and leaves the
+    // existing profile line untouched (managed-keys-only rewrite; unrelated preserved).
+    writeDshCredentialsEnv({ dshHome, url: "https://c2", apiKey: "cho_k2" });
+    const parsed = parseEnv(readFileSync(p, "utf8"));
+    expect(parsed.CHORUS_URL).toBe("https://c2");
+    expect(parsed.CHORUS_API_KEY).toBe("cho_k2");
+    expect(parsed.CHORUS_AGENT_PROFILE).toBe("agent-uuid-1");
   });
 });

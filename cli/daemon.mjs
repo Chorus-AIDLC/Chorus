@@ -678,7 +678,13 @@ export function buildMultiAgentDaemon(agentConfigs, deps = {}) {
           : deps.makeSseListener,
       };
       try {
-        return { cfg, daemon: build({ url: cfg.url, apiKey: cfg.apiKey }, agentDeps) };
+        return {
+          cfg,
+          daemon: build(
+            { url: cfg.url, apiKey: cfg.apiKey, agentUuid: cfg.agentUuid, agentName: cfg.agentName },
+            agentDeps,
+          ),
+        };
       } catch (err) {
         logger.error?.(
           `[Chorus] agent ${cfg.label}: failed to build runtime — skipping ` +
@@ -911,6 +917,11 @@ export async function runDaemon(flags = {}, deps = {}) {
     for (const cfg of agentConfigs) {
       try {
         const id = await validate({ url: cfg.url, apiKey: cfg.apiKey });
+        // The validated identity is authoritative for the CHORUS_AGENT_PROFILE the
+        // spawner exports — fill from it when daemon.json omitted the field
+        // (resolveAgentConfigs already normalized these to a trimmed string | undefined).
+        cfg.agentUuid = cfg.agentUuid ?? id.uuid;
+        cfg.agentName = cfg.agentName ?? id.name;
         okConfigs.push(cfg);
         log(
           `[Chorus] agent ${cfg.label}: ${id.name} (${id.uuid}) — ${cfg.agentType}, ` +
@@ -1049,7 +1060,11 @@ export async function runDaemon(flags = {}, deps = {}) {
   }
   log(`[Chorus] browse roots: ${browseRoots.join(", ")} (discovery only; no connections created)`);
 
-  const daemon = build(creds, {
+  const daemon = build(
+    // Export this agent's identity as CHORUS_AGENT_PROFILE in the woken session
+    // (the validated identity is authoritative; creds may already carry it).
+    { ...creds, agentUuid: creds.agentUuid ?? identity.uuid, agentName: creds.agentName ?? identity.name },
+    {
     logger: { info: log, warn: errLog, error: errLog },
     permissionMode,
     agentType,

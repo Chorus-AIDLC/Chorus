@@ -2,22 +2,22 @@
 // Kiro's Chorus "plugin" is not a CLI-installable package — it is a set of loose
 // files dropped under .kiro/ (skills, the `chorus` main agent + reviewer
 // subagents, the steering doc, and the session-automation hook scripts), plus a
-// `chorus` MCP server merged into settings/mcp.json. public/install-kiro.sh does
-// this in bash; this module re-implements the same drop natively in pure JS so
-// `chorus init` can install it CROSS-PLATFORM (Windows-safe) with no bash / curl
-// dependency — Node's built-in `fetch` downloads the template, node:fs writes it.
+// `chorus` MCP server merged into settings/mcp.json. This module drops those
+// files natively in pure JS so `chorus init` can install them CROSS-PLATFORM
+// (Windows-safe) with no bash / curl dependency — Node's built-in `fetch`
+// downloads the template, node:fs writes it. (The legacy public/install-kiro.sh
+// is now a deprecation stub that redirects to `chorus init`; this module is the
+// sole Kiro plugin installer.)
 //
 // ASSET SOURCE (owner-decided): the .kiro/ assets are DOWNLOADED from the
-// connected Chorus instance at `${CHORUS_URL}/kiro-plugin/…` (mirroring
-// install-kiro.sh's remote mode), NOT bundled into the npm package. `chorus init`
-// already holds the connection URL, so this keeps the assets in lockstep with the
-// server the user is connecting to and avoids shipping a second copy.
+// connected Chorus instance at `${CHORUS_URL}/kiro-plugin/…`, NOT bundled into
+// the npm package. `chorus init` already holds the connection URL, so this keeps
+// the assets in lockstep with the server the user is connecting to and avoids
+// shipping a second copy.
 //
-// ANTI-DRIFT: the variable asset lists (skills / reviewer agents / hook scripts)
-// live in ONE shared data file — public/kiro-plugin/manifest.txt — read by BOTH
-// this module (parseManifest) and install-kiro.sh (its load_manifest). A parity
-// test asserts the two resolve the identical set. bash can't import a JS module,
-// so the shared thing is a plain data file, not code.
+// The variable asset lists (skills / reviewer agents / hook scripts) live in a
+// data file — public/kiro-plugin/manifest.txt — read by this module
+// (parseManifest), so the shipped asset set is declared in one place.
 
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -29,10 +29,9 @@ import { fileURLToPath } from "node:url";
 export const KIRO_MANIFEST_URL = new URL("../../public/kiro-plugin/manifest.txt", import.meta.url);
 
 /**
- * Parse the shared manifest text into the three artifact lists. Mirror of
- * install-kiro.sh's `load_manifest`: one "<kind> <name>" pair per line; blank
- * lines and `#` comments ignored; kind ∈ {skill, reviewer, hook}. Unknown kinds
- * are ignored (forward-compatible).
+ * Parse the manifest text into the three artifact lists: one "<kind> <name>"
+ * pair per line; blank lines and `#` comments ignored; kind ∈ {skill, reviewer,
+ * hook}. Unknown kinds are ignored (forward-compatible).
  * @param {string} text
  * @returns {{ skills: string[], reviewerAgents: string[], hookScripts: string[] }}
  */
@@ -238,7 +237,7 @@ export async function installFileTemplate({
   const existingText = existed ? readFileSync(mcpJsonPath, "utf8") : "";
   writeFileSync(mcpJsonPath, mergeChorusServer(existingText, serverObj));
 
-  log?.(`[chorus init] kiro: wrote .kiro/ template into ${kiroDir}`);
+  log?.(`[chorus agents add] kiro: wrote .kiro/ template into ${kiroDir}`);
   return {
     skills: manifest.skills.length,
     reviewerAgents: manifest.reviewerAgents.length,

@@ -264,8 +264,12 @@ ARGUMENT FLAGS (call)
 CREDENTIALS (all actions)
   --url <url>           Chorus server URL          (env: CHORUS_URL)
   --api-key <cho_...>   Agent API key              (env: CHORUS_API_KEY)
-  --agent <label>       Select an agent from ~/.chorus/daemon.json agents[]
-                        (required when several are configured and no env/flags)
+  --agent <name|uuid>   Act as an agent from ~/.chorus/daemon.json agents[],
+                        matched by its agentUuid or agentName (env:
+                        CHORUS_AGENT_PROFILE). The key is read from daemon.json —
+                        no need to pass/export CHORUS_API_KEY. A profile is
+                        preferred over CHORUS_URL/CHORUS_API_KEY; required when
+                        several agents are configured and no profile/flags/env.
 
 OUTPUT
   call    prints the tool result's text verbatim on success (drop-in for

@@ -1,6 +1,6 @@
 # Connect Kiro CLI to Chorus
 
-This guide walks through connecting [Amazon Kiro CLI](https://kiro.dev/docs/cli) to a running Chorus instance. Kiro is the fourth Chorus plugin surface (alongside Claude Code, Codex, and OpenClaw). Unlike a packaged plugin, Kiro reads loose `.kiro/{agents,skills,steering,settings}` files, so the deliverable is a template tree merged into your Kiro config directory by a one-shot installer.
+This guide walks through connecting [Amazon Kiro CLI](https://kiro.dev/docs/cli) to a running Chorus instance. Kiro is the fourth Chorus plugin surface (alongside Claude Code, Codex, and OpenClaw). Unlike a packaged plugin, Kiro reads loose `.kiro/{agents,skills,steering,settings}` files, so the deliverable is a template tree merged into your Kiro config directory by `chorus agents add`.
 
 Once installed, Kiro gains:
 
@@ -26,30 +26,31 @@ export CHORUS_API_KEY="cho_your_api_key"
 
 > Add these to `~/.bashrc` or `~/.zshrc` so they persist across shells. Kiro CLI interpolates both values at runtime — the generated `mcp.json` references `${CHORUS_URL}` and `${env:CHORUS_API_KEY}` — so neither is baked into the file and both must stay exported in the shell you launch Kiro from. (This is also what lets a single Chorus daemon serve multiple Kiro agents, each resolving its own URL + key from its own environment.)
 
-## Step 2: Run the installer
+## Step 2: Run chorus agents add
 
 ```bash
-curl -fsSL "$CHORUS_URL/install-kiro.sh" | bash
+chorus agents add --agents kiro
 ```
 
-The script is idempotent and safe to re-run. It will:
+`chorus agents add` reads `CHORUS_URL` / `CHORUS_API_KEY` from your environment (Step 1). It is idempotent and safe to re-run. It will:
 
 1. Verify a Kiro CLI (`kiro-cli` or `kiro`) is installed.
-2. Collect `CHORUS_URL` + `CHORUS_API_KEY` (from env, or prompt on a TTY) and normalize the URL to end in `/api/mcp`.
+2. Download the `.kiro/` template from your connected Chorus instance (it needs `CHORUS_URL`).
 3. Install the Chorus skills, the `chorus` main agent + three reviewer subagents, and the Chorus steering doc into `~/.kiro/`.
-4. Copy the session-automation hook scripts (+ `chorus-api.sh`) into `~/.kiro/chorus-bin/`, mark them executable, and resolve the hook command paths to absolute paths so they run regardless of the directory you launch Kiro from.
-5. Merge the `chorus` MCP server into `~/.kiro/settings/mcp.json`, **preserving any MCP servers you already had** and backing up the original once to `mcp.json.chorus-bak`.
+4. Copy the session-automation hook scripts into `~/.kiro/`, mark them executable, and resolve the hook command paths to absolute paths so they run regardless of the directory you launch Kiro from.
+5. Merge the `chorus` MCP server into `~/.kiro/settings/mcp.json`, **preserving any MCP servers you already had** and backing up the original once.
+6. Seed your Chorus credentials once into `~/.chorus/daemon.json`.
 
-If `CHORUS_URL` / `CHORUS_API_KEY` aren't set, the installer prompts for them interactively (provided you have a TTY). With both exported it runs fully non-interactively.
+If `CHORUS_URL` / `CHORUS_API_KEY` aren't set, `chorus agents add` prompts for them interactively (provided you have a TTY). Don't have the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents kiro`.
 
-### Global (default) vs `--workspace`
+### Global (default) vs a project-local install
 
 - **Global (default):** writes to `~/.kiro/`. Kiro's default agent auto-loads global skills, steering, and MCP config, so **one install works in every directory** — you only need `CHORUS_URL` / `CHORUS_API_KEY` in your shell.
-- **Workspace-local:** pass `--workspace` to write to `<cwd>/.kiro/` instead. Kiro's workspace scope wins over global, so this is the isolated, project-local option (e.g. to pin a different API key per project via [direnv](https://direnv.net/)).
+- **Project-local:** set `KIRO_DIR` to a workspace `.kiro/` before running. Kiro's workspace scope wins over global, so this is the isolated, project-local option (e.g. to pin a different API key per project via [direnv](https://direnv.net/)).
 
 ```bash
 # project-local install
-curl -fsSL "$CHORUS_URL/install-kiro.sh" | bash -s -- --workspace
+KIRO_DIR="$PWD/.kiro" chorus agents add --agents kiro
 ```
 
 ## Step 3: Activate Chorus in Kiro (your manual verification step)
@@ -80,12 +81,13 @@ The `chorus` agent calls `chorus_checkin()` over MCP and reports back your agent
 
 ## Non-interactive install (CI / sandboxed environments)
 
-The installer runs fine without a TTY as long as both vars are in the environment:
+Pass the connection explicitly and skip prompts with `--yes` — no TTY required:
 
 ```bash
-CHORUS_URL=https://chorus.example.com \
-CHORUS_API_KEY=cho_xxx \
-  bash <(curl -fsSL https://chorus.example.com/install-kiro.sh)
+npm install -g @chorus-aidlc/chorus@0.17.0
+chorus agents add --agents kiro \
+  --url https://chorus.example.com \
+  --api-key cho_xxx --yes
 ```
 
 ## Troubleshooting
@@ -93,7 +95,7 @@ CHORUS_API_KEY=cho_xxx \
 - **`No Kiro CLI found in PATH`** — Install Kiro CLI (<https://kiro.dev/docs/cli>). The installer accepts either `kiro-cli` or `kiro`.
 - **`No TTY and CHORUS_API_KEY unset`** — Export `CHORUS_API_KEY` (create one under Settings → Agents) before running non-interactively.
 - **`URL must start with http:// or https://`** — `CHORUS_URL` is missing the scheme. Use `http://` or `https://`.
-- **`401 Unauthorized`** on check-in — API key wrong, revoked, or not exported in the shell that launched Kiro. Recreate under Settings → Agents, re-export `CHORUS_API_KEY`, and relaunch Kiro (re-running the installer is only needed if the URL changed).
+- **`401 Unauthorized`** on check-in — API key wrong, revoked, or not exported in the shell that launched Kiro. Recreate under Settings → Agents, re-export `CHORUS_API_KEY`, and relaunch Kiro (re-running `chorus agents add` is only needed if the URL changed).
 - **Skills don't appear** — Kiro custom agents only load the skills listed in their `resources`; the `chorus` main agent lists all eight. For the default agent, global skills under `~/.kiro/skills/` load automatically. Confirm the files landed with `ls ~/.kiro/skills/`.
 - **Merged the wrong server / want to revert `mcp.json`** — restore `~/.kiro/settings/mcp.json.chorus-bak`.
 
