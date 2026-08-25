@@ -61,14 +61,14 @@ packages/openclaw-plugin/       ← OpenClaw plugin package (TS runtime + skills
 public/kiro-plugin/             ← Kiro CLI plugin (loose .kiro/ template tree + install script)
   .kiro/
     settings/mcp.json           ← Chorus remote MCP server (${env:CHORUS_API_KEY} bearer, disabled:false)
-    skills/chorus-*/SKILL.md    ← 8 chorus-PREFIXED skills (no bare names — global-install distinctiveness)
+    skills/chorus-*/SKILL.md    ← the chorus-PREFIXED skills (no bare names — global-install distinctiveness)
     agents/chorus.json          ← main agent (.json — Kiro CLI, NOT .md); hosts all hooks via __CHORUS_BIN__ placeholder
     agents/chorus.md            ← main-agent system-prompt sidecar (file://./chorus.md)
     agents/chorus-*-reviewer.json  ← 3 read-only reviewer subagents (tools:["read","@chorus"])
     steering/chorus.md          ← platform overview + AI-DLC context (folds in the `chorus` overview skill)
   bin/                          ← Hook scripts (bash, 3.2-safe) + chorus-api.sh + test-syntax.sh
                                   installer copies these into <KIRO_DIR>/chorus-bin/ and resolves __CHORUS_BIN__
-(public/install-kiro.sh)        ← one-shot curl|bash installer → merges .kiro/ into ~/.kiro/ (or <cwd>/.kiro/ with --workspace)
+(public/install-kiro.sh)        ← deprecation stub → redirects to `chorus agents add`; the .kiro/ tree is installed by cli/init/file-template.mjs (asset list: public/kiro-plugin/manifest.txt)
 
 packages/chorus-pi/             ← Pi coding agent package (TS extension + skills)
   package.json                  ← npm package + Pi manifest (version here)
@@ -160,7 +160,7 @@ Every time **any** plugin package changes, bump the version in **all** of that p
 
 ### Kiro plugin — bump together
 Kiro has **no plugin.json / marketplace registry** (it reads loose `.kiro/` files), so the only versioned files are the skill frontmatters.
-10. Every skill under `public/kiro-plugin/.kiro/skills/chorus-*/SKILL.md` — `metadata.version: "X.Y.Z"` on the shared skill sequence (all 8 `chorus-*` skills). The `agents/*.json` and `steering/chorus.md` carry **no** version field — nothing to edit there.
+10. Every skill under `public/kiro-plugin/.kiro/skills/chorus-*/SKILL.md` — `metadata.version: "X.Y.Z"` on the shared skill sequence (all `chorus-*` skills). The `agents/*.json` and `steering/chorus.md` carry **no** version field — nothing to edit there.
 11. `public/kiro-plugin/bin/chorus-api.sh` — hardcoded `clientInfo.version` string in the JSON-RPC `initialize` payload (same as the Codex `chorus-mcp-call.sh` helper).
 
 ### Pi package — bump together
@@ -171,7 +171,7 @@ Kiro has **no plugin.json / marketplace registry** (it reads loose `.kiro/` file
 ### dsh (DeepSeek Harness) plugin — bump together
 dsh tracks the **app version** (currently `0.16.3`), NOT the 0.9.x skill sequence.
 16. `packages/chorus-dsh/package.json` — `"version": "X.Y.Z"` (the published `@chorus-aidlc/chorus-dsh` bundle).
-17. Every skill under `packages/chorus-dsh/skills/*/SKILL.md` — `metadata.version: "X.Y.Z"` (the `chorus/` overview + all 13 `-chorus`-suffixed stage/reviewer skills).
+17. Every skill under `packages/chorus-dsh/skills/*/SKILL.md` — `metadata.version: "X.Y.Z"` (the `chorus/` overview + all `-chorus`-suffixed stage/reviewer skills).
    - **Do NOT** hardcode a version in `bin/chorus-mcp-call.mjs` — its `clientInfo.version` is auto-read from `package.json`, so it never drifts.
 
 ### Standalone skills — independent versioning
@@ -203,7 +203,7 @@ Users update via:
 /plugin update chorus@chorus-plugins           # Claude Code
 codex plugin update chorus@chorus-plugins      # Codex
 # OpenClaw: reinstall/update via the OpenClaw plugin manager (npm spec @chorus-aidlc/chorus-openclaw-plugin)
-# Kiro: re-run the installer — curl -fsSL "$CHORUS_URL/install-kiro.sh" | bash  (idempotent; merges into ~/.kiro/)
+# Kiro: re-run `chorus agents add --agents kiro` (idempotent; installs the .kiro/ tree via the file-template installer)
 # Pi: pull the Chorus checkout, then reinstall its packages/chorus-pi local path
 ```
 

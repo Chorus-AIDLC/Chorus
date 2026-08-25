@@ -104,6 +104,11 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(credWrites).toBe(0);
     expect(text).toContain("kiro: seeded");
     expect(text).toContain("pi: seeded");
+    // Completion prints a CHORUS_AGENT_PROFILE export hint per configured agent
+    // (faked identities u-cho_kiro / u-cho_pi), so an interactive shell can act as
+    // one without exporting its API key.
+    expect(text).toContain('export CHORUS_AGENT_PROFILE="u-cho_kiro"');
+    expect(text).toContain('export CHORUS_AGENT_PROFILE="u-cho_pi"');
     // plugin-install ran per selected agent: kiro installed its .kiro/ file
     // template (fetched + written into the temp KIRO_DIR); pi stays guided.
     expect(text).toContain("kiro: installed");

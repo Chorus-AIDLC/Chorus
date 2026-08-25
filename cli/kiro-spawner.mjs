@@ -280,6 +280,10 @@ export class KiroSpawner {
     if (this.creds) {
       if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
       if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
+      // Identity profile for the woken session — its hooks/skills pass this to
+      // `chorus mcp --agent`, which resolves the key from ~/.chorus/daemon.json.
+      if (this.creds.agentUuid || this.creds.agentName)
+        childEnv.CHORUS_AGENT_PROFILE = this.creds.agentUuid || this.creds.agentName;
     }
 
     // Snapshot the session store BEFORE the run so we can identify the sessionId

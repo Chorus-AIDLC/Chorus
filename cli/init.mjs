@@ -87,15 +87,15 @@ export async function runInit(argv = [], deps = {}) {
   const detections = await detectAgents(env);
   const { selectedIds, error } = await resolveSelection({ flags, detections, io });
   if (error) {
-    io.log(`[chorus init] ${error}`);
+    io.log(`[chorus agents add] ${error}`);
     return 1;
   }
   if (!selectedIds || selectedIds.length === 0) {
-    io.log("[chorus init] Nothing to configure.");
+    io.log("[chorus agents add] Nothing to configure.");
     return 0;
   }
 
-  io.log(`[chorus init] Configuring: ${selectedIds.join(", ")}`);
+  io.log(`[chorus agents add] Configuring: ${selectedIds.join(", ")}`);
 
   const steps = await orderedSteps();
   // `ctxExtras` lets a caller/test inject step-context collaborators (e.g. a
@@ -132,7 +132,7 @@ export async function runInit(argv = [], deps = {}) {
 /** Print the per-outcome summary table. */
 export function summarize(outcomes, io, selectedIds = []) {
   io.log("");
-  io.log("[chorus init] Summary:");
+  io.log("[chorus agents add] Summary:");
   if (outcomes.length === 0) {
     io.log("  (no steps registered yet)");
   }
@@ -142,8 +142,51 @@ export function summarize(outcomes, io, selectedIds = []) {
   }
   const failed = outcomes.filter(isFailureOutcome);
   if (failed.length) {
-    io.log(`[chorus init] ${failed.length} step(s) failed — see above.`);
+    io.log(`[chorus agents add] ${failed.length} step(s) failed — see above.`);
   } else if (selectedIds.length) {
-    io.log("[chorus init] Done. Next: run the daemon / connect MCP to activate tools.");
+    io.log("[chorus agents add] Done. Next: run the daemon / connect MCP to activate tools.");
   }
+
+  profileExportHint(outcomes, io);
+}
+
+/**
+ * Print an optional `export CHORUS_AGENT_PROFILE=…` hint for every agent whose
+ * identity credential-seed captured. Setting it in an interactive shell lets that
+ * shell's Chorus hooks/skills act as a specific agent — the CLI resolves the key
+ * from ~/.chorus/daemon.json by profile, so the API key need not be exported for
+ * the wrapper/doc-mirror MCP path. It is OPTIONAL and ADDITIVE (Claude Code's
+ * built-in MCP client still reads CHORUS_URL/CHORUS_API_KEY from the env);
+ * daemon-woken sessions receive CHORUS_AGENT_PROFILE from the spawner automatically.
+ *
+ * EXCEPTION — dsh: when credential-seed persisted the profile into `$DSH_HOME/.env`
+ * (outcome `profileInEnv: true`), dsh loads it into the session env on its own, so
+ * a manual export is redundant — that agent is omitted from the hint. Every other
+ * agent (Claude Code, Codex, Kiro, …) has no such file channel and still gets the
+ * hint.
+ * @param {import("./init/contracts.mjs").StepOutcome[]} outcomes
+ * @param {{ log: Function }} io
+ */
+export function profileExportHint(outcomes, io) {
+  const seen = new Set();
+  const profiles = [];
+  for (const o of outcomes) {
+    // dsh persists CHORUS_AGENT_PROFILE in $DSH_HOME/.env and loads it into the
+    // session env itself — no manual export needed, so skip it here.
+    if (o && o.profileInEnv === true) continue;
+    if (o && typeof o.agentUuid === "string" && o.agentUuid && !seen.has(o.agentUuid)) {
+      seen.add(o.agentUuid);
+      profiles.push({ agentUuid: o.agentUuid, agentName: typeof o.agentName === "string" ? o.agentName : "" });
+    }
+  }
+  if (profiles.length === 0) return;
+
+  io.log("");
+  io.log("[chorus agents add] Optional — act as an agent in THIS shell without exporting its API key");
+  io.log("  (Chorus hooks/skills resolve the key from ~/.chorus/daemon.json by profile):");
+  for (const p of profiles) {
+    io.log(`    export CHORUS_AGENT_PROFILE="${p.agentUuid}"${p.agentName ? `   # ${p.agentName}` : ""}`);
+  }
+  io.log("  One per shell — pick the identity it should act as; add it to ~/.bashrc / ~/.zshrc");
+  io.log("  to persist. Daemon-woken sessions set CHORUS_AGENT_PROFILE automatically.");
 }

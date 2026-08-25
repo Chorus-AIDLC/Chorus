@@ -35,17 +35,28 @@ dsh plugin --profile <name> add @chorus-aidlc/chorus-dsh -w
 - `@deepseek-ai/dsh-tool-skill`
 - `@deepseek-ai/dsh-persona`
 
-把凭证写到 dsh 工具能读到的地方：
+用 `chorus agents add` 写入 Chorus 凭证：
 
 ```bash
-CHORUS_URL="$CHORUS_URL" CHORUS_API_KEY="$CHORUS_API_KEY" \
-  bash <(curl -fsSL "$CHORUS_URL/dsh-credentials.sh")
+chorus agents add --agents dsh --dsh-profile <name>
 ```
 
-这会把 `CHORUS_URL` + `CHORUS_API_KEY` 写入 `$DSH_HOME/.env`（权限 0600），并保留
-其他条目。dsh 会刻意把"凭据形状"的环境变量从工具子进程里擦掉，所以 OpenSpec
-文档镜像 wrapper 无法从你的 shell 继承 key——它从 `$DSH_HOME/.env`（dsh 自己的
-凭据兜底位）读取。该脚本只写凭证（不复制任何插件文件），未导出的值会交互式询问。
+`chorus agents add` 会校验你的 key，并把 `CHORUS_URL` + `CHORUS_API_KEY` 写入
+`~/.chorus/daemon.json`（权限 0600），如有需要还会把 `@chorus-aidlc/chorus-dsh`
+bundle 加入该 profile。它会从上面的 shell 环境读取这些值，缺失的值在有 TTY 时
+交互式询问。还没安装 `chorus` CLI？先用 `npm install -g @chorus-aidlc/chorus@0.17.0` 全局安装，再运行 `chorus agents add --agents dsh --dsh-profile <name>`。
+
+对于 `dsh` agent，`chorus agents add` 还会把 `CHORUS_URL`、`CHORUS_API_KEY` 和
+`CHORUS_AGENT_PROFILE`（该 agent 的 UUID）写入 `$DSH_HOME/.env`（默认 `~/.dsh/.env`，
+权限 0600，保留无关行）。这是 dsh 自己的凭证通道：dsh 会从工具子进程里剥离凭证形态的
+变量，所以文档镜像 wrapper 无法从 shell 读到 URL/key——`chorus` CLI 不在 `PATH` 时
+（例如用 `npx` 而非全局安装运行 `chorus agents add`），wrapper 会从 `$DSH_HOME/.env`
+读取 `CHORUS_URL` / `CHORUS_API_KEY`。`CHORUS_AGENT_PROFILE` 不是密钥、不会被剥离：
+dsh 会把 `$DSH_HOME/.env` 加载进会话，profile 直接出现在环境变量里。它指明这个 profile
+以哪个 agent 身份行事——在配置了多个 agent 的机器上，wrapper 会据此确定地以该 agent
+身份行事（委托 `chorus mcp call --agent <profile>`，从 `~/.chorus/daemon.json` 解析出
+key）。因为已经持久化在这里，dsh **不需要**你再手动 `export CHORUS_AGENT_PROFILE`（其他
+没有 `.env` 通道的 agent 仍会从 `chorus agents add` 得到这条 export 提示）。
 
 启动同一个 profile：
 
@@ -75,7 +86,7 @@ npm 包包含 Chorus lifecycle、inline persona 和 instructions、MCP 配置，
 ## 文件归属
 
 - `dsh plugin` 创建的 profile 包状态归 dsh 管理。
-- Chorus 不会在 `$DSH_HOME` 下写入 package、skill、preset、instruction 或凭证文件。
+- Chorus 不会在 `$DSH_HOME` 下写入 package、skill、preset 或 instruction 文件。唯一的例外是凭证/身份：`chorus agents add` 会写入 `$DSH_HOME/.env`（`CHORUS_URL` + `CHORUS_API_KEY` + `CHORUS_AGENT_PROFILE`，权限 0600，保留无关行）——这是 dsh 认可的通道，`chorus` CLI 不可用时由文档镜像 wrapper 读取。
 
 ## 故障排查
 

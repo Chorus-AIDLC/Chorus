@@ -4,13 +4,13 @@
 //   - cli/init/file-template.mjs pure helpers + installFileTemplate (temp dir +
 //     a FAKED fetch — never hits the network),
 //   - installKiro / readKiroInstallState in cli/init/install-methods.mjs,
-//   - and the MANIFEST PARITY between the JS parser and public/install-kiro.sh's
-//     bash `load_manifest`, proving both read the single shared data file.
+//   - and that the shared kiro manifest is readable + non-empty. The manifest is
+//     now owned SOLELY by file-template.mjs — install-kiro.sh is a deprecation
+//     stub with no manifest, so the old bash-side parity assertion is gone.
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   parseManifest,
@@ -411,30 +411,11 @@ describe("readKiroInstallState (temp fixtures)", () => {
   });
 });
 
-describe("manifest parity: JS parser vs install-kiro.sh load_manifest", () => {
-  const scriptPath = fileURLToPath(new URL("../../public/install-kiro.sh", import.meta.url));
-
-  /** Parse `--print-manifest` bash output ("skills: a b\nreviewers: …\nhooks: …"). */
-  function bashManifest() {
-    const out = execFileSync("bash", [scriptPath, "--print-manifest"], { encoding: "utf8" });
-    const pick = (label) => {
-      const line = out.split(/\r?\n/).find((l) => l.startsWith(`${label}:`)) || `${label}:`;
-      return line.slice(label.length + 1).trim().split(/\s+/).filter(Boolean);
-    };
-    return { skills: pick("skills"), reviewerAgents: pick("reviewers"), hookScripts: pick("hooks") };
-  }
-
-  it("both consumers resolve the identical asset set from the shared file", () => {
+describe("kiro manifest (owned solely by file-template.mjs)", () => {
+  it("readKiroManifestFile resolves a non-empty asset set from the shared file", () => {
+    // install-kiro.sh is now a deprecation stub with no manifest of its own, so
+    // the manifest is single-sourced here. Guard against an empty parse.
     const js = readKiroManifestFile();
-    const bash = bashManifest();
-    // Order-independent set equality per list.
-    const sorted = (o) => ({
-      skills: [...o.skills].sort(),
-      reviewerAgents: [...o.reviewerAgents].sort(),
-      hookScripts: [...o.hookScripts].sort(),
-    });
-    expect(sorted(bash)).toEqual(sorted(js));
-    // Sanity: the shared file actually carries content (guards an empty parse on both sides).
     expect(js.skills.length).toBeGreaterThan(0);
     expect(js.reviewerAgents.length).toBeGreaterThan(0);
     expect(js.hookScripts.length).toBeGreaterThan(0);

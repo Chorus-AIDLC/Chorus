@@ -120,6 +120,150 @@ describe("resolveMcpCredentials — multi-agent selection", () => {
   });
 });
 
+describe("resolveMcpCredentials — profile by uuid/name (real daemon.json shape)", () => {
+  // The real ~/.chorus/daemon.json (written by chorus init / login) tags each
+  // entry with agentUuid + agentName — NOT label/name.
+  const realShape = {
+    [LOGIN_PATH]: {
+      agents: [
+        {
+          url: "https://c",
+          apiKey: "cho_admin",
+          agentType: "claude-code",
+          agentUuid: "daee0667-8487-4810-9cc0-8e4a0b2174c9",
+          agentName: "Admin Claude",
+        },
+        {
+          url: "https://c",
+          apiKey: "cho_codex",
+          agentType: "codex",
+          agentUuid: "b0e3a413-d812-44b7-a512-8c6dacd9e180",
+          agentName: "Codex",
+        },
+      ],
+    },
+  };
+
+  it("--agent selects by agentUuid", () => {
+    expect(
+      resolveMcpCredentials({ agent: "b0e3a413-d812-44b7-a512-8c6dacd9e180" }, deps({ files: realShape })),
+    ).toEqual({ url: "https://c", apiKey: "cho_codex", label: "Codex" });
+  });
+
+  it("--agent selects by agentName", () => {
+    expect(resolveMcpCredentials({ agent: "Admin Claude" }, deps({ files: realShape }))).toEqual({
+      url: "https://c",
+      apiKey: "cho_admin",
+      label: "Admin Claude",
+    });
+  });
+
+  it("--agent flag is PREFERRED over an explicit --url/--api-key pair (prefer profile)", () => {
+    expect(
+      resolveMcpCredentials(
+        { agent: "Codex", url: "https://flag", apiKey: "cho_flag" },
+        deps({ files: realShape }),
+      ),
+    ).toEqual({ url: "https://c", apiKey: "cho_codex", label: "Codex" });
+  });
+
+  it("an ambiguous agentName match throws listing candidates", () => {
+    const dup = {
+      [LOGIN_PATH]: {
+        agents: [
+          { apiKey: "cho_1", url: "https://c", agentUuid: "u1", agentName: "Twin" },
+          { apiKey: "cho_2", url: "https://c", agentUuid: "u2", agentName: "Twin" },
+        ],
+      },
+    };
+    expect(() => resolveMcpCredentials({ agent: "Twin" }, deps({ files: dup }))).toThrow(
+      /--agent "Twin" is ambiguous.*Twin, Twin.*UUID/s,
+    );
+    // ...but the unique uuid still resolves cleanly.
+    expect(resolveMcpCredentials({ agent: "u2" }, deps({ files: dup }))).toEqual({
+      url: "https://c",
+      apiKey: "cho_2",
+      label: "Twin",
+    });
+  });
+});
+
+describe("resolveMcpCredentials — CHORUS_AGENT_PROFILE env", () => {
+  const realShape = {
+    [LOGIN_PATH]: {
+      agents: [
+        { apiKey: "cho_admin", url: "https://c", agentUuid: "u-admin", agentName: "Admin Claude" },
+        { apiKey: "cho_codex", url: "https://c", agentUuid: "u-codex", agentName: "Codex" },
+      ],
+    },
+  };
+
+  it("selects the agent named by CHORUS_AGENT_PROFILE (by name or uuid)", () => {
+    expect(
+      resolveMcpCredentials({}, deps({ env: { CHORUS_AGENT_PROFILE: "Codex" }, files: realShape })),
+    ).toEqual({ url: "https://c", apiKey: "cho_codex", label: "Codex" });
+    expect(
+      resolveMcpCredentials({}, deps({ env: { CHORUS_AGENT_PROFILE: "u-admin" }, files: realShape })),
+    ).toEqual({ url: "https://c", apiKey: "cho_admin", label: "Admin Claude" });
+  });
+
+  it("profile env WINS over the CHORUS_URL/CHORUS_API_KEY env pair", () => {
+    expect(
+      resolveMcpCredentials(
+        {},
+        deps({
+          env: { CHORUS_AGENT_PROFILE: "Codex", CHORUS_URL: "https://env", CHORUS_API_KEY: "cho_env" },
+          files: realShape,
+        }),
+      ),
+    ).toEqual({ url: "https://c", apiKey: "cho_codex", label: "Codex" });
+  });
+
+  it("an explicit --agent flag takes precedence over CHORUS_AGENT_PROFILE", () => {
+    expect(
+      resolveMcpCredentials(
+        { agent: "Admin Claude" },
+        deps({ env: { CHORUS_AGENT_PROFILE: "Codex" }, files: realShape }),
+      ),
+    ).toEqual({ url: "https://c", apiKey: "cho_admin", label: "Admin Claude" });
+  });
+
+  it("a profile env naming no agent falls back to url-mode (label = profile name)", () => {
+    expect(
+      resolveMcpCredentials(
+        {},
+        deps({
+          env: { CHORUS_AGENT_PROFILE: "ghost", CHORUS_URL: "https://env", CHORUS_API_KEY: "cho_env" },
+          files: realShape,
+        }),
+      ),
+    ).toEqual({ url: "https://env", apiKey: "cho_env", label: "ghost" });
+  });
+
+  it("a profile env with no agents[] rides along the env pair as the label", () => {
+    expect(
+      resolveMcpCredentials(
+        {},
+        deps({ env: { CHORUS_AGENT_PROFILE: "whoever", CHORUS_URL: "https://env", CHORUS_API_KEY: "cho_env" } }),
+      ),
+    ).toEqual({ url: "https://env", apiKey: "cho_env", label: "whoever" });
+  });
+
+  it("an ambiguous CHORUS_AGENT_PROFILE match throws", () => {
+    const dup = {
+      [LOGIN_PATH]: {
+        agents: [
+          { apiKey: "cho_1", url: "https://c", agentUuid: "u1", agentName: "Twin" },
+          { apiKey: "cho_2", url: "https://c", agentUuid: "u2", agentName: "Twin" },
+        ],
+      },
+    };
+    expect(() =>
+      resolveMcpCredentials({}, deps({ env: { CHORUS_AGENT_PROFILE: "Twin" }, files: dup })),
+    ).toThrow(/CHORUS_AGENT_PROFILE "Twin" is ambiguous/s);
+  });
+});
+
 describe("resolveMcpCredentials — flat (no agents[])", () => {
   it("resolves flat login-file credentials with no --agent", () => {
     const r = resolveMcpCredentials(

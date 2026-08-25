@@ -4,7 +4,7 @@ This guide walks through connecting [Claude Code](https://claude.com/claude-code
 
 > **Tip:** The in-app setup wizard at **Settings → Setup Guide → Open setup guide** walks you through the same steps interactively, including API-key creation. Use this doc if you prefer a reference you can read end-to-end or automate.
 
-> **One command (experimental):** `chorus init` detects the coding agents installed on your machine, lets you pick which to configure, installs each one's Chorus plugin via that agent's own plugin CLI, and seeds your Chorus credentials once into `~/.chorus/daemon.json`. Non-interactive: `chorus init --agents claude,codex --url <url> --api-key <cho_...> --yes`. It installs the plugin surface; the manual steps below always work and remain fully supported.
+> **One command (recommended):** `chorus agents add` detects the coding agents installed on your machine, lets you pick which to configure, installs each one's Chorus plugin via that agent's own plugin CLI, and seeds your Chorus credentials once into `~/.chorus/daemon.json`. Non-interactive: `chorus agents add --agents claude,codex --url <url> --api-key <cho_...> --yes`. Step 2 below is exactly this; a manual in-TUI alternative is folded in after it.
 
 ## Prerequisites
 
@@ -21,11 +21,36 @@ export CHORUS_API_KEY="cho_your_api_key"
 
 > Add these to `~/.bashrc` or `~/.zshrc` if you want them to persist across shells.
 
+> **Optional — pin this shell to a specific agent (`CHORUS_AGENT_PROFILE`).** Once
+> `chorus agents add` has saved your agents into `~/.chorus/daemon.json`, you can name which
+> agent this shell's Chorus hooks/skills act as, and the bundled `chorus mcp` client
+> resolves that agent's key from `daemon.json` — no need to export its API key for the
+> hook / doc-mirror path. `chorus agents add` prints the exact line at the end of a run; add it
+> to your shell profile:
+>
+> ```bash
+> export CHORUS_AGENT_PROFILE="<agent-uuid>"   # the UUID chorus agents add printed (agentName also works)
+> ```
+>
+> This is most useful when several agents are configured on one machine (it disambiguates
+> which identity a session acts as). It's additive — Claude Code's built-in MCP client
+> still uses the `CHORUS_URL` / `CHORUS_API_KEY` from Step 1. Daemon-woken sessions set
+> `CHORUS_AGENT_PROFILE` automatically.
+
 ## Step 2: Install the Chorus plugin
 
-The recommended path is the official Chorus plugin — it bundles hooks, skills, and auto-managed sessions on top of the raw MCP connection.
+Install the Chorus CLI, then let `chorus agents add` install the plugin for Claude Code — it runs Claude Code's own `claude plugin` commands for you (registers the marketplace, installs `chorus@chorus-plugins`) and seeds your credentials:
 
-**From the plugin marketplace** (recommended):
+```bash
+npm install -g @chorus-aidlc/chorus@0.17.0
+chorus agents add --agents claude
+```
+
+`chorus agents add` reads `CHORUS_URL` / `CHORUS_API_KEY` from Step 1 (or prompts on a TTY); it is idempotent and safe to re-run.
+
+<details><summary>Manual alternatives</summary>
+
+`chorus agents add --agents claude` runs these for you; do it by hand only if you prefer to stay in the TUI:
 
 ```bash
 claude
@@ -33,11 +58,13 @@ claude
 /plugin install chorus@chorus-plugins
 ```
 
-**From a local clone** (for development):
+Or load from a local clone (for development):
 
 ```bash
 claude --plugin-dir public/chorus-plugin
 ```
+
+</details>
 
 That's it. On next launch, Claude will see Chorus MCP tools (`chorus_checkin`, `chorus_pm_*`, `chorus_claim_task`, …) and the workflow slash commands (`/chorus`, `/chorus:develop`, `/chorus:proposal`, `/chorus:yolo`, etc.).
 

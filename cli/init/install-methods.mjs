@@ -452,7 +452,7 @@ export function guided(agentId, detail) {
 export const GUIDED_MESSAGES = {
   // Pi HAS an extension surface (`pi install <source>`) — this message must NOT
   // claim otherwise. What's missing is a published Chorus Pi extension for
-  // `chorus init` to install automatically, so the accurate guidance is the real
+  // `chorus agents add` to install automatically, so the accurate guidance is the real
   // manual command against that source once it's available.
-  pi: "Pi installs extensions with `pi install <source>`; Chorus does not yet publish a Pi extension for `chorus init` to automate, so install it manually with `pi install <source>` when a Chorus Pi source is available.",
+  pi: "Pi installs extensions with `pi install <source>`; Chorus does not yet publish a Pi extension for `chorus agents add` to automate, so install it manually with `pi install <source>` when a Chorus Pi source is available.",
 };

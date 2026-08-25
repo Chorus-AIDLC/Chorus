@@ -12,16 +12,15 @@ export CHORUS_API_KEY="cho_..."
 dsh plugin --profile web add @chorus-aidlc/chorus-dsh -w
 ```
 
-The profile's dsh base installation supplies the four peer plugins declared by this package. Chorus does not write files beneath `$DSH_HOME`.
+The profile's dsh base installation supplies the four peer plugins declared by this package. Chorus writes no package/skill/preset/instruction files beneath `$DSH_HOME`; the sole exception is credentials — `chorus agents add` writes `$DSH_HOME/.env` (see below).
 
-Then store the credentials where dsh's tools can read them. dsh scrubs credential-shaped variables from tool subprocesses, so the OpenSpec document-mirror wrapper reads `CHORUS_URL` / `CHORUS_API_KEY` from `$DSH_HOME/.env` (dsh's credential fallback), not the shell:
+Then provision your Chorus credentials with `chorus agents add`:
 
 ```sh
-CHORUS_URL="$CHORUS_URL" CHORUS_API_KEY="$CHORUS_API_KEY" \
-  bash <(curl -fsSL "$CHORUS_URL/dsh-credentials.sh")
+chorus agents add --agents dsh --dsh-profile <name>
 ```
 
-`dsh-credentials.sh` is served by the Chorus instance; it writes only `$DSH_HOME/.env` (mode 0600, preserving other entries) and copies no plugin files. The Chorus daemon injects per-agent credentials separately.
+`chorus agents add` validates your key and seeds `CHORUS_URL` / `CHORUS_API_KEY` into `~/.chorus/daemon.json` (mode 0600). For a `dsh` agent it ALSO writes the same pair into `$DSH_HOME/.env` (default `~/.dsh/.env`, mode 0600, preserving any unrelated lines) — dsh's own credential channel. The OpenSpec document-mirror wrapper prefers the `chorus mcp` CLI (which reads the daemon.json credentials); where the CLI is unavailable (e.g. the `npx` init path, which does not persist `chorus` on `PATH`) it reads `CHORUS_URL` / `CHORUS_API_KEY` from that `$DSH_HOME/.env` — dsh scrubs credential-shaped variables from tool subprocesses, so the shell is not a reliable source. This `$DSH_HOME/.env` write restores what the now-retired `dsh-credentials.sh` bootstrap used to do (that script is now a stub that redirects to `chorus agents add`). The Chorus daemon injects per-agent credentials separately.
 
 ## Configuration
 

@@ -78,8 +78,11 @@ for entry in \
   run_suite "$variant"
 done
 
-grep -q 'HOOK_SCRIPTS=.*verify-document-roundtrip.sh' "$REPO_ROOT/public/install-kiro.sh" || {
-  echo "FAIL: Kiro installer omits verify-document-roundtrip.sh" >&2
+# install-kiro.sh is now a deprecation stub (retired in favor of `chorus agents add`);
+# the Kiro file-template installer reads its hook list from the manifest, which is
+# the single source of truth for what the plugin ships.
+grep -q '^hook verify-document-roundtrip.sh' "$REPO_ROOT/public/kiro-plugin/manifest.txt" || {
+  echo "FAIL: Kiro plugin manifest omits verify-document-roundtrip.sh" >&2
   fail=$((fail + 1))
 }
 

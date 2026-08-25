@@ -4,7 +4,7 @@ description: Chorus Proposal workflow — create proposals with document and tas
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.4"
+  version: "0.17.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -91,7 +91,7 @@ Before authoring document drafts, **load the `/chorus-openspec-aware` skill** an
 
 - **`CHORUS_OPENSPEC_ACTIVE=1`** → follow `/chorus-openspec-aware` §3. Pick `$SLUG`, scaffold `openspec/changes/<slug>/`, author `proposal.md` / `design.md` / `specs/<capability>/spec.md` locally, then create the proposal container (Step 1 above) with the literal line `OpenSpec change slug: <slug>` in `description`, and mirror each local file into a document draft.
 
-  > **⛔ Mandatory in OpenSpec mode:** mirror calls go through the `chorus-api.sh` wrapper with `content` produced by `json_encode_file` — see `/chorus-openspec-aware` §3.6. Do **not** call `chorus_pm_add_document_draft` directly from the MCP harness with a hand-typed `content` field. Re-typing thousands of lines through the LLM burns 20k+ content tokens per proposal and breaks byte-equality with the local source of truth (`/chorus-openspec-aware` §2 Rule 1 explains the full reasoning). Skip Step 2 below when in OpenSpec mode — the wrapper-based flow in `/chorus-openspec-aware` §3.6 replaces it for documents.
+  > **⛔ Mandatory in OpenSpec mode:** mirror calls fill `content` from the local file — prefer `chorus mcp call … --arg-file content=<file>`, falling back to the `chorus-api.sh` wrapper with `json_encode_file` when `chorus` is not on `PATH` — see `/chorus-openspec-aware` §3.6. Do **not** call `chorus_pm_add_document_draft` directly from the MCP harness with a hand-typed `content` field. Re-typing thousands of lines through the LLM burns 20k+ content tokens per proposal and breaks byte-equality with the local source of truth (`/chorus-openspec-aware` §2 Rule 1 explains the full reasoning). Skip Step 2 below when in OpenSpec mode — the file-fill flow in `/chorus-openspec-aware` §3.6 replaces it for documents.
 
 - **`CHORUS_OPENSPEC_ACTIVE=0`** (CLI absent or `CHORUS_OPENSPEC_MODE=off`) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
 

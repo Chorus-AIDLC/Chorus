@@ -70,7 +70,7 @@ export async function resolveSelection({ flags = {}, detections = [], io = {} })
  */
 async function promptChecklist({ detections, io }) {
   const defaults = detections.filter((d) => d.detected).map((d) => d.id);
-  io.log("[chorus init] Detected coding agents (✓ = found on this machine):");
+  io.log("[chorus agents add] Detected coding agents (✓ = found on this machine):");
   detections.forEach((d, i) => {
     io.log(`  ${i + 1}) ${d.detected ? "✓" : " "} ${d.displayName} (${d.id})`);
   });

@@ -107,10 +107,10 @@ describe("registerChorusCommands", () => {
     expect(res.text).toContain("[in_progress] Cool idea");
   });
 
-  it("/chorus skills lists all 9 bundled skills with slash-command invocation", async () => {
+  it("/chorus skills lists all 10 bundled skills with slash-command invocation", async () => {
     const { command } = register({});
     const res = await command.handler({ args: "skills" });
-    expect(res.text).toContain("Chorus skills (9)");
+    expect(res.text).toContain("Chorus skills (10)");
     for (const slug of [
       "/chorus",
       "/idea",
@@ -121,6 +121,7 @@ describe("registerChorusCommands", () => {
       "/review",
       "/yolo",
       "/openspec-aware",
+      "/chorus-cli",
     ]) {
       expect(res.text).toContain(slug);
     }

@@ -23,22 +23,25 @@ export CHORUS_API_KEY="cho_your_api_key"
 
 ## Step 2: Enable the Chorus plugin
 
-Run the one-shot installer:
+Run `chorus agents add`:
 
 ```bash
-curl -fsSL "$CHORUS_URL/install-opencode.sh" | bash
+chorus agents add --agents opencode
 ```
 
-The script is idempotent and safe to re-run. It will:
+`chorus agents add` reads `CHORUS_URL` / `CHORUS_API_KEY` from your environment (Step 1). It is idempotent and safe to re-run. It will:
 
 1. Verify `opencode` is installed (warns if not, but still writes the config).
 2. Idempotently add `"opencode-chorus"` to the `plugin` array in `~/.config/opencode/opencode.json`. Existing plugin entries are preserved.
-3. Back up the original config to `opencode.json.chorus-bak` (only on first modification) and set file mode to `600`.
+3. Back up the original config to `opencode.json.chorus-bak` (only on first modification).
+4. Seed your Chorus credentials once into `~/.chorus/daemon.json`.
 
-**What the script does NOT do:**
+**What `chorus agents add` does NOT do:**
 
 - It does **not** write to `~/.bashrc` / `~/.zshrc`. You are responsible for exporting `CHORUS_URL` and `CHORUS_API_KEY` yourself before launching `opencode`.
-- It does **not** install the plugin package. OpenCode fetches `opencode-chorus` from npm via Bun the first time you launch it after editing `opencode.json` (cache lives at `~/.cache/opencode/packages/opencode-chorus@latest/`).
+- It does **not** vendor the plugin package into the repo. OpenCode fetches `opencode-chorus` from npm via Bun (cache lives at `~/.cache/opencode/packages/opencode-chorus@latest/`).
+
+> Don't have the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents opencode`.
 
 ### Manual alternative
 
@@ -83,7 +86,7 @@ The plugin will call `chorus_checkin()` via its MCP client and the agent will re
 
 - **`401 Unauthorized`.** API key wrong or revoked. Recreate under Settings → Agents, then update `CHORUS_API_KEY` in your shell rc and restart OpenCode.
 
-- **Need to roll back?** The installer saved your original config to `~/.config/opencode/opencode.json.chorus-bak`. Restore with:
+- **Need to roll back?** `chorus agents add` saved your original config to `~/.config/opencode/opencode.json.chorus-bak`. Restore with:
   ```bash
   mv ~/.config/opencode/opencode.json.chorus-bak ~/.config/opencode/opencode.json
   ```

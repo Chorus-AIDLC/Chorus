@@ -26,7 +26,7 @@ import { loginFilePath } from "./credentials.mjs";
  * `agentType: "offline"` and pass resolveAgentConfigs' KNOWN_AGENTS validation. The
  * fail-closed no-wake handling lives in spawner-select.mjs (selectSpawner returns
  * an OfflineSpawner that refuses to spawn) — an offline value MUST NOT fall through
- * to the claude-code default and wake it. `chorus init` maps every non-wakeable
+ * to the claude-code default and wake it. `chorus agents add` maps every non-wakeable
  * selected agent (opencode/openclaw/pi/dsh) to this classification. */
 export const KNOWN_AGENTS = ["claude-code", "codex", "kiro", "dsh", "offline"];
 

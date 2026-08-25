@@ -225,8 +225,51 @@ cmd_mcp_tool() {
   local tool_name="${1:-}"
   local arguments="${2:-{\}}"
   [ -n "$tool_name" ] || die "Usage: chorus-api.sh mcp-tool <tool_name> [arguments_json]"
+
+  # Decide ONCE whether we can delegate to the native `chorus` CLI. `chorus mcp`
+  # (and profile-by-name/uuid selection) only exists in chorus >= 0.17.0, so
+  # version-gate: `chorus --version` prints a bare X.Y.Z; parse the first
+  # MAJOR.MINOR and accept major>0 OR (major==0 && minor>=17). Bash 3.2-safe.
+  # CHORUS_MCP_NO_CLI forces the curl path.
+  local _cli_usable=0 _cli_ver="" _cli_major _cli_minor
+  if [ -z "${CHORUS_MCP_NO_CLI:-}" ] && command -v chorus >/dev/null 2>&1; then
+    _cli_ver=$(chorus --version 2>/dev/null | head -1 | tr -d '\r' || true)
+    _cli_major=$(printf '%s' "$_cli_ver" | sed -n 's/^[^0-9]*\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1/p')
+    _cli_minor=$(printf '%s' "$_cli_ver" | sed -n 's/^[^0-9]*\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\2/p')
+    if [ -n "$_cli_major" ] && [ -n "$_cli_minor" ] && { [ "$_cli_major" -gt 0 ] || [ "$_cli_minor" -ge 17 ]; }; then
+      _cli_usable=1
+    fi
+  fi
+
+  # Profile path (PREFERRED): CHORUS_AGENT_PROFILE + a usable CLI -> delegate by
+  # profile. The CLI reads this agent's key from ~/.chorus/daemon.json, so
+  # CHORUS_URL/CHORUS_API_KEY need NOT be set. When the CLI is absent/old we fall
+  # through to the url+key path (the documented fallback).
+  if [ -n "${CHORUS_AGENT_PROFILE:-}" ] && [ "$_cli_usable" -eq 1 ]; then
+    local cli_status=0
+    chorus mcp call "$tool_name" "$arguments" --agent "$CHORUS_AGENT_PROFILE" || cli_status=$?
+    return "$cli_status"
+  fi
+
+  # url+key path. This wrapper stays the single credential resolver, so pass
+  # CHORUS_URL/CHORUS_API_KEY explicitly. Prefer the CLI when usable (a byte-exact
+  # drop-in for this curl path, #505); the fallback never triggers on a call
+  # *failure* — a present-but-erroring `chorus mcp call` propagates its stdout,
+  # stderr, and exit code verbatim (no curl retry, no double request).
   require_env
   ensure_state
+  if [ "$_cli_usable" -eq 1 ]; then
+    local cli_status=0
+    chorus mcp call "$tool_name" "$arguments" \
+      --url "$CHORUS_URL" --api-key "$CHORUS_API_KEY" || cli_status=$?
+    return "$cli_status"
+  fi
+  if [ -z "${CHORUS_MCP_NO_CLI:-}" ] && command -v chorus >/dev/null 2>&1; then
+    # `chorus` is present but too old for `chorus mcp` -> actionable upgrade error
+    # (no silent curl fallback).
+    echo "ERROR: chorus CLI version '${_cli_ver:-unknown}' is too old; 'chorus mcp' requires chorus >= 0.17.0. Upgrade with: npm install -g @chorus-aidlc/chorus" >&2
+    return 1
+  fi
 
   local mcp_url="${CHORUS_URL}/api/mcp"
   local auth_header="Authorization: Bearer ${CHORUS_API_KEY}"
@@ -240,7 +283,7 @@ cmd_mcp_tool() {
     # Step 1: Initialize MCP session
     local init_payload
     init_payload=$(cat <<JSONEOF
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-hook","version":"0.16.4"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-hook","version":"0.17.0"}}}
 JSONEOF
 )
 

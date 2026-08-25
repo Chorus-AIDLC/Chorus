@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.4"
+  version: "0.17.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -246,7 +246,7 @@ Results are advisory — they do not hard-block approval, verification, or ship 
 
 Opt-in spec-driven path: `proposal-chorus`, `develop-chorus`, `yolo-chorus` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts. Fully optional — free-form authoring works without it. The stage skills re-check the three activation signals inline (dsh has no SessionStart hook): `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`.
 
-The `openspec-aware-chorus` skill reads the `CHORUS_OPENSPEC_ACTIVE` value the chorus-dsh bundle precomputes at load (three-check inline fallback). Byte-exact document mirroring uses the package-local wrapper path exported as `CHORUS_MCP_CALL`; a missing wrapper is a visible blocker, never a reason to retype document content.
+The `openspec-aware-chorus` skill reads the `CHORUS_OPENSPEC_ACTIVE` value the chorus-dsh bundle precomputes at load (three-check inline fallback). Byte-exact document mirroring prefers `chorus mcp call … --arg-file content=<file>`, falling back to the package-local wrapper path exported as `CHORUS_MCP_CALL` when `chorus` is not on `PATH`; a missing transport is a visible blocker, never a reason to retype document content.
 
 ---
 

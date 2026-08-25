@@ -322,7 +322,7 @@ The CLI SHALL accept a `--yes` / `-y` flag on `chorus daemon install` that suppr
 The CLI SHALL expose a single capability classifier that reports whether the
 current host supports installing a real boot-autostart daemon service, returning
 `systemd` on Linux where `systemctl --user` is available, `launchd` on macOS, and
-`unsupported` on every other platform. The `chorus init` daemon-setup step SHALL
+`unsupported` on every other platform. The `chorus agents add` daemon-setup step SHALL
 consult this classifier to decide whether to offer/perform a real service install
 on the current host, and `chorus daemon install` SHALL perform the
 platform-appropriate install (systemd on Linux, launchd on macOS, printed template

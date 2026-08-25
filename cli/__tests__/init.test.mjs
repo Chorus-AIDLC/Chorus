@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { runInit } from "../init.mjs";
+import { runInit, profileExportHint } from "../init.mjs";
 import { STEP_SCOPES, OUTCOME_ACTIONS } from "../init/contracts.mjs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -38,7 +38,7 @@ describe("runInit — help", () => {
       },
     });
     expect(code).toBe(0);
-    expect(io.lines.join("\n")).toContain("Chorus init v1.2.3");
+    expect(io.lines.join("\n")).toContain("Chorus agents add v1.2.3");
     expect(detectCalled).toBe(false);
     expect(stepsCalled).toBe(false);
   });
@@ -127,13 +127,71 @@ describe("runInit — orchestration", () => {
   });
 });
 
-describe("chorus init — router dispatch (real entry)", () => {
-  it("`node chorus.mjs init --help` prints usage and exits 0 without starting the server", () => {
-    const out = execFileSync(process.execPath, ["chorus.mjs", "init", "--help"], {
+describe("profileExportHint", () => {
+  it("prints one export line per agent identity (deduped), with the name as a comment", () => {
+    const io = capture();
+    profileExportHint(
+      [
+        { stepId: "credential-seed", action: OUTCOME_ACTIONS.SEEDED, detail: "…", agentUuid: "u-1", agentName: "Admin Claude" },
+        { stepId: "plugin-install", agentId: "claude", action: OUTCOME_ACTIONS.INSTALLED, detail: "…" }, // no identity → ignored
+        { stepId: "credential-seed", action: OUTCOME_ACTIONS.SKIPPED, detail: "…", agentUuid: "u-2", agentName: "Codex" },
+        { stepId: "credential-seed", action: OUTCOME_ACTIONS.SEEDED, detail: "…", agentUuid: "u-1", agentName: "Admin Claude" }, // dup uuid → deduped
+      ],
+      io,
+    );
+    const text = io.lines.join("\n");
+    expect(text).toContain('export CHORUS_AGENT_PROFILE="u-1"');
+    expect(text).toContain("# Admin Claude");
+    expect(text).toContain('export CHORUS_AGENT_PROFILE="u-2"');
+    expect(text).toContain("# Codex");
+    // deduped: exactly two export lines
+    expect(text.match(/export CHORUS_AGENT_PROFILE=/g)).toHaveLength(2);
+    // accurate framing: resolves the key from daemon.json, and daemon-woken auto
+    expect(text).toContain("~/.chorus/daemon.json");
+    expect(text).toContain("Daemon-woken sessions set CHORUS_AGENT_PROFILE automatically");
+  });
+
+  it("prints nothing when no outcome carries an identity", () => {
+    const io = capture();
+    profileExportHint(
+      [{ stepId: "plugin-install", agentId: "claude", action: OUTCOME_ACTIONS.INSTALLED, detail: "…" }],
+      io,
+    );
+    expect(io.lines.join("\n")).toBe("");
+  });
+
+  it("omits a dsh agent whose profile is already in $DSH_HOME/.env (profileInEnv) but keeps the others", () => {
+    const io = capture();
+    profileExportHint(
+      [
+        { stepId: "credential-seed", action: OUTCOME_ACTIONS.SEEDED, detail: "…", agentUuid: "u-claude", agentName: "Admin Claude" },
+        { stepId: "credential-seed", action: OUTCOME_ACTIONS.SEEDED, detail: "…", agentUuid: "u-dsh", agentName: "DSH Agent", profileInEnv: true },
+      ],
+      io,
+    );
+    const text = io.lines.join("\n");
+    expect(text).toContain('export CHORUS_AGENT_PROFILE="u-claude"'); // non-dsh still hinted
+    expect(text).not.toContain("u-dsh"); // dsh loads it from $DSH_HOME/.env — no manual export
+    expect(text.match(/export CHORUS_AGENT_PROFILE=/g)).toHaveLength(1);
+  });
+
+  it("prints nothing when the only agent has its profile in $DSH_HOME/.env", () => {
+    const io = capture();
+    profileExportHint(
+      [{ stepId: "credential-seed", action: OUTCOME_ACTIONS.SEEDED, detail: "…", agentUuid: "u-dsh", agentName: "DSH Agent", profileInEnv: true }],
+      io,
+    );
+    expect(io.lines.join("\n")).toBe("");
+  });
+});
+
+describe("chorus agents add — router dispatch (real entry)", () => {
+  it("`node chorus.mjs agents add --help` prints the init help and exits 0 without starting the server", () => {
+    const out = execFileSync(process.execPath, ["chorus.mjs", "agents", "add", "--help"], {
       cwd: REPO_ROOT,
       encoding: "utf8",
     });
-    expect(out).toContain("Chorus init v");
+    expect(out).toContain("Chorus agents add v");
     expect(out).toContain("USAGE");
     expect(out).not.toContain("Starting embedded PostgreSQL");
   });
