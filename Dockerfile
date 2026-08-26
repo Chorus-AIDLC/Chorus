@@ -65,10 +65,14 @@ COPY --from=builder /app/prisma.config.ts ./
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 
-# Install prisma CLI globally for database migrations
+# Install prisma CLI globally for database migrations. PIN to the app's @prisma/client
+# version — an unpinned `pnpm add -g prisma` floats to the latest release, and Prisma
+# CLIs newer than 7.3.0 dropped the `migrate deploy` command (docker-entrypoint.sh),
+# which made the container crash on startup → ECS circuit-breaker rollback. Keep this in
+# lockstep with the `prisma` / `@prisma/client` versions in package.json + pnpm-lock.yaml.
 ENV PNPM_HOME="/root/.local/share/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN pnpm add -g prisma
+RUN pnpm add -g prisma@7.3.0
 
 # Copy dotenv for prisma.config.ts (standalone bundles it into server.js but doesn't keep the module)
 COPY --from=builder /app/node_modules/dotenv ./node_modules/dotenv

@@ -1172,9 +1172,9 @@
       },
       "claudeCode": {
         "step1Title": "第 1 步：设置环境变量",
-        "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc 以实现持久化。",
+        "step1Tip": "无需持久化——第 2 步的 chorus agents add 会读取它们。",
         "step2Title": "第 2 步：运行 chorus agents add",
-        "step2Tip": "chorus agents add 会注册 chorus-plugins marketplace，把 Chorus 插件安装进 Claude Code（~/.claude），并写入你的凭证。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。上面第一条命令会全局安装 Chorus CLI（锁定 0.17.0 版本）。"
+        "step2Tip": "chorus agents add 会把 Chorus 插件装进 Claude Code，并把 CHORUS_URL、CHORUS_API_KEY、CHORUS_AGENT_PROFILE 写入 ~/.claude/settings.json——因此交互式 Claude Code 无需手动 export。"
       },
       "codex": {
         "step1Title": "第 1 步：设置环境变量",

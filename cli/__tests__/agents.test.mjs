@@ -247,6 +247,15 @@ describe("chorus agents remove", () => {
     expect(removeAgent(["u-d"], rmDeps(file, io).dep)).toBe(0);
     expect(io.text()).toContain("$DSH_HOME/.env");
   });
+
+  it("prints the ~/.claude/settings.json clear-manually note when removing a claude-code agent", () => {
+    const io = cap();
+    const file = { agents: [{ apiKey: "cho_c", url: "https://c", agentUuid: "u-c", agentName: "Admin Claude", agentType: "claude-code" }] };
+    expect(removeAgent(["u-c"], rmDeps(file, io).dep)).toBe(0);
+    expect(io.text()).toContain("~/.claude/settings.json");
+    expect(io.text()).toContain("clear them manually");
+    expect(io.text()).not.toContain("cho_"); // key never printed
+  });
 });
 
 describe("runAgents — sub-verb dispatch", () => {

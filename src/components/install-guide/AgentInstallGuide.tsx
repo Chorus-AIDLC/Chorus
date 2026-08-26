@@ -91,8 +91,6 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
                 {t("install.claudeCode.step2Tip")}
               </p>
             </div>
-
-            {profileStep}
           </TabsContent>
 
           {/* Codex Tab */}

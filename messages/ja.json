@@ -1172,9 +1172,9 @@
       },
       "claudeCode": {
         "step1Title": "ステップ 1：環境変数を設定",
-        "step1Tip": "ヒント：永続化するには ~/.bashrc または ~/.zshrc に追加してください。",
+        "step1Tip": "永続化は不要です。ステップ 2 の chorus agents add が読み取ります。",
         "step2Title": "ステップ 2：chorus agents add を実行",
-        "step2Tip": "chorus agents add は chorus-plugins マーケットプレイスを登録し、Chorus プラグインを Claude Code（~/.claude）にインストールし、認証情報を保存します。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。"
+        "step2Tip": "chorus agents add は Chorus プラグインを Claude Code にインストールし、CHORUS_URL・CHORUS_API_KEY・CHORUS_AGENT_PROFILE を ~/.claude/settings.json に書き込みます。そのため対話的な Claude Code では手動の export は不要です。"
       },
       "codex": {
         "step1Title": "ステップ 1：環境変数を設定",

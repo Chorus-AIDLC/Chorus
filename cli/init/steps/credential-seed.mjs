@@ -42,7 +42,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { STEP_SCOPES, OUTCOME_ACTIONS } from "../contracts.mjs";
 import {
@@ -184,6 +184,129 @@ export function writeDshCredentialsEnv({ dshHome, url, apiKey, agentProfile }, d
 }
 
 /**
+ * Whether an init selection id is Claude Code (`claude`). Claude Code gets a SECOND
+ * credential sink beyond ~/.chorus/daemon.json — its user-global ~/.claude/settings.json
+ * `env` block — so INTERACTIVE Claude Code authenticates with no manual export (the plugin
+ * `.mcp.json` interpolates `${CHORUS_URL}`/`${CHORUS_API_KEY}` from that env at session
+ * start). We gate on the selection id, NOT the mapped daemon agentType (`claude` →
+ * "claude-code"). Mirrors {@link isDshSelection}.
+ * @param {string} id
+ */
+function isClaudeSelection(id) {
+  return id === "claude";
+}
+
+/**
+ * Resolve the USER-GLOBAL Claude Code settings.json path. Honors `CLAUDE_CONFIG_DIR` (which
+ * replaces ~/.claude wholesale per Claude Code docs), then `HOME` (so tests can inject a
+ * temp home), else the OS home dir. ALWAYS the user-global file — NEVER a project-level
+ * `.claude/settings.json` (git-tracked; would leak the `cho_` key) or `.claude/settings.local.json`.
+ * @param {Record<string, string | undefined>} env
+ */
+function resolveClaudeSettingsPath(env) {
+  const base = nonEmpty(env.CLAUDE_CONFIG_DIR) ?? join(nonEmpty(env.HOME) ?? homedir(), ".claude");
+  return join(base, "settings.json");
+}
+
+/**
+ * Read the `CHORUS_AGENT_PROFILE` currently recorded in a Claude Code settings.json `env`
+ * block, for cross-run REPOINT detection. Returns undefined on a missing / unreadable /
+ * malformed file or when no such key exists — callers treat undefined as "no prior
+ * identity" (safe to write). Never throws.
+ * @param {string} settingsPath
+ * @param {{ read?: (p: string) => string }} [deps]
+ * @returns {string | undefined}
+ */
+export function readClaudeSettingsProfile(settingsPath, deps = {}) {
+  const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
+  try {
+    const parsed = JSON.parse(read(settingsPath));
+    const env = parsed && typeof parsed === "object" ? parsed.env : undefined;
+    return env && typeof env === "object" && !Array.isArray(env) ? nonEmpty(env.CHORUS_AGENT_PROFILE) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Merge-preserving upsert of CHORUS_URL + CHORUS_API_KEY (+ CHORUS_AGENT_PROFILE) into the
+ * `env` block of the user-global ~/.claude/settings.json. The Claude Code analogue of
+ * {@link writeDshCredentialsEnv}: same invariants (idempotent, 0600, atomic temp+rename,
+ * key never echoed), but the target is a JSON object rather than a dotenv file.
+ *
+ * settings.json `env` is injected at session start BEFORE the MCP client connects and is
+ * inherited by hook + Bash/CLI subprocesses, so this one write satisfies native MCP auth
+ * (`.mcp.json` `${VAR}` interpolation), the plugin hooks, AND the skill `chorus` CLI — no
+ * manual export. (Verified against Claude Code docs mcp.md / env-vars.md.)
+ *
+ * Behavior:
+ *   - Missing file → start from `{}` (create the config dir if absent).
+ *   - Existing but UNPARSEABLE JSON, a non-object root, or a present-but-non-object `env`
+ *     → THROW (never clobber a file we cannot safely merge; the caller treats a throw as a
+ *     write failure and keeps the export hint).
+ *   - Upserts ONLY the three managed keys into `parsed.env`; every other env key and every
+ *     other top-level field is preserved verbatim.
+ *   - Atomic write: temp file (0600) in the same dir, then rename over the target.
+ *   - Idempotent: a re-run with the same values reproduces the file.
+ *
+ * The API key is only ever written into the 0600 file — never argv, never a log.
+ * @param {{ settingsPath: string, url: string, apiKey: string, agentProfile?: string }} args
+ * @param {{
+ *   read?: (p: string) => string,
+ *   write?: (p: string, c: string, o: object) => void,
+ *   mkdir?: (p: string, o: object) => void,
+ *   rename?: (from: string, to: string) => void,
+ * }} [deps]
+ * @returns {string} the settings.json path written
+ */
+export function writeClaudeSettingsEnv({ settingsPath, url, apiKey, agentProfile }, deps = {}) {
+  const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
+  const write = deps.write ?? writeFileSync;
+  const mkdir = deps.mkdir ?? mkdirSync;
+  const rename = deps.rename ?? renameSync;
+
+  let raw;
+  try {
+    raw = read(settingsPath);
+  } catch {
+    raw = undefined; // no file yet — start fresh
+  }
+
+  let parsed = {};
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(`existing ${settingsPath} is not valid JSON (${err?.message ?? err}) — refusing to overwrite`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`existing ${settingsPath} is not a JSON object — refusing to overwrite`);
+    }
+  }
+
+  // Preserve an existing `env` object; a present-but-non-object `env` is unsafe to merge.
+  let envBlock = parsed.env;
+  if (envBlock === undefined || envBlock === null) {
+    envBlock = {};
+  } else if (typeof envBlock !== "object" || Array.isArray(envBlock)) {
+    throw new Error(`existing ${settingsPath} has a non-object "env" block — refusing to overwrite`);
+  }
+
+  const merged = { ...envBlock, CHORUS_URL: url, CHORUS_API_KEY: apiKey };
+  if (nonEmpty(agentProfile)) merged.CHORUS_AGENT_PROFILE = agentProfile.trim();
+  parsed.env = merged;
+
+  const content = `${JSON.stringify(parsed, null, 2)}\n`;
+
+  mkdir(dirname(settingsPath), { recursive: true });
+  // Atomic write: temp file (0600) in the same dir, then rename over target.
+  const tmp = `${settingsPath}.tmp`;
+  write(tmp, content, { mode: 0o600 });
+  rename(tmp, settingsPath);
+  return settingsPath;
+}
+
+/**
  * @param {import("../contracts.mjs").StepContext & {
  *   validateCredentials?: Function, appendAgent?: Function, writeLogin?: Function,
  *   promptFn?: Function,
@@ -200,6 +323,8 @@ export async function seedCredentials(ctx) {
   const resolveCwds = ctx.resolveInstallCwds ?? defaultResolveInstallCwds;
   const ask = ctx.promptFn ?? defaultPrompt;
   const writeDshEnv = ctx.writeDshEnv ?? writeDshCredentialsEnv;
+  const writeClaudeSettings = ctx.writeClaudeSettings ?? writeClaudeSettingsEnv;
+  const readSettingsProfile = ctx.readClaudeSettingsProfile ?? readClaudeSettingsProfile;
 
   const selection = Array.isArray(ctx.selection) ? ctx.selection.filter((id) => nonEmpty(id)) : [];
   if (selection.length === 0) {
@@ -325,14 +450,93 @@ export async function seedCredentials(ctx) {
       }
     }
 
+    // claude-only: ALSO write the user-global ~/.claude/settings.json `env` block so
+    // INTERACTIVE Claude Code authenticates with no manual export. On a SUCCESSFUL write we
+    // set settingsEnvWritten so init.mjs suppresses the manual export hint (like dsh's
+    // profileInEnv). Runs regardless of the daemon.json dedup result (an idempotent re-run
+    // repairs a missing/stale settings.json). The key is only written into the 0600 file.
+    let claudeNote = "";
+    let settingsEnvWritten = false;
+    if (isClaudeSelection(id)) {
+      const settingsPath = resolveClaudeSettingsPath(env);
+      const newProfile = identity.uuid;
+      // Cross-run REPOINT detection: the user-global env block holds ONE identity, and a
+      // single run configures `claude` at most once (resolveSelection dedups ids). So a
+      // DIFFERENT existing profile is a PRIOR run's identity — never overwrite it silently
+      // (prompt on a TTY; WARN on non-TTY). Absent/equal → write (equal is idempotent).
+      const existingProfile = readSettingsProfile(settingsPath);
+      const isRepoint = existingProfile !== undefined && existingProfile !== newProfile;
+      let doWrite = true;
+      let declined = false;
+      let repointWarn = "";
+      if (isRepoint) {
+        if (isTTY && typeof ask === "function") {
+          const ans = String(
+            (await ask(
+              `Interactive Claude Code is currently configured as ${existingProfile}; ` +
+                `repoint it to ${identity.name} (${newProfile})? [y/N]: `,
+            )) ?? "",
+          ).trim();
+          if (!/^y(es)?$/i.test(ans)) {
+            doWrite = false;
+            declined = true;
+          }
+        } else {
+          repointWarn = ` (WARNING: repointed interactive Claude Code from ${existingProfile} to ${newProfile})`;
+        }
+      }
+      if (doWrite) {
+        try {
+          const p = writeClaudeSettings({ settingsPath, url, apiKey, agentProfile: newProfile });
+          settingsEnvWritten = true;
+          claudeNote = `; wrote CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE into ${p} (0600)${repointWarn}`;
+        } catch (err) {
+          // B1: profileExportHint prints only CHORUS_AGENT_PROFILE and CANNOT fix native MCP
+          // (it interpolates ${CHORUS_URL}/${CHORUS_API_KEY}), and printing the key would
+          // break never-echo. So emit an actionable, non-secret WARNING; the export hint is
+          // still shown (settingsEnvWritten stays false) as a partial fallback.
+          claudeNote =
+            `; WARNING: could not write ${settingsPath} (${err?.message ?? String(err)}). ` +
+            "Interactive Claude Code MCP will not connect until CHORUS_URL, CHORUS_API_KEY and " +
+            `CHORUS_AGENT_PROFILE are in its env block — add them to ${settingsPath} (or export them). ` +
+            "Your cho_ key is not shown here.";
+        }
+      } else if (declined) {
+        // Declined repoint: the EXISTING settings.json identity remains, and since
+        // settings.json env OVERRIDES the shell, a shell export would be ignored — so
+        // direct the operator to the FILE, do not suggest exporting.
+        claudeNote =
+          `; left interactive Claude Code as ${existingProfile} — edit ${settingsPath} to change it ` +
+          "(a shell export would be overridden by settings.json env).";
+      }
+      // Ambient-shell conflict heads-up: settings.json env OVERRIDES the shell, so if the
+      // shell already exports a DIFFERENT identity, note it. Non-secret: compare the profile
+      // UUID (primary) and the key IN MEMORY (never printed).
+      const shellProfile = nonEmpty(env.CHORUS_AGENT_PROFILE);
+      const shellKey = nonEmpty(env.CHORUS_API_KEY);
+      if ((shellProfile && shellProfile !== newProfile) || (shellKey && shellKey !== apiKey)) {
+        claudeNote +=
+          "; note: your shell exports a different CHORUS_* identity — settings.json env " +
+          "overrides it for interactive Claude Code";
+      }
+    }
+
+    // Combined side-file note + hint-suppression flags (dsh and claude are mutually
+    // exclusive selection ids, so at most one note/flag is set per iteration).
+    const sideNote = `${dshNote}${claudeNote}`;
+    const hintFlags = {
+      ...(profileInEnv ? { profileInEnv: true } : {}),
+      ...(settingsEnvWritten ? { settingsEnvWritten: true } : {}),
+    };
+
     if (!res.ok) {
       outcomes.push(
         out(
           SKIPPED,
-          `${id}: ${identity.name} (${identity.uuid}) already configured (same key) — left unchanged${dshNote}`,
+          `${id}: ${identity.name} (${identity.uuid}) already configured (same key) — left unchanged${sideNote}`,
           // Carry the identity so the orchestrator can print a CHORUS_AGENT_PROFILE
           // export hint even on an idempotent re-run (the agent is still configured).
-          { agentUuid: identity.uuid, agentName: identity.name, ...(profileInEnv ? { profileInEnv: true } : {}) },
+          { agentUuid: identity.uuid, agentName: identity.name, ...hintFlags },
         ),
       );
       continue;
@@ -340,9 +544,9 @@ export async function seedCredentials(ctx) {
     outcomes.push(
       out(
         SEEDED,
-        `${id}: seeded ${identity.name} (${identity.uuid}) as ${agentType} → agents[${res.index}] in ~/.chorus/daemon.json${dshNote}`,
+        `${id}: seeded ${identity.name} (${identity.uuid}) as ${agentType} → agents[${res.index}] in ~/.chorus/daemon.json${sideNote}`,
         // Structured identity for the completion profile-export hint (init.mjs).
-        { agentUuid: identity.uuid, agentName: identity.name, ...(profileInEnv ? { profileInEnv: true } : {}) },
+        { agentUuid: identity.uuid, agentName: identity.name, ...hintFlags },
       ),
     );
   }

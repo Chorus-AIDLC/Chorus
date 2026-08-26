@@ -132,6 +132,10 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     const kiroDir = join(mkdtempSync(join(tmpdir(), "init-int-")), ".kiro");
     const dshHome = mkdtempSync(join(tmpdir(), "init-dsh-"));
     const openclawDir = mkdtempSync(join(tmpdir(), "init-ocw-"));
+    // claude is in the selection, so the credential-seed step writes the user-global
+    // Claude Code settings.json env. Point CLAUDE_CONFIG_DIR at a temp dir so this test
+    // NEVER touches the developer's real ~/.claude/settings.json.
+    const claudeCfgDir = mkdtempSync(join(tmpdir(), "init-cc-"));
 
     const appended = [];
     let keyN = 0;
@@ -159,6 +163,7 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
           DSH_HOME: dshHome,
           CHORUS_DSH_PROFILE: "default",
           OPENCLAW_CONFIG_DIR: openclawDir,
+          CLAUDE_CONFIG_DIR: claudeCfgDir, // isolate the real ~/.claude/settings.json write
         },
         detectAgents, // real
         orderedSteps, // real

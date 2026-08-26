@@ -12,27 +12,27 @@
 - 已安装 `claude` CLI（[安装指引](https://docs.claude.com/en/docs/claude-code/setup)）
 - 一个 Chorus **API Key**（在 Web UI 的 **Settings → Agents → Create API Key** 创建）。Key 以 `cho_` 开头。
 
-## 第 1 步：导出环境变量
+## 第 1 步：提供 Chorus 凭据
+
+第 2 步的 `chorus agents add` 需要你的 Chorus **URL** 和 **API Key**。任选一种方式提供即可 —— 传 `--url` / `--api-key`、回答它的交互式提问，或在运行前先为当前 shell 导出：
 
 ```bash
 export CHORUS_URL="http://localhost:8637"
 export CHORUS_API_KEY="cho_your_api_key"
 ```
 
-> 如果希望跨 shell 持久化，可以加入 `~/.bashrc` 或 `~/.zshrc`。
+> **无需再持久化到 `~/.bashrc` / `~/.zshrc`。** 对 Claude Code 这个 agent，`chorus agents add` 会把 `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` 写入 **用户级** `~/.claude/settings.json` 的 `env` 块。Claude Code 在会话启动时（且在 MCP 客户端连接之前）注入这段 env，所以**交互式启动的 Claude Code 无需手动 export 即可认证**（同一份 env 也会作用于插件 hooks 和 `chorus` CLI）。它只写用户级文件（绝不写项目级 `.claude/settings.json`），落盘 `0600`，且从不打印密钥。
+>
+> **优先级：** `settings.json` 的 `env` **覆盖** shell 环境变量（Claude Code 在启动时用它替换从 shell 继承的值）。所以即便你 `export` 了**另一个** `CHORUS_*` 身份，交互式 Claude Code 仍会用已配置的那个 —— 检测到 shell 里已导出不同值时，`chorus agents add` 会打印一行提示。
+>
+> **多个 Claude Code 身份：** 全局 `env` 只能装一个身份。若你之后再添加**第二个** Claude Code agent，`chorus agents add` 会在改指（repoint）你的交互式身份前先询问（非交互式运行则打印警告）。万一写入失败，它会明确列出需要设置的键，方便你手动补上。
 
-> **可选 —— 把当前 shell 固定到某个 agent（`CHORUS_AGENT_PROFILE`）。** 当 `chorus agents add`
-> 把你的 agent 写入 `~/.chorus/daemon.json` 后，你可以指定这个 shell 的 Chorus hooks/skills
-> 以哪个 agent 身份行事，内置的 `chorus mcp` 客户端会从 `daemon.json` 里解析出该 agent 的密钥
-> —— hook / 文档镜像这条路径就不必再导出 API Key。`chorus agents add` 会在运行结束时打印出这行，
-> 把它加进你的 shell 配置即可：
+> **可选 —— 给 CLI/hook 路径用的 `CHORUS_AGENT_PROFILE`。** `chorus agents add` 已经把它连同写进了 `settings.json`，通常不必再设。仅当你想让某个 shell 的 `chorus mcp` / hooks 以**另一个**已配置 agent 的身份行事时才手动设置 —— 它会从 `~/.chorus/daemon.json` 解析出那个 agent 的密钥，因此无需导出密钥：
 >
 > ```bash
-> export CHORUS_AGENT_PROFILE="<agent-uuid>"   # chorus agents add 打印的 UUID（用 agentName 也行）
+> export CHORUS_AGENT_PROFILE="<agent-uuid>"   # `chorus agents` 列出的 UUID 或 agentName
 > ```
 >
-> 一台机器上配了多个 agent 时最有用（用来区分当前会话以哪个身份行事）。它是「附加」的
-> —— Claude Code 内置的 MCP 客户端仍然用第 1 步里的 `CHORUS_URL` / `CHORUS_API_KEY`。
 > 被 daemon 唤醒的会话会自动带上 `CHORUS_AGENT_PROFILE`。
 
 ## 第 2 步：安装 Chorus Plugin
