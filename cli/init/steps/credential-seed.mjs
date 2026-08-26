@@ -705,7 +705,18 @@ export async function seedCredentials(ctx) {
       try {
         const p = writeCodexEnv({ configPath, url, apiKey, agentProfile: identity.uuid });
         codexEnvWritten = true;
-        codexNote = `; wrote CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE into ${p} (0600) under [shell_environment_policy].set`;
+        // VERIFIED (spike, codex-cli 0.146.1): [shell_environment_policy].set reaches Codex's
+        // shell/exec tool (so the model's own `chorus` calls resolve identity) but NOT its
+        // plugin lifecycle hooks — those inherit Codex's OWN process env. So we surface the
+        // residual honestly rather than fully suppressing the hint: for the SessionStart
+        // check-in / PostToolUse hooks to fire in an INTERACTIVE session, start `codex` from a
+        // shell exporting the three vars (daemon-wake sets them automatically). No wrapper.
+        codexNote =
+          `; wrote CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE into ${p} (0600) under [shell_environment_policy].set ` +
+          "(wires Codex's shell-tool `chorus` calls). NOTE: Codex plugin hooks (SessionStart check-in / PostToolUse) " +
+          "inherit Codex's own process env, which [shell_environment_policy] does not set — to fire them in an " +
+          "interactive session, start codex from a shell that exports CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE " +
+          "(the daemon-wake path sets these automatically). Your cho_ key is not shown here.";
       } catch (err) {
         // Write failed (locked/unwritable, or an ambiguous inline `set` we refuse to edit).
         // Emit an actionable, non-secret WARNING; the export hint is still shown

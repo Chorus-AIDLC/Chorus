@@ -899,6 +899,31 @@ describe("seedCredentials — Codex config.toml env sink", () => {
     expect(o.detail).toMatch(/config\.toml \(0600\)/);
   });
 
+  it("success note surfaces the interactive-hook residual (task-2 spike): names the 3 keys + export, no key value, no wrapper", async () => {
+    // Verified in the task-2 spike: [shell_environment_policy].set reaches Codex's shell
+    // tool but NOT its plugin hooks (they inherit Codex's process env). So the success note
+    // must tell the operator how to wire the hooks interactively — surfaced, not suppressed.
+    const write = fakeCodexWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["codex"],
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writeCodexEnv: write,
+        validateCredentials: async () => ({ uuid: "u-new", name: "Codex Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.codexEnvWritten).toBe(true);
+    expect(o.detail).toMatch(/hook/i); // the residual is named
+    expect(o.detail).toMatch(/CHORUS_URL/);
+    expect(o.detail).toMatch(/CHORUS_API_KEY/);
+    expect(o.detail).toMatch(/CHORUS_AGENT_PROFILE/);
+    expect(o.detail).toMatch(/export/i); // directs to export for interactive hooks
+    expect(o.detail).not.toContain("cho_secret"); // key value never echoed
+    expect(o.detail).not.toMatch(/wrapper|chorus launch/i); // owner rejected the wrapper
+  });
+
   it("multi-agent (claude+codex): the codex entry is written via writeCodexEnv with its own identity", async () => {
     const codexWrite = fakeCodexWrite();
     const claudeWrite = fakeClaudeWrite();

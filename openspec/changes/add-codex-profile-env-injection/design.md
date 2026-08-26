@@ -43,27 +43,47 @@ Owner (idea comment): *reference the Claude Code plugin; prefer the `chorus` CLI
    --agent <profile>` (the CLI reads the key from `~/.chorus/daemon.json`).
 2. **Fallback:** CLI absent/old → `CHORUS_URL`+`CHORUS_API_KEY` (CLI url+key path, else curl).
 
-Writing all three makes **both** paths available and — critically — satisfies the
-`on-session-start.sh` url+key preflight. So **no plugin-hook code change is needed**; the
-correct behavior falls out of the existing resolution logic once the env is present.
+Writing all three makes **both** resolution paths available **wherever the env reaches** —
+which the task-2 spike found is the shell/exec tool, but NOT the lifecycle hooks (see
+"What `[shell_environment_policy].set` covers" below). So for the model's shell-tool
+`chorus` calls this is fully wired with no export; for the SessionStart/PostToolUse hooks
+(which inherit Codex's process env, not the shell policy) an interactive launch still needs
+the shell to export the vars. **No plugin-hook code change and no wrapper** either way (the
+resolution order already lives in the hooks); the residual interactive-hook gap is surfaced,
+not hidden.
 
-## What `[shell_environment_policy].set` covers — and the one honest unknown
+## What `[shell_environment_policy].set` covers — VERIFIED (task-2 spike)
 
-`[shell_environment_policy]` (config schema in `codex-rs`) governs the environment Codex
-hands to its **exec/shell tool** — reliably covering the model's own `chorus` shell calls.
+**Method.** Source inspection of the local `codex-rs` checkout for **codex-cli 0.146.1**
+(the installed version). Two spawn paths were traced:
 
-**The unknown (spike, task 2):** whether that env also reaches Codex's **plugin lifecycle
-hook** subprocesses (`SessionStart` → `on-session-start.sh`, `PostToolUse` →
-`chorus-mcp-call.sh`), which run through a separate spawn path
-(`codex-rs/core/src/hook_runtime.rs`). Verify against the installed `codex`; if hooks are
-NOT covered, the shell-tool path still works and the residual hook gap is surfaced via an
-actionable WARNING + the manual `export` hint (NOT a wrapper — owner rejected it).
+- **Shell/exec tool** applies `shell_environment_policy` — `codex-rs/core/src/unified_exec/process_manager.rs:1156`
+  (and `1169`, `1206`) and `codex-rs/core/src/tools/handlers/shell/shell_command.rs:104`
+  read `context.turn.config.permissions.shell_environment_policy` when building the tool's
+  environment. So `[shell_environment_policy].set` **reaches the shell/exec tool**.
+- **Plugin lifecycle hooks** run through the `codex_hooks` crate. The command runner
+  `codex-rs/hooks/src/engine/command_runner.rs` → `build_command()` (lines 164-191) spawns
+  the hook via `Command::new(<shell>)` and applies **only** `command.envs(&handler.env)` —
+  the hook declaration's own static `env`. It does **not** call `env_clear`, so the hook
+  process inherits **Codex's own process environment**, and it does **not** consult
+  `shell_environment_policy` at all (no reference to it anywhere in `codex-rs/hooks/`).
 
-> **Hallucination-aware:** the implementer MUST re-verify (a) the exact `set` TOML spelling
-> Codex accepts (`[shell_environment_policy.set]` table vs inline `set = { … }`), (b) that
-> the key is still stored as a literal `Authorization: Bearer` in `[mcp_servers.chorus]`,
-> and (c) hook-subprocess env inheritance — against the installed `codex --version`, not
-> memory.
+**Verdict.** `[shell_environment_policy].set` covers the **shell/exec tool but NOT the
+plugin lifecycle hooks**. The SessionStart (`on-session-start.sh`) and PostToolUse
+(`chorus-mcp-call.sh`) hooks receive whatever env `codex` itself was launched with (plus the
+static `handler.env`) — the daemon-wake path sets that at spawn (`cli/codex-spawner.mjs:277-283`),
+but an INTERACTIVE launch does not unless the user's shell already exports the vars.
+
+**Consequence for this change:**
+- ✅ The write to `[shell_environment_policy].set` **does** make the model's own shell-tool
+  `chorus mcp call` invocations (the skill-CLI path) resolve identity with no export.
+- ❌ It does **not** wire the SessionStart check-in / PostToolUse hooks for interactive
+  launch — no config-file mechanism can, since hooks inherit Codex's process env and
+  `shell_environment_policy` is not applied to them. Per the owner's "不加也行" (accept the
+  gap) and NO-wrapper decision, this residual is **surfaced, not silently suppressed**: the
+  Codex success note tells the operator that to fire the hooks interactively they must launch
+  `codex` from a shell exporting `CHORUS_URL`/`CHORUS_API_KEY`/`CHORUS_AGENT_PROFILE` (the
+  daemon-wake path already does this automatically). No `chorus launch codex` wrapper.
 
 ## Architecture
 
