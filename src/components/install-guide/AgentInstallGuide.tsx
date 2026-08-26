@@ -36,25 +36,6 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
     </div>
   );
 
-  // Claude Code ONLY: `chorus agents add` writes the connection env into the
-  // user-global ~/.claude/settings.json, so — unlike the other harnesses — there is
-  // no manual `export` / `CHORUS_AGENT_PROFILE` step. Show WHAT is written and WHERE
-  // instead of the profile-export step.
-  const settingsWritesStep = (
-    <div>
-      <h3 className="mb-2 text-sm font-medium text-foreground">
-        {t("install.claudeCode.writesTitle")}
-      </h3>
-      <CodeBlock
-        language="json"
-        code={`// ~/.claude/settings.json\n{\n  "env": {\n    "CHORUS_URL": "${origin}",\n    "CHORUS_API_KEY": "cho_…",\n    "CHORUS_AGENT_PROFILE": "<agent-uuid>"\n  }\n}`}
-      />
-      <p className="mt-2 text-xs text-muted-foreground">
-        {t("install.claudeCode.writesDesc")}
-      </p>
-    </div>
-  );
-
   return (
     <Card className="w-full">
       <CardContent className="p-6">
@@ -110,8 +91,6 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
                 {t("install.claudeCode.step2Tip")}
               </p>
             </div>
-
-            {settingsWritesStep}
           </TabsContent>
 
           {/* Codex Tab */}

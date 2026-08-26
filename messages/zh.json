@@ -1172,11 +1172,9 @@
       },
       "claudeCode": {
         "step1Title": "第 1 步：设置环境变量",
-        "step1Tip": "无需持久化：chorus agents add（第 2 步）会把它们写入 ~/.claude/settings.json 的 env，Claude Code 启动时注入（并覆盖 shell），因此交互式 Claude Code 无需手动 export 即可连接。",
+        "step1Tip": "无需持久化——第 2 步的 chorus agents add 会读取它们。",
         "step2Title": "第 2 步：运行 chorus agents add",
-        "step2Tip": "chorus agents add 会注册 chorus-plugins marketplace，把 Chorus 插件安装进 Claude Code（~/.claude），并写入你的凭证。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。上面第一条命令会全局安装 Chorus CLI（锁定 0.17.0 版本）。",
-        "writesTitle": "chorus agents add 会写入什么（无需手动 export）",
-        "writesDesc": "对 Claude Code，chorus agents add 会把 CHORUS_URL / CHORUS_API_KEY / CHORUS_AGENT_PROFILE 写入用户级 ~/.claude/settings.json 的 env 块。Claude Code 在启动时注入（在 MCP 连接之前，并覆盖你的 shell），因此交互式 Claude Code 无需手动 export，也无需设置 CHORUS_AGENT_PROFILE。它不会写项目级 .claude/settings.json，文件以 0600 保存，且从不打印你的密钥。再添加第二个 Claude Code agent 时会在改指当前身份前先询问。"
+        "step2Tip": "chorus agents add 会把 Chorus 插件装进 Claude Code，并把 CHORUS_URL、CHORUS_API_KEY、CHORUS_AGENT_PROFILE 写入 ~/.claude/settings.json——因此交互式 Claude Code 无需手动 export。"
       },
       "codex": {
         "step1Title": "第 1 步：设置环境变量",

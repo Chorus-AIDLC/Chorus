@@ -1172,11 +1172,9 @@
       },
       "claudeCode": {
         "step1Title": "Step 1: Set environment variables",
-        "step1Tip": "You don't need to persist these: chorus agents add (Step 2) writes them into ~/.claude/settings.json env, which Claude Code injects at launch (overriding your shell), so interactive Claude Code connects with no manual export.",
+        "step1Tip": "No need to persist these — chorus agents add (Step 2) picks them up.",
         "step2Title": "Step 2: Run chorus agents add",
-        "step2Tip": "chorus agents add registers the chorus-plugins marketplace and installs the Chorus plugin into Claude Code (~/.claude), then seeds your credentials. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). The first command installs the Chorus CLI globally (pinned to version 0.17.0).",
-        "writesTitle": "What chorus agents add writes (no manual export needed)",
-        "writesDesc": "For Claude Code, chorus agents add writes CHORUS_URL / CHORUS_API_KEY / CHORUS_AGENT_PROFILE into the user-global ~/.claude/settings.json env block. Claude Code injects it at launch — before MCP connects, overriding your shell — so interactive Claude Code needs no manual export or CHORUS_AGENT_PROFILE. It never writes a project .claude/settings.json, stores the file 0600, and never prints your key. Adding a second Claude Code agent asks before repointing this identity."
+        "step2Tip": "chorus agents add installs the Chorus plugin into Claude Code and writes CHORUS_URL, CHORUS_API_KEY and CHORUS_AGENT_PROFILE into ~/.claude/settings.json — so interactive Claude Code needs no manual export."
       },
       "codex": {
         "step1Title": "Step 1: Set environment variables",

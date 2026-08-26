@@ -107,16 +107,20 @@ describe("AgentInstallGuide dsh onboarding", () => {
     // The retired `chorus init` command name must not appear anywhere.
     expect(screen.queryByText(/chorus init/)).toBeNull();
 
-    // Claude Code has NO manual export-profile step: chorus agents add writes the
-    // connection env into ~/.claude/settings.json. Show what/where instead.
+    // Claude Code has NO Step 3: no manual export-profile step and no separate
+    // writes-section. The settings.json write is stated concisely in the Step 2 tip.
     expect(
-      screen.getByText("What chorus agents add writes (no manual export needed)"),
+      screen.getByText(
+        /writes CHORUS_URL, CHORUS_API_KEY and CHORUS_AGENT_PROFILE into ~\/\.claude\/settings\.json/,
+      ),
     ).toBeTruthy();
-    expect(screen.getByText(/~\/\.claude\/settings\.json env block/)).toBeTruthy();
     expect(
       screen.queryByText("Step 3 (optional): Set the default agent for the Chorus CLI"),
     ).toBeNull();
     expect(screen.queryByText(/export CHORUS_AGENT_PROFILE="<agent-uuid>"/)).toBeNull();
+    expect(
+      screen.queryByText("What chorus agents add writes (no manual export needed)"),
+    ).toBeNull();
 
     // The manual `/plugin marketplace add` + `/plugin install` flow is NOT shown:
     // `chorus agents add --agents claude` already runs those `claude plugin` commands
@@ -167,13 +171,13 @@ describe("AgentInstallGuide dsh onboarding", () => {
       expect(screen.queryByText(/Verify connection/)).toBeNull();
     }
 
-    // Claude Code DROPS the export-profile step — chorus agents add writes the env into
-    // ~/.claude/settings.json, so it shows a "what gets written where" note instead.
+    // Claude Code shows NO Step 3 at all: no export-profile step and no separate
+    // writes-section (the settings.json write is stated concisely in the Step 2 tip).
     await user.click(screen.getByRole("tab", { name: "Claude Code" }));
     expect(screen.queryByText(PROFILE_TITLE)).toBeNull();
     expect(
-      screen.getByText("What chorus agents add writes (no manual export needed)"),
-    ).toBeTruthy();
+      screen.queryByText("What chorus agents add writes (no manual export needed)"),
+    ).toBeNull();
     expect(screen.queryByText(/Verify connection/)).toBeNull();
 
     // dsh keeps its own flow and does NOT get the CLI profile step (its profile is
