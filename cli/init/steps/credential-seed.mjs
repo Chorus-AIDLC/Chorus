@@ -307,6 +307,173 @@ export function writeClaudeSettingsEnv({ settingsPath, url, apiKey, agentProfile
 }
 
 /**
+ * Whether an init selection id is Codex (`codex`). Codex gets a SECOND credential sink
+ * beyond ~/.chorus/daemon.json — the `[shell_environment_policy].set` table of its own
+ * ~/.codex/config.toml — so INTERACTIVE Codex's plugin hooks + shell-tool `chorus` calls
+ * resolve identity with no manual export. Codex's native MCP is already export-free (the
+ * installer bakes a literal Bearer into config.toml), but the hooks never auto-single, so
+ * they still need CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE in the env. We gate on the
+ * selection id, NOT the mapped daemon agentType (`codex` → "codex"). Mirrors
+ * {@link isDshSelection} / {@link isClaudeSelection}.
+ * @param {string} id
+ */
+function isCodexSelection(id) {
+  return id === "codex";
+}
+
+/**
+ * Resolve the Codex config.toml path. Honors `CODEX_HOME` (Codex's own override, same as
+ * cli/codex-spawner.mjs + install-methods.mjs), then `HOME` (so tests can inject a temp
+ * home), else the OS home dir — matching how the Codex install/spawn code already resolves
+ * `~/.codex`. The literal `[mcp_servers.chorus]` Bearer already lives in this file; this
+ * write only touches `[shell_environment_policy].set`.
+ * @param {Record<string, string | undefined>} env
+ */
+function resolveCodexConfigPath(env) {
+  const base = nonEmpty(env.CODEX_HOME) ?? join(nonEmpty(env.HOME) ?? homedir(), ".codex");
+  return join(base, "config.toml");
+}
+
+/**
+ * Merge-preserving upsert of CHORUS_URL + CHORUS_API_KEY + CHORUS_AGENT_PROFILE into the
+ * `[shell_environment_policy].set` table of ~/.codex/config.toml. The Codex analogue of
+ * {@link writeClaudeSettingsEnv} / {@link writeDshCredentialsEnv}: same invariants
+ * (idempotent, 0600, atomic temp+rename, key never echoed), but the target is a TOML file.
+ *
+ * Codex's `[shell_environment_policy].set` injects env into Codex's exec/shell tool, and the
+ * plugin hook wrapper (chorus-mcp-call.sh) prefers CHORUS_AGENT_PROFILE + the `chorus` CLI
+ * and falls back to url+key — so writing all three feeds both paths and satisfies the hook's
+ * url+key preflight. (Verified against the Codex plugin hooks + CC's chorus-api.sh.)
+ *
+ * TARGETED TEXTUAL upsert — NOT a TOML parse+reserialize. The repo has no TOML-parser
+ * dependency and must stay pure-JS/cross-platform; a reserialize would reformat the file and
+ * disturb the literal `[mcp_servers.chorus]` Bearer + comments. So the edit touches only the
+ * managed keys and preserves every other section/key/comment verbatim.
+ *
+ * Behavior:
+ *   - Missing file → start fresh with a `[shell_environment_policy.set]` section.
+ *   - `[shell_environment_policy.set]` header present → upsert the three keys within that
+ *     section (replacing in place, dropping any duplicate managed line), preserving all
+ *     other keys in the section and everything else in the file.
+ *   - `[shell_environment_policy]` present with an inline `set = { … }` table → THROW (a
+ *     textual edit of an inline table is unsafe; the caller treats a throw as a write
+ *     failure and keeps the manual-export hint). Configure it via a `[shell_environment_policy.set]`
+ *     section instead.
+ *   - Otherwise → append a fresh `[shell_environment_policy.set]` section.
+ *   - Atomic 0600 temp+rename; idempotent (a re-run with the same values reproduces the file).
+ *
+ * The API key is only ever written into the 0600 file — never argv, never a log.
+ * @param {{ configPath: string, url: string, apiKey: string, agentProfile: string }} args
+ * @param {{
+ *   read?: (p: string) => string,
+ *   write?: (p: string, c: string, o: object) => void,
+ *   mkdir?: (p: string, o: object) => void,
+ *   rename?: (from: string, to: string) => void,
+ * }} [deps]
+ * @returns {string} the config.toml path written
+ */
+export function writeCodexShellEnvCreds({ configPath, url, apiKey, agentProfile }, deps = {}) {
+  const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
+  const write = deps.write ?? writeFileSync;
+  const mkdir = deps.mkdir ?? mkdirSync;
+  const rename = deps.rename ?? renameSync;
+
+  const u = nonEmpty(url);
+  const k = nonEmpty(apiKey);
+  const prof = nonEmpty(agentProfile);
+  if (!u || !k || !prof) {
+    throw new Error("writeCodexShellEnvCreds requires url, apiKey, and agentProfile");
+  }
+
+  // TOML basic-string value: escape backslash then double-quote. URLs / cho_ keys / UUIDs
+  // don't contain these, but escape defensively so we never emit invalid TOML.
+  const toToml = (v) => `"${String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const managed = { CHORUS_URL: u, CHORUS_API_KEY: k, CHORUS_AGENT_PROFILE: prof };
+  const managedKeys = Object.keys(managed);
+  const kvLine = (key) => `${key} = ${toToml(managed[key])}`;
+
+  let existing = "";
+  try {
+    existing = read(configPath);
+  } catch {
+    existing = ""; // no file yet — start fresh
+  }
+
+  const isTableHeader = (s) => /^\s*\[/.test(s);
+  const setHeaderRe = /^\s*\[shell_environment_policy\.set\]\s*$/;
+  const polHeaderRe = /^\s*\[shell_environment_policy\]\s*$/;
+  const keyRe = new RegExp(`^\\s*(${managedKeys.join("|")})\\s*=`);
+
+  const lines = existing.length ? existing.split(/\r?\n/) : [];
+  // Drop a single trailing empty element from a final newline so idempotent re-runs never
+  // accumulate blank lines (mirrors writeDshCredentialsEnv).
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+
+  const setIdx = lines.findIndex((l) => setHeaderRe.test(l));
+
+  let outLines;
+  if (setIdx !== -1) {
+    // Upsert within the existing [shell_environment_policy.set] section (header .. next
+    // top-level table header, exclusive, or EOF).
+    let end = lines.length;
+    for (let j = setIdx + 1; j < lines.length; j += 1) {
+      if (isTableHeader(lines[j])) {
+        end = j;
+        break;
+      }
+    }
+    const seen = new Set();
+    const sectionOut = [];
+    for (let j = setIdx + 1; j < end; j += 1) {
+      const m = lines[j].match(keyRe);
+      if (m) {
+        const key = m[1];
+        if (!seen.has(key)) {
+          sectionOut.push(kvLine(key)); // replace in place
+          seen.add(key);
+        }
+        continue; // drop this (and any later duplicate) managed line
+      }
+      sectionOut.push(lines[j]); // preserve unrelated line verbatim
+    }
+    for (const key of managedKeys) if (!seen.has(key)) sectionOut.push(kvLine(key));
+    outLines = [...lines.slice(0, setIdx + 1), ...sectionOut, ...lines.slice(end)];
+  } else {
+    // No dotted-table section. If a `[shell_environment_policy]` header carries an INLINE
+    // `set = { … }`, refuse to edit it textually (unsafe) — treat as a write failure.
+    const polIdx = lines.findIndex((l) => polHeaderRe.test(l));
+    if (polIdx !== -1) {
+      let end = lines.length;
+      for (let j = polIdx + 1; j < lines.length; j += 1) {
+        if (isTableHeader(lines[j])) {
+          end = j;
+          break;
+        }
+      }
+      for (let j = polIdx + 1; j < end; j += 1) {
+        if (/^\s*set\s*=/.test(lines[j])) {
+          throw new Error(
+            `existing ${configPath} has an inline [shell_environment_policy] set = { … } table — ` +
+              "refusing to edit it; configure it via a [shell_environment_policy.set] section instead",
+          );
+        }
+      }
+    }
+    const block = ["[shell_environment_policy.set]", ...managedKeys.map(kvLine)];
+    outLines = lines.length === 0 ? block : [...lines, "", ...block];
+  }
+
+  const content = outLines.join("\n") + "\n";
+
+  mkdir(dirname(configPath), { recursive: true });
+  // Atomic write: temp file (0600) in the same dir, then rename over target.
+  const tmp = `${configPath}.tmp`;
+  write(tmp, content, { mode: 0o600 });
+  rename(tmp, configPath);
+  return configPath;
+}
+
+/**
  * @param {import("../contracts.mjs").StepContext & {
  *   validateCredentials?: Function, appendAgent?: Function, writeLogin?: Function,
  *   promptFn?: Function,
@@ -325,6 +492,7 @@ export async function seedCredentials(ctx) {
   const writeDshEnv = ctx.writeDshEnv ?? writeDshCredentialsEnv;
   const writeClaudeSettings = ctx.writeClaudeSettings ?? writeClaudeSettingsEnv;
   const readSettingsProfile = ctx.readClaudeSettingsProfile ?? readClaudeSettingsProfile;
+  const writeCodexEnv = ctx.writeCodexEnv ?? writeCodexShellEnvCreds;
 
   const selection = Array.isArray(ctx.selection) ? ctx.selection.filter((id) => nonEmpty(id)) : [];
   if (selection.length === 0) {
@@ -521,12 +689,43 @@ export async function seedCredentials(ctx) {
       }
     }
 
-    // Combined side-file note + hint-suppression flags (dsh and claude are mutually
+    // codex-only: ALSO write the user-global ~/.codex/config.toml [shell_environment_policy].set
+    // so INTERACTIVE Codex's plugin hooks + shell-tool `chorus` calls resolve identity with no
+    // manual export. UNGATED — every codex agent (single- and multi-agent alike), because the
+    // Codex hooks never auto-single (on-session-start.sh requires CHORUS_URL+CHORUS_API_KEY;
+    // chorus-mcp-call.sh needs CHORUS_AGENT_PROFILE+CLI OR url+key). Native MCP is already
+    // export-free via the literal Bearer this write leaves untouched. On a SUCCESSFUL write set
+    // codexEnvWritten so init.mjs suppresses the export hint (like dsh's profileInEnv / Claude
+    // Code's settingsEnvWritten). Runs regardless of the daemon.json dedup result. The key is
+    // only written into the 0600 file.
+    let codexNote = "";
+    let codexEnvWritten = false;
+    if (isCodexSelection(id)) {
+      const configPath = resolveCodexConfigPath(env);
+      try {
+        const p = writeCodexEnv({ configPath, url, apiKey, agentProfile: identity.uuid });
+        codexEnvWritten = true;
+        codexNote = `; wrote CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE into ${p} (0600) under [shell_environment_policy].set`;
+      } catch (err) {
+        // Write failed (locked/unwritable, or an ambiguous inline `set` we refuse to edit).
+        // Emit an actionable, non-secret WARNING; the export hint is still shown
+        // (codexEnvWritten stays false). No launcher wrapper — the resolution order already
+        // lives in the plugin hook wrapper.
+        codexNote =
+          `; WARNING: could not write ${configPath} (${err?.message ?? String(err)}). ` +
+          "Interactive Codex hooks will not reach Chorus until CHORUS_URL, CHORUS_API_KEY and " +
+          `CHORUS_AGENT_PROFILE are in its env — add them under [shell_environment_policy.set] in ${configPath} ` +
+          "(or export them). Your cho_ key is not shown here.";
+      }
+    }
+
+    // Combined side-file note + hint-suppression flags (dsh, claude, and codex are mutually
     // exclusive selection ids, so at most one note/flag is set per iteration).
-    const sideNote = `${dshNote}${claudeNote}`;
+    const sideNote = `${dshNote}${claudeNote}${codexNote}`;
     const hintFlags = {
       ...(profileInEnv ? { profileInEnv: true } : {}),
       ...(settingsEnvWritten ? { settingsEnvWritten: true } : {}),
+      ...(codexEnvWritten ? { codexEnvWritten: true } : {}),
     };
 
     if (!res.ok) {

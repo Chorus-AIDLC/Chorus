@@ -16,6 +16,7 @@ import {
   writeDshCredentialsEnv,
   writeClaudeSettingsEnv,
   readClaudeSettingsProfile,
+  writeCodexShellEnvCreds,
 } from "../init/steps/credential-seed.mjs";
 import { appendAgentConfig, writeLoginFile } from "../login.mjs";
 import { OUTCOME_ACTIONS } from "../init/contracts.mjs";
@@ -61,6 +62,10 @@ function baseCtx(over = {}) {
     // defaults to "no prior identity" → the write path (no repoint prompt).
     writeClaudeSettings: vi.fn(({ settingsPath }) => settingsPath),
     readClaudeSettingsProfile: () => undefined,
+    // Stub the Codex config.toml sink so `codex`-selection tests never touch the REAL
+    // ~/.codex/config.toml. Tests that assert on the write override this (a recording
+    // fake, or the real writer against a temp CODEX_HOME).
+    writeCodexEnv: vi.fn(({ configPath }) => configPath),
     ...over,
   };
 }
@@ -760,6 +765,195 @@ describe("seedCredentials — Claude Code settings.json env sink", () => {
         flags: { url: "https://c", apiKey: "cho_k" },
         appendAgent: fakeAppend(),
         writeClaudeSettings: write,
+      }),
+    );
+    expect(write.calls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex — the ~/.codex/config.toml `[shell_environment_policy].set` sink. Codex's
+// native MCP is already export-free (literal Bearer in config.toml), but the plugin
+// hooks need CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE in the env (they never
+// auto-single). The writer does a TARGETED TEXTUAL upsert (no TOML-parser dep) that
+// preserves the literal [mcp_servers.chorus] block, 0600, idempotent, key never echoed.
+// ---------------------------------------------------------------------------
+describe("writeCodexShellEnvCreds (real writer)", () => {
+  it("creates a missing config.toml with the 3 keys under [shell_environment_policy.set], at 0600", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
+    const p = join(dir, "nested", ".codex", "config.toml"); // dir does not exist yet
+    const ret = writeCodexShellEnvCreds({ configPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    expect(ret).toBe(p);
+    expect(existsSync(p)).toBe(true);
+    const txt = readFileSync(p, "utf8");
+    expect(txt).toMatch(/^\[shell_environment_policy\.set\]$/m);
+    expect(txt).toContain('CHORUS_URL = "https://c"');
+    expect(txt).toContain('CHORUS_API_KEY = "cho_k"');
+    expect(txt).toContain('CHORUS_AGENT_PROFILE = "u-1"');
+    expect(statSync(p).mode & 0o777).toBe(0o600);
+  });
+
+  it("preserves the literal [mcp_servers.chorus] Bearer + upserts into an existing [shell_environment_policy.set] in place", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
+    const p = join(dir, "config.toml");
+    writeFileSync(
+      p,
+      [
+        "# my codex config",
+        "[mcp_servers.chorus]",
+        'url = "https://c/api/mcp"',
+        "",
+        "[mcp_servers.chorus.http_headers]",
+        'Authorization = "Bearer cho_LITERAL"',
+        "",
+        "[shell_environment_policy.set]",
+        'CHORUS_URL = "http://old"',
+        'FOO = "keep"',
+        "",
+      ].join("\n"),
+    );
+    writeCodexShellEnvCreds({ configPath: p, url: "https://new", apiKey: "cho_new", agentProfile: "u-2" });
+    const txt = readFileSync(p, "utf8");
+    // Literal Bearer + its section + a leading comment survive verbatim.
+    expect(txt).toContain("# my codex config");
+    expect(txt).toContain("[mcp_servers.chorus.http_headers]");
+    expect(txt).toContain('Authorization = "Bearer cho_LITERAL"');
+    // Unrelated key inside the managed section is preserved.
+    expect(txt).toContain('FOO = "keep"');
+    // Managed keys upserted in place — no duplicate, old value gone.
+    expect(txt).toContain('CHORUS_URL = "https://new"');
+    expect(txt).not.toContain("http://old");
+    expect(txt).toContain('CHORUS_API_KEY = "cho_new"');
+    expect(txt).toContain('CHORUS_AGENT_PROFILE = "u-2"');
+    expect((txt.match(/^CHORUS_URL = /gm) || []).length).toBe(1);
+  });
+
+  it("appends a fresh [shell_environment_policy.set] section when the file has content but no shell_environment_policy", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
+    const p = join(dir, "config.toml");
+    writeFileSync(p, '[mcp_servers.chorus]\nurl = "https://c/api/mcp"\n');
+    writeCodexShellEnvCreds({ configPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-3" });
+    const txt = readFileSync(p, "utf8");
+    expect(txt).toContain("[mcp_servers.chorus]"); // preserved
+    expect(txt).toMatch(/^\[shell_environment_policy\.set\]$/m); // appended
+    expect(txt).toContain('CHORUS_AGENT_PROFILE = "u-3"');
+  });
+
+  it("THROWS on an ambiguous inline `set = { … }` under [shell_environment_policy] and does NOT clobber", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
+    const p = join(dir, "config.toml");
+    const original = '[shell_environment_policy]\nset = { FOO = "bar" }\n';
+    writeFileSync(p, original);
+    expect(() => writeCodexShellEnvCreds({ configPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u" })).toThrow(
+      /inline .*set|cannot safely edit|refus/i,
+    );
+    expect(readFileSync(p, "utf8")).toBe(original); // untouched
+  });
+
+  it("is idempotent: a re-run reproduces byte-identical content and keeps 0600", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
+    const p = join(dir, "config.toml");
+    writeCodexShellEnvCreds({ configPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    const first = readFileSync(p, "utf8");
+    writeCodexShellEnvCreds({ configPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    expect(readFileSync(p, "utf8")).toBe(first);
+    expect(statSync(p).mode & 0o777).toBe(0o600);
+  });
+});
+
+/** A recording fake for ctx.writeCodexEnv — captures args, returns the path. */
+function fakeCodexWrite(overrideFn) {
+  const calls = [];
+  const fn = (args) => {
+    calls.push(args);
+    if (overrideFn) return overrideFn(args);
+    return args.configPath;
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+describe("seedCredentials — Codex config.toml env sink", () => {
+  it("single codex: writes config.toml under CODEX_HOME, sets codexEnvWritten, never leaks the key", async () => {
+    const write = fakeCodexWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["codex"],
+        env: { CODEX_HOME: "/tmp/xyz-codex-home" },
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writeCodexEnv: write,
+        validateCredentials: async () => ({ uuid: "u-new", name: "Codex Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.action).toBe(SEEDED);
+    expect(o.codexEnvWritten).toBe(true);
+    expect(write.calls[0]).toMatchObject({
+      configPath: join("/tmp/xyz-codex-home", "config.toml"),
+      url: "https://c",
+      apiKey: "cho_secret",
+      agentProfile: "u-new",
+    });
+    expect(o.detail).not.toContain("cho_secret"); // key never echoed
+    expect(o.detail).toMatch(/config\.toml \(0600\)/);
+  });
+
+  it("multi-agent (claude+codex): the codex entry is written via writeCodexEnv with its own identity", async () => {
+    const codexWrite = fakeCodexWrite();
+    const claudeWrite = fakeClaudeWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        io: { log: () => {}, isTTY: true },
+        selection: ["claude", "codex"],
+        flags: { url: "https://c" },
+        promptFn: async (q) => (q.includes("claude") ? "cho_c" : "cho_x"),
+        appendAgent: fakeAppend(),
+        writeClaudeSettings: claudeWrite,
+        writeCodexEnv: codexWrite,
+        validateCredentials: async ({ apiKey }) => ({ uuid: `u-${apiKey}`, name: `Agent ${apiKey}` }),
+      }),
+    );
+    const outcomes = [].concat(res);
+    expect(outcomes.map((o) => o.action)).toEqual([SEEDED, SEEDED]);
+    // Codex written exactly once, with the codex identity (not claude's).
+    expect(codexWrite.calls).toHaveLength(1);
+    expect(codexWrite.calls[0]).toMatchObject({ apiKey: "cho_x", agentProfile: "u-cho_x" });
+    expect(outcomes[1].codexEnvWritten).toBe(true);
+  });
+
+  it("write failure: actionable WARNING names the 3 keys, no codexEnvWritten, key never printed, no wrapper", async () => {
+    const write = fakeCodexWrite(() => {
+      throw new Error("EACCES: permission denied");
+    });
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["codex"],
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writeCodexEnv: write,
+        validateCredentials: async () => ({ uuid: "u-new", name: "Codex Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.codexEnvWritten).toBeUndefined();
+    expect(o.detail).toMatch(/could not write/);
+    expect(o.detail).toMatch(/CHORUS_URL/);
+    expect(o.detail).toMatch(/CHORUS_API_KEY/);
+    expect(o.detail).toMatch(/CHORUS_AGENT_PROFILE/);
+    expect(o.detail).not.toContain("cho_secret");
+    expect(o.detail).not.toMatch(/wrapper|chorus launch/i);
+  });
+
+  it("non-codex selection (claude): never calls writeCodexEnv", async () => {
+    const write = fakeCodexWrite();
+    await seedCredentials(
+      baseCtx({
+        selection: ["claude"],
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+        writeCodexEnv: write,
+        writeClaudeSettings: fakeClaudeWrite(),
       }),
     );
     expect(write.calls).toHaveLength(0);
