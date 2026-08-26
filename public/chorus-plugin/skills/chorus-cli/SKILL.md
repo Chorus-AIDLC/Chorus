@@ -43,11 +43,6 @@ Agent configuration lives in `~/.chorus/daemon.json`; `chorus agents` is the CRU
   resolves that agent's key from `~/.chorus/daemon.json`, so you need not export
   `CHORUS_API_KEY` for the CLI path. Daemon-woken sessions receive it automatically.
 
-> **Claude Code:** `chorus agents add` writes these three vars into the user-global
-> `~/.claude/settings.json` `env` block, which Claude Code injects at session start and which
-> **overrides** the shell env — so interactive Claude Code (native MCP + hooks + this CLI)
-> needs no manual `export`. Adding a second Claude Code identity prompts before repointing.
-
 ## 4. MCP operations — `chorus mcp`
 
 Call any Chorus MCP tool from the shell — a byte-exact, token-free path for large content:
