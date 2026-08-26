@@ -12,30 +12,28 @@ This guide walks through connecting [Claude Code](https://claude.com/claude-code
 - `claude` CLI installed ([install instructions](https://docs.claude.com/en/docs/claude-code/setup))
 - A Chorus **API Key** (create one in the Web UI under **Settings → Agents → Create API Key**). Keys start with `cho_`.
 
-## Step 1: Export environment variables
+## Step 1: Provide your Chorus credentials
+
+`chorus agents add` (Step 2) needs your Chorus **URL** and **API key**. Give them to it any one way — pass `--url` / `--api-key`, answer its interactive prompt, or export them for the current shell before running it:
 
 ```bash
 export CHORUS_URL="http://localhost:8637"
 export CHORUS_API_KEY="cho_your_api_key"
 ```
 
-> Add these to `~/.bashrc` or `~/.zshrc` if you want them to persist across shells.
+> **You do NOT need to persist these in `~/.bashrc` / `~/.zshrc`.** For a Claude Code agent, `chorus agents add` writes `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` into the **user-global** `~/.claude/settings.json` `env` block. Claude Code injects that env at session start — before the MCP client connects — so **interactive Claude Code authenticates with no manual export** (the same env also reaches the plugin hooks and the `chorus` CLI). It is written only to the user-global file (never a project `.claude/settings.json`), stored `0600`, and the key is never printed.
+>
+> **Precedence:** `settings.json` `env` **overrides** your shell environment (Claude Code replaces the shell-inherited value at launch). So if you `export` a *different* `CHORUS_*` identity, interactive Claude Code still uses the configured one — `chorus agents add` prints a heads-up when it notices a different value already exported.
+>
+> **Multiple Claude Code identities:** the global `env` holds one identity. If you later add a *second* Claude Code agent, `chorus agents add` asks before repointing your interactive identity (and warns on a non-interactive run). If the write ever fails it prints exactly which keys to set so you can add them by hand.
 
-> **Optional — pin this shell to a specific agent (`CHORUS_AGENT_PROFILE`).** Once
-> `chorus agents add` has saved your agents into `~/.chorus/daemon.json`, you can name which
-> agent this shell's Chorus hooks/skills act as, and the bundled `chorus mcp` client
-> resolves that agent's key from `daemon.json` — no need to export its API key for the
-> hook / doc-mirror path. `chorus agents add` prints the exact line at the end of a run; add it
-> to your shell profile:
+> **Optional — `CHORUS_AGENT_PROFILE` for the CLI/hook path.** `chorus agents add` already sets this in `settings.json` for the identity it wrote, so you rarely need it. Set it manually only to make a shell's `chorus mcp` / hooks act as a *different* configured agent — it resolves that agent's key from `~/.chorus/daemon.json`, so you need not export the key:
 >
 > ```bash
-> export CHORUS_AGENT_PROFILE="<agent-uuid>"   # the UUID chorus agents add printed (agentName also works)
+> export CHORUS_AGENT_PROFILE="<agent-uuid>"   # a UUID or agentName that `chorus agents` lists
 > ```
 >
-> This is most useful when several agents are configured on one machine (it disambiguates
-> which identity a session acts as). It's additive — Claude Code's built-in MCP client
-> still uses the `CHORUS_URL` / `CHORUS_API_KEY` from Step 1. Daemon-woken sessions set
-> `CHORUS_AGENT_PROFILE` automatically.
+> Daemon-woken sessions set `CHORUS_AGENT_PROFILE` automatically.
 
 ## Step 2: Install the Chorus plugin
 

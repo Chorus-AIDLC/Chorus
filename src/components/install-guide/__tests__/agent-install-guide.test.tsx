@@ -107,13 +107,16 @@ describe("AgentInstallGuide dsh onboarding", () => {
     // The retired `chorus init` command name must not appear anywhere.
     expect(screen.queryByText(/chorus init/)).toBeNull();
 
-    // Optional Step 3: pick the default agent the chorus CLI acts as.
+    // Claude Code has NO manual export-profile step: chorus agents add writes the
+    // connection env into ~/.claude/settings.json. Show what/where instead.
     expect(
-      screen.getByText("Step 3 (optional): Set the default agent for the Chorus CLI"),
+      screen.getByText("What chorus agents add writes (no manual export needed)"),
     ).toBeTruthy();
+    expect(screen.getByText(/~\/\.claude\/settings\.json env block/)).toBeTruthy();
     expect(
-      screen.getByText(/export CHORUS_AGENT_PROFILE="<agent-uuid>"/),
-    ).toBeTruthy();
+      screen.queryByText("Step 3 (optional): Set the default agent for the Chorus CLI"),
+    ).toBeNull();
+    expect(screen.queryByText(/export CHORUS_AGENT_PROFILE="<agent-uuid>"/)).toBeNull();
 
     // The manual `/plugin marketplace add` + `/plugin install` flow is NOT shown:
     // `chorus agents add --agents claude` already runs those `claude plugin` commands
@@ -154,13 +157,24 @@ describe("AgentInstallGuide dsh onboarding", () => {
     render(<AgentInstallGuide apiKey={null} />);
 
     const PROFILE_TITLE = "Step 3 (optional): Set the default agent for the Chorus CLI";
-    for (const tab of ["Claude Code", "Codex", "Kiro", "OpenCode"]) {
+    // Codex / Kiro / OpenCode still show the manual export-profile step (their
+    // settings-file auto-write is a separate, unbuilt sibling idea).
+    for (const tab of ["Codex", "Kiro", "OpenCode"]) {
       await user.click(screen.getByRole("tab", { name: tab }));
       expect(screen.getByText(PROFILE_TITLE)).toBeTruthy();
       expect(screen.getByText(/export CHORUS_AGENT_PROFILE="<agent-uuid>"/)).toBeTruthy();
       // The old per-tab "Verify connection" step is gone on every tab.
       expect(screen.queryByText(/Verify connection/)).toBeNull();
     }
+
+    // Claude Code DROPS the export-profile step — chorus agents add writes the env into
+    // ~/.claude/settings.json, so it shows a "what gets written where" note instead.
+    await user.click(screen.getByRole("tab", { name: "Claude Code" }));
+    expect(screen.queryByText(PROFILE_TITLE)).toBeNull();
+    expect(
+      screen.getByText("What chorus agents add writes (no manual export needed)"),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Verify connection/)).toBeNull();
 
     // dsh keeps its own flow and does NOT get the CLI profile step (its profile is
     // seeded into $DSH_HOME/.env, not exported by hand).

@@ -45,6 +45,11 @@ Agent configuration lives in `~/.chorus/daemon.json`; `chorus agents` is the CRU
   scrubs credential-shaped env from tool subprocesses; the dsh doc-mirror wrapper also reads
   `CHORUS_AGENT_PROFILE` / credentials from `$DSH_HOME/.env`.)
 
+> **Claude Code:** `chorus agents add` writes these three vars into the user-global
+> `~/.claude/settings.json` `env` block, which Claude Code injects at session start and which
+> **overrides** the shell env — so interactive Claude Code (native MCP + hooks + this CLI)
+> needs no manual `export`. Adding a second Claude Code identity prompts before repointing.
+
 ## 4. MCP operations — `chorus mcp`
 
 Call any Chorus MCP tool from the shell — a byte-exact, token-free path for large content:

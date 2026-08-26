@@ -159,11 +159,12 @@ export function summarize(outcomes, io, selectedIds = []) {
  * built-in MCP client still reads CHORUS_URL/CHORUS_API_KEY from the env);
  * daemon-woken sessions receive CHORUS_AGENT_PROFILE from the spawner automatically.
  *
- * EXCEPTION — dsh: when credential-seed persisted the profile into `$DSH_HOME/.env`
- * (outcome `profileInEnv: true`), dsh loads it into the session env on its own, so
- * a manual export is redundant — that agent is omitted from the hint. Every other
- * agent (Claude Code, Codex, Kiro, …) has no such file channel and still gets the
- * hint.
+ * EXCEPTIONS — dsh and Claude Code: when credential-seed persisted the profile into
+ * `$DSH_HOME/.env` (outcome `profileInEnv: true`) dsh loads it into the session env on
+ * its own; and when it wrote the full CHORUS_* env into `~/.claude/settings.json`
+ * (outcome `settingsEnvWritten: true`) Claude Code injects it at session start. Either
+ * way a manual export is redundant — that agent is omitted from the hint. Every other
+ * agent (Codex, Kiro, …) has no such file channel and still gets the hint.
  * @param {import("./init/contracts.mjs").StepOutcome[]} outcomes
  * @param {{ log: Function }} io
  */
@@ -172,8 +173,10 @@ export function profileExportHint(outcomes, io) {
   const profiles = [];
   for (const o of outcomes) {
     // dsh persists CHORUS_AGENT_PROFILE in $DSH_HOME/.env and loads it into the
-    // session env itself — no manual export needed, so skip it here.
-    if (o && o.profileInEnv === true) continue;
+    // session env itself — no manual export needed, so skip it here. Claude Code
+    // likewise has its full CHORUS_* env written into ~/.claude/settings.json
+    // (settingsEnvWritten) — that session is fully wired, so skip it too.
+    if (o && (o.profileInEnv === true || o.settingsEnvWritten === true)) continue;
     if (o && typeof o.agentUuid === "string" && o.agentUuid && !seen.has(o.agentUuid)) {
       seen.add(o.agentUuid);
       profiles.push({ agentUuid: o.agentUuid, agentName: typeof o.agentName === "string" ? o.agentName : "" });

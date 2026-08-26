@@ -269,6 +269,14 @@ export function removeAgent(argv = [], opts = {}) {
       "Note: any dsh $DSH_HOME/.env credentials were left untouched (a single shared file) — clear them manually if needed.\n",
     );
   }
+  // Claude Code: `chorus agents add` may have written CHORUS_* into the user-global
+  // ~/.claude/settings.json env block. Reverse cleanup is out of scope — leave it in place
+  // (a later re-add overwrites it idempotently) but tell the operator, mirroring the dsh note.
+  if (nonEmpty(removed.agentType) === "claude-code") {
+    out.write(
+      "Note: any CHORUS_* keys written into ~/.claude/settings.json were left untouched — clear them manually if needed.\n",
+    );
+  }
   return 0;
 }
 

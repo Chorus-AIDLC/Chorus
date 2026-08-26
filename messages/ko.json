@@ -1172,9 +1172,11 @@
       },
       "claudeCode": {
         "step1Title": "1단계: 환경 변수 설정",
-        "step1Tip": "팁: 지속적으로 사용하려면 ~/.bashrc 또는 ~/.zshrc에 추가하세요.",
+        "step1Tip": "지속할 필요가 없습니다. chorus agents add(2단계)가 이 값들을 ~/.claude/settings.json의 env에 기록하고 Claude Code가 실행 시 주입하므로(셸보다 우선), 대화형 Claude Code는 수동 export 없이 연결됩니다.",
         "step2Title": "2단계: chorus agents add 실행",
-        "step2Tip": "chorus agents add은 chorus-plugins 마켓플레이스를 등록하고 Chorus 플러그인을 Claude Code(~/.claude)에 설치하며 자격 증명을 저장합니다. CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다. 첫 번째 명령은 Chorus CLI를 전역으로 설치합니다(버전 0.17.0으로 고정)."
+        "step2Tip": "chorus agents add은 chorus-plugins 마켓플레이스를 등록하고 Chorus 플러그인을 Claude Code(~/.claude)에 설치하며 자격 증명을 저장합니다. CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다. 첫 번째 명령은 Chorus CLI를 전역으로 설치합니다(버전 0.17.0으로 고정).",
+        "writesTitle": "chorus agents add이 기록하는 내용(수동 export 불필요)",
+        "writesDesc": "Claude Code의 경우 chorus agents add이 CHORUS_URL / CHORUS_API_KEY / CHORUS_AGENT_PROFILE를 사용자 전역 ~/.claude/settings.json의 env 블록에 기록합니다. Claude Code가 실행 시(MCP 연결 전에, 셸보다 우선하여) 주입하므로 대화형 Claude Code에는 수동 export나 CHORUS_AGENT_PROFILE가 필요 없습니다. 프로젝트 .claude/settings.json은 기록하지 않고, 파일은 0600으로 저장하며, 키를 출력하지 않습니다. 두 번째 Claude Code 에이전트를 추가하면 이 ID를 변경하기 전에 확인합니다."
       },
       "codex": {
         "step1Title": "1단계: 환경 변수 설정",

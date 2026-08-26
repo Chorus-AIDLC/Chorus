@@ -14,6 +14,8 @@ import {
   seedCredentials,
   credentialSeedStep,
   writeDshCredentialsEnv,
+  writeClaudeSettingsEnv,
+  readClaudeSettingsProfile,
 } from "../init/steps/credential-seed.mjs";
 import { appendAgentConfig, writeLoginFile } from "../login.mjs";
 import { OUTCOME_ACTIONS } from "../init/contracts.mjs";
@@ -53,6 +55,12 @@ function baseCtx(over = {}) {
     // check per-agent cwds override it. Stubbed so the real resolveInstallCwds (which
     // reads process.cwd / daemon.json) never runs in unit tests.
     resolveInstallCwds: async () => ({ cwds: [] }),
+    // Stub the Claude Code settings.json sink so `claude`-selection tests never touch the
+    // REAL ~/.claude/settings.json. Tests that assert on the write override these (a
+    // recording fake, or the real writer against a temp dir). readClaudeSettingsProfile
+    // defaults to "no prior identity" → the write path (no repoint prompt).
+    writeClaudeSettings: vi.fn(({ settingsPath }) => settingsPath),
+    readClaudeSettingsProfile: () => undefined,
     ...over,
   };
 }
@@ -501,5 +509,259 @@ describe("seedCredentials — dsh $DSH_HOME/.env credential channel", () => {
     expect(parsed.CHORUS_URL).toBe("https://c2");
     expect(parsed.CHORUS_API_KEY).toBe("cho_k2");
     expect(parsed.CHORUS_AGENT_PROFILE).toBe("agent-uuid-1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Claude Code — the user-global ~/.claude/settings.json `env` sink. The writer
+// mirrors writeDshCredentialsEnv (idempotent, 0600, atomic, key never echoed) but
+// targets a JSON object. Interactive Claude Code injects settings.json env at
+// session start, so this one write feeds native MCP + hooks + skill CLI.
+// ---------------------------------------------------------------------------
+describe("writeClaudeSettingsEnv (real writer)", () => {
+  it("creates a missing settings.json with the 3 managed keys under env, at 0600", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-home-"));
+    const p = join(dir, "nested", ".claude", "settings.json"); // dir does not exist yet
+    const ret = writeClaudeSettingsEnv({ settingsPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    expect(ret).toBe(p);
+    expect(existsSync(p)).toBe(true);
+    const parsed = JSON.parse(readFileSync(p, "utf8"));
+    expect(parsed.env).toMatchObject({ CHORUS_URL: "https://c", CHORUS_API_KEY: "cho_k", CHORUS_AGENT_PROFILE: "u-1" });
+    expect(statSync(p).mode & 0o777).toBe(0o600);
+  });
+
+  it("preserves other env keys AND every other top-level field verbatim", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-home-"));
+    const p = join(dir, "settings.json");
+    writeFileSync(
+      p,
+      JSON.stringify({ model: "opus", env: { FOO: "bar", CHORUS_URL: "http://old" }, permissions: { allow: ["Read"] } }),
+    );
+    writeClaudeSettingsEnv({ settingsPath: p, url: "https://new", apiKey: "cho_new", agentProfile: "u-2" });
+    const parsed = JSON.parse(readFileSync(p, "utf8"));
+    expect(parsed.model).toBe("opus"); // top-level preserved
+    expect(parsed.permissions).toEqual({ allow: ["Read"] }); // top-level preserved
+    expect(parsed.env.FOO).toBe("bar"); // unrelated env key preserved
+    expect(parsed.env.CHORUS_URL).toBe("https://new"); // managed key upserted in place
+    expect(parsed.env.CHORUS_API_KEY).toBe("cho_new");
+    expect(parsed.env.CHORUS_AGENT_PROFILE).toBe("u-2");
+  });
+
+  it("THROWS on existing malformed JSON and does NOT clobber the file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-home-"));
+    const p = join(dir, "settings.json");
+    writeFileSync(p, "{ this is not json ");
+    expect(() => writeClaudeSettingsEnv({ settingsPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u" })).toThrow(
+      /not valid JSON/,
+    );
+    expect(readFileSync(p, "utf8")).toBe("{ this is not json "); // untouched
+  });
+
+  it("THROWS on a present-but-non-object env block (no clobber)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-home-"));
+    const p = join(dir, "settings.json");
+    writeFileSync(p, JSON.stringify({ env: "oops" }));
+    expect(() => writeClaudeSettingsEnv({ settingsPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u" })).toThrow(
+      /non-object "env"/,
+    );
+  });
+
+  it("is idempotent: a re-run reproduces byte-identical content and keeps 0600", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-home-"));
+    const p = join(dir, "settings.json");
+    writeClaudeSettingsEnv({ settingsPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    const first = readFileSync(p, "utf8");
+    writeClaudeSettingsEnv({ settingsPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    expect(readFileSync(p, "utf8")).toBe(first);
+    expect(statSync(p).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("readClaudeSettingsProfile", () => {
+  it("returns the CHORUS_AGENT_PROFILE from an existing env block", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-home-"));
+    const p = join(dir, "settings.json");
+    writeFileSync(p, JSON.stringify({ env: { CHORUS_AGENT_PROFILE: "u-42", FOO: "bar" } }));
+    expect(readClaudeSettingsProfile(p)).toBe("u-42");
+  });
+
+  it("returns undefined for a missing file, malformed JSON, or an env-less file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cc-home-"));
+    expect(readClaudeSettingsProfile(join(dir, "nope.json"))).toBeUndefined();
+    const bad = join(dir, "bad.json");
+    writeFileSync(bad, "{ not json");
+    expect(readClaudeSettingsProfile(bad)).toBeUndefined();
+    const noenv = join(dir, "noenv.json");
+    writeFileSync(noenv, JSON.stringify({ model: "opus" }));
+    expect(readClaudeSettingsProfile(noenv)).toBeUndefined();
+  });
+});
+
+/** A recording fake for ctx.writeClaudeSettings — captures args, returns the path. */
+function fakeClaudeWrite(overrideFn) {
+  const calls = [];
+  const fn = (args) => {
+    calls.push(args);
+    if (overrideFn) return overrideFn(args);
+    return args.settingsPath;
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+describe("seedCredentials — Claude Code settings.json env sink", () => {
+  it("fresh claude (no prior profile): writes settings.json, sets settingsEnvWritten, never leaks the key", async () => {
+    const write = fakeClaudeWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["claude"],
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writeClaudeSettings: write,
+        readClaudeSettingsProfile: () => undefined,
+        validateCredentials: async () => ({ uuid: "u-new", name: "New Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.action).toBe(SEEDED);
+    expect(o.settingsEnvWritten).toBe(true);
+    expect(write.calls[0]).toMatchObject({ url: "https://c", apiKey: "cho_secret", agentProfile: "u-new" });
+    expect(o.detail).not.toContain("cho_secret"); // key never echoed
+    expect(o.detail).toMatch(/settings\.json \(0600\)/);
+  });
+
+  it("same identity: idempotent write with no repoint prompt/warning", async () => {
+    const write = fakeClaudeWrite();
+    const asked = [];
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["claude"],
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+        writeClaudeSettings: write,
+        readClaudeSettingsProfile: () => "u-same",
+        promptFn: async (q) => {
+          asked.push(q);
+          return "";
+        },
+        validateCredentials: async () => ({ uuid: "u-same", name: "Same Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.settingsEnvWritten).toBe(true);
+    expect(write.calls).toHaveLength(1);
+    expect(asked.some((q) => /repoint/i.test(q))).toBe(false);
+    expect(o.detail).not.toMatch(/repoint|WARNING/);
+  });
+
+  it("different identity, non-TTY: overwrites and WARNS naming old→new", async () => {
+    const write = fakeClaudeWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["claude"],
+        io: { log: () => {}, isTTY: false },
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+        writeClaudeSettings: write,
+        readClaudeSettingsProfile: () => "u-OLD",
+        validateCredentials: async () => ({ uuid: "u-NEW", name: "New Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(write.calls).toHaveLength(1); // overwrote
+    expect(o.settingsEnvWritten).toBe(true);
+    expect(o.detail).toMatch(/repointed interactive Claude Code from u-OLD to u-NEW/);
+  });
+
+  it("different identity, TTY declined: no write, directs to edit the file (not export)", async () => {
+    const write = fakeClaudeWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["claude"],
+        io: { log: () => {}, isTTY: true },
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+        writeClaudeSettings: write,
+        readClaudeSettingsProfile: () => "u-OLD",
+        promptFn: async (q) => (/repoint/i.test(q) ? "n" : /daemon waking/i.test(q) ? "n" : ""),
+        validateCredentials: async () => ({ uuid: "u-NEW", name: "New Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(write.calls).toHaveLength(0); // declined → not written
+    expect(o.settingsEnvWritten).toBeUndefined();
+    expect(o.detail).toMatch(/left interactive Claude Code as u-OLD/);
+    expect(o.detail).toMatch(/edit .*settings\.json/);
+    // Directs to the FILE and clarifies a shell export would be overridden — it does NOT
+    // offer exporting as a remedy (settings.json env wins).
+    expect(o.detail).toMatch(/export would be overridden by settings\.json/);
+  });
+
+  it("write failure: actionable WARNING, no settingsEnvWritten, key never printed", async () => {
+    const write = fakeClaudeWrite(() => {
+      throw new Error("EACCES: permission denied");
+    });
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["claude"],
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writeClaudeSettings: write,
+        readClaudeSettingsProfile: () => undefined,
+        validateCredentials: async () => ({ uuid: "u-new", name: "New Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.settingsEnvWritten).toBeUndefined();
+    expect(o.detail).toMatch(/could not write/);
+    expect(o.detail).toMatch(/CHORUS_URL, CHORUS_API_KEY and CHORUS_AGENT_PROFILE/);
+    expect(o.detail).not.toContain("cho_secret");
+  });
+
+  it("ambient-shell heads-up: notes a different exported identity (non-secret)", async () => {
+    const write = fakeClaudeWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["claude"],
+        env: { CHORUS_AGENT_PROFILE: "u-OTHER" }, // shell exports a different identity
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writeClaudeSettings: write,
+        readClaudeSettingsProfile: () => undefined,
+        validateCredentials: async () => ({ uuid: "u-new", name: "New Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.detail).toMatch(/your shell exports a different CHORUS_\* identity/);
+    expect(o.detail).not.toContain("cho_secret");
+  });
+
+  it("no heads-up when the shell exports the SAME identity", async () => {
+    const write = fakeClaudeWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["claude"],
+        env: { CHORUS_AGENT_PROFILE: "u-new" }, // same as the identity being written
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+        writeClaudeSettings: write,
+        readClaudeSettingsProfile: () => undefined,
+        validateCredentials: async () => ({ uuid: "u-new", name: "New Agent" }),
+      }),
+    );
+    expect([].concat(res)[0].detail).not.toMatch(/your shell exports a different/);
+  });
+
+  it("non-claude selection: never touches settings.json", async () => {
+    const write = fakeClaudeWrite();
+    await seedCredentials(
+      baseCtx({
+        selection: ["codex"],
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+        writeClaudeSettings: write,
+      }),
+    );
+    expect(write.calls).toHaveLength(0);
   });
 });
