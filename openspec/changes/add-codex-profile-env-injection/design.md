@@ -55,7 +55,10 @@ not hidden.
 ## What `[shell_environment_policy].set` covers — VERIFIED (task-2 spike)
 
 **Method.** Source inspection of the local `codex-rs` checkout for **codex-cli 0.146.1**
-(the installed version). Two spawn paths were traced:
+(the installed version) plus a scripted run of the writer. A live interactive `codex`
+session was **not** driven (this ran headless — no TTY/model), so the verdict rests on the
+source of truth (how Codex builds each subprocess's env) rather than runtime observation.
+Two spawn paths were traced:
 
 - **Shell/exec tool** applies `shell_environment_policy` — `codex-rs/core/src/unified_exec/process_manager.rs:1156`
   (and `1169`, `1206`) and `codex-rs/core/src/tools/handlers/shell/shell_command.rs:104`
