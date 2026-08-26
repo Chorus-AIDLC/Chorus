@@ -31,8 +31,18 @@ chorus agents add --agents codex
 2. 注册 `chorus-plugins` marketplace（如果已注册则升级）。
 3. 通过 Codex 自己的 plugin CLI 安装 Chorus 插件，从而把 `[mcp_servers.chorus]` 和 `[plugins."chorus@chorus-plugins"]` 写入 `~/.codex/config.toml`（原文件首次备份），并启用 Codex 生命周期 hook。Chorus hooks 随插件打包，插件安装后由 Codex 自动加载。
 4. 把你的 Chorus 凭证一次性写入 `~/.chorus/daemon.json`。
+5. 把 `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` 写入 `~/.codex/config.toml` 的 `[shell_environment_policy].set`（`0600`、幂等、保留你的其它配置），这样模型在 shell 工具里调用 `chorus` 时就能解析出你的 agent 身份，**无需手动 export**。
 
 如果环境里没有 `CHORUS_URL` / `CHORUS_API_KEY`，`chorus agents add` 会在有 TTY 时交互式询问。还没安装 `chorus` CLI？先用 `npm install -g @chorus-aidlc/chorus@0.17.0` 全局安装，再运行 `chorus agents add --agents codex`。
+
+### 哪些无需手动 export，哪一项仍然需要
+
+运行 `chorus agents add` 之后，交互式 Codex 会话在以下场景**无需手动 export**：
+
+- **原生 MCP 工具** —— 安装器把字面 `Authorization: Bearer <key>` 写进了 `[mcp_servers.chorus]`（Codex 不会展开这里的 `${VAR}`），所以 MCP 直接完成认证。
+- **模型自己在 shell 里调用 `chorus`**（即 skill CLI）—— 从上面的 `[shell_environment_policy].set` 解析。解析顺序优先 `CHORUS_AGENT_PROFILE` + `chorus` CLI（≥ 0.17.0，密钥从 `~/.chorus/daemon.json` 读取），CLI 缺失时回退到 `CHORUS_URL` + `CHORUS_API_KEY`。
+
+唯一的例外是插件的**生命周期 hook**（SessionStart 的 check-in 和 PostToolUse 自动化）：Codex 把它们作为自己的子进程运行，继承的是 **Codex 进程自身的环境变量**，而 `[shell_environment_policy]` 并不会设置它。所以要让这些 hook 在**交互式**启动时触发，请从一个已 export `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` 的 shell 里启动 `codex`，也就是把第 1 步的 export 写进 `~/.bashrc` / `~/.zshrc`。被 daemon 唤醒的 Codex 会话会自动拿到这三个变量，因此这一点只影响你手动启动的交互式会话。
 
 ## 第 3 步：验证连接
 

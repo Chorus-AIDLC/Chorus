@@ -31,8 +31,18 @@ chorus agents add --agents codex
 2. Register the `chorus-plugins` marketplace (or upgrade it if already registered).
 3. Install the Chorus plugin through Codex's own plugin CLI, which writes `[mcp_servers.chorus]` and `[plugins."chorus@chorus-plugins"]` into `~/.codex/config.toml` (backing up your original once) and enables Codex lifecycle hooks. Chorus hooks are bundled in the plugin and load automatically once it is installed.
 4. Seed your Chorus credentials once into `~/.chorus/daemon.json`.
+5. Write `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` into the `[shell_environment_policy].set` table of `~/.codex/config.toml` (mode `0600`, idempotent, preserving your other config) so the model's shell-tool `chorus` calls resolve your agent identity with **no manual export**.
 
 If `CHORUS_URL` / `CHORUS_API_KEY` aren't set, `chorus agents add` prompts for them interactively (provided you have a TTY). Don't have the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents codex`.
+
+### What needs no export — and the one thing that does
+
+After `chorus agents add`, an interactive Codex session reaches Chorus with **no manual export** for:
+
+- **Native MCP tools** — the installer bakes a literal `Authorization: Bearer <key>` into `[mcp_servers.chorus]` (Codex does not expand `${VAR}` there), so MCP authenticates directly.
+- **The model's own `chorus` shell calls** (the skill CLI) — resolved from the `[shell_environment_policy].set` block above. Resolution prefers `CHORUS_AGENT_PROFILE` + the `chorus` CLI (≥ 0.17.0, which reads the key from `~/.chorus/daemon.json`) and falls back to `CHORUS_URL` + `CHORUS_API_KEY`.
+
+The exception is the plugin's **lifecycle hooks** (the SessionStart check-in and PostToolUse automations): Codex runs these as its own subprocesses that inherit **Codex's process environment**, which `[shell_environment_policy]` does not set. So for the hooks to fire in an **interactive** launch, start `codex` from a shell that exports `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` — persist the Step 1 exports to your `~/.bashrc` / `~/.zshrc`. Daemon-woken Codex sessions receive all three automatically, so this only affects hand-launched interactive sessions.
 
 ## Step 3: Verify the connection
 
