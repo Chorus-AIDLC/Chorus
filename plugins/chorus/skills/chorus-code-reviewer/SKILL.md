@@ -1,6 +1,6 @@
 ---
 name: chorus-code-reviewer
-description: 'Read-only Chorus code-review gateway — the final ship-time review of an Idea''s aggregate code change (the whole feature across all its tasks, not one task). Fetches the Idea, its approved proposals, documents, and tasks via MCP, reviews the aggregate implementation, and posts a structured VERDICT comment on the Idea. Invoke by mounting this skill into a default sub-agent via spawn_agent(agent_type="default", items=[{ type: "skill", path: "chorus:chorus-code-reviewer", ... }, { type: "text", text: "Review the code for idea <uuid>. Round: N." }]).'
+description: 'Read-only Chorus code-review gateway — the final ship-time review of an Idea''s aggregate code change (the whole feature across all its tasks, not one task). Fetches the Idea, its approved proposals, documents, and tasks via MCP, reviews the aggregate implementation, and posts a structured VERDICT comment on the Idea. Invoke with spawn_agent({items:[{type:"skill", path:"chorus:chorus-code-reviewer"}, {type:"text", text:"Review the code for idea <idea-uuid>. Round: N. Post VERDICT."}]}).'
 license: AGPL-3.0
 metadata:
   author: chorus

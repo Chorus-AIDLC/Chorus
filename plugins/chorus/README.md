@@ -94,14 +94,14 @@ codex   # plugin auto-installs on first launch; use /plugins to confirm
 
 ## What's different from the Claude Code version
 
-The Codex port uses its native plugin hooks and built-in sub-agent roles rather
+The Codex port uses its native plugin hooks and skill-mounted sub-agents rather
 than mirroring Claude Code's Agent Teams implementation.
 
 Consequences:
 
 - Workers track progress through task status, work reports, acceptance-criteria
   self-checks, and verification.
-- Reviewer skills are mounted into Codex's built-in `default` sub-agent role.
+- Reviewer and worker skills are mounted explicitly through `spawn_agent({items:[...]})`.
 - There are no direct Codex equivalents for Claude Code's `TeammateIdle` and
   `TaskCompleted` events.
 
@@ -128,7 +128,7 @@ Full design rationale and binary-level schema research: `docs/codex-plugin-plan.
 - `chorus-proposal-reviewer` — read-only review of submitted proposals
 - `chorus-task-reviewer` — read-only review of completed tasks (can run tests/builds in read-only shell)
 
-Both are invoked by the main agent via `spawn_agent(agent_type=..., message=...)` and waited on via `wait_agent([id])`.
+Both are invoked by the main agent via `spawn_agent({items:[{type:"skill", ...}, {type:"text", ...}]})`. The text item carries the proposal/task UUID and expected VERDICT. Wait only when the next gate depends on the result, use `send_input` to correct an active child, close finished threads promptly, and use `resume_agent` only for previously closed threads. Routine entity-backed children use fresh context; opt into `fork_context: true` only when material parent-conversation state is required.
 
 ## Troubleshooting
 

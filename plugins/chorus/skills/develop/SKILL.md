@@ -190,20 +190,20 @@ chorus_submit_for_verify({
 
 > `to_verify` does NOT unblock downstream tasks — only `done` (after admin verification) does.
 
-> **Review Agent:** After `chorus_submit_for_verify`, the Chorus plugin's PostToolUse hook injects context instructing you to spawn the `chorus-task-reviewer` sub-agent. You MUST spawn it yourself (it is NOT auto-launched). Spawn it by mounting this plugin's `chorus-task-reviewer` skill into a default sub-agent:
+> **Review Agent:** After `chorus_submit_for_verify`, the Chorus plugin's PostToolUse hook injects context instructing you to spawn the `chorus-task-reviewer` sub-agent. You MUST spawn it yourself (it is NOT auto-launched). Mount this plugin's `chorus-task-reviewer` skill explicitly:
 >
 > ```
-> spawn_agent(
->   agent_type="default",
->   items=[
+> reviewer = spawn_agent({
+>   items: [
 >     { type: "skill", name: "Chorus Task Reviewer", path: "chorus:chorus-task-reviewer" },
 >     { type: "text",  text: "Review Chorus task <task-uuid>. Post VERDICT comment." }
 >   ]
-> )
-> wait_agent([reviewer_id]); close_agent(reviewer_id)
+> })
+> wait_agent({ targets: [reviewer.agent_id] })
+> close_agent({ target: reviewer.agent_id })
 > ```
 >
-> Why not `agent_type="chorus-task-reviewer"`? Codex 0.125 only has three built-in roles (default / explorer / worker); custom review personas are loaded by mounting the skill. The reviewer posts a `VERDICT:` comment on the task.
+> Verification is blocked on the verdict, so this call site waits. Once the reviewer finishes, close it promptly to release its thread slot. The reviewer posts a `VERDICT:` comment on the task.
 
 > **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the PostToolUse hook injects a reminder to run the ship-time code-review gateway. Spawn it the same way, mounting `chorus:chorus-code-reviewer` and passing the `ideaUuid` + round number; it reviews the Idea's **aggregate** code change (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT:` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via the **quick-dev** workflow (`$quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it (do not reopen old tasks). Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Advisory/behavioral, same as the other reviewers. Run it **before** any idea-completion report.
 
@@ -254,6 +254,8 @@ When running multiple sub-agents in parallel on a proposal's tasks, the main age
 | **Orchestration** | Codex `spawn_agent` | Spawning sub-agents, passing task assignments |
 | **Work Tracking** | Chorus MCP | Task lifecycle and work reports |
 
+Codex owns execution-thread orchestration (`spawn_agent`, `wait_agent`, `send_input`, `close_agent`, `resume_agent`). Chorus MCP remains authoritative for task claims, status, work reports, acceptance evidence, verification submissions, and reviewer comments.
+
 ### Team Lead Workflow
 
 ```
@@ -262,16 +264,27 @@ chorus_checkin()
 chorus_list_tasks({ projectUuid: "<project-uuid>" })
 chorus_get_unblocked_tasks({ projectUuid: "<project-uuid>" })
 
-# 2. Spawn workers and pass task UUIDs in the message
-spawn_agent(
-  agent_type="worker",
-  message='''You are a Chorus developer worker. Follow the $develop skill.
-Your task(s): <task-uuid-1>, <task-uuid-2>
+# 2. Mount the workflow explicitly and pass Chorus entity UUIDs
+worker = spawn_agent({
+  items: [
+    { type: "skill", name: "Chorus Develop", path: "chorus:develop" },
+    { type: "text", text: """Work these Chorus tasks in dependency order:
+Task UUIDs: <task-uuid-1>, <task-uuid-2>
 Project UUID: <project-uuid>
 
-Procedure: for each task — claim → mark in_progress → implement → report work → self-check AC → submit for verification.''',
-)
+For each task: claim → mark in_progress → implement → report work → self-check AC → submit for verification. Exit after submission; the main agent owns independent review and admin verification.""" }
+  ]
+})
 ```
+
+### Context and Lifecycle
+
+- Start routine entity-backed workers and reviewers with a fresh context (the default). They can fetch authoritative context from Chorus using the task, proposal, idea, and project UUIDs in the text item.
+- Set `fork_context: true` only when the child genuinely needs material evidence or decisions from the parent conversation that cannot be conveyed cleanly in the mounted skill plus assignment text. State that reason in the assignment.
+- Call `wait_agent` only when the next orchestrator action is blocked on the result. Independent workers can run while the main agent handles unrelated work.
+- Use `send_input` to clarify, correct, or extend work in an active sub-agent.
+- Call `close_agent` as soon as a completed or abandoned sub-agent needs no further interaction; completion alone does not release its thread slot.
+- Use `resume_agent` only to restore a previously closed sub-agent. For an active sub-agent, use `send_input`.
 
 ### Wave-Based Execution
 
@@ -287,7 +300,7 @@ Procedure: for each task — claim → mark in_progress → implement → report
 
 ### Multiple Tasks Per Worker
 
-A single worker can work on multiple tasks sequentially — write them in its `spawn_agent` message in dependency order, and have the worker loop over them.
+A single worker can work on multiple tasks sequentially — list them in the `spawn_agent` text item in dependency order, and have the worker loop over them.
 
 ### MCP Access for Workers
 

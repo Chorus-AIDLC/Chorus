@@ -342,7 +342,7 @@ To turn it off, set `CHORUS_OPENSPEC_MODE=off` — the banner then reads a neutr
 7. **Document decisions** — Add comments explaining your reasoning
 8. **Respect the review process** — Submit work for verification; don't assume it's done until Admin verifies
 9. **Interactive questions** — For confirmations/choices, send a plain-text question; Codex currently does not ship a structured radio-button tool in default mode
-10. **Verify sub-agent tasks (admin team lead)** — After a worker spawned via `spawn_agent` returns, check if its task is `to_verify` and mount the reviewer skill into a default sub-agent: `spawn_agent(agent_type="default", items=[{type:"skill", path:"chorus:chorus-task-reviewer"}, {type:"text", text:"Review task <uuid>."}])`. Codex 0.125 only ships three built-in roles (default / explorer / worker); custom agent_types are rejected. Tasks in `to_verify` do NOT unblock downstream — only `done` does.
+10. **Verify sub-agent tasks (admin team lead)** — After a worker spawned via `spawn_agent` returns, check if its task is `to_verify` and mount the reviewer skill explicitly: `spawn_agent({items:[{type:"skill", path:"chorus:chorus-task-reviewer"}, {type:"text", text:"Review task <task-uuid> and post VERDICT."}]})`. Wait only because verification depends on the verdict, then close the reviewer thread. Tasks in `to_verify` do NOT unblock downstream — only `done` does.
 
 ---
 

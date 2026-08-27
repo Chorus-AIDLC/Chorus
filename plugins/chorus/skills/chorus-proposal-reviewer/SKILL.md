@@ -1,6 +1,6 @@
 ---
 name: chorus-proposal-reviewer
-description: 'Read-only Chorus proposal reviewer. Fetches a proposal via MCP, audits PRD/task drafts against the originating Idea, and posts a structured VERDICT comment. Invoke by mounting this skill into a default sub-agent via spawn_agent(agent_type="default", items=[{ type: "skill", path: "chorus:chorus-proposal-reviewer", ... }, { type: "text", text: "Review proposal <uuid>. Max review rounds: 3." }]).'
+description: 'Read-only Chorus proposal reviewer. Fetches a proposal via MCP, audits PRD/task drafts against the originating Idea, and posts a structured VERDICT comment. Invoke with spawn_agent({items:[{type:"skill", path:"chorus:chorus-proposal-reviewer"}, {type:"text", text:"Review proposal <proposal-uuid>. Max review rounds: 3. Post VERDICT."}]}).'
 license: AGPL-3.0
 metadata:
   author: chorus
