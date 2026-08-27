@@ -29,10 +29,22 @@ chorus agents add --agents codex
 
 1. Verify `codex` is installed.
 2. Register the `chorus-plugins` marketplace (or upgrade it if already registered).
-3. Install the Chorus plugin through Codex's own plugin CLI, which writes `[mcp_servers.chorus]` and `[plugins."chorus@chorus-plugins"]` into `~/.codex/config.toml` (backing up your original once) and enables Codex lifecycle hooks. Chorus hooks are bundled in the plugin and load automatically once it is installed.
+3. Install the Chorus plugin through Codex's own plugin CLI, which writes `[plugins."chorus@chorus-plugins"]` into `~/.codex/config.toml` (backing up your original once) and enables Codex lifecycle hooks. Chorus hooks are bundled in the plugin and load automatically once it is installed.
 4. Seed your Chorus credentials once into `~/.chorus/daemon.json`.
+5. Write `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` into `~/.codex/.env` (mode `0600`, idempotent, preserving your other entries). Codex loads this dotenv file into its **own process environment** at startup, so both its plugin hooks and the model's shell-tool `chorus` calls resolve your agent identity with **no manual export**.
+6. Write the native-MCP server block `[mcp_servers.chorus]` into `~/.codex/config.toml` with `url` + `bearer_token_env_var = "CHORUS_API_KEY"` — a **keyless** reference (no API key is stored in `config.toml`). Codex resolves that env var (from the `~/.codex/.env` in step 5) into the `Authorization: Bearer <key>` header when it connects to MCP.
 
 If `CHORUS_URL` / `CHORUS_API_KEY` aren't set, `chorus agents add` prompts for them interactively (provided you have a TTY). Don't have the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents codex`.
+
+### What needs no export
+
+After `chorus agents add`, an interactive Codex session reaches Chorus with **no manual export at all** — the `~/.codex/.env` file Codex loads at startup carries your identity into every surface:
+
+- **Plugin lifecycle hooks** (the SessionStart check-in and PostToolUse automations) — Codex snapshots its process environment (populated from `~/.codex/.env`) into each hook subprocess, so the check-in fires without exporting anything in your shell.
+- **The model's own `chorus` shell calls** (the skill CLI) — resolved from that same process env. Resolution prefers `CHORUS_AGENT_PROFILE` + the `chorus` CLI (≥ 0.17.0, which reads the key from `~/.chorus/daemon.json`) and falls back to `CHORUS_URL` + `CHORUS_API_KEY`.
+- **Native MCP tools** — `[mcp_servers.chorus]` uses `bearer_token_env_var = "CHORUS_API_KEY"`, which Codex resolves from the same process env into `Authorization: Bearer <key>` at connect time. The key is never stored in `config.toml` (Codex does **not** expand `${VAR}` inside `http_headers`, which is why the dedicated `bearer_token_env_var` field is used).
+
+> The API key lives in exactly one place — `~/.codex/.env` — so rotating it is a single edit there (re-run `chorus agents add` to refresh it). Daemon-woken Codex sessions get the same three variables injected automatically, so remote-dispatched runs authenticate identically, native MCP included. The Step 1 `export`s are still handy for running `chorus agents add` itself and ad-hoc `chorus` CLI calls in your terminal, but they are no longer required for an interactive Codex session to reach Chorus.
 
 ## Step 3: Verify the connection
 
@@ -58,7 +70,8 @@ chorus agents add --agents codex \
 ## Troubleshooting
 
 - **`codex not found in PATH`** — Install it: `npm i -g @openai/codex`.
-- **`401 Unauthorized`** on `check in` — API key wrong or revoked. Recreate under Settings → Agents, then re-run `chorus agents add` (or edit the `Authorization` line in `config.toml`).
+- **`401 Unauthorized`** on `check in` — API key wrong or revoked. Recreate under Settings → Agents, then re-run `chorus agents add` (which refreshes `~/.codex/.env`; `[mcp_servers.chorus]` reads the key from there via `bearer_token_env_var`, so there's no literal key to edit in `config.toml`).
+- **`Environment variable CHORUS_API_KEY … is not set`** from Codex MCP startup — `~/.codex/.env` is missing the key or wasn't loaded. Re-run `chorus agents add --agents codex` to rewrite it (or export `CHORUS_API_KEY` before launching `codex`).
 - **`URL must start with http:// or https://`** — `CHORUS_URL` missing the scheme. Use `http://` or `https://`.
 - **Marketplace source conflict** — You previously registered `chorus-plugins` from a different URL. The installer detects this and auto-re-registers; check the `!` warnings it prints.
 - **Hook didn't fire on first launch** — Open `/plugins` inside Codex and confirm `chorus@chorus-plugins` is installed/enabled, then open `/hooks` to review/trust the bundled Chorus hooks. Hooks run after the plugin cache is materialized.

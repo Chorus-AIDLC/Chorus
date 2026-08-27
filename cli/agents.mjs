@@ -277,6 +277,15 @@ export function removeAgent(argv = [], opts = {}) {
       "Note: any CHORUS_* keys written into ~/.claude/settings.json were left untouched — clear them manually if needed.\n",
     );
   }
+  // Codex: `chorus agents add` may have written CHORUS_* into ~/.codex/.env (and a keyless
+  // [mcp_servers.chorus] block that references CHORUS_API_KEY via bearer_token_env_var in
+  // ~/.codex/config.toml — no literal key). Reverse cleanup is out of scope — leave it, tell the operator.
+  if (nonEmpty(removed.agentType) === "codex") {
+    out.write(
+      "Note: any CHORUS_* env written into ~/.codex/.env " +
+        "(and the keyless [mcp_servers.chorus] block in ~/.codex/config.toml, which references the key via bearer_token_env_var) were left untouched — clear them manually if needed.\n",
+    );
+  }
   return 0;
 }
 

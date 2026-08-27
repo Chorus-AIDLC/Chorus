@@ -88,13 +88,13 @@ Results can be filtered by project(s) using optional HTTP headers on the Chorus 
 
 **Affected tools**: `chorus_checkin`, `chorus_get_my_assignments`
 
-**Example (`~/.codex/config.toml`)**:
+**Example (`~/.codex/config.toml`)** — auth is the keyless `bearer_token_env_var` (the key lives in `~/.codex/.env`); `http_headers` carries only the filter headers:
 ```toml
 [mcp_servers.chorus]
 url = "<BASE_URL>/api/mcp"
+bearer_token_env_var = "CHORUS_API_KEY"
 
 [mcp_servers.chorus.http_headers]
-Authorization = "Bearer cho_xxx"
 X-Chorus-Project = "project-uuid-1,project-uuid-2"
 ```
 
@@ -252,18 +252,22 @@ API Keys must be created manually by the user in the Chorus Web UI.
 
 ### 2. MCP Server Configuration
 
-Codex CLI reads MCP config from `~/.codex/config.toml` (global) or `<repo>/.codex/config.toml` (per-project). Add:
+Codex CLI reads MCP config from `~/.codex/config.toml` (global) or `<repo>/.codex/config.toml` (per-project). Add a **keyless** block — the API key is read from an env var, not stored in `config.toml`:
 
 ```toml
 [mcp_servers.chorus]
 url = "<BASE_URL>/api/mcp"
-
-[mcp_servers.chorus.http_headers]
-Authorization = "Bearer <your-api-key>"
+bearer_token_env_var = "CHORUS_API_KEY"
 ```
 
-> The transport is inferred from the `url` key — there is no `type = "http"` field in Codex's MCP schema. The header table key is `http_headers`, not `headers`.
-> Easier path: install the Chorus CLI globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents codex` and it will write this block for you (plus enable the lifecycle hooks).
+and put the key in `~/.codex/.env` (Codex loads it into its process env at startup):
+
+```dotenv
+CHORUS_API_KEY=cho_your_key_here
+```
+
+> The transport is inferred from the `url` key — there is no `type = "http"` field in Codex's MCP schema. Auth uses `bearer_token_env_var` (Codex resolves the named env var into `Authorization: Bearer <key>` at connect time); Codex does **not** expand `${VAR}` inside `http_headers`, so don't put a literal key there. Use the `http_headers` table only for non-secret headers like `X-Chorus-Project`.
+> Easier path: install the Chorus CLI globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents codex` and it will write this block (and `~/.codex/.env`) for you, plus enable the lifecycle hooks.
 
 Restart Codex CLI after configuration.
 

@@ -256,6 +256,16 @@ describe("chorus agents remove", () => {
     expect(io.text()).toContain("clear them manually");
     expect(io.text()).not.toContain("cho_"); // key never printed
   });
+
+  it("prints the ~/.codex/.env clear-manually note when removing a codex agent", () => {
+    const io = cap();
+    const file = { agents: [{ apiKey: "cho_x", url: "https://c", agentUuid: "u-x", agentName: "Codex", agentType: "codex" }] };
+    expect(removeAgent(["u-x"], rmDeps(file, io).dep)).toBe(0);
+    expect(io.text()).toContain("~/.codex/.env"); // the credential sink
+    expect(io.text()).toContain("~/.codex/config.toml"); // the untouched literal Bearer
+    expect(io.text()).toContain("clear them manually");
+    expect(io.text()).not.toContain("cho_"); // key never printed
+  });
 });
 
 describe("runAgents — sub-verb dispatch", () => {

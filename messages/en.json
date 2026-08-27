@@ -1178,9 +1178,9 @@
       },
       "codex": {
         "step1Title": "Step 1: Set environment variables",
-        "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc for persistence.",
+        "step1Tip": "Tip: chorus agents add (Step 2) reads these and writes them into ~/.codex/.env, so you don't need to persist them to your shell rc for Codex — an interactively-launched Codex resolves its identity (plugin hooks, shell-tool chorus calls, and native MCP) from ~/.codex/.env. Daemon-woken sessions get them automatically.",
         "step2Title": "Step 2: Run chorus agents add",
-        "step2Tip": "chorus agents add registers the chorus-plugins marketplace, installs the Chorus plugin into Codex (writing the MCP server entry into ~/.codex/config.toml), and seeds your credentials. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). The first command installs the Chorus CLI globally (pinned to version 0.17.0)."
+        "step2Tip": "chorus agents add registers the chorus-plugins marketplace, installs the Chorus plugin into Codex, seeds your credentials, writes CHORUS_URL / CHORUS_API_KEY / CHORUS_AGENT_PROFILE into ~/.codex/.env (which Codex loads into its process env at startup), and writes a keyless [mcp_servers.chorus] into ~/.codex/config.toml using bearer_token_env_var = \"CHORUS_API_KEY\" — so interactive Codex needs no manual export at all: the plugin hooks, the model's shell-tool chorus calls, and native MCP all resolve your identity from ~/.codex/.env (no API key is stored in config.toml). It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). The first command installs the Chorus CLI globally (pinned to version 0.17.0)."
       },
       "kiro": {
         "step1Title": "Step 1: Set environment variables",

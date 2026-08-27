@@ -198,6 +198,21 @@ describe("profileExportHint", () => {
     expect(text).not.toContain("u-claude"); // settings.json already carries its env — no manual export
     expect(text.match(/export CHORUS_AGENT_PROFILE=/g)).toHaveLength(1);
   });
+
+  it("omits a Codex agent whose full env was written to config.toml (codexEnvWritten) but keeps the others", () => {
+    const io = capture();
+    profileExportHint(
+      [
+        { stepId: "credential-seed", action: OUTCOME_ACTIONS.SEEDED, detail: "…", agentUuid: "u-codex", agentName: "Codex", codexEnvWritten: true },
+        { stepId: "credential-seed", action: OUTCOME_ACTIONS.SEEDED, detail: "…", agentUuid: "u-kiro", agentName: "Kiro" },
+      ],
+      io,
+    );
+    const text = io.lines.join("\n");
+    expect(text).toContain('export CHORUS_AGENT_PROFILE="u-kiro"'); // kiro still hinted
+    expect(text).not.toContain("u-codex"); // config.toml already carries its env — no manual export
+    expect(text.match(/export CHORUS_AGENT_PROFILE=/g)).toHaveLength(1);
+  });
 });
 
 describe("chorus agents add — router dispatch (real entry)", () => {

@@ -14,12 +14,13 @@
 //     `resume <thread_id>`. (serde: ThreadEvent tag="type", rename="thread.started";
 //     ThreadStartedEvent.thread_id: String — codex-rs/exec/src/exec_events.rs.)
 //   • No `--mcp-config`: Codex reads MCP servers from the user's ~/.codex/config.toml.
-//     The Chorus MCP key there is USER-MANAGED: the installer writes a LITERAL Bearer
-//     header and Codex does NOT expand ${VAR} inside http_headers, so the CHORUS_API_KEY
-//     the daemon exports does NOT reach Codex's MCP auth. The daemon still exports
-//     CHORUS_URL / CHORUS_API_KEY into the child env — but only for the plugin's shell
-//     tooling (chorus-api.sh / SessionStart hooks), never argv and never Codex MCP.
-//     (Multi-agent: two Codex agents with different keys each need their own CODEX_HOME.)
+//     `chorus agents add` writes [mcp_servers.chorus] with bearer_token_env_var =
+//     "CHORUS_API_KEY" — a KEYLESS reference (no literal key in config.toml), and Codex
+//     resolves that env var into `Authorization: Bearer <key>` at connect. So the
+//     CHORUS_API_KEY the daemon exports into the child env below DOES reach Codex's MCP
+//     auth (as well as the plugin's shell tooling — chorus-api.sh / SessionStart hooks);
+//     never argv. (Multi-agent: two Codex agents with different keys each need their own
+//     CODEX_HOME so their config.toml + ~/.codex/.env don't collide.)
 //   • Permission is a SANDBOX mode, not a tool allowlist.
 //
 // Reuses claude-spawner's platform-neutral helpers: parseNdjsonChunk (NDJSON
