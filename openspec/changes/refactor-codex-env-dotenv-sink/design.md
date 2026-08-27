@@ -18,11 +18,12 @@ choice:
 | `config.toml` `[shell_environment_policy].set` | ✅ | ❌ | ❌ | `protocol/src/shell_environment.rs:90` (`populate_env` step 4); `core/src/unified_exec/process_manager.rs:1285` |
 | plugin hook process env | — | ✅ = Codex process env snapshot + 4 `*PLUGIN*` vars only | — | `hooks/src/registry.rs:77` (`std::env::vars_os()`); `hooks/src/engine/command_runner.rs` (`env_clear()`→`envs(snapshot)`+`envs(plugin)`); `hooks/src/engine/discovery.rs:261` |
 | **`~/.codex/.env` (dotenv)** | ✅ (`inherit=All`, default excludes off) | ✅ (loaded into process env → hook snapshot) | ❌ | `arg0/src/lib.rs:159` `load_dotenv()`, `:303` `find_codex_home().join(".env")`, `:312` `set_filtered`→`std::env::set_var` (filters only `CODEX_*`; overrides shell) |
-| `[mcp_servers.chorus].http_headers` literal Bearer | — | — | ✅ | HTTP transport; written by `codex plugin add` |
+| `[mcp_servers.chorus]` `bearer_token_env_var` (HTTP MCP auth) | — | — | ✅ | HTTP transport; resolves `CHORUS_API_KEY` from the process env (which `~/.codex/.env` populates) → `Authorization: Bearer <key>`. Written **by Chorus** (keyless), NOT by `codex plugin add` — see Decision 7. |
 
 **Conclusion.** `~/.codex/.env` is the only single write that reaches BOTH hooks and the shell
-tool. Combined with the literal Bearer (already export-free HTTP MCP auth), it makes
-interactive Codex fully export-free — matching CC's `settings.json` `env` model, including
+tool. Combined with the keyless `[mcp_servers.chorus]` `bearer_token_env_var` block (Decision 7),
+which resolves the key from that same `.env`, it makes interactive Codex fully export-free —
+matching CC's `settings.json` `env` model, including
 its **override-the-shell** precedence (`.env` uses `set_var`, which overwrites an existing
 ambient value).
 
