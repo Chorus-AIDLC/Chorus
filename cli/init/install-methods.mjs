@@ -21,6 +21,7 @@ import { installFileTemplate } from "./file-template.mjs";
 import { OUTCOME_ACTIONS } from "./contracts.mjs";
 import { CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME, CHORUS_MARKETPLACE_SOURCE } from "./chorus-plugin-consts.mjs";
 import { writeCodexMcpServer } from "./codex-mcp-config.mjs";
+import { resolveCredentials } from "../credentials.mjs";
 
 const STEP_ID = "plugin-install";
 const { INSTALLED, REPAIRED, SKIPPED, FAILED, UNSUPPORTED } = OUTCOME_ACTIONS;
@@ -121,7 +122,19 @@ export function installCodex(ctx) {
   const source = env.CHORUS_MARKETPLACE_SOURCE_CODEX || "Chorus-AIDLC/Chorus";
   const state = safeState(ctx);
   const writeMcp = ctx.writeCodexMcpServer ?? writeCodexMcpServer;
-  const chorusUrl = nonEmpty(ctx.flags?.url) ?? nonEmpty(env.CHORUS_URL);
+  const resolveCreds = ctx.resolveCredentials ?? resolveCredentials;
+  // URL for the [mcp_servers.chorus] block. Prefer the explicit flag/env; otherwise fall
+  // back to the credential resolver, which reads the URL from ~/.chorus/daemon.json
+  // (agents[0]) — that covers the interactive path where the operator typed the URL at a
+  // prompt (credential-seed, order 10, already wrote it there before this step runs).
+  let chorusUrl = nonEmpty(ctx.flags?.url) ?? nonEmpty(env.CHORUS_URL);
+  if (!chorusUrl) {
+    try {
+      chorusUrl = nonEmpty(resolveCreds(ctx.flags ?? {}, { env }).url);
+    } catch {
+      chorusUrl = undefined; // no complete credentials resolved — ensureMcp() skips with a note
+    }
+  }
 
   // Ensure the native-MCP block is present + normalized to the keyless bearer_token_env_var
   // form. Idempotent; runs on both fresh install and re-run. Never writes a secret. A missing

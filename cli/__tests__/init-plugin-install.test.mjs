@@ -38,7 +38,10 @@ function fakeRun(script = () => ({ ok: true, code: 0, stdout: "", stderr: "" }))
   return run;
 }
 
-function ctxFor(agentId, { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer } = {}) {
+function ctxFor(
+  agentId,
+  { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer, resolveCredentials } = {},
+) {
   return {
     agentId,
     env,
@@ -48,7 +51,11 @@ function ctxFor(agentId, { state = {}, run, backup, env = {}, io, flags, binaryO
     flags,
     binaryOnPath,
     minHostVersion,
-    writeCodexMcpServer,
+    // Codex MCP-config deps default to hermetic no-ops so codex tests never touch the real
+    // ~/.codex/config.toml or read the real ~/.chorus/daemon.json. Tests that assert on them
+    // override these.
+    writeCodexMcpServer: writeCodexMcpServer ?? (() => {}),
+    resolveCredentials: resolveCredentials ?? (() => ({ url: undefined, apiKey: undefined })),
     adapter: { id: agentId, installPlugin: () => {}, readInstallState: () => state },
   };
 }
@@ -166,6 +173,26 @@ describe("installCodex (verified codex-cli 0.146.1)", () => {
     expect(res.action).toBe(INSTALLED); // plugin still installed
     expect(mcpCalls).toHaveLength(0); // no URL → no MCP write
     expect(res.detail).toMatch(/skipped \[mcp_servers\.chorus\].*no Chorus URL/);
+  });
+
+  it("resolves the MCP-block URL from daemon.json (resolveCredentials) when not in flags/env", () => {
+    // Interactive path: the operator typed the URL at a prompt (not --url/CHORUS_URL);
+    // credential-seed already wrote it into ~/.chorus/daemon.json, and installCodex falls
+    // back to the credential resolver to pick it up.
+    const run = fakeRun();
+    const mcpCalls = [];
+    const res = installCodex(
+      ctxFor("codex", {
+        state: {},
+        run,
+        env: { HOME: "/home/u" }, // no CHORUS_URL, no --url
+        writeCodexMcpServer: (a) => mcpCalls.push(a),
+        resolveCredentials: () => ({ url: "https://from-daemon.example", apiKey: "cho_x" }),
+      }),
+    );
+    expect(res.action).toBe(INSTALLED);
+    expect(mcpCalls).toHaveLength(1);
+    expect(mcpCalls[0].url).toBe("https://from-daemon.example");
   });
 
   it("MCP-write failure is a non-fatal WARNING and never echoes the key", () => {
