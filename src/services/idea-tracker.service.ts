@@ -276,6 +276,44 @@ export async function buildIdeaTracker(
   return tracker;
 }
 
+// ===== Active-project distribution (checkin / session-start) =====
+
+export interface ActiveProjectDistributionEntry {
+  name: string;
+  /** Count of the agent's active ideas in this project (always >= 1). */
+  activeIdeaCount: number;
+}
+
+/**
+ * Collapse the agent's idea tracker into a per-project active-idea *count* —
+ * "which projects am I advancing ideas in, and how many" — with no per-idea
+ * payload. Backs chorus_checkin / session-start, which surfaces the distribution
+ * rather than a per-idea list.
+ *
+ * Derived from `buildIdeaTracker` (the single source of truth) rather than a
+ * second count query, so the count can never drift from what
+ * chorus_get_my_assignments reports. Do NOT re-implement the active-idea filter
+ * or add a divergent query here — the 0.7.2 single-source refactor (see the file
+ * header) exists precisely to prevent that drift.
+ *
+ * Callers MUST NOT pass `maxIdeas`: the count has to reflect every active idea,
+ * and the old checkin 10-cap would silently truncate it.
+ */
+export async function buildActiveProjectDistribution(
+  auth: AuthContext,
+  options: BuildIdeaTrackerOptions = {},
+): Promise<Record<string, ActiveProjectDistributionEntry>> {
+  const tracker = await buildIdeaTracker(auth, options);
+  const distribution: Record<string, ActiveProjectDistributionEntry> = {};
+  for (const [projectUuid, project] of Object.entries(tracker)) {
+    distribution[projectUuid] = {
+      name: project.name,
+      activeIdeaCount: project.ideas.length,
+    };
+  }
+  return distribution;
+}
+
 // ===== Task tracker =====
 
 /**

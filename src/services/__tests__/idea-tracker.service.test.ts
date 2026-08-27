@@ -22,7 +22,11 @@ vi.mock("@/services/idea.service", async (importActual) => {
   return { ...actual, getIdeasWithDerivedStatus: mockGetIdeasWithDerivedStatus };
 });
 
-import { buildIdeaTracker, buildTaskTracker } from "@/services/idea-tracker.service";
+import {
+  buildActiveProjectDistribution,
+  buildIdeaTracker,
+  buildTaskTracker,
+} from "@/services/idea-tracker.service";
 import type { AuthContext } from "@/types/auth";
 
 // ===== Fixtures =====
@@ -524,6 +528,87 @@ describe("buildIdeaTracker — grouping & ordering & options", () => {
     await buildIdeaTracker(agentAuth, { projectUuids: [] });
     const callArg = mockPrisma.idea.findMany.mock.calls[0][0];
     expect(callArg.where).not.toHaveProperty("projectUuid");
+  });
+});
+
+// ============================================================
+// buildActiveProjectDistribution (checkin distribution)
+// ============================================================
+
+describe("buildActiveProjectDistribution", () => {
+  it("returns an empty object when the agent has no active ideas", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([]);
+    const dist = await buildActiveProjectDistribution(agentAuth);
+    expect(dist).toEqual({});
+  });
+
+  it("collapses each project to { name, activeIdeaCount } without a per-idea payload", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i1", PROJECT_A, "open"),
+      makeIdea("i2", PROJECT_A, "elaborating", { elaborationStatus: "pending_answers" }),
+      makeIdea("i3", PROJECT_B, "open"),
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([
+      { uuid: PROJECT_A, name: "A" },
+      { uuid: PROJECT_B, name: "B" },
+    ]);
+
+    const dist = await buildActiveProjectDistribution(agentAuth);
+
+    expect(dist[PROJECT_A]).toEqual({ name: "A", activeIdeaCount: 2 });
+    expect(dist[PROJECT_B]).toEqual({ name: "B", activeIdeaCount: 1 });
+    expect(dist[PROJECT_A]).not.toHaveProperty("ideas");
+  });
+
+  it("excludes done-derived ideas from the count (rolls up through buildIdeaTracker)", async () => {
+    const proposalUuid = "p-done";
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i_active", PROJECT_A, "open"),
+      makeIdea("i_done", PROJECT_A, "elaborated"),
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      makeProposal(proposalUuid, PROJECT_A, "approved", ["i_done"]),
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([{ proposalUuid, status: "done" }]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+
+    const dist = await buildActiveProjectDistribution(agentAuth);
+
+    expect(dist[PROJECT_A].activeIdeaCount).toBe(1);
+  });
+
+  it("is uncapped — counts more than 10 active ideas in a project", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue(
+      Array.from({ length: 25 }, (_, i) => makeIdea(`i${i}`, PROJECT_A, "open")),
+    );
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+
+    const dist = await buildActiveProjectDistribution(agentAuth);
+
+    expect(dist[PROJECT_A].activeIdeaCount).toBe(25);
+  });
+
+  it("forwards options.projectUuids to the underlying query", async () => {
+    await buildActiveProjectDistribution(agentAuth, { projectUuids: [PROJECT_A] });
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ projectUuid: { in: [PROJECT_A] } }),
+      }),
+    );
+  });
+
+  it("count equals the buildIdeaTracker idea count for the same auth (single source of truth)", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i1", PROJECT_A, "open"),
+      makeIdea("i2", PROJECT_A, "open"),
+      makeIdea("i3", PROJECT_A, "open"),
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+
+    const tracker = await buildIdeaTracker(agentAuth);
+    const dist = await buildActiveProjectDistribution(agentAuth);
+
+    expect(dist[PROJECT_A].activeIdeaCount).toBe(tracker[PROJECT_A].ideas.length);
   });
 });
 

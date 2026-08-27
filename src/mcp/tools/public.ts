@@ -488,7 +488,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_checkin",
     collectionToolConfig({
       description:
-        "Agent check-in. Returns agent identity (owner, roles, persona), a project-grouped idea tracker with derived statuses and proposal/task counts, and up to 5 recent unread notifications (auto-marked read). Recommended at session start.",
+        "Agent check-in. Returns agent identity (owner, roles, persona), activeProjects — a per-project distribution of your active ideas (project name + active-idea count, NOT a per-idea list) — a short guidance list (follow AI-DLC via the Chorus skill; use chorus_search to locate work), and up to 5 recent unread notifications (auto-marked read). Recommended at session start. For the full per-idea list, call chorus_get_my_assignments.",
       inputSchema: z.object({}),
     }),
     async () => {
@@ -504,7 +504,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_get_my_assignments",
     collectionToolConfig({
       description:
-        "Get the agent's idea/task tracker, grouped by project — same shape as checkin.ideaTracker. Returns { ideaTracker, taskTracker } where ideaTracker carries derivedStatus + proposal/task counts and taskTracker carries acceptance criteria progress.",
+        "Get the agent's FULL idea/task tracker, grouped by project — the on-demand full list (chorus_checkin only returns an activeProjects project→count distribution). Returns { ideaTracker, taskTracker } where ideaTracker carries per-idea derivedStatus + proposal/task counts and taskTracker carries acceptance criteria progress.",
       inputSchema: z.object({}),
     }),
     async () => {
