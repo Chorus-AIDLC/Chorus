@@ -106,7 +106,7 @@ CTX="${CTX}
 
 - **Notifications**: \`chorus_get_notifications()\` fetches and auto-marks read.
 - **Skills**: use \`\$chorus\`, \`\$idea\`, \`\$proposal\`, \`\$develop\`, \`\$review\`, \`\$quick-dev\`, or \`\$yolo\` to load the stage-specific workflow.
-- **Reviewer sub-agents**: mount the reviewer skill into a default sub-agent — \`spawn_agent(agent_type=\"default\", items=[{type:\"skill\", path:\"chorus:chorus-proposal-reviewer\"}, {type:\"text\", text:\"Review proposal <uuid>.\"}])\` after \`chorus_pm_submit_proposal\`; same pattern with \`chorus:chorus-task-reviewer\` after \`chorus_submit_for_verify\`. Codex 0.125 only ships three built-in roles (default / explorer / worker) — custom agent_types like \`chorus-proposal-reviewer\` will be rejected. Remember \`close_agent\` after \`wait_agent\`; completed ≠ closed, 6 concurrent max."
+- **Reviewer sub-agents**: mount the reviewer skill explicitly — \`spawn_agent({items:[{type:\"skill\", path:\"chorus:chorus-proposal-reviewer\"}, {type:\"text\", text:\"Review proposal <proposal-uuid> and post VERDICT.\"}]})\` after \`chorus_pm_submit_proposal\`; use \`chorus:chorus-task-reviewer\` with the task UUID after \`chorus_submit_for_verify\`. Wait only when the next gate depends on the verdict, then close the thread; use \`send_input\` for an active child and \`resume_agent\` only for a previously closed one. Routine entity-backed children use fresh context; \`fork_context: true\` is only for material parent-conversation state."
 
 # User-visible status (mirrors the Claude Code hook; Codex skill prefix is $chorus).
 USER_MSG="Chorus connected at ${CHORUS_URL}"
