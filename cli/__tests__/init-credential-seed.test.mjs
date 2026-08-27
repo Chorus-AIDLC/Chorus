@@ -16,7 +16,8 @@ import {
   writeDshCredentialsEnv,
   writeClaudeSettingsEnv,
   readClaudeSettingsProfile,
-  writeCodexShellEnvCreds,
+  writeCodexEnvFile,
+  readCodexEnvProfile,
 } from "../init/steps/credential-seed.mjs";
 import { appendAgentConfig, writeLoginFile } from "../login.mjs";
 import { OUTCOME_ACTIONS } from "../init/contracts.mjs";
@@ -62,10 +63,10 @@ function baseCtx(over = {}) {
     // defaults to "no prior identity" → the write path (no repoint prompt).
     writeClaudeSettings: vi.fn(({ settingsPath }) => settingsPath),
     readClaudeSettingsProfile: () => undefined,
-    // Stub the Codex config.toml sink so `codex`-selection tests never touch the REAL
-    // ~/.codex/config.toml. Tests that assert on the write override this (a recording
-    // fake, or the real writer against a temp CODEX_HOME).
-    writeCodexEnv: vi.fn(({ configPath }) => configPath),
+    // Stub the Codex ~/.codex/.env sink so `codex`-selection tests never touch the REAL
+    // ~/.codex/.env. Tests that assert on the write override this (a recording fake, or the
+    // real writer against a temp CODEX_HOME).
+    writeCodexEnv: vi.fn(({ envPath }) => envPath),
     ...over,
   };
 }
@@ -772,92 +773,82 @@ describe("seedCredentials — Claude Code settings.json env sink", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Codex — the ~/.codex/config.toml `[shell_environment_policy].set` sink. Codex's
-// native MCP is already export-free (literal Bearer in config.toml), but the plugin
-// hooks need CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE in the env (they never
-// auto-single). The writer does a TARGETED TEXTUAL upsert (no TOML-parser dep) that
-// preserves the literal [mcp_servers.chorus] block, 0600, idempotent, key never echoed.
+// Codex — the ~/.codex/.env dotenv sink. Codex's native MCP is already export-free
+// (literal Bearer in config.toml), and its plugin hooks need
+// CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE in the env (they never auto-single).
+// Codex loads ~/.codex/.env into its process env at startup — snapshotted into hooks and
+// inherited by the shell tool — so this ONE dotenv write covers both surfaces, export-free.
+// writeCodexEnvFile is a thin wrapper over the shared upsertDotenvFile: 0600, idempotent,
+// merge-preserving, key never echoed. readCodexEnvProfile powers CC-parity repoint detection.
 // ---------------------------------------------------------------------------
-describe("writeCodexShellEnvCreds (real writer)", () => {
-  it("creates a missing config.toml with the 3 keys under [shell_environment_policy.set], at 0600", () => {
+describe("writeCodexEnvFile (real writer)", () => {
+  it("creates a missing ~/.codex/.env with the 3 keys, parseEnv round-trips, at 0600", () => {
     const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
-    const p = join(dir, "nested", ".codex", "config.toml"); // dir does not exist yet
-    const ret = writeCodexShellEnvCreds({ configPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    const p = join(dir, "nested", ".codex", ".env"); // dir does not exist yet
+    const ret = writeCodexEnvFile({ envPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
     expect(ret).toBe(p);
     expect(existsSync(p)).toBe(true);
-    const txt = readFileSync(p, "utf8");
-    expect(txt).toMatch(/^\[shell_environment_policy\.set\]$/m);
-    expect(txt).toContain('CHORUS_URL = "https://c"');
-    expect(txt).toContain('CHORUS_API_KEY = "cho_k"');
-    expect(txt).toContain('CHORUS_AGENT_PROFILE = "u-1"');
+    const parsed = parseEnv(readFileSync(p, "utf8"));
+    expect(parsed.CHORUS_URL).toBe("https://c");
+    expect(parsed.CHORUS_API_KEY).toBe("cho_k");
+    expect(parsed.CHORUS_AGENT_PROFILE).toBe("u-1");
     expect(statSync(p).mode & 0o777).toBe(0o600);
   });
 
-  it("preserves the literal [mcp_servers.chorus] Bearer + upserts into an existing [shell_environment_policy.set] in place", () => {
+  it("preserves unrelated lines + upserts the 3 keys in place (no dup); replaces an `export CHORUS_*=` line dropping the prefix", () => {
     const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
-    const p = join(dir, "config.toml");
-    writeFileSync(
-      p,
-      [
-        "# my codex config",
-        "[mcp_servers.chorus]",
-        'url = "https://c/api/mcp"',
-        "",
-        "[mcp_servers.chorus.http_headers]",
-        'Authorization = "Bearer cho_LITERAL"',
-        "",
-        "[shell_environment_policy.set]",
-        'CHORUS_URL = "http://old"',
-        'FOO = "keep"',
-        "",
-      ].join("\n"),
-    );
-    writeCodexShellEnvCreds({ configPath: p, url: "https://new", apiKey: "cho_new", agentProfile: "u-2" });
+    const p = join(dir, ".env");
+    writeFileSync(p, "FOO=keep\nexport CHORUS_API_KEY=cho_old\nCHORUS_URL=http://old\nBAR=baz\n");
+    writeCodexEnvFile({ envPath: p, url: "https://new", apiKey: "cho_new", agentProfile: "u-2" });
     const txt = readFileSync(p, "utf8");
-    // Literal Bearer + its section + a leading comment survive verbatim.
-    expect(txt).toContain("# my codex config");
-    expect(txt).toContain("[mcp_servers.chorus.http_headers]");
-    expect(txt).toContain('Authorization = "Bearer cho_LITERAL"');
-    // Unrelated key inside the managed section is preserved.
-    expect(txt).toContain('FOO = "keep"');
-    // Managed keys upserted in place — no duplicate, old value gone.
-    expect(txt).toContain('CHORUS_URL = "https://new"');
+    const parsed = parseEnv(txt);
+    // Unrelated lines preserved verbatim.
+    expect(parsed.FOO).toBe("keep");
+    expect(parsed.BAR).toBe("baz");
+    // Managed keys upserted in place — no duplicate, old value gone, export prefix dropped.
+    expect(parsed.CHORUS_URL).toBe("https://new");
+    expect(parsed.CHORUS_API_KEY).toBe("cho_new");
+    expect(parsed.CHORUS_AGENT_PROFILE).toBe("u-2");
+    expect(txt).not.toContain("cho_old");
     expect(txt).not.toContain("http://old");
-    expect(txt).toContain('CHORUS_API_KEY = "cho_new"');
-    expect(txt).toContain('CHORUS_AGENT_PROFILE = "u-2"');
-    expect((txt.match(/^CHORUS_URL = /gm) || []).length).toBe(1);
+    expect((txt.match(/^CHORUS_API_KEY=/gm) || []).length).toBe(1);
+    expect(txt).not.toMatch(/^export /m);
   });
 
-  it("appends a fresh [shell_environment_policy.set] section when the file has content but no shell_environment_policy", () => {
+  it("THROWS when any of url / apiKey / agentProfile is missing (all three required)", () => {
     const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
-    const p = join(dir, "config.toml");
-    writeFileSync(p, '[mcp_servers.chorus]\nurl = "https://c/api/mcp"\n');
-    writeCodexShellEnvCreds({ configPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-3" });
-    const txt = readFileSync(p, "utf8");
-    expect(txt).toContain("[mcp_servers.chorus]"); // preserved
-    expect(txt).toMatch(/^\[shell_environment_policy\.set\]$/m); // appended
-    expect(txt).toContain('CHORUS_AGENT_PROFILE = "u-3"');
-  });
-
-  it("THROWS on an ambiguous inline `set = { … }` under [shell_environment_policy] and does NOT clobber", () => {
-    const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
-    const p = join(dir, "config.toml");
-    const original = '[shell_environment_policy]\nset = { FOO = "bar" }\n';
-    writeFileSync(p, original);
-    expect(() => writeCodexShellEnvCreds({ configPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u" })).toThrow(
-      /inline .*set|cannot safely edit|refus/i,
+    const p = join(dir, ".env");
+    expect(() => writeCodexEnvFile({ envPath: p, url: "https://c", apiKey: "cho_k" })).toThrow(
+      /requires url, apiKey, and agentProfile/,
     );
-    expect(readFileSync(p, "utf8")).toBe(original); // untouched
+    expect(existsSync(p)).toBe(false); // nothing written
   });
 
   it("is idempotent: a re-run reproduces byte-identical content and keeps 0600", () => {
     const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
-    const p = join(dir, "config.toml");
-    writeCodexShellEnvCreds({ configPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    const p = join(dir, ".env");
+    writeCodexEnvFile({ envPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
     const first = readFileSync(p, "utf8");
-    writeCodexShellEnvCreds({ configPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    writeCodexEnvFile({ envPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
     expect(readFileSync(p, "utf8")).toBe(first);
     expect(statSync(p).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("readCodexEnvProfile", () => {
+  it("returns the CHORUS_AGENT_PROFILE from an existing ~/.codex/.env", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
+    const p = join(dir, ".env");
+    writeFileSync(p, "FOO=bar\nCHORUS_AGENT_PROFILE=u-42\n");
+    expect(readCodexEnvProfile(p)).toBe("u-42");
+  });
+
+  it("returns undefined for a missing file or a profile-less file, without throwing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-home-"));
+    expect(readCodexEnvProfile(join(dir, "nope.env"))).toBeUndefined();
+    const noprof = join(dir, ".env");
+    writeFileSync(noprof, "CHORUS_URL=https://c\n");
+    expect(readCodexEnvProfile(noprof)).toBeUndefined();
   });
 });
 
@@ -867,14 +858,14 @@ function fakeCodexWrite(overrideFn) {
   const fn = (args) => {
     calls.push(args);
     if (overrideFn) return overrideFn(args);
-    return args.configPath;
+    return args.envPath;
   };
   fn.calls = calls;
   return fn;
 }
 
-describe("seedCredentials — Codex config.toml env sink", () => {
-  it("single codex: writes config.toml under CODEX_HOME, sets codexEnvWritten, never leaks the key", async () => {
+describe("seedCredentials — Codex ~/.codex/.env sink", () => {
+  it("single codex: writes ~/.codex/.env under CODEX_HOME, sets codexEnvWritten, never leaks the key", async () => {
     const write = fakeCodexWrite();
     const res = await seedCredentials(
       baseCtx({
@@ -890,19 +881,18 @@ describe("seedCredentials — Codex config.toml env sink", () => {
     expect(o.action).toBe(SEEDED);
     expect(o.codexEnvWritten).toBe(true);
     expect(write.calls[0]).toMatchObject({
-      configPath: join("/tmp/xyz-codex-home", "config.toml"),
+      envPath: join("/tmp/xyz-codex-home", ".env"),
       url: "https://c",
       apiKey: "cho_secret",
       agentProfile: "u-new",
     });
     expect(o.detail).not.toContain("cho_secret"); // key never echoed
-    expect(o.detail).toMatch(/config\.toml \(0600\)/);
+    expect(o.detail).toMatch(/\.env \(0600\)/);
   });
 
-  it("success note surfaces the interactive-hook residual (task-2 spike): names the 3 keys + export, no key value, no wrapper", async () => {
-    // Verified in the task-2 spike: [shell_environment_policy].set reaches Codex's shell
-    // tool but NOT its plugin hooks (they inherit Codex's process env). So the success note
-    // must tell the operator how to wire the hooks interactively — surfaced, not suppressed.
+  it("success note is export-free: names hooks + shell-tool + no manual export, no key value, no wrapper", async () => {
+    // The ~/.codex/.env sink reaches BOTH the plugin hooks (via Codex's process-env snapshot)
+    // and the shell tool, so the note states interactive Codex is export-free — no residual.
     const write = fakeCodexWrite();
     const res = await seedCredentials(
       baseCtx({
@@ -915,11 +905,8 @@ describe("seedCredentials — Codex config.toml env sink", () => {
     );
     const o = [].concat(res)[0];
     expect(o.codexEnvWritten).toBe(true);
-    expect(o.detail).toMatch(/hook/i); // the residual is named
-    expect(o.detail).toMatch(/CHORUS_URL/);
-    expect(o.detail).toMatch(/CHORUS_API_KEY/);
-    expect(o.detail).toMatch(/CHORUS_AGENT_PROFILE/);
-    expect(o.detail).toMatch(/export/i); // directs to export for interactive hooks
+    expect(o.detail).toMatch(/hook/i); // hooks are named as covered
+    expect(o.detail).toMatch(/no manual export/i); // export-free, no residual
     expect(o.detail).not.toContain("cho_secret"); // key value never echoed
     expect(o.detail).not.toMatch(/wrapper|chorus launch/i); // owner rejected the wrapper
   });
