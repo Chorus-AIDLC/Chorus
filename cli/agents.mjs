@@ -277,13 +277,13 @@ export function removeAgent(argv = [], opts = {}) {
       "Note: any CHORUS_* keys written into ~/.claude/settings.json were left untouched — clear them manually if needed.\n",
     );
   }
-  // Codex: `chorus agents add` may have written CHORUS_* into ~/.codex/config.toml
-  // [shell_environment_policy].set (and the installer a literal Bearer under
-  // [mcp_servers.chorus]). Reverse cleanup is out of scope — leave it, but tell the operator.
+  // Codex: `chorus agents add` may have written CHORUS_* into ~/.codex/.env (and the installer
+  // a literal Bearer under ~/.codex/config.toml [mcp_servers.chorus]). Reverse cleanup is out of
+  // scope — leave it, but tell the operator.
   if (nonEmpty(removed.agentType) === "codex") {
     out.write(
-      "Note: any CHORUS_* env written into ~/.codex/config.toml [shell_environment_policy].set " +
-        "(and the literal Bearer under [mcp_servers.chorus]) were left untouched — clear them manually if needed.\n",
+      "Note: any CHORUS_* env written into ~/.codex/.env " +
+        "(and the literal Bearer under ~/.codex/config.toml [mcp_servers.chorus]) were left untouched — clear them manually if needed.\n",
     );
   }
   return 0;

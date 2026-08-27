@@ -65,8 +65,10 @@ function baseCtx(over = {}) {
     readClaudeSettingsProfile: () => undefined,
     // Stub the Codex ~/.codex/.env sink so `codex`-selection tests never touch the REAL
     // ~/.codex/.env. Tests that assert on the write override this (a recording fake, or the
-    // real writer against a temp CODEX_HOME).
+    // real writer against a temp CODEX_HOME). readCodexEnvProfile defaults to "no prior
+    // identity" → the write path (no repoint prompt); repoint tests override it.
     writeCodexEnv: vi.fn(({ envPath }) => envPath),
+    readCodexEnvProfile: () => undefined,
     ...over,
   };
 }
@@ -932,6 +934,101 @@ describe("seedCredentials — Codex ~/.codex/.env sink", () => {
     expect(codexWrite.calls).toHaveLength(1);
     expect(codexWrite.calls[0]).toMatchObject({ apiKey: "cho_x", agentProfile: "u-cho_x" });
     expect(outcomes[1].codexEnvWritten).toBe(true);
+  });
+
+  it("repoint non-TTY: overwrites and WARNS naming old→new profile UUID (compare by UUID)", async () => {
+    const write = fakeCodexWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["codex"],
+        io: { log: () => {}, isTTY: false },
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+        writeCodexEnv: write,
+        readCodexEnvProfile: () => "u-OLD",
+        validateCredentials: async () => ({ uuid: "u-NEW", name: "Codex Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(write.calls).toHaveLength(1); // overwrote
+    expect(o.codexEnvWritten).toBe(true);
+    expect(o.detail).toMatch(/repointed interactive Codex from u-OLD to u-NEW/);
+    expect(write.calls[0].agentProfile).toBe("u-NEW");
+  });
+
+  it("repoint TTY declined: no write, directs to edit ~/.codex/.env (not export)", async () => {
+    const write = fakeCodexWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["codex"],
+        io: { log: () => {}, isTTY: true },
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+        writeCodexEnv: write,
+        readCodexEnvProfile: () => "u-OLD",
+        promptFn: async (q) => (/repoint/i.test(q) ? "n" : /daemon waking/i.test(q) ? "n" : ""),
+        validateCredentials: async () => ({ uuid: "u-NEW", name: "Codex Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(write.calls).toHaveLength(0); // declined → not written
+    expect(o.codexEnvWritten).toBeUndefined();
+    expect(o.detail).toMatch(/left interactive Codex as u-OLD/);
+    expect(o.detail).toMatch(/edit .*\.env/);
+    expect(o.detail).toMatch(/export would be overridden/);
+  });
+
+  it("same identity: idempotent write with no repoint prompt/warning", async () => {
+    const write = fakeCodexWrite();
+    const asked = [];
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["codex"],
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+        writeCodexEnv: write,
+        readCodexEnvProfile: () => "u-same",
+        promptFn: async (q) => {
+          asked.push(q);
+          return "";
+        },
+        validateCredentials: async () => ({ uuid: "u-same", name: "Same Codex" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.codexEnvWritten).toBe(true);
+    expect(write.calls).toHaveLength(1);
+    expect(asked.some((q) => /repoint/i.test(q))).toBe(false);
+    expect(o.detail).not.toMatch(/repoint|WARNING/);
+  });
+
+  it("regression: writes ONLY ~/.codex/.env — config.toml (and its literal Bearer) is never touched", async () => {
+    // Uses the REAL writeCodexEnvFile against a temp CODEX_HOME with a pre-existing config.toml
+    // carrying a literal [mcp_servers.chorus] Bearer — proving the .env sink never writes
+    // config.toml (the prior [shell_environment_policy] write is gone).
+    const codexHome = mkdtempSync(join(tmpdir(), "codex-real-"));
+    const cfg = join(codexHome, "config.toml");
+    const cfgBefore = '[mcp_servers.chorus]\nurl = "https://c/api/mcp"\n\n[mcp_servers.chorus.http_headers]\nAuthorization = "Bearer cho_LITERAL"\n';
+    writeFileSync(cfg, cfgBefore);
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["codex"],
+        env: { CODEX_HOME: codexHome },
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writeCodexEnv: writeCodexEnvFile, // the REAL dotenv writer
+        validateCredentials: async () => ({ uuid: "u-real", name: "Codex Agent" }),
+      }),
+    );
+    expect([].concat(res)[0].codexEnvWritten).toBe(true);
+    // .env written with all 3 keys.
+    const envPath = join(codexHome, ".env");
+    expect(existsSync(envPath)).toBe(true);
+    const parsed = parseEnv(readFileSync(envPath, "utf8"));
+    expect(parsed).toMatchObject({ CHORUS_URL: "https://c", CHORUS_API_KEY: "cho_secret", CHORUS_AGENT_PROFILE: "u-real" });
+    // config.toml is byte-for-byte unchanged — no [shell_environment_policy] write, Bearer intact.
+    expect(readFileSync(cfg, "utf8")).toBe(cfgBefore);
+    expect(readFileSync(cfg, "utf8")).not.toContain("shell_environment_policy");
   });
 
   it("write failure: actionable WARNING names the 3 keys, no codexEnvWritten, key never printed, no wrapper", async () => {

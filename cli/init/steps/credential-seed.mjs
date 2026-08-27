@@ -441,6 +441,7 @@ export async function seedCredentials(ctx) {
   const writeClaudeSettings = ctx.writeClaudeSettings ?? writeClaudeSettingsEnv;
   const readSettingsProfile = ctx.readClaudeSettingsProfile ?? readClaudeSettingsProfile;
   const writeCodexEnv = ctx.writeCodexEnv ?? writeCodexEnvFile;
+  const readCodexProfile = ctx.readCodexEnvProfile ?? readCodexEnvProfile;
 
   const selection = Array.isArray(ctx.selection) ? ctx.selection.filter((id) => nonEmpty(id)) : [];
   if (selection.length === 0) {
@@ -639,30 +640,71 @@ export async function seedCredentials(ctx) {
 
     // codex-only: ALSO write ~/.codex/.env (dotenv) so INTERACTIVE Codex's plugin lifecycle
     // hooks (SessionStart check-in / PostToolUse) AND its shell-tool `chorus` calls resolve
-    // identity with no manual export — Codex loads ~/.codex/.env into its process env at
-    // startup, which the hooks snapshot and the shell tool inherits. UNGATED — every codex
-    // agent (single- and multi-agent alike), because the Codex hooks never auto-single. Native
-    // MCP stays export-free via the literal [mcp_servers.chorus] Bearer this write never
-    // touches. On a SUCCESSFUL write set codexEnvWritten so init.mjs suppresses the export hint
-    // (like dsh's profileInEnv / Claude Code's settingsEnvWritten). The key is only written
-    // into the 0600 file. (T2 adds CC-parity repoint detection + richer note.)
+    // identity with NO manual export — Codex loads ~/.codex/.env into its process env at arg0
+    // startup, which the hooks snapshot and the shell tool inherits. UNGATED — every codex agent
+    // (single- and multi-agent alike), because the Codex hooks never auto-single. Native MCP
+    // stays export-free via the literal [mcp_servers.chorus] Bearer this write never touches. On
+    // a SUCCESSFUL write set codexEnvWritten so init.mjs suppresses the export hint (like dsh's
+    // profileInEnv / Claude Code's settingsEnvWritten). The key is only written into the 0600 file.
     let codexNote = "";
     let codexEnvWritten = false;
     if (isCodexSelection(id)) {
       const envPath = resolveCodexEnvPath(env);
-      try {
-        const p = writeCodexEnv({ envPath, url, apiKey, agentProfile: identity.uuid });
-        codexEnvWritten = true;
+      const newProfile = identity.uuid;
+      // Cross-run REPOINT detection (mirrors Claude Code): ~/.codex/.env carries ONE identity and
+      // a single run configures `codex` at most once, so a DIFFERENT existing profile is a PRIOR
+      // run's identity — never overwrite it silently (prompt on a TTY; WARN on non-TTY).
+      // Absent/equal → write (equal is idempotent). Because Codex's dotenv loader OVERRIDES the
+      // shell, a declined repoint directs the operator to EDIT the file, not export. Compare by
+      // the profile UUID, never the key.
+      const existingProfile = readCodexProfile(envPath);
+      const isRepoint = existingProfile !== undefined && existingProfile !== newProfile;
+      let doWrite = true;
+      let declined = false;
+      let repointWarn = "";
+      if (isRepoint) {
+        if (isTTY && typeof ask === "function") {
+          const ans = String(
+            (await ask(
+              `Interactive Codex is currently configured as ${existingProfile}; ` +
+                `repoint it to ${identity.name} (${newProfile})? [y/N]: `,
+            )) ?? "",
+          ).trim();
+          if (!/^y(es)?$/i.test(ans)) {
+            doWrite = false;
+            declined = true;
+          }
+        } else {
+          repointWarn = ` (WARNING: repointed interactive Codex from ${existingProfile} to ${newProfile})`;
+        }
+      }
+      if (doWrite) {
+        try {
+          const p = writeCodexEnv({ envPath, url, apiKey, agentProfile: newProfile });
+          codexEnvWritten = true;
+          // Export-free: ~/.codex/.env reaches BOTH the plugin hooks (SessionStart check-in /
+          // PostToolUse, via Codex's process-env snapshot) AND the shell tool — no residual, no
+          // "start codex from an exporting shell", no wrapper. Key never echoed.
+          codexNote =
+            `; wrote CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE into ${p} (0600)${repointWarn} — ` +
+            "interactive Codex (plugin hooks: SessionStart check-in / PostToolUse, AND shell-tool " +
+            "`chorus` calls) authenticates with no manual export. Your cho_ key is not shown here.";
+        } catch (err) {
+          // Write failed (locked/unwritable). Emit an actionable, non-secret WARNING; the export
+          // hint is still shown (codexEnvWritten stays false). No launcher wrapper.
+          codexNote =
+            `; WARNING: could not write ${envPath} (${err?.message ?? String(err)}). ` +
+            "Interactive Codex will not reach Chorus until CHORUS_URL, CHORUS_API_KEY and " +
+            `CHORUS_AGENT_PROFILE are in ~/.codex/.env — add them there (or export them). ` +
+            "Your cho_ key is not shown here.";
+        }
+      } else if (declined) {
+        // Declined repoint: the EXISTING ~/.codex/.env identity remains, and since Codex's dotenv
+        // loader OVERRIDES the shell, a shell export would be ignored — direct the operator to the
+        // FILE, do not suggest exporting.
         codexNote =
-          `; wrote CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE into ${p} (0600) — interactive Codex ` +
-          "(plugin hooks + shell-tool `chorus` calls) authenticates with no manual export. Your cho_ key is not shown here.";
-      } catch (err) {
-        // Write failed (locked/unwritable). Emit an actionable, non-secret WARNING; the export
-        // hint is still shown (codexEnvWritten stays false). No launcher wrapper.
-        codexNote =
-          `; WARNING: could not write ${envPath} (${err?.message ?? String(err)}). ` +
-          "Interactive Codex will not reach Chorus until CHORUS_URL, CHORUS_API_KEY and " +
-          "CHORUS_AGENT_PROFILE are in ~/.codex/.env (or exported). Your cho_ key is not shown here.";
+          `; left interactive Codex as ${existingProfile} — edit ${envPath} to change it ` +
+          "(a shell export would be overridden by Codex's ~/.codex/.env loader).";
       }
     }
 
