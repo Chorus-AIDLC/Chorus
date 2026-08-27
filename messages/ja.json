@@ -1178,7 +1178,7 @@
       },
       "codex": {
         "step1Title": "ステップ 1：環境変数を設定",
-        "step1Tip": "ヒント：~/.bashrc または ~/.zshrc に追加しておくと、対話的に起動した Codex のプラグインフック（SessionStart / PostToolUse）がこれらを読み取れます（これらのフックは Codex 自身のプロセス環境を継承します）。デーモンに起こされたセッションは自動的に取得します。",
+        "step1Tip": "ヒント：chorus agents add（ステップ 2）がこれらを読み取り ~/.codex/.env に書き込むため、Codex のためにシェルの rc へ永続化する必要はありません。対話的に起動した Codex は ~/.codex/.env から自身の識別情報（プラグインフック、shell ツールでの chorus 呼び出し、ネイティブ MCP）を解決します。デーモンに起こされたセッションは自動的に取得します。",
         "step2Title": "ステップ 2：chorus agents add を実行",
         "step2Tip": "chorus agents add は chorus-plugins マーケットプレイスを登録し、Chorus プラグインを Codex にインストールし、認証情報を保存し、CHORUS_URL / CHORUS_API_KEY / CHORUS_AGENT_PROFILE を ~/.codex/.env に書き込み（Codex は起動時にこれを自身のプロセス環境へ読み込みます）、さらにキーを含まない [mcp_servers.chorus] を bearer_token_env_var = \"CHORUS_API_KEY\" で ~/.codex/config.toml に書き込みます。これにより、インタラクティブな Codex は一切手動の export が不要になります。プラグインの hook、モデルによる shell ツールでの chorus 呼び出し、ネイティブ MCP はすべて ~/.codex/.env から本人確認を解決します（API キーは config.toml に保存されません）。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。 最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。"
       },

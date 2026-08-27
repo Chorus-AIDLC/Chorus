@@ -1178,7 +1178,7 @@
       },
       "codex": {
         "step1Title": "第 1 步：设置环境变量",
-        "step1Tip": "提示：把这些加入 ~/.bashrc 或 ~/.zshrc，好让交互式启动的 Codex 的插件 hook（SessionStart / PostToolUse）能读到它们（这些 hook 继承的是 Codex 进程自身的环境变量）。被 daemon 唤醒的会话会自动拿到。",
+        "step1Tip": "提示：chorus agents add（第 2 步）会读取这些变量并写入 ~/.codex/.env，因此你无需为 Codex 把它们持久化到 shell rc——交互式启动的 Codex 会从 ~/.codex/.env 解析出自己的身份（插件 hook、shell 工具里的 chorus 调用、以及原生 MCP）。被 daemon 唤醒的会话会自动拿到。",
         "step2Title": "第 2 步：运行 chorus agents add",
         "step2Tip": "chorus agents add 会注册 chorus-plugins marketplace，把 Chorus 插件安装进 Codex，写入你的凭证，把 CHORUS_URL / CHORUS_API_KEY / CHORUS_AGENT_PROFILE 写进 ~/.codex/.env（Codex 启动时加载进自己的进程环境），并把一个不含密钥的 [mcp_servers.chorus] 写进 ~/.codex/config.toml，使用 bearer_token_env_var = \"CHORUS_API_KEY\"——因此交互式 Codex 完全无需手动 export：插件 hook、模型在 shell 里调用 chorus、以及原生 MCP 都从 ~/.codex/.env 解析你的身份（config.toml 里不存 API key）。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。 上面第一条命令会全局安装 Chorus CLI（锁定 0.17.0 版本）。"
       },
