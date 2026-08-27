@@ -38,7 +38,7 @@ function fakeRun(script = () => ({ ok: true, code: 0, stdout: "", stderr: "" }))
   return run;
 }
 
-function ctxFor(agentId, { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion } = {}) {
+function ctxFor(agentId, { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer } = {}) {
   return {
     agentId,
     env,
@@ -48,6 +48,7 @@ function ctxFor(agentId, { state = {}, run, backup, env = {}, io, flags, binaryO
     flags,
     binaryOnPath,
     minHostVersion,
+    writeCodexMcpServer,
     adapter: { id: agentId, installPlugin: () => {}, readInstallState: () => state },
   };
 }
@@ -116,6 +117,73 @@ describe("installCodex (verified codex-cli 0.146.1)", () => {
     const res = installCodex(ctxFor("codex", { state: { pluginInstalled: true }, run }));
     expect(res.action).toBe(SKIPPED);
     expect(run.calls).toHaveLength(0);
+  });
+
+  it("writes [mcp_servers.chorus] after plugin add when a Chorus URL is available", () => {
+    const run = fakeRun();
+    const mcpCalls = [];
+    const res = installCodex(
+      ctxFor("codex", {
+        state: {},
+        run,
+        env: { HOME: "/home/u" },
+        flags: { url: "https://c.example" },
+        writeCodexMcpServer: (a) => mcpCalls.push(a),
+      }),
+    );
+    expect(res.action).toBe(INSTALLED);
+    // Plugin surface first, then the MCP-block write.
+    expect(run.calls[1].args).toEqual(["plugin", "add", "chorus@chorus-plugins", "--json"]);
+    expect(mcpCalls).toHaveLength(1);
+    expect(mcpCalls[0]).toEqual({ configPath: "/home/u/.codex/config.toml", url: "https://c.example" });
+    expect(res.detail).toContain("[mcp_servers.chorus]");
+    expect(res.detail).toContain('bearer_token_env_var="CHORUS_API_KEY"');
+  });
+
+  it("normalizes [mcp_servers.chorus] even on the already-installed path (idempotent repair)", () => {
+    const run = fakeRun();
+    const mcpCalls = [];
+    const res = installCodex(
+      ctxFor("codex", {
+        state: { pluginInstalled: true },
+        run,
+        env: { HOME: "/home/u", CHORUS_URL: "https://c.example/api/mcp" },
+        writeCodexMcpServer: (a) => mcpCalls.push(a),
+      }),
+    );
+    expect(res.action).toBe(SKIPPED);
+    expect(run.calls).toHaveLength(0); // no plugin re-install
+    expect(mcpCalls).toHaveLength(1); // but the MCP block is still normalized
+    expect(mcpCalls[0].url).toBe("https://c.example/api/mcp");
+  });
+
+  it("skips the MCP write (non-fatal) when no Chorus URL resolves", () => {
+    const run = fakeRun();
+    const mcpCalls = [];
+    const res = installCodex(
+      ctxFor("codex", { state: {}, run, env: { HOME: "/home/u" }, writeCodexMcpServer: (a) => mcpCalls.push(a) }),
+    );
+    expect(res.action).toBe(INSTALLED); // plugin still installed
+    expect(mcpCalls).toHaveLength(0); // no URL → no MCP write
+    expect(res.detail).toMatch(/skipped \[mcp_servers\.chorus\].*no Chorus URL/);
+  });
+
+  it("MCP-write failure is a non-fatal WARNING and never echoes the key", () => {
+    const run = fakeRun();
+    const res = installCodex(
+      ctxFor("codex", {
+        state: {},
+        run,
+        env: { HOME: "/home/u" },
+        flags: { url: "https://c.example", apiKey: "cho_secret" },
+        writeCodexMcpServer: () => {
+          throw new Error("EACCES: permission denied");
+        },
+      }),
+    );
+    expect(res.action).toBe(INSTALLED); // plugin install still succeeded
+    expect(res.detail).toMatch(/WARNING: could not write \[mcp_servers\.chorus\]/);
+    expect(res.detail).not.toContain("cho_secret");
   });
 });
 

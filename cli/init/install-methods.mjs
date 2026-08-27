@@ -6,8 +6,10 @@
 // guided message via `guided()` rather than a guessed command.
 //
 // All shell-outs go through ctx.run (default cli/init/run-command.mjs) so this
-// unit-tests without executing anything. Nothing here writes MCP config or
-// credentials — plugin surface only.
+// unit-tests without executing anything. These functions write the plugin surface
+// (and, per agent, the MCP-server config that references credentials by env-var —
+// e.g. Codex's keyless [mcp_servers.chorus] bearer_token_env_var, Kiro's ${env:...}
+// mcp.json) — but NEVER a literal API key/secret (those live in the credential sinks).
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -18,6 +20,7 @@ import { binaryOnPath } from "./detect.mjs";
 import { installFileTemplate } from "./file-template.mjs";
 import { OUTCOME_ACTIONS } from "./contracts.mjs";
 import { CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME, CHORUS_MARKETPLACE_SOURCE } from "./chorus-plugin-consts.mjs";
+import { writeCodexMcpServer } from "./codex-mcp-config.mjs";
 
 const STEP_ID = "plugin-install";
 const { INSTALLED, REPAIRED, SKIPPED, FAILED, UNSUPPORTED } = OUTCOME_ACTIONS;
@@ -85,10 +88,18 @@ export function installClaude(ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Codex — VERIFIED against codex-cli 0.146.1:
+// Codex — VERIFIED against codex-cli 0.146.1 / 0.150.1:
 //   `codex plugin marketplace add <SOURCE>`   (SOURCE = local path | owner/repo[@ref] | Git URL)
 //   `codex plugin add <PLUGIN@MARKETPLACE> --json`
 // config.toml is backed up before the CLI mutates it.
+//
+// Codex is the ONE exception to this file's "plugin surface only" rule: `codex plugin add`
+// does NOT write the native-MCP block (its marketplace `authentication: ON_INSTALL` is
+// metadata only — verified codex-cli 0.150.1), so after the plugin install we write
+// `[mcp_servers.chorus]` ourselves with a KEYLESS `bearer_token_env_var = "CHORUS_API_KEY"`
+// (writeCodexMcpServer). Codex resolves that env var — which ~/.codex/.env populates — into
+// the Authorization header at connect time, so the API key stays only in ~/.codex/.env and a
+// daemon-woken Codex authenticates too. No secret is written into config.toml.
 // ---------------------------------------------------------------------------
 export function readCodexInstallState({ env = process.env } = {}) {
   const home = env.HOME || homedir();
@@ -105,19 +116,45 @@ export function installCodex(ctx) {
   const env = ctx.env ?? process.env;
   const home = env.HOME || homedir();
   const codexHome = env.CODEX_HOME || join(home, ".codex");
+  const configPath = join(codexHome, "config.toml");
   // Codex accepts owner/repo; allow an override, else the canonical repo slug.
   const source = env.CHORUS_MARKETPLACE_SOURCE_CODEX || "Chorus-AIDLC/Chorus";
   const state = safeState(ctx);
-  if (state.pluginInstalled) return out("codex", SKIPPED, "already installed (config.toml)");
+  const writeMcp = ctx.writeCodexMcpServer ?? writeCodexMcpServer;
+  const chorusUrl = nonEmpty(ctx.flags?.url) ?? nonEmpty(env.CHORUS_URL);
 
-  ctx.backup?.(join(codexHome, "config.toml")); // back up before the CLI edits it
+  // Ensure the native-MCP block is present + normalized to the keyless bearer_token_env_var
+  // form. Idempotent; runs on both fresh install and re-run. Never writes a secret. A missing
+  // URL is a non-fatal skip (the plugin surface is still installed). Returns a note suffix.
+  const ensureMcp = () => {
+    if (!chorusUrl) {
+      return " (skipped [mcp_servers.chorus]: no Chorus URL — pass --url or set CHORUS_URL)";
+    }
+    try {
+      writeMcp({ configPath, url: chorusUrl });
+      return ' and wrote [mcp_servers.chorus] (bearer_token_env_var="CHORUS_API_KEY")';
+    } catch (err) {
+      return ` (WARNING: could not write [mcp_servers.chorus]: ${errText({ error: err?.message ?? String(err) })})`;
+    }
+  };
+
+  if (state.pluginInstalled) {
+    ctx.backup?.(configPath); // back up before we normalize the MCP block
+    return out("codex", SKIPPED, `already installed (config.toml)${ensureMcp()}`);
+  }
+
+  ctx.backup?.(configPath); // back up before the CLI edits it
   if (!state.marketplaceRegistered) {
     const r = run("codex", ["plugin", "marketplace", "add", source], { env });
     if (!r.ok) return out("codex", FAILED, `codex plugin marketplace add failed: ${errText(r)}`);
   }
   const r2 = run("codex", ["plugin", "add", CHORUS_PLUGIN_ID, "--json"], { env });
   if (!r2.ok) return out("codex", FAILED, `codex plugin add failed: ${errText(r2)}`);
-  return out("codex", state.marketplaceRegistered ? REPAIRED : INSTALLED, `installed ${CHORUS_PLUGIN_ID} via codex plugin CLI`);
+  return out(
+    "codex",
+    state.marketplaceRegistered ? REPAIRED : INSTALLED,
+    `installed ${CHORUS_PLUGIN_ID} via codex plugin CLI${ensureMcp()}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
