@@ -49,23 +49,27 @@ if [ -z "$CHECKIN_RESULT" ]; then
 fi
 
 # Emit the startup context as plain text (Kiro adds STDOUT to context).
-# The checkin payload carries agent owner, effective permissions, the
-# active-project distribution, and working-style guidance — surfaced verbatim,
-# same as the CC hook.
+# Slim the injected view to ONLY the active-project distribution + working-style
+# guidance (idea e8f3af04). CHECKIN_RESULT still carries agent owner / permissions
+# / notifications, but we do NOT dump it into the agent's context. Degrades
+# gracefully when jq is missing.
+CHORUS_ACTIVE_PROJECTS="(active-project distribution unavailable)"
+CHORUS_GUIDANCE=""
+if command -v jq >/dev/null 2>&1; then
+  _AP=$(printf '%s' "$CHECKIN_RESULT" | jq -r '(.activeProjects // {}) | to_entries | if length == 0 then "No active projects — use chorus_search / chorus_get_my_assignments to find work." else (map("- \(.value.name): \(.value.activeIdeaCount) active idea(s)") | join("\n")) end' 2>/dev/null) || true
+  [ -n "$_AP" ] && CHORUS_ACTIVE_PROJECTS="$_AP"
+  CHORUS_GUIDANCE=$(printf '%s' "$CHECKIN_RESULT" | jq -r '(.guidance // []) | map("- " + .) | join("\n")' 2>/dev/null) || true
+fi
+
 CONTEXT="# Chorus Plugin — Active
 
 Chorus is connected at ${CHORUS_URL}. Session lifecycle hooks are enabled (checkin on spawn, best-effort heartbeat/checkout on stop, reviewer nudges after workflow MCP calls).
 
-## Checkin
+## Active Projects
 
-${CHECKIN_RESULT}
+${CHORUS_ACTIVE_PROJECTS}
 
-## Quick Reference
-
-- **Active Projects**: the checkin above shows activeProjects — which projects you're advancing ideas in, with an active-idea count per project (a location map, not a per-idea to-do list). Use chorus_search to find the specific work the user refers to, and chorus_get_my_assignments for the full per-idea list.
-- **Reviewers**: after chorus_pm_submit_proposal / chorus_submit_for_verify / chorus_admin_verify_task, a postToolUse hook will nudge you to spawn the matching read-only reviewer subagent (chorus-proposal-reviewer / chorus-task-reviewer / chorus-code-reviewer). See /chorus-review.
-- **Notifications**: chorus_get_notifications() fetches and auto-marks read. See /chorus-develop.
-- **Project Groups**: chorus_get_project_groups() before creating projects."
+${CHORUS_GUIDANCE}"
 
 # Resume: if a Chorus session was cached by a prior swarm-mode flow,
 # send a best-effort heartbeat and note it in context. No session cached

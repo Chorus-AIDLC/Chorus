@@ -63,13 +63,27 @@ else
   OPENSPEC_REASON="openspec/ directory + openspec CLI both present"
 fi
 
+# Slim the injected view to ONLY the active-project distribution + working-style
+# guidance (idea e8f3af04) — do NOT dump the full checkin JSON
+# (agent identity / permissions / notifications / per-idea details). Degrades
+# gracefully when jq is missing.
+CHORUS_ACTIVE_PROJECTS="(active-project distribution unavailable)"
+CHORUS_GUIDANCE=""
+if command -v jq >/dev/null 2>&1; then
+  _AP=$(printf '%s' "$CHECKIN" | jq -r '(.activeProjects // {}) | to_entries | if length == 0 then "No active projects — use chorus_search / chorus_get_my_assignments to find work." else (map("- \(.value.name): \(.value.activeIdeaCount) active idea(s)") | join("\n")) end' 2>/dev/null) || true
+  [ -n "$_AP" ] && CHORUS_ACTIVE_PROJECTS="$_AP"
+  CHORUS_GUIDANCE=$(printf '%s' "$CHECKIN" | jq -r '(.guidance // []) | map("- " + .) | join("\n")' 2>/dev/null) || true
+fi
+
 CTX="# Chorus Plugin — Active (Codex port)
 
 Chorus is connected at ${CHORUS_URL}. MCP tools are available under the \`chorus\` server.
 
-## Checkin
+## Active Projects
 
-${CHECKIN}
+${CHORUS_ACTIVE_PROJECTS}
+
+${CHORUS_GUIDANCE}
 
 ## OpenSpec Mode
 
@@ -99,14 +113,6 @@ Note: this repo has an \`openspec/\` directory, so the user likely intends to us
 Note: OpenSpec is not set up in this repo (${OPENSPEC_REASON}). Spec-driven authoring is optional — free-form works fine. If the user wants spec-driven mode (proposal.md / design.md / spec deltas mirrored into Chorus), run \`\$chorus enable openspec\` — §6 walks the \`npm i -g @fission-ai/openspec\` + \`openspec init\` steps and the restart."
   fi
 fi
-
-CTX="${CTX}
-
-## Quick Reference
-
-- **Notifications**: \`chorus_get_notifications()\` fetches and auto-marks read.
-- **Skills**: use \`\$chorus\`, \`\$idea\`, \`\$proposal\`, \`\$develop\`, \`\$review\`, \`\$quick-dev\`, or \`\$yolo\` to load the stage-specific workflow.
-- **Reviewer sub-agents**: mount the reviewer skill explicitly — \`spawn_agent({items:[{type:\"skill\", path:\"chorus:chorus-proposal-reviewer\"}, {type:\"text\", text:\"Review proposal <proposal-uuid> and post VERDICT.\"}]})\` after \`chorus_pm_submit_proposal\`; use \`chorus:chorus-task-reviewer\` with the task UUID after \`chorus_submit_for_verify\`. Wait only when the next gate depends on the verdict, then close the thread; use \`send_input\` for an active child and \`resume_agent\` only for a previously closed one. Routine entity-backed children use fresh context; \`fork_context: true\` is only for material parent-conversation state."
 
 # User-visible status (mirrors the Claude Code hook; Codex skill prefix is $chorus).
 USER_MSG="Chorus connected at ${CHORUS_URL}"

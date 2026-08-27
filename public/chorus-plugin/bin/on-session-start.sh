@@ -107,14 +107,30 @@ else
   OPENSPEC_REASON="openspec/ directory + openspec CLI both present"
 fi
 
-# Build context for Claude (additionalContext)
+# Slim the injected view to ONLY the active-project distribution + working-style
+# guidance (idea e8f3af04). The full CHECKIN_RESULT is still used above for
+# state-setting (owner/permissions) — we just do NOT dump it into the agent's
+# context. Degrades gracefully when jq is missing.
+CHORUS_ACTIVE_PROJECTS="(active-project distribution unavailable)"
+CHORUS_GUIDANCE=""
+if command -v jq >/dev/null 2>&1; then
+  _AP=$(printf '%s' "$CHECKIN_RESULT" | jq -r '(.activeProjects // {}) | to_entries | if length == 0 then "No active projects — use chorus_search / chorus_get_my_assignments to find work." else (map("- \(.value.name): \(.value.activeIdeaCount) active idea(s)") | join("\n")) end' 2>/dev/null) || true
+  [ -n "$_AP" ] && CHORUS_ACTIVE_PROJECTS="$_AP"
+  CHORUS_GUIDANCE=$(printf '%s' "$CHECKIN_RESULT" | jq -r '(.guidance // []) | map("- " + .) | join("\n")' 2>/dev/null) || true
+fi
+
+# Build context for Claude (additionalContext) — slimmed to the active-project
+# distribution + guidance only (no agent identity / permissions / notifications
+# / per-idea dump).
 CONTEXT="# Chorus Plugin — Active
 
 Chorus is connected at ${CHORUS_URL}. Session lifecycle hooks are enabled.
 
-## Checkin
+## Active Projects
 
-${CHECKIN_RESULT}
+${CHORUS_ACTIVE_PROJECTS}
+
+${CHORUS_GUIDANCE}
 
 ## OpenSpec Mode
 
@@ -144,15 +160,6 @@ Note: this repo has an \`openspec/\` directory, so the user likely intends to us
 Note: OpenSpec is not set up in this repo (${OPENSPEC_REASON}). Spec-driven authoring is optional — free-form works fine. If the user wants spec-driven mode (proposal.md / design.md / spec deltas mirrored into Chorus), run \`/chorus enable openspec\` — §6 walks the \`npm i -g @fission-ai/openspec\` + \`openspec init\` steps and the re-launch."
   fi
 fi
-
-CONTEXT="${CONTEXT}
-
-## Quick Reference
-
-- **Active Projects**: checkin.activeProjects shows which projects you're advancing ideas in, with an active-idea count per project — it is a location map, not a per-idea to-do list. Use chorus_search to find the specific work the user refers to (across ideas/proposals/tasks/docs), and chorus_get_my_assignments for the full per-idea list.
-- **Sessions**: Auto-managed by hooks. Do NOT call chorus_create_session/chorus_close_session for sub-agents. See /chorus:develop.
-- **Notifications**: chorus_get_notifications() fetches and auto-marks read. See /chorus.
-- **Project Groups**: chorus_get_project_groups() before creating projects. See /chorus."
 
 # Check for existing state (resumed session)
 MAIN_SESSION=$("$API" state-get "main_session_uuid" 2>/dev/null) || true

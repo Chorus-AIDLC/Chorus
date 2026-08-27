@@ -41,7 +41,7 @@ describe("registerChorusCommands", () => {
     const { command, callTool } = register({
       chorus_checkin: {
         agent: { name: "Admin Claude" },
-        ideaTracker: { p1: { name: "Proj", ideas: [{}, {}] } },
+        activeProjects: { p1: { name: "Proj", activeIdeaCount: 2 } },
         notifications: { unread: 3 },
       },
     });
@@ -49,7 +49,8 @@ describe("registerChorusCommands", () => {
     expect(callTool).toHaveBeenCalledWith("chorus_checkin", {});
     expect(res.text).toContain("Connection: connected");
     expect(res.text).toContain("Agent: Admin Claude");
-    expect(res.text).toContain("Assigned ideas: 2");
+    expect(res.text).toContain("Active projects: 1 (2 active idea(s))");
+    expect(res.text).toContain("- Proj: 2");
     expect(res.text).toContain("Notifications: 3 unread");
   });
 
@@ -57,7 +58,7 @@ describe("registerChorusCommands", () => {
     const { command } = register({ chorus_checkin: { agent: { name: "Bot" } } });
     const res = await command.handler({ args: "status" });
     expect(res.text).toContain("Agent: Bot");
-    expect(res.text).toContain("Assigned ideas: 0");
+    expect(res.text).toContain("Active projects: 0");
   });
 
   it("/chorus status surfaces an error result when checkin throws", async () => {
