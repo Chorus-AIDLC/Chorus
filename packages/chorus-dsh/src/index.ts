@@ -207,47 +207,6 @@ function resultMessage(result: ToolExecutionResult): UserMessage | undefined {
   return content.length > 0 ? createPluginMessage(content) : undefined;
 }
 
-// Slim the injected check-in view to ONLY the active-project distribution +
-// working-style guidance (idea e8f3af04). The full check-in result still comes
-// back from the tool (agent identity / permissions / notifications) but we do
-// NOT inject all of it into the agent's context. On any parse failure fall back
-// to the raw result so the check-in is never silently dropped.
-function slimCheckinMessage(result: ToolExecutionResult): UserMessage | undefined {
-  if (result.isError || result.content.length === 0) return undefined;
-  const text = result.content
-    .filter(
-      (block): block is Extract<ContentBlock, { type: "text" }> =>
-        block.type === "text",
-    )
-    .map((block) => block.text)
-    .join("");
-  if (text.trim().length === 0) return undefined;
-  let parsed: {
-    activeProjects?: Record<string, { name?: string; activeIdeaCount?: number }>;
-    guidance?: string[];
-  };
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return resultMessage(result);
-  }
-  const projects = Object.values(parsed.activeProjects ?? {});
-  const projectLines =
-    projects.length === 0
-      ? "No active projects — use chorus_search / chorus_get_my_assignments to find work."
-      : projects
-          .map(
-            (p) =>
-              `- ${p.name ?? "(unnamed project)"}: ${p.activeIdeaCount ?? 0} active idea(s)`,
-          )
-          .join("\n");
-  const guidanceLines = (parsed.guidance ?? []).map((g) => `- ${g}`).join("\n");
-  const body = ["# Chorus — Active Projects", "", projectLines]
-    .concat(guidanceLines ? ["", guidanceLines] : [])
-    .join("\n");
-  return createPluginMessage([{ type: "text", text: body }]);
-}
-
 function actionTarget(exec: ToolExecution, action: ActionName): string {
   const argument = ACTIONS[action].argument;
   if (
@@ -361,7 +320,7 @@ export function apply(ctx: Context, config: Config): void {
         agent,
         signal: state.abort.signal,
       })
-      .then(slimCheckinMessage)
+      .then(resultMessage)
       .catch((error: unknown) => {
         ctx.logger.warn(`${name}: check-in failed: ${String(error)}`);
         return undefined;
