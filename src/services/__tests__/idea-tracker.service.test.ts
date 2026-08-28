@@ -610,6 +610,61 @@ describe("buildActiveProjectDistribution", () => {
 
     expect(dist[PROJECT_A].activeIdeaCount).toBe(tracker[PROJECT_A].ideas.length);
   });
+
+  it("caps the overview at 10 projects, dropping the excess (truncate at the 10th)", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => makeIdea(`i${i}`, `proj-${i}`, "open")),
+    );
+    mockPrisma.project.findMany.mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => ({ uuid: `proj-${i}`, name: `P${i}` })),
+    );
+
+    const dist = await buildActiveProjectDistribution(agentAuth);
+
+    expect(Object.keys(dist)).toHaveLength(10);
+    // keeps the first 10 (most-recent by idea order); drops the 11th/12th
+    expect(dist["proj-0"]).toBeDefined();
+    expect(dist["proj-9"]).toBeDefined();
+    expect(dist["proj-10"]).toBeUndefined();
+    expect(dist["proj-11"]).toBeUndefined();
+  });
+
+  it("drops duplicate-named projects, keeping the most-recent (first-seen) one", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i1", "proj-new", "open"), // name "Dup" — most recent
+      makeIdea("i2", "proj-old", "open"), // name "Dup" — older, dropped
+      makeIdea("i3", "proj-y", "open"), // name "Y"
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([
+      { uuid: "proj-new", name: "Dup" },
+      { uuid: "proj-old", name: "Dup" },
+      { uuid: "proj-y", name: "Y" },
+    ]);
+
+    const dist = await buildActiveProjectDistribution(agentAuth);
+
+    expect(Object.keys(dist).sort()).toEqual(["proj-new", "proj-y"]);
+    expect(dist["proj-old"]).toBeUndefined();
+    expect(dist["proj-new"].name).toBe("Dup");
+  });
+
+  it("orders projects by most-recent active idea (first appearance in updatedAt-desc order)", async () => {
+    // The mock returns ideas already in updatedAt-desc order (buildIdeaTracker's orderBy).
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i1", "proj-recent", "open"),
+      makeIdea("i2", "proj-mid", "open"),
+      makeIdea("i3", "proj-old", "open"),
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([
+      { uuid: "proj-recent", name: "R" },
+      { uuid: "proj-mid", name: "M" },
+      { uuid: "proj-old", name: "O" },
+    ]);
+
+    const dist = await buildActiveProjectDistribution(agentAuth);
+
+    expect(Object.keys(dist)).toEqual(["proj-recent", "proj-mid", "proj-old"]);
+  });
 });
 
 // ============================================================
