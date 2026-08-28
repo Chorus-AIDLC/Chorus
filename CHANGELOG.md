@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.17.0] - 2026-08-28
+
+### Added
+- **Unified agent management CLI**: Added `chorus agents add/list/remove` for configuring Claude Code, Codex, Kiro, OpenCode, OpenClaw, Pi, and dsh, including plugin installation where supported, credential seeding, per-agent daemon wake controls, and Linux/macOS auto-start. (#503, #504, #506, #507)
+- **Native MCP client**: Added `chorus mcp call`, `whoami`, and `list` with multi-agent selection, file-backed arguments, and byte-compatible output for plugin and OpenSpec workflows. (#505)
+- **Export-free Claude Code and Codex setup**: `chorus agents add` now configures Claude Code through `~/.claude/settings.json` and Codex through `~/.codex/.env` plus keyless `bearer_token_env_var` MCP authentication. (#509, #510)
+
+### Changed
+- **Bootstrap and plugin workflows**: Retired per-agent installation scripts in favor of the unified CLI; plugin MCP wrappers now prefer `chorus mcp call`, with compatibility fallbacks when the CLI is unavailable. (#507)
+- **Agent check-in context**: Replaced the per-Idea check-in list with a bounded active-project distribution while preserving full assignments on demand and adding AI-DLC/search guidance at session start. (#512)
+
+### Fixed
+- **Codex sub-agent orchestration**: Updated worker and reviewer spawning to use the current object-based spawn API, explicit skill mounting, and correct lifecycle handling. (#511)
+- **Nested theme status**: Container Idea status now rolls up bottom-up across nested themes while preserving direct-child progress and deterministic cycle handling. (#513)
+
+### Plugin
+- **Plugin and skill versions → 0.17.0**: Claude Code, Codex, OpenClaw, Kiro, Pi, dsh, and standalone skill distributions now share version 0.17.0 and include the new `chorus-cli` skill. (#507)
+
+---
+
 ## [0.16.4] - 2026-08-19
 
 ### Added
