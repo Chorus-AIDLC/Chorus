@@ -50,7 +50,6 @@ interface CheckinResponse {
     persona?: string | null;
   };
   activeProjects?: Record<string, CheckinActiveProject>;
-  guidance?: string[];
   notifications?: {
     unread?: number;
   };

@@ -62,6 +62,7 @@ ${CHECKIN_RESULT}
 
 ## Quick Reference
 
+- **Long-horizon work**: follow AI-DLC via the Chorus skill (idea → proposal → task → verify) rather than coding ad hoc, and use chorus_search to locate the specific work the user refers to across ideas/proposals/tasks/docs.
 - **Active Projects**: the checkin above shows activeProjects — which projects you're advancing ideas in, with an active-idea count per project (a location map, not a per-idea to-do list). Use chorus_search to find the specific work the user refers to, and chorus_get_my_assignments for the full per-idea list.
 - **Reviewers**: after chorus_pm_submit_proposal / chorus_submit_for_verify / chorus_admin_verify_task, a postToolUse hook will nudge you to spawn the matching read-only reviewer subagent (chorus-proposal-reviewer / chorus-task-reviewer / chorus-code-reviewer). See /chorus-review.
 - **Notifications**: chorus_get_notifications() fetches and auto-marks read. See /chorus-develop.

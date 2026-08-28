@@ -90,10 +90,6 @@ describe("MCP collection migration", () => {
             { name: "界".repeat(64), activeIdeaCount: index },
           ]),
         ),
-        guidance: [
-          "Follow the AI-DLC workflow via the Chorus skill.",
-          "Use chorus_search to locate work.",
-        ],
         notifications: [],
       });
     }],

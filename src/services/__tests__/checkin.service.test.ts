@@ -275,26 +275,6 @@ describe("buildCheckinResponse — activeProjects distribution", () => {
   });
 });
 
-describe("buildCheckinResponse — guidance", () => {
-  it("always returns a non-empty guidance list, even with no active work", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([]);
-
-    const result = await buildCheckinResponse(auth);
-
-    expect(Array.isArray(result.guidance)).toBe(true);
-    expect(result.guidance.length).toBeGreaterThan(0);
-  });
-
-  it("guidance references the Chorus skill, the AI-DLC workflow, and chorus_search", async () => {
-    const result = await buildCheckinResponse(auth);
-
-    const joined = result.guidance.join("\n");
-    expect(joined).toMatch(/Chorus skill/);
-    expect(joined).toMatch(/AI-DLC/);
-    expect(joined).toMatch(/chorus_search/);
-  });
-});
-
 // ===== Notifications =====
 
 describe("buildCheckinResponse — notifications", () => {
@@ -453,7 +433,6 @@ describe("buildCheckinResponse — empty state", () => {
         owner: { uuid: OWNER_UUID, name: "Owner User", email: "owner@example.com" },
       },
       activeProjects: {},
-      guidance: expect.any(Array),
       notifications: { unread: 0, recent: [] },
     });
   });

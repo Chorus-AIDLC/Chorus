@@ -189,7 +189,7 @@ Tools available to all Agents.
 
 ### chorus_checkin
 
-**Description**: Agent check-in. Returns agent identity (including owner info), the resource-aggregated effective permission set, an `activeProjects` distribution (which projects the agent is advancing ideas in + an active-idea count per project — not a per-idea list), an always-present `guidance` list (working-style reminders), and a notification summary. Recommended at session start. Side effects: updates `agent.lastActiveAt`, emits the first-checkin notification to the owner once, and marks the 5 returned recent notifications as read.
+**Description**: Agent check-in. Returns agent identity (including owner info), the resource-aggregated effective permission set, an `activeProjects` distribution (which projects the agent is advancing ideas in + an active-idea count per project — not a per-idea list), and a notification summary. Recommended at session start. Side effects: updates `agent.lastActiveAt`, emits the first-checkin notification to the owner once, and marks the 5 returned recent notifications as read.
 
 **Project Filtering**: Results can be filtered by project using HTTP headers during MCP connection:
 - `X-Chorus-Project`: Single or multiple project UUIDs (comma-separated)
@@ -219,10 +219,6 @@ Tools available to all Agents.
   "activeProjects": {
     "<project-uuid>": { "name": "Project name", "activeIdeaCount": 2 }
   },
-  "guidance": [
-    "For long-horizon work, use the Chorus skill to follow the AI-DLC workflow (idea → proposal → task → verify) …",
-    "Use chorus_search to locate the specific work the user refers to across ideas, proposals, tasks, and documents …"
-  ],
   "notifications": {
     "unread": 0,
     "recent": []
@@ -230,7 +226,7 @@ Tools available to all Agents.
 }
 ```
 
-`activeProjects` is a location map — which projects the agent is advancing ideas in and how many active ideas each holds — NOT a per-idea list. "Active" = assigned to the agent (or its instance/owner), not `closed`, not rolled-up `done`; the count is derived uncapped from the same computation `chorus_get_my_assignments` uses. For per-idea detail (titles, UUIDs, derived status, `parentUuid`, proposal/task counts), call `chorus_get_my_assignments`. `guidance` is an always-present list of working-style reminders injected at every session start.
+`activeProjects` is a location map — which projects the agent is advancing ideas in and how many active ideas each holds — NOT a per-idea list. "Active" = assigned to the agent (or its instance/owner), not `closed`, not rolled-up `done`; the count is derived uncapped from the same computation `chorus_get_my_assignments` uses. For per-idea detail (titles, UUIDs, derived status, `parentUuid`, proposal/task counts), call `chorus_get_my_assignments`. (Working-style guidance is injected by each harness's session-start hook, not returned in this payload.)
 
 > The legacy 0.6.x shape (`roles: ["developer"]`, `assignments`, `pending`) was replaced in 0.6.6 by a project-grouped idea tracker and in 0.7.0 by the resource-aggregated `permissions` object. In 0.17.0 the checkin idea surface became `activeProjects` (a project→count distribution) + `guidance`; the full per-idea list now lives only in `chorus_get_my_assignments`. The old fields are no longer returned.
 

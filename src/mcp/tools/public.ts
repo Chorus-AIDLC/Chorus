@@ -488,7 +488,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_checkin",
     collectionToolConfig({
       description:
-        "Agent check-in. Returns agent identity (owner, roles, persona), activeProjects — a per-project distribution of your active ideas (project name + active-idea count, NOT a per-idea list) — a short guidance list (follow AI-DLC via the Chorus skill; use chorus_search to locate work), and up to 5 recent unread notifications (auto-marked read). Recommended at session start. For the full per-idea list, call chorus_get_my_assignments.",
+        "Agent check-in. Returns agent identity (owner, roles, persona), activeProjects — a per-project distribution of your active ideas (project name + active-idea count, NOT a per-idea list) — and up to 5 recent unread notifications (auto-marked read). Recommended at session start. For the full per-idea list, call chorus_get_my_assignments.",
       inputSchema: z.object({}),
     }),
     async () => {

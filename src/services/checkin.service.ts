@@ -54,27 +54,15 @@ export interface CheckinResponse {
    * work. For the full per-idea list, call chorus_get_my_assignments.
    */
   activeProjects: Record<string, CheckinActiveProject>;
-  /**
-   * Always-present working-style reminders (injected at every session start).
-   * See CHECKIN_GUIDANCE.
-   */
-  guidance: string[];
   notifications: {
     unread: number;
     recent: CheckinNotification[];
   };
 }
 
-/**
- * Always-on working-style reminders surfaced in every checkin / session-start
- * injection (elaboration idea e8f3af04). Kept in the payload — not per-hook
- * static text — so every harness that dumps the checkin response inherits them
- * from one source.
- */
-const CHECKIN_GUIDANCE: string[] = [
-  "For long-horizon work, use the Chorus skill to follow the AI-DLC workflow (idea → proposal → task → verify) instead of coding ad hoc — see the /chorus skill.",
-  "Use chorus_search to locate the specific work the user refers to across ideas, proposals, tasks, and documents. activeProjects shows WHICH projects hold your work; search to find the exact item — don't treat it as a fixed to-do list.",
-];
+// Working-style guidance (AI-DLC + chorus_search) is intentionally NOT part of
+// this MCP response — it lives as a one-line reminder in each harness's
+// session-start hook script, keeping the MCP payload pure data.
 
 // ===== Service method =====
 
@@ -139,7 +127,6 @@ export async function buildCheckinResponse(auth: AuthContext): Promise<CheckinRe
         : null,
     },
     activeProjects,
-    guidance: CHECKIN_GUIDANCE,
     notifications,
   };
 }
