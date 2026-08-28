@@ -125,11 +125,11 @@ if [ "$CHORUS_OPENSPEC_ACTIVE" = "1" ]; then
 
 OpenSpec mode is **active** for this session. When the proposal / develop / yolo skills reach an OpenSpec-aware step, load the openspec-aware skill at \`.claude/skills/openspec-aware/SKILL.md\` and follow §3 (OpenSpec authoring) — do NOT re-run the §1 detection block, the answer is already known.
 
-Critical rule (openspec-aware §2 Rule 1): document mirror calls (\`chorus_pm_add_document_draft\` / \`chorus_pm_update_document_draft\` / \`chorus_pm_update_document\`) MUST go through \`chorus-api.sh mcp-tool\` with \`content\` produced by \`json_encode_file\`. Do NOT invoke these MCP tools directly with hand-typed \`content\` in OpenSpec mode."
+Critical rule (openspec-aware §2 Rule 1): document mirror calls (\`chorus_pm_add_document_draft\` / \`chorus_pm_update_document_draft\` / \`chorus_pm_update_document\`) MUST fill \`content\` from the local file — prefer \`chorus mcp call <tool> '<json>' --arg-file content=<file>\`, falling back to \`chorus-api.sh mcp-tool\` with \`json_encode_file\` when \`chorus\` is not on PATH. Do NOT invoke these MCP tools directly with hand-typed \`content\` in OpenSpec mode."
 else
   CONTEXT="${CONTEXT}
 
-OpenSpec mode is **inactive** for this session. The proposal / develop / yolo skills follow their free-form path; do NOT scaffold \`openspec/changes/\`, do NOT add an \`OpenSpec change slug:\` line to proposal descriptions, and do NOT route document mirror calls through \`chorus-api.sh\`."
+OpenSpec mode is **inactive** for this session. The proposal / develop / yolo skills follow their free-form path; do NOT scaffold \`openspec/changes/\`, do NOT add an \`OpenSpec change slug:\` line to proposal descriptions, and do NOT route document mirror calls through the \`chorus\` CLI or \`chorus-api.sh\`."
   if [ "$OPENSPEC_OPTOUT" = "1" ]; then
     CONTEXT="${CONTEXT}
 
@@ -149,7 +149,8 @@ CONTEXT="${CONTEXT}
 
 ## Quick Reference
 
-- **Idea Tracker**: Shows up to 10 most recently updated ideas. Use chorus_get_ideas() for full list.
+- **Long-horizon work**: follow AI-DLC via the Chorus skill (idea → proposal → task → verify) rather than coding ad hoc, and use chorus_search to locate the specific work the user refers to across ideas/proposals/tasks/docs.
+- **Active Projects**: checkin.activeProjects shows which projects you're advancing ideas in, with an active-idea count per project — it is a location map, not a per-idea to-do list. Use chorus_search to find the specific work the user refers to (across ideas/proposals/tasks/docs), and chorus_get_my_assignments for the full per-idea list.
 - **Sessions**: Auto-managed by hooks. Do NOT call chorus_create_session/chorus_close_session for sub-agents. See /chorus:develop.
 - **Notifications**: chorus_get_notifications() fetches and auto-marks read. See /chorus.
 - **Project Groups**: chorus_get_project_groups() before creating projects. See /chorus."

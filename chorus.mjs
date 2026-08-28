@@ -24,7 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // client commands that connect OUT to a remote Chorus server. Their modules are
 // lazy-imported so the server-launch path pays no startup cost.
 
-const SUBCOMMANDS = new Set(["daemon", "login"]);
+const SUBCOMMANDS = new Set(["daemon", "login", "mcp", "agents"]);
 
 // Client-subcommand arg parsing + help text live in cli/client-args.mjs so they
 // are pure and unit-testable (this entry module runs side effects at import).
@@ -54,6 +54,19 @@ function pkgVersion() {
 }
 
 async function runSubcommand(name, rest) {
+  // `agents` and `mcp` own their arg parsing + help (they handle `--help`
+  // themselves), so they are dispatched before the shared client-flag/help
+  // block below. (`chorus init` was renamed to `chorus agents add` — the bare
+  // `chorus init` word is intercepted with a rename hint before server boot.)
+  if (name === "mcp") {
+    const { runMcp } = await import("./cli/mcp.mjs");
+    return runMcp(rest, { version: pkgVersion() });
+  }
+  if (name === "agents") {
+    const { runAgents } = await import("./cli/agents.mjs");
+    return runAgents(rest, { version: pkgVersion() });
+  }
+
   const flags = parseClientFlags(rest);
 
   // Per-subcommand --help / -h fast-path: print subcommand-specific help and
@@ -82,6 +95,18 @@ async function runSubcommand(name, rest) {
 
 {
   const sub = process.argv[2];
+  // `chorus init` was renamed to `chorus agents add`. Intercept the old word
+  // with an actionable hint and exit — never fall through to the server-launch
+  // path below (a muscle-memory `chorus init` must not silently boot Postgres).
+  if (sub === "init") {
+    process.stderr.write(
+      "`chorus init` has been renamed to `chorus agents add`.\n" +
+        "  • configure agents:  chorus agents add   (same flags as before)\n" +
+        "  • list configured:   chorus agents\n" +
+        "  • remove one:        chorus agents remove <name|uuid>\n",
+    );
+    process.exit(1);
+  }
   if (sub && SUBCOMMANDS.has(sub)) {
     runSubcommand(sub, process.argv.slice(3))
       .then((code) => process.exit(typeof code === "number" ? code : 0))
@@ -146,10 +171,16 @@ Chorus v${pkg.version} — AI Agent & Human collaboration platform
 
 USAGE
   chorus [options]                 Start the Chorus server (default)
+  chorus agents [list|add|remove]  Manage this machine's configured agents:
+                                   list (default), add (detect + install plugin + seed
+                                   creds; formerly 'chorus init'), remove <name|uuid>
+                                   (see 'chorus agents --help')
   chorus login [--url --api-key]   Authenticate as an agent; saves ~/.chorus/daemon.json
   chorus daemon [--url --api-key]  Connect to a remote Chorus server, subscribe to the
                                    agent notification stream, and wake a local headless
                                    Claude Code on task dispatch
+  chorus mcp <call|whoami|list>    Native MCP client — call any tool, print this agent's
+                                   UUID, or list callable tools (see 'chorus mcp --help')
 
 SERVER OPTIONS
   -p, --port <port>        HTTP server port             (default: 8637, env: PORT)
@@ -203,6 +234,9 @@ EXAMPLES
   chorus daemon                              # Connect & wake local Claude Code (full autonomy by default)
   chorus daemon --chorus-only                # Restrict the woken Claude to Chorus MCP tools only
   CHORUS_URL=https://... CHORUS_API_KEY=cho_... chorus daemon
+  chorus mcp whoami                          # Print this agent's own UUID
+  chorus mcp call chorus_get_task '{"taskUuid":"..."}'      # Call a tool with JSON args
+  chorus mcp call chorus_pm_add_document_draft --arg proposalUuid=P1 --arg type=prd --arg-file content=doc.md
 `);
   process.exit(0);
 }

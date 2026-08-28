@@ -46,7 +46,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 **[v0.15.0](https://chorus-ai.dev/blog/chorus-v0.15.0-release/)** — プロジェクト単位の Agent 作業ディレクトリ：各ユーザーがプロジェクト内の Agent ごとにホストと cwd を設定し、デーモンが許可したルートだけを参照できます。割り当て、ウェイク、再開、後続ターンで同じ実行先を使い、進行中のセッションは移動しません。Codex は再開可能なバックエンド thread ID を別に保存し、不要になった Chorus の session 管理手順を削除しました。
 
-**[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI が 4 つ目の接続方法になりました（Kiro CLI v2）：ワンコマンドの `install-kiro.sh` プラグインと `--agent kiro` デーモンバックエンド、加えていくつかのデーモン修正。
+**[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI が 4 つ目の接続方法になりました（Kiro CLI v2）：`chorus agents add` によるワンコマンドの Kiro プラグイン導入と `--agent kiro` デーモンバックエンド、加えていくつかのデーモン修正。
 
 **[v0.14.0](https://chorus-ai.dev/blog/chorus-v0.14.0-release/)** — アプリ全体のダークモード（ライト / ダーク / システム）。参考資料をあらゆる着想・提案・課題に添付でき、インラインでも MCP 経由でも読み取れます。韓国語と日本語を追加（韓国語はコミュニティによる貢献）。グループ化のための**テーマ**着想、デーモンの「開発を開始」/「Yolo」ボタン、対話式の着想入力、クラッシュからの再開、`chorus daemon install`。
 
@@ -59,7 +59,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 2 つのコマンドだけです — データベースも Docker も設定ファイルも不要です。
 
 ```bash
-npm install -g @chorus-aidlc/chorus
+npm install -g @chorus-aidlc/chorus@0.17.0
 chorus
 ```
 

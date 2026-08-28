@@ -4,7 +4,7 @@ description: Multi-agent orchestration playbook — coordinate OTHER agents and 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.4"
+  version: "0.17.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -77,7 +77,7 @@ Chorus ships three read-only reviewer skills. As orchestrator you run them at th
 | `chorus-task-reviewer` | a task is submitted for verify | one task vs its acceptance criteria (VERDICT on the task) |
 | `chorus-code-reviewer` | the idea's last task is verified | the idea's **aggregate** code change — the final ship gateway (VERDICT on the idea) |
 
-Spawn a review sub-agent with `spawn_agent(agent_type="default", items=[{type:"skill", path:"chorus:chorus-task-reviewer"}, {type:"text", text:"Review <entity> <uuid>."}])` (Codex ships only `default`/`explorer`/`worker` roles). Each posts exactly one `VERDICT: PASS` / `PASS WITH NOTES` / `FAIL` comment. Verdicts are **advisory** — they do not auto-approve, auto-verify, or hard-block; you read the BLOCKERs and decide. A `FAIL` means route the BLOCKERs back for a fix before advancing (for a code-review FAIL, add fix tasks to the *approved* proposal via `$quick-dev` and re-run once they are `done`). See `$review` for the full pattern.
+Spawn a review sub-agent with `spawn_agent({items:[{type:"skill", path:"chorus:chorus-task-reviewer"}, {type:"text", text:"Review task <task-uuid> and post VERDICT."}]})`. Each posts exactly one `VERDICT: PASS` / `PASS WITH NOTES` / `FAIL` comment. Verdicts are **advisory** — they do not auto-approve, auto-verify, or hard-block; you read the BLOCKERs and decide. A `FAIL` means route the BLOCKERs back for a fix before advancing (for a code-review FAIL, add fix tasks to the *approved* proposal via `$quick-dev` and re-run once they are `done`). See `$review` for the full pattern and lifecycle rules.
 
 ---
 

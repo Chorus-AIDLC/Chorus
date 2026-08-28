@@ -71,17 +71,17 @@ The install guide in the Settings key-creation flow SHALL be available only duri
 
 ### Requirement: dsh three-step onboarding flow
 
-The dsh tab SHALL present a localized three-step setup flow. It SHALL show exports for `CHORUS_URL` and `CHORUS_API_KEY`, SHALL show the command `curl -fsSL <current-origin>/install-dsh.sh | bash`, and SHALL instruct the user to launch dsh and verify the Chorus connection with a check-in. The current origin and the component's live-or-placeholder API key SHALL be interpolated consistently with the Codex and Kiro tabs.
+The dsh tab SHALL present a localized setup flow. It SHALL show exports for `CHORUS_URL` and `CHORUS_API_KEY`, SHALL show the command `chorus agents add` (after `npm install -g @chorus-aidlc/chorus`) as the way to install and configure the Chorus plugin for DeepSeek Harness, and SHALL instruct the user to launch dsh and verify the Chorus connection with a check-in. The current origin and the component's live-or-placeholder API key SHALL be interpolated consistently with the Codex and Kiro tabs. It SHALL NOT present the retired `curl | bash` installer command.
 
 #### Scenario: User opens the dsh tab with a live key
 
 - **WHEN** a user selects the dsh tab while the component has a live API key
-- **THEN** the guide SHALL show the current Chorus origin, that key, the dsh installer command for that origin, and the launch/check-in verification instruction
+- **THEN** the guide SHALL show the current Chorus origin, that key, the `chorus agents add` command, and the launch/check-in verification instruction
 
 #### Scenario: dsh guide is localized in every supported UI locale
 
 - **WHEN** the application locale is English, Chinese, Japanese, or Korean
-- **THEN** the dsh tab label and all three setup-step strings SHALL resolve from that locale without missing-key fallback
+- **THEN** the dsh tab label and all setup-step strings SHALL resolve from that locale without missing-key fallback
 
 ### Requirement: Responsive install-guide tab navigation
 

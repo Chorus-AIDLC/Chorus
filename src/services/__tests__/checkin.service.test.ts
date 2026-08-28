@@ -172,15 +172,15 @@ describe("buildCheckinResponse — agent info", () => {
   });
 });
 
-// ===== Idea tracker =====
+// ===== Active-project distribution + guidance =====
 
-describe("buildCheckinResponse — ideaTracker", () => {
-  it("returns empty tracker when agent has no assigned ideas", async () => {
+describe("buildCheckinResponse — activeProjects distribution", () => {
+  it("returns empty distribution when agent has no assigned ideas", async () => {
     mockPrisma.idea.findMany.mockResolvedValue([]);
 
     const result = await buildCheckinResponse(auth);
 
-    expect(result.ideaTracker).toEqual({});
+    expect(result.activeProjects).toEqual({});
   });
 
   it("queries ideas assigned to agent OR agent's owner", async () => {
@@ -202,7 +202,7 @@ describe("buildCheckinResponse — ideaTracker", () => {
     expect(call.where.OR).toEqual([{ assigneeType: "agent", assigneeUuid: AGENT_UUID }]);
   });
 
-  it("groups ideas by project with project name", async () => {
+  it("reduces each project to { name, activeIdeaCount } with no per-idea payload", async () => {
     mockPrisma.idea.findMany.mockResolvedValue([
       makeIdea("idea-a1", PROJECT_A, "open"),
       makeIdea("idea-a2", PROJECT_A, "elaborating", { elaborationStatus: "validating" }),
@@ -215,29 +215,17 @@ describe("buildCheckinResponse — ideaTracker", () => {
 
     const result = await buildCheckinResponse(auth);
 
-    expect(result.ideaTracker[PROJECT_A].name).toBe("Project A");
-    expect(result.ideaTracker[PROJECT_A].ideas).toHaveLength(2);
-    expect(result.ideaTracker[PROJECT_B].name).toBe("Project B");
-    expect(result.ideaTracker[PROJECT_B].ideas).toHaveLength(1);
-  });
-
-  it("emits derived status for each idea", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([
-      makeIdea("idea-todo", PROJECT_A, "open"),
-      makeIdea("idea-research", PROJECT_A, "elaborating", { elaborationStatus: "validating" }),
-      makeIdea("idea-answer", PROJECT_A, "elaborating", { elaborationStatus: "pending_answers" }),
+    expect(result.activeProjects[PROJECT_A]).toEqual({ name: "Project A", activeIdeaCount: 2 });
+    expect(result.activeProjects[PROJECT_B]).toEqual({ name: "Project B", activeIdeaCount: 1 });
+    // No per-idea leak — entries carry only name + activeIdeaCount, never an ideas[] array.
+    expect(result.activeProjects[PROJECT_A]).not.toHaveProperty("ideas");
+    expect(Object.keys(result.activeProjects[PROJECT_A]).sort()).toEqual([
+      "activeIdeaCount",
+      "name",
     ]);
-    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
-
-    const result = await buildCheckinResponse(auth);
-
-    const byUuid = Object.fromEntries(result.ideaTracker[PROJECT_A].ideas.map((i) => [i.uuid, i]));
-    expect(byUuid["idea-todo"].status).toBe("todo");
-    expect(byUuid["idea-research"].status).toBe("in_progress");
-    expect(byUuid["idea-answer"].status).toBe("human_conduct_required");
   });
 
-  it("filters out ideas with derivedStatus=done", async () => {
+  it("excludes derivedStatus=done ideas from the count", async () => {
     const doneProposal = "proposal-done";
     mockPrisma.idea.findMany.mockResolvedValue([
       makeIdea("idea-active", PROJECT_A, "open"),
@@ -254,104 +242,27 @@ describe("buildCheckinResponse — ideaTracker", () => {
 
     const result = await buildCheckinResponse(auth);
 
-    expect(result.ideaTracker[PROJECT_A].ideas.map((i) => i.uuid)).toEqual(["idea-active"]);
+    // idea-done rolls up to done and drops out; only idea-active is counted.
+    expect(result.activeProjects[PROJECT_A].activeIdeaCount).toBe(1);
   });
 
   it("excludes closed ideas at the query level", async () => {
-    // The Prisma query filter (not: "closed") is responsible for excluding closed ideas.
-    // Verify that filter is actually on the query so it can't regress silently.
+    // The Prisma query filter (not: "closed") excludes closed ideas — assert it
+    // stays on the query so it can't regress silently.
     await buildCheckinResponse(auth);
     const call = mockPrisma.idea.findMany.mock.calls[0][0];
     expect(call.where.status).toEqual({ not: "closed" });
   });
 
-  it("computes proposals count across pending + approved", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", PROJECT_A, "elaborated")]);
-    mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "proposal-p", status: "pending", inputUuids: ["idea-1"], createdAt: now },
-      { uuid: "proposal-a", status: "approved", inputUuids: ["idea-1"], createdAt: now },
-    ]);
-    mockPrisma.task.findMany.mockResolvedValue([
-      { proposalUuid: "proposal-a", status: "open" },
-    ]);
+  it("counts all active ideas uncapped (no 10-idea truncation)", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => makeIdea(`idea-${i}`, PROJECT_A, "open")),
+    );
     mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
 
     const result = await buildCheckinResponse(auth);
 
-    const idea = result.ideaTracker[PROJECT_A].ideas[0];
-    expect(idea.proposals).toBe(2);
-    expect(idea.tasks).toBe(1);
-  });
-
-  it("reports 0 tasks when idea has no approved proposal", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", PROJECT_A, "elaborated")]);
-    mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "proposal-p", status: "pending", inputUuids: ["idea-1"], createdAt: now },
-    ]);
-    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
-
-    const result = await buildCheckinResponse(auth);
-
-    const idea = result.ideaTracker[PROJECT_A].ideas[0];
-    expect(idea.proposals).toBe(1);
-    expect(idea.tasks).toBe(0);
-  });
-
-  it("uses the latest approved proposal for task counting", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", PROJECT_A, "elaborated")]);
-    mockPrisma.proposal.findMany.mockResolvedValue([
-      {
-        uuid: "proposal-new",
-        status: "approved",
-        inputUuids: ["idea-1"],
-        createdAt: new Date("2026-03-01T00:00:00Z"),
-      },
-      {
-        uuid: "proposal-old",
-        status: "approved",
-        inputUuids: ["idea-1"],
-        createdAt: new Date("2026-01-01T00:00:00Z"),
-      },
-    ]);
-    mockPrisma.task.findMany.mockResolvedValue([
-      { proposalUuid: "proposal-new", status: "open" },
-      { proposalUuid: "proposal-new", status: "in_progress" },
-      { proposalUuid: "proposal-old", status: "done" },
-    ]);
-    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
-
-    const result = await buildCheckinResponse(auth);
-
-    const idea = result.ideaTracker[PROJECT_A].ideas[0];
-    expect(idea.proposals).toBe(2);
-    expect(idea.tasks).toBe(2);
-  });
-
-  it("ignores proposal inputUuids that point to ideas outside the tracked set", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", PROJECT_A, "elaborated")]);
-    mockPrisma.proposal.findMany.mockResolvedValue([
-      {
-        uuid: "proposal-x",
-        status: "approved",
-        inputUuids: ["idea-1", "idea-unrelated"],
-        createdAt: now,
-      },
-    ]);
-    mockPrisma.task.findMany.mockResolvedValue([{ proposalUuid: "proposal-x", status: "open" }]);
-    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
-
-    const result = await buildCheckinResponse(auth);
-
-    expect(result.ideaTracker[PROJECT_A].ideas[0].proposals).toBe(1);
-  });
-
-  it("skips task query when no approved proposals are in scope", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", PROJECT_A, "open")]);
-    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
-
-    await buildCheckinResponse(auth);
-
-    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    expect(result.activeProjects[PROJECT_A].activeIdeaCount).toBe(12);
   });
 
   it("falls back to empty name when project not found", async () => {
@@ -360,37 +271,7 @@ describe("buildCheckinResponse — ideaTracker", () => {
 
     const result = await buildCheckinResponse(auth);
 
-    expect(result.ideaTracker[PROJECT_A].name).toBe("");
-  });
-
-  it("tolerates proposals with non-array inputUuids", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", PROJECT_A, "elaborated")]);
-    mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "p-bad", status: "approved", inputUuids: "oops", createdAt: now },
-    ]);
-    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
-
-    const result = await buildCheckinResponse(auth);
-
-    const idea = result.ideaTracker[PROJECT_A].ideas[0];
-    expect(idea.proposals).toBe(0);
-    expect(idea.tasks).toBe(0);
-  });
-
-  it("runs exactly 3 entity queries when there are approved proposals", async () => {
-    mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", PROJECT_A, "elaborated")]);
-    mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "p-1", status: "approved", inputUuids: ["idea-1"], createdAt: now },
-    ]);
-    mockPrisma.task.findMany.mockResolvedValue([{ proposalUuid: "p-1", status: "open" }]);
-    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
-
-    await buildCheckinResponse(auth);
-
-    expect(mockPrisma.idea.findMany).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.proposal.findMany).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.task.findMany).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.project.findMany).toHaveBeenCalledTimes(1);
+    expect(result.activeProjects[PROJECT_A]).toEqual({ name: "", activeIdeaCount: 1 });
   });
 });
 
@@ -551,7 +432,7 @@ describe("buildCheckinResponse — empty state", () => {
         systemPrompt: null,
         owner: { uuid: OWNER_UUID, name: "Owner User", email: "owner@example.com" },
       },
-      ideaTracker: {},
+      activeProjects: {},
       notifications: { unread: 0, recent: [] },
     });
   });

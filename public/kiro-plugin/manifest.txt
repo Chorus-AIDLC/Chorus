@@ -1,0 +1,41 @@
+# Chorus Kiro plugin artifact manifest — the single source of truth for the
+# .kiro/ file-template's variable asset lists.
+#
+# Read at runtime by the Kiro file-template installer:
+#   - cli/init/file-template.mjs (JS; parsed by parseManifest)
+# (public/install-kiro.sh is now a deprecation stub that redirects to `chorus agents add`
+# and no longer reads this manifest — the JS installer is the sole consumer.)
+#
+# Format: one "<kind> <name>" pair per line. Blank lines and lines beginning
+# with '#' are ignored. kind is one of:
+#   skill     -> .kiro/skills/<name>/SKILL.md
+#   reviewer  -> .kiro/agents/<name>.json  (read-only reviewer subagent)
+#   hook      -> bin/<name>                -> installed to .kiro/chorus-bin/<name>
+#
+# The fixed (non-list) assets — .kiro/settings/mcp.json, .kiro/steering/chorus.md,
+# .kiro/agents/chorus.json, .kiro/agents/chorus.md — are NOT listed here because
+# they are single, always-present files, not variable-length sets.
+
+skill chorus-idea
+skill chorus-proposal
+skill chorus-develop
+skill chorus-yolo
+skill chorus-review
+skill chorus-quick-dev
+skill chorus-brainstorm
+skill chorus-openspec-aware
+skill chorus-docs
+skill chorus-cli
+
+reviewer chorus-code-reviewer
+reviewer chorus-proposal-reviewer
+reviewer chorus-task-reviewer
+
+hook on-agent-spawn.sh
+hook on-stop.sh
+hook on-post-submit-proposal.sh
+hook on-post-submit-for-verify.sh
+hook on-post-verify-task.sh
+hook chorus-api.sh
+hook verify-document-roundtrip.sh
+hook test-syntax.sh

@@ -35,6 +35,9 @@ import { fileURLToPath } from "node:url";
 /** The systemd --user unit name (also the launchd label stem). */
 export const SERVICE_NAME = "chorus-daemon";
 
+/** The macOS launchd LaunchAgent label. */
+export const LAUNCHD_LABEL = "com.chorus.daemon";
+
 /** Default IO bundle — overridable per-call for tests (no real disk/process). */
 function defaultIO() {
   return {
@@ -232,25 +235,39 @@ function systemdQuoteArg(token) {
 
 /**
  * Detect whether a supervisor already manages the chorus daemon on this host.
- * Linux only (systemd --user); everything else reports `{ kind: "none" }`.
- *   - kind: "systemd" with installed (unit file present, `is-enabled` not
- *     "not-found") and active (`is-active` == "active").
- *   - kind: "none" otherwise (or when systemctl is unavailable).
+ *   - Linux → kind: "systemd" (unit file present and/or `is-active` == "active").
+ *   - macOS → kind: "launchd" (LaunchAgent plist present and/or `launchctl list
+ *     <label>` reports it loaded).
+ *   - kind: "none" otherwise (or when the service manager is unavailable).
  * Used by the lifecycle subcommands to decide whether to delegate.
  * @param {object} [io]
- * @returns {{ kind: "systemd", installed: boolean, active: boolean, unitPath: string } | { kind: "none" }}
+ * @returns {{ kind: "systemd", installed: boolean, active: boolean, unitPath: string }
+ *   | { kind: "launchd", installed: boolean, active: boolean, label: string, plistPath: string }
+ *   | { kind: "none" }}
  */
 export function detectSupervisor(io = defaultIO()) {
-  if (io.platform !== "linux") return { kind: "none" };
-  const unitPath = systemdUnitPath(io);
-  const installed = safeExists(unitPath, io);
-  // `is-active` is authoritative for "running under systemd right now". Query it
-  // even when the unit file is absent: a transient/unit-less path still returns
-  // non-active, and we never want to throw here.
-  const activeRes = systemctlUser(["is-active", `${SERVICE_NAME}.service`], io);
-  const active = (activeRes.stdout ?? "").trim() === "active";
-  if (!installed && !active) return { kind: "none" };
-  return { kind: "systemd", installed, active, unitPath };
+  if (io.platform === "linux") {
+    const unitPath = systemdUnitPath(io);
+    const installed = safeExists(unitPath, io);
+    // `is-active` is authoritative for "running under systemd right now". Query it
+    // even when the unit file is absent: a transient/unit-less path still returns
+    // non-active, and we never want to throw here.
+    const activeRes = systemctlUser(["is-active", `${SERVICE_NAME}.service`], io);
+    const active = (activeRes.stdout ?? "").trim() === "active";
+    if (!installed && !active) return { kind: "none" };
+    return { kind: "systemd", installed, active, unitPath };
+  }
+  if (io.platform === "darwin") {
+    const plistPath = launchdPlistPath(io);
+    const installed = safeExists(plistPath, io);
+    // `launchctl list <label>` exits 0 when the agent is loaded (prints its dict),
+    // non-zero otherwise. This is authoritative for "loaded right now".
+    const listRes = launchctl(["list", LAUNCHD_LABEL], io);
+    const active = listRes.status === 0;
+    if (!installed && !active) return { kind: "none" };
+    return { kind: "launchd", installed, active, label: LAUNCHD_LABEL, plistPath };
+  }
+  return { kind: "none" };
 }
 
 function safeExists(path, io) {
@@ -279,6 +296,44 @@ export function journalctlUser(args, io = defaultIO()) {
   } catch (err) {
     return { status: null, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/** Run `launchctl <args>`, capturing output. Never throws. macOS only. */
+export function launchctl(args, io = defaultIO()) {
+  try {
+    const r = io.spawnSync("launchctl", args, { encoding: "utf8" });
+    // spawnSync sets .error (and status null) when the binary is missing (ENOENT);
+    // surface that as a null status + the error message rather than throwing.
+    if (r?.error) {
+      return { status: null, stdout: r?.stdout ?? "", stderr: String(r.error.message ?? r.error) };
+    }
+    return { status: r?.status ?? null, stdout: r?.stdout ?? "", stderr: r?.stderr ?? "" };
+  } catch (err) {
+    return { status: null, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Classify whether THIS host supports installing a real boot-autostart daemon
+ * service, and via which supervisor. The single source of truth both
+ * `chorus daemon install` and the `chorus agents add` daemon-setup step consult so they
+ * cannot disagree about what "supported" means (add-chorus-init-daemon-setup).
+ *   - "systemd"     — Linux where `systemctl --user` is usable.
+ *   - "launchd"     — macOS (launchctl is always present).
+ *   - "unsupported" — Linux without a usable systemctl, Windows, or anything else.
+ * Pure-ish: only probes `systemctl --user --version` on Linux (injected IO).
+ * @param {object} [io]
+ * @returns {"systemd" | "launchd" | "unsupported"}
+ */
+export function autostartCapability(io = defaultIO()) {
+  if (io.platform === "darwin") return "launchd";
+  if (io.platform === "linux") {
+    // `systemctl --user` must be reachable — a container/minimal host may lack it,
+    // in which case there is no real boot service we can install.
+    const probe = systemctlUser(["--version"], io);
+    return probe.status === 0 ? "systemd" : "unsupported";
+  }
+  return "unsupported";
 }
 
 /**
@@ -331,19 +386,39 @@ export function installService(spec, io = defaultIO()) {
     }
   }
   if (io.platform === "darwin") {
+    // Real launchd install (add-chorus-init-daemon-setup): write the LaunchAgent
+    // plist and `launchctl load -w` it so it starts now and at every login —
+    // no longer a printed-template-only posture.
     const plistPath = launchdPlistPath(io);
     const unitText = renderLaunchdPlist({ ...spec, home, logPath: join(home, ".chorus", "daemon.log") });
-    return {
-      platform: "darwin",
-      installed: false,
-      unitPath: plistPath,
-      unitText,
-      steps: [
-        `Save the plist below to ${plistPath}`,
-        `launchctl load -w ${plistPath}`,
-        `Check: launchctl list | grep com.chorus.daemon`,
-      ],
-    };
+    const steps = [];
+    try {
+      io.mkdirSync(dirname(plistPath), { recursive: true });
+      // Back up an existing plist before overwrite (backup-before-overwrite
+      // convention, mirrors the init plugin-install step); best-effort.
+      if (safeExists(plistPath, io) && typeof io.readFileSync === "function") {
+        try {
+          io.writeFileSync(`${plistPath}.chorus-bak`, io.readFileSync(plistPath));
+          steps.push(`backed up existing plist → ${plistPath}.chorus-bak`);
+        } catch {
+          // a failed backup must not block the (idempotent) re-install
+        }
+      }
+      // Unload any currently-loaded copy first so a re-install applies the new
+      // plist rather than leaving the old agent running (parallels the systemd
+      // restart). Best-effort — a not-loaded agent returns non-zero here.
+      launchctl(["unload", plistPath], io);
+      io.writeFileSync(plistPath, unitText, { mode: 0o644 });
+      steps.push(`wrote ${plistPath}`);
+      const load = launchctl(["load", "-w", plistPath], io);
+      if (load.status !== 0) {
+        return { platform: "darwin", installed: false, unitPath: plistPath, unitText, steps, error: `launchctl load -w failed: ${load.stderr.trim() || `exit ${load.status}`}` };
+      }
+      steps.push(`launchctl load -w ${plistPath}`);
+      return { platform: "darwin", installed: true, unitPath: plistPath, unitText, steps };
+    } catch (err) {
+      return { platform: "darwin", installed: false, unitPath: plistPath, unitText, steps, error: err instanceof Error ? err.message : String(err) };
+    }
   }
   // Windows / other: no first-class service model without native deps. Print the
   // foreground command an operator can wrap in their supervisor of choice.
@@ -398,18 +473,30 @@ export function uninstallService(io = defaultIO()) {
     return { platform: "linux", removed: existed || disable.status === 0, unitPath, steps };
   }
   if (io.platform === "darwin") {
+    // Real launchd uninstall (add-chorus-init-daemon-setup): unload the agent and
+    // remove the plist. Idempotent: tolerate an already-absent plist / not-loaded
+    // agent.
     const plistPath = launchdPlistPath(io);
-    return {
-      platform: "darwin",
-      removed: false,
-      unitPath: plistPath,
-      steps: [`launchctl unload -w ${plistPath}`, `rm ${plistPath}`],
-    };
+    const steps = [];
+    const existed = safeExists(plistPath, io);
+    // unload -w stops the agent and clears its "enabled" override; a not-loaded
+    // agent returns non-zero, which we tolerate.
+    const unload = launchctl(["unload", "-w", plistPath], io);
+    if (unload.status === 0) steps.push(`launchctl unload -w ${plistPath}`);
+    try {
+      if (existed) {
+        io.unlinkSync(plistPath);
+        steps.push(`removed ${plistPath}`);
+      }
+    } catch (err) {
+      return { platform: "darwin", removed: false, unitPath: plistPath, steps, error: err instanceof Error ? err.message : String(err) };
+    }
+    return { platform: "darwin", removed: existed, unitPath: plistPath, steps };
   }
   return {
     platform: "other",
     removed: false,
-    steps: ["Automatic service uninstall is only supported on Linux (systemd). Remove the daemon from your supervisor manually."],
+    steps: ["Automatic service uninstall is only supported on Linux (systemd) and macOS (launchd). Remove the daemon from your supervisor manually."],
   };
 }
 

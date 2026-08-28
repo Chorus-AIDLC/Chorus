@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.4"
+  version: "0.17.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -209,8 +209,8 @@ In $yolo mode, the agent generates elaboration questions and answers them itself
    **2a. OpenSpec mode (`CHORUS_OPENSPEC_ACTIVE=1`).** Follow `openspec-aware` §3 end-to-end:
    - Pick `$SLUG`, run `openspec new change "$SLUG"` (§3.1–§3.2).
    - Author `proposal.md`, `design.md`, and one `specs/<capability>/spec.md` per capability locally on disk (§3.3). ADDED Requirements only; per-spec fallback to free-form Markdown if MODIFIED/REMOVED is needed.
-   - Define `$API`, `json_encode_file`, `chorus_check_response` helpers (§3.4, §6).
-   - Mirror each local file via `"$API" chorus_pm_add_document_draft "$PAYLOAD"` (§3.6) — one call per file, with the document type from `openspec-aware` §5. (Codex's `chorus-mcp-call.sh` takes `<TOOL_NAME> <JSON>` directly; no `mcp-tool` subcommand.)
+   - Define the `chorus_check_response` helper (§6); prefer `chorus mcp call … --arg-file content=<file>` for mirrors (§3.4/§3.6) — the bash-wrapper fallback's `$API` (§2.1) + `json_encode_file` are only needed when `chorus` is not on `PATH`.
+   - Mirror each local file via `chorus mcp call chorus_pm_add_document_draft … --arg-file content=<file>` (§3.6; fallback = `"$API" chorus_pm_add_document_draft "$PAYLOAD"`) — one call per file, with the document type from `openspec-aware` §5. (Codex's `chorus-mcp-call.sh` takes `<TOOL_NAME> <JSON>` directly; no `mcp-tool` subcommand.)
 
    > **⛔ Do not** invoke `chorus_pm_add_document_draft` / `chorus_pm_update_document_draft` / `chorus_pm_update_document` from Codex's MCP harness with a hand-typed `content` field in this branch. Re-typing the markdown body wastes 20k+ tokens per proposal and breaks byte-equality with the local files. See `openspec-aware` §2 Rule 1.
 
@@ -270,17 +270,16 @@ In $yolo mode, the agent generates elaboration questions and answers them itself
 
 ### Phase 2: Proposal Review Loop
 
-After `chorus_pm_submit_proposal`, the PostToolUse hook injects context instructing you to spawn the `chorus-proposal-reviewer` sub-agent. The reviewer is a SKILL, not a built-in agent_type — spawn it by mounting the skill into a default agent:
+After `chorus_pm_submit_proposal`, the PostToolUse hook injects context instructing you to spawn the `chorus-proposal-reviewer` sub-agent. Mount the reviewer skill explicitly:
 
 ```
-spawn_agent(
-  agent_type="default",
-  items=[
+reviewer = spawn_agent({
+  items: [
     { type: "skill", name: "Chorus Proposal Reviewer", path: "chorus:chorus-proposal-reviewer" },
     { type: "text",  text: "Review proposal <proposal-uuid>. Max review rounds: 3. Post VERDICT comment." }
   ]
-)
-wait_agent([reviewer_id])
+})
+wait_agent({ targets: [reviewer.agent_id] })
 ```
 
 Then:
@@ -291,7 +290,7 @@ Then:
    ```
    Look for the most recent comment containing `VERDICT:`.
 
-   **IMPORTANT — release thread slot**: after `wait_agent` returns, immediately call `close_agent(reviewer_id)`. Codex caps concurrent agent threads at 6; `completed` status does NOT free a slot — only `close_agent` does. On long `$yolo` runs you WILL hit the limit if you don't close each reviewer after use.
+   **IMPORTANT — release thread slot**: after `wait_agent` returns, immediately call `close_agent({ target: reviewer.agent_id })`. Codex caps concurrent agent threads at 6; `completed` status does NOT free a slot — only `close_agent` does. On long `$yolo` runs you WILL hit the limit if you don't close each reviewer after use.
 
 2. **Act on the VERDICT:**
 
@@ -351,15 +350,16 @@ loop:
 
   # 2. For each unblocked task, spawn a worker
   for each task in unblocked:
-    spawn_agent(
-      agent_type="worker",
-      message=f"""You are a Chorus developer worker. Follow the $develop skill.
+    spawn_agent({
+      items: [
+        { type: "skill", name: "Chorus Develop", path: "chorus:develop" },
+        { type: "text", text: f"""Implement this Chorus task:
+Task UUID: {task.uuid}
+Project UUID: {project_uuid}
 
-      Your task UUID: {task.uuid}
-      Project UUID: {project_uuid}
-
-      Implement per task description + acceptance criteria. Read task, proposal, and project documents for context. After chorus_submit_for_verify, exit and let the main agent spawn the task-reviewer."""
-    )
+Follow the mounted develop workflow and the task acceptance criteria. Read the task, proposal, and project documents through Chorus. After chorus_submit_for_verify, exit; the main agent owns independent review and admin verification.""" }
+      ]
+    })
 
   # 3. Wait for workers to return (use wait_agent)
   #    Each worker follows $develop skill:
@@ -412,17 +412,15 @@ for each task in wave_tasks:
     continue
 
   # 2. Spawn task-reviewer in FOREGROUND and wait for it (use wait_agent)
-  #    Mount the chorus-task-reviewer SKILL into a default sub-agent
-  #    (Codex only has default/explorer/worker built-in types).
-  spawn_agent(
-    agent_type="default",
-    items=[
+  #    Mount the chorus-task-reviewer SKILL explicitly.
+  reviewer = spawn_agent({
+    items: [
       { type: "skill", name: "Chorus Task Reviewer", path: "chorus:chorus-task-reviewer" },
       { type: "text",  text: "Review Chorus task <task-uuid>. Post VERDICT as a comment before exit." }
     ]
-  )
-  wait_agent([reviewer_id])
-  close_agent(reviewer_id)   # IMPORTANT: release the thread slot (max 6 concurrent, completed != closed)
+  })
+  wait_agent({ targets: [reviewer.agent_id] })
+  close_agent({ target: reviewer.agent_id })   # completed != closed
 
   # 3. Read task-reviewer VERDICT
   comments = chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
@@ -472,15 +470,15 @@ Continue with remaining tasks -- do not halt the entire pipeline for one stuck t
 
 Once **every** task of the idea's proposal is verified (`done`) — Phase 3 finds no more unblocked tasks and none remain non-terminal — run the final ship-time code-review gateway **before** the Phase 5b completion report. It reviews the **whole Idea's aggregate code change** across all tasks (not a single task) and posts its verdict on the **Idea**. After the last task is verified, the PostToolUse hook injects a reminder to spawn it.
 
-The code-reviewer is a SKILL, not a built-in agent_type — mount it into a default sub-agent and wait for it:
+Mount the code-reviewer skill explicitly and wait for it:
 
 ```
-reviewer = spawn_agent(agent_type="default", items=[
+reviewer = spawn_agent({ items: [
     { type: "skill", name: "Chorus Code Reviewer", path: "chorus:chorus-code-reviewer" },
-    { type: "text", text: "Review the aggregate code for idea <idea-uuid>. Round: N." }
-])
-wait_agent([reviewer])
-close_agent(reviewer)   # release the thread slot (Codex caps concurrent agents at 6)
+    { type: "text", text: "Review the aggregate code for idea <idea-uuid>. Round: N. Post VERDICT on the idea." }
+] })
+wait_agent({ targets: [reviewer.agent_id] })
+close_agent({ target: reviewer.agent_id })
 
 # Read the VERDICT on the IDEA
 comments = chorus_get_comments({ targetType: "idea", targetUuid: "<idea-uuid>" })
@@ -499,6 +497,10 @@ ESCALATE: "Idea '{title}' failed code review after {maxCodeReviewRounds} rounds.
 **No new VERDICT after the code-reviewer returns?** It exhausted its `maxTurns` budget (larger than the task-reviewer's because it reviews the whole feature). Respawn ONCE with a concise-budget hint; if still silent, treat as PASS WITH NOTES and proceed.
 
 > The gateway is **behavioral** like the other two reviewers: its verdict is advisory and does not change the Idea's stored status; the orchestrator honors it. It runs **before** the completion report so the report is never written while a FAIL is outstanding.
+
+### Codex sub-agent context and lifecycle
+
+Routine Chorus workers and reviewers start with a fresh context: their mounted skill plus entity UUIDs let them retrieve authoritative state through MCP. Use `fork_context: true` only when a child needs material parent-conversation evidence or decisions that cannot be conveyed cleanly in its assignment, and state why. Call `wait_agent` only when the next pipeline action depends on the result; use `send_input` to redirect an active child, `close_agent` promptly when interaction is finished, and `resume_agent` only for a previously closed child. Codex manages these execution threads; Chorus MCP remains authoritative for claims, statuses, work reports, acceptance evidence, submissions, and verdict comments.
 
 ---
 

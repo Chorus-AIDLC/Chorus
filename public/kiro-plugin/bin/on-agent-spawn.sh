@@ -12,7 +12,7 @@
 #   * If CHORUS_URL / CHORUS_API_KEY are unset -> print a "not configured"
 #     notice to STDOUT and exit 0. NEVER abort the spawn.
 #   * Otherwise call chorus_checkin over MCP and print the result (agent
-#     owner / permissions / idea tracker) as the startup context.
+#     owner / permissions / active-project distribution) as the startup context.
 #   * If Chorus is unreachable, print a warning and exit 0 (degrade
 #     gracefully — the spawn must not fail).
 #
@@ -49,8 +49,9 @@ if [ -z "$CHECKIN_RESULT" ]; then
 fi
 
 # Emit the startup context as plain text (Kiro adds STDOUT to context).
-# The checkin payload carries agent owner, effective permissions, and the
-# recent-idea tracker — surfaced verbatim, same as the CC hook.
+# The checkin payload carries agent owner, effective permissions, the
+# active-project distribution, and working-style guidance — surfaced verbatim,
+# same as the CC hook.
 CONTEXT="# Chorus Plugin — Active
 
 Chorus is connected at ${CHORUS_URL}. Session lifecycle hooks are enabled (checkin on spawn, best-effort heartbeat/checkout on stop, reviewer nudges after workflow MCP calls).
@@ -61,7 +62,8 @@ ${CHECKIN_RESULT}
 
 ## Quick Reference
 
-- **Idea Tracker**: the checkin above lists up to 10 most recently updated ideas. Use chorus_get_ideas() for the full list.
+- **Long-horizon work**: follow AI-DLC via the Chorus skill (idea → proposal → task → verify) rather than coding ad hoc, and use chorus_search to locate the specific work the user refers to across ideas/proposals/tasks/docs.
+- **Active Projects**: the checkin above shows activeProjects — which projects you're advancing ideas in, with an active-idea count per project (a location map, not a per-idea to-do list). Use chorus_search to find the specific work the user refers to, and chorus_get_my_assignments for the full per-idea list.
 - **Reviewers**: after chorus_pm_submit_proposal / chorus_submit_for_verify / chorus_admin_verify_task, a postToolUse hook will nudge you to spawn the matching read-only reviewer subagent (chorus-proposal-reviewer / chorus-task-reviewer / chorus-code-reviewer). See /chorus-review.
 - **Notifications**: chorus_get_notifications() fetches and auto-marks read. See /chorus-develop.
 - **Project Groups**: chorus_get_project_groups() before creating projects."

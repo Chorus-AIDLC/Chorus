@@ -124,6 +124,20 @@ describe("resolveAgentConfigs — agents[] default inheritance", () => {
     expect(out[0].label).toBe("pm-bot");
     expect(out[1].label).toBe("dev-bot");
   });
+
+  it("carries agentUuid / agentName through so the spawner can export CHORUS_AGENT_PROFILE", () => {
+    const file = {
+      url: "https://t",
+      agents: [
+        { apiKey: "cho_a", agentUuid: "u-admin", agentName: "Admin Claude" },
+        { apiKey: "cho_b" }, // no identity fields -> undefined, not a crash
+      ],
+    };
+    const out = resolveAgentConfigs({}, mkDeps(file));
+    expect(out[0]).toMatchObject({ agentUuid: "u-admin", agentName: "Admin Claude" });
+    expect(out[1].agentUuid).toBeUndefined();
+    expect(out[1].agentName).toBeUndefined();
+  });
 });
 
 describe("resolveAgentConfigs — per-agent overrides", () => {
@@ -161,6 +175,21 @@ describe("resolveAgentConfigs — per-agent overrides", () => {
     const file = { url: "https://t", agents: [{ apiKey: "cho_a", cwds: ["", "   "] }] };
     const out = resolveAgentConfigs({}, mkDeps(file));
     expect(out[0].cwds).toEqual([undefined]);
+  });
+
+  it("carries daemonWake per agent as a pass-through (true / false / absent→undefined)", () => {
+    const file = {
+      url: "https://t",
+      agents: [
+        { apiKey: "cho_on", agentType: "kiro", daemonWake: true },
+        { apiKey: "cho_off", agentType: "kiro", daemonWake: false },
+        { apiKey: "cho_abs", agentType: "kiro" }, // no daemonWake ⇒ undefined (woken)
+      ],
+    };
+    const out = resolveAgentConfigs({}, mkDeps(file));
+    expect(out[0].daemonWake).toBe(true);
+    expect(out[1].daemonWake).toBe(false);
+    expect(out[2].daemonWake).toBeUndefined();
   });
 
   it("mixed backends resolve independently in one daemon", () => {

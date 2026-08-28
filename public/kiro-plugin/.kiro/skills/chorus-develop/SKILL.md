@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.4"
+  version: "0.17.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -134,7 +134,7 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
    chorus_get_documents({ projectUuid: "<project-uuid>" })
    ```
 
-> **Document update flow (OpenSpec mode):** if the originating proposal `description` contains a line `OpenSpec change slug: <slug>`, the project's PRD / tech_design / spec Documents are **mirrors** of files under `openspec/changes/<slug>/`. To update such a Document (e.g. clarify an AC, fix a spec scenario before resubmitting), load the `/chorus-openspec-aware` skill and follow §3.8: edit the local `.md` file first, then mirror through the `chorus-api.sh` wrapper with `json_encode_file` and `chorus_check_response`.
+> **Document update flow (OpenSpec mode):** if the originating proposal `description` contains a line `OpenSpec change slug: <slug>`, the project's PRD / tech_design / spec Documents are **mirrors** of files under `openspec/changes/<slug>/`. To update such a Document (e.g. clarify an AC, fix a spec scenario before resubmitting), load the `/chorus-openspec-aware` skill and follow §3.8: edit the local `.md` file first, then mirror it — prefer `chorus mcp call … --arg-file content=<file>`, falling back to the `chorus-api.sh` wrapper with `json_encode_file` when `chorus` is not on `PATH` — with `chorus_check_response` halting on error.
 >
 > **⛔ Do not** call `chorus_pm_update_document` directly from the MCP harness with a hand-typed `content` field in OpenSpec mode. The local file is the source of truth; agent-typed content drifts and burns tokens (`/chorus-openspec-aware` §2 Rule 1).
 >

@@ -35,19 +35,38 @@ the bundle's four peer plugins:
 - `@deepseek-ai/dsh-tool-skill`
 - `@deepseek-ai/dsh-persona`
 
-Store the credentials where dsh's tools can read them:
+Provision your Chorus credentials with `chorus agents add`:
 
 ```bash
-CHORUS_URL="$CHORUS_URL" CHORUS_API_KEY="$CHORUS_API_KEY" \
-  bash <(curl -fsSL "$CHORUS_URL/dsh-credentials.sh")
+chorus agents add --agents dsh --dsh-profile <name>
 ```
 
-This writes `CHORUS_URL` + `CHORUS_API_KEY` into `$DSH_HOME/.env` (mode 0600),
-preserving any other entries. dsh deliberately scrubs credential-shaped
-variables from tool subprocesses, so the OpenSpec document-mirror wrapper cannot
-inherit the key from your shell — it reads it from `$DSH_HOME/.env`, dsh's own
-credential fallback. The script writes only credentials (no plugin files) and
-prompts for any value that is not already exported.
+`chorus agents add` validates your key and seeds `CHORUS_URL` + `CHORUS_API_KEY` into
+`~/.chorus/daemon.json` (mode 0600), and adds the `@chorus-aidlc/chorus-dsh`
+bundle to the profile if it is not already present. It reads the values from the
+shell environment above and prompts for anything missing on a TTY. Don't have
+the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus@0.17.0`,
+then run `chorus agents add --agents dsh --dsh-profile <name>`.
+
+For a `dsh` agent, `chorus agents add` ALSO writes `CHORUS_URL`, `CHORUS_API_KEY`,
+and `CHORUS_AGENT_PROFILE` (this agent's UUID) into `$DSH_HOME/.env` (default
+`~/.dsh/.env`, mode 0600, preserving any unrelated lines). This is dsh's own
+credential channel: dsh scrubs credential-shaped variables from tool subprocesses,
+so the OpenSpec document-mirror wrapper cannot read the URL/key from the shell. The
+wrapper prefers the `chorus mcp` CLI when it is on `PATH`; where the CLI is absent —
+for example when `chorus agents add` was run via `npx` rather than a global install,
+which does not persist `chorus` on `PATH` — it reads `CHORUS_URL` / `CHORUS_API_KEY`
+from `$DSH_HOME/.env`. (This restores what the retired `dsh-credentials.sh` bootstrap
+used to write.)
+
+`CHORUS_AGENT_PROFILE` is not a secret, so dsh does NOT scrub it: dsh loads
+`$DSH_HOME/.env` into the session and the profile reaches tools directly on the
+environment. It names WHICH agent this profile acts as, so on a machine with several
+configured agents the wrapper deterministically acts as this one — it delegates
+`chorus mcp call --agent <profile>`, resolving the key from `~/.chorus/daemon.json`.
+Because it is persisted here, you do NOT need to `export CHORUS_AGENT_PROFILE` by
+hand for dsh (the other agents, which have no `.env` channel, still get that export
+hint from `chorus agents add`).
 
 Launch the same profile:
 
@@ -78,8 +97,11 @@ dsh interactively (above) for now. Daemon support will return in a later release
 ## Filesystem ownership
 
 - dsh owns profile package state created by `dsh plugin`.
-- Chorus writes no package, skill, preset, instruction, or credential file
-  beneath `$DSH_HOME`.
+- Chorus writes no package, skill, preset, or instruction file beneath
+  `$DSH_HOME`. The one exception is credentials/identity: `chorus agents add` writes
+  `$DSH_HOME/.env` (`CHORUS_URL` + `CHORUS_API_KEY` + `CHORUS_AGENT_PROFILE`, mode
+  0600, unrelated lines preserved) — dsh's sanctioned channel, read by the
+  document-mirror wrapper when the `chorus` CLI is unavailable.
 
 ## Troubleshooting
 

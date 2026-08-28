@@ -243,10 +243,12 @@ When the Claude Code task is completed, the `TaskCompleted` hook will automatica
 
 ## chorus-api.sh Commands
 
+> **Document mirroring prefers the `chorus` CLI.** For OpenSpec-mode document mirrors, `mcp-tool` is now the **CLI-absent fallback** — prefer `chorus mcp call <tool> '<json>' --arg-file content=<file>` when the `chorus` CLI is on `PATH` (byte-exact, replaces the `json_encode_file` helper). See [MCP_CLIENT.md](./MCP_CLIENT.md) and [OPENSPEC_MODE.md](./OPENSPEC_MODE.md). The wrapper's other subcommands (`checkin`, `state-*`, `session-*`) are unaffected.
+
 | Command | Description |
 |---------|-------------|
 | `checkin` | Check connectivity with Chorus backend |
-| `mcp-tool <name> [args_json]` | Call any MCP tool via JSON-RPC |
+| `mcp-tool <name> [args_json]` | Call any MCP tool via JSON-RPC (CLI-absent fallback for document mirrors — prefer `chorus mcp call`) |
 | `state-get <key>` | Read a value from state.json |
 | `state-set <key> <value>` | Write a value to state.json |
 | `state-delete <key>` | Delete a key from state.json |

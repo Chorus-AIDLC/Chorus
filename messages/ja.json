@@ -1166,26 +1166,27 @@
         "openClaw": "OpenClaw",
         "other": "その他のエージェント"
       },
+      "profileStep": {
+        "title": "ステップ 3（任意）：Chorus CLI のデフォルトエージェントを設定",
+        "desc": "chorus agents add は設定した各エージェントについて export CHORUS_AGENT_PROFILE の行を出力します。そのうちの1行をシェルに追加すると、chorus CLI がデフォルトでどのエージェントとして動作するかを設定できます。鍵は ~/.chorus/daemon.json から解決されます。"
+      },
       "claudeCode": {
         "step1Title": "ステップ 1：環境変数を設定",
-        "step1Tip": "ヒント：永続化するには ~/.bashrc または ~/.zshrc に追加してください。",
-        "step2Title": "ステップ 2：Claude Code を開いて実行"
+        "step1Tip": "永続化は不要です。ステップ 2 の chorus agents add が読み取ります。",
+        "step2Title": "ステップ 2：chorus agents add を実行",
+        "step2Tip": "chorus agents add は Chorus プラグインを Claude Code にインストールし、CHORUS_URL・CHORUS_API_KEY・CHORUS_AGENT_PROFILE を ~/.claude/settings.json に書き込みます。そのため対話的な Claude Code では手動の export は不要です。"
       },
       "codex": {
         "step1Title": "ステップ 1：環境変数を設定",
-        "step1Tip": "ヒント：永続化するには ~/.bashrc または ~/.zshrc に追加してください。",
-        "step2Title": "ステップ 2：Codex インストーラーを実行",
-        "step2Tip": "このスクリプトはプラグインマーケットプレイスを登録し、MCP サーバーのエントリを ~/.codex/config.toml に書き込みます。",
-        "step3Title": "ステップ 3：接続を確認",
-        "step3Desc": "Codex を開いて Chorus へのチェックインを依頼してください — 例：「check in to chorus」と入力します。"
+        "step1Tip": "永続化は不要です。ステップ 2 の chorus agents add が ~/.codex/.env に書き込みます。",
+        "step2Title": "ステップ 2：chorus agents add を実行",
+        "step2Tip": "chorus agents add は Chorus プラグインをインストールし、CHORUS_URL・CHORUS_API_KEY・CHORUS_AGENT_PROFILE を ~/.codex/.env に書き込みます。そのため対話的な Codex では手動の export は不要です。"
       },
       "kiro": {
         "step1Title": "ステップ 1：環境変数を設定",
         "step1Tip": "ヒント：Kiro CLI が起動時に読み取れるよう、~/.bashrc または ~/.zshrc に追加してください。",
-        "step2Title": "ステップ 2：Kiro インストーラーを実行",
-        "step2Tip": "デフォルトでは ~/.kiro/ にグローバルインストールされ、Chorus をどのディレクトリでも利用できます。現在のディレクトリの .kiro/ にのみインストールする場合は、フラグを追加してください：bash -s -- --workspace。",
-        "step3Title": "ステップ 3：接続を確認",
-        "step3Desc": "Kiro CLI を開いて /chorus-idea スキルを有効化するか、Chorus エージェントで直接起動してください：kiro-cli --agent chorus。"
+        "step2Title": "ステップ 2：chorus agents add を実行",
+        "step2Tip": "chorus agents add は Chorus の skills、agents、steering、および chorus MCP サーバーを ~/.kiro にグローバルインストールし、Chorus をどのディレクトリでも利用できるようにします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。別のディレクトリにインストールするには、実行前に KIRO_DIR を設定してください。 最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。"
       },
       "dsh": {
         "step1Title": "ステップ 1：環境変数を設定",
@@ -1193,17 +1194,15 @@
         "step2Title": "ステップ 2：Chorus bundle を追加",
         "step2Tip": "{name} を使用する dsh profile 名に置き換えてください。dsh の profile は pnpm workspace のルートなので -w が必要です。profile の package state と peer plugin は dsh が管理します。",
         "step3Title": "ステップ 3：認証情報を書き込む",
-        "step3Tip": "CHORUS_URL と CHORUS_API_KEY を $DSH_HOME/.env（モード 0600）に書き込みます。dsh は認証情報らしい変数をツールのサブプロセスから除去するため、ドキュメントミラー wrapper はシェルではなくこのファイルから読み取ります。",
+        "step3Tip": "chorus agents add はキーを検証し、CHORUS_URL と CHORUS_API_KEY を ~/.chorus/daemon.json（モード 0600）に書き込みます。必要に応じて Chorus bundle を profile に追加します。ステップ 2 と同じ profile を指定するには --dsh-profile {name} を渡してください。認証情報は環境変数（ステップ 1）から読み取ります。 最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。",
         "step4Title": "ステップ 4：起動して確認",
         "step4Desc": "dsh --profile {name} を実行し、「check in to chorus」と依頼してください。"
       },
       "opencode": {
         "step1Title": "ステップ 1：環境変数を設定",
         "step1Tip": "ヒント：OpenCode 起動時にプラグインが読み取れるよう、~/.bashrc または ~/.zshrc に追加してください。",
-        "step2Title": "ステップ 2：Chorus プラグインを有効化",
-        "step2Tip": "インストーラーは ~/.config/opencode/opencode.json の「plugin」配列に「opencode-chorus」を冪等に追加します。シェルの rc は変更しません。OpenCode は初回起動時に Bun 経由でプラグインをインストールします。",
-        "step3Title": "ステップ 3：接続を確認",
-        "step3Desc": "OpenCode を開いてエージェントに「check in to chorus」と依頼してください。接続に成功するとこのステップは自動的に進みます。",
+        "step2Title": "ステップ 2：chorus agents add を実行",
+        "step2Tip": "chorus agents add は ~/.config/opencode/opencode.json の「plugin」配列に「opencode-chorus」を冪等に追加します。シェルの rc は変更しません。OpenCode は初回起動時に Bun 経由でプラグインをインストールします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。 最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。",
         "troubleshootingTitle": "トラブルシューティング",
         "issueCache": {
           "title": "プラグインが読み込まれない",
@@ -1223,8 +1222,6 @@
         "step2Title": "ステップ 2：~/.openclaw/openclaw.json を編集",
         "step3Title": "ステップ 3：OpenClaw ゲートウェイを再起動",
         "step3Desc": "新しい設定を反映するため OpenClaw ゲートウェイのプロセスを再起動してください。",
-        "step4Title": "ステップ 4：接続を確認",
-        "step4Desc": "OpenClaw のチャットウィンドウで、次のコマンドを入力してください：",
         "troubleshootingTitle": "トラブルシューティング",
         "troubleshootingError": "「Wake agent failed: HTTP 405」",
         "troubleshootingFix": "このエラーはフックが有効になっていないことを意味します。openclaw.json の設定で「hooks.enabled」を true に設定し、ゲートウェイを再起動してください。"

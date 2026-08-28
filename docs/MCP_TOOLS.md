@@ -171,11 +171,13 @@ The Agent-level **AgentSession** model (used for swarm-mode observability via `c
 
 Chorus ships **five first-class agent-runtime plugin surfaces** that all speak to this same `/api/mcp` endpoint, plus a runtime-agnostic standalone skill for any other MCP-capable client:
 
+All surfaces are configured with the one-command CLI — install it globally, then run `chorus agents add`: `npm install -g @chorus-aidlc/chorus@0.17.0` then `chorus agents add` (see each CONNECT guide). The legacy per-agent `curl … | bash` installers (`public/install-{codex,opencode,kiro}.sh`, `public/dsh-credentials.sh`) are retired to deprecation stubs that point to `chorus agents add`.
+
 1. **Claude Code** — `public/chorus-plugin/` (marketplace-installed). See [CONNECT_CLAUDE_CODE.md](./CONNECT_CLAUDE_CODE.md).
-2. **Codex** — `plugins/chorus/` + `public/install-codex.sh`. See [CONNECT_CODEX.md](./CONNECT_CODEX.md).
+2. **Codex** — `plugins/chorus/`, configured via `chorus agents add`. See [CONNECT_CODEX.md](./CONNECT_CODEX.md).
 3. **OpenClaw** — `packages/openclaw-plugin/` (TypeScript SSE/MCP runtime).
-4. **Kiro CLI** — `public/kiro-plugin/.kiro/` template tree + `public/install-kiro.sh` (merges into `~/.kiro/`, or `<cwd>/.kiro/` with `--workspace`). See [CONNECT_KIRO.md](./CONNECT_KIRO.md).
-5. **dsh** — public npm bundle `@chorus-aidlc/chorus-dsh`, installed into a dsh profile with `dsh plugin --profile <name> add`. See [CONNECT_DSH.md](./CONNECT_DSH.md). (Unattended daemon wakes via `--agent dsh` are temporarily offline.)
+4. **Kiro CLI** — `public/kiro-plugin/.kiro/` template tree, installed by `chorus agents add` (native cross-platform file-template; global `~/.kiro/` or `<cwd>/.kiro/`). See [CONNECT_KIRO.md](./CONNECT_KIRO.md).
+5. **dsh** — public npm bundle `@chorus-aidlc/chorus-dsh`, installed into a dsh profile with `dsh plugin --profile <name> add` (orchestrated by `chorus agents add`). See [CONNECT_DSH.md](./CONNECT_DSH.md). (Unattended daemon wakes via `--agent dsh` are temporarily offline.)
 
 For any other MCP-capable agent (Cursor, Continue, custom), see the standalone skill at `public/skill/` and [CONNECT_OTHER_AGENTS.md](./CONNECT_OTHER_AGENTS.md).
 
@@ -187,7 +189,7 @@ Tools available to all Agents.
 
 ### chorus_checkin
 
-**Description**: Agent check-in. Returns agent identity (including owner info), the resource-aggregated effective permission set, an idea tracker grouped by project, and a notification summary. Recommended at session start. Side effects: updates `agent.lastActiveAt`, emits the first-checkin notification to the owner once, and marks the 5 returned recent notifications as read.
+**Description**: Agent check-in. Returns agent identity (including owner info), the resource-aggregated effective permission set, an `activeProjects` distribution (which projects the agent is advancing ideas in + an active-idea count per project — not a per-idea list), and a notification summary. Recommended at session start. Side effects: updates `agent.lastActiveAt`, emits the first-checkin notification to the owner once, and marks the 5 returned recent notifications as read.
 
 **Project Filtering**: Results can be filtered by project using HTTP headers during MCP connection:
 - `X-Chorus-Project`: Single or multiple project UUIDs (comma-separated)
@@ -214,13 +216,8 @@ Tools available to all Agents.
     "systemPrompt": "System prompt (optional)",
     "owner": { "uuid": "User UUID", "name": "Owner Name", "email": "owner@example.com" }
   },
-  "ideaTracker": {
-    "<project-uuid>": {
-      "name": "Project name",
-      "ideas": [
-        { "uuid": "...", "title": "...", "status": "in_progress", "proposals": 1, "tasks": 3, "parentUuid": null }
-      ]
-    }
+  "activeProjects": {
+    "<project-uuid>": { "name": "Project name", "activeIdeaCount": 2 }
   },
   "notifications": {
     "unread": 0,
@@ -229,9 +226,9 @@ Tools available to all Agents.
 }
 ```
 
-Each idea entry carries the stored single-parent lineage edge as `parentUuid` (or `null` for top-level ideas) — this lightweight surface exposes `parentUuid` ONLY, not `childCount` (which stays exclusive to `chorus_get_ideas` / `chorus_get_idea`).
+`activeProjects` is a location map — which projects the agent is advancing ideas in and how many active ideas each holds — NOT a per-idea list. "Active" = assigned to the agent (or its instance/owner), not `closed`, not rolled-up `done`; the count is derived uncapped from the same computation `chorus_get_my_assignments` uses. For per-idea detail (titles, UUIDs, derived status, `parentUuid`, proposal/task counts), call `chorus_get_my_assignments`. (Working-style guidance is injected by each harness's session-start hook, not returned in this payload.)
 
-> The legacy 0.6.x shape (`roles: ["developer"]`, `assignments`, `pending`) was replaced in 0.6.6 by the project-grouped `ideaTracker` and in 0.7.0 by the resource-aggregated `permissions` object. The old fields are no longer returned.
+> The legacy 0.6.x shape (`roles: ["developer"]`, `assignments`, `pending`) was replaced in 0.6.6 by a project-grouped idea tracker and in 0.7.0 by the resource-aggregated `permissions` object. In 0.17.0 the checkin idea surface became `activeProjects` (a project→count distribution) + `guidance`; the full per-idea list now lives only in `chorus_get_my_assignments`. The old fields are no longer returned.
 
 ### chorus_list_projects
 
@@ -395,7 +392,7 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 
 ### chorus_get_my_assignments
 
-**Description**: Get the agent's idea/task tracker, grouped by project. Output is structurally identical to `chorus_checkin.ideaTracker` (see `chorus_checkin`) — the only difference is that `chorus_get_my_assignments` returns the full set of in-progress ideas (no `maxIdeas` cap), plus a `taskTracker` for tasks.
+**Description**: Get the agent's FULL idea/task tracker, grouped by project — the on-demand full list. Unlike `chorus_checkin` (which returns only an `activeProjects` project→count distribution), this returns the complete set of in-progress ideas per project with per-idea detail (no `maxIdeas` cap), plus a `taskTracker` for tasks.
 
 **Project Filtering**: Results can be filtered by project using HTTP headers during MCP connection:
 - `X-Chorus-Project`: Single or multiple project UUIDs (comma-separated)
@@ -444,7 +441,7 @@ Each idea entry carries the stored single-parent lineage edge as `parentUuid` (o
 
 Each idea entry's `status` is the derived status (`todo` / `in_progress` / `human_conduct_required`); each task entry's `ac` reports admin-verified acceptance-criteria progress. Each idea entry also carries the stored single-parent lineage edge as `parentUuid` (or `null` for top-level ideas) — this lightweight surface exposes `parentUuid` ONLY, not `childCount` (which stays exclusive to `chorus_get_ideas` / `chorus_get_idea`).
 
-> **BREAKING (0.7.2)**: prior to 0.7.2 this tool returned a flat `{ ideas: [], tasks: [] }`. The new shape aligns 1:1 with `chorus_checkin.ideaTracker`.
+> **BREAKING (0.7.2)**: prior to 0.7.2 this tool returned a flat `{ ideas: [], tasks: [] }`. **Since 0.17.0** `chorus_checkin` returns an `activeProjects` project→count distribution instead of a per-idea `ideaTracker`, so this tool is the authoritative per-idea list — the two surfaces are no longer identical (checkin = distribution, this = full list).
 
 ### chorus_get_available_ideas
 

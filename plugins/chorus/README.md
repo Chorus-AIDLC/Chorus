@@ -12,29 +12,32 @@ Chorus AI-DLC collaboration platform plugin for OpenAI Codex CLI, ported from th
 - **2 read-only reviewer subagents** — `chorus-proposal-reviewer`, `chorus-task-reviewer`
 - **4 session-aware hooks** — session start checkin, per-turn reminders, and PostToolUse reviewer nudges after proposal/task submission
 
-> The Chorus **MCP server** is configured separately — see *Installation* below. Codex's plugin runtime doesn't expand `${VAR}` in `.mcp.json` and doesn't pass the user's shell env through to MCP subprocesses, so we don't ship an `.mcp.json` in this plugin. Instead, the install script writes a proper `[mcp_servers.chorus]` section to `~/.codex/config.toml` with a literal URL + `Authorization: Bearer <key>` header.
+> The Chorus **MCP server** is configured separately — see *Installation* below. Codex doesn't expand `${VAR}` inside `http_headers`, so instead of a literal key `chorus agents add` writes a `[mcp_servers.chorus]` section to `~/.codex/config.toml` with `url` + `bearer_token_env_var = "CHORUS_API_KEY"` (a keyless reference) and puts the key itself in `~/.codex/.env` (which Codex loads into its process env at startup). The key lives in exactly one place and never appears in `config.toml`.
 
 ## Installation
 
-### One-shot installer (recommended)
+### One-command setup (recommended)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh | bash
+npm install -g @chorus-aidlc/chorus@0.17.0
+chorus agents add --agents codex
 ```
 
-The installer:
+`chorus agents add`:
 
-1. Verifies `codex` is in `PATH`
-2. Registers the **chorus-plugins** marketplace (`codex plugin marketplace add …`)
-3. Prompts for your **Chorus URL** and **API key** (or reads them from `CHORUS_URL` / `CHORUS_API_KEY` env)
-4. Writes `[mcp_servers.chorus]` + `[mcp_servers.chorus.http_headers]` to `~/.codex/config.toml` (`chmod 600`, backed up once to `config.toml.chorus-bak`)
-5. Enables lifecycle hooks with `[features] hooks = true`
+1. Verifies `codex` is installed
+2. Registers the **chorus-plugins** marketplace (or upgrades it if already registered)
+3. Installs the Chorus plugin through Codex's own plugin CLI, which writes `[plugins."chorus@chorus-plugins"]` into `~/.codex/config.toml` (backed up once) and enables lifecycle hooks
+4. Seeds your Chorus credentials once into `~/.chorus/daemon.json`
+5. Writes `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` into `~/.codex/.env` (Codex loads it into its process env → plugin hooks and the model's shell-tool `chorus` calls are export-free), and writes a keyless `[mcp_servers.chorus]` (`url` + `bearer_token_env_var = "CHORUS_API_KEY"`) into `~/.codex/config.toml` for native MCP
+
+See [CONNECT_CODEX.md](../../docs/CONNECT_CODEX.md) for the full walkthrough. (The legacy `install-codex.sh` one-shot installer is retired to a stub that redirects here.)
 
 Chorus lifecycle hooks are bundled in the Codex plugin manifest and loaded automatically after the plugin is installed and enabled. Use `/hooks` in Codex to review and trust newly installed or changed hook definitions.
 
 Then finish with `/plugins` inside the Codex TUI.
 
-Re-run at any time to rotate the API key — existing `[mcp_servers.chorus*]` sections are wiped and re-written idempotently.
+Re-run at any time to rotate the API key — `~/.codex/.env` and the `[mcp_servers.chorus]` block are refreshed idempotently (the key lives only in `~/.codex/.env`).
 
 ### Finish inside Codex
 
@@ -57,23 +60,29 @@ Inside Codex, type `$chorus` (or any of `$idea` / `$proposal` / `$develop` / `$r
 ### Non-interactive install (CI / scripted)
 
 ```bash
-CHORUS_URL="https://chorus.example.com/api/mcp" \
-CHORUS_API_KEY="cho_..." \
-  bash <(curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh)
+npm install -g @chorus-aidlc/chorus@0.17.0
+chorus agents add --agents codex \
+  --url "https://chorus.example.com" \
+  --api-key "cho_..." \
+  --yes
 ```
-
-`CHORUS_MARKETPLACE_SOURCE` can also be overridden (e.g. to a fork URL or local clone path).
 
 ### Manual (if you'd rather not run the installer)
 
-Add to `~/.codex/config.toml`:
+Add to `~/.codex/config.toml` (keyless — the key is read from an env var, not stored here):
 
 ```toml
 [mcp_servers.chorus]
 url = "https://chorus.example.com/api/mcp"
+bearer_token_env_var = "CHORUS_API_KEY"
+```
 
-[mcp_servers.chorus.http_headers]
-Authorization = "Bearer cho_your_key_here"
+and put the key itself in `~/.codex/.env` (Codex loads it into its process env at startup, so the plugin hooks and shell-tool `chorus` calls are covered too):
+
+```dotenv
+CHORUS_URL=https://chorus.example.com
+CHORUS_API_KEY=cho_your_key_here
+CHORUS_AGENT_PROFILE=<your-agent-uuid>
 ```
 
 Then register the marketplace and install:
@@ -85,14 +94,14 @@ codex   # plugin auto-installs on first launch; use /plugins to confirm
 
 ## What's different from the Claude Code version
 
-The Codex port uses its native plugin hooks and built-in sub-agent roles rather
+The Codex port uses its native plugin hooks and skill-mounted sub-agents rather
 than mirroring Claude Code's Agent Teams implementation.
 
 Consequences:
 
 - Workers track progress through task status, work reports, acceptance-criteria
   self-checks, and verification.
-- Reviewer skills are mounted into Codex's built-in `default` sub-agent role.
+- Reviewer and worker skills are mounted explicitly through `spawn_agent({items:[...]})`.
 - There are no direct Codex equivalents for Claude Code's `TeammateIdle` and
   `TaskCompleted` events.
 
@@ -119,15 +128,15 @@ Full design rationale and binary-level schema research: `docs/codex-plugin-plan.
 - `chorus-proposal-reviewer` — read-only review of submitted proposals
 - `chorus-task-reviewer` — read-only review of completed tasks (can run tests/builds in read-only shell)
 
-Both are invoked by the main agent via `spawn_agent(agent_type=..., message=...)` and waited on via `wait_agent([id])`.
+Both are invoked by the main agent via `spawn_agent({items:[{type:"skill", ...}, {type:"text", ...}]})`. The text item carries the proposal/task UUID and expected VERDICT. Wait only when the next gate depends on the result, use `send_input` to correct an active child, close finished threads promptly, and use `resume_agent` only for previously closed threads. Routine entity-backed children use fresh context; opt into `fork_context: true` only when material parent-conversation state is required.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| `chorus` not in `codex mcp list` | Did you run `install-codex.sh`? It writes `[mcp_servers.chorus]` into `~/.codex/config.toml`. |
-| `chorus` is listed but tools don't work | URL or token wrong. Re-run `install-codex.sh` to update; the installer overwrites idempotently. |
-| Plugin (`/plugins` menu) is empty | The `marketplace add` step didn't run. Re-run `install-codex.sh`, or manually `codex plugin marketplace add https://github.com/Chorus-AIDLC/Chorus`. |
+| `chorus` not in `codex mcp list` | Did you run `chorus agents add --agents codex`? It writes `[mcp_servers.chorus]` into `~/.codex/config.toml`. |
+| `chorus` is listed but tools don't work | URL or token wrong. Re-run `chorus agents add --agents codex` to update; it overwrites idempotently. |
+| Plugin (`/plugins` menu) is empty | The `marketplace add` step didn't run. Re-run `chorus agents add --agents codex`, or manually `codex plugin marketplace add https://github.com/Chorus-AIDLC/Chorus`. |
 | Skills don't show in `$<name>` autocomplete | Restart the Codex session. Skills are loaded at session start from `~/.codex/plugins/cache/chorus-plugins/chorus/*/skills/`. |
-| Hooks don't fire | Check `grep '^hooks = true' ~/.codex/config.toml`, confirm the plugin is installed/enabled in `/plugins`, then open `/hooks` to review/trust Chorus plugin hooks. Re-run `install-codex.sh` to refresh MCP/plugin config. |
-| Need to rotate API key | Just re-run `install-codex.sh` and enter the new key when prompted. |
+| Hooks don't fire | Check `grep '^hooks = true' ~/.codex/config.toml`, confirm the plugin is installed/enabled in `/plugins`, then open `/hooks` to review/trust Chorus plugin hooks. Re-run `chorus agents add --agents codex` to refresh MCP/plugin config. |
+| Need to rotate API key | Just re-run `chorus agents add --agents codex` and enter the new key when prompted. |

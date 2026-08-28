@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.4"
+  version: "0.17.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -88,13 +88,13 @@ Results can be filtered by project(s) using optional HTTP headers on the Chorus 
 
 **Affected tools**: `chorus_checkin`, `chorus_get_my_assignments`
 
-**Example (`~/.codex/config.toml`)**:
+**Example (`~/.codex/config.toml`)** — auth is the keyless `bearer_token_env_var` (the key lives in `~/.codex/.env`); `http_headers` carries only the filter headers:
 ```toml
 [mcp_servers.chorus]
 url = "<BASE_URL>/api/mcp"
+bearer_token_env_var = "CHORUS_API_KEY"
 
 [mcp_servers.chorus.http_headers]
-Authorization = "Bearer cho_xxx"
 X-Chorus-Project = "project-uuid-1,project-uuid-2"
 ```
 
@@ -252,18 +252,22 @@ API Keys must be created manually by the user in the Chorus Web UI.
 
 ### 2. MCP Server Configuration
 
-Codex CLI reads MCP config from `~/.codex/config.toml` (global) or `<repo>/.codex/config.toml` (per-project). Add:
+Codex CLI reads MCP config from `~/.codex/config.toml` (global) or `<repo>/.codex/config.toml` (per-project). Add a **keyless** block — the API key is read from an env var, not stored in `config.toml`:
 
 ```toml
 [mcp_servers.chorus]
 url = "<BASE_URL>/api/mcp"
-
-[mcp_servers.chorus.http_headers]
-Authorization = "Bearer <your-api-key>"
+bearer_token_env_var = "CHORUS_API_KEY"
 ```
 
-> The transport is inferred from the `url` key — there is no `type = "http"` field in Codex's MCP schema. The header table key is `http_headers`, not `headers`.
-> Easier path: run `curl -sSL https://raw.githubusercontent.com/Chorus-AIDLC/Chorus/main/public/install-codex.sh | bash` and it will write this block for you (plus the hook wrapper).
+and put the key in `~/.codex/.env` (Codex loads it into its process env at startup):
+
+```dotenv
+CHORUS_API_KEY=cho_your_key_here
+```
+
+> The transport is inferred from the `url` key — there is no `type = "http"` field in Codex's MCP schema. Auth uses `bearer_token_env_var` (Codex resolves the named env var into `Authorization: Bearer <key>` at connect time); Codex does **not** expand `${VAR}` inside `http_headers`, so don't put a literal key there. Use the `http_headers` table only for non-secret headers like `X-Chorus-Project`.
+> Easier path: install the Chorus CLI globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents codex` and it will write this block (and `~/.codex/.env`) for you, plus enable the lifecycle hooks.
 
 Restart Codex CLI after configuration.
 
@@ -338,7 +342,7 @@ To turn it off, set `CHORUS_OPENSPEC_MODE=off` — the banner then reads a neutr
 7. **Document decisions** — Add comments explaining your reasoning
 8. **Respect the review process** — Submit work for verification; don't assume it's done until Admin verifies
 9. **Interactive questions** — For confirmations/choices, send a plain-text question; Codex currently does not ship a structured radio-button tool in default mode
-10. **Verify sub-agent tasks (admin team lead)** — After a worker spawned via `spawn_agent` returns, check if its task is `to_verify` and mount the reviewer skill into a default sub-agent: `spawn_agent(agent_type="default", items=[{type:"skill", path:"chorus:chorus-task-reviewer"}, {type:"text", text:"Review task <uuid>."}])`. Codex 0.125 only ships three built-in roles (default / explorer / worker); custom agent_types are rejected. Tasks in `to_verify` do NOT unblock downstream — only `done` does.
+10. **Verify sub-agent tasks (admin team lead)** — After a worker spawned via `spawn_agent` returns, check if its task is `to_verify` and mount the reviewer skill explicitly: `spawn_agent({items:[{type:"skill", path:"chorus:chorus-task-reviewer"}, {type:"text", text:"Review task <task-uuid> and post VERDICT."}]})`. Wait only because verification depends on the verdict, then close the reviewer thread. Tasks in `to_verify` do NOT unblock downstream — only `done` does.
 
 ---
 
@@ -384,7 +388,7 @@ This is the core overview skill. For stage-specific workflows, use:
 | **Development** | `$develop` | Claim Tasks, report work, and coordinate sub-agent workers |
 | **Review** | `$review` | Approve/reject Proposals, verify Tasks, project governance |
 | **Docs** | `$docs` | Consult the live Chorus documentation site to answer product-usage questions — UI workflow, agent/plugin setup, API/MCP, deployment, operations |
-| **OpenSpec mode** | `openspec-aware` | Opt-in **shared sub-procedure** invoked by `proposal`, `develop`, and `yolo` whenever the user has the `openspec` CLI installed. Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via the `chorus-mcp-call.sh` wrapper. Skips silently in fallback mode. See `~/.codex/skills/openspec-aware/SKILL.md`. |
+| **OpenSpec mode** | `openspec-aware` | Opt-in **shared sub-procedure** invoked by `proposal`, `develop`, and `yolo` whenever the user has the `openspec` CLI installed. Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via `chorus mcp call --arg-file` (bash `chorus-mcp-call.sh` wrapper as fallback). Skips silently in fallback mode. See `~/.codex/skills/openspec-aware/SKILL.md`. |
 
 ### Getting Started
 

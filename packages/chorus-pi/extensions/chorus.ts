@@ -119,7 +119,7 @@ async function mcpCall<T = unknown>(tool: string, args: Record<string, unknown> 
       params: {
         protocolVersion: "2025-03-26",
         capabilities: {},
-        clientInfo: { name: "chorus-pi", version: "0.16.4" },
+        clientInfo: { name: "chorus-pi", version: "0.17.0" },
       },
     }),
   });
@@ -255,8 +255,8 @@ export default function (pi: ExtensionAPI) {
         "- **Reviewer sub-agents**: after submit_proposal/submit_for_verify the extension nudges you to spawn chorus-proposal-reviewer / chorus-task-reviewer. Use the blocking `subagent` tool so it waits for the VERDICT; reviewers do NOT get a Chorus session.",
         "- **Code-review gateway**: bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (current: " + (MAX_CODE_REVIEW_ROUNDS === 0 ? "unlimited" : String(MAX_CODE_REVIEW_ROUNDS)) + "; on FAIL, fix via /skill:quick-dev and re-run — after the limit, escalate the Idea's feature-level BLOCKERs to a human instead of shipping.",
         (CHORUS_BIN
-          ? "- **OpenSpec wrapper**: `bin/chorus-mcp-call.sh` is at `" + CHORUS_BIN + "`. OpenSpec-mode document mirror calls MUST use this path (see /skill:openspec-aware §2). A bare `chorus-mcp-call.sh` will NOT be on PATH for local-path installs."
-          : "- **OpenSpec wrapper**: `bin/chorus-mcp-call.sh` was not resolved relative to the extension — fall back to `find ~/.pi/agent/npm -path '*chorus-pi/bin/chorus-mcp-call.sh'` (see /skill:openspec-aware §2)."),
+          ? "- **OpenSpec wrapper**: `bin/chorus-mcp-call.sh` is at `" + CHORUS_BIN + "` — the CLI-absent fallback for OpenSpec-mode document mirrors. Prefer `chorus mcp call <tool> '<json>' --arg-file content=<file>` (chorus >= 0.17.0); use this wrapper only when `chorus` is not on PATH (a bare `chorus-mcp-call.sh` will NOT be on PATH for local-path installs). See /skill:openspec-aware §2."
+          : "- **OpenSpec wrapper**: `bin/chorus-mcp-call.sh` was not resolved relative to the extension — it is the CLI-absent fallback for OpenSpec-mode document mirrors (prefer `chorus mcp call <tool> '<json>' --arg-file content=<file>`). If you need it, locate it with `find ~/.pi/agent/npm -path '*chorus-pi/bin/chorus-mcp-call.sh'`. See /skill:openspec-aware §2."),
         "- **Skills**: /skill:chorus, /skill:idea, /skill:proposal, /skill:develop, /skill:review, /skill:quick-dev, /skill:yolo",
       ].join("\n");
       const banner = buildSessionBanner({

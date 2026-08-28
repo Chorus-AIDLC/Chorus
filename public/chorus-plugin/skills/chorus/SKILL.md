@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.16.4"
+  version: "0.17.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -358,6 +358,24 @@ openspec init --tools claude        # 2. scaffold openspec/ + wire up Claude Cod
 `openspec init` is interactive if you omit `--tools`; pass `--tools claude` to run it unattended. Chorus's detection only needs the `openspec/` directory, but wiring up Claude Code also gives OpenSpec its own commands + skills. The OpenSpec signal is read **once at SessionStart**, so it can't flip mid-session — after the steps succeed, tell the user to **re-launch the session**; the banner then reads `(OpenSpec Enabled)` and the stage skills fold in the `openspec-aware` skill automatically.
 
 To turn it off, flip `enableOpenSpec` to `false` or set `CHORUS_OPENSPEC_MODE=off` — the banner then reads a neutral `(OpenSpec off)`.
+
+### 7. Daemon auto-start via `chorus agents add`
+
+`chorus agents add` runs an ordered set of steps to wire this machine to Chorus. Its final step — **daemon-setup** — configures the local Chorus daemon and, opt-in, installs it as a boot-autostart service.
+
+- **What it configures.** Reusing the same preflight as `chorus daemon install`, it persists the served working directories (`cwds`) and the default backend agent into `~/.chorus/daemon.json`. Credentials are the **connection credentials only** — the Chorus URL + API key (`cho_…`) seeded earlier in the run. `chorus agents add` never collects or stores model-provider secrets (see the limitation below).
+- **Opt-in auto-start.**
+  - Interactive (TTY): it asks *"Install & enable the Chorus daemon to auto-start on boot?"* — **default No**. Answer yes to install.
+  - Non-interactive (non-TTY, or `--yes`): it installs the boot service **only** when you pass `--daemon-autostart`; otherwise it writes `~/.chorus/daemon.json` and leaves starting the daemon to you (`chorus daemon`).
+- **Platform support.** Auto-start is a *real* boot service on **Linux (systemd `--user`)** and **macOS (launchd LaunchAgent)** — both start now and at every login. On other platforms (e.g. Windows) it writes the config and prints the manual start steps instead of installing anything.
+- **Idempotent.** Re-running when the service is already installed reports it as already configured and changes nothing.
+- **Manage it.** `chorus daemon status | stop | restart | logs` transparently delegate to the installed supervisor (`systemctl --user` on Linux, `launchctl` on macOS); with no service installed they operate on the `chorus daemon -d` pidfile/log as before.
+
+> **⚠️ Provider credentials on a boot service (important).** A boot-launched daemon (systemd `--user` or launchd) starts in a **clean environment** and does **not** inherit your shell-exported model-provider secrets (`ANTHROPIC_API_KEY`, `AWS_*` / `CLAUDE_CODE_USE_BEDROCK`, etc.). Chorus keeps `daemon.json` to the Chorus connection credentials only, so you must supply provider credentials to the service's environment yourself:
+> - **Linux (systemd):** add a drop-in `~/.config/systemd/user/chorus-daemon.service.d/env.conf` containing `[Service]` + `Environment=ANTHROPIC_API_KEY=…` then `systemctl --user daemon-reload && systemctl --user restart chorus-daemon.service`; or place the vars in `~/.config/environment.d/*.conf`.
+> - **macOS (launchd):** `launchctl setenv ANTHROPIC_API_KEY …` (before load), or add an `EnvironmentVariables` dict to `~/Library/LaunchAgents/com.chorus.daemon.plist`.
+>
+> Without this, a boot-started daemon reaches Chorus fine but its spawned agents may fail to reach the model provider.
 
 ---
 

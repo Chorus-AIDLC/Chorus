@@ -80,9 +80,97 @@ describe("AgentInstallGuide dsh onboarding", () => {
     ).toBeTruthy();
     expect(screen.getByText(/dsh --profile <name>.*"check in to chorus"/i)).toBeTruthy();
     expect(screen.getByText(/dsh 0\.1\.0-rc\.7 and pnpm/i)).toBeTruthy();
-    // Credential provisioning uses the served script; the removed server installer stays gone.
-    expect(screen.getByText(/bash <\(curl -fsSL .*\/dsh-credentials\.sh\)/)).toBeTruthy();
+    // Credentials + bundle are now provisioned by installing the CLI globally
+    // (pinned to @0.17.0) then `chorus agents add` — no npx. The retired curl bootstrap
+    // (dsh-credentials.sh) and the removed server installer stay gone.
+    expect(
+      screen.getByText(/npm install -g @chorus-aidlc\/chorus@0\.17\.0/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/chorus agents add --agents dsh --dsh-profile <name>/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/npx @chorus-aidlc\/chorus agents add/)).toBeNull();
+    expect(screen.queryByText(/dsh-credentials\.sh/)).toBeNull();
+    expect(screen.queryByText(/curl -fsSL/)).toBeNull();
     expect(screen.queryByText(/install-dsh\.sh/)).toBeNull();
+  });
+
+  it("uses npm install + chorus agents add as the sole Claude Code command (no redundant /plugin flow — chorus agents add already runs it)", () => {
+    render(<AgentInstallGuide apiKey="cho_live_test_key" />);
+
+    // claude-code is the default tab — no click needed.
+    expect(screen.getByText("Step 2: Run chorus agents add")).toBeTruthy();
+    expect(
+      screen.getByText(/npm install -g @chorus-aidlc\/chorus@0\.17\.0/),
+    ).toBeTruthy();
+    expect(screen.getByText(/chorus agents add --agents claude/)).toBeTruthy();
+    // The retired `chorus init` command name must not appear anywhere.
+    expect(screen.queryByText(/chorus init/)).toBeNull();
+
+    // Claude Code has NO Step 3: no manual export-profile step and no separate
+    // writes-section. The settings.json write is stated concisely in the Step 2 tip.
+    expect(
+      screen.getByText(
+        /writes CHORUS_URL, CHORUS_API_KEY and CHORUS_AGENT_PROFILE into ~\/\.claude\/settings\.json/,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("Step 3 (optional): Set the default agent for the Chorus CLI"),
+    ).toBeNull();
+    expect(screen.queryByText(/export CHORUS_AGENT_PROFILE="<agent-uuid>"/)).toBeNull();
+    expect(
+      screen.queryByText("What chorus agents add writes (no manual export needed)"),
+    ).toBeNull();
+
+    // The manual `/plugin marketplace add` + `/plugin install` flow is NOT shown:
+    // `chorus agents add --agents claude` already runs those `claude plugin` commands
+    // under the hood (see installClaude in cli/init/install-methods.mjs), so
+    // surfacing them separately would be redundant.
+    expect(screen.queryByText("Or, inside Claude Code")).toBeNull();
+    expect(
+      screen.queryByText(/\/plugin marketplace add Chorus-AIDLC\/chorus/),
+    ).toBeNull();
+    expect(screen.queryByText(/\/plugin install chorus@chorus-plugins/)).toBeNull();
+    expect(screen.queryByText(/npx @chorus-aidlc\/chorus agents add/)).toBeNull();
+  });
+
+  it("uses `npm install -g @chorus-aidlc/chorus@0.17.0` + `chorus agents add` (never npx) on every agent init tab", async () => {
+    const user = userEvent.setup();
+    render(<AgentInstallGuide apiKey={null} />);
+
+    const initTabs = [
+      { tab: "Claude Code", init: /chorus agents add --agents claude/ },
+      { tab: "Codex", init: /chorus agents add --agents codex/ },
+      { tab: "Kiro", init: /chorus agents add --agents kiro/ },
+      { tab: "DeepSeek Harness", init: /chorus agents add --agents dsh/ },
+      { tab: "OpenCode", init: /chorus agents add --agents opencode/ },
+    ];
+
+    for (const { tab, init } of initTabs) {
+      await user.click(screen.getByRole("tab", { name: tab }));
+      expect(
+        screen.getByText(/npm install -g @chorus-aidlc\/chorus@0\.17\.0/),
+      ).toBeTruthy();
+      expect(screen.getByText(init)).toBeTruthy();
+      expect(screen.queryByText(/npx @chorus-aidlc\/chorus agents add/)).toBeNull();
+    }
+  });
+
+  it("removes the manual default-agent step from Codex only", async () => {
+    const user = userEvent.setup();
+    render(<AgentInstallGuide apiKey={null} />);
+
+    const PROFILE_TITLE = "Step 3 (optional): Set the default agent for the Chorus CLI";
+
+    await user.click(screen.getByRole("tab", { name: "Codex" }));
+    expect(screen.queryByText(PROFILE_TITLE)).toBeNull();
+    expect(screen.queryByText(/export CHORUS_AGENT_PROFILE="<agent-uuid>"/)).toBeNull();
+
+    for (const tab of ["Kiro", "OpenCode"]) {
+      await user.click(screen.getByRole("tab", { name: tab }));
+      expect(screen.getByText(PROFILE_TITLE)).toBeTruthy();
+      expect(screen.getByText(/export CHORUS_AGENT_PROFILE="<agent-uuid>"/)).toBeTruthy();
+    }
   });
 
   it("uses the API-key placeholder when no live key is available", async () => {

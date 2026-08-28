@@ -28,6 +28,7 @@ function fakeService(over = {}) {
     uninstallService: vi.fn(() => ({ platform: "linux", removed: true, unitPath: "/u", steps: ["removed /u"] })),
     systemctlUser: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
     journalctlUser: vi.fn(() => ({ status: 0, stdout: "journal-body", stderr: "" })),
+    launchctl: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
     resolveServicePaths: vi.fn(() => ({ nodePath: "/node", scriptPath: "/x/chorus.mjs", path: "/bin" })),
     // The install pre-config phase (credential preflight + cwd wizard). Default:
     // both succeed offline so the install dispatch tests never touch real
@@ -239,6 +240,108 @@ describe("runDaemon — supervisor (systemd) delegation", () => {
   });
 });
 
+describe("runDaemon — supervisor (launchd) delegation", () => {
+  // On macOS with a loaded LaunchAgent, the control verbs route to launchctl and
+  // ~/.chorus/daemon.log instead of the pidfile.
+  const loaded = (over = {}) => fakeService({
+    detectSupervisor: vi.fn(() => ({ kind: "launchd", installed: true, active: true, label: "com.chorus.daemon", plistPath: "/p.plist" })),
+    ...over,
+  });
+
+  it("status delegates to launchctl list and never touches the pidfile", async () => {
+    const logs = [];
+    const service = loaded();
+    service.launchctl = vi.fn(() => ({ status: 0, stdout: "{ \"PID\" = 123; };", stderr: "" }));
+    const lifecycle = fakeLifecycle();
+    const code = await runDaemon(
+      { action: "status" },
+      { lifecycle, service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(logs.join("")).toMatch(/managed by launchd/);
+    expect(service.launchctl).toHaveBeenCalledWith(["list", "com.chorus.daemon"]);
+    expect(lifecycle.isRunning).not.toHaveBeenCalled();
+  });
+
+  it("status returns 1 when the agent is installed but NOT loaded", async () => {
+    const service = fakeService({
+      detectSupervisor: () => ({ kind: "launchd", installed: true, active: false, label: "com.chorus.daemon", plistPath: "/p.plist" }),
+    });
+    const logs = [];
+    const code = await runDaemon(
+      { action: "status" },
+      { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(1);
+    expect(logs.join("")).toMatch(/NOT loaded/);
+  });
+
+  it("stop delegates to launchctl unload and does not signal the pidfile", async () => {
+    const service = loaded();
+    const lifecycle = fakeLifecycle();
+    const logs = [];
+    const code = await runDaemon(
+      { action: "stop" },
+      { lifecycle, service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(service.launchctl).toHaveBeenCalledWith(["unload", "/p.plist"]);
+    expect(lifecycle.stopDaemon).not.toHaveBeenCalled();
+    expect(logs.join("")).toMatch(/stopped the daemon service/);
+    expect(logs.join("")).toMatch(/load again at next login/);
+  });
+
+  it("restart delegates to launchctl unload then load and does not re-detach", async () => {
+    const service = loaded();
+    const lifecycle = fakeLifecycle();
+    const code = await runDaemon(
+      { action: "restart" },
+      { lifecycle, service, log: () => {}, errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(service.launchctl).toHaveBeenNthCalledWith(1, ["unload", "/p.plist"]);
+    expect(service.launchctl).toHaveBeenNthCalledWith(2, ["load", "/p.plist"]);
+    expect(lifecycle.startBackground).not.toHaveBeenCalled();
+  });
+
+  it("logs reads ~/.chorus/daemon.log via the log reader (launchd routes stdout there)", async () => {
+    const service = loaded();
+    const out = [];
+    const code = await runDaemon(
+      { action: "logs" },
+      { lifecycle: fakeLifecycle(), service, log: (m) => out.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(out.join("")).toContain("log-body");
+    expect(service.journalctlUser).not.toHaveBeenCalled();
+  });
+
+  it("a stop failure under launchd surfaces the error and returns 1", async () => {
+    const service = loaded();
+    service.launchctl = vi.fn(() => ({ status: 1, stdout: "", stderr: "Unload failed" }));
+    const errs = [];
+    const code = await runDaemon(
+      { action: "stop" },
+      { lifecycle: fakeLifecycle(), service, log: () => {}, errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(1);
+    expect(errs.join("")).toMatch(/failed to stop the service/i);
+  });
+
+  it("no launchd agent installed: status falls back to the pidfile path", async () => {
+    // detectSupervisor kind:none (default) → the pidfile probe is used, unchanged.
+    const lifecycle = fakeLifecycle({ isRunning: vi.fn(() => ({ running: true, pid: 55, stale: false })) });
+    const logs = [];
+    const code = await runDaemon(
+      { action: "status" },
+      { lifecycle, service: fakeService(), log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(logs.join("")).toMatch(/running \(pid 55\)/);
+    expect(lifecycle.isRunning).toHaveBeenCalled();
+  });
+});
+
 describe("runDaemon — install / uninstall", () => {
   it("install runs the credential + cwd + agent config phase, passes --chorus-only into the spec (NOT --agent), and reports success", async () => {
     const service = fakeService();
@@ -329,9 +432,9 @@ describe("runDaemon — install / uninstall", () => {
     expect(errs.join("")).toMatch(/install failed: daemon-reload failed/);
   });
 
-  it("install on macOS prints the template + steps and exits 0 without failing", async () => {
+  it("install on macOS reports a real launchd install success (exit 0)", async () => {
     const service = fakeService({
-      installService: () => ({ platform: "darwin", installed: false, unitPath: "/p.plist", unitText: "<plist/>", steps: ["Save the plist below to /p.plist"] }),
+      installService: () => ({ platform: "darwin", installed: true, unitPath: "/p.plist", unitText: "<plist/>", steps: ["wrote /p.plist", "launchctl load -w /p.plist"] }),
     });
     const logs = [];
     const code = await runDaemon(
@@ -339,8 +442,37 @@ describe("runDaemon — install / uninstall", () => {
       { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
     );
     expect(code).toBe(0);
-    expect(logs.join("\n")).toMatch(/Linux-only/);
-    expect(logs.join("\n")).toContain("<plist/>");
+    expect(logs.join("\n")).toMatch(/installed and started the daemon service/);
+    expect(logs.join("\n")).toContain("launchctl load -w /p.plist");
+    // launchd needs no lingering — the Linux-only linger hint must not appear
+    expect(logs.join("\n")).not.toMatch(/enable-linger/);
+  });
+
+  it("install surfaces a macOS launchd failure as exit 1", async () => {
+    const service = fakeService({
+      installService: () => ({ platform: "darwin", installed: false, unitPath: "/p.plist", unitText: "<plist/>", steps: ["wrote /p.plist"], error: "launchctl load -w failed: Load failed: 5" }),
+    });
+    const errs = [];
+    const code = await runDaemon(
+      { action: "install" },
+      { lifecycle: fakeLifecycle(), service, log: () => {}, errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(1);
+    expect(errs.join("")).toMatch(/install failed: launchctl load -w failed/);
+  });
+
+  it("install on Windows/other prints the template + steps and exits 0", async () => {
+    const service = fakeService({
+      installService: () => ({ platform: "other", installed: false, unitText: "node chorus.mjs daemon", steps: ["Automatic service install is only supported on Linux (systemd)."] }),
+    });
+    const logs = [];
+    const code = await runDaemon(
+      { action: "install" },
+      { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(logs.join("\n")).toMatch(/not supported on this platform/);
+    expect(logs.join("\n")).toContain("node chorus.mjs daemon");
   });
 
   it("uninstall reports removal on Linux; 'nothing to remove' when absent", async () => {

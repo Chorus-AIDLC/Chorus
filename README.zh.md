@@ -37,7 +37,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 **[v0.15.0](https://chorus-ai.dev/zh/blog/chorus-v0.15.0-release/)** — 项目级 Agent 工作目录：每位用户可以为项目中的每个 Agent 绑定主机和 cwd，只浏览 daemon 允许的目录，并让任务分配、唤醒、恢复和后续对话使用同一个执行位置，且不迁移进行中的会话。Codex 现在会单独保存可恢复的后端 thread ID，并移除不再需要的 Chorus session 管理步骤。
 
-**[v0.14.1](https://chorus-ai.dev/zh/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI 成为第四种接入方式（Kiro CLI v2）：一条命令的 `install-kiro.sh` 插件，以及 `--agent kiro` 的 daemon 后端，另有若干 daemon 修复。
+**[v0.14.1](https://chorus-ai.dev/zh/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI 成为第四种接入方式（Kiro CLI v2）：通过 `chorus agents add` 一条命令安装的 Kiro 插件，以及 `--agent kiro` 的 daemon 后端，另有若干 daemon 修复。
 
 **[v0.14.0](https://chorus-ai.dev/zh/blog/chorus-v0.14.0-release/)** — 全应用深色模式（浅色 / 深色 / 跟随系统）。参考资料可挂到任意想法、提案或任务上，行内可读，也能通过 MCP 读写。新增韩语和日语（韩语由社区贡献）。用于归类的**主题**想法，以及 daemon 的「开始开发」/「Yolo」按钮、对话式建想法、崩溃恢复与 `chorus daemon install`。
 
@@ -50,7 +50,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 两条命令即可，无需数据库、无需 Docker、无需配置文件。
 
 ```bash
-npm install -g @chorus-aidlc/chorus
+npm install -g @chorus-aidlc/chorus@0.17.0
 chorus
 ```
 

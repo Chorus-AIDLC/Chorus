@@ -52,7 +52,7 @@ const { lang } = Astro.props;
       </div>
       <div class="int-code">
         <span class="comment">{t(lang, 'integration.codex.installComment')}</span><br>
-        <span class="cmd">curl</span> <span class="flag">-fsSL</span> &lt;CHORUS_URL&gt;/install-codex.sh | <span class="cmd">bash</span>
+        <span class="cmd">chorus</span> <span class="flag">agents add</span> --agents codex
       </div>
     </div>
     <div class="int-card">

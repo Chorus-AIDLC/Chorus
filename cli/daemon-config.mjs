@@ -306,13 +306,19 @@ function positiveInt(value) {
  * @typedef {Object} AgentConfig  One fully-resolved agent runtime config.
  * @property {string} url                       Chorus server URL for this agent.
  * @property {string} apiKey                    This agent's `cho_` API key.
- * @property {string} agentType                 Backend: claude-code | codex | kiro | dsh.
+ * @property {string} agentType                 Backend: claude-code | codex | kiro | dsh | offline.
+ * @property {boolean} [daemonWake]             Wake opt-in for a wakeable backend; only
+ *                                              `false` disables (absent/true ⇒ woken).
  * @property {Array<string|undefined>} cwds     Served paths (`undefined` ⇒ process cwd).
  * @property {"yolo"|"chorus"} permissionMode   Woken-agent permission posture.
  * @property {number} maxConcurrency            This agent's wake-queue cap.
  * @property {number} sigintTimeoutMs           Interrupt escalation window (ms).
  * @property {string[]} browseRoots             Directory-discovery allowlist.
  * @property {string} label                     Diagnostic label ("agent" or "agents[i]").
+ * @property {string} [agentUuid]               This agent's Chorus UUID — exported to a
+ *                                              woken session as CHORUS_AGENT_PROFILE so its
+ *                                              hooks/skills resolve the key from daemon.json.
+ * @property {string} [agentName]               This agent's Chorus display name (profile alias).
  */
 
 /**
@@ -365,6 +371,8 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
         sigintTimeoutMs: resolveSigintTimeoutMs(flags, deps),
         browseRoots: resolveBrowseRoots(flags, deps),
         label: "agent",
+        agentUuid: nonEmptyStr(file?.agentUuid),
+        agentName: nonEmptyStr(file?.agentName),
       },
     ];
   }
@@ -433,6 +441,23 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
     const browseRoots =
       entry.browseRoots !== undefined ? cleanCwdList(entry.browseRoots, home) : defaultBrowseRoots;
 
-    return { url, apiKey, agentType, cwds, permissionMode, maxConcurrency, sigintTimeoutMs, browseRoots, label };
+    // daemonWake: per-agent opt-in for daemon waking (pass-through boolean). Only
+    // `=== false` disables waking; absent (undefined) or true ⇒ woken, so agent
+    // entries written before this field existed keep being woken. Orthogonal to
+    // agentType (offline is never woken regardless).
+    return {
+      url,
+      apiKey,
+      agentType,
+      cwds,
+      permissionMode,
+      maxConcurrency,
+      sigintTimeoutMs,
+      browseRoots,
+      daemonWake: entry.daemonWake,
+      label,
+      agentUuid: nonEmptyStr(entry.agentUuid),
+      agentName: nonEmptyStr(entry.agentName),
+    };
   });
 }

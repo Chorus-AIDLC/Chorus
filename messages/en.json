@@ -1166,26 +1166,27 @@
         "openClaw": "OpenClaw",
         "other": "Other Agents"
       },
+      "profileStep": {
+        "title": "Step 3 (optional): Set the default agent for the Chorus CLI",
+        "desc": "chorus agents add prints an export CHORUS_AGENT_PROFILE line for each configured agent. Add one to your shell to set which agent the chorus CLI acts as by default; its key is resolved from ~/.chorus/daemon.json."
+      },
       "claudeCode": {
         "step1Title": "Step 1: Set environment variables",
-        "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc for persistence.",
-        "step2Title": "Step 2: Open Claude Code and run"
+        "step1Tip": "No need to persist these — chorus agents add (Step 2) picks them up.",
+        "step2Title": "Step 2: Run chorus agents add",
+        "step2Tip": "chorus agents add installs the Chorus plugin into Claude Code and writes CHORUS_URL, CHORUS_API_KEY and CHORUS_AGENT_PROFILE into ~/.claude/settings.json — so interactive Claude Code needs no manual export."
       },
       "codex": {
         "step1Title": "Step 1: Set environment variables",
-        "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc for persistence.",
-        "step2Title": "Step 2: Run the Codex installer",
-        "step2Tip": "The script registers the plugin marketplace and writes the MCP server entry into ~/.codex/config.toml.",
-        "step3Title": "Step 3: Verify connection",
-        "step3Desc": "Open Codex and ask it to check in to Chorus — e.g. type \"check in to chorus\"."
+        "step1Tip": "No need to persist these — chorus agents add (Step 2) writes them to ~/.codex/.env.",
+        "step2Title": "Step 2: Run chorus agents add",
+        "step2Tip": "chorus agents add installs the Chorus plugin and writes CHORUS_URL, CHORUS_API_KEY and CHORUS_AGENT_PROFILE to ~/.codex/.env — so interactive Codex needs no manual export."
       },
       "kiro": {
         "step1Title": "Step 1: Set environment variables",
         "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so Kiro CLI can read them on startup.",
-        "step2Title": "Step 2: Run the Kiro installer",
-        "step2Tip": "By default this installs globally into ~/.kiro/ so Chorus is available in every directory. For a project-local install into the current directory's .kiro/ instead, append the flag: bash -s -- --workspace.",
-        "step3Title": "Step 3: Verify connection",
-        "step3Desc": "Open Kiro CLI and activate the /chorus-idea skill, or start with the Chorus agent directly: kiro-cli --agent chorus."
+        "step2Title": "Step 2: Run chorus agents add",
+        "step2Tip": "chorus agents add installs the Chorus skills, agents, steering, and the chorus MCP server into ~/.kiro globally, so Chorus is available in every directory. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). To install into a different directory, set KIRO_DIR before running. The first command installs the Chorus CLI globally (pinned to version 0.17.0)."
       },
       "dsh": {
         "step1Title": "Step 1: Set environment variables",
@@ -1193,17 +1194,15 @@
         "step2Title": "Step 2: Add the Chorus bundle",
         "step2Tip": "Replace {name} with the dsh profile you want to use. The -w flag is required because a dsh profile is a pnpm workspace root. dsh owns the profile package state and satisfies the bundle's peer plugins.",
         "step3Title": "Step 3: Store credentials",
-        "step3Tip": "Writes CHORUS_URL and CHORUS_API_KEY to $DSH_HOME/.env (mode 0600). dsh scrubs credential-shaped variables from tool subprocesses, so the document-mirror wrapper reads them from this file, not the shell.",
+        "step3Tip": "chorus agents add validates your key and seeds CHORUS_URL and CHORUS_API_KEY into ~/.chorus/daemon.json (mode 0600), adding the Chorus bundle to the profile if needed. Pass --dsh-profile {name} to match the profile from Step 2; it reads the credentials from your environment (Step 1). The first command installs the Chorus CLI globally (pinned to version 0.17.0).",
         "step4Title": "Step 4: Launch and verify",
         "step4Desc": "Run dsh --profile {name}, then ask it to \"check in to chorus\"."
       },
       "opencode": {
         "step1Title": "Step 1: Set environment variables",
         "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so the plugin can read them on OpenCode startup.",
-        "step2Title": "Step 2: Enable the Chorus plugin",
-        "step2Tip": "The installer idempotently adds \"opencode-chorus\" to the \"plugin\" array in ~/.config/opencode/opencode.json. It does not touch your shell rc. OpenCode installs the plugin via Bun on first launch.",
-        "step3Title": "Step 3: Verify connection",
-        "step3Desc": "Open OpenCode and ask the agent to \"check in to chorus\". This step auto-advances when the connection succeeds.",
+        "step2Title": "Step 2: Run chorus agents add",
+        "step2Tip": "chorus agents add idempotently adds \"opencode-chorus\" to the \"plugin\" array in ~/.config/opencode/opencode.json. It does not touch your shell rc; OpenCode installs the plugin via Bun on first launch. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). The first command installs the Chorus CLI globally (pinned to version 0.17.0).",
         "troubleshootingTitle": "Troubleshooting",
         "issueCache": {
           "title": "Plugin not loaded",
@@ -1223,8 +1222,6 @@
         "step2Title": "Step 2: Edit ~/.openclaw/openclaw.json",
         "step3Title": "Step 3: Restart OpenClaw gateway",
         "step3Desc": "Restart the OpenClaw gateway process to pick up the new configuration.",
-        "step4Title": "Step 4: Verify connection",
-        "step4Desc": "In the OpenClaw chat window, type the following command:",
         "troubleshootingTitle": "Troubleshooting",
         "troubleshootingError": "\"Wake agent failed: HTTP 405\"",
         "troubleshootingFix": "This error means hooks are not enabled. Set \"hooks.enabled\" to true in your openclaw.json configuration and restart the gateway."

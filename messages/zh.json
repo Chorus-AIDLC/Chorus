@@ -1166,26 +1166,27 @@
         "openClaw": "OpenClaw",
         "other": "其他智能体"
       },
+      "profileStep": {
+        "title": "第 3 步（可选）：设置 Chorus CLI 的默认 Agent",
+        "desc": "chorus agents add 会为每个配置的 agent 打印一行 export CHORUS_AGENT_PROFILE。把其中一行加入 shell，即可设置 chorus CLI 默认以哪个 agent 身份运行；密钥会从 ~/.chorus/daemon.json 解析。"
+      },
       "claudeCode": {
         "step1Title": "第 1 步：设置环境变量",
-        "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc 以实现持久化。",
-        "step2Title": "第 2 步：打开 Claude Code 并运行"
+        "step1Tip": "无需持久化——第 2 步的 chorus agents add 会读取它们。",
+        "step2Title": "第 2 步：运行 chorus agents add",
+        "step2Tip": "chorus agents add 会把 Chorus 插件装进 Claude Code，并把 CHORUS_URL、CHORUS_API_KEY、CHORUS_AGENT_PROFILE 写入 ~/.claude/settings.json——因此交互式 Claude Code 无需手动 export。"
       },
       "codex": {
         "step1Title": "第 1 步：设置环境变量",
-        "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc 以实现持久化。",
-        "step2Title": "第 2 步：运行 Codex 安装脚本",
-        "step2Tip": "脚本会自动注册 plugin marketplace 并写入 ~/.codex/config.toml 的 MCP 服务器配置。",
-        "step3Title": "第 3 步：验证连接",
-        "step3Desc": "打开 Codex，让它 check in 到 Chorus，例如输入 \"check in to chorus\"。"
+        "step1Tip": "无需持久化——第 2 步的 chorus agents add 会将它们写入 ~/.codex/.env。",
+        "step2Title": "第 2 步：运行 chorus agents add",
+        "step2Tip": "chorus agents add 会安装 Chorus 插件，并将 CHORUS_URL、CHORUS_API_KEY、CHORUS_AGENT_PROFILE 写入 ~/.codex/.env——交互式 Codex 无需手动 export。"
       },
       "kiro": {
         "step1Title": "第 1 步：设置环境变量",
         "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc，Kiro CLI 会在启动时读取这两个变量。",
-        "step2Title": "第 2 步：运行 Kiro 安装脚本",
-        "step2Tip": "默认全局安装到 ~/.kiro/，Chorus 在任意目录下均可用。若只想安装到当前项目目录下的 .kiro/，请追加参数：bash -s -- --workspace。",
-        "step3Title": "第 3 步：验证连接",
-        "step3Desc": "打开 Kiro CLI 并激活 /chorus-idea 技能，或直接以 Chorus agent 启动：kiro-cli --agent chorus。"
+        "step2Title": "第 2 步：运行 chorus agents add",
+        "step2Tip": "chorus agents add 会把 Chorus 的 skills、agents、steering 以及 chorus MCP 服务器全局安装到 ~/.kiro，使 Chorus 在任意目录下均可用。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。若想安装到其他目录，运行前先设置 KIRO_DIR。 上面第一条命令会全局安装 Chorus CLI（锁定 0.17.0 版本）。"
       },
       "dsh": {
         "step1Title": "第 1 步：设置环境变量",
@@ -1193,17 +1194,15 @@
         "step2Title": "第 2 步：添加 Chorus bundle",
         "step2Tip": "将 {name} 替换为要使用的 dsh profile。必须带 -w，因为 dsh 的 profile 是一个 pnpm workspace 根。profile 包状态由 dsh 管理，并由 dsh 满足 bundle 的 peer 插件。",
         "step3Title": "第 3 步：写入凭证",
-        "step3Tip": "把 CHORUS_URL 和 CHORUS_API_KEY 写入 $DSH_HOME/.env（权限 0600）。dsh 会把凭据形状的变量从工具子进程里擦掉，所以文档镜像 wrapper 从这个文件读取，而不是从 shell。",
+        "step3Tip": "chorus agents add 会校验你的 key，并把 CHORUS_URL 和 CHORUS_API_KEY 写入 ~/.chorus/daemon.json（权限 0600），如有需要还会把 Chorus bundle 加入该 profile。用 --dsh-profile {name} 指定与第 2 步一致的 profile；它会从环境变量（第 1 步）读取凭证。 上面第一条命令会全局安装 Chorus CLI（锁定 0.17.0 版本）。",
         "step4Title": "第 4 步：启动并验证",
         "step4Desc": "运行 dsh --profile {name}，然后让它执行 \"check in to chorus\"。"
       },
       "opencode": {
         "step1Title": "第 1 步：设置环境变量",
         "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc，插件会在 OpenCode 启动时读取这两个变量。",
-        "step2Title": "第 2 步：启用 Chorus 插件",
-        "step2Tip": "安装脚本会幂等地把 \"opencode-chorus\" 加入 ~/.config/opencode/opencode.json 的 \"plugin\" 数组，不会修改你的 shell rc。OpenCode 首次启动时 Bun 会自动安装该插件。",
-        "step3Title": "第 3 步：验证连接",
-        "step3Desc": "打开 OpenCode，告诉 agent \"check in to chorus\"。连接成功后本步骤会自动跳转。",
+        "step2Title": "第 2 步：运行 chorus agents add",
+        "step2Tip": "chorus agents add 会幂等地把 \"opencode-chorus\" 加入 ~/.config/opencode/opencode.json 的 \"plugin\" 数组，不会修改你的 shell rc；OpenCode 首次启动时 Bun 会自动安装该插件。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。 上面第一条命令会全局安装 Chorus CLI（锁定 0.17.0 版本）。",
         "troubleshootingTitle": "故障排除",
         "issueCache": {
           "title": "插件未加载",
@@ -1223,8 +1222,6 @@
         "step2Title": "第 2 步：编辑 ~/.openclaw/openclaw.json",
         "step3Title": "第 3 步：重启 OpenClaw 网关",
         "step3Desc": "重启 OpenClaw 网关进程以加载新的配置。",
-        "step4Title": "第 4 步：验证连接",
-        "step4Desc": "在 OpenClaw 聊天窗口中，输入以下命令：",
         "troubleshootingTitle": "故障排除",
         "troubleshootingError": "\"Wake agent failed: HTTP 405\"",
         "troubleshootingFix": "此错误表示 hooks 未启用。请在 openclaw.json 配置中将 \"hooks.enabled\" 设置为 true，然后重启网关。"

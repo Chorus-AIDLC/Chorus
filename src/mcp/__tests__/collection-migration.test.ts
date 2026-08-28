@@ -84,15 +84,12 @@ describe("MCP collection migration", () => {
     ["chorus_checkin", () => {
       services.checkin.buildCheckinResponse.mockResolvedValue({
         agent: { uuid: "agent-1", name: "Agent" },
-        ideaTracker: {
-          project: {
-            name: "Project",
-            ideas: Array.from({ length: 100 }, (_, index) => ({
-              uuid: `idea-${index}`,
-              title: "界".repeat(256),
-            })),
-          },
-        },
+        activeProjects: Object.fromEntries(
+          Array.from({ length: 100 }, (_, index) => [
+            `project-${index}`,
+            { name: "界".repeat(64), activeIdeaCount: index },
+          ]),
+        ),
         notifications: [],
       });
     }],

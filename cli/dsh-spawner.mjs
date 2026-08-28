@@ -187,6 +187,13 @@ export class DshSpawner {
     };
     if (this.creds?.url) childEnv.CHORUS_URL = this.creds.url;
     if (this.creds?.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
+    // Identity profile — the dsh doc-mirror wrapper passes this to `chorus mcp
+    // --agent` (resolving the key from ~/.chorus/daemon.json). dsh scrubs
+    // credential-shaped env from tool subprocesses; the profile is not a secret,
+    // and the wrapper also reads it from $DSH_HOME/.env, so url/apiKey remain the
+    // reliable fallback when it doesn't survive.
+    if (this.creds?.agentUuid || this.creds?.agentName)
+      childEnv.CHORUS_AGENT_PROFILE = this.creds.agentUuid || this.creds.agentName;
 
     const { command, argv } = resolveDshSpawnCommand(dshPath, this.platform, childEnv);
     let child;
