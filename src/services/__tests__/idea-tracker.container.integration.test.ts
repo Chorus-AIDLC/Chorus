@@ -100,6 +100,65 @@ function seed(childCount: number, childDone: number) {
   mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT, name: "A" }]);
 }
 
+function seedCompletedNestedContainer() {
+  const root = {
+    uuid: CONTAINER,
+    title: "Root theme",
+    status: "open",
+    elaborationStatus: null,
+    parentUuid: null,
+    isContainer: true,
+    projectUuid: PROJECT,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const nested = {
+    uuid: "idea-nested",
+    title: "Nested theme",
+    status: "open",
+    elaborationStatus: null,
+    parentUuid: CONTAINER,
+    isContainer: true,
+    projectUuid: PROJECT,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const leaf = {
+    uuid: "idea-leaf",
+    title: "Leaf",
+    status: "elaborated",
+    elaborationStatus: "resolved",
+    parentUuid: nested.uuid,
+    isContainer: false,
+    projectUuid: PROJECT,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  mockPrisma.idea.findMany.mockImplementation(async (args: { where?: { OR?: unknown } }) => {
+    if (args?.where?.OR) return [root];
+    return [root, nested, leaf];
+  });
+  mockPrisma.idea.groupBy.mockResolvedValue([
+    { parentUuid: CONTAINER, _count: { _all: 1 } },
+    { parentUuid: nested.uuid, _count: { _all: 1 } },
+  ]);
+  mockPrisma.proposal.findMany.mockResolvedValue([
+    {
+      uuid: "leaf-proposal",
+      projectUuid: PROJECT,
+      status: "approved",
+      inputType: "idea",
+      inputUuids: [leaf.uuid],
+      createdAt: now,
+    },
+  ]);
+  mockPrisma.task.findMany.mockResolvedValue([
+    { proposalUuid: "leaf-proposal", status: "done" },
+  ]);
+  mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT, name: "A" }]);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.agentInstance.findMany.mockResolvedValue([]);
@@ -111,6 +170,12 @@ beforeEach(() => {
 describe("buildIdeaTracker container rollup (real getIdeasWithDerivedStatus)", () => {
   it("drops a container whose children are ALL done", async () => {
     seed(3, 3);
+    const tracker = await buildIdeaTracker(agentAuth);
+    expect(tracker).toEqual({});
+  });
+
+  it("drops a root container when its completed direct child is itself a container", async () => {
+    seedCompletedNestedContainer();
     const tracker = await buildIdeaTracker(agentAuth);
     expect(tracker).toEqual({});
   });

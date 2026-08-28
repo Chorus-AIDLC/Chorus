@@ -1617,25 +1617,99 @@ export async function getIdeasWithDerivedStatus(
     };
   });
 
-  // Pass 2: a THEME (container) with ≥1 child aggregates its children — its own
-  // status would otherwise be stuck at what elaboration produced, hiding real
-  // progress. Group pass-1 derived statuses by parent (direct children only),
-  // then roll each theme up + attach childProgress for the x/y ring.
-  const childDerivedByParent = new Map<string, DerivedIdeaStatus[]>();
+  // Pass 2: resolve container statuses from leaves to roots. Keep the immutable
+  // pass-1 values separate so malformed cycles have a deterministic fallback.
+  const byUuid = new Map(base.map((item) => [item.uuid, item]));
+  const baseStatusByUuid = new Map(base.map((item) => [item.uuid, item.derivedStatus]));
+  const baseBadgeByUuid = new Map(base.map((item) => [item.uuid, item.badgeHint]));
+  const childUuidsByParent = new Map<string, string[]>();
   for (const item of base) {
-    if (!item.parentUuid) continue;
-    const arr = childDerivedByParent.get(item.parentUuid) ?? [];
-    arr.push(item.derivedStatus);
-    childDerivedByParent.set(item.parentUuid, arr);
+    if (!item.parentUuid || !byUuid.has(item.parentUuid)) continue;
+    const arr = childUuidsByParent.get(item.parentUuid) ?? [];
+    arr.push(item.uuid);
+    childUuidsByParent.set(item.parentUuid, arr);
   }
+
+  // Each Idea has at most one parent, so iterative parent-chain walks identify
+  // every strongly connected component without recursion. Marking the complete
+  // component (rather than whichever DFS back-edge is encountered first) makes
+  // the fallback independent of database result order.
+  const cyclicUuids = new Set<string>();
+  const scannedUuids = new Set<string>();
   for (const item of base) {
-    if (!item.isContainer) continue;
-    const childStatuses = childDerivedByParent.get(item.uuid) ?? [];
-    if (childStatuses.length === 0) continue; // childless theme keeps its own status
+    if (scannedUuids.has(item.uuid)) continue;
+    const path: string[] = [];
+    const pathIndex = new Map<string, number>();
+    let currentUuid: string | null = item.uuid;
+
+    while (currentUuid && byUuid.has(currentUuid) && !scannedUuids.has(currentUuid)) {
+      const cycleStart = pathIndex.get(currentUuid);
+      if (cycleStart !== undefined) {
+        for (const cycleUuid of path.slice(cycleStart)) cyclicUuids.add(cycleUuid);
+        break;
+      }
+      pathIndex.set(currentUuid, path.length);
+      path.push(currentUuid);
+      currentUuid = byUuid.get(currentUuid)?.parentUuid ?? null;
+    }
+    for (const pathUuid of path) scannedUuids.add(pathUuid);
+  }
+
+  // Non-containers, childless containers, and every cycle member already have
+  // their final value. Resolve the remaining acyclic containers only after all
+  // of their direct children are final, propagating each completion upward once.
+  const resolvedByUuid = new Map<string, DerivedStatusResult>();
+  for (const item of base) {
+    const childUuids = childUuidsByParent.get(item.uuid) ?? [];
+    if (!item.isContainer || childUuids.length === 0 || cyclicUuids.has(item.uuid)) {
+      resolvedByUuid.set(item.uuid, {
+        derivedStatus: baseStatusByUuid.get(item.uuid)!,
+        badgeHint: baseBadgeByUuid.get(item.uuid)!,
+      });
+    }
+  }
+
+  const pendingChildren = new Map<string, number>();
+  const ready: string[] = [];
+  for (const item of base) {
+    if (resolvedByUuid.has(item.uuid)) continue;
+    const unresolvedCount = (childUuidsByParent.get(item.uuid) ?? [])
+      .filter((childUuid) => !resolvedByUuid.has(childUuid)).length;
+    pendingChildren.set(item.uuid, unresolvedCount);
+    if (unresolvedCount === 0) ready.push(item.uuid);
+  }
+
+  for (let cursor = 0; cursor < ready.length; cursor += 1) {
+    const uuid = ready[cursor];
+    const childStatuses = (childUuidsByParent.get(uuid) ?? []).map(
+      (childUuid) => resolvedByUuid.get(childUuid)!.derivedStatus,
+    );
     const rolled = rollupThemeDerivedStatus(childStatuses);
-    item.derivedStatus = rolled.derivedStatus;
-    item.badgeHint = rolled.badgeHint;
-    item.childProgress = rolled.childProgress;
+    resolvedByUuid.set(uuid, rolled);
+
+    const parentUuid = byUuid.get(uuid)?.parentUuid;
+    if (!parentUuid || !pendingChildren.has(parentUuid)) continue;
+    const remaining = pendingChildren.get(parentUuid)! - 1;
+    pendingChildren.set(parentUuid, remaining);
+    if (remaining === 0) ready.push(parentUuid);
+  }
+
+  for (const item of base) {
+    const resolved = resolvedByUuid.get(item.uuid);
+    if (resolved) {
+      item.derivedStatus = resolved.derivedStatus;
+      item.badgeHint = resolved.badgeHint;
+    }
+
+    const childUuids = childUuidsByParent.get(item.uuid) ?? [];
+    if (!item.isContainer || childUuids.length === 0) continue;
+    const childStatuses = childUuids.map(
+      (childUuid) =>
+        resolvedByUuid.get(childUuid)?.derivedStatus ?? baseStatusByUuid.get(childUuid)!,
+    );
+    // Cycle members retain their own base status/badge, but their progress ring
+    // still reports deterministic direct-child completion.
+    item.childProgress = rollupThemeDerivedStatus(childStatuses).childProgress;
   }
 
   return base;
