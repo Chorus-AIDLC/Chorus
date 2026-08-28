@@ -113,7 +113,8 @@ OPTIONS
                            auto-start is unsupported (e.g. Windows). In an
                            interactive TTY run the daemon-setup step prompts instead
                            (default: No).
-  -y, --yes                Skip confirmation prompts (implied when non-TTY).
+  -y, --yes                Accept confirmation prompts, including refreshing
+                           installed plugins to latest (implied when non-TTY).
   -h, --help               Show this help message.
 
 NON-INTERACTIVE
@@ -121,6 +122,8 @@ NON-INTERACTIVE
   will not guess which agents to configure and aborts otherwise. The daemon boot service is
   installed non-interactively ONLY when you pass --daemon-autostart; otherwise the
   daemon config is written and you start it yourself with 'chorus daemon'.
+  With an explicit selection, --yes and non-TTY runs refresh selected installed
+  plugins to their latest available versions without prompting.
 
 SCOPE
   This installs the plugin SURFACE, seeds credentials into the daemon config, and

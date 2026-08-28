@@ -112,6 +112,97 @@ describe("runInit — orchestration", () => {
     expect(code).toBe(1);
   });
 
+  it("asks once for installed-plugin refresh and passes a declined decision to every step", async () => {
+    const lines = [];
+    const questions = [];
+    const io = {
+      log: (m) => lines.push(String(m)),
+      isTTY: true,
+      ask: async (q) => {
+        questions.push(q);
+        return "n";
+      },
+    };
+    const seen = [];
+    const adapters = new Map([
+      ["claude", { id: "claude", readInstallState: () => ({ supported: true, pluginInstalled: true }) }],
+      ["codex", { id: "codex", readInstallState: () => ({ supported: true, pluginInstalled: true }) }],
+    ]);
+    const code = await runInit([], {
+      io,
+      detectAgents: () => DETECTIONS,
+      resolveSelection: async () => ({ selectedIds: ["claude", "codex"] }),
+      orderedSteps: () => [{
+        id: "plugin",
+        order: 1,
+        scope: STEP_SCOPES.PER_AGENT,
+        run: (ctx) => {
+          seen.push([ctx.agentId, ctx.flags.updateInstalled]);
+          return { stepId: "plugin", agentId: ctx.agentId, action: OUTCOME_ACTIONS.SKIPPED, detail: "repair only" };
+        },
+      }],
+      getAdapter: (id) => adapters.get(id),
+    });
+    expect(code).toBe(0);
+    expect(questions).toHaveLength(1);
+    expect(questions[0]).toMatch(/latest/i);
+    expect(seen).toEqual([["claude", false], ["codex", false]]);
+  });
+
+  it.each([
+    { label: "--yes", argv: ["--yes"], isTTY: true },
+    { label: "non-TTY", argv: [], isTTY: false },
+  ])("automatically accepts installed-plugin refresh for $label", async ({ argv, isTTY }) => {
+    const io = { ...capture(), isTTY, ask: async () => { throw new Error("must not prompt"); } };
+    let updateInstalled;
+    const code = await runInit(argv, {
+      io,
+      detectAgents: () => DETECTIONS,
+      resolveSelection: async () => ({ selectedIds: ["claude"] }),
+      orderedSteps: () => [{
+        id: "plugin",
+        order: 1,
+        scope: STEP_SCOPES.PER_AGENT,
+        run: (ctx) => {
+          updateInstalled = ctx.flags.updateInstalled;
+          return { stepId: "plugin", agentId: "claude", action: OUTCOME_ACTIONS.REPAIRED, detail: "updated" };
+        },
+      }],
+      getAdapter: () => ({
+        id: "claude",
+        readInstallState: () => ({ supported: true, pluginInstalled: true }),
+      }),
+    });
+    expect(code).toBe(0);
+    expect(updateInstalled).toBe(true);
+  });
+
+  it("does not prompt when only guided or not-installed adapters are selected", async () => {
+    const io = { ...capture(), isTTY: true, ask: async () => { throw new Error("must not prompt"); } };
+    let updateInstalled;
+    await runInit([], {
+      io,
+      detectAgents: () => DETECTIONS,
+      resolveSelection: async () => ({ selectedIds: ["claude", "codex"] }),
+      orderedSteps: () => [{
+        id: "noop",
+        order: 1,
+        scope: STEP_SCOPES.ONCE,
+        run: (ctx) => {
+          updateInstalled = ctx.flags.updateInstalled;
+          return { stepId: "noop", action: OUTCOME_ACTIONS.SKIPPED, detail: "none" };
+        },
+      }],
+      getAdapter: (id) => ({
+        id,
+        readInstallState: () => id === "claude"
+          ? { supported: false, pluginInstalled: true }
+          : { supported: true, pluginInstalled: false },
+      }),
+    });
+    expect(updateInstalled).toBe(false);
+  });
+
   it("a step that throws becomes a visible failed outcome, not a crash", async () => {
     const io = capture();
     const code = await runInit([], {

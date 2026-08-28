@@ -108,6 +108,8 @@ export const FAILURE_ACTIONS = Object.freeze([OUTCOME_ACTIONS.FAILED]);
  * @property {string} [agentId]     The current agent id (per-agent steps only).
  * @property {AgentAdapter} [adapter] The current agent's adapter (per-agent steps only).
  * @property {object} flags         Parsed init flags (see cli/init-args.mjs).
+ *   `flags.updateInstalled` is the orchestrator-resolved, invocation-wide
+ *   decision to refresh selected installed plugin payloads.
  * @property {{ log: (m: string) => void, ask: Function, isTTY: boolean }} io
  * @property {(path: string) => (string|null)} backup  Copy a file to <path>.chorus-bak
  *   once before overwrite; returns the backup path or null if the source is absent.

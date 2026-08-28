@@ -94,6 +94,18 @@ describe("installClaude (verified `claude plugin` CLI)", () => {
     expect(run.calls[0].args).toEqual(["plugin", "marketplace", "add", "https://github.com/Chorus-AIDLC/Chorus"]);
     expect(run.calls[1].args).toEqual(["plugin", "install", "chorus@chorus-plugins", "-y"]);
   });
+  it("updates an installed plugin to latest with the live-verified -y signature", () => {
+    const run = fakeRun();
+    const res = installClaude(ctxFor("claude", {
+      state: { pluginInstalled: true, version: "0.17.0" },
+      run,
+      flags: { updateInstalled: true },
+    }));
+    expect(res.action).toBe(REPAIRED);
+    expect(run.calls.map((c) => c.args)).toEqual([
+      ["plugin", "update", "chorus@chorus-plugins", "-y"],
+    ]);
+  });
   it("repairs (install only) when marketplace already registered", () => {
     const run = fakeRun();
     const res = installClaude(ctxFor("claude", { state: { marketplaceRegistered: true, pluginInstalled: false }, run }));
@@ -124,6 +136,41 @@ describe("installCodex (verified codex-cli 0.146.1)", () => {
     const res = installCodex(ctxFor("codex", { state: { pluginInstalled: true }, run }));
     expect(res.action).toBe(SKIPPED);
     expect(run.calls).toHaveLength(0);
+  });
+
+  it("backs up, upgrades the marketplace, reinstalls with --json, and normalizes MCP on refresh", () => {
+    const run = fakeRun();
+    const backups = [];
+    const mcpCalls = [];
+    const res = installCodex(ctxFor("codex", {
+      state: { marketplaceRegistered: true, pluginInstalled: true },
+      run,
+      backup: (p) => backups.push(p),
+      env: { HOME: "/home/u", CHORUS_URL: "https://c.example" },
+      flags: { updateInstalled: true },
+      writeCodexMcpServer: (a) => mcpCalls.push(a),
+    }));
+    expect(res.action).toBe(REPAIRED);
+    expect(backups).toEqual(["/home/u/.codex/config.toml"]);
+    expect(run.calls.map((c) => c.args)).toEqual([
+      ["plugin", "marketplace", "upgrade", "chorus-plugins"],
+      ["plugin", "add", "chorus@chorus-plugins", "--json"],
+    ]);
+    expect(mcpCalls).toHaveLength(1);
+  });
+
+  it("reports a marketplace-upgrade failure without attempting plugin add", () => {
+    const run = fakeRun((cmd, args) => args.includes("upgrade")
+      ? { ok: false, stderr: "snapshot failed" }
+      : { ok: true });
+    const res = installCodex(ctxFor("codex", {
+      state: { marketplaceRegistered: true, pluginInstalled: true },
+      run,
+      flags: { updateInstalled: true },
+    }));
+    expect(res.action).toBe(FAILED);
+    expect(res.detail).toContain("snapshot failed");
+    expect(run.calls).toHaveLength(1);
   });
 
   it("writes [mcp_servers.chorus] after plugin add when a Chorus URL is available", () => {
@@ -228,6 +275,20 @@ describe("installOpencode (verified opencode 1.14.33)", () => {
     const res = installOpencode(ctxFor("opencode", { state: { pluginInstalled: true }, run }));
     expect(res.action).toBe(SKIPPED);
   });
+  it("backs up and forces global replacement when refresh is accepted", () => {
+    const run = fakeRun();
+    const backups = [];
+    const res = installOpencode(ctxFor("opencode", {
+      state: { pluginInstalled: true },
+      run,
+      backup: (p) => backups.push(p),
+      env: { HOME: "/home/u" },
+      flags: { updateInstalled: true },
+    }));
+    expect(res.action).toBe(REPAIRED);
+    expect(backups).toEqual(["/home/u/.config/opencode/opencode.json"]);
+    expect(run.calls[0].args).toEqual(["plugin", "opencode-chorus", "-g", "--force"]);
+  });
 });
 
 describe("installDsh (verified docs/CONNECT_DSH.md — dsh 0.1.0-rc.7)", () => {
@@ -288,6 +349,21 @@ describe("installDsh (verified docs/CONNECT_DSH.md — dsh 0.1.0-rc.7)", () => {
     }));
     expect(res.action).toBe(SKIPPED);
     expect(run.calls).toHaveLength(0);
+  });
+
+  it("backs up the profile package and reruns the live-verified add -w command on refresh", async () => {
+    const run = fakeRun();
+    const backups = [];
+    const res = await installDsh(ctxFor("dsh", {
+      state: { pluginInstalled: true, packagePath: "/home/u/.dsh/profiles/work/package.json" },
+      run,
+      backup: (p) => backups.push(p),
+      binaryOnPath: () => true,
+      flags: { dshProfile: "work", updateInstalled: true },
+    }));
+    expect(res.action).toBe(REPAIRED);
+    expect(backups).toEqual(["/home/u/.dsh/profiles/work/package.json"]);
+    expect(run.calls[0].args).toEqual(CMD);
   });
 
   it("fails (never guesses) in a non-TTY run with no explicit profile", async () => {
@@ -395,6 +471,25 @@ describe("installOpenclaw (verified openclaw-plugin README lines 32-35 + package
     }));
     expect(res.action).toBe(SKIPPED);
     expect(run.calls).toHaveLength(0);
+  });
+
+  it("reinstalls and enables an installed plugin on accepted refresh after the host guard", () => {
+    const run = openclawRun("2099.1.1");
+    const backups = [];
+    const res = installOpenclaw(ctxFor("openclaw", {
+      state: { pluginInstalled: true, pluginEnabled: true },
+      run,
+      backup: (p) => backups.push(p),
+      env: { HOME: "/home/u" },
+      flags: { updateInstalled: true },
+    }));
+    expect(res.action).toBe(REPAIRED);
+    expect(backups).toEqual(["/home/u/.openclaw/openclaw.json"]);
+    expect(run.calls.map((c) => c.args)).toEqual([
+      ["--version"],
+      INSTALL,
+      ENABLE,
+    ]);
   });
 
   it("FAILED (no mutation) when the openclaw version cannot be determined", () => {
@@ -505,6 +600,16 @@ describe("state readers (temp fixtures)", () => {
     expect(readDshInstallState({ env: { DSH_HOME: dshHome }, profile: "bare" }).pluginInstalled).toBe(false);
     // Missing profile dir → best-effort probe reports not-installed (no throw).
     expect(readDshInstallState({ env: { DSH_HOME: dshHome }, profile: "ghost" }).pluginInstalled).toBe(false);
+  });
+  it("readDshInstallState recognizes the live dsh profiles/<name> layout", () => {
+    const dshHome = mkdtempSync(join(tmpdir(), "dsh-live-"));
+    mkdirSync(join(dshHome, "profiles", "work"), { recursive: true });
+    const packagePath = join(dshHome, "profiles", "work", "package.json");
+    writeFileSync(packagePath, JSON.stringify({ dependencies: { "@chorus-aidlc/chorus-dsh": "^0.17.0" } }));
+    expect(readDshInstallState({ env: { DSH_HOME: dshHome }, profile: "work" })).toMatchObject({
+      pluginInstalled: true,
+      packagePath,
+    });
   });
   it("readDshInstallState reports not-installed without a profile and falls back to ~/.dsh", () => {
     // No profile at all → cannot resolve which workspace, so not-installed.

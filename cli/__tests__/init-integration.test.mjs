@@ -5,12 +5,13 @@
 // (ctxExtras) so no real server / agent CLI is touched. Exercises the full
 // detect → select → credential-seed → plugin-install → summary path.
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInit } from "../init.mjs";
 import { detectAgents, orderedSteps, getAdapter, STEP_REGISTRY } from "../init/registry.mjs";
 import { STEP_SCOPES, OUTCOME_ACTIONS } from "../init/contracts.mjs";
+import { pluginInstallStep } from "../init/steps/plugin-install.mjs";
 
 function capture() {
   const lines = [];
@@ -43,6 +44,92 @@ function fakeKiroFetch() {
 }
 
 describe("chorus init — end-to-end (real registry, injected collaborators)", () => {
+  it("detects an installed live dsh profile before interactive profile resolution and asks once to refresh", async () => {
+    const dshHome = mkdtempSync(join(tmpdir(), "refresh-dsh-"));
+    const profileDir = join(dshHome, "profiles", "work");
+    mkdirSync(profileDir, { recursive: true });
+    writeFileSync(
+      join(profileDir, "package.json"),
+      JSON.stringify({ dependencies: { "@chorus-aidlc/chorus-dsh": "^0.16.4" } }),
+    );
+    const prompts = [];
+    const calls = [];
+    const lines = [];
+    const io = {
+      log: (m) => lines.push(String(m)),
+      isTTY: true,
+      ask: async (q) => {
+        prompts.push(String(q));
+        return String(q).includes("Update installed") ? "y" : "work";
+      },
+    };
+    const code = await runInit(["--agents", "dsh"], {
+      io,
+      env: { HOME: "/unused", DSH_HOME: dshHome },
+      detectAgents,
+      orderedSteps: () => [pluginInstallStep],
+      getAdapter,
+      backup: () => null,
+      ctxExtras: {
+        binaryOnPath: () => true,
+        run: (cmd, args) => {
+          calls.push([cmd, args]);
+          return { ok: true, stdout: "" };
+        },
+      },
+    });
+
+    expect(code).toBe(0);
+    expect(prompts.filter((q) => q.includes("Update installed"))).toHaveLength(1);
+    expect(prompts.filter((q) => q.includes("dsh profile"))).toHaveLength(1);
+    expect(prompts[0]).toContain("Update installed");
+    expect(prompts[1]).toContain("dsh profile");
+    expect(calls).toEqual([
+      ["dsh", ["plugin", "--profile", "work", "add", "@chorus-aidlc/chorus-dsh", "-w"]],
+    ]);
+    expect(lines.join("\n")).toContain("dsh: repaired");
+  });
+
+  it("continues accepted installed-plugin refreshes after one harness fails and exits non-zero", async () => {
+    const codexHome = mkdtempSync(join(tmpdir(), "refresh-codex-"));
+    const opencodeDir = mkdtempSync(join(tmpdir(), "refresh-opencode-"));
+    writeFileSync(
+      join(codexHome, "config.toml"),
+      '[marketplaces.chorus-plugins]\nsource = "x"\n[plugins."chorus@chorus-plugins"]\nenabled = true\n',
+    );
+    mkdirSync(opencodeDir, { recursive: true });
+    writeFileSync(join(opencodeDir, "opencode.json"), JSON.stringify({ plugin: ["opencode-chorus@0.16.0"] }));
+    const calls = [];
+    const io = capture();
+    const code = await runInit(["--agents", "codex,opencode", "--yes"], {
+      io,
+      env: { HOME: "/unused", CODEX_HOME: codexHome, OPENCODE_CONFIG_DIR: opencodeDir },
+      detectAgents,
+      orderedSteps: () => [pluginInstallStep],
+      getAdapter,
+      backup: () => null,
+      ctxExtras: {
+        run: (cmd, args) => {
+          calls.push([cmd, args]);
+          if (cmd === "codex" && args.includes("upgrade")) {
+            return { ok: false, stderr: "simulated marketplace refresh failure" };
+          }
+          return { ok: true, stdout: "" };
+        },
+        writeCodexMcpServer: () => {},
+        resolveCredentials: () => ({ url: undefined }),
+      },
+    });
+    const text = io.lines.join("\n");
+    expect(code).toBe(1);
+    expect(text).toContain("codex: failed");
+    expect(text).toContain("opencode: repaired");
+    expect(calls).toContainEqual([
+      "opencode",
+      ["plugin", "opencode-chorus", "-g", "--force"],
+    ]);
+  });
+
   it("captures a key per selected agent then runs plugin-install per agent, in order, with a summary", async () => {
     // A TTY run so the SECOND agent's key can be prompted (the first pre-fills from
     // --api-key). `--yes` keeps daemon-setup non-interactive. All daemon-setup +
