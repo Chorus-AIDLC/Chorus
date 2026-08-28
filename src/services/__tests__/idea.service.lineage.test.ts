@@ -62,6 +62,7 @@ import {
   createIdea,
   setIdeaParent,
   getIdea,
+  getIdeaWithDerivedStatus,
   getIdeasWithDerivedStatus,
   getDescendantUuids,
   moveIdea,
@@ -336,6 +337,132 @@ describe("getIdeasWithDerivedStatus rollup", () => {
     expect(theme.derivedStatus).toBe("in_progress"); // not stuck at "planning"/elaborated
     expect(theme.childProgress).toEqual({ done: 1, total: 3 });
   });
+
+  it("rolls completed nested containers from leaves to roots with direct-child progress", async () => {
+    mockPrisma.idea.findMany.mockResolvedValueOnce([
+      { uuid: "root", title: "Root", status: "open", elaborationStatus: null, parentUuid: null, isContainer: true, createdAt: now, updatedAt: now },
+      { uuid: "nested", title: "Nested", status: "open", elaborationStatus: null, parentUuid: "root", isContainer: true, createdAt: now, updatedAt: now },
+      { uuid: "leaf", title: "Leaf", status: "elaborated", elaborationStatus: "resolved", parentUuid: "nested", isContainer: false, createdAt: now, updatedAt: now },
+    ]);
+    mockPrisma.idea.groupBy.mockResolvedValueOnce([
+      { parentUuid: "root", _count: { _all: 1 } },
+      { parentUuid: "nested", _count: { _all: 1 } },
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([
+      { uuid: "leaf-proposal", status: "approved", inputUuids: ["leaf"], createdAt: now },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValueOnce([
+      { proposalUuid: "leaf-proposal", status: "done" },
+    ]);
+
+    const result = await getIdeasWithDerivedStatus(COMPANY, PROJECT);
+
+    expect(result.find((idea) => idea.uuid === "nested")).toMatchObject({
+      derivedStatus: "done",
+      childProgress: { done: 1, total: 1 },
+    });
+    expect(result.find((idea) => idea.uuid === "root")).toMatchObject({
+      derivedStatus: "done",
+      childProgress: { done: 1, total: 1 },
+    });
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.idea.groupBy).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.proposal.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.task.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates partial completion through deep containers independent of result order", async () => {
+    const rows = [
+      { uuid: "root", title: "Root", status: "open", elaborationStatus: null, parentUuid: null, isContainer: true, createdAt: now, updatedAt: now },
+      { uuid: "middle", title: "Middle", status: "open", elaborationStatus: null, parentUuid: "root", isContainer: true, createdAt: now, updatedAt: now },
+      { uuid: "inner", title: "Inner", status: "open", elaborationStatus: null, parentUuid: "middle", isContainer: true, createdAt: now, updatedAt: now },
+      { uuid: "done-leaf", title: "Done", status: "elaborated", elaborationStatus: "resolved", parentUuid: "inner", isContainer: false, createdAt: now, updatedAt: now },
+      { uuid: "todo-leaf", title: "Todo", status: "open", elaborationStatus: null, parentUuid: "inner", isContainer: false, createdAt: now, updatedAt: now },
+    ];
+    const counts = [
+      { parentUuid: "root", _count: { _all: 1 } },
+      { parentUuid: "middle", _count: { _all: 1 } },
+      { parentUuid: "inner", _count: { _all: 2 } },
+    ];
+    const proposals = [
+      { uuid: "done-proposal", status: "approved", inputUuids: ["done-leaf"], createdAt: now },
+    ];
+    const tasks = [{ proposalUuid: "done-proposal", status: "done" }];
+    mockPrisma.idea.findMany
+      .mockResolvedValueOnce(rows)
+      .mockResolvedValueOnce([...rows].reverse());
+    mockPrisma.idea.groupBy
+      .mockResolvedValueOnce(counts)
+      .mockResolvedValueOnce([...counts].reverse());
+    mockPrisma.proposal.findMany
+      .mockResolvedValueOnce(proposals)
+      .mockResolvedValueOnce(proposals);
+    mockPrisma.task.findMany
+      .mockResolvedValueOnce(tasks)
+      .mockResolvedValueOnce(tasks);
+
+    const first = await getIdeasWithDerivedStatus(COMPANY, PROJECT);
+    const second = await getIdeasWithDerivedStatus(COMPANY, PROJECT);
+    const snapshot = (items: typeof first) => Object.fromEntries(
+      items.map((item) => [item.uuid, {
+        status: item.derivedStatus,
+        progress: item.childProgress,
+      }]),
+    );
+
+    expect(snapshot(second)).toEqual(snapshot(first));
+    expect(snapshot(first)).toMatchObject({
+      inner: { status: "in_progress", progress: { done: 1, total: 2 } },
+      middle: { status: "in_progress", progress: { done: 0, total: 1 } },
+      root: { status: "in_progress", progress: { done: 0, total: 1 } },
+    });
+  });
+
+  it("uses each cyclic SCC member's base status deterministically and tolerates missing parents", async () => {
+    const rows = [
+      { uuid: "cycle-a", title: "A", status: "open", elaborationStatus: null, parentUuid: "cycle-b", isContainer: true, createdAt: now, updatedAt: now },
+      { uuid: "cycle-b", title: "B", status: "elaborating", elaborationStatus: "validating", parentUuid: "cycle-a", isContainer: true, createdAt: now, updatedAt: now },
+      { uuid: "done-child", title: "Done", status: "elaborated", elaborationStatus: "resolved", parentUuid: "cycle-a", isContainer: false, createdAt: now, updatedAt: now },
+      { uuid: "orphan", title: "Orphan", status: "elaborating", elaborationStatus: "validating", parentUuid: "missing-parent", isContainer: false, createdAt: now, updatedAt: now },
+    ];
+    const counts = [
+      { parentUuid: "cycle-a", _count: { _all: 2 } },
+      { parentUuid: "cycle-b", _count: { _all: 1 } },
+      { parentUuid: "missing-parent", _count: { _all: 1 } },
+    ];
+    const proposals = [
+      { uuid: "done-proposal", status: "approved", inputUuids: ["done-child"], createdAt: now },
+    ];
+    const tasks = [{ proposalUuid: "done-proposal", status: "done" }];
+    mockPrisma.idea.findMany
+      .mockResolvedValueOnce(rows)
+      .mockResolvedValueOnce([rows[2], rows[1], rows[3], rows[0]]);
+    mockPrisma.idea.groupBy
+      .mockResolvedValueOnce(counts)
+      .mockResolvedValueOnce([...counts].reverse());
+    mockPrisma.proposal.findMany
+      .mockResolvedValueOnce(proposals)
+      .mockResolvedValueOnce(proposals);
+    mockPrisma.task.findMany
+      .mockResolvedValueOnce(tasks)
+      .mockResolvedValueOnce(tasks);
+
+    const first = await getIdeasWithDerivedStatus(COMPANY, PROJECT);
+    const second = await getIdeasWithDerivedStatus(COMPANY, PROJECT);
+    const snapshot = (items: typeof first) => Object.fromEntries(
+      items.map((item) => [item.uuid, {
+        status: item.derivedStatus,
+        progress: item.childProgress,
+      }]),
+    );
+
+    expect(snapshot(second)).toEqual(snapshot(first));
+    expect(snapshot(first)).toMatchObject({
+      "cycle-a": { status: "todo", progress: { done: 1, total: 2 } },
+      "cycle-b": { status: "in_progress", progress: { done: 0, total: 1 } },
+      orphan: { status: "in_progress", progress: null },
+    });
+  });
 });
 
 describe("rollupThemeDerivedStatus (pure)", () => {
@@ -400,6 +527,54 @@ describe("getIdea lineage payload", () => {
     expect(res?.parent).toEqual({ uuid: "root", title: "Root", status: "open" });
     expect(res?.children?.map((c) => c.uuid)).toEqual(["leaf"]);
     expect(res?.descendantUuids).toEqual(["leaf"]);
+  });
+
+  it("returns the same nested rollup in the Idea detail response", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(
+      ideaRow({
+        uuid: "root",
+        status: "open",
+        isContainer: true,
+        project: { uuid: PROJECT, name: "P" },
+        parent: null,
+        children: [
+          { uuid: "nested", title: "Nested", status: "open", elaborationStatus: null },
+        ],
+      }),
+    );
+    const projectRows = [
+      { uuid: "root", title: "Root", status: "open", elaborationStatus: null, parentUuid: null, isContainer: true, createdAt: now, updatedAt: now },
+      { uuid: "nested", title: "Nested", status: "open", elaborationStatus: null, parentUuid: "root", isContainer: true, createdAt: now, updatedAt: now },
+      { uuid: "leaf", title: "Leaf", status: "elaborated", elaborationStatus: "resolved", parentUuid: "nested", isContainer: false, createdAt: now, updatedAt: now },
+    ];
+    mockPrisma.idea.findMany
+      .mockResolvedValueOnce(projectRows)
+      .mockResolvedValueOnce([{ uuid: "nested" }])
+      .mockResolvedValueOnce([{ uuid: "leaf" }])
+      .mockResolvedValueOnce([]);
+    mockPrisma.idea.groupBy.mockResolvedValueOnce([
+      { parentUuid: "root", _count: { _all: 1 } },
+      { parentUuid: "nested", _count: { _all: 1 } },
+    ]);
+    mockPrisma.proposal.findMany
+      .mockResolvedValueOnce([
+        { uuid: "leaf-proposal", status: "approved", inputUuids: ["leaf"], createdAt: now },
+      ])
+      .mockResolvedValueOnce([]);
+    mockPrisma.task.findMany.mockResolvedValueOnce([
+      { proposalUuid: "leaf-proposal", status: "done" },
+    ]);
+
+    const detail = await getIdeaWithDerivedStatus(COMPANY, "root");
+
+    expect(detail).toMatchObject({
+      uuid: "root",
+      derivedStatus: "done",
+      childProgress: { done: 1, total: 1 },
+      children: [
+        { uuid: "nested", derivedStatus: "done" },
+      ],
+    });
   });
 });
 
