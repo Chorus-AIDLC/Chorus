@@ -104,6 +104,7 @@ CTX="${CTX}
 
 ## Quick Reference
 
+- **Long-horizon work**: follow AI-DLC via the Chorus skill (idea → proposal → task → verify) rather than coding ad hoc, and use chorus_search to locate the specific work the user refers to across ideas/proposals/tasks/docs.
 - **Notifications**: \`chorus_get_notifications()\` fetches and auto-marks read.
 - **Skills**: use \`\$chorus\`, \`\$idea\`, \`\$proposal\`, \`\$develop\`, \`\$review\`, \`\$quick-dev\`, or \`\$yolo\` to load the stage-specific workflow.
 - **Reviewer sub-agents**: mount the reviewer skill explicitly — \`spawn_agent({items:[{type:\"skill\", path:\"chorus:chorus-proposal-reviewer\"}, {type:\"text\", text:\"Review proposal <proposal-uuid> and post VERDICT.\"}]})\` after \`chorus_pm_submit_proposal\`; use \`chorus:chorus-task-reviewer\` with the task UUID after \`chorus_submit_for_verify\`. Wait only when the next gate depends on the verdict, then close the thread; use \`send_input\` for an active child and \`resume_agent\` only for a previously closed one. Routine entity-backed children use fresh context; \`fork_context: true\` is only for material parent-conversation state."

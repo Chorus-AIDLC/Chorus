@@ -149,7 +149,8 @@ CONTEXT="${CONTEXT}
 
 ## Quick Reference
 
-- **Idea Tracker**: Shows up to 10 most recently updated ideas. Use chorus_get_ideas() for full list.
+- **Long-horizon work**: follow AI-DLC via the Chorus skill (idea → proposal → task → verify) rather than coding ad hoc, and use chorus_search to locate the specific work the user refers to across ideas/proposals/tasks/docs.
+- **Active Projects**: checkin.activeProjects shows which projects you're advancing ideas in, with an active-idea count per project — it is a location map, not a per-idea to-do list. Use chorus_search to find the specific work the user refers to (across ideas/proposals/tasks/docs), and chorus_get_my_assignments for the full per-idea list.
 - **Sessions**: Auto-managed by hooks. Do NOT call chorus_create_session/chorus_close_session for sub-agents. See /chorus:develop.
 - **Notifications**: chorus_get_notifications() fetches and auto-marks read. See /chorus.
 - **Project Groups**: chorus_get_project_groups() before creating projects. See /chorus."

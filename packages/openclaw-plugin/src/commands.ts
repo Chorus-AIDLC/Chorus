@@ -2,13 +2,14 @@ import type { ChorusMcpClient } from "./mcp-client.js";
 
 // ===== Response types from Chorus MCP tools =====
 //
-// These mirror the CURRENT (Chorus 0.7.2+) tool output shapes:
-//   - chorus_checkin           → { checkinTime, agent, ideaTracker, notifications }
+// These mirror the CURRENT (Chorus 0.17.0+) tool output shapes:
+//   - chorus_checkin           → { checkinTime, agent, activeProjects, guidance, notifications }
 //   - chorus_get_my_assignments → { ideaTracker, taskTracker }
-// Both `ideaTracker` and `taskTracker` are Records keyed by project UUID, with
-// the work items nested inside each project bucket. Every field is read
-// defensively (optional chaining) so a missing/renamed field degrades to "0"
-// or "none" rather than throwing.
+// chorus_checkin returns a per-project `activeProjects` distribution (name +
+// activeIdeaCount, NOT a per-idea list); the full per-idea `ideaTracker` lives
+// only in chorus_get_my_assignments. Both trackers are Records keyed by project
+// UUID. Every field is read defensively (optional chaining) so a missing/renamed
+// field degrades to "0"/"none" rather than throwing.
 
 interface IdeaTrackerEntry {
   uuid: string;
@@ -36,6 +37,11 @@ interface TaskTrackerProject {
   tasks?: TaskTrackerEntry[];
 }
 
+interface CheckinActiveProject {
+  name?: string;
+  activeIdeaCount?: number;
+}
+
 interface CheckinResponse {
   checkinTime?: string;
   agent?: {
@@ -43,7 +49,7 @@ interface CheckinResponse {
     name?: string;
     persona?: string | null;
   };
-  ideaTracker?: Record<string, IdeaTrackerProject>;
+  activeProjects?: Record<string, CheckinActiveProject>;
   notifications?: {
     unread?: number;
   };
@@ -98,24 +104,17 @@ function formatSkillsList(): string {
   ].join("\n");
 }
 
-// Sum a count across every project bucket in a tracker Record.
-function countTracker<T>(
-  tracker: Record<string, { ideas?: T[]; tasks?: T[] }> | undefined,
-  key: "ideas" | "tasks"
-): number {
-  if (!tracker) return 0;
-  return Object.values(tracker).reduce((total, project) => {
-    const items = key === "ideas" ? project.ideas : project.tasks;
-    return total + (items?.length ?? 0);
-  }, 0);
-}
-
 function formatStatus(checkin: CheckinResponse, connectionStatus: string): string {
-  const ideaCount = countTracker(checkin?.ideaTracker, "ideas");
+  const projects = Object.values(checkin?.activeProjects ?? {});
+  const activeIdeaTotal = projects.reduce(
+    (total, p) => total + (p.activeIdeaCount ?? 0),
+    0
+  );
   const lines: string[] = [
     `Connection: ${connectionStatus}`,
     `Agent: ${checkin?.agent?.name ?? "unknown"}`,
-    `Assigned ideas: ${ideaCount}`,
+    `Active projects: ${projects.length} (${activeIdeaTotal} active idea(s))`,
+    ...projects.map((p) => `  - ${p.name ?? "(unnamed)"}: ${p.activeIdeaCount ?? 0}`),
     `Notifications: ${checkin?.notifications?.unread ?? 0} unread`,
     `Skills: ${PLUGIN_SKILLS.map((s) => s.name).join(", ")}`,
   ];

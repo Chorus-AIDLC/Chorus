@@ -276,6 +276,64 @@ export async function buildIdeaTracker(
   return tracker;
 }
 
+// ===== Active-project distribution (checkin / session-start) =====
+
+export interface ActiveProjectDistributionEntry {
+  name: string;
+  /** Count of the agent's active ideas in this project (always >= 1). */
+  activeIdeaCount: number;
+}
+
+/**
+ * Max projects surfaced in the checkin overview. This is an *overview* injected
+ * into every session's context, not the full list — so it is bounded to avoid
+ * polluting the agent's context. Excess projects (beyond the cap) are dropped;
+ * use chorus_get_my_assignments for the complete set.
+ */
+const MAX_ACTIVE_PROJECTS = 10;
+
+/**
+ * Collapse the agent's idea tracker into a per-project active-idea *count* —
+ * "which projects am I advancing ideas in, and how many" — with no per-idea
+ * payload. Backs chorus_checkin / session-start, which surfaces the distribution
+ * rather than a per-idea list.
+ *
+ * Derived from `buildIdeaTracker` (the single source of truth) rather than a
+ * second count query, so the count can never drift from what
+ * chorus_get_my_assignments reports. Do NOT re-implement the active-idea filter
+ * or add a divergent query here — the 0.7.2 single-source refactor (see the file
+ * header) exists precisely to prevent that drift.
+ *
+ * Ordering + bounding (overview semantics):
+ *   - `buildIdeaTracker` visits ideas in `updatedAt desc` and creates each
+ *     project on first appearance, so `Object.entries(tracker)` is already
+ *     ordered by each project's most-recently-active idea (most recent first).
+ *   - The result is truncated to `MAX_ACTIVE_PROJECTS` (10) — it is an overview,
+ *     not the full list. Per-project `activeIdeaCount` is NOT truncated (it
+ *     still reflects every active idea in that project), so callers still MUST
+ *     NOT pass `maxIdeas`.
+ *
+ * Projects are keyed by UUID and NOT de-duplicated by name: two projects that
+ * merely share a display name but have distinct UUIDs are distinct projects, and
+ * collapsing them would couple this overview to messy real-world data. The cap +
+ * recency order alone keep the overview bounded.
+ */
+export async function buildActiveProjectDistribution(
+  auth: AuthContext,
+  options: BuildIdeaTrackerOptions = {},
+): Promise<Record<string, ActiveProjectDistributionEntry>> {
+  const tracker = await buildIdeaTracker(auth, options);
+  const distribution: Record<string, ActiveProjectDistributionEntry> = {};
+  for (const [projectUuid, project] of Object.entries(tracker)) {
+    distribution[projectUuid] = {
+      name: project.name,
+      activeIdeaCount: project.ideas.length,
+    };
+    if (Object.keys(distribution).length >= MAX_ACTIVE_PROJECTS) break; // overview: truncate the most-recent 10
+  }
+  return distribution;
+}
+
 // ===== Task tracker =====
 
 /**

@@ -36,7 +36,9 @@ export interface AvailableTaskResponse {
   createdAt: string;
 }
 
-// My assignments response — 0.7.2: aligned with chorus_checkin.ideaTracker.
+// My assignments response — the full per-idea tracker. chorus_checkin no longer
+// returns this shape: it derives an activeProjects project→count distribution
+// from the same buildIdeaTracker (see checkin.service.ts / idea-tracker.service.ts).
 // Idea data is grouped by project with derivedStatus + proposal/task counts.
 // Task data is similarly grouped, with admin-verified acceptance progress.
 export interface MyAssignmentsResponse {
@@ -101,9 +103,10 @@ async function formatAvailableTask(task: {
 // ===== Service Methods =====
 
 /**
- * Get the agent's idea + task trackers, grouped by project. Aligned 1:1 with
- * chorus_checkin.ideaTracker (no maxIdeas cap here — checkin returns at most
- * 10 for compactness; my_assignments returns the full set).
+ * Get the agent's idea + task trackers, grouped by project — the full per-idea
+ * list (no maxIdeas cap). chorus_checkin no longer returns this shape: it derives
+ * an activeProjects project→count distribution from the same buildIdeaTracker;
+ * my_assignments is the on-demand full set.
  *
  * BREAKING (Chorus 0.7.2): the previous flat `{ ideas: [], tasks: [] }` shape
  * is replaced by `{ ideaTracker, taskTracker }`.

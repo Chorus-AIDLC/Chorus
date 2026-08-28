@@ -41,6 +41,13 @@ const CHECKIN_TOOL = "mcp__chorus__chorus_checkin";
 const SYNTHETIC_CALL_PREFIX = "chorus-dsh:checkin:";
 const PLUGIN_SOURCE = { kind: "plugin", plugin: name } as const;
 
+// One-line working-style reminder injected at session start. Kept here in the
+// plugin (NOT in the chorus_checkin MCP payload — the MCP response stays pure
+// data): for long-horizon work, follow AI-DLC via the Chorus skill and use
+// chorus_search to locate the work the user refers to.
+const SESSION_START_GUIDANCE =
+  "For long-horizon work, follow AI-DLC via the Chorus skill (idea → proposal → task → verify) rather than coding ad hoc, and use chorus_search to locate the specific work the user refers to across ideas/proposals/tasks/docs.";
+
 const ACTIONS = {
   chorus_pm_submit_proposal: {
     argument: "proposalUuid",
@@ -344,7 +351,12 @@ export function apply(ctx: Context, config: Config): void {
       }
       const downstream = await next();
       if (!context || downstream.kind !== "enter") return downstream;
-      return { kind: "enter", messages: [...downstream.messages, context] };
+      const guidance = createPluginMessage([
+        { type: "text", text: SESSION_START_GUIDANCE },
+      ]);
+      // First step only: inject the check-in context + the one-line session-start
+      // guidance. Fails open (no injection) when the check-in didn't resolve.
+      return { kind: "enter", messages: [...downstream.messages, context, guidance] };
     },
   );
 

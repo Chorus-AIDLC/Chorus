@@ -232,7 +232,7 @@ describe("runtime", () => {
     });
   });
 
-  it("injects check-in context into the first step exactly once", async () => {
+  it("injects check-in context + session-start guidance into the first step exactly once", async () => {
     const ctx = new FakeContext();
     const agent = fakeAgent();
     apply(ctx as any, config());
@@ -250,8 +250,10 @@ describe("runtime", () => {
     );
 
     expect(ctx.tools.execute).toHaveBeenCalledTimes(1);
-    expect(first.messages).toHaveLength(1);
+    // First step injects the check-in context message + the one-line guidance.
+    expect(first.messages).toHaveLength(2);
     expect(first.messages[0].content[0].text).toBe("checked in");
+    expect(first.messages[1].content[0].text).toContain("AI-DLC");
     expect(second.messages).toHaveLength(0);
     await ctx.dispose();
   });

@@ -1,12 +1,15 @@
 // src/services/checkin.service.ts
-// Checkin service — builds the agent checkin response with ideaTracker + notifications.
+// Checkin service — builds the agent checkin response with the active-project
+// distribution + working-style guidance + notifications.
 // The idea-tracker logic lives in idea-tracker.service so that chorus_get_my_assignments
 // stays in lockstep with checkin (see Chorus 0.7.2).
 
 import { prisma } from "@/lib/prisma";
 import type { AuthContext } from "@/types/auth";
-import type { DerivedIdeaStatus } from "@/services/idea.service";
-import { buildIdeaTracker as buildIdeaTrackerService } from "@/services/idea-tracker.service";
+import {
+  buildActiveProjectDistribution,
+  type ActiveProjectDistributionEntry,
+} from "@/services/idea-tracker.service";
 import * as notificationService from "@/services/notification.service";
 import {
   computeEffectivePermissions,
@@ -29,19 +32,8 @@ export interface CheckinAgentInfo {
   owner: { uuid: string; name: string | null; email: string | null } | null;
 }
 
-export interface CheckinIdea {
-  uuid: string;
-  title: string;
-  status: DerivedIdeaStatus;
-  parentUuid: string | null;
-  proposals: number;
-  tasks: number;
-}
-
-export interface CheckinProject {
-  name: string;
-  ideas: CheckinIdea[];
-}
+/** Re-exported for consumers that type the checkin payload's distribution. */
+export type CheckinActiveProject = ActiveProjectDistributionEntry;
 
 export interface CheckinNotification {
   uuid: string;
@@ -55,12 +47,22 @@ export interface CheckinNotification {
 export interface CheckinResponse {
   checkinTime: string;
   agent: CheckinAgentInfo;
-  ideaTracker: Record<string, CheckinProject>;
+  /**
+   * Per-project distribution of the agent's active ideas: which projects the
+   * agent is advancing work in, and how many active ideas each holds — NOT a
+   * per-idea list. Keyed by project UUID; empty when the agent has no active
+   * work. For the full per-idea list, call chorus_get_my_assignments.
+   */
+  activeProjects: Record<string, CheckinActiveProject>;
   notifications: {
     unread: number;
     recent: CheckinNotification[];
   };
 }
+
+// Working-style guidance (AI-DLC + chorus_search) is intentionally NOT part of
+// this MCP response — it lives as a one-line reminder in each harness's
+// session-start hook script, keeping the MCP payload pure data.
 
 // ===== Service method =====
 
@@ -95,9 +97,12 @@ export async function buildCheckinResponse(auth: AuthContext): Promise<CheckinRe
   );
   const groupedPermissions = groupPermissionsByResource(effective);
 
-  // Build idea tracker and fetch notification summary in parallel
-  const [ideaTracker, notifications] = await Promise.all([
-    buildIdeaTracker(auth),
+  // Build the active-project distribution and fetch the notification summary in
+  // parallel. The distribution is derived (uncapped) from the same
+  // buildIdeaTracker that chorus_get_my_assignments uses, so counts stay in
+  // lockstep — see buildActiveProjectDistribution.
+  const [activeProjects, notifications] = await Promise.all([
+    buildActiveProjectDistribution(auth),
     buildNotificationSummary(auth),
   ]);
 
@@ -121,15 +126,9 @@ export async function buildCheckinResponse(auth: AuthContext): Promise<CheckinRe
         ? { uuid: agent.owner.uuid, name: agent.owner.name, email: agent.owner.email }
         : null,
     },
-    ideaTracker,
+    activeProjects,
     notifications,
   };
-}
-
-// ===== Idea tracker (delegates to idea-tracker.service) =====
-
-async function buildIdeaTracker(auth: AuthContext): Promise<Record<string, CheckinProject>> {
-  return buildIdeaTrackerService(auth, { maxIdeas: 10 });
 }
 
 // ===== Notification summary (fetch 5 unread, mark read) =====
