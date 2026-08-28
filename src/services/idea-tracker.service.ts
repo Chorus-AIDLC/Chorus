@@ -287,9 +287,8 @@ export interface ActiveProjectDistributionEntry {
 /**
  * Max projects surfaced in the checkin overview. This is an *overview* injected
  * into every session's context, not the full list — so it is bounded to avoid
- * polluting the agent's context. Excess projects (beyond the cap) and
- * duplicate-named projects are dropped; use chorus_get_my_assignments for the
- * complete set.
+ * polluting the agent's context. Excess projects (beyond the cap) are dropped;
+ * use chorus_get_my_assignments for the complete set.
  */
 const MAX_ACTIVE_PROJECTS = 10;
 
@@ -309,11 +308,15 @@ const MAX_ACTIVE_PROJECTS = 10;
  *   - `buildIdeaTracker` visits ideas in `updatedAt desc` and creates each
  *     project on first appearance, so `Object.entries(tracker)` is already
  *     ordered by each project's most-recently-active idea (most recent first).
- *   - Duplicate-named projects are dropped, keeping the most-recent one.
  *   - The result is truncated to `MAX_ACTIVE_PROJECTS` (10) — it is an overview,
  *     not the full list. Per-project `activeIdeaCount` is NOT truncated (it
  *     still reflects every active idea in that project), so callers still MUST
  *     NOT pass `maxIdeas`.
+ *
+ * Projects are keyed by UUID and NOT de-duplicated by name: two projects that
+ * merely share a display name but have distinct UUIDs are distinct projects, and
+ * collapsing them would couple this overview to messy real-world data. The cap +
+ * recency order alone keep the overview bounded.
  */
 export async function buildActiveProjectDistribution(
   auth: AuthContext,
@@ -321,15 +324,12 @@ export async function buildActiveProjectDistribution(
 ): Promise<Record<string, ActiveProjectDistributionEntry>> {
   const tracker = await buildIdeaTracker(auth, options);
   const distribution: Record<string, ActiveProjectDistributionEntry> = {};
-  const seenNames = new Set<string>();
   for (const [projectUuid, project] of Object.entries(tracker)) {
-    if (seenNames.has(project.name)) continue; // no duplicate-named projects
-    seenNames.add(project.name);
     distribution[projectUuid] = {
       name: project.name,
       activeIdeaCount: project.ideas.length,
     };
-    if (Object.keys(distribution).length >= MAX_ACTIVE_PROJECTS) break; // overview: truncate at the cap
+    if (Object.keys(distribution).length >= MAX_ACTIVE_PROJECTS) break; // overview: truncate the most-recent 10
   }
   return distribution;
 }

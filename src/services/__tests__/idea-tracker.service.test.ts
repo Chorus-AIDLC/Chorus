@@ -629,23 +629,25 @@ describe("buildActiveProjectDistribution", () => {
     expect(dist["proj-11"]).toBeUndefined();
   });
 
-  it("drops duplicate-named projects, keeping the most-recent (first-seen) one", async () => {
+  it("keeps same-named projects with distinct UUIDs (no name de-duplication)", async () => {
+    // Two distinct projects that merely share a display name are distinct
+    // projects — do NOT collapse them (don't couple to messy real-world data).
     mockPrisma.idea.findMany.mockResolvedValue([
-      makeIdea("i1", "proj-new", "open"), // name "Dup" — most recent
-      makeIdea("i2", "proj-old", "open"), // name "Dup" — older, dropped
+      makeIdea("i1", "proj-a", "open"), // name "Dup"
+      makeIdea("i2", "proj-b", "open"), // name "Dup" (distinct UUID) — also kept
       makeIdea("i3", "proj-y", "open"), // name "Y"
     ]);
     mockPrisma.project.findMany.mockResolvedValue([
-      { uuid: "proj-new", name: "Dup" },
-      { uuid: "proj-old", name: "Dup" },
+      { uuid: "proj-a", name: "Dup" },
+      { uuid: "proj-b", name: "Dup" },
       { uuid: "proj-y", name: "Y" },
     ]);
 
     const dist = await buildActiveProjectDistribution(agentAuth);
 
-    expect(Object.keys(dist).sort()).toEqual(["proj-new", "proj-y"]);
-    expect(dist["proj-old"]).toBeUndefined();
-    expect(dist["proj-new"].name).toBe("Dup");
+    expect(Object.keys(dist).sort()).toEqual(["proj-a", "proj-b", "proj-y"]);
+    expect(dist["proj-a"].name).toBe("Dup");
+    expect(dist["proj-b"].name).toBe("Dup");
   });
 
   it("orders projects by most-recent active idea (first appearance in updatedAt-desc order)", async () => {
