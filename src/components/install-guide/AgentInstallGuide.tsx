@@ -20,10 +20,6 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const displayKey = apiKey || "<YOUR_API_KEY>";
 
-  // Optional step, identical across every `chorus agents add` tab (Claude Code /
-  // Codex / Kiro / OpenCode): pick the default agent the chorus CLI acts as. dsh
-  // omits it (its profile is seeded into $DSH_HOME/.env and loaded by dsh);
-  // openClaw / other don't run `chorus agents add`, so no CLI profile applies.
   const profileStep = (
     <div>
       <h3 className="mb-2 text-sm font-medium text-foreground">
@@ -121,7 +117,6 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </p>
             </div>
 
-            {profileStep}
           </TabsContent>
 
           {/* Kiro Tab */}

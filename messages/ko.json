@@ -1178,9 +1178,9 @@
       },
       "codex": {
         "step1Title": "1단계: 환경 변수 설정",
-        "step1Tip": "팁: chorus agents add(2단계)이 이 값들을 읽어 ~/.codex/.env에 기록하므로 Codex를 위해 셸 rc에 영구 저장할 필요가 없습니다. 대화형으로 실행한 Codex는 ~/.codex/.env에서 자신의 신원(플러그인 훅, shell 도구의 chorus 호출, 네이티브 MCP)을 해석합니다. 데몬이 깨운 세션은 자동으로 받습니다.",
+        "step1Tip": "영구 저장할 필요가 없습니다. 2단계의 chorus agents add이 ~/.codex/.env에 기록합니다.",
         "step2Title": "2단계: chorus agents add 실행",
-        "step2Tip": "chorus agents add은 chorus-plugins 마켓플레이스를 등록하고 Chorus 플러그인을 Codex에 설치하며, 자격 증명을 저장하고, CHORUS_URL / CHORUS_API_KEY / CHORUS_AGENT_PROFILE를 ~/.codex/.env에 기록하며(Codex가 시작 시 자신의 프로세스 환경으로 로드), 키가 없는 [mcp_servers.chorus]를 bearer_token_env_var = \"CHORUS_API_KEY\"로 ~/.codex/config.toml에 기록합니다. 따라서 대화형 Codex는 수동 export가 전혀 필요 없습니다. 플러그인 hook, 모델의 shell 도구 chorus 호출, 네이티브 MCP 모두 ~/.codex/.env에서 신원을 해석합니다(API 키는 config.toml에 저장되지 않음). CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다. 첫 번째 명령은 Chorus CLI를 전역으로 설치합니다(버전 0.17.0으로 고정)."
+        "step2Tip": "chorus agents add은 Chorus 플러그인을 설치하고 CHORUS_URL, CHORUS_API_KEY, CHORUS_AGENT_PROFILE를 ~/.codex/.env에 기록합니다. 따라서 대화형 Codex는 수동 export가 필요 없습니다."
       },
       "kiro": {
         "step1Title": "1단계: 환경 변수 설정",

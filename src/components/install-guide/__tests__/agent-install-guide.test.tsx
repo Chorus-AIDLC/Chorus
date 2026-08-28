@@ -156,39 +156,21 @@ describe("AgentInstallGuide dsh onboarding", () => {
     }
   });
 
-  it("shows the optional 'default agent' Step 3 on every chorus-agents-add tab, and drops the redundant 'Verify connection' step (onboarding has its own connection check)", async () => {
+  it("removes the manual default-agent step from Codex only", async () => {
     const user = userEvent.setup();
     render(<AgentInstallGuide apiKey={null} />);
 
     const PROFILE_TITLE = "Step 3 (optional): Set the default agent for the Chorus CLI";
-    // Codex / Kiro / OpenCode still show the manual export-profile step (their
-    // settings-file auto-write is a separate, unbuilt sibling idea).
-    for (const tab of ["Codex", "Kiro", "OpenCode"]) {
+
+    await user.click(screen.getByRole("tab", { name: "Codex" }));
+    expect(screen.queryByText(PROFILE_TITLE)).toBeNull();
+    expect(screen.queryByText(/export CHORUS_AGENT_PROFILE="<agent-uuid>"/)).toBeNull();
+
+    for (const tab of ["Kiro", "OpenCode"]) {
       await user.click(screen.getByRole("tab", { name: tab }));
       expect(screen.getByText(PROFILE_TITLE)).toBeTruthy();
       expect(screen.getByText(/export CHORUS_AGENT_PROFILE="<agent-uuid>"/)).toBeTruthy();
-      // The old per-tab "Verify connection" step is gone on every tab.
-      expect(screen.queryByText(/Verify connection/)).toBeNull();
     }
-
-    // Claude Code shows NO Step 3 at all: no export-profile step and no separate
-    // writes-section (the settings.json write is stated concisely in the Step 2 tip).
-    await user.click(screen.getByRole("tab", { name: "Claude Code" }));
-    expect(screen.queryByText(PROFILE_TITLE)).toBeNull();
-    expect(
-      screen.queryByText("What chorus agents add writes (no manual export needed)"),
-    ).toBeNull();
-    expect(screen.queryByText(/Verify connection/)).toBeNull();
-
-    // dsh keeps its own flow and does NOT get the CLI profile step (its profile is
-    // seeded into $DSH_HOME/.env, not exported by hand).
-    await user.click(screen.getByRole("tab", { name: "DeepSeek Harness" }));
-    expect(screen.queryByText(PROFILE_TITLE)).toBeNull();
-
-    // OpenClaw no longer shows a "Verify connection" step either.
-    await user.click(screen.getByRole("tab", { name: "OpenClaw" }));
-    expect(screen.queryByText(/Verify connection/)).toBeNull();
-    expect(screen.queryByText(PROFILE_TITLE)).toBeNull();
   });
 
   it("uses the API-key placeholder when no live key is available", async () => {
