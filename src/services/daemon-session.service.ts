@@ -67,6 +67,40 @@ export type TurnTrigger = (typeof TURN_TRIGGERS)[number];
 export const TURN_STATUSES = ["pending", "running", "ended", "interrupted"] as const;
 export type TurnStatus = (typeof TURN_STATUSES)[number];
 
+// Ephemeral company-stream activity. A running turn is the activity token; no
+// parallel persistence model is needed because reconnect bootstrap reads the
+// authoritative running turns back from DaemonSessionTurn.
+interface SessionActivityEventBase {
+  type: "session_started" | "session_ended";
+  companyUuid: string;
+  sessionUuid: string;
+  activityUuid: string;
+  directIdeaUuid: string | null;
+  agentUuid: string;
+  originConnectionUuid: string;
+}
+
+/** Subscriber-facing activity projection. Authorization is relative to the caller. */
+export interface SessionActivityEvent extends SessionActivityEventBase {
+  canOpen: boolean;
+}
+
+/**
+ * Process-local activity shape. Ownership is used only at the SSE boundary to
+ * derive `canOpen` and is never serialized to subscribers.
+ */
+export interface PublishedSessionActivityEvent extends SessionActivityEventBase {
+  agentOwnerUuid: string | null;
+}
+
+export const SESSION_ACTIVITY_EVENT_NAME = "session_activity";
+
+export function publishSessionActivityEvent(
+  event: PublishedSessionActivityEvent,
+): void {
+  eventBus.emit(SESSION_ACTIVITY_EVENT_NAME, event);
+}
+
 // A SERVER-ONLY terminal turn status (daemon-wake-coalescing). Assigned when a pending
 // turn is COALESCED AWAY — an earlier same-session wake drained it into one batch, so it
 // will never run on its own. Deliberately NOT a member of TURN_STATUSES (the daemon-
@@ -783,7 +817,13 @@ export async function advanceTurn(
   // that a future 子3 SSE consumer's multi-tenancy fence could mishandle.
   const session = await prisma.daemonSession.findUnique({
     where: { uuid: turn.sessionUuid },
-    select: { companyUuid: true },
+    select: {
+      companyUuid: true,
+      directIdeaUuid: true,
+      agentUuid: true,
+      originConnectionUuid: true,
+      agent: { select: { ownerUuid: true } },
+    },
   });
   if (!session) {
     throw new Error(
@@ -801,6 +841,16 @@ export async function advanceTurn(
     turn: view,
     // No messages changed on a status transition — empty tail (always-array contract).
     messages: [],
+  });
+  publishSessionActivityEvent({
+    type: status === "running" ? "session_started" : "session_ended",
+    companyUuid: session.companyUuid,
+    sessionUuid: turn.sessionUuid,
+    activityUuid: turnUuid,
+    directIdeaUuid: session.directIdeaUuid,
+    agentUuid: session.agentUuid,
+    originConnectionUuid: session.originConnectionUuid,
+    agentOwnerUuid: session.agent?.ownerUuid ?? null,
   });
   return { ok: true, turn: view };
 }
@@ -999,6 +1049,56 @@ export async function getVisibleSessions(auth: {
   // (never breaks the read); the session rows themselves are unaffected.
   await reconcileOrphanTurnsForSessions(auth.companyUuid, rows);
   return rows.map(toSessionView);
+}
+
+/**
+ * Rebuild the caller-visible running activity set for company-stream bootstrap.
+ * User subscribers observe every running session in their company and receive
+ * subscriber-relative `canOpen`; agent keys remain self-only. The projection
+ * comes directly from running turns, with no polling endpoint or persisted flag.
+ */
+export async function listVisibleRunningSessionActivities(auth: {
+  type: string;
+  companyUuid: string;
+  actorUuid: string;
+}): Promise<SessionActivityEvent[]> {
+  const rows = await prisma.daemonSessionTurn.findMany({
+    where: {
+      status: "running",
+      session: {
+        companyUuid: auth.companyUuid,
+        ...(auth.type === "agent" ? { agentUuid: auth.actorUuid } : {}),
+      },
+    },
+    orderBy: [{ sessionUuid: "asc" }, { uuid: "asc" }],
+    select: {
+      uuid: true,
+      sessionUuid: true,
+      session: {
+        select: {
+          companyUuid: true,
+          directIdeaUuid: true,
+          agentUuid: true,
+          originConnectionUuid: true,
+          agent: { select: { ownerUuid: true } },
+        },
+      },
+    },
+  });
+
+  return rows.map((row) => ({
+    type: "session_started",
+    companyUuid: row.session.companyUuid,
+    sessionUuid: row.sessionUuid,
+    activityUuid: row.uuid,
+    directIdeaUuid: row.session.directIdeaUuid,
+    agentUuid: row.session.agentUuid,
+    originConnectionUuid: row.session.originConnectionUuid,
+    canOpen:
+      auth.type === "agent"
+        ? row.session.agentUuid === auth.actorUuid
+        : row.session.agent.ownerUuid === auth.actorUuid,
+  }));
 }
 
 /**

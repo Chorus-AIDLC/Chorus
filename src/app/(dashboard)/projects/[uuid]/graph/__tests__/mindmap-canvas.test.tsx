@@ -21,12 +21,20 @@
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, fireEvent, act, waitFor } from "@testing-library/react";
+import { render, fireEvent, act, waitFor, screen } from "@testing-library/react";
+import type { AgentPresenceValue, ActiveIdeaSession } from "@/contexts/agent-presence-context";
 
 // usePresence: the canvas calls getPresence per node; stub to an empty array so
 // the presence ring branch is inert and the steady-repaint loop short-circuits.
 vi.mock("@/hooks/use-presence", () => ({
   usePresence: () => ({ getPresence: () => [] }),
+}));
+
+const agentPresence = vi.hoisted(() => ({
+  value: null as AgentPresenceValue | null,
+}));
+vi.mock("@/contexts/agent-presence-context", () => ({
+  useAgentPresenceOptional: () => agentPresence.value,
 }));
 
 // next-intl: capture every t(key) call so the test can assert the painter
@@ -96,6 +104,7 @@ function stubCanvas2D(): CanvasRenderingContext2D {
 beforeEach(() => {
   tCalls.length = 0;
   vi.restoreAllMocks();
+  agentPresence.value = null;
 
   // ResizeObserver shim.
   (window as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
@@ -128,7 +137,11 @@ beforeEach(() => {
   vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
 });
 
-import { MindMapCanvas, type ForceNode } from "../mindmap-canvas";
+import {
+  graphActiveIndicatorGeometry,
+  MindMapCanvas,
+  type ForceNode,
+} from "../mindmap-canvas";
 
 function buildNodes(): ForceNode[] {
   return [
@@ -209,6 +222,193 @@ describe("MindMapCanvas — status pill + no fetch-on-hover", () => {
       expect(tCalls).toContain("status.inProgress");
       expect(tCalls).toContain("documents.typeTechDesign");
       expect(tCalls).toContain("ideaTracker.badge.building");
+    });
+  });
+});
+
+describe("MindMapCanvas — daemon activity indicator", () => {
+  it.each([0.2, 0.5, 1, 2.5])(
+    "keeps its entire hitbox beyond card, expand, lifecycle, and presence geometry at %sx zoom",
+    (scale) => {
+      const geometry = graphActiveIndicatorGeometry(
+        { x: 300, y: 180 },
+        { scale, tx: 17, ty: 23 },
+      );
+
+      expect(geometry.bounds.left).toBeGreaterThan(
+        geometry.protectedCardBounds.right,
+      );
+      expect(geometry.scale).toBe(Math.min(1, scale));
+    },
+  );
+
+  it("adds an isolated accessible hit target for an active Idea", async () => {
+    const activeSession: ActiveIdeaSession = {
+      sessionUuid: "session-1",
+      ideaUuid: "idea-1",
+      agentUuid: "agent-1",
+      originConnectionUuid: "connection-1",
+      activities: new Set(["activity-1"]),
+      agentName: "Codex",
+      host: "devbox",
+      cwd: "/work/chorus",
+      connectionAvailable: true,
+      canOpen: true,
+    };
+    const openChatForActiveSession = vi.fn();
+    agentPresence.value = {
+      activeSessionsByIdea: new Map([["idea-1", [activeSession]]]),
+      openChatForActiveSession,
+    } as unknown as AgentPresenceValue;
+    const onNodeClick = vi.fn();
+
+    render(
+      <MindMapCanvas
+        nodes={buildNodes()}
+        links={[]}
+        selectedId={null}
+        onNodeClick={onNodeClick}
+      />,
+    );
+
+    const indicator = await waitFor(() =>
+      screen.getByTestId("graph-active-session-indicator"),
+    );
+    fireEvent.click(indicator);
+
+    expect(openChatForActiveSession).toHaveBeenCalledWith(activeSession);
+    expect(onNodeClick).not.toHaveBeenCalled();
+  });
+
+  it("keeps card-body and expand-strip routing active beside the overlay", async () => {
+    const activeSession: ActiveIdeaSession = {
+      sessionUuid: "session-1",
+      ideaUuid: "idea-1",
+      agentUuid: "agent-1",
+      originConnectionUuid: "connection-1",
+      activities: new Set(["activity-1"]),
+      agentName: "Codex",
+      host: "devbox",
+      cwd: "/work/chorus",
+      connectionAvailable: true,
+      canOpen: true,
+    };
+    agentPresence.value = {
+      activeSessionsByIdea: new Map([["idea-1", [activeSession]]]),
+      openChatForActiveSession: vi.fn(),
+    } as unknown as AgentPresenceValue;
+    const onNodeClick = vi.fn();
+    const { container } = render(
+      <MindMapCanvas
+        nodes={[
+          {
+            id: "idea-1",
+            type: "idea",
+            title: "Idea one",
+            status: "building",
+            hasAffordance: true,
+            childCount: 2,
+          },
+        ]}
+        links={[]}
+        selectedId={null}
+        onNodeClick={onNodeClick}
+      />,
+    );
+    await waitFor(() =>
+      screen.getByTestId("graph-active-session-indicator"),
+    );
+    const canvas = container.querySelector("canvas")!;
+
+    fireEvent.pointerDown(canvas, {
+      pointerId: 1,
+      pointerType: "mouse",
+      clientX: 400,
+      clientY: 300,
+    });
+    fireEvent.pointerUp(canvas, {
+      pointerId: 1,
+      pointerType: "mouse",
+      clientX: 400,
+      clientY: 300,
+    });
+    expect(onNodeClick).toHaveBeenLastCalledWith("idea-1", "idea", false);
+
+    fireEvent.pointerDown(canvas, {
+      pointerId: 2,
+      pointerType: "mouse",
+      clientX: 600,
+      clientY: 300,
+    });
+    fireEvent.pointerUp(canvas, {
+      pointerId: 2,
+      pointerType: "mouse",
+      clientX: 600,
+      clientY: 300,
+    });
+    expect(onNodeClick).toHaveBeenLastCalledWith("idea-1", "idea", true);
+  });
+
+  it("covers zero/many sessions and removes the hit target after the final end", async () => {
+    const first: ActiveIdeaSession = {
+      sessionUuid: "session-1",
+      ideaUuid: "idea-1",
+      agentUuid: "agent-1",
+      originConnectionUuid: "connection-1",
+      activities: new Set(["activity-1"]),
+      agentName: "Codex",
+      host: "devbox",
+      cwd: "/work/one",
+      connectionAvailable: true,
+      canOpen: true,
+    };
+    const second: ActiveIdeaSession = {
+      ...first,
+      sessionUuid: "session-2",
+      agentName: "Claude",
+      originConnectionUuid: "connection-2",
+      cwd: "/work/two",
+    };
+    const openChatForActiveSession = vi.fn();
+    agentPresence.value = {
+      activeSessionsByIdea: new Map(),
+      openChatForActiveSession,
+    } as unknown as AgentPresenceValue;
+    const onNodeClick = vi.fn();
+    const props = {
+      nodes: buildNodes(),
+      links: [],
+      selectedId: null,
+      onNodeClick,
+    };
+    const { rerender } = render(<MindMapCanvas {...props} />);
+    expect(
+      screen.queryByTestId("graph-active-session-indicator"),
+    ).toBeNull();
+
+    agentPresence.value = {
+      activeSessionsByIdea: new Map([["idea-1", [first, second]]]),
+      openChatForActiveSession,
+    } as unknown as AgentPresenceValue;
+    rerender(<MindMapCanvas {...props} />);
+    const indicator = await waitFor(() =>
+      screen.getByTestId("graph-active-session-indicator"),
+    );
+    expect(indicator.textContent).toContain("2");
+    fireEvent.click(indicator);
+    fireEvent.click(screen.getByText("Claude"));
+    expect(openChatForActiveSession).toHaveBeenCalledWith(second);
+    expect(onNodeClick).not.toHaveBeenCalled();
+
+    agentPresence.value = {
+      activeSessionsByIdea: new Map(),
+      openChatForActiveSession,
+    } as unknown as AgentPresenceValue;
+    rerender(<MindMapCanvas {...props} />);
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("graph-active-session-indicator"),
+      ).toBeNull();
     });
   });
 });

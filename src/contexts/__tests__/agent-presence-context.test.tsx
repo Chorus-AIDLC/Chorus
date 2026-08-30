@@ -19,12 +19,17 @@ import {
   computeOnlineCount,
   groupExecutionsByConnection,
   mergeExecutionEvent,
+  emptySessionActivityState,
+  reduceSessionActivity,
+  deriveActiveSessionsByIdea,
   buildEventsUrl,
   routeTranscriptEvent,
   type ExecutionsByConnection,
   type TranscriptEvent,
   type TranscriptSubscriber,
+  type ActiveIdeaSession,
 } from "@/contexts/agent-presence-context";
+import type { SessionActivityEvent } from "@/services/daemon-session.service";
 import type { ConnectionView, ExecutionView } from "@/components/agent-presence";
 
 // authFetch is the provider's only network dependency; mock it.
@@ -40,6 +45,7 @@ vi.mock("@/lib/logger-client", () => ({
 interface CapturedEventSource {
   url: string;
   onmessage: ((event: MessageEvent) => void) | null;
+  onopen: (() => void) | null;
   onerror: (() => void) | null;
   readyState: number;
   close: () => void;
@@ -52,6 +58,7 @@ class MockEventSource implements CapturedEventSource {
   static CLOSED = 2;
   url: string;
   onmessage: ((event: MessageEvent) => void) | null = null;
+  onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
   readyState = MockEventSource.OPEN;
   constructor(url: string) {
@@ -140,6 +147,22 @@ function transcriptEvent(over: Partial<TranscriptEvent> = {}): TranscriptEvent {
         createdAt: "2026-06-18T00:00:00.000Z",
       },
     ],
+    ...over,
+  };
+}
+
+function sessionActivityEvent(
+  over: Partial<SessionActivityEvent> = {},
+): SessionActivityEvent {
+  return {
+    type: "session_started",
+    companyUuid: "company-1",
+    sessionUuid: "session-1",
+    activityUuid: "activity-1",
+    directIdeaUuid: "idea-1",
+    agentUuid: "agent-c1",
+    originConnectionUuid: "c1",
+    canOpen: true,
     ...over,
   };
 }
@@ -244,6 +267,75 @@ describe("mergeExecutionEvent", () => {
     const next = mergeExecutionEvent(prev, { connectionUuid: "conn-a", executions: [] });
     expect(next["conn-a"]).toBeUndefined();
     expect(next["conn-b"]).toHaveLength(1);
+  });
+});
+
+describe("session activity reduction and derivation", () => {
+  it("is idempotent for duplicate starts and keeps overlapping activity alive", () => {
+    let state = emptySessionActivityState();
+    state = reduceSessionActivity(state, sessionActivityEvent());
+    state = reduceSessionActivity(state, sessionActivityEvent());
+    state = reduceSessionActivity(
+      state,
+      sessionActivityEvent({ activityUuid: "activity-2" }),
+    );
+    state = reduceSessionActivity(
+      state,
+      sessionActivityEvent({ type: "session_ended" }),
+    );
+    expect(state.sessions.get("session-1")?.activities).toEqual(
+      new Set(["activity-2"]),
+    );
+  });
+
+  it("tombstones duplicate/out-of-order ends so delayed starts do not resurrect", () => {
+    let state = reduceSessionActivity(
+      emptySessionActivityState(),
+      sessionActivityEvent({ type: "session_ended" }),
+    );
+    state = reduceSessionActivity(state, sessionActivityEvent());
+    state = reduceSessionActivity(
+      state,
+      sessionActivityEvent({ type: "session_ended" }),
+    );
+    expect(state.sessions.size).toBe(0);
+  });
+
+  it("groups direct Ideas, joins connection details, deduplicates sessions, and sorts stably", () => {
+    let state = emptySessionActivityState();
+    state = reduceSessionActivity(
+      state,
+      sessionActivityEvent({
+        sessionUuid: "session-z",
+        activityUuid: "activity-z",
+        agentUuid: "agent-z",
+        originConnectionUuid: "c2",
+      }),
+    );
+    state = reduceSessionActivity(state, sessionActivityEvent());
+    state = reduceSessionActivity(
+      state,
+      sessionActivityEvent({
+        sessionUuid: "adhoc",
+        activityUuid: "adhoc-activity",
+        directIdeaUuid: null,
+      }),
+    );
+
+    const grouped = deriveActiveSessionsByIdea(state, [
+      conn("c1", "online"),
+      { ...conn("c2", "online"), agentUuid: "agent-z", host: "host-z", cwd: "/work/z" },
+    ]);
+    expect([...grouped.keys()]).toEqual(["idea-1"]);
+    expect(grouped.get("idea-1")?.map((session) => session.sessionUuid)).toEqual([
+      "session-1",
+      "session-z",
+    ]);
+    expect(grouped.get("idea-1")?.[1]).toMatchObject({
+      host: "host-z",
+      cwd: "/work/z",
+      connectionAvailable: true,
+    });
   });
 });
 
@@ -426,6 +518,85 @@ describe("AgentPresenceProvider — SSE execution merge", () => {
         lastEventSource.onmessage({ data: ":heartbeat" } as MessageEvent);
       }),
     ).not.toThrow();
+  });
+});
+
+describe("AgentPresenceProvider — session activity and navigation", () => {
+  it("rebuilds activity on stream open and handles start/end without polling", async () => {
+    routeAuthFetch({
+      connections: () => okJson({ connections: [conn("c1", "online")] }),
+      executions: () => okJson({ executions: [] }),
+    });
+    const { result } = renderProvider();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => dispatchSse(sessionActivityEvent() as unknown as Record<string, unknown>));
+    expect(result.current.activeSessionsByIdea.get("idea-1")).toHaveLength(1);
+
+    act(() => lastEventSource?.onopen?.());
+    expect(result.current.activeSessionsByIdea.size).toBe(0);
+
+    act(() => dispatchSse(sessionActivityEvent() as unknown as Record<string, unknown>));
+    act(() =>
+      dispatchSse(
+        sessionActivityEvent({ type: "session_ended" }) as unknown as Record<
+          string,
+          unknown
+        >,
+      ),
+    );
+    expect(result.current.activeSessionsByIdea.size).toBe(0);
+  });
+
+  it("opens the exact active session via agent+host+CWD and falls back to session+agent when the connection is missing", async () => {
+    routeAuthFetch({
+      connections: () => okJson({ connections: [conn("c1", "online")] }),
+      executions: () => okJson({ executions: [] }),
+    });
+    const { result } = renderProvider();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() =>
+      dispatchSse(
+        sessionActivityEvent({ canOpen: false }) as unknown as Record<
+          string,
+          unknown
+        >,
+      ),
+    );
+    const forbidden = result.current.activeSessionsByIdea.get("idea-1")![0];
+    act(() => result.current.openChatForActiveSession(forbidden));
+    expect(result.current.focusTarget).toBeNull();
+
+    act(() => lastEventSource?.onopen?.());
+    act(() => dispatchSse(sessionActivityEvent() as unknown as Record<string, unknown>));
+    const located = result.current.activeSessionsByIdea.get("idea-1")![0];
+    act(() => result.current.openChatForActiveSession(located));
+    expect(result.current.focusTarget).toEqual({
+      agentUuid: "agent-c1",
+      sessionUuid: "session-1",
+      pin: { host: "host", cwd: null },
+    });
+
+    const missing: ActiveIdeaSession = {
+      ...located,
+      sessionUuid: "missing",
+      originConnectionUuid: "missing-connection",
+      host: null,
+      cwd: null,
+      connectionAvailable: false,
+      canOpen: true,
+    };
+    act(() => result.current.openChatForActiveSession(missing));
+    expect(result.current.focusTarget).toEqual({
+      agentUuid: "agent-c1",
+      sessionUuid: "missing",
+    });
   });
 });
 

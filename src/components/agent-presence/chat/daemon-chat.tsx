@@ -689,13 +689,14 @@ export function DaemonChat() {
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   useEffect(() => {
     if (
+      listStatus !== "loading" &&
       mobileDetailOpen &&
       selectedSessionUuid &&
       !rows.some((r) => r.session.uuid === selectedSessionUuid)
     ) {
       setMobileDetailOpen(false);
     }
-  }, [rows, mobileDetailOpen, selectedSessionUuid]);
+  }, [rows, listStatus, mobileDetailOpen, selectedSessionUuid]);
 
   const selectSession = useCallback((uuid: string) => {
     setSelectedSessionUuid(uuid);
