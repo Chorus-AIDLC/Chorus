@@ -97,11 +97,26 @@ export async function runInit(argv = [], deps = {}) {
 
   io.log(`[chorus agents add] Configuring: ${selectedIds.join(", ")}`);
 
+  // Resolve adapters once: update-intent detection and per-agent steps must see
+  // the same adapter instances/state readers.
+  const adapters = new Map();
+  for (const agentId of selectedIds) {
+    adapters.set(agentId, await getAdapter(agentId));
+  }
+  const updateInstalled = await resolveUpdateInstalled({
+    selectedIds,
+    adapters,
+    flags,
+    env,
+    io,
+  });
+  const resolvedFlags = { ...flags, updateInstalled };
+
   const steps = await orderedSteps();
   // `ctxExtras` lets a caller/test inject step-context collaborators (e.g. a
   // fake credential validator or command runner) so an end-to-end run is
   // hermetic; production passes none and steps use their real defaults.
-  const baseCtx = { selection: selectedIds, flags, io, env, backup, ...(deps.ctxExtras ?? {}) };
+  const baseCtx = { selection: selectedIds, flags: resolvedFlags, io, env, backup, ...(deps.ctxExtras ?? {}) };
   /** @type {import("./init/contracts.mjs").StepOutcome[]} */
   const outcomes = [];
 
@@ -109,7 +124,7 @@ export async function runInit(argv = [], deps = {}) {
     try {
       if (step.scope === STEP_SCOPES.PER_AGENT) {
         for (const agentId of selectedIds) {
-          const adapter = await getAdapter(agentId);
+          const adapter = adapters.get(agentId);
           outcomes.push(await step.run({ ...baseCtx, agentId, adapter }));
         }
       } else {
@@ -127,6 +142,36 @@ export async function runInit(argv = [], deps = {}) {
 
   summarize(outcomes.flat(), io, selectedIds);
   return outcomes.flat().some(isFailureOutcome) ? 1 : 0;
+}
+
+/**
+ * Resolve one installed-plugin update decision for the whole invocation.
+ * Unsupported/guided adapters and selected adapters without an installed
+ * Chorus payload do not trigger the question. `--yes` and non-TTY runs accept
+ * automatically; an interactive answer defaults to no.
+ */
+export async function resolveUpdateInstalled({ selectedIds, adapters, flags, env, io }) {
+  let anyInstalled = false;
+  for (const agentId of selectedIds) {
+    const adapter = adapters.get(agentId);
+    if (!adapter || typeof adapter.readInstallState !== "function") continue;
+    try {
+      const profile = flags.dshProfile ?? env.CHORUS_DSH_PROFILE;
+      const state = await adapter.readInstallState({ env, profile });
+      if (state?.supported === true && state?.pluginInstalled === true) {
+        anyInstalled = true;
+        break;
+      }
+    } catch {
+      // State probes are advisory and read-only. A broken probe must not block
+      // normal repair/install work; the installer will report its own outcome.
+    }
+  }
+  if (!anyInstalled) return false;
+  if (flags.yes || !io.isTTY) return true;
+  if (typeof io.ask !== "function") return false;
+  const answer = String(await io.ask("Update installed Chorus plugins to the latest available versions? [y/N] ")).trim();
+  return /^(?:y|yes)$/i.test(answer);
 }
 
 /** Print the per-outcome summary table. */

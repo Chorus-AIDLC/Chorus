@@ -8,7 +8,7 @@
 //     now owned SOLELY by file-template.mjs — install-kiro.sh is a deprecation
 //     stub with no manifest, so the old bash-side parity assertion is gone.
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,11 +28,12 @@ const { INSTALLED, REPAIRED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
 
 const tmp = (p) => mkdtempSync(join(tmpdir(), p));
 
-// A small SYNTHETIC manifest so tests control the exact asset set (2 skills / 1
+// A small SYNTHETIC manifest so tests control the exact asset set (3 skills / 1
 // reviewer / 1 hook). Comment + blank lines exercise the parser's skips.
 const SYNTH_MANIFEST = `# Chorus kiro manifest (test)
 skill chorus-idea
 skill chorus-yolo
+skill chorus-orchestrate
 
 reviewer chorus-task-reviewer
 hook on-stop.sh
@@ -94,7 +95,7 @@ function makeFetch(routes, { fail } = {}) {
 describe("parseManifest", () => {
   it("splits kind/name lines, ignoring blanks, comments, and unknown kinds", () => {
     expect(parseManifest(SYNTH_MANIFEST)).toEqual({
-      skills: ["chorus-idea", "chorus-yolo"],
+      skills: ["chorus-idea", "chorus-yolo", "chorus-orchestrate"],
       reviewerAgents: ["chorus-task-reviewer"],
       hookScripts: ["on-stop.sh"],
     });
@@ -166,11 +167,12 @@ describe("installFileTemplate (temp dir + faked fetch)", () => {
     const logs = [];
     const res = await installFileTemplate({ chorusUrl: "https://x.dev/api/mcp", kiroDir, fetchImpl, log: (m) => logs.push(m) });
 
-    expect(res).toMatchObject({ skills: 2, reviewerAgents: 1, hookScripts: 1 });
+    expect(res).toMatchObject({ skills: 3, reviewerAgents: 1, hookScripts: 1 });
     expect(logs.join("\n")).toContain(kiroDir); // log hook fired
     // skills + reviewer + main agent + steering
     expect(existsSync(join(kiroDir, "skills", "chorus-idea", "SKILL.md"))).toBe(true);
     expect(existsSync(join(kiroDir, "skills", "chorus-yolo", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(kiroDir, "skills", "chorus-orchestrate", "SKILL.md"))).toBe(true);
     expect(existsSync(join(kiroDir, "agents", "chorus-task-reviewer.json"))).toBe(true);
     expect(existsSync(join(kiroDir, "agents", "chorus.md"))).toBe(true);
     expect(existsSync(join(kiroDir, "steering", "chorus.md"))).toBe(true);
@@ -302,6 +304,35 @@ describe("installKiro", () => {
     expect(fetchImpl.seen).toHaveLength(0);
   });
 
+  it("refreshes a complete installed template, replaces Chorus assets, and merge-preserves MCP config", async () => {
+    const kiroDir = join(tmp("kiro-refresh-"), ".kiro");
+    mkdirSync(join(kiroDir, "skills", "chorus-idea"), { recursive: true });
+    mkdirSync(join(kiroDir, "agents"), { recursive: true });
+    mkdirSync(join(kiroDir, "settings"), { recursive: true });
+    writeFileSync(join(kiroDir, "skills", "chorus-idea", "SKILL.md"), "# stale");
+    writeFileSync(join(kiroDir, "agents", "chorus.json"), '{"stale":true}');
+    writeFileSync(
+      join(kiroDir, "settings", "mcp.json"),
+      JSON.stringify({ mcpServers: { chorus: { stale: true }, mine: { type: "stdio" } } }),
+    );
+    const backups = [];
+    const res = await installKiro(kiroCtx({
+      state: { pluginInstalled: true, skillsPresent: true, agentPresent: true, mcpServerPresent: true },
+      env: { CHORUS_URL: "https://x.dev", KIRO_DIR: kiroDir },
+      flags: { updateInstalled: true },
+      fetchImpl: makeFetch(fullRoutes()),
+      backup: (p) => backups.push(p),
+    }));
+    expect(res.action).toBe(REPAIRED);
+    expect(readFileSync(join(kiroDir, "skills", "chorus-idea", "SKILL.md"), "utf8")).toBe("# chorus-idea");
+    expect(readFileSync(join(kiroDir, "skills", "chorus-orchestrate", "SKILL.md"), "utf8")).toBe("# chorus-orchestrate");
+    const mcp = JSON.parse(readFileSync(join(kiroDir, "settings", "mcp.json"), "utf8"));
+    expect(mcp.mcpServers.mine).toEqual({ type: "stdio" });
+    expect(mcp.mcpServers.chorus.url).toBe("https://x.dev/api/mcp");
+    expect(mcp.mcpServers.chorus.headers.Authorization).toBe("Bearer ${env:CHORUS_API_KEY}");
+    expect(backups).toEqual([join(kiroDir, "settings", "mcp.json")]);
+  });
+
   it("FAILED when no Chorus URL is resolvable (nothing to download from)", async () => {
     const res = await installKiro(kiroCtx({ state: { pluginInstalled: false }, env: {} }));
     expect(res.action).toBe(FAILED);
@@ -419,6 +450,16 @@ describe("kiro manifest (owned solely by file-template.mjs)", () => {
     expect(js.skills.length).toBeGreaterThan(0);
     expect(js.reviewerAgents.length).toBeGreaterThan(0);
     expect(js.hookScripts.length).toBeGreaterThan(0);
+  });
+
+  it("lists every skill shipped in the Kiro template", () => {
+    const manifestSkills = [...readKiroManifestFile().skills].sort();
+    const skillsDir = fileURLToPath(new URL(".kiro/skills/", KIRO_MANIFEST_URL));
+    const templateSkills = readdirSync(skillsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(skillsDir, entry.name, "SKILL.md")))
+      .map((entry) => entry.name)
+      .sort();
+    expect(manifestSkills).toEqual(templateSkills);
   });
 
   it("readKiroManifestFile reads the repo manifest at its canonical path", () => {
