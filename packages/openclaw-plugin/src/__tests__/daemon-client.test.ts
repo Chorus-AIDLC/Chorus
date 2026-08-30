@@ -397,6 +397,40 @@ describe("session-key continuity", () => {
     expect(runEmbeddedAgent.mock.calls[0][0].sessionKey).toBe(expectedKey);
   });
 
+  it.each([
+    "/workspaces/项目 alpha",
+    "/workspaces/space only",
+  ])("reuses the business-key session entry independently of cwd %s", async (cwd) => {
+    const rest = makeRestClient();
+    const getSessionEntry = vi.fn(() => ({
+      sessionId: "sid-existing",
+      sessionFile: "f.jsonl",
+    }));
+    const runEmbeddedAgent = vi.fn(async () => ({ meta: {} }));
+    const ctx = makeRunContext({ runEmbeddedAgent, getSessionEntry });
+    ctx.workspaceDir = cwd;
+    const { client } = build({ rest, runContext: ctx });
+
+    await client.runWake({
+      prompt: "p",
+      contextKey: "ctx",
+      entityType: "idea",
+      entityUuid: "idea-9",
+      directIdeaUuid: "idea-9",
+    });
+
+    const expectedKey = deriveSessionKey("idea-9", "agent:main:main");
+    expect(getSessionEntry).toHaveBeenCalledWith({
+      sessionKey: expectedKey,
+      agentId: "main",
+    });
+    expect(runEmbeddedAgent.mock.calls[0][0]).toMatchObject({
+      sessionId: "sid-existing",
+      sessionKey: expectedKey,
+      workspaceDir: cwd,
+    });
+  });
+
   it("opens a NEW session with a SAFE session id (the business key) when getSessionEntry returns none", async () => {
     // Regression for a defect surfaced by a live OpenClaw gateway run (T5): when no
     // OpenClaw session exists yet for the derived key, the fallback session id MUST be

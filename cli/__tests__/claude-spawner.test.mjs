@@ -14,6 +14,7 @@ import {
   escapeCwd,
   transcriptPath,
   isNewSession,
+  SESSION_CONFLICT_FAILURE,
 } from "../claude-spawner.mjs";
 import { writeMcpConfig, buildMcpConfig } from "../mcp-config.mjs";
 
@@ -94,15 +95,42 @@ describe("isValidSessionId", () => {
 });
 
 describe("escapeCwd (verified Claude Code transcript-dir rule)", () => {
-  it("POSIX: replaces both / and . with - (verified on disk)", () => {
+  it("POSIX: preserves established ASCII path fixtures byte-for-byte", () => {
     expect(escapeCwd("/home/ubuntu/dev/ai-pm", "linux")).toBe("-home-ubuntu-dev-ai-pm");
     // a leading-dot segment yields the verified double dash
     expect(escapeCwd("/home/ubuntu/.claude-mem/observer", "linux")).toBe(
       "-home-ubuntu--claude-mem-observer"
     );
   });
-  it("Windows: also escapes backslashes and the drive colon (best-effort)", () => {
+
+  it("normalizes spaces, underscores, CJK, and astral Unicode like Claude Code 2.1.251", () => {
+    expect(escapeCwd("/home/u/my project", "linux")).toBe("-home-u-my-project");
+    expect(escapeCwd("/home/u/proj_name", "linux")).toBe("-home-u-proj-name");
+    expect(escapeCwd("/home/ubuntu/dev/养育", "linux")).toBe("-home-ubuntu-dev---");
+    // Claude's non-unicode regex replaces each UTF-16 surrogate code unit.
+    expect(escapeCwd("/home/u/😀", "linux")).toBe("-home-u---");
+  });
+
+  it("Windows: preserves the established separator and drive-colon fixture", () => {
     expect(escapeCwd("C:\\Users\\me\\dev\\ai-pm", "win32")).toBe("C--Users-me-dev-ai-pm");
+  });
+
+  it("keeps escaped keys through 200 characters and truncates keys over the boundary", () => {
+    expect(escapeCwd("a".repeat(200), "linux")).toBe("a".repeat(200));
+    expect(escapeCwd("a".repeat(201), "linux")).toBe(`${"a".repeat(200)}-rkvsv5`);
+  });
+
+  it("hashes the original cwd after truncating the escaped key", () => {
+    // Both inputs escape to the same 201-character value. Distinct suffixes prove
+    // Claude hashes the original slash/underscore code unit, not the escaped key.
+    const escapedPrefix = `-${"a".repeat(199)}`;
+    expect(escapeCwd(`/${"a".repeat(200)}`, "linux")).toBe(`${escapedPrefix}-b6ymvl`);
+    expect(escapeCwd(`_${"a".repeat(200)}`, "linux")).toBe(`${escapedPrefix}-awnd41`);
+  });
+
+  it("uses original UTF-16 code units for a long cwd hash", () => {
+    const cwd = `/tmp/😀/${"x".repeat(195)}`;
+    expect(escapeCwd(cwd, "linux")).toBe(`-tmp----${"x".repeat(192)}-ty71zh`);
   });
 });
 
@@ -126,6 +154,16 @@ describe("transcriptPath / isNewSession", () => {
     const deps = { env: {}, platform: "linux", home: "/home/u" };
     expect(isNewSession(SID, cwd, { ...deps, exists: (p) => p !== expected })).toBe(true);
     expect(isNewSession(SID, cwd, { ...deps, exists: (p) => p === expected })).toBe(false);
+  });
+
+  it.each([
+    ["/home/ubuntu/dev/养育", "-home-ubuntu-dev---"],
+    ["/home/ubuntu/dev/my project", "-home-ubuntu-dev-my-project"],
+  ])("finds an existing transcript for cwd %s", (cwd, escapedCwd) => {
+    const expected = `/home/u/.claude/projects/${escapedCwd}/${SID}.jsonl`;
+    const deps = { env: {}, platform: "linux", home: "/home/u", exists: (p) => p === expected };
+    expect(transcriptPath(SID, cwd, deps)).toBe(expected);
+    expect(isNewSession(SID, cwd, deps)).toBe(false);
   });
 });
 
@@ -327,6 +365,52 @@ describe("ClaudeSpawner.wake", () => {
     const result = await p;
     expect(result.exitCode).toBe(2);
     expect(warns.join("")).toMatch(/exited with code 2/);
+  });
+
+  it("classifies a split Session ID already-in-use stderr signature on non-zero exit", async () => {
+    const child = makeFakeChild();
+    const spawner = new ClaudeSpawner({
+      claudePath: "/c",
+      spawnImpl: () => child,
+      logger: silent,
+    });
+    const p = spawner.wake({ prompt: "x", sessionId: SID, isNew: true });
+    child.stderr.emit("data", `Error: Session ID ${SID} is already `);
+    child.stderr.emit("data", "in use by another process\n");
+    child.emit("close", 1);
+
+    expect(await p).toEqual({
+      sessionId: SID,
+      backendSessionId: SID,
+      exitCode: 1,
+      isNew: true,
+      failureClassification: SESSION_CONFLICT_FAILURE,
+    });
+  });
+
+  it("leaves unrelated stderr and zero exits unclassified", async () => {
+    for (const { stderr, code } of [
+      { stderr: "authentication failed", code: 1 },
+      { stderr: `Session ID ${SID} is already in use`, code: 0 },
+    ]) {
+      const child = makeFakeChild();
+      const spawner = new ClaudeSpawner({
+        claudePath: "/c",
+        spawnImpl: () => child,
+        logger: silent,
+      });
+      const p = spawner.wake({ prompt: "x", sessionId: SID, isNew: true });
+      child.stderr.emit("data", stderr);
+      child.emit("close", code);
+      const result = await p;
+      expect(result).not.toHaveProperty("failureClassification");
+      expect(result).toMatchObject({
+        sessionId: SID,
+        backendSessionId: SID,
+        exitCode: code,
+        isNew: true,
+      });
+    }
   });
 
   it("does NOT crash on a spawn 'error' event", async () => {

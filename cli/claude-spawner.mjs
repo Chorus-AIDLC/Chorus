@@ -3,7 +3,7 @@
 // engineering point of the daemon: parsing stream-json is plain JS and
 // platform-neutral; the real work is spawning, and it is all Windows.
 //
-// Verified against Claude Code CLI 2.1.177:
+// Verified against Claude Code CLI 2.1.251:
 //   • `-p/--print` + `--output-format stream-json` emits NDJSON (one JSON object
 //     per line); every line carries `session_id`.
 //   • `--session-id <uuid>` sets the session id for a fresh run, and
@@ -32,6 +32,28 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 /** Matches a canonical lowercase UUID (any version). Chorus idea uuids are v4. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** Backend-neutral failure classification consumed by the wake orchestrator. */
+export const SESSION_CONFLICT_FAILURE = "session_conflict";
+
+const STDERR_BUFFER_LIMIT = 64 * 1024;
+const SESSION_CONFLICT_RE = /\bsession id\b[^\r\n]{0,200}\bis already in use\b/i;
+const CLAUDE_PROJECT_KEY_CAP = 200;
+
+/**
+ * Claude Code 2.1.251's Java-style signed 32-bit string hash, rendered as the
+ * absolute value in base36. Iterating by index intentionally hashes UTF-16 code
+ * units (including each surrogate in an astral character) rather than code points.
+ * @param {string} value
+ * @returns {string}
+ */
+function projectKeyHash(value) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
 /**
  * True iff `id` is a well-formed, lowercase UUID. The daemon anchors the Claude
  * session id on a Chorus idea uuid (already lowercase v4); we validate before
@@ -45,22 +67,27 @@ export function isValidSessionId(id) {
 }
 
 /**
- * Claude Code's transcript directory for a working directory. Verified against the
- * live install: claude escapes the ABSOLUTE cwd by replacing both `/` and `.` with
- * `-` (e.g. `/home/u/dev/ai-pm` → `-home-u-dev-ai-pm`,
- * `/home/u/.cfg/x` → `-home-u--cfg-x`). On Windows the separators/drive differ, so
- * we escape backslashes and colons too; the rule there is best-effort and must be
- * re-verified against a Windows claude before claiming Windows resume support.
+ * Claude Code's transcript directory for a working directory. Verified against
+ * Claude Code 2.1.251's live Linux install and on-disk transcripts: every
+ * non-ASCII-alphanumeric UTF-16 code unit becomes `-`. That includes separators,
+ * dots, spaces, underscores, and non-ASCII characters; existing hyphens remain
+ * byte-identical because replacing `-` with `-` is a no-op. Escaped keys longer
+ * than 200 characters use the first 200 characters plus `-` and the base36
+ * Java-style signed 32-bit hash of the original cwd. The same expression produces
+ * the established Windows fixture, though the Windows on-disk layout remains
+ * best-effort until verified on a Windows Claude installation.
  * @param {string} cwd  Absolute working directory.
  * @param {NodeJS.Platform} [platform]
  * @returns {string}
  */
 export function escapeCwd(cwd, platform = process.platform) {
-  // Replace path separators and dots with `-`. On POSIX that's `/` and `.`; on
-  // Windows also `\` and the drive-colon. Collapsing both `/` and `.` is what
-  // produces the verified double-dash on a leading-dot segment.
-  const re = platform === "win32" ? /[\\/.:]/g : /[/.]/g;
-  return cwd.replace(re, "-");
+  // `platform` remains in the signature for fixture/API compatibility. Claude's
+  // observed sanitizer is platform-independent; platform path syntax supplies
+  // the differing separator/drive characters that this expression normalizes.
+  void platform;
+  const escaped = cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  if (escaped.length <= CLAUDE_PROJECT_KEY_CAP) return escaped;
+  return `${escaped.slice(0, CLAUDE_PROJECT_KEY_CAP)}-${projectKeyHash(cwd)}`;
 }
 
 /**
@@ -284,7 +311,8 @@ export class ClaudeSpawner {
    *   so the waker can store the handle in its execution registry for the interrupt
    *   path BEFORE this promise resolves. It is invoked once, synchronously, only on a
    *   successful spawn; a spawn failure never calls it.
-   * @returns {Promise<{ sessionId: string, backendSessionId: string|null, exitCode: number|null, isNew: boolean }>}
+   * @returns {Promise<{ sessionId: string, backendSessionId: string|null, exitCode: number|null, isNew: boolean,
+   *                     failureClassification?: "session_conflict" }>}
    *   `backendSessionId` is the Claude `--resume` anchor (the input `sessionId`) on a
    *   terminal resolution after a spawn, so the conversation UI can offer a resumable
    *   id — mirrors codex-spawner's shape. `null` on the pre-spawn failure paths (no
@@ -369,6 +397,8 @@ export class ClaudeSpawner {
       }
 
       let stdoutBuf = "";
+      let stderrBuf = "";
+      let sessionConflictSeen = false;
       let observedSessionId = id;
 
       child.stdout?.setEncoding?.("utf8");
@@ -392,7 +422,10 @@ export class ClaudeSpawner {
 
       child.stderr?.setEncoding?.("utf8");
       child.stderr?.on("data", (chunk) => {
-        const text = String(chunk).trim();
+        const rawText = String(chunk);
+        stderrBuf = (stderrBuf + rawText).slice(-STDERR_BUFFER_LIMIT);
+        if (SESSION_CONFLICT_RE.test(stderrBuf)) sessionConflictSeen = true;
+        const text = rawText.trim();
         if (text) this.logger.warn(`[Chorus] claude stderr: ${text}`);
       });
 
@@ -411,7 +444,11 @@ export class ClaudeSpawner {
         }
         // backendSessionId is the `--resume` anchor (`id`), NOT observedSessionId (see
         // the process-error handler above for why the anchor is the resumable value).
-        resolve({ sessionId: observedSessionId, backendSessionId: id, exitCode: code, isNew });
+        const result = { sessionId: observedSessionId, backendSessionId: id, exitCode: code, isNew };
+        if (code !== null && code !== 0 && sessionConflictSeen) {
+          result.failureClassification = SESSION_CONFLICT_FAILURE;
+        }
+        resolve(result);
       });
 
       // Guard against an ASYNC stdin error (EPIPE): if claude exits/closes

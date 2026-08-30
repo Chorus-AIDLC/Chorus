@@ -246,18 +246,25 @@ describe("KiroSpawner.wake — spawn orchestration", () => {
     expect(setSessionId).not.toHaveBeenCalled();
   });
 
-  it("resume wake: a known anchor produces `--resume-id <sessionId>` (ignores passed isNew)", async () => {
+  it.each([
+    "/workspaces/项目 alpha",
+    "/workspaces/space only",
+  ])("resume wake: a known anchor ignores the shared new-session probe under cwd %s", async (cwd) => {
     const child = makeFakeChild();
     const setSessionId = vi.fn();
     const { spawner, calls } = makeSpawner({ child, getSessionId: () => SID, setSessionId });
-    // pass isNew:true but the map has a session id → spawner must resume
-    const p = spawner.wake({ prompt: "again", sessionId: ANCHOR, isNew: true });
+    // pass isNew:true (the shared Claude probe missed) but the map has a session
+    // id → Kiro must resume independently and pass the cwd through verbatim.
+    const p = spawner.wake({ prompt: "again", sessionId: ANCHOR, isNew: true, cwd });
     child.emit("close", 0);
     const result = await p;
+    expect(spawner.sessionDecision).toEqual({ probeIsAuthoritative: false });
     expect(calls.argv).toContain("--resume-id");
     expect(calls.argv[calls.argv.indexOf("--resume-id") + 1]).toBe(SID);
+    expect(calls.opts.cwd).toBe(cwd);
     // resume returns the known id; does NOT re-persist (not a new run)
     expect(result.sessionId).toBe(SID);
+    expect(result.isNew).toBe(false);
     expect(setSessionId).not.toHaveBeenCalled();
   });
 
