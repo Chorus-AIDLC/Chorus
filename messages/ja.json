@@ -1245,6 +1245,18 @@
       "testConnection": "このステップではエージェントの接続をテストします。近日公開。"
     }
   },
+  "activeSessions": {
+    "indicatorLabel": "{count} 件の Daemon Session が実行中 — チャットを開くか選択",
+    "statusOnlyIndicatorLabel": "{count} 件の Daemon Session が実行中 — ステータスのみ",
+    "chooserLabel": "実行中の Daemon Session",
+    "runningCount": "{count} 件の Session が実行中",
+    "location": "{host} · {cwd}",
+    "unknownHost": "不明なホスト",
+    "unknownCwd": "不明な作業ディレクトリ",
+    "agentFallback": "接続情報を読み込み中",
+    "statusOnly": "ステータスのみ · 別のユーザーが所有",
+    "statusOnlyEntry": "{agent} — ステータスのみ"
+  },
   "ideaTracker": {
     "overview": "概要",
     "overviewSubtitle": "着想・提案・課題を一目で追跡します",

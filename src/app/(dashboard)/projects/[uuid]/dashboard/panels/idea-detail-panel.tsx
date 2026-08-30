@@ -45,6 +45,8 @@ import { canVerifyElaboration } from "@/lib/elaboration-verify";
 import { StartDevelopmentButton } from "@/components/start-development-button";
 import { YoloButton } from "@/components/yolo-button";
 import { ReferencesSection } from "@/components/references-section";
+import { ActiveSessionIndicator } from "@/components/active-session-indicator";
+import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
 import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
 import { reassignIdeaInstanceNoWakeAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions";
@@ -170,6 +172,9 @@ export function IdeaDetailPanel({
   const tStatus = useTranslations("status");
   const tLineage = useTranslations("ideaTracker.lineage");
   const router = useRouter();
+  const agentPresence = useAgentPresenceOptional();
+  const activeSessions =
+    agentPresence?.activeSessionsByIdea.get(ideaUuid) ?? [];
 
   // Core idea state
   const [idea, setIdea] = useState<IdeaWithDerivedStatus | null>(null);
@@ -657,6 +662,13 @@ export function IdeaDetailPanel({
                         ? tTracker(`badge.${BADGE_HINT_I18N_KEYS[idea.badgeHint] || "open"}`)
                         : tStatus(derivedStatusI18nKeys[status] || "todo")}
                     </Badge>
+                    {activeSessions.length > 0 && agentPresence && (
+                      <ActiveSessionIndicator
+                        sessions={activeSessions}
+                        onSelect={agentPresence.openChatForActiveSession}
+                        surface="sidebar"
+                      />
+                    )}
                     {isContainer && idea.childProgress && idea.childProgress.total > 0 && (
                       // Theme rollup: x/y ring reflecting child completion, so the
                       // header shows real progress rather than a stuck "elaborated".

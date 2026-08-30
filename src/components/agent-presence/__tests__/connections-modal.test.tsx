@@ -114,6 +114,33 @@ function OpenForSessionTrigger({
   );
 }
 
+// A stand-in for the Idea Tracker / graph running-session affordance. Unlike
+// openChatForSession, this path has no SessionView seed; it must preserve the
+// activity's sessionUuid and let the already-fetched conversation list resolve it.
+function OpenActiveIdeaSessionTrigger() {
+  const { openChatForActiveSession } = useAgentPresence();
+  return (
+    <Button
+      onClick={() =>
+        openChatForActiveSession({
+          sessionUuid: "s-idea",
+          ideaUuid: "idea-1",
+          agentUuid: "agent-1",
+          originConnectionUuid: "1",
+          activities: new Set(["turn-1"]),
+          agentName: "Alpha",
+          host: "host",
+          cwd: "/workspace/chorus",
+          connectionAvailable: true,
+          canOpen: true,
+        })
+      }
+    >
+      open-active-idea-session
+    </Button>
+  );
+}
+
 // ===== EventSource stub =====
 class NoopEventSource {
   static CONNECTING = 0;
@@ -898,6 +925,65 @@ describe("Daemon chat modal — one-shot session focus (openChatForSession)", ()
           /^\/api\/daemon-sessions\/[^/?]+$/.test(c[0] as string),
       ),
     ).toBe(false);
+  });
+});
+
+describe("Daemon chat modal — active Idea session focus", () => {
+  it("opens the exact transcript and mobile drill-down instead of the conversation list", async () => {
+    const ideaSession = session({
+      uuid: "s-idea",
+      agentUuid: "agent-1",
+      directIdeaUuid: "idea-1",
+      title: "Current idea conversation",
+      originConnectionUuid: "1",
+    });
+    respondWith({
+      connections: [
+        conn({
+          uuid: "1",
+          agentUuid: "agent-1",
+          agentName: "Alpha",
+          host: "host",
+          cwd: "/workspace/chorus",
+        }),
+      ],
+      sessions: [
+        ideaSession,
+        session({
+          uuid: "s-other",
+          agentUuid: "agent-1",
+          title: "Another conversation",
+          originConnectionUuid: "1",
+        }),
+      ],
+      detail: { session: ideaSession, turns: [] },
+    });
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AgentPresenceProvider>
+        <OpenActiveIdeaSessionTrigger />
+        <AgentConnectionsModal />
+      </AgentPresenceProvider>,
+    );
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    await user.click(screen.getByText("open-active-idea-session"));
+
+    await waitFor(() =>
+      expect(
+        mockAuthFetch.mock.calls.some(
+          (call) =>
+            typeof call[0] === "string" &&
+            (call[0] as string).startsWith("/api/daemon-sessions/s-idea"),
+        ),
+      ).toBe(true),
+    );
+    expect(
+      screen.getByRole("button", { name: "Conversations" }),
+    ).toBeTruthy();
+    expect(
+      screen.getAllByText("Current idea conversation").length,
+    ).toBeGreaterThan(0);
   });
 });
 
