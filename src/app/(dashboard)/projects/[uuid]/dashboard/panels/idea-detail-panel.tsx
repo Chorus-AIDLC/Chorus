@@ -652,40 +652,46 @@ export function IdeaDetailPanel({
                   <h2 className="text-base font-semibold text-foreground truncate">
                     {idea.title}
                   </h2>
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <Badge
-                      className={
-                        derivedStatusColors[status] || derivedStatusColors.todo
-                      }
-                    >
-                      {idea.badgeHint
-                        ? tTracker(`badge.${BADGE_HINT_I18N_KEYS[idea.badgeHint] || "open"}`)
-                        : tStatus(derivedStatusI18nKeys[status] || "todo")}
-                    </Badge>
+                  <div className="mt-1.5 flex min-w-0 items-center gap-2">
+                    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+                      <Badge
+                        className={
+                          derivedStatusColors[status] || derivedStatusColors.todo
+                        }
+                      >
+                        {idea.badgeHint
+                          ? tTracker(`badge.${BADGE_HINT_I18N_KEYS[idea.badgeHint] || "open"}`)
+                          : tStatus(derivedStatusI18nKeys[status] || "todo")}
+                      </Badge>
+                      {isContainer && idea.childProgress && idea.childProgress.total > 0 && (
+                        // Theme rollup: x/y ring reflecting child completion, so the
+                        // header shows real progress rather than a stuck "elaborated".
+                        <span
+                          className="flex shrink-0 items-center gap-1 text-xs font-medium text-primary"
+                          title={tLineage("childrenDone", {
+                            done: idea.childProgress.done,
+                            total: idea.childProgress.total,
+                          })}
+                        >
+                          <ProgressRing done={idea.childProgress.done} total={idea.childProgress.total} size={13} stroke={2} />
+                          {idea.childProgress.done}/{idea.childProgress.total}
+                        </span>
+                      )}
+                      <span
+                        className="min-w-0 truncate whitespace-nowrap text-xs text-muted-foreground"
+                        title={formatDateTime(idea.createdAt)}
+                      >
+                        {formatDateTime(idea.createdAt)}
+                      </span>
+                    </div>
                     {activeSessions.length > 0 && agentPresence && (
                       <ActiveSessionIndicator
                         sessions={activeSessions}
                         onSelect={agentPresence.openChatForActiveSession}
                         surface="sidebar"
+                        className="shrink-0"
                       />
                     )}
-                    {isContainer && idea.childProgress && idea.childProgress.total > 0 && (
-                      // Theme rollup: x/y ring reflecting child completion, so the
-                      // header shows real progress rather than a stuck "elaborated".
-                      <span
-                        className="flex items-center gap-1 text-xs font-medium text-primary"
-                        title={tLineage("childrenDone", {
-                          done: idea.childProgress.done,
-                          total: idea.childProgress.total,
-                        })}
-                      >
-                        <ProgressRing done={idea.childProgress.done} total={idea.childProgress.total} size={13} stroke={2} />
-                        {idea.childProgress.done}/{idea.childProgress.total}
-                      </span>
-                    )}
-                    <span className="text-xs text-muted-foreground">
-                      {formatDateTime(idea.createdAt)}
-                    </span>
                   </div>
                 </>
               )

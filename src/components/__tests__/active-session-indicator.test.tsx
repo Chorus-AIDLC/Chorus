@@ -98,6 +98,25 @@ describe("ActiveSessionIndicator", () => {
     expect(onParentClick).not.toHaveBeenCalled();
   });
 
+  it("keeps a hover-opened chooser open when its trigger is clicked", () => {
+    render(
+      <ActiveSessionIndicator
+        sessions={[session("one"), session("two")]}
+        onSelect={() => {}}
+        surface="sidebar"
+      />,
+    );
+
+    const trigger = screen.getByTestId("sidebar-active-session-indicator");
+    fireEvent.pointerEnter(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Agent one")).toBeTruthy();
+    expect(screen.getByText("Agent two")).toBeTruthy();
+  });
+
   it("renders the same live-agent affordance in the Idea Tracker sidebar", () => {
     render(
       <ActiveSessionIndicator

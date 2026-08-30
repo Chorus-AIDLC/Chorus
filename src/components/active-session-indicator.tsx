@@ -88,7 +88,14 @@ export function ActiveSessionIndicator({
             if (sessions.length === 1 && sessions[0].canOpen) {
               event.preventDefault();
               select(sessions[0]);
+              return;
             }
+            // Hover/focus may already have opened the controlled popover before
+            // the click arrives. Prevent Radix Trigger's default toggle from
+            // immediately closing it again, which presents as a visible flash.
+            event.preventDefault();
+            cancelClose();
+            setOpen(true);
           }}
           onKeyDown={(event) => event.stopPropagation()}
           className={cn(
