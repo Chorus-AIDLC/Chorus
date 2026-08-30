@@ -21,7 +21,7 @@
 
 import { buildBatchPrompt } from "./prompts.mjs";
 import { writeMcpConfig } from "./mcp-config.mjs";
-import { isNewSession } from "./claude-spawner.mjs";
+import { isNewSession, SESSION_CONFLICT_FAILURE } from "./claude-spawner.mjs";
 import { killProcessTree, DEFAULT_SIGINT_TIMEOUT_MS } from "./process-killer.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
@@ -31,7 +31,7 @@ export class Waker {
    * @param {{
    *   creds: { url: string, apiKey: string },
    *   lineage: { resolve: (event: any) => Promise<{ rootIdeaUuid: string|null, directIdeaUuid: string|null }> },
-   *   spawner: { wake: (params: any) => Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }> },
+   *   spawner: { wake: (params: any) => Promise<{ sessionId: string, backendSessionId?: string|null, exitCode: number|null, isNew: boolean, failureClassification?: string }> },
    *   cwd?: string,  The connection/session-bound working directory this Waker serves; resolveCwd() is the single source the probe + spawn + resume use. `undefined` ⇒ the process default cwd (HARD-1 / single-path).
    *   validateRuntimeCwd?: (cwd: string) => Promise<{normalizedPath?: string}>,
    *   hooks?: import("./upload-hooks.mjs").UploadHooks,
@@ -101,6 +101,13 @@ export class Waker {
     // wake's exit path reads + clears it to decide reason=user vs reason=crash.
     /** @type {Set<string>} */
     this.interrupting = new Set();
+    // Session/entity lanes whose deterministic Claude conflict survived the one-shot
+    // resume fallback. Only a synthetic crash resume for the same lane is suppressed;
+    // unrelated wakes continue, and a fresh human instruction clears the lane so one
+    // new bounded recovery cycle is allowed. Daemon-local by design: construction
+    // (including daemon restart) starts with an empty guard.
+    /** @type {Set<string>} */
+    this.deterministicConflictGuards = new Set();
     // Daemon graceful-shutdown flag (fix-daemon-exit-orphan-running-turn). Set once
     // by interruptAll() and never cleared — a shutting-down Waker is on its way out.
     // The wake exit path reads it to report the TURN as interrupted(shutdown), and to
@@ -359,7 +366,28 @@ export class Waker {
    */
   async wakeBatch(notifications, key, attribution) {
     let cfg;
-    const list = Array.isArray(notifications) ? notifications : [];
+    const receivedList = Array.isArray(notifications) ? notifications : [];
+    const hasFreshHumanInstruction = receivedList.some(
+      (n) => n?.action === "human_instruction",
+    );
+    if (hasFreshHumanInstruction && this.deterministicConflictGuards.delete(key)) {
+      this.logger.info(
+        `[Chorus] cleared deterministic session-conflict guard for ${key} on fresh human instruction`,
+      );
+    }
+    const list =
+      !hasFreshHumanInstruction && this.deterministicConflictGuards.has(key)
+        ? receivedList.filter((n) => {
+            const suppress =
+              n?.action === "resource_resumed" && n?.resumedFrom === "crash";
+            if (suppress) {
+              this.logger.warn(
+                `[Chorus] suppressed automatic crash resume for ${key}: deterministic session conflict fallback already exhausted`,
+              );
+            }
+            return !suppress;
+          })
+        : receivedList;
     // Physical batch size — how many wakes were coalesced into this one turn. Drives the
     // session-anchor synthesis (a coalesced batch shows ONE synthesized idea row) and the
     // arrival log label. Independent of the wire count below.
@@ -390,7 +418,7 @@ export class Waker {
     // all leave the executions map when the batch settles so the server reconcile ends the
     // queued rows the batch coalesced away (a coalesced batch shows only ONE running row).
     const drainedExecKeys = [];
-    for (const n of list) {
+    for (const n of receivedList) {
       const e = this.#entityOf(n);
       if (e) drainedExecKeys.push(this.#execKey(e.entityType, e.entityUuid));
     }
@@ -515,7 +543,39 @@ export class Waker {
       // it even before spawner.wake() returns. (Do NOT reference the awaited
       // `result` inside onMessage — it's in the temporal dead zone there.)
       let observedSessionId = sessionId ?? "";
-      const result = await this.spawner.wake({
+      const onChild = (child) => {
+        const entry = execKey ? this.executions.get(execKey) : null;
+        if (entry && entry.status === "running") entry.child = child;
+        if (sessionId && !turnAdvancedToRunning) {
+          turnAdvancedToRunning = true;
+          // Fire-and-forget; #advanceTurn swallows + logs its own failures so a
+          // turn-report error never crashes the spawn callback (no-silent-errors).
+          // The coalescedCount rides this → running edge so the server settles the
+          // (count − 1) same-session pending turns coalesced into this one (a single
+          // wake reports 1, which the client omits from the wire).
+          runningTurnUuidPromise = this.#advanceTurn(
+            sessionId,
+            "running",
+            entity,
+            null,
+            null,
+            null,
+            null,
+            coalescedCount,
+          );
+        }
+      };
+      const onMessage = (message) => {
+        if (message && typeof message.session_id === "string") observedSessionId = message.session_id;
+        // Fire-and-forget transcript hook (子1): keeps only user/assistant text and
+        // batch-POSTs to /api/daemon/transcript for the current turn. Warn-not-throw
+        // inside the hook; the trailing .catch is belt-and-braces so a rejected hook
+        // promise can never surface as an unhandled rejection in the wake path.
+        this.hooks
+          ?.onTranscriptMessage?.({ rootIdeaKey: key, sessionId: observedSessionId, message })
+          .catch(() => {});
+      };
+      const wakeParams = {
         prompt,
         sessionId,
         isNew,
@@ -526,39 +586,30 @@ export class Waker {
         // a re-keyed/dropped entry never throws here. ALSO advance the server turn
         // pending→running here (子1) — same hook keying, no parallel registry — since
         // this is the precise moment the subprocess actually started.
-        onChild: (child) => {
-          const entry = execKey ? this.executions.get(execKey) : null;
-          if (entry && entry.status === "running") entry.child = child;
-          if (sessionId) {
-            turnAdvancedToRunning = true;
-            // Fire-and-forget; #advanceTurn swallows + logs its own failures so a
-            // turn-report error never crashes the spawn callback (no-silent-errors).
-            // The coalescedCount rides this → running edge so the server settles the
-            // (count − 1) same-session pending turns coalesced into this one (a single
-            // wake reports 1, which the client omits from the wire).
-            runningTurnUuidPromise = this.#advanceTurn(
-              sessionId,
-              "running",
-              entity,
-              null,
-              null,
-              null,
-              null,
-              coalescedCount,
-            );
-          }
-        },
-        onMessage: (message) => {
-          if (message && typeof message.session_id === "string") observedSessionId = message.session_id;
-          // Fire-and-forget transcript hook (子1): keeps only user/assistant text and
-          // batch-POSTs to /api/daemon/transcript for the current turn. Warn-not-throw
-          // inside the hook; the trailing .catch is belt-and-braces so a rejected hook
-          // promise can never surface as an unhandled rejection in the wake path.
-          this.hooks
-            ?.onTranscriptMessage?.({ rootIdeaKey: key, sessionId: observedSessionId, message })
-            .catch(() => {});
-        },
-      });
+        onChild,
+        onMessage,
+      };
+      let result = await this.spawner.wake(wakeParams);
+
+      // Claude can still reject a new-session launch when its durable session exists
+      // but the transcript probe missed it. Retry that classified conflict exactly once
+      // as a resume. The shared callbacks preserve transcript flow and replace the live
+      // child for interrupt handling; onChild's gate keeps pending→running exactly once.
+      if (
+        isNew &&
+        result?.failureClassification === SESSION_CONFLICT_FAILURE
+      ) {
+        this.logger.warn(
+          `[Chorus] new-session conflict for ${key}; retrying once with resume`,
+        );
+        result = await this.spawner.wake({ ...wakeParams, isNew: false });
+        if (result?.failureClassification === SESSION_CONFLICT_FAILURE) {
+          this.deterministicConflictGuards.add(key);
+          this.logger.warn(
+            `[Chorus] deterministic session conflict fallback exhausted for ${key}; future automatic crash resumes will be suppressed`,
+          );
+        }
+      }
 
       if (result && !probeIsAuthoritative) {
         this.logger.info(

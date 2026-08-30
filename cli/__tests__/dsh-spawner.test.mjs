@@ -10,6 +10,8 @@ import {
 const CREDS = { url: "https://chorus.test", apiKey: "cho_secret" };
 const UUID = "11111111-2222-4333-8444-555555555555";
 const SID = "chorus-11111111222243338444555555555555";
+const UUID2 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const SID2 = "chorus-aaaaaaaabbbb4ccc8dddeeeeeeeeeeee";
 
 function response(id, result) {
   return `${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`;
@@ -40,7 +42,7 @@ function fakeChild(onRequest) {
   return child;
 }
 
-function successfulRuntime() {
+function successfulRuntime(sessionId = SID) {
   return fakeChild((request, child) => {
     queueMicrotask(() => {
       if (request.method === "initialize") {
@@ -55,14 +57,14 @@ function successfulRuntime() {
         child.stdout.emit(
           "data",
           notification("session.event", {
-            sessionId: SID,
+            sessionId,
             event: {
               type: "agent/inbox/spliced",
               data: { inserted: [{ id: "msg-1" }] },
             },
           }) +
             notification("session.event", {
-              sessionId: SID,
+              sessionId,
               event: {
                 type: "user/message",
                 data: { message: { role: "user", content: [{ type: "text", text: "hello" }] } },
@@ -85,7 +87,7 @@ function successfulRuntime() {
         child.stdout.emit(
           "data",
           notification("session.event", {
-            sessionId: SID,
+            sessionId,
             event: {
               type: "assistant/message",
               data: {
@@ -95,7 +97,7 @@ function successfulRuntime() {
             },
           }) +
             notification("session.event", {
-              sessionId: SID,
+              sessionId,
               event: {
                 type: "assistant/message",
                 data: {
@@ -117,7 +119,7 @@ function successfulRuntime() {
         child.stdout.emit("data", response(request.id, { messageId: "msg-1" }));
         child.stdout.emit(
           "data",
-          notification("session.status", { sessionId: SID, status: "idle" }),
+          notification("session.status", { sessionId, status: "idle" }),
         );
       } else if (request.method === "shutdown") {
         child.stdout.emit("data", response(request.id, {}));
@@ -265,6 +267,51 @@ describe("DshSpawner.wake", () => {
         source: "dsh",
       },
     });
+  });
+
+  it("passes CJK/space cwd values verbatim while isolating every runtime session", async () => {
+    const fixtures = [
+      { cwd: "/workspaces/项目 alpha", uuid: UUID, sid: SID },
+      { cwd: "/workspaces/space only", uuid: UUID2, sid: SID2 },
+    ];
+    const calls = [];
+    let index = 0;
+    const { spawner } = makeSpawner({
+      uuidFn: () => fixtures[index].uuid,
+      spawnImpl: (command, argv, opts) => {
+        const fixture = fixtures[index++];
+        const child = successfulRuntime(fixture.sid);
+        calls.push({ command, argv, opts, child });
+        return child;
+      },
+    });
+
+    const results = [];
+    for (const fixture of fixtures) {
+      results.push(await spawner.wake({
+        prompt: "continue",
+        sessionId: "shared-claude-anchor",
+        cwd: fixture.cwd,
+        isNew: false,
+      }));
+    }
+
+    expect(spawner.sessionDecision).toEqual({ probeIsAuthoritative: false });
+    expect(results.map((result) => result.backendSessionId)).toEqual([SID, SID2]);
+    for (const [fixtureIndex, fixture] of fixtures.entries()) {
+      const call = calls[fixtureIndex];
+      expect(call.opts.cwd).toBe(fixture.cwd);
+      expect(call.opts.env.DSH_CWD).toBe(fixture.cwd);
+      const requests = call.child.stdin.writes.map((line) => JSON.parse(line));
+      expect(requests[0].params.cwd).toBe(fixture.cwd);
+      expect(requests[1].params.sessionId).toBe(fixture.sid);
+      expect(requests[1].params.sessionId).not.toBe("shared-claude-anchor");
+      expect(results[fixtureIndex]).toMatchObject({
+        sessionId: fixture.sid,
+        backendSessionId: fixture.sid,
+        isNew: true,
+      });
+    }
   });
 
   it("contains callback exceptions and logs stderr diagnostics", async () => {

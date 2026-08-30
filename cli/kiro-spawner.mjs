@@ -222,6 +222,7 @@ export function pickNewSessionId(before, after) {
 export class KiroSpawner {
   /** @param {KiroSpawnerOptions} [opts] */
   constructor(opts = {}) {
+    this.sessionDecision = { probeIsAuthoritative: false };
     this.kiroPath = opts.kiroPath ?? null;
     this.spawnImpl = opts.spawnImpl ?? spawn;
     this.logger = opts.logger ?? NOOP_LOGGER;

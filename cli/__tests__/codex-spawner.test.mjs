@@ -358,14 +358,21 @@ describe("CodexSpawner.wake — spawn orchestration", () => {
     expect(setThreadId).not.toHaveBeenCalled();
   });
 
-  it("resume wake: a known anchor produces `exec resume <thread_id>` (ignores passed isNew)", async () => {
+  it.each([
+    "/workspaces/项目 alpha",
+    "/workspaces/space only",
+  ])("resume wake: a known anchor ignores the shared new-session probe under cwd %s", async (cwd) => {
     const child = makeFakeChild();
     const { spawner, calls } = makeSpawner({ child, getThreadId: () => TID });
-    // pass isNew:true but the map has a thread id → spawner must resume
-    const p = spawner.wake({ prompt: "again", sessionId: ANCHOR, isNew: true });
+    // pass isNew:true (the shared Claude probe missed) but the map has a thread
+    // id → Codex must resume independently and pass the cwd through verbatim.
+    const p = spawner.wake({ prompt: "again", sessionId: ANCHOR, isNew: true, cwd });
     child.emit("close", 0);
-    await p;
+    const result = await p;
+    expect(spawner.sessionDecision).toEqual({ probeIsAuthoritative: false });
     expect(calls.argv.slice(0, 3)).toEqual(["exec", "resume", TID]);
+    expect(calls.opts.cwd).toBe(cwd);
+    expect(result).toMatchObject({ backendSessionId: TID, isNew: false });
   });
 
   it("forwards each parsed event to onMessage", async () => {
