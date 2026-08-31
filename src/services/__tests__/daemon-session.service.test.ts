@@ -1316,13 +1316,13 @@ describe("getSessionDetail", () => {
       where: { turnUuid: { in: ["t3", "t2", "t1"] } },
       orderBy: [{ turnUuid: "asc" }, { seq: "asc" }],
     });
-    // Candidate turns are read seq DESC; with NO cursor there is no take cap (the page
-    // window is computed in memory over the message stream) and no seq filter. The
-    // candidate query is the LAST turn findMany (the read-time orphan-reconcile probe
+    // Candidate turns are read seq DESC with a fixed default-page bound and no seq filter.
+    // The candidate query is the LAST turn findMany (the read-time orphan-reconcile probe
     // runs first on this path).
     const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0];
     expect(turnArgs.orderBy).toEqual({ seq: "desc" });
     expect(turnArgs.where).toEqual({ sessionUuid });
+    expect(turnArgs.take).toBe(DEFAULT_TRANSCRIPT_MESSAGE_PAGE + 2);
   });
 
   it("DEFAULT page size is DEFAULT_TRANSCRIPT_MESSAGE_PAGE (20) MESSAGES, not turns", async () => {
@@ -1370,6 +1370,7 @@ describe("getSessionDetail", () => {
     // limit clamped to 1 → exactly the single newest message (seq 3), hasMore true.
     expect(clampedLow?.turns[0].messages.map((m) => m.seq)).toEqual([3]);
     expect(clampedLow?.hasMore).toBe(true);
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0].take).toBe(3);
 
     // limit 9999 clamps to 200 (a no-op ceiling here) → the whole conversation fits.
     const clampedHigh = await getSessionDetail(
@@ -1379,6 +1380,7 @@ describe("getSessionDetail", () => {
     );
     expect(clampedHigh?.turns[0].messages.map((m) => m.seq)).toEqual([1, 2, 3]);
     expect(clampedHigh?.hasMore).toBe(false);
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0].take).toBe(202);
   });
 
   it("COMPOSITE CURSOR: candidate turns fenced seq <= beforeTurnSeq; messages strictly older than (T, M)", async () => {
@@ -1409,6 +1411,7 @@ describe("getSessionDetail", () => {
     // findMany (the read-time orphan-reconcile probe runs first on this path).
     const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0];
     expect(turnArgs.where).toEqual({ sessionUuid, seq: { lte: 3 } });
+    expect(turnArgs.take).toBe(52);
     // Only messages strictly older than (turnSeq 3, msgSeq 2): t3's seq 1 (and its slot
     // seq 0), plus all of t2 and t1's slots. t3's seq 2 and 3 are at/after the cursor →
     // excluded. So t3 keeps only t3m1.
@@ -1638,6 +1641,10 @@ describe("getSessionDetail", () => {
       sessionUuid,
       { limit: 1, beforeTurnSeq: page1!.oldestTurnSeq!, beforeMsgSeq: page1!.oldestMsgSeq! },
     );
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0]).toMatchObject({
+      where: { sessionUuid, seq: { lte: 2 } },
+      take: 3,
+    });
     expect(page2?.turns.map((t) => t.uuid)).toEqual(["t1"]);
     expect(page2?.turns[0].messages).toEqual([]);
     expect(page2?.hasMore).toBe(false); // conversation start reached

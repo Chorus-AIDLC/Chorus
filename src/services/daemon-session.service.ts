@@ -1282,21 +1282,17 @@ export async function getSessionDetail(
       ? opts.beforeMsgSeq
       : null;
 
-  // Candidate turn window: every turn at or before the cursor turn (`seq <= beforeTurnSeq`),
-  // or all turns when no cursor. NOTE: only messages are trimmed by the rolling-window cap
-  // (`trimSessionTranscript` deletes DaemonTranscriptMessage rows) — turns are NOT, so this
-  // set grows with the session's wake count (one turn per wake). For the conversational
-  // session sizes this read serves that is acceptable: we load these turns' messages in one
-  // batched query and slice the composite window in memory (D4), bounded per page by `limit`.
-  // If a session's turn count ever grows large enough to matter, bound this with a `take`
-  // heuristic (limit + margin, widen on underflow) rather than scanning all turns.
-  // Ordered seq DESC so the slot/message stream is newest-first before windowing.
+  // Candidate turn window: every turn contributes a msgSeq=0 stream slot, so `limit + 1`
+  // turns cover the returned page plus the hasMore sentinel. A cursor at msgSeq=0 excludes
+  // its equal-seq turn; one extra turn covers that edge. Thus `limit + 2` is a fixed safe
+  // bound independent of total session history. Ordered seq DESC before stream folding.
   const candidateTurns = await prisma.daemonSessionTurn.findMany({
     where: {
       sessionUuid,
       ...(beforeTurnSeq !== null ? { seq: { lte: beforeTurnSeq } } : {}),
     },
     orderBy: { seq: "desc" },
+    take: limit + 2,
   });
 
   // Load the candidate turns' real messages in ONE batched query, then fold in memory —
