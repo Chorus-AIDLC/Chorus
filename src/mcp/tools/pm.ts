@@ -20,12 +20,16 @@ import * as elaborationService from "@/services/elaboration.service";
 import { getAgentByUuid } from "@/services/agent.service";
 import { getUserByUuid } from "@/services/user.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
-import { isAssignmentOwnedByActor } from "@/lib/uuid-resolver";
+import {
+  isAssignmentOwnedByActor,
+  resolveAssigneeAgentUuid,
+} from "@/lib/uuid-resolver";
 import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
 import { hasPermission } from "@/lib/auth";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import { enforceToolClassification } from "./collection-contract";
+import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
 
 export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   server = enforceToolClassification(server);
@@ -893,7 +897,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:admin",
     "chorus_pm_assign_idea",
     {
-      description: "Assign an Idea to an agent (must hold idea:write) or a user, on a human's behalf. Silently takes over any existing assignee; an `open` Idea moves to `elaborating`, any other status is preserved. Optionally pin an agent assignment to a specific AgentInstance via `instanceUuid` (persists as an `agent_instance` assignment and targets that instance at wake time) — only valid when assigneeType=\"agent\". Assigning to an agent wakes it best-effort (offline still persists the assignment); assigning to a user sets the assignee and notifies the user with no daemon wake.",
+      description: "Assign an Idea to an agent (must hold idea:write) or a user, on a human's behalf. Silently takes over any existing assignee; an `open` Idea moves to `elaborating`, any other status is preserved. Agent assignments automatically pin to the caller owner's project-fixed cwd target when configured, overriding `instanceUuid`; otherwise an optional `instanceUuid` persists an `agent_instance` pin. A new logical agent assignee requests a wake; assigning the same agent again may update its pin/cwd but is deduplicated and does not request another wake. Assigning to a user sets the assignee and notifies the user with no daemon wake.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
         assigneeType: z.enum(["agent", "user"]).describe("Assignee type: agent or user"),
@@ -901,7 +905,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         instanceUuid: z
           .string()
           .nullish()
-          .describe("Optional AgentInstance UUID — only valid when assigneeType=\"agent\". Pins the Idea to that durable (agent, host, cwd) instance so the row persists as `agent_instance` and the wake targets that instance; omit for a plain `agent` assignment whose wake-time instance is online-first. The instance must belong to the target agent's company, else the call is rejected. Rejected if supplied with assigneeType=\"user\"."),
+          .describe("Optional AgentInstance UUID — only valid when assigneeType=\"agent\". A configured project-fixed cwd target takes precedence and supplies the effective instance automatically; otherwise this pins the Idea to that durable (agent, host, cwd) instance. When used, the instance must belong to the target agent's company, else the call is rejected. Rejected if supplied with assigneeType=\"user\"."),
       }),
     },
     async ({ ideaUuid, assigneeType, assigneeUuid, instanceUuid }) => {
@@ -948,11 +952,43 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         }
       }
 
+      // Resolve the same immutable project target snapshot as the UI action. A
+      // project-fixed owner preference deliberately wins over a caller-supplied
+      // instance so MCP and UI cannot route the same project to different roots.
+      const resolvedTarget =
+        assigneeType === "agent" && auth.ownerUuid
+          ? await resolveProjectAgentCwdTarget({
+              companyUuid: auth.companyUuid,
+              actorUserUuid: auth.ownerUuid,
+              projectUuid: idea.projectUuid,
+              agentUuid: assigneeUuid,
+            })
+          : null;
+      const usesProjectFixedTarget =
+        resolvedTarget?.source === "project_fixed";
+      const effectiveInstanceUuid =
+        assigneeType === "agent"
+          ? usesProjectFixedTarget
+            ? resolvedTarget.agentInstanceUuid
+            : instanceUuid
+          : null;
+      const currentAssigneeAgentUuid =
+        assigneeType === "agent"
+          ? await resolveAssigneeAgentUuid(
+              auth.companyUuid,
+              idea.assigneeType,
+              idea.assigneeUuid,
+            )
+          : null;
+      const isSameLogicalAgentAssignee =
+        assigneeType === "agent" &&
+        currentAssigneeAgentUuid === assigneeUuid;
+      const shouldEmitAssignedActivity =
+        assigneeType !== "agent" || !isSameLogicalAgentAssignee;
+
       // Execute the assignment. assignIdea is reassign-safe (silent takeover;
-      // open→elaborating else status preserved) and applies the optional instance
+      // open→elaborating else status preserved) and applies the effective instance
       // pin via resolveAssigneeFields (validates company ownership → agent_instance).
-      // Forward instanceUuid only for a pinned agent assignment so an un-pinned or
-      // user assignment's args are byte-identical to the human path.
       try {
         const updated = await ideaService.assignIdea({
           ideaUuid: idea.uuid,
@@ -961,28 +997,44 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           assigneeUuid,
           assignedByType: "agent",
           assignedByUuid: auth.actorUuid,
-          ...(assigneeType === "agent" && instanceUuid != null ? { instanceUuid } : {}),
+          ...(effectiveInstanceUuid != null
+            ? { instanceUuid: effectiveInstanceUuid }
+            : {}),
+          cwdSource: usesProjectFixedTarget ? resolvedTarget.source : null,
+          cwdHost: usesProjectFixedTarget ? resolvedTarget.host : null,
+          runtimeCwd: usesProjectFixedTarget ? resolvedTarget.cwd : null,
         });
 
-        // CRITICAL: the actor-bearing `assigned` Activity is what triggers the
-        // idea_claimed wake (agent) / assignment notification (user). assignIdea
-        // emits only an `updated` change event — without this Activity there is NO
-        // wake. Value mirrors claimIdeaToAgentAction: the raw assignee identity
-        // plus the instance uuid (when pinned), for attribution parity with the UI.
-        await activityService.createActivity({
-          companyUuid: auth.companyUuid,
-          projectUuid: idea.projectUuid,
-          targetType: "idea",
-          targetUuid: idea.uuid,
-          actorType: "agent",
-          actorUuid: auth.actorUuid,
-          action: "assigned",
-          value: {
-            assigneeType,
-            assigneeUuid,
-            ...(assigneeType === "agent" && instanceUuid != null ? { instanceUuid } : {}),
-          },
-        });
+        // The actor-bearing `assigned` Activity triggers the idea_claimed wake
+        // (agent) / assignment notification (user). Keep that side effect for a
+        // newly responsible agent, but deduplicate same-owning-agent re-pins:
+        // assignIdea still persists the effective target while no second daemon
+        // turn is born merely because its instance/cwd changed.
+        if (shouldEmitAssignedActivity) {
+          await activityService.createActivity({
+            companyUuid: auth.companyUuid,
+            projectUuid: idea.projectUuid,
+            targetType: "idea",
+            targetUuid: idea.uuid,
+            actorType: "agent",
+            actorUuid: auth.actorUuid,
+            action: "assigned",
+            value: {
+              assigneeType,
+              assigneeUuid,
+              ...(effectiveInstanceUuid != null
+                ? { instanceUuid: effectiveInstanceUuid }
+                : {}),
+              ...(usesProjectFixedTarget
+                ? {
+                    resolvedCwdSource: resolvedTarget.source,
+                    resolvedCwdHost: resolvedTarget.host,
+                    resolvedRuntimeCwd: resolvedTarget.cwd,
+                  }
+                : {}),
+            },
+          });
+        }
 
         return {
           content: [{ type: "text", text: JSON.stringify({
@@ -990,6 +1042,22 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
             status: updated.status,
             assignee: updated.assignee
               ? { type: updated.assignee.type, uuid: updated.assignee.uuid }
+              : null,
+            wakeRequested:
+              assigneeType === "agent" && shouldEmitAssignedActivity,
+            target: assigneeType === "agent"
+              ? {
+                  instanceUuid: effectiveInstanceUuid ?? null,
+                  resolvedCwdSource: usesProjectFixedTarget
+                    ? resolvedTarget.source
+                    : null,
+                  resolvedCwdHost: usesProjectFixedTarget
+                    ? resolvedTarget.host
+                    : null,
+                  resolvedRuntimeCwd: usesProjectFixedTarget
+                    ? resolvedTarget.cwd
+                    : null,
+                }
               : null,
           }, null, 2) }],
         };

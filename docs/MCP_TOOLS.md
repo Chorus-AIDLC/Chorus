@@ -1025,7 +1025,7 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 ### chorus_pm_assign_idea
 
-**Description**: Assign an Idea to an agent (must hold `idea:write`) or a user, on a human's behalf. Unlike `chorus_claim_idea` — which is a **self-claim** by the calling agent — this assigns the Idea to a **different** actor. Silently takes over any existing assignee; an `open` Idea moves to `elaborating`, any other status is preserved. Assigning to an agent wakes it best-effort via the existing `idea_claimed` wake (an offline agent still gets the assignment persisted — the wake is a no-op); assigning to a user sets the assignee and delivers an assignment notification with **no** daemon wake. Optionally pin an agent assignment to a specific **AgentInstance** via `instanceUuid` (persists as an `agent_instance` assignment and targets that instance at wake time) — valid only when `assigneeType = "agent"`.
+**Description**: Assign an Idea to an agent (must hold `idea:write`) or a user, on a human's behalf. Unlike `chorus_claim_idea` — which is a **self-claim** by the calling agent — this assigns the Idea to another actor. Silently takes over any existing assignee; an `open` Idea moves to `elaborating`, any other status is preserved. Agent assignments automatically use the caller owner's project-fixed cwd target when configured (overriding `instanceUuid`); otherwise `instanceUuid` can pin a specific **AgentInstance**. A new logical agent assignee emits the existing `idea_claimed` wake, while assigning the same owning agent again may update its pin/cwd but is wake-deduplicated. Assigning to a user sets the assignee and delivers an assignment notification with **no** daemon wake.
 
 **Required Permission**: `idea:admin`
 
@@ -1035,24 +1035,34 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | ideaUuid | string | Yes | Idea UUID |
 | assigneeType | enum | Yes | Assignee type: `agent` or `user` |
 | assigneeUuid | string | Yes | Target Agent UUID or User UUID (per `assigneeType`) |
-| instanceUuid | string | No | AgentInstance UUID to pin an **agent** assignment to (the durable `(agent, host, cwd)` identity from the presence/daemon tools). **Present** → the Idea is assigned as `agent_instance` and the wake targets that instance. **Omitted** → a plain `agent` assignment whose wake-time instance is resolved online-first. Rejected if supplied with `assigneeType = "user"`. |
+| instanceUuid | string | No | AgentInstance UUID to pin an **agent** assignment to (the durable `(agent, host, cwd)` identity from the presence/daemon tools). A configured project-fixed cwd target takes precedence and supplies the effective instance automatically; otherwise this value is used. Rejected if supplied with `assigneeType = "user"`. |
 
 **Validation rules**:
 - Idea must exist in the caller's company
 - `assigneeType = "agent"`: the target Agent must exist, belong to the same company, and hold the effective `idea:write` permission (preset or custom)
 - `assigneeType = "user"`: the target User must exist and belong to the same company; `instanceUuid` must not be supplied
-- When `instanceUuid` is supplied, it must reference an AgentInstance in the same company, otherwise the call is rejected ("Agent instance not found")
+- When no project-fixed target overrides it, `instanceUuid` must reference an AgentInstance in the same company, otherwise the call is rejected ("Agent instance not found")
 
-**Contrast with `chorus_claim_idea`**: `chorus_claim_idea` (gated `idea:write`) is how an agent claims an Idea **for itself** (open → elaborating). `chorus_pm_assign_idea` (gated `idea:admin`) is the MCP surface over the human "assign idea" action — it assigns to **any** eligible agent or user and emits the same actor-bearing `assigned` Activity that wakes an assigned daemon agent.
+**Contrast with `chorus_claim_idea`**: `chorus_claim_idea` (gated `idea:write`) is how an agent claims an Idea **for itself** (open → elaborating). `chorus_pm_assign_idea` (gated `idea:admin`) is the MCP surface over the human "assign idea" action — it assigns to **any** eligible agent or user and emits the actor-bearing `assigned` Activity only when responsibility changes to a new logical assignee.
 
 **Output**:
 ```json
 {
   "uuid": "Idea UUID",
   "status": "elaborating",
-  "assignee": { "type": "agent", "uuid": "..." }
+  "assignee": { "type": "agent_instance", "uuid": "..." },
+  "wakeRequested": true,
+  "target": {
+    "instanceUuid": "...",
+    "resolvedCwdSource": "project_fixed",
+    "resolvedCwdHost": "host.example",
+    "resolvedRuntimeCwd": "/work/project"
+  }
 }
 ```
+
+`wakeRequested` is `false` when an assignment updates the pin/cwd of the same
+logical agent without emitting a duplicate `assigned` Activity.
 
 ### chorus_pm_create_proposal
 
