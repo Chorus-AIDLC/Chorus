@@ -95,6 +95,9 @@ export interface IdeaRow {
   parentUuid: string | null;
   assigneeType: string | null;
   assigneeUuid: string | null;
+  cwdSource?: string | null;
+  cwdHost?: string | null;
+  runtimeCwd?: string | null;
   assignedAt: Date | null;
   assignedByUuid: string | null;
   createdByUuid: string;
@@ -246,6 +249,7 @@ export interface ProjectAgentCwdPreferenceRow {
   agentUuid: string;
   host: string | null;
   cwd: string | null;
+  anchorAgentInstanceUuid?: string | null;
 }
 
 export interface AgentInstanceStore {
@@ -549,6 +553,14 @@ export function buildMockPrisma() {
     agentInstance: makeModel<AgentInstanceRow & Record<string, unknown>>(
       () => agentInstanceStore.agentInstances as (AgentInstanceRow & Record<string, unknown>)[],
       {
+        compoundKeys: {
+          companyUuid_agentUuid_host_cwd: [
+            "companyUuid",
+            "agentUuid",
+            "host",
+            "cwd",
+          ],
+        },
         defaults: () => ({
           uuid: nextUuid("instance"),
           host: "",
