@@ -236,24 +236,39 @@ export function DaemonChat() {
   const [listStatus, setListStatus] = useState<"loading" | "ok" | "error">(
     "loading",
   );
-  const fetchSessions = useCallback(async () => {
-    try {
-      const res = await authFetch("/api/daemon-sessions");
-      if (!res.ok) {
+  // Mount, seeded-focus, and timer refreshes can race. Keep one request per mounted chat
+  // in flight; clear it after settlement so the next 15s tick still reads fresh data.
+  const sessionsRequestRef = useRef<Promise<void> | null>(null);
+  const fetchSessions = useCallback((): Promise<void> => {
+    if (sessionsRequestRef.current) return sessionsRequestRef.current;
+
+    const request = (async () => {
+      try {
+        const res = await authFetch("/api/daemon-sessions");
+        if (!res.ok) {
+          setListStatus("error");
+          return;
+        }
+        const json = await res.json();
+        if (json.success) {
+          setSessions(json.data.sessions ?? []);
+          setListStatus("ok");
+        } else {
+          setListStatus("error");
+        }
+      } catch (error) {
+        clientLogger.error("Failed to fetch daemon sessions:", error);
         setListStatus("error");
-        return;
       }
-      const json = await res.json();
-      if (json.success) {
-        setSessions(json.data.sessions ?? []);
-        setListStatus("ok");
-      } else {
-        setListStatus("error");
+    })();
+
+    sessionsRequestRef.current = request;
+    void request.finally(() => {
+      if (sessionsRequestRef.current === request) {
+        sessionsRequestRef.current = null;
       }
-    } catch (error) {
-      clientLogger.error("Failed to fetch daemon sessions:", error);
-      setListStatus("error");
-    }
+    });
+    return request;
   }, []);
   useEffect(() => {
     fetchSessions();
