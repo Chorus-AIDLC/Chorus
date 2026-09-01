@@ -69,6 +69,7 @@ const expectedLifecycleCommands = {
   "@chorus-aidlc/chorus": {
     installCommands: ["pnpm install --frozen-lockfile"],
     checkCommands: [
+      "pnpm exec prisma generate",
       "pnpm exec eslint src cli chorus.mjs scripts/prepack-pglite.mjs scripts/coordinated-npm-release",
       "pnpm exec tsc --noEmit",
       "pnpm test",
