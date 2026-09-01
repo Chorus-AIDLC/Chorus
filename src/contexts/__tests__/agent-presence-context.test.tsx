@@ -699,6 +699,7 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    act(() => lastEventSource?.onopen?.());
     const constructionsAfterMount = eventSourceConstructions;
     const execCallsAfterMount = execCall;
 
@@ -714,6 +715,7 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await act(async () => {
+      lastEventSource?.onopen?.();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -742,6 +744,7 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate (closed)"
       await Promise.resolve();
       await Promise.resolve();
     });
+    act(() => lastEventSource?.onopen?.());
     const constructionsAfterMount = eventSourceConstructions;
     const execCallsAfterMount = execCall;
 
@@ -755,6 +758,7 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate (closed)"
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await act(async () => {
+      lastEventSource?.onopen?.();
       await Promise.resolve();
       await Promise.resolve();
     });

@@ -23,6 +23,11 @@ import {
   AtSign,
 } from "lucide-react";
 import { authFetch } from "@/lib/auth-client";
+import {
+  DashboardEventProvider,
+  useDashboardEvents,
+  useDashboardEventsOptional,
+} from "@/contexts/dashboard-event-context";
 
 function getToastIcon(action: string) {
   switch (action) {
@@ -75,6 +80,20 @@ function getEntityPath(entityType: string, entityUuid: string, projectUuid: stri
 }
 
 export function NotificationProvider({ children }: NotificationProviderProps) {
+  const dashboardEvents = useDashboardEventsOptional();
+  if (!dashboardEvents) {
+    return (
+      <DashboardEventProvider>
+        <NotificationProvider>{children}</NotificationProvider>
+      </DashboardEventProvider>
+    );
+  }
+  return <NotificationProviderInner>{children}</NotificationProviderInner>;
+}
+
+function NotificationProviderInner({ children }: NotificationProviderProps) {
+  const dashboardEvents = useDashboardEvents();
+  const subscribeDashboardEvents = dashboardEvents.subscribe;
   const [unreadCount, setUnreadCount] = useState(0);
   const subscribersRef = useRef<Set<() => void>>(new Set());
   const router = useRouter();
@@ -140,62 +159,53 @@ export function NotificationProvider({ children }: NotificationProviderProps) {
   );
 
   useEffect(() => {
-    let es: EventSource | null = null;
-    let debounceTimer: NodeJS.Timeout;
-
-    function connect() {
-      disconnect();
-      es = new EventSource("/api/events/notifications");
-
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (typeof data.unreadCount === "number") {
-            setUnreadCount(data.unreadCount);
-          }
-          if (data.type === "new_notification") {
-            showToast(data);
-          }
-        } catch {
-          // Ignore parse errors
-        }
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(notify, 300);
-      };
-
-      es.onerror = () => {
-        // Browser EventSource auto-reconnects on error
-      };
-    }
-
-    function disconnect() {
-      if (es) {
-        es.close();
-        es = null;
-      }
-    }
+    let debounceTimer: NodeJS.Timeout | undefined;
 
     function handleVisibility() {
       if (document.visibilityState === "visible") {
-        connect();
-        fetchUnreadCount();
-      } else {
-        disconnect();
+        void fetchUnreadCount();
       }
     }
 
-    // Initial connection and data fetch
-    connect();
-    fetchUnreadCount();
+    const unsubscribe = subscribeDashboardEvents((data) => {
+      const notificationPayload =
+        typeof data.unreadCount === "number" ||
+        data.type === "new_notification" ||
+        data.type === "count_update";
+      if (!notificationPayload) return;
+
+      if (typeof data.unreadCount === "number") {
+        setUnreadCount(data.unreadCount);
+      }
+      if (
+        data.type === "new_notification" &&
+        document.visibilityState === "visible"
+      ) {
+        showToast(
+          data as {
+            action?: string;
+            actorName?: string;
+            entityTitle?: string;
+            entityType?: string;
+            entityUuid?: string;
+            projectUuid?: string;
+          },
+        );
+      }
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(notify, 300);
+    });
+
+    void fetchUnreadCount();
 
     document.addEventListener("visibilitychange", handleVisibility);
 
     return () => {
-      disconnect();
+      unsubscribe();
       clearTimeout(debounceTimer);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [fetchUnreadCount, notify, showToast]);
+  }, [subscribeDashboardEvents, fetchUnreadCount, notify, showToast]);
 
   const contextValue = useMemo(
     () => ({ unreadCount, refreshNotifications }),
