@@ -97,10 +97,10 @@ export function isReviewerAgent(name: string): boolean {
  * session + task-lifecycle (checkin/update/report/checkout) injection.
  *
  * Only canonical worker agent names get a session. The three Chorus reviewers
- * are read-only (handled by isReviewerAgent) and the built-in read-only agents
- * `scout` / `planner` / `reviewer` are NOT workers — injecting the session workflow
- * into them adds irrelevant task-lifecycle instructions and unnecessary
- * chorus_create_session API traffic for agents that never touch a task.
+ * are read-only (handled by isReviewerAgent) and the official subagent example's
+ * read-only agents `scout` / `planner` / `reviewer` are NOT workers — injecting
+ * the session workflow into them adds irrelevant task-lifecycle instructions and
+ * unnecessary chorus_create_session API traffic for agents that never touch a task.
  *
  * This is a positive allowlist (not a reviewer exclusion) so arbitrary custom
  * read-only agents also do NOT get a session. Add more worker names here if the
@@ -111,60 +111,52 @@ export function isWorkerAgent(name: string): boolean {
   return (WORKER_AGENT_NAMES as readonly string[]).includes(name);
 }
 /**
- * Extract the agentId (sa_<uuid>) from a subagent_spawn tool result.
+ * Enumerate the (agent, task) items in an official `subagent` tool call's input,
+ * across its three modes:
+ *   - single:   { agent, task }
+ *   - parallel: { tasks: [{ agent, task }, ...] }
+ *   - chain:    { chain: [{ agent, task }, ...] }
  *
- * Tries every plausible shape Pi may deliver, in order:
- *   1. result.details.agent.id  — the pi-subagents summarizeAgent() structured path
- *   2. result.agentId          — forward-compat top-level field
- *   3. result.content[].text    — parse sa_<uuid> from the spawn result text
- *      ("Spawned <agent> as sa_<uuid>. Do useful non-overlapping work immediately. …")
- *   4. typeof result === 'string' — if Pi delivers the result as a plain string,
- *      parse sa_<uuid> directly from it
+ * Each returned holder carries the agent name, the current task text, and a
+ * `setTask` that writes back into the SAME input object in place — so the
+ * extension can inject the Chorus session workflow into a worker's task before
+ * the ephemeral child `pi` process is spawned (pi's `tool_call` event input is
+ * mutable). Holders with a non-string / empty agent or task are skipped.
  *
- * Returns null if none match. Callers should log the actual result when this
- * returns null so the runtime shape can be confirmed.
+ * Replaces the old persistent-model agentId extraction: the official subagent
+ * children are ephemeral (spawn → run → exit within one tool call) and expose
+ * no `sa_<uuid>` agentId to map, so there is nothing to parse out of a result.
  */
-export function extractAgentId(result: unknown): string | null {
-  if (result == null) return null;
-  // 4. plain string — parse sa_<uuid> directly
-  if (typeof result === "string") {
-    return parseAgentIdFromText(result);
+export interface SubagentTaskItem {
+  agent: string;
+  task: string;
+  setTask: (task: string) => void;
+}
+
+export function subagentTaskItems(input: unknown): SubagentTaskItem[] {
+  if (!input || typeof input !== "object") return [];
+  const obj = input as Record<string, unknown>;
+  const items: SubagentTaskItem[] = [];
+  const collect = (holder: Record<string, unknown>): void => {
+    const agent = typeof holder.agent === "string" ? holder.agent : "";
+    const task = typeof holder.task === "string" ? holder.task : "";
+    if (!agent || !task) return;
+    items.push({
+      agent,
+      task,
+      setTask: (t) => {
+        holder.task = t;
+      },
+    });
+  };
+  if (Array.isArray(obj.tasks)) {
+    for (const t of obj.tasks) if (t && typeof t === "object") collect(t as Record<string, unknown>);
+  } else if (Array.isArray(obj.chain)) {
+    for (const c of obj.chain) if (c && typeof c === "object") collect(c as Record<string, unknown>);
+  } else {
+    collect(obj);
   }
-  const r = result as
-    | { details?: { agent?: { id?: string } }; agentId?: string; content?: { text?: string }[] }
-    | undefined;
-  if (!r) return null;
-  // 1. the documented structured path
-  if (r.details?.agent?.id) return r.details.agent.id;
-  // 2. forward-compat top-level field
-  if (r.agentId) return r.agentId;
-  // 3. parse sa_<uuid> out of the result content text
-  const text = r.content?.map((c) => c?.text ?? "").join(" ");
-  if (text) return parseAgentIdFromText(text);
-  return null;
-}
-
-/** Parse sa_<uuid> out of any text. Returns null if not found. */
-export function parseAgentIdFromText(text: string): string | null {
-  const m = text.match(/\bsa_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i);
-  return m ? m[0] : null;
-}
-
-/**
- * Extract the agentId from a tool_result EVENT (which exposes `details` and
- * `content` as first-class fields, not nested under `result`). This is the
- * most reliable extraction point per pi's source: agent-session.js afterToolCall
- * passes `content: result.content, details: result.details` directly to
- * emitToolResult.
- */
-export function extractAgentIdFromToolResultEvent(event: {
-  details?: { agent?: { id?: string } };
-  content?: { text?: string }[];
-}): string | null {
-  if (event.details?.agent?.id) return event.details.agent.id;
-  const text = event.content?.map((c) => c?.text ?? "").join(" ");
-  if (text) return parseAgentIdFromText(text);
-  return null;
+  return items;
 }
 
 /**
@@ -186,6 +178,19 @@ export function sessionWorkflow(sessionUuid: string): string {
     `  5. chorus_session_checkout_task({ sessionUuid: "${s}", taskUuid: <task-uuid> })`,
     "Do NOT call chorus_create_session or chorus_close_session — the extension owns the lifecycle.",
   ].join("\n");
+}
+
+/**
+ * Resolved OpenSpec mode for a repo. `active` is the effective on/off; `reason`
+ * is a human-readable explanation; `optout` marks an explicit opt-out (so the
+ * banner does not nag); `hint` is an optional install hint when the directory
+ * exists but the CLI is missing.
+ */
+export interface OpenSpecState {
+  active: boolean;
+  reason: string;
+  optout: boolean;
+  hint: string;
 }
 
 /**

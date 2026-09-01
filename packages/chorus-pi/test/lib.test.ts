@@ -3,8 +3,7 @@ import {
   isReviewerAgent,
   isWorkerAgent,
   WORKER_AGENT_NAMES,
-  extractAgentId,
-  extractAgentIdFromToolResultEvent,
+  subagentTaskItems,
   sessionWorkflow,
   detectOpenSpec,
   buildSessionBanner,
@@ -60,56 +59,59 @@ test("isWorkerAgent: arbitrary custom agent names are NOT workers (no false posi
 test("WORKER_AGENT_NAMES: the canonical allowlist", () => {
   expect([...WORKER_AGENT_NAMES]).toEqual(["worker"]);
 });
-// ─── extractAgentId ──────────────────────────────────────────────────────────
-test("extractAgentId: reads details.agent.id (the pi-subagents summarizeAgent() path)", () => {
-  const result = {
-    details: { agent: { id: "sa_4d762c7d-213d-4bb3-9fe0-4123bf406c08", agent: "worker", state: "running" } },
-  };
-  expect(extractAgentId(result)).toBe("sa_4d762c7d-213d-4bb3-9fe0-4123bf406c08");
+// ─── subagentTaskItems (ephemeral subagent-model task enumeration) ──────────
+test("subagentTaskItems: single mode yields one holder", () => {
+  const input = { agent: "worker", task: "build the thing" };
+  const items = subagentTaskItems(input);
+  expect(items.map((i) => i.agent)).toEqual(["worker"]);
+  expect(items[0].task).toBe("build the thing");
 });
 
-test("extractAgentId: falls back to top-level agentId", () => {
-  expect(extractAgentId({ agentId: "sa_fallback" })).toBe("sa_fallback");
+test("subagentTaskItems: parallel mode yields one holder per task", () => {
+  const input = { tasks: [{ agent: "worker", task: "a" }, { agent: "scout", task: "b" }] };
+  const items = subagentTaskItems(input);
+  expect(items.map((i) => i.agent)).toEqual(["worker", "scout"]);
+  expect(items.map((i) => i.task)).toEqual(["a", "b"]);
 });
 
-test("extractAgentId: returns null when neither path present", () => {
-  expect(extractAgentId({ details: { agent: {} } })).toBe(null);
-  expect(extractAgentId({})).toBe(null);
-  expect(extractAgentId(undefined)).toBe(null);
-  expect(extractAgentId(null)).toBe(null);
+test("subagentTaskItems: chain mode yields one holder per step", () => {
+  const input = { chain: [{ agent: "planner", task: "plan" }, { agent: "worker", task: "do {previous}" }] };
+  const items = subagentTaskItems(input);
+  expect(items.map((i) => i.agent)).toEqual(["planner", "worker"]);
 });
 
-test("extractAgentId: parses sa_<uuid> from result content text when details is absent (the runtime-confirmed shape)", () => {
-  const text = "Spawned worker as sa_4d762c7d-213d-4bb3-9fe0-4123bf406c08. Do useful non-overlapping work immediately.";
-  expect(extractAgentId({ content: [{ type: "text", text }] })).toBe("sa_4d762c7d-213d-4bb3-9fe0-4123bf406c08");
+test("subagentTaskItems: setTask mutates the ORIGINAL input in place (single)", () => {
+  const input: any = { agent: "worker", task: "orig" };
+  subagentTaskItems(input)[0].setTask("orig + injected");
+  expect(input.task).toBe("orig + injected");
 });
 
-test("extractAgentId: parses sa_<uuid> even when surrounded by other text (multiline content)", () => {
-  expect(
-    extractAgentId({
-      content: [{ text: "some prefix\n" }, { text: "Spawned scout as sa_0aa265af-1234-5678-9abc-def012345678. done." }],
-    }),
-  ).toBe("sa_0aa265af-1234-5678-9abc-def012345678");
+test("subagentTaskItems: setTask mutates the ORIGINAL input in place (parallel)", () => {
+  const input: any = { tasks: [{ agent: "worker", task: "t0" }, { agent: "worker", task: "t1" }] };
+  const items = subagentTaskItems(input);
+  items[1].setTask("t1!");
+  expect(input.tasks[1].task).toBe("t1!");
+  expect(input.tasks[0].task).toBe("t0"); // untouched
 });
 
-test("extractAgentId: returns null when content has no sa_<uuid>", () => {
-  expect(extractAgentId({ content: [{ text: "some other message" }] })).toBe(null);
+test("subagentTaskItems: skips items with a missing/non-string agent or task", () => {
+  expect(subagentTaskItems({ agent: "worker" }).length).toBe(0); // no task
+  expect(subagentTaskItems({ task: "x" }).length).toBe(0); // no agent
+  expect(subagentTaskItems({ agent: 5, task: "x" }).length).toBe(0); // non-string agent
+  expect(subagentTaskItems({ tasks: [{ agent: "worker", task: "ok" }, { agent: "worker" }] }).map((i) => i.task)).toEqual(["ok"]);
 });
 
-test("extractAgentId: structured path wins over text fallback", () => {
-  const result = {
-    details: { agent: { id: "sa_structured" } },
-    content: [{ text: "Spawned x as sa_textfallback-0000-…" }],
-  };
-  expect(extractAgentId(result)).toBe("sa_structured");
+test("subagentTaskItems: non-object / empty input yields no items", () => {
+  expect(subagentTaskItems(undefined)).toEqual([]);
+  expect(subagentTaskItems(null)).toEqual([]);
+  expect(subagentTaskItems("nope")).toEqual([]);
+  expect(subagentTaskItems({})).toEqual([]);
 });
-test("extractAgentId: prefers details.agent.id over agentId when both present", () => {
-  expect(
-    extractAgentId({
-      details: { agent: { id: "sa_primary" } },
-      agentId: "sa_secondary",
-    }),
-  ).toBe("sa_primary");
+
+test("subagentTaskItems: tasks[] takes precedence over a stray top-level task", () => {
+  // parallel invocation — the array is the source of truth, not any single-mode fields
+  const items = subagentTaskItems({ tasks: [{ agent: "worker", task: "a" }], agent: "x", task: "y" });
+  expect(items.map((i) => i.agent)).toEqual(["worker"]);
 });
 
 // ─── sessionWorkflow ─────────────────────────────────────────────────────────
@@ -206,39 +208,6 @@ test("detectOpenSpec: CLI presence is probed only when the dir exists (optout sh
   expect(calls).toBe(1);
 });
 
-// ─── extractAgentId: string fallback (path #4) ─────────────────────────────
-test("extractAgentId: parses sa_<uuid> from a plain string result", () => {
-  expect(extractAgentId("Spawned worker as sa_99999999-aaaa-bbbb-cccc-dddddddddddd. Done.")).toBe(
-    "sa_99999999-aaaa-bbbb-cccc-dddddddddddd",
-  );
-});
-
-test("extractAgentId: returns null for a string with no sa_<uuid>", () => {
-  expect(extractAgentId("some text without an agent id")).toBe(null);
-});
-
-// ─── extractAgentIdFromToolResultEvent ──────────────────────────────────────
-test("extractAgentIdFromToolResultEvent: reads details.agent.id directly", () => {
-  expect(
-    extractAgentIdFromToolResultEvent({
-      details: { agent: { id: "sa_aaaa1111-2222-3333-4444-555555555555" } },
-    }),
-  ).toBe("sa_aaaa1111-2222-3333-4444-555555555555");
-});
-
-test("extractAgentIdFromToolResultEvent: falls back to content text", () => {
-  expect(
-    extractAgentIdFromToolResultEvent({
-      content: [{ text: "Spawned x as sa_bbbb2222-3333-4444-5555-666666666666." }],
-    }),
-  ).toBe("sa_bbbb2222-3333-4444-5555-666666666666");
-});
-
-test("extractAgentIdFromToolResultEvent: returns null when neither present", () => {
-  expect(extractAgentIdFromToolResultEvent({})).toBe(null);
-  expect(extractAgentIdFromToolResultEvent({ details: {} })).toBe(null);
-});
-
 // ─── normalizeChorusToolName + resolveChorusToolName ────────────────────────
 import { normalizeChorusToolName, resolveChorusToolName, NUDGE_TOOL_NAMES } from "../lib/lib.js";
 
@@ -252,7 +221,7 @@ test("normalizeChorusToolName: strips one chorus_ server prefix (gateway/direct-
 
 test("normalizeChorusToolName: returns null for non-chorus tools", () => {
   expect(normalizeChorusToolName("bash")).toBe(null);
-  expect(normalizeChorusToolName("subagent_spawn")).toBe(null);
+  expect(normalizeChorusToolName("subagent")).toBe(null);
   expect(normalizeChorusToolName("")).toBe(null);
   expect(normalizeChorusToolName(undefined)).toBe(null);
 });

@@ -7,15 +7,17 @@
 //
 // It asserts: package identity (name), version lockstep with the root app
 // package.json, the publish shape (publishConfig / files allowlist / repository
-// directory / bin / `pi` manifest), the CURRENT skill set, and the 3 reviewer
-// agents. A missing skill or reviewer agent exits non-zero and NAMES the
+// directory / bin / `pi` manifest), the skill set, the 3 reviewer agents, and
+// the bundled official-subagent extension (extensions/subagent/{index.ts,agents.ts}).
+// A missing skill, reviewer agent, or subagent file exits non-zero and NAMES the
 // offending item.
 //
-// Skill-set decoupling (A1 <-> B): this list is the skill set present TODAY (11
-// skills, no `brainstorm`). Task B, which adds the `brainstorm` skill, also
-// extends this list in the same task, keeping A1 and B independent DAG roots.
+// Skill-set decoupling (A1 <-> B): task A1 landed this list with the 11 skills
+// present then (no `brainstorm`). Task B adds the `brainstorm` skill AND extends
+// this expected list to 12, keeping A1 and B independent DAG roots (A1 passed on
+// 11, B passes on 12).
 
-import { readFile, readdir } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +27,7 @@ const repoRoot = resolve(root, "..", "..");
 const expectedName = "@chorus-aidlc/chorus-pi";
 const expectedFiles = ["extensions", "lib", "skills", "agents", "bin", "README.md"];
 const expectedSkills = [
+  "brainstorm",
   "chorus",
   "chorus-cli",
   "develop",
@@ -142,6 +145,25 @@ for (const name of expectedAgentsSorted) {
   );
 }
 
+// ─── Bundled official-subagent extension ─────────────────────────────────────
+// The reviewer subagents use pi's official subagent pattern, copied into
+// extensions/subagent/. Both files must be present (index.ts registers the
+// `subagent` tool; agents.ts adds package-relative agent discovery). The
+// @narumitw/pi-subagents dependency must be gone from every dependency block.
+for (const rel of ["extensions/subagent/index.ts", "extensions/subagent/agents.ts"]) {
+  try {
+    await access(join(root, rel));
+  } catch {
+    throw new Error(`missing bundled subagent file: ${rel}`);
+  }
+}
+for (const block of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
+  assert(
+    !manifest[block]?.["@narumitw/pi-subagents"],
+    `@narumitw/pi-subagents must be removed from ${block}`,
+  );
+}
+
 console.log(
-  `chorus-pi package validation passed (v${manifest.version}, ${expectedSkillsSorted.length} skills, ${expectedAgentsSorted.length} reviewer agents)`,
+  `chorus-pi package validation passed (v${manifest.version}, ${expectedSkillsSorted.length} skills, ${expectedAgentsSorted.length} reviewer agents, bundled subagent extension)`,
 );

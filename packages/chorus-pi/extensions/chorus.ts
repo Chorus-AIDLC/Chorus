@@ -9,18 +9,23 @@
  * Capabilities (mirrors the Claude Code plugin):
  *   - session_start          → chorus_checkin + context injection (SessionStart hook)
  *   - before_agent_start     → inject checkin result once (replaces UserPromptSubmit noise)
- *   - tool_call (subagent_spawn, pre-execution, MUTABLE input)
- *                            → create a Chorus session and inject its UUID + the session
- *                              workflow into the spawned worker's task. This is the
- *                              Pi-native equivalent of Claude's SubagentStart hook
+ *   - tool_call (subagent, pre-execution, MUTABLE input)
+ *                            → for each WORKER task in the `subagent` invocation
+ *                              (single / parallel / chain), create a Chorus session and
+ *                              inject its UUID + the session workflow into that task. This
+ *                              is the Pi-native equivalent of Claude's SubagentStart hook
  *                              injecting session context — a capability the Codex port
  *                              lacks (Codex has no pre-spawn mutation channel, so its
  *                              workers must manage sessions manually).
- *   - tool_execution_end     → reviewer nudges after submit_proposal / submit_for_verify
+ *   - tool_result            → close the ephemeral worker session(s) once the `subagent`
+ *                              tool call returns (the official children are ephemeral:
+ *                              spawn → run → exit within one tool call, so there is no
+ *                              persistent agentId and no separate close tool).
+ *                            → reviewer nudges after submit_proposal / submit_for_verify
  *                              / admin_verify_task (the 3 PostToolUse hooks)
- *                            → agentId→sessionUuid mapping on spawn result; close orphan
- *                              session on spawn error
- *                            → close the mapped session on subagent_manage close
+ *   - tool_execution_end     → fallback close of the worker session(s) if tool_result
+ *                              did not fire (idempotent — a successful close deletes the
+ *                              bookkeeping entry)
  *   - session_shutdown       → close stray sessions (SessionEnd hook)
  *
  * MCP: no installer needed. pi-mcp-adapter auto-discovers the repo's .mcp.json
@@ -33,8 +38,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   isWorkerAgent,
-  extractAgentId,
-  extractAgentIdFromToolResultEvent,
+  subagentTaskItems,
   sessionWorkflow,
   detectOpenSpec,
   buildSessionBanner,
@@ -181,13 +185,17 @@ async function mcpCall<T = unknown>(tool: string, args: Record<string, unknown> 
   }
 }
 
-// ─── Session bookkeeping ──────────────────────────────────────────────────
-// agentId (sa_<uuid>, from subagent_spawn result) → Chorus sessionUuid
-const sessionMap = new Map<string, string>();
-// toolCallId → sessionUuid (pending between tool_call create and tool_result/tool_execution_end map)
-const pendingSessions = new Map<string, string>();
-// toolCallIds whose agentId→sessionUuid mapping was already done by tool_result (so tool_execution_end skips them)
-const spawnMapped = new Set<string>();
+// ─── Session bookkeeping (ephemeral subagent model) ────────────────────────
+// The official `subagent` tool spawns EPHEMERAL child pi processes (single /
+// parallel / chain) that run to completion within one tool call — there is no
+// persistent agentId and no separate `subagent_manage close` tool. So we create
+// a Chorus session for each WORKER task when the `subagent` tool call starts
+// (tool_call, mutable input → inject the session UUID + workflow into that task)
+// and close those sessions when the tool call finishes (tool_result, with
+// tool_execution_end as an idempotent fallback).
+//
+// toolCallId → the Chorus session UUIDs created for that `subagent` invocation.
+const callSessions = new Map<string, string[]>();
 let checkinContext: string | null = null;
 let injectedOnce = false;
 
@@ -196,9 +204,11 @@ let injectedOnce = false;
 // error must NOT permanently leak the backend session). Only on success does
 // this run onSuccess (which drops the sessionMap/pendingSessions entry) and
 // report success. Returns whether the close succeeded.
+type NotifyCtx = { ui: { notify(msg: string, level: "info" | "warning" | "error"): void } };
+
 async function closeSessionOrRetain(
   sid: string,
-  ctx: { ui: { notify(msg: string, level: string): void } },
+  ctx: NotifyCtx,
   msgs: { fail: string; success: string; successLevel?: "info" | "warning" },
   onSuccess: () => void,
 ): Promise<boolean> {
@@ -211,6 +221,34 @@ async function closeSessionOrRetain(
   onSuccess();
   ctx.ui.notify(msgs.success, msgs.successLevel ?? "info");
   return true;
+}
+
+// Close every Chorus session created for a `subagent` tool call. Idempotent:
+// both tool_result and tool_execution_end call this for the same toolCallId, so
+// the entry is deleted only once all its sessions close. A session whose close
+// fails is retained in callSessions so a later event (or session_shutdown) can
+// retry it — a transient network/server error must NOT leak the backend session.
+async function closeCallSessions(
+  toolCallId: string,
+  ctx: NotifyCtx,
+): Promise<void> {
+  const sids = callSessions.get(toolCallId);
+  if (!sids || sids.length === 0) return;
+  const retained: string[] = [];
+  for (const sid of sids) {
+    const ok = await closeSessionOrRetain(
+      sid,
+      ctx,
+      {
+        fail: `Chorus: close failed for session ${sid.slice(0, 8)}… (will retry on shutdown)`,
+        success: `Chorus: closed session ${sid.slice(0, 8)}…`,
+      },
+      () => {},
+    );
+    if (!ok) retained.push(sid);
+  }
+  if (retained.length > 0) callSessions.set(toolCallId, retained);
+  else callSessions.delete(toolCallId);
 }
 
 
@@ -270,7 +308,7 @@ export default function (pi: ExtensionAPI) {
               : "OpenSpec is not set up in this repo. Spec-driven authoring is optional — free-form works fine. If the user wants spec-driven mode, run `/skill:chorus enable openspec` (§6 walks the install + re-launch).",
         "",
         "## Quick Reference",
-        "- **Sessions**: auto-managed. When you `subagent_spawn` a worker, the extension creates a Chorus session and injects its UUID + the session workflow into the worker's task automatically. When you `subagent_manage close` the agent, the extension closes the session. Do NOT call chorus_create_session/close_session yourself.",
+        "- **Sessions**: auto-managed. When you dispatch a WORKER via the `subagent` tool (single/parallel/chain), the extension creates a Chorus session per worker task and injects its UUID + the session workflow into that task automatically; the session is closed when the `subagent` tool call returns (children are ephemeral). Do NOT call chorus_create_session/close_session yourself.",
         "- **Notifications**: chorus_get_notifications() fetches and auto-marks read.",
         "- **Reviewer sub-agents**: after submit_proposal/submit_for_verify the extension nudges you to spawn chorus-proposal-reviewer / chorus-task-reviewer. Use the blocking `subagent` tool so it waits for the VERDICT; reviewers do NOT get a Chorus session.",
         "- **Code-review gateway**: bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (current: " + (MAX_CODE_REVIEW_ROUNDS === 0 ? "unlimited" : String(MAX_CODE_REVIEW_ROUNDS)) + "; on FAIL, fix via /skill:quick-dev and re-run — after the limit, escalate the Idea's feature-level BLOCKERs to a human instead of shipping.",
@@ -308,79 +346,52 @@ export default function (pi: ExtensionAPI) {
     };
   });
 
-  // tool_call (pre-execution, MUTABLE input) → create session + inject sessionUuid
-  // into the spawned worker's task. The spawned subprocess receives the UUID.
+  // tool_call (pre-execution, MUTABLE input) → for each WORKER task in the
+  // `subagent` invocation (single / parallel / chain), create a Chorus session
+  // and inject its UUID + the session workflow into that task. The ephemeral
+  // child pi subprocess spawned for that task receives the UUID in its prompt.
   pi.on("tool_call", async (event, _ctx) => {
-    if (!CONFIGURED || event.toolName !== "subagent_spawn") return;
-    const input = event.input as { agent?: string; task?: string };
-    const agentName = input?.agent ?? "";
+    if (!CONFIGURED || event.toolName !== "subagent") return;
     // Positive worker classification: only canonical worker agents get a Chorus
     // session + task-lifecycle injection. The three Chorus reviewers are not
-    // workers (read-only), and the built-in scout/planner/reviewer are read-only
-    // too — injecting the session workflow into them adds irrelevant instructions
-    // and unnecessary chorus_create_session traffic. See isWorkerAgent().
-    if (!isWorkerAgent(agentName) || !input.task) return;
-    try {
-      const session = await mcpCall<{ uuid?: string }>("chorus_create_session", { name: agentName });
-      if (!session?.uuid) return;
-      pendingSessions.set(event.toolCallId, session.uuid);
-      // Mutate the task in place — the spawned subprocess receives the UUID.
-      input.task = input.task + sessionWorkflow(session.uuid);
-    } catch {
-      // Non-fatal: worker runs without observability (same as Codex fallback).
+    // workers (read-only), and the example scout/planner/reviewer agents are
+    // read-only too — injecting the session workflow into them adds irrelevant
+    // instructions and unnecessary chorus_create_session traffic. See isWorkerAgent().
+    const created: string[] = [];
+    for (const item of subagentTaskItems(event.input)) {
+      if (!isWorkerAgent(item.agent)) continue;
+      try {
+        const session = await mcpCall<{ uuid?: string }>("chorus_create_session", { name: item.agent });
+        if (!session?.uuid) continue;
+        created.push(session.uuid);
+        // Mutate the task in place — the ephemeral child receives the UUID.
+        item.setTask(item.task + sessionWorkflow(session.uuid));
+      } catch {
+        // Non-fatal: worker runs without observability (same as Codex fallback).
+      }
     }
+    if (created.length > 0) callSessions.set(event.toolCallId, created);
   });
   // tool_result (fires first; has input + details + content as first-class fields)
-  // → PRIMARY handler for BOTH ends of the session lifecycle:
-  //   - subagent_spawn  → map agentId → sessionUuid (from event.details.agent.id)
-  //   - subagent_manage {action:"close"} → close the mapped session (from event.input)
-  // Per pi source (agent-session.js afterToolCall), emitToolResult receives
-  // `input: args, content: result.content, details: result.details` directly from
-  // the tool's return — NOT nested under `result` like tool_execution_end, and
-  // `input` IS present (unlike tool_execution_end which has no input field).
+  // → PRIMARY handler that closes the ephemeral worker session(s) once a `subagent`
+  //   tool call returns. The official subagent children are ephemeral (spawn → run
+  //   → exit within one tool call), so the session lifecycle collapses to
+  //   "create on tool_call start, close on tool_result".
+  // → Also fires reviewer nudges after the 3 chorus_* submit/verify tools.
   pi.on("tool_result", async (event, ctx) => {
-    if (!CONFIGURED || event.isError) return;
+    if (!CONFIGURED) return;
 
-    // ── subagent_spawn → map agentId → sessionUuid ─────────────────────
-    if (event.toolName === "subagent_spawn") {
-      const sid = pendingSessions.get(event.toolCallId);
-      if (!sid) return;
-      const agentId = extractAgentIdFromToolResultEvent(event);
-      if (agentId) {
-        sessionMap.set(agentId, sid);
-        spawnMapped.add(event.toolCallId);
-        ctx.ui.notify(`Chorus session: ${sid.slice(0, 8)}… (worker ${agentId.slice(0, 11)}…)`, "info");
-      } else {
-        // tool_result had the best shot and still failed — log for diagnostics.
-        // tool_execution_end will try event.result as a last resort.
-        console.error("[chorus-pi] tool_result could not extract agentId. event keys:",
-          Object.keys(event), "details:", event.details, "content:", event.content?.map((c: any) => c?.text));
-      }
+    // ── subagent tool finished → close the worker session(s) ───────────
+    // Close on success OR error: the sessions were created at tool_call start,
+    // so they must be closed either way. closeCallSessions is idempotent and
+    // retains any session whose close fails for a shutdown retry.
+    if (event.toolName === "subagent") {
+      await closeCallSessions(event.toolCallId, ctx);
       return;
     }
 
-    // ── subagent_manage {action:"close"} → close the mapped session ───
-    // tool_result has event.input (ToolResultEventBase.input) — tool_execution_end does NOT.
-    if (event.toolName === "subagent_manage") {
-      const input = event.input as { action?: string; agentId?: string };
-      if (input?.action !== "close" || !input.agentId) return;
-      const sid = sessionMap.get(input.agentId);
-      if (sid) {
-        // Close the backend session. Only drop the mapping and report success on
-        // a successful close — a transient network/server failure must NOT delete the
-        // mapping, otherwise session_shutdown (which iterates sessionMap.values())
-        // cannot retry and the backend session leaks permanently. (Reviewer P1.)
-        await closeSessionOrRetain(sid, ctx, {
-          fail: `Chorus: close failed for session ${sid.slice(0, 8)}… (will retry on shutdown)`,
-          success: `Chorus: closed session ${sid.slice(0, 8)}…`,
-        }, () => sessionMap.delete(input.agentId));
-      } else {
-        // No mapping for this agentId — either it was a reviewer (no session),
-        // the spawn mapping failed, or the agent predated this session.
-        ctx.ui.notify(`Chorus: no session mapped to ${input.agentId.slice(0, 11)}… — nothing to close`, "warning");
-      }
-      return;
-    }
+    // Reviewer nudges only fire on a successful chorus_* call.
+    if (event.isError) return;
 
     // ── Reviewer nudges (the 3 Claude PostToolUse hooks) ──────────────
     // In MCP gateway mode event.toolName === "mcp" and the real chorus tool
@@ -409,78 +420,31 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // tool_execution_end → FALLBACK agentId extraction + error cleanup + reviewer nudges
-  // NOTE: this event has NO `input` field (per pi ToolExecutionEndEvent type).
-  // subagent_manage close is handled in tool_result above, not here.
+  // tool_execution_end → idempotent FALLBACK close of the worker session(s).
+  // tool_result normally fires first and already closed (and deleted) them, so
+  // this is a no-op in the common case. It exists so that if tool_result did not
+  // fire — or its close failed and retained the session — the sessions are still
+  // closed (or retried) here rather than leaking until session_shutdown.
+  // NOTE: this event has NO `input` field (per pi ToolExecutionEndEvent type),
+  // so reviewer nudges (which need event.input to resolve the chorus tool name in
+  // MCP gateway mode) are handled in tool_result above, not here.
   pi.on("tool_execution_end", async (event, ctx) => {
     if (!CONFIGURED) return;
-
-    // ── subagent_spawn result: map agentId → sessionUuid (or close orphan on error)
-    if (event.toolName === "subagent_spawn") {
-      const sid = pendingSessions.get(event.toolCallId);
-      if (!sid) return;
-      if (event.isError) {
-        // Spawn failed — close the orphan session. Retain the sid in pendingSessions
-        // if the close fails so session_shutdown can retry it (no permanent leak).
-        await closeSessionOrRetain(sid, ctx, {
-          fail: `Chorus: close failed for orphan session ${sid.slice(0, 8)}… (will retry on shutdown)`,
-          success: `Chorus: closed orphan session ${sid.slice(0, 8)}… (spawn error)`,
-        }, () => pendingSessions.delete(event.toolCallId));
-        return;
-      }
-      // tool_result already mapped this one — nothing to do.
-      if (spawnMapped.has(event.toolCallId)) {
-        spawnMapped.delete(event.toolCallId);
-        pendingSessions.delete(event.toolCallId);
-        return;
-      }
-      // Fallback: tool_result didn't fire or couldn't extract. Try event.result.
-      const agentId = extractAgentId(event.result);
-      if (agentId) {
-        sessionMap.set(agentId, sid);
-        pendingSessions.delete(event.toolCallId);
-        ctx.ui.notify(`Chorus session: ${sid.slice(0, 8)}… (worker ${agentId.slice(0, 11)}…)`, "info");
-      } else {
-        // Extraction failed on BOTH events (tool_result + tool_execution_end).
-        // Try to close the orphan session. Retain the sid in pendingSessions if
-        // the close fails so session_shutdown can retry it (no permanent leak).
-        const closed = await closeSessionOrRetain(sid, ctx, {
-          fail: `Chorus: close failed for orphan session ${sid.slice(0, 8)}… (will retry on shutdown)`,
-          success: `Chorus: closed orphan session ${sid.slice(0, 8)}… (could not extract agentId, worker task ran without observability)`,
-          successLevel: "warning",
-        }, () => pendingSessions.delete(event.toolCallId));
-        // Diagnostic: log the actual result shape so the runtime contract can be
-        // confirmed — and state accurately whether the orphan was closed or
-        // retained in pendingSessions for a shutdown retry.
-        console.error(`[chorus-pi] FALLBACK also failed — orphan session ${closed ? "closed" : "close failed; retained for shutdown retry"}.`, "result type:", typeof event.result,
-          "keys:", event.result && typeof event.result === "object" ? Object.keys(event.result) : "n/a",
-          "result:", JSON.stringify(event.result)?.slice(0, 300));
-      }
-      return;
+    if (event.toolName === "subagent") {
+      await closeCallSessions(event.toolCallId, ctx);
     }
-
-    // subagent_manage close is handled in tool_result (which has event.input);
-    // tool_execution_end has no input field, so there is nothing to do here for manage.
-
-    // tool_execution_end has no input field, so there is nothing to do here for manage.
-
-    // tool_execution_end has no input field, so there is nothing to do here for manage.
-
-    // Reviewer nudges are handled in tool_result above (which has event.input,
-    // needed to resolve the real chorus tool name in MCP gateway mode).
   });
 
-  // SessionEnd → close any stray sessions (replaces Claude's on-session-end.sh)
+  // SessionEnd → close any stray worker sessions (replaces Claude's on-session-end.sh).
+  // Retries every session still tracked in callSessions (e.g. a subagent call whose
+  // close failed and was retained, or that never saw a tool_result/tool_execution_end).
   pi.on("session_shutdown", async () => {
-    for (const sid of sessionMap.values()) {
-      await mcpCall("chorus_close_session", { sessionUuid: sid }).catch(() => {});
+    for (const sids of callSessions.values()) {
+      for (const sid of sids) {
+        await mcpCall("chorus_close_session", { sessionUuid: sid }).catch(() => {});
+      }
     }
-    for (const sid of pendingSessions.values()) {
-      await mcpCall("chorus_close_session", { sessionUuid: sid }).catch(() => {});
-    }
-    sessionMap.clear();
-    pendingSessions.clear();
-    spawnMapped.clear();
+    callSessions.clear();
     injectedOnce = false;
     checkinContext = null;
     mcpSessionId = null;

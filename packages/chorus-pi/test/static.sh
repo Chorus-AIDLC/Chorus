@@ -23,23 +23,25 @@ if [ -n "$ext_ts" ]; then
   done
 fi
 
-echo "═══ A1b. no undefined module-scope variables (catches the pendingSessions bug) ═══"
+echo "═══ A1b. no undefined module-scope variables (catches the callSessions bug) ═══"
 # A transpile (bun build) does NOT catch references to undeclared variables because
-# TS strips types and bun's transpiler is lenient. So grep for the 3 known module-scope
+# TS strips types and bun's transpiler is lenient. So grep for the known module-scope
 # consts and assert every reference is preceded by a declaration.
-for v in sessionMap pendingSessions spawnMapped injectedOnce checkinContext mcpSessionId; do
+for v in callSessions injectedOnce checkinContext mcpSessionId; do
   decls=$(grep -cE "^const $v\b|^let $v\b" extensions/chorus.ts)
   uses=$(grep -cE "\b$v\b" extensions/chorus.ts)
   if [ "$decls" -ge 1 ]; then ok "$v declared ($decls×) and used ($uses×)"; else no "$v used ($uses×) but NEVER declared — runtime ReferenceError"; fi
 done
 echo "═══ A2. package.json + pi manifest ═══"
 bun -e 'const p=require("./package.json");
- const need=["pi.extensions","pi.skills","bin.chorus-mcp-call"];
  const errs=[];
  if(!Array.isArray(p.pi?.extensions))errs.push("pi.extensions not array");
  if(!Array.isArray(p.pi?.skills))errs.push("pi.skills not array");
  if(!p.bin?.["chorus-mcp-call"])errs.push("bin.chorus-mcp-call missing");
- if(!p.peerDependencies?.["@narumitw/pi-subagents"])errs.push("peerDep pi-subagents missing");
+ // The reviewer subagents now use pi'"'"'s OFFICIAL subagent pattern bundled at
+ // extensions/subagent/ — the third-party @narumitw/pi-subagents dep MUST be gone.
+ for(const b of ["dependencies","devDependencies","peerDependencies","optionalDependencies"])
+   if(p[b]?.["@narumitw/pi-subagents"])errs.push("@narumitw/pi-subagents must be removed from "+b);
  if(errs.length){console.log(errs.join("; "));process.exit(1)}' 2>&1 && ok "package.json pi manifest valid" || no "package.json invalid"
 
 echo "═══ A3. skill frontmatter (name+description, Agent Skills name rules) ═══"
@@ -78,10 +80,11 @@ done
 
 echo "═══ A8. agent cross-refs (skills spawn agents that exist) ═══"
 agent_names=$(for a in agents/*.md; do grep -m1 "^name:" "$a" | sed 's/^name:[[:space:]]*//'; done | sort -u)
-# pi-subagents built-in agents: scout, planner, reviewer, worker (always available, not in our agents/)
+# pi official subagent example agents: scout, planner, reviewer, worker (shipped in
+# pi's examples/extensions/subagent/agents/; referenced by our orchestration skills)
 builtins="scout planner reviewer worker"
 for ref in $(grep -rhoE 'agent: "[a-z0-9-]+"' skills/ | sed 's/agent: "//; s/"//' | sort -u); do
-  if echo " $builtins " | grep -q " $ref "; then ok "spawn '$ref' -> pi-subagents built-in";
+  if echo " $builtins " | grep -q " $ref "; then ok "spawn '$ref' -> pi subagent example agent";
   elif echo "$agent_names" | grep -qx "$ref"; then ok "spawn '$ref' -> agent exists";
   else no "spawn '$ref' -> NO matching agent or built-in"; fi
 done

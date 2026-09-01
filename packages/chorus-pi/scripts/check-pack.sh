@@ -18,6 +18,8 @@ tar -tzf "$tarball" >"$tmp/files.txt"
 # ─── Required runtime assets present ────────────────────────────────────────
 for file in \
   package/extensions/chorus.ts \
+  package/extensions/subagent/index.ts \
+  package/extensions/subagent/agents.ts \
   package/lib/lib.ts \
   package/bin/chorus-mcp-call.sh \
   package/agents/chorus-code-reviewer.md \
@@ -31,8 +33,8 @@ for file in \
 done
 
 skill_count="$(grep -Ec '^package/skills/[^/]+/SKILL[.]md$' "$tmp/files.txt")"
-if [ "$skill_count" -ne 11 ]; then
-  echo "expected 11 skills in tarball, found $skill_count" >&2
+if [ "$skill_count" -ne 12 ]; then
+  echo "expected 12 skills in tarball, found $skill_count" >&2
   exit 1
 fi
 
