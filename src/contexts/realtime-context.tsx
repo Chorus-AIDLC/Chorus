@@ -10,6 +10,11 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "@/hooks/use-progress-router";
+import {
+  useDashboardEventsOptional,
+  type DashboardEvent,
+  type DashboardExecutionEvent,
+} from "@/contexts/dashboard-event-context";
 
 type Subscriber = () => void;
 
@@ -48,15 +53,12 @@ export type {
   ExecutionView,
   ExecutionEvent as ExecutionEventBase,
 } from "@/services/daemon-execution.service";
-import type { ExecutionEvent as ExecutionEventBase } from "@/services/daemon-execution.service";
 
 // SSE-tagged execution event: the backend ExecutionEvent plus the `type`
 // discriminator the SSE route adds so the client can route it. Carries the
 // connection's full current active (`running`/`queued`) set so a subscriber
 // re-renders directly off the event without a follow-up read.
-export interface ExecutionEvent extends ExecutionEventBase {
-  type: "execution";
-}
+export type ExecutionEvent = DashboardExecutionEvent;
 
 type ExecutionSubscriber = (event: ExecutionEvent) => void;
 
@@ -75,6 +77,9 @@ interface RealtimeProviderProps {
 }
 
 export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProps) {
+  const dashboardEvents = useDashboardEventsOptional();
+  const subscribeDashboardEvents = dashboardEvents?.subscribe;
+  const sharedOpenGeneration = dashboardEvents?.openGeneration;
   const subscribersRef = useRef<Set<Subscriber>>(new Set());
   const entitySubscribersRef = useRef<Set<EntitySubscriber>>(new Set());
   const presenceSubscribersRef = useRef<Set<PresenceSubscriber>>(new Set());
@@ -88,9 +93,31 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
     entitySubscribersRef.current.forEach((cb) => cb(event));
   }, []);
 
+  const notifyCatchUp = useCallback(() => {
+    notify();
+    for (const entityType of [
+      "task",
+      "idea",
+      "proposal",
+      "document",
+      "project",
+      "project_group",
+    ]) {
+      notifyEntity({
+        companyUuid: "",
+        projectUuid: "",
+        entityType,
+        entityUuid: "",
+        action: "updated",
+      });
+    }
+  }, [notify, notifyEntity]);
+
   useEffect(() => {
     let es: EventSource | null = null;
-    let debounceTimer: NodeJS.Timeout;
+    let debounceTimer: NodeJS.Timeout | undefined;
+    let unsubscribe: (() => void) | undefined;
+    let hasOpened = false;
 
     let lastNotifyTime = 0;
     const THROTTLE_MS = 3000;  // At most 1 refresh every 3 seconds
@@ -108,16 +135,66 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
       }, ENTITY_DEBOUNCE_MS);
     }
 
-    function connect() {
+    function handleEvent(parsed: DashboardEvent) {
+      // Project-scoped events are rejected before any subscriber, throttle, or
+      // debounce work. Execution events remain company/visibility scoped.
+      if (parsed.type === "presence") {
+        if (projectUuid && parsed.projectUuid !== projectUuid) return;
+        presenceSubscribersRef.current.forEach((cb) =>
+          cb(parsed as unknown as PresenceEvent),
+        );
+        return;
+      }
+
+      if (parsed.type === "execution") {
+        executionSubscribersRef.current.forEach((cb) =>
+          cb(parsed as unknown as ExecutionEvent),
+        );
+        return;
+      }
+
+      // Ignore notification/session/transcript/control payloads riding the
+      // shared transport. Change events are the untagged entity payloads.
+      if (
+        typeof parsed.entityType !== "string" ||
+        typeof parsed.entityUuid !== "string" ||
+        typeof parsed.action !== "string"
+      ) {
+        return;
+      }
+      if (projectUuid && parsed.projectUuid !== projectUuid) return;
+
+      const parsedEvent = parsed as unknown as RealtimeEvent;
+      clearTimeout(debounceTimer);
+      const now = Date.now();
+      const elapsed = now - lastNotifyTime;
+
+      if (elapsed >= THROTTLE_MS) {
+        lastNotifyTime = now;
+        notify();
+      } else {
+        debounceTimer = setTimeout(() => {
+          lastNotifyTime = Date.now();
+          notify();
+        }, Math.max(DEBOUNCE_MS, THROTTLE_MS - elapsed));
+      }
+
+      debouncedNotifyEntity(parsedEvent);
+    }
+
+    function connectStandalone() {
       // Close any existing connection before opening a new one
       disconnect();
       const url = projectUuid
-        ? `/api/events?projectUuid=${projectUuid}`
+        ? `/api/events?projectUuid=${encodeURIComponent(projectUuid)}`
         : `/api/events`;
       es = new EventSource(url);
+      es.onopen = () => {
+        if (hasOpened) notifyCatchUp();
+        hasOpened = true;
+      };
       es.onmessage = (msg) => {
-        // Parse event data
-        let parsed: Record<string, unknown> | null = null;
+        let parsed: DashboardEvent | null = null;
         try {
           parsed = JSON.parse(msg.data);
         } catch {
@@ -126,41 +203,7 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
         }
 
         if (!parsed) return;
-
-        // Route presence events to dedicated subscribers — skip notify/debouncedNotifyEntity
-        if (parsed.type === "presence") {
-          presenceSubscribersRef.current.forEach((cb) => cb(parsed as unknown as PresenceEvent));
-          return;
-        }
-
-        // Route execution-state events to dedicated subscribers. Delivered
-        // immediately (no debounce): execution changes are already coalesced
-        // server-side into a single per-connection snapshot, and the detail pane
-        // must reflect a task starting/finishing without lag.
-        if (parsed.type === "execution") {
-          executionSubscribersRef.current.forEach((cb) => cb(parsed as unknown as ExecutionEvent));
-          return;
-        }
-
-        // Existing change event handling (backward compatible)
-        const parsedEvent = parsed as unknown as RealtimeEvent;
-
-        clearTimeout(debounceTimer);
-        const now = Date.now();
-        const elapsed = now - lastNotifyTime;
-
-        if (elapsed >= THROTTLE_MS) {
-          lastNotifyTime = now;
-          notify();
-        } else {
-          debounceTimer = setTimeout(() => {
-            lastNotifyTime = Date.now();
-            notify();
-          }, Math.max(DEBOUNCE_MS, THROTTLE_MS - elapsed));
-        }
-
-        // Entity-specific events: debounced per entity type (300ms)
-        debouncedNotifyEntity(parsedEvent);
+        handleEvent(parsed);
       };
       es.onerror = () => {
         // Browser EventSource auto-reconnects on error
@@ -178,26 +221,45 @@ export function RealtimeProvider({ projectUuid, children }: RealtimeProviderProp
       if (document.visibilityState === "visible") {
         const connectionLost = !es || es.readyState === EventSource.CLOSED;
         if (connectionLost) {
-          // Reconnect and catch up — events were missed while disconnected.
-          connect();
-          notify();
-          for (const entityType of ["task", "idea", "proposal", "document", "project", "project_group"]) {
-            notifyEntity({ companyUuid: "", projectUuid: "", entityType, entityUuid: "", action: "updated" });
-          }
+          connectStandalone();
         }
       }
     }
 
-    connect();
-    document.addEventListener("visibilitychange", handleVisibility);
+    if (subscribeDashboardEvents) {
+      unsubscribe = subscribeDashboardEvents(handleEvent);
+    } else {
+      connectStandalone();
+      document.addEventListener("visibilitychange", handleVisibility);
+    }
 
     return () => {
+      unsubscribe?.();
       disconnect();
       clearTimeout(debounceTimer);
       for (const key in entityDebounceTimers) clearTimeout(entityDebounceTimers[key]);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [projectUuid, notify, notifyEntity]);
+  }, [
+    projectUuid,
+    subscribeDashboardEvents,
+    notify,
+    notifyEntity,
+    notifyCatchUp,
+  ]);
+
+  const seenSharedGenerationRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!subscribeDashboardEvents || !sharedOpenGeneration) return;
+    if (seenSharedGenerationRef.current === null) {
+      seenSharedGenerationRef.current = sharedOpenGeneration;
+      return;
+    }
+    if (sharedOpenGeneration > seenSharedGenerationRef.current) {
+      seenSharedGenerationRef.current = sharedOpenGeneration;
+      notifyCatchUp();
+    }
+  }, [subscribeDashboardEvents, sharedOpenGeneration, notifyCatchUp]);
 
   const subscribe = useCallback((callback: Subscriber) => {
     subscribersRef.current.add(callback);
