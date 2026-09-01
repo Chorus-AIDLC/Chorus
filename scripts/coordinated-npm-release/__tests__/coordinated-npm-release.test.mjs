@@ -327,6 +327,18 @@ test("real release manifest preserves every package lifecycle and pack gate", ()
   }
 });
 
+test("dsh contract check bootstraps its pinned upstream on clean runners", async () => {
+  const script = await readFile(
+    resolve(repositoryRoot, "packages/chorus-dsh/scripts/check-dsh-contract.sh"),
+    "utf8",
+  );
+
+  assert.match(script, /checkout="\$\{DSH_CHECKOUT:-\}"/);
+  assert.match(script, /git clone .*--branch "\$tag"/s);
+  assert.match(script, /99f6f02fecdb7dff40c3fbc9470f5907c29f74ca/);
+  assert.doesNotMatch(script, /\/home\/ubuntu\/dev\/deepseek-harness/);
+});
+
 test("standard CI runs the coordinated package-contract suite", async () => {
   const workflow = await readFile(
     resolve(repositoryRoot, ".github/workflows/test.yml"),

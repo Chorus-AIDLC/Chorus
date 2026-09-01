@@ -2,7 +2,17 @@
 set -euo pipefail
 
 expected="99f6f02fecdb7dff40c3fbc9470f5907c29f74ca"
-checkout="${DSH_CHECKOUT:-/home/ubuntu/dev/deepseek-harness}"
+tag="dsh-v0.1.0-rc.7"
+checkout="${DSH_CHECKOUT:-}"
+temporary_checkout=""
+
+if [[ -z "$checkout" ]]; then
+  temporary_checkout="$(mktemp -d)"
+  trap 'rm -rf "$temporary_checkout"' EXIT
+  checkout="$temporary_checkout/deepseek-harness"
+  git clone --quiet --depth 1 --branch "$tag" \
+    https://github.com/deepseek-ai/deepseek-harness.git "$checkout"
+fi
 
 if [[ ! -d "$checkout/.git" ]]; then
   echo "missing pinned deepseek-harness checkout: $checkout" >&2
@@ -11,7 +21,7 @@ fi
 
 actual="$(git -C "$checkout" rev-parse HEAD)"
 if [[ "$actual" != "$expected" ]]; then
-  echo "unsupported deepseek-harness revision: expected dsh-v0.1.0-rc.7 ($expected), got $actual" >&2
+  echo "unsupported deepseek-harness revision: expected $tag ($expected), got $actual" >&2
   exit 1
 fi
 
