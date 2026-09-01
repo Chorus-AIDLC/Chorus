@@ -312,6 +312,134 @@ describe("extractTranscriptText — codex exec --json shape", () => {
   });
 });
 
+// ── pi `pi --mode json` AgentSessionEvent shapes ──
+// Verified against pi (earendil-works/pi): docs/json.md + packages/agent/src/agent-loop.ts
+// + packages/ai/src/types.ts. pi emits a `message_end` carrying a full AgentMessage after
+// each step. Its content-block union is { type:"text",text } | { type:"thinking",thinking }
+// | { type:"toolCall",... } for an assistant message (identical text-block shape to Claude).
+// pi UNCONDITIONALLY re-emits the wake prompt as a role:"user" message_end at loop start
+// (agent-loop.ts:112-115) and tool results as role:"toolResult" message_end (agent-loop.ts:801),
+// plus separate `tool_execution_end` tool-output events — none of which are conversation text.
+const PI_ASSISTANT_TEXT_END = {
+  type: "message_end",
+  message: {
+    role: "assistant",
+    content: [{ type: "text", text: "The hostname is `ip-172`." }],
+    api: "anthropic",
+    provider: "anthropic",
+    model: "claude-x",
+    usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: {} },
+    stopReason: "stop",
+    timestamp: 1735000000000,
+  },
+};
+const PI_ASSISTANT_MIXED_END = {
+  type: "message_end",
+  message: {
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "Let me look." },
+      { type: "text", text: "Reading now." },
+      { type: "toolCall", id: "tc_1", name: "read_file", arguments: { path: "/etc/hostname" } },
+    ],
+    stopReason: "toolUse",
+    timestamp: 1735000000001,
+  },
+};
+// pi echoes the wake prompt as a role:"user" message_end — must be dropped (promptText owns it).
+const PI_USER_PROMPT_END_STRING = {
+  type: "message_end",
+  message: { role: "user", content: "Please read /etc/hostname.", timestamp: 1735000000002 },
+};
+const PI_USER_PROMPT_END_ARRAY = {
+  type: "message_end",
+  message: { role: "user", content: [{ type: "text", text: "Please read /etc/hostname." }], timestamp: 1735000000003 },
+};
+// A tool result rides as a role:"toolResult" message_end — tool output, not conversation text.
+const PI_TOOLRESULT_END = {
+  type: "message_end",
+  message: {
+    role: "toolResult",
+    toolCallId: "tc_1",
+    toolName: "read_file",
+    content: [{ type: "text", text: "1\tip-172\n" }],
+  },
+};
+const PI_TOOL_EXECUTION_END = {
+  type: "tool_execution_end",
+  toolCallId: "tc_1",
+  toolName: "read_file",
+  result: { output: "1\tip-172\n" },
+  isError: false,
+};
+const PI_MESSAGE_START = {
+  type: "message_start",
+  message: { role: "assistant", content: [{ type: "text", text: "partial…" }], timestamp: 1735000000004 },
+};
+
+describe("extractTranscriptText — pi `pi --mode json` shape", () => {
+  it("keeps a pi assistant message_end as assistant text", () => {
+    expect(extractTranscriptText(PI_ASSISTANT_TEXT_END)).toEqual({
+      role: "assistant",
+      text: "The hostname is `ip-172`.",
+    });
+  });
+
+  it("keeps only the text block(s) of a pi assistant message_end (drops thinking + toolCall)", () => {
+    expect(extractTranscriptText(PI_ASSISTANT_MIXED_END)).toEqual({
+      role: "assistant",
+      text: "Reading now.",
+    });
+  });
+
+  it("drops the pi user-prompt echo (message_end role:user) — promptText already owns it", () => {
+    expect(extractTranscriptText(PI_USER_PROMPT_END_STRING)).toBeNull();
+    expect(extractTranscriptText(PI_USER_PROMPT_END_ARRAY)).toBeNull();
+  });
+
+  it("drops a pi toolResult message_end and a tool_execution_end (tool output, not conversation text)", () => {
+    expect(extractTranscriptText(PI_TOOLRESULT_END)).toBeNull();
+    expect(extractTranscriptText(PI_TOOL_EXECUTION_END)).toBeNull();
+  });
+
+  it("drops a pi message_start (only message_end is authoritative)", () => {
+    expect(extractTranscriptText(PI_MESSAGE_START)).toBeNull();
+  });
+
+  it("drops pi lifecycle envelopes (agent_start / turn_start / turn_end / agent_end)", () => {
+    expect(extractTranscriptText({ type: "agent_start" })).toBeNull();
+    expect(extractTranscriptText({ type: "turn_start" })).toBeNull();
+    expect(extractTranscriptText({ type: "turn_end", message: {}, toolResults: [] })).toBeNull();
+    expect(extractTranscriptText({ type: "agent_end", messages: [] })).toBeNull();
+    // The `session` header line is not conversation text either.
+    expect(extractTranscriptText({ type: "session", version: 3, id: "uuid", cwd: "/x" })).toBeNull();
+  });
+
+  it("drops a pi assistant message_end whose text is only whitespace", () => {
+    const blank = { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "   " }] } };
+    expect(extractTranscriptText(blank)).toBeNull();
+  });
+
+  it("strips a <system-reminder> span from a pi assistant message_end but keeps the real text", () => {
+    const withReminder = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Done.<system-reminder>internal</system-reminder> Next." }],
+      },
+    };
+    expect(extractTranscriptText(withReminder)).toEqual({ role: "assistant", text: "Done. Next." });
+  });
+
+  it("drops a pi message_end with no / malformed message (never throws)", () => {
+    expect(extractTranscriptText({ type: "message_end" })).toBeNull();
+    expect(extractTranscriptText({ type: "message_end", message: null })).toBeNull();
+    expect(extractTranscriptText({ type: "message_end", message: 42 })).toBeNull();
+    expect(extractTranscriptText({ type: "message_end", message: { role: "assistant" } })).toBeNull(); // no content
+    expect(extractTranscriptText({ type: "message_end", message: { role: "assistant", content: 7 } })).toBeNull();
+  });
+});
+
 /** A fake server: records every POST body and answers ok unless told otherwise. */
 function fakeServer({ ok = true, status = 200 } = {}) {
   const posts = [];

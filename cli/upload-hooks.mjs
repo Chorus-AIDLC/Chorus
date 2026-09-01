@@ -399,15 +399,26 @@ function stripSystemReminders(s) {
  * the caller can skip it). Never throws — a shape it doesn't recognize yields null
  * rather than an error (defensive against CLI drift).
  *
- * Two stream dialects are recognized (their top-level shapes are disjoint, so no
+ * Four stream dialects are recognized (their top-level shapes are disjoint, so no
  * backend flag is needed):
  *  - Claude Code stream-json: `{ type: "user"|"assistant", message: { content … } }`.
+ *  - DeepSeek Harness (dsh): `{ type: "user/message"|"assistant/message", data: { message } }`.
  *  - codex `codex exec --json`: conversation/tool output rides on `item.completed`
  *    events discriminated by `item.type`; assistant text is an `agent_message`
  *    item with a top-level `item.text` (verified against codex-cli 0.142.3). codex
  *    does NOT echo the user prompt (the chat UI renders that from the turn's
  *    promptText), and `reasoning` / `command_execution` / lifecycle envelopes are
  *    not conversation text — all dropped.
+ *  - pi (@earendil-works/pi-coding-agent) `pi --mode json`: AgentSessionEvents whose
+ *    authoritative final text is a `message_end` carrying a full AgentMessage
+ *    (`{ role, content }`). We keep ONLY the assistant message: pi UNCONDITIONALLY
+ *    re-emits the wake prompt as a `message_end` with role "user" (agent-loop.ts),
+ *    which the daemon already stores as the turn's promptText — so echoing it would
+ *    duplicate the prompt (same reason codex drops the user echo). `toolResult`
+ *    messages and `tool_execution_end` tool-output events are not conversation text.
+ *    pi's content-block shape is identical to Claude's (text blocks `{type:"text",text}`,
+ *    thinking `{type:"thinking"}`, tool calls `{type:"toolCall"}`), so we normalize the
+ *    assistant envelope to the Claude shape and reuse the same block extractor.
  *
  * @param {any} obj  One parsed stream NDJSON object.
  * @returns {{ role: "user"|"assistant", text: string } | null}
@@ -436,6 +447,19 @@ export function extractTranscriptText(obj) {
     const itemText = typeof item.text === "string" ? item.text : "";
     if (!itemText.trim()) return null;
     return { role: "assistant", text: itemText };
+  }
+
+  // ── pi `pi --mode json` dialect ──
+  // pi's authoritative final text of each step is a `message_end` carrying a full
+  // AgentMessage `{ role, content }`. Keep ONLY the assistant message: pi re-emits the
+  // wake prompt as a role:"user" message_end (already stored as the turn's promptText),
+  // and role:"toolResult" / `tool_execution_end` events are tool output, not text.
+  // pi's content-block shape matches Claude's, so we hand the message to the Claude-shape
+  // extractor below (which keeps only `{type:"text"}` blocks, strips reminders, drops empties).
+  if (obj.type === "message_end") {
+    const message = obj.message;
+    if (!message || typeof message !== "object" || message.role !== "assistant") return null;
+    return extractTranscriptText({ type: "assistant", message });
   }
 
   // ── Claude Code stream-json dialect ──
