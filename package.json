@@ -58,6 +58,7 @@
     "landing:build": "pnpm --filter chorus-landing run build",
     "landing:preview": "pnpm --filter chorus-landing run preview",
     "test": "vitest run",
+    "test:release-contract": "node --test scripts/coordinated-npm-release/__tests__/coordinated-npm-release.test.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "prepack": "pnpm build && node scripts/prepack-pglite.mjs"

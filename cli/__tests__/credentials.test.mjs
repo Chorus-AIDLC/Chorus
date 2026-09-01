@@ -1,5 +1,6 @@
 // cli/__tests__/credentials.test.mjs
 // Covers cli-auth spec "Layered credential and address resolution".
+import { resolve } from "node:path";
 import { describe, it, expect } from "vitest";
 import { resolveCredentials, loginFilePath, claudeSettingsPath } from "../credentials.mjs";
 
@@ -152,7 +153,32 @@ describe("path helpers", () => {
   it("loginFilePath ends with .chorus/daemon.json", () => {
     expect(loginFilePath().replace(/\\/g, "/")).toMatch(/\.chorus\/daemon\.json$/);
   });
+  it("loginFilePath honors an explicit daemon config path", () => {
+    const previous = process.env.CHORUS_DAEMON_CONFIG_PATH;
+    try {
+      process.env.CHORUS_DAEMON_CONFIG_PATH = "/tmp/chorus-test/.chorus/daemon.json";
+      expect(loginFilePath().replace(/\\/g, "/")).toBe(
+        resolve("/tmp/chorus-test/.chorus/daemon.json").replace(/\\/g, "/"),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.CHORUS_DAEMON_CONFIG_PATH;
+      else process.env.CHORUS_DAEMON_CONFIG_PATH = previous;
+    }
+  });
   it("claudeSettingsPath ends with .claude/settings.json", () => {
     expect(claudeSettingsPath().replace(/\\/g, "/")).toMatch(/\.claude\/settings\.json$/);
+  });
+  it("claudeSettingsPath honors an explicit settings path", () => {
+    const previous = process.env.CHORUS_CLAUDE_SETTINGS_PATH;
+    try {
+      process.env.CHORUS_CLAUDE_SETTINGS_PATH =
+        "/tmp/chorus-test/.claude/settings.json";
+      expect(claudeSettingsPath().replace(/\\/g, "/")).toBe(
+        resolve("/tmp/chorus-test/.claude/settings.json").replace(/\\/g, "/"),
+      );
+    } finally {
+      if (previous === undefined) delete process.env.CHORUS_CLAUDE_SETTINGS_PATH;
+      else process.env.CHORUS_CLAUDE_SETTINGS_PATH = previous;
+    }
   });
 });

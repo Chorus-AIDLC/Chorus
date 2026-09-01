@@ -91,12 +91,20 @@ try {
   // ignore
 }
 
-// --- 3. Copy static assets and public/ into standalone directory ---
+// --- 3. Remove build-time environment files from the publishable output ---
+
+const standaloneDir = join(process.cwd(), ".next", "standalone");
+for (const entry of readdirSync(standaloneDir)) {
+  if (entry === ".env" || entry.startsWith(".env.")) {
+    rmSync(join(standaloneDir, entry), { force: true });
+    console.log(`  removed standalone/${entry}`);
+  }
+}
+
+// --- 4. Copy static assets and public/ into standalone directory ---
 // Next.js standalone server.js expects .next/static/ and public/ relative
 // to its own directory (.next/standalone/), but `next build` outputs them
 // at the project root. Docker does this via COPY; we do it here for npm.
-
-const standaloneDir = join(process.cwd(), ".next", "standalone");
 
 console.log("Copying static assets into standalone directory...");
 const staticSrc = join(process.cwd(), ".next", "static");
@@ -109,7 +117,7 @@ const publicDst = join(standaloneDir, "public");
 cpSync(publicSrc, publicDst, { recursive: true });
 console.log("  copied public/");
 
-// --- 4. Rewrite Prisma's hardcoded build-host __dirname in server chunks ---
+// --- 5. Rewrite Prisma's hardcoded build-host __dirname in server chunks ---
 // Prisma 7's generated client.ts contains:
 //   globalThis['__dirname'] = path.dirname(fileURLToPath(import.meta.url))
 // webpack inlines `import.meta.url` at build time as the absolute file:// URL
@@ -138,10 +146,15 @@ try {
 }
 
 let patchedCount = 0;
+let portableCount = 0;
 for (const name of chunkFiles) {
   if (!name.endsWith(".js")) continue;
   const fullPath = join(chunksDir, name);
   const original = readFileSync(fullPath, "utf8");
+  if (original.includes(prismaDirnameRep)) {
+    portableCount++;
+    continue;
+  }
   if (!prismaDirnameRe.test(original)) continue;
   prismaDirnameRe.lastIndex = 0;
   const patched = original.replace(prismaDirnameRe, prismaDirnameRep);
@@ -150,7 +163,7 @@ for (const name of chunkFiles) {
   console.log(`  patched chunks/${name}`);
 }
 
-if (patchedCount === 0) {
+if (patchedCount + portableCount === 0) {
   // If we ship a tarball without this patch on Windows it breaks at runtime.
   // Fail loudly so a Prisma upgrade that changes the generated shape can't
   // silently slip through.
@@ -167,5 +180,8 @@ if (patchedCount === 0) {
   process.exit(1);
 }
 console.log(`  patched ${patchedCount} chunk(s)`);
+if (portableCount > 0) {
+  console.log(`  verified ${portableCount} previously patched chunk(s)`);
+}
 
 console.log("Prepack complete.");
