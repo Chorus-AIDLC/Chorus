@@ -143,8 +143,9 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     // + a temp KIRO_DIR keep it hermetic (no network, no real ~/.kiro touch).
     const kiroDir = join(mkdtempSync(join(tmpdir(), "init-int-")), ".kiro");
 
-    // kiro (→ kiro, wakeable) installs its .kiro/ file template; pi (→ offline)
-    // is guided (deterministic UNSUPPORTED) for plugin-install → no real CLI call.
+    // kiro (→ kiro, wakeable) installs its .kiro/ file template; pi (→ pi, wakeable)
+    // is still guided (deterministic UNSUPPORTED) for plugin-install → no real CLI
+    // call (task D flips pi's install adapter; here it stays guided).
     const code = await runInit(
       ["--agents", "kiro,pi", "--url", "https://c", "--api-key", "cho_kiro", "--yes"],
       {
@@ -178,15 +179,15 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(code).toBe(0);
     const text = io.lines.join("\n");
     // credential-seed captured a DISTINCT key per agent, each tagged with its mapped
-    // agentType (kiro is wakeable → "kiro"; pi is not → "offline").
+    // agentType (kiro and pi are both wakeable now → "kiro" / "pi").
     expect(appended.map((a) => [a.apiKey, a.agentType])).toEqual([
       ["cho_kiro", "kiro"],
-      ["cho_pi", "offline"],
+      ["cho_pi", "pi"],
     ]);
-    // daemon-wake DEFAULTS OFF: the wakeable kiro was not opted in → daemonWake:false;
-    // the offline pi gets no daemonWake field.
+    // daemon-wake DEFAULTS OFF: both wakeable agents were answered "n" at the
+    // per-agent daemon-waking prompt → daemonWake:false on each.
     expect(appended[0].daemonWake).toBe(false);
-    expect(appended[1]).not.toHaveProperty("daemonWake");
+    expect(appended[1].daemonWake).toBe(false);
     // Flat top-level creds are DEPRECATED — credential-seed never writes them.
     expect(credWrites).toBe(0);
     expect(text).toContain("kiro: seeded");
@@ -201,7 +202,7 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(text).toContain("kiro: installed");
     expect(text).toContain("pi: unsupported");
     expect(existsSync(join(kiroDir, "agents", "chorus.json"))).toBe(true);
-    // daemon-setup: nothing will be woken (kiro not opted in, pi offline) → skip.
+    // daemon-setup: nothing will be woken (neither kiro nor pi opted in) → skip.
     expect(text).toContain("no agent enabled for daemon waking");
     // summary + next-step hint
     expect(text).toContain("Summary");
@@ -294,21 +295,22 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(code).toBe(1);
 
     // agentType written per agent — the load-bearing mapping, incl. claude→claude-code
-    // (explicit rename) and opencode/openclaw/pi/dsh→offline (kiro stays wakeable).
+    // (explicit rename) and opencode/openclaw/dsh→offline (kiro and pi are wakeable).
     expect(appended.map((a) => a.agentType)).toEqual([
       "claude-code", // claude — the rename actually exercised
       "offline", // dsh (de-advertised)
       "offline", // openclaw
       "kiro", // kiro (wakeable)
-      "offline", // pi
+      "pi", // pi (wakeable — add-daemon-pi-backend)
     ]);
     expect(appended).toHaveLength(5);
     // --daemon-wake-all opted the wakeable agents in (daemonWake:true); offline agents
     // get no daemonWake field.
     expect(appended[0].daemonWake).toBe(true); // claude
     expect(appended[3].daemonWake).toBe(true); // kiro
+    expect(appended[4].daemonWake).toBe(true); // pi (wakeable)
     expect(appended[1]).not.toHaveProperty("daemonWake"); // dsh → offline
-    expect(appended[4]).not.toHaveProperty("daemonWake"); // pi → offline
+    expect(appended[2]).not.toHaveProperty("daemonWake"); // openclaw → offline
 
     // Per-agent install outcomes, and per-agent failure isolation: openclaw FAILED,
     // yet dsh (before it) AND kiro/pi (after it) all produced their own outcome.
@@ -334,11 +336,13 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(text).toContain("--daemon-autostart");
   });
 
-  it("all-offline selection (opencode,pi) skips the daemon auto-start prompt", async () => {
-    // No wakeable agent selected → daemon-setup persists the agents[] entries but
-    // SKIPS both the backend resolve/menu and the auto-start prompt (even on a TTY,
-    // no --yes). opencode installs (offline classification is orthogonal to whether
-    // its plugin installs); pi is guided.
+  it("no-agent-opted-in selection (opencode,pi) skips the daemon auto-start prompt", async () => {
+    // opencode is offline and pi is wakeable but NOT opted into daemon-waking (its
+    // per-agent prompt is answered no) → daemon-setup persists the agents[] entries
+    // but SKIPS both the backend resolve/menu and the auto-start prompt (even on a
+    // TTY, no --yes), because NOTHING is enabled for waking. opencode installs
+    // (offline classification is orthogonal to whether its plugin installs); pi is
+    // still guided (task D flips its install adapter, not this task).
     const lines = [];
     let askedAutostart = false;
     const io = {
@@ -388,9 +392,11 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     const text = io.lines.join("\n");
     // opencode installed + pi unsupported → no FAILED outcome → exit 0.
     expect(code).toBe(0);
-    // Both agents parked as offline for the `chorus mcp` proxy (no daemonWake field).
-    expect(appended.map((a) => a.agentType)).toEqual(["offline", "offline"]);
-    expect(appended.every((a) => !("daemonWake" in a))).toBe(true);
+    // opencode → offline (parked for the `chorus mcp` proxy, no daemonWake field);
+    // pi → pi (wakeable) but not opted in → daemonWake:false.
+    expect(appended.map((a) => a.agentType)).toEqual(["offline", "pi"]);
+    expect(appended[0]).not.toHaveProperty("daemonWake"); // opencode offline
+    expect(appended[1].daemonWake).toBe(false); // pi wakeable, not opted in
     expect(text).toContain("opencode: installed");
     expect(text).toContain("pi: unsupported");
     // The auto-start gate: nothing will be woken → no backend resolve, no prompt.

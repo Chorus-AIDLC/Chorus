@@ -1511,6 +1511,7 @@
     "clientCodex": "Codex",
     "clientKiro": "Kiro",
     "clientDsh": "DeepSeek Harness",
+    "clientPi": "Pi",
     "clientUnknown": "Unknown client",
     "uptimeMonoDays": "{days}d {time}",
     "mobileBack": "Connections",

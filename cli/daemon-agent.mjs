@@ -27,8 +27,8 @@ import { loginFilePath } from "./credentials.mjs";
  * fail-closed no-wake handling lives in spawner-select.mjs (selectSpawner returns
  * an OfflineSpawner that refuses to spawn) — an offline value MUST NOT fall through
  * to the claude-code default and wake it. `chorus agents add` maps every non-wakeable
- * selected agent (opencode/openclaw/pi/dsh) to this classification. */
-export const KNOWN_AGENTS = ["claude-code", "codex", "kiro", "dsh", "offline"];
+ * selected agent (opencode/openclaw) to this classification. */
+export const KNOWN_AGENTS = ["claude-code", "codex", "kiro", "dsh", "pi", "offline"];
 
 /** The default agent backend when neither --agent nor CHORUS_AGENT is set. */
 export const DEFAULT_AGENT = "claude-code";
@@ -45,6 +45,7 @@ export function backendCli(agentType) {
   if (agentType === "codex") return { name: "codex", envVar: "CHORUS_CODEX_PATH" };
   if (agentType === "kiro") return { name: "kiro-cli", envVar: "CHORUS_KIRO_PATH" };
   if (agentType === "dsh") return { name: "dsh-jsonrpc-agent", envVar: "CHORUS_DSH_PATH" };
+  if (agentType === "pi") return { name: "pi", envVar: "CHORUS_PI_PATH" };
   // `offline` has no CLI to resolve — it is never woken (see backendClientType).
   // The daemon does not probe a binary for it; this explicit descriptor keeps the
   // return sensible if some banner path ever reads it (CHORUS_AGENT selects the
@@ -65,6 +66,7 @@ export function backendClientType(agentType) {
   if (agentType === "codex") return "codex";
   if (agentType === "kiro") return "kiro";
   if (agentType === "dsh") return "dsh";
+  if (agentType === "pi") return "pi";
   // `offline` is a non-wakeable classification — the daemon SHALL NOT register it
   // as a wakeable connection (daemon-multi-agent spec). It must therefore NOT
   // fall through to the `claude_code` default (which would make an offline agent

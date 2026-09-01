@@ -18,15 +18,16 @@ describe("agentTypeForSelection", () => {
     expect(agentTypeForSelection("claude")).not.toBe("claude");
   });
 
-  it("passes codex and kiro through unchanged (they already match the daemon vocabulary)", () => {
+  it("passes codex, kiro, and pi through unchanged (they already match the daemon vocabulary)", () => {
     expect(agentTypeForSelection("codex")).toBe("codex");
     expect(agentTypeForSelection("kiro")).toBe("kiro");
+    // pi is now a first-class wakeable backend (add-daemon-pi-backend), no longer offline.
+    expect(agentTypeForSelection("pi")).toBe("pi");
   });
 
-  it("classifies non-wakeable backends (opencode/openclaw/pi/dsh) as offline", () => {
+  it("classifies non-wakeable backends (opencode/openclaw/dsh) as offline", () => {
     expect(agentTypeForSelection("opencode")).toBe("offline");
     expect(agentTypeForSelection("openclaw")).toBe("offline");
-    expect(agentTypeForSelection("pi")).toBe("offline");
     expect(agentTypeForSelection("dsh")).toBe("offline");
   });
 
@@ -45,10 +46,11 @@ describe("agentTypeForSelection", () => {
 });
 
 describe("isWakeableAgentType", () => {
-  it("treats claude-code / codex / kiro as wakeable", () => {
+  it("treats claude-code / codex / kiro / pi as wakeable", () => {
     expect(isWakeableAgentType("claude-code")).toBe(true);
     expect(isWakeableAgentType("codex")).toBe(true);
     expect(isWakeableAgentType("kiro")).toBe(true);
+    expect(isWakeableAgentType("pi")).toBe(true);
   });
 
   it("treats offline as NOT wakeable", () => {
