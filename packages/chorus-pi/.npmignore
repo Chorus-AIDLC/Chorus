@@ -1,0 +1,15 @@
+# The published contents are the package.json "files" allowlist
+# (extensions, lib, skills, agents, bin, README.md). Unlike the dsh package,
+# chorus-pi publishes its TypeScript source as-is — pi loads `.ts` via jiti, so
+# there is NO build/dist step. This .npmignore must therefore NEVER list
+# extensions/, lib/, skills/, or agents/ (doing so would ship a broken package).
+#
+# It is defense-in-depth AND, by existing, stops npm from falling back to
+# .gitignore for pack exclusions (a fallback that could otherwise drop source).
+test/
+scripts/
+node_modules/
+coverage/
+.vite/
+*.tgz
+*.log

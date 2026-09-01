@@ -91,6 +91,26 @@ const CHORUS_BIN = resolveChorusBin(import.meta.url, {
 });
 const CONFIGURED = CHORUS_URL !== "" && CHORUS_API_KEY !== "";
 
+// Package version — single source of truth is the bundled package.json (kept in
+// lockstep with the Chorus app version at release), never a hardcoded literal.
+// Read once at load; falls back to "0.0.0" if unreadable so a broken read never
+// crashes the extension.
+const PKG_VERSION: string = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const _fs = require("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const _path = require("node:path");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const _url = require("node:url");
+    const _dir = _path.dirname(_url.fileURLToPath(import.meta.url));
+    const _pkg = JSON.parse(_fs.readFileSync(_path.join(_dir, "..", "package.json"), "utf-8"));
+    return typeof _pkg.version === "string" ? _pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+
 // ─── MCP-over-HTTP helper (TS replacement for chorus-mcp-call.sh) ───────────
 let mcpSessionId: string | null = null;
 
@@ -119,7 +139,7 @@ async function mcpCall<T = unknown>(tool: string, args: Record<string, unknown> 
       params: {
         protocolVersion: "2025-03-26",
         capabilities: {},
-        clientInfo: { name: "chorus-pi", version: "0.17.0" },
+        clientInfo: { name: "chorus-pi", version: PKG_VERSION },
       },
     }),
   });
