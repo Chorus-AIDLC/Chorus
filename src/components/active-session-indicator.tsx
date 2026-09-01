@@ -123,6 +123,12 @@ export function ActiveSessionIndicator({
       <PopoverContent
         align="start"
         sideOffset={6}
+        // Hover-out closes the popover, and Radix by default returns focus to the
+        // trigger on close — which re-fires the trigger's `onFocus` and reopens
+        // the popover, a close→reopen bounce that reads as a hover flicker. The
+        // popover is a hover/keyboard-open affordance, not a focus trap, so we
+        // suppress the focus return; keyboard open via `onFocus` still works.
+        onCloseAutoFocus={(event) => event.preventDefault()}
         onPointerDown={(event) => event.stopPropagation()}
         onPointerEnter={cancelClose}
         onPointerLeave={scheduleClose}
