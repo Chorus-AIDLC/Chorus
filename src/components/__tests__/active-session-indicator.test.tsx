@@ -69,6 +69,67 @@ describe("ActiveSessionIndicator", () => {
     expect(onParentClick).not.toHaveBeenCalled();
   });
 
+  it("opens one session directly from a touch gesture without mounting a chooser", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onParentClick = vi.fn();
+    render(
+      <div onClick={onParentClick}>
+        <ActiveSessionIndicator
+          sessions={[session("touch-one")]}
+          onSelect={onSelect}
+          surface="tracker"
+        />
+      </div>,
+    );
+
+    const trigger = screen.getByTestId("tracker-active-session-indicator");
+    await user.pointer([
+      { keys: "[TouchA>]", target: trigger },
+      { keys: "[/TouchA]", target: trigger },
+    ]);
+
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionUuid: "touch-one" }),
+    );
+    expect(screen.queryByLabelText("chooserLabel")).toBeNull();
+    expect(onParentClick).not.toHaveBeenCalled();
+  });
+
+  it("opens a multi-session chooser from a touch gesture and selects one", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onParentClick = vi.fn();
+    render(
+      <div onClick={onParentClick}>
+        <ActiveSessionIndicator
+          sessions={[session("one"), session("two")]}
+          onSelect={onSelect}
+          surface="tracker"
+        />
+      </div>,
+    );
+
+    const trigger = screen.getByTestId("tracker-active-session-indicator");
+    fireEvent.pointerEnter(trigger, { pointerType: "touch" });
+    expect(screen.queryByText("Agent one")).toBeNull();
+
+    await user.pointer([
+      { keys: "[TouchA>]", target: trigger },
+      { keys: "[/TouchA]", target: trigger },
+    ]);
+
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Agent one")).toBeTruthy();
+    expect(screen.getByText("Agent two")).toBeTruthy();
+    await user.click(screen.getByText("Agent two"));
+
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionUuid: "two" }),
+    );
+    expect(onParentClick).not.toHaveBeenCalled();
+  });
+
   it("shows a keyboard-focusable chooser for many sessions and selects one", () => {
     const onSelect = vi.fn();
     const onParentClick = vi.fn();
@@ -108,13 +169,27 @@ describe("ActiveSessionIndicator", () => {
     );
 
     const trigger = screen.getByTestId("sidebar-active-session-indicator");
-    fireEvent.pointerEnter(trigger);
+    fireEvent.pointerEnter(trigger, { pointerType: "mouse" });
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
 
     fireEvent.click(trigger);
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("Agent one")).toBeTruthy();
     expect(screen.getByText("Agent two")).toBeTruthy();
+  });
+
+  it("opens the chooser for a hover-capable pen pointer", () => {
+    render(
+      <ActiveSessionIndicator
+        sessions={[session("one"), session("two")]}
+        onSelect={() => {}}
+        surface="sidebar"
+      />,
+    );
+
+    const trigger = screen.getByTestId("sidebar-active-session-indicator");
+    fireEvent.pointerEnter(trigger, { pointerType: "pen" });
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("renders the same live-agent affordance in the Idea Tracker sidebar", () => {
@@ -146,7 +221,7 @@ describe("ActiveSessionIndicator", () => {
     );
 
     const trigger = screen.getByTestId("tracker-active-session-indicator");
-    fireEvent.focus(trigger);
+    trigger.focus();
     await user.keyboard("{Enter}");
 
     expect(onSelect).toHaveBeenCalledWith(
@@ -185,6 +260,7 @@ describe("ActiveSessionIndicator", () => {
   });
 
   it("keeps an activity actionable when connection details are unavailable", () => {
+    const onSelect = vi.fn();
     render(
       <ActiveSessionIndicator
         sessions={[
@@ -195,15 +271,24 @@ describe("ActiveSessionIndicator", () => {
             agentName: null,
           }),
         ]}
-        onSelect={() => {}}
+        onSelect={onSelect}
         surface="tracker"
       />,
     );
-    fireEvent.pointerEnter(
-      screen.getByTestId("tracker-active-session-indicator"),
+
+    const trigger = screen.getByTestId("tracker-active-session-indicator");
+    expect(screen.getByLabelText("agent-fallback")).toBeTruthy();
+    fireEvent.click(trigger);
+
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionUuid: "fallback",
+        connectionAvailable: false,
+        host: null,
+        cwd: null,
+      }),
     );
-    expect(screen.getByText("agent-fallback")).toBeTruthy();
-    expect(screen.getByText("agentFallback")).toBeTruthy();
+    expect(screen.queryByText("agentFallback")).toBeNull();
   });
 
   it("keeps a single other-user session status-only for mouse and keyboard", async () => {
@@ -221,9 +306,33 @@ describe("ActiveSessionIndicator", () => {
     expect(trigger.getAttribute("aria-disabled")).toBe("true");
     fireEvent.click(trigger);
     await user.keyboard("{Enter}");
-    fireEvent.pointerEnter(trigger);
+    fireEvent.pointerEnter(trigger, { pointerType: "mouse" });
 
     expect(screen.getByText("statusOnly")).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("discloses a single status-only session on touch without opening chat", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <ActiveSessionIndicator
+        sessions={[session("other-touch", { canOpen: false })]}
+        onSelect={onSelect}
+        surface="tracker"
+      />,
+    );
+
+    const trigger = screen.getByTestId("tracker-active-session-indicator");
+    await user.pointer([
+      { keys: "[TouchA>]", target: trigger },
+      { keys: "[/TouchA]", target: trigger },
+    ]);
+
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    const entry = screen.getByText("Agent other-touch").closest("button")!;
+    expect(entry.disabled).toBe(true);
+    await user.click(entry);
     expect(onSelect).not.toHaveBeenCalled();
   });
 
