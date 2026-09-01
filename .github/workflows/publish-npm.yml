@@ -34,7 +34,7 @@ jobs:
           run_install: false
 
       - name: Set up supported npm CLI
-        run: npm install --global 'npm@^11.5.1'
+        run: npm install --global 'npm@11.19.1'
 
       - name: Verify trusted-publishing toolchain
         shell: bash
