@@ -5,6 +5,8 @@ import { useTranslations } from "next-intl";
 import { CornerDownRight, GitFork, Link as LinkIcon, ChevronRight } from "lucide-react";
 import { formatShortDate } from "@/lib/format-date";
 import { ProgressRing } from "@/components/ui/progress-ring";
+import { ActiveSessionIndicator } from "@/components/active-session-indicator";
+import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 import {
   Collapsible,
   CollapsibleContent,
@@ -80,6 +82,8 @@ export function IdeaCard({ idea, onClick, depth = 0, showConnector = false }: Id
     : "text-muted-foreground";
   const childCount = idea.childCount ?? 0;
   const referenceCount = idea.referenceCount ?? 0;
+  const presence = useAgentPresenceOptional();
+  const activeSessions = presence?.activeSessionsByIdea.get(idea.uuid) ?? [];
 
   // Read-only references panel state (Thread B). Collapsed shows just the count
   // badge; the panel is hidden entirely when there are no references. The fetch
@@ -174,6 +178,13 @@ export function IdeaCard({ idea, onClick, depth = 0, showConnector = false }: Id
               <LinkIcon className="h-2.5 w-2.5" aria-hidden />
               {referenceCount}
             </CollapsibleTrigger>
+          )}
+          {activeSessions.length > 0 && presence && (
+            <ActiveSessionIndicator
+              sessions={activeSessions}
+              onSelect={presence.openChatForActiveSession}
+              surface="tracker"
+            />
           )}
         </div>
 

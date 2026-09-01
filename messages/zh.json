@@ -1245,6 +1245,18 @@
       "testConnection": "此步骤将测试智能体连接。即将推出。"
     }
   },
+  "activeSessions": {
+    "indicatorLabel": "{count} 个 Daemon Session 正在运行——打开或选择会话",
+    "statusOnlyIndicatorLabel": "{count} 个 Daemon Session 正在运行——仅显示状态",
+    "chooserLabel": "正在运行的 Daemon Session",
+    "runningCount": "{count} 个 Session 正在运行",
+    "location": "{host} · {cwd}",
+    "unknownHost": "未知主机",
+    "unknownCwd": "未知工作目录",
+    "agentFallback": "连接详情仍在加载",
+    "statusOnly": "仅显示状态 · 由其他用户拥有",
+    "statusOnlyEntry": "{agent}——仅显示状态"
+  },
   "ideaTracker": {
     "overview": "总览",
     "overviewSubtitle": "追踪想法、提案和任务进展",

@@ -66,9 +66,10 @@ function readJsonSafe(path) {
 }
 
 // ---------------------------------------------------------------------------
-// Claude Code — VERIFIED against Claude Code 2.1.235:
+// Claude Code — VERIFIED LIVE against Claude Code 2.1.250:
 //   `claude plugin marketplace add <url|path|repo>`
 //   `claude plugin install <plugin@marketplace> -y`  (-y required when non-TTY)
+//   `claude plugin update <plugin@marketplace> -y`
 // State is read from ~/.claude/plugins/installed_plugins.json (read-only).
 // ---------------------------------------------------------------------------
 export function installClaude(ctx) {
@@ -77,6 +78,11 @@ export function installClaude(ctx) {
   const source = env.CHORUS_MARKETPLACE_SOURCE || CHORUS_MARKETPLACE_SOURCE;
   const state = safeState(ctx);
   if (state.pluginInstalled) {
+    if (ctx.flags?.updateInstalled) {
+      const r = run("claude", ["plugin", "update", CHORUS_PLUGIN_ID, "-y"], { env });
+      if (!r.ok) return out("claude", FAILED, `claude plugin update failed: ${errText(r)}`);
+      return out("claude", REPAIRED, `updated ${CHORUS_PLUGIN_ID} to latest via claude plugin update`);
+    }
     return out("claude", SKIPPED, `already installed${state.version ? ` (v${state.version})` : ""}`);
   }
   if (!state.marketplaceRegistered) {
@@ -91,6 +97,7 @@ export function installClaude(ctx) {
 // ---------------------------------------------------------------------------
 // Codex — VERIFIED against codex-cli 0.146.1 / 0.150.1:
 //   `codex plugin marketplace add <SOURCE>`   (SOURCE = local path | owner/repo[@ref] | Git URL)
+//   `codex plugin marketplace upgrade [MARKETPLACE_NAME]`
 //   `codex plugin add <PLUGIN@MARKETPLACE> --json`
 // config.toml is backed up before the CLI mutates it.
 //
@@ -153,6 +160,21 @@ export function installCodex(ctx) {
 
   if (state.pluginInstalled) {
     ctx.backup?.(configPath); // back up before we normalize the MCP block
+    if (ctx.flags?.updateInstalled) {
+      if (!state.marketplaceRegistered) {
+        const ra = run("codex", ["plugin", "marketplace", "add", source], { env });
+        if (!ra.ok) return out("codex", FAILED, `codex plugin marketplace add failed: ${errText(ra)}`);
+      }
+      const ru = run("codex", ["plugin", "marketplace", "upgrade", CHORUS_MARKETPLACE_NAME], { env });
+      if (!ru.ok) return out("codex", FAILED, `codex plugin marketplace upgrade failed: ${errText(ru)}`);
+      const rp = run("codex", ["plugin", "add", CHORUS_PLUGIN_ID, "--json"], { env });
+      if (!rp.ok) return out("codex", FAILED, `codex plugin add failed: ${errText(rp)}`);
+      return out(
+        "codex",
+        REPAIRED,
+        `refreshed ${CHORUS_MARKETPLACE_NAME} and reinstalled ${CHORUS_PLUGIN_ID}${ensureMcp()}`,
+      );
+    }
     return out("codex", SKIPPED, `already installed (config.toml)${ensureMcp()}`);
   }
 
@@ -171,8 +193,9 @@ export function installCodex(ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// opencode — VERIFIED against opencode 1.14.33:
+// opencode — VERIFIED LIVE against opencode 1.14.33:
 //   `opencode plugin <module>`  ("install plugin and update config")
+//   `--global` targets the user config; `--force` replaces an existing version.
 // module name "opencode-chorus" from public/install-opencode.sh. opencode.json
 // is backed up before the CLI mutates it.
 // ---------------------------------------------------------------------------
@@ -195,15 +218,21 @@ export function installOpencode(ctx) {
   const home = env.HOME || homedir();
   const dir = env.OPENCODE_CONFIG_DIR || join(home, ".config", "opencode");
   const state = safeState(ctx);
-  if (state.pluginInstalled) return out("opencode", SKIPPED, "already in opencode.json plugin list");
+  if (state.pluginInstalled && !ctx.flags?.updateInstalled) {
+    return out("opencode", SKIPPED, "already in opencode.json plugin list");
+  }
 
   ctx.backup?.(join(dir, "opencode.json")); // back up before the CLI edits it
   // `-g` writes the GLOBAL ~/.config/opencode/opencode.json (the same file
   // readOpencodeInstallState checks); without it opencode installs project-local
   // (cwd), which would defeat idempotency for a machine-wide `chorus init`.
-  const r = run("opencode", ["plugin", OPENCODE_PLUGIN_MODULE, "-g"], { env });
+  const args = ["plugin", OPENCODE_PLUGIN_MODULE, "-g"];
+  if (state.pluginInstalled) args.push("--force");
+  const r = run("opencode", args, { env });
   if (!r.ok) return out("opencode", FAILED, `opencode plugin install failed: ${errText(r)}`);
-  return out("opencode", INSTALLED, `installed ${OPENCODE_PLUGIN_MODULE} via opencode plugin -g`);
+  return state.pluginInstalled
+    ? out("opencode", REPAIRED, `updated ${OPENCODE_PLUGIN_MODULE} to latest via opencode plugin -g --force`)
+    : out("opencode", INSTALLED, `installed ${OPENCODE_PLUGIN_MODULE} via opencode plugin -g`);
 }
 
 // ---------------------------------------------------------------------------
@@ -225,18 +254,35 @@ const DSH_BUNDLE = "@chorus-aidlc/chorus-dsh";
 export function readDshInstallState({ env = process.env, profile } = {}) {
   // Best-effort, per-profile idempotency probe. A dsh profile is a pnpm workspace
   // root under $DSH_HOME (docs/CONNECT_DSH.md); a profile that has added the bundle
-  // records it in that root's package.json. The exact layout is NOT verifiable here,
-  // so this degrades to "not installed" if it differs (dsh's own `add` is idempotent)
-  // — never a false positive, never a throw. Called with no `profile` (registry-level
-  // detection, which does not know the user's pick) it reports not-installed.
-  if (!profile) return { marketplaceRegistered: false, pluginInstalled: false };
+  // records it in that root's package.json. Before an interactive profile has
+  // been chosen, inspect the live profiles/<name> store so runInit can include
+  // dsh in its one invocation-wide installed-plugin refresh decision.
   const home = env.HOME || homedir();
   const dshHome = env.DSH_HOME || join(home, ".dsh");
-  const pkg = readJsonSafe(join(dshHome, profile, "package.json"));
-  const deps = { ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) };
+  let candidates;
+  if (profile) {
+    candidates = [
+      join(dshHome, "profiles", profile, "package.json"),
+      join(dshHome, profile, "package.json"),
+    ];
+  } else {
+    try {
+      candidates = readdirSync(join(dshHome, "profiles"), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => join(dshHome, "profiles", entry.name, "package.json"));
+    } catch {
+      candidates = [];
+    }
+  }
+  const packagePath = candidates.find((path) => {
+    const pkg = readJsonSafe(path);
+    const deps = { ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) };
+    return Object.prototype.hasOwnProperty.call(deps, DSH_BUNDLE);
+  });
   return {
     marketplaceRegistered: false, // dsh has no marketplace concept
-    pluginInstalled: Object.prototype.hasOwnProperty.call(deps, DSH_BUNDLE),
+    pluginInstalled: !!packagePath,
+    packagePath: packagePath ?? (profile ? candidates[0] : undefined),
   };
 }
 
@@ -276,11 +322,16 @@ export async function installDsh(ctx) {
 
   // Idempotency: skip when the chosen profile already carries the bundle.
   const state = safeState(ctx, { profile });
-  if (state.pluginInstalled) return out("dsh", SKIPPED, `already installed in dsh profile '${profile}'`);
+  if (state.pluginInstalled && !ctx.flags?.updateInstalled) {
+    return out("dsh", SKIPPED, `already installed in dsh profile '${profile}'`);
+  }
+  if (state.pluginInstalled) ctx.backup?.(state.packagePath);
 
   const r = run("dsh", ["plugin", "--profile", profile, "add", DSH_BUNDLE, "-w"], { env });
   if (!r.ok) return out("dsh", FAILED, `dsh plugin add failed: ${errText(r)}`);
-  return out("dsh", INSTALLED, `installed ${DSH_BUNDLE} into dsh profile '${profile}'`);
+  return state.pluginInstalled
+    ? out("dsh", REPAIRED, `updated ${DSH_BUNDLE} to latest in dsh profile '${profile}'`)
+    : out("dsh", INSTALLED, `installed ${DSH_BUNDLE} into dsh profile '${profile}'`);
 }
 
 // ---------------------------------------------------------------------------
@@ -377,7 +428,7 @@ export function installOpenclaw(ctx) {
 
   // Already installed AND enabled → nothing to do. No version probe needed: an
   // enabled-and-loaded plugin necessarily already satisfied the host floor.
-  if (state.pluginInstalled && state.pluginEnabled) {
+  if (state.pluginInstalled && state.pluginEnabled && !ctx.flags?.updateInstalled) {
     return out("openclaw", SKIPPED, "already installed and enabled");
   }
 
@@ -395,18 +446,26 @@ export function installOpenclaw(ctx) {
   }
 
   // Installed-but-disabled → enable only (repair).
-  if (state.pluginInstalled) {
+  if (state.pluginInstalled && !ctx.flags?.updateInstalled) {
     const re = run("openclaw", ["plugins", "enable", OPENCLAW_PLUGIN_ID], { env });
     if (!re.ok) return out("openclaw", FAILED, `openclaw plugins enable failed: ${errText(re)}`);
     return out("openclaw", REPAIRED, `enabled ${OPENCLAW_PLUGIN_ID} (was installed but disabled)`);
   }
 
-  // Fresh → install from npm, then enable.
+  // Fresh or accepted refresh → install from npm, then ensure enabled. Back up
+  // the mutable host config before an installed payload is refreshed.
+  if (state.pluginInstalled) {
+    const home = env.HOME || homedir();
+    const dir = env.OPENCLAW_CONFIG_DIR || join(home, ".openclaw");
+    ctx.backup?.(join(dir, "openclaw.json"));
+  }
   const ri = run("openclaw", ["plugins", "install", OPENCLAW_NPM_SPEC], { env });
   if (!ri.ok) return out("openclaw", FAILED, `openclaw plugins install failed: ${errText(ri)}`);
   const re = run("openclaw", ["plugins", "enable", OPENCLAW_PLUGIN_ID], { env });
   if (!re.ok) return out("openclaw", FAILED, `openclaw plugins enable failed: ${errText(re)}`);
-  return out("openclaw", INSTALLED, `installed ${OPENCLAW_NPM_SPEC} and enabled ${OPENCLAW_PLUGIN_ID}`);
+  return state.pluginInstalled
+    ? out("openclaw", REPAIRED, `reinstalled latest ${OPENCLAW_NPM_SPEC} and ensured ${OPENCLAW_PLUGIN_ID} is enabled`)
+    : out("openclaw", INSTALLED, `installed ${OPENCLAW_NPM_SPEC} and enabled ${OPENCLAW_PLUGIN_ID}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -457,14 +516,16 @@ export async function installKiro(ctx) {
   const chorusUrl = nonEmpty(ctx.flags?.url) ?? nonEmpty(env.CHORUS_URL);
 
   const state = safeState(ctx);
-  if (state.pluginInstalled) return out("kiro", SKIPPED, `already installed (${kiroDir})`);
+  if (state.pluginInstalled && !ctx.flags?.updateInstalled) {
+    return out("kiro", SKIPPED, `already installed (${kiroDir})`);
+  }
 
   if (!chorusUrl) {
     return out("kiro", FAILED, "no Chorus URL — pass --url or set CHORUS_URL so the .kiro/ template can be downloaded from the connected instance");
   }
 
   // Any chorus-* asset already present ⇒ this is a delta repair, not a fresh drop.
-  const repairing = !!(state.skillsPresent || state.agentPresent || state.mcpServerPresent);
+  const repairing = !!(state.pluginInstalled || state.skillsPresent || state.agentPresent || state.mcpServerPresent);
   try {
     const res = await installFileTemplate({
       chorusUrl,

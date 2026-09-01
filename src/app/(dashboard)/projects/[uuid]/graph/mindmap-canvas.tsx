@@ -41,6 +41,7 @@ import { useTranslations } from "next-intl";
 import { Plus, Minus, Maximize } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ActiveSessionIndicator } from "@/components/active-session-indicator";
 import {
   Tooltip,
   TooltipContent,
@@ -48,6 +49,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { usePresence } from "@/hooks/use-presence";
+import {
+  useAgentPresenceOptional,
+  type ActiveSessionsByIdea,
+} from "@/contexts/agent-presence-context";
 import { getAgentColor } from "@/lib/agent-color";
 import {
   computeTreeLayout,
@@ -184,6 +189,30 @@ const DIM_ALPHA = 0.18;
 // the node's own type color) — a saturated pink reads as the search cursor and
 // can't be confused with either.
 const CURRENT_MATCH_RING_COLOR = "#EC4899";
+const EMPTY_ACTIVE_SESSIONS: ActiveSessionsByIdea = new Map();
+
+interface GraphActiveIndicatorAnchor {
+  ideaUuid: string;
+  x: number;
+  y: number;
+  scale: number;
+}
+
+function sameActiveAnchors(
+  previous: readonly GraphActiveIndicatorAnchor[],
+  next: readonly GraphActiveIndicatorAnchor[],
+): boolean {
+  if (previous.length !== next.length) return false;
+  return previous.every((anchor, index) => {
+    const candidate = next[index];
+    return (
+      anchor.ideaUuid === candidate.ideaUuid &&
+      Math.abs(anchor.x - candidate.x) < 0.5 &&
+      Math.abs(anchor.y - candidate.y) < 0.5 &&
+      Math.abs(anchor.scale - candidate.scale) < 0.001
+    );
+  });
+}
 
 /**
  * Per-node opacity multiplier, composing the hover/selection lineage focus with
@@ -297,6 +326,62 @@ const CHIP = 30;
 // The expand/collapse control occupies the right BTN_W strip of the card —
 // a big, easy-to-hit target. The click hit-test uses the same value.
 const BTN_W = 40;
+const PRESENCE_OUTSET = 4;
+const ACTIVE_INDICATOR_SIZE = 32;
+const ACTIVE_INDICATOR_GAP = 8;
+
+export interface GraphActiveIndicatorGeometry {
+  x: number;
+  y: number;
+  scale: number;
+  bounds: { left: number; top: number; right: number; bottom: number };
+  protectedCardBounds: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  };
+}
+
+/**
+ * Places the DOM activity control in graph space beyond the card and presence
+ * ring, then scales its hitbox with the canvas while zooming out. This keeps
+ * the overlay out of the card body, lifecycle/status content, expand strip,
+ * and presence ring at every supported zoom instead of letting a fixed 32px
+ * target consume more of a shrinking card.
+ */
+export function graphActiveIndicatorGeometry(
+  center: { x: number; y: number },
+  view: ViewTransform,
+): GraphActiveIndicatorGeometry {
+  const scale = Math.min(1, view.scale);
+  const graphX =
+    center.x +
+    CARD_W / 2 +
+    PRESENCE_OUTSET +
+    ACTIVE_INDICATOR_GAP +
+    ACTIVE_INDICATOR_SIZE / 2;
+  const x = graphX * view.scale + view.tx;
+  const y = center.y * view.scale + view.ty;
+  const halfSize = (ACTIVE_INDICATOR_SIZE * scale) / 2;
+  return {
+    x,
+    y,
+    scale,
+    bounds: {
+      left: x - halfSize,
+      top: y - halfSize,
+      right: x + halfSize,
+      bottom: y + halfSize,
+    },
+    protectedCardBounds: {
+      left: (center.x - CARD_W / 2 - PRESENCE_OUTSET) * view.scale + view.tx,
+      top: (center.y - CARD_H / 2 - PRESENCE_OUTSET) * view.scale + view.ty,
+      right: (center.x + CARD_W / 2 + PRESENCE_OUTSET) * view.scale + view.tx,
+      bottom: (center.y + CARD_H / 2 + PRESENCE_OUTSET) * view.scale + view.ty,
+    },
+  };
+}
 
 const TWEEN_MS = 300; // coordinate tween + fade duration (Tech Design D2)
 
@@ -382,6 +467,9 @@ export function MindMapCanvas({
   centerNodeId = null,
 }: MindMapCanvasProps) {
   const { getPresence } = usePresence();
+  const agentPresence = useAgentPresenceOptional();
+  const activeSessionsByIdea =
+    agentPresence?.activeSessionsByIdea ?? EMPTY_ACTIVE_SESSIONS;
   const t = useTranslations();
 
   // Localized type-eyebrow labels (e.g. zh 想法/提案/任务/文档). The painter is a
@@ -451,6 +539,9 @@ export function MindMapCanvas({
   // (which would rebuild the painter every time the anchor nudges).
   const tooltipAnchorRef = useRef(tooltipAnchor);
   tooltipAnchorRef.current = tooltipAnchor;
+  const [activeIndicatorAnchors, setActiveIndicatorAnchors] = useState<
+    GraphActiveIndicatorAnchor[]
+  >([]);
 
   // --- Deterministic layout (Tech Design D1) --------------------------------
   // Pure: identical visible node/link sets + expand state → identical coords.
@@ -713,8 +804,32 @@ export function MindMapCanvas({
         getPresence,
         typeLabels,
         resolveStatusPill,
+        activeSessionCount:
+          anim.node.type === "idea"
+            ? activeSessionsByIdea.get(anim.node.id)?.length ?? 0
+            : 0,
       });
     }
+
+    const nextActiveAnchors: GraphActiveIndicatorAnchor[] = [];
+    for (const [id, anim] of anims) {
+      if (anim.exit || anim.node.type !== "idea") continue;
+      if ((activeSessionsByIdea.get(id)?.length ?? 0) === 0) continue;
+      const center = rendered.get(id);
+      if (!center) continue;
+      const geometry = graphActiveIndicatorGeometry(center, view);
+      nextActiveAnchors.push({
+        ideaUuid: id,
+        x: geometry.x,
+        y: geometry.y,
+        scale: geometry.scale,
+      });
+    }
+    setActiveIndicatorAnchors((previous) =>
+      sameActiveAnchors(previous, nextActiveAnchors)
+        ? previous
+        : nextActiveAnchors,
+    );
 
     // 3) Hover-tooltip anchor (Tech Design D2). Compute the hovered card's
     // SCREEN position from its LIVE rendered center + the view transform (the
@@ -761,7 +876,7 @@ export function MindMapCanvas({
       scheduleRender();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dims, links, treeParentById, hoverId, selectedId, focusLineage, matchIds, currentMatchId, getPresence, nodes, typeLabels, resolveStatusPill]);
+  }, [dims, links, treeParentById, hoverId, selectedId, focusLineage, matchIds, currentMatchId, getPresence, nodes, typeLabels, resolveStatusPill, activeSessionsByIdea]);
 
   const renderFrameRef = useRef(renderFrame);
   renderFrameRef.current = renderFrame;
@@ -769,6 +884,10 @@ export function MindMapCanvas({
     if (rafRef.current != null) return;
     rafRef.current = requestAnimationFrame(() => renderFrameRef.current());
   }, []);
+
+  useEffect(() => {
+    scheduleRender();
+  }, [activeSessionsByIdea, scheduleRender]);
   // expose to the layout effect (declared before it via hoisting of the const)
 
   // Repaint on theme flip. The canvas resolves its SURFACE palette from the
@@ -1242,6 +1361,29 @@ export function MindMapCanvas({
           y={tooltipAnchor.y}
         />
       )}
+      {agentPresence &&
+        activeIndicatorAnchors.map((anchor) => {
+          const sessions = activeSessionsByIdea.get(anchor.ideaUuid) ?? [];
+          if (sessions.length === 0) return null;
+          return (
+            <div
+              key={anchor.ideaUuid}
+              className="absolute z-20"
+              style={{
+                left: anchor.x,
+                top: anchor.y,
+                transform: `translate(-50%, -50%) scale(${anchor.scale})`,
+                transformOrigin: "center",
+              }}
+            >
+              <ActiveSessionIndicator
+                sessions={sessions}
+                onSelect={agentPresence.openChatForActiveSession}
+                surface="graph"
+              />
+            </div>
+          );
+        })}
       {/* On-screen zoom / fit control cluster (Tech Design D2, Q4=a). A DOM
           overlay in the bottom-left (opposite the top-right search card),
           giving a gesture-free zoom/reframe fallback. Hidden while the graph
@@ -1336,6 +1478,7 @@ interface PaintNodeOpts {
   resolveStatusPill: (
     node: ForceNode,
   ) => { bg: string; fg: string; label: string } | null;
+  activeSessionCount: number;
 }
 
 function paintNode(
@@ -1356,6 +1499,7 @@ function paintNode(
     getPresence,
     typeLabels,
     resolveStatusPill,
+    activeSessionCount,
   } = opts;
   const type = node.type;
   // Type hue — lifted variant under `.dark` (Canvas 2D can't honor `dark:`;
@@ -1474,6 +1618,33 @@ function paintNode(
     ctx.lineWidth = 2.5;
     roundRect(ctx, left - 3, top - 3, CARD_W + 6, CARD_H + 6, CARD_R + 2);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  if (type === "idea" && activeSessionCount > 0) {
+    const markerX =
+      left +
+      CARD_W +
+      PRESENCE_OUTSET +
+      ACTIVE_INDICATOR_GAP +
+      ACTIVE_INDICATOR_SIZE / 2;
+    const markerY = center.y;
+    const markerR = activeSessionCount > 1 ? 10 : 7;
+    ctx.save();
+    ctx.fillStyle = isDark ? "#34D399" : "#059669";
+    ctx.shadowColor = isDark ? "#34D399" : "#10B981";
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(markerX, markerY, markerR, 0, Math.PI * 2);
+    ctx.fill();
+    if (activeSessionCount > 1) {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#FFFFFF";
+      ctx.font = "700 9px ui-sans-serif, system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`${activeSessionCount}`, markerX, markerY + 0.5);
+    }
     ctx.restore();
   }
 

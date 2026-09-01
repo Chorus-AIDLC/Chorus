@@ -58,6 +58,7 @@ function buildAuth(): AgentAuthContext {
     roles: ["pm_agent"],
     permissions: [
       "idea:write",
+      "idea:admin",
       "proposal:write",
       "document:write",
       "task:write",
@@ -156,5 +157,13 @@ describe("relocated red-lines landed in the right place", () => {
   it("pm_assign_task: instance-pin detail moved into instanceUuid param", () => {
     const instanceUuid = jsonSchema("chorus_pm_assign_task").properties?.instanceUuid;
     expect(instanceUuid?.description).toMatch(/agent_instance/);
+  });
+
+  it("pm_assign_idea: documents project-fixed auto-pinning and same-agent wake deduplication", () => {
+    expect(descOf("chorus_pm_assign_idea")).toMatch(/project-fixed/i);
+    expect(descOf("chorus_pm_assign_idea")).toMatch(/overriding `instanceUuid`/);
+    expect(descOf("chorus_pm_assign_idea")).toMatch(/deduplicated/i);
+    expect(descOf("chorus_pm_assign_idea")).toMatch(/same agent/i);
+    expect(descOf("chorus_pm_assign_idea")).toMatch(/does not request another wake/i);
   });
 });

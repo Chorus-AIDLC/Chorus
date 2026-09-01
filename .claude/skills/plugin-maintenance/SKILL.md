@@ -174,6 +174,39 @@ dsh tracks the **app version** (currently `0.16.3`), NOT the 0.9.x skill sequenc
 17. Every skill under `packages/chorus-dsh/skills/*/SKILL.md` — `metadata.version: "X.Y.Z"` (the `chorus/` overview + all `-chorus`-suffixed stage/reviewer skills).
    - **Do NOT** hardcode a version in `bin/chorus-mcp-call.mjs` — its `clientInfo.version` is auto-read from `package.json`, so it never drifts.
 
+### Coordinated npm release identity
+
+When cutting an application release, the three public npm packages are one
+lockstep release unit. Set the same `X.Y.Z` in:
+
+1. root `package.json` (`@chorus-aidlc/chorus`);
+2. `packages/openclaw-plugin/package.json`
+   (`@chorus-aidlc/chorus-openclaw-plugin`) and refresh its standalone
+   `package-lock.json`;
+3. `packages/chorus-dsh/package.json`
+   (`@chorus-aidlc/chorus-dsh`).
+
+Publishing GitHub Release `vX.Y.Z` triggers
+`.github/workflows/publish-npm.yml`. The workflow completes all three package
+build/pack contracts before any upload, then publishes CLI → OpenClaw → dsh.
+The older interactive package publish scripts are maintenance tools, not the CI
+release entry point.
+
+For all three npm package settings, Trusted Publisher must use the exact
+workflow filename `publish-npm.yml` in the matching GitHub repository. Leave
+the npm Environment field blank while the workflow job has no `environment`;
+if an Environment is introduced, configure the exact same case-sensitive name
+on npm and on the workflow job. Keep `id-token: write`, do not add
+`NPM_TOKEN`, `NODE_AUTH_TOKEN`, or a setup-node token placeholder, and do not
+disable npm's automatic provenance. A public-repository publish is accepted
+only after the workflow observes its SLSA provenance attestation.
+
+For partial publication, repair the external problem and choose **Re-run jobs**
+on the same failed Actions run. Do not create a replacement Release/version.
+The rerun skips exact versions already confirmed in npm and resumes in fixed
+order. A failed registry lookup is not a skip and must stop the run; the job
+summary identifies `failed` and `not-attempted` packages for diagnosis.
+
 ### Standalone skills — independent versioning
 15. `public/skill/*/SKILL.md` — bump only the standalone skills that changed, using their own version sequence.
 

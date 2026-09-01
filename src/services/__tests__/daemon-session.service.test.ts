@@ -83,6 +83,7 @@ import {
   findReusablePendingInstructionTurn,
   advanceTurn,
   getVisibleSessions,
+  listVisibleRunningSessionActivities,
   getSessionTurns,
   getSessionDetail,
   isSessionVisibleToCaller,
@@ -108,7 +109,9 @@ const turnUuid = "turn-0000-0000-0000-000000000001";
 function sessionRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     uuid: sessionUuid,
+    companyUuid,
     agentUuid,
+    agent: { ownerUuid },
     sessionId,
     backendSessionId: null,
     directIdeaUuid: sessionId,
@@ -536,7 +539,9 @@ describe("advanceTurn", () => {
     mockPrisma.daemonSessionTurn.update.mockResolvedValue(
       turnRow({ status: "interrupted", interruptedReason: "shutdown", endedAt }),
     );
-    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+    mockPrisma.daemonSession.findUnique.mockResolvedValue(
+      sessionRow(),
+    );
 
     const res = await advanceTurn(turnUuid, "interrupted", {
       endedAt,
@@ -549,12 +554,25 @@ describe("advanceTurn", () => {
     expect(data.endedAt).toBe(endedAt);
 
     // The SSE trigger fires exactly as for ended, carrying the reason in the view.
-    expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+    expect(mockEventBus.emit).toHaveBeenCalledTimes(2);
     const [eventName, payload] = mockEventBus.emit.mock.calls[0];
     expect(eventName).toBe(`transcript:${sessionUuid}`);
     expect(payload.trigger).toBe("turn_status_changed");
     expect(payload.turn.status).toBe("interrupted");
     expect(payload.turn.interruptedReason).toBe("shutdown");
+    expect(mockEventBus.emit.mock.calls[1]).toEqual([
+      "session_activity",
+      {
+        type: "session_ended",
+        companyUuid,
+        sessionUuid,
+        activityUuid: turnUuid,
+        directIdeaUuid: sessionId,
+        agentUuid,
+        originConnectionUuid: connectionUuid,
+        agentOwnerUuid: ownerUuid,
+      },
+    ]);
   });
 
   it("REJECTS pending → interrupted (a pending turn stays recoverable via backfill)", async () => {
@@ -617,7 +635,7 @@ describe("advanceTurn", () => {
       status: "running",
     });
     mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({ status: "ended" }));
-    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+    mockPrisma.daemonSession.findUnique.mockResolvedValue(sessionRow());
     // A stray reason alongside a legal → ended must not decorate the ended turn.
     await advanceTurn(turnUuid, "ended", { interruptedReason: "crash" });
     const data = mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data;
@@ -634,7 +652,7 @@ describe("advanceTurn", () => {
     mockPrisma.daemonSessionTurn.update.mockResolvedValue(
       turnRow({ status: "ended", relayError: "transcript upload returned 502" }),
     );
-    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+    mockPrisma.daemonSession.findUnique.mockResolvedValue(sessionRow());
 
     const res = await advanceTurn(turnUuid, "ended", {
       relayError: "transcript upload returned 502",
@@ -798,7 +816,7 @@ describe("advanceTurn", () => {
     mockPrisma.daemonSessionTurn.update.mockResolvedValue(
       turnRow({ status: "running", startedAt, executionUuid: "exec-1" }),
     );
-    mockPrisma.daemonSession.findUnique.mockResolvedValue({ companyUuid });
+    mockPrisma.daemonSession.findUnique.mockResolvedValue(sessionRow());
 
     const res = await advanceTurn(turnUuid, "running", { startedAt, executionUuid: "exec-1" });
     expect(res).toMatchObject({ ok: true });
@@ -808,7 +826,7 @@ describe("advanceTurn", () => {
     expect(updateArg.data.startedAt).toBe(startedAt);
     expect(updateArg.data.executionUuid).toBe("exec-1");
 
-    expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+    expect(mockEventBus.emit).toHaveBeenCalledTimes(2);
     const [eventName, payload] = mockEventBus.emit.mock.calls[0];
     expect(eventName).toBe(`transcript:${sessionUuid}`);
     expect(payload.trigger).toBe("turn_status_changed");
@@ -816,6 +834,19 @@ describe("advanceTurn", () => {
     expect(payload.turn.status).toBe("running");
     // No messages changed on a status transition — the tail is always present, empty.
     expect(payload.messages).toEqual([]);
+    expect(mockEventBus.emit.mock.calls[1]).toEqual([
+      "session_activity",
+      {
+        type: "session_started",
+        companyUuid,
+        sessionUuid,
+        activityUuid: turnUuid,
+        directIdeaUuid: sessionId,
+        agentUuid,
+        originConnectionUuid: connectionUuid,
+        agentOwnerUuid: ownerUuid,
+      },
+    ]);
   });
 
   it("running → ended: updates status, records endedAt, emits turn_status_changed", async () => {
@@ -973,6 +1004,98 @@ describe("getVisibleSessions", () => {
       getVisibleSessions({ type: "user", companyUuid, actorUuid: ownerUuid }),
     ).rejects.toThrow("db down");
     expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+});
+
+describe("listVisibleRunningSessionActivities", () => {
+  it("queries all same-company running turns and projects subscriber-relative canOpen", async () => {
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      {
+        uuid: turnUuid,
+        sessionUuid,
+        session: {
+          companyUuid,
+          directIdeaUuid: sessionId,
+          agentUuid,
+          originConnectionUuid: connectionUuid,
+          agent: { ownerUuid },
+        },
+      },
+      {
+        uuid: "other-turn",
+        sessionUuid: "other-session",
+        session: {
+          companyUuid,
+          directIdeaUuid: "other-idea",
+          agentUuid: "other-agent",
+          originConnectionUuid: "other-connection",
+          agent: { ownerUuid: "other-owner" },
+        },
+      },
+    ]);
+
+    const result = await listVisibleRunningSessionActivities({
+      type: "user",
+      companyUuid,
+      actorUuid: ownerUuid,
+    });
+
+    expect(mockPrisma.daemonSessionTurn.findMany).toHaveBeenCalledWith({
+      where: {
+        status: "running",
+        session: {
+          companyUuid,
+        },
+      },
+      orderBy: [{ sessionUuid: "asc" }, { uuid: "asc" }],
+      select: {
+        uuid: true,
+        sessionUuid: true,
+        session: {
+          select: {
+            companyUuid: true,
+            directIdeaUuid: true,
+            agentUuid: true,
+            originConnectionUuid: true,
+            agent: { select: { ownerUuid: true } },
+          },
+        },
+      },
+    });
+    expect(result).toEqual([
+      {
+        type: "session_started",
+        companyUuid,
+        sessionUuid,
+        activityUuid: turnUuid,
+        directIdeaUuid: sessionId,
+        agentUuid,
+        originConnectionUuid: connectionUuid,
+        canOpen: true,
+      },
+      {
+        type: "session_started",
+        companyUuid,
+        sessionUuid: "other-session",
+        activityUuid: "other-turn",
+        directIdeaUuid: "other-idea",
+        agentUuid: "other-agent",
+        originConnectionUuid: "other-connection",
+        canOpen: false,
+      },
+    ]);
+  });
+
+  it("uses self scope for agent callers", async () => {
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+    await listVisibleRunningSessionActivities({
+      type: "agent",
+      companyUuid,
+      actorUuid: agentUuid,
+    });
+    expect(
+      mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where.session,
+    ).toEqual({ companyUuid, agentUuid });
   });
 });
 
@@ -1193,13 +1316,13 @@ describe("getSessionDetail", () => {
       where: { turnUuid: { in: ["t3", "t2", "t1"] } },
       orderBy: [{ turnUuid: "asc" }, { seq: "asc" }],
     });
-    // Candidate turns are read seq DESC; with NO cursor there is no take cap (the page
-    // window is computed in memory over the message stream) and no seq filter. The
-    // candidate query is the LAST turn findMany (the read-time orphan-reconcile probe
+    // Candidate turns are read seq DESC with a fixed default-page bound and no seq filter.
+    // The candidate query is the LAST turn findMany (the read-time orphan-reconcile probe
     // runs first on this path).
     const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0];
     expect(turnArgs.orderBy).toEqual({ seq: "desc" });
     expect(turnArgs.where).toEqual({ sessionUuid });
+    expect(turnArgs.take).toBe(DEFAULT_TRANSCRIPT_MESSAGE_PAGE + 2);
   });
 
   it("DEFAULT page size is DEFAULT_TRANSCRIPT_MESSAGE_PAGE (20) MESSAGES, not turns", async () => {
@@ -1247,6 +1370,7 @@ describe("getSessionDetail", () => {
     // limit clamped to 1 → exactly the single newest message (seq 3), hasMore true.
     expect(clampedLow?.turns[0].messages.map((m) => m.seq)).toEqual([3]);
     expect(clampedLow?.hasMore).toBe(true);
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0].take).toBe(3);
 
     // limit 9999 clamps to 200 (a no-op ceiling here) → the whole conversation fits.
     const clampedHigh = await getSessionDetail(
@@ -1256,6 +1380,7 @@ describe("getSessionDetail", () => {
     );
     expect(clampedHigh?.turns[0].messages.map((m) => m.seq)).toEqual([1, 2, 3]);
     expect(clampedHigh?.hasMore).toBe(false);
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0].take).toBe(202);
   });
 
   it("COMPOSITE CURSOR: candidate turns fenced seq <= beforeTurnSeq; messages strictly older than (T, M)", async () => {
@@ -1286,6 +1411,7 @@ describe("getSessionDetail", () => {
     // findMany (the read-time orphan-reconcile probe runs first on this path).
     const turnArgs = mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0];
     expect(turnArgs.where).toEqual({ sessionUuid, seq: { lte: 3 } });
+    expect(turnArgs.take).toBe(52);
     // Only messages strictly older than (turnSeq 3, msgSeq 2): t3's seq 1 (and its slot
     // seq 0), plus all of t2 and t1's slots. t3's seq 2 and 3 are at/after the cursor →
     // excluded. So t3 keeps only t3m1.
@@ -1515,6 +1641,10 @@ describe("getSessionDetail", () => {
       sessionUuid,
       { limit: 1, beforeTurnSeq: page1!.oldestTurnSeq!, beforeMsgSeq: page1!.oldestMsgSeq! },
     );
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls.at(-1)![0]).toMatchObject({
+      where: { sessionUuid, seq: { lte: 2 } },
+      take: 3,
+    });
     expect(page2?.turns.map((t) => t.uuid)).toEqual(["t1"]);
     expect(page2?.turns[0].messages).toEqual([]);
     expect(page2?.hasMore).toBe(false); // conversation start reached
@@ -2260,7 +2390,7 @@ describe("advanceTurnForWake", () => {
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it("deduplicates concurrent identical terminal reports to one rollup and one SSE event", async () => {
+  it("deduplicates concurrent identical terminal reports to one rollup and one lifecycle event pair", async () => {
     let persistedStatus = "running";
     let persistedBackendSessionId: string | null = null;
     let persistedUsage: unknown = null;
@@ -2347,7 +2477,7 @@ describe("advanceTurnForWake", () => {
       expect.objectContaining({ ok: true, turn: expect.objectContaining({ status: "ended" }) }),
     ]);
     expect(mockPrisma.daemonSession.update).toHaveBeenCalledTimes(1);
-    expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+    expect(mockEventBus.emit).toHaveBeenCalledTimes(2);
     expect(persistedUsage).toEqual(usage);
   });
 
@@ -2651,9 +2781,10 @@ describe("advanceTurnForWake — coalescedCount settlement of superseded pending
       ([, payload]) => payload?.turn?.status === MERGED_TURN_STATUS,
     );
     expect(mergedEmits).toHaveLength(0);
-    // The running-transition itself still emits exactly once (its turn is "running").
-    expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+    // The running transition emits the existing transcript update plus one activity start.
+    expect(mockEventBus.emit).toHaveBeenCalledTimes(2);
     expect(mockEventBus.emit.mock.calls[0][1].turn.status).toBe("running");
+    expect(mockEventBus.emit.mock.calls[1][1].type).toBe("session_started");
   });
 
   it("settlement is bound to the RUNNING transition — a terminal edge (→ended) with coalescedCount>1 settles nothing", async () => {
@@ -2736,9 +2867,11 @@ describe("reconcileOrphanTurns", () => {
     expect(data.status).toBe("interrupted");
     expect(data.interruptedReason).toBe("offline");
     expect(data.endedAt).toBeInstanceOf(Date);
-    // SSE published by the chokepoint (not reimplemented here).
-    expect(mockEventBus.emit).toHaveBeenCalledTimes(1);
+    // Existing transcript SSE plus the session-ended activity are both owned by
+    // the chokepoint (not reimplemented here).
+    expect(mockEventBus.emit).toHaveBeenCalledTimes(2);
     expect(mockEventBus.emit.mock.calls[0][1].trigger).toBe("turn_status_changed");
+    expect(mockEventBus.emit.mock.calls[1][1].type).toBe("session_ended");
   });
 
   it("AGE-ONLY rule: a fresh lastSeenAt is NOT eligible even when status is 'offline' (abort→reconnect gap)", async () => {

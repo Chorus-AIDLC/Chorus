@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.17.1] - 2026-09-01
+
+### Added
+- **Installed agent plugin refresh**: Added one-time update confirmation and native refresh flows for Claude Code, Codex, OpenCode, dsh, OpenClaw, and Kiro. (#516)
+- **Live daemon activity on Ideas**: Added real-time daemon activity indicators across Tracker, Graph, and Idea detail views, including mobile session drilldown. (#517)
+- **Automated coordinated npm releases**: Added tokenless GitHub Actions publishing for the Chorus CLI, OpenClaw plugin, and dsh plugin with reproducible validation, provenance checks, and safe reruns. (#522)
+
+### Fixed
+- **Non-ASCII working-directory resume**: Daemon-backed agent sessions now resume correctly when their working directory contains non-ASCII characters. (#518)
+- **Daemon chat initial loading**: Bounded and coalesced initial chat loading work to avoid excessive requests and processing. (#519)
+- **Idea assignment targeting**: Project-fixed working-directory targets now take precedence correctly, while reassignment wakes are deduplicated for an unchanged owner; skill documentation now reflects these semantics. (#520, #525)
+- **Mobile project creation**: Restored the New Project entry on the mobile project-group bar. (#523)
+- **Live-session indicator flicker**: Prevented the active-session popover from reopening when the pointer leaves its trigger. (#524)
+
+---
+
 ## [0.17.0] - 2026-08-28
 
 ### Added

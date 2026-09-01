@@ -373,7 +373,7 @@ function GroupSection({
               }`}
             >
               {/* Group Header */}
-              <div className="flex flex-col gap-2 px-4 py-2.5 md:flex-row md:items-center md:justify-between md:px-6 md:py-3">
+              <div className="flex items-center justify-between gap-2 px-4 py-2.5 md:px-6 md:py-3">
                 <CollapsibleTrigger className="flex flex-1 cursor-pointer items-center gap-2.5 text-left md:gap-3">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/[0.08] md:h-9 md:w-9">
                     <Folder className="h-4 w-4 text-primary" />
@@ -400,14 +400,18 @@ function GroupSection({
                       </span>
                     </div>
                   </div>
-                  {open ? (
-                    <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-[#9A9A9A] md:h-4 md:w-4" />
-                  ) : (
-                    <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-[#9A9A9A] md:h-4 md:w-4" />
-                  )}
                 </CollapsibleTrigger>
-                <div className={`hidden items-center gap-2 md:flex`}>
-                  <Link href={`/project-groups/${group.uuid}`}>
+                <div className="flex items-center gap-1 md:gap-2">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="order-1 shrink-0 text-[#9A9A9A] hover:text-muted-foreground md:hidden"
+                    onClick={onNewProject}
+                    aria-label={t("projects.newProject")}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                  <Link href={`/project-groups/${group.uuid}`} className="order-3 hidden md:order-2 md:block">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -420,12 +424,19 @@ function GroupSection({
                   <Button
                     variant="outline"
                     size="sm"
-                    className="border-[#E5E2DC] dark:border-[#2a2a2e] text-xs"
+                    className="order-3 hidden border-[#E5E2DC] dark:border-[#2a2a2e] text-xs md:order-2 md:flex"
                     onClick={onNewProject}
                   >
                     <Plus className="mr-1 h-3 w-3" />
                     {t("projects.newProject")}
                   </Button>
+                  <CollapsibleTrigger className="order-2 flex shrink-0 cursor-pointer items-center md:order-1">
+                    {open ? (
+                      <ChevronDown className="h-3.5 w-3.5 text-[#9A9A9A] md:h-4 md:w-4" />
+                    ) : (
+                      <ChevronRight className="h-3.5 w-3.5 text-[#9A9A9A] md:h-4 md:w-4" />
+                    )}
+                  </CollapsibleTrigger>
                 </div>
               </div>
 
@@ -538,22 +549,33 @@ function UngroupedSection({ projects, onNewProject, viewMode, open, onOpenChange
                         {projects.length}
                       </Badge>
                     </div>
-                    {open ? (
-                      <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-[#9A9A9A] md:h-4 md:w-4" />
-                    ) : (
-                      <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-[#9A9A9A] md:h-4 md:w-4" />
-                    )}
                   </CollapsibleTrigger>
-                  <div className="hidden items-center gap-2 md:flex">
+                  <div className="flex shrink-0 items-center gap-1 md:gap-2">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="order-1 shrink-0 text-[#9A9A9A] hover:text-muted-foreground md:hidden"
+                      onClick={onNewProject}
+                      aria-label={t("projects.newProject")}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
                     <Button
                       variant="outline"
                       size="sm"
-                      className="shrink-0 border-[#E5E2DC] dark:border-[#2a2a2e] text-xs"
+                      className="order-3 hidden shrink-0 border-[#E5E2DC] dark:border-[#2a2a2e] text-xs md:order-2 md:flex"
                       onClick={onNewProject}
                     >
                       <Plus className="mr-1 h-3 w-3" />
                       {t("projects.newProject")}
                     </Button>
+                    <CollapsibleTrigger className="order-2 flex shrink-0 cursor-pointer items-center md:order-1">
+                      {open ? (
+                        <ChevronDown className="h-3.5 w-3.5 text-[#9A9A9A] md:h-4 md:w-4" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 text-[#9A9A9A] md:h-4 md:w-4" />
+                      )}
+                    </CollapsibleTrigger>
                   </div>
                 </div>
 

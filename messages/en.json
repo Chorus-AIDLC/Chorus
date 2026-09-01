@@ -1245,6 +1245,18 @@
       "testConnection": "This step will test your agent connection. Coming soon."
     }
   },
+  "activeSessions": {
+    "indicatorLabel": "{count, plural, one {1 daemon session running — open chat} other {# daemon sessions running — choose a chat}}",
+    "statusOnlyIndicatorLabel": "{count, plural, one {1 daemon session running — status only} other {# daemon sessions running — status only}}",
+    "chooserLabel": "Running daemon sessions",
+    "runningCount": "{count, plural, one {# running session} other {# running sessions}}",
+    "location": "{host} · {cwd}",
+    "unknownHost": "Unknown host",
+    "unknownCwd": "Unknown working directory",
+    "agentFallback": "Connection details are still loading",
+    "statusOnly": "Status only · owned by another user",
+    "statusOnlyEntry": "{agent} — status only"
+  },
   "ideaTracker": {
     "overview": "Overview",
     "overviewSubtitle": "Track ideas, proposals, and tasks at a glance",

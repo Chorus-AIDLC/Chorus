@@ -18,15 +18,19 @@
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 /** Absolute path to the login file written by `chorus login`. */
 export function loginFilePath() {
+  const override = process.env.CHORUS_DAEMON_CONFIG_PATH?.trim();
+  if (override) return resolve(override);
   return join(homedir(), ".chorus", "daemon.json");
 }
 
 /** Absolute path to the Claude Code user settings file (plugin fallback source). */
 export function claudeSettingsPath() {
+  const override = process.env.CHORUS_CLAUDE_SETTINGS_PATH?.trim();
+  if (override) return resolve(override);
   return join(homedir(), ".claude", "settings.json");
 }
 

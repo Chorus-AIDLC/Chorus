@@ -103,6 +103,8 @@ const CREATOR = "user-creator-e2e"; // idea creator (always an idea_claimed reci
 const TARGET_USER = "user-bob-e2e"; // eligible user target (same company)
 const INSTANCE = "instance-pm-host1"; // durable instance owned by PM_AGENT
 const CONN = "conn-pm-host1";
+const CONFLICTING_INSTANCE = "instance-pm-host2";
+const CONFLICTING_CONN = "conn-pm-host2";
 const IDEA = "idea-assign-e2e";
 
 // The caller's AuthContext — idea:admin is what registers chorus_pm_assign_idea.
@@ -182,6 +184,9 @@ function seed(ideaOverrides: Partial<(typeof agentInstanceStore.ideas)[number]> 
     parentUuid: null,
     assigneeType: null,
     assigneeUuid: null,
+    cwdSource: null,
+    cwdHost: null,
+    runtimeCwd: null,
     assignedAt: null,
     assignedByUuid: null,
     createdByUuid: CREATOR,
@@ -195,10 +200,11 @@ function seed(ideaOverrides: Partial<(typeof agentInstanceStore.ideas)[number]> 
 // Drive the real tool, then re-feed the emitted `assigned` activity into the real
 // listener. Returns the tool result plus the (single) captured activity event.
 async function assignAndNotify(params: Record<string, unknown>) {
+  const activityCount = emittedActivity.length;
   const result = await toolHandlers["chorus_pm_assign_idea"](params);
   // The tool emits exactly one "activity" event on success (createActivity). On a
   // rejection (idea/target invalid) none is emitted — handleActivity is then skipped.
-  const activityEvent = emittedActivity.find(
+  const activityEvent = emittedActivity.slice(activityCount).find(
     (e) => e.targetType === "idea" && e.targetUuid === params.ideaUuid && e.action === "assigned",
   );
   if (activityEvent) {
@@ -350,6 +356,123 @@ describe("assign_idea end-to-end — agent_instance pin (AC#1)", () => {
     );
     expect(session?.originConnectionUuid).toBe(CONN);
     expect(session?.agentUuid).toBe(PM_AGENT);
+  });
+
+  it("materializes the owner project-fixed target, overrides a conflicting explicit instance, and directs the wake to the fixed connection", async () => {
+    seed();
+    const now = new Date();
+    agentInstanceStore.agentInstances.push({
+      uuid: CONFLICTING_INSTANCE,
+      companyUuid: COMPANY,
+      agentUuid: PM_AGENT,
+      host: "host-2",
+      cwd: "/work/other",
+      createdAt: now,
+      updatedAt: now,
+    });
+    agentInstanceStore.daemonConnections.push({
+      uuid: CONFLICTING_CONN,
+      companyUuid: COMPANY,
+      agentUuid: PM_AGENT,
+      clientType: "claude-code",
+      clientVersion: "0.17.0",
+      host: "host-2",
+      cwd: "/work/other",
+      startedAt: now,
+      status: "online",
+      connectedAt: now,
+      lastSeenAt: now,
+      disconnectedAt: null,
+      agentInstanceUuid: CONFLICTING_INSTANCE,
+    });
+    agentInstanceStore.projectAgentCwdPreferences.push({
+      uuid: "pref-fixed-pm",
+      companyUuid: COMPANY,
+      userUuid: OWNER,
+      projectUuid: PROJECT,
+      agentUuid: PM_AGENT,
+      host: "host-1",
+      cwd: "/work/pm",
+      anchorAgentInstanceUuid: INSTANCE,
+    });
+
+    const { result } = await assignAndNotify({
+      ideaUuid: IDEA,
+      assigneeType: "agent",
+      assigneeUuid: PM_AGENT,
+      instanceUuid: CONFLICTING_INSTANCE,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(ideaRow()).toMatchObject({
+      assigneeType: "agent_instance",
+      assigneeUuid: INSTANCE,
+      cwdSource: "project_fixed",
+      cwdHost: "host-1",
+      runtimeCwd: "/work/pm",
+    });
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      assignee: { type: "agent_instance", uuid: INSTANCE },
+      target: {
+        instanceUuid: INSTANCE,
+        resolvedCwdSource: "project_fixed",
+        resolvedCwdHost: "host-1",
+        resolvedRuntimeCwd: "/work/pm",
+      },
+    });
+    expect(assignedActivities()[0].value).toMatchObject({
+      instanceUuid: INSTANCE,
+      resolvedCwdSource: "project_fixed",
+      resolvedCwdHost: "host-1",
+      resolvedRuntimeCwd: "/work/pm",
+    });
+    const turn = agentInstanceStore.daemonSessionTurns.at(-1)!;
+    const session = agentInstanceStore.daemonSessions.find(
+      (candidate) => candidate.uuid === turn.sessionUuid,
+    );
+    expect(session?.originConnectionUuid).toBe(CONN);
+  });
+
+  it("same-agent plain-to-project-fixed reassignment persists the pin without another activity or daemon turn", async () => {
+    seed();
+    const first = await assignAndNotify({
+      ideaUuid: IDEA,
+      assigneeType: "agent",
+      assigneeUuid: PM_AGENT,
+    });
+    expect(first.result.isError).toBeFalsy();
+    expect(ideaRow()).toMatchObject({
+      assigneeType: "agent",
+      assigneeUuid: PM_AGENT,
+    });
+
+    agentInstanceStore.projectAgentCwdPreferences.push({
+      uuid: "pref-fixed-after-plain",
+      companyUuid: COMPANY,
+      userUuid: OWNER,
+      projectUuid: PROJECT,
+      agentUuid: PM_AGENT,
+      host: "host-1",
+      cwd: "/work/pm",
+      anchorAgentInstanceUuid: INSTANCE,
+    });
+    const second = await assignAndNotify({
+      ideaUuid: IDEA,
+      assigneeType: "agent",
+      assigneeUuid: PM_AGENT,
+    });
+
+    expect(second.result.isError).toBeFalsy();
+    expect(ideaRow()).toMatchObject({
+      assigneeType: "agent_instance",
+      assigneeUuid: INSTANCE,
+      cwdSource: "project_fixed",
+      cwdHost: "host-1",
+      runtimeCwd: "/work/pm",
+    });
+    expect(JSON.parse(second.result.content[0].text).wakeRequested).toBe(false);
+    expect(assignedActivities()).toHaveLength(1);
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(1);
   });
 });
 

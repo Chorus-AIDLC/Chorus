@@ -24,6 +24,7 @@ skill chorus-review
 skill chorus-quick-dev
 skill chorus-brainstorm
 skill chorus-openspec-aware
+skill chorus-orchestrate
 skill chorus-docs
 skill chorus-cli
 

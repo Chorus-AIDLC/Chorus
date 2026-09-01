@@ -28,10 +28,21 @@ const mockUserService = vi.hoisted(() => ({
   getUserByUuid: vi.fn(),
 }));
 
+const mockProjectAgentCwdService = vi.hoisted(() => ({
+  resolveProjectAgentCwdTarget: vi.fn(),
+}));
+
+const mockUuidResolver = vi.hoisted(() => ({
+  isAssignmentOwnedByActor: vi.fn(),
+  resolveAssigneeAgentUuid: vi.fn(),
+}));
+
 vi.mock("@/services/idea.service", () => mockIdeaService);
 vi.mock("@/services/activity.service", () => mockActivityService);
 vi.mock("@/services/agent.service", () => mockAgentService);
 vi.mock("@/services/user.service", () => mockUserService);
+vi.mock("@/services/project-agent-cwd.service", () => mockProjectAgentCwdService);
+vi.mock("@/lib/uuid-resolver", () => mockUuidResolver);
 
 vi.mock("@/lib/prisma", () => ({ prisma: {} }));
 vi.mock("@/services/project.service", () => ({ projectExists: vi.fn() }));
@@ -93,6 +104,7 @@ beforeEach(() => {
     status: "open",
     assigneeType: null,
     assigneeUuid: null,
+    assignee: null,
   });
   mockIdeaService.assignIdea.mockResolvedValue({
     uuid: ideaUuid,
@@ -109,6 +121,18 @@ beforeEach(() => {
   mockUserService.getUserByUuid.mockResolvedValue({
     uuid: targetUserUuid,
     companyUuid,
+  });
+  mockUuidResolver.resolveAssigneeAgentUuid.mockResolvedValue(null);
+  mockProjectAgentCwdService.resolveProjectAgentCwdTarget.mockResolvedValue({
+    actorUserUuid: "owner-1",
+    source: "unconfigured",
+    agentUuid: targetAgentUuid,
+    host: null,
+    cwd: null,
+    availability: "ready",
+    promptPolicy: "select",
+    connectionUuid: "connection-1",
+    agentInstanceUuid: null,
   });
 });
 
@@ -179,6 +203,23 @@ describe("chorus_pm_assign_idea — agent target (AC2/AC4)", () => {
     expect(assignArgs).not.toHaveProperty("instanceUuid");
     const activityValue = mockActivityService.createActivity.mock.calls[0][0].value;
     expect(activityValue).not.toHaveProperty("instanceUuid");
+  });
+
+  it("resolves the target with the caller owner's project context", async () => {
+    await toolHandlers["chorus_pm_assign_idea"]({
+      ideaUuid,
+      assigneeType: "agent",
+      assigneeUuid: targetAgentUuid,
+    });
+
+    expect(
+      mockProjectAgentCwdService.resolveProjectAgentCwdTarget,
+    ).toHaveBeenCalledWith({
+      companyUuid,
+      actorUserUuid: "owner-1",
+      projectUuid,
+      agentUuid: targetAgentUuid,
+    });
   });
 
   it("rejects an ineligible agent (no idea:write) without changing the assignee", async () => {
@@ -278,6 +319,112 @@ describe("chorus_pm_assign_idea — instance pin (AC2)", () => {
 
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toMatch(/Agent instance not found/);
+  });
+
+  it("uses a project-fixed target instead of a conflicting explicit instance and returns its provenance", async () => {
+    mockProjectAgentCwdService.resolveProjectAgentCwdTarget.mockResolvedValue({
+      actorUserUuid: "owner-1",
+      source: "project_fixed",
+      agentUuid: targetAgentUuid,
+      host: "fixed-host",
+      cwd: "/fixed/project",
+      availability: "ready",
+      promptPolicy: "suppress",
+      connectionUuid: "fixed-connection",
+      agentInstanceUuid: "fixed-instance",
+    });
+    mockIdeaService.assignIdea.mockResolvedValue({
+      uuid: ideaUuid,
+      status: "elaborating",
+      assignee: { type: "agent_instance", uuid: "fixed-instance" },
+    });
+
+    const res = await toolHandlers["chorus_pm_assign_idea"]({
+      ideaUuid,
+      assigneeType: "agent",
+      assigneeUuid: targetAgentUuid,
+      instanceUuid: "conflicting-instance",
+    });
+
+    expect(mockIdeaService.assignIdea).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instanceUuid: "fixed-instance",
+        cwdSource: "project_fixed",
+        cwdHost: "fixed-host",
+        runtimeCwd: "/fixed/project",
+      }),
+    );
+    expect(mockActivityService.createActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        value: {
+          assigneeType: "agent",
+          assigneeUuid: targetAgentUuid,
+          instanceUuid: "fixed-instance",
+          resolvedCwdSource: "project_fixed",
+          resolvedCwdHost: "fixed-host",
+          resolvedRuntimeCwd: "/fixed/project",
+        },
+      }),
+    );
+    expect(JSON.parse(res.content[0].text)).toMatchObject({
+      assignee: { type: "agent_instance", uuid: "fixed-instance" },
+      target: {
+        instanceUuid: "fixed-instance",
+        resolvedCwdSource: "project_fixed",
+        resolvedCwdHost: "fixed-host",
+        resolvedRuntimeCwd: "/fixed/project",
+      },
+    });
+  });
+
+  it("deduplicates the Activity when a plain-agent assignee is re-pinned", async () => {
+    mockIdeaService.getIdeaByUuid.mockResolvedValue({
+      uuid: ideaUuid,
+      projectUuid,
+      status: "elaborating",
+      assigneeType: "agent",
+      assigneeUuid: targetAgentUuid,
+    });
+    mockUuidResolver.resolveAssigneeAgentUuid.mockResolvedValue(targetAgentUuid);
+
+    const res = await toolHandlers["chorus_pm_assign_idea"]({
+      ideaUuid,
+      assigneeType: "agent",
+      assigneeUuid: targetAgentUuid,
+      instanceUuid,
+    });
+
+    expect(mockIdeaService.assignIdea).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceUuid }),
+    );
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+    expect(JSON.parse(res.content[0].text)).toMatchObject({
+      wakeRequested: false,
+    });
+  });
+
+  it("deduplicates the Activity when an instance-pinned assignee keeps the same owning agent", async () => {
+    mockIdeaService.getIdeaByUuid.mockResolvedValue({
+      uuid: ideaUuid,
+      projectUuid,
+      status: "elaborating",
+      assigneeType: "agent_instance",
+      assigneeUuid: "old-instance",
+    });
+    mockUuidResolver.resolveAssigneeAgentUuid.mockResolvedValue(targetAgentUuid);
+
+    const res = await toolHandlers["chorus_pm_assign_idea"]({
+      ideaUuid,
+      assigneeType: "agent",
+      assigneeUuid: targetAgentUuid,
+      instanceUuid,
+    });
+
+    expect(mockIdeaService.assignIdea).toHaveBeenCalled();
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+    expect(JSON.parse(res.content[0].text)).toMatchObject({
+      wakeRequested: false,
+    });
   });
 });
 

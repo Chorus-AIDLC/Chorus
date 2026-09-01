@@ -10,6 +10,8 @@ node_modules
 !.yarn/releases
 !.yarn/versions
 package-lock.json
+# OpenClaw is an npm-managed package published via `npm ci`; its lockfile is tracked.
+!packages/openclaw-plugin/package-lock.json
 
 # testing
 /coverage
@@ -68,6 +70,7 @@ packages/chorus-cdk/lib/*.d.ts
 
 # npm pack output
 *.tgz
+/.release-artifacts/
 
 #demo
 dev-story-demo/

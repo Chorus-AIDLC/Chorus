@@ -1245,6 +1245,18 @@
       "testConnection": "이 단계에서는 에이전트 연결을 테스트합니다. 곧 제공됩니다."
     }
   },
+  "activeSessions": {
+    "indicatorLabel": "{count}개의 Daemon Session 실행 중 — 채팅 열기 또는 선택",
+    "statusOnlyIndicatorLabel": "{count}개의 Daemon Session 실행 중 — 상태만 표시",
+    "chooserLabel": "실행 중인 Daemon Session",
+    "runningCount": "{count}개의 Session 실행 중",
+    "location": "{host} · {cwd}",
+    "unknownHost": "알 수 없는 호스트",
+    "unknownCwd": "알 수 없는 작업 디렉터리",
+    "agentFallback": "연결 정보를 불러오는 중",
+    "statusOnly": "상태만 표시 · 다른 사용자 소유",
+    "statusOnlyEntry": "{agent} — 상태만 표시"
+  },
   "ideaTracker": {
     "overview": "개요",
     "overviewSubtitle": "아이디어, 제안, 작업을 한눈에 추적하세요",

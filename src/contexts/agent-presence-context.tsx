@@ -66,6 +66,7 @@ import type {
 } from "@/components/agent-presence";
 import type { ExecutionEvent } from "@/contexts/realtime-context";
 import type {
+  SessionActivityEvent,
   SessionView,
   TranscriptEvent as TranscriptEventBase,
 } from "@/services/daemon-session.service";
@@ -122,6 +123,35 @@ export interface ChatFocusTarget {
 // the modal keeps it). Wholesale-replaced per connection by each SSE event.
 export type ExecutionsByConnection = Record<string, ExecutionView[]>;
 
+interface ActiveSessionAccumulator {
+  sessionUuid: string;
+  ideaUuid: string | null;
+  agentUuid: string;
+  originConnectionUuid: string;
+  activities: ReadonlySet<string>;
+  canOpen: boolean;
+}
+
+export interface SessionActivityState {
+  sessions: ReadonlyMap<string, ActiveSessionAccumulator>;
+  endedActivities: ReadonlySet<string>;
+}
+
+export interface ActiveIdeaSession {
+  sessionUuid: string;
+  ideaUuid: string;
+  agentUuid: string;
+  originConnectionUuid: string;
+  activities: ReadonlySet<string>;
+  agentName: string | null;
+  host: string | null;
+  cwd: string | null;
+  connectionAvailable: boolean;
+  canOpen: boolean;
+}
+
+export type ActiveSessionsByIdea = ReadonlyMap<string, ActiveIdeaSession[]>;
+
 export interface AgentPresenceValue {
   status: AgentPresenceStatus;
   connections: ConnectionView[];
@@ -132,6 +162,7 @@ export interface AgentPresenceValue {
   // the detail pane can show a loading state instead of flashing "Nothing
   // running" in the window where connections have loaded but executions have not.
   executionsLoaded: boolean;
+  activeSessionsByIdea: ActiveSessionsByIdea;
   modalOpen: boolean;
   setModalOpen: (open: boolean) => void;
   // The currently-open conversation (the chat sets this). When it changes, the
@@ -162,6 +193,10 @@ export interface AgentPresenceValue {
     agentUuid: string,
     pin?: { host: string; cwd: string | null },
   ) => void;
+  // Navigate using the same agent+(host,cwd) locator as ProjectCwdSummary.
+  // Activity remains actionable when its connection projection has not arrived:
+  // in that case this deliberately falls back to agent-only focus.
+  openChatForActiveSession: (session: ActiveIdeaSession) => void;
   // Open the daemon-chat modal focused on a SPECIFIC conversation (one-shot, same
   // consume-and-clear contract as `openChatForAgent`). Used after dispatching a new
   // ad-hoc session (e.g. the conversational create-idea entry) to land the user on
@@ -227,6 +262,95 @@ export function mergeExecutionEvent(
   return next;
 }
 
+export function emptySessionActivityState(): SessionActivityState {
+  return {
+    sessions: new Map(),
+    endedActivities: new Set(),
+  };
+}
+
+/**
+ * Token-keyed activity reduction. End tombstones make duplicate and out-of-order
+ * delivery safe: an end observed before a delayed duplicate start cannot
+ * resurrect the activity. A reconnect starts from a fresh state before replay.
+ */
+export function reduceSessionActivity(
+  prev: SessionActivityState,
+  event: SessionActivityEvent,
+): SessionActivityState {
+  if (event.type === "session_ended") {
+    const endedActivities = new Set(prev.endedActivities);
+    endedActivities.add(event.activityUuid);
+    const current = prev.sessions.get(event.sessionUuid);
+    if (!current || !current.activities.has(event.activityUuid)) {
+      return { sessions: prev.sessions, endedActivities };
+    }
+    const activities = new Set(current.activities);
+    activities.delete(event.activityUuid);
+    const sessions = new Map(prev.sessions);
+    if (activities.size === 0) {
+      sessions.delete(event.sessionUuid);
+    } else {
+      sessions.set(event.sessionUuid, { ...current, activities });
+    }
+    return { sessions, endedActivities };
+  }
+
+  if (prev.endedActivities.has(event.activityUuid)) return prev;
+  const current = prev.sessions.get(event.sessionUuid);
+  const activities = new Set(current?.activities ?? []);
+  if (activities.has(event.activityUuid)) return prev;
+  activities.add(event.activityUuid);
+  const sessions = new Map(prev.sessions);
+  sessions.set(event.sessionUuid, {
+    sessionUuid: event.sessionUuid,
+    ideaUuid: event.directIdeaUuid,
+    agentUuid: event.agentUuid,
+    originConnectionUuid: event.originConnectionUuid,
+    activities,
+    canOpen: event.canOpen,
+  });
+  return { sessions, endedActivities: prev.endedActivities };
+}
+
+export function deriveActiveSessionsByIdea(
+  state: SessionActivityState,
+  connections: ConnectionView[],
+): ActiveSessionsByIdea {
+  const connectionsByUuid = new Map(
+    connections.map((connection) => [connection.uuid, connection]),
+  );
+  const grouped = new Map<string, ActiveIdeaSession[]>();
+  for (const session of state.sessions.values()) {
+    if (!session.ideaUuid) continue;
+    const connection = connectionsByUuid.get(session.originConnectionUuid);
+    const item: ActiveIdeaSession = {
+      sessionUuid: session.sessionUuid,
+      ideaUuid: session.ideaUuid,
+      agentUuid: session.agentUuid,
+      originConnectionUuid: session.originConnectionUuid,
+      activities: session.activities,
+      agentName: connection?.agentName ?? null,
+      host: connection?.host ?? null,
+      cwd: connection?.cwd ?? null,
+      connectionAvailable: connection != null,
+      canOpen: session.canOpen,
+    };
+    const sessions = grouped.get(session.ideaUuid) ?? [];
+    sessions.push(item);
+    grouped.set(session.ideaUuid, sessions);
+  }
+  for (const sessions of grouped.values()) {
+    sessions.sort(
+      (a, b) =>
+        a.agentUuid.localeCompare(b.agentUuid) ||
+        a.originConnectionUuid.localeCompare(b.originConnectionUuid) ||
+        a.sessionUuid.localeCompare(b.sessionUuid),
+    );
+  }
+  return grouped;
+}
+
 /**
  * Build the provider's `/api/events` URL for the current open session. With no open
  * session it is the bare company-wide stream (`/api/events`); with one open it carries
@@ -270,6 +394,8 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
   const [executionsByConnection, setExecutionsByConnection] =
     useState<ExecutionsByConnection>({});
   const [executionsLoaded, setExecutionsLoaded] = useState(false);
+  const [sessionActivity, setSessionActivity] =
+    useState<SessionActivityState>(emptySessionActivityState);
   const [modalOpen, setModalOpen] = useState(false);
   // The open conversation. Changing it reconnects the SSE stream with a new
   // `?sessionUuid=` (see the SSE effect). `null` = no conversation open / no transcript
@@ -459,6 +585,12 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       // `transcript:{sessionUuid}` channel; the URL is rebuilt from `openSession` on
       // every (re)connect so a conversation switch reconnects to the new channel.
       es = new EventSource(buildEventsUrl(openSession));
+      // EventSource fires `open` for the initial connection and every browser
+      // reconnect. Clear stale tokens before the server replays its authoritative
+      // running snapshot through session_started events.
+      es.onopen = () => {
+        setSessionActivity(emptySessionActivityState());
+      };
       es.onmessage = (msg) => {
         let parsed: (Record<string, unknown> & { type?: unknown }) | null = null;
         try {
@@ -472,6 +604,18 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
         // (the chat container). The server only subscribes the `?sessionUuid=` it was
         // asked for, so any transcript event here is for the open session.
         if (routeTranscriptEvent(parsed, transcriptSubscribersRef.current)) return;
+        if (
+          parsed.type === "session_started" ||
+          parsed.type === "session_ended"
+        ) {
+          setSessionActivity((prev) =>
+            reduceSessionActivity(
+              prev,
+              parsed as unknown as SessionActivityEvent,
+            ),
+          );
+          return;
+        }
         // Execution events merge into the by-connection map; everything else (change /
         // presence) is the page-scoped provider's concern.
         if (parsed.type === "execution") {
@@ -533,6 +677,10 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
     () => computeOnlineCount(connections),
     [connections],
   );
+  const activeSessionsByIdea = useMemo(
+    () => deriveActiveSessionsByIdea(sessionActivity, connections),
+    [sessionActivity, connections],
+  );
 
   // Subscribe to the open conversation's live transcript events. Adds the callback to
   // the ref-held Set and returns an unsubscribe fn (mirrors realtime-context's
@@ -555,6 +703,29 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       setModalOpen(true);
     },
     [],
+  );
+
+  const openChatForActiveSession = useCallback(
+    (session: ActiveIdeaSession) => {
+      if (!session.canOpen) return;
+      const connection = connections.find(
+        (candidate) => candidate.uuid === session.originConnectionUuid,
+      );
+      // An activity indicator identifies one concrete running conversation, not
+      // merely an agent. Keep the familiar agent+CWD locator for the left rail,
+      // but ALSO carry the session uuid so desktop selects the matching row and
+      // mobile opens its transcript drill-down immediately. Losing sessionUuid
+      // here previously stranded mobile users on the agent's conversation list.
+      setFocusTarget({
+        agentUuid: session.agentUuid,
+        sessionUuid: session.sessionUuid,
+        ...(connection
+          ? { pin: { host: connection.host, cwd: connection.cwd } }
+          : {}),
+      });
+      setModalOpen(true);
+    },
+    [connections],
   );
 
   // Open the chat focused on a specific conversation. Carries the full SessionView
@@ -583,6 +754,7 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       onlineCount,
       executionsByConnection,
       executionsLoaded,
+      activeSessionsByIdea,
       modalOpen,
       setModalOpen,
       openSession,
@@ -590,6 +762,7 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       subscribeTranscript,
       focusTarget,
       openChatForAgent,
+      openChatForActiveSession,
       openChatForSession,
       clearChatFocusTarget,
       refreshConnections: fetchConnections,
@@ -600,11 +773,13 @@ export function AgentPresenceProvider({ children }: { children: ReactNode }) {
       onlineCount,
       executionsByConnection,
       executionsLoaded,
+      activeSessionsByIdea,
       modalOpen,
       openSession,
       subscribeTranscript,
       focusTarget,
       openChatForAgent,
+      openChatForActiveSession,
       openChatForSession,
       clearChatFocusTarget,
       fetchConnections,

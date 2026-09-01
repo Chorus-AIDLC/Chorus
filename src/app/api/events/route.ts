@@ -21,8 +21,12 @@ import {
 } from "@/services/daemon-execution.service";
 import {
   isSessionVisibleToCaller,
+  listVisibleRunningSessionActivities,
   reconcileOrphanTurns,
+  SESSION_ACTIVITY_EVENT_NAME,
   transcriptEventName,
+  type SessionActivityEvent,
+  type PublishedSessionActivityEvent,
   type TranscriptEvent,
 } from "@/services/daemon-session.service";
 import { NextRequest } from "next/server";
@@ -77,7 +81,7 @@ export async function GET(request: NextRequest) {
       : null;
 
   const stream = new ReadableStream({
-    start(controller) {
+    async start(controller) {
       const encoder = new TextEncoder();
 
       const send = (data: string) => {
@@ -142,6 +146,40 @@ export async function GET(request: NextRequest) {
         eventBus.on(channel, executionHandler);
       }
 
+      // Attach the company-wide activity listener BEFORE reading the running-turn
+      // snapshot. Live events that land during the query are buffered and flushed
+      // after replay, so a concurrent end always wins over a stale snapshot row.
+      // Ownership travels only on the process-local event and is projected here
+      // into subscriber-relative `canOpen`; it is never sent over the wire.
+      let activityBootstrapping = true;
+      const bufferedActivityEvents: SessionActivityEvent[] = [];
+      const projectActivity = (
+        event: PublishedSessionActivityEvent,
+      ): SessionActivityEvent | null => {
+        if (event.companyUuid !== auth.companyUuid) return null;
+        if (auth.type === "agent" && event.agentUuid !== auth.actorUuid) {
+          return null;
+        }
+        const { agentOwnerUuid, ...activity } = event;
+        return {
+          ...activity,
+          canOpen:
+            auth.type === "agent"
+              ? event.agentUuid === auth.actorUuid
+              : agentOwnerUuid === auth.actorUuid,
+        };
+      };
+      const sessionActivityHandler = (event: PublishedSessionActivityEvent) => {
+        const projected = projectActivity(event);
+        if (!projected) return;
+        if (activityBootstrapping) {
+          bufferedActivityEvents.push(projected);
+          return;
+        }
+        send(`data: ${JSON.stringify(projected)}\n\n`);
+      };
+      eventBus.on(SESSION_ACTIVITY_EVENT_NAME, sessionActivityHandler);
+
       // Subscribe the OPEN conversation's transcript channel (when one was requested
       // AND verified visible above). Each event is forwarded tagged `type:
       // "transcript"` — the discriminator the client routes on alongside change /
@@ -174,6 +212,7 @@ export async function GET(request: NextRequest) {
         for (const channel of executionChannels) {
           eventBus.off(channel, executionHandler);
         }
+        eventBus.off(SESSION_ACTIVITY_EVENT_NAME, sessionActivityHandler);
         if (transcriptChannel) {
           eventBus.off(transcriptChannel, transcriptHandler);
         }
@@ -206,6 +245,17 @@ export async function GET(request: NextRequest) {
           orphanTimer.unref?.();
         }
       });
+
+      const runningActivities =
+        await listVisibleRunningSessionActivities(auth);
+      if (request.signal.aborted) return;
+      for (const event of runningActivities) {
+        send(`data: ${JSON.stringify(event)}\n\n`);
+      }
+      activityBootstrapping = false;
+      for (const event of bufferedActivityEvents) {
+        send(`data: ${JSON.stringify(event)}\n\n`);
+      }
     },
   });
 

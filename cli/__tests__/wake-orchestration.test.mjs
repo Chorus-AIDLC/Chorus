@@ -8,7 +8,7 @@ import { createNoopUploadHooks } from "../upload-hooks.mjs";
 import { Waker } from "../waker.mjs";
 import { EventRouter } from "../event-router.mjs";
 import { WakeQueue } from "../wake-queue.mjs";
-import { ClaudeSpawner } from "../claude-spawner.mjs";
+import { ClaudeSpawner, SESSION_CONFLICT_FAILURE } from "../claude-spawner.mjs";
 import { EventEmitter } from "node:events";
 
 const silent = { info() {}, warn() {}, error() {} };
@@ -631,6 +631,148 @@ describe("Waker.wake full loop", () => {
     expect(snap).toHaveLength(1);
     expect(snap[0].rootIdeaUuid).toBe(ROOT_IDEA);
     expect(snap[0].status).toBe("queued");
+  });
+});
+
+describe("Waker deterministic Claude session-conflict recovery", () => {
+  const FAKE_CHILD_1 = { pid: 6101 };
+  const FAKE_CHILD_2 = { pid: 6102 };
+
+  it("retries a classified new-session conflict exactly once as resume with shared flow and one running transition", async () => {
+    const childrenDuringRun = [];
+    const spawner = {
+      wake: vi.fn(async (params) => {
+        const attempt = spawner.wake.mock.calls.length;
+        const child = attempt === 1 ? FAKE_CHILD_1 : FAKE_CHILD_2;
+        params.onChild?.(child);
+        childrenDuringRun.push(waker.executions.get("task:task-1")?.child);
+        params.onMessage?.({ type: "system", session_id: params.sessionId });
+        return attempt === 1
+          ? {
+              sessionId: params.sessionId,
+              backendSessionId: params.sessionId,
+              exitCode: 1,
+              isNew: true,
+              failureClassification: SESSION_CONFLICT_FAILURE,
+            }
+          : {
+              sessionId: params.sessionId,
+              backendSessionId: params.sessionId,
+              exitCode: 0,
+              isNew: false,
+            };
+      }),
+    };
+    const advanceTurn = vi.fn(async () => {});
+    const reportInterrupt = vi.fn(async () => {});
+    const { waker } = makeWaker({ spawner, advanceTurn, reportInterrupt });
+    const resolved = await waker.keyFor(TASK_NOTIF);
+
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+
+    expect(spawner.wake).toHaveBeenCalledTimes(2);
+    const [first, retry] = spawner.wake.mock.calls.map((call) => call[0]);
+    expect([first.isNew, retry.isNew]).toEqual([true, false]);
+    for (const field of ["prompt", "sessionId", "cwd", "mcpConfigPath"]) {
+      expect(retry[field]).toBe(first[field]);
+    }
+    expect(retry.onChild).toBe(first.onChild);
+    expect(retry.onMessage).toBe(first.onMessage);
+    expect(childrenDuringRun).toEqual([FAKE_CHILD_1, FAKE_CHILD_2]);
+    expect(advanceTurn.mock.calls.map((call) => call[0].status)).toEqual([
+      "running",
+      "ended",
+    ]);
+    expect(reportInterrupt).not.toHaveBeenCalled();
+    expect(waker.deterministicConflictGuards.has(resolved.key)).toBe(false);
+  });
+
+  it("guards only repeated synthetic crash resumes after fallback exhaustion, with clearing and isolation", async () => {
+    const warns = [];
+    const spawner = {
+      wake: vi.fn(async (params) => {
+        params.onChild?.({ pid: 6200 + spawner.wake.mock.calls.length });
+        const attempt = spawner.wake.mock.calls.length;
+        if (attempt <= 2) {
+          return {
+            sessionId: params.sessionId,
+            backendSessionId: params.sessionId,
+            exitCode: 1,
+            isNew: params.isNew,
+            failureClassification: SESSION_CONFLICT_FAILURE,
+          };
+        }
+        return {
+          sessionId: params.sessionId,
+          backendSessionId: params.sessionId,
+          exitCode: attempt === 4 ? 2 : 0,
+          isNew: params.isNew,
+        };
+      }),
+    };
+    const reportInterrupt = vi.fn(async () => {});
+    const { waker } = makeWaker({ spawner, reportInterrupt });
+    waker.logger = { ...silent, warn: (message) => warns.push(message) };
+    const resolved = await waker.keyFor(TASK_NOTIF);
+
+    await waker.wake(TASK_NOTIF, resolved.key, resolved);
+    expect(spawner.wake).toHaveBeenCalledTimes(2);
+    expect(waker.deterministicConflictGuards.has(resolved.key)).toBe(true);
+    expect(reportInterrupt).toHaveBeenCalledWith("task", "task-1", "crash");
+
+    const automaticCrashResume = {
+      ...TASK_NOTIF,
+      action: "resource_resumed",
+      resumedFrom: "crash",
+    };
+    await waker.wake(automaticCrashResume, resolved.key, resolved);
+    expect(spawner.wake).toHaveBeenCalledTimes(2);
+    expect(warns.join("\n")).toMatch(/suppressed automatic crash resume/);
+
+    const otherSession = {
+      key: "idea:22222222-2222-4222-8222-222222222222",
+      rootIdeaUuid: "22222222-2222-4222-8222-222222222222",
+      directIdeaUuid: "22222222-2222-4222-8222-222222222222",
+    };
+    await waker.wake(
+      { ...TASK_NOTIF, entityUuid: "task-2" },
+      otherSession.key,
+      otherSession,
+    );
+    expect(spawner.wake).toHaveBeenCalledTimes(3);
+
+    // An ordinary unclassified crash still runs and reports normally despite the
+    // deterministic guard belonging to this lane.
+    reportInterrupt.mockClear();
+    await waker.wake(
+      { ...TASK_NOTIF, action: "mentioned", message: "check this" },
+      resolved.key,
+      resolved,
+    );
+    expect(spawner.wake).toHaveBeenCalledTimes(4);
+    expect(reportInterrupt).toHaveBeenCalledWith("task", "task-1", "crash");
+
+    // A user-interrupt resume is not the automatic crash-resume shape and remains
+    // unaffected by the guard.
+    await waker.wake(
+      { ...TASK_NOTIF, action: "resource_resumed", resumedFrom: "user" },
+      resolved.key,
+      resolved,
+    );
+    expect(spawner.wake).toHaveBeenCalledTimes(5);
+    expect(waker.deterministicConflictGuards.has(resolved.key)).toBe(true);
+
+    await waker.wake(
+      {
+        ...TASK_NOTIF,
+        action: "human_instruction",
+        instructionText: "try recovery again",
+      },
+      resolved.key,
+      resolved,
+    );
+    expect(spawner.wake).toHaveBeenCalledTimes(6);
+    expect(waker.deterministicConflictGuards.has(resolved.key)).toBe(false);
   });
 });
 

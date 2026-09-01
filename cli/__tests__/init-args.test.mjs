@@ -78,5 +78,7 @@ describe("initHelpText", () => {
     expect(t).toContain("USAGE");
     expect(t).toContain("--agents");
     expect(t).toContain("NON-INTERACTIVE");
+    expect(t).toMatch(/--yes[\s\S]*installed plugins to latest/);
+    expect(t).toMatch(/non-TTY runs refresh selected installed/);
   });
 });
