@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.17.0–0.17.1](https://github.com/Chorus-AIDLC/Chorus/releases/tag/v0.17.1)** — 1 つの CLI で各コーディングエージェントに Chorus を導入・更新できるようになりました。Tracker、Graph、Idea 詳細ではデーモンの活動をリアルタイムに確認できます。
+
 **[v0.16.4](https://chorus-ai.dev/blog/chorus-v0.16.4-release/)** — DeepSeek Harness（dsh）が 6 つ目の接続方法に。`@chorus-aidlc/chorus-dsh` バンドルが Chorus のスキル・ペルソナ・MCP 設定を任意の dsh プロファイルに追加します。現時点は対話的な利用のみ、デーモンウェイクは後日対応。
 
 **[v0.16.1](https://chorus-ai.dev/blog/chorus-v0.16.1-release/)** — 1 つの `chorus daemon` が、互いに独立した複数のエージェントを同時に扱えるようになりました。各エージェントは `agents[]` 配列で自分のキー・作業ディレクトリ・バックエンド・権限を持ちます。エージェント同士は @メンションで作業を渡し合え、各ウェイクはそのエージェント自身のプロジェクトディレクトリに届きます。
@@ -59,7 +61,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 2 つのコマンドだけです — データベースも Docker も設定ファイルも不要です。
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.0
+npm install -g @chorus-aidlc/chorus@0.17.1
 chorus
 ```
 

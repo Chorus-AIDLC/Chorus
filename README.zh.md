@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.17.0–0.17.1](https://github.com/Chorus-AIDLC/Chorus/releases/tag/v0.17.1)** — 一个 CLI 即可为各类编程 Agent 安装和更新 Chorus。现在还能在 Tracker、Graph 和 Idea 详情中直接看到 daemon 的实时活动。
+
 **[v0.16.4](https://chorus-ai.dev/zh/blog/chorus-v0.16.4-release/)** — DeepSeek Harness（dsh）成为第六种接入方式：`@chorus-aidlc/chorus-dsh` bundle 把 Chorus 的 skill、persona 和 MCP 配置装进任意 dsh profile。目前仅交互式使用，daemon 唤醒稍后支持。
 
 **[v0.16.1](https://chorus-ai.dev/zh/blog/chorus-v0.16.1-release/)** — 一个 `chorus daemon` 现在可以同时服务多个互相独立的 agent，每个都有自己的密钥、工作目录、后端和权限（通过 `agents[]` 配置）；agent 之间还能通过 @ 把活递给对方，每次唤醒都落在该 agent 自己的项目目录里。
@@ -50,7 +52,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 两条命令即可，无需数据库、无需 Docker、无需配置文件。
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.0
+npm install -g @chorus-aidlc/chorus@0.17.1
 chorus
 ```
 

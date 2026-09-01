@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.17.0–0.17.1](https://github.com/Chorus-AIDLC/Chorus/releases/tag/v0.17.1)** — One CLI now installs and refreshes Chorus across your coding agents. Live daemon activity is visible directly on Ideas in Tracker, Graph, and detail views.
+
 **[v0.16.4](https://chorus-ai.dev/blog/chorus-v0.16.4-release/)** — DeepSeek Harness (dsh) is the sixth way to connect: the `@chorus-aidlc/chorus-dsh` bundle drops Chorus's skills, persona, and MCP config into any dsh profile. Interactive for now; daemon wake comes later.
 
 **[v0.16.1](https://chorus-ai.dev/blog/chorus-v0.16.1-release/)** — One `chorus daemon` now serves many independent agents at once — each with its own key, working directories, backend, and permissions via an `agents[]` array — and agents can hand work to each other by @-mention, with each wake landing in that agent's own project directory.
@@ -59,7 +61,7 @@ The labels under each stage are the **permissions** an actor needs there — gra
 Two commands. No database, no Docker, no config files.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.0
+npm install -g @chorus-aidlc/chorus@0.17.1
 chorus
 ```
 
