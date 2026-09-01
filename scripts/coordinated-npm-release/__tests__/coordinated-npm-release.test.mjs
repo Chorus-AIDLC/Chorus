@@ -545,6 +545,7 @@ test("workflow is release-only, tokenless, minimally privileged, and provenance-
   assert.doesNotMatch(workflow, /registry-url|NPM_TOKEN|NODE_AUTH_TOKEN|_authToken/);
   assert.match(workflow, /runs-on: ubuntu-latest/);
   assert.match(workflow, /node-version: ['"]24['"]/);
+  assert.match(workflow, /npm install --global ['"]npm@11[.]19[.]1['"]/);
   assert.match(workflow, /CHORUS_RELEASE_EXPECT_PROVENANCE:.*repository[.]private/);
   assert.match(workflow, /prepare[.]mjs[\s\S]*publish[.]mjs/);
 });
