@@ -74,13 +74,15 @@ describe("readInstallState.supported — real installer vs guided fallback", () 
     getAdapter(id).readInstallState({ env: {}, home: "/nonexistent-xyz" }).supported;
 
   it("is true for every agent with a real automated installer", () => {
-    for (const id of ["claude", "codex", "opencode", "dsh", "openclaw", "kiro"]) {
+    for (const id of ["claude", "codex", "opencode", "dsh", "openclaw", "kiro", "pi"]) {
       expect(supportedOf(id)).toBe(true);
     }
   });
 
-  it("is false for a guided-only agent (pi)", () => {
-    expect(supportedOf("pi")).toBe(false);
+  it("is true for pi now — it flipped from guided to the npm-published `installPi`", () => {
+    // pi's install adapter runs `pi install npm:@chorus-aidlc/chorus-pi` (pi-init-integration),
+    // so it is a real installer (no `.guided` tag) → supported. No agent is guided-only anymore.
+    expect(supportedOf("pi")).toBe(true);
   });
 
   it("a guided() install is tagged so buildAdapter can exclude it", () => {

@@ -111,7 +111,7 @@ public/skill/                   ← Standalone skill (any MCP-compatible agent)
 | OpenSpec detection | SessionStart hook | SessionStart hook | Inline | `agentSpawn` hook | `session_start` extension event |
 | Runtime/hooks | Stateful bash hooks | Stateless bash hooks | TypeScript SSE runtime | Bash 3.2 hooks in `chorus.json` | TypeScript native extension; shell only for OpenSpec mirroring |
 | Task execution | Agent Teams waves | `spawn_agent` | Main-agent waves | Kiro subagents | `subagent_spawn` workers |
-| Install | Marketplace | `install-codex.sh` | OpenClaw plugin manager | `install-kiro.sh` | GitHub checkout + `pi install <checkout>/packages/chorus-pi` |
+| Install | Marketplace | `install-codex.sh` | OpenClaw plugin manager | `install-kiro.sh` | npm (`pi install npm:@chorus-aidlc/chorus-pi`) |
 
 When porting a change between plugins, preserve these intentional differences. Don't add state files to the Codex/OpenClaw plugins, don't use `$`-prefix outside Codex, keep OpenClaw's `chorus__` names and manual-session/inline-detection wording, and preserve Kiro's `chorus-` skill prefix, `@chorus/<tool>` matchers, and `__CHORUS_BIN__` placeholder. For Pi, use `/skill:<name>`, `subagent_spawn`, native extension events, and plain-text interaction; do not introduce Claude hooks or Codex session wording.
 
@@ -246,10 +246,10 @@ Users update via:
 codex plugin update chorus@chorus-plugins      # Codex
 # OpenClaw: reinstall/update via the OpenClaw plugin manager (npm spec @chorus-aidlc/chorus-openclaw-plugin)
 # Kiro: re-run `chorus agents add --agents kiro` (idempotent; installs the .kiro/ tree via the file-template installer)
-# Pi: pull the Chorus checkout, then reinstall its packages/chorus-pi local path
+# Pi: pi install npm:@chorus-aidlc/chorus-pi   (reinstall to pull the latest published extension)
 ```
 
-Pi accepts GitHub sources such as `pi install git:github.com/user/repo@ref`, but it does not support selecting a package subdirectory. Do not point it at the Chorus monorepo root: Pi would inspect the root `package.json`, not `packages/chorus-pi/package.json`. Until Pi is published from a dedicated package-root repository or branch, clone/pull Chorus and install the package by local path.
+Pi is published to npm as `@chorus-aidlc/chorus-pi` and installs with `pi install npm:@chorus-aidlc/chorus-pi` — the same path `chorus agents add` automates (select Pi, or `--agents pi`). The old sparse-git-checkout / local-path workaround is no longer needed; local-path `pi install ./packages/chorus-pi` is now only for developing chorus-pi from the repo checkout.
 
 ## Skill Content Changes — Seven Surfaces
 

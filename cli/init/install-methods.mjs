@@ -469,6 +469,52 @@ export function installOpenclaw(ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Pi — VERIFIED against docs/CONNECT_PI.md + packages/chorus-pi/README.md
+// (chorus-pi ships to npm as @chorus-aidlc/chorus-pi):
+//   `pi install npm:@chorus-aidlc/chorus-pi`
+// pi installs extensions straight from an npm source (the `npm:` prefix on the
+// spec, like OpenClaw). There is NO marketplace step and NO separate enable
+// step (unlike claude / codex / openclaw). pi has no permission system and loads
+// TypeScript via jiti, so the package publishes source as-is — nothing to build.
+//
+// Graceful degradation: if the `pi` binary is absent we surface the exact manual
+// command as UNSUPPORTED guidance (never a hard FAILED — UNSUPPORTED is not a
+// FAILURE_ACTION, so `chorus init` does not abort) and run ZERO commands. This
+// follows the "no guessed command / no crash" rule the other adapters share.
+//
+// VERIFIED-gap: `@chorus-aidlc/chorus-pi` is published at the next coordinated
+// release (A2), so the npm-install path could not be exercised end-to-end on this
+// build host. The command shape + graceful fallback are implemented; the spec's
+// `pi install npm:<pkg>` form is the documented, reviewed command.
+// ---------------------------------------------------------------------------
+const PI_NPM_SPEC = "npm:@chorus-aidlc/chorus-pi";
+
+export function installPi(ctx) {
+  const run = ctx.run ?? runCommand;
+  const env = ctx.env ?? process.env;
+
+  // `pi` must be on PATH to run the install. Probe via PATH (NOT `run`) so an
+  // absent pi surfaces the manual command and executes NOTHING — and, because
+  // UNSUPPORTED is not a FAILURE_ACTION, never aborts `chorus init`. Injectable
+  // for unit tests (mirrors installDsh's pnpm precheck).
+  const hasBinary = ctx.binaryOnPath ?? binaryOnPath;
+  if (!hasBinary(["pi"], { env })) {
+    return out(
+      "pi",
+      UNSUPPORTED,
+      `pi CLI not found on PATH — install the Chorus extension manually once pi is available: \`pi install ${PI_NPM_SPEC}\``,
+    );
+  }
+
+  // pi's install is idempotent (re-running reinstalls/updates the extension), and
+  // pi exposes no verifiable install-state file, so there is no readState probe —
+  // a re-run simply reinstalls the latest published extension.
+  const r = run("pi", ["install", PI_NPM_SPEC], { env });
+  if (!r.ok) return out("pi", FAILED, `pi install failed: ${errText(r)}`);
+  return out("pi", INSTALLED, `installed ${PI_NPM_SPEC} via pi install`);
+}
+
+// ---------------------------------------------------------------------------
 // Kiro — NATIVE FILE-TEMPLATE install (Kiro has NO plugin CLI). Its "plugin" is a
 // set of loose files under .kiro/ (what public/install-kiro.sh drops). We
 // re-implement that drop cross-platform in pure JS (no bash/curl), downloading
@@ -546,9 +592,13 @@ export async function installKiro(ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Guided (not automated). These agents have no verified native install path, so
-// — per the "no guessed command" rule — we surface a precise next step instead
-// of running an unverified command.
+// Guided (not automated) — the fallback mechanism for an agent that has no
+// verified native install path: surface a precise next step instead of running
+// an unverified command (the "no guessed command" rule). NO agent currently
+// ships as guided — claude / codex / opencode / openclaw / kiro / dsh / pi all
+// have real installers (pi flipped to `installPi` once @chorus-aidlc/chorus-pi
+// shipped to npm). `guided()` is kept as the mechanism for a future agent added
+// before its install command is verified.
 // ---------------------------------------------------------------------------
 export function guided(agentId, detail) {
   // Tag the returned function so adapters.mjs can tell a GUIDED (unsupported)
@@ -560,10 +610,6 @@ export function guided(agentId, detail) {
   return fn;
 }
 
-export const GUIDED_MESSAGES = {
-  // Pi HAS an extension surface (`pi install <source>`) — this message must NOT
-  // claim otherwise. What's missing is a published Chorus Pi extension for
-  // `chorus agents add` to install automatically, so the accurate guidance is the real
-  // manual command against that source once it's available.
-  pi: "Pi installs extensions with `pi install <source>`; Chorus does not yet publish a Pi extension for `chorus agents add` to automate, so install it manually with `pi install <source>` when a Chorus Pi source is available.",
-};
+// No agents are currently guided; kept as the stable export the adapter registry
+// and tests reference. A future not-yet-verified agent adds its message here.
+export const GUIDED_MESSAGES = {};

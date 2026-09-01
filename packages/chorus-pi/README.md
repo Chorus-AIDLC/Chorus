@@ -27,6 +27,26 @@ files into `~/.pi/agent/agents/`.
 
 Then configure `.mcp.json` and env vars — see [`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md).
 
+`chorus init` (a.k.a. `chorus agents add`) automates this: select **Pi** in the agent
+checklist and it runs `pi install npm:@chorus-aidlc/chorus-pi` for you (degrading to the
+manual command if the `pi` CLI is absent).
+
+## Wakeable daemon backend (`--agent pi`)
+
+pi is a first-class **wakeable** Chorus daemon backend. The Chorus daemon can wake a
+headless pi session on remote dispatch (assigned idea/task, `@mention`, proposal decision),
+so pi joins the reversed-conversation loop like the Claude Code / Codex / Kiro backends:
+
+```bash
+chorus daemon --agent pi
+```
+
+The daemon resolves `pi` from PATH (override with `CHORUS_PI_PATH`), runs it headless
+(`pi --mode json -p`), and exports `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE`
+into the woken session. pi has no permission system, so no sandbox flag is involved. `chorus init`
+seeds a selected pi agent as wakeable in `~/.chorus/daemon.json` and can install the boot daemon
+that wakes it. See [`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md#run-pi-as-a-wakeable-daemon-backend).
+
 ## Why Pi is the lowest-friction target
 
 - **MCP: zero installer.** `pi-mcp-adapter` auto-discovers the repo's `.mcp.json` (literal URL + Bearer — no `${VAR}` expansion needed, unlike Codex). The main agent gets all 40+ `chorus_*` tools with no setup script.

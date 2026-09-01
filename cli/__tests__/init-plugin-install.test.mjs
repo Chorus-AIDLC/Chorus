@@ -15,6 +15,7 @@ import {
   installOpencode,
   installDsh,
   installOpenclaw,
+  installPi,
   readCodexInstallState,
   readOpencodeInstallState,
   readDshInstallState,
@@ -539,20 +540,47 @@ describe("openclawMinHostVersion (read from the package, not hardcoded)", () => 
   });
 });
 
-describe("guided (unverified agents)", () => {
-  it("returns an UNSUPPORTED outcome with the guidance message", () => {
-    // dsh + openclaw + kiro are NO LONGER guided — they have real installers now.
-    // Only pi remains guided (deferred).
-    for (const id of ["pi"]) {
-      const res = guided(id, GUIDED_MESSAGES[id])();
-      expect(res.action).toBe(UNSUPPORTED);
-      expect(res.detail).toBe(GUIDED_MESSAGES[id]);
-    }
+describe("installPi (npm-published pi extension)", () => {
+  const PI_SPEC = "npm:@chorus-aidlc/chorus-pi";
+
+  it("runs `pi install npm:@chorus-aidlc/chorus-pi` when pi is on PATH", () => {
+    const run = fakeRun(() => ({ ok: true, code: 0, stdout: "", stderr: "" }));
+    const res = installPi({ run, env: {}, binaryOnPath: () => true });
+    expect(res.action).toBe(INSTALLED);
+    expect(run.calls).toHaveLength(1);
+    expect(run.calls[0].cmd).toBe("pi");
+    expect(run.calls[0].args).toEqual(["install", PI_SPEC]);
   });
-  it("no longer carries stale dsh / openclaw / kiro guided messages", () => {
+
+  it("degrades gracefully (UNSUPPORTED + manual command) when pi is absent, running NOTHING", () => {
+    const run = fakeRun();
+    const res = installPi({ run, env: {}, binaryOnPath: () => false });
+    expect(res.action).toBe(UNSUPPORTED); // NOT a FAILURE_ACTION → init never aborts
+    expect(res.detail).toContain(`pi install ${PI_SPEC}`);
+    expect(run.calls).toHaveLength(0); // no guessed command executed
+  });
+
+  it("reports FAILED (not a throw) when the pi install command fails", () => {
+    const run = fakeRun(() => ({ ok: false, code: 1, stderr: "boom" }));
+    const res = installPi({ run, env: {}, binaryOnPath: () => true });
+    expect(res.action).toBe(FAILED);
+    expect(res.detail).toContain("boom");
+  });
+});
+
+describe("guided fallback mechanism", () => {
+  it("returns an UNSUPPORTED outcome with the guidance message", () => {
+    // guided() stays as the mechanism for a future not-yet-verified agent.
+    const res = guided("someagent", "install it by hand")();
+    expect(res.action).toBe(UNSUPPORTED);
+    expect(res.detail).toBe("install it by hand");
+  });
+  it("no agent is guided anymore — pi flipped to a real installer with the rest", () => {
+    // dsh/openclaw/kiro got real installers earlier; pi now runs `installPi`.
     expect(GUIDED_MESSAGES.dsh).toBeUndefined();
     expect(GUIDED_MESSAGES.openclaw).toBeUndefined();
     expect(GUIDED_MESSAGES.kiro).toBeUndefined();
+    expect(GUIDED_MESSAGES.pi).toBeUndefined();
   });
 });
 
