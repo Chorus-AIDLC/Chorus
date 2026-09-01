@@ -363,9 +363,6 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: '*'
         version: 0.84.4(@modelcontextprotocol/sdk@1.26.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3)
-      '@narumitw/pi-subagents':
-        specifier: '*'
-        version: 3.0.1(@earendil-works/pi-ai@0.84.4(@modelcontextprotocol/sdk@1.26.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-coding-agent@0.84.4(@modelcontextprotocol/sdk@1.26.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@0.84.4)(typebox@1.3.7)
 
   packages/landing:
     dependencies:
@@ -1670,14 +1667,6 @@ packages:
 
   '@napi-rs/wasm-runtime@1.1.1':
     resolution: {integrity: sha512-p64ah1M1ld8xjWv3qbvFwHiFVWrq1yFvV4f7w+mzaqiR4IlSgkqhcRdHwsGgomwzBH51sRY4NEowLxnaBjcW/A==}
-
-  '@narumitw/pi-subagents@3.0.1':
-    resolution: {integrity: sha512-LDY4rpPCT6J22AoVFZeWk6vkuB9zQVgsNcOOsrnTrjaUeziP/WaggWppobC1p4rZNlfmt94v0HRsvFlTFkzj7A==}
-    peerDependencies:
-      '@earendil-works/pi-ai': '*'
-      '@earendil-works/pi-coding-agent': '*'
-      '@earendil-works/pi-tui': '*'
-      typebox: '*'
 
   '@next/env@15.5.12':
     resolution: {integrity: sha512-pUvdJN1on574wQHjaBfNGDt9Mz5utDSZFsIIQkMzPgNS8ZvT4H2mwOrOIClwsQOb6EGx5M76/CZr6G8i6pSpLg==}
@@ -9861,13 +9850,6 @@ snapshots:
       '@emnapi/runtime': 1.8.1
       '@tybys/wasm-util': 0.10.1
     optional: true
-
-  '@narumitw/pi-subagents@3.0.1(@earendil-works/pi-ai@0.84.4(@modelcontextprotocol/sdk@1.26.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-coding-agent@0.84.4(@modelcontextprotocol/sdk@1.26.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-tui@0.84.4)(typebox@1.3.7)':
-    dependencies:
-      '@earendil-works/pi-ai': 0.84.4(@modelcontextprotocol/sdk@1.26.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3)
-      '@earendil-works/pi-coding-agent': 0.84.4(@modelcontextprotocol/sdk@1.26.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3)
-      '@earendil-works/pi-tui': 0.84.4
-      typebox: 1.3.7
 
   '@next/env@15.5.12': {}
 

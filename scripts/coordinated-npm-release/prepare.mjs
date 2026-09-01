@@ -194,7 +194,7 @@ try {
     prepareResultPath,
     `${JSON.stringify({ releaseTag, version, packages: prepared }, null, 2)}\n`,
   );
-  console.log(`\nPrepared all three packages: ${prepareResultPath}`);
+  console.log(`\nPrepared all ${prepared.length} packages: ${prepareResultPath}`);
 } catch (error) {
   if (currentPackage) setStatus(currentPackage, "prepare-failed");
   await appendJobSummary(summaryTable(version, statuses, "Coordinated npm release preparation failed"));

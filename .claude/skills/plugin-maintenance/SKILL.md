@@ -176,7 +176,7 @@ dsh tracks the **app version** (currently `0.16.3`), NOT the 0.9.x skill sequenc
 
 ### Coordinated npm release identity
 
-When cutting an application release, the three public npm packages are one
+When cutting an application release, the four public npm packages are one
 lockstep release unit. Set the same `X.Y.Z` in:
 
 1. root `package.json` (`@chorus-aidlc/chorus`);
@@ -184,15 +184,20 @@ lockstep release unit. Set the same `X.Y.Z` in:
    (`@chorus-aidlc/chorus-openclaw-plugin`) and refresh its standalone
    `package-lock.json`;
 3. `packages/chorus-dsh/package.json`
-   (`@chorus-aidlc/chorus-dsh`).
+   (`@chorus-aidlc/chorus-dsh`);
+4. `packages/chorus-pi/package.json`
+   (`@chorus-aidlc/chorus-pi`) — no standalone lockfile to refresh (it rides the
+   workspace `pnpm-lock.yaml`); a plain version bump does not dirty the lockfile,
+   but if you changed its deps run `pnpm install --lockfile-only` at the repo
+   root (the release preflight runs `pnpm install --frozen-lockfile`).
 
 Publishing GitHub Release `vX.Y.Z` triggers
-`.github/workflows/publish-npm.yml`. The workflow completes all three package
-build/pack contracts before any upload, then publishes CLI → OpenClaw → dsh.
-The older interactive package publish scripts are maintenance tools, not the CI
-release entry point.
+`.github/workflows/publish-npm.yml`. The workflow completes all four package
+build/pack contracts before any upload, then publishes CLI → OpenClaw → dsh →
+chorus-pi. The older interactive package publish scripts are maintenance tools,
+not the CI release entry point.
 
-For all three npm package settings, Trusted Publisher must use the exact
+For all four npm package settings, Trusted Publisher must use the exact
 workflow filename `publish-npm.yml` in the matching GitHub repository. Leave
 the npm Environment field blank while the workflow job has no `environment`;
 if an Environment is introduced, configure the exact same case-sensitive name
@@ -200,6 +205,10 @@ on npm and on the workflow job. Keep `id-token: write`, do not add
 `NPM_TOKEN`, `NODE_AUTH_TOKEN`, or a setup-node token placeholder, and do not
 disable npm's automatic provenance. A public-repository publish is accepted
 only after the workflow observes its SLSA provenance attestation.
+`@chorus-aidlc/chorus-pi` is the newest package: its Trusted Publisher must be
+registered on npmjs.org before its first coordinated publish, or the run stops
+at chorus-pi with the first three already published — a human/ops step, not
+something to fake or token-shim around.
 
 For partial publication, repair the external problem and choose **Re-run jobs**
 on the same failed Actions run. Do not create a replacement Release/version.
