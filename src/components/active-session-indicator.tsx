@@ -43,6 +43,7 @@ export function ActiveSessionIndicator({
 
   if (sessions.length === 0) return null;
   const hasOpenableSession = sessions.some((session) => session.canOpen);
+  const opensDirectly = sessions.length === 1 && sessions[0].canOpen;
   const leadSession = sessions[0];
   const avatarSize = surface === "graph" ? 22 : 20;
 
@@ -62,64 +63,81 @@ export function ActiveSessionIndicator({
     onSelect(session);
   };
 
+  const trigger = (
+    <Button
+      type="button"
+      variant="outline"
+      size={surface === "tracker" ? "xs" : "icon-sm"}
+      data-testid={`${surface}-active-session-indicator`}
+      aria-label={t(
+        hasOpenableSession ? "indicatorLabel" : "statusOnlyIndicatorLabel",
+        { count: sessions.length },
+      )}
+      aria-disabled={!hasOpenableSession}
+      aria-haspopup={sessions.length > 1 ? "dialog" : undefined}
+      onPointerDown={(event) => event.stopPropagation()}
+      onPointerEnter={
+        opensDirectly
+          ? undefined
+          : (event) => {
+              // Touch emits pointer-enter/leave around a tap but has no hover
+              // intent. Let Radix's click trigger own touch activation.
+              if (event.pointerType === "touch") return;
+              cancelClose();
+              setOpen(true);
+            }
+      }
+      onPointerLeave={
+        opensDirectly
+          ? undefined
+          : (event) => {
+              if (event.pointerType !== "touch") scheduleClose();
+            }
+      }
+      onFocus={opensDirectly ? undefined : () => setOpen(true)}
+      onClick={(event) => {
+        event.stopPropagation();
+        cancelClose();
+
+        if (opensDirectly) {
+          select(leadSession);
+          return;
+        }
+
+        // A chooser opened by hover or keyboard focus must stay open
+        // when the same gesture clicks the trigger. Otherwise, leave the
+        // event unprevented so Radix performs its native click/tap toggle.
+        if (open) event.preventDefault();
+      }}
+      onKeyDown={(event) => event.stopPropagation()}
+      className={cn(
+        "group/active relative gap-1.5 overflow-visible border-emerald-500/35 bg-emerald-500/10 font-semibold text-emerald-700 shadow-none transition-[background-color,border-color,box-shadow] hover:border-emerald-500/60 hover:bg-emerald-500/15 hover:text-emerald-700 hover:shadow-[0_3px_10px_-5px_rgba(16,185,129,0.8)] focus-visible:border-emerald-500 focus-visible:ring-emerald-500/50 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300 dark:hover:border-emerald-500/60 dark:hover:bg-emerald-500/15 dark:hover:text-emerald-300",
+        surface === "tracker"
+          ? "h-7 min-w-7 px-1 text-[11px]"
+          : surface === "sidebar"
+            ? "h-8 min-w-8 px-1 text-[11px]"
+            : "h-9 min-w-9 px-1 text-[11px] shadow-sm",
+        className,
+      )}
+    >
+      <span className="relative shrink-0" aria-hidden>
+        <AgentAvatar
+          name={sessionIdentity(leadSession)}
+          size={avatarSize}
+          className="rounded-full ring-1 ring-emerald-600/25"
+        />
+        <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full border-2 border-card bg-emerald-500" />
+        <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-emerald-400/75 motion-safe:animate-ping motion-reduce:animate-none" />
+      </span>
+      {sessions.length > 1 && <span>{sessions.length}</span>}
+    </Button>
+  );
+
+  if (opensDirectly) return trigger;
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size={surface === "tracker" ? "xs" : "icon-sm"}
-          data-testid={`${surface}-active-session-indicator`}
-          aria-label={t(
-            hasOpenableSession ? "indicatorLabel" : "statusOnlyIndicatorLabel",
-            { count: sessions.length },
-          )}
-          aria-disabled={!hasOpenableSession}
-          aria-haspopup={sessions.length > 1 ? "dialog" : undefined}
-          onPointerDown={(event) => event.stopPropagation()}
-          onPointerEnter={() => {
-            cancelClose();
-            setOpen(true);
-          }}
-          onPointerLeave={scheduleClose}
-          onFocus={() => setOpen(true)}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (sessions.length === 1 && sessions[0].canOpen) {
-              event.preventDefault();
-              select(sessions[0]);
-              return;
-            }
-            // Hover/focus may already have opened the controlled popover before
-            // the click arrives. Prevent Radix Trigger's default toggle from
-            // immediately closing it again, which presents as a visible flash.
-            event.preventDefault();
-            cancelClose();
-            setOpen(true);
-          }}
-          onKeyDown={(event) => event.stopPropagation()}
-          className={cn(
-            "group/active relative gap-1.5 overflow-visible border-emerald-500/35 bg-emerald-500/10 font-semibold text-emerald-700 shadow-none transition-[background-color,border-color,box-shadow] hover:border-emerald-500/60 hover:bg-emerald-500/15 hover:text-emerald-700 hover:shadow-[0_3px_10px_-5px_rgba(16,185,129,0.8)] focus-visible:border-emerald-500 focus-visible:ring-emerald-500/50 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300 dark:hover:border-emerald-500/60 dark:hover:bg-emerald-500/15 dark:hover:text-emerald-300",
-            surface === "tracker"
-              ? "h-7 min-w-7 px-1 text-[11px]"
-              : surface === "sidebar"
-                ? "h-8 min-w-8 px-1 text-[11px]"
-                : "h-9 min-w-9 px-1 text-[11px] shadow-sm",
-            className,
-          )}
-        >
-          <span className="relative shrink-0" aria-hidden>
-            <AgentAvatar
-              name={sessionIdentity(leadSession)}
-              size={avatarSize}
-              className="rounded-full ring-1 ring-emerald-600/25"
-            />
-            <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full border-2 border-card bg-emerald-500" />
-            <span className="absolute -bottom-0.5 -right-0.5 size-2 rounded-full bg-emerald-400/75 motion-safe:animate-ping motion-reduce:animate-none" />
-          </span>
-          {sessions.length > 1 && <span>{sessions.length}</span>}
-        </Button>
-      </PopoverTrigger>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent
         align="start"
         sideOffset={6}
