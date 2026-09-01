@@ -1,0 +1,109 @@
+{
+  "packages": [
+    {
+      "label": "Chorus CLI",
+      "directory": ".",
+      "packageName": "@chorus-aidlc/chorus",
+      "installCommands": [
+        "pnpm install --frozen-lockfile"
+      ],
+      "checkCommands": [
+        "pnpm exec eslint src cli chorus.mjs scripts/prepack-pglite.mjs scripts/coordinated-npm-release",
+        "pnpm exec tsc --noEmit",
+        "pnpm test"
+      ],
+      "buildCommands": [
+        "pnpm build"
+      ],
+      "packageCommands": [
+        "node scripts/prepack-pglite.mjs"
+      ],
+      "requiredFiles": [
+        "package.json",
+        "chorus.mjs",
+        "cli/daemon.mjs",
+        "prisma/schema.prisma",
+        ".next/standalone/server.js"
+      ],
+      "forbiddenPatterns": [
+        "^node_modules/",
+        "(^|/)__tests__/",
+        "(^|/)\\.env($|\\.)"
+      ],
+      "postPackCheck": "chorus-cli-smoke"
+    },
+    {
+      "label": "OpenClaw plugin",
+      "directory": "packages/openclaw-plugin",
+      "packageName": "@chorus-aidlc/chorus-openclaw-plugin",
+      "installCommands": [
+        "npm ci --ignore-scripts --no-audit --no-fund"
+      ],
+      "checkCommands": [
+        "npm run clean",
+        "npm run typecheck",
+        "npm run test"
+      ],
+      "buildCommands": [
+        "npm run build"
+      ],
+      "packageCommands": [
+        "test -f dist/index.js",
+        "grep -F 'id: \"chorus-openclaw-plugin\"' dist/index.js"
+      ],
+      "requiredFiles": [
+        "package.json",
+        "dist/index.js",
+        "src/index.ts",
+        "openclaw.plugin.json",
+        "README.md"
+      ],
+      "forbiddenPatterns": [
+        "(^|/)node_modules/",
+        "(^|/)__tests__/",
+        "(^|/)bin/publish\\.sh$",
+        "(^|/)\\.env($|\\.)"
+      ],
+      "postPackCheck": "openclaw-plugin"
+    },
+    {
+      "label": "dsh plugin",
+      "directory": "packages/chorus-dsh",
+      "packageName": "@chorus-aidlc/chorus-dsh",
+      "installCommands": [
+        "pnpm install --frozen-lockfile"
+      ],
+      "checkCommands": [
+        "pnpm lint",
+        "pnpm typecheck",
+        "pnpm test",
+        "pnpm run check:dsh-contract"
+      ],
+      "buildCommands": [
+        "pnpm build"
+      ],
+      "packageCommands": [
+        "pnpm run check:package",
+        "pnpm run check:pack"
+      ],
+      "requiredFiles": [
+        "package.json",
+        "bin/chorus-mcp-call.mjs",
+        "dist/chorus-dsh.mjs",
+        "dist/index.d.ts",
+        "dist/persona.mjs",
+        "dist/persona.d.ts",
+        "cordis.patch.yml",
+        "README.md"
+      ],
+      "forbiddenPatterns": [
+        "(^|/)node_modules/",
+        "(^|/)tests/",
+        "(^|/)install-dsh",
+        "(^|/)agent-presets/",
+        "(^|/)\\.env($|\\.)"
+      ],
+      "postPackCheck": "none"
+    }
+  ]
+}

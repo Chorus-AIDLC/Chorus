@@ -37,6 +37,9 @@ jobs:
       - name: Run tests with coverage
         run: pnpm test:coverage -- --reporter=json --outputFile=coverage/test-results.json
 
+      - name: Run coordinated package-contract tests
+        run: pnpm test:release-contract
+
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
