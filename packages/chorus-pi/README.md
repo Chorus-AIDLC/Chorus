@@ -25,11 +25,17 @@ reviewer agents are discovered directly from the package's own `agents/` dir —
 there is **no** separate subagents dependency and **no** manual copy of agent
 files into `~/.pi/agent/agents/`.
 
-Then configure `.mcp.json` and env vars — see [`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md).
+Then configure `mcp.json` and env vars — see [`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md).
 
 `chorus init` (a.k.a. `chorus agents add`) automates this: select **Pi** in the agent
-checklist and it runs `pi install npm:@chorus-aidlc/chorus-pi` for you (degrading to the
-manual command if the `pi` CLI is absent).
+checklist and it runs both installs (`pi install npm:pi-mcp-adapter && pi install
+npm:@chorus-aidlc/chorus-pi`, degrading to the manual commands if the `pi` CLI is absent)
+**and** writes pi's global `~/.pi/agent/mcp.json` with an `mcpServers.chorus` entry whose
+`Authorization` header references the key by environment variable (`Bearer ${CHORUS_API_KEY}`)
+— the resolved endpoint URL is a literal, and **no `cho_` key is written to disk** (the same
+keyless model Claude Code and Codex use). You still export `CHORUS_API_KEY` (and
+`CHORUS_AGENT_PROFILE`) in the shell that launches interactive pi — pi has no settings env-file
+to persist them into; the daemon spawner injects them for the wake path.
 
 ## Wakeable daemon backend (`--agent pi`)
 
@@ -49,7 +55,7 @@ that wakes it. See [`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md#run-pi-as-a-w
 
 ## Why Pi is the lowest-friction target
 
-- **MCP: zero installer.** `pi-mcp-adapter` auto-discovers the repo's `.mcp.json` (literal URL + Bearer — no `${VAR}` expansion needed, unlike Codex). The main agent gets all 40+ `chorus_*` tools with no setup script.
+- **MCP: adapter path, keyless config.** `pi-mcp-adapter` reads the `mcp.json` `chorus agents add` writes at `~/.pi/agent/mcp.json` (or a project-root `.mcp.json`) and exposes all 40+ `chorus_*` tools — the extension never registers tools itself. The `Authorization` header references the key by env var (`Bearer ${CHORUS_API_KEY}`, which the adapter interpolates at connect time), so no `cho_` key lands on disk. A literal Bearer also works, but the env-referenced form is what the CLI writes.
 - **Hooks: TypeScript, not bash.** The extension replaces ~10 bash hook scripts with one TS file. No `curl`/`jq`, no Bash 3.2 compatibility traps (the `${2:-{}}` JSON-parse bug that plagued the Codex port is structurally impossible here).
 - **Sub-agent sessions: automatic.** By monitoring `subagent` tool events, the extension auto-creates a Chorus session for each worker task in a dispatch and closes it when the tool call returns — a capability the Codex port lacks (Codex has no sub-agent lifecycle events, so its workers manage sessions manually).
 - **Skills: same standard.** Pi implements the Agent Skills standard, so the skill bodies port with find/replace only (Claude's `Task` tool → the `subagent` tool; `/chorus:develop` → `/skill:develop`).

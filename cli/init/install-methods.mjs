@@ -471,22 +471,30 @@ export function installOpenclaw(ctx) {
 // ---------------------------------------------------------------------------
 // Pi — VERIFIED against docs/CONNECT_PI.md + packages/chorus-pi/README.md
 // (chorus-pi ships to npm as @chorus-aidlc/chorus-pi):
-//   `pi install npm:@chorus-aidlc/chorus-pi`
+//   `pi install npm:pi-mcp-adapter`            (the MCP adapter — exposes chorus_* tools)
+//   `pi install npm:@chorus-aidlc/chorus-pi`   (the Chorus skills/agents/extension)
 // pi installs extensions straight from an npm source (the `npm:` prefix on the
 // spec, like OpenClaw). There is NO marketplace step and NO separate enable
 // step (unlike claude / codex / openclaw). pi has no permission system and loads
 // TypeScript via jiti, so the package publishes source as-is — nothing to build.
 //
+// TWO packages: pi reaches the Chorus MCP tools ONLY through `pi-mcp-adapter` (which reads
+// the mcp.json `chorus agents add` writes — see credential-seed's pi branch + pi-mcp-config.mjs);
+// chorus.ts does NOT register tools itself. So we install the adapter FIRST (the tool surface),
+// then chorus-pi (the skills / reviewer agents / session extension). Both are idempotent.
+//
 // Graceful degradation: if the `pi` binary is absent we surface the exact manual
-// command as UNSUPPORTED guidance (never a hard FAILED — UNSUPPORTED is not a
+// commands as UNSUPPORTED guidance (never a hard FAILED — UNSUPPORTED is not a
 // FAILURE_ACTION, so `chorus init` does not abort) and run ZERO commands. This
 // follows the "no guessed command / no crash" rule the other adapters share.
 //
 // VERIFIED-gap: `@chorus-aidlc/chorus-pi` is published at the next coordinated
 // release (A2), so the npm-install path could not be exercised end-to-end on this
-// build host. The command shape + graceful fallback are implemented; the spec's
-// `pi install npm:<pkg>` form is the documented, reviewed command.
+// build host. The command shapes + graceful fallback are implemented; the spec's
+// `pi install npm:<pkg>` form is the documented, reviewed command (pi-mcp-adapter is
+// published — verified 2.32.1).
 // ---------------------------------------------------------------------------
+const PI_ADAPTER_SPEC = "npm:pi-mcp-adapter";
 const PI_NPM_SPEC = "npm:@chorus-aidlc/chorus-pi";
 
 export function installPi(ctx) {
@@ -494,7 +502,7 @@ export function installPi(ctx) {
   const env = ctx.env ?? process.env;
 
   // `pi` must be on PATH to run the install. Probe via PATH (NOT `run`) so an
-  // absent pi surfaces the manual command and executes NOTHING — and, because
+  // absent pi surfaces the manual commands and executes NOTHING — and, because
   // UNSUPPORTED is not a FAILURE_ACTION, never aborts `chorus init`. Injectable
   // for unit tests (mirrors installDsh's pnpm precheck).
   const hasBinary = ctx.binaryOnPath ?? binaryOnPath;
@@ -502,16 +510,20 @@ export function installPi(ctx) {
     return out(
       "pi",
       UNSUPPORTED,
-      `pi CLI not found on PATH — install the Chorus extension manually once pi is available: \`pi install ${PI_NPM_SPEC}\``,
+      `pi CLI not found on PATH — install the Chorus extension manually once pi is available: ` +
+        `\`pi install ${PI_ADAPTER_SPEC} && pi install ${PI_NPM_SPEC}\``,
     );
   }
 
   // pi's install is idempotent (re-running reinstalls/updates the extension), and
   // pi exposes no verifiable install-state file, so there is no readState probe —
-  // a re-run simply reinstalls the latest published extension.
+  // a re-run simply reinstalls the latest published extensions. The MCP adapter is
+  // the tool surface, so install it FIRST; then the chorus-pi package.
+  const ra = run("pi", ["install", PI_ADAPTER_SPEC], { env });
+  if (!ra.ok) return out("pi", FAILED, `pi install ${PI_ADAPTER_SPEC} failed: ${errText(ra)}`);
   const r = run("pi", ["install", PI_NPM_SPEC], { env });
   if (!r.ok) return out("pi", FAILED, `pi install failed: ${errText(r)}`);
-  return out("pi", INSTALLED, `installed ${PI_NPM_SPEC} via pi install`);
+  return out("pi", INSTALLED, `installed ${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} via pi install`);
 }
 
 // ---------------------------------------------------------------------------

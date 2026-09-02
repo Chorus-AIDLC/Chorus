@@ -19,6 +19,7 @@ import {
   writeCodexEnvFile,
   readCodexEnvProfile,
 } from "../init/steps/credential-seed.mjs";
+import { writePiMcpServer } from "../init/pi-mcp-config.mjs";
 import { appendAgentConfig, writeLoginFile } from "../login.mjs";
 import { OUTCOME_ACTIONS } from "../init/contracts.mjs";
 
@@ -69,6 +70,10 @@ function baseCtx(over = {}) {
     // identity" → the write path (no repoint prompt); repoint tests override it.
     writeCodexEnv: vi.fn(({ envPath }) => envPath),
     readCodexEnvProfile: () => undefined,
+    // Stub the pi ~/.pi/agent/mcp.json sink so `pi`-selection tests never touch the REAL
+    // ~/.pi/agent/mcp.json. Tests that assert on the write override this (a recording fake, or
+    // the real writer against a temp PI_CODING_AGENT_DIR).
+    writePiMcp: vi.fn(({ configPath }) => configPath),
     ...over,
   };
 }
@@ -1062,6 +1067,135 @@ describe("seedCredentials — Codex ~/.codex/.env sink", () => {
         flags: { url: "https://c", apiKey: "cho_k" },
         appendAgent: fakeAppend(),
         writeCodexEnv: write,
+        writeClaudeSettings: fakeClaudeWrite(),
+      }),
+    );
+    expect(write.calls).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pi — the ~/.pi/agent/mcp.json ADAPTER sink. Unlike CC/Codex, pi has NO settings
+// env-file to persist the key + profile into, so `chorus agents add` instead writes pi's
+// global mcp.json (which pi-mcp-adapter reads) with an mcpServers.chorus entry whose
+// Authorization references the key by env var (`Bearer ${CHORUS_API_KEY}`) — NO literal key
+// on disk, the pi analogue of Codex's keyless [mcp_servers.chorus] bearer_token_env_var.
+// Because pi has no env-file, this write does NOT suppress the CHORUS_AGENT_PROFILE export
+// hint (interactive pi still needs the vars in its shell; the daemon injects them for wake).
+// ---------------------------------------------------------------------------
+/** A recording fake for ctx.writePiMcp — captures args, returns the path. */
+function fakePiWrite(overrideFn) {
+  const calls = [];
+  const fn = (args) => {
+    calls.push(args);
+    if (overrideFn) return overrideFn(args);
+    return args.configPath;
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+describe("seedCredentials — Pi ~/.pi/agent/mcp.json adapter sink", () => {
+  it("single pi: writes mcp.json under PI_CODING_AGENT_DIR with only { configPath, url } (no key), sets piMcpWritten, never leaks the key", async () => {
+    const write = fakePiWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["pi"],
+        env: { PI_CODING_AGENT_DIR: "/tmp/xyz-pi-agent" },
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writePiMcp: write,
+        validateCredentials: async () => ({ uuid: "u-new", name: "Pi Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.action).toBe(SEEDED);
+    // pi maps to the wakeable "pi" agentType (not offline).
+    expect(o.piMcpWritten).toBe(true);
+    // The writer is called with ONLY the config path + url — the API key is never passed here
+    // (it lives as the env-referenced ${CHORUS_API_KEY} the writer emits into the header).
+    expect(write.calls).toHaveLength(1);
+    expect(write.calls[0]).toEqual({ configPath: join("/tmp/xyz-pi-agent", "mcp.json"), url: "https://c" });
+    expect(write.calls[0]).not.toHaveProperty("apiKey");
+    expect(o.detail).not.toContain("cho_secret"); // key never echoed
+    expect(o.detail).toMatch(/mcp\.json \(0600\)/);
+    expect(o.detail).toContain("Bearer ${CHORUS_API_KEY}"); // env-ref, not the literal key
+  });
+
+  it("does NOT suppress the CHORUS_AGENT_PROFILE export hint (pi has no env-file) — no profileInEnv/settingsEnvWritten/codexEnvWritten", async () => {
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["pi"],
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writePiMcp: fakePiWrite(),
+        validateCredentials: async () => ({ uuid: "u-new", name: "Pi Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    // The identity is still carried (so the export hint prints), and none of the
+    // hint-suppression flags are set — interactive pi needs the vars exported in its shell.
+    expect(o.agentUuid).toBe("u-new");
+    expect(o.profileInEnv).toBeUndefined();
+    expect(o.settingsEnvWritten).toBeUndefined();
+    expect(o.codexEnvWritten).toBeUndefined();
+  });
+
+  it("real writer against a temp PI_CODING_AGENT_DIR: mcp.json has the env-ref, no literal key on disk", async () => {
+    const piAgentDir = mkdtempSync(join(tmpdir(), "pi-agent-"));
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["pi"],
+        env: { PI_CODING_AGENT_DIR: piAgentDir },
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writePiMcp: writePiMcpServer, // the REAL writer
+        validateCredentials: async () => ({ uuid: "u-real", name: "Pi Agent" }),
+      }),
+    );
+    expect([].concat(res)[0].piMcpWritten).toBe(true);
+    const p = join(piAgentDir, "mcp.json");
+    expect(existsSync(p)).toBe(true);
+    const txt = readFileSync(p, "utf8");
+    const cfg = JSON.parse(txt);
+    expect(cfg.mcpServers.chorus).toEqual({
+      type: "http",
+      url: "https://c/api/mcp",
+      headers: { Authorization: "Bearer ${CHORUS_API_KEY}" },
+    });
+    // The cho_ key is NEVER written to the mcp.json — only the env reference.
+    expect(txt).not.toContain("cho_secret");
+    expect(statSync(p).mode & 0o777).toBe(0o600);
+  });
+
+  it("write failure: actionable WARNING, no piMcpWritten, key never printed", async () => {
+    const write = fakePiWrite(() => {
+      throw new Error("EACCES: permission denied");
+    });
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["pi"],
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: fakeAppend(),
+        writePiMcp: write,
+        validateCredentials: async () => ({ uuid: "u-new", name: "Pi Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.piMcpWritten).toBeUndefined();
+    expect(o.detail).toMatch(/could not write/);
+    expect(o.detail).toMatch(/mcpServers\.chorus/);
+    expect(o.detail).not.toContain("cho_secret");
+  });
+
+  it("non-pi selection (claude): never calls writePiMcp", async () => {
+    const write = fakePiWrite();
+    await seedCredentials(
+      baseCtx({
+        selection: ["claude"],
+        flags: { url: "https://c", apiKey: "cho_k" },
+        appendAgent: fakeAppend(),
+        writePiMcp: write,
         writeClaudeSettings: fakeClaudeWrite(),
       }),
     );

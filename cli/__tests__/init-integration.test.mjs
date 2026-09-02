@@ -153,7 +153,9 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
       {
         io,
         version: "9.9.9",
-        env: { ...process.env, KIRO_DIR: kiroDir },
+        // pi (selected) → credential-seed writes the env-referenced ~/.pi/agent/mcp.json;
+        // point PI_CODING_AGENT_DIR at a temp dir so this test NEVER touches the real one.
+        env: { ...process.env, KIRO_DIR: kiroDir, PI_CODING_AGENT_DIR: mkdtempSync(join(tmpdir(), "init-pi-")) },
         detectAgents, // real
         orderedSteps, // real: [credential-seed(10), plugin-install(20), daemon-setup(30)]
         getAdapter, // real
@@ -257,6 +259,8 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
           CHORUS_DSH_PROFILE: "default",
           OPENCLAW_CONFIG_DIR: openclawDir,
           CLAUDE_CONFIG_DIR: claudeCfgDir, // isolate the real ~/.claude/settings.json write
+          // pi → credential-seed writes the env-referenced ~/.pi/agent/mcp.json; temp-isolate it.
+          PI_CODING_AGENT_DIR: mkdtempSync(join(tmpdir(), "init-pi-")),
         },
         detectAgents, // real
         orderedSteps, // real
@@ -369,7 +373,9 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
       {
         io,
         version: "9.9.9",
-        env: { ...process.env, OPENCODE_CONFIG_DIR: opencodeDir },
+        // pi (selected) → credential-seed writes the env-referenced ~/.pi/agent/mcp.json;
+        // point PI_CODING_AGENT_DIR at a temp dir so this test NEVER touches the real one.
+        env: { ...process.env, OPENCODE_CONFIG_DIR: opencodeDir, PI_CODING_AGENT_DIR: mkdtempSync(join(tmpdir(), "init-pi-")) },
         detectAgents,
         orderedSteps,
         getAdapter,

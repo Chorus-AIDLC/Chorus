@@ -6,6 +6,16 @@ Pi can also run as a **wakeable `--agent pi` daemon backend** — Chorus wakes a
 
 > For Claude Code, see [CONNECT_CLAUDE_CODE.md](CONNECT_CLAUDE_CODE.md). For Codex, see [CONNECT_CODEX.md](CONNECT_CODEX.md).
 
+## Fastest path: `chorus agents add`
+
+`chorus init` (a.k.a. `chorus agents add`) wires everything below in one command — select **Pi** in the agent checklist and it:
+
+- installs **`pi-mcp-adapter`** (the MCP tool surface) and then **`@chorus-aidlc/chorus-pi`** (`pi install npm:pi-mcp-adapter && pi install npm:@chorus-aidlc/chorus-pi`), degrading to the manual commands if the `pi` CLI is absent;
+- writes pi's global **`~/.pi/agent/mcp.json`** with an `mcpServers.chorus` entry whose `Authorization` header references the key by **environment variable** (`Bearer ${CHORUS_API_KEY}`) — the resolved endpoint URL is a literal, and **no `cho_` key is ever written to disk** (the same keyless model Claude Code and Codex use);
+- seeds pi as a **wakeable** agent in `~/.chorus/daemon.json`.
+
+You still need `CHORUS_API_KEY` (and, to act as a specific agent, `CHORUS_AGENT_PROFILE`) exported in the shell that launches interactive pi — pi has no settings env-file to persist them into (the daemon spawner injects them for the wake path). The manual steps below are the equivalent by hand.
+
 ## Prerequisites
 
 - Chorus instance running and reachable (e.g., `http://localhost:8637` or a deployed URL)
@@ -14,7 +24,7 @@ Pi can also run as a **wakeable `--agent pi` daemon backend** — Chorus wakes a
   ```bash
   pi install npm:pi-mcp-adapter
   ```
-  > There is **no** separate subagents package to install — `chorus-pi` bundles pi's official `subagent` tool itself.
+  > `chorus agents add` installs this for you. There is **no** separate subagents package to install — `chorus-pi` bundles pi's official `subagent` tool itself.
 - A Chorus **API Key** (create one in the Web UI under **Settings → Agents → Create API Key**). Keys start with `cho_`.
 
 ## Step 1: Export environment variables
@@ -24,13 +34,13 @@ export CHORUS_URL="http://localhost:8637"
 export CHORUS_API_KEY="cho_your_api_key"
 ```
 
-> Add these to `~/.bashrc` or `~/.zshrc` so Pi can read them on startup. The extension reads `CHORUS_URL` (the Chorus root, or the full `/api/mcp` endpoint) and `CHORUS_API_KEY` to perform its own `chorus_checkin` and session lifecycle calls over MCP-over-HTTP.
+> Add these to `~/.bashrc` or `~/.zshrc` so Pi can read them on startup. The extension reads `CHORUS_URL` (the Chorus root, or the full `/api/mcp` endpoint) and `CHORUS_API_KEY` to perform its own `chorus_checkin` and session lifecycle calls over MCP-over-HTTP. The `mcp.json` below references `CHORUS_API_KEY` too, so the same export feeds both the extension and the MCP tool surface.
 >
 > **Note on URL format:** `CHORUS_URL` may be either the root URL (`https://chorus.example.com`) or the full MCP endpoint (`https://chorus.example.com/api/mcp`). The extension appends `/api/mcp` only when the URL has no path beyond the host.
 
 ## Step 2: Configure the MCP server
 
-Pi's `pi-mcp-adapter` auto-discovers standard MCP config files. Place a `.mcp.json` at the project root (or `~/.pi/agent/mcp.json` globally) so the main agent gets the `chorus_*` tools:
+Pi's `pi-mcp-adapter` auto-discovers standard MCP config files. `chorus agents add` writes the **global** config at `~/.pi/agent/mcp.json` (the Pi agent-dir override the adapter discovers by default; override the dir with `$PI_CODING_AGENT_DIR`) with the key **referenced from the environment** — no literal key on disk. To do it by hand, place this at that global path (or as a project-root `.mcp.json`):
 
 ```json
 {
@@ -39,14 +49,14 @@ Pi's `pi-mcp-adapter` auto-discovers standard MCP config files. Place a `.mcp.js
       "type": "http",
       "url": "http://localhost:8637/api/mcp",
       "headers": {
-        "Authorization": "Bearer cho_your_api_key"
+        "Authorization": "Bearer ${CHORUS_API_KEY}"
       }
     }
   }
 }
 ```
 
-> Unlike the Codex port, **no installer is required**. Pi reads this file directly — literal URL + literal Bearer work out of the box (Pi does not require `${VAR}` expansion in `.mcp.json`). If you already have `.claude.json` / `~/.codex/config.toml` configured, `pi-mcp-adapter` will discover and offer to adopt those too via `/mcp setup`.
+> `pi-mcp-adapter` interpolates `${CHORUS_API_KEY}` (and `$env:CHORUS_API_KEY`) in `url`/`headers` at connect time, so the `cho_` key stays in the environment — never in the file. The endpoint URL is written as a literal (it is not a secret). A literal `Bearer cho_...` also still works, but the env-referenced form is what `chorus agents add` writes so a shared/committed config never leaks a key. If you already have `.claude.json` / `~/.codex/config.toml` configured, `pi-mcp-adapter` will discover and offer to adopt those too via `/mcp setup`.
 
 ## Step 3: Install the chorus-pi package
 
@@ -92,7 +102,7 @@ If the checkin fails, the injected context will read `# Chorus: connection faile
 |---|---|---|---|
 | Extension form | `.claude-plugin/plugin.json` + `userConfig` | `.codex-plugin/plugin.json` + `interface` | TypeScript extension + `package.json` `pi.extensions` |
 | Hooks | `hooks.json` → bash scripts (~10 events) | `hooks.json` → bash scripts (4 events, stateless) | `pi.on(event)` in TS (20+ native events) |
-| MCP delivery | `.mcp.json` with `${VAR}` expansion | installer writes `config.toml` (no `${VAR}`) | `pi-mcp-adapter` auto-discovers `.mcp.json` (literal values) |
+| MCP delivery | `.mcp.json` with `${VAR}` expansion | installer writes `config.toml` (keyless `bearer_token_env_var`) | `chorus agents add` writes `~/.pi/agent/mcp.json`; `pi-mcp-adapter` reads it + interpolates `${CHORUS_API_KEY}` |
 | Sub-agent sessions | auto (SubagentStart/Stop events) | **manual** (no sub-agent events) | **auto** (`tool_call` mutation injects session UUID into the spawned task) |
 | Reviewer agents | `agents/*.md` (model/tools/disallowedTools) | `agents/openai.yaml` (UI metadata) | bundled `agents/*.md`, discovered package-relative (no copy) |
 | Distribution | marketplace + `/plugins` | installer + TUI `/plugins` | npm (`pi install npm:@chorus-aidlc/chorus-pi`) |
@@ -144,7 +154,7 @@ If you want the skill docs' `chorus_*` names to work verbatim for the main agent
 
 pi is a first-class **wakeable daemon backend**: the Chorus daemon can wake a headless pi session on remote dispatch (an idea/task assigned to your agent, an `@mention`, a proposal decision), so pi participates in the reversed-conversation loop like Claude Code / Codex / Kiro.
 
-The simplest path is `chorus init` (a.k.a. `chorus agents add`): select **Pi** in the agent checklist and it installs the extension (`pi install npm:@chorus-aidlc/chorus-pi`), seeds pi as a **wakeable** agent in `~/.chorus/daemon.json`, and — if you opt in — installs the boot daemon that wakes it. To wire it by hand instead, run the daemon with the pi backend:
+The simplest path is `chorus init` (a.k.a. `chorus agents add`): select **Pi** in the agent checklist and it installs the adapter + extension (`pi install npm:pi-mcp-adapter && pi install npm:@chorus-aidlc/chorus-pi`), writes the env-referenced `~/.pi/agent/mcp.json` (no literal key — see [Step 2](#step-2-configure-the-mcp-server)), seeds pi as a **wakeable** agent in `~/.chorus/daemon.json`, and — if you opt in — installs the boot daemon that wakes it. To wire it by hand instead, run the daemon with the pi backend:
 
 ```bash
 chorus daemon --agent pi
