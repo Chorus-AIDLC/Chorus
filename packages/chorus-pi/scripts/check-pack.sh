@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Pack @chorus-aidlc/chorus-pi into a throwaway dir and assert the tarball holds
-# exactly the runtime assets — the extension, lib, all skills, all 3 reviewer
-# agents, the bin wrapper, and README — and NONE of test/, node_modules/, .env,
-# or credential-like (cho_…) strings. Modeled on the dsh package's check-pack.sh
-# (but chorus-pi ships TypeScript source, not a dist/ build).
+# exactly the runtime assets — the extension, lib, all skills, all 4 bundled
+# agents (3 reviewers + chorus-worker), the bin wrapper, and README — and NONE of
+# test/, node_modules/, .env, or credential-like (cho_…) strings. Modeled on the
+# dsh package's check-pack.sh (but chorus-pi ships TypeScript source, not a dist/ build).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,6 +25,7 @@ for file in \
   package/agents/chorus-code-reviewer.md \
   package/agents/chorus-proposal-reviewer.md \
   package/agents/chorus-task-reviewer.md \
+  package/agents/chorus-worker.md \
   package/README.md; do
   if ! grep -Fx "$file" "$tmp/files.txt" >/dev/null; then
     echo "missing required file in tarball: $file" >&2

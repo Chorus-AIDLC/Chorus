@@ -6,6 +6,7 @@ Chorus AI-DLC collaboration platform extension for [Pi](https://pi.dev). Ported 
 
 - **12 skills** — `/skill:chorus`, `/skill:idea`, `/skill:proposal`, `/skill:develop`, `/skill:review`, `/skill:quick-dev`, `/skill:yolo`, `/skill:brainstorm`, `/skill:orchestrate`, `/skill:docs`, `/skill:chorus-cli`, `/skill:openspec-aware`
 - **3 read-only reviewer sub-agents** — `chorus-proposal-reviewer`, `chorus-task-reviewer`, `chorus-code-reviewer`
+- **1 worker sub-agent** — `chorus-worker`, a general-purpose Chorus implementer that claims and completes ONE task via the develop workflow (dispatch it with the `subagent` tool, single or parallel mode, for wave-based execution)
 - **1 session-aware extension** (`extensions/chorus.ts`) — subscribes to Pi native events to automate checkin, context injection, reviewer nudges, and session lifecycle
 - **The official pi subagent pattern** bundled at `extensions/subagent/` (the `subagent` tool + package-relative agent discovery)
 
@@ -77,17 +78,18 @@ packages/chorus-pi/
 │   ├── brainstorm/ orchestrate/  # divergent prelude + multi-agent orchestration
 │   ├── docs/ chorus-cli/      # docs router + CLI reference
 │   └── openspec-aware/        # opt-in spec-driven authoring sub-procedure
-├── agents/                   # 3 reviewer sub-agents — discovered package-relative by extensions/subagent/agents.ts (no manual copy)
-│   ├── chorus-proposal-reviewer.md
+├── agents/                   # 4 sub-agents — discovered package-relative by extensions/subagent/agents.ts (no manual copy)
+│   ├── chorus-proposal-reviewer.md   # read-only reviewers
 │   ├── chorus-task-reviewer.md
-│   └── chorus-code-reviewer.md
+│   ├── chorus-code-reviewer.md
+│   └── chorus-worker.md              # general-purpose task implementer (inherits full tools)
 ├── bin/
 │   └── chorus-mcp-call.sh    # stateless MCP-over-HTTP wrapper (from the Codex port) for OpenSpec byte-exact document mirroring
 └── README.md
 ```
 ## Status
 
-**Complete port** of the Claude Code / Codex plugins to Pi. All 12 skills, all 3 reviewer sub-agents, the session-aware extension, the bundled official subagent pattern, and the OpenSpec wrapper are implemented and validated (TS transpiles, JSON valid, all skill/agent names compliant with the Agent Skills standard, no Claude/Codex-specific references remain).
+**Complete port** of the Claude Code / Codex plugins to Pi. All 12 skills, all 3 reviewer sub-agents plus the `chorus-worker` implementer, the session-aware extension, the bundled official subagent pattern, and the OpenSpec wrapper are implemented and validated (TS transpiles, JSON valid, all skill/agent names compliant with the Agent Skills standard, no Claude/Codex-specific references remain).
 
 The extension goes beyond the Codex port in one key way: by using Pi's `tool_call` event (pre-execution, mutable input), it **auto-injects the Chorus session UUID + workflow into each dispatched worker's task** — the Pi-native equivalent of Claude's `SubagentStart` hook. The Codex port has no pre-spawn mutation channel, so its workers must manage sessions manually. On Pi, dispatch a worker via the `subagent` tool and the extension handles session creation + context injection, then closes the session when the (ephemeral) tool call returns.
 

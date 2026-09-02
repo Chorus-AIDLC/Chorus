@@ -53,14 +53,28 @@ for s in skills/*/SKILL.md; do
   if echo "$name" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then ok "$s name='$name'"; else no "$s name='$name' violates rules"; fi
 done
 
-echo "═══ A4. agent frontmatter (name+description+tools) ═══"
+echo "═══ A4. agent frontmatter (name+description; reviewers read-only tools) ═══"
 for a in agents/*.md; do
   name=$(grep -m1 "^name:" "$a" | sed 's/^name:[[:space:]]*//')
   desc=$(grep -m1 "^description:" "$a" | sed 's/^description:[[:space:]]*//')
   tools=$(grep -m1 "^tools:" "$a" | sed 's/^tools:[[:space:]]*//')
-  [ -n "$name" ] && [ -n "$desc" ] && [ -n "$tools" ] && ok "$a name='$name' tools='$tools'" || no "$a missing name/description/tools"
-  # reviewers must be read-only (no write/edit in tools)
-  echo "$tools" | grep -qiE '\b(write|edit|replace|undo)\b' && no "$a reviewer has write tools (should be read-only)" || true
+  [ -n "$name" ] && [ -n "$desc" ] || { no "$a missing name/description"; continue; }
+  case "$name" in
+    *-reviewer)
+      # reviewers MUST declare an explicit tools list AND be read-only (no write/edit)
+      if [ -z "$tools" ]; then no "$a reviewer missing tools (must be an explicit read-only list)"; continue; fi
+      if echo "$tools" | grep -qiE '\b(write|edit|replace|undo)\b'; then
+        no "$a reviewer has write tools (should be read-only)"
+      else
+        ok "$a reviewer name='$name' tools='$tools'"
+      fi
+      ;;
+    *)
+      # worker/implementer agents intentionally OMIT tools so they inherit the
+      # dispatcher's full capabilities (write/edit/bash/mcp). name+description suffice.
+      ok "$a name='$name' tools='${tools:-<inherit full>}'"
+      ;;
+  esac
 done
 
 echo "═══ A5. wrapper bash syntax ═══"

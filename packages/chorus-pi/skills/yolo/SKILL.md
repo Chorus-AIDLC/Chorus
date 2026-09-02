@@ -322,7 +322,9 @@ After `chorus_pm_submit_proposal`, the extension nudges you to spawn `chorus-pro
 
 After proposal approval, tasks exist in `open` status. Execute them in dependency-ordered waves using subagents. If spawning fails, fall back to main agent execution.
 
-#### Primary: Agent Team (parallel)
+#### Primary: subagent parallel dispatch (wave-based)
+
+The `subagent` tool is **blocking** — a parallel dispatch runs every worker in the wave to completion and returns their aggregated output in one call. There is no async spawn, no `agentId` to track, and no manual close. The chorus-pi extension auto-injects each worker's Chorus session UUID + workflow at `tool_call` time and closes the sessions when the dispatch returns.
 
 ```
 wave = 1
@@ -338,35 +340,37 @@ loop:
     # Stuck -- tasks failed review and can't proceed
     break with escalation report
 
-  # 2. Spawn a sub-agent for each unblocked task (async)
-  #    The chorus-pi extension auto-injects the session UUID + workflow
-  #    into each worker's task at tool_call time.
-  for each task in unblocked:
-    subagent_spawn({
-      agent: "worker",
-      task: "Your Chorus task UUID: {task.uuid}\nProject UUID: {project-uuid}\n\nImplement the task per its description and acceptance criteria. Read the task, proposal, and project documents for context."
-    })
-    # keep the returned agentId (sa_<uuid>) to close the worker later
+  # 2. Dispatch one chorus-worker per unblocked task in a SINGLE blocking
+  #    parallel call. Max 8 tasks per call (concurrency 4) — if the wave has
+  #    more than 8 ready tasks, split into batches of <=8 sequential calls.
+  #    Pass only task + project UUIDs; the chorus-pi extension auto-injects the
+  #    session UUID + workflow into each worker's task at tool_call time.
+  subagent({
+    tasks: [
+      { agent: "chorus-worker",
+        task: "Your Chorus task UUID: {task.uuid}\nProject UUID: {project-uuid}\n\nImplement the task per its description and acceptance criteria. Read the task, proposal, and project documents for context." },
+      // ... one entry per unblocked task, max 8
+    ]
+  })
+  # The call BLOCKS until EVERY worker in the wave finishes. Each worker follows
+  # the /skill:develop workflow: claim -> in_progress -> report -> self-check AC
+  # -> submit_for_verify (leaving its task at to_verify).
+  # For a single ready task, use single mode instead:
+  #   subagent({ agent: "chorus-worker", task: "..." })
 
-  # 3. Wait for all sub-agents to complete
-  #    Each sub-agent follows the /skill:develop workflow:
-  #    claim -> in_progress -> develop -> report -> self-check AC -> submit_for_verify
-  #    the extension nudges you to spawn chorus-task-reviewer after submit_for_verify
-  #    (use the blocking `subagent` tool so it waits for the VERDICT)
-
-  # 4. Proceed to Phase 4 (verification) for this wave
+  # 3. Proceed to Phase 4 (verification) for this wave
   wave += 1
 ```
 
-**What the sub-agent prompt needs:**
-- Task UUID(s)
-- Project UUID
+**What each worker task needs:**
+- Task UUID + Project UUID
 - NO session UUID, NO workflow boilerplate -- the extension auto-injects via tool_call mutation
+- No `agentId` and no close step — the blocking call owns the worker's whole lifecycle
 
 
 #### Fallback: Main Agent (sequential)
 
-If `subagent_spawn` fails (e.g., pi-subagents not installed, permission denied, or sub-agents crash repeatedly), fall back to executing tasks sequentially as the main agent:
+If the `subagent` dispatch is unavailable or its workers fail repeatedly (e.g., the subagent extension is not loaded, permission denied, or the child pi processes crash), fall back to executing tasks sequentially as the main agent:
 
 ```
 for each task in unblocked:

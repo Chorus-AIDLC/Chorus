@@ -102,11 +102,13 @@ export function isReviewerAgent(name: string): boolean {
  * the session workflow into them adds irrelevant task-lifecycle instructions and
  * unnecessary chorus_create_session API traffic for agents that never touch a task.
  *
- * This is a positive allowlist (not a reviewer exclusion) so arbitrary custom
- * read-only agents also do NOT get a session. Add more worker names here if the
- * project introduces them.
+ * `chorus-worker` is this package's own general-purpose implementer agent
+ * (agents/chorus-worker.md); `worker` is retained for back-compat with pi's
+ * subagent example. This is a positive allowlist (not a reviewer exclusion) so
+ * arbitrary custom read-only agents also do NOT get a session. Add more worker
+ * names here if the project introduces them.
  */
-export const WORKER_AGENT_NAMES = ["worker"] as const;
+export const WORKER_AGENT_NAMES = ["worker", "chorus-worker"] as const;
 export function isWorkerAgent(name: string): boolean {
   return (WORKER_AGENT_NAMES as readonly string[]).includes(name);
 }

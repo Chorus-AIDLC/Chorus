@@ -7,9 +7,10 @@
 //
 // It asserts: package identity (name), version lockstep with the root app
 // package.json, the publish shape (publishConfig / files allowlist / repository
-// directory / bin / `pi` manifest), the skill set, the 3 reviewer agents, and
-// the bundled official-subagent extension (extensions/subagent/{index.ts,agents.ts}).
-// A missing skill, reviewer agent, or subagent file exits non-zero and NAMES the
+// directory / bin / `pi` manifest), the skill set, the 4 bundled agents (3
+// read-only reviewers + the chorus-worker implementer), and the bundled
+// official-subagent extension (extensions/subagent/{index.ts,agents.ts}).
+// A missing skill, agent, or subagent file exits non-zero and NAMES the
 // offending item.
 //
 // Skill-set decoupling (A1 <-> B): task A1 landed this list with the 11 skills
@@ -44,6 +45,7 @@ const expectedAgents = [
   "chorus-code-reviewer",
   "chorus-proposal-reviewer",
   "chorus-task-reviewer",
+  "chorus-worker",
 ];
 
 function assert(condition, message) {
@@ -122,14 +124,17 @@ for (const name of expectedSkillsSorted) {
   );
 }
 
-// ─── Reviewer agents ────────────────────────────────────────────────────────
+// ─── Bundled agents (3 reviewers + chorus-worker) ───────────────────────────
 const actualAgents = (await readdir(join(root, "agents"), { withFileTypes: true }))
   .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
   .map((entry) => entry.name.replace(/\.md$/, ""))
   .sort();
 const expectedAgentsSorted = [...expectedAgents].sort();
 for (const name of expectedAgentsSorted) {
-  assert(actualAgents.includes(name), `expected reviewer agent missing: ${name}`);
+  assert(actualAgents.includes(name), `expected agent missing: ${name}`);
+}
+for (const name of actualAgents) {
+  assert(expectedAgentsSorted.includes(name), `unexpected agent present (extend the expected set?): ${name}`);
 }
 for (const name of expectedAgentsSorted) {
   const text = await readFile(join(root, "agents", `${name}.md`), "utf8");
@@ -165,5 +170,5 @@ for (const block of ["dependencies", "devDependencies", "peerDependencies", "opt
 }
 
 console.log(
-  `chorus-pi package validation passed (v${manifest.version}, ${expectedSkillsSorted.length} skills, ${expectedAgentsSorted.length} reviewer agents, bundled subagent extension)`,
+  `chorus-pi package validation passed (v${manifest.version}, ${expectedSkillsSorted.length} skills, ${expectedAgentsSorted.length} agents, bundled subagent extension)`,
 );

@@ -32,8 +32,9 @@ test("isReviewerAgent: rejects non-reviewers (workers, built-ins, partials)", ()
 });
 
 // ─── isWorkerAgent (positive worker classification for session injection) ──
-test("isWorkerAgent: canonical 'worker' is a worker", () => {
-  expect(isWorkerAgent("worker")).toBe(true);
+test("isWorkerAgent: canonical worker names are workers", () => {
+  expect(isWorkerAgent("worker")).toBe(true);          // pi subagent example back-compat
+  expect(isWorkerAgent("chorus-worker")).toBe(true);   // this package's implementer agent
 });
 
 test("isWorkerAgent: built-in read-only agents are NOT workers", () => {
@@ -57,7 +58,7 @@ test("isWorkerAgent: arbitrary custom agent names are NOT workers (no false posi
 });
 
 test("WORKER_AGENT_NAMES: the canonical allowlist", () => {
-  expect([...WORKER_AGENT_NAMES]).toEqual(["worker"]);
+  expect([...WORKER_AGENT_NAMES]).toEqual(["worker", "chorus-worker"]);
 });
 // ─── subagentTaskItems (ephemeral subagent-model task enumeration) ──────────
 test("subagentTaskItems: single mode yields one holder", () => {
