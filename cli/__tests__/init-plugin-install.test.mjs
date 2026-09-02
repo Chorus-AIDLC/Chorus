@@ -20,6 +20,7 @@ import {
   readOpencodeInstallState,
   readDshInstallState,
   readOpenclawInstallState,
+  readPiInstallState,
   openclawMinHostVersion,
   guided,
   GUIDED_MESSAGES,
@@ -579,6 +580,78 @@ describe("installPi (npm-published pi extension + pi-mcp-adapter)", () => {
     expect(res.action).toBe(FAILED);
     expect(res.detail).toContain("boom");
     expect(run.calls).toHaveLength(2); // adapter ok, then chorus-pi failed
+  });
+
+  it("SKIPS (already installed) and runs NOTHING when both packages are present and not updating", () => {
+    const run = fakeRun();
+    const res = installPi(
+      ctxFor("pi", {
+        run,
+        binaryOnPath: () => true,
+        state: { chorusPiInstalled: true, adapterInstalled: true },
+      }),
+    );
+    expect(res.action).toBe(SKIPPED);
+    expect(res.detail).toContain("already installed");
+    expect(run.calls).toHaveLength(0); // recognized existing install — no re-run
+  });
+
+  it("REPAIRS (reinstalls latest) when both present but --update-installed is set", () => {
+    const run = fakeRun();
+    const res = installPi(
+      ctxFor("pi", {
+        run,
+        binaryOnPath: () => true,
+        flags: { updateInstalled: true },
+        state: { chorusPiInstalled: true, adapterInstalled: true },
+      }),
+    );
+    expect(res.action).toBe(REPAIRED);
+    expect(run.calls).toHaveLength(2); // adapter then chorus-pi, reinstalled to latest
+  });
+
+  it("REPAIRS a partial install (adapter present, chorus-pi missing) by installing both", () => {
+    const run = fakeRun();
+    const res = installPi(
+      ctxFor("pi", {
+        run,
+        binaryOnPath: () => true,
+        state: { chorusPiInstalled: false, adapterInstalled: true },
+      }),
+    );
+    expect(res.action).toBe(REPAIRED);
+    expect(run.calls).toHaveLength(2);
+  });
+});
+
+describe("readPiInstallState (settings.json packages probe)", () => {
+  const withPkgs = (packages) => ({ readJson: () => ({ packages }) });
+
+  it("detects both chorus-pi and pi-mcp-adapter from string package sources", () => {
+    const s = readPiInstallState(withPkgs(["npm:pi-mcp-adapter", "npm:@chorus-aidlc/chorus-pi"]));
+    expect(s.adapterInstalled).toBe(true);
+    expect(s.chorusPiInstalled).toBe(true);
+    expect(s.pluginInstalled).toBe(true); // both present
+  });
+
+  it("matches object-shaped package entries (source carried on a field)", () => {
+    const s = readPiInstallState(withPkgs([{ source: "npm:@chorus-aidlc/chorus-pi" }, { source: "npm:pi-mcp-adapter" }]));
+    expect(s.chorusPiInstalled).toBe(true);
+    expect(s.adapterInstalled).toBe(true);
+  });
+
+  it("reports not-installed for an empty/missing settings file", () => {
+    const s = readPiInstallState({ readJson: () => null });
+    expect(s.chorusPiInstalled).toBe(false);
+    expect(s.adapterInstalled).toBe(false);
+    expect(s.pluginInstalled).toBe(false);
+  });
+
+  it("pluginInstalled is false when only the adapter is present (partial)", () => {
+    const s = readPiInstallState(withPkgs(["npm:pi-mcp-adapter"]));
+    expect(s.adapterInstalled).toBe(true);
+    expect(s.chorusPiInstalled).toBe(false);
+    expect(s.pluginInstalled).toBe(false); // needs both
   });
 });
 

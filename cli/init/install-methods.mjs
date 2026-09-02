@@ -497,6 +497,33 @@ export function installOpenclaw(ctx) {
 const PI_ADAPTER_SPEC = "npm:pi-mcp-adapter";
 const PI_NPM_SPEC = "npm:@chorus-aidlc/chorus-pi";
 
+/**
+ * Read pi's install state. `pi install` records each package's source in the
+ * agent settings file (`<PI_CODING_AGENT_DIR|~/.pi/agent>/settings.json`) under a
+ * `packages[]` array — entries are either a string source (`npm:@scope/pkg`) or an
+ * object carrying that source plus filtering. We substring-match the stringified
+ * entry so detection is robust to either shape. This is the file-read probe the pi
+ * adapter previously lacked (its descriptor had no `readState`, so the runtime
+ * defaulted `pluginInstalled:false` and every re-run reported a fresh INSTALL
+ * instead of the SKIPPED/upgrade messaging the other adapters give).
+ */
+export function readPiInstallState({ env = process.env, readJson = readJsonSafe } = {}) {
+  const home = env.HOME || homedir();
+  const agentDir = nonEmpty(env.PI_CODING_AGENT_DIR) || join(home, ".pi", "agent");
+  const settings = readJson(join(agentDir, "settings.json"));
+  const pkgs = Array.isArray(settings?.packages) ? settings.packages : [];
+  const hasPkg = (needle) =>
+    pkgs.some((p) => (typeof p === "string" ? p : JSON.stringify(p)).includes(needle));
+  const adapterInstalled = hasPkg("pi-mcp-adapter");
+  const pluginInstalled = hasPkg("@chorus-aidlc/chorus-pi");
+  return {
+    marketplaceRegistered: false, // pi has no marketplace concept
+    pluginInstalled: pluginInstalled && adapterInstalled,
+    chorusPiInstalled: pluginInstalled,
+    adapterInstalled,
+  };
+}
+
 export function installPi(ctx) {
   const run = ctx.run ?? runCommand;
   const env = ctx.env ?? process.env;
@@ -515,14 +542,32 @@ export function installPi(ctx) {
     );
   }
 
-  // pi's install is idempotent (re-running reinstalls/updates the extension), and
-  // pi exposes no verifiable install-state file, so there is no readState probe —
-  // a re-run simply reinstalls the latest published extensions. The MCP adapter is
-  // the tool surface, so install it FIRST; then the chorus-pi package.
+  const state = safeState(ctx);
+
+  // Both the MCP adapter and the chorus-pi package already recorded in pi's
+  // settings → recognize it (parity with codex/kiro's "already installed") and do
+  // NOTHING, unless the caller explicitly asked to update.
+  if (state.chorusPiInstalled && state.adapterInstalled && !ctx.flags?.updateInstalled) {
+    return out(
+      "pi",
+      SKIPPED,
+      `already installed (${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} in pi settings) — re-run with --update-installed to upgrade`,
+    );
+  }
+
+  // Install (or, on an update / partial-install re-run, reinstall the latest — pi
+  // install is idempotent). The MCP adapter is the tool surface, so install it
+  // FIRST; then the chorus-pi package.
   const ra = run("pi", ["install", PI_ADAPTER_SPEC], { env });
   if (!ra.ok) return out("pi", FAILED, `pi install ${PI_ADAPTER_SPEC} failed: ${errText(ra)}`);
   const r = run("pi", ["install", PI_NPM_SPEC], { env });
   if (!r.ok) return out("pi", FAILED, `pi install failed: ${errText(r)}`);
+
+  // A pre-existing install we just refreshed → REPAIRED; a clean first install →
+  // INSTALLED (same distinction the other adapters draw).
+  if (state.chorusPiInstalled || state.adapterInstalled) {
+    return out("pi", REPAIRED, `reinstalled latest ${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} via pi install`);
+  }
   return out("pi", INSTALLED, `installed ${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} via pi install`);
 }
 

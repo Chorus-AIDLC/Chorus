@@ -41,6 +41,7 @@ import {
   readDshInstallState,
   readOpenclawInstallState,
   readKiroInstallState,
+  readPiInstallState,
 } from "./install-methods.mjs";
 
 // Re-export the shared marketplace identifiers from their canonical home so
@@ -94,7 +95,7 @@ export const AGENT_DESCRIPTORS = [
   { id: "kiro", displayName: "Kiro CLI", binaries: ["kiro"], configDirs: ["~/.kiro"], readState: readKiroInstallState, install: installKiro },
   { id: "opencode", displayName: "opencode", binaries: ["opencode"], configDirs: ["~/.config/opencode", "~/.opencode"], readState: readOpencodeInstallState, install: installOpencode },
   { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"], readState: readOpenclawInstallState, install: installOpenclaw },
-  { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], install: installPi },
+  { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], readState: readPiInstallState, install: installPi },
   { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"], readState: readDshInstallState, install: installDsh },
 ];
 
