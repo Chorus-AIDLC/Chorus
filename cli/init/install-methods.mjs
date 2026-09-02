@@ -543,11 +543,11 @@ export function installPi(ctx) {
   }
 
   const state = safeState(ctx);
+  const bothInstalled = state.chorusPiInstalled && state.adapterInstalled;
 
-  // Both the MCP adapter and the chorus-pi package already recorded in pi's
-  // settings → recognize it (parity with codex/kiro's "already installed") and do
-  // NOTHING, unless the caller explicitly asked to update.
-  if (state.chorusPiInstalled && state.adapterInstalled && !ctx.flags?.updateInstalled) {
+  // Already fully installed → recognize it (parity with codex/kiro's "already
+  // installed") and do NOTHING, unless the caller explicitly asked to update.
+  if (bothInstalled && !ctx.flags?.updateInstalled) {
     return out(
       "pi",
       SKIPPED,
@@ -555,20 +555,31 @@ export function installPi(ctx) {
     );
   }
 
-  // Install (or, on an update / partial-install re-run, reinstall the latest — pi
-  // install is idempotent). The MCP adapter is the tool surface, so install it
+  // Update requested on an existing install → use pi's OWN updater. `pi install`
+  // of an already-recorded package only re-writes the settings entry; it does NOT
+  // pull the newer published version, so it never clears pi's "Package updates
+  // available — Run pi update --extensions" nag. `pi update --extensions` (exactly
+  // what that nag tells the user to run) refreshes installed extensions — including
+  // chorus-pi + pi-mcp-adapter — to their latest published versions.
+  if (bothInstalled) {
+    const u = run("pi", ["update", "--extensions"], { env });
+    if (!u.ok) return out("pi", FAILED, `pi update --extensions failed: ${errText(u)}`);
+    return out("pi", REPAIRED, `updated installed pi extensions to latest via \`pi update --extensions\` (incl. ${PI_NPM_SPEC})`);
+  }
+
+  // Fresh or partial install → install what's needed (pi install is idempotent for
+  // any already-present one). The MCP adapter is the tool surface, so install it
   // FIRST; then the chorus-pi package.
   const ra = run("pi", ["install", PI_ADAPTER_SPEC], { env });
   if (!ra.ok) return out("pi", FAILED, `pi install ${PI_ADAPTER_SPEC} failed: ${errText(ra)}`);
   const r = run("pi", ["install", PI_NPM_SPEC], { env });
   if (!r.ok) return out("pi", FAILED, `pi install failed: ${errText(r)}`);
 
-  // A pre-existing install we just refreshed → REPAIRED; a clean first install →
-  // INSTALLED (same distinction the other adapters draw).
-  if (state.chorusPiInstalled || state.adapterInstalled) {
-    return out("pi", REPAIRED, `reinstalled latest ${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} via pi install`);
-  }
-  return out("pi", INSTALLED, `installed ${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} via pi install`);
+  // A partial pre-existing install we just completed → REPAIRED; a clean first
+  // install → INSTALLED (same distinction the other adapters draw).
+  return state.chorusPiInstalled || state.adapterInstalled
+    ? out("pi", REPAIRED, `reinstalled ${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} via pi install`)
+    : out("pi", INSTALLED, `installed ${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} via pi install`);
 }
 
 // ---------------------------------------------------------------------------

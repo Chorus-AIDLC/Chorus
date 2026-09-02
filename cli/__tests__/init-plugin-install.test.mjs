@@ -596,7 +596,7 @@ describe("installPi (npm-published pi extension + pi-mcp-adapter)", () => {
     expect(run.calls).toHaveLength(0); // recognized existing install — no re-run
   });
 
-  it("REPAIRS (reinstalls latest) when both present but --update-installed is set", () => {
+  it("REPAIRS via `pi update --extensions` (NOT pi install) when both present and --update-installed is set", () => {
     const run = fakeRun();
     const res = installPi(
       ctxFor("pi", {
@@ -607,7 +607,12 @@ describe("installPi (npm-published pi extension + pi-mcp-adapter)", () => {
       }),
     );
     expect(res.action).toBe(REPAIRED);
-    expect(run.calls).toHaveLength(2); // adapter then chorus-pi, reinstalled to latest
+    // MUST use pi's real updater — `pi install` of an existing package does not pull
+    // the newer version and leaves pi's "updates available" nag showing.
+    expect(run.calls).toHaveLength(1);
+    expect(run.calls[0].cmd).toBe("pi");
+    expect(run.calls[0].args).toEqual(["update", "--extensions"]);
+    expect(res.detail).toContain("pi update --extensions");
   });
 
   it("REPAIRS a partial install (adapter present, chorus-pi missing) by installing both", () => {
