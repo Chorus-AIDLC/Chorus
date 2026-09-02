@@ -1161,6 +1161,7 @@
         "claudeCode": "Claude Code",
         "codex": "Codex",
         "kiro": "Kiro",
+        "pi": "Pi",
         "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
@@ -1187,6 +1188,12 @@
         "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so Kiro CLI can read them on startup.",
         "step2Title": "Step 2: Run chorus agents add",
         "step2Tip": "chorus agents add installs the Chorus skills, agents, steering, and the chorus MCP server into ~/.kiro globally, so Chorus is available in every directory. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). To install into a different directory, set KIRO_DIR before running. The first command installs the Chorus CLI globally (pinned to version 0.17.0)."
+      },
+      "pi": {
+        "step1Title": "Step 1: Set environment variables",
+        "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so Pi can read them at runtime — chorus agents add writes an env-referenced key (not a literal) into ~/.pi/agent/mcp.json.",
+        "step2Title": "Step 2: Run chorus agents add",
+        "step2Tip": "chorus agents add --agents pi installs the pi-mcp-adapter and the chorus-pi plugin, writes the chorus MCP server into ~/.pi/agent/mcp.json (referencing CHORUS_API_KEY from your environment — no literal key), and seeds pi as a wakeable daemon agent. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1)."
       },
       "dsh": {
         "step1Title": "Step 1: Set environment variables",

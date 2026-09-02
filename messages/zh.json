@@ -1161,6 +1161,7 @@
         "claudeCode": "Claude Code",
         "codex": "Codex",
         "kiro": "Kiro",
+        "pi": "Pi",
         "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
@@ -1187,6 +1188,12 @@
         "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc，Kiro CLI 会在启动时读取这两个变量。",
         "step2Title": "第 2 步：运行 chorus agents add",
         "step2Tip": "chorus agents add 会把 Chorus 的 skills、agents、steering 以及 chorus MCP 服务器全局安装到 ~/.kiro，使 Chorus 在任意目录下均可用。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。若想安装到其他目录，运行前先设置 KIRO_DIR。 上面第一条命令会全局安装 Chorus CLI（锁定 0.17.0 版本）。"
+      },
+      "pi": {
+        "step1Title": "第 1 步：设置环境变量",
+        "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc，以便 Pi 在运行时读取——chorus agents add 会把一个引用环境变量的 key（而非明文）写入 ~/.pi/agent/mcp.json。",
+        "step2Title": "第 2 步：运行 chorus agents add",
+        "step2Tip": "chorus agents add --agents pi 会安装 pi-mcp-adapter 和 chorus-pi 插件，把 chorus MCP 服务器写入 ~/.pi/agent/mcp.json（引用环境变量中的 CHORUS_API_KEY，不写明文 key），并把 pi 注册为可被唤醒的 daemon agent。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。"
       },
       "dsh": {
         "step1Title": "第 1 步：设置环境变量",
