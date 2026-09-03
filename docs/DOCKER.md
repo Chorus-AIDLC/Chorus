@@ -202,6 +202,36 @@ Production Docker images always output JSON to stdout (ready for CloudWatch / EL
 3. If the database is not ready, it retries every 10 seconds (up to 30 attempts)
 4. Once migrations succeed, the Next.js server starts on port 8637
 
+## Automated Publishing (CI)
+
+Images are published automatically by the
+[`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml)
+GitHub Actions workflow. Two triggers, two tag policies:
+
+| Trigger | Tags produced | `latest` updated? | De-dup |
+|---|---|---|---|
+| Push to `develop` / `main` | moving branch tag (`:develop` / `:main`) | **No** | older in-progress build for the same branch is cancelled |
+| GitHub Release `published` | release version tag (`:vX.Y.Z`) + `:latest` | **Yes** | never cancelled |
+
+Both jobs build multi-arch (`linux/amd64` + `linux/arm64`) via QEMU + Buildx and
+reuse `scripts/docker-push.sh`. Branch builds pass `--no-latest`, so day-to-day
+merges never clobber the `latest` tag that production consumers depend on. The
+release job checks out the immutable release tag ref (not the branch head) so
+the image matches the published release.
+
+### Prerequisite: Docker Hub repository secrets
+
+The workflow authenticates to Docker Hub with `docker/login-action`, which reads
+two **repository secrets** that must be configured before the first run
+(Settings → Secrets and variables → Actions):
+
+| Secret | Description |
+|---|---|
+| `DOCKERHUB_USERNAME` | Docker Hub username with push access to `chorusaidlc/chorus-app`. |
+| `DOCKERHUB_TOKEN` | Docker Hub access token (create at Docker Hub → Account Settings → Personal access tokens). Prefer a scoped token over the account password. |
+
+If these secrets are missing, the workflow fails fast at the login step.
+
 ## Source Code
 
 https://github.com/Chorus-AIDLC/Chorus
