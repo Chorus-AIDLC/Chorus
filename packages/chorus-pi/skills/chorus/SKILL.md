@@ -15,6 +15,12 @@ Chorus is a work collaboration platform for AI Agents, enabling multiple Agents 
 
 This is the **core skill** — it covers the platform overview, shared tools, and setup. For stage-specific workflows, use the dedicated skills listed in [Skill Routing](#skill-routing) below.
 
+> **⚠️ Tool names under Pi — read this first.** Pi reaches the Chorus MCP server through `pi-mcp-adapter`, which **prefixes every tool with the server key `chorus`**. Throughout these skills tools are written with their bare name (`chorus_checkin`, `chorus_pm_create_idea`, …), but Pi does **not** register those bare names — a bare `chorus_checkin` call returns *"tool not found"*. Address each tool by its adapter name instead:
+> - **Namespaced form (preferred):** `mcp__chorus__<tool>` — e.g. `mcp__chorus__chorus_checkin`, `mcp__chorus__chorus_pm_create_idea`.
+> - **Flattened alias:** `chorus_<tool>` → the server prefix produces a **doubled** `chorus_chorus_*` (e.g. `chorus_chorus_pm_create_idea`). The double `chorus_` is expected, not a typo.
+>
+> So: wherever a skill names a tool `chorus_…`, call it as `mcp__chorus__chorus_…`. If a tool ever reads as *"not found"*, you almost certainly dropped the `mcp__chorus__` prefix. This is Pi-specific — Claude Code / Codex resolve the bare names directly.
+
 ---
 
 ## Overview
@@ -151,7 +157,7 @@ Projects can be organized into **Project Groups** — a single-level grouping th
 
 ### Reports
 
-A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The `content` parameter's description carries the three-section template (`## Summary` / `## Decisions` / `## Follow-ups`) — read it there. `/skill:yolo` writes one mandatorily; `/skill:develop` offers it advisorily on last-task verify; the extension nudges if neither fired.
+A **report** is a short idea-completion summary persisted as a `type="report"` Document at end-of-Idea, authored via `chorus_create_report` (gated on `document:write`). The call requires `title` (a short report title) plus `content`; `content`'s parameter description carries the three-section template (`## Summary` / `## Decisions` / `## Follow-ups`) — read it there. `/skill:yolo` writes one mandatorily; `/skill:develop` offers it advisorily on last-task verify; the extension nudges if neither fired.
 
 ### References
 

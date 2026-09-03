@@ -259,7 +259,7 @@ Once Admin verifies (status: `done`), move to the next available task (back to S
 
 ### Step 11: Idea Completion Report (advisory)
 
-If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, offer to call `chorus_create_report` via `AskUserQuestion`. The `content` parameter's description carries the section template. Skip on decline — the extension will remind on the next run.
+If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, offer to call `chorus_create_report` via `AskUserQuestion`. The call requires `title` (a short report title) plus `content`; `content`'s parameter description carries the three-section template (`## Summary` / `## Decisions` / `## Follow-ups`). Skip on decline — the extension will remind on the next run.
 
 ---
 
