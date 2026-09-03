@@ -79,4 +79,3 @@ remain unchanged — producing the resolved tag plus `latest`.
   `docker login` has authenticated the runner
 - **THEN** the interactive "not logged in" guard does not abort the build
 - **AND** the push still fails loudly if the credentials are actually invalid
-

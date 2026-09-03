@@ -47,11 +47,13 @@ jobs:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # Never cancel a release build, but serialize them so two overlapping
-    # releases can't race and leave `latest` pointing at the older image.
-    concurrency:
-      group: docker-release
-      cancel-in-progress: false
+    # No concurrency block: a release build must ALWAYS run to completion
+    # (GitHub concurrency keeps at most 1 running + 1 pending per group and
+    # cancels a superseded pending run even with cancel-in-progress: false,
+    # which would violate "releases always complete"). The only residual risk
+    # is that two releases published close together could finish out of order
+    # and leave `latest` on the earlier image — accepted as a known, very
+    # low-probability NOTE rather than cancelling any release.
     steps:
       - name: Checkout immutable release tag
         uses: actions/checkout@v7
