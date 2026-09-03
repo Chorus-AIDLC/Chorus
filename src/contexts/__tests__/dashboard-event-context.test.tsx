@@ -108,6 +108,35 @@ describe("DashboardEventProvider", () => {
     );
   });
 
+  it("dispatches an in-band stream_reset to subscribers on open, ordered before any message", () => {
+    const received: Array<Record<string, unknown>> = [];
+    render(
+      <DashboardEventProvider>
+        <Harness
+          project="project-a"
+          onEvent={(event) => received.push(event)}
+          onGeneration={() => {}}
+          exposeSession={() => {}}
+        />
+      </DashboardEventProvider>,
+    );
+    const es = MockEventSource.instances[0];
+
+    act(() => {
+      es.onopen?.();
+      es.onmessage?.({
+        data: JSON.stringify({ type: "presence", projectUuid: "project-a" }),
+      } as MessageEvent);
+    });
+
+    // onopen fires before any onmessage (EventSource spec), and the reset is
+    // dispatched synchronously inside onopen — so subscribers see stream_reset
+    // strictly before the connection's first replayed message. This ordering is
+    // what eliminates the wipe-vs-replay race.
+    expect(received[0]).toEqual({ type: "stream_reset" });
+    expect(received[1]).toEqual({ type: "presence", projectUuid: "project-a" });
+  });
+
   it("parses once, fans out events, increments opens, recovers visibility, and cleans up", () => {
     const onEvent = vi.fn();
     const onGeneration = vi.fn();
@@ -131,11 +160,18 @@ describe("DashboardEventProvider", () => {
       first.onopen?.();
       first.onopen?.();
     });
-    expect(onEvent).toHaveBeenCalledOnce();
-    expect(onEvent).toHaveBeenCalledWith({
+    // The presence message is fanned out once; each onopen ALSO fans out a
+    // synthetic stream_reset (in-band connect reset), so filter those to assert
+    // the parsed message delivery.
+    const nonReset = onEvent.mock.calls.filter(
+      ([event]) => (event as { type?: unknown }).type !== "stream_reset",
+    );
+    expect(nonReset).toHaveLength(1);
+    expect(nonReset[0][0]).toEqual({
       type: "presence",
       projectUuid: "project-a",
     });
+    expect(onEvent).toHaveBeenCalledWith({ type: "stream_reset" });
     expect(onGeneration).toHaveBeenLastCalledWith(2);
 
     act(() => {

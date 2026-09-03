@@ -15,6 +15,15 @@ import type { ExecutionEvent as ExecutionEventBase } from "@/services/daemon-exe
 export type DashboardEvent = Record<string, unknown> & { type?: unknown };
 export type DashboardEventSubscriber = (event: DashboardEvent) => void;
 
+// Client-synthetic event `type` the transport fans out to subscribers on every
+// EventSource `open`, BEFORE any `message` of that connection (the EventSource
+// spec guarantees `open` fires first). Domain consumers whose derived state must
+// be reset per-connection (e.g. agent-presence session-activity) clear it on this
+// in-band event instead of in a passive effect keyed on `openGeneration` — a
+// passive effect can run AFTER the connection's replay has already repopulated the
+// state and erase it (the wipe-vs-replay race). The server never emits this type.
+export const STREAM_RESET_EVENT = "stream_reset";
+
 export interface DashboardExecutionEvent extends ExecutionEventBase {
   type: "execution";
 }
@@ -59,6 +68,14 @@ export function DashboardEventProvider({ children }: { children: ReactNode }) {
       eventSource = new EventSource(buildDashboardEventsUrl(sessionUuid));
       eventSource.onopen = () => {
         setOpenGeneration((generation) => generation + 1);
+        // In-band, synchronous connect reset. Dispatched through the SAME
+        // subscriber fan-out as messages, so every subscriber receives it BEFORE
+        // any replay `onmessage` of this connection (open fires before message).
+        // This is the ordering guarantee that lets domain consumers reset
+        // per-connection state without racing the server's on-connect replay.
+        for (const callback of subscribersRef.current) {
+          callback({ type: STREAM_RESET_EVENT });
+        }
       };
       eventSource.onmessage = (message) => {
         let parsed: DashboardEvent;

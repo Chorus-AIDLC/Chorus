@@ -61,6 +61,7 @@ import {
   buildDashboardEventsUrl,
   useDashboardEvents,
   useDashboardEventsOptional,
+  STREAM_RESET_EVENT,
   type DashboardExecutionEvent,
 } from "@/contexts/dashboard-event-context";
 import type {
@@ -589,6 +590,16 @@ function AgentPresenceProviderInner({ children }: { children: ReactNode }) {
   // changes and fans each parsed payload out once.
   useEffect(() => {
     return subscribeDashboardEvents((parsed) => {
+      if (parsed.type === STREAM_RESET_EVENT) {
+        // Connect-time reset, delivered in-band by the transport on `onopen` and
+        // therefore ordered strictly BEFORE this connection's replayed
+        // `session_started` events. Clearing here — not in the openGeneration
+        // effect below — is what makes reset-before-replay deterministic: a passive
+        // effect could run after the replay had already repopulated the map and
+        // wipe it (the wipe-vs-replay race that made the tracker marker unstable).
+        setSessionActivity(emptySessionActivityState());
+        return;
+      }
       if (routeTranscriptEvent(parsed, transcriptSubscribersRef.current)) return;
       if (parsed.type === "session_started" || parsed.type === "session_ended") {
         setSessionActivity((prev) =>
@@ -605,14 +616,19 @@ function AgentPresenceProviderInner({ children }: { children: ReactNode }) {
     });
   }, [subscribeDashboardEvents]);
 
-  // The initial open relies on the poll's first fetch. Every later open denotes
-  // a possible delivery gap (native recovery, explicit visibility recovery, or
-  // transcript-session URL replacement), so reset replay state and catch up.
+  // Executions self-heal on reconnect. The initial open relies on the poll's
+  // first fetch. Every later open denotes a possible delivery gap (native
+  // recovery, explicit visibility recovery, or transcript-session URL
+  // replacement), so re-fetch the executions aggregate to catch up.
+  //
+  // Session-activity is NOT reset here — that reset now rides the in-band
+  // `STREAM_RESET_EVENT` (dispatched by the transport on `onopen`, before this
+  // connection's replay), so it is deterministically ordered before the replay
+  // instead of racing it from a passive effect.
   const seenOpenGenerationRef = useRef<number | null>(null);
   useEffect(() => {
     const generation = openGeneration;
     if (generation === 0) return;
-    setSessionActivity(emptySessionActivityState());
     if (seenOpenGenerationRef.current === null) {
       seenOpenGenerationRef.current = generation;
       return;
