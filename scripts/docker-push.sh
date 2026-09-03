@@ -11,13 +11,22 @@ BUILDER_NAME="chorus-multiarch"
 #   ./scripts/docker-push.sh              → tags: latest + git short SHA
 #   ./scripts/docker-push.sh v1.2.3       → tags: v1.2.3 + latest
 #   ./scripts/docker-push.sh --no-push    → build only, don't push
+#   ./scripts/docker-push.sh --no-latest  → tag ONLY :${TAG}, omit :latest
+#   ./scripts/docker-push.sh --assume-login → skip the interactive Docker Hub
+#                                             login guard (also skipped when
+#                                             CI=true). buildx --push still
+#                                             fails loudly on bad credentials.
 NO_PUSH=false
+NO_LATEST=false
+ASSUME_LOGIN=false
 TAG=""
 
 for arg in "$@"; do
   case "$arg" in
-    --no-push) NO_PUSH=true ;;
-    *)         TAG="$arg" ;;
+    --no-push)     NO_PUSH=true ;;
+    --no-latest)   NO_LATEST=true ;;
+    --assume-login) ASSUME_LOGIN=true ;;
+    *)             TAG="$arg" ;;
   esac
 done
 
@@ -28,7 +37,11 @@ if [ -z "$TAG" ]; then
   TAG="$GIT_SHA"
 fi
 
-TAGS="-t ${IMAGE}:${TAG} -t ${IMAGE}:latest"
+if [ "$NO_LATEST" = true ]; then
+  TAGS="-t ${IMAGE}:${TAG}"
+else
+  TAGS="-t ${IMAGE}:${TAG} -t ${IMAGE}:latest"
+fi
 
 echo "============================================"
 echo "  Chorus Docker Multi-Arch Build & Push"
@@ -71,8 +84,13 @@ if [ "$NO_PUSH" = true ]; then
   echo "(--no-push mode: building without pushing)"
   eval "$BUILD_CMD --output type=image,push=false ."
 else
-  # Ensure logged in
-  if ! docker info 2>/dev/null | grep -q "Username"; then
+  # Ensure logged in — but skip the guard in CI or when explicitly assured.
+  # docker/login-action writes ~/.docker/config.json which does not always
+  # surface as "Username" in `docker info`, so the guard would false-positive.
+  # buildx --push still fails loudly if the credentials are actually invalid.
+  if [ "${CI:-}" = true ] || [ "$ASSUME_LOGIN" = true ]; then
+    echo "(skipping interactive login guard: CI/--assume-login)"
+  elif ! docker info 2>/dev/null | grep -q "Username"; then
     echo "Not logged in to Docker Hub. Run 'docker login' first."
     exit 1
   fi
@@ -82,7 +100,11 @@ fi
 echo ""
 echo "Done! Image: ${IMAGE}:${TAG}"
 if [ "$NO_PUSH" = false ]; then
-  echo "Pushed: ${IMAGE}:${TAG} and ${IMAGE}:latest"
+  if [ "$NO_LATEST" = true ]; then
+    echo "Pushed: ${IMAGE}:${TAG}"
+  else
+    echo "Pushed: ${IMAGE}:${TAG} and ${IMAGE}:latest"
+  fi
   echo ""
   echo "Pull with:"
   echo "  docker pull ${IMAGE}:${TAG}"
