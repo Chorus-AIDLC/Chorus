@@ -15,10 +15,12 @@ import {
   installOpencode,
   installDsh,
   installOpenclaw,
+  installPi,
   readCodexInstallState,
   readOpencodeInstallState,
   readDshInstallState,
   readOpenclawInstallState,
+  readPiInstallState,
   openclawMinHostVersion,
   guided,
   GUIDED_MESSAGES,
@@ -539,20 +541,138 @@ describe("openclawMinHostVersion (read from the package, not hardcoded)", () => 
   });
 });
 
-describe("guided (unverified agents)", () => {
-  it("returns an UNSUPPORTED outcome with the guidance message", () => {
-    // dsh + openclaw + kiro are NO LONGER guided — they have real installers now.
-    // Only pi remains guided (deferred).
-    for (const id of ["pi"]) {
-      const res = guided(id, GUIDED_MESSAGES[id])();
-      expect(res.action).toBe(UNSUPPORTED);
-      expect(res.detail).toBe(GUIDED_MESSAGES[id]);
-    }
+describe("installPi (npm-published pi extension + pi-mcp-adapter)", () => {
+  const PI_ADAPTER = "npm:pi-mcp-adapter";
+  const PI_SPEC = "npm:@chorus-aidlc/chorus-pi";
+
+  it("installs pi-mcp-adapter FIRST (the tool surface), then chorus-pi, when pi is on PATH", () => {
+    const run = fakeRun(() => ({ ok: true, code: 0, stdout: "", stderr: "" }));
+    const res = installPi({ run, env: {}, binaryOnPath: () => true });
+    expect(res.action).toBe(INSTALLED);
+    expect(run.calls).toHaveLength(2);
+    expect(run.calls[0].cmd).toBe("pi");
+    expect(run.calls[0].args).toEqual(["install", PI_ADAPTER]); // adapter first — it exposes chorus_* tools
+    expect(run.calls[1].args).toEqual(["install", PI_SPEC]); // then the chorus-pi package
+    expect(res.detail).toContain(PI_ADAPTER);
+    expect(res.detail).toContain(PI_SPEC);
   });
-  it("no longer carries stale dsh / openclaw / kiro guided messages", () => {
+
+  it("degrades gracefully (UNSUPPORTED + BOTH manual commands) when pi is absent, running NOTHING", () => {
+    const run = fakeRun();
+    const res = installPi({ run, env: {}, binaryOnPath: () => false });
+    expect(res.action).toBe(UNSUPPORTED); // NOT a FAILURE_ACTION → init never aborts
+    expect(res.detail).toContain(`pi install ${PI_ADAPTER}`);
+    expect(res.detail).toContain(`pi install ${PI_SPEC}`);
+    expect(run.calls).toHaveLength(0); // no guessed command executed
+  });
+
+  it("reports FAILED (not a throw) and does NOT install chorus-pi when the adapter install fails", () => {
+    const run = fakeRun((cmd, args) => (args[1] === PI_ADAPTER ? { ok: false, code: 1, stderr: "adapter boom" } : { ok: true }));
+    const res = installPi({ run, env: {}, binaryOnPath: () => true });
+    expect(res.action).toBe(FAILED);
+    expect(res.detail).toContain("adapter boom");
+    expect(run.calls).toHaveLength(1); // stopped after the adapter failure — chorus-pi not attempted
+  });
+
+  it("reports FAILED (not a throw) when the chorus-pi install command fails", () => {
+    const run = fakeRun((cmd, args) => (args[1] === PI_SPEC ? { ok: false, code: 1, stderr: "boom" } : { ok: true }));
+    const res = installPi({ run, env: {}, binaryOnPath: () => true });
+    expect(res.action).toBe(FAILED);
+    expect(res.detail).toContain("boom");
+    expect(run.calls).toHaveLength(2); // adapter ok, then chorus-pi failed
+  });
+
+  it("SKIPS (already installed) and runs NOTHING when both packages are present and not updating", () => {
+    const run = fakeRun();
+    const res = installPi(
+      ctxFor("pi", {
+        run,
+        binaryOnPath: () => true,
+        state: { chorusPiInstalled: true, adapterInstalled: true },
+      }),
+    );
+    expect(res.action).toBe(SKIPPED);
+    expect(res.detail).toContain("already installed");
+    expect(run.calls).toHaveLength(0); // recognized existing install — no re-run
+  });
+
+  it("REPAIRS via `pi update --extensions` (NOT pi install) when both present and --update-installed is set", () => {
+    const run = fakeRun();
+    const res = installPi(
+      ctxFor("pi", {
+        run,
+        binaryOnPath: () => true,
+        flags: { updateInstalled: true },
+        state: { chorusPiInstalled: true, adapterInstalled: true },
+      }),
+    );
+    expect(res.action).toBe(REPAIRED);
+    // MUST use pi's real updater — `pi install` of an existing package does not pull
+    // the newer version and leaves pi's "updates available" nag showing.
+    expect(run.calls).toHaveLength(1);
+    expect(run.calls[0].cmd).toBe("pi");
+    expect(run.calls[0].args).toEqual(["update", "--extensions"]);
+    expect(res.detail).toContain("pi update --extensions");
+  });
+
+  it("REPAIRS a partial install (adapter present, chorus-pi missing) by installing both", () => {
+    const run = fakeRun();
+    const res = installPi(
+      ctxFor("pi", {
+        run,
+        binaryOnPath: () => true,
+        state: { chorusPiInstalled: false, adapterInstalled: true },
+      }),
+    );
+    expect(res.action).toBe(REPAIRED);
+    expect(run.calls).toHaveLength(2);
+  });
+});
+
+describe("readPiInstallState (settings.json packages probe)", () => {
+  const withPkgs = (packages) => ({ readJson: () => ({ packages }) });
+
+  it("detects both chorus-pi and pi-mcp-adapter from string package sources", () => {
+    const s = readPiInstallState(withPkgs(["npm:pi-mcp-adapter", "npm:@chorus-aidlc/chorus-pi"]));
+    expect(s.adapterInstalled).toBe(true);
+    expect(s.chorusPiInstalled).toBe(true);
+    expect(s.pluginInstalled).toBe(true); // both present
+  });
+
+  it("matches object-shaped package entries (source carried on a field)", () => {
+    const s = readPiInstallState(withPkgs([{ source: "npm:@chorus-aidlc/chorus-pi" }, { source: "npm:pi-mcp-adapter" }]));
+    expect(s.chorusPiInstalled).toBe(true);
+    expect(s.adapterInstalled).toBe(true);
+  });
+
+  it("reports not-installed for an empty/missing settings file", () => {
+    const s = readPiInstallState({ readJson: () => null });
+    expect(s.chorusPiInstalled).toBe(false);
+    expect(s.adapterInstalled).toBe(false);
+    expect(s.pluginInstalled).toBe(false);
+  });
+
+  it("pluginInstalled is false when only the adapter is present (partial)", () => {
+    const s = readPiInstallState(withPkgs(["npm:pi-mcp-adapter"]));
+    expect(s.adapterInstalled).toBe(true);
+    expect(s.chorusPiInstalled).toBe(false);
+    expect(s.pluginInstalled).toBe(false); // needs both
+  });
+});
+
+describe("guided fallback mechanism", () => {
+  it("returns an UNSUPPORTED outcome with the guidance message", () => {
+    // guided() stays as the mechanism for a future not-yet-verified agent.
+    const res = guided("someagent", "install it by hand")();
+    expect(res.action).toBe(UNSUPPORTED);
+    expect(res.detail).toBe("install it by hand");
+  });
+  it("no agent is guided anymore — pi flipped to a real installer with the rest", () => {
+    // dsh/openclaw/kiro got real installers earlier; pi now runs `installPi`.
     expect(GUIDED_MESSAGES.dsh).toBeUndefined();
     expect(GUIDED_MESSAGES.openclaw).toBeUndefined();
     expect(GUIDED_MESSAGES.kiro).toBeUndefined();
+    expect(GUIDED_MESSAGES.pi).toBeUndefined();
   });
 });
 

@@ -53,6 +53,7 @@ import {
 import { resolveInstallCwds as defaultResolveInstallCwds } from "../../daemon-install-config.mjs";
 import { validateAndFetchIdentity } from "../../chorus-client.mjs";
 import { agentTypeForSelection, isWakeableAgentType } from "../agent-type-map.mjs";
+import { writePiMcpServer, resolvePiMcpConfigPath } from "../pi-mcp-config.mjs";
 
 const STEP_ID = "credential-seed";
 const { SEEDED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
@@ -422,6 +423,23 @@ export function readCodexEnvProfile(envPath, deps = {}) {
 }
 
 /**
+ * Whether an init selection id is Pi (`pi`). Pi's Chorus MCP access is via the ADAPTER
+ * path (`pi-mcp-adapter` reads an mcp.json — chorus.ts never registers tools itself), so
+ * — like Codex's `[mcp_servers.chorus]` — `chorus agents add` writes pi's global
+ * `~/.pi/agent/mcp.json` with an `mcpServers.chorus` entry whose Authorization references
+ * the API key by ENV VAR (`Bearer ${CHORUS_API_KEY}`), NO literal key on disk. Unlike dsh /
+ * Claude Code / Codex, pi has NO settings env-file to persist the key + profile into, so this
+ * write does NOT suppress the CHORUS_AGENT_PROFILE export hint: interactive pi still needs
+ * CHORUS_API_KEY (+ CHORUS_AGENT_PROFILE) exported in its shell. We gate on the selection id,
+ * NOT the mapped daemon agentType (`pi` → the shared "offline" type, so it can't single pi
+ * out). Mirrors {@link isDshSelection} / {@link isClaudeSelection} / {@link isCodexSelection}.
+ * @param {string} id
+ */
+function isPiSelection(id) {
+  return id === "pi";
+}
+
+/**
  * @param {import("../contracts.mjs").StepContext & {
  *   validateCredentials?: Function, appendAgent?: Function, writeLogin?: Function,
  *   promptFn?: Function,
@@ -442,6 +460,7 @@ export async function seedCredentials(ctx) {
   const readSettingsProfile = ctx.readClaudeSettingsProfile ?? readClaudeSettingsProfile;
   const writeCodexEnv = ctx.writeCodexEnv ?? writeCodexEnvFile;
   const readCodexProfile = ctx.readCodexEnvProfile ?? readCodexEnvProfile;
+  const writePiMcp = ctx.writePiMcp ?? writePiMcpServer;
 
   const selection = Array.isArray(ctx.selection) ? ctx.selection.filter((id) => nonEmpty(id)) : [];
   if (selection.length === 0) {
@@ -708,13 +727,47 @@ export async function seedCredentials(ctx) {
       }
     }
 
-    // Combined side-file note + hint-suppression flags (dsh, claude, and codex are mutually
-    // exclusive selection ids, so at most one note/flag is set per iteration).
-    const sideNote = `${dshNote}${claudeNote}${codexNote}`;
+    // pi-only: ALSO write pi's global ~/.pi/agent/mcp.json so `pi-mcp-adapter` exposes the
+    // chorus_* tools to the pi agent (the ADAPTER path — chorus.ts never registers tools). The
+    // Authorization header references the key by env var (`Bearer ${CHORUS_API_KEY}`), so NO
+    // literal cho_ key is written — the pi analogue of Codex's keyless [mcp_servers.chorus]
+    // bearer_token_env_var and CC's plugin .mcp.json ${VAR} interpolation. The URL is not a
+    // secret, so it is a resolved literal. UNGATED by daemon.json dedup (an idempotent re-run
+    // still repairs a missing/stale mcp.json). Unlike dsh/claude/codex this write does NOT
+    // suppress the CHORUS_AGENT_PROFILE export hint: pi has NO settings env-file to persist the
+    // key + profile into, so interactive pi still needs CHORUS_API_KEY (+ CHORUS_AGENT_PROFILE)
+    // in its shell — the daemon spawner injects them for the wake path. `piMcpWritten` is
+    // reported for observability only; it is intentionally NOT in the hint-suppression set.
+    let piNote = "";
+    let piMcpWritten = false;
+    if (isPiSelection(id)) {
+      const configPath = resolvePiMcpConfigPath(env);
+      try {
+        const p = writePiMcp({ configPath, url });
+        piMcpWritten = true;
+        piNote =
+          `; wrote mcpServers.chorus (Authorization: Bearer \${CHORUS_API_KEY}) into ${p} (0600) — ` +
+          "pi-mcp-adapter exposes the chorus_* tools with the cho_ key env-sourced (no literal key on " +
+          "disk). Interactive pi still needs CHORUS_API_KEY (+ CHORUS_AGENT_PROFILE) exported in its " +
+          "shell; the daemon injects them for the wake path. Your cho_ key is not shown here.";
+      } catch (err) {
+        piNote =
+          `; WARNING: could not write ${configPath} (${err?.message ?? String(err)}). ` +
+          "pi will not reach Chorus MCP until an mcpServers.chorus entry with an env-referenced " +
+          `Authorization (Bearer \${CHORUS_API_KEY}) exists — add it to ${configPath}. ` +
+          "Your cho_ key is not shown here.";
+      }
+    }
+
+    // Combined side-file note + hint-suppression flags (dsh, claude, codex, and pi are mutually
+    // exclusive selection ids, so at most one note is set per iteration). piMcpWritten is carried
+    // for observability but is NOT a hint-suppression flag (see the pi branch above).
+    const sideNote = `${dshNote}${claudeNote}${codexNote}${piNote}`;
     const hintFlags = {
       ...(profileInEnv ? { profileInEnv: true } : {}),
       ...(settingsEnvWritten ? { settingsEnvWritten: true } : {}),
       ...(codexEnvWritten ? { codexEnvWritten: true } : {}),
+      ...(piMcpWritten ? { piMcpWritten: true } : {}),
     };
 
     if (!res.ok) {

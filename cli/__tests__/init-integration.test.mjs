@@ -143,14 +143,19 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     // + a temp KIRO_DIR keep it hermetic (no network, no real ~/.kiro touch).
     const kiroDir = join(mkdtempSync(join(tmpdir(), "init-int-")), ".kiro");
 
-    // kiro (→ kiro, wakeable) installs its .kiro/ file template; pi (→ offline)
-    // is guided (deterministic UNSUPPORTED) for plugin-install → no real CLI call.
+    // kiro (→ kiro, wakeable) installs its .kiro/ file template; pi (→ pi, wakeable)
+    // now runs the real `installPi` adapter (task D flipped it from guided). Here pi
+    // is NOT on PATH (binaryOnPath:()=>false), so installPi degrades gracefully to
+    // UNSUPPORTED (surfacing the manual `pi install npm:…` command) and runs no CLI
+    // — deterministic + hermetic regardless of whether the build host has pi.
     const code = await runInit(
       ["--agents", "kiro,pi", "--url", "https://c", "--api-key", "cho_kiro", "--yes"],
       {
         io,
         version: "9.9.9",
-        env: { ...process.env, KIRO_DIR: kiroDir },
+        // pi (selected) → credential-seed writes the env-referenced ~/.pi/agent/mcp.json;
+        // point PI_CODING_AGENT_DIR at a temp dir so this test NEVER touches the real one.
+        env: { ...process.env, KIRO_DIR: kiroDir, PI_CODING_AGENT_DIR: mkdtempSync(join(tmpdir(), "init-pi-")) },
         detectAgents, // real
         orderedSteps, // real: [credential-seed(10), plugin-install(20), daemon-setup(30)]
         getAdapter, // real
@@ -162,6 +167,8 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
           },
           writeLogin: () => { credWrites += 1; },
           fetch: fakeKiroFetch(), // kiro's file-template download (hermetic)
+          // pi absent → installPi degrades gracefully (no `pi install` executed).
+          binaryOnPath: () => false,
           // pi's own key; "n" to the per-agent daemon-waking prompt (kiro NOT opted in).
           promptFn: async (q) => (String(q).includes("daemon waking") ? "n" : "cho_pi"),
           // daemon-setup reads the agents[] credential-seed just wrote (the fake append
@@ -178,15 +185,15 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(code).toBe(0);
     const text = io.lines.join("\n");
     // credential-seed captured a DISTINCT key per agent, each tagged with its mapped
-    // agentType (kiro is wakeable → "kiro"; pi is not → "offline").
+    // agentType (kiro and pi are both wakeable now → "kiro" / "pi").
     expect(appended.map((a) => [a.apiKey, a.agentType])).toEqual([
       ["cho_kiro", "kiro"],
-      ["cho_pi", "offline"],
+      ["cho_pi", "pi"],
     ]);
-    // daemon-wake DEFAULTS OFF: the wakeable kiro was not opted in → daemonWake:false;
-    // the offline pi gets no daemonWake field.
+    // daemon-wake DEFAULTS OFF: both wakeable agents were answered "n" at the
+    // per-agent daemon-waking prompt → daemonWake:false on each.
     expect(appended[0].daemonWake).toBe(false);
-    expect(appended[1]).not.toHaveProperty("daemonWake");
+    expect(appended[1].daemonWake).toBe(false);
     // Flat top-level creds are DEPRECATED — credential-seed never writes them.
     expect(credWrites).toBe(0);
     expect(text).toContain("kiro: seeded");
@@ -197,11 +204,12 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(text).toContain('export CHORUS_AGENT_PROFILE="u-cho_kiro"');
     expect(text).toContain('export CHORUS_AGENT_PROFILE="u-cho_pi"');
     // plugin-install ran per selected agent: kiro installed its .kiro/ file
-    // template (fetched + written into the temp KIRO_DIR); pi stays guided.
+    // template (fetched + written into the temp KIRO_DIR); pi (binary absent)
+    // degraded to unsupported with the manual `pi install npm:…` command.
     expect(text).toContain("kiro: installed");
     expect(text).toContain("pi: unsupported");
     expect(existsSync(join(kiroDir, "agents", "chorus.json"))).toBe(true);
-    // daemon-setup: nothing will be woken (kiro not opted in, pi offline) → skip.
+    // daemon-setup: nothing will be woken (neither kiro nor pi opted in) → skip.
     expect(text).toContain("no agent enabled for daemon waking");
     // summary + next-step hint
     expect(text).toContain("Summary");
@@ -251,6 +259,8 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
           CHORUS_DSH_PROFILE: "default",
           OPENCLAW_CONFIG_DIR: openclawDir,
           CLAUDE_CONFIG_DIR: claudeCfgDir, // isolate the real ~/.claude/settings.json write
+          // pi → credential-seed writes the env-referenced ~/.pi/agent/mcp.json; temp-isolate it.
+          PI_CODING_AGENT_DIR: mkdtempSync(join(tmpdir(), "init-pi-")),
         },
         detectAgents, // real
         orderedSteps, // real
@@ -289,26 +299,27 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
 
     const text = io.lines.join("\n");
 
-    // Exit 1: openclaw's plugin install FAILED (the only FAILED outcome; unsupported
-    // pi is not a failure).
+    // Exit 1: openclaw's plugin install FAILED (the only FAILED outcome; pi installs
+    // fine now via `pi install npm:…` — binaryOnPath:()=>true + the shared ok runner).
     expect(code).toBe(1);
 
     // agentType written per agent — the load-bearing mapping, incl. claude→claude-code
-    // (explicit rename) and opencode/openclaw/pi/dsh→offline (kiro stays wakeable).
+    // (explicit rename) and opencode/openclaw/dsh→offline (kiro and pi are wakeable).
     expect(appended.map((a) => a.agentType)).toEqual([
       "claude-code", // claude — the rename actually exercised
       "offline", // dsh (de-advertised)
       "offline", // openclaw
       "kiro", // kiro (wakeable)
-      "offline", // pi
+      "pi", // pi (wakeable — add-daemon-pi-backend)
     ]);
     expect(appended).toHaveLength(5);
     // --daemon-wake-all opted the wakeable agents in (daemonWake:true); offline agents
     // get no daemonWake field.
     expect(appended[0].daemonWake).toBe(true); // claude
     expect(appended[3].daemonWake).toBe(true); // kiro
+    expect(appended[4].daemonWake).toBe(true); // pi (wakeable)
     expect(appended[1]).not.toHaveProperty("daemonWake"); // dsh → offline
-    expect(appended[4]).not.toHaveProperty("daemonWake"); // pi → offline
+    expect(appended[2]).not.toHaveProperty("daemonWake"); // openclaw → offline
 
     // Per-agent install outcomes, and per-agent failure isolation: openclaw FAILED,
     // yet dsh (before it) AND kiro/pi (after it) all produced their own outcome.
@@ -316,14 +327,14 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(text).toContain("dsh: installed");
     expect(text).toContain("openclaw: failed");
     expect(text).toContain("kiro: installed");
-    expect(text).toContain("pi: unsupported");
+    expect(text).toContain("pi: installed"); // `pi install npm:@chorus-aidlc/chorus-pi`
 
-    // supported flips: real installers (dsh/openclaw/kiro) true; guided pi false.
+    // supported flips: real installers (dsh/openclaw/kiro/pi) all true now.
     const supportedOf = (id) => getAdapter(id).readInstallState({ env: {}, home: "/nonexistent-xyz" }).supported;
     expect(supportedOf("dsh")).toBe(true);
     expect(supportedOf("openclaw")).toBe(true);
     expect(supportedOf("kiro")).toBe(true);
-    expect(supportedOf("pi")).toBe(false);
+    expect(supportedOf("pi")).toBe(true);
 
     // daemon-setup did NOT re-prompt the backend AND did NOT write the deprecated
     // top-level cwds/agent: with an init selection, per-agent cwds + agentType are
@@ -334,11 +345,14 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     expect(text).toContain("--daemon-autostart");
   });
 
-  it("all-offline selection (opencode,pi) skips the daemon auto-start prompt", async () => {
-    // No wakeable agent selected → daemon-setup persists the agents[] entries but
-    // SKIPS both the backend resolve/menu and the auto-start prompt (even on a TTY,
-    // no --yes). opencode installs (offline classification is orthogonal to whether
-    // its plugin installs); pi is guided.
+  it("no-agent-opted-in selection (opencode,pi) skips the daemon auto-start prompt", async () => {
+    // opencode is offline and pi is wakeable but NOT opted into daemon-waking (its
+    // per-agent prompt is answered no) → daemon-setup persists the agents[] entries
+    // but SKIPS both the backend resolve/menu and the auto-start prompt (even on a
+    // TTY, no --yes), because NOTHING is enabled for waking. opencode installs
+    // (offline classification is orthogonal to whether its plugin installs); pi runs
+    // the real installPi adapter but is not on PATH here (binaryOnPath:()=>false), so
+    // it degrades gracefully to unsupported.
     const lines = [];
     let askedAutostart = false;
     const io = {
@@ -359,7 +373,9 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
       {
         io,
         version: "9.9.9",
-        env: { ...process.env, OPENCODE_CONFIG_DIR: opencodeDir },
+        // pi (selected) → credential-seed writes the env-referenced ~/.pi/agent/mcp.json;
+        // point PI_CODING_AGENT_DIR at a temp dir so this test NEVER touches the real one.
+        env: { ...process.env, OPENCODE_CONFIG_DIR: opencodeDir, PI_CODING_AGENT_DIR: mkdtempSync(join(tmpdir(), "init-pi-")) },
         detectAgents,
         orderedSteps,
         getAdapter,
@@ -373,6 +389,7 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
           writeLogin: () => {},
           promptFn: async () => "cho_pi",
           run: () => ({ ok: true, stdout: "" }),
+          binaryOnPath: () => false, // pi absent → installPi degrades gracefully
           readJson: () => ({ agents: appended }),
           resolveInstallCwds: async () => ({ cwds: ["/a"] }),
           resolveInstallAgent: async (flags) => {
@@ -388,11 +405,13 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     const text = io.lines.join("\n");
     // opencode installed + pi unsupported → no FAILED outcome → exit 0.
     expect(code).toBe(0);
-    // Both agents parked as offline for the `chorus mcp` proxy (no daemonWake field).
-    expect(appended.map((a) => a.agentType)).toEqual(["offline", "offline"]);
-    expect(appended.every((a) => !("daemonWake" in a))).toBe(true);
+    // opencode → offline (parked for the `chorus mcp` proxy, no daemonWake field);
+    // pi → pi (wakeable) but not opted in → daemonWake:false.
+    expect(appended.map((a) => a.agentType)).toEqual(["offline", "pi"]);
+    expect(appended[0]).not.toHaveProperty("daemonWake"); // opencode offline
+    expect(appended[1].daemonWake).toBe(false); // pi wakeable, not opted in
     expect(text).toContain("opencode: installed");
-    expect(text).toContain("pi: unsupported");
+    expect(text).toContain("pi: unsupported"); // pi binary absent → graceful degrade
     // The auto-start gate: nothing will be woken → no backend resolve, no prompt.
     expect(text).toContain("no agent enabled for daemon waking");
     expect(daemonResolveAgentCalls).toBe(0);

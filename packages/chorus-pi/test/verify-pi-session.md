@@ -16,10 +16,15 @@ C1. Skill discovery: load the core skill and confirm it rendered.
     - Run: `/skill:chorus` (or read `packages/chorus-pi/skills/chorus/SKILL.md`)
     - Assert: the skill content loads (you can see "AI-DLC Workflow" and "Skill Routing").
 
-C2. Agent discovery: list available sub-agents.
-    - Run (via the subagent tool or the mcp gateway — whichever this session exposes): `subagent_manage({ action: "list" })`
-    - Assert: the result includes `chorus-proposal-reviewer`, `chorus-task-reviewer`, and `chorus-code-reviewer`.
-    - (Built-ins `scout`/`planner`/`reviewer`/`worker` may also appear — that's fine.)
+C2. Agent discovery (package-relative, zero copy).
+    The 3 reviewer agents are discovered directly from the package's own `agents/`
+    dir by the bundled `extensions/subagent/agents.ts` — NO copy into
+    `~/.pi/agent/agents/`. Confirm by dispatching one with a trivial probe task:
+    - Run: `subagent({ agent: "chorus-task-reviewer", task: "Reply with the single word READY and stop." })`
+    - Assert: the dispatch resolves the agent (it runs / returns) rather than
+      erroring with "Unknown agent". That proves package-relative discovery worked.
+    - (An `Unknown agent` error naming the available agents means discovery failed —
+      check the package installed and `extensions/subagent/` shipped.)
 
 C3. MCP connection + tool-name prefix (critical).
     The skill docs call chorus tools by their backend native name, e.g.
@@ -51,26 +56,27 @@ C4. Extension loaded (session_start → checkin + context injection).
 
 D1. tool_call session injection (the key capability).
     The extension's `tool_call` handler (pre-execution, mutable input) should
-    create a Chorus session and append its UUID + workflow into the spawned
-    worker's task. Verify by spawning a worker that echoes the injection:
+    create a Chorus session and append its UUID + workflow into the dispatched
+    worker's task. Verify by dispatching a worker that echoes the injection:
     - Run:
       ```
-      subagent_spawn({ agent: "worker", task: "If your task text contains a line starting with 'Session UUID:', print exactly that line and stop. Otherwise print 'NO SESSION INJECTED' and stop." })
+      subagent({ agent: "worker", task: "If your task text contains a line starting with 'Session UUID:', print exactly that line and stop. Otherwise print 'NO SESSION INJECTED' and stop." })
       ```
     - Wait for the worker's completion message.
     - Assert: the worker printed `Session UUID: <uuid>`, NOT `NO SESSION INJECTED`.
-    - Record the `agentId` returned by subagent_spawn (starts with `sa_`) for D2.
+    - Record that `<uuid>` for D2.
     - On PASS, this proves: tool_call fired → chorus_create_session was called →
-      the UUID was injected into input.task → the subprocess received it.
+      the UUID was injected into the worker task → the ephemeral child received it.
 
-D2. session closes on subagent_manage close.
-    - Run: `subagent_manage({ action: "close", agentId: "<the sa_ id from D1>" })`
-    - Then verify on the backend: `mcp({ tool: "chorus_list_sessions", args: { status: "active" } })`
+D2. session auto-closes when the subagent call returns.
+    The official subagent children are ephemeral — the extension closes the
+    session automatically on the `subagent` tool's `tool_result` (no separate
+    close tool). By the time D1's call returned, the session should already be
+    closed.
+    - Verify on the backend: `mcp({ tool: "chorus_list_sessions", args: { status: "active" } })`
       (use the prefix that worked in C3).
-    - Assert: the session UUID from D1 is NOT in the active list (it was closed
-      by the extension's tool_execution_end handler).
-    - (Alternatively check `chorus_chorus_get_session` with the UUID — it should
-      be `closed`.)
+    - Assert: the session UUID from D1 is NOT in the active list.
+    - (Alternatively check `chorus_get_session` with the UUID — it should be `closed`.)
 
 D3. Reviewer nudge fires after submit_for_verify.
     This needs a real task in `to_verify` state. If you have a project + task

@@ -78,7 +78,7 @@ Review your persona, current assignments, and pending work counts.
 
 **Skip if you are the main agent or Team Lead.**
 
-If you are a **sub-agent** (spawned via `subagent_spawn`), the Chorus extension automatically creates your session and injects it into your task prompt — look for a `--- Chorus session (auto-injected) ---` section containing your `Session UUID`. Keep it for all task operations.
+If you are a **sub-agent** (dispatched via the `subagent` tool), the Chorus extension automatically creates your session and injects it into your task prompt — look for a `--- Chorus session (auto-injected) ---` section containing your `Session UUID`. Keep it for all task operations.
 
 ### Step 2: Find Work
 
@@ -259,13 +259,13 @@ Once Admin verifies (status: `done`), move to the next available task (back to S
 
 ### Step 11: Idea Completion Report (advisory)
 
-If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, offer to call `chorus_create_report` via `AskUserQuestion`. The `content` parameter's description carries the section template. Skip on decline — the extension will remind on the next run.
+If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, offer to call `chorus_create_report` via `AskUserQuestion`. The call requires `title` (a short report title) plus `content`; `content`'s parameter description carries the three-section template (`## Summary` / `## Decisions` / `## Follow-ups`). Skip on decline — the extension will remind on the next run.
 
 ---
 
 ## Session (Sub-Agents Only)
 
-The Chorus extension **fully automates** session lifecycle — creation (on `subagent_spawn`, via `tool_call` task injection) and cleanup (on `subagent_manage close`) are handled by the extension. Sub-agents only do 3 things manually:
+The Chorus extension **fully automates** session lifecycle — a Chorus session is created (on `subagent` dispatch, via `tool_call` task injection) and closed (when the blocking `subagent` call returns) by the extension. Sub-agents only do 3 things manually:
 
 1. `chorus_session_checkin_task({ sessionUuid, taskUuid })` — before starting work
 2. `chorus_session_checkout_task({ sessionUuid, taskUuid })` — when done (recommended; plugin also auto-checkouts on exit)
@@ -277,13 +277,15 @@ The Chorus extension **fully automates** session lifecycle — creation (on `sub
 
 ## Parallel Sub-Agent Integration
 
-When using Pi's subagents (`pi-subagents`) to run multiple sub-agents in parallel, Chorus provides full work observability. The `chorus-pi` extension automates the session lifecycle: when you `subagent_spawn` a worker, it creates a Chorus session and injects the session UUID + workflow into the worker's task; when you `subagent_manage close` the agent, it closes the session.
+Use the `subagent` tool to run multiple Chorus workers in parallel; Chorus provides full work observability. The `subagent` tool is **blocking** — a parallel dispatch runs every worker to completion and returns their aggregated output in one call (there is no async spawn, no `agentId`, and no manual close). The `chorus-pi` extension automates session lifecycle: when you dispatch a `chorus-worker`, it creates a Chorus session and injects the session UUID + workflow into that worker's task; when the `subagent` call returns, it closes the session.
+
+> The `subagent` tool has three modes — **single** (`{ agent, task }`), **parallel** (`{ tasks: [...] }`, max 8 per call, concurrency 4), and **chain** (`{ chain: [...] }`, sequential with a `{previous}` placeholder). Dispatch `agent: "chorus-worker"` for Chorus task implementation.
 
 ### Two-Layer Architecture
 
 | Layer | System | Purpose |
 |-------|--------|---------|
-| **Orchestration** | Pi subagents (`subagent_spawn` / `subagent_send` / `subagent_mailbox`) | Spawning sub-agents, follow-up tasks, inter-agent messaging |
+| **Orchestration** | The `subagent` tool (single / parallel / chain) | Dispatching workers to isolated pi subprocesses and collecting their results |
 | **Work Tracking** | Chorus | Task lifecycle, session observability, activity stream |
 
 ### Team Lead Workflow
@@ -293,24 +295,28 @@ When using Pi's subagents (`pi-subagents`) to run multiple sub-agents in paralle
 chorus_checkin()
 chorus_list_tasks({ projectUuid: "<project-uuid>" })
 
-# 2. Spawn sub-agents (async — returns immediately with an agentId)
-# Pass only task UUIDs — the chorus-pi extension auto-injects the session
-# UUID + workflow into the worker's task.
-subagent_spawn({
-  agent: "worker",
-  task: "Your Chorus task UUID: <task-uuid>\nProject UUID: <project-uuid>\n\nImplement..."
+# 2. Dispatch a worker per ready task in ONE blocking parallel call (max 8).
+# Pass only task + project UUIDs — the chorus-pi extension auto-injects the
+# session UUID + workflow into each worker's task.
+subagent({
+  tasks: [
+    { agent: "chorus-worker",
+      task: "Your Chorus task UUID: <task-uuid>\nProject UUID: <project-uuid>\n\nImplement..." },
+    // ... one entry per ready task, max 8 (batch into multiple calls if more)
+  ]
 })
-# → returns agentId (sa_<uuid>); keep it to close the agent later.
+# The call BLOCKS until every worker finishes and returns their outputs.
+# For a single task, use single mode: subagent({ agent: "chorus-worker", task: "..." })
 ```
 
 **What the Team Lead prompt needs:**
-- Task UUID(s)
+- Task UUID(s) + Project UUID
 - NO session UUID, NO workflow boilerplate — the extension auto-injects everything
-- The `agentId` returned by `subagent_spawn` (needed to `subagent_manage close` later)
+- No `agentId` to track and no close step — the blocking call owns the worker's whole lifecycle
 
 ### Sub-Agent Workflow
 
-The extension injects the session UUID + workflow into the sub-agent's task automatically (at `tool_call` time, before the subprocess starts). The sub-agent reads the `Session UUID:` from its task prompt and follows the injected steps:
+The extension injects the session UUID + workflow into the worker's task automatically (at `tool_call` time, before the subprocess starts). The worker reads the `Session UUID:` from its task prompt and follows the injected steps:
 
 ```
 # 1. Checkin to task (sessionUuid comes from the auto-injected task)
@@ -328,11 +334,9 @@ chorus_report_work({ taskUuid: "<my-task-uuid>", report: "...", sessionUuid: "<m
 chorus_session_checkout_task({ sessionUuid: "<my-session-uuid>", taskUuid: "<my-task-uuid>" })
 chorus_submit_for_verify({ taskUuid: "<my-task-uuid>", summary: "..." })
 
-# 6. (Optional) notify the team lead via mailbox — you need its agentId
-subagent_mailbox({ action: "send", agentId: "<team-lead-agentId>", message: "Task complete" })
-
-# DO NOT call chorus_close_session — the extension closes it when the
-# team lead runs subagent_manage({ action: "close", agentId: "<my-agentId>" })
+# The worker's final message is returned to the Team Lead as the subagent result.
+# DO NOT call chorus_close_session — the extension closes the session when the
+# blocking `subagent` call returns.
 ```
 
 ### Handling Task Dependencies (DAG)
@@ -341,24 +345,25 @@ subagent_mailbox({ action: "send", agentId: "<team-lead-agentId>", message: "Tas
 
 **Wave-based execution (recommended):**
 1. `chorus_get_unblocked_tasks` — find ready tasks
-2. `subagent_spawn` workers for Wave 1 (async; keep the agentIds)
-3. Wait for `to_verify` (poll `chorus_list_tasks` or read the async completion messages), then **verify each task** (`chorus_admin_verify_task` → `done`)
-4. `subagent_manage close` each finished worker (releases its slot + closes its Chorus session)
-5. `chorus_get_unblocked_tasks` — find newly unblocked tasks (Wave 2)
-6. Repeat until all tasks done
+2. Dispatch a `chorus-worker` per ready task in ONE blocking `subagent({ tasks: [...] })` call (max 8; batch if more). The call returns when the whole wave has finished (each worker at `to_verify`).
+3. **Verify each task** — spawn `chorus-task-reviewer`, act on its VERDICT, then `chorus_admin_verify_task` → `done`.
+4. `chorus_get_unblocked_tasks` — find newly unblocked tasks (Wave 2)
+5. Repeat until all tasks done
 
-> **Critical:** `to_verify` does NOT resolve dependencies — only `done` or `closed` does. The Team Lead must verify tasks between waves. Also remember to `subagent_manage close` finished workers — Pi limits concurrent sub-agents and `completed` does not release the slot.
+> **Critical:** `to_verify` does NOT resolve dependencies — only `done` or `closed` does. The Team Lead must verify tasks between waves. The blocking `subagent` call already released each worker's slot on return, so there is nothing to close.
 
 ### Multiple Tasks Per Sub-Agent
 
-A single sub-agent can work on multiple tasks sequentially:
+A single worker can handle several tasks sequentially — use single mode with an ordered list:
 
 ```
-subagent_spawn({
-  agent: "worker",
+subagent({
+  agent: "chorus-worker",
   task: "Your Chorus tasks (work in order):\n1. task-schema-uuid\n2. task-api-uuid (depends on #1)\n\nFor EACH task: checkin -> in_progress -> work -> report -> checkout -> submit_for_verify"
 })
 ```
+
+For strictly dependent stages where each step consumes the previous output, use chain mode: `subagent({ chain: [{ agent: "chorus-worker", task: "..." }, { agent: "chorus-worker", task: "... {previous} ..." }] })`.
 
 ### MCP Access for Sub-Agents
 

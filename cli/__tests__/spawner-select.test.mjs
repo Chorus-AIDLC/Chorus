@@ -9,6 +9,7 @@ import { ClaudeSpawner } from "../claude-spawner.mjs";
 import { CodexSpawner } from "../codex-spawner.mjs";
 import { DshSpawner } from "../dsh-spawner.mjs";
 import { KiroSpawner } from "../kiro-spawner.mjs";
+import { PiSpawner } from "../pi-spawner.mjs";
 
 const logger = { info() {}, warn() {}, error() {} };
 const creds = { url: "https://example.test", apiKey: "cho_test" };
@@ -36,6 +37,14 @@ describe("selectSpawner", () => {
     expect(s.creds).toEqual(creds);
   });
 
+  it("returns a PiSpawner for pi — NOT the claude-code default, NOT offline", () => {
+    const s = selectSpawner("pi", { logger, permissionMode: "yolo", creds });
+    expect(s).toBeInstanceOf(PiSpawner);
+    expect(s).not.toBeInstanceOf(ClaudeSpawner);
+    expect(s).not.toBeInstanceOf(OfflineSpawner);
+    expect(s.creds).toEqual(creds);
+  });
+
   it("threads permissionMode into the selected spawner", () => {
     expect(selectSpawner("claude-code", { logger, permissionMode: "chorus", creds }).permissionMode).toBe("chorus");
     expect(selectSpawner("codex", { logger, permissionMode: "yolo", creds }).permissionMode).toBe("yolo");
@@ -47,6 +56,7 @@ describe("selectSpawner", () => {
     expect(selectSpawner("codex", { logger, creds }).creds).toEqual(creds);
     expect(selectSpawner("kiro", { logger, creds }).creds).toEqual(creds);
     expect(selectSpawner("dsh", { logger, creds }).creds).toEqual(creds);
+    expect(selectSpawner("pi", { logger, creds }).creds).toEqual(creds);
   });
 
   it("defaults to claude-code when the agent type is unrecognized (no throw — selection is post-validation)", () => {
@@ -91,9 +101,11 @@ describe("OfflineSpawner (fail-closed no-op wake)", () => {
     const x = selectSpawner("codex", { logger, permissionMode: "yolo", creds });
     const k = selectSpawner("kiro", { logger, permissionMode: "yolo", creds });
     const d = selectSpawner("dsh", { logger, permissionMode: "yolo", creds });
+    const pi = selectSpawner("pi", { logger, permissionMode: "yolo", creds });
     expect(typeof c.wake).toBe("function");
     expect(typeof x.wake).toBe("function");
     expect(typeof k.wake).toBe("function");
     expect(typeof d.wake).toBe("function");
+    expect(typeof pi.wake).toBe("function");
   });
 });

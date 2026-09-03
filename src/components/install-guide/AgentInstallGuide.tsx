@@ -46,6 +46,9 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
             <TabsTrigger value="kiro" className="shrink-0">
               {t("install.tabs.kiro")}
             </TabsTrigger>
+            <TabsTrigger value="pi" className="shrink-0">
+              {t("install.tabs.pi")}
+            </TabsTrigger>
             <TabsTrigger value="dsh" className="shrink-0">
               {t("install.tabs.dsh")}
             </TabsTrigger>
@@ -144,6 +147,37 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("install.kiro.step2Tip")}
+              </p>
+            </div>
+
+            {profileStep}
+          </TabsContent>
+
+          {/* Pi Tab */}
+          <TabsContent value="pi" className="mt-4 space-y-4">
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.pi.step1Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code={`export CHORUS_URL="${origin}"\nexport CHORUS_API_KEY="${displayKey}"`}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.pi.step1Tip")}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.pi.step2Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code={`npm install -g @chorus-aidlc/chorus\nchorus agents add --agents pi`}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.pi.step2Tip")}
               </p>
             </div>
 

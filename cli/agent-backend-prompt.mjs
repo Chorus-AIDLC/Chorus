@@ -32,11 +32,16 @@ import { KNOWN_AGENTS } from "./daemon-agent.mjs";
  * The code path (probeAgentCli/resolveDshPath, spawner-select, dsh-spawner) is
  * kept dormant — re-add this menu entry to bring it back online. It remains
  * reachable by name (e.g. `--agent dsh`, or typing "dsh" at the prompt).
+ *
+ * pi IS advertised: it is a first-class wakeable backend (PiSpawner /
+ * add-daemon-pi-backend), unlike the dormant dsh, so it sits in the numbered
+ * menu alongside claude-code / codex / kiro.
  */
 export const AGENT_MENU = [
   { value: "claude-code", label: "Claude Code (default)" },
   { value: "codex", label: "Codex CLI" },
   { value: "kiro", label: "Kiro CLI" },
+  { value: "pi", label: "Pi" },
 ];
 
 /** A non-empty trimmed string, or undefined. */

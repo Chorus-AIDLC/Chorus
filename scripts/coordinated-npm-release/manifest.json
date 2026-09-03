@@ -105,6 +105,34 @@
         "(^|/)\\.env($|\\.)"
       ],
       "postPackCheck": "none"
+    },
+    {
+      "label": "chorus-pi plugin",
+      "directory": "packages/chorus-pi",
+      "packageName": "@chorus-aidlc/chorus-pi",
+      "installCommands": [
+        "pnpm install --frozen-lockfile"
+      ],
+      "checkCommands": [
+        "pnpm run check:package"
+      ],
+      "buildCommands": [],
+      "packageCommands": [
+        "pnpm run check:pack"
+      ],
+      "requiredFiles": [
+        "package.json",
+        "extensions/chorus.ts",
+        "skills/chorus/SKILL.md",
+        "agents/chorus-task-reviewer.md",
+        "README.md"
+      ],
+      "forbiddenPatterns": [
+        "(^|/)node_modules/",
+        "(^|/)test/",
+        "(^|/)\\.env($|\\.)"
+      ],
+      "postPackCheck": "none"
     }
   ]
 }
