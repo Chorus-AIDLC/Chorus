@@ -47,7 +47,11 @@ jobs:
     if: github.event_name == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # No concurrency block — release image builds must never be cancelled.
+    # Never cancel a release build, but serialize them so two overlapping
+    # releases can't race and leave `latest` pointing at the older image.
+    concurrency:
+      group: docker-release
+      cancel-in-progress: false
     steps:
       - name: Checkout immutable release tag
         uses: actions/checkout@v7
@@ -70,4 +74,9 @@ jobs:
       - name: Build & push release image + latest
         env:
           CI: "true"
-        run: ./scripts/docker-push.sh "${{ github.event.release.tag_name }}"
+          # Pass the tag through the environment rather than interpolating
+          # ${{ ... }} directly into the run script — a release tag is
+          # attacker-influenced input and inline expansion is a shell-injection
+          # vector (GitHub Actions security-hardening guidance).
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: ./scripts/docker-push.sh "$RELEASE_TAG"

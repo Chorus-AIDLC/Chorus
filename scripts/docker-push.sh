@@ -37,10 +37,20 @@ if [ -z "$TAG" ]; then
   TAG="$GIT_SHA"
 fi
 
-if [ "$NO_LATEST" = true ]; then
-  TAGS="-t ${IMAGE}:${TAG}"
-else
-  TAGS="-t ${IMAGE}:${TAG} -t ${IMAGE}:latest"
+# Validate the tag against Docker's tag grammar
+# ([A-Za-z0-9_][A-Za-z0-9_.-]{0,127}). This rejects shell metacharacters
+# ($(), backticks, ;, spaces, …) so a hostile branch/release tag can never
+# smuggle a command into the build invocation. Defense-in-depth: the build
+# is also run via an argv array (no eval), so nothing is word-split anyway.
+if ! printf '%s' "$TAG" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
+  echo "Invalid image tag: '${TAG}' (allowed: [A-Za-z0-9_][A-Za-z0-9_.-]{0,127})" >&2
+  exit 1
+fi
+
+# Build the tag arguments as an array (never a word-split string).
+TAG_ARGS=(-t "${IMAGE}:${TAG}")
+if [ "$NO_LATEST" != true ]; then
+  TAG_ARGS+=(-t "${IMAGE}:latest")
 fi
 
 echo "============================================"
@@ -71,18 +81,24 @@ docker buildx inspect --bootstrap
 echo ""
 echo "Building for platforms: ${PLATFORMS} ..."
 
-BUILD_CMD="docker buildx build \
-  --platform ${PLATFORMS} \
-  --target production \
-  --label org.opencontainers.image.source=https://github.com/chorusaidlc/chorus-app \
-  --label org.opencontainers.image.revision=${GIT_SHA} \
-  --label org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-  ${TAGS}"
+# Build the buildx argument vector as an array. Running docker directly with
+# "${BUILD_ARGS[@]}" (no `eval`, no string interpolation) means the tag and
+# every other value are passed as literal argv elements — a tag containing
+# shell syntax cannot be interpreted as a command.
+BUILD_ARGS=(
+  buildx build
+  --platform "${PLATFORMS}"
+  --target production
+  --label "org.opencontainers.image.source=https://github.com/chorusaidlc/chorus-app"
+  --label "org.opencontainers.image.revision=${GIT_SHA}"
+  --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  "${TAG_ARGS[@]}"
+)
 
 if [ "$NO_PUSH" = true ]; then
   # --load only works for single platform; for multi-arch without push, use --output
   echo "(--no-push mode: building without pushing)"
-  eval "$BUILD_CMD --output type=image,push=false ."
+  docker "${BUILD_ARGS[@]}" --output type=image,push=false .
 else
   # Ensure logged in — but skip the guard in CI or when explicitly assured.
   # docker/login-action writes ~/.docker/config.json which does not always
@@ -94,7 +110,7 @@ else
     echo "Not logged in to Docker Hub. Run 'docker login' first."
     exit 1
   fi
-  eval "$BUILD_CMD --push ."
+  docker "${BUILD_ARGS[@]}" --push .
 fi
 
 echo ""

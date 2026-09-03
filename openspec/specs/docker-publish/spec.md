@@ -1,7 +1,7 @@
 # docker-publish Specification
 
 ## Purpose
-TBD - created by archiving change add-branch-docker-publish. Update Purpose after archive.
+Automated Docker image build & push for integration branches (`develop`/`main`) and releases, with a tag policy that protects the `latest` tag (only releases update it) and injection-safe handling of branch/release tags.
 ## Requirements
 ### Requirement: Branch image auto-publish without `latest`
 
