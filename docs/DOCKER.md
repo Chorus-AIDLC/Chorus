@@ -213,11 +213,24 @@ GitHub Actions workflow. Two triggers, two tag policies:
 | Push to `develop` / `main` | moving branch tag (`:develop` / `:main`) | **No** | older in-progress build for the same branch is cancelled |
 | GitHub Release `published` | release version tag (`:vX.Y.Z`) + `:latest` | **Yes** | never cancelled |
 
-Both jobs build multi-arch (`linux/amd64` + `linux/arm64`) via QEMU + Buildx and
-reuse `scripts/docker-push.sh`. Branch builds pass `--no-latest`, so day-to-day
-merges never clobber the `latest` tag that production consumers depend on. The
-release job checks out the immutable release tag ref (not the branch head) so
-the image matches the published release.
+Both triggers build multi-arch (`linux/amd64` + `linux/arm64`) using **native
+per-architecture runners** — amd64 on `ubuntu-latest` and arm64 on the free
+`ubuntu-24.04-arm` hosted runner — rather than QEMU emulation. Each arch is
+built and pushed **by digest** in a matrix `build` job, then a `merge` job
+stitches the digests into a single multi-arch tag with `docker buildx imagetools
+create`. Native arm64 avoids the slow emulated Next.js build that would otherwise
+time out. Branch builds tag only the moving branch name, so day-to-day merges
+never clobber the `latest` tag that production consumers depend on; the release
+job checks out the immutable release tag ref (not the branch head) and also
+updates `:latest`. The tag is resolved and validated in the merge step, and
+attacker-influenced inputs (the release tag) are passed via `env` rather than
+inlined into a shell command.
+
+`scripts/docker-push.sh` remains available for **local / manual** multi-arch
+builds (it uses QEMU + Buildx in a single invocation, which is fine off the
+critical CI path). A `workflow_dispatch` trigger is also available to smoke-test
+the native build on a branch — on manual dispatch the images are built but never
+pushed.
 
 ### Prerequisite: Docker Hub repository secrets
 
