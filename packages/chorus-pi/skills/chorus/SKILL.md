@@ -19,7 +19,7 @@ This is the **core skill** — it covers the platform overview, shared tools, an
 > - **Namespaced form (preferred):** `mcp__chorus__<tool>` — e.g. `mcp__chorus__chorus_checkin`, `mcp__chorus__chorus_pm_create_idea`.
 > - **Flattened alias:** `chorus_<tool>` → the server prefix produces a **doubled** `chorus_chorus_*` (e.g. `chorus_chorus_pm_create_idea`). The double `chorus_` is expected, not a typo.
 >
-> So: wherever a skill names a tool `chorus_…`, call it as `mcp__chorus__chorus_…`. If a tool ever reads as *"not found"*, you almost certainly dropped the `mcp__chorus__` prefix. This is Pi-specific — Claude Code / Codex resolve the bare names directly.
+> So: wherever a skill names a tool `chorus_…`, call it as `mcp__chorus__chorus_…`. If a tool ever reads as *"not found"*, you almost certainly dropped the `mcp__chorus__` prefix. This is Pi-specific — other harnesses resolve the bare names directly.
 
 ---
 

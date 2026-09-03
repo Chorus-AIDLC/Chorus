@@ -385,7 +385,7 @@ The hook is read-only; you (the agent) perform the archive:
    1-byte drift (a spec that mirrored correctly will read as 1 byte longer on the
    server). Use `jq -j` (no trailing newline) or `cmp` directly, and never rely
    on recursive `jq`, `head`, command substitution, or newline normalization.
-   (Unlike the Claude Code / Kiro / Codex plugins, the `chorus-pi` package ships
+   (Unlike the plugin-style Chorus surfaces, the `chorus-pi` package ships
    no `verify-document-roundtrip.sh` — the `--arg-file` byte-equality guarantee
    makes it unnecessary.)
 
