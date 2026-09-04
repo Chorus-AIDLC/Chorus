@@ -21,9 +21,9 @@ const provenanceRetryDelayMs = Number(
   process.env.CHORUS_RELEASE_PROVENANCE_RETRY_DELAY_MS ?? "3000",
 );
 // Fresh publishes need time for the registry/CDN to expose the attestation.
-// Default budget ~= (attempts - 1) * delay ≈ 57s; both are env-overridable.
+// Default budget ~= (attempts - 1) * delay ≈ 177s; both are env-overridable.
 const provenanceRetryAttempts = Number(
-  process.env.CHORUS_RELEASE_PROVENANCE_RETRY_ATTEMPTS ?? "20",
+  process.env.CHORUS_RELEASE_PROVENANCE_RETRY_ATTEMPTS ?? "60",
 );
 const npmPublicRegistry = "https://registry.npmjs.org/";
 const manifest = await loadManifest();
@@ -146,10 +146,17 @@ async function verifyProvenance(packageName, cwd) {
         }
         lastDetail = "registry metadata does not contain an SLSA provenance attestation";
       } catch {
-        lastDetail = "registry returned invalid attestation JSON";
+        throw new Error(
+          `Unable to verify automatic provenance for ${spec}: registry returned invalid attestation JSON`,
+        );
       }
     } else {
       lastDetail = [lookup.stdout, lookup.stderr].filter(Boolean).join("\n").trim();
+      const versionNotVisibleYet =
+        /\bE404\b/.test(lastDetail) && lastDetail.includes(spec);
+      if (!versionNotVisibleYet) {
+        throw new Error(`Unable to query automatic provenance for ${spec}: ${lastDetail}`);
+      }
     }
     if (attempt < provenanceRetryAttempts) {
       await new Promise((resolve) => setTimeout(resolve, provenanceRetryDelayMs));
