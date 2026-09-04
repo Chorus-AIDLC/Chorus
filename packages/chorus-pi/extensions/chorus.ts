@@ -468,30 +468,40 @@ export default function (pi: ExtensionAPI) {
   // the pi event bus. Delete the mapping BEFORE issuing the close so a
   // duplicate lifecycle event cannot double-close; re-add on failure so the
   // shutdown sweep can still retry it.
+  //
+  // In-flight closes are tracked so session_shutdown can await them before
+  // sweeping: a close that fails after the sweep ran would otherwise re-add
+  // its entry after the map was cleared (retry lost + stale entry).
+  const inflightCloses = new Set<Promise<void>>();
   const closeRunSessions = (runId: string): void => {
     const sids = runIdToSid.get(runId);
     if (!sids || sids.length === 0) return;
     runIdToSid.delete(runId);
-    void (async () => {
+    const p: Promise<void> = (async () => {
       const failed: string[] = [];
       for (const sid of sids) {
         try { await mcpCall("chorus_close_session", { sessionUuid: sid }); } catch { failed.push(sid); }
       }
       if (failed.length > 0) runIdToSid.set(runId, failed);
     })();
+    inflightCloses.add(p);
+    void p.finally(() => inflightCloses.delete(p));
   };
-  const eventBusRunId = (data: unknown): string | null => {
+  // Only `runId` is trusted on async-complete; `id` (runId-or-id shape) is
+  // accepted only on process-terminal, since async-complete could carry an
+  // unrelated id field alongside runId.
+  const eventBusRunId = (data: unknown, allowId: boolean): string | null => {
     const d = (data ?? {}) as Record<string, unknown>;
     if (typeof d.runId === "string" && d.runId) return d.runId;
-    if (typeof d.id === "string" && d.id) return d.id;
+    if (allowId && typeof d.id === "string" && d.id) return d.id;
     return null;
   };
   pi.events.on("subagent:async-complete", (data) => {
-    const runId = eventBusRunId(data);
+    const runId = eventBusRunId(data, false);
     if (runId) closeRunSessions(runId);
   });
   pi.events.on("subagent:process-terminal", (data) => {
-    const runId = eventBusRunId(data);
+    const runId = eventBusRunId(data, true);
     if (runId) closeRunSessions(runId);
   });
 
@@ -499,6 +509,10 @@ export default function (pi: ExtensionAPI) {
   // Retries every session still tracked in callSessions (e.g. a subagent call whose
   // close failed and was retained, or that never saw a tool_result/tool_execution_end).
   pi.on("session_shutdown", async () => {
+    // Wait for in-flight async closes to settle FIRST: a close that fails
+    // re-adds into runIdToSid, and the sweep below must see it (otherwise the
+    // retry is lost and a stale entry survives the clear).
+    await Promise.allSettled([...inflightCloses]);
     for (const sids of callSessions.values()) {
       for (const sid of sids) {
         await mcpCall("chorus_close_session", { sessionUuid: sid }).catch(() => {});

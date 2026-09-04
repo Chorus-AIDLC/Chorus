@@ -188,9 +188,11 @@ export function sessionWorkflow(sessionUuid: string): string {
  * Matches the block header at the start of a line (`--- Chorus session`), so
  * prose that merely mentions "Chorus session" does not suppress injection.
  * Covers both this extension's injected block and any main-agent template.
+ * The header is exactly "--- Chorus session" followed by " (…)" or end of line;
+ * a hyphenated continuation like "--- Chorus session-notes" is not a header.
  */
 export function hasSessionMarker(task: string): boolean {
-  return /^--- Chorus session\b/m.test(task);
+  return /^--- Chorus session(?=[ (\u2014]|$)/m.test(task);
 }
 
 /**
@@ -203,25 +205,17 @@ export function hasSessionMarker(task: string): boolean {
  * launches async (detached) by default: spawn returns immediately with
  * `details.asyncId`, and completion arrives later on the pi event bus as
  * `subagent:async-complete` / `subagent:process-terminal` with `{runId}`/`{id}`.
- * Only `asyncId`/`runId` are trusted as run ids — generic `id`/`prefix` fields
- * of blocking results are not run ids.
+ * Only `details.asyncId`/`details.runId` are trusted — the nicobailon contract
+ * always carries the run id in `details` for async launches, and a blocking
+ * run's worker output (even standalone JSON) must never be misclassified as
+ * an async run (which would leak the session until session_shutdown).
  */
 export function extractRunIdFromToolResultEvent(event: {
   details?: unknown;
-  content?: { text?: string }[];
 }): string | null {
   const d = (event.details ?? {}) as Record<string, unknown>;
   for (const key of ["asyncId", "runId"]) {
     if (typeof d[key] === "string" && (d[key] as string).length > 0) return d[key] as string;
-  }
-  const text = event.content?.map((c) => c?.text ?? "").join(" ") ?? "";
-  try {
-    const parsed = JSON.parse(text) as Record<string, unknown>;
-    for (const key of ["asyncId", "runId"]) {
-      if (typeof parsed[key] === "string" && (parsed[key] as string).length > 0) return parsed[key] as string;
-    }
-  } catch {
-    /* not JSON */
   }
   return null;
 }
