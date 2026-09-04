@@ -2,7 +2,6 @@
 name: chorus-proposal-reviewer
 description: Review submitted Chorus proposals for quality — check document completeness, task granularity, AC alignment, and cross-task dependencies. Spawn via the blocking subagent tool after chorus_pm_submit_proposal.
 tools: read, grep, find, ls, bash, mcp, mcpScript
-async: false
 acceptance: { level: "none", reason: "read-only chorus reviewer; verdict is posted via chorus_add_comment to Chorus, not returned to parent; suppress acceptance-report injection" }
 ---
 
