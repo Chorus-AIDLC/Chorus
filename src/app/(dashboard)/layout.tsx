@@ -30,6 +30,7 @@ import { DaemonPresenceEntry } from "@/components/daemon-presence-entry";
 import { SidebarPreferences } from "@/components/sidebar-preferences";
 import { AgentConnectionsModal } from "@/components/agent-presence";
 import { NotificationProvider } from "@/contexts/notification-context";
+import { DashboardEventProvider } from "@/contexts/dashboard-event-context";
 import {
   ProjectQuickAccessProvider,
   useProjectQuickAccess,
@@ -567,6 +568,7 @@ export default function DashboardLayout({
   };
 
   return (
+    <DashboardEventProvider>
     <NotificationProvider>
     {/* AuthProvider exposes the current user via useAuth() to the whole shell.
         It is mounted here (not the root layout) because only the authenticated
@@ -589,12 +591,11 @@ export default function DashboardLayout({
         of the sidebar recent list (best-effort, ref-guarded). Under the provider
         so it can consume the shared aggregate. */}
     <ProjectVisitRecorder currentProjectUuid={currentProjectUuid} />
-    {/* AgentPresenceProvider is the single shell-level data spine for the
+    {/* AgentPresenceProvider is the shell-level domain state for the
         bottom-right daemon-presence entry + its roster popover + the chat modal.
         Mounted ONCE here, wrapping the whole shell (sidebar + main), so it
-        survives route changes (does not remount per navigation) and is
-        independent of the per-route, project-scoped RealtimeProvider branches
-        below. */}
+        survives route changes and consumes the DashboardEventProvider transport
+        alongside the per-route RealtimeProvider branches below. */}
     <AgentPresenceProvider>
     {/* PixelActivityProvider — the shell↔project bridge that lets the shell-level
         DaemonPresenceEntry open the project-scoped pixel-canvas activity view.
@@ -671,5 +672,6 @@ export default function DashboardLayout({
     </AuthProvider>
     <Toaster position={isMobile ? "top-center" : "top-right"} closeButton={!isMobile} />
     </NotificationProvider>
+    </DashboardEventProvider>
   );
 }

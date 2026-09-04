@@ -8,10 +8,12 @@ import { AGENT_MENU, promptAgentBackend } from "../agent-backend-prompt.mjs";
 import { KNOWN_AGENTS } from "../daemon-agent.mjs";
 
 describe("AGENT_MENU", () => {
-  it("advertises claude-code / codex / kiro (dsh de-advertised)", () => {
-    expect(AGENT_MENU.map((r) => r.value)).toEqual(["claude-code", "codex", "kiro"]);
+  it("advertises claude-code / codex / kiro / pi (dsh de-advertised)", () => {
+    expect(AGENT_MENU.map((r) => r.value)).toEqual(["claude-code", "codex", "kiro", "pi"]);
     // Every advertised value must be a KNOWN_AGENTS backend.
     for (const row of AGENT_MENU) expect(KNOWN_AGENTS).toContain(row.value);
+    // pi is a first-class wakeable backend now → advertised in the numbered menu.
+    expect(AGENT_MENU.map((r) => r.value)).toContain("pi");
     // dsh stays reachable by name but is NOT advertised in the numbered menu.
     expect(AGENT_MENU.map((r) => r.value)).not.toContain("dsh");
   });

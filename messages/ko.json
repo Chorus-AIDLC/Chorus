@@ -1161,6 +1161,7 @@
         "claudeCode": "Claude Code",
         "codex": "Codex",
         "kiro": "Kiro",
+        "pi": "Pi",
         "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
@@ -1187,6 +1188,12 @@
         "step1Tip": "팁: Kiro CLI가 시작 시 읽을 수 있도록 ~/.bashrc 또는 ~/.zshrc에 추가하세요.",
         "step2Title": "2단계: chorus agents add 실행",
         "step2Tip": "chorus agents add은 Chorus의 skills, agents, steering 및 chorus MCP 서버를 ~/.kiro에 전역으로 설치하여 모든 디렉터리에서 Chorus를 사용할 수 있게 합니다. CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다. 다른 디렉터리에 설치하려면 실행 전에 KIRO_DIR을 설정하세요. 첫 번째 명령은 Chorus CLI를 전역으로 설치합니다(버전 0.17.0으로 고정)."
+      },
+      "pi": {
+        "step1Title": "1단계: 환경 변수 설정",
+        "step1Tip": "팁: Pi가 런타임에 읽을 수 있도록 ~/.bashrc 또는 ~/.zshrc에 추가하세요. chorus agents add은 환경 변수를 참조하는 키(리터럴이 아님)를 ~/.pi/agent/mcp.json에 기록합니다.",
+        "step2Title": "2단계: chorus agents add 실행",
+        "step2Tip": "chorus agents add --agents pi는 pi-mcp-adapter와 chorus-pi 플러그인을 설치하고, chorus MCP 서버를 ~/.pi/agent/mcp.json에 기록하며(환경 변수의 CHORUS_API_KEY를 참조하고 리터럴 키는 쓰지 않음), pi를 웨이크 가능한 데몬 에이전트로 등록합니다. CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다."
       },
       "dsh": {
         "step1Title": "1단계: 환경 변수 설정",
@@ -1511,6 +1518,7 @@
     "clientCodex": "Codex",
     "clientKiro": "Kiro",
     "clientDsh": "DeepSeek Harness",
+    "clientPi": "Pi",
     "clientUnknown": "알 수 없는 클라이언트",
     "uptimeMonoDays": "{days}일 {time}",
     "mobileBack": "연결",

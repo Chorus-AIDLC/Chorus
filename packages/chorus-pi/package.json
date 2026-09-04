@@ -1,13 +1,17 @@
 {
   "name": "@chorus-aidlc/chorus-pi",
-  "version": "0.17.0",
+  "version": "0.17.2",
   "description": "Chorus AI-DLC collaboration platform extension for the Pi coding agent. Provides skills for every stage of the AI-DLC lifecycle, read-only reviewer subagents, and session-aware extension hooks. The Chorus MCP server is auto-discovered from the repo's .mcp.json by pi-mcp-adapter — no installer required.",
   "author": {
     "name": "Chorus-AIDLC"
   },
-  "homepage": "https://github.com/Chorus-AIDLC/Chorus",
-  "repository": "https://github.com/Chorus-AIDLC/Chorus",
   "license": "AGPL-3.0",
+  "homepage": "https://github.com/Chorus-AIDLC/Chorus",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Chorus-AIDLC/Chorus.git",
+    "directory": "packages/chorus-pi"
+  },
   "keywords": [
     "chorus",
     "ai-dlc",
@@ -17,18 +21,38 @@
     "pi-extension",
     "pi-package"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "extensions/chorus.ts",
   "type": "module",
   "bin": {
     "chorus-mcp-call": "bin/chorus-mcp-call.sh"
   },
+  "files": [
+    "extensions",
+    "lib",
+    "skills",
+    "agents",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "prepublishOnly": "pnpm run check:package",
+    "check:package": "node scripts/validate-package.mjs",
+    "check:pack": "bash scripts/check-pack.sh"
+  },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@narumitw/pi-subagents": "*"
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
   },
   "pi": {
     "extensions": ["./extensions"],
     "skills": ["./skills"]
   },
-  "//note": "Agents ship in agents/ but are NOT declared in the pi manifest — pi-subagents loads them from ~/.pi/agent/agents/*.md (user) or .pi/agents/*.md (project). The install/postinstall step should copy agents/*.md into ~/.pi/agent/agents/."
+  "//note": "Reviewer subagents use pi's official subagent pattern, bundled at extensions/subagent/ (index.ts + agents.ts, copied from earendil-works/pi's examples). The copied agents.ts discovers this package's own agents/*.md via a package-relative BUNDLED_DIR, so the 3 reviewer agents load with ZERO manual copy into ~/.pi/agent/agents/. pi auto-loads extensions/subagent/index.ts as a subdirectory-with-index extension (no manifest entry needed)."
 }

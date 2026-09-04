@@ -13,6 +13,7 @@ const expectedPackages = [
   [".", "@chorus-aidlc/chorus"],
   ["packages/openclaw-plugin", "@chorus-aidlc/chorus-openclaw-plugin"],
   ["packages/chorus-dsh", "@chorus-aidlc/chorus-dsh"],
+  ["packages/chorus-pi", "@chorus-aidlc/chorus-pi"],
 ];
 
 export async function loadManifest() {
@@ -25,7 +26,7 @@ export async function loadManifest() {
   ]);
   if (JSON.stringify(identities) !== JSON.stringify(expectedPackages)) {
     throw new Error(
-      "Release manifest must contain exactly Chorus CLI, OpenClaw, and dsh in publish order",
+      "Release manifest must contain exactly Chorus CLI, OpenClaw, dsh, and chorus-pi in publish order",
     );
   }
   return manifest;

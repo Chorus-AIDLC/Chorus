@@ -64,6 +64,18 @@ const packageDefinitions = [
       "README.md",
     ],
   },
+  {
+    label: "chorus-pi plugin",
+    directory: "packages/chorus-pi",
+    packageName: "@chorus-aidlc/chorus-pi",
+    requiredFiles: [
+      "package.json",
+      "extensions/chorus.ts",
+      "skills/chorus/SKILL.md",
+      "agents/chorus-task-reviewer.md",
+      "README.md",
+    ],
+  },
 ];
 const expectedLifecycleCommands = {
   "@chorus-aidlc/chorus": {
@@ -100,6 +112,13 @@ const expectedLifecycleCommands = {
     ],
     buildCommands: ["pnpm build"],
     packageCommands: ["pnpm run check:package", "pnpm run check:pack"],
+    postPackCheck: "none",
+  },
+  "@chorus-aidlc/chorus-pi": {
+    installCommands: ["pnpm install --frozen-lockfile"],
+    checkCommands: ["pnpm run check:package"],
+    buildCommands: [],
+    packageCommands: ["pnpm run check:pack"],
     postPackCheck: "none",
   },
 };
@@ -219,6 +238,7 @@ const index = [
   "@chorus-aidlc/chorus",
   "@chorus-aidlc/chorus-openclaw-plugin",
   "@chorus-aidlc/chorus-dsh",
+  "@chorus-aidlc/chorus-pi",
 ].indexOf(packageName);
 
 if (args.join(" ") === "config get registry") {
@@ -373,7 +393,7 @@ test("name and version drift fail before any package command or artifact", async
 
 test("a late prepare failure leaves no publish handoff and audits unattempted state", async (t) => {
   const root = await createFixture(t, {
-    failPrepareFor: "@chorus-aidlc/chorus-dsh",
+    failPrepareFor: "@chorus-aidlc/chorus-pi",
   });
   const summary = resolve(root, "summary.md");
   const result = runScript(root, "prepare.mjs", [releaseTag], {
@@ -393,14 +413,14 @@ test("a late prepare failure leaves no publish handoff and audits unattempted st
     ),
   ];
   assert.deepEqual(attemptedPackages, packageDefinitions.map(({ packageName }) => packageName));
-  assert.match(await readFile(summary, "utf8"), /chorus-dsh` \| prepare-failed/);
+  assert.match(await readFile(summary, "utf8"), /chorus-pi` \| prepare-failed/);
 
   const publish = runScript(root, "publish.mjs", [releaseTag]);
   assert.equal(publish.status, 1);
   assert.doesNotMatch(`${publish.stdout}\n${publish.stderr}`, /\$ npm publish/);
 });
 
-test("real npm pack prepares all three contract-shaped tarballs in fixed order", async (t) => {
+test("real npm pack prepares all four contract-shaped tarballs in fixed order", async (t) => {
   const root = await prepareFixture(t);
   const lifecycleLog = (await readFile(resolve(root, "prepare.log"), "utf8"))
     .trim()
@@ -452,7 +472,7 @@ test("fresh publication uses fixed order and verifies automatic provenance", asy
   assert.ok(publishes.every(({ args }) => !args.some((arg) => /provenance/i.test(arg))));
   assert.equal(
     calls.filter(({ args }) => args[2] === "dist.attestations").length,
-    3,
+    4,
   );
   for (const { packageName } of packageDefinitions) {
     assert.match(summary, new RegExp(`${packageName.replaceAll("/", "\\/")}\\\` \\| published`));
@@ -464,7 +484,7 @@ test("an already-published version is skipped and remaining packages continue", 
   const { result, calls, summary } = await runPublish(root, "first-published");
   assert.equal(result.status, 0, result.stderr);
   const publishes = calls.filter(({ args }) => args[0] === "publish");
-  assert.equal(publishes.length, 2);
+  assert.equal(publishes.length, 3);
   assert.ok(publishes[0].args[1].includes("chorus-openclaw-plugin"));
   assert.equal(
     calls.filter(

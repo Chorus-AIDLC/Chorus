@@ -642,3 +642,69 @@ describe("GET /api/events (transcript SSE — open-session subscription)", () =>
     expect(offChannels).toContain(`transcript:${sessionUuid}`);
   });
 });
+
+describe("GET /api/events (browser notification forwarding)", () => {
+  beforeEach(() => {
+    mockGetAuthContext.mockResolvedValue(userAuth);
+    mockParseSelfReport.mockReturnValue(null);
+    mockRegisterConnection.mockResolvedValue(null);
+  });
+
+  it("subscribes only the authenticated browser user's channel and forwards payloads unchanged", async () => {
+    const res = await GET(makeRequest());
+    const { chunks } = await startStream(res);
+    const channel = `notification:user:${userUuid}`;
+    const notificationCall = mockEventBus.on.mock.calls.find(
+      ([candidate]) => candidate === channel,
+    );
+
+    expect(notificationCall).toBeDefined();
+    expect(
+      mockEventBus.on.mock.calls.some(
+        ([candidate]) => candidate === "notification:user:another-user",
+      ),
+    ).toBe(false);
+
+    const payload = {
+      type: "new_notification",
+      notificationUuid: "notification-1",
+      unreadCount: 4,
+      action: "mentioned",
+    };
+    const before = chunks.length;
+    notificationCall![1](payload);
+    await flush();
+
+    expect(chunks).toHaveLength(before + 1);
+    expect(chunks.at(-1)).toBe(`data: ${JSON.stringify(payload)}\n\n`);
+  });
+
+  it("removes the browser notification listener on abort", async () => {
+    const abortController = new AbortController();
+    const res = await GET(makeRequest("", abortController.signal));
+    await startStream(res);
+
+    abortController.abort();
+    await flush();
+
+    expect(mockEventBus.off).toHaveBeenCalledWith(
+      `notification:user:${userUuid}`,
+      expect.any(Function),
+    );
+  });
+
+  it("does not add browser notification forwarding to a registered daemon stream", async () => {
+    mockGetAuthContext.mockResolvedValue(agentAuth);
+    mockParseSelfReport.mockReturnValue({ clientType: "claude_code" });
+    mockRegisterConnection.mockResolvedValue(connHandle);
+
+    const res = await GET(makeRequest("clientType=claude_code"));
+    await startStream(res);
+
+    expect(
+      mockEventBus.on.mock.calls.some(([channel]) =>
+        String(channel).startsWith("notification:"),
+      ),
+    ).toBe(false);
+  });
+});

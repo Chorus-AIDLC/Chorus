@@ -20,6 +20,7 @@ import { ClaudeSpawner } from "./claude-spawner.mjs";
 import { CodexSpawner } from "./codex-spawner.mjs";
 import { DshSpawner } from "./dsh-spawner.mjs";
 import { KiroSpawner } from "./kiro-spawner.mjs";
+import { PiSpawner } from "./pi-spawner.mjs";
 
 /**
  * A fail-closed spawner for the `offline` agentType. It satisfies the shared
@@ -52,7 +53,7 @@ export class OfflineSpawner {
 
 /**
  * Construct the spawner backend for `agentType`.
- * @param {string} agentType  "claude-code" | "codex" | "kiro" | "dsh" | "offline"
+ * @param {string} agentType  "claude-code" | "codex" | "kiro" | "dsh" | "pi" | "offline"
  *   (already validated upstream). "offline" → OfflineSpawner (fail-closed no-op).
  * @param {{ logger?: any, permissionMode?: "chorus"|"yolo", creds?: { url: string, apiKey: string } }} [opts]
  * @returns {import("./codex-spawner.mjs").Spawner}
@@ -78,6 +79,11 @@ export function selectSpawner(agentType, opts = {}) {
       bundleVersion: opts.bundleVersion,
       prepareManagedConfigFn: opts.prepareManagedConfigFn,
     });
+  }
+  if (agentType === "pi") {
+    // pi is a first-class wakeable backend — an explicit branch so it NEVER falls
+    // through to the claude-code default below (nor is treated as offline).
+    return new PiSpawner({ logger, permissionMode, creds });
   }
   return new ClaudeSpawner({ logger, permissionMode, creds });
 }

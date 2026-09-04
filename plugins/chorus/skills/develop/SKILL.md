@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, and spawn
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.0"
+  version: "0.17.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -239,7 +239,7 @@ Once Admin verifies (status: `done`), move to the next available task (back to S
 
 ### Step 11: Idea Completion Report (advisory)
 
-If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, prompt the user and call `chorus_create_report` on accept. The `content` parameter's description carries the section template. Skip on decline — the PostToolUse hook will remind on the next run.
+If the task you just self-verified was the LAST one of its Idea (every Task across every approved Proposal is now `done`/`closed`) and you have `document:write`, prompt the user and call `chorus_create_report` on accept. The call requires `title` (a short report title) plus `content`; `content`'s parameter description carries the three-section template (`## Summary` / `## Decisions` / `## Follow-ups`). Skip on decline — the PostToolUse hook will remind on the next run.
 
 ---
 

@@ -34,13 +34,13 @@ Verifies the package is well-formed and internally consistent, with no runtime d
 | Check | What it asserts |
 |---|---|
 | A1 TS transpile | `extensions/chorus.ts` builds with `bun build` |
-| A2 package.json | `pi.extensions` (array), `pi.skills` (array), `bin.chorus-mcp-call`, peerDep `@narumitw/pi-subagents` all present |
+| A2 package.json | `pi.extensions` (array), `pi.skills` (array), `bin.chorus-mcp-call` present; `@narumitw/pi-subagents` absent from every dependency block (reviewers use pi's bundled official subagent pattern) |
 | A3 skill frontmatter | every skill has `name` + `description`; name matches Agent Skills rules (lowercase, hyphens ok, no leading/trailing/double hyphen) |
 | A4 agent frontmatter | every agent has `name` + `description` + `tools`; reviewer `tools` is read-only (no write/edit/replace) |
 | A5 wrapper syntax | `bash -n bin/chorus-mcp-call.sh` |
 | A6 no residual | no `Claude Code` / `CLAUDE_PROJECT_DIR` / `.claude/` / `subagent_type` / `run_in_background` / `TeamCreate` / `Task({` / `Agent({` references left in skills/agents/bin |
 | A7 skill cross-refs | every `/skill:X` in a skill maps to a real `name:` in `skills/*/SKILL.md` |
-| A8 agent cross-refs | every `agent: "X"` spawn in a skill maps to either a `chorus-*-reviewer` in `agents/` or a pi-subagents built-in (scout/planner/reviewer/worker) |
+| A8 agent cross-refs | every `agent: "X"` spawn in a skill maps to either a `chorus-*-reviewer` in `agents/` or a pi official subagent example agent (scout/planner/reviewer/worker) |
 
 A8 is the key end-to-end-consistency check: it proves the skills don't reference a reviewer that wasn't ported.
 
@@ -48,9 +48,9 @@ A8 is the key end-to-end-consistency check: it proves the skills don't reference
 
 Tests the pure helpers extracted to `lib/lib.ts` (no Pi runtime, no live MCP):
 
-- `isReviewerAgent` — the three reviewer names match; workers/built-ins/partials reject
-- `isWorkerAgent` — positive worker allowlist (`["worker"]`); built-in read-only agents (scout/planner/reviewer) and arbitrary custom agents reject
-- `extractAgentId` / `extractAgentIdFromToolResultEvent` — reads `result.details.agent.id` (the real `pi-subagents` `summarizeAgent()` path); falls back to `agentId` and `sa_<uuid>` text parsing; null on absence
+- `isReviewerAgent` — the three reviewer names match; workers/example-agents/partials reject
+- `isWorkerAgent` — positive worker allowlist (`["worker"]`); the example read-only agents (scout/planner/reviewer) and arbitrary custom agents reject
+- `subagentTaskItems` — enumerates the (agent, task) items of a `subagent` tool call across single / parallel / chain modes; `setTask` mutates the ORIGINAL input in place; skips items with a missing/non-string agent or task; empty for non-object input
 - `sessionWorkflow` — UUID appears in every chorus_* step; contains the "do not manage lifecycle" line; starts with a blank separator line
 - `detectOpenSpec` — all four branches (optout / no dir / dir-but-no-CLI / both present); CLI probed only when the dir exists
 - `buildSessionBanner` — the five banner states (not-configured / connection-failed / connected+active / connected+opt-out / connected+not-set-up)
@@ -63,13 +63,15 @@ These catch logic regressions in the ported behavior without needing a session.
 
 ## Layer B′ — Extension-event tests (`test/ext-events.test.ts`)
 
-Drives the **real** `extensions/chorus.ts` default factory against a fake `pi` (handlers captured off `pi.on`) and a mocked global `fetch` (so `mcpCall` never hits the network). Covers the session-lifecycle fixes that needed an event-level check:
+Drives the **real** `extensions/chorus.ts` default factory against a fake `pi` (handlers captured off `pi.on`) and a mocked global `fetch` (so `mcpCall` never hits the network). Covers the ephemeral-subagent session lifecycle at the event level:
 
-- **P1-2** — an unknown `subagent_spawn` result shape (neither extractor recognizes) closes the orphan Chorus session instead of leaking it
-- **P1-3** — a failing `chorus_close_session` retains the `agentId→sessionUuid` mapping so `session_shutdown` can retry it; a *successful* close (the control test) deletes the mapping and is NOT retried
-- **P2-1** — non-worker agents (scout/planner/reviewer/`chorus-*-reviewer`) do NOT create a session; `worker` does
+- **worker dispatch** — a `subagent` tool call for a `worker` creates a Chorus session on `tool_call`, mutates the worker's task in place with the injected `sessionWorkflow`, and closes the session on `tool_result`; `tool_execution_end` is then an idempotent no-op
+- **parallel / mixed** — one session per worker task; a `chorus-*-reviewer` task in the same parallel dispatch gets NO session and its task is not mutated
+- **non-worker agents** — scout/planner/reviewer/`chorus-*-reviewer` create no session; `worker` does
+- **no leak** — a failing `chorus_close_session` retains the session so `session_shutdown` retries it (both closes target the same session); a `subagent` tool error still closes the created session; `tool_execution_end` closes the session if `tool_result` never fired
+- **reviewer nudges** — `chorus_submit_for_verify` (direct) and `chorus_pm_submit_proposal` (gateway `event.input.tool`) fire a `pi.sendUserMessage` steer; a non-trigger chorus tool fires none
 
-Module-scope state (`sessionMap`/`pendingSessions`/`spawnMapped`) is reset between tests by invoking the `session_shutdown` handler. Runs in its own `bun test` invocation (set in `test/all.sh`) so its `globalThis.fetch` override cannot leak into `test/lib.test.ts`.
+Module-scope state (`callSessions`) is reset between tests by invoking the `session_shutdown` handler. Runs in its own `bun test` invocation (set in `test/all.sh`) so its `globalThis.fetch` override cannot leak into `test/lib.test.ts`.
 
 ## Layer C — Load + connection (needs a fresh Pi session + Chorus running)
 
@@ -78,16 +80,14 @@ These verify Pi discovers the package and the extension's `session_start` actual
 ### C0. Install + configure
 
 ```bash
-# runtime deps (if not already installed)
+# MCP adapter (if not already installed)
 pi install npm:pi-mcp-adapter
-pi install npm:@narumitw/pi-subagents
 
-# the package
-pi install ./packages/chorus-pi
-
-# reviewer agents go to the discovery path (NOT the package manifest)
-mkdir -p ~/.pi/agent/agents
-cp packages/chorus-pi/agents/*.md ~/.pi/agent/agents/
+# the package — ships the official subagent pattern (extensions/subagent/) and
+# discovers the 3 reviewer agents package-relative, so NO subagents dep and NO
+# manual copy of agents/*.md into ~/.pi/agent/agents/ is needed.
+pi install npm:@chorus-aidlc/chorus-pi
+# (or, from a repo checkout: pi install ./packages/chorus-pi)
 
 # env + mcp (adjust URL/key)
 export CHORUS_URL=http://localhost:8637
@@ -99,8 +99,8 @@ export CHORUS_API_KEY=cho_your_key
 
 | Check | How | Expected |
 |---|---|---|
-| Skills discovered | type `/skill:chorus` | the skill loads (autocomplete shows all 8) |
-| Agents discovered | `/subagents` panel | `chorus-proposal-reviewer`, `chorus-task-reviewer`, `chorus-code-reviewer` listed (plus built-ins) |
+| Skills discovered | type `/skill:chorus` | the skill loads (autocomplete shows all 12) |
+| Agents discovered | dispatch `subagent({ agent: "chorus-task-reviewer", ... })` (or inspect discovery) | the 3 reviewer agents are found package-relative — with NO copy into `~/.pi/agent/agents/` |
 | MCP connected | `/mcp` panel | `chorus` green/plug icon, 40+ `chorus_*` tools |
 | Extension loaded | send any prompt; watch the first turn | a `# Chorus Plugin — Active` context message appears (from `before_agent_start` injection) with your checkin JSON + `CHORUS_OPENSPEC_ACTIVE=…` |
 
@@ -108,34 +108,22 @@ If the injected context reads `# Chorus: connection failed`, the extension could
 
 ## Layer D — Session injection + reviewer nudge (the core runtime behavior)
 
-These verify the `tool_call`-mutation session injection and the `tool_execution_end` reviewer nudge — the behaviors that make this port match Claude Code's auto session lifecycle (and exceed the Codex port, which can't do either).
+These verify the `tool_call`-mutation session injection and the `tool_result` reviewer nudge — the behaviors that make this port match Claude Code's auto session lifecycle (and exceed the Codex port, which can't do either).
 
-### D1. Session UUID injection into a spawned worker
+### D1. Session UUID injection into a dispatched worker
 
-Spawn a worker and inspect the task it actually received:
-
-```
-subagent_spawn({ agent: "worker", task: "Reply with the word OK and stop." })
-```
-
-Then, **inside the spawned worker's context**, verify its task prompt contains the injected block. The simplest way: ask the worker to echo the first line containing "Chorus session":
+Dispatch a worker via the `subagent` tool and have it echo the injected block:
 
 ```
-# In the main session, after the worker reports, check it saw the UUID.
-# Or: spawn with a task that prints it:
-subagent_spawn({
+subagent({
   agent: "worker",
   task: "If your task contains a line starting with 'Session UUID:', print that line and stop. Otherwise print 'NO SESSION'."
 })
 ```
 
-Expected: the worker prints `Session UUID: <some-uuid>` — proving the extension's `tool_call` handler created a Chorus session and appended `sessionWorkflow(uuid)` to `input.task` before the subprocess started.
+Expected: the worker prints `Session UUID: <some-uuid>` — proving the extension's `tool_call` handler created a Chorus session and appended `sessionWorkflow(uuid)` to the worker task's text before the ephemeral child `pi` process started.
 
-Then close it and confirm the session closes:
-```
-subagent_manage({ action: "close", agentId: "<the sa_ id from spawn>" })
-```
-Check the Chorus backend (Web UI → sessions, or `chorus_list_sessions`) — the session should now be `closed`.
+The children are ephemeral (spawn → run → exit within the single `subagent` tool call), so there is no separate close step: the extension closes the session automatically when the `subagent` tool call returns (`tool_result` / `tool_execution_end`). Check the Chorus backend (Web UI → sessions, or `chorus_list_sessions`) — the session should be `closed` right after the tool call completes.
 
 ### D2. Reviewer nudge after proposal submission
 
@@ -145,7 +133,7 @@ chorus_pm_submit_proposal({ proposalUuid: "<uuid>" })
 ```
 Expected: shortly after, a user-style steer message appears prompting you to spawn `chorus-proposal-reviewer` (unless `CHORUS_ENABLE_PROPOSAL_REVIEWER=false`).
 
-Repeat with `chorus_submit_for_verify` (task-reviewer nudge) and `chorus_admin_verify_task` (code-reviewer nudge) to exercise all three `tool_execution_end` branches.
+Repeat with `chorus_submit_for_verify` (task-reviewer nudge) and `chorus_admin_verify_task` (code-reviewer nudge) to exercise all three `tool_result` nudge branches.
 
 ### D3. Reviewer agent actually runs
 
@@ -156,7 +144,7 @@ Expected: the blocking subagent tool waits, the reviewer fetches the task via `c
 
 ### D4. session_shutdown cleanup
 
-Exit Pi (Ctrl+C / Ctrl+D). On the Chorus backend, any sessions still tracked by the extension should be closed (the `session_shutdown` handler flushes `sessionMap` + `pendingSessions`).
+Exit Pi (Ctrl+C / Ctrl+D). On the Chorus backend, any sessions still tracked by the extension should be closed (the `session_shutdown` handler flushes `callSessions` — e.g. a worker session whose close failed and was retained for retry).
 
 ## Layer E — End-to-end AI-DLC
 

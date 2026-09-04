@@ -44,6 +44,7 @@ const TAB_NAMES = [
   "Claude Code",
   "Codex",
   "Kiro",
+  "Pi",
   "DeepSeek Harness",
   "OpenCode",
   "OpenClaw",
@@ -51,7 +52,7 @@ const TAB_NAMES = [
 ];
 
 describe("AgentInstallGuide dsh onboarding", () => {
-  it("renders seven ordered, non-shrinking tabs in a horizontally scrollable row", () => {
+  it("renders eight ordered, non-shrinking tabs in a horizontally scrollable row", () => {
     const { container } = render(<AgentInstallGuide apiKey={null} />);
     const tabList = container.querySelector<HTMLElement>('[data-slot="tabs-list"]');
 
@@ -132,6 +133,33 @@ describe("AgentInstallGuide dsh onboarding", () => {
     ).toBeNull();
     expect(screen.queryByText(/\/plugin install chorus@chorus-plugins/)).toBeNull();
     expect(screen.queryByText(/npx @chorus-aidlc\/chorus agents add/)).toBeNull();
+  });
+
+  it("renders the Pi tab with an unpinned CLI install and `chorus agents add --agents pi`", async () => {
+    const user = userEvent.setup();
+    render(<AgentInstallGuide apiKey="cho_live_test_key" />);
+
+    await user.click(screen.getByRole("tab", { name: "Pi" }));
+
+    // The command appears in both the code block and the step-2 tip; assert it renders.
+    expect(
+      screen.getAllByText(/chorus agents add --agents pi/).length,
+    ).toBeGreaterThan(0);
+    // The code block installs the latest CLI (0.17.2+ ships --agents pi) — NOT pinned
+    // to @0.17.0. The mocked CodeBlock collapses the newline to a space, so the whole
+    // command reads on one line (unique to the <pre>, since the tip has no "npm install").
+    expect(
+      screen.getByText(
+        /npm install -g @chorus-aidlc\/chorus chorus agents add --agents pi/,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(/npm install -g @chorus-aidlc\/chorus@0\.17\.0/),
+    ).toBeNull();
+    // Pi is a wakeable/multi-agent backend, so it also shows the optional profile step.
+    expect(
+      screen.getByText("Step 3 (optional): Set the default agent for the Chorus CLI"),
+    ).toBeTruthy();
   });
 
   it("uses `npm install -g @chorus-aidlc/chorus@0.17.0` + `chorus agents add` (never npx) on every agent init tab", async () => {

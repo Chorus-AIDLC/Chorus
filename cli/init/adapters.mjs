@@ -35,13 +35,13 @@ import {
   installDsh,
   installOpenclaw,
   installKiro,
+  installPi,
   readCodexInstallState,
   readOpencodeInstallState,
   readDshInstallState,
   readOpenclawInstallState,
   readKiroInstallState,
-  guided,
-  GUIDED_MESSAGES,
+  readPiInstallState,
 } from "./install-methods.mjs";
 
 // Re-export the shared marketplace identifiers from their canonical home so
@@ -95,7 +95,7 @@ export const AGENT_DESCRIPTORS = [
   { id: "kiro", displayName: "Kiro CLI", binaries: ["kiro"], configDirs: ["~/.kiro"], readState: readKiroInstallState, install: installKiro },
   { id: "opencode", displayName: "opencode", binaries: ["opencode"], configDirs: ["~/.config/opencode", "~/.opencode"], readState: readOpencodeInstallState, install: installOpencode },
   { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"], readState: readOpenclawInstallState, install: installOpenclaw },
-  { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], install: guided("pi", GUIDED_MESSAGES.pi) },
+  { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], readState: readPiInstallState, install: installPi },
   { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"], readState: readDshInstallState, install: installDsh },
 ];
 
@@ -117,8 +117,8 @@ export function buildAdapter(d) {
       // `guided()` fallback also returns a function (so `typeof d.install ===
       // "function"` alone would report every fallback agent as supported — the
       // pre-existing latent bug); guided installers are tagged `.guided === true`,
-      // so exclude them here. Real installers (claude/codex/opencode + dsh/openclaw/
-      // kiro) → true; guided (pi) → false.
+      // so exclude them here. Every current agent (claude/codex/opencode + dsh/
+      // openclaw/kiro/pi) has a real installer → true; a future guided fallback → false.
       return { supported: typeof d.install === "function" && d.install.guided !== true, ...base };
     },
     installPlugin: (ctx = {}) =>

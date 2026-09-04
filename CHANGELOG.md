@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.17.2] - 2026-09-04
+
+### Added
+- **Configured agent launcher**: Added `chorus agents run` to launch configured coding agents interactively with scoped Chorus credentials and verbatim argument forwarding. (#537)
+- **Production-ready Pi integration**: Added the publishable `@chorus-aidlc/chorus-pi` package, native subagents, daemon wake support, automated installation, and coordinated npm publishing. (#532)
+- **Automated Docker publishing**: Added branch and release workflows for multi-architecture Docker images with safe tag handling. (#534)
+
+### Changed
+- **Shared dashboard event stream**: Consolidated dashboard SSE consumers onto one stable connection per browser tab while preserving filtering and reconnect recovery. (#530)
+
+### Fixed
+- **Touch-friendly active sessions**: Improved active-session navigation and selection for touch, pen, keyboard, and pointer input. (#531)
+- **Stable daemon activity markers**: Removed the reconnect race that could hide active-session markers in the Idea Tracker. (#536)
+- **Native multi-architecture builds**: Replaced slow QEMU-based ARM builds with native per-architecture runners and digest merging. (#535)
+
+### Plugin
+- **Plugin and skill versions → 0.17.2**: Aligned Claude Code, Codex, OpenClaw, Kiro, Pi, and dsh distributions and all four coordinated npm packages to version 0.17.2.
+
+---
+
 ## [0.17.1] - 2026-09-01
 
 ### Added

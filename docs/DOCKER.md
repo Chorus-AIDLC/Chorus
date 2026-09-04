@@ -202,6 +202,49 @@ Production Docker images always output JSON to stdout (ready for CloudWatch / EL
 3. If the database is not ready, it retries every 10 seconds (up to 30 attempts)
 4. Once migrations succeed, the Next.js server starts on port 8637
 
+## Automated Publishing (CI)
+
+Images are published automatically by the
+[`.github/workflows/docker-publish.yml`](../.github/workflows/docker-publish.yml)
+GitHub Actions workflow. Two triggers, two tag policies:
+
+| Trigger | Tags produced | `latest` updated? | De-dup |
+|---|---|---|---|
+| Push to `develop` / `main` | moving branch tag (`:develop` / `:main`) | **No** | older in-progress build for the same branch is cancelled |
+| GitHub Release `published` | release version tag (`:vX.Y.Z`) + `:latest` | **Yes** | never cancelled |
+
+Both triggers build multi-arch (`linux/amd64` + `linux/arm64`) using **native
+per-architecture runners** — amd64 on `ubuntu-latest` and arm64 on the free
+`ubuntu-24.04-arm` hosted runner — rather than QEMU emulation. Each arch is
+built and pushed **by digest** in a matrix `build` job, then a `merge` job
+stitches the digests into a single multi-arch tag with `docker buildx imagetools
+create`. Native arm64 avoids the slow emulated Next.js build that would otherwise
+time out. Branch builds tag only the moving branch name, so day-to-day merges
+never clobber the `latest` tag that production consumers depend on; the release
+job checks out the immutable release tag ref (not the branch head) and also
+updates `:latest`. The tag is resolved and validated in the merge step, and
+attacker-influenced inputs (the release tag) are passed via `env` rather than
+inlined into a shell command.
+
+`scripts/docker-push.sh` remains available for **local / manual** multi-arch
+builds (it uses QEMU + Buildx in a single invocation, which is fine off the
+critical CI path). A `workflow_dispatch` trigger is also available to smoke-test
+the native build on a branch — on manual dispatch the images are built but never
+pushed.
+
+### Prerequisite: Docker Hub repository secrets
+
+The workflow authenticates to Docker Hub with `docker/login-action`, which reads
+two **repository secrets** that must be configured before the first run
+(Settings → Secrets and variables → Actions):
+
+| Secret | Description |
+|---|---|
+| `DOCKERHUB_USERNAME` | Docker Hub username with push access to `chorusaidlc/chorus-app`. |
+| `DOCKERHUB_TOKEN` | Docker Hub access token (create at Docker Hub → Account Settings → Personal access tokens). Prefer a scoped token over the account password. |
+
+If these secrets are missing, the workflow fails fast at the login step.
+
 ## Source Code
 
 https://github.com/Chorus-AIDLC/Chorus

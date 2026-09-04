@@ -15,6 +15,41 @@ See `chorus daemon --help` and `chorus login --help` for the full flag list.
 
 ---
 
+## Launch an agent interactively (`chorus agents run`)
+
+The daemon wakes an agent **headlessly** on dispatch. When you instead want to
+start a configured agent **yourself, in your terminal**, use `chorus agents run` —
+the foreground counterpart. It saves you from hand-exporting the connection
+variables before every launch: a child process cannot write to your shell anyway,
+so `run` injects the environment into the launched agent process directly.
+
+```bash
+chorus agents run --name work -- --model opus        # launch agent "work"; pass --model opus to it
+chorus agents run                                    # launch the only configured agent
+chorus agents run --name work --type codex -- resume # override the backend, then pass `resume` through
+```
+
+- **Which agent.** `--name <name|uuid>` selects from `~/.chorus/daemon.json`
+  `agents[]`. With one configured agent it is optional; with several, pass
+  `--name` (or set `CHORUS_AGENT_PROFILE`) or you get an error — it never guesses.
+- **What gets injected** (into the launched process only — never your shell, never
+  printed): `CHORUS_URL`, `CHORUS_API_KEY`, and `CHORUS_AGENT_PROFILE`. The
+  harness's own credentials were already written to its config by
+  `chorus agents add`, so they are not re-handled here.
+- **Which binary.** The backend defaults to the agent's stored `agentType`;
+  `--type <type>` overrides it. Types map to binaries: `claude-code`/`claude` →
+  `claude`, `codex` → `codex`, `kiro` → `kiro-cli`, `pi` → `pi`, `opencode` →
+  `opencode`, `openclaw` → `openclaw`, `dsh` → `dsh-jsonrpc-agent`. Agents added as
+  opencode / openclaw / dsh are stored as `offline` (the daemon does not auto-wake
+  them), so pass `--type` explicitly to launch those.
+- **Passthrough.** Everything after `--` is handed to the agent **verbatim** and
+  never inspected, so the agent's full flag surface is available. The launched
+  agent inherits your terminal, and `chorus agents run` exits with its exit code.
+
+See `chorus agents run --help`.
+
+---
+
 ## Credentials
 
 The daemon resolves the server URL + `cho_` API key in this precedence (first

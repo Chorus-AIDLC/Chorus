@@ -53,6 +53,8 @@ export async function GET(request: NextRequest) {
   // handle gets the full lifecycle as before; a null registration leaves both null.
   const conflict = isConnectionConflict(registration) ? registration : null;
   const conn = isConnectionConflict(registration) ? null : registration;
+  const notificationChannel =
+    !conn && !conflict ? `notification:${auth.type}:${auth.actorUuid}` : null;
 
   // Resolve which daemon connections this caller may see (owner/self scoped) so
   // the stream can forward their per-connection `execution:{uuid}` events. The
@@ -129,6 +131,16 @@ export async function GET(request: NextRequest) {
       };
 
       eventBus.on("presence", presenceHandler);
+
+      // Browser notifications share this company-wide dashboard stream. Daemon
+      // clients have a registered connection and keep using the dedicated
+      // /api/events/notifications transport for registration/control/liveness.
+      const notificationHandler = (event: Record<string, unknown>) => {
+        send(`data: ${JSON.stringify(event)}\n\n`);
+      };
+      if (notificationChannel) {
+        eventBus.on(notificationChannel, notificationHandler);
+      }
 
       // Subscribe to per-connection execution-state events for every connection
       // this caller may see. Each event is forwarded tagged with a `type:
@@ -209,6 +221,9 @@ export async function GET(request: NextRequest) {
       request.signal.addEventListener("abort", () => {
         eventBus.off("change", handler);
         eventBus.off("presence", presenceHandler);
+        if (notificationChannel) {
+          eventBus.off(notificationChannel, notificationHandler);
+        }
         for (const channel of executionChannels) {
           eventBus.off(channel, executionHandler);
         }

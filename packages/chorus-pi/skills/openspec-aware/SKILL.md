@@ -4,7 +4,7 @@ description: Opt-in OpenSpec-mode authoring for Chorus PM workflows in Pi. Detec
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.0"
+  version: "0.17.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -376,11 +376,18 @@ The hook is read-only; you (the agent) perform the archive:
 
 3. **Halt on any error** from `openspec archive` or `chorus_pm_update_document`. Print stderr verbatim, post a comment on the proposal recording the failure (`chorus_add_comment` with `targetType: "proposal"`, `targetUuid: <proposalUuid>`), then stop. No retry. Matches §6 "no silent errors." (Comment on the proposal, not the idea: the failure is in archiving proposal-derived specs, and proposals can be `inputType: "document"` with no idea attached.)
 
-4. **Confirm success.** Resolve each matching Document UUID and run
-   `verify-document-roundtrip.sh <local-spec-path> <document-uuid>`. This
-   performs exact-byte comparison and metadata-only mismatch diagnostics. Do
-   not replace it with recursive `jq`, `head`, command substitution, or newline
-   normalization.
+4. **Confirm success.** For each capability, verify that
+   `openspec/specs/<capability>/spec.md` round-trips **byte-equal (modulo a
+   single trailing `\n`)** with its Chorus Document. The `--arg-file` mirror path
+   already guarantees this, so a spot check is enough: fetch the Document
+   `content` and `cmp` it against the local file. **Do NOT use `jq -r`** to
+   extract the content — it appends a trailing newline and manufactures a phantom
+   1-byte drift (a spec that mirrored correctly will read as 1 byte longer on the
+   server). Use `jq -j` (no trailing newline) or `cmp` directly, and never rely
+   on recursive `jq`, `head`, command substitution, or newline normalization.
+   (Unlike the plugin-style Chorus surfaces, the `chorus-pi` package ships
+   no `verify-document-roundtrip.sh` — the `--arg-file` byte-equality guarantee
+   makes it unnecessary.)
 
 **Strict opt-in:** if the verified task is not the last of its idea, OR the proposal description carries no `OpenSpec change slug: <slug>` line, OR the local shell has no `openspec` CLI, the hook exits 0 silently and no archive reminder is injected. Existing free-form behavior is preserved.
 

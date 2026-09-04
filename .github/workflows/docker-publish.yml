@@ -1,0 +1,182 @@
+name: Publish Docker image
+
+on:
+  push:
+    branches: [develop, main]
+  release:
+    types: [published]
+  # Manual trigger — used to smoke-test the native per-arch build on a feature
+  # branch. On workflow_dispatch the images are BUILT but never pushed and the
+  # manifest is not created, so it never touches the registry.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: chorusaidlc/chorus-app
+
+jobs:
+  # ─── Per-architecture native builds ────────────────────────────────────────
+  # Each architecture builds on its OWN native runner (no QEMU emulation), which
+  # is what keeps the arm64 build fast enough to finish in time. Each job pushes
+  # the image BY DIGEST (no tag); the merge job stitches the digests into one
+  # multi-arch tag. ubuntu-24.04-arm is a free GitHub-hosted runner for public
+  # repos.
+  build:
+    name: Build ${{ matrix.platform }}
+    if: github.event_name == 'push' || github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # For a release, build the immutable tag ref; otherwise the pushed ref.
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'workflow_dispatch'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Prepare platform pair
+        run: |
+          platform="${{ matrix.platform }}"
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      # workflow_dispatch: build only (no push, no digest) to smoke-test speed.
+      - name: Build only (dispatch smoke test)
+        if: github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          target: production
+          push: false
+
+      # push / release: build and push BY DIGEST (no tags here).
+      - name: Build & push by digest
+        id: build
+        if: github.event_name != 'workflow_dispatch'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          target: production
+          labels: |
+            org.opencontainers.image.source=https://github.com/chorusaidlc/chorus-app
+            org.opencontainers.image.revision=${{ github.sha }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ─── Merge per-arch digests into one multi-arch tag ─────────────────────────
+  merge:
+    name: Merge & tag multi-arch manifest
+    # Never runs for workflow_dispatch (build-only smoke test).
+    if: github.event_name == 'push' || github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create multi-arch manifest with tags
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          # Attacker-influenced inputs are passed via env (never inlined into the
+          # run script) and validated below before use.
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+
+          # Resolve the moving tag: branch name for push, release version for release.
+          if [ "$EVENT_NAME" = "release" ]; then
+            TAG="$RELEASE_TAG"
+          else
+            TAG="$REF_NAME"
+          fi
+
+          # Validate against Docker's tag grammar — rejects shell metacharacters,
+          # so nothing hostile can reach imagetools/argv even via env.
+          if ! printf '%s' "$TAG" | grep -Eq '^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'; then
+            echo "Invalid image tag: '$TAG'" >&2
+            exit 1
+          fi
+
+          # Tag args: release also updates :latest; branch builds never do.
+          TAG_ARGS=(-t "${IMAGE}:${TAG}")
+          if [ "$EVENT_NAME" = "release" ]; then
+            TAG_ARGS+=(-t "${IMAGE}:latest")
+          fi
+
+          # One source ref per pushed digest (filenames are the bare sha256 hex).
+          SOURCES=()
+          for f in *; do
+            SOURCES+=("${IMAGE}@sha256:${f}")
+          done
+          if [ "${#SOURCES[@]}" -eq 0 ]; then
+            echo "No digests found to merge" >&2
+            exit 1
+          fi
+
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCES[@]}"
+
+          echo "Created ${IMAGE}:${TAG}$([ "$EVENT_NAME" = release ] && echo ' + :latest')"
+          docker buildx imagetools inspect "${IMAGE}:${TAG}"
+
+  # ─── De-dup only newest branch build ────────────────────────────────────────
+  # Same-branch cancellation is handled by the workflow-level concurrency below.
+
+concurrency:
+  # push: stable per-branch group + cancel-in-progress → only the newest commit's
+  #   build survives (the cancel-old decision).
+  # release / workflow_dispatch: run_id makes each group unique, so they never
+  #   collide and are never cancelled (releases always complete).
+  group: docker-publish-${{ github.event_name }}-${{ github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}

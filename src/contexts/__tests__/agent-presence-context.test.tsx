@@ -551,6 +551,57 @@ describe("AgentPresenceProvider — session activity and navigation", () => {
     expect(result.current.activeSessionsByIdea.size).toBe(0);
   });
 
+  it("clears session-activity on an in-band stream_reset event", async () => {
+    routeAuthFetch({
+      connections: () => okJson({ connections: [conn("c1", "online")] }),
+      executions: () => okJson({ executions: [] }),
+    });
+    const { result } = renderProvider();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => dispatchSse(sessionActivityEvent() as unknown as Record<string, unknown>));
+    expect(result.current.activeSessionsByIdea.get("idea-1")).toHaveLength(1);
+
+    // The transport delivers stream_reset in-band on connection open; it clears
+    // the derived session set (the reset no longer lives in the openGeneration
+    // passive effect).
+    act(() => dispatchSse({ type: "stream_reset" }));
+    expect(result.current.activeSessionsByIdea.size).toBe(0);
+  });
+
+  it("keeps replayed sessions that arrive after a stream_reset (reset-before-replay, race guard)", async () => {
+    routeAuthFetch({
+      connections: () => okJson({ connections: [conn("c1", "online")] }),
+      executions: () => okJson({ executions: [] }),
+    });
+    const { result } = renderProvider();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Seed a stale session, then the connect reset, then the connection's replay.
+    // The replayed session must survive and the stale one must be gone — the reset
+    // does NOT run again after the replay to wipe it (the regression this fixes).
+    act(() =>
+      dispatchSse(
+        sessionActivityEvent({
+          sessionUuid: "stale",
+          activityUuid: "stale-act",
+        }) as unknown as Record<string, unknown>,
+      ),
+    );
+    act(() => dispatchSse({ type: "stream_reset" }));
+    act(() => dispatchSse(sessionActivityEvent() as unknown as Record<string, unknown>));
+
+    const sessions = result.current.activeSessionsByIdea.get("idea-1");
+    expect(sessions).toHaveLength(1);
+    expect(sessions?.[0].sessionUuid).toBe("session-1");
+  });
+
   it("opens the exact active session via agent+host+CWD and falls back to session+agent when the connection is missing", async () => {
     routeAuthFetch({
       connections: () => okJson({ connections: [conn("c1", "online")] }),
@@ -699,6 +750,7 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    act(() => lastEventSource?.onopen?.());
     const constructionsAfterMount = eventSourceConstructions;
     const execCallsAfterMount = execCall;
 
@@ -714,6 +766,7 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await act(async () => {
+      lastEventSource?.onopen?.();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -742,6 +795,7 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate (closed)"
       await Promise.resolve();
       await Promise.resolve();
     });
+    act(() => lastEventSource?.onopen?.());
     const constructionsAfterMount = eventSourceConstructions;
     const execCallsAfterMount = execCall;
 
@@ -755,6 +809,7 @@ describe("AgentPresenceProvider — reconnect re-fetches the aggregate (closed)"
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await act(async () => {
+      lastEventSource?.onopen?.();
       await Promise.resolve();
       await Promise.resolve();
     });

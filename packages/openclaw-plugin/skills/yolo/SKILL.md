@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.0"
+  version: "0.17.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -159,7 +159,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
            { id: "b", label: "<option B>" }
          ]
        }
-       // ... 5-8 questions covering functional, technical, scope aspects
+       // ... 5-8 questions covering functional, technical_context, scope aspects
      ]
    })
    ```
@@ -485,7 +485,7 @@ After all waves complete, output a markdown summary:
 
 ### Phase 5b: Idea Completion Report (mandatory)
 
-A successful `/yolo` run always finishes the Idea — call `chorus_create_report` once with `proposalUuid` set to the last verified proposal. The `content` parameter's description carries the section template; follow it. Surface the returned `documentUuid` in the Phase 5 summary. Skipping is a protocol violation.
+A successful `/yolo` run always finishes the Idea — call `chorus_create_report` once with `proposalUuid` set to the last verified proposal. The call requires `title` (a short report title) plus `content`; `content`'s parameter description carries the three-section template (`## Summary` / `## Decisions` / `## Follow-ups`); follow it. Surface the returned `documentUuid` in the Phase 5 summary. Skipping is a protocol violation.
 
 > **Order:** write the completion report only **after** the Phase 4.5 code-review gateway returns PASS / PASS WITH NOTES — never while a code-review FAIL is outstanding.
 

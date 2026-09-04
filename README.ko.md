@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.17.2](https://chorus-ai.dev/blog/chorus-v0.17.2-release/)** — Pi를 정식 패키지와 데몬 웨이크로 사용할 수 있으며, `chorus agents run`으로 로컬 에이전트 프로파일을 빠르게 전환할 수 있습니다.
+
 **[v0.17.0–0.17.1](https://github.com/Chorus-AIDLC/Chorus/releases/tag/v0.17.1)** — 하나의 CLI로 여러 코딩 에이전트에 Chorus를 설치하고 업데이트할 수 있습니다. 이제 Tracker, Graph, Idea 상세 화면에서 데몬 활동도 실시간으로 확인할 수 있습니다.
 
 **[v0.16.4](https://chorus-ai.dev/blog/chorus-v0.16.4-release/)** — DeepSeek Harness(dsh)가 여섯 번째 연결 방식으로 추가됩니다: `@chorus-aidlc/chorus-dsh` 번들이 Chorus의 스킬·페르소나·MCP 설정을 임의의 dsh 프로파일에 추가합니다. 현재는 대화식 사용만, 데몬 웨이크는 추후 지원.

@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.17.2](https://chorus-ai.dev/blog/chorus-v0.17.2-release/)** — Pi is now a published, wakeable Chorus agent, and `chorus agents run` switches local agent profiles with one command.
+
 **[v0.17.0–0.17.1](https://github.com/Chorus-AIDLC/Chorus/releases/tag/v0.17.1)** — One CLI now installs and refreshes Chorus across your coding agents. Live daemon activity is visible directly on Ideas in Tracker, Graph, and detail views.
 
 **[v0.16.4](https://chorus-ai.dev/blog/chorus-v0.16.4-release/)** — DeepSeek Harness (dsh) is the sixth way to connect: the `@chorus-aidlc/chorus-dsh` bundle drops Chorus's skills, persona, and MCP config into any dsh profile. Interactive for now; daemon wake comes later.
