@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.17.2](https://chorus-ai.dev/blog/chorus-v0.17.2-release/)** — Pi が正式配布とデーモンウェイクに対応し、`chorus agents run` でローカルのエージェントプロファイルをすぐ切り替えられます。
+
 **[v0.17.0–0.17.1](https://github.com/Chorus-AIDLC/Chorus/releases/tag/v0.17.1)** — 1 つの CLI で各コーディングエージェントに Chorus を導入・更新できるようになりました。Tracker、Graph、Idea 詳細ではデーモンの活動をリアルタイムに確認できます。
 
 **[v0.16.4](https://chorus-ai.dev/blog/chorus-v0.16.4-release/)** — DeepSeek Harness（dsh）が 6 つ目の接続方法に。`@chorus-aidlc/chorus-dsh` バンドルが Chorus のスキル・ペルソナ・MCP 設定を任意の dsh プロファイルに追加します。現時点は対話的な利用のみ、デーモンウェイクは後日対応。

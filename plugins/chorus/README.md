@@ -19,7 +19,7 @@ Chorus AI-DLC collaboration platform plugin for OpenAI Codex CLI, ported from th
 ### One-command setup (recommended)
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.0
+npm install -g @chorus-aidlc/chorus@0.17.2
 chorus agents add --agents codex
 ```
 
@@ -60,7 +60,7 @@ Inside Codex, type `$chorus` (or any of `$idea` / `$proposal` / `$develop` / `$r
 ### Non-interactive install (CI / scripted)
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.0
+npm install -g @chorus-aidlc/chorus@0.17.2
 chorus agents add --agents codex \
   --url "https://chorus.example.com" \
   --api-key "cho_..." \

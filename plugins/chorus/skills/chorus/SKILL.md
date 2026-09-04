@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.0"
+  version: "0.17.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -267,7 +267,7 @@ CHORUS_API_KEY=cho_your_key_here
 ```
 
 > The transport is inferred from the `url` key — there is no `type = "http"` field in Codex's MCP schema. Auth uses `bearer_token_env_var` (Codex resolves the named env var into `Authorization: Bearer <key>` at connect time); Codex does **not** expand `${VAR}` inside `http_headers`, so don't put a literal key there. Use the `http_headers` table only for non-secret headers like `X-Chorus-Project`.
-> Easier path: install the Chorus CLI globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents codex` and it will write this block (and `~/.codex/.env`) for you, plus enable the lifecycle hooks.
+> Easier path: install the Chorus CLI globally with `npm install -g @chorus-aidlc/chorus@0.17.2`, then run `chorus agents add --agents codex` and it will write this block (and `~/.codex/.env`) for you, plus enable the lifecycle hooks.
 
 Restart Codex CLI after configuration.
 

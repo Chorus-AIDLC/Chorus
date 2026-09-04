@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.17.2](https://chorus-ai.dev/zh/blog/chorus-v0.17.2-release/)** — Pi 现在可以正式安装并由 daemon 唤醒，`chorus agents run` 还能一条命令切换本地 Agent profile。
+
 **[v0.17.0–0.17.1](https://github.com/Chorus-AIDLC/Chorus/releases/tag/v0.17.1)** — 一个 CLI 即可为各类编程 Agent 安装和更新 Chorus。现在还能在 Tracker、Graph 和 Idea 详情中直接看到 daemon 的实时活动。
 
 **[v0.16.4](https://chorus-ai.dev/zh/blog/chorus-v0.16.4-release/)** — DeepSeek Harness（dsh）成为第六种接入方式：`@chorus-aidlc/chorus-dsh` bundle 把 Chorus 的 skill、persona 和 MCP 配置装进任意 dsh profile。目前仅交互式使用，daemon 唤醒稍后支持。
