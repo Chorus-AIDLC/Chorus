@@ -67,6 +67,10 @@ USAGE
   chorus agents add [flags]         Configure agent(s): detect, install plugin, seed
                                     credentials (formerly \`chorus init\`; same flags —
                                     see \`chorus agents add --help\`)
+  chorus agents run --name <n> [--type <t>] -- [args…]
+                                    Launch an agent's binary in the foreground with its
+                                    Chorus connection injected; args after \`--\` pass
+                                    through verbatim (see \`chorus agents run --help\`)
   chorus agents remove <name|uuid>  Remove a configured agent from ~/.chorus/daemon.json
 
 Each listed UUID or name is a valid value for \`chorus mcp --agent <name|uuid>\` or the
@@ -315,6 +319,14 @@ export function runAgents(argv = [], opts = {}) {
     // list/remove paths from loading the heavier init subsystem.
     const runInit = opts.runInit ?? (async (a, o) => (await import("./init.mjs")).runInit(a, o));
     return runInit(argv.slice(1), { version });
+  }
+  if (first === "run") {
+    // Foreground agent launch. Dynamic import keeps the list/remove paths from
+    // loading the launcher (and its child_process import). Forward the full opts
+    // (env/readJson/loginPath/spawnImpl/stdio) so tests can inject them.
+    const runAgentLaunch =
+      opts.runAgentLaunch ?? (async (a, o) => (await import("./agent-launcher.mjs")).runAgentLaunch(a, o));
+    return runAgentLaunch(argv.slice(1), { ...opts, version });
   }
   if (first === "remove") {
     return removeAgent(argv.slice(1), opts);

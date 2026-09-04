@@ -35,6 +35,16 @@ Agent configuration lives in `~/.chorus/daemon.json`; `chorus agents` is the CRU
 - `chorus agents remove <name|uuid>` — remove a configured agent from `~/.chorus/daemon.json`
   (matched by UUID or name; an ambiguous name → use the UUID).
 
+- `chorus agents run --name <name|uuid> [--type <type>] [--] [agent args…]` — launch a
+  configured agent's binary in the FOREGROUND with its Chorus connection injected into the
+  child only (`CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE`; nothing is exported to
+  the parent shell, and the key is never printed). Agent selection: single agent by default; else `--name`, else `CHORUS_AGENT_PROFILE`; ambiguous/none →
+  error. Backend defaults to the agent's stored `agentType`, overridable with `--type`.
+  Everything after `--` is passed to the agent **verbatim** (never inspected). Type → binary:
+  `claude-code`/`claude`→`claude`, `codex`→`codex`, `kiro`→`kiro-cli`, `pi`→`pi`,
+  `opencode`→`opencode`, `openclaw`→`openclaw`, `dsh`→`dsh-jsonrpc-agent`. Agents added as
+  opencode/openclaw/dsh are stored as `offline` → pass `--type` explicitly to launch them.
+
 ## 3. Connection environment variables
 
 - `CHORUS_URL` — the Chorus instance URL.
