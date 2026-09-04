@@ -5,6 +5,8 @@ import {
   WORKER_AGENT_NAMES,
   subagentTaskItems,
   sessionWorkflow,
+  hasSessionMarker,
+  extractRunIdFromToolResultEvent,
   detectOpenSpec,
   buildSessionBanner,
   parseMaxCodeReviewRounds,
@@ -531,4 +533,30 @@ test("resolveChorusConfigFromMcpJson: all candidates partial → empty (no compl
   const readFile = (p: string) => files[p as keyof typeof files];
   expect(resolveChorusConfigFromMcpJson(["/proj/.mcp.json", "/home/.pi/agent/mcp.json"], fs, readFile))
     .toEqual({ url: "", apiKey: "" });
+});
+
+// ─── hasSessionMarker / extractRunIdFromToolResultEvent ──────────────
+
+test("hasSessionMarker: matches injected block header at line start only", () => {
+  expect(hasSessionMarker("do work\n--- Chorus session (auto-injected by the chorus-pi extension) ---\nSession UUID: x")).toBe(true);
+  expect(hasSessionMarker("--- Chorus session (managed by main agent) ---")).toBe(true);
+  expect(hasSessionMarker("plain implementation task, no chorus")).toBe(false);
+  // prose that merely mentions the phrase must NOT suppress injection
+  expect(hasSessionMarker("this task is about the Chorus session lifecycle")).toBe(false);
+  expect(hasSessionMarker("")).toBe(false);
+});
+
+test("extractRunIdFromToolResultEvent: asyncId/runId from details or JSON content", () => {
+  expect(extractRunIdFromToolResultEvent({ details: { asyncId: "run-1" }, content: [] })).toBe("run-1");
+  expect(extractRunIdFromToolResultEvent({ details: { runId: "run-2" }, content: [] })).toBe("run-2");
+  expect(extractRunIdFromToolResultEvent({ details: {}, content: [{ text: JSON.stringify({ asyncId: "run-3" }) }] })).toBe("run-3");
+  expect(extractRunIdFromToolResultEvent({ details: {}, content: [{ text: JSON.stringify({ runId: "run-4" }) }] })).toBe("run-4");
+});
+
+test("extractRunIdFromToolResultEvent: generic id/prefix are NOT trusted run ids", () => {
+  expect(extractRunIdFromToolResultEvent({ details: { id: "job-1" }, content: [] })).toBe(null);
+  expect(extractRunIdFromToolResultEvent({ details: { prefix: "abc" }, content: [] })).toBe(null);
+  expect(extractRunIdFromToolResultEvent({ details: {}, content: [{ text: JSON.stringify({ id: "job-1", results: [] }) }] })).toBe(null);
+  expect(extractRunIdFromToolResultEvent({ details: {}, content: [{ text: "plain text" }] })).toBe(null);
+  expect(extractRunIdFromToolResultEvent({ details: {}, content: [] })).toBe(null);
 });

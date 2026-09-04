@@ -18,9 +18,13 @@
  *                              lacks (Codex has no pre-spawn mutation channel, so its
  *                              workers must manage sessions manually).
  *   - tool_result            → close the ephemeral worker session(s) once the `subagent`
- *                              tool call returns (the official children are ephemeral:
- *                              spawn → run → exit within one tool call, so there is no
- *                              persistent agentId and no separate close tool).
+ *   - tool_result            → for the official blocking subagent, close the ephemeral
+ *                              worker session(s) once the `subagent` tool call returns
+ *                              (spawn → run → exit within one tool call, so there is no
+ *                              persistent agentId and no separate close tool). For the
+ *                              nicobailon `pi-subagents` tool (async/detached by default,
+ *                              `details.asyncId` on tool_result) the sessions are deferred
+ *                              and closed on subagent:async-complete / process-terminal.
  *                            → reviewer nudges after submit_proposal / submit_for_verify
  *                              / admin_verify_task (the 3 PostToolUse hooks)
  *   - tool_execution_end     → fallback close of the worker session(s) if tool_result
@@ -40,6 +44,8 @@ import {
   isWorkerAgent,
   subagentTaskItems,
   sessionWorkflow,
+  hasSessionMarker,
+  extractRunIdFromToolResultEvent,
   detectOpenSpec,
   buildSessionBanner,
   parseMaxCodeReviewRounds,
@@ -196,6 +202,10 @@ async function mcpCall<T = unknown>(tool: string, args: Record<string, unknown> 
 //
 // toolCallId → the Chorus session UUIDs created for that `subagent` invocation.
 const callSessions = new Map<string, string[]>();
+// runId (nicobailon async/detached `subagent` runs) → sessionUuid(s); closed on
+// subagent:async-complete / subagent:process-terminal (blocking runs close at
+// tool_result via callSessions and never enter this map).
+const runIdToSid = new Map<string, string[]>();
 let checkinContext: string | null = null;
 let injectedOnce = false;
 
@@ -360,6 +370,8 @@ export default function (pi: ExtensionAPI) {
     const created: string[] = [];
     for (const item of subagentTaskItems(event.input)) {
       if (!isWorkerAgent(item.agent)) continue;
+      // Manual main-agent template already injected — never double-inject.
+      if (hasSessionMarker(item.task)) continue;
       try {
         const session = await mcpCall<{ uuid?: string }>("chorus_create_session", { name: item.agent });
         if (!session?.uuid) continue;
@@ -382,10 +394,24 @@ export default function (pi: ExtensionAPI) {
     if (!CONFIGURED) return;
 
     // ── subagent tool finished → close the worker session(s) ───────────
-    // Close on success OR error: the sessions were created at tool_call start,
-    // so they must be closed either way. closeCallSessions is idempotent and
-    // retains any session whose close fails for a shutdown retry.
+    // The official blocking subagent closes sessions at tool_result; the
+    // nicobailon `pi-subagents` tool is async (detached) by default, so its
+    // tool_result carries `details.asyncId` and the run completes later via
+    // the pi event bus — in that case move the sessions to runIdToSid and
+    // let subagent:async-complete / subagent:process-terminal close them.
     if (event.toolName === "subagent") {
+      const runId = extractRunIdFromToolResultEvent(event);
+      if (runId) {
+        const sids = callSessions.get(event.toolCallId);
+        if (sids && sids.length > 0) {
+          runIdToSid.set(runId, [...(runIdToSid.get(runId) ?? []), ...sids]);
+          callSessions.delete(event.toolCallId);
+          ctx.ui.notify(`Chorus session(s): ${sids.map((s) => s.slice(0, 8)).join(",")}… deferred to async run ${runId.slice(0, 8)}…`, "info");
+        }
+        return;
+      }
+      // Blocking run (or no run id) — close now. closeCallSessions is
+      // idempotent and retains any session whose close fails for a shutdown retry.
       await closeCallSessions(event.toolCallId, ctx);
       return;
     }
@@ -431,8 +457,42 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_execution_end", async (event, ctx) => {
     if (!CONFIGURED) return;
     if (event.toolName === "subagent") {
+      // tool_result already moved async sessions to runIdToSid — nothing left
+      // in callSessions for them. Blocking runs (or failed injection) close here.
       await closeCallSessions(event.toolCallId, ctx);
     }
+  });
+
+  // ── nicobailon async/detached `subagent` runs: close by runId ──────
+  // tool_result deferred these sessions to runIdToSid; completion arrives on
+  // the pi event bus. Delete the mapping BEFORE issuing the close so a
+  // duplicate lifecycle event cannot double-close; re-add on failure so the
+  // shutdown sweep can still retry it.
+  const closeRunSessions = (runId: string): void => {
+    const sids = runIdToSid.get(runId);
+    if (!sids || sids.length === 0) return;
+    runIdToSid.delete(runId);
+    void (async () => {
+      const failed: string[] = [];
+      for (const sid of sids) {
+        try { await mcpCall("chorus_close_session", { sessionUuid: sid }); } catch { failed.push(sid); }
+      }
+      if (failed.length > 0) runIdToSid.set(runId, failed);
+    })();
+  };
+  const eventBusRunId = (data: unknown): string | null => {
+    const d = (data ?? {}) as Record<string, unknown>;
+    if (typeof d.runId === "string" && d.runId) return d.runId;
+    if (typeof d.id === "string" && d.id) return d.id;
+    return null;
+  };
+  pi.events.on("subagent:async-complete", (data) => {
+    const runId = eventBusRunId(data);
+    if (runId) closeRunSessions(runId);
+  });
+  pi.events.on("subagent:process-terminal", (data) => {
+    const runId = eventBusRunId(data);
+    if (runId) closeRunSessions(runId);
   });
 
   // SessionEnd → close any stray worker sessions (replaces Claude's on-session-end.sh).
@@ -444,7 +504,13 @@ export default function (pi: ExtensionAPI) {
         await mcpCall("chorus_close_session", { sessionUuid: sid }).catch(() => {});
       }
     }
+    for (const sids of runIdToSid.values()) {
+      for (const sid of sids) {
+        await mcpCall("chorus_close_session", { sessionUuid: sid }).catch(() => {});
+      }
+    }
     callSessions.clear();
+    runIdToSid.clear();
     injectedOnce = false;
     checkinContext = null;
     mcpSessionId = null;

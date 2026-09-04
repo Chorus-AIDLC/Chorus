@@ -93,6 +93,22 @@ packages/chorus-pi/
 
 The extension goes beyond the Codex port in one key way: by using Pi's `tool_call` event (pre-execution, mutable input), it **auto-injects the Chorus session UUID + workflow into each dispatched worker's task** — the Pi-native equivalent of Claude's `SubagentStart` hook. The Codex port has no pre-spawn mutation channel, so its workers must manage sessions manually. On Pi, dispatch a worker via the `subagent` tool and the extension handles session creation + context injection, then closes the session when the (ephemeral) tool call returns.
 
+
+### Subagent run modes: blocking (bundled) vs async (nicobailon `pi-subagents`)
+
+The bundled `subagent` tool (pi's official reference pattern) is **blocking**:
+spawn → run → exit within one tool call, so the extension closes the Chorus
+session at `tool_result`. If you instead use the nicobailon `pi-subagents`
+package's `subagent` tool, top-level launches are **async (detached)** by
+default: `tool_result` returns immediately with `details.asyncId` and the run
+completes later. The extension detects this case (`asyncId`/`runId` in details
+or JSON content) and defers session close to `subagent:async-complete` /
+`subagent:process-terminal` (with `session_shutdown` sweep as a final guard).
+Tasks that already carry an injected `--- Chorus session` block (e.g. a
+main-agent wave template) are never re-injected.
+
+Note: the bundled subagent and nicobailon `pi-subagents` both register a tool
+named `subagent` — install only one of the two to avoid a tool-name clash.
 ## License
 
 AGPL-3.0

@@ -85,9 +85,16 @@ installDefaultFetch();
 const handlers: Record<string, (event: any, ctx: any) => Promise<unknown>> = {};
 const notifyMessages: { msg: string; level: string }[] = [];
 const userMessages: string[] = [];
+const eventBus: Record<string, (data: unknown) => void> = {};
 const pi: any = {
   on: (ev: string, fn: (event: any, ctx: any) => Promise<unknown>) => {
     handlers[ev] = fn;
+  },
+  events: {
+    on: (name: string, fn: (data: unknown) => void) => {
+      eventBus[name] = fn;
+    },
+    emit: () => {},
   },
   sendUserMessage: (msg: string) => {
     userMessages.push(msg);
@@ -320,4 +327,57 @@ test("no nudge for a non-trigger chorus tool", async () => {
     ctx,
   );
   expect(userMessages.length).toBe(0);
+});
+
+// ─── async (nicobailon pi-subagents) lifecycle ────────────────────
+
+test("async subagent: session deferred on tool_result and closed on async-complete", async () => {
+  await resetState();
+  const input: any = { agent: "worker", task: "do async work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-a1", input }, ctx);
+  // tool_result carries details.asyncId → session NOT closed, moved to runIdToSid.
+  await handlers["tool_result"](
+    { toolName: "subagent", toolCallId: "tc-a1", isError: false, input, details: { asyncId: "RUN-A" }, content: [] },
+    ctx,
+  );
+  expect(toolCalls).not.toContain("chorus_close_session");
+  // async-complete closes it.
+  eventBus["subagent:async-complete"]!({ runId: "RUN-A" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBe(1);
+});
+
+test("async subagent: process-terminal also closes the deferred session", async () => {
+  await resetState();
+  const input: any = { agent: "worker", task: "do async work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-a2", input }, ctx);
+  await handlers["tool_result"](
+    { toolName: "subagent", toolCallId: "tc-a2", isError: false, input, details: { asyncId: "RUN-B" }, content: [] },
+    ctx,
+  );
+  eventBus["subagent:process-terminal"]!({ runId: "RUN-B" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBe(1);
+});
+
+test("async subagent: duplicate events close only once", async () => {
+  await resetState();
+  const input: any = { agent: "worker", task: "do async work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-a3", input }, ctx);
+  await handlers["tool_result"](
+    { toolName: "subagent", toolCallId: "tc-a3", isError: false, input, details: { asyncId: "RUN-C" }, content: [] },
+    ctx,
+  );
+  eventBus["subagent:async-complete"]!({ runId: "RUN-C" });
+  eventBus["subagent:process-terminal"]!({ runId: "RUN-C" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBe(1);
+});
+
+test("manual session marker in task suppresses double injection", async () => {
+  await resetState();
+  const input: any = { agent: "worker", task: "--- Chorus session (managed by main agent) ---\nSession UUID: 00000000-0000-0000-0000-000000000000\ndo work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-mk", input }, ctx);
+  expect(toolCalls.filter((t) => t === "chorus_create_session").length).toBe(0);
+  expect(input.task).toContain("managed by main agent");
 });
