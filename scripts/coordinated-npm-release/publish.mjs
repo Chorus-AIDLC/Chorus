@@ -135,20 +135,25 @@ async function verifyProvenance(packageName, cwd) {
       { cwd, capture: true },
     );
     if (lookup.status === 0) {
-      try {
-        const attestations = JSON.parse(lookup.stdout);
-        if (
-          typeof attestations?.url === "string" &&
-          attestations.provenance?.predicateType === "https://slsa.dev/provenance/v1"
-        ) {
-          console.log(`${spec} provenance attestation verified`);
-          return;
-        }
+      const response = lookup.stdout.trim();
+      if (response === "") {
         lastDetail = "registry metadata does not contain an SLSA provenance attestation";
-      } catch {
-        throw new Error(
-          `Unable to verify automatic provenance for ${spec}: registry returned invalid attestation JSON`,
-        );
+      } else {
+        try {
+          const attestations = JSON.parse(response);
+          if (
+            typeof attestations?.url === "string" &&
+            attestations.provenance?.predicateType === "https://slsa.dev/provenance/v1"
+          ) {
+            console.log(`${spec} provenance attestation verified`);
+            return;
+          }
+          lastDetail = "registry metadata does not contain an SLSA provenance attestation";
+        } catch {
+          throw new Error(
+            `Unable to verify automatic provenance for ${spec}: registry returned invalid attestation JSON`,
+          );
+        }
       }
     } else {
       lastDetail = [lookup.stdout, lookup.stderr].filter(Boolean).join("\n").trim();

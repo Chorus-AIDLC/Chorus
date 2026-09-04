@@ -263,7 +263,7 @@ if (args.join(" ") === "config get registry") {
   }
 } else if (args[0] === "view" && args[2] === "dist.attestations") {
   if (scenario === "first-published-provenance-missing" && index === 0) {
-    console.log(JSON.stringify({}));
+    // npm prints an empty successful response when this property is not yet present.
   } else if (scenario === "first-published-provenance-not-visible" && index === 0) {
     console.error("npm error code E404");
     console.error("npm error 404 No match found for version - " + spec);
