@@ -1,7 +1,9 @@
 ---
 name: chorus-task-reviewer
 description: Review submitted Chorus tasks — verify implementation against AC and proposal documents. Spawn via the blocking subagent tool after chorus_submit_for_verify.
-tools: read, grep, find, ls, bash, mcp
+tools: read, grep, find, ls, bash, mcp, mcpScript
+async: false
+acceptance: { level: "none", reason: "read-only chorus reviewer; verdict is posted via chorus_add_comment to Chorus, not returned to parent; suppress acceptance-report injection" }
 ---
 
 CRITICAL: READ-ONLY task review. You CANNOT edit, write, or create files in the project directory.
