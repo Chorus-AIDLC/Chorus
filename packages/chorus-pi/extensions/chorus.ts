@@ -482,7 +482,10 @@ export default function (pi: ExtensionAPI) {
       for (const sid of sids) {
         try { await mcpCall("chorus_close_session", { sessionUuid: sid }); } catch { failed.push(sid); }
       }
-      if (failed.length > 0) runIdToSid.set(runId, failed);
+      if (failed.length > 0) {
+        runIdToSid.set(runId, failed);
+        console.warn(`[chorus-pi] failed to close ${failed.length} session(s) for run ${runId}: ${failed.join(", ")} — will retry at session_shutdown`);
+      }
     })();
     inflightCloses.add(p);
     void p.finally(() => inflightCloses.delete(p));

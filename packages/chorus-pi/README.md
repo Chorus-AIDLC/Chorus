@@ -139,11 +139,11 @@ no conflict error, nicobailon wins deterministically.
 | Both installed, with the filter above | nicobailon's `subagent` tool is the only one. Chorus session hooks keep working (they match on the tool name) |
 | Both installed, no filter: `npm:pi-subagents` listed **before** chorus-pi | nicobailon wins; the bundled subagent reports a conflict error at load (harmless inside an interactive session, noisy for CLI commands like `pi packages list`) |
 | Both installed, no filter: `npm:pi-subagents` listed **after** chorus-pi | Bundled subagent wins (it loaded first); nicobailon's tool is rejected. Flip the order to switch |
-
 **How to verify which implementation is active**: run
 `subagent({ action: "list" })`. nicobailon output shows `Package agents /
 Builtin agents / User agents` sections; the bundled subagent's output has no
 such sections.
+
 ### Tips when combining with nicobailon `pi-subagents`
 
 - **Sessions work with either tool.** Chorus hooks match on the tool name,

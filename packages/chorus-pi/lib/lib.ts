@@ -206,9 +206,14 @@ export function hasSessionMarker(task: string): boolean {
  * `details.asyncId`, and completion arrives later on the pi event bus as
  * `subagent:async-complete` / `subagent:process-terminal` with `{runId}`/`{id}`.
  * Only `details.asyncId`/`details.runId` are trusted — the nicobailon contract
- * always carries the run id in `details` for async launches, and a blocking
- * run's worker output (even standalone JSON) must never be misclassified as
- * an async run (which would leak the session until session_shutdown).
+ * always carries the run id in `details` for async launches (verified against
+ * pi-subagents src/runs/foreground/subagent-executor.ts: async started returns
+ * `details: { mode, results, asyncId, asyncDir }` (:1584/:1375), and nicobailon
+ * itself reads `result.details.asyncId` (:1711/:1967/:2119); `id`/`prefix`
+ * appear only in completion-event payloads, never in tool_result details), and
+ * a blocking run's worker output (even standalone JSON) must never be
+ * misclassified as an async run (which would leak the session until
+ * session_shutdown).
  */
 export function extractRunIdFromToolResultEvent(event: {
   details?: unknown;
