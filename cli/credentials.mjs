@@ -380,3 +380,105 @@ export function resolveMcpCredentials(flags = {}, deps = {}) {
   const flat = resolveCredentials(flags, deps);
   return { url: flat.url, apiKey: flat.apiKey, label: flat.source };
 }
+
+/**
+ * @typedef {Object} LaunchAgent
+ * @property {string|undefined} url
+ * @property {string|undefined} apiKey
+ * @property {string|undefined} agentUuid
+ * @property {string|undefined} agentName
+ * @property {string|undefined} agentType   The daemon agentType stored in daemon.json
+ *   ("claude-code" | "codex" | "kiro" | "pi" | "offline" | …). The launcher maps this
+ *   (or an explicit --type) to a binary.
+ * @property {string} label                 Diagnostic display label (name/uuid), never the key.
+ */
+
+/**
+ * Resolve WHICH configured agent to launch (`chorus agents run`), returning the
+ * selected `agents[]` entry INCLUDING its `agentType` — the field the launcher
+ * needs to pick a binary and which `resolveMcpCredentials` deliberately drops.
+ *
+ * Selection precedence (mirrors `resolveMcpCredentials`, minus the url+key env/flag
+ * fallbacks — a launch always acts as a configured agent):
+ *   1. explicit selector: `flags.name` (the `--name` flag) or `flags.agent`
+ *      (`--agent` alias), matched against each entry's agentUuid / agentName /
+ *      label / name (exact). No match → error; >1 match → ambiguity error.
+ *   2. `CHORUS_AGENT_PROFILE` env, same matching.
+ *   3. exactly one configured agent → that agent.
+ *   4. more than one and nothing specified → error (never pick silently).
+ * No `agents[]` at all → error telling the user to configure one.
+ *
+ * Each entry's url/apiKey merges over the top-level per-field defaults
+ * (`resolveCredentialDefaults`), same as `resolveMcpCredentials`. This never
+ * imports daemon-config.mjs (which imports this module) — it reads `agents[]`
+ * directly to stay cycle-free.
+ *
+ * @param {{ name?: string, agent?: string, url?: string, apiKey?: string }} flags
+ * @param {ResolveDeps} [deps]
+ * @returns {LaunchAgent}
+ * @throws {Error} on ambiguity, no match, or no configured agents.
+ */
+export function resolveLaunchAgent(flags = {}, deps = {}) {
+  const env = deps.env ?? process.env;
+  const readJson = deps.readJson ?? readJsonSafe;
+  const loginPath = deps.loginPath ?? loginFilePath();
+  const wanted = nonEmpty(flags.name) ?? nonEmpty(flags.agent) ?? nonEmpty(env.CHORUS_AGENT_PROFILE);
+
+  const file = readJson(loginPath);
+  const agentEntries =
+    file && Array.isArray(file.agents)
+      ? file.agents.filter((a) => a && typeof a === "object")
+      : [];
+  if (agentEntries.length === 0) {
+    throw new Error(
+      `No agents are configured in ${loginPath}. Run \`chorus agents add\` to configure one.`,
+    );
+  }
+
+  const defaults = resolveCredentialDefaults(flags, deps);
+  const labelOf = (entry, i) =>
+    nonEmpty(entry.agentName) ?? nonEmpty(entry.label) ?? nonEmpty(entry.name) ?? `agents[${i}]`;
+  const resolved = agentEntries.map((entry, i) => ({
+    label: labelOf(entry, i),
+    keys: [entry.agentUuid, entry.agentName, entry.label, entry.name]
+      .map((k) => nonEmpty(k))
+      .filter((k) => k !== undefined),
+    url: nonEmpty(entry.url) ?? defaults.url,
+    apiKey: nonEmpty(entry.apiKey) ?? defaults.apiKey,
+    agentUuid: nonEmpty(entry.agentUuid),
+    agentName: nonEmpty(entry.agentName) ?? nonEmpty(entry.name),
+    agentType: nonEmpty(entry.agentType),
+  }));
+  const labels = resolved.map((a) => a.label).join(", ");
+
+  let selected;
+  if (wanted) {
+    const matches = resolved.filter((a) => a.keys.includes(wanted));
+    if (matches.length === 0) {
+      throw new Error(`No configured agent matches "${wanted}" in ${loginPath}. Available: ${labels}.`);
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `"${wanted}" is ambiguous in ${loginPath} — it matches ${matches.length} agents ` +
+          `(${matches.map((m) => m.label).join(", ")}). Use the agent UUID to disambiguate.`,
+      );
+    }
+    selected = matches[0];
+  } else if (resolved.length === 1) {
+    selected = resolved[0];
+  } else {
+    throw new Error(
+      `Multiple agents are configured in ${loginPath} (${labels}). ` +
+        `Specify which one to launch with --name <name|uuid> or CHORUS_AGENT_PROFILE.`,
+    );
+  }
+
+  return {
+    url: selected.url,
+    apiKey: selected.apiKey,
+    agentUuid: selected.agentUuid,
+    agentName: selected.agentName,
+    agentType: selected.agentType,
+    label: selected.label,
+  };
+}
