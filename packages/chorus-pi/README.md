@@ -151,7 +151,7 @@ such sections.
   identical; only close timing differs (blocking closes at `tool_result`, async
   closes on `subagent:async-complete`/`process-terminal`).
 - **Why the packaged agents do not set `async: false`.** Under nicobailon
-  0.64 a foreground (`async: false`) child runs inside the parent process
+  0.65 a foreground (`async: false`) child runs inside the parent process
   and never loads the parent's ambient extensions — tools registered by an
   ambient adapter such as `pi-mcp-adapter` (`mcp`, `mcpScript`) are
   unavailable, and nicobailon's child-tool diagnostic treats an allowlist
