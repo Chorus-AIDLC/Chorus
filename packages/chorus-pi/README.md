@@ -150,6 +150,17 @@ such sections.
   so `checkin → in_progress → report → checkout → submit_for_verify` flows are
   identical; only close timing differs (blocking closes at `tool_result`, async
   closes on `subagent:async-complete`/`process-terminal`).
+- **Why the packaged agents do not set `async: false`.** Under nicobailon
+  0.64 a foreground (`async: false`) child runs inside the parent process
+  and never loads the parent's ambient extensions — tools registered by an
+  ambient adapter such as `pi-mcp-adapter` (`mcp`, `mcpScript`) are
+  unavailable, and nicobailon's child-tool diagnostic treats an allowlist
+  that declares them as a failed run (exit 1) even if the agent never
+  called them. The Chorus reviewers/worker need `mcp` to post verdicts and
+  check in, so they run as background children (nicobailon default). Wait
+  for completion with `bg_wait`/the run notification; the bundled subagent
+  is unaffected because its child is a separate `pi --mode json` process
+  that loads extensions.
 - **`workflowScript` / `runs.run` / `runs.all`**: nicobailon-only. The bundled
   subagent has no `workflowScript` mode — use `parallel`/`chain` via its own
   schema, or keep nicobailon for scripted waves.
