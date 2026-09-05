@@ -274,6 +274,27 @@ describe("managed dsh profile composition", () => {
     }
   });
 
+  it("fails fast with an actionable hint when a non-default provider's adapter is missing", async () => {
+    const root = tempRoot();
+    try {
+      // Simulate the upstream SDK rejecting a non-default provider with no adapter
+      // registered — prepare must surface it (fail-fast) AND wrap it with a hint
+      // pointing at the deepseek-official-only managed profile + CHORUS_DSH_HOME.
+      await expect(prepareManagedDshConfig({
+        root,
+        bundleVersion: "0.16.3",
+        dshPath: "/opt/dsh",
+        runtimeVersion: "rt-a",
+        env: { ...process.env, CHORUS_DSH_PROVIDER: "acme-cloud" },
+        install: vi.fn(),
+        validateProfile: vi.fn(),
+        validateComposition: () => { throw new Error("no adapter registered for provider acme-cloud"); },
+      })).rejects.toThrow(/non-default.*deepseek-official.*CHORUS_DSH_HOME.*no adapter registered/s);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("redacts credentials from composition diagnostics", async () => {
     const root = tempRoot();
     try {
