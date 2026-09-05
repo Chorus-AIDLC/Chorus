@@ -7,7 +7,7 @@ Task: `33668f51` (idea `ce76b6be`, Chorus 0.17.3). Proves the `dsh --profile sdk
 ## Preconditions (headless-verified ✅)
 - Installed runtime `dsh --version` = **0.1.2-rc.1**; upstream mirror `/home/ubuntu/dev/deepseek-harness` pinned at tag **dsh-v0.1.2-rc.1** (T1).
 - Launch rewrite landed (T2): `cli/dsh-spawner.mjs` resolves the `dsh` bin + spawns `dsh --profile sdk [--patch]` with `DSH_HOME`; `cli/dsh-managed-config.mjs` composes the `sdk` profile via `dsh plugin --profile sdk add @chorus-aidlc/chorus-dsh -w`. 9 affected unit suites 172/172, tsc clean.
-- Uncommitted (rides the dsh integration branch; human merge gate).
+- Committed on branch `feat/upgrade-dsh-to-0-1-2-rc-1` (PR #541 → develop); not merged (human gate).
 
 ## Owner run steps
 1. **Start the local server** (own shell): `pnpm dev:local` (local Postgres :5433).

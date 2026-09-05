@@ -59,6 +59,12 @@ The local working tree is still checked out at rc.7, so a reader without git acc
   - **devDependencies stay EXACT `0.1.2-rc.1`** (+ `@deepseek-ai/cordis` `4.0.2`) — what we build/test against, pinned for reproducibility. Separate from the supported range.
 - **`check-dsh-contract.sh` no longer pins an exact dsh commit.** It verifies the *contract* (the lifecycle events chorus-dsh observes still exist) against a configurable `DSH_CONTRACT_REF` (default `dsh-v0.1.2-rc.1`, overridable) rather than asserting `HEAD == <exact sha>` — version-tolerant, and no re-pin needed each dsh release.
 
+### Managed-profile freshness (review round 2)
+
+- **Fingerprint binds to the real external dsh runtime version.** `prepareManagedDshConfig` probes `dsh --version` (`resolveRuntimeVersion`, fail-soft → `"unknown"`) and folds it into the reuse fingerprint alongside profile + bundleSpec + dshRc + provider. Because peers are now a lenient range, a managed profile composed against an older `dsh` must NOT be reused after the operator upgrades the CLI — the reuse path never re-runs compose, so the runtime version is what forces a rebuild. Recorded in `active.json`.
+- **Provider probe is fail-fast, not masking.** `validateManagedDshComposition` now probes `initialize` with the **configured** provider (+ its `--patch`), not always the default. A non-default `CHORUS_DSH_PROVIDER` whose LLM adapter is not mounted by the sdk profile fails at *prepare* with an actionable hint (managed sdk mounts only the `deepseek-official` adapter; use `CHORUS_DSH_HOME` with a pre-composed profile for a custom provider) — instead of silently at the first real wake.
+- **`CHORUS_DSH_HOME` override** bypasses managed prepare entirely (no compose, no provider patch, no structural validation), so it MUST point at a pre-composed, self-validated sdk `DSH_HOME`.
+
 ## Module Contracts
 
 - **Spawner → daemon**: unchanged. `DshSpawner` still emits `dsh.turn.completed` frames with the shared normalized camelCase usage fields and `source:"dsh"`; `onChild` still exposes the runtime process group for interrupt. `cli/upload-hooks.mjs` `extractDshTurnUsage` consumes that internal frame and needs no change.

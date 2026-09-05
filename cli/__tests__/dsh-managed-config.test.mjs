@@ -28,8 +28,8 @@ function tempRoot() {
 /** A runCommand double that answers the validation `initialize` with the SDK
  * runtime identity and ignores the plugin-add call (records both). */
 function fakeRunner(record) {
-  return vi.fn((command, argv) => {
-    record.push({ command, argv });
+  return vi.fn((command, argv, opts) => {
+    record.push({ command, argv, opts });
     return {
       stdout: `${JSON.stringify({ jsonrpc: "2.0", id: 1, result: { serverInfo: { name: RUNTIME_IDENTITY } } })}\n`,
       status: 0,
@@ -140,6 +140,7 @@ describe("managed dsh profile composition", () => {
         root,
         bundleVersion: "0.16.3",
         dshPath: "/opt/dsh",
+        runtimeVersion: "rt-a",
         runCommand: fakeRunner(calls),
         validateProfile,
         statePathExists: () => true,
@@ -162,6 +163,7 @@ describe("managed dsh profile composition", () => {
         root,
         bundleVersion: "0.16.3",
         dshPath: "/opt/dsh",
+        runtimeVersion: "rt-a",
         runCommand: fakeRunner([]),
         validateProfile,
         statePathExists: () => true,
@@ -169,6 +171,39 @@ describe("managed dsh profile composition", () => {
       expect(second).toMatchObject({ reused: true, home: first.home });
       // Reuse re-validates the profile cheaply but never re-installs or re-composes.
       expect(validateProfile).toHaveBeenCalledTimes(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuilds (no reuse) when the external dsh runtime version changes", async () => {
+    const root = tempRoot();
+    try {
+      const first = await prepareManagedDshConfig({
+        root,
+        bundleVersion: "0.16.3",
+        dshPath: "/opt/dsh",
+        runtimeVersion: "dsh 0.1.2-rc.1",
+        runCommand: fakeRunner([]),
+        validateProfile: vi.fn(),
+        statePathExists: () => true,
+      });
+      expect(first.reused).toBe(false);
+      expect(first.runtimeVersion).toBe("dsh 0.1.2-rc.1");
+      // Same bundle + profile, but the operator upgraded the dsh CLI → the stale
+      // profile must NOT be reused; fingerprint changes → fresh compose.
+      const second = await prepareManagedDshConfig({
+        root,
+        bundleVersion: "0.16.3",
+        dshPath: "/opt/dsh",
+        runtimeVersion: "dsh 0.1.3-rc.1",
+        runCommand: fakeRunner([]),
+        validateProfile: vi.fn(),
+        statePathExists: () => true,
+      });
+      expect(second.reused).toBe(false);
+      expect(second.home).not.toBe(first.home);
+      expect(second.runtimeVersion).toBe("dsh 0.1.3-rc.1");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -184,6 +219,7 @@ describe("managed dsh profile composition", () => {
         bundleVersion: "0.17.2",
         dshPath: "/opt/dsh",
         env: { CHORUS_DSH_BUNDLE_SPEC: "/build/chorus-dsh.tgz" },
+        runtimeVersion: "rt-a",
         runCommand: fakeRunner(envCalls),
         validateProfile: vi.fn(),
         statePathExists: () => true,
@@ -198,6 +234,7 @@ describe("managed dsh profile composition", () => {
         bundleSpec: `${DSH_BUNDLE}@9.9.9`,
         dshPath: "/opt/dsh",
         env: { CHORUS_DSH_BUNDLE_SPEC: "/build/chorus-dsh.tgz" },
+        runtimeVersion: "rt-a",
         runCommand: fakeRunner(optCalls),
         validateProfile: vi.fn(),
         statePathExists: () => true,
@@ -216,6 +253,7 @@ describe("managed dsh profile composition", () => {
         root,
         bundleVersion: "0.16.3",
         dshPath: "/opt/dsh",
+        runtimeVersion: "rt-a",
         env: { ...process.env, CHORUS_DSH_PROVIDER: "acme-cloud" },
         runCommand: fakeRunner(calls),
         validateProfile: vi.fn(),
@@ -223,9 +261,12 @@ describe("managed dsh profile composition", () => {
       });
       expect(prepared.patchPath).toBe(join(prepared.home, "chorus-provider.patch.yml"));
       expect(readFileSync(prepared.patchPath, "utf8")).toContain('provider: "acme-cloud"');
-      // The validation launch carried the overlay.
+      // The validation launch carried the overlay AND probed with the CONFIGURED
+      // provider (not the default) — so a non-default provider whose adapter is
+      // missing fails at prepare rather than silently at the first wake.
       const validationCall = calls.find((c) => c.argv.includes("--patch"));
       expect(validationCall.argv).toEqual(["--profile", "sdk", "--patch", prepared.patchPath]);
+      expect(JSON.parse(validationCall.opts.input).params.provider).toBe("acme-cloud");
       const marker = JSON.parse(readFileSync(join(root, "active.json"), "utf8"));
       expect(marker.patchPath).toBe(prepared.patchPath);
     } finally {

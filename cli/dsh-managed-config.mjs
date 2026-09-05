@@ -122,6 +122,29 @@ function runCommand(command, argv, opts) {
 }
 
 /**
+ * Probe the external dsh runtime version (`dsh --version`) so the managed-profile
+ * fingerprint invalidates when the operator upgrades the dsh CLI — a stale profile
+ * composed against an older runtime must not be silently reused (reuse alone never
+ * re-runs compose). Fail-soft: an unreadable version yields "unknown" (stable per
+ * install) and never blocks preparation. Injectable via opts.runtimeVersion.
+ * @returns {string}
+ */
+function resolveRuntimeVersion(dshPath, opts = {}) {
+  if (typeof opts.runtimeVersion === "string") return opts.runtimeVersion;
+  try {
+    const runner = opts.runCommand ?? runCommand;
+    const r = runner(dshPath, ["--version"], {
+      env: opts.env ?? process.env,
+      timeout: opts.versionTimeoutMs ?? 10_000,
+      platform: opts.platform,
+    });
+    return String(r.stdout ?? "").trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
  * Cheap structural check that a prepared home actually carries the composed
  * profile: its manifest lists the Chorus bundle and the package is installed.
  * Runs on both a fresh prepare and every reuse (fast — no dsh spawn).
@@ -148,8 +171,9 @@ export function validateManagedDshProfile(home, opts = {}) {
  * any provider `--patch`) and assert the SDK runtime answers with the expected
  * identity. `initialize` makes no LLM/network call, so this needs no real
  * credentials or provider routing — it structurally confirms the composed tree
- * loads and the JSON-RPC server owns stdout. Uses the DEFAULT provider for the
- * probe regardless of any configured override (routing is a live-turn concern).
+ * loads and the JSON-RPC server owns stdout. Probes with the CONFIGURED provider
+ * (+ its `--patch`) so a non-default provider whose LLM adapter is not mounted
+ * fails HERE at prepare (fail-fast) instead of silently at the first real wake.
  * @param {string} home managed DSH_HOME
  */
 export function validateManagedDshComposition(home, opts = {}) {
@@ -168,7 +192,7 @@ export function validateManagedDshComposition(home, opts = {}) {
     jsonrpc: "2.0",
     id: 1,
     method: "initialize",
-    params: { cwd: home, provider: DEFAULT_DSH_PROVIDER, model: "deepseek-v4-flash" },
+    params: { cwd: home, provider: opts.provider ?? DEFAULT_DSH_PROVIDER, model: "deepseek-v4-flash" },
   })}\n`;
   const runner = opts.runCommand ?? runCommand;
   const result = runner(dshPath, argv, {
@@ -198,7 +222,8 @@ function activeState(root, pathExists = existsSync) {
 /**
  * Ensure a validated managed dsh profile home exists and return where it lives.
  * Reuses the last-known-good release when the fingerprint (profile + Chorus
- * bundle spec + dsh RC + provider) is unchanged; otherwise composes a fresh
+ * bundle spec + dsh RC + external dsh runtime version + provider) is unchanged;
+ * otherwise composes a fresh
  * release in an isolated dir, validates it, and atomically flips active.json.
  * A failed fresh prepare rolls back and leaves the prior marker intact.
  *
@@ -224,8 +249,13 @@ export async function prepareManagedDshConfig(opts = {}) {
     opts.bundleSpec ?? nonEmpty(env.CHORUS_DSH_BUNDLE_SPEC) ?? `${DSH_BUNDLE}@${bundleVersion}`;
   const provider = nonEmpty(env.CHORUS_DSH_PROVIDER) ?? nonEmpty(env.DSH_PROVIDER) ?? DEFAULT_DSH_PROVIDER;
   const providerPatch = buildProviderPatch(provider);
+  // Bind the fingerprint to the ACTUAL external dsh runtime version: peers are a
+  // lenient range now, so a managed profile composed against an older `dsh` must
+  // be rebuilt when the operator upgrades the CLI — the reuse path never re-runs
+  // compose, so without this a runtime upgrade would silently reuse a stale tree.
+  const runtimeVersion = resolveRuntimeVersion(dshPath, opts);
   const fingerprint = createHash("sha256")
-    .update(JSON.stringify({ version: STATE_VERSION, profile: DSH_PROFILE, bundleSpec, dshRc: DSH_RC_VERSION, provider }))
+    .update(JSON.stringify({ version: STATE_VERSION, profile: DSH_PROFILE, bundleSpec, dshRc: DSH_RC_VERSION, runtimeVersion, provider }))
     .digest("hex")
     .slice(0, 16);
   const current = activeState(root, opts.statePathExists ?? existsSync);
@@ -271,11 +301,16 @@ export async function prepareManagedDshConfig(opts = {}) {
       (opts.validateComposition ?? validateManagedDshComposition)(releaseDir, {
         ...opts,
         dshPath,
+        provider,
         patchPath,
       });
     } catch (error) {
+      const hint =
+        provider !== DEFAULT_DSH_PROVIDER
+          ? ` (provider "${provider}" is non-default — the managed sdk profile mounts only the ${DEFAULT_DSH_PROVIDER} adapter; a custom provider needs its adapter pre-composed, e.g. point CHORUS_DSH_HOME at your own sdk profile)`
+          : "";
       throw new Error(
-        `dsh managed composition validation failed: ` +
+        `dsh managed composition validation failed${hint}: ` +
           redactedErrorText(error, [env.CHORUS_API_KEY, opts.creds?.apiKey]),
       );
     }
@@ -285,6 +320,7 @@ export async function prepareManagedDshConfig(opts = {}) {
       fingerprint,
       home: releaseDir,
       patchPath,
+      runtimeVersion,
       validatedAt: new Date().toISOString(),
     };
     mkdirSync(root, { recursive: true });
