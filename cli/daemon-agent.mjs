@@ -44,7 +44,7 @@ export const DEFAULT_AGENT = "claude-code";
 export function backendCli(agentType) {
   if (agentType === "codex") return { name: "codex", envVar: "CHORUS_CODEX_PATH" };
   if (agentType === "kiro") return { name: "kiro-cli", envVar: "CHORUS_KIRO_PATH" };
-  if (agentType === "dsh") return { name: "dsh-jsonrpc-agent", envVar: "CHORUS_DSH_PATH" };
+  if (agentType === "dsh") return { name: "dsh", envVar: "CHORUS_DSH_PATH" };
   if (agentType === "pi") return { name: "pi", envVar: "CHORUS_PI_PATH" };
   // `offline` has no CLI to resolve — it is never woken (see backendClientType).
   // The daemon does not probe a binary for it; this explicit descriptor keeps the

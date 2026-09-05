@@ -351,15 +351,21 @@ test("real release manifest preserves every package lifecycle and pack gate", ()
   }
 });
 
-test("dsh contract check bootstraps its pinned upstream on clean runners", async () => {
+test("dsh contract check validates the lifecycle contract without pinning an exact dsh revision", async () => {
   const script = await readFile(
     resolve(repositoryRoot, "packages/chorus-dsh/scripts/check-dsh-contract.sh"),
     "utf8",
   );
 
+  // Bootstraps a clean checkout, but is version-tolerant: a configurable ref
+  // (no hard-pinned exact commit) plus the lifecycle-event greps that ARE the
+  // real contract. chorus-dsh supports a range of dsh versions, so we must not
+  // re-introduce a strict single-revision lock here.
   assert.match(script, /checkout="\$\{DSH_CHECKOUT:-\}"/);
-  assert.match(script, /git clone .*--branch "\$tag"/s);
-  assert.match(script, /99f6f02fecdb7dff40c3fbc9470f5907c29f74ca/);
+  assert.match(script, /git clone .*--branch "\$ref"/s);
+  assert.match(script, /DSH_CONTRACT_REF/);
+  assert.match(script, /'agent\/session-start'/);
+  assert.doesNotMatch(script, /[0-9a-f]{40}/);
   assert.doesNotMatch(script, /\/home\/ubuntu\/dev\/deepseek-harness/);
 });
 

@@ -193,7 +193,7 @@ describe("resolveInstallAgent", () => {
         resolveClaudePath: () => "/bin/claude",
         resolveCodexPath: () => "/bin/codex",
         resolveKiroPath: () => "/bin/kiro-cli",
-        resolveDshPath: () => "/bin/dsh-jsonrpc-agent",
+        resolveDshPath: () => "/bin/dsh",
       },
       log: vi.fn(),
       errLog: vi.fn(),
@@ -272,7 +272,7 @@ describe("resolveInstallAgent", () => {
     // now, occupying slot 4), so slot "5" is out of range → falls back to the
     // claude-code default, and the dsh probe is never consulted. (resolveDshPath is
     // retained dormant for when the backend is brought back online.)
-    const findDsh = vi.fn(() => "/opt/dsh-jsonrpc-agent");
+    const findDsh = vi.fn(() => "/opt/dsh");
     const o = baseOpts({
       prompt: vi.fn(async () => "5"),
       probes: {
