@@ -11,126 +11,223 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   DSH_BUNDLE,
-  DSH_PEERS,
+  DSH_PROFILE,
+  DSH_RC_VERSION,
+  DEFAULT_DSH_PROVIDER,
+  RUNTIME_IDENTITY,
+  buildProviderPatch,
   prepareManagedDshConfig,
-  renderManagedDshConfig,
-  validateManagedDshImports,
+  validateManagedDshComposition,
+  validateManagedDshProfile,
 } from "../dsh-managed-config.mjs";
 
 function tempRoot() {
   return mkdtempSync(join(tmpdir(), "chorus-dsh-managed-"));
 }
 
-function fakePackage(project, name) {
-  const dir = join(project, "node_modules", ...name.split("/"));
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "package.json"), JSON.stringify({
-    name,
-    type: "module",
-    main: "index.mjs",
-  }));
-  writeFileSync(join(dir, "index.mjs"), `export const name = ${JSON.stringify(name)};\n`);
-  if (name === DSH_BUNDLE) {
-    mkdirSync(join(dir, "dist"), { recursive: true });
-    mkdirSync(join(dir, "skills"), { recursive: true });
-    writeFileSync(join(dir, "dist", "persona.mjs"), "export default {};\n");
-  }
+/** A runCommand double that answers the validation `initialize` with the SDK
+ * runtime identity and ignores the plugin-add call (records both). */
+function fakeRunner(record) {
+  return vi.fn((command, argv) => {
+    record.push({ command, argv });
+    return {
+      stdout: `${JSON.stringify({ jsonrpc: "2.0", id: 1, result: { serverInfo: { name: RUNTIME_IDENTITY } } })}\n`,
+      status: 0,
+    };
+  });
 }
 
-describe("managed dsh composition", () => {
-  it("renders a secret-free complete config with the bundle and all four peers", () => {
-    const text = renderManagedDshConfig();
-    expect(text).toContain(`name: '${DSH_BUNDLE}'`);
-    for (const peer of DSH_PEERS) expect(text).toContain(peer);
-    expect(text).toContain("id: sdk-jsonrpc-server");
-    expect(text).toContain("id: skill");
-    expect(text).toContain("id: tool-skill");
-    expect(text).toContain("chorusDshConfig.url");
-    expect(text).toContain("chorusDshConfig.apiKey");
-    expect(text).not.toContain("cho_secret");
+describe("managed dsh profile composition", () => {
+  it("emits no provider overlay for the default provider and a targeted one otherwise", () => {
+    expect(buildProviderPatch(DEFAULT_DSH_PROVIDER)).toBe(null);
+    expect(buildProviderPatch("")).toBe(null);
+    expect(buildProviderPatch(undefined)).toBe(null);
+    const patch = buildProviderPatch("acme-cloud");
+    expect(patch.fileName).toBe("chorus-provider.patch.yml");
+    expect(patch.yaml).toContain("id: agent-default-model");
+    expect(patch.yaml).toContain('provider: "acme-cloud"');
+    expect(patch.yaml).toContain("CHORUS_DSH_PROVIDER=acme-cloud");
   });
 
-  it("hard-resolves and loads all five imports from the config anchor", async () => {
-    const root = tempRoot();
+  it("validates a real profile home by its manifest bundle list and installed package", () => {
+    const home = tempRoot();
     try {
-      writeFileSync(join(root, "cordis.yml"), "[]\n");
-      for (const name of [DSH_BUNDLE, ...DSH_PEERS]) fakePackage(root, name);
-      const result = await validateManagedDshImports(root);
-      expect(Object.keys(result.resolved)).toEqual([DSH_BUNDLE, ...DSH_PEERS]);
-      expect(result.usedBundleFallback).toBe(false);
+      const profileDir = join(home, "profiles", DSH_PROFILE);
+      mkdirSync(profileDir, { recursive: true });
+      writeFileSync(
+        join(profileDir, "package.json"),
+        JSON.stringify({
+          name: "dsh-profile-sdk",
+          dsh: { profile: { bundles: ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-sdk-app", DSH_BUNDLE] } },
+        }),
+      );
+      // Missing installed package → fails.
+      expect(() => validateManagedDshProfile(home)).toThrow(/did not install/);
+      const pkgDir = join(profileDir, "node_modules", ...DSH_BUNDLE.split("/"));
+      mkdirSync(pkgDir, { recursive: true });
+      writeFileSync(join(pkgDir, "package.json"), JSON.stringify({ name: DSH_BUNDLE }));
+      const result = validateManagedDshProfile(home);
+      expect(result.bundles).toContain(DSH_BUNDLE);
+      expect(result.profileDir).toBe(profileDir);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
     }
   });
 
-  it("uses an absolute bundle fallback while peers remain name-resolved", async () => {
-    const root = tempRoot();
-    try {
-      writeFileSync(join(root, "cordis.yml"), "[]\n");
-      for (const peer of DSH_PEERS) fakePackage(root, peer);
-      const fallback = join(root, "external", "dist", "chorus-dsh.mjs");
-      mkdirSync(dirname(fallback), { recursive: true });
-      writeFileSync(fallback, "export const name = 'chorus-dsh';\n");
-      const resolvedNames = [];
-      const result = await validateManagedDshImports(root, {
-        resolveImport(name) {
-          resolvedNames.push(name);
-          if (name === DSH_BUNDLE) throw new Error("not linked by name");
-          return join(root, "node_modules", ...name.split("/"), "index.mjs");
-        },
-        resolveBundleEntry: () => fallback,
-      });
-      expect(result.usedBundleFallback).toBe(true);
-      expect(result.bundleEntry).toBe(fallback);
-      expect(resolvedNames).toEqual(expect.arrayContaining(DSH_PEERS));
-      const config = renderManagedDshConfig(fallback);
-      expect(config).toContain(`name: '${fallback}'`);
-      expect(config).toContain(`name: '${join(dirname(fallback), "persona.mjs")}'`);
-      for (const peer of DSH_PEERS) expect(config).toContain(peer);
-      expect(config).not.toContain("createRequire(baseUrl).resolve('@chorus-aidlc/chorus-dsh/package.json')");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
+  it("rejects a profile whose manifest omits the Chorus bundle", () => {
+    expect(() =>
+      validateManagedDshProfile("/x", {
+        readJson: () => ({ dsh: { profile: { bundles: ["@deepseek-ai/dsh-base"] } } }),
+        profileExists: () => true,
+      }),
+    ).toThrow(/missing the @chorus-aidlc\/chorus-dsh bundle/);
   });
 
-  it("installs the required direct packages once and reuses validated active state", async () => {
+  it("drives `dsh --profile sdk` initialize over stdin and asserts the runtime identity", () => {
+    const calls = [];
+    const runner = fakeRunner(calls);
+    validateManagedDshComposition("/managed/home", {
+      dshPath: "/opt/dsh",
+      runCommand: runner,
+      creds: { url: "https://c.example", apiKey: "cho_secret" },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe("/opt/dsh");
+    expect(calls[0].argv).toEqual(["--profile", "sdk"]);
+    const opts = runner.mock.calls[0][2];
+    expect(opts.env.DSH_HOME).toBe("/managed/home");
+    expect(opts.env.CHORUS_API_KEY).toBe("cho_secret");
+    const request = JSON.parse(opts.input);
+    expect(request).toMatchObject({ id: 1, method: "initialize" });
+    expect(request.params.provider).toBe(DEFAULT_DSH_PROVIDER);
+
+    // A non-identity / no-id response fails visibly.
+    expect(() =>
+      validateManagedDshComposition("/managed/home", {
+        dshPath: "/opt/dsh",
+        runCommand: () => ({ stdout: '{"jsonrpc":"2.0","id":2,"result":{}}', status: 0 }),
+      }),
+    ).toThrow(/did not complete JSON-RPC initialization/);
+    expect(() =>
+      validateManagedDshComposition("/managed/home", {
+        dshPath: "/opt/dsh",
+        runCommand: () => ({ stdout: '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"other"}}}', status: 0 }),
+      }),
+    ).toThrow(/unexpected server identity/);
+  });
+
+  it("appends --patch to the validation launch when a provider overlay is present", () => {
+    const calls = [];
+    validateManagedDshComposition("/managed/home", {
+      dshPath: "/opt/dsh",
+      patchPath: "/managed/home/chorus-provider.patch.yml",
+      runCommand: fakeRunner(calls),
+    });
+    expect(calls[0].argv).toEqual([
+      "--profile",
+      "sdk",
+      "--patch",
+      "/managed/home/chorus-provider.patch.yml",
+    ]);
+  });
+
+  it("composes the profile via `dsh plugin add -w`, validates it, and reuses the active marker", async () => {
     const root = tempRoot();
-    const install = vi.fn();
-    const validateImports = vi.fn(async () => ({
-      resolved: Object.fromEntries([DSH_BUNDLE, ...DSH_PEERS].map((name) => [name, `/x/${name}`])),
-      bundleEntry: "/x/bundle.mjs",
-      usedBundleFallback: false,
-    }));
-    const validateComposition = vi.fn();
+    const calls = [];
+    const validateProfile = vi.fn();
     try {
       const first = await prepareManagedDshConfig({
         root,
         bundleVersion: "0.16.3",
-        install,
-        validateImports,
-        validateComposition,
-        runtimeExists: () => true,
+        dshPath: "/opt/dsh",
+        runCommand: fakeRunner(calls),
+        validateProfile,
         statePathExists: () => true,
       });
       expect(first.reused).toBe(false);
-      const pkg = JSON.parse(readFileSync(join(dirname(first.configPath), "package.json"), "utf8"));
-      expect(pkg.dependencies[DSH_BUNDLE]).toBe("0.16.3");
-      for (const peer of DSH_PEERS) expect(pkg.dependencies[peer]).toBe("0.1.0-rc.7");
-      expect(readFileSync(join(dirname(first.configPath), ".npmrc"), "utf8")).toBe("node-linker=hoisted\n");
+      expect(first.patchPath).toBe(null);
+      expect(existsSync(first.home)).toBe(true);
+
+      // First runCommand = the plugin add; second = the composition validation.
+      expect(calls[0].command).toBe("/opt/dsh");
+      expect(calls[0].argv).toEqual(["plugin", "--profile", "sdk", "add", `${DSH_BUNDLE}@0.16.3`, "-w"]);
+      expect(calls[1].argv).toEqual(["--profile", "sdk"]);
+
+      const marker = JSON.parse(readFileSync(join(root, "active.json"), "utf8"));
+      expect(marker.home).toBe(first.home);
+      expect(marker.patchPath).toBe(null);
+      expect(marker.version).toBe(2);
 
       const second = await prepareManagedDshConfig({
         root,
         bundleVersion: "0.16.3",
-        install,
-        validateImports,
-        validateComposition,
-        runtimeExists: () => true,
+        dshPath: "/opt/dsh",
+        runCommand: fakeRunner([]),
+        validateProfile,
         statePathExists: () => true,
       });
-      expect(second).toMatchObject({ reused: true, configPath: first.configPath });
-      expect(install).toHaveBeenCalledTimes(1);
-      expect(validateComposition).toHaveBeenCalledTimes(1);
-      expect(validateImports).toHaveBeenCalledTimes(2);
+      expect(second).toMatchObject({ reused: true, home: first.home });
+      // Reuse re-validates the profile cheaply but never re-installs or re-composes.
+      expect(validateProfile).toHaveBeenCalledTimes(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("overrides the plugin-add spec from CHORUS_DSH_BUNDLE_SPEC (local build) and lets opts.bundleSpec win", async () => {
+    const root = tempRoot();
+    try {
+      // env override → the daemon installs a local build (tarball/dir) instead of `@<published version>`.
+      const envCalls = [];
+      await prepareManagedDshConfig({
+        root,
+        bundleVersion: "0.17.2",
+        dshPath: "/opt/dsh",
+        env: { CHORUS_DSH_BUNDLE_SPEC: "/build/chorus-dsh.tgz" },
+        runCommand: fakeRunner(envCalls),
+        validateProfile: vi.fn(),
+        statePathExists: () => true,
+      });
+      expect(envCalls[0].argv).toEqual(["plugin", "--profile", "sdk", "add", "/build/chorus-dsh.tgz", "-w"]);
+
+      // explicit opts.bundleSpec still wins over the env override.
+      const optCalls = [];
+      await prepareManagedDshConfig({
+        root,
+        bundleVersion: "0.17.2",
+        bundleSpec: `${DSH_BUNDLE}@9.9.9`,
+        dshPath: "/opt/dsh",
+        env: { CHORUS_DSH_BUNDLE_SPEC: "/build/chorus-dsh.tgz" },
+        runCommand: fakeRunner(optCalls),
+        validateProfile: vi.fn(),
+        statePathExists: () => true,
+      });
+      expect(optCalls[0].argv).toEqual(["plugin", "--profile", "sdk", "add", `${DSH_BUNDLE}@9.9.9`, "-w"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("writes a provider --patch overlay and records it in the marker for a non-default provider", async () => {
+    const root = tempRoot();
+    const calls = [];
+    try {
+      const prepared = await prepareManagedDshConfig({
+        root,
+        bundleVersion: "0.16.3",
+        dshPath: "/opt/dsh",
+        env: { ...process.env, CHORUS_DSH_PROVIDER: "acme-cloud" },
+        runCommand: fakeRunner(calls),
+        validateProfile: vi.fn(),
+        statePathExists: () => true,
+      });
+      expect(prepared.patchPath).toBe(join(prepared.home, "chorus-provider.patch.yml"));
+      expect(readFileSync(prepared.patchPath, "utf8")).toContain('provider: "acme-cloud"');
+      // The validation launch carried the overlay.
+      const validationCall = calls.find((c) => c.argv.includes("--patch"));
+      expect(validationCall.argv).toEqual(["--profile", "sdk", "--patch", prepared.patchPath]);
+      const marker = JSON.parse(readFileSync(join(root, "active.json"), "utf8"));
+      expect(marker.patchPath).toBe(prepared.patchPath);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -142,14 +239,10 @@ describe("managed dsh composition", () => {
       await expect(prepareManagedDshConfig({
         root,
         bundleVersion: "0.16.3",
+        dshPath: "/opt/dsh",
         creds: { url: "https://chorus.test", apiKey: "cho_do_not_log" },
         install: vi.fn(),
-        validateImports: async () => ({
-          resolved: {},
-          bundleEntry: "/x/bundle.mjs",
-          usedBundleFallback: false,
-        }),
-        runtimeExists: () => true,
+        validateProfile: vi.fn(),
         validateComposition: () => { throw new Error("bad key cho_do_not_log"); },
       })).rejects.toThrow(/bad key \[REDACTED\]/);
     } finally {
@@ -157,67 +250,51 @@ describe("managed dsh composition", () => {
     }
   });
 
-  it("preserves the last-known-good marker when update validation fails", async () => {
+  it("preserves the last-known-good marker when an update's validation fails", async () => {
     const root = tempRoot();
-    const validImports = async () => ({
-      resolved: {},
-      bundleEntry: "/x/bundle.mjs",
-      usedBundleFallback: false,
-    });
     try {
       const good = await prepareManagedDshConfig({
         root,
         bundleVersion: "0.16.3",
+        dshPath: "/opt/dsh",
         install: vi.fn(),
-        validateImports: validImports,
+        validateProfile: vi.fn(),
         validateComposition: vi.fn(),
-        runtimeExists: () => true,
       });
       await expect(prepareManagedDshConfig({
         root,
         bundleVersion: "0.16.4",
+        dshPath: "/opt/dsh",
         install: vi.fn(),
-        validateImports: validImports,
+        validateProfile: vi.fn(),
         validateComposition: () => { throw new Error("invalid plugin graph"); },
-        runtimeExists: () => true,
       })).rejects.toThrow(/composition validation failed.*invalid plugin graph/);
       const marker = JSON.parse(readFileSync(join(root, "active.json"), "utf8"));
-      expect(marker.configPath).toBe(good.configPath);
-      expect(existsSync(good.configPath)).toBe(true);
+      expect(marker.home).toBe(good.home);
+      expect(existsSync(good.home)).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("reports peer resolution failures with the package name", async () => {
-    const root = tempRoot();
-    try {
-      writeFileSync(join(root, "cordis.yml"), "[]\n");
-      const fallback = join(root, "bundle.mjs");
-      writeFileSync(fallback, "export {};\n");
-      await expect(validateManagedDshImports(root, {
-        resolveImport(name) {
-          if (name === DSH_BUNDLE) throw new Error("bundle missing");
-          throw new Error("peer missing");
-        },
-        resolveBundleEntry: () => fallback,
-      })).rejects.toThrow(new RegExp(DSH_PEERS[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("reports package-manager failures and leaves no active state", async () => {
+  it("reports plugin-add failures and leaves no active state", async () => {
     const root = tempRoot();
     try {
       await expect(prepareManagedDshConfig({
         root,
         bundleVersion: "0.16.3",
-        install: () => { throw new Error("spawn pnpm ENOENT"); },
-      })).rejects.toThrow(/package installation failed.*pnpm ENOENT/);
+        dshPath: "/opt/dsh",
+        install: () => { throw new Error("dsh plugin add: ERR_PNPM offline"); },
+      })).rejects.toThrow(/profile installation failed.*ERR_PNPM offline/);
       expect(existsSync(join(root, "active.json"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("requires a bundle version and the dsh CLI path", async () => {
+    await expect(prepareManagedDshConfig({ root: "/x" })).rejects.toThrow(/bundle version/);
+    await expect(prepareManagedDshConfig({ root: "/x", bundleVersion: "0.16.3" })).rejects.toThrow(/dsh CLI/);
+    expect(DSH_RC_VERSION).toBe("0.1.2-rc.1");
   });
 });

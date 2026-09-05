@@ -129,7 +129,7 @@ describe("resolveBinaryName", () => {
     expect(resolveBinaryName(undefined, "pi")).toEqual({ type: "pi", binary: "pi" });
     expect(resolveBinaryName(undefined, "opencode")).toEqual({ type: "opencode", binary: "opencode" });
     expect(resolveBinaryName(undefined, "openclaw")).toEqual({ type: "openclaw", binary: "openclaw" });
-    expect(resolveBinaryName(undefined, "dsh")).toEqual({ type: "dsh", binary: "dsh-jsonrpc-agent" });
+    expect(resolveBinaryName(undefined, "dsh")).toEqual({ type: "dsh", binary: "dsh" });
   });
 
   it("prefers explicit --type over the stored agentType", () => {

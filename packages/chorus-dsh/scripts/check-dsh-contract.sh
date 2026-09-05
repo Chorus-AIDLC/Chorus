@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-expected="99f6f02fecdb7dff40c3fbc9470f5907c29f74ca"
-tag="dsh-v0.1.0-rc.7"
+expected="a66e4702047846cdaa10c66c9d3df3951f5ea70d"
+tag="dsh-v0.1.2-rc.1"
 checkout="${DSH_CHECKOUT:-}"
 temporary_checkout=""
 

@@ -4,7 +4,7 @@ Native DeepSeek Harness bundle for Chorus MCP access, lifecycle automation, prom
 
 ## Install
 
-DeepSeek Harness `0.1.0-rc.7` and pnpm are required. Add the bundle to a profile (`-w` is required — a dsh profile is a pnpm workspace root):
+DeepSeek Harness `0.1.2-rc.1` and pnpm are required. Add the bundle to a profile (`-w` is required — a dsh profile is a pnpm workspace root):
 
 ```sh
 export CHORUS_URL="https://chorus.example.com"

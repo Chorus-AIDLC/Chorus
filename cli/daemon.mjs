@@ -1000,7 +1000,7 @@ export async function runDaemon(flags = {}, deps = {}) {
   // Detect the SELECTED backend's executable (non-fatal): the daemon still
   // subscribes when it's missing; a wake surfaces the error visibly when one
   // arrives. The resolved path (or absence) is shown in the banner below. Each
-  // backend probes its own binary, including dsh-jsonrpc-agent for dsh, so the
+  // backend probes its own binary, including the `dsh` CLI for dsh, so the
   // startup banner and warning report the selected runtime rather than Claude.
   const cliPath =
     agentType === "codex"
@@ -1272,8 +1272,7 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
     });
     if (
       installAgent.agent === "dsh" &&
-      !String(env.CHORUS_DSH_CONFIG ?? "").trim() &&
-      !String(env.DSH_CORDIS_CONFIG ?? "").trim()
+      !String(env.CHORUS_DSH_HOME ?? "").trim()
     ) {
       try {
         await (pfDeps?.prepareManagedDshConfig ?? prepareManagedDshConfig)({
