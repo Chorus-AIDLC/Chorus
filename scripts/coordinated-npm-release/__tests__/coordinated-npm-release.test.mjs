@@ -359,7 +359,7 @@ test("dsh contract check bootstraps its pinned upstream on clean runners", async
 
   assert.match(script, /checkout="\$\{DSH_CHECKOUT:-\}"/);
   assert.match(script, /git clone .*--branch "\$tag"/s);
-  assert.match(script, /99f6f02fecdb7dff40c3fbc9470f5907c29f74ca/);
+  assert.match(script, /a66e4702047846cdaa10c66c9d3df3951f5ea70d/);
   assert.doesNotMatch(script, /\/home\/ubuntu\/dev\/deepseek-harness/);
 });
 
