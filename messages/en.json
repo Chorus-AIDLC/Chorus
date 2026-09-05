@@ -1593,6 +1593,7 @@
     "agentSessionCount": "{count, plural, one {# conversation} other {# conversations}}",
     "listHeader": "CONVERSATIONS",
     "loadMore": "Load more",
+    "loadingMore": "Loading more…",
     "loadEarlier": "Load earlier messages",
     "loadingEarlier": "Loading earlier…",
     "transcriptLoading": "Loading transcript…",

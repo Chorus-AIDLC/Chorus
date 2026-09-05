@@ -1593,6 +1593,7 @@
     "agentSessionCount": "{count, plural, other {# 个对话}}",
     "listHeader": "对话",
     "loadMore": "加载更多",
+    "loadingMore": "加载中…",
     "loadEarlier": "加载更早的消息",
     "loadingEarlier": "正在加载更早…",
     "transcriptLoading": "正在加载记录…",

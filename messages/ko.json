@@ -1593,6 +1593,7 @@
     "agentSessionCount": "대화 {count}개",
     "listHeader": "대화",
     "loadMore": "더 보기",
+    "loadingMore": "더 불러오는 중…",
     "loadEarlier": "이전 메시지 불러오기",
     "loadingEarlier": "이전 메시지를 불러오는 중…",
     "transcriptLoading": "대화 기록을 불러오는 중…",
