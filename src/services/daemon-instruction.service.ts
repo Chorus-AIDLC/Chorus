@@ -46,6 +46,7 @@ import {
   // that error is caught + mapped to 409 at the route layer, so it is not referenced here.
   assertContinuable,
   getVisibleSessions,
+  getSessionsPageForAgent,
   getFirstInstructionBySessionUuid,
   publishTranscriptEvent,
   STALE_THRESHOLD_MS,
@@ -1132,7 +1133,51 @@ async function callerOwnsAgent(
 export async function getVisibleSessionsWithOrigin(
   auth: { type: string; companyUuid: string; actorUuid: string },
 ): Promise<SessionTargetView[]> {
-  const sessions = await getVisibleSessions(auth);
+  return enrichSessions(auth, await getVisibleSessions(auth));
+}
+
+/**
+ * A page of a single agent's visible conversations, each enriched with `originOnline` +
+ * naming (the SAME shape as {@link getVisibleSessionsWithOrigin}), plus the keyset cursor
+ * (`nextCursor` / `hasMore`). Backs the chat modal's per-agent paginated list.
+ *
+ * The requested `agentUuid` is validated under the caller's scope via the existing
+ * `callerOwnsAgent` fence — an agent the caller may not see (not owned, or in another
+ * company) yields an EMPTY page, never another owner's rows and without disclosing whether
+ * that agent exists. The underlying `getSessionsPageForAgent` re-applies the owner/self
+ * fence in its own query (defense in depth) and reconciles ONLY the returned page, so
+ * enrichment here also runs over just that page — bounded by `limit`, not the full history.
+ */
+export async function getVisibleSessionsPageWithOrigin(
+  auth: { type: string; companyUuid: string; actorUuid: string },
+  agentUuid: string,
+  opts?: { limit?: number; before?: string | null },
+): Promise<{
+  sessions: SessionTargetView[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}> {
+  if (!(await callerOwnsAgent(auth, agentUuid))) {
+    return { sessions: [], nextCursor: null, hasMore: false };
+  }
+  const page = await getSessionsPageForAgent(auth, agentUuid, opts);
+  const sessions = await enrichSessions(auth, page.sessions);
+  return { sessions, nextCursor: page.nextCursor, hasMore: page.hasMore };
+}
+
+/**
+ * Enrich a set of session rows with the derived `originOnline` flag + naming fields
+ * (`firstInstruction`, `ideaTitle`). Extracted so the full-list and per-agent-page reads
+ * share one enrichment path. All lookups are batched (one query each) and the two naming
+ * reads run IN PARALLEL, so the added latency is O(1) round-trips in the SIZE OF THE INPUT
+ * PAGE regardless of total session count. `originOnline` uses the SAME staleness verdict
+ * `assertContinuable` enforces (`status === "online" && now - lastSeenAt <=
+ * STALE_THRESHOLD_MS`), single-sourced via the re-exported `STALE_THRESHOLD_MS`.
+ */
+async function enrichSessions(
+  auth: { type: string; companyUuid: string; actorUuid: string },
+  sessions: SessionView[],
+): Promise<SessionTargetView[]> {
   if (sessions.length === 0) return [];
 
   const connectionUuids = [...new Set(sessions.map((s) => s.originConnectionUuid))];

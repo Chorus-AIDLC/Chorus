@@ -1051,6 +1051,110 @@ export async function getVisibleSessions(auth: {
   return rows.map(toSessionView);
 }
 
+// ===== Owner-scoped PAGINATED reads (daemon session list pagination) =====
+//
+// The full-history `getVisibleSessions` above stays as the legacy (no-param) path. The
+// two reads below back the opt-in paginated modes of GET /api/daemon-sessions, so the
+// chat modal never fetches more session rows than it shows. Both keep the exact
+// owner/self + companyUuid fence of `getVisibleSessions`.
+
+// The chat modal's page size — one page of a single agent's conversations. Matches the
+// client's PAGE_SIZE so a first page fills the list exactly once.
+export const DEFAULT_SESSION_PAGE = 12;
+// Hard bound on a caller-supplied `limit`, so a crafted request can't ask for the whole
+// history back (defeating the point) or a pathological page.
+export const MAX_SESSION_PAGE = 100;
+
+function clampSessionLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_SESSION_PAGE;
+  return Math.min(MAX_SESSION_PAGE, Math.max(1, Math.floor(limit)));
+}
+
+/** One entry of the agent index: an agent that has visible session history. */
+export interface AgentSessionIndexEntry {
+  agentUuid: string;
+  // Most recent conversation timestamp for this agent (ISO-8601) — lets the client pick
+  // a default-selected agent without loading any rows.
+  lastTurnAt: string;
+  // How many visible conversations this agent has.
+  sessionCount: number;
+}
+
+/** A page of a single agent's conversations, newest-first, with a keyset cursor. */
+export interface SessionPage {
+  sessions: SessionView[];
+  // Pass as `before` to fetch the next (older) page; null when none remain.
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+/**
+ * The agent axis for the chat modal's Select: every agent that has at least one visible
+ * session, with its most-recent `lastTurnAt` and visible `sessionCount`. A single grouped
+ * aggregate under the SAME owner/self + companyUuid fence as `getVisibleSessions` — NO
+ * per-session origin/naming enrichment and NO orphan-turn reconcile, so its cost scales
+ * with the number of distinct agents, not the total session count. A READ that does NOT
+ * swallow — a query failure propagates.
+ */
+export async function getVisibleAgentIndex(auth: {
+  type: string;
+  companyUuid: string;
+  actorUuid: string;
+}): Promise<AgentSessionIndexEntry[]> {
+  const groups = await prisma.daemonSession.groupBy({
+    by: ["agentUuid"],
+    where: { companyUuid: auth.companyUuid, ...ownerScope(auth) },
+    _count: { _all: true },
+    _max: { lastTurnAt: true },
+    orderBy: { _max: { lastTurnAt: "desc" } },
+  });
+  return groups.map((g) => ({
+    agentUuid: g.agentUuid,
+    // Every grouped agent has ≥1 session, so `_max.lastTurnAt` is always present; guard
+    // defensively rather than assert non-null.
+    lastTurnAt: (g._max.lastTurnAt ?? new Date(0)).toISOString(),
+    sessionCount: g._count._all,
+  }));
+}
+
+/**
+ * One page of a SINGLE agent's visible conversations, newest-first, keyset-paginated by
+ * a stable `(lastTurnAt desc, uuid desc)` order (mirrors `comment.service` cursor paging:
+ * `cursor` + `skip: 1` + `take: limit + 1` for the `hasMore` sentinel, no count query).
+ *
+ * Visibility: an AGENT key may only page ITS OWN sessions — a mismatch yields an empty
+ * page (non-disclosure), never another agent's rows. This explicit guard matters because
+ * for an agent caller `ownerScope` is the scalar `{ agentUuid: actorUuid }`, which the
+ * requested `agentUuid` would otherwise overwrite when merged into the same `where`
+ * object; the guard makes the merge safe (they are equal past this point). A USER /
+ * super_admin caller's `ownerScope` is the relation filter `{ agent: { ownerUuid } }` (a
+ * distinct key), so it AND-composes with `agentUuid` and never cross-owner leaks. A READ
+ * that does NOT swallow.
+ */
+export async function getSessionsPageForAgent(
+  auth: { type: string; companyUuid: string; actorUuid: string },
+  agentUuid: string,
+  opts?: { limit?: number; before?: string | null },
+): Promise<SessionPage> {
+  if (auth.type === "agent" && agentUuid !== auth.actorUuid) {
+    return { sessions: [], nextCursor: null, hasMore: false };
+  }
+  const limit = clampSessionLimit(opts?.limit);
+  const before = opts?.before ?? null;
+  const rows = await prisma.daemonSession.findMany({
+    where: { companyUuid: auth.companyUuid, ...ownerScope(auth), agentUuid },
+    orderBy: [{ lastTurnAt: "desc" }, { uuid: "desc" }],
+    ...(before ? { cursor: { uuid: before }, skip: 1 } : {}),
+    take: limit + 1,
+  });
+  const hasMore = rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
+  const nextCursor = hasMore ? pageRows[pageRows.length - 1].uuid : null;
+  // Reconcile only the PAGE's origin connections — bounded, not the full history.
+  await reconcileOrphanTurnsForSessions(auth.companyUuid, pageRows);
+  return { sessions: pageRows.map(toSessionView), nextCursor, hasMore };
+}
+
 /**
  * Rebuild the caller-visible running activity set for company-stream bootstrap.
  * User subscribers observe every running session in their company and receive
