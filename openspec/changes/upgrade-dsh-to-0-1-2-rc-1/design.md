@@ -53,8 +53,11 @@ The local working tree is still checked out at rc.7, so a reader without git acc
 
 ### Version pins
 
-- `DSH_RC_VERSION` → `0.1.2-rc.1`.
-- `packages/chorus-dsh/package.json`: peerDeps are caret `^0.1.0-rc.7`; **devDeps are exact no-caret** `0.1.0-rc.7` (`dsh-agent`, `dsh-llm`, `dsh-persona`, `dsh-session`, `dsh-subagent`, `dsh-tools`). Both forms must move to `0.1.2-rc.1` (caret `^0.1.2-rc.1` does not satisfy the older prerelease; exact pins are stale). `@deepseek-ai/cordis` 4.0.1 → 4.0.2 optional alignment.
+- `DSH_RC_VERSION` → `0.1.2-rc.1` (managed-config cache-key/default, not a runtime lock — external_runtime).
+- **`packages/chorus-dsh/package.json` — split "supported" vs "developed-against" (deliberately lenient about dsh versions):**
+  - **peerDependencies = lenient range `>=0.1.2-rc.1`** (was `^0.1.2-rc.1`). The plugin depends only on stable dsh APIs (lifecycle events / MCP client / persona / skills) unchanged across the 0.1.x line, so it should NOT pin a tight upper bound — dropping the caret's implicit `<0.2.0` lets it accept current + all future stable dsh without a re-pin. (Semver prerelease matching still can't express "any future prerelease at a new tuple" in a range string; making peers optional was rejected because `dsh plugin add` must auto-install `dsh-mcp-client` for the composition. If broader prerelease tolerance is needed, revisit optional peers + a base-provided fallback.)
+  - **devDependencies stay EXACT `0.1.2-rc.1`** (+ `@deepseek-ai/cordis` `4.0.2`) — what we build/test against, pinned for reproducibility. Separate from the supported range.
+- **`check-dsh-contract.sh` no longer pins an exact dsh commit.** It verifies the *contract* (the lifecycle events chorus-dsh observes still exist) against a configurable `DSH_CONTRACT_REF` (default `dsh-v0.1.2-rc.1`, overridable) rather than asserting `HEAD == <exact sha>` — version-tolerant, and no re-pin needed each dsh release.
 
 ## Module Contracts
 

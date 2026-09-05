@@ -65,10 +65,10 @@
     "@deepseek-ai/schemastery": "3.18.1"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-mcp-client": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-persona": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-skill-filesystem": "^0.1.2-rc.1",
-    "@deepseek-ai/dsh-tool-skill": "^0.1.2-rc.1"
+    "@deepseek-ai/dsh-mcp-client": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-persona": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-skill-filesystem": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-tool-skill": ">=0.1.2-rc.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
