@@ -52,7 +52,10 @@
   },
   "pi": {
     "extensions": ["./extensions"],
-    "skills": ["./skills"]
+    "skills": ["./skills"],
+    "subagents": {
+      "agents": ["./agents"]
+    }
   },
   "//note": "Reviewer subagents use pi's official subagent pattern, bundled at extensions/subagent/ (index.ts + agents.ts, copied from earendil-works/pi's examples). The copied agents.ts discovers this package's own agents/*.md via a package-relative BUNDLED_DIR, so the 3 reviewer agents load with ZERO manual copy into ~/.pi/agent/agents/. pi auto-loads extensions/subagent/index.ts as a subdirectory-with-index extension (no manifest entry needed)."
 }

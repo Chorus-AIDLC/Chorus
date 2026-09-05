@@ -27,8 +27,8 @@ echo "═══ A1b. no undefined module-scope variables (catches the callSessio
 # A transpile (bun build) does NOT catch references to undeclared variables because
 # TS strips types and bun's transpiler is lenient. So grep for the known module-scope
 # consts and assert every reference is preceded by a declaration.
-for v in callSessions injectedOnce checkinContext mcpSessionId; do
-  decls=$(grep -cE "^const $v\b|^let $v\b" extensions/chorus.ts)
+for v in callSessions injectedOnce checkinContext mcpSessionId runIdToSid inflightCloses; do
+  decls=$(grep -cE "^[[:space:]]*const $v\\b|^[[:space:]]*let $v\\b" extensions/chorus.ts)
   uses=$(grep -cE "\b$v\b" extensions/chorus.ts)
   if [ "$decls" -ge 1 ]; then ok "$v declared ($decls×) and used ($uses×)"; else no "$v used ($uses×) but NEVER declared — runtime ReferenceError"; fi
 done

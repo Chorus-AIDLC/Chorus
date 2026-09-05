@@ -21,6 +21,7 @@ echo "──────── Layer B: extension events ───────�
 bun test test/ext-events.test.ts 2>&1 | tail -8
 be=$?
 echo ""
+echo ""
 echo "══════════════════════════════════════════"
 if [ $a -eq 0 ] && [ $b -eq 0 ] && [ $be -eq 0 ]; then
   echo "  ALL OFFLINE TESTS PASSED (A: static, B: unit + extension events)"

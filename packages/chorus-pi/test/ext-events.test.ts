@@ -85,9 +85,16 @@ installDefaultFetch();
 const handlers: Record<string, (event: any, ctx: any) => Promise<unknown>> = {};
 const notifyMessages: { msg: string; level: string }[] = [];
 const userMessages: string[] = [];
+const eventBus: Record<string, (data: unknown) => void> = {};
 const pi: any = {
   on: (ev: string, fn: (event: any, ctx: any) => Promise<unknown>) => {
     handlers[ev] = fn;
+  },
+  events: {
+    on: (name: string, fn: (data: unknown) => void) => {
+      eventBus[name] = fn;
+    },
+    emit: () => {},
   },
   sendUserMessage: (msg: string) => {
     userMessages.push(msg);
@@ -320,4 +327,155 @@ test("no nudge for a non-trigger chorus tool", async () => {
     ctx,
   );
   expect(userMessages.length).toBe(0);
+});
+
+// ─── async (nicobailon pi-subagents) lifecycle ────────────────────
+
+test("async subagent: session deferred on tool_result and closed on async-complete", async () => {
+  await resetState();
+  const input: any = { agent: "worker", task: "do async work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-a1", input }, ctx);
+  // tool_result carries details.asyncId → session NOT closed, moved to runIdToSid.
+  await handlers["tool_result"](
+    { toolName: "subagent", toolCallId: "tc-a1", isError: false, input, details: { asyncId: "RUN-A" }, content: [] },
+    ctx,
+  );
+  expect(toolCalls).not.toContain("chorus_close_session");
+  // async-complete closes it.
+  eventBus["subagent:async-complete"]!({ runId: "RUN-A" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBe(1);
+});
+
+test("async subagent: process-terminal also closes the deferred session", async () => {
+  await resetState();
+  const input: any = { agent: "worker", task: "do async work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-a2", input }, ctx);
+  await handlers["tool_result"](
+    { toolName: "subagent", toolCallId: "tc-a2", isError: false, input, details: { asyncId: "RUN-B" }, content: [] },
+    ctx,
+  );
+  eventBus["subagent:process-terminal"]!({ runId: "RUN-B" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBe(1);
+});
+
+test("async subagent: duplicate events close only once", async () => {
+  await resetState();
+  const input: any = { agent: "worker", task: "do async work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-a3", input }, ctx);
+  await handlers["tool_result"](
+    { toolName: "subagent", toolCallId: "tc-a3", isError: false, input, details: { asyncId: "RUN-C" }, content: [] },
+    ctx,
+  );
+  eventBus["subagent:async-complete"]!({ runId: "RUN-C" });
+  eventBus["subagent:process-terminal"]!({ runId: "RUN-C" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBe(1);
+});
+
+test("manual session marker in task suppresses double injection", async () => {
+  await resetState();
+  const input: any = { agent: "worker", task: "--- Chorus session (managed by main agent) ---\nSession UUID: 00000000-0000-0000-0000-000000000000\ndo work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-mk", input }, ctx);
+  expect(toolCalls.filter((t) => t === "chorus_create_session").length).toBe(0);
+  expect(input.task).toContain("managed by main agent");
+});
+
+test("process-terminal closes via the {id} shape (runId absent)", async () => {
+  await resetState();
+  const input: any = { agent: "worker", task: "do async work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-id", input }, ctx);
+  await handlers["tool_result"](
+    { toolName: "subagent", toolCallId: "tc-id", isError: false, input, details: { asyncId: "RUN-ID" }, content: [] },
+    ctx,
+  );
+  eventBus["subagent:process-terminal"]!({ id: "RUN-ID" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBe(1);
+});
+
+test("async-complete ignores id-only payloads (runId must be present)", async () => {
+  await resetState();
+  const input: any = { agent: "worker", task: "do async work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-idonly", input }, ctx);
+  await handlers["tool_result"](
+    { toolName: "subagent", toolCallId: "tc-idonly", isError: false, input, details: { asyncId: "RUN-IO" }, content: [] },
+    ctx,
+  );
+  eventBus["subagent:async-complete"]!({ id: "RUN-IO" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBe(0);
+});
+
+test("parallel async: one runId maps several session ids, all closed once", async () => {
+  await resetState();
+  const tasks = [
+    { agent: "worker", task: "build a" },
+    { agent: "worker", task: "build b" },
+  ];
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-parasync", input: { tasks } }, ctx);
+  expect(toolCalls.filter((t) => t === "chorus_create_session").length).toBe(2);
+  await handlers["tool_result"](
+    { toolName: "subagent", toolCallId: "tc-parasync", isError: false, input: { tasks }, details: { asyncId: "RUN-PAR" }, content: [] },
+    ctx,
+  );
+  expect(toolCalls).not.toContain("chorus_close_session");
+  eventBus["subagent:async-complete"]!({ runId: "RUN-PAR" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBe(2);
+});
+
+test("parallel async: marker on one task suppresses only that session", async () => {
+  await resetState();
+  const tasks = [
+    { agent: "worker", task: "--- Chorus session (managed by main agent) ---\nSession UUID: 00000000-0000-0000-0000-000000000000\ndo a" },
+    { agent: "worker", task: "build b" },
+  ];
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-parmix", input: { tasks } }, ctx);
+  expect(toolCalls.filter((t) => t === "chorus_create_session").length).toBe(1);
+});
+
+test("async close failure is re-added and the shutdown sweep retries it", async () => {
+  await resetState();
+  const closeUuids: string[] = [];
+  (globalThis as any).fetch = (async (url: any, init: any) => {
+    const body = init?.body ? JSON.parse(init.body) : {};
+    if (body.method === "initialize") {
+      return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+        status: 200, headers: { "mcp-session-id": "mcp-sess-1", "content-type": "application/json" },
+      }) as unknown as Response;
+    }
+    if (body.method === "notifications/initialized") return new Response("", { status: 200 }) as unknown as Response;
+    if (body.method === "tools/call") {
+      const name: string = body.params?.name ?? "";
+      toolCalls.push(name);
+      if (name === "chorus_close_session") {
+        closeUuids.push(body.params?.arguments?.sessionUuid);
+        return new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 2, error: { code: -32603, message: "server boom" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ) as unknown as Response;
+      }
+      const text = name === "chorus_create_session" ? JSON.stringify({ uuid: "S-pfail" }) : "{}";
+      return new Response(
+        JSON.stringify({ jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text }] } }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ) as unknown as Response;
+    }
+    return new Response("", { status: 200 }) as unknown as Response;
+  }) as any;
+  const input: any = { agent: "worker", task: "do async work" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-pfail", input }, ctx);
+  await handlers["tool_result"](
+    { toolName: "subagent", toolCallId: "tc-pfail", isError: false, input, details: { asyncId: "RUN-FAIL" }, content: [] },
+    ctx,
+  );
+  eventBus["subagent:async-complete"]!({ runId: "RUN-FAIL" });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(closeUuids.length).toBe(1); // attempted, failed
+  // restore a working close and let the shutdown sweep retry the retained sid
+  installDefaultFetch();
+  await handlers["session_shutdown"]({}, ctx);
+  expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBeGreaterThan(1);
 });

@@ -5,6 +5,8 @@ import {
   WORKER_AGENT_NAMES,
   subagentTaskItems,
   sessionWorkflow,
+  hasSessionMarker,
+  extractRunIdFromToolResultEvent,
   detectOpenSpec,
   buildSessionBanner,
   parseMaxCodeReviewRounds,
@@ -531,4 +533,30 @@ test("resolveChorusConfigFromMcpJson: all candidates partial → empty (no compl
   const readFile = (p: string) => files[p as keyof typeof files];
   expect(resolveChorusConfigFromMcpJson(["/proj/.mcp.json", "/home/.pi/agent/mcp.json"], fs, readFile))
     .toEqual({ url: "", apiKey: "" });
+});
+
+// ─── hasSessionMarker / extractRunIdFromToolResultEvent ──────────────
+
+test("hasSessionMarker: matches injected block header at line start only", () => {
+  expect(hasSessionMarker("do work\n--- Chorus session (auto-injected by the chorus-pi extension) ---\nSession UUID: x")).toBe(true);
+  expect(hasSessionMarker("--- Chorus session (managed by main agent) ---")).toBe(true);
+  expect(hasSessionMarker("plain implementation task, no chorus")).toBe(false);
+  // prose that merely mentions the phrase must NOT suppress injection
+  expect(hasSessionMarker("this task is about the Chorus session lifecycle")).toBe(false);
+  // a hyphenated continuation is not a header
+  expect(hasSessionMarker("--- Chorus session-notes for the team")).toBe(false);
+  expect(hasSessionMarker("")).toBe(false);
+});
+
+test("extractRunIdFromToolResultEvent: asyncId/runId trusted from details only", () => {
+  expect(extractRunIdFromToolResultEvent({ details: { asyncId: "run-1" } })).toBe("run-1");
+  expect(extractRunIdFromToolResultEvent({ details: { runId: "run-2" } })).toBe("run-2");
+});
+
+test("extractRunIdFromToolResultEvent: generic id/prefix and content are NOT trusted", () => {
+  expect(extractRunIdFromToolResultEvent({ details: { id: "job-1" } })).toBe(null);
+  expect(extractRunIdFromToolResultEvent({ details: { prefix: "abc" } })).toBe(null);
+  // worker output (even JSON) must never misclassify a blocking run as async
+  expect(extractRunIdFromToolResultEvent({ details: {}, content: [{ text: JSON.stringify({ asyncId: "run-x", results: [] }) }] })).toBe(null);
+  expect(extractRunIdFromToolResultEvent({ details: undefined })).toBe(null);
 });
