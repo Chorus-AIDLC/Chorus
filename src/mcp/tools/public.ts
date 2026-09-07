@@ -29,6 +29,7 @@ import * as assignmentService from "@/services/assignment.service";
 import { zArray } from "./schema-utils";
 import * as notificationService from "@/services/notification.service";
 import * as elaborationService from "@/services/elaboration.service";
+import * as alignmentService from "@/services/alignment.service";
 import * as projectGroupService from "@/services/project-group.service";
 import * as mentionService from "@/services/mention.service";
 import * as searchService from "@/services/search.service";
@@ -896,6 +897,37 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           isError: true,
         };
       }
+    }
+  );
+
+  // chorus_get_alignment_anchor - Consolidated first-principles alignment anchor.
+  // Gated on idea:read (all reviewer presets hold it). Consolidates reads already
+  // available via chorus_get_idea / chorus_get_elaboration / chorus_get_comments —
+  // no new data exposure. See openspec add-first-principles-alignment-review.
+  registerPermissionedTool(
+    server,
+    auth,
+    "idea:read",
+    "chorus_get_alignment_anchor",
+    {
+      description:
+        "Resolve the first-principles ALIGNMENT ANCHOR (original intent) for a reviewable entity, in one call. Walks the entity to its directly-attached Idea(s) (idea → itself; proposal → its input idea(s); task/document → their proposal's input idea(s)) and returns each Idea's title + content, its RESOLVED elaboration decisions (question + chosen answer), and its comments (each carrying authorType so a reviewer can tell a human-authored authorization from an agent's own comment). The anchor is the DIRECTLY-ATTACHED idea (`directIdeaUuid`), never the ancestor `rootIdeaUuid` (returned only as light context alongside `lineageTitles`). Returns `anchorAvailable:false` with empty `ideas` when the entity has no attached idea (e.g. a document-input proposal). Consolidates chorus_get_idea / chorus_get_elaboration / chorus_get_comments — exposes no field not already readable through those.",
+      inputSchema: z.object({
+        entityType: z
+          .enum(["idea", "proposal", "task", "document"])
+          .describe("The kind of entity being reviewed"),
+        entityUuid: z.string().describe("The entity's UUID"),
+      }),
+    },
+    async ({ entityType, entityUuid }) => {
+      const anchor = await alignmentService.getAlignmentAnchor(
+        auth.companyUuid,
+        entityType,
+        entityUuid
+      );
+      return {
+        content: [{ type: "text", text: JSON.stringify(anchor, null, 2) }],
+      };
     }
   );
 

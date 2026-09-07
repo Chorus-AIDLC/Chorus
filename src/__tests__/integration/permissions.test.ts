@@ -303,6 +303,13 @@ const PM_AGENT_ADDED_IN_0_14_0 = [
   "chorus_remove_reference",
 ];
 
+// add-first-principles-alignment-review (0.18.0): chorus_get_alignment_anchor is
+// the first read-gated tool (idea:read). EVERY preset — developer, pm, admin —
+// carries idea:read, so all three now see this consolidated intent-anchor read.
+const ADDED_IN_0_18_0 = [
+  "chorus_get_alignment_anchor",
+];
+
 // ===== Shared beforeEach =====
 
 beforeEach(() => {
@@ -369,13 +376,13 @@ describe("Scenario 1: custom permissions agent end-to-end (AC1)", () => {
   });
 
   it("MCP tools/list shows exactly the tools gated by the custom permission set", () => {
-    // Under customPermissions the only matches in the permission map are the 5
-    // developer.ts tools (gated on task:write). idea:read and task:read point
-    // at public.ts tools which aren't gated via registerPermissionedTool, so
-    // they don't surface here — they're always visible to any authenticated agent.
+    // Under customPermissions the matches in the permission map are the 5
+    // developer.ts tools (gated on task:write) plus the idea:read-gated
+    // chorus_get_alignment_anchor (0.18.0). task:read points at public.ts tools
+    // that aren't gated via registerPermissionedTool, so they don't surface here.
     const auth = makeAgentAuth(customPermissions);
     const tools = enumerateGatedMcpTools(auth);
-    expect(tools).toEqual(new Set(OLD_DEVELOPER_TOOLS));
+    expect(tools).toEqual(new Set([...OLD_DEVELOPER_TOOLS, ...ADDED_IN_0_18_0]));
   });
 
   it("MCP tools/list must NOT expose pm-write / admin / proposal-read tools", () => {
@@ -456,10 +463,12 @@ describe("Scenario 1: custom permissions agent end-to-end (AC1)", () => {
 // ============================================================
 
 describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
-  it("developer_agent preset registers exactly the 0.6.x developer tool set", () => {
+  it("developer_agent preset registers the 0.6.x developer tool set plus the 0.18.0 idea:read alignment anchor", () => {
     const auth = makeAgentAuth([...ROLE_PRESETS.developer_agent], ["developer_agent"]);
     const tools = enumerateGatedMcpTools(auth);
-    expect(tools).toEqual(new Set(OLD_DEVELOPER_TOOLS));
+    // 0.18.0: developer_agent carries idea:read, so it now also sees the
+    // consolidated intent-anchor read (the first read-gated tool).
+    expect(tools).toEqual(new Set([...OLD_DEVELOPER_TOOLS, ...ADDED_IN_0_18_0]));
   });
 
   it("admin_agent preset registers exactly the 0.6.x admin ∪ pm ∪ developer tool set plus 0.9.0 chorus_create_report and 0.9.4 chorus_pm_validate_elaboration", () => {
@@ -481,6 +490,8 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
       // 0.16.3 (add-assign-idea-mcp-tool): chorus_pm_assign_idea is idea:admin-
       // gated. admin_agent carries idea:admin; pm_agent (idea:write only) does not.
       "chorus_pm_assign_idea",
+      // 0.18.0 (add-first-principles-alignment-review): idea:read-gated anchor read.
+      ...ADDED_IN_0_18_0,
     ]);
     expect(tools).toEqual(expected);
   });
@@ -499,12 +510,12 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
     }
   });
 
-  it("pm_agent diff vs 0.6.x pm baseline is exactly the 10 expected 0.7.0 tools plus the 0.9.0 chorus_create_report and 0.10.0 chorus_edit_idea", () => {
+  it("pm_agent diff vs 0.6.x pm baseline is exactly the 0.7.0 tools plus 0.9.0 chorus_create_report, 0.10.0 chorus_edit_idea, 0.14.0 references, and the 0.18.0 alignment anchor", () => {
     const auth = makeAgentAuth([...ROLE_PRESETS.pm_agent], ["pm_agent"]);
     const tools = enumerateGatedMcpTools(auth);
     const baseline = new Set(OLD_PM_TOOLS);
     const diff = Array.from(tools).filter((t) => !baseline.has(t)).sort();
-    expect(diff).toEqual([...PM_AGENT_ADDED_IN_0_7_0, ...PM_AGENT_ADDED_IN_0_9_0, ...PM_AGENT_ADDED_IN_0_10_0, ...PM_AGENT_ADDED_IN_0_14_0].sort());
+    expect(diff).toEqual([...PM_AGENT_ADDED_IN_0_7_0, ...PM_AGENT_ADDED_IN_0_9_0, ...PM_AGENT_ADDED_IN_0_10_0, ...PM_AGENT_ADDED_IN_0_14_0, ...ADDED_IN_0_18_0].sort());
   });
 
   it("pm_agent preset does not leak any *:admin-gated tool", () => {

@@ -21,6 +21,14 @@
 import type { Permission } from "@/lib/authz/types";
 
 export const TOOL_PERMISSIONS = {
+  // ===== public.ts (gated read) =====
+  // First-principles alignment anchor — the only read-gated public tool. Gated
+  // idea:read: it consolidates chorus_get_idea / chorus_get_elaboration /
+  // chorus_get_comments (all already require reading the idea), so idea:read is
+  // its natural floor. Every reviewer preset (developer/pm/admin) holds idea:read.
+  // See add-first-principles-alignment-review Tech Design → Component 1.
+  chorus_get_alignment_anchor: "idea:read",
+
   // ===== pm.ts =====
   // Idea mutations
   chorus_claim_idea: "idea:write",

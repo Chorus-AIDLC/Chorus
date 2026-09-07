@@ -26,6 +26,7 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 
 | Tool | Required Permission |
 |------|---------------------|
+| `chorus_get_alignment_anchor` | `idea:read` |
 | `chorus_claim_idea` | `idea:write` |
 | `chorus_release_idea` | `idea:write` |
 | `chorus_move_idea` | `idea:write` |
@@ -541,6 +542,50 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
   }
 }
 ```
+
+---
+
+### chorus_get_alignment_anchor
+
+**Permission**: `idea:read` (the only read-gated tool; every reviewer preset holds `idea:read`).
+
+**Description**: Resolve the first-principles **alignment anchor** — the *original intent* — for any reviewable entity, in one call. Consolidates the reads the three reviewers (proposal-, task-, code-reviewer) use to check, top-down, that the work still serves the Idea it was created for. It walks the entity to its **directly-attached** Idea(s) and returns each Idea's content, its resolved elaboration decisions, and its comments. This tool exposes **no field not already readable** via `chorus_get_idea`, `chorus_get_elaboration`, and `chorus_get_comments` — it only consolidates them (and reuses those exact service functions), and is tenant-scoped by `companyUuid`.
+
+The anchor is the **directly-attached** Idea (`directIdeaUuid`, the first Idea node on the lineage — e.g. a proposal's `inputUuids[0]`), **never** the ancestor `rootIdeaUuid`. For an Idea nested under a parent theme, the anchor is that child Idea itself. `rootIdeaUuid` and `lineageTitles` are returned only as light secondary context.
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| entityType | `"idea" \| "proposal" \| "task" \| "document"` | Yes | The kind of entity being reviewed |
+| entityUuid | string | Yes | The entity's UUID |
+
+**Resolution paths**: `idea` → itself; `proposal` → its input Idea(s); `task` → its proposal's input Idea(s); `document` → its proposal's input Idea(s). A proposal that combines several ideas returns them **all** in `ideas`.
+
+**Output**:
+```json
+{
+  "directIdeaUuid": "...",
+  "rootIdeaUuid": "...",
+  "lineageTitles": ["Parent Theme", "Direct Idea"],
+  "resolvedVia": "via_proposal",
+  "ideas": [
+    {
+      "uuid": "...",
+      "title": "...",
+      "content": "the Idea body — the primary intent statement",
+      "elaboration": [
+        { "question": "...", "answer": "chosen option label, or the 'Other' customText" }
+      ],
+      "comments": [
+        { "authorType": "user", "author": "Alice", "at": "ISO timestamp", "content": "..." }
+      ]
+    }
+  ],
+  "anchorAvailable": true
+}
+```
+
+Each comment carries `authorType` (`"user"` | `"agent"`) so a reviewer can enforce the human-authored escape hatch — an agent-authored comment never authorizes drift. `elaboration` lists **resolved decisions only** (answered questions). When the entity has no attached Idea (e.g. a document-input proposal, a quick task, a missing entity), the tool returns `anchorAvailable: false` with an empty `ideas` list rather than an error.
 
 ---
 
