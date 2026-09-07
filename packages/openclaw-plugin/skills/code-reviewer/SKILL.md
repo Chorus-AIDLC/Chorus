@@ -66,6 +66,17 @@ Read each task's work report (in its comments) — the developers describe what 
 
 **Hallucination check:** Flag anything that looks LLM-fabricated as NOTE — API signatures, CLI flags, config keys, model IDs, endpoint URLs, package names.
 
+## First-principles alignment
+
+Call `chorus__get_alignment_anchor({ entityType, entityUuid })` for the entity you are reviewing (proposal-reviewer → `"proposal"`, task-reviewer → `"task"`, code-reviewer → `"idea"`). Treat the returned Idea content + resolved elaboration + Idea comments as the **original intent** (the anchor). If `anchorAvailable` is false, skip this dimension.
+
+Check the work under review against the anchor for three drift types:
+- **Scope creep** — work beyond the original intent.
+- **Requirement loss / shrink** — intent the anchor states, dropped or reduced.
+- **Semantic drift** — satisfies its AC but misses the anchor's point.
+
+Any drift is a **BLOCKER** (→ FAIL / reject) **unless** it is traceable to a **human-originated** authorization: a human-authored Idea comment (`authorType == "user"`), a human-answered elaboration entry, or an explicit human override at the gate. **A comment authored by an agent never authorizes** — a drifting agent cannot self-clear. When you downgrade on this escape hatch, make it a NOTE and **cite the specific human-originated anchor entry** you relied on. Fold alignment into your existing VERDICT; read-only posture, output cap, and the PASS / PASS WITH NOTES / FAIL derivation are unchanged.
+
 ## Finding classification
 
 **BLOCKER** — blocks ship: build/test failures across the feature; broken cross-task integration / contract mismatch causing wrong behavior; security hole introduced by the change; regression in untouched areas; a feature-level requirement (from the idea/docs) not actually covered by the aggregate; edge cases causing runtime errors at integration seams.

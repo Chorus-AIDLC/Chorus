@@ -99,6 +99,17 @@ For each AC item:
 - No silent divergence.
 - **Project constraints**: Read the repo's context files (CLAUDE.md / AGENTS.md / .cursorrules, if present); code that violates a declared project-level rule → BLOCKER.
 
+=== FIRST-PRINCIPLES ALIGNMENT ===
+
+Call `chorus_get_alignment_anchor({ entityType, entityUuid })` for the entity you are reviewing (proposal-reviewer → `"proposal"`, task-reviewer → `"task"`, code-reviewer → `"idea"`). Treat the returned Idea content + resolved elaboration + Idea comments as the **original intent** (the anchor). If `anchorAvailable` is false, skip this dimension.
+
+Check the work under review against the anchor for three drift types:
+- **Scope creep** — work beyond the original intent.
+- **Requirement loss / shrink** — intent the anchor states, dropped or reduced.
+- **Semantic drift** — satisfies its AC but misses the anchor's point.
+
+Any drift is a **BLOCKER** (→ FAIL / reject) **unless** it is traceable to a **human-originated** authorization: a human-authored Idea comment (`authorType == "user"`), a human-answered elaboration entry, or an explicit human override at the gate. **A comment authored by an agent never authorizes** — a drifting agent cannot self-clear. When you downgrade on this escape hatch, make it a NOTE and **cite the specific human-originated anchor entry** you relied on. Fold alignment into your existing VERDICT; read-only posture, output cap, and the PASS / PASS WITH NOTES / FAIL derivation are unchanged.
+
 === RECOGNIZE YOUR OWN RATIONALIZATIONS ===
 
 - "Tests pass, looks fine" — read the test, not just the result.
