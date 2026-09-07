@@ -574,7 +574,7 @@ The anchor is the **directly-attached** Idea (`directIdeaUuid`, the first Idea n
       "title": "...",
       "content": "the Idea body — the primary intent statement",
       "elaboration": [
-        { "question": "...", "answer": "chosen option label, or the 'Other' customText" }
+        { "question": "...", "answer": "chosen option label, or the 'Other' customText", "answeredByType": "user" }
       ],
       "comments": [
         { "authorType": "user", "author": "Alice", "at": "ISO timestamp", "content": "..." }
@@ -585,7 +585,7 @@ The anchor is the **directly-attached** Idea (`directIdeaUuid`, the first Idea n
 }
 ```
 
-Each comment carries `authorType` (`"user"` | `"agent"`) so a reviewer can enforce the human-authored escape hatch — an agent-authored comment never authorizes drift. `elaboration` lists **resolved decisions only** (answered questions). When the entity has no attached Idea (e.g. a document-input proposal, a quick task, a missing entity), the tool returns `anchorAvailable: false` with an empty `ideas` list rather than an error.
+Both `comments[].authorType` and `elaboration[].answeredByType` are normalized to `"user"` | `"agent"`, where **every human actor — a regular user OR a super_admin — is `"user"`** and only a real agent is `"agent"`. This lets a reviewer enforce the human-originated escape hatch symmetrically: a human-authored comment (`authorType == "user"`) or a human-answered elaboration decision (`answeredByType == "user"`) can authorize a deviation, while an agent-authored comment or an agent-self-answered (YOLO) decision never does — a drifting agent cannot self-clear. `elaboration` lists **resolved decisions only** (answered questions). When the entity has no attached Idea (e.g. a document-input proposal, a quick task, a missing entity), the tool returns `anchorAvailable: false` with an empty `ideas` list rather than an error.
 
 ---
 

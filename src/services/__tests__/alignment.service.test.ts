@@ -105,9 +105,12 @@ function makeQuestion(opts: {
   selectedOptionId?: string | null;
   customText?: string | null;
   answered?: boolean;
+  /** Actor TYPE that answered (defaults "user"); drives answeredByType classification. */
+  answeredByType?: string;
 }): ElaborationQuestionResponse {
   const options = opts.options ?? [];
   const answered = opts.answered ?? true;
+  const answeredByType = opts.answeredByType ?? "user";
   return {
     uuid: `q-${opts.text}`,
     questionId: `qid-${opts.text}`,
@@ -120,7 +123,7 @@ function makeQuestion(opts: {
           selectedOptionId: opts.selectedOptionId ?? null,
           customText: opts.customText ?? null,
           answeredAt: "2026-01-01T00:00:00.000Z",
-          answeredBy: { type: "user", uuid: "u-1" },
+          answeredBy: { type: answeredByType, uuid: `${answeredByType}-1` },
         }
       : null,
     issue: null,
@@ -214,7 +217,7 @@ describe("alignment.service / getAlignmentAnchor", () => {
       uuid: "i-1",
       title: "Ship dark mode",
       content: "Add a dark theme toggle",
-      elaboration: [{ question: "Which surfaces?", answer: "All pages" }],
+      elaboration: [{ question: "Which surfaces?", answer: "All pages", answeredByType: "user" }],
       comments: [
         { authorType: "user", author: "Alice", at: "2026-01-02T00:00:00.000Z", content: "Approved scope" },
       ],
@@ -318,7 +321,7 @@ describe("alignment.service / getAlignmentAnchor", () => {
     expect(anchor.anchorAvailable).toBe(true);
     expect(anchor.directIdeaUuid).toBe("i-a"); // primary line = inputUuids[0]
     expect(anchor.ideas.map((i) => i.uuid)).toEqual(["i-a", "i-b"]);
-    expect(anchor.ideas[0].elaboration).toEqual([{ question: "QA", answer: "Ans A" }]);
+    expect(anchor.ideas[0].elaboration).toEqual([{ question: "QA", answer: "Ans A", answeredByType: "user" }]);
     expect(anchor.ideas[1].comments).toEqual([
       { authorType: "agent", author: "Bot", at: "2026-01-02T00:00:00.000Z", content: "B note" },
     ]);
@@ -386,6 +389,52 @@ describe("alignment.service / getAlignmentAnchor", () => {
     expect(anchor.ideas[0].content).toBeNull();
   });
 
+  // ===== N2: super_admin is a HUMAN actor, classified human-originated =====
+  it("classifies a super_admin comment as human-originated ('user'), not agent", async () => {
+    installGraph({
+      ideas: [{ uuid: "i-1", title: "I", content: null, parentUuid: null }],
+      comments: {
+        "i-1": [
+          makeComment({ uuid: "c-sa", content: "super-admin authorized this", authorType: "super_admin", authorName: "Root" }),
+          makeComment({ uuid: "c-agent", content: "agent self-note", authorType: "agent", authorName: "Agent X" }),
+        ],
+      },
+    });
+
+    const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
+
+    // super_admin → "user" so the reviewer's human-authored escape hatch accepts it;
+    // the agent comment stays "agent" so a drifting agent still cannot self-clear.
+    expect(anchor.ideas[0].comments).toEqual([
+      { authorType: "user", author: "Root", at: "2026-01-02T00:00:00.000Z", content: "super-admin authorized this" },
+      { authorType: "agent", author: "Agent X", at: "2026-01-02T00:00:00.000Z", content: "agent self-note" },
+    ]);
+  });
+
+  // ===== N1: human-answered vs agent-answered elaboration are distinguishable =====
+  it("tags each elaboration decision with answeredByType so agent-self-answered (YOLO) rounds are distinguishable from human-answered", async () => {
+    installGraph({
+      ideas: [{ uuid: "i-1", title: "I", content: "c", parentUuid: null }],
+      elaborations: {
+        "i-1": makeElaboration("i-1", [
+          makeQuestion({ text: "Human decided", options: [{ id: "o1", label: "H" }], selectedOptionId: "o1", answeredByType: "user" }),
+          makeQuestion({ text: "Agent decided", options: [{ id: "o2", label: "A" }], selectedOptionId: "o2", answeredByType: "agent" }),
+          makeQuestion({ text: "Super-admin decided", options: [{ id: "o3", label: "S" }], selectedOptionId: "o3", answeredByType: "super_admin" }),
+        ]),
+      },
+    });
+
+    const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
+
+    // Human and super_admin answers authorize ("user"); the agent-self-answered one
+    // is flagged "agent" and cannot authorize drift.
+    expect(anchor.ideas[0].elaboration).toEqual([
+      { question: "Human decided", answer: "H", answeredByType: "user" },
+      { question: "Agent decided", answer: "A", answeredByType: "agent" },
+      { question: "Super-admin decided", answer: "S", answeredByType: "user" },
+    ]);
+  });
+
   // ===== resolved-decision label mapping =====
   it("maps only ANSWERED decisions, using option label, 'Other' customText, and id fallback", async () => {
     installGraph({
@@ -413,10 +462,10 @@ describe("alignment.service / getAlignmentAnchor", () => {
     const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
 
     expect(anchor.ideas[0].elaboration).toEqual([
-      { question: "Selected option", answer: "Chosen Label" },
-      { question: "Other answer", answer: "free text" },
-      { question: "Ghost option", answer: "missing-opt" },
-      { question: "Empty answer", answer: "" },
+      { question: "Selected option", answer: "Chosen Label", answeredByType: "user" },
+      { question: "Other answer", answer: "free text", answeredByType: "user" },
+      { question: "Ghost option", answer: "missing-opt", answeredByType: "user" },
+      { question: "Empty answer", answer: "", answeredByType: "user" },
     ]);
   });
 

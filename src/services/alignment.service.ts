@@ -35,11 +35,26 @@ import { getElaboration } from "@/services/elaboration.service";
 import { listComments } from "@/services/comment.service";
 import type { ElaborationQuestionResponse } from "@/types/elaboration";
 
-/** One resolved elaboration decision: the question and the chosen answer. */
+/**
+ * The anchor's human-vs-agent authorship signal, exposed on every comment and
+ * elaboration decision as `"user" | "agent"`. A HUMAN actor — a regular user OR a
+ * super_admin — is `"user"`; only a real agent is `"agent"`. Reviewers key their
+ * human-originated escape hatch off this value.
+ */
+export type AnchorActorType = "user" | "agent";
+
+/** One resolved elaboration decision: the question, the chosen answer, and who chose it. */
 export interface AlignmentAnchorDecision {
   question: string;
   /** Chosen option label, or the free-text `customText` for an "Other" answer. */
   answer: string;
+  /**
+   * Answerer kind, normalized to `"user" | "agent"` (a super_admin — a human
+   * operator — maps to `"user"`). Mirrors comment `authorType` so the reviewer's
+   * "human-answered elaboration" escape hatch is enforceable: an agent-self-answered
+   * (YOLO) decision (`answeredByType: "agent"`) never authorizes drift.
+   */
+  answeredByType: AnchorActorType;
 }
 
 /**
@@ -47,7 +62,8 @@ export interface AlignmentAnchorDecision {
  * human-authored escape hatch (an agent-authored comment never authorizes drift).
  */
 export interface AlignmentAnchorComment {
-  authorType: string; // "user" | "agent"
+  /** `"user"` for any human author (user OR super_admin); `"agent"` for an agent. */
+  authorType: AnchorActorType;
   author: string; // display name
   at: string; // ISO timestamp
   content: string;
@@ -76,6 +92,23 @@ export interface AlignmentAnchor {
   ideas: AlignmentAnchorIdea[];
   /** False when the entity has no attached idea (nothing to anchor to). */
   anchorAvailable: boolean;
+}
+
+/**
+ * Normalize a stored actor/author type to the anchor's human-vs-agent signal.
+ *
+ * Only a real agent (`"agent"`, or the session-scoped `"agent_instance"`) is
+ * agent-originated; EVERY human actor — a regular user OR a super_admin — maps to
+ * `"user"`. A super_admin is a human operator, NOT an agent, so their Idea comment
+ * / elaboration answer must satisfy the reviewer's human-authored escape hatch
+ * (`authorType`/`answeredByType == "user"`) rather than be over-blocked as if a
+ * drifting agent had self-cleared. This is the same discriminator the rest of the
+ * codebase uses to tell agents apart (see `isAgent` in src/lib/auth.ts).
+ */
+function toAnchorActorType(storedType: string): AnchorActorType {
+  return storedType === "agent" || storedType === "agent_instance"
+    ? "agent"
+    : "user";
 }
 
 /**
@@ -198,6 +231,9 @@ async function collectResolvedDecisions(
       decisions.push({
         question: question.text,
         answer: resolveAnswerLabel(question),
+        // Who answered — a human-answered decision authorizes drift, an
+        // agent-self-answered (YOLO) one does not.
+        answeredByType: toAnchorActorType(question.answer.answeredBy.type),
       });
     }
   }
@@ -235,7 +271,8 @@ async function collectIdeaComments(
     targetUuid: ideaUuid,
   });
   return comments.map((c) => ({
-    authorType: c.author.type,
+    // Normalize so a super_admin (human) reads as "user", not "agent".
+    authorType: toAnchorActorType(c.author.type),
     author: c.author.name,
     at: c.createdAt,
     content: c.content,
