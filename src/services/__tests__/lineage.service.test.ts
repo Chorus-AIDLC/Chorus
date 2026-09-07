@@ -680,6 +680,40 @@ describe("lineage.service / resolveDirectIdeaUuid (shallow, no-climb)", () => {
     await expect(resolveDirectIdeaUuid(COMPANY, "task", "t1")).resolves.toBeNull();
   });
 
+  // Value-identity is the invariant the whole "same-source" safety rests on
+  // (anchor.ideaUuid ≡ DaemonSession.sessionId). Pin it not only on the happy path but on
+  // the NULL/edge branches too, so a future drift in resolveRootIdea's null semantics can
+  // never silently fork the shallow primitive. Both paths are run on the SAME graph.
+  it.each([
+    ["ghost proposal input idea", COMPANY, "task", "t-ghost-input"],
+    ["quick task (no proposal)", COMPANY, "task", "t-quick"],
+    ["non-idea proposal input", COMPANY, "proposal", "p-doc"],
+    ["cross-company task", OTHER_COMPANY, "task", "t-ok"],
+  ] as const)(
+    "value-identity on the null/edge branch: %s (shallow === resolveRootIdea().directIdeaUuid)",
+    async (_label, company, type, uuid) => {
+      installGraph({
+        ideas: [{ uuid: "i-ok", title: "OK", parentUuid: null }],
+        proposals: [
+          { uuid: "p-ghost", title: "PGhost", inputType: "idea", inputUuids: ["i-ghost"] },
+          { uuid: "p-doc", title: "PDoc", inputType: "document", inputUuids: ["d-src"] },
+          { uuid: "p-ok", title: "POk", inputType: "idea", inputUuids: ["i-ok"] },
+        ],
+        tasks: [
+          { uuid: "t-ghost-input", title: "TGhost", proposalUuid: "p-ghost" },
+          { uuid: "t-quick", title: "TQuick", proposalUuid: null },
+          { uuid: "t-ok", title: "TOk", proposalUuid: "p-ok" },
+        ],
+      });
+
+      const shallow = await resolveDirectIdeaUuid(company, type, uuid);
+      const deep = (await resolveRootIdea(company, type, uuid)).directIdeaUuid;
+
+      expect(shallow).toBe(deep);
+      expect(shallow).toBeNull();
+    },
+  );
+
   it("cross-company entity → null (getters are company-scoped)", async () => {
     installGraph({
       ideas: [{ uuid: "i-a", title: "A", parentUuid: null }],
