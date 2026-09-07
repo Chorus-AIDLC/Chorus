@@ -110,6 +110,60 @@ describe("buildPrompt", () => {
     ).toBeNull();
   });
 
+  // --- Waker-session advisory anchor (wake-carry-waker-session-anchor, T2) ---
+  const WAKER = { agentUuid: "agent-waker", agentName: "Peer", ideaUuid: "idea-1" };
+
+  it("appends the waker-session advisory iff wakerSession is present, naming @[name](agent:uuid)", () => {
+    // absent → no anchor block
+    expect(buildPrompt(TASK_NOTIF)).not.toContain("has a live session open on this resource");
+    // present → advisory block naming the waker, with the not-a-route disclaimer
+    const p = buildPrompt({ ...TASK_NOTIF, wakerSession: WAKER });
+    expect(p).toContain("@[Peer](agent:agent-waker)");
+    expect(p).toContain("has a live session open on this resource");
+    // makes NO server-routing claim — states it is advisory, not an enforced route
+    expect(p).toContain("advisory, not an");
+    expect(p).toContain("enforced server route");
+    expect(p).toContain("there is no automatic subscription and nothing is force-delivered");
+  });
+
+  it("renders the anchor and orchestrator blocks independently (both/either/neither)", () => {
+    // both present → both render
+    const both = buildPrompt({
+      ...TASK_NOTIF,
+      orchestrator: { type: "agent", uuid: "agent-orchestrator", name: "Coordinator" },
+      wakerSession: WAKER,
+    });
+    expect(both).toContain("Your orchestrator for this resource is @Coordinator.");
+    expect(both).toContain("@[Peer](agent:agent-waker)");
+
+    // anchor only → orchestrator block absent
+    const anchorOnly = buildPrompt({ ...TASK_NOTIF, wakerSession: WAKER });
+    expect(anchorOnly).toContain("@[Peer](agent:agent-waker)");
+    expect(anchorOnly).not.toContain("Your orchestrator for this resource");
+
+    // orchestrator only → anchor block absent
+    const orchOnly = buildPrompt({
+      ...TASK_NOTIF,
+      orchestrator: { type: "agent", uuid: "agent-orchestrator", name: "Coordinator" },
+    });
+    expect(orchOnly).toContain("Your orchestrator for this resource is @Coordinator.");
+    expect(orchOnly).not.toContain("has a live session open on this resource");
+  });
+
+  it("keeps a null wake body null even when a wakerSession anchor is present (no anchor-only wake)", () => {
+    expect(
+      buildPrompt({ ...TASK_NOTIF, action: "unknown_action", wakerSession: WAKER }),
+    ).toBeNull();
+    expect(
+      buildPrompt({
+        ...TASK_NOTIF,
+        action: "human_instruction",
+        instructionText: "   ",
+        wakerSession: WAKER,
+      }),
+    ).toBeNull();
+  });
+
   it("comment_added does NOT wake (too noisy); only an explicit @mention does", () => {
     // A plain comment to the task's assignee/creator should be ignored...
     expect(buildPrompt({ ...TASK_NOTIF, action: "comment_added", message: "please rebase" })).toBeNull();

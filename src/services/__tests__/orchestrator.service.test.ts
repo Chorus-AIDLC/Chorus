@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockPrisma = vi.hoisted(() => ({
   idea: { findFirst: vi.fn() },
   task: { findFirst: vi.fn() },
+  daemonSession: { findFirst: vi.fn() },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -11,7 +12,15 @@ vi.mock("@/lib/uuid-resolver", () => ({
   resolveAssignmentActor: mockResolveAssignmentActor,
 }));
 
-import { resolveResourceOrchestrator } from "@/services/orchestrator.service";
+const mockListConnectionsForAgent = vi.hoisted(() => vi.fn());
+vi.mock("@/services/daemon-connection.service", () => ({
+  listConnectionsForAgent: mockListConnectionsForAgent,
+}));
+
+import {
+  resolveResourceOrchestrator,
+  resolveWakerSessionAnchor,
+} from "@/services/orchestrator.service";
 
 describe("resolveResourceOrchestrator", () => {
   beforeEach(() => {
@@ -105,4 +114,87 @@ describe("resolveResourceOrchestrator", () => {
       expect(mockResolveAssignmentActor).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("resolveWakerSessionAnchor", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the anchor when the waker's idea session has an online origin", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({
+      originConnectionUuid: "conn-1",
+    });
+    mockListConnectionsForAgent.mockResolvedValue([
+      { uuid: "conn-0", agentName: "Waker", effectiveStatus: "offline" },
+      { uuid: "conn-1", agentName: "Waker", effectiveStatus: "online" },
+    ]);
+
+    await expect(
+      resolveWakerSessionAnchor("company-1", "agent-1", "idea-1"),
+    ).resolves.toEqual({
+      agentUuid: "agent-1",
+      agentName: "Waker",
+      ideaUuid: "idea-1",
+    });
+    // The session business key is the idea (sessionId === ideaUuid), scoped by company+agent.
+    expect(mockPrisma.daemonSession.findFirst).toHaveBeenCalledWith({
+      where: { companyUuid: "company-1", agentUuid: "agent-1", sessionId: "idea-1" },
+      select: { originConnectionUuid: true },
+    });
+    expect(mockListConnectionsForAgent).toHaveBeenCalledWith("company-1", "agent-1");
+  });
+
+  it("returns null when the waker has no session for the idea (no connection lookup)", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(null);
+
+    await expect(
+      resolveWakerSessionAnchor("company-1", "agent-1", "idea-1"),
+    ).resolves.toBeNull();
+    expect(mockListConnectionsForAgent).not.toHaveBeenCalled();
+  });
+
+  it("returns null when the session's origin connection is offline", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({
+      originConnectionUuid: "conn-1",
+    });
+    mockListConnectionsForAgent.mockResolvedValue([
+      { uuid: "conn-1", agentName: "Waker", effectiveStatus: "offline" },
+    ]);
+
+    await expect(
+      resolveWakerSessionAnchor("company-1", "agent-1", "idea-1"),
+    ).resolves.toBeNull();
+  });
+
+  it("returns null when the session's origin connection is not among the agent's connections", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({
+      originConnectionUuid: "conn-gone",
+    });
+    // Another connection is online, but it is NOT the session's origin — no anchor.
+    mockListConnectionsForAgent.mockResolvedValue([
+      { uuid: "conn-other", agentName: "Waker", effectiveStatus: "online" },
+    ]);
+
+    await expect(
+      resolveWakerSessionAnchor("company-1", "agent-1", "idea-1"),
+    ).resolves.toBeNull();
+  });
+
+  it("falls back to an empty agentName when the online connection has no joined name", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({
+      originConnectionUuid: "conn-1",
+    });
+    mockListConnectionsForAgent.mockResolvedValue([
+      { uuid: "conn-1", agentName: null, effectiveStatus: "online" },
+    ]);
+
+    await expect(
+      resolveWakerSessionAnchor("company-1", "agent-1", "idea-1"),
+    ).resolves.toEqual({
+      agentUuid: "agent-1",
+      agentName: "",
+      ideaUuid: "idea-1",
+    });
+  });
 });

@@ -36,9 +36,20 @@ vi.mock("@/services/notification-turn", () => ({
   createTurnAndResolveTarget: mockCreateTurnAndResolveTarget,
 }));
 
+// formatNotifications resolves a TASK wake's direct containing idea via the shared lineage
+// resolver (a Task has no `ideaUuid` column; the direct idea is the FIRST idea node, which is
+// also the idea-anchored DaemonSession's business key). Mocked so this suite stays a focused
+// unit test — the resolver itself is covered in daemon-session/lineage suites.
+const mockResolveDirectIdeaUuid = vi.hoisted(() => vi.fn());
+vi.mock("@/services/daemon-session.service", () => ({
+  resolveDirectIdeaUuid: mockResolveDirectIdeaUuid,
+}));
+
 const mockResolveResourceOrchestrator = vi.hoisted(() => vi.fn());
+const mockResolveWakerSessionAnchor = vi.hoisted(() => vi.fn());
 vi.mock("@/services/orchestrator.service", () => ({
   resolveResourceOrchestrator: mockResolveResourceOrchestrator,
+  resolveWakerSessionAnchor: mockResolveWakerSessionAnchor,
 }));
 
 import {
@@ -99,6 +110,11 @@ beforeEach(() => {
     suppressWake: false,
   });
   mockResolveResourceOrchestrator.mockResolvedValue(null);
+  // The waker-session anchor resolver is exercised via its own suite; here default it to no
+  // anchor and to a task→idea resolution that resolves, so the wiring path runs without
+  // asserting an anchor unless a test opts in.
+  mockResolveWakerSessionAnchor.mockResolvedValue(null);
+  mockResolveDirectIdeaUuid.mockResolvedValue("idea-from-task");
 });
 
 // ===== create =====
@@ -440,6 +456,144 @@ describe("createBatch", () => {
       expect.objectContaining({
         data: expect.objectContaining({ instructionText: "do the thing" }),
       })
+    );
+  });
+});
+
+// ===== waker-session anchor wiring (wake-carry-waker-session-anchor, T1) =====
+describe("wakerSession anchor wiring", () => {
+  const waker = "agent-waker-0000-0000-000000000001";
+
+  it("emits the waker-session anchor for an agent-caused idea wake (idea → itself)", async () => {
+    const overrides = {
+      entityType: "idea",
+      entityUuid: "idea-1",
+      actorType: "agent",
+      actorUuid: waker,
+    };
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord(overrides));
+    mockPrisma.notification.count.mockResolvedValue(0);
+    const anchor = { agentUuid: waker, agentName: "Waker", ideaUuid: "idea-1" };
+    mockResolveWakerSessionAnchor.mockResolvedValue(anchor);
+
+    const result = await create(makeNotifParams(overrides));
+
+    expect(result.wakerSession).toEqual(anchor);
+    expect(mockResolveWakerSessionAnchor).toHaveBeenCalledWith(
+      companyUuid,
+      waker,
+      "idea-1",
+    );
+    // An idea wake anchors on itself — no lineage resolution at all.
+    expect(mockResolveDirectIdeaUuid).not.toHaveBeenCalled();
+  });
+
+  it("resolves a task wake's direct containing idea (first idea node, not the root)", async () => {
+    const overrides = {
+      entityType: "task",
+      entityUuid: "task-9",
+      actorType: "agent",
+      actorUuid: waker,
+    };
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord(overrides));
+    mockPrisma.notification.count.mockResolvedValue(0);
+    mockResolveDirectIdeaUuid.mockResolvedValue("idea-of-task");
+    const anchor = { agentUuid: waker, agentName: "Waker", ideaUuid: "idea-of-task" };
+    mockResolveWakerSessionAnchor.mockResolvedValue(anchor);
+
+    const result = await create(makeNotifParams(overrides));
+
+    // The task's DIRECT idea is resolved once, via the shared resolver that returns the first
+    // idea node (never climbing to a parent/container root); the anchor is keyed on it.
+    expect(mockResolveDirectIdeaUuid).toHaveBeenCalledTimes(1);
+    expect(mockResolveDirectIdeaUuid).toHaveBeenCalledWith(
+      companyUuid,
+      "task",
+      "task-9",
+    );
+    expect(mockResolveWakerSessionAnchor).toHaveBeenCalledWith(
+      companyUuid,
+      waker,
+      "idea-of-task",
+    );
+    expect(result.wakerSession).toEqual(anchor);
+  });
+
+  it("does not emit a waker anchor for a user-actor wake", async () => {
+    const overrides = {
+      entityType: "idea",
+      entityUuid: "idea-1",
+      actorType: "user",
+      actorUuid: "user-1",
+    };
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord(overrides));
+    mockPrisma.notification.count.mockResolvedValue(0);
+
+    const result = await create(makeNotifParams(overrides));
+
+    expect(result.wakerSession).toBeNull();
+    expect(mockResolveWakerSessionAnchor).not.toHaveBeenCalled();
+  });
+
+  it("does not emit a waker anchor for a proposal-addressed wake (no idea/task key)", async () => {
+    const overrides = {
+      entityType: "proposal",
+      entityUuid: "proposal-1",
+      actorType: "agent",
+      actorUuid: waker,
+    };
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord(overrides));
+    mockPrisma.notification.count.mockResolvedValue(0);
+
+    const result = await create(makeNotifParams(overrides));
+
+    expect(result.wakerSession).toBeNull();
+    expect(mockResolveWakerSessionAnchor).not.toHaveBeenCalled();
+    expect(mockResolveDirectIdeaUuid).not.toHaveBeenCalled();
+  });
+
+  it("omits the anchor when the waker session is offline or missing (resolver → null)", async () => {
+    const overrides = {
+      entityType: "idea",
+      entityUuid: "idea-1",
+      actorType: "agent",
+      actorUuid: waker,
+    };
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord(overrides));
+    mockPrisma.notification.count.mockResolvedValue(0);
+    mockResolveWakerSessionAnchor.mockResolvedValue(null);
+
+    const result = await create(makeNotifParams(overrides));
+
+    expect(mockResolveWakerSessionAnchor).toHaveBeenCalledWith(
+      companyUuid,
+      waker,
+      "idea-1",
+    );
+    expect(result.wakerSession).toBeNull();
+  });
+
+  it("resolves the waker anchor once per distinct (agent, idea) pair across a batch", async () => {
+    const params = makeNotifParams({
+      recipientType: "agent",
+      entityType: "idea",
+      entityUuid: "idea-1",
+      actorType: "agent",
+      actorUuid: waker,
+    });
+    const record = makeNotifRecord(params);
+    mockPrisma.notification.create
+      .mockResolvedValueOnce(record)
+      .mockResolvedValueOnce({ ...record, uuid: "notif-2" });
+    mockPrisma.notification.count.mockResolvedValue(1);
+
+    await createBatch([params, params]);
+
+    expect(mockResolveWakerSessionAnchor).toHaveBeenCalledTimes(1);
+    expect(mockResolveWakerSessionAnchor).toHaveBeenCalledWith(
+      companyUuid,
+      waker,
+      "idea-1",
     );
   });
 });
