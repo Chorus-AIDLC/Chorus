@@ -106,3 +106,11 @@ Seven surfaces, each with its own copy and spawn mechanism (Claude Code `Agent()
 - A separate persisted alignment **report** artifact (owner chose VERDICT-comment output only).
 - A new dedicated alignment-reviewer agent (owner chose to extend existing reviewers).
 - Anchoring on ancestor theme intent beyond light lineage-title context.
+
+## Known boundary — the Idea *body* is a trusted anchor (precise guarantee scope)
+
+The anti-self-authorization guarantee this change delivers is **specifically**: *an agent cannot poison the baseline through the comment or elaboration channels* — those are structurally partitioned by author, so agent-originated entries land in `agentContext` and never in the `baseline` the reviewer anchors on. It is **not** the blanket claim "an agent can never self-authorize."
+
+The residual vector: the Idea **`content` (body) is treated as trusted baseline**, but an agent holding `idea:write` can `chorus_edit_idea` to expand the body — the same baseline-poisoning attack, one level up. This is intentionally **not** hard-patched here, because the normal daemon ideation flow legitimately has an agent `chorus_edit_idea` to polish the user's raw input, so a blanket "distrust any agent-edited body" rule would break real usage. The existing `edited` activity records only `changedFields`, not the prior body, so it cannot by itself reconstruct the original intent.
+
+The proper fix is a **lifecycle-aware immutable anchor version**: freeze a baseline snapshot at human elaboration-confirmation (or proposal approval); subsequent body edits retain before/after + actor provenance; only a human ratification produces a new baseline version, while agent edits enter a proposed/audit context. This is tracked as a separate follow-up Idea (see the idea's review thread / completion report).
