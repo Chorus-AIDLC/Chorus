@@ -56,11 +56,11 @@ vi.mock("@/lib/logger", () => ({ default: mockLogger }));
 const mockEventBus = vi.hoisted(() => ({ emit: vi.fn() }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 
-// Mock lineage.service so resolveDirectIdeaUuid's reuse is asserted in isolation
-// (no idea/task DB walk).
-const mockResolveRootIdea = vi.hoisted(() => vi.fn());
+// daemon-session.service re-exports the canonical DIRECT-idea primitive from
+// lineage.service; mock it so the re-export is asserted in isolation (no DB walk).
+const mockResolveDirectIdeaUuid = vi.hoisted(() => vi.fn());
 vi.mock("@/services/lineage.service", () => ({
-  resolveRootIdea: mockResolveRootIdea,
+  resolveDirectIdeaUuid: mockResolveDirectIdeaUuid,
 }));
 
 // Mock the connection registry module so importing STALE_THRESHOLD_MS does not pull
@@ -191,7 +191,7 @@ beforeEach(() => {
   mockPrisma.daemonTranscriptMessage.deleteMany.mockResolvedValue({ count: 0 });
   mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
   transcriptSeqCounter = 0;
-  mockResolveRootIdea.mockResolvedValue({ rootIdeaUuid: null, directIdeaUuid: null, lineage: [], resolvedVia: "not_found" });
+  mockResolveDirectIdeaUuid.mockResolvedValue(null);
 });
 
 // ===== Constants =====
@@ -359,32 +359,24 @@ describe("resolveOrCreateSession", () => {
   });
 });
 
-// ===== resolveDirectIdeaUuid (lineage reuse) =====
-describe("resolveDirectIdeaUuid", () => {
-  it("delegates to lineage.service.resolveRootIdea and returns its directIdeaUuid", async () => {
-    mockResolveRootIdea.mockResolvedValue({
-      rootIdeaUuid: "root-i",
-      directIdeaUuid: "direct-i",
-      lineage: [],
-      resolvedVia: "via_proposal",
-    });
+// ===== resolveDirectIdeaUuid (re-export of the canonical lineage primitive) =====
+// The no-ancestry-climb behavior itself is verified against the REAL resolver in
+// lineage.service.test.ts; here we only assert the re-export forwards faithfully.
+describe("resolveDirectIdeaUuid (re-export)", () => {
+  it("forwards to lineage.service.resolveDirectIdeaUuid and returns its result", async () => {
+    mockResolveDirectIdeaUuid.mockResolvedValue("direct-i");
     const result = await resolveDirectIdeaUuid(companyUuid, "task", "task-1");
-    expect(mockResolveRootIdea).toHaveBeenCalledWith(companyUuid, "task", "task-1");
+    expect(mockResolveDirectIdeaUuid).toHaveBeenCalledWith(companyUuid, "task", "task-1");
     expect(result).toBe("direct-i");
   });
 
-  it("returns null when the entity has no idea ancestor (a success, not an error)", async () => {
-    mockResolveRootIdea.mockResolvedValue({
-      rootIdeaUuid: null,
-      directIdeaUuid: null,
-      lineage: [],
-      resolvedVia: "no_proposal",
-    });
+  it("returns null when the entity has no idea anchor (a success, not an error)", async () => {
+    mockResolveDirectIdeaUuid.mockResolvedValue(null);
     await expect(resolveDirectIdeaUuid(companyUuid, "task", "task-1")).resolves.toBeNull();
   });
 
   it("PROPAGATES a lineage query failure", async () => {
-    mockResolveRootIdea.mockRejectedValue(new Error("db down"));
+    mockResolveDirectIdeaUuid.mockRejectedValue(new Error("db down"));
     await expect(resolveDirectIdeaUuid(companyUuid, "task", "task-1")).rejects.toThrow("db down");
   });
 });

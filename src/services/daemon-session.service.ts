@@ -15,7 +15,8 @@
 // no turn/session business logic lives in routes (service-layer convention).
 //
 // It reuses, never re-models:
-//   - `lineage.service.resolveRootIdea` for `directIdeaUuid` resolution, and
+//   - `lineage.service.resolveDirectIdeaUuid` (re-exported below) for a session's
+//     idea anchor — the shallow, no-ancestry-climb direct-idea primitive, and
 //   - the connection registry's exported `STALE_THRESHOLD_MS` for the single
 //     offline/staleness verdict used by `assertContinuable` (no second constant).
 //
@@ -28,7 +29,9 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
-import { resolveRootIdea, type LineageEntityType } from "@/services/lineage.service";
+// Re-export the canonical DIRECT-idea primitive so the notification chokepoint and the
+// waker-session anchor resolve a session's idea anchor from ONE source (no ancestry climb).
+export { resolveDirectIdeaUuid } from "@/services/lineage.service";
 // The single offline/staleness verdict lives in the connection registry. Import it
 // here (rather than restate the number) so producer (the SSE heartbeat that bumps
 // lastSeenAt) and this consumer can never drift — exactly as the execution service
@@ -480,23 +483,6 @@ export async function resolveOrCreateSession(params: {
     },
   });
   return toSessionView(row);
-}
-
-/**
- * Resolve the `directIdeaUuid` for an entity via the shared lineage resolver, so the
- * notification chokepoint can derive a session's idea anchor without re-implementing
- * the multi-hop walk. Returns the direct idea uuid (the FIRST idea node on the
- * lineage), or null when the entity has no idea ancestor (a success, not an error —
- * the session is then ad-hoc and keyed on a server-generated uuid by the caller).
- * companyUuid-scoped via the lineage getters; a query failure propagates.
- */
-export async function resolveDirectIdeaUuid(
-  companyUuid: string,
-  entityType: LineageEntityType,
-  entityUuid: string,
-): Promise<string | null> {
-  const result = await resolveRootIdea(companyUuid, entityType, entityUuid);
-  return result.directIdeaUuid;
 }
 
 // ===== Turn lifecycle =====

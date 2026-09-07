@@ -206,12 +206,12 @@ async function formatNotifications(
   //   - idea entity  → the idea itself (`entityUuid`, no lookup, no traversal).
   //   - task entity  → the task's DIRECT containing idea. A Task has no `ideaUuid` column;
   //                    it links to its idea via `proposalUuid` → Proposal.inputUuids[0].
-  //                    `resolveDirectIdeaUuid` returns exactly that FIRST idea node — the
-  //                    resource's own direct idea, NOT the lineage/parent root — which is also
-  //                    the business key the idea-anchored `DaemonSession` is stored under
-  //                    (`sessionId === directIdeaUuid`), so the anchor lookup can match a real
-  //                    session. This reads the direct anchor only; it never resolves to a
-  //                    parent/container idea (the AC's no-ancestry-climb rule).
+  //                    `resolveDirectIdeaUuid` (the shallow canonical primitive) reads exactly
+  //                    that — task → proposal → inputUuids[0] — and NEVER hops a `parentUuid`,
+  //                    honoring the AC's no-ancestry-climb rule. It is the SAME primitive that
+  //                    keys the idea-anchored `DaemonSession` (`sessionId === directIdeaUuid`,
+  //                    via notification-turn), so the anchor lookup matches a real session by
+  //                    construction — same source, no parent/container/root idea ever read.
   // User-actor wakes and proposal/document-addressed wakes never qualify.
 
   // (a) Batch-resolve the direct idea for each distinct agent-caused TASK wake (one resolve

@@ -17,7 +17,11 @@ vi.mock("@/services/proposal.service", () => ({ getProposalByUuid: mockGetPropos
 vi.mock("@/services/document.service", () => ({ getDocumentByUuid: mockGetDocumentByUuid }));
 vi.mock("@/services/idea.service", () => ({ getIdeaByUuid: mockGetIdeaByUuid }));
 
-import { resolveRootIdea, MAX_PARENT_HOPS } from "@/services/lineage.service";
+import {
+  resolveRootIdea,
+  resolveDirectIdeaUuid,
+  MAX_PARENT_HOPS,
+} from "@/services/lineage.service";
 
 const COMPANY = "company-1111";
 const OTHER_COMPANY = "company-9999";
@@ -527,5 +531,168 @@ describe("lineage.service / resolveRootIdea", () => {
     const res = await resolveRootIdea(COMPANY, "comment", "c1");
     expect(res.rootIdeaUuid).toBeNull();
     expect(res.resolvedVia).toBe("not_found");
+  });
+});
+
+// resolveDirectIdeaUuid is the canonical DIRECT-idea primitive used to key the
+// DaemonSession (`--session-id`) and to derive the waker-session anchor. Spec
+// `agent-orchestrator-handoff` (+ T1 AC) requires it to read ONLY the resource's own
+// idea anchor and MUST NOT climb parent/container idea ancestry. These tests exercise
+// the REAL resolver (only the DB getters are mocked) and assert the parent Idea is
+// never read — the constraint boundary the resolveRootIdea path could not cover.
+describe("lineage.service / resolveDirectIdeaUuid (shallow, no-climb)", () => {
+  it("task → its DIRECT idea, WITHOUT reading the parent/container idea", async () => {
+    installGraph({
+      ideas: [
+        { uuid: "i-root", title: "Root", parentUuid: null },
+        { uuid: "i-child", title: "Child", parentUuid: "i-root" },
+      ],
+      proposals: [{ uuid: "p1", title: "P1", inputType: "idea", inputUuids: ["i-child"] }],
+      tasks: [{ uuid: "t1", title: "T1", proposalUuid: "p1" }],
+    });
+
+    const direct = await resolveDirectIdeaUuid(COMPANY, "task", "t1");
+
+    expect(direct).toBe("i-child");
+    // The direct idea WAS read (existence check); the parent/root idea was NOT.
+    const readIdeaUuids = mockGetIdeaByUuid.mock.calls.map((c) => c[1]);
+    expect(readIdeaUuids).toContain("i-child");
+    expect(readIdeaUuids).not.toContain("i-root");
+  });
+
+  it("value-identical to resolveRootIdea().directIdeaUuid but reads fewer ideas", async () => {
+    installGraph({
+      ideas: [
+        { uuid: "i-root", title: "Root", parentUuid: null },
+        { uuid: "i-mid", title: "Mid", parentUuid: "i-root" },
+        { uuid: "i-leaf", title: "Leaf", parentUuid: "i-mid" },
+      ],
+      proposals: [{ uuid: "p1", title: "P1", inputType: "idea", inputUuids: ["i-leaf"] }],
+      tasks: [{ uuid: "t1", title: "T1", proposalUuid: "p1" }],
+    });
+
+    const shallow = await resolveDirectIdeaUuid(COMPANY, "task", "t1");
+    const shallowIdeaReads = mockGetIdeaByUuid.mock.calls.length;
+    vi.clearAllMocks();
+    installGraph({
+      ideas: [
+        { uuid: "i-root", title: "Root", parentUuid: null },
+        { uuid: "i-mid", title: "Mid", parentUuid: "i-root" },
+        { uuid: "i-leaf", title: "Leaf", parentUuid: "i-mid" },
+      ],
+      proposals: [{ uuid: "p1", title: "P1", inputType: "idea", inputUuids: ["i-leaf"] }],
+      tasks: [{ uuid: "t1", title: "T1", proposalUuid: "p1" }],
+    });
+    const deep = await resolveRootIdea(COMPANY, "task", "t1");
+
+    expect(shallow).toBe(deep.directIdeaUuid); // same value
+    expect(shallow).toBe("i-leaf");
+    expect(shallowIdeaReads).toBe(1); // only the direct idea; root path reads i-leaf+i-mid+i-root
+  });
+
+  it("idea entity → itself (existence-checked), no parent read", async () => {
+    installGraph({
+      ideas: [
+        { uuid: "i-root", title: "Root", parentUuid: null },
+        { uuid: "i-leaf", title: "Leaf", parentUuid: "i-root" },
+      ],
+    });
+
+    const direct = await resolveDirectIdeaUuid(COMPANY, "idea", "i-leaf");
+
+    expect(direct).toBe("i-leaf");
+    expect(mockGetIdeaByUuid.mock.calls.map((c) => c[1])).not.toContain("i-root");
+  });
+
+  it("document → its proposal's direct input idea, no parent read", async () => {
+    installGraph({
+      ideas: [
+        { uuid: "i-root", title: "Root", parentUuid: null },
+        { uuid: "i-child", title: "Child", parentUuid: "i-root" },
+      ],
+      proposals: [{ uuid: "p1", title: "P1", inputType: "idea", inputUuids: ["i-child"] }],
+      documents: [{ uuid: "d1", title: "Spec", proposalUuid: "p1" }],
+    });
+
+    const direct = await resolveDirectIdeaUuid(COMPANY, "document", "d1");
+
+    expect(direct).toBe("i-child");
+    expect(mockGetIdeaByUuid.mock.calls.map((c) => c[1])).not.toContain("i-root");
+  });
+
+  it("proposal entity → inputUuids[0]'s idea", async () => {
+    installGraph({
+      ideas: [{ uuid: "i-a", title: "A", parentUuid: null }],
+      proposals: [{ uuid: "p1", title: "P1", inputType: "idea", inputUuids: ["i-a"] }],
+    });
+
+    await expect(resolveDirectIdeaUuid(COMPANY, "proposal", "p1")).resolves.toBe("i-a");
+  });
+
+  it("multi-idea proposal → inputUuids[0] only (no other input read, no climb)", async () => {
+    installGraph({
+      ideas: [
+        { uuid: "i-root-a", title: "RootA", parentUuid: null },
+        { uuid: "i-a", title: "A", parentUuid: "i-root-a" },
+        { uuid: "i-b", title: "B", parentUuid: null },
+      ],
+      proposals: [
+        { uuid: "p-merge", title: "Merge", inputType: "idea", inputUuids: ["i-a", "i-b"] },
+      ],
+      tasks: [{ uuid: "t1", title: "T1", proposalUuid: "p-merge" }],
+    });
+
+    const direct = await resolveDirectIdeaUuid(COMPANY, "task", "t1");
+
+    expect(direct).toBe("i-a");
+    const readIdeaUuids = mockGetIdeaByUuid.mock.calls.map((c) => c[1]);
+    expect(readIdeaUuids).not.toContain("i-root-a"); // no climb
+    expect(readIdeaUuids).not.toContain("i-b"); // secondary input not needed for the anchor
+  });
+
+  it.each([
+    ["quick task, no proposal", "task", "t-quick"],
+    ["standalone document", "document", "d-solo"],
+    ["missing task", "task", "t-ghost"],
+  ] as const)("null (no idea anchor): %s", async (_label, type, uuid) => {
+    installGraph({
+      tasks: [{ uuid: "t-quick", title: "Quick", proposalUuid: null }],
+      documents: [{ uuid: "d-solo", title: "Note", proposalUuid: null }],
+    });
+
+    await expect(resolveDirectIdeaUuid(COMPANY, type, uuid)).resolves.toBeNull();
+  });
+
+  it("proposal whose input is a document (not an idea) → null", async () => {
+    installGraph({
+      proposals: [{ uuid: "p-doc", title: "PDoc", inputType: "document", inputUuids: ["d-src"] }],
+    });
+
+    await expect(resolveDirectIdeaUuid(COMPANY, "proposal", "p-doc")).resolves.toBeNull();
+  });
+
+  it("task whose proposal input idea is a ghost (missing) → null", async () => {
+    installGraph({
+      proposals: [{ uuid: "p1", title: "P1", inputType: "idea", inputUuids: ["i-ghost"] }],
+      tasks: [{ uuid: "t1", title: "T1", proposalUuid: "p1" }],
+    });
+
+    await expect(resolveDirectIdeaUuid(COMPANY, "task", "t1")).resolves.toBeNull();
+  });
+
+  it("cross-company entity → null (getters are company-scoped)", async () => {
+    installGraph({
+      ideas: [{ uuid: "i-a", title: "A", parentUuid: null }],
+      proposals: [{ uuid: "p1", title: "P1", inputType: "idea", inputUuids: ["i-a"] }],
+      tasks: [{ uuid: "t1", title: "T1", proposalUuid: "p1" }],
+    });
+
+    await expect(resolveDirectIdeaUuid(OTHER_COMPANY, "task", "t1")).resolves.toBeNull();
+  });
+
+  it("unknown entityType → null (no throw)", async () => {
+    installGraph({});
+    // @ts-expect-error — exercising the runtime default branch
+    await expect(resolveDirectIdeaUuid(COMPANY, "comment", "c1")).resolves.toBeNull();
   });
 });
