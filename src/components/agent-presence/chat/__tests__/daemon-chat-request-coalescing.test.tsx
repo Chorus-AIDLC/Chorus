@@ -72,14 +72,47 @@ vi.mock("../../daemon-connect-cta", () => ({
 
 import { DaemonChat } from "../daemon-chat";
 
-function successfulListResponse() {
+function agentIndexResponse() {
   return {
     ok: true,
-    json: async () => ({ success: true, data: { sessions: [] } }),
+    json: async () => ({
+      success: true,
+      data: {
+        agents: [
+          { agentUuid: "agent-1", lastTurnAt: "2026-08-30T12:00:00.000Z", sessionCount: 1 },
+        ],
+      },
+    }),
+  };
+}
+function pageResponse() {
+  return {
+    ok: true,
+    json: async () => ({
+      success: true,
+      data: { sessions: [], nextCursor: null, hasMore: false },
+    }),
+  };
+}
+function detailResponse() {
+  return {
+    ok: true,
+    json: async () => ({
+      success: true,
+      data: {
+        session: sessionSeed,
+        turns: [],
+        hasMore: false,
+        oldestTurnSeq: null,
+        oldestMsgSeq: null,
+      },
+    }),
   };
 }
 
-describe("DaemonChat session-list request coalescing", () => {
+const isIndexUrl = (u: unknown) => String(u).includes("view=agents");
+
+describe("DaemonChat agent-index request coalescing", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
@@ -98,55 +131,40 @@ describe("DaemonChat session-list request coalescing", () => {
     vi.useRealTimers();
   });
 
-  it("shares the mount/focus request, then allows a fresh 15-second refresh", async () => {
-    let resolveInitialList!: (value: ReturnType<typeof successfulListResponse>) => void;
-    const initialList = new Promise<ReturnType<typeof successfulListResponse>>((resolve) => {
-      resolveInitialList = resolve;
+  it("shares the mount/focus agent-index request, then allows a fresh 15-second refresh", async () => {
+    let resolveInitialIndex!: (value: ReturnType<typeof agentIndexResponse>) => void;
+    const initialIndex = new Promise<ReturnType<typeof agentIndexResponse>>((resolve) => {
+      resolveInitialIndex = resolve;
     });
 
     mockAuthFetch.mockImplementation((url: string) => {
-      if (url === "/api/daemon-sessions") {
-        const listCallCount = mockAuthFetch.mock.calls.filter(
-          ([calledUrl]) => calledUrl === "/api/daemon-sessions",
-        ).length;
-        return listCallCount === 1
-          ? initialList
-          : Promise.resolve(successfulListResponse());
+      if (isIndexUrl(url)) {
+        // The mount fetch + the focus-driven re-sync both call fetchAgentIndex; the second
+        // must COALESCE into the first in-flight request (one network call).
+        const indexCallCount = mockAuthFetch.mock.calls.filter(([u]) => isIndexUrl(u)).length;
+        return indexCallCount === 1 ? initialIndex : Promise.resolve(agentIndexResponse());
       }
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({
-          success: true,
-          data: {
-            session: sessionSeed,
-            turns: [],
-            hasMore: false,
-            oldestTurnSeq: null,
-            oldestMsgSeq: null,
-          },
-        }),
-      });
+      if (String(url).includes("agentUuid=")) return Promise.resolve(pageResponse());
+      return Promise.resolve(detailResponse()); // /api/daemon-sessions/<uuid>
     });
 
     const view = render(<DaemonChat />);
 
     expect(mockClearChatFocusTarget).toHaveBeenCalledOnce();
-    expect(
-      mockAuthFetch.mock.calls.filter(([url]) => url === "/api/daemon-sessions"),
-    ).toHaveLength(1);
+    // Mount + focus-driven agent-index reads coalesced into a single network call.
+    expect(mockAuthFetch.mock.calls.filter(([url]) => isIndexUrl(url))).toHaveLength(1);
 
     await act(async () => {
-      resolveInitialList(successfulListResponse());
-      await initialList;
+      resolveInitialIndex(agentIndexResponse());
+      await initialIndex;
     });
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15_000);
     });
 
-    expect(
-      mockAuthFetch.mock.calls.filter(([url]) => url === "/api/daemon-sessions"),
-    ).toHaveLength(2);
+    // The 15s poll issues a fresh agent-index read (coalescing cleared after settlement).
+    expect(mockAuthFetch.mock.calls.filter(([url]) => isIndexUrl(url))).toHaveLength(2);
 
     view.unmount();
   });

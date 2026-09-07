@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.17.3] - 2026-09-07
+
+### Added
+- **Pi async subagents**: Added session lifecycle support for detached subagent runs, duplicate-injection protection, and compatibility guidance for nicobailon `pi-subagents`.
+
+### Changed
+- **dsh daemon backend**: Upgraded to dsh 0.1.2-rc.1 and its `dsh --profile sdk` launch model.
+- **Daemon conversations**: Added server-side session pagination, reducing chat modal startup and polling payloads.
+
+### Fixed
+- **npm provenance verification**: Extended propagation retries while preserving fail-fast behavior for authorization and service errors.
+
+### Plugin
+- **Plugin and package versions → 0.17.3**: Aligned Claude Code, Codex, OpenClaw, Kiro, Pi, dsh, and all four coordinated npm packages.
+
+---
+
 ## [0.17.2] - 2026-09-04
 
 ### Added

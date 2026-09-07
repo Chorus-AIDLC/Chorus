@@ -1593,6 +1593,7 @@
     "agentSessionCount": "{count} 件の会話",
     "listHeader": "会話",
     "loadMore": "さらに読み込む",
+    "loadingMore": "読み込み中…",
     "loadEarlier": "以前のメッセージを読み込む",
     "loadingEarlier": "以前のメッセージを読み込み中…",
     "transcriptLoading": "トランスクリプトを読み込み中…",

@@ -12,7 +12,9 @@ import { describe, expect, it } from "vitest";
 import {
   applyTranscriptEvent,
   mergeTurnPage,
+  mergeSessionsById,
 } from "@/components/agent-presence/chat/daemon-chat";
+import type { SessionTarget } from "@/components/agent-presence/send-instruction-box";
 import { groupMergedTurns } from "@/components/agent-presence/chat/transcript-view";
 import type {
   TranscriptMessageView,
@@ -454,5 +456,60 @@ describe("live-convergence seam: turn_status_changed(merged) → apply → group
     expect(groups).toHaveLength(1);
     expect(groups[0].absorbing.uuid).toBe("a");
     expect(groups[0].merged.map((t) => t.uuid)).toEqual(["m1"]);
+  });
+});
+
+// ===== mergeSessionsById — the paginated-list union helper =====
+function sess(uuid: string, lastTurnAt: string, extra: Partial<SessionTarget> = {}): SessionTarget {
+  return {
+    uuid,
+    agentUuid: "agent-1",
+    sessionId: uuid,
+    directIdeaUuid: null,
+    originConnectionUuid: "conn-1",
+    status: "active",
+    title: null,
+    lastTurnAt,
+    originOnline: false,
+    firstInstruction: null,
+    ideaTitle: null,
+    ...extra,
+  };
+}
+
+describe("mergeSessionsById", () => {
+  it("appends an older 'Load more' page and sorts newest-first by lastTurnAt", () => {
+    const existing = [sess("a", "2026-06-19T05:00:00.000Z"), sess("b", "2026-06-19T04:00:00.000Z")];
+    const older = [sess("c", "2026-06-19T03:00:00.000Z"), sess("d", "2026-06-19T02:00:00.000Z")];
+    const out = mergeSessionsById(existing, older);
+    expect(out.map((s) => s.uuid)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("de-dupes by uuid — the INCOMING (fresher) copy wins", () => {
+    const existing = [sess("a", "2026-06-19T05:00:00.000Z", { originOnline: false })];
+    const incoming = [sess("a", "2026-06-19T06:00:00.000Z", { originOnline: true })];
+    // incoming is the first arg → its copy wins.
+    const out = mergeSessionsById(incoming, existing);
+    expect(out).toHaveLength(1);
+    expect(out[0].originOnline).toBe(true);
+    expect(out[0].lastTurnAt).toBe("2026-06-19T06:00:00.000Z");
+  });
+
+  it("preserves an optimistic row absent from the incoming page (fresh first-page load)", () => {
+    const optimistic = [sess("new", "2026-06-19T07:00:00.000Z")];
+    const serverPage = [sess("a", "2026-06-19T05:00:00.000Z")];
+    // fresh load: mergeSessionsById(page, existing-for-agent) — the optimistic row survives.
+    const out = mergeSessionsById(serverPage, optimistic);
+    expect(out.map((s) => s.uuid)).toEqual(["new", "a"]);
+  });
+
+  it("returns a new array and does not mutate its inputs", () => {
+    const a = [sess("a", "2026-06-19T05:00:00.000Z")];
+    const b = [sess("b", "2026-06-19T04:00:00.000Z")];
+    const out = mergeSessionsById(a, b);
+    expect(out).not.toBe(a);
+    expect(out).not.toBe(b);
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
   });
 });

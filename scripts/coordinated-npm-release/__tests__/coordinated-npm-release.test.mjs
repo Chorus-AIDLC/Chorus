@@ -263,7 +263,11 @@ if (args.join(" ") === "config get registry") {
   }
 } else if (args[0] === "view" && args[2] === "dist.attestations") {
   if (scenario === "first-published-provenance-missing" && index === 0) {
-    console.log(JSON.stringify({}));
+    // npm prints an empty successful response when this property is not yet present.
+  } else if (scenario === "first-published-provenance-not-visible" && index === 0) {
+    console.error("npm error code E404");
+    console.error("npm error 404 No match found for version - " + spec);
+    process.exitCode = 1;
   } else if (scenario === "first-published-provenance-error" && index === 0) {
     console.error("E503 attestation metadata unavailable");
     process.exitCode = 1;
@@ -347,15 +351,21 @@ test("real release manifest preserves every package lifecycle and pack gate", ()
   }
 });
 
-test("dsh contract check bootstraps its pinned upstream on clean runners", async () => {
+test("dsh contract check validates the lifecycle contract without pinning an exact dsh revision", async () => {
   const script = await readFile(
     resolve(repositoryRoot, "packages/chorus-dsh/scripts/check-dsh-contract.sh"),
     "utf8",
   );
 
+  // Bootstraps a clean checkout, but is version-tolerant: a configurable ref
+  // (no hard-pinned exact commit) plus the lifecycle-event greps that ARE the
+  // real contract. chorus-dsh supports a range of dsh versions, so we must not
+  // re-introduce a strict single-revision lock here.
   assert.match(script, /checkout="\$\{DSH_CHECKOUT:-\}"/);
-  assert.match(script, /git clone .*--branch "\$tag"/s);
-  assert.match(script, /99f6f02fecdb7dff40c3fbc9470f5907c29f74ca/);
+  assert.match(script, /git clone .*--branch "\$ref"/s);
+  assert.match(script, /DSH_CONTRACT_REF/);
+  assert.match(script, /'agent\/session-start'/);
+  assert.doesNotMatch(script, /[0-9a-f]{40}/);
   assert.doesNotMatch(script, /\/home\/ubuntu\/dev\/deepseek-harness/);
 });
 
@@ -514,6 +524,23 @@ test("missing provenance on an already-published version fails the rerun", async
   assert.match(summary, /chorus-openclaw-plugin` \| not-attempted/);
 });
 
+test("a not-yet-visible npm version retries provenance until the budget is exhausted", async (t) => {
+  const root = await prepareFixture(t);
+  const { result, calls, summary } = await runPublish(
+    root,
+    "first-published-provenance-not-visible",
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /E404/);
+  assert.equal(calls.filter(({ args }) => args[0] === "publish").length, 0);
+  assert.equal(
+    calls.filter(({ args }) => args[2] === "dist.attestations").length,
+    5,
+  );
+  assert.match(summary, /@chorus-aidlc\/chorus` \| failed/);
+  assert.match(summary, /chorus-openclaw-plugin` \| not-attempted/);
+});
+
 test("provenance query failure on an already-published version fails the rerun", async (t) => {
   const root = await prepareFixture(t);
   const { result, calls, summary } = await runPublish(
@@ -525,10 +552,22 @@ test("provenance query failure on an already-published version fails the rerun",
   assert.equal(calls.filter(({ args }) => args[0] === "publish").length, 0);
   assert.equal(
     calls.filter(({ args }) => args[2] === "dist.attestations").length,
-    5,
+    1,
   );
   assert.match(summary, /@chorus-aidlc\/chorus` \| failed/);
   assert.match(summary, /chorus-openclaw-plugin` \| not-attempted/);
+});
+
+test("default provenance retry window tolerates slow npm registry propagation", async () => {
+  const source = await readFile(resolve(sourceDirectory, "publish.mjs"), "utf8");
+  assert.match(
+    source,
+    /CHORUS_RELEASE_PROVENANCE_RETRY_DELAY_MS\s*\?\?\s*"3000"/,
+  );
+  assert.match(
+    source,
+    /CHORUS_RELEASE_PROVENANCE_RETRY_ATTEMPTS\s*\?\?\s*"60"/,
+  );
 });
 
 test("registry lookup errors stop later uploads and mark failed/not-attempted", async (t) => {

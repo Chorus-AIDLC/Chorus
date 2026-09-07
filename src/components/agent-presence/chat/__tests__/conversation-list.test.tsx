@@ -81,7 +81,7 @@ function renderList(overrides: Partial<React.ComponentProps<typeof ConversationL
       selectedSessionUuid={null}
       onSelectSession={() => {}}
       onNewConversation={() => {}}
-      visibleCount={12}
+      hasMore={false}
       onLoadMore={() => {}}
       {...overrides}
     />,
@@ -129,5 +129,42 @@ describe("ConversationList body state", () => {
     renderList({ loading: true, rows: [makeRow("s-1", "Stale row")] });
     expect(screen.getByTestId("conversation-list-skeleton")).toBeTruthy();
     expect(screen.queryByText("Stale row")).toBeNull();
+  });
+
+  it("renders ALL loaded rows (no client-side slice) — pagination is server-driven", () => {
+    const rows = Array.from({ length: 20 }, (_, i) => makeRow(`s-${i}`, `Conversation ${i}`));
+    renderList({ loading: false, rows });
+    // Every loaded row is rendered — there is no visibleCount cap anymore.
+    expect(screen.getByText("Conversation 0")).toBeTruthy();
+    expect(screen.getByText("Conversation 19")).toBeTruthy();
+  });
+
+  it("shows 'Load more' only when the server reports hasMore, and calls onLoadMore on click", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    const onLoadMore = vi.fn();
+
+    // hasMore=false → no control.
+    renderList({ loading: false, rows: [makeRow("s-1", "Only")], hasMore: false, onLoadMore });
+    expect(screen.queryByText("Load more")).toBeNull();
+    cleanup();
+
+    // hasMore=true → control present and wired.
+    renderList({ loading: false, rows: [makeRow("s-1", "Only")], hasMore: true, onLoadMore });
+    const btn = screen.getByText("Load more");
+    await user.click(btn);
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it("loadingMore disables the control and shows the loading label", () => {
+    renderList({
+      loading: false,
+      rows: [makeRow("s-1", "Only")],
+      hasMore: true,
+      loadingMore: true,
+    });
+    expect(screen.queryByText("Load more")).toBeNull();
+    const loading = screen.getByText("Loading more…");
+    expect(loading.closest("button")?.disabled).toBe(true);
   });
 });

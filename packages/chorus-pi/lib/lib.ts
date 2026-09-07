@@ -183,6 +183,49 @@ export function sessionWorkflow(sessionUuid: string): string {
 }
 
 /**
+ * True when a worker task already carries an injected session block.
+ *
+ * Matches the block header at the start of a line (`--- Chorus session`), so
+ * prose that merely mentions "Chorus session" does not suppress injection.
+ * Covers both this extension's injected block and any main-agent template.
+ * The header is exactly "--- Chorus session" followed by " (…)" or end of line;
+ * a hyphenated continuation like "--- Chorus session-notes" is not a header.
+ */
+export function hasSessionMarker(task: string): boolean {
+  return /^--- Chorus session(?=[ (\u2014]|$)/m.test(task);
+}
+
+/**
+ * Detect an async (detached) nicobailon pi-subagents `subagent` run from its
+ * tool_result EVENT, and extract the run id that its completion events will
+ * carry.
+ *
+ * The official bundled subagent (blocking) returns at tool_result with no run
+ * id — the session lifecycle closes there. The nicobailon `pi-subagents` tool
+ * launches async (detached) by default: spawn returns immediately with
+ * `details.asyncId`, and completion arrives later on the pi event bus as
+ * `subagent:async-complete` / `subagent:process-terminal` with `{runId}`/`{id}`.
+ * Only `details.asyncId`/`details.runId` are trusted — the nicobailon contract
+ * always carries the run id in `details` for async launches (verified against
+ * pi-subagents src/runs/foreground/subagent-executor.ts: async started returns
+ * `details: { mode, results, asyncId, asyncDir }` (:1584/:1375), and nicobailon
+ * itself reads `result.details.asyncId` (:1711/:1967/:2119); `id`/`prefix`
+ * appear only in completion-event payloads, never in tool_result details), and
+ * a blocking run's worker output (even standalone JSON) must never be
+ * misclassified as an async run (which would leak the session until
+ * session_shutdown).
+ */
+export function extractRunIdFromToolResultEvent(event: {
+  details?: unknown;
+}): string | null {
+  const d = (event.details ?? {}) as Record<string, unknown>;
+  for (const key of ["asyncId", "runId"]) {
+    if (typeof d[key] === "string" && (d[key] as string).length > 0) return d[key] as string;
+  }
+  return null;
+}
+
+/**
  * Resolved OpenSpec mode for a repo. `active` is the effective on/off; `reason`
  * is a human-readable explanation; `optout` marks an explicit opt-out (so the
  * banner does not nag); `hint` is an optional install hint when the directory

@@ -36,7 +36,7 @@ export const TYPE_TO_BINARY = Object.freeze({
   pi: "pi",
   opencode: "opencode",
   openclaw: "openclaw",
-  dsh: "dsh-jsonrpc-agent",
+  dsh: "dsh",
 });
 
 /** Human list of accepted --type values, for help + error text. */

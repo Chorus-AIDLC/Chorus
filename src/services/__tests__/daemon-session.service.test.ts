@@ -8,6 +8,7 @@ const mockPrisma = vi.hoisted(() => {
     findUnique: vi.fn(),
     findFirst: vi.fn(),
     findMany: vi.fn(),
+    groupBy: vi.fn(),
     update: vi.fn(),
     updateMany: vi.fn(),
     },
@@ -83,6 +84,10 @@ import {
   findReusablePendingInstructionTurn,
   advanceTurn,
   getVisibleSessions,
+  getVisibleAgentIndex,
+  getSessionsPageForAgent,
+  DEFAULT_SESSION_PAGE,
+  MAX_SESSION_PAGE,
   listVisibleRunningSessionActivities,
   getSessionTurns,
   getSessionDetail,
@@ -1004,6 +1009,126 @@ describe("getVisibleSessions", () => {
       getVisibleSessions({ type: "user", companyUuid, actorUuid: ownerUuid }),
     ).rejects.toThrow("db down");
     expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+});
+
+// ===== getVisibleAgentIndex (agent-index mode — grouped aggregate, no enrichment) =====
+const agentUuid2 = "agent-0000-0000-0000-000000000002";
+describe("getVisibleAgentIndex", () => {
+  it("groups by agentUuid with count + max(lastTurnAt), owner+company scoped, newest agent first, no reconcile", async () => {
+    mockPrisma.daemonSession.groupBy.mockResolvedValue([
+      { agentUuid, _count: { _all: 3 }, _max: { lastTurnAt: new Date("2026-06-15T05:00:00.000Z") } },
+      { agentUuid: agentUuid2, _count: { _all: 1 }, _max: { lastTurnAt: new Date("2026-06-15T02:00:00.000Z") } },
+    ]);
+    const result = await getVisibleAgentIndex({ type: "user", companyUuid, actorUuid: ownerUuid });
+    const arg = mockPrisma.daemonSession.groupBy.mock.calls[0][0];
+    expect(arg.by).toEqual(["agentUuid"]);
+    expect(arg.where).toEqual({ companyUuid, agent: { ownerUuid } });
+    expect(arg._count).toEqual({ _all: true });
+    expect(arg._max).toEqual({ lastTurnAt: true });
+    expect(arg.orderBy).toEqual({ _max: { lastTurnAt: "desc" } });
+    expect(result).toEqual([
+      { agentUuid, lastTurnAt: "2026-06-15T05:00:00.000Z", sessionCount: 3 },
+      { agentUuid: agentUuid2, lastTurnAt: "2026-06-15T02:00:00.000Z", sessionCount: 1 },
+    ]);
+    // Agent-index mode does NO orphan-turn reconcile (that probe query never runs).
+    expect(mockPrisma.daemonSessionTurn.findMany).not.toHaveBeenCalled();
+  });
+
+  it("AGENT-KEY caller is self-scoped via agentUuid", async () => {
+    mockPrisma.daemonSession.groupBy.mockResolvedValue([]);
+    await getVisibleAgentIndex({ type: "agent", companyUuid, actorUuid: agentUuid });
+    expect(mockPrisma.daemonSession.groupBy.mock.calls[0][0].where).toEqual({
+      companyUuid,
+      agentUuid,
+    });
+  });
+
+  it("PROPAGATES a query error (read, does NOT swallow)", async () => {
+    mockPrisma.daemonSession.groupBy.mockRejectedValue(new Error("db down"));
+    await expect(
+      getVisibleAgentIndex({ type: "user", companyUuid, actorUuid: ownerUuid }),
+    ).rejects.toThrow("db down");
+  });
+});
+
+// ===== getSessionsPageForAgent (per-agent keyset page) =====
+describe("getSessionsPageForAgent", () => {
+  it("first page (no cursor): default limit, newest-first, take=limit+1, narrowed to the agent + owner scope", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([sessionRow()]);
+    const page = await getSessionsPageForAgent(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      agentUuid,
+    );
+    const arg = mockPrisma.daemonSession.findMany.mock.calls[0][0];
+    expect(arg.where).toEqual({ companyUuid, agent: { ownerUuid }, agentUuid });
+    expect(arg.orderBy).toEqual([{ lastTurnAt: "desc" }, { uuid: "desc" }]);
+    expect(arg.take).toBe(DEFAULT_SESSION_PAGE + 1);
+    expect(arg.cursor).toBeUndefined();
+    expect(arg.skip).toBeUndefined();
+    expect(page.sessions).toHaveLength(1);
+    expect(page.hasMore).toBe(false);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it("hasMore + nextCursor when the +1 sentinel row is returned (page trimmed to limit)", async () => {
+    const rows = Array.from({ length: 3 }, (_, i) =>
+      sessionRow({ uuid: `sess-page-${i}` }),
+    );
+    mockPrisma.daemonSession.findMany.mockResolvedValue(rows);
+    const page = await getSessionsPageForAgent(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      agentUuid,
+      { limit: 2 },
+    );
+    expect(mockPrisma.daemonSession.findMany.mock.calls[0][0].take).toBe(3);
+    expect(page.sessions.map((s) => s.uuid)).toEqual(["sess-page-0", "sess-page-1"]);
+    expect(page.hasMore).toBe(true);
+    expect(page.nextCursor).toBe("sess-page-1"); // last row OF THE PAGE, not the sentinel
+  });
+
+  it("clamps limit to 1..MAX_SESSION_PAGE and floors/ignores garbage", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([]);
+    const auth = { type: "user", companyUuid, actorUuid: ownerUuid };
+    await getSessionsPageForAgent(auth, agentUuid, { limit: 9999 });
+    expect(mockPrisma.daemonSession.findMany.mock.calls[0][0].take).toBe(MAX_SESSION_PAGE + 1);
+    await getSessionsPageForAgent(auth, agentUuid, { limit: 0 });
+    expect(mockPrisma.daemonSession.findMany.mock.calls[1][0].take).toBe(1 + 1);
+    await getSessionsPageForAgent(auth, agentUuid, { limit: NaN });
+    expect(mockPrisma.daemonSession.findMany.mock.calls[2][0].take).toBe(DEFAULT_SESSION_PAGE + 1);
+  });
+
+  it("passes the keyset cursor (cursor:{uuid} + skip:1) when `before` is set", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([]);
+    await getSessionsPageForAgent(
+      { type: "user", companyUuid, actorUuid: ownerUuid },
+      agentUuid,
+      { before: "sess-cursor-xyz" },
+    );
+    const arg = mockPrisma.daemonSession.findMany.mock.calls[0][0];
+    expect(arg.cursor).toEqual({ uuid: "sess-cursor-xyz" });
+    expect(arg.skip).toBe(1);
+  });
+
+  it("AGENT-KEY caller paging ANOTHER agent → empty page, NO query (non-disclosure)", async () => {
+    const page = await getSessionsPageForAgent(
+      { type: "agent", companyUuid, actorUuid: agentUuid },
+      agentUuid2,
+    );
+    expect(page).toEqual({ sessions: [], nextCursor: null, hasMore: false });
+    expect(mockPrisma.daemonSession.findMany).not.toHaveBeenCalled();
+  });
+
+  it("AGENT-KEY caller paging ITS OWN agent → self-scoped where (no key collision)", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([]);
+    await getSessionsPageForAgent(
+      { type: "agent", companyUuid, actorUuid: agentUuid },
+      agentUuid,
+    );
+    expect(mockPrisma.daemonSession.findMany.mock.calls[0][0].where).toEqual({
+      companyUuid,
+      agentUuid,
+    });
   });
 });
 

@@ -55,7 +55,7 @@ describe("formatBanner — content", () => {
       { ...INFO, agentType: "dsh", cliPath: null },
       { isTTY: false },
     );
-    expect(out).toContain("dsh-jsonrpc-agent CLI");
+    expect(out).toContain("dsh CLI");
     expect(out).toContain("CHORUS_DSH_PATH");
     expect(out).not.toMatch(/claude CLI/);
   });

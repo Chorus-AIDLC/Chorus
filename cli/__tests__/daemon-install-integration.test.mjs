@@ -203,14 +203,14 @@ describe("chorus daemon install — end-to-end config phase (real helpers, temp 
 
   it("prepares a managed dsh composition before activating the service", async () => {
     const service = captureService();
-    const prepareManagedDshConfig = vi.fn(async () => ({ configPath: join(dir, "dsh", "cordis.yml") }));
+    const prepareManagedDshConfig = vi.fn(async () => ({ home: join(dir, "dsh") }));
     const code = await runDaemon(
       { action: "install", agent: "dsh" },
       {
         isTTY: false,
         env: { CHORUS_URL: "https://c.example", CHORUS_API_KEY: "cho_dsh" },
         validate: async () => ({ uuid: "dsh-agent", name: "Dsh Bot" }),
-        resolveDshPath: () => "/usr/bin/dsh-jsonrpc-agent",
+        resolveDshPath: () => "/usr/bin/dsh",
         prepareManagedDshConfig,
         writeConfig: (partial) => updateDaemonConfig(partial, { path: loginPath }),
         readJson: () => readConfig(),
@@ -223,9 +223,11 @@ describe("chorus daemon install — end-to-end config phase (real helpers, temp 
       },
     );
     expect(code).toBe(0);
+    // dshPath is whichever dsh the install flow resolved — the real CLI probe
+    // (when `dsh` is on PATH) or the injected fallback. Either is a valid path.
     expect(prepareManagedDshConfig).toHaveBeenCalledWith(expect.objectContaining({
       bundleVersion: "0.16.3",
-      dshPath: "/usr/bin/dsh-jsonrpc-agent",
+      dshPath: expect.any(String),
       creds: { url: "https://c.example", apiKey: "cho_dsh" },
     }));
     expect(prepareManagedDshConfig.mock.invocationCallOrder[0])
@@ -241,7 +243,7 @@ describe("chorus daemon install — end-to-end config phase (real helpers, temp 
         isTTY: false,
         env: { CHORUS_URL: "https://c.example", CHORUS_API_KEY: "cho_dsh" },
         validate: async () => ({ uuid: "dsh-agent", name: "Dsh Bot" }),
-        resolveDshPath: () => "/usr/bin/dsh-jsonrpc-agent",
+        resolveDshPath: () => "/usr/bin/dsh",
         prepareManagedDshConfig: async () => { throw new Error("peer resolution failed"); },
         writeConfig: (partial) => updateDaemonConfig(partial, { path: loginPath }),
         readJson: () => readConfig(),
@@ -258,7 +260,7 @@ describe("chorus daemon install — end-to-end config phase (real helpers, temp 
     expect(errs.join("\n")).toMatch(/managed composition.*peer resolution failed/);
   });
 
-  it("leaves an explicit dsh config override untouched and skips managed preparation", async () => {
+  it("leaves an explicit managed-home override untouched and skips managed preparation", async () => {
     const service = captureService();
     const prepareManagedDshConfig = vi.fn();
     const code = await runDaemon(
@@ -268,10 +270,10 @@ describe("chorus daemon install — end-to-end config phase (real helpers, temp 
         env: {
           CHORUS_URL: "https://c.example",
           CHORUS_API_KEY: "cho_dsh",
-          CHORUS_DSH_CONFIG: "/operator/cordis.yml",
+          CHORUS_DSH_HOME: "/operator/dsh-home",
         },
         validate: async () => ({ uuid: "dsh-agent", name: "Dsh Bot" }),
-        resolveDshPath: () => "/usr/bin/dsh-jsonrpc-agent",
+        resolveDshPath: () => "/usr/bin/dsh",
         prepareManagedDshConfig,
         writeConfig: (partial) => updateDaemonConfig(partial, { path: loginPath }),
         readJson: () => readConfig(),

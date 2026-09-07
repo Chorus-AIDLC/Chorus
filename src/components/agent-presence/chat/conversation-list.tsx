@@ -188,7 +188,8 @@ export function ConversationList({
   selectedSessionUuid,
   onSelectSession,
   onNewConversation,
-  visibleCount,
+  hasMore,
+  loadingMore = false,
   onLoadMore,
   loading = false,
 }: {
@@ -204,9 +205,12 @@ export function ConversationList({
   // composer. Always offered (chat-app convention) so the user is never one-click
   // away from talking to the agent.
   onNewConversation: () => void;
-  // How many rows are currently revealed (the container owns the count + page size
-  // so it survives a re-render); "Load more" grows it.
-  visibleCount: number;
+  // Whether the server reports MORE (older) conversations beyond the loaded rows — drives
+  // the "Load more" control. The container owns the keyset cursor + page fetching; this
+  // pane just renders the already-loaded `rows` and asks for the next page on click.
+  hasMore: boolean;
+  // True while the next page is being fetched — disables the control + shows a loading label.
+  loadingMore?: boolean;
   onLoadMore: () => void;
   // True while the session list is still loading (first load / no data yet). Renders
   // skeleton placeholder rows INSTEAD of the empty state, so an in-flight load is never
@@ -218,8 +222,6 @@ export function ConversationList({
   const t = useTranslations("daemonChat");
   const nowMs = useNowTick();
 
-  const visibleRows = rows.slice(0, visibleCount);
-  const hasMore = rows.length > visibleCount;
   // The "New conversation" affordance is active only when an agent is selected and
   // nothing is selected yet (so the right pane is already the composer) — but it
   // remains visible always, just visually marked when it's the current view.
@@ -322,7 +324,7 @@ export function ConversationList({
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-            {visibleRows.map((row, idx) => (
+            {rows.map((row, idx) => (
               <div key={row.session.uuid}>
                 <Row
                   row={row}
@@ -330,7 +332,7 @@ export function ConversationList({
                   onSelect={() => onSelectSession(row.session.uuid)}
                   nowMs={nowMs}
                 />
-                {idx < visibleRows.length - 1 && (
+                {idx < rows.length - 1 && (
                   <div className="h-px w-full bg-[#F2EEE7] dark:bg-[#201e1a]" />
                 )}
               </div>
@@ -341,9 +343,10 @@ export function ConversationList({
                   variant="ghost"
                   size="sm"
                   onClick={onLoadMore}
+                  disabled={loadingMore}
                   className="h-8 w-full rounded-lg text-[12px] font-medium text-primary hover:bg-[#FBF4EF] dark:hover:bg-[#26241f] hover:text-primary"
                 >
-                  {t("loadMore")}
+                  {loadingMore ? t("loadingMore") : t("loadMore")}
                 </Button>
               </div>
             )}

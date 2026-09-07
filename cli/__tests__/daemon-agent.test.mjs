@@ -201,8 +201,8 @@ describe("backendCli — agentType → executable descriptor", () => {
   it("maps kiro → kiro-cli / CHORUS_KIRO_PATH", () => {
     expect(backendCli("kiro")).toEqual({ name: "kiro-cli", envVar: "CHORUS_KIRO_PATH" });
   });
-  it("maps dsh → dsh-jsonrpc-agent / CHORUS_DSH_PATH", () => {
-    expect(backendCli("dsh")).toEqual({ name: "dsh-jsonrpc-agent", envVar: "CHORUS_DSH_PATH" });
+  it("maps dsh → dsh / CHORUS_DSH_PATH", () => {
+    expect(backendCli("dsh")).toEqual({ name: "dsh", envVar: "CHORUS_DSH_PATH" });
   });
   it("maps pi → pi / CHORUS_PI_PATH", () => {
     expect(backendCli("pi")).toEqual({ name: "pi", envVar: "CHORUS_PI_PATH" });

@@ -1,7 +1,8 @@
 ---
 name: chorus-code-reviewer
 description: Final ship-time review of an Idea's aggregate code change — the whole feature across all its tasks, not one task. Read-only; posts a VERDICT comment on the Idea. Spawn via the blocking subagent tool after the last task of an idea-rooted proposal is verified.
-tools: read, grep, find, ls, bash, mcp
+tools: read, grep, find, ls, bash, mcp, mcpScript
+acceptance: { level: "none", reason: "read-only chorus reviewer; verdict is posted via chorus_add_comment to Chorus, not returned to parent; suppress acceptance-report injection" }
 ---
 
 CRITICAL: READ-ONLY code review of an ENTIRE Idea's aggregate change. You CANNOT edit, write, or create files in the project directory.

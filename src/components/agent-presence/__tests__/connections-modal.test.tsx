@@ -255,10 +255,49 @@ function respondWith(opts: {
           json: async () => ({ success: true, data: detail }),
         });
       }
-      if (url.startsWith("/api/daemon-sessions")) {
+      // Agent-index mode (?view=agents): derive the index from the fixture sessions
+      // (group by agentUuid → sessionCount + max lastTurnAt), newest agent first — the
+      // shape the paginated endpoint returns for the chat modal's Select + default agent.
+      if (url.includes("view=agents")) {
+        const byAgent = new Map<
+          string,
+          { agentUuid: string; lastTurnAt: string; sessionCount: number }
+        >();
+        for (const s of sessions) {
+          const cur = byAgent.get(s.agentUuid);
+          if (!cur) {
+            byAgent.set(s.agentUuid, {
+              agentUuid: s.agentUuid,
+              lastTurnAt: s.lastTurnAt,
+              sessionCount: 1,
+            });
+          } else {
+            cur.sessionCount += 1;
+            if (s.lastTurnAt > cur.lastTurnAt) cur.lastTurnAt = s.lastTurnAt;
+          }
+        }
+        const agents = [...byAgent.values()].sort((a, b) =>
+          a.lastTurnAt < b.lastTurnAt ? 1 : -1,
+        );
         return Promise.resolve({
           ok: sessionsOk,
-          json: async () => ({ success: sessionsOk, data: { sessions } }),
+          json: async () => ({ success: sessionsOk, data: { agents } }),
+        });
+      }
+      // Per-agent page mode (?agentUuid=X): filter the fixture sessions to that agent
+      // and return the paginated envelope. The fixtures fit in one page (hasMore false).
+      if (url.startsWith("/api/daemon-sessions")) {
+        const m = url.match(/[?&]agentUuid=([^&]+)/);
+        const agentUuid = m ? decodeURIComponent(m[1]) : null;
+        const pageSessions = agentUuid
+          ? sessions.filter((s) => s.agentUuid === agentUuid)
+          : sessions;
+        return Promise.resolve({
+          ok: sessionsOk,
+          json: async () => ({
+            success: sessionsOk,
+            data: { sessions: pageSessions, nextCursor: null, hasMore: false },
+          }),
         });
       }
     }

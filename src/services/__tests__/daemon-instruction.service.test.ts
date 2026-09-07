@@ -30,6 +30,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 const mockResolveOrCreateSession = vi.fn();
 const mockAssertContinuable = vi.fn();
 const mockGetVisibleSessions = vi.fn();
+const mockGetSessionsPageForAgent = vi.fn();
 const mockGetFirstInstruction = vi.fn();
 vi.mock("@/services/daemon-session.service", () => {
   // Defined inside the factory (hoisted with the mock) so the class is initialized
@@ -47,6 +48,7 @@ vi.mock("@/services/daemon-session.service", () => {
     resolveOrCreateSession: (...a: unknown[]) => mockResolveOrCreateSession(...a),
     assertContinuable: (...a: unknown[]) => mockAssertContinuable(...a),
     getVisibleSessions: (...a: unknown[]) => mockGetVisibleSessions(...a),
+    getSessionsPageForAgent: (...a: unknown[]) => mockGetSessionsPageForAgent(...a),
     getFirstInstructionBySessionUuid: (...a: unknown[]) => mockGetFirstInstruction(...a),
     SessionReadOnlyError,
     STALE_THRESHOLD_MS: 90_000,
@@ -98,6 +100,7 @@ import {
   createAdHocSessionWithInstruction,
   repointSessionOriginAndSend,
   getVisibleSessionsWithOrigin,
+  getVisibleSessionsPageWithOrigin,
 } from "@/services/daemon-instruction.service";
 // The mocked SessionReadOnlyError class (defined in the vi.mock factory above), imported
 // so the offline-origin test can construct + assert against the same class the SUT sees.
@@ -191,6 +194,7 @@ beforeEach(() => {
   mockConnectionBelongsToAgent.mockResolvedValue(true);
   mockIsConnectionLive.mockResolvedValue(true);
   mockGetVisibleSessions.mockResolvedValue([]);
+  mockGetSessionsPageForAgent.mockResolvedValue({ sessions: [], nextCursor: null, hasMore: false });
   // Naming enrichment helper defaults to "no opening instruction" unless a test wires it.
   mockGetFirstInstruction.mockResolvedValue(new Map());
 });
@@ -908,5 +912,70 @@ describe("getVisibleSessionsWithOrigin", () => {
     expect(out[0]).toHaveProperty("status");
     expect(out[0]).toHaveProperty("lastTurnAt");
     expect(out[0]).toHaveProperty("originOnline");
+  });
+});
+
+// ===== getVisibleSessionsPageWithOrigin (per-agent paginated + enriched) =====
+describe("getVisibleSessionsPageWithOrigin", () => {
+  it("unauthorized/unknown agent → empty page, WITHOUT paging or disclosing existence", async () => {
+    mockPrisma.agent.count.mockResolvedValue(0); // callerOwnsAgent → false for a user
+    const out = await getVisibleSessionsPageWithOrigin(userAuth, agentUuid, { limit: 12 });
+    expect(out).toEqual({ sessions: [], nextCursor: null, hasMore: false });
+    expect(mockGetSessionsPageForAgent).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonConnection.findMany).not.toHaveBeenCalled();
+  });
+
+  it("authorized agent → enriches ONLY the page rows and passes through the cursor/hasMore", async () => {
+    mockPrisma.agent.count.mockResolvedValue(1); // owns the agent
+    mockGetSessionsPageForAgent.mockResolvedValue({
+      sessions: [
+        sessionView({ uuid: "s1", sessionId: "idea-9", directIdeaUuid: "idea-9" }),
+      ],
+      nextCursor: "s1",
+      hasMore: true,
+    });
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([
+      { uuid: connectionUuid, status: "online", lastSeenAt: new Date() },
+    ]);
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: "idea-9", title: "Presence pill" }]);
+
+    const out = await getVisibleSessionsPageWithOrigin(userAuth, agentUuid, {
+      limit: 12,
+      before: "cursor-abc",
+    });
+
+    // The requested agent + pagination opts are forwarded verbatim to the raw pager.
+    expect(mockGetSessionsPageForAgent).toHaveBeenCalledWith(userAuth, agentUuid, {
+      limit: 12,
+      before: "cursor-abc",
+    });
+    expect(out.nextCursor).toBe("s1");
+    expect(out.hasMore).toBe(true);
+    expect(out.sessions).toHaveLength(1);
+    expect(out.sessions[0].originOnline).toBe(true);
+    expect(out.sessions[0].ideaTitle).toBe("Presence pill");
+    // Enrichment ran over the single page row only (one idea query for its one idea).
+    expect(mockPrisma.idea.findMany.mock.calls[0][0].where.uuid.in).toEqual(["idea-9"]);
+  });
+
+  it("empty page still returns the pager's cursor/hasMore, skipping enrichment", async () => {
+    mockPrisma.agent.count.mockResolvedValue(1);
+    mockGetSessionsPageForAgent.mockResolvedValue({ sessions: [], nextCursor: null, hasMore: false });
+    const out = await getVisibleSessionsPageWithOrigin(userAuth, agentUuid);
+    expect(out).toEqual({ sessions: [], nextCursor: null, hasMore: false });
+    // enrichSessions short-circuits on an empty page — no connection query.
+    expect(mockPrisma.daemonConnection.findMany).not.toHaveBeenCalled();
+  });
+
+  it("AGENT-KEY caller owns itself (no agent.count query needed)", async () => {
+    mockGetSessionsPageForAgent.mockResolvedValue({
+      sessions: [sessionView({ uuid: "s1", directIdeaUuid: null })],
+      nextCursor: null,
+      hasMore: false,
+    });
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+    const out = await getVisibleSessionsPageWithOrigin(agentAuth, agentUuid);
+    expect(out.sessions).toHaveLength(1);
+    expect(mockPrisma.agent.count).not.toHaveBeenCalled(); // self-ownership is a uuid compare
   });
 });
