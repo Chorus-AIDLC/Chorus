@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **First-principles alignment review**: The proposal-, task-, and code-reviewer now check, top-down, that the work still serves the *original Idea's intent* — not just its local acceptance criteria. Backed by a consolidated `chorus_get_alignment_anchor` MCP read (`idea:read`) that returns the intent anchor for any reviewable entity: the directly-attached Idea's content, its resolved elaboration decisions, and its comments (each carrying author type). Each reviewer flags three drift types — **scope creep**, **requirement loss / shrink**, and **semantic drift** — as a `BLOCKER → VERDICT: FAIL / reject`, downgraded to a cited `NOTE` only when the deviation is traceable to a **human-originated** authorization (a human-authored Idea comment, a human-answered elaboration entry, or an explicit human override at the gate); an agent's own comment never authorizes, so a drifting agent cannot self-clear. Propagated as one compact shared block across all seven reviewer surfaces (Claude Code, Codex, OpenClaw, Kiro, Pi, dsh, and the standalone skill library).
+
+---
+
 ## [0.17.3] - 2026-09-07
 
 ### Added

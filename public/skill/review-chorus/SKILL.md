@@ -24,6 +24,8 @@ Key responsibilities:
 - **Task verification** — verify or reopen Tasks submitted by Developer Agents (see `develop-chorus` skill at `<BASE_URL>/skill/develop-chorus/SKILL.md`)
 - **Project governance** — create projects/ideas, manage groups, close/delete entities
 
+> **First-principles alignment (built into all three reviewers).** The proposal-, task-, and code-reviewer each also verify, top-down, that the work still serves the *original Idea's intent* — resolving the intent anchor (the directly-attached Idea's content + resolved elaboration + Idea comments) via `chorus_get_alignment_anchor` and flagging **scope creep**, **requirement loss / shrink**, or **semantic drift**. Unauthorized drift is a **BLOCKER → `VERDICT: FAIL` / reject**, downgraded to a cited NOTE only when traceable to a **human-originated** authorization (a human-authored Idea comment, a human-answered elaboration entry, or an explicit human override at the gate) — an agent's own comment never authorizes. So a review `FAIL` may come from intent drift, not just a local defect: treat it the same way — reject/reopen and fix, or record a human override. See the canonical **Independent Review** section in the `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) for the full rule.
+
 ---
 
 ## Tools

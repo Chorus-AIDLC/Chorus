@@ -449,6 +449,16 @@ This is the **single canonical description** of the reviewer pattern. The `devel
 
 > The verdict is advisory: even a `FAIL` does not hard-block, and a `PASS` does not auto-approve. A human/admin (or, under `/yolo`, the automated orchestrator) makes the final decision. The code-review gateway in particular is a **behavioral** gate — it does not change the Idea's stored status; the orchestrator honors its verdict.
 
+### First-Principles Alignment (built into all three reviewers)
+
+Beyond their local checks, every reviewer also verifies **top-down** that the work still serves the *original Idea's intent*. Each one calls `chorus_get_alignment_anchor({ entityType, entityUuid })` (proposal-reviewer → `"proposal"`, task-reviewer → `"task"`, code-reviewer → `"idea"`) and treats the returned bundle — the **directly-attached** Idea's content + its **resolved elaboration** decisions + the **human-authored comments** on that Idea — as the authoritative **anchor** of original intent (never an ancestor theme). The work under review is checked against the anchor for three drift types:
+
+- **Scope creep** — work beyond the original intent.
+- **Requirement loss / shrink** — intent the anchor states, quietly dropped or reduced.
+- **Semantic drift** — the work passes its acceptance criteria but misses the anchor's point.
+
+Any drift is a **BLOCKER → `VERDICT: FAIL` / reject** — **unless** it is traceable to a **human-originated** authorization: a **human-authored** Idea comment (`authorType == "user"`), a **human-answered** elaboration entry, or an explicit **human override** at the gate. **A comment authored by an agent never authorizes** — a drifting agent cannot self-clear by posting its own comment. When a reviewer downgrades a deviation on this escape hatch, it downgrades to a `NOTE` and **cites the specific human-authored anchor entry** it relied on, so the decision is human-auditable. When `anchorAvailable` is false (e.g. a document-input proposal with no attached Idea), the alignment dimension is skipped. This is one labeled part of the existing VERDICT — not a separate report.
+
 ### Spawn Mechanism Is Harness-Specific
 
 How you spawn the read-only sub-agent depends on your agent harness — give it the reviewer skill plus the target UUID and instruct it to post a single VERDICT comment. Concrete examples:
