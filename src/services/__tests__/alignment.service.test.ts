@@ -389,28 +389,6 @@ describe("alignment.service / getAlignmentAnchor", () => {
     expect(anchor.ideas[0].content).toBeNull();
   });
 
-  // ===== N2: super_admin is a HUMAN actor, classified human-originated =====
-  it("classifies a super_admin comment as human-originated ('user'), not agent", async () => {
-    installGraph({
-      ideas: [{ uuid: "i-1", title: "I", content: null, parentUuid: null }],
-      comments: {
-        "i-1": [
-          makeComment({ uuid: "c-sa", content: "super-admin authorized this", authorType: "super_admin", authorName: "Root" }),
-          makeComment({ uuid: "c-agent", content: "agent self-note", authorType: "agent", authorName: "Agent X" }),
-        ],
-      },
-    });
-
-    const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
-
-    // super_admin → "user" so the reviewer's human-authored escape hatch accepts it;
-    // the agent comment stays "agent" so a drifting agent still cannot self-clear.
-    expect(anchor.ideas[0].comments).toEqual([
-      { authorType: "user", author: "Root", at: "2026-01-02T00:00:00.000Z", content: "super-admin authorized this" },
-      { authorType: "agent", author: "Agent X", at: "2026-01-02T00:00:00.000Z", content: "agent self-note" },
-    ]);
-  });
-
   // ===== N1: human-answered vs agent-answered elaboration are distinguishable =====
   it("tags each elaboration decision with answeredByType so agent-self-answered (YOLO) rounds are distinguishable from human-answered", async () => {
     installGraph({
@@ -419,19 +397,18 @@ describe("alignment.service / getAlignmentAnchor", () => {
         "i-1": makeElaboration("i-1", [
           makeQuestion({ text: "Human decided", options: [{ id: "o1", label: "H" }], selectedOptionId: "o1", answeredByType: "user" }),
           makeQuestion({ text: "Agent decided", options: [{ id: "o2", label: "A" }], selectedOptionId: "o2", answeredByType: "agent" }),
-          makeQuestion({ text: "Super-admin decided", options: [{ id: "o3", label: "S" }], selectedOptionId: "o3", answeredByType: "super_admin" }),
         ]),
       },
     });
 
     const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
 
-    // Human and super_admin answers authorize ("user"); the agent-self-answered one
-    // is flagged "agent" and cannot authorize drift.
+    // A human-answered decision authorizes ("user"); the agent-self-answered (YOLO)
+    // one is flagged "agent" and cannot authorize drift. (The only actor types a real
+    // elaboration answer carries are "user" (dashboard) and "agent" (MCP).)
     expect(anchor.ideas[0].elaboration).toEqual([
       { question: "Human decided", answer: "H", answeredByType: "user" },
       { question: "Agent decided", answer: "A", answeredByType: "agent" },
-      { question: "Super-admin decided", answer: "S", answeredByType: "user" },
     ]);
   });
 

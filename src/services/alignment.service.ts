@@ -37,9 +37,9 @@ import type { ElaborationQuestionResponse } from "@/types/elaboration";
 
 /**
  * The anchor's human-vs-agent authorship signal, exposed on every comment and
- * elaboration decision as `"user" | "agent"`. A HUMAN actor — a regular user OR a
- * super_admin — is `"user"`; only a real agent is `"agent"`. Reviewers key their
- * human-originated escape hatch off this value.
+ * elaboration decision as `"user" | "agent"`. A human author/answerer is `"user"`;
+ * a real agent is `"agent"`. Reviewers key their human-originated escape hatch off
+ * this value — only `"user"` can authorize a deviation.
  */
 export type AnchorActorType = "user" | "agent";
 
@@ -49,10 +49,10 @@ export interface AlignmentAnchorDecision {
   /** Chosen option label, or the free-text `customText` for an "Other" answer. */
   answer: string;
   /**
-   * Answerer kind, normalized to `"user" | "agent"` (a super_admin — a human
-   * operator — maps to `"user"`). Mirrors comment `authorType` so the reviewer's
-   * "human-answered elaboration" escape hatch is enforceable: an agent-self-answered
-   * (YOLO) decision (`answeredByType: "agent"`) never authorizes drift.
+   * Answerer kind, normalized to `"user" | "agent"`. Mirrors comment `authorType`
+   * so the reviewer's "human-answered elaboration" escape hatch is enforceable: an
+   * agent-self-answered (YOLO) decision (`answeredByType: "agent"`) never authorizes
+   * drift — only a human-answered one (`"user"`) does.
    */
   answeredByType: AnchorActorType;
 }
@@ -62,7 +62,7 @@ export interface AlignmentAnchorDecision {
  * human-authored escape hatch (an agent-authored comment never authorizes drift).
  */
 export interface AlignmentAnchorComment {
-  /** `"user"` for any human author (user OR super_admin); `"agent"` for an agent. */
+  /** `"user"` for a human author; `"agent"` for an agent. */
   authorType: AnchorActorType;
   author: string; // display name
   at: string; // ISO timestamp
@@ -95,15 +95,25 @@ export interface AlignmentAnchor {
 }
 
 /**
- * Normalize a stored actor/author type to the anchor's human-vs-agent signal.
+ * Normalize a stored actor/author type to the anchor's human-vs-agent signal: a
+ * real agent (`"agent"`, or the session-scoped `"agent_instance"`) is `"agent"`;
+ * everything else — i.e. a human `"user"` — is `"user"`. This is the single shared
+ * classifier used for BOTH comment `authorType` and elaboration `answeredByType`,
+ * mirroring how the rest of the codebase tells agents apart (see `isAgent` in
+ * src/lib/auth.ts).
  *
- * Only a real agent (`"agent"`, or the session-scoped `"agent_instance"`) is
- * agent-originated; EVERY human actor — a regular user OR a super_admin — maps to
- * `"user"`. A super_admin is a human operator, NOT an agent, so their Idea comment
- * / elaboration answer must satisfy the reviewer's human-authored escape hatch
- * (`authorType`/`answeredByType == "user"`) rather than be over-blocked as if a
- * drifting agent had self-cleared. This is the same discriminator the rest of the
- * codebase uses to tell agents apart (see `isAgent` in src/lib/auth.ts).
+ * The only stored types that actually reach here are `"user"` and `"agent"`: idea
+ * comments are written as `isUser(auth) ? "user" : "agent"` and elaboration answers
+ * carry the actor type (MCP → `"agent"`; the dashboard action goes through
+ * `getServerAuthContext`, which is always `"user"`).
+ *
+ * LIMITATION: a super_admin is a human operator, but there is no distinct/reachable
+ * super_admin idea-comment or elaboration-answer authoring path today — the write
+ * paths above collapse a super_admin to `"agent"` — so super_admin is deliberately
+ * NOT special-cased here (special-casing it would be dead code that this normalizer
+ * never sees). If such a path is ever added, this human-vs-agent classification AND
+ * the write path that feeds it must be revisited together so a genuine human
+ * authorization is not over-blocked as if a drifting agent had self-cleared.
  */
 function toAnchorActorType(storedType: string): AnchorActorType {
   return storedType === "agent" || storedType === "agent_instance"
@@ -271,7 +281,7 @@ async function collectIdeaComments(
     targetUuid: ideaUuid,
   });
   return comments.map((c) => ({
-    // Normalize so a super_admin (human) reads as "user", not "agent".
+    // Classify each author as human ("user") vs agent ("agent") for the escape hatch.
     authorType: toAnchorActorType(c.author.type),
     author: c.author.name,
     at: c.createdAt,
