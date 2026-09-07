@@ -228,6 +228,53 @@ describe("buildBatchPrompt — human_instruction is NEVER collapsed", () => {
   });
 });
 
+describe("buildBatchPrompt — waker-session advisory anchor (T2, busy-worker batch)", () => {
+  // AC (proposal-reviewer flag): the advisory anchor must ALSO surface in the coalesced
+  // multi-wake path — the busy-worker scenario is exactly a batch. It is actor-scoped, so
+  // it rides each event's own block (not once at the top).
+  const WAKER_X = { agentUuid: "agent-x", agentName: "PeerX", ideaUuid: "idea-X" };
+  const WAKER_Y = { agentUuid: "agent-y", agentName: "PeerY", ideaUuid: "idea-Y" };
+
+  it("surfaces each event's own anchor per block; events without one carry no anchor", () => {
+    const withAnchor = mk({
+      action: "mentioned",
+      entityType: "idea",
+      entityUuid: "idea-X",
+      message: "@agent look",
+      wakerSession: WAKER_X,
+    });
+    const noAnchor = mk({ action: "task_assigned", entityUuid: "task-F", entityTitle: "F" });
+    const p = buildBatchPrompt([withAnchor, noAnchor]);
+
+    // both events render as blocks
+    expect(occurrences(p, "### Event ")).toBe(2);
+    // the anchor rides the block that carries it, naming its own waker
+    expect(p).toContain("@[PeerX](agent:agent-x)");
+    expect(p).toContain("has a live session open on this resource");
+    // exactly one anchor block — the no-anchor event contributes none
+    expect(occurrences(p, "has a live session open on this resource")).toBe(1);
+    // still advisory, not a routing guarantee
+    expect(p).toContain("advisory, not an");
+  });
+
+  it("renders a distinct per-wake anchor for each event that carries one", () => {
+    const a = mk({ action: "task_assigned", entityUuid: "task-A", wakerSession: WAKER_X });
+    const b = mk({
+      action: "mentioned",
+      entityType: "idea",
+      entityUuid: "idea-Y",
+      message: "@agent hi",
+      wakerSession: WAKER_Y,
+    });
+    const p = buildBatchPrompt([a, b]);
+    expect(p).toContain("@[PeerX](agent:agent-x)");
+    expect(p).toContain("@[PeerY](agent:agent-y)");
+    expect(occurrences(p, "has a live session open on this resource")).toBe(2);
+    // each anchor sits with its own event, in arrival order
+    expect(p.indexOf("@[PeerX](agent:agent-x)")).toBeLessThan(p.indexOf("@[PeerY](agent:agent-y)"));
+  });
+});
+
 describe("buildBatchPrompt — null-body events are omitted", () => {
   it("omits empty human_instruction events from a multi-event batch", () => {
     // AC: Events whose body is null (empty human_instruction) are omitted from the batch.

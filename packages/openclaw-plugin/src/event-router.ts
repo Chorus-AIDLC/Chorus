@@ -71,6 +71,16 @@ interface NotificationDetail {
    * inject the same handback instruction the daemon does.
    */
   orchestrator?: { type: string; uuid: string; name: string } | null;
+  /**
+   * Derived, NON-persisted waker-session anchor (wake-carry-waker-session-anchor, T1).
+   * Present only for an agent-caused wake on an idea/task-anchored resource whose waking
+   * agent has a live, ONLINE-origin session for that idea — it tells the woken peer that
+   * replying on this resource reaches the waker's existing live session. A SIBLING of
+   * `orchestrator` (actor-scoped vs assignment-scoped): either, both, or neither may be
+   * present. Mirrors the daemon's cli/prompts.mjs `wakerSession` field so
+   * buildWakerSessionGuidance can inject the same advisory the daemon does.
+   */
+  wakerSession?: { agentUuid: string; agentName: string; ideaUuid: string } | null;
 }
 
 export class ChorusEventRouter {
@@ -255,11 +265,34 @@ export class ChorusEventRouter {
   }
 
   /**
-   * Append orchestrator-handoff guidance (when the resource has an agent orchestrator)
-   * to a wake message and dispatch it. Every handler routes its wake through this so the
-   * handback instruction rides EVERY action — parity with the daemon, which appends
-   * orchestratorGuidance once in buildPrompt (cli/prompts.mjs). No orchestrator → the
-   * message is dispatched unchanged.
+   * Waker-session advisory for a wake — the OpenClaw twin of the daemon's
+   * wakerSessionGuidance in cli/prompts.mjs. KEEP THE TWO WORDINGS IN SYNC. Returns null
+   * unless the notification carries a `wakerSession` anchor (surfaced by the server only when
+   * the waking agent has a live, ONLINE-origin session for this resource's idea). It tells the
+   * woken peer that replying on this resource reaches the waker's existing live session — an
+   * ADVISORY only, not an enforced server route. A SIBLING of buildOrchestratorGuidance:
+   * independent, so either/both/neither may render on one wake.
+   */
+  private buildWakerSessionGuidance(n: NotificationDetail): string | null {
+    if (!n.wakerSession) return null;
+    const { agentName, agentUuid } = n.wakerSession;
+    return (
+      `@[${agentName}](agent:${agentUuid}) woke you and has a live session open on this ` +
+      `resource. If you reply by commenting on this same resource, your reply reaches that ` +
+      `agent's live session, keeping the exchange on one thread. This is advisory, not an ` +
+      `enforced server route — there is no automatic subscription and nothing is force-delivered; ` +
+      `replying here is simply where a reply lands via the normal return path. Prefer replying ` +
+      `on this resource over opening a new session.`
+    );
+  }
+
+  /**
+   * Append orchestrator-handoff guidance (when the resource has an agent orchestrator) and the
+   * waker-session advisory (when the wake carries an online waker anchor) to a wake message and
+   * dispatch it. Every handler routes its wake through this so both instructions ride EVERY
+   * action — parity with the daemon, which appends orchestratorGuidance + wakerSessionGuidance
+   * in buildPrompt (cli/prompts.mjs). The two blocks are independent: either, both, or neither
+   * may append; with neither the message is dispatched unchanged.
    */
   private wakeWithHandoff(
     message: string,
@@ -268,7 +301,11 @@ export class ChorusEventRouter {
     attr: WakeAttribution,
   ): void {
     const handoff = this.buildOrchestratorGuidance(n);
-    this.wake(handoff ? `${message}\n\n${handoff}` : message, contextKey, attr);
+    const anchor = this.buildWakerSessionGuidance(n);
+    let msg = message;
+    if (handoff) msg += `\n\n${handoff}`;
+    if (anchor) msg += `\n\n${anchor}`;
+    this.wake(msg, contextKey, attr);
   }
 
   private handleTaskAssigned(n: NotificationDetail, attr: WakeAttribution): void {

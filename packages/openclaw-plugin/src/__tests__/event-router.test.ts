@@ -317,3 +317,60 @@ describe("ChorusEventRouter — orchestrator handoff (daemon parity)", () => {
     expect(wake.mock.calls[0][0]).not.toContain("Your orchestrator for this resource");
   });
 });
+
+describe("ChorusEventRouter — waker-session advisory anchor (daemon parity)", () => {
+  let wake: ReturnType<typeof vi.fn>;
+  let logger: ReturnType<typeof makeLogger>;
+
+  beforeEach(() => {
+    wake = vi.fn();
+    logger = makeLogger();
+  });
+
+  function build(responses: Record<string, unknown>) {
+    const mcpClient = makeMcpClient(responses) as never;
+    const router = new ChorusEventRouter({ mcpClient, wake, logger });
+    return { router };
+  }
+
+  const orchestrator = { type: "agent", uuid: "agent-orch", name: "Coordinator" };
+  const wakerSession = { agentUuid: "agent-waker", agentName: "Peer", ideaUuid: "idea-1" };
+
+  it("appends the advisory anchor when wakerSession is present, naming @[name](agent:uuid)", async () => {
+    const { router } = build({
+      chorus_get_notifications: { notifications: [makeNotification({ wakerSession })] },
+    });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    const msg = wake.mock.calls[0][0] as string;
+    // Mirrors the daemon's wakerSessionGuidance wording (cli/prompts.mjs) — kept in sync.
+    expect(msg).toContain("@[Peer](agent:agent-waker)");
+    expect(msg).toContain("has a live session open on this resource");
+    // advisory, NOT a server-routing guarantee
+    expect(msg).toContain("advisory, not an");
+    expect(msg).toContain("enforced server route");
+    // wrapper only rewrites the message; contextKey threads through unchanged
+    expect(wake.mock.calls[0][1]).toBe("chorus:task_assigned:task-1");
+  });
+
+  it("adds NO anchor when the wake carries no wakerSession", async () => {
+    const { router } = build({ chorus_get_notifications: { notifications: [makeNotification()] } });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    expect(wake.mock.calls[0][0]).not.toContain("has a live session open on this resource");
+  });
+
+  it("renders the anchor and orchestrator blocks independently (both may ride one wake)", async () => {
+    const { router } = build({
+      chorus_get_notifications: {
+        notifications: [makeNotification({ orchestrator, wakerSession })],
+      },
+    });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    const msg = wake.mock.calls[0][0] as string;
+    expect(msg).toContain("Your orchestrator for this resource is @Coordinator.");
+    expect(msg).toContain("@[Coordinator](agent:agent-orch)");
+    expect(msg).toContain("@[Peer](agent:agent-waker)");
+  });
+});

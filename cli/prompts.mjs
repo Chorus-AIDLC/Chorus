@@ -26,6 +26,13 @@
  * @property {string} actorUuid
  * @property {string} actorName
  * @property {{type: string, uuid: string, name: string} | null} [orchestrator]
+ * @property {{agentUuid: string, agentName: string, ideaUuid: string} | null} [wakerSession]
+ *   Derived, NON-persisted waker-session anchor (wake-carry-waker-session-anchor, T1). Present
+ *   only for an agent-caused wake on an idea/task-anchored resource whose waking agent has a
+ *   live, ONLINE-origin session for that idea — it tells the woken peer that replying on this
+ *   resource reaches the waker's existing live session. A SIBLING of `orchestrator`
+ *   (actor-scoped vs assignment-scoped): either, both, or neither may be present. The server
+ *   supplies it on the `chorus_get_notifications` projection; the router threads it here.
  * @property {string} [instructionText]  Free-text body of a `human_instruction` wake
  *   (子1 — daemon-session-conversation). The server denormalizes the canonical turn
  *   promptText onto the wake notification so the daemon reads it in the
@@ -61,6 +68,37 @@ function orchestratorGuidance(n) {
     `@[${n.orchestrator.name}](agent:${n.orchestrator.uuid}) with the decision needed or completion ` +
     `evidence, then leave any human-gated resource pending and end the turn. Do not @mention the ` +
     `orchestrator for ordinary internal progress.`
+  );
+}
+
+/**
+ * Waker-session advisory, appended to a wake body whenever the notification carries a
+ * `wakerSession` anchor (wake-carry-waker-session-anchor, T2). It tells the woken peer WHERE
+ * the waking agent's live conversation is: replying by commenting on THIS resource lands the
+ * reply back in that agent's existing idea-anchored session, keeping the exchange on one
+ * thread instead of scattering into a fresh one.
+ *
+ * It is deliberately ADVISORY, not routing — the server surfaces the anchor only when it
+ * resolved a live, ONLINE-origin waker session (an offline/missing waker degrades to
+ * notify-only and the field is null); there is no automatic subscription and nothing is
+ * force-delivered. The wording must NOT promise a guaranteed channel.
+ *
+ * A SIBLING of `orchestratorGuidance`: independent, appended alongside it in buildPrompt, so
+ * either/both/neither may render on one wake and they may name different agents. Its OpenClaw
+ * twin is `buildWakerSessionGuidance` in packages/openclaw-plugin/src/event-router.ts —
+ * KEEP THE TWO WORDINGS IN SYNC.
+ * @param {NotificationDetail} n
+ */
+function wakerSessionGuidance(n) {
+  if (!n.wakerSession) return null;
+  const { agentName, agentUuid } = n.wakerSession;
+  return (
+    `@[${agentName}](agent:${agentUuid}) woke you and has a live session open on this ` +
+    `resource. If you reply by commenting on this same resource, your reply reaches that ` +
+    `agent's live session, keeping the exchange on one thread. This is advisory, not an ` +
+    `enforced server route — there is no automatic subscription and nothing is force-delivered; ` +
+    `replying here is simply where a reply lands via the normal return path. Prefer replying ` +
+    `on this resource over opening a new session.`
   );
 }
 
@@ -121,7 +159,12 @@ export function buildPrompt(n) {
   const body = buildPromptBody(n);
   if (body == null) return null;
   const handoff = orchestratorGuidance(n);
-  return `${HEADLESS_PREAMBLE}\n\n${body}${handoff ? `\n\n${handoff}` : ""}`;
+  const anchor = wakerSessionGuidance(n);
+  return (
+    `${HEADLESS_PREAMBLE}\n\n${body}` +
+    (handoff ? `\n\n${handoff}` : "") +
+    (anchor ? `\n\n${anchor}` : "")
+  );
 }
 
 /**
@@ -208,7 +251,14 @@ export function buildBatchPrompt(notifications) {
         ? `\n(${g.count} ${n.action} events on this ${entityType} arrived — showing the newest ` +
           `below; earlier ones are re-derivable via the entity's own chorus_get_* tools.)`
         : "";
-    return `${header}${collapseNote}\n\n${g.body}`;
+    // Per-wake waker-session advisory (wake-carry-waker-session-anchor, T2). The anchor is
+    // ACTOR-scoped, so it belongs to each event individually — different queued wakes may
+    // carry different (or no) waker sessions. Appending it only in buildPrompt would silently
+    // drop it in this coalesced busy-worker batch, the feature's core scenario; so surface it
+    // per block here too, keyed off the collapsed group's newest notification.
+    const anchor = wakerSessionGuidance(n);
+    const anchorBlock = anchor ? `\n\n${anchor}` : "";
+    return `${header}${collapseNote}\n\n${g.body}${anchorBlock}`;
   });
 
   return [HEADLESS_PREAMBLE, backlogPreamble, ...rendered].join("\n\n");
