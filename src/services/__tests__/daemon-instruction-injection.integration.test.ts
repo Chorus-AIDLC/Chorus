@@ -364,6 +364,10 @@ vi.mock("@/lib/logger", () => ({
 const mockResolveRootIdea = vi.hoisted(() => vi.fn());
 vi.mock("@/services/lineage.service", () => ({
   resolveRootIdea: mockResolveRootIdea,
+  // daemon-session.service re-exports resolveDirectIdeaUuid from here; keep it consistent
+  // with the mocked resolveRootIdea's directIdeaUuid (the value the old path returned).
+  resolveDirectIdeaUuid: async (...args: unknown[]) =>
+    (await mockResolveRootIdea(...args))?.directIdeaUuid ?? null,
 }));
 
 // Connection registry: the chokepoint asks for the agent's online connections to pin an
