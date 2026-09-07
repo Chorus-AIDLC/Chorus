@@ -79,6 +79,8 @@ Chorus ships three read-only reviewer sub-agents. As orchestrator you spawn them
 
 Each posts exactly one `VERDICT: PASS` / `PASS WITH NOTES` / `FAIL` comment. Verdicts are **advisory** — they do not auto-approve, auto-verify, or hard-block; you read the BLOCKERs and decide. A `FAIL` means route the BLOCKERs back for a fix before advancing (for a code-review FAIL, add fix tasks to the *approved* proposal via `/quick-dev` and re-run once they are `done`). See `/review` and the plugin's Review Agent Configuration for the full pattern.
 
+**First-principles alignment.** Every one of the three reviewers also checks, top-down, that the work still serves the *original Idea's intent* — it resolves the intent anchor (Idea content + resolved elaboration + Idea comments) via `chorus_get_alignment_anchor` and flags scope creep, requirement loss/shrink, or semantic drift. Unauthorized drift is a **BLOCKER → FAIL / reject**, downgraded to a NOTE only when traceable to a **human-originated** authorization (a human-authored Idea comment, a human-answered elaboration entry, or an explicit human override at the gate) — an agent's own comment never authorizes, so a drifting agent cannot self-clear. As orchestrator, route an alignment FAIL back for a fix like any other BLOCKER, or record the human override at the gate.
+
 ---
 
 ## Choosing a collaboration mode
