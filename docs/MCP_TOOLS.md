@@ -549,7 +549,7 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 **Permission**: `idea:read` (the only read-gated tool; every reviewer preset holds `idea:read`).
 
-**Description**: Resolve the first-principles **alignment anchor** — the *original intent* — for any reviewable entity, in one call. Consolidates the reads the three reviewers (proposal-, task-, code-reviewer) use to check, top-down, that the work still serves the Idea it was created for. It walks the entity to its **directly-attached** Idea(s) and returns each Idea's content, its resolved elaboration decisions, and its comments. This tool exposes **no field not already readable** via `chorus_get_idea`, `chorus_get_elaboration`, and `chorus_get_comments` — it only consolidates them (and reuses those exact service functions), and is tenant-scoped by `companyUuid`.
+**Description**: Resolve the first-principles **alignment anchor** — the *original intent* — for any reviewable entity, in one call. Consolidates the reads the three reviewers (proposal-, task-, code-reviewer) use to check, top-down, that the work still serves the Idea it was created for. It walks the entity to its **directly-attached** Idea(s) and returns, **per Idea, a structural split**: the human-authorized **baseline** (the Idea `content` + elaboration decisions answered by a human + comments authored by a human) versus an **`agentContext`** (agent-answered elaboration + agent-authored comments — audit-only). The reviewer builds the *original intent* from the **baseline alone**; `agentContext` must never expand, shrink, or override it, so a drifting agent cannot self-authorize scope by self-answering a YOLO elaboration or posting its own Idea comment. This tool exposes **no field not already readable** via `chorus_get_idea`, `chorus_get_elaboration`, and `chorus_get_comments` — it only consolidates them (and reuses those exact service functions), and is tenant-scoped by `companyUuid`.
 
 The anchor is the **directly-attached** Idea (`directIdeaUuid`, the first Idea node on the lineage — e.g. a proposal's `inputUuids[0]`), **never** the ancestor `rootIdeaUuid`. For an Idea nested under a parent theme, the anchor is that child Idea itself. `rootIdeaUuid` and `lineageTitles` are returned only as light secondary context.
 
@@ -572,22 +572,32 @@ The anchor is the **directly-attached** Idea (`directIdeaUuid`, the first Idea n
     {
       "uuid": "...",
       "title": "...",
-      "content": "the Idea body — the primary intent statement",
-      "elaboration": [
+      "content": "the Idea body — the primary human-authored intent statement",
+      "baselineElaboration": [
         { "question": "...", "answer": "chosen option label, or the 'Other' customText", "answeredByType": "user" }
       ],
-      "comments": [
+      "humanComments": [
         { "authorType": "user", "author": "Alice", "at": "ISO timestamp", "content": "..." }
-      ]
+      ],
+      "agentContext": {
+        "elaboration": [
+          { "question": "...", "answer": "...", "answeredByType": "agent" }
+        ],
+        "comments": [
+          { "authorType": "agent", "author": "Worker Bot", "at": "ISO timestamp", "content": "..." }
+        ]
+      }
     }
   ],
   "anchorAvailable": true
 }
 ```
 
-Both `comments[].authorType` and `elaboration[].answeredByType` are normalized to `"user"` | `"agent"`: a **human** author/answerer is `"user"` and a real **agent** is `"agent"`. This lets a reviewer enforce the human-originated escape hatch symmetrically: a human-authored comment (`authorType == "user"`) or a human-answered elaboration decision (`answeredByType == "user"`) can authorize a deviation, while an agent-authored comment or an agent-self-answered (YOLO) decision never does — a drifting agent cannot self-clear. `elaboration` lists **resolved decisions only** (answered questions). When the entity has no attached Idea (e.g. a document-input proposal, a quick task, a missing entity), the tool returns `anchorAvailable: false` with an empty `ideas` list rather than an error.
+**Baseline vs. agent context (the anti-self-authorization split).** The `content` + `baselineElaboration` + `humanComments` fields form the **human-authorized baseline** — the *only* source of original intent. `agentContext.elaboration` and `agentContext.comments` are the agent-originated entries, surfaced for **audit only**; they must **never** expand, shrink, or override the baseline. This split is enforced in the tool (at the data layer) rather than left to each reviewer prompt to re-derive, so an agent cannot poison the baseline by self-answering a YOLO elaboration or posting an Idea comment claiming extra scope — those land in `agentContext`, and the reviewer's escape hatch that downgrades a deviation keys off baseline entries alone.
 
-> **Limitation:** the only actor types that reach `authorType` / `answeredByType` today are `"user"` (dashboard-authored) and `"agent"` (MCP-authored). A super_admin is a human operator, but there is **no distinct/reachable super_admin idea-comment or elaboration-answer authoring path** at present (those write paths collapse a super_admin to `"agent"`), so super_admin is **not** special-cased. If such a path is ever added, this human-vs-agent classification — and the write path feeding it — must be revisited so a genuine human authorization is not over-blocked.
+Each decision still carries `answeredByType` and each comment `authorType`, normalized to `"user"` | `"agent"`. The classifier is **fail-closed**: it returns the human value `"user"` **only** for the exact stored type `"user"`; every other value — `"agent"`, the session-scoped `"agent_instance"`, any unknown future type, or a missing type — collapses to `"agent"`. So `baselineElaboration` / `humanComments` contain exclusively `"user"` entries and `agentContext` exclusively non-human ones. `baselineElaboration` and `agentContext.elaboration` list **resolved decisions only** (answered questions). When the entity has no attached Idea (e.g. a document-input proposal, a quick task, a missing entity), the tool returns `anchorAvailable: false` with an empty `ideas` list rather than an error.
+
+> **Limitation:** the only actor types that reach `authorType` / `answeredByType` today are `"user"` (dashboard-authored) and `"agent"` (MCP-authored). A super_admin is a human operator, but there is **no distinct/reachable super_admin idea-comment or elaboration-answer authoring path** at present (those write paths collapse a super_admin to `"agent"`), so super_admin is **not** special-cased — and, being fail-closed, the classifier treats it as non-human. If such a path is ever added, this human-vs-agent classification — and the write path feeding it — must be revisited so a genuine human authorization is not over-blocked.
 
 ---
 

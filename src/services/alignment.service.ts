@@ -4,9 +4,18 @@
 //
 // `getAlignmentAnchor` is the single consolidated read that every reviewer
 // (proposal-, task-, code-reviewer) calls to pin the work it is reviewing back
-// to the *original intent*. Given any reviewable entity it returns one bundle:
-// the directly-attached Idea(s), their resolved elaboration decisions, and their
-// comments (the authorized-scope-change ledger).
+// to the *original intent*. Given any reviewable entity it returns one bundle
+// per directly-attached Idea, each STRUCTURALLY split into a human-authorized
+// `baseline` (idea `content` + human-answered elaboration + human-authored
+// comments) and an agent-originated `agentContext` (agent-answered elaboration +
+// agent-authored comments — audit-only).
+//
+// The split IS the anti-self-authorization guarantee: the reviewer builds the
+// "original intent" from the baseline alone, so a drifting agent can NOT poison
+// that baseline by self-answering a YOLO elaboration or posting its own idea
+// comment ("X is in scope") — such entries land in `agentContext`, which must
+// never expand, shrink, or override the baseline. The escape hatch that
+// downgrades a deviation therefore keys off baseline entries only.
 //
 // CRITICAL — the anchor is the DIRECTLY-ATTACHED idea (`directIdeaUuid`, the
 // FIRST idea node on the lineage, e.g. a proposal's `inputUuids[0]`), NEVER the
@@ -69,13 +78,36 @@ export interface AlignmentAnchorComment {
   content: string;
 }
 
-/** The intent statement for one attached Idea. */
+/**
+ * Agent-originated audit context for one Idea — NEVER part of the baseline.
+ * Present so the reviewer (and a human auditor) can SEE what the agent added,
+ * but the reviewer must not let any of it expand, shrink, or override the
+ * human-authorized baseline.
+ */
+export interface AlignmentAnchorAgentContext {
+  /** Elaboration decisions answered by an agent (e.g. self-answered under YOLO). */
+  elaboration: AlignmentAnchorDecision[];
+  /** Idea comments authored by an agent. */
+  comments: AlignmentAnchorComment[];
+}
+
+/**
+ * The intent bundle for one attached Idea, STRUCTURALLY split so the
+ * human-authorized baseline can never be constructed from agent-originated
+ * entries. The reviewer's "original intent" = `content` + `baselineElaboration`
+ * + `humanComments`; `agentContext` is audit-only.
+ */
 export interface AlignmentAnchorIdea {
   uuid: string;
   title: string;
+  /** The Idea body — the primary human-authored intent statement. */
   content: string | null;
-  elaboration: AlignmentAnchorDecision[];
-  comments: AlignmentAnchorComment[];
+  /** Human-answered elaboration decisions (baseline). Each carries `answeredByType: "user"`. */
+  baselineElaboration: AlignmentAnchorDecision[];
+  /** Human-authored Idea comments (baseline). Each carries `authorType: "user"`. */
+  humanComments: AlignmentAnchorComment[];
+  /** Agent-originated elaboration + comments — audit-only, never baseline. */
+  agentContext: AlignmentAnchorAgentContext;
 }
 
 /** The consolidated "original intent" bundle for a reviewable entity. */
@@ -95,17 +127,20 @@ export interface AlignmentAnchor {
 }
 
 /**
- * Normalize a stored actor/author type to the anchor's human-vs-agent signal: a
- * real agent (`"agent"`, or the session-scoped `"agent_instance"`) is `"agent"`;
- * everything else — i.e. a human `"user"` — is `"user"`. This is the single shared
- * classifier used for BOTH comment `authorType` and elaboration `answeredByType`,
- * mirroring how the rest of the codebase tells agents apart (see `isAgent` in
- * src/lib/auth.ts).
+ * Normalize a stored actor/author type to the anchor's human-vs-agent signal.
+ * FAIL-CLOSED: this classifier gates an authorization boundary (only a human can
+ * authorize scope drift), so it returns the human value `"user"` ONLY for the
+ * exact stored type `"user"`; EVERY other value — `"agent"`, the session-scoped
+ * `"agent_instance"`, any unknown future type, or `null`/`undefined` — collapses
+ * to `"agent"` (non-human). An entry the system cannot positively confirm as
+ * human-authored must never be treated as a human authorization. This is the
+ * single shared classifier used for BOTH comment `authorType` and elaboration
+ * `answeredByType`.
  *
- * The only stored types that actually reach here are `"user"` and `"agent"`: idea
- * comments are written as `isUser(auth) ? "user" : "agent"` and elaboration answers
- * carry the actor type (MCP → `"agent"`; the dashboard action goes through
- * `getServerAuthContext`, which is always `"user"`).
+ * The only stored types that actually reach here today are `"user"` and
+ * `"agent"`: idea comments are written as `isUser(auth) ? "user" : "agent"` and
+ * elaboration answers carry the actor type (MCP → `"agent"`; the dashboard action
+ * goes through `getServerAuthContext`, which is always `"user"`).
  *
  * LIMITATION: a super_admin is a human operator, but there is no distinct/reachable
  * super_admin idea-comment or elaboration-answer authoring path today — the write
@@ -115,10 +150,10 @@ export interface AlignmentAnchor {
  * the write path that feeds it must be revisited together so a genuine human
  * authorization is not over-blocked as if a drifting agent had self-cleared.
  */
-function toAnchorActorType(storedType: string): AnchorActorType {
-  return storedType === "agent" || storedType === "agent_instance"
-    ? "agent"
-    : "user";
+function toAnchorActorType(
+  storedType: string | null | undefined
+): AnchorActorType {
+  return storedType === "user" ? "user" : "agent";
 }
 
 /**
@@ -201,7 +236,16 @@ async function collectAnchorIdeaUuids(
   return existing.length > 0 ? existing : [directIdeaUuid];
 }
 
-/** Assemble one Idea's intent bundle (content + resolved decisions + comments). */
+/**
+ * Assemble one Idea's intent bundle and STRUCTURALLY split it into the
+ * human-authorized baseline (content + human-answered elaboration +
+ * human-authored comments) and the agent-originated audit context
+ * (agent-answered elaboration + agent-authored comments). The partition keys
+ * strictly off the fail-closed `answeredByType` / `authorType` classification,
+ * so the baseline can never absorb an agent-originated entry — this is the
+ * anti-self-authorization guarantee, enforced at the data layer rather than left
+ * to each reviewer prompt to re-derive.
+ */
 async function buildIdeaBundle(
   companyUuid: string,
   ideaUuid: string
@@ -209,17 +253,29 @@ async function buildIdeaBundle(
   const idea = await getIdeaByUuid(companyUuid, ideaUuid);
   if (!idea) return null;
 
-  const [elaboration, comments] = await Promise.all([
+  const [decisions, comments] = await Promise.all([
     collectResolvedDecisions(companyUuid, ideaUuid),
     collectIdeaComments(companyUuid, ideaUuid),
   ]);
+
+  // Partition by the fail-closed human-vs-agent signal. Only positively
+  // human-authored entries ("user") enter the baseline; everything else is
+  // audit-only agent context.
+  const baselineElaboration = decisions.filter((d) => d.answeredByType === "user");
+  const agentElaboration = decisions.filter((d) => d.answeredByType !== "user");
+  const humanComments = comments.filter((c) => c.authorType === "user");
+  const agentComments = comments.filter((c) => c.authorType !== "user");
 
   return {
     uuid: idea.uuid,
     title: idea.title,
     content: idea.content ?? null,
-    elaboration,
-    comments,
+    baselineElaboration,
+    humanComments,
+    agentContext: {
+      elaboration: agentElaboration,
+      comments: agentComments,
+    },
   };
 }
 

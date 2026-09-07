@@ -217,10 +217,11 @@ describe("alignment.service / getAlignmentAnchor", () => {
       uuid: "i-1",
       title: "Ship dark mode",
       content: "Add a dark theme toggle",
-      elaboration: [{ question: "Which surfaces?", answer: "All pages", answeredByType: "user" }],
-      comments: [
+      baselineElaboration: [{ question: "Which surfaces?", answer: "All pages", answeredByType: "user" }],
+      humanComments: [
         { authorType: "user", author: "Alice", at: "2026-01-02T00:00:00.000Z", content: "Approved scope" },
       ],
+      agentContext: { elaboration: [], comments: [] },
     });
   });
 
@@ -289,9 +290,10 @@ describe("alignment.service / getAlignmentAnchor", () => {
     expect(anchor.ideas).toHaveLength(1);
     expect(anchor.ideas[0].uuid).toBe("i-nested");
     expect(anchor.ideas[0].content).toBe("The specific intent");
-    expect(anchor.ideas[0].comments).toEqual([
+    expect(anchor.ideas[0].humanComments).toEqual([
       { authorType: "user", author: "N", at: "2026-01-02T00:00:00.000Z", content: "child-level note" },
     ]);
+    expect(anchor.ideas[0].agentContext.comments).toEqual([]);
     // The theme is NEVER the anchor idea.
     expect(anchor.ideas.map((i) => i.uuid)).not.toContain("i-theme");
     // ...but it IS surfaced as light lineage context.
@@ -321,8 +323,10 @@ describe("alignment.service / getAlignmentAnchor", () => {
     expect(anchor.anchorAvailable).toBe(true);
     expect(anchor.directIdeaUuid).toBe("i-a"); // primary line = inputUuids[0]
     expect(anchor.ideas.map((i) => i.uuid)).toEqual(["i-a", "i-b"]);
-    expect(anchor.ideas[0].elaboration).toEqual([{ question: "QA", answer: "Ans A", answeredByType: "user" }]);
-    expect(anchor.ideas[1].comments).toEqual([
+    expect(anchor.ideas[0].baselineElaboration).toEqual([{ question: "QA", answer: "Ans A", answeredByType: "user" }]);
+    // i-b's only comment is agent-authored → audit context, never the human baseline.
+    expect(anchor.ideas[1].humanComments).toEqual([]);
+    expect(anchor.ideas[1].agentContext.comments).toEqual([
       { authorType: "agent", author: "Bot", at: "2026-01-02T00:00:00.000Z", content: "B note" },
     ]);
   });
@@ -367,8 +371,8 @@ describe("alignment.service / getAlignmentAnchor", () => {
     expect(anchor.resolvedVia).toBe("not_found");
   });
 
-  // ===== comment authorType (escape-hatch enforcement input) =====
-  it("carries each comment's authorType so a reviewer can enforce the human-authored escape hatch", async () => {
+  // ===== STRUCTURAL split: human comment → baseline, agent comment → agentContext =====
+  it("routes a human-authored comment into humanComments (baseline) and an agent-authored comment into agentContext (audit-only)", async () => {
     installGraph({
       ideas: [{ uuid: "i-1", title: "I", content: null, parentUuid: null }],
       comments: {
@@ -381,8 +385,12 @@ describe("alignment.service / getAlignmentAnchor", () => {
 
     const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
 
-    expect(anchor.ideas[0].comments).toEqual([
+    // Only the human-authored comment is baseline (part of original intent).
+    expect(anchor.ideas[0].humanComments).toEqual([
       { authorType: "user", author: "Human", at: "2026-01-02T00:00:00.000Z", content: "human authorized extra scope" },
+    ]);
+    // The agent-authored comment is audit-only context, never baseline.
+    expect(anchor.ideas[0].agentContext.comments).toEqual([
       { authorType: "agent", author: "Agent X", at: "2026-01-02T00:00:00.000Z", content: "agent self-note" },
     ]);
     // content is passed through untouched, including null idea bodies.
@@ -403,11 +411,13 @@ describe("alignment.service / getAlignmentAnchor", () => {
 
     const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
 
-    // A human-answered decision authorizes ("user"); the agent-self-answered (YOLO)
-    // one is flagged "agent" and cannot authorize drift. (The only actor types a real
-    // elaboration answer carries are "user" (dashboard) and "agent" (MCP).)
-    expect(anchor.ideas[0].elaboration).toEqual([
+    // A human-answered decision is baseline ("user"); the agent-self-answered (YOLO)
+    // one is routed to agentContext and cannot authorize drift. (The only actor types
+    // a real elaboration answer carries are "user" (dashboard) and "agent" (MCP).)
+    expect(anchor.ideas[0].baselineElaboration).toEqual([
       { question: "Human decided", answer: "H", answeredByType: "user" },
+    ]);
+    expect(anchor.ideas[0].agentContext.elaboration).toEqual([
       { question: "Agent decided", answer: "A", answeredByType: "agent" },
     ]);
   });
@@ -438,23 +448,25 @@ describe("alignment.service / getAlignmentAnchor", () => {
 
     const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
 
-    expect(anchor.ideas[0].elaboration).toEqual([
+    expect(anchor.ideas[0].baselineElaboration).toEqual([
       { question: "Selected option", answer: "Chosen Label", answeredByType: "user" },
       { question: "Other answer", answer: "free text", answeredByType: "user" },
       { question: "Ghost option", answer: "missing-opt", answeredByType: "user" },
       { question: "Empty answer", answer: "", answeredByType: "user" },
     ]);
+    expect(anchor.ideas[0].agentContext.elaboration).toEqual([]);
   });
 
-  it("returns empty elaboration/comments when the idea has none", async () => {
+  it("returns empty baseline and empty agentContext when the idea has no elaboration/comments", async () => {
     installGraph({
       ideas: [{ uuid: "i-1", title: "I", content: "c", parentUuid: null }],
     });
 
     const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
 
-    expect(anchor.ideas[0].elaboration).toEqual([]);
-    expect(anchor.ideas[0].comments).toEqual([]);
+    expect(anchor.ideas[0].baselineElaboration).toEqual([]);
+    expect(anchor.ideas[0].humanComments).toEqual([]);
+    expect(anchor.ideas[0].agentContext).toEqual({ elaboration: [], comments: [] });
   });
 
   // ===== multi-input fallback: only inputUuids[0] readable =====
@@ -471,5 +483,113 @@ describe("alignment.service / getAlignmentAnchor", () => {
     expect(anchor.directIdeaUuid).toBe("i-a");
     expect(anchor.ideas.map((i) => i.uuid)).toEqual(["i-a"]);
     expect(anchor.anchorAvailable).toBe(true);
+  });
+
+  // ===== ANTI-SELF-AUTHORIZATION (Codex BLOCKER c3fecf2d) =====
+  // The core guarantee: an agent claiming extra scope — via its own idea comment OR
+  // by self-answering a YOLO elaboration — is STRUCTURALLY kept out of the baseline
+  // (original intent). Only human-originated entries land in the baseline, so a
+  // reviewer that anchors on the baseline can never silently absorb agent-claimed
+  // scope and must still raise it as unauthorized drift.
+  it("keeps an agent-claimed scope expansion (comment + self-answered elaboration) OUT of the baseline; only human entries are baseline", async () => {
+    installGraph({
+      ideas: [{ uuid: "i-1", title: "Login page", content: "Add an email/password login form", parentUuid: null }],
+      elaborations: {
+        "i-1": makeElaboration("i-1", [
+          // Human-answered decision → baseline (a genuine authorization).
+          makeQuestion({
+            text: "Password reset in scope?",
+            options: [{ id: "y", label: "Yes, add reset flow" }],
+            selectedOptionId: "y",
+            answeredByType: "user",
+          }),
+          // Agent self-answered (YOLO) decision claiming SSO scope → agentContext, NOT baseline.
+          makeQuestion({
+            text: "Add SSO?",
+            options: [{ id: "sso", label: "Yes, add SSO/SAML" }],
+            selectedOptionId: "sso",
+            answeredByType: "agent",
+          }),
+        ]),
+      },
+      comments: {
+        "i-1": [
+          // Human comment authorizing scope → baseline.
+          makeComment({ uuid: "c-h", content: "Approved: also add a Remember-me checkbox", authorType: "user", authorName: "Owner" }),
+          // Agent comment claiming extra scope → agentContext, NOT baseline (the poison attempt).
+          makeComment({ uuid: "c-a", content: "SSO is now in scope", authorType: "agent", authorName: "Worker Bot" }),
+        ],
+      },
+    });
+
+    const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
+    const idea = anchor.ideas[0];
+
+    // Baseline = human-answered elaboration + human-authored comments ONLY.
+    expect(idea.baselineElaboration).toEqual([
+      { question: "Password reset in scope?", answer: "Yes, add reset flow", answeredByType: "user" },
+    ]);
+    expect(idea.humanComments).toEqual([
+      { authorType: "user", author: "Owner", at: "2026-01-02T00:00:00.000Z", content: "Approved: also add a Remember-me checkbox" },
+    ]);
+
+    // The agent's SSO scope-claim (both channels) is audit-only context, never baseline.
+    expect(idea.agentContext.elaboration).toEqual([
+      { question: "Add SSO?", answer: "Yes, add SSO/SAML", answeredByType: "agent" },
+    ]);
+    expect(idea.agentContext.comments).toEqual([
+      { authorType: "agent", author: "Worker Bot", at: "2026-01-02T00:00:00.000Z", content: "SSO is now in scope" },
+    ]);
+
+    // No agent-originated text can leak into the baseline channels.
+    const baselineText = [
+      idea.content ?? "",
+      ...idea.baselineElaboration.map((d) => `${d.question} ${d.answer}`),
+      ...idea.humanComments.map((c) => c.content),
+    ].join(" ");
+    expect(baselineText).not.toContain("SSO");
+    expect(idea.baselineElaboration.every((d) => d.answeredByType === "user")).toBe(true);
+    expect(idea.humanComments.every((c) => c.authorType === "user")).toBe(true);
+  });
+
+  // ===== FAIL-CLOSED classifier (AC2) =====
+  // toAnchorActorType is fail-closed: ONLY the exact stored type "user" is human.
+  // agent / agent_instance / an unknown future type / a missing type all collapse to
+  // "agent", so none of them can enter the baseline.
+  it("is fail-closed: only stored type 'user' is baseline; agent_instance and unknown types are agentContext", async () => {
+    installGraph({
+      ideas: [{ uuid: "i-1", title: "I", content: "c", parentUuid: null }],
+      elaborations: {
+        "i-1": makeElaboration("i-1", [
+          makeQuestion({ text: "Q-user", options: [{ id: "u", label: "U" }], selectedOptionId: "u", answeredByType: "user" }),
+          makeQuestion({ text: "Q-inst", options: [{ id: "i", label: "I" }], selectedOptionId: "i", answeredByType: "agent_instance" }),
+          makeQuestion({ text: "Q-unknown", options: [{ id: "k", label: "K" }], selectedOptionId: "k", answeredByType: "superadmin" }),
+        ]),
+      },
+      comments: {
+        "i-1": [
+          makeComment({ uuid: "c-user", content: "human", authorType: "user", authorName: "H" }),
+          makeComment({ uuid: "c-inst", content: "instance", authorType: "agent_instance", authorName: "AI" }),
+          makeComment({ uuid: "c-unknown", content: "mystery", authorType: "robot", authorName: "R" }),
+        ],
+      },
+    });
+
+    const anchor = await getAlignmentAnchor(COMPANY, "idea", "i-1");
+    const idea = anchor.ideas[0];
+
+    // Exactly one human decision and one human comment reach the baseline.
+    expect(idea.baselineElaboration).toEqual([
+      { question: "Q-user", answer: "U", answeredByType: "user" },
+    ]);
+    expect(idea.humanComments).toEqual([
+      { authorType: "user", author: "H", at: "2026-01-02T00:00:00.000Z", content: "human" },
+    ]);
+
+    // agent_instance AND the unknown type both collapse to "agent" and land in agentContext.
+    expect(idea.agentContext.elaboration.map((d) => d.question)).toEqual(["Q-inst", "Q-unknown"]);
+    expect(idea.agentContext.elaboration.every((d) => d.answeredByType === "agent")).toBe(true);
+    expect(idea.agentContext.comments.map((c) => c.content)).toEqual(["instance", "mystery"]);
+    expect(idea.agentContext.comments.every((c) => c.authorType === "agent")).toBe(true);
   });
 });
