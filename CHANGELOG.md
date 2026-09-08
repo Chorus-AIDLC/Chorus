@@ -1,12 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Added
-- **First-principles alignment review**: The proposal-, task-, and code-reviewer now check, top-down, that the work still serves the *original Idea's intent* — not just its local acceptance criteria. Implemented purely as a reviewer-prompt reminder (no new MCP tool): each reviewer resolves the originating Idea from the entity under review (proposal → its `inputUuids[0]`; task → its proposal's `inputUuids[0]`; code → the given `ideaUuid`) and reads it with the existing `chorus_get_idea` + `chorus_get_elaboration` + `chorus_get_comments`. It builds the intent baseline from **human-authored input only** — the Idea content + elaboration answers where `answeredBy.type == "user"` + comments where `author.type == "user"`; agent-answered elaboration and agent-authored comments are audit context only and can never expand, shrink, or override the baseline (a drifting agent cannot self-authorize). Each reviewer flags three drift types — **scope creep**, **requirement loss / shrink**, and **semantic drift** — as a `BLOCKER → VERDICT: FAIL / reject`, downgraded to a cited `NOTE` only when the deviation is traceable to a **human** authorization (a human-authored Idea comment, a human-answered elaboration entry, or an explicit human override at the gate). Delivered as a reviewer-specific instruction folded natively into each reviewer's own procedure (the proposal-reviewer's cross-check step, a task-reviewer procedure step, a code-reviewer whole-feature dimension) and referencing only that reviewer's own Idea-resolution path — three distinct instruction bodies, each kept parity-consistent across all seven reviewer surfaces (Claude Code, Codex, OpenClaw, Kiro, Pi, dsh, and the standalone skill library).
-
----
-
 ## [0.17.3] - 2026-09-07
 
 ### Added
