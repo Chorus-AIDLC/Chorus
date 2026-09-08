@@ -18,7 +18,18 @@ Both **coexist**. The active mode is resolved deterministically:
 3. Else, if a `.chorus/specs/` directory exists → spec-lite.
 4. Else → free-form, exactly as before either mode existed.
 
-Existing OpenSpec projects are unaffected — spec-lite never overrides OpenSpec silently.
+Resolution produces exactly **one** mode; branch on that resolved value, never on the raw `CHORUS_OPENSPEC_ACTIVE` flag (both `lite` and `free-form` have `=0`, so keying off the flag double-matches). Existing OpenSpec projects are unaffected — spec-lite never overrides OpenSpec silently.
+
+**Mode-resolution matrix** (the behavior contract):
+
+| `CHORUS_SPEC_MODE` | OpenSpec active? | `.chorus/specs/` exists? | Resolved mode |
+|---|---|---|---|
+| `lite` | any | any | **lite** |
+| `openspec` | any | any | **openspec** |
+| `off` | any | any | **free-form** |
+| unset | yes | any | **openspec** |
+| unset | no | yes | **lite** |
+| unset | no | no | **free-form** |
 
 ## The file format
 
@@ -28,11 +39,15 @@ YAML frontmatter (`slug`, `title`, `status`, `created`, optional `ideaUuid`/`pro
 
 The local file is the **source of truth**; Chorus is a downstream mirror. Sync is **push-only** — there is no reverse pull in v1. At proposal submit (and on later edits), the file is mirrored into a Chorus `spec` document using the existing `chorus_pm_add_document_draft … --arg-file content=<file>` transport — byte-exact, with the document content streamed from the file's bytes (never re-typed by the agent). `spec` is a pre-existing document type; spec-lite adds **no new MCP tool, no CLI command, no backend, and no schema change**.
 
+**Deterministic proposal↔file link.** The proposal `description` carries a literal `Spec-lite change slug: <slug>` line (the analogue of OpenSpec's slug line), and the spec file's frontmatter records `proposalUuid`. Develop resolves the file from the slug line and the document from the frontmatter `proposalUuid` (unique match, else halt) — never by matching title+type, which isn't unique across changes. The `proposalUuid` is written into frontmatter **before** the first mirror, so the local file and the first Chorus copy are byte-consistent from the start.
+
 ## Local audit trail (留痕)
 
 Because each spec is plain git-tracked markdown, its full history is `git log --follow .chorus/specs/<slug>.md` — readable and diffable offline, with or without a Chorus connection. The `## Changelog` section is a human-facing, timestamped log appended as the change progresses (created → tasks done → status changes). No separate audit file is needed.
 
 Only `.chorus/specs/` is version-controlled; the rest of `.chorus/` (plugin runtime state) stays gitignored via `.chorus/*` + `!.chorus/specs/`.
+
+**Single-writer under parallel tasks.** The spec is one shared file, so in a multi-task wave only the orchestrator / main agent updates it (Changelog, checkboxes, re-mirror); parallel workers report via `chorus_report_work` and don't touch the spec. This avoids git conflicts and last-write-wins clobbering. A non-orchestrator that must update re-reads immediately before writing to detect conflicts.
 
 ## Why it saves tokens and time
 

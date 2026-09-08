@@ -142,7 +142,9 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
 >
 > In the no-OpenSpec fallback (no slug line, or no `openspec` CLI), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
 
-> **Document update flow (spec-lite mode):** if the change is managed by **spec-lite** (a `.chorus/specs/<slug>.md` file exists / `CHORUS_SPEC_MODE=lite`), the `spec` Document is a **mirror** of that file. Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`): edit `.chorus/specs/<slug>.md` first (it is the source of truth), append a timestamped `## Changelog` entry (留痕) and tick `- [ ]` task/AC boxes as work completes, then re-mirror via `chorus mcp call chorus_pm_update_document … --arg-file content=.chorus/specs/<slug>.md`. No new tool/CLI — same `--arg-file` transport as OpenSpec.
+> **Document update flow (spec-lite mode):** if the originating proposal `description` contains a line `Spec-lite change slug: <slug>`, the `spec` Document is a **mirror** of `.chorus/specs/<slug>.md`. Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`). Locate the file **deterministically** by that slug line (not by title/type, which isn't unique); the file's frontmatter `proposalUuid` confirms the link. Edit `.chorus/specs/<slug>.md` first (it is the source of truth), append a timestamped `## Changelog` entry (留痕) and tick `- [ ]` task/AC boxes as work completes, then re-mirror via `chorus mcp call chorus_pm_update_document … --arg-file content=.chorus/specs/<slug>.md`. No new tool/CLI — same `--arg-file` transport as OpenSpec.
+>
+> **Single-writer:** the spec file is one shared file — in a multi-task wave, only the **orchestrator / main agent** edits + re-mirrors it; parallel workers report via `chorus_report_work` only. A non-orchestrator that must update it re-reads immediately before writing to detect conflicts.
 
 ### Step 5: Start Working
 

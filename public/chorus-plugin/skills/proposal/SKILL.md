@@ -94,15 +94,15 @@ Before authoring document drafts, resolve which spec mode to author in. The orde
 3. Else, if a `.chorus/specs/` directory exists at the repo root → **spec-lite**.
 4. Else → **free-form**.
 
-Then branch:
+Branch on the **resolved mode** (not on the raw `CHORUS_OPENSPEC_ACTIVE` flag — `lite` and `free-form` share `=0`):
 
-- **spec-lite** → load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG`, author one `.chorus/specs/<slug>.md` (Intent / Requirements+AC / Tasks / Changelog) from `.chorus/specs/TEMPLATE.md`, create the proposal container (Step 1 above), and mirror the file into a `spec` document draft via `chorus mcp call chorus_pm_add_document_draft … --arg-file content=.chorus/specs/<slug>.md` at submit. Skip Step 2 below — the file-fill mirror replaces inline drafting for this document. (Add tasks via `chorus_pm_add_task_draft` as usual.)
+- **resolved = spec-lite** → load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG`, author one `.chorus/specs/<slug>.md` (Intent / Requirements+AC / Tasks / Changelog), create the proposal container (Step 1 above) with a literal `Spec-lite change slug: <slug>` line in `description`, write `proposalUuid` into the file's frontmatter **before** the first mirror, then mirror the file into a `spec` document draft via `chorus mcp call chorus_pm_add_document_draft … --arg-file content=.chorus/specs/<slug>.md` at submit. Skip Step 2 below — the file-fill mirror replaces inline drafting for this document. (Add tasks via `chorus_pm_add_task_draft` as usual.)
 
-- **OpenSpec** (`CHORUS_OPENSPEC_ACTIVE=1`) → follow `openspec-aware` §3. Pick `$SLUG`, scaffold `openspec/changes/<slug>/`, author `proposal.md` / `design.md` / `specs/<capability>/spec.md` locally, then create the proposal container (Step 1 above) with the literal line `OpenSpec change slug: <slug>` in `description`, and mirror each local file into a document draft.
+- **resolved = OpenSpec** (`CHORUS_OPENSPEC_ACTIVE=1`) → follow `openspec-aware` §3. Pick `$SLUG`, scaffold `openspec/changes/<slug>/`, author `proposal.md` / `design.md` / `specs/<capability>/spec.md` locally, then create the proposal container (Step 1 above) with the literal line `OpenSpec change slug: <slug>` in `description`, and mirror each local file into a document draft.
 
   > **⛔ Mandatory in OpenSpec mode:** mirror calls fill `content` from the local file — prefer `chorus mcp call … --arg-file content=<file>`, falling back to the `chorus-api.sh` wrapper with `json_encode_file` when `chorus` is not on `PATH` — see `openspec-aware` §3.6. Do **not** call `chorus_pm_add_document_draft` directly from the MCP harness with a hand-typed `content` field. Re-typing thousands of lines through the LLM burns 20k+ content tokens per proposal and breaks byte-equality with the local source of truth (`openspec-aware` §2 Rule 1 explains the full reasoning). Skip Step 2 below when in OpenSpec mode — the file-fill flow in `openspec-aware` §3.6 replaces it for documents.
 
-- **`CHORUS_OPENSPEC_ACTIVE=0`** (CLI absent or `CHORUS_OPENSPEC_MODE=off`) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
+- **resolved = free-form** (step 4 above: no `CHORUS_SPEC_MODE`, OpenSpec inactive, and no `.chorus/specs/` dir) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
 
 ### Step 2: Add Document Drafts
 

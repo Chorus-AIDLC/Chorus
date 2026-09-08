@@ -1,7 +1,7 @@
 # spec-lite Specification
 
 ## Purpose
-TBD - created by archiving change spec-lite. Update Purpose after archive.
+Define spec-lite: an opt-in, coexisting lightweight local-spec mode for Chorus — one git-tracked `.chorus/specs/<slug>.md` per change (Intent / Requirements+AC / Tasks / Changelog-留痕), local-first, mirrored one-way into Chorus via existing document tools, with no new CLI/MCP/backend/schema and no change to the OpenSpec path.
 ## Requirements
 ### Requirement: Single-file lightweight spec format
 The spec-lite mode SHALL represent each change as exactly one markdown file at `.chorus/specs/<slug>.md`, where `<slug>` is kebab-case and unique within `.chorus/specs/`. The file MUST contain YAML frontmatter (`slug`, `title`, `status`) and the sections `## Intent`, `## Requirements`, `## Tasks`, and `## Changelog`. Requirements MUST NOT require `SHALL`/`MUST` grammar or scenario blocks, and acceptance criteria MUST be expressed as `- [ ]` checkbox items.
@@ -64,4 +64,22 @@ The spec-lite mode SHALL keep a human-readable local audit trail (留痕). Each 
 #### Scenario: Offline auditability
 - **WHEN** there is no connection to Chorus
 - **THEN** the spec file and its complete history remain readable and diffable from the local git repository
+
+### Requirement: Deterministic proposal-to-spec-file linkage
+The spec-lite mode SHALL provide a deterministic link between a Chorus proposal and its local spec file. The proposal `description` MUST carry a literal `Spec-lite change slug: <slug>` line, and the spec file's frontmatter MUST record `proposalUuid`, written before the first mirror so the local file and its Chorus mirror are byte-consistent from the first push. Resolution MUST NOT rely on matching document `title`+`type` (not unique across changes); a lookup that finds zero or multiple candidates MUST halt rather than guess.
+
+#### Scenario: Develop locates the correct spec among many
+- **WHEN** the repository contains several `.chorus/specs/*.md` files and a task's proposal `description` contains `Spec-lite change slug: add-export-csv`
+- **THEN** the workflow edits `.chorus/specs/add-export-csv.md` (confirmed by its frontmatter `proposalUuid`) and does not touch any other spec file
+
+#### Scenario: Ambiguous linkage halts
+- **WHEN** resolving a spec-lite proposal to its `spec` Document yields zero or more than one match
+- **THEN** the workflow halts and surfaces the ambiguity instead of updating an arbitrary document
+
+### Requirement: Single-writer spec updates under concurrency
+The spec-lite mode SHALL avoid concurrent-write races on the single shared spec file. In a multi-task wave, only the orchestrator / main agent SHALL update the spec file (Changelog, checkboxes, re-mirror); parallel task workers SHALL report progress via `chorus_report_work` and MUST NOT edit or re-mirror the spec. A non-orchestrator that must update it MUST re-read the file immediately before writing to detect conflicts.
+
+#### Scenario: Parallel workers do not clobber the spec
+- **WHEN** multiple task workers run in parallel for a spec-lite change
+- **THEN** only the orchestrator appends Changelog entries / ticks checkboxes / re-mirrors, and workers report via `chorus_report_work` without editing the spec file
 

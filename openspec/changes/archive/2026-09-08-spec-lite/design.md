@@ -110,3 +110,14 @@ The repo's `.gitignore` ignores `.chorus/` wholesale (Chorus plugin runtime stat
 - **Two coexisting modes add a choice point.** Mitigated by the deterministic resolution order above and by keeping OpenSpec the default when active.
 - **`.chorus/` already holds plugin runtime state** (`artifacts/`, `state.json`) and is fully gitignored. spec-lite namespaces under `.chorus/specs/` (never sharing files with plugin state) and the `.gitignore` is narrowed (`.chorus/*` + `!.chorus/specs/`) so specs are tracked while runtime state stays ignored.
 - **Skill-surface drift** (only the CC plugin gets it in v1). Accepted and recorded as an explicit follow-up rather than fanning out prematurely.
+
+## Post-review refinements (Worker Codex peer review, pre-PR)
+
+Two blockers + two minors surfaced in peer review and folded in before PR:
+
+1. **Branch on the resolved mode, not the raw flag.** `lite` and `free-form` both have `CHORUS_OPENSPEC_ACTIVE=0`, so the stage-skill branches now key off the single resolved mode value (step 4 = free-form) rather than `CHORUS_OPENSPEC_ACTIVE=0` — otherwise a session could match both `lite` and `free-form`.
+2. **Deterministic proposal↔file link + write-order.** The proposal `description` carries a literal `Spec-lite change slug: <slug>` line (analogue of OpenSpec's slug line), and `proposalUuid` is written into the spec frontmatter **before** the first mirror (not backfilled after — that made local ≠ mirror). Develop resolves the file by the slug line and the document by frontmatter `proposalUuid` (unique match, else halt) — never by `title`+`type`.
+3. **Template shipping.** `.chorus/specs/TEMPLATE.md` lives in this repo and isn't shipped to user projects, so the authoring step is "copy TEMPLATE if present, else create from the skill's inline template."
+4. **Single-writer under parallel tasks.** Only the orchestrator/main agent updates + re-mirrors the shared spec file; parallel workers report via `chorus_report_work` only (re-read + conflict-detect if a non-orchestrator must write) — avoids git conflicts / last-write-wins.
+
+A mode-resolution matrix (`CHORUS_SPEC_MODE` × OpenSpec-active × `.chorus/specs/` present → resolved mode) is documented in `docs/SPEC_LITE.md` as the behavior contract.
