@@ -190,23 +190,24 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 #### Step 1.4: Create Proposal
 
-1. **Select spec mode.** Resolve deterministically (OpenSpec stays the default when active — spec-lite never overrides it silently):
+1. **Select spec mode.** `CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}` — **lite is the default** (the SessionStart `## Spec Mode` section states the resolved value):
 
-   - `CHORUS_SPEC_MODE=lite` → **spec-lite branch (sub-step 2c below)**; `=openspec` → OpenSpec; `=off` → free-form.
-   - Else load the `openspec-aware` skill and run its §1 detection: `CHORUS_OPENSPEC_ACTIVE=1` → OpenSpec spec-driven branch (2a); `=0` → next check.
-   - Else if a `.chorus/specs/` directory exists → **spec-lite (2c)**; else → free-form branch (2b).
+   - `CHORUS_SPEC_MODE=lite` → **spec-lite branch (sub-step 2c below)**; `=openspec` → OpenSpec (2a); `=off` → free-form (2b).
+   - Unset → **spec-lite (2c)** — the default. OpenSpec is no longer auto-selected merely because an `openspec/` dir + CLI exist.
+   - Legacy `CHORUS_OPENSPEC_MODE=off` is still honored — it forces *not*-openspec.
 
-   **Fail fast (after resolving, before entering 2a/2b/2c):** if the resolved mode is OpenSpec *because* `CHORUS_SPEC_MODE=openspec` was set but OpenSpec is unusable (`CHORUS_OPENSPEC_ACTIVE=0`), halt — do NOT silently fall back or enter 2a with no OpenSpec to author. Name the cause: **config conflict** if OpenSpec is explicitly disabled (`CHORUS_OPENSPEC_MODE=off` / toggle off), else the **install hint** (`npm i -g @fission-ai/openspec` / `openspec init`) if simply not installed. (Unset `CHORUS_SPEC_MODE` with inactive OpenSpec routes on to 2c/2b, no error.)
+   **Fail fast (after resolving, before entering 2a/2b/2c):** if `CHORUS_SPEC_MODE=openspec` but OpenSpec is unusable, halt — do NOT silently fall back or enter 2a with no OpenSpec to author. Name the cause: **config conflict** if OpenSpec is explicitly disabled (`CHORUS_OPENSPEC_MODE=off` / toggle off), else the **install hint** (`npm i -g @fission-ai/openspec` / `openspec init`) if simply not installed.
 
    This is mandatory — yolo runs unattended, so silently picking the wrong mode is exactly the failure scenario this resolution exists to prevent.
 
-2. **Create the empty proposal container.** In OpenSpec mode, the `description` MUST contain the literal line `OpenSpec change slug: <slug>` (use the `$SLUG` you'll pick in 2a); in free-form mode, omit that line.
+2. **Create the empty proposal container.** In OpenSpec mode the `description` MUST contain `OpenSpec change slug: <slug>`; in spec-lite mode `Spec-lite change slug: <slug>` (use the `$SLUG` you'll pick in 2a / 2c); in free-form mode omit any slug line.
 
    ```
    chorus_pm_create_proposal({
      projectUuid: "<project-uuid>",
      title: "<feature name>",
-     description: "<summary>\n\nOpenSpec change slug: <slug>",   // OpenSpec mode
+     description: "<summary>\n\nSpec-lite change slug: <slug>",  // spec-lite mode (default)
+     // description: "<summary>\n\nOpenSpec change slug: <slug>", // OpenSpec mode
      // description: "<summary>",                                 // free-form mode
      inputType: "idea",
      inputUuids: ["<idea-uuid>"]
@@ -215,7 +216,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
    Then branch:
 
-   **2a. OpenSpec mode (`CHORUS_OPENSPEC_ACTIVE=1`).** Follow `openspec-aware` §3 end-to-end:
+   **2a. OpenSpec mode (resolved mode = openspec; `CHORUS_OPENSPEC_ACTIVE=1`).** Follow `openspec-aware` §3 end-to-end:
    - Pick `$SLUG`, run `openspec new change "$SLUG"` (§3.1–§3.2).
    - Author `proposal.md`, `design.md`, and one `specs/<capability>/spec.md` per capability locally on disk (§3.3). ADDED Requirements only; per-spec fallback to free-form Markdown if MODIFIED/REMOVED is needed.
    - Define the `chorus_check_response` helper (§6); prefer `chorus mcp call … --arg-file content=<file>` for mirrors (§3.4/§3.6) — the bash-wrapper fallback's `$API` + `json_encode_file` are only needed when `chorus` is not on `PATH`.
@@ -225,7 +226,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
    Then continue to step 3 (task drafts).
 
-   **2b. Free-form mode (resolved mode = free-form).** Only when step 1 resolved to free-form (explicit `CHORUS_SPEC_MODE=off`, OR unset with OpenSpec inactive and no `.chorus/specs/` dir) — do NOT enter this branch merely because `CHORUS_OPENSPEC_ACTIVE=0`, since spec-lite (2c) also has `=0`. Add a tech design document draft directly via MCP, content authored inline:
+   **2b. Free-form mode (resolved mode = free-form).** Only when step 1 resolved to free-form — i.e. explicit `CHORUS_SPEC_MODE=off`. (Unset resolves to spec-lite (2c), not free-form.) Add a tech design document draft directly via MCP, content authored inline:
 
    ```
    chorus_pm_add_document_draft({
@@ -236,7 +237,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    })
    ```
 
-   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG`, author one `.chorus/specs/<slug>.md` (Intent / Requirements+AC / Tasks / Changelog) from `.chorus/specs/TEMPLATE.md` (or the skill's §2 inline template if TEMPLATE isn't present). The proposal `description` MUST carry a literal `Spec-lite change slug: <slug>` line (the deterministic link develop uses); write `proposalUuid` into the file's frontmatter **before** the first mirror so local == mirror, then mirror it into a single `spec` document draft byte-exact — `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"spec\",\"title\":\"Spec: <feature>\"}" --arg-file content=.chorus/specs/<slug>.md`. No `OpenSpec change slug:` line and no `openspec/changes/` scaffold. Then continue to step 3 for task drafts.
+   **2c. spec-lite mode (resolved mode = lite — the default).** Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG`, author a Chorus-native change folder `.chorus/specs/<slug>/` from `.chorus/specs/TEMPLATE/` (or the skill's inline shape if the template isn't present) — at minimum `prd.md` (Chorus PRD: Intent / plain-prose Requirements + `- [ ]` acceptance points / Non-goals), plus `tech_design.md` etc. only if warranted. The proposal `description` MUST carry a literal `Spec-lite change slug: <slug>` line (the deterministic link develop uses). Mirror **each** `<type>.md` into a document draft of that `type` byte-exact — e.g. `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/prd.md`. No `OpenSpec change slug:` line and no `openspec/changes/` scaffold; there is no `tasks.md`. Then continue to step 3 for task drafts.
 
 3. **Add task drafts incrementally** (use returned `draftUuid` for dependency chaining). `acceptanceCriteriaItems` is **required** on every draft — at least one non-blank criterion, or the call is rejected:
    ```

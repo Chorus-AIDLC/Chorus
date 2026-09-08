@@ -1,6 +1,8 @@
 # OpenSpec Mode
 
-OpenSpec mode is an opt-in authoring style for Chorus PM agents. When the agent has the [`openspec`](https://github.com/Fission-AI/OpenSpec) CLI installed locally, the proposal-authoring flow switches from free-form Markdown to a structured `proposal.md` + `design.md` + `specs/<capability>/spec.md` layout that lives on disk and is mirrored into Chorus `documentDrafts` — preferring the `chorus` CLI (`chorus mcp call … --arg-file content=<file>`), with the plugin's bash MCP wrapper script as a fallback when `chorus` is not on `PATH`. The local files are the working copy; the Chorus drafts are a mirror that reviewers can read on the proposal page.
+OpenSpec mode is an **opt-in** authoring style for Chorus PM agents. The proposal-authoring flow switches from free-form Markdown to a structured `proposal.md` + `design.md` + `specs/<capability>/spec.md` layout that lives on disk and is mirrored into Chorus `documentDrafts` — preferring the `chorus` CLI (`chorus mcp call … --arg-file content=<file>`), with the plugin's bash MCP wrapper script as a fallback when `chorus` is not on `PATH`. The local files are the working copy; the Chorus drafts are a mirror that reviewers can read on the proposal page.
+
+> **Default spec mode is now [spec-lite](./SPEC_LITE.md), not OpenSpec (Claude Code plugin).** `CHORUS_SPEC_MODE` resolves to `{lite, openspec, off}`; when unset it resolves to **lite** (a Chorus-native lightweight folder format). OpenSpec is selected **only** by an explicit `CHORUS_SPEC_MODE=openspec` — it is no longer auto-activated merely because an `openspec/` dir + CLI are present. When `CHORUS_SPEC_MODE=openspec` but OpenSpec isn't usable, the stage skill fails fast (install hint / config-conflict) rather than falling back. The Claude Code SessionStart hook writes a `## Spec Mode` section (below, "When it activates") that states the resolved mode; when the mode is a usable OpenSpec it additionally carries the `CHORUS_OPENSPEC_ACTIVE=1` line the stage skills branch on. (The **Codex** plugin still uses the prior OpenSpec-only detection until spec-lite propagates there — a follow-up.)
 
 This document is a user-facing summary. The authoritative behavior lives in the hand-maintained `openspec-aware` skill files. All prefer `chorus mcp call --arg-file` and keep the surface's bash wrapper as a CLI-absent fallback:
 
@@ -23,27 +25,27 @@ The mode is purely client-side. **Chorus ships no new MCP tools, no schema chang
 
 ## When it activates (detection contract)
 
-Detection runs **once per session**, in the plugin's SessionStart hook (`bin/on-session-start.sh` for Claude Code, `hooks/on-session-start.sh` for Codex). The hook computes a single value `CHORUS_OPENSPEC_ACTIVE` and writes a `## OpenSpec Mode` section into the developer-message / additional-context block. Stage skills (proposal, develop, yolo) read that value when they need to branch — they do not re-detect.
+Mode resolution runs **once per session**, in the plugin's SessionStart hook. In the **Claude Code** plugin (`bin/on-session-start.sh`) the hook resolves `CHORUS_SPEC_MODE` (default **lite**) and writes a `## Spec Mode` section into the additional-context block; when the resolved mode is a usable OpenSpec, that section also carries a `CHORUS_OPENSPEC_ACTIVE=1` line. (The **Codex** plugin's `hooks/on-session-start.sh` still writes the older OpenSpec-only `## OpenSpec Mode` / `CHORUS_OPENSPEC_ACTIVE` detection until spec-lite propagates there.) Stage skills (proposal, develop, yolo) read the resolved mode when they need to branch — they do not re-detect.
 
-`CHORUS_OPENSPEC_ACTIVE=1` requires **all three** of:
+`CHORUS_OPENSPEC_ACTIVE=1` requires an explicit `CHORUS_SPEC_MODE=openspec` **and all three** of:
 
-1. `CHORUS_OPENSPEC_MODE` is **not** set to `off` (explicit opt-out wins).
+1. `CHORUS_OPENSPEC_MODE` is **not** set to `off`, and the `enableOpenSpec` toggle is on (explicit opt-out wins).
 2. The project root contains an `openspec/` directory — i.e. someone has run `openspec init` here. This is the "this repo intends to use OpenSpec" signal.
 3. The `openspec` CLI is on `PATH`. The OpenSpec authoring path needs the CLI to scaffold (`openspec new change`), validate, and archive — the folder alone is not enough.
 
-If any check fails, the hook still writes `## OpenSpec Mode` into context with `CHORUS_OPENSPEC_ACTIVE=0` and a one-line reason ("CHORUS_OPENSPEC_MODE=off (explicit opt-out)" / "no openspec/ directory at …" / "openspec/ directory present but `openspec` CLI not on PATH"). When the folder is present but the CLI is missing, the user-visible toast also surfaces an install hint:
+If `CHORUS_SPEC_MODE=openspec` but one of these fails, the hook writes a `## Spec Mode` section marking OpenSpec as **not usable** with a one-line reason, and the stage skill **fails fast** — surfacing the install hint (no `openspec/` dir or CLI) or a config-conflict message (`CHORUS_OPENSPEC_MODE=off` / toggle off), never silently falling back. The user-visible toast then reads:
 
 ```
-Chorus connected at <URL> (OpenSpec repo detected — install with: npm i -g @fission-ai/openspec)
+Chorus connected at <URL> (Spec: openspec — not usable)
 ```
 
-The agent should pass that hint through to the user instead of silently choosing the free-form path.
-
-When all three signals hold, the user-visible toast looks like:
+When the mode resolves to a usable OpenSpec, the user-visible toast reads:
 
 ```
-Chorus connected at <URL> (OpenSpec Enabled)
+Chorus connected at <URL> (Spec: openspec)
 ```
+
+(For the default and disabled cases the toast reads `(Spec: lite)` or `(Spec: off)`.)
 
 ### Why folder + CLI both, not just one
 
@@ -91,13 +93,9 @@ Two switches, in precedence order:
 export CHORUS_OPENSPEC_MODE=off
 ```
 
-This forces fallback mode even when both the `openspec/` directory and the `openspec` CLI are present. The SessionStart hook checks the userConfig toggle first, then this env var, before the folder/CLI signals. The reason recorded in the `## OpenSpec Mode` context block when env-off wins is exactly:
+This forces *not*-openspec even when both the `openspec/` directory and the `openspec` CLI are present (the legacy opt-out is still honored; the default mode is lite regardless). The SessionStart hook checks the userConfig toggle first, then this env var, before the folder/CLI signals. If `CHORUS_SPEC_MODE=openspec` is set at the same time, that's a **config conflict** and the stage skill fails fast; otherwise the resolved mode is lite (or `off` if `CHORUS_SPEC_MODE=off`).
 
-```
-CHORUS_OPENSPEC_ACTIVE=0 (CHORUS_OPENSPEC_MODE=off (explicit opt-out))
-```
-
-After detection, no `openspec/` folder is created or referenced (existing folders on disk are untouched), and the proposal description gets no `OpenSpec change slug:` line. Behavior is identical to a host that doesn't have OpenSpec installed.
+After resolution, no `openspec/` folder is created or referenced (existing folders on disk are untouched), and the proposal description gets no `OpenSpec change slug:` line.
 
 The Codex plugin has no userConfig surface, so only the env var applies there.
 

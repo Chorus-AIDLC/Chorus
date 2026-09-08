@@ -1,66 +1,91 @@
 # spec-lite — Lightweight Local Spec Management
 
-spec-lite is a low-ceremony, git-tracked way to keep a spec for a change: **one markdown file per change** at `.chorus/specs/<slug>.md`, mirrored one-way into Chorus. It is an **opt-in alternative** to the heavier OpenSpec path (`openspec-aware`), meant for the common case where you want a durable, human-readable record of *intent + requirements + tasks* without the four-file, strictly-validated OpenSpec ceremony.
+spec-lite is a low-ceremony, git-tracked, **Chorus-native** way to keep a spec for a change: one
+**folder per change** at `.chorus/specs/<slug>/`, holding plain-markdown docs named by Chorus's own
+Document types, each mirrored 1:1 into Chorus. It is the **default** spec mode — a durable,
+human-readable record of *intent + requirements* without OpenSpec's four-file, strictly-validated
+ceremony. The heavier `openspec-aware` path stays available as an opt-in for large, spec-heavy work.
 
-## When to use lite vs OpenSpec
+## Mode selection (lite by default)
 
-| | spec-lite | OpenSpec (`openspec-aware`) |
-|---|---|---|
-| Files per change | 1 (`.chorus/specs/<slug>.md`) | 4 (`proposal.md`, `design.md`, `tasks.md`, `specs/<cap>/spec.md`) |
-| Validation | none (plain markdown) | strict `SHALL`/`MUST` + `#### Scenario:` grammar |
-| Tooling | none — reuses existing Chorus doc tools | external `openspec` CLI subprocess |
-| Best for | most changes; fast, low-token specs | large, spec-heavy work needing formal delta specs + archive-to-cumulative-spec |
-
-Both **coexist**. The active mode is resolved deterministically:
+`CHORUS_SPEC_MODE` resolves to exactly one mode; the SessionStart `## Spec Mode` section states it:
 
 1. `CHORUS_SPEC_MODE=lite` → spec-lite; `=openspec` → OpenSpec; `=off` → free-form (no spec artifact).
-2. Else, if OpenSpec is active (`openspec/` dir + `openspec` CLI present) → OpenSpec (the unchanged default).
-3. Else, if a `.chorus/specs/` directory exists → spec-lite.
-4. Else → free-form, exactly as before either mode existed.
+2. **Unset → `lite`** (the default). OpenSpec is **no longer** auto-selected merely because an
+   `openspec/` dir + CLI are present — it is opt-in via `CHORUS_SPEC_MODE=openspec`.
+3. Legacy `CHORUS_OPENSPEC_MODE=off` is still honored — it forces *not*-openspec (default is already lite).
 
-Resolution produces exactly **one** mode; branch on that resolved value, never on the raw `CHORUS_OPENSPEC_ACTIVE` flag (both `lite` and `free-form` have `=0`, so keying off the flag double-matches). Existing OpenSpec projects are unaffected — spec-lite never overrides OpenSpec silently.
+| `CHORUS_SPEC_MODE` | Resolved mode |
+|---|---|
+| `lite` | **lite** |
+| `openspec` | **openspec** (fail fast if unusable — see below) |
+| `off` | **free-form** |
+| unset | **lite** (default) |
 
-**Mode-resolution matrix** (the behavior contract):
+**Fail fast on an unsatisfiable explicit request.** `CHORUS_SPEC_MODE=openspec` when OpenSpec isn't
+usable must **halt**, never silently fall back: if OpenSpec is **not installed** (no `openspec/` dir or
+no CLI) surface the install hint (`npm i -g @fission-ai/openspec` / `openspec init`); if it is
+**explicitly disabled** (`CHORUS_OPENSPEC_MODE=off` or the Enable-OpenSpec toggle) report a config
+conflict (`CHORUS_SPEC_MODE=openspec` vs OpenSpec disabled). The stage skill (proposal/yolo) enforces
+this after resolving, before branching.
 
-| `CHORUS_SPEC_MODE` | OpenSpec active? | `.chorus/specs/` exists? | Resolved mode |
-|---|---|---|---|
-| `lite` | any | any | **lite** |
-| `openspec` | any | any | **openspec** |
-| `off` | any | any | **free-form** |
-| unset | yes | any | **openspec** |
-| unset | no | yes | **lite** |
-| unset | no | no | **free-form** |
+## The change folder
 
-`CHORUS_SPEC_MODE=off` is explicit free-form (distinct from unset). **Fail fast on an unsatisfiable explicit request:** `CHORUS_SPEC_MODE=openspec` when OpenSpec isn't usable (no `openspec/` dir or no CLI) must halt with the install hint (`npm i -g @fission-ai/openspec` / `openspec init`), not silently fall back — an explicit intent that can't be honored should be visible, not swallowed.
+`.chorus/specs/<slug>/` — one folder per change, `<slug>` kebab-case and unique. Inside it, plain
+markdown named by **Chorus `Document.type`**:
 
-## The file format
+| File | `Document.type` | Required? |
+|---|---|---|
+| `prd.md` | `prd` | **yes** — the only required file |
+| `tech_design.md` | `tech_design` | optional — the "how" |
+| `adr.md` / `spec.md` / `guide.md` | `adr` / `spec` / `guide` | optional |
 
-YAML frontmatter — `slug`, `title`, `status`, `created`, optional `ideaUuid`, `proposalUuid` (required before the first Chorus mirror), and optional `documentUuid` (backfilled after approval) — followed by four sections: **Intent** (1–2 lines), **Requirements** (plain prose, each with `- [ ]` acceptance-criterion items), **Tasks** (`- [ ]` checkboxes, dependencies inline), and **Changelog** (append-only, ISO-8601 timestamps). A `## Design` section may be added inline when a change warrants it. Copy `.chorus/specs/TEMPLATE.md` to start.
+`prd.md` is a Chorus PRD: YAML frontmatter (`slug`, `title`, `status`, `created`, and optional
+`ideaUuid` / `proposalUuid` / `documentUuid` for mirroring) followed by `## Intent` (intent +
+background), `## Requirements` (plain prose with `- [ ]` acceptance points — no `SHALL`/scenario
+grammar), and `## Non-goals`. Copy `.chorus/specs/TEMPLATE/prd.md` to start. There is **no `tasks.md`**
+(Chorus Tasks own execution state) and **no changelog section** (git history is the audit trail).
 
-## One-way sync to Chorus
+## Always mirror to Chorus
 
-The local file is the **source of truth**; Chorus is a downstream mirror. Sync is **push-only** — there is no reverse pull in v1. At proposal submit (and on later edits), the file is mirrored into a Chorus `spec` document using the existing `chorus_pm_add_document_draft … --arg-file content=<file>` transport — byte-exact, with the document content streamed from the file's bytes (never re-typed by the agent). `spec` is a pre-existing document type; spec-lite adds **no new MCP tool, no CLI command, no backend, and no schema change**.
+The local folder is the **source of truth**; Chorus is a one-way downstream mirror (no reverse pull).
+Each `<type>.md` mirrors byte-exact to a Chorus Document of that `type`, using the existing
+`chorus_pm_add_document_draft … --arg-file content=<file>` transport — content streamed from the file's
+bytes, never re-typed by the agent. `prd`, `tech_design`, `adr`, `spec`, `guide` are all pre-existing
+`Document.type` values, so spec-lite adds **no new MCP tool, CLI, backend, or schema**. Post-approval
+edits use `chorus_pm_update_document`; every mirror is guarded by the `chorus_check_response`
+halt-on-error helper (openspec-aware §6).
 
-**Deterministic proposal↔file link.** The proposal `description` carries a literal `Spec-lite change slug: <slug>` line (the analogue of OpenSpec's slug line), and the spec file's frontmatter records `proposalUuid` (and, after approval, the materialized `documentUuid` — backfilled once known, and because that edits the file it is **immediately re-mirrored** so local stays byte-consistent with Chorus; re-mirror is then fully deterministic). Develop resolves the file from the slug line and the document from frontmatter `documentUuid`/`proposalUuid` (unique match, else halt) — never by matching title+type, which isn't unique across changes. The `proposalUuid` is written into frontmatter **before** the first mirror, so the local file and the first Chorus copy are byte-consistent from the start.
-
-**Task state authority.** The spec file's `## Tasks` checkboxes are a local authoring view. Once the proposal is approved, tasks materialize as real Chorus Tasks and **Chorus is authoritative for execution state** — the one-way push does not sync task status back into the file. The file boxes are a convenience, not the source of truth for progress.
+**Deterministic link.** The proposal `description` carries one literal `Spec-lite change slug: <slug>`
+line so develop can find the folder; `prd.md` frontmatter records `proposalUuid` / `documentUuid` once
+known (re-mirror after backfilling so local stays byte-identical to Chorus).
 
 ## Local audit trail (留痕)
 
-Because each spec is plain git-tracked markdown, its full history is `git log --follow .chorus/specs/<slug>.md` — readable and diffable offline, with or without a Chorus connection. **Git history is the authoritative record**; the `## Changelog` section is a lightweight human-readable summary appended as the change progresses. Generate timestamps with `date -u` rather than hand-writing them (or just record date + event). Keep it minimal. No separate audit file is needed.
+Because each spec is plain git-tracked markdown, its full history is `git log --follow
+.chorus/specs/<slug>/` — readable and diffable offline, with or without a Chorus connection. **Git
+history is the authoritative record**; there is no separate changelog file to maintain. Only
+`.chorus/specs/` is version-controlled — the rest of `.chorus/` (plugin runtime state) stays gitignored
+via `.chorus/*` + `!.chorus/specs/`.
 
-Only `.chorus/specs/` is version-controlled; the rest of `.chorus/` (plugin runtime state) stays gitignored via `.chorus/*` + `!.chorus/specs/`.
-
-**Single-writer under parallel tasks.** The spec is one shared file, so in a multi-task wave only the orchestrator / main agent updates it (Changelog, checkboxes, re-mirror); parallel workers report via `chorus_report_work` and don't touch the spec. This avoids git conflicts and last-write-wins clobbering. A non-orchestrator that must update re-reads immediately before writing to detect conflicts.
+**Single-writer under parallel tasks.** The folder is shared, so in a multi-task wave only the
+orchestrator / main agent edits + re-mirrors; parallel workers report via `chorus_report_work` and don't
+touch the specs. A non-orchestrator that must write re-reads immediately before editing to detect conflicts.
 
 ## Why it saves tokens and time
 
-The savings are twofold, mirroring lessons from prior lightweight spec systems:
-
-- **Fewer files, terser format.** One file instead of four means far less content to read and write per change. This echoes **AWS AI-DLC** (`awslabs/aidlc-workflows`), whose `aidlc-docs/` is a handful of plain-markdown files; its RFC #105 makes the sharper point that the real token lever is *lean, deferred loading* rather than volume — spec-lite keeps the skill itself small and loads it only when the mode resolves to `lite`.
-- **No subprocess, no strict validation.** Dropping the OpenSpec CLI round-trips and the `SHALL`/scenario grammar removes both wall-clock and cognitive overhead. **superpowers** (`obra/superpowers`) similarly keeps its spec + plan as plain git-committed markdown with checkbox tasks and no validator.
-- **Byte-exact mirror.** The `--arg-file` transport streams the file into the document's `content` without the agent re-emitting it, saving the ~20k+ tokens a re-typed markdown body would cost per proposal.
+- **Fewer files, terser format, Chorus-native names.** A `prd.md` (+ optional `tech_design.md`) instead
+  of OpenSpec's four files means far less to read and write. This echoes **AWS AI-DLC**
+  (`awslabs/aidlc-workflows`), whose `aidlc-docs/` is a handful of plain-markdown files; its RFC #105
+  makes the sharper point that the real token lever is *lean, deferred loading* — spec-lite keeps the
+  skill small and loads it only when the mode resolves to `lite`.
+- **No subprocess, no strict validation.** Dropping the OpenSpec CLI round-trips and the
+  `SHALL`/scenario grammar removes both wall-clock and cognitive overhead. **superpowers**
+  (`obra/superpowers`) similarly keeps its spec + plan as plain git-committed markdown, no validator.
+- **Byte-exact mirror.** `--arg-file` streams the file into the document's `content` without the agent
+  re-emitting it, saving the ~20k+ tokens a re-typed markdown body would cost per proposal.
 
 ## Not in v1 (follow-ups)
 
-Making spec-lite the default; bidirectional (Chorus → local) pull; and propagating the skill beyond the Claude Code plugin to the other plugin surfaces (Codex/Kiro/OpenClaw/Pi/dsh).
+Bidirectional (Chorus → local) pull; and propagating the skill beyond the Claude Code plugin to the
+other plugin surfaces (Codex/Kiro/OpenClaw/Pi/dsh).

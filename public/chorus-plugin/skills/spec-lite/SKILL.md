@@ -1,6 +1,6 @@
 ---
 name: spec-lite
-description: Lightweight local spec management for Chorus PM workflows — a single git-tracked `.chorus/specs/<slug>.md` per change (intent + requirements + tasks + changelog), local-first, mirrored one-way into Chorus. An opt-in, low-token alternative to the heavier openspec-aware path. Read from proposal / develop / yolo when the spec mode resolves to `lite`.
+description: Lightweight, Chorus-native local specs for Chorus PM workflows — a git-tracked folder `.chorus/specs/<slug>/` of plain-markdown docs named by Chorus Document type (prd.md, tech_design.md, …), each mirrored 1:1 into Chorus. The default spec mode; a low-token alternative to the heavier openspec-aware path. Read from proposal / develop / yolo when the spec mode resolves to `lite`.
 license: AGPL-3.0
 metadata:
   author: chorus
@@ -8,145 +8,79 @@ metadata:
   mcp_server: chorus
 ---
 
-# spec-lite — Lightweight Local Spec Authoring
+# spec-lite — lightweight local spec authoring
 
-A **shared sub-procedure** invoked by the Chorus stage skills (proposal, develop, yolo) — the lightweight sibling of `openspec-aware`. Where OpenSpec scaffolds four files per change and validates strict `SHALL`/scenario grammar through a CLI subprocess, spec-lite keeps **one plain-markdown file per change**, git-tracked, mirrored one-way into Chorus.
+A **shared sub-procedure** for the Chorus stage skills (proposal, develop, yolo) and the **default**
+spec mode. Instead of OpenSpec's four-file scaffold + `SHALL`/scenario grammar + CLI, a change is
+one git-tracked folder of plain-markdown docs, each mirrored 1:1 into Chorus. No new CLI, MCP tool,
+backend, or schema — mirroring reuses the existing document tools.
 
-It is deliberately **infrastructure-free**: no new `chorus spec` CLI, no new MCP tool, no backend service, no database schema. Sync reuses the existing document tools. Savings come from (a) one terse file instead of four, and (b) dropping the OpenSpec CLI subprocess + strict validation.
+## Mode (how you got here)
 
----
+`CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}`; the SessionStart `## Spec Mode`
+section states the active value. **lite is the default when `CHORUS_SPEC_MODE` is unset** — you are
+here because the mode resolved to `lite`. `=openspec` → the `openspec-aware` skill instead; `=off` →
+free-form, no spec artifact. If the mode is not `lite`, this skill is a no-op — return to the caller.
 
-## §1. Mode selection (how you got here)
+## The change folder
 
-Resolve the active spec mode deterministically to **one** value. OpenSpec stays the default when active — spec-lite never overrides it silently:
+`.chorus/specs/<slug>/` (`<slug>` kebab-case, from the idea title, unique). Inside it, plain-markdown
+docs named by **Chorus Document type**:
 
-1. `CHORUS_SPEC_MODE=lite` → **lite** (this skill). `=openspec` → openspec-aware. `=off` → free-form (no spec artifact).
-2. Else if OpenSpec is active (`CHORUS_OPENSPEC_ACTIVE=1`, per `openspec-aware` §1) → **openspec**.
-3. Else if a `.chorus/specs/` directory exists at the repo root → **lite**.
-4. Else → **free-form**.
+| File | `Document.type` | Required? |
+|---|---|---|
+| `prd.md` | `prd` | **yes** — the only required file |
+| `tech_design.md` | `tech_design` | optional — the "how" |
+| `adr.md` / `spec.md` / `guide.md` | `adr` / `spec` / `guide` | optional |
 
-Branch on the **resolved value**, not on `CHORUS_OPENSPEC_ACTIVE` — `lite` and `free-form` share `CHORUS_OPENSPEC_ACTIVE=0`, so keying off the raw flag double-matches. `CHORUS_SPEC_MODE=off` resolves to free-form explicitly (it is not the same as unset). If the resolution is not `lite`, this skill is a no-op — return to the caller.
+`prd.md` = a Chorus PRD: frontmatter (`slug`, `title`, `status: draft\|active\|done`, `created`,
+optional `ideaUuid`/`proposalUuid`/`documentUuid`), then `## Intent` (intent + background),
+`## Requirements` (plain prose + `- [ ]` acceptance points — no `SHALL`/scenario grammar), and a
+`## Non-goals` bullet list. Copy `.chorus/specs/TEMPLATE/prd.md` to start (or write it from the shape
+above if the template isn't in the repo). Keep it terse — the whole point is fewer tokens than OpenSpec.
 
-**Fail fast on an unsatisfiable explicit request.** If `CHORUS_SPEC_MODE=openspec` but OpenSpec isn't usable, the flow must halt — never silently fall back. Distinguish the cause in the message: if OpenSpec is **explicitly disabled** (`CHORUS_OPENSPEC_MODE=off`, or the plugin's Enable-OpenSpec toggle is off) that's a **config conflict** (`CHORUS_SPEC_MODE=openspec` vs OpenSpec disabled) — say so; if it's simply **not installed** (no `openspec/` dir or no `openspec` CLI on `PATH`), surface the **install hint** (`npm i -g @fission-ai/openspec` / `openspec init`). **This check is enforced by the calling stage skill's mode resolver — `proposal` / `yolo`, after resolving and before branching** (the `develop` skill consumes an existing proposal's `Spec-lite change slug:` marker and does not re-select the mode). spec-lite itself is not loaded when the mode is `openspec`, so it cannot be the enforcement point.
+## Author
 
-`CHORUS_SPEC_MODE` is the spec-mode selector for this feature. The legacy `CHORUS_OPENSPEC_MODE=off` only **disables OpenSpec**; with no `CHORUS_SPEC_MODE` set, resolution then continues down the order — so it yields **lite** if a `.chorus/specs/` dir exists, otherwise free-form (it does not force free-form).
+1. Pick `$SLUG`; ensure `.chorus/specs/$SLUG/` exists (it is git-tracked; `.gitignore` re-includes
+   `!.chorus/specs/`). Write `prd.md` (and `tech_design.md` etc. only if the change warrants them).
+2. When you create the proposal container, put one literal line in its `description` so develop can
+   find the folder later: `Spec-lite change slug: <slug>` (own line, no trailing punctuation).
 
----
+## Always mirror to Chorus
 
-## §2. The file format: `.chorus/specs/<slug>.md`
-
-One file per change. `<slug>` is kebab-case, derived from the idea/change title, unique within `.chorus/specs/`. Copy `.chorus/specs/TEMPLATE.md` to start (or, if it isn't present — e.g. a user repo where the plugin didn't ship it — create the file from the inline template below).
-
-```markdown
----
-slug: add-export-csv
-title: Add CSV export to the reports page
-status: draft            # draft | active | done
-created: 2026-09-08
-ideaUuid:                # optional Chorus idea uuid
-proposalUuid:            # REQUIRED before the first mirror — the originating proposal
-documentUuid:            # optional — backfilled after approval; makes re-mirror deterministic
----
-
-## Intent
-<1-2 sentences: the user/business intent this change serves.>
-
-## Requirements
-### R1: <requirement name>
-<plain prose — no SHALL/MUST grammar required.>
-- [ ] AC: <testable acceptance criterion>
-- [ ] AC: <testable acceptance criterion>
-
-## Tasks
-- [ ] T1: <unit of work>
-- [ ] T2: <unit of work> (depends: T1)
-
-## Changelog
-- 2026-09-08T03:00:00Z — created (spec-lite)
-```
-
-Rules:
-
-- **Four sections, in order:** `## Intent`, `## Requirements`, `## Tasks`, `## Changelog`. Frontmatter carries the machine-readable metadata; `proposalUuid` is the durable link back to Chorus (see §4).
-- **Requirements** are plain prose; acceptance criteria are `- [ ]` checkbox items under each requirement. No scenario grammar, no validator.
-- **Tasks** are `- [ ]` checkboxes; note dependencies inline (`(depends: T1)`).
-- A `## Design` section MAY be added inline when a change warrants it — do not split it into a separate file.
-
----
-
-## §3. Authoring steps
-
-1. Pick `$SLUG` (kebab-case, from the idea title). Ensure `.chorus/specs/` exists (create it if missing — it is git-tracked; see the repo `.gitignore` `!.chorus/specs/` re-include).
-2. Create the file: copy `.chorus/specs/TEMPLATE.md` → `.chorus/specs/$SLUG.md` **if the template exists**, otherwise write the file from the §2 inline template. Fill Intent, Requirements (+AC), Tasks. Set frontmatter `slug`, `title`, `status: draft`, `created`, and `ideaUuid` if known. Leave `proposalUuid` blank until §4.
-3. Keep it terse. The whole value is fewer tokens than OpenSpec — do not pad.
-
----
-
-## §4. Sync — one-way push, local → Chorus
-
-The local file is the **source of truth**; Chorus is a downstream mirror. Sync is **push-only** (no reverse pull in v1) and uses the **existing** document tools with the byte-exact `--arg-file` transport — the same mechanism `openspec-aware` §3.6 uses. `type: "spec"` is a pre-existing `Document.type`; **no schema change**.
-
-**Deterministic link (do this so develop can find the file later).** When you create the proposal container:
-
-1. Put a single provenance line in the proposal `description`, on its own line, literal prefix, no trailing punctuation — the spec-lite analogue of OpenSpec's slug line:
-
-   ```
-   Spec-lite change slug: <slug>
-   ```
-
-2. **Write `proposalUuid` into the file's frontmatter BEFORE the first mirror**, so the mirrored bytes already carry it and local == mirror from the very first push. (Backfilling *after* the mirror leaves the local source-of-truth and the fresh Chorus copy inconsistent — don't.)
-
-**Submit-time mirror (the auto-sync trigger).** Then mirror the file into a Chorus `spec` document draft — one call, content filled from the file's bytes (never re-typed):
+Every `<type>.md` mirrors **byte-exact** to a Chorus Document of that `type`. Fill `content` from the
+file's bytes with `--arg-file` — never re-type the body (that drifts and burns ~20k tokens):
 
 ```bash
 chorus mcp call chorus_pm_add_document_draft \
-  "{\"proposalUuid\":\"$PROPOSAL_UUID\",\"type\":\"spec\",\"title\":\"Spec: $TITLE\"}" \
-  --arg-file content=".chorus/specs/$SLUG.md"
+  "{\"proposalUuid\":\"$PROPOSAL_UUID\",\"type\":\"prd\",\"title\":\"PRD: $TITLE\"}" \
+  --arg-file content=".chorus/specs/$SLUG/prd.md"
 ```
 
-Guard every mirror call with the `chorus_check_response` halt-on-error helper from `openspec-aware` §6 (three signals: exit code, `"error":` in body, empty body) — no silent errors.
+One call per file (`type` matches the filename). Post-approval, propagate edits with
+`chorus_pm_update_document` against the materialized Document UUID (draft edits before approval:
+`chorus_pm_update_document_draft`). Guard every mirror with the `chorus_check_response` halt-on-error
+helper — copy it from `openspec-aware` §6 (checks exit code, `"error":` in body, empty body); no silent
+errors. Record `proposalUuid`/`documentUuid` in `prd.md` frontmatter once known and re-mirror, so local
+stays byte-identical to Chorus. (No `chorus` on `PATH`? Fall back to `chorus-api.sh` + `json_encode_file`, `openspec-aware` §3.6.)
 
-**Later edits.** Before approval, propagate local edits with `chorus_pm_update_document_draft` (same `--arg-file`); after approval, with `chorus_pm_update_document` against the materialized Document UUID.
+## Develop-time: 留痕 via git history
 
-**Locating the right file/document (develop-time).** Do NOT match by `title`+`type` alone — not unique across changes. Resolve deterministically:
+**Git history is the audit trail** — `git log --follow .chorus/specs/$SLUG/`. There is no changelog
+section to maintain. As work proceeds, edit the docs, tick `- [ ]` acceptance points, set frontmatter
+`status: active` → `done`, and re-mirror each edited file so Chorus stays current.
 
-- From a proposal → its spec file: grep the proposal `description` for `^Spec-lite change slug: `, then open `.chorus/specs/<slug>.md`.
-- From a spec file → its Chorus document: prefer the frontmatter `documentUuid` when present. Backfill it the first time you learn it (after the proposal is approved and the draft materializes into a Document). **Backfilling `documentUuid` changes the file, so immediately re-mirror the file via `chorus_pm_update_document` using that same `documentUuid`** — otherwise local ≠ mirror reappears right after approval. Absent a `documentUuid`, use the frontmatter `proposalUuid`: among that proposal's `type: "spec"` documents there is exactly one — if zero or many match, **halt** and surface it rather than guessing.
+**Single-writer:** the folder is shared, so in a multi-task wave only the **orchestrator / main agent**
+edits + re-mirrors; parallel workers report via `chorus_report_work` only. A non-orchestrator that must
+write re-reads immediately before editing to catch conflicts.
 
-**Task state authority.** The `## Tasks` checkboxes are a **local authoring view**. Once the proposal is approved, tasks materialize as real Chorus Tasks and **Chorus is authoritative for execution state** (claim / verify / done); the one-way push does not sync Chorus task status back into the file. Tick the file boxes as a convenience if you like, but don't treat them as the source of truth for task progress.
+**Task state lives in Chorus**, not the file — once the proposal is approved, tasks are real Chorus
+Tasks (claim / verify / done). The `- [ ]` points in `prd.md` are acceptance intent, not a task tracker.
 
----
+## Checklist
 
-## §5. Develop-time: Changelog / 留痕 (single-writer)
-
-The `## Changelog` section is the local audit trail (留痕). As work proceeds:
-
-- Append a timestamped line on each meaningful state change (created, tasks started, status → active/done):
-  `- 2026-09-08T04:10:00Z — T1 done; status → active`
-- Tick the `- [ ]` task/AC checkboxes as they complete.
-- After editing, re-mirror the file to Chorus (§4) so the platform view stays current.
-
-**Single-writer rule (concurrency).** The spec file is one shared file; parallel task workers all editing + re-mirroring it race (git conflicts, last-write-wins). So: **only the orchestrator / main agent updates the spec file and re-mirrors** — parallel workers report progress via `chorus_report_work` and do NOT touch the spec. If a non-orchestrator must update it, **re-read the file immediately before editing and detect conflicts** rather than blind-writing.
-
-**Git history is the authoritative record**, not the Changelog. `git log --follow .chorus/specs/$SLUG.md` is the versioned history; the `## Changelog` is a lightweight human-readable summary. Generate any timestamp with `date -u +%Y-%m-%dT%H:%M:%SZ` (don't hand-write it) — or just record date + event. Keep entries minimal. Because the file is plain git-tracked markdown, it and its history remain readable offline, with or without a Chorus connection.
-
-When the change is delivered, set frontmatter `status: done` and append a final Changelog line.
-
----
-
-## §6. What spec-lite does NOT add
-
-- **No** new CLI command (no `chorus spec ...`).
-- **No** new MCP tool — sync uses only `chorus_pm_add_document_draft` / `chorus_pm_update_document(_draft)`.
-- **No** backend service, no sync daemon, no `prisma/schema.prisma` change.
-- **No** change to the OpenSpec path — spec-lite is additive and opt-in; when OpenSpec is active and `CHORUS_SPEC_MODE` is unset, openspec-aware runs unchanged.
-
----
-
-## §7. Quick checklist
-
-1. Resolve mode (§1) to one value. If not `lite`, no-op.
-2. Pick `$SLUG`; create `.chorus/specs/$SLUG.md` (copy TEMPLATE, else inline template); fill Intent / Requirements+AC / Tasks (§2–§3).
-3. Create the proposal with a `Spec-lite change slug: <slug>` line; write `proposalUuid` into frontmatter → then mirror to a `spec` document draft via `--arg-file` (§4).
-4. During develop → orchestrator appends timestamped `## Changelog` entries, ticks checkboxes, re-mirrors; locate the file/doc by slug line + frontmatter `proposalUuid` (§4–§5).
-5. On delivery → `status: done` + final Changelog line.
+1. Confirm mode = `lite` (else no-op).
+2. Create `.chorus/specs/$SLUG/prd.md` (+ optional `tech_design.md`, …) from the template.
+3. Create the proposal with a `Spec-lite change slug: <slug>` line; mirror each file to a Document of its `type` via `--arg-file`.
+4. Develop → edit docs, re-mirror, tick acceptance points; git history is the record.
+5. On delivery → frontmatter `status: done`, final re-mirror.

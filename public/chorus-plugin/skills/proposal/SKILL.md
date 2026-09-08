@@ -87,24 +87,23 @@ chorus_pm_create_proposal({
 
 ### Step 1.5: Select spec mode
 
-Before authoring document drafts, resolve which spec mode to author in. The order is deterministic (OpenSpec stays the default when active — spec-lite never overrides it silently):
+Before authoring document drafts, resolve which spec mode to author in. `CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}` — **lite is the default**. The SessionStart `## Spec Mode` section already states the resolved value:
 
 1. `CHORUS_SPEC_MODE=lite` → **spec-lite** (lightweight branch below). `=openspec` → OpenSpec. `=off` → free-form.
-2. Else, load the `openspec-aware` skill and run its §1 detection: if `CHORUS_OPENSPEC_ACTIVE=1` → **OpenSpec** (unchanged default).
-3. Else, if a `.chorus/specs/` directory exists at the repo root → **spec-lite**.
-4. Else → **free-form**.
+2. Unset → **spec-lite** (the default — OpenSpec is no longer auto-selected merely because an `openspec/` dir + CLI exist).
+3. Legacy `CHORUS_OPENSPEC_MODE=off` is still honored — it forces *not*-openspec (default is already lite).
 
-**Fail fast on an unsatisfiable explicit request (check here, after resolving, before branching):** if the resolved mode is **OpenSpec** *because* `CHORUS_SPEC_MODE=openspec` was set, but OpenSpec isn't usable (`CHORUS_OPENSPEC_ACTIVE=0`), do **not** silently fall back to lite/free-form and do **not** drop into a branch with no OpenSpec to author — halt. Name the cause: if OpenSpec is **explicitly disabled** (`CHORUS_OPENSPEC_MODE=off` or the Enable-OpenSpec toggle is off) report a **config conflict**; if it's just **not installed** (no `openspec/` dir or CLI) surface the **install hint** (`npm i -g @fission-ai/openspec` / `openspec init`). (For unset `CHORUS_SPEC_MODE`, step 2 already routes a non-active OpenSpec onward to lite/free-form — no error.)
+**Fail fast on an unsatisfiable explicit request (check here, after resolving, before branching):** if `CHORUS_SPEC_MODE=openspec` but OpenSpec isn't usable, do **not** silently fall back — halt. Name the cause: if OpenSpec is **explicitly disabled** (`CHORUS_OPENSPEC_MODE=off` or the Enable-OpenSpec toggle is off) report a **config conflict**; if it's just **not installed** (no `openspec/` dir or CLI) surface the **install hint** (`npm i -g @fission-ai/openspec` / `openspec init`).
 
-Branch on the **resolved mode** (not on the raw `CHORUS_OPENSPEC_ACTIVE` flag — `lite` and `free-form` share `=0`):
+Branch on the **resolved mode**:
 
-- **resolved = spec-lite** → load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG`, author one `.chorus/specs/<slug>.md` (Intent / Requirements+AC / Tasks / Changelog), create the proposal container (Step 1 above) with a literal `Spec-lite change slug: <slug>` line in `description`, write `proposalUuid` into the file's frontmatter **before** the first mirror, then mirror the file into a `spec` document draft via `chorus mcp call chorus_pm_add_document_draft … --arg-file content=.chorus/specs/<slug>.md` at submit. Skip Step 2 below — the file-fill mirror replaces inline drafting for this document. (Add tasks via `chorus_pm_add_task_draft` as usual.)
+- **resolved = spec-lite** → load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG`, author a Chorus-native change folder `.chorus/specs/<slug>/` — at minimum `prd.md` (Chorus PRD: Intent / plain-prose Requirements + `- [ ]` acceptance points / Non-goals), plus `tech_design.md` etc. only if the change warrants them. Create the proposal container (Step 1 above) with a literal `Spec-lite change slug: <slug>` line in `description`, then mirror **each** `<type>.md` into a document draft of that `type` (`prd`, `tech_design`, …) via `chorus mcp call chorus_pm_add_document_draft … --arg-file content=.chorus/specs/<slug>/<type>.md`. Skip Step 2 below — the file-fill mirror replaces inline drafting for these documents. (Add tasks via `chorus_pm_add_task_draft` as usual — there is no `tasks.md`.)
 
-- **resolved = OpenSpec** (`CHORUS_OPENSPEC_ACTIVE=1`) → follow `openspec-aware` §3. Pick `$SLUG`, scaffold `openspec/changes/<slug>/`, author `proposal.md` / `design.md` / `specs/<capability>/spec.md` locally, then create the proposal container (Step 1 above) with the literal line `OpenSpec change slug: <slug>` in `description`, and mirror each local file into a document draft.
+- **resolved = OpenSpec** (`CHORUS_SPEC_MODE=openspec`, OpenSpec usable) → follow `openspec-aware` §3. Pick `$SLUG`, scaffold `openspec/changes/<slug>/`, author `proposal.md` / `design.md` / `specs/<capability>/spec.md` locally, then create the proposal container (Step 1 above) with the literal line `OpenSpec change slug: <slug>` in `description`, and mirror each local file into a document draft.
 
   > **⛔ Mandatory in OpenSpec mode:** mirror calls fill `content` from the local file — prefer `chorus mcp call … --arg-file content=<file>`, falling back to the `chorus-api.sh` wrapper with `json_encode_file` when `chorus` is not on `PATH` — see `openspec-aware` §3.6. Do **not** call `chorus_pm_add_document_draft` directly from the MCP harness with a hand-typed `content` field. Re-typing thousands of lines through the LLM burns 20k+ content tokens per proposal and breaks byte-equality with the local source of truth (`openspec-aware` §2 Rule 1 explains the full reasoning). Skip Step 2 below when in OpenSpec mode — the file-fill flow in `openspec-aware` §3.6 replaces it for documents.
 
-- **resolved = free-form** (explicit `CHORUS_SPEC_MODE=off`, OR unset with OpenSpec inactive and no `.chorus/specs/` dir) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
+- **resolved = free-form** (explicit `CHORUS_SPEC_MODE=off`) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
 
 ### Step 2: Add Document Drafts
 

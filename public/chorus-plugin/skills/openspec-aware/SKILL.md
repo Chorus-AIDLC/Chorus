@@ -16,7 +16,7 @@ This skill is a **shared sub-procedure** invoked by the Chorus stage skills (pro
 - Activates when **all three** signals hold (see §1): `CHORUS_OPENSPEC_MODE` is not `off`, an `openspec/` directory exists at the project root, and the `openspec` CLI is on `PATH`.
 - Otherwise the calling skill falls back to its existing free-form behavior.
 
-> **See also — `spec-lite`:** for a lighter alternative that keeps one git-tracked `.chorus/specs/<slug>.md` per change (no CLI, no strict validation, one-way `--arg-file` mirror to Chorus), see the `spec-lite` skill (`skills/spec-lite/SKILL.md`). The stage skills resolve OpenSpec vs spec-lite vs free-form via a deterministic order; OpenSpec (this skill) remains the default whenever it is active, so nothing below changes.
+> **See also — `spec-lite` (the default):** spec-lite is now the **default** spec mode — a Chorus-native, git-tracked change folder `.chorus/specs/<slug>/` of plain-markdown docs named by Document type (`prd.md`, `tech_design.md`, …), each mirrored 1:1 into Chorus via the same `--arg-file` transport, with no CLI and no strict validation. OpenSpec (this skill) is **opt-in** via `CHORUS_SPEC_MODE=openspec`; a session that resolves to OpenSpec follows everything below unchanged. See the `spec-lite` skill (`skills/spec-lite/SKILL.md`).
 
 When you reach a point in proposal / develop / yolo where this skill is referenced, **read the value of `CHORUS_OPENSPEC_ACTIVE` from the SessionStart context** (see §1) and branch on it. Do not re-run the detection block — the SessionStart hook has already done it once for this session.
 
@@ -24,7 +24,7 @@ When you reach a point in proposal / develop / yolo where this skill is referenc
 
 ## §1. Detection — already done at SessionStart
 
-The Chorus plugin's SessionStart hook (`bin/on-session-start.sh`) computes `CHORUS_OPENSPEC_ACTIVE` once when the session opens and writes a `## OpenSpec Mode` section into the plugin's injected context. The value of `CHORUS_OPENSPEC_ACTIVE` is `1` only when **all three** of these hold:
+The Chorus plugin's SessionStart hook (`bin/on-session-start.sh`) resolves the active spec mode once when the session opens and writes a `## Spec Mode` section into the plugin's injected context. When the resolved mode is a usable OpenSpec, that section also carries a `CHORUS_OPENSPEC_ACTIVE=1` line. `CHORUS_OPENSPEC_ACTIVE` is `1` only when **all three** of these hold:
 
 1. `CHORUS_OPENSPEC_MODE` is **not** set to `off` (explicit opt-out wins).
 2. The project root contains an `openspec/` directory (i.e. someone ran `openspec init` here).
@@ -34,26 +34,20 @@ Both signals (2) and (3) are required because the OpenSpec authoring path needs 
 
 ### How to read the value
 
-You should already see something like this in your context (look for the `## OpenSpec Mode` section near the top of the conversation):
+You should already see something like this in your context (look for the `## Spec Mode` section near the top of the conversation). This skill is only loaded when the mode resolved to a usable OpenSpec, so you should see:
 
 ```
-## OpenSpec Mode
+## Spec Mode
+
+CHORUS_SPEC_MODE=openspec (explicit; openspec/ directory + openspec CLI both present)
 
 CHORUS_OPENSPEC_ACTIVE=1 (openspec/ directory + openspec CLI both present)
-```
-
-or:
-
-```
-## OpenSpec Mode
-
-CHORUS_OPENSPEC_ACTIVE=0 (no openspec/ directory at /path/to/repo/openspec)
 ```
 
 Branch:
 
 - `CHORUS_OPENSPEC_ACTIVE=1` → follow §3 (OpenSpec authoring).
-- `CHORUS_OPENSPEC_ACTIVE=0` → return to the calling skill's free-form path. **Do not** scaffold `openspec/changes/`. **Do not** add the slug line to the proposal description.
+- No `CHORUS_OPENSPEC_ACTIVE=1` line (the section shows `CHORUS_SPEC_MODE=lite` / `off`, or you were spawned without SessionStart context) → this skill is a no-op; return to the calling skill's path. **Do not** scaffold `openspec/changes/`. **Do not** add the slug line to the proposal description. (Reconstruct the value with the manual fallback below if you genuinely have no context.)
 
 ### Manual fallback
 
@@ -470,7 +464,7 @@ This is project-wide policy: no silent errors.
 
 When invoked from a stage skill (proposal / develop / yolo):
 
-1. Read `CHORUS_OPENSPEC_ACTIVE` from the `## OpenSpec Mode` section in the SessionStart context (§1). If it isn't there, fall back to the manual probe in §1.
+1. Read `CHORUS_OPENSPEC_ACTIVE` from the `## Spec Mode` section in the SessionStart context (§1). If it isn't there, fall back to the manual probe in §1.
 2. If `CHORUS_OPENSPEC_ACTIVE=0` → return to caller's free-form path (§4).
 3. Otherwise:
    a. Pick `$SLUG` (§3.1).
