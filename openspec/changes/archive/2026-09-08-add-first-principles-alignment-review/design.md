@@ -4,7 +4,7 @@
 
 Add an **intent-alignment** dimension to the three existing Chorus reviewers so each gate checks, top-down, that the work still serves the *original Idea's intent* — not just that it passes its local checks. The design has **one moving part**:
 
-1. **A compact shared alignment snippet** added to every reviewer prompt. The snippet tells the reviewer to (a) **resolve the originating Idea** from the entity under review, (b) read it with the **existing** `chorus_get_idea` / `chorus_get_elaboration` / `chorus_get_comments`, (c) build the *original-intent* **baseline from human-authored input only** (agent-authored / agent-answered entries are audit context only), and (d) apply a fixed drift/verdict rule.
+1. **A tight, reviewer-specific alignment instruction** folded into each reviewer's existing flow — proposal / task / code each get their own, at their own altitude, **not one shared block**. Each tells that reviewer to (a) **resolve the originating Idea** via its own path, (b) read it with the **existing** `chorus_get_idea` / `chorus_get_elaboration` / `chorus_get_comments`, (c) build the *original-intent* **baseline from human-authored input only** (agent-authored / agent-answered entries are audit context only), and (d) apply the drift/verdict rule at that reviewer's stage.
 
 There is **no new MCP tool**. The owner reviewed an earlier tool-backed draft (a consolidated `chorus_get_alignment_anchor` read) and rejected it as too complex; the alignment check is implemented **purely as reviewer-prompt reminders** that self-gather through reads every reviewer surface already has. The snippet is kept bounded so the per-reviewer prompt does not balloon (the owner's explicit constraint: *"不要让 reviewer 的 prompt 膨胀太多"*).
 
@@ -79,7 +79,7 @@ The two escape hatches map onto this cleanly: a **human-authored** authorization
 
 ## Multi-surface propagation
 
-Seven surfaces, each with its own copy and spawn mechanism (Claude Code `Agent()`, Codex `spawn_agent`, OpenClaw `sessions_spawn` + `chorus__` prefix, Kiro JSON `prompt` string with `tools:["read","@chorus"]`, Pi `subagent_spawn`, dsh `subagent` with `-chorus` suffix, standalone skill lib). The alignment snippet is added to all 21 reviewer definitions; the plugin-maintenance skill's seven-surface checklist is the propagation guardrail. Because the snippet only uses reads every surface already has via its `@chorus` binding, there is no server-side component to keep in sync — parity is purely textual (byte-consistent modulo the tool prefix and each host's section framing).
+Seven surfaces, each with its own copy and spawn mechanism (Claude Code `Agent()`, Codex `spawn_agent`, OpenClaw `sessions_spawn` + `chorus__` prefix, Kiro JSON `prompt` string with `tools:["read","@chorus"]`, Pi `subagent_spawn`, dsh `subagent` with `-chorus` suffix, standalone skill lib). Each reviewer type's alignment instruction is added to its definitions across the seven surfaces (three types × 7 = 21 defs); the plugin-maintenance skill's seven-surface checklist is the propagation guardrail. Because the instructions only use reads every surface already has via its `@chorus` binding, there is no server-side component to keep in sync — parity is purely textual and **per reviewer type**: within a type the seven surfaces are consistent (modulo tool prefix and host framing), giving three distinct instruction bodies overall, not one shared block.
 
 ## Risks & mitigations
 
