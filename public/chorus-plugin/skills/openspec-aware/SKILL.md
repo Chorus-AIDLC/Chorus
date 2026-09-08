@@ -54,10 +54,15 @@ Branch:
 If you're in a sub-shell, sub-agent, or session that did not see the `## Spec Mode` section (e.g. spawned mid-session without the parent's context), **do not hand-roll the detection** — source the *same* resolver the hook uses, so there is one computation of the mode:
 
 ```bash
-# resolve-spec-mode.sh lives next to the plugin hooks (beside on-session-start.sh).
-. "<chorus-plugin>/bin/resolve-spec-mode.sh"
-# It sets SPEC_MODE (lite|openspec|off), SPEC_FAIL (non-empty ⇒ halt),
-# and CHORUS_OPENSPEC_ACTIVE (1 only for a usable openspec).
+# The resolver sits beside the plugin hooks; ${CLAUDE_PLUGIN_ROOT} is the plugin
+# root Claude Code exports (the same var hooks.json uses).
+RESOLVER="${CLAUDE_PLUGIN_ROOT}/bin/resolve-spec-mode.sh"
+if [ -f "$RESOLVER" ]; then
+  . "$RESOLVER"   # sets SPEC_MODE (lite|openspec|off), SPEC_FAIL (non-empty ⇒ halt),
+                  # and CHORUS_OPENSPEC_ACTIVE (1 only for a usable openspec)
+else
+  echo "resolve-spec-mode.sh not found; set CHORUS_SPEC_MODE explicitly and re-launch" >&2
+fi
 ```
 
 Then: if `SPEC_FAIL` is non-empty, halt and surface it; if `CHORUS_OPENSPEC_ACTIVE=1` follow §3; otherwise this skill is a no-op — return to the caller, which follows the resolved `SPEC_MODE` (spec-lite or free-form). If you genuinely cannot locate the helper, set `CHORUS_SPEC_MODE` explicitly and re-launch rather than guessing — never re-derive the rule inline (the hook/helper is the single source of truth).

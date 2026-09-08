@@ -60,7 +60,7 @@ Requiring both makes the activation predicate match what's actually needed at ru
 
 ### Sub-agents and sub-shells
 
-Detection runs in the plugin's session-start hook, which fires once per top-level session. Sub-agents that get the parent's context forwarded inherit `CHORUS_OPENSPEC_ACTIVE` for free. If you spawn a sub-agent without forwarding context, the `openspec-aware` skill §1 has a manual fallback block that performs the same three checks locally — use only when SessionStart context is genuinely unavailable.
+Detection runs in the plugin's session-start hook, which fires once per top-level session. Sub-agents that get the parent's context forwarded inherit `CHORUS_OPENSPEC_ACTIVE` for free. If you spawn a sub-agent without forwarding context, the `openspec-aware` skill §1 has a manual fallback that **sources the same `${CLAUDE_PLUGIN_ROOT}/bin/resolve-spec-mode.sh`** the hook uses (not a re-implemented check) — use only when SessionStart context is genuinely unavailable.
 
 ---
 
@@ -135,7 +135,7 @@ Calling these tools directly from the agent's MCP harness with a hand-typed `con
 2. **Byte-equality.** A file-fill path (CLI `--arg-file`, or the fallback's `jq -Rs '.'`) is a byte-faithful encoder. LLM re-emission of long markdown drifts (table alignment, fence escapes, long-URL wraps). The exact byte-equality guarantee holds **only** on a file-fill path.
 3. **Single source of truth.** With a file-fill mirror, the local `openspec/changes/<slug>/*.md` is authoritative; Chorus is a mirror. With agent re-typing, authority splits and a future diff cannot tell which side is correct.
 
-The `chorus_check_response` halt-on-error discipline applies to **both** paths. Free-form mode (`CHORUS_OPENSPEC_ACTIVE=0`) is unaffected — there's no local file to mirror, so direct MCP calls with inline `content` are still the right pattern.
+The `chorus_check_response` halt-on-error discipline applies to **both** OpenSpec transports. When `CHORUS_OPENSPEC_ACTIVE=0`, Rule 1 (this OpenSpec mirror rule) doesn't apply — but note `=0` now covers **two** resolved modes, and only one of them is free-form: `SPEC_MODE=off` is free-form (no spec artifact; author drafts with inline `content` via direct MCP), whereas `SPEC_MODE=lite` (spec-lite) still mirrors `.chorus/specs/<slug>/<type>.md` **byte-exact via `--arg-file`** and must NOT re-type document `content` inline. Don't infer "inline content is fine" from `CHORUS_OPENSPEC_ACTIVE=0` alone — check the resolved `SPEC_MODE`.
 
 ---
 
