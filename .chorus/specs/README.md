@@ -1,27 +1,33 @@
 # `.chorus/specs/` — lightweight local specs
 
-This directory holds **spec-lite** specs. Each `<slug>/` is a **durable spec for a capability/feature**
-(not a single change): a git-tracked folder of plain-markdown docs named by Chorus's own Document types
-— `prd.md` (required), and optionally `tech_design.md`, `adr.md`, `spec.md`, `guide.md`. These docs are
-the **source of truth**, **edited in place** as the capability evolves; each is mirrored 1:1 to a
-**persistent** Chorus Document of the same `type` (later edits bump the Document version = its history).
+This directory holds **spec-lite** specs. Each `<slug>/` is a **capability/feature** (not a single
+change) and contains two kinds of thing:
 
-Each modification effort is recorded as a **dated change file** under
-`.chorus/specs/<slug>/changes/YYYY-MM-DD-<change-slug>.md` — one lean file per effort (What / Why /
-Acceptance), referencing the durable spec (`../prd.md`). The date prefix lets many changes to one spec
-coexist; old change files are never rewritten (git history is 留痕).
+- **`<slug>/spec.md` — the durable local spec.** One cumulative, human-readable, git-tracked file,
+  **edited in place** as the capability evolves. It is the local "current truth", **never synced to
+  Chorus and carries no Chorus ids** — its git history is the record. It never enters the mirror loop.
+- **One dated folder per change effort — `<slug>/<YYYY-MM-DD>-<change-slug>/`** (directly under
+  `<slug>/`, **no `changes/` wrapper**). It holds the Chorus-typed docs for that change — `prd.md`
+  (primary), optionally `tech_design.md` / `adr.md` / `guide.md` / `spec.md`. These **are** mirrored
+  1:1 into **persistent** Chorus Documents of the matching type (later edits bump the Document version
+  = its history); their frontmatter carries `proposalUuid` / `documentUuid`. Old dated folders are
+  never rewritten — a new effort gets a new dated folder.
 
 The surrounding `.chorus/` directory is Chorus **plugin runtime state** (`artifacts/`, `state.json`)
 and is gitignored. Only `.chorus/specs/` is version-controlled — the repo `.gitignore` uses
 `.chorus/*` + `!.chorus/specs/` to ignore runtime state while tracking specs.
 
-- **Start a new capability spec:** copy [`TEMPLATE/prd.md`](./TEMPLATE/) to `<slug>/prd.md`.
-- **Record a change:** copy [`TEMPLATE/changes/YYYY-MM-DD-change.md`](./TEMPLATE/changes/) to
-  `<slug>/changes/<today>-<change-slug>.md`, then edit the durable docs in place.
+- **Start a new capability spec:** copy [`TEMPLATE/spec.md`](./TEMPLATE/) to `<slug>/spec.md`.
+- **Record a change:** copy [`TEMPLATE/YYYY-MM-DD-change/`](./TEMPLATE/) to
+  `<slug>/<today>-<change-slug>/` (rename the folder), write its `prd.md` (+ `tech_design.md` if
+  warranted), then update `<slug>/spec.md` in place.
+- **Naming caution:** the durable file is `<slug>/spec.md` (local only, no ids); a per-change
+  `spec`-type doc would live at `<slug>/<date>-<slug>/spec.md` (synced, carries ids). Prefer `prd.md`
+  as the per-change primary doc.
 - **Format, mode selection, and mirroring:** see the `spec-lite` skill
   (`public/chorus-plugin/skills/spec-lite/SKILL.md`) and [`docs/SPEC_LITE.md`](../../docs/SPEC_LITE.md).
-- **Audit trail (留痕):** `git log -- .chorus/specs/<slug>/` for the whole capability (dated change
-  files + durable-doc diffs; `git log --follow -- <file>` to track a single renamed file) — no
-  changelog file; the mirrored Documents' versions are the parallel record in Chorus.
-- **Living example:** [`spec-lite/`](./spec-lite/) — the spec-lite capability described in this format,
-  with its first change under [`spec-lite/changes/`](./spec-lite/changes/).
+- **Audit trail (留痕):** `git log -- .chorus/specs/<slug>/` for the whole capability (the durable
+  `spec.md`'s in-place diffs + each dated folder's change docs); the mirrored Documents' versions are
+  the parallel record in Chorus. No changelog file. Only dated-folder docs mirror; `spec.md` never does.
+- **Living example:** [`spec-lite/`](./spec-lite/) — the spec-lite capability in this format, with its
+  first change under [`spec-lite/2026-09-08-chorus-native-lite/`](./spec-lite/2026-09-08-chorus-native-lite/).

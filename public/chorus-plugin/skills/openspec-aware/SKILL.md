@@ -16,7 +16,7 @@ This skill is a **shared sub-procedure** invoked by the Chorus stage skills (pro
 - Activates when **all three** signals hold (see §1): `CHORUS_OPENSPEC_MODE` is not `off`, an `openspec/` directory exists at the project root, and the `openspec` CLI is on `PATH`.
 - Otherwise the calling skill follows the resolved `SPEC_MODE` — **spec-lite** (the default when OpenSpec isn't usable) or free-form (`=off`).
 
-> **See also — `spec-lite` (the lightweight fallback):** OpenSpec (this skill) stays the **default whenever it is usable** (`openspec/` dir + CLI, not disabled). When OpenSpec is absent or disabled — or when `CHORUS_SPEC_MODE=lite` is set explicitly — the mode resolves to **spec-lite**: a Chorus-native, git-tracked **durable spec folder** `.chorus/specs/<slug>/` of plain-markdown docs named by Document type (`prd.md`, `tech_design.md`, …) edited in place, with per-effort dated change records under `changes/`, each doc mirrored 1:1 into a persistent Chorus Document via the same `--arg-file` transport, with no CLI and no strict validation. A session that resolves to OpenSpec follows everything below unchanged. See the `spec-lite` skill (`skills/spec-lite/SKILL.md`).
+> **See also — `spec-lite` (the lightweight fallback):** OpenSpec (this skill) stays the **default whenever it is usable** (`openspec/` dir + CLI, not disabled). When OpenSpec is absent or disabled — or when `CHORUS_SPEC_MODE=lite` is set explicitly — the mode resolves to **spec-lite**: a Chorus-native, git-tracked model with a durable local spec `.chorus/specs/<slug>/spec.md` per capability (edited in place, **never synced**), plus one dated folder per change effort `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` of plain-markdown docs named by Document type (`prd.md`, `tech_design.md`, …), those dated-folder docs each mirrored 1:1 into a persistent Chorus Document via the same `--arg-file` transport, with no CLI and no strict validation. A session that resolves to OpenSpec follows everything below unchanged. See the `spec-lite` skill (`skills/spec-lite/SKILL.md`).
 
 When you reach a point in proposal / develop / yolo where this skill is referenced, **read the value of `CHORUS_OPENSPEC_ACTIVE` from the SessionStart context** (see §1) and branch on it. Do not re-run the detection block — the SessionStart hook has already done it once for this session.
 
@@ -378,7 +378,7 @@ When `CHORUS_OPENSPEC_ACTIVE` is not `1`, this skill is a **no-op** — return t
 
 - No `openspec/changes/` folder is created or referenced.
 - No `OpenSpec change slug: …` line is added to the proposal description.
-- Document authoring is whatever the resolved mode dictates (spec-lite: mirror `.chorus/specs/<slug>/<type>.md`; free-form: inline `chorus_pm_add_document_draft`) — not this skill's concern.
+- Document authoring is whatever the resolved mode dictates (spec-lite: mirror `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/<type>.md`; free-form: inline `chorus_pm_add_document_draft`) — not this skill's concern.
 - Rule 1 (wrapper-only mirror) does not apply to OpenSpec here — there is no `openspec/` local file for this skill to mirror.
 - The §3.9 archive hook does nothing (no slug → silent exit).
 
