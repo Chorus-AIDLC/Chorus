@@ -69,12 +69,13 @@ fi
 
 # Resolve the active spec mode for this repo, once per session.
 #
-# CHORUS_SPEC_MODE ∈ {lite, openspec, off}; lite is the DEFAULT when unset
-# (OpenSpec is NO LONGER auto-selected just because openspec/ + CLI exist).
+# CHORUS_SPEC_MODE ∈ {lite, openspec, off}. When it is UNSET, OpenSpec stays the
+# default whenever it is usable (openspec/ dir + CLI, not disabled); lite is the
+# fallback only when OpenSpec is absent or disabled. An explicit value always wins.
 #   - lite     → Chorus-native lightweight specs in .chorus/specs/<slug>/ (spec-lite skill)
 #   - openspec → openspec-aware §3 authoring; FAIL FAST if OpenSpec isn't usable
 #   - off      → free-form, no spec artifact
-# Legacy CHORUS_OPENSPEC_MODE=off is still honored: it forces not-openspec.
+# Legacy CHORUS_OPENSPEC_MODE=off is still honored: it forces not-openspec (→ lite when unset).
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 # --- Is OpenSpec usable? (needs openspec/ dir + CLI on PATH + not disabled) ---
@@ -130,12 +131,24 @@ case "${CHORUS_SPEC_MODE:-}" in
     fi
     ;;
   "")
-    SPEC_MODE="lite"
-    SPEC_REASON="default — Chorus-native lightweight specs in .chorus/specs/<slug>/; set CHORUS_SPEC_MODE=openspec for OpenSpec, =off to disable"
+    # Unset: OpenSpec is the default when usable; lite is the fallback otherwise.
+    if [ "$OPENSPEC_USABLE" = "1" ]; then
+      SPEC_MODE="openspec"
+      SPEC_REASON="default — ${OPENSPEC_USABLE_REASON}; set CHORUS_SPEC_MODE=lite for Chorus-native specs, =off to disable"
+    else
+      SPEC_MODE="lite"
+      SPEC_REASON="default — OpenSpec not usable (${OPENSPEC_USABLE_REASON}); using Chorus-native lightweight specs in .chorus/specs/<slug>/"
+    fi
     ;;
   *)
-    SPEC_MODE="lite"
-    SPEC_REASON="CHORUS_SPEC_MODE='${CHORUS_SPEC_MODE}' unrecognized; defaulting to lite"
+    # Unrecognized value: treat like unset (OpenSpec-if-usable, else lite).
+    if [ "$OPENSPEC_USABLE" = "1" ]; then
+      SPEC_MODE="openspec"
+      SPEC_REASON="CHORUS_SPEC_MODE='${CHORUS_SPEC_MODE}' unrecognized; falling back to default (${OPENSPEC_USABLE_REASON})"
+    else
+      SPEC_MODE="lite"
+      SPEC_REASON="CHORUS_SPEC_MODE='${CHORUS_SPEC_MODE}' unrecognized; OpenSpec not usable, defaulting to lite"
+    fi
     ;;
 esac
 

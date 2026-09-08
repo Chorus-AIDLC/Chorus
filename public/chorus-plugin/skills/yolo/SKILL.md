@@ -190,11 +190,11 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 #### Step 1.4: Create Proposal
 
-1. **Select spec mode.** `CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}` — **lite is the default** (the SessionStart `## Spec Mode` section states the resolved value):
+1. **Select spec mode.** `CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}` (the SessionStart `## Spec Mode` section states the resolved value):
 
-   - `CHORUS_SPEC_MODE=lite` → **spec-lite branch (sub-step 2c below)**; `=openspec` → OpenSpec (2a); `=off` → free-form (2b).
-   - Unset → **spec-lite (2c)** — the default. OpenSpec is no longer auto-selected merely because an `openspec/` dir + CLI exist.
-   - Legacy `CHORUS_OPENSPEC_MODE=off` is still honored — it forces *not*-openspec.
+   - Explicit `CHORUS_SPEC_MODE` wins: `=lite` → **spec-lite (2c)**; `=openspec` → **OpenSpec (2a)**; `=off` → **free-form (2b)**.
+   - Unset → **OpenSpec (2a)** when it is usable (`openspec/` dir + CLI, not disabled); otherwise → **spec-lite (2c)**. (OpenSpec stays the default when present; lite is the fallback.)
+   - Legacy `CHORUS_OPENSPEC_MODE=off` (or the Enable-OpenSpec toggle off) forces *not*-openspec — an unset `CHORUS_SPEC_MODE` then resolves to lite.
 
    **Fail fast (after resolving, before entering 2a/2b/2c):** if `CHORUS_SPEC_MODE=openspec` but OpenSpec is unusable, halt — do NOT silently fall back or enter 2a with no OpenSpec to author. Name the cause: **config conflict** if OpenSpec is explicitly disabled (`CHORUS_OPENSPEC_MODE=off` / toggle off), else the **install hint** (`npm i -g @fission-ai/openspec` / `openspec init`) if simply not installed.
 

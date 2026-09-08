@@ -87,11 +87,11 @@ chorus_pm_create_proposal({
 
 ### Step 1.5: Select spec mode
 
-Before authoring document drafts, resolve which spec mode to author in. `CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}` — **lite is the default**. The SessionStart `## Spec Mode` section already states the resolved value:
+Before authoring document drafts, resolve which spec mode to author in. `CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}`. The SessionStart `## Spec Mode` section already states the resolved value:
 
-1. `CHORUS_SPEC_MODE=lite` → **spec-lite** (lightweight branch below). `=openspec` → OpenSpec. `=off` → free-form.
-2. Unset → **spec-lite** (the default — OpenSpec is no longer auto-selected merely because an `openspec/` dir + CLI exist).
-3. Legacy `CHORUS_OPENSPEC_MODE=off` is still honored — it forces *not*-openspec (default is already lite).
+1. Explicit `CHORUS_SPEC_MODE` wins: `=lite` → **spec-lite** (lightweight branch below); `=openspec` → **OpenSpec**; `=off` → **free-form**.
+2. Unset → **OpenSpec** when it is usable (`openspec/` dir + CLI on PATH, not disabled); otherwise → **spec-lite**. (OpenSpec stays the default when present; lite is the fallback.)
+3. Legacy `CHORUS_OPENSPEC_MODE=off` (or the Enable-OpenSpec toggle off) forces *not*-openspec — so an unset `CHORUS_SPEC_MODE` then resolves to lite.
 
 **Fail fast on an unsatisfiable explicit request (check here, after resolving, before branching):** if `CHORUS_SPEC_MODE=openspec` but OpenSpec isn't usable, do **not** silently fall back — halt. Name the cause: if OpenSpec is **explicitly disabled** (`CHORUS_OPENSPEC_MODE=off` or the Enable-OpenSpec toggle is off) report a **config conflict**; if it's just **not installed** (no `openspec/` dir or CLI) surface the **install hint** (`npm i -g @fission-ai/openspec` / `openspec init`).
 

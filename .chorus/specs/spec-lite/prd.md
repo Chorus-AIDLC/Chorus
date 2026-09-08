@@ -23,13 +23,14 @@ Document types (`prd.md`, `tech_design.md`, `adr.md`, `spec.md`, `guide.md`). `p
 only required file; the rest are added when the change warrants them. Each `<type>.md` mirrors
 1:1, byte-exact, to a Chorus Document of that `type` via the existing document tools — no new
 MCP tool, CLI, backend, or schema. The local folder is the source of truth; git history is the
-audit trail (no changelog file). Mode is **lite by default**: `CHORUS_SPEC_MODE=lite|openspec|off`
-wins, and an unset value resolves to lite (OpenSpec is no longer auto-selected merely because an
-`openspec/` dir + CLI exist). `=openspec` fails fast with a clear reason when OpenSpec is unusable.
+audit trail (no changelog file). Mode: an explicit `CHORUS_SPEC_MODE=lite|openspec|off` wins;
+when unset, **OpenSpec stays the default whenever it is usable** (`openspec/` dir + CLI, not
+disabled) and **lite is the fallback** only when OpenSpec is absent or disabled. `=openspec` fails
+fast with a clear reason when OpenSpec is unusable.
 
 - [ ] A change lives in `.chorus/specs/<slug>/` with at least `prd.md`; no `tasks.md`, no changelog section, no OpenSpec grammar.
 - [ ] Each `<type>.md` mirrors to a Chorus Document of the same `type` via `chorus_pm_add_document_draft` / `chorus_pm_update_document` with `--arg-file content=<file>` (byte-exact).
-- [ ] `CHORUS_SPEC_MODE` resolves to `lite` when unset; explicit `lite`/`openspec`/`off` win; legacy `CHORUS_OPENSPEC_MODE=off` still forces not-openspec.
+- [ ] When `CHORUS_SPEC_MODE` is unset, the mode resolves to `openspec` if OpenSpec is usable else `lite`; explicit `lite`/`openspec`/`off` win; legacy `CHORUS_OPENSPEC_MODE=off` still forces not-openspec (→ lite when unset).
 - [ ] `CHORUS_SPEC_MODE=openspec` halts with an install hint (missing dir/CLI) or a config-conflict message (explicitly disabled) — never silently falls back.
 - [ ] The SessionStart hook prints a `## Spec Mode` section that always states the active mode + a one-line routing note; passes `test-syntax.sh` (Bash 3.2).
 - [ ] The `spec-lite` skill, `docs/SPEC_LITE.md`, and the proposal/develop/yolo mode branches all speak Chorus-native (prd/tech_design), lite-default, always-mirror.

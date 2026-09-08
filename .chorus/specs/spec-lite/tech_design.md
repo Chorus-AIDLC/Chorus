@@ -13,14 +13,15 @@ by Chorus `Document.type`: `prd.md`, `tech_design.md`, `adr.md`, `spec.md`, `gui
 carries frontmatter (`slug`, `title`, `status`, `created`, optional `ideaUuid`/`proposalUuid`/
 `documentUuid`); other files may repeat a short frontmatter or none. Only `prd.md` is required.
 
-## Mode resolution (lite default)
+## Mode resolution (OpenSpec-first when usable, lite fallback)
 Resolve `CHORUS_SPEC_MODE` to one of `{lite, openspec, off}`:
-1. Env `CHORUS_SPEC_MODE=lite|openspec|off` wins.
-2. Unset → **lite** (the default).
-3. `=openspec` requires a usable OpenSpec (`openspec/` dir + CLI on PATH, not disabled). If not
-   usable → fail fast: install hint (`npm i -g @fission-ai/openspec` / `openspec init`) when
-   missing, config-conflict message when explicitly disabled (`CHORUS_OPENSPEC_MODE=off` or the
-   Enable-OpenSpec toggle). Legacy `CHORUS_OPENSPEC_MODE=off` forces not-openspec.
+1. Explicit env `CHORUS_SPEC_MODE=lite|openspec|off` wins.
+2. Unset → **openspec** when OpenSpec is usable (`openspec/` dir + CLI on PATH, not disabled);
+   otherwise → **lite**. OpenSpec stays the default when present; lite is the fallback.
+3. `=openspec` requires a usable OpenSpec. If not usable → fail fast: install hint
+   (`npm i -g @fission-ai/openspec` / `openspec init`) when missing, config-conflict message when
+   explicitly disabled (`CHORUS_OPENSPEC_MODE=off` or the Enable-OpenSpec toggle). Legacy
+   `CHORUS_OPENSPEC_MODE=off` forces not-openspec (→ lite when unset).
 
 The SessionStart hook (`bin/on-session-start.sh`) computes the resolved mode + a human reason and
 prints a `## Spec Mode` section; the proposal/develop/yolo skills branch on the resolved value.

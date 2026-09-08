@@ -1,6 +1,6 @@
 ---
 name: spec-lite
-description: Lightweight, Chorus-native local specs for Chorus PM workflows — a git-tracked folder `.chorus/specs/<slug>/` of plain-markdown docs named by Chorus Document type (prd.md, tech_design.md, …), each mirrored 1:1 into Chorus. The default spec mode; a low-token alternative to the heavier openspec-aware path. Read from proposal / develop / yolo when the spec mode resolves to `lite`.
+description: Lightweight, Chorus-native local specs for Chorus PM workflows — a git-tracked folder `.chorus/specs/<slug>/` of plain-markdown docs named by Chorus Document type (prd.md, tech_design.md, …), each mirrored 1:1 into Chorus. The default when OpenSpec isn't in use; a low-token alternative to the heavier openspec-aware path. Read from proposal / develop / yolo when the spec mode resolves to `lite`.
 license: AGPL-3.0
 metadata:
   author: chorus
@@ -10,7 +10,7 @@ metadata:
 
 # spec-lite — lightweight local spec authoring
 
-A **shared sub-procedure** for the Chorus stage skills (proposal, develop, yolo) and the **default**
+A **shared sub-procedure** for the Chorus stage skills (proposal, develop, yolo) — the lightweight
 spec mode. Instead of OpenSpec's four-file scaffold + `SHALL`/scenario grammar + CLI, a change is
 one git-tracked folder of plain-markdown docs, each mirrored 1:1 into Chorus. No new CLI, MCP tool,
 backend, or schema — mirroring reuses the existing document tools.
@@ -18,9 +18,11 @@ backend, or schema — mirroring reuses the existing document tools.
 ## Mode (how you got here)
 
 `CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}`; the SessionStart `## Spec Mode`
-section states the active value. **lite is the default when `CHORUS_SPEC_MODE` is unset** — you are
-here because the mode resolved to `lite`. `=openspec` → the `openspec-aware` skill instead; `=off` →
-free-form, no spec artifact. If the mode is not `lite`, this skill is a no-op — return to the caller.
+section states the active value. **When `CHORUS_SPEC_MODE` is unset, OpenSpec stays the default
+whenever it is usable (`openspec/` dir + CLI on PATH, not disabled); lite is the fallback only when
+OpenSpec is absent or disabled.** An explicit `CHORUS_SPEC_MODE` always wins: `=lite` → this skill,
+`=openspec` → the `openspec-aware` skill, `=off` → free-form (no spec artifact). You are here because
+the mode resolved to `lite`. If it is not `lite`, this skill is a no-op — return to the caller.
 
 ## The change folder
 

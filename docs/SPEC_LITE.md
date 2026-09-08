@@ -2,25 +2,27 @@
 
 spec-lite is a low-ceremony, git-tracked, **Chorus-native** way to keep a spec for a change: one
 **folder per change** at `.chorus/specs/<slug>/`, holding plain-markdown docs named by Chorus's own
-Document types, each mirrored 1:1 into Chorus. It is the **default** spec mode — a durable,
-human-readable record of *intent + requirements* without OpenSpec's four-file, strictly-validated
-ceremony. The heavier `openspec-aware` path stays available as an opt-in for large, spec-heavy work.
+Document types, each mirrored 1:1 into Chorus — a durable, human-readable record of *intent +
+requirements* without OpenSpec's four-file, strictly-validated ceremony. It is the **lightweight
+fallback** that takes over whenever OpenSpec isn't in use; the heavier `openspec-aware` path stays
+the default whenever it is usable.
 
-## Mode selection (lite by default)
+## Mode selection (OpenSpec-first when usable, lite fallback)
 
 `CHORUS_SPEC_MODE` resolves to exactly one mode; the SessionStart `## Spec Mode` section states it:
 
-1. `CHORUS_SPEC_MODE=lite` → spec-lite; `=openspec` → OpenSpec; `=off` → free-form (no spec artifact).
-2. **Unset → `lite`** (the default). OpenSpec is **no longer** auto-selected merely because an
-   `openspec/` dir + CLI are present — it is opt-in via `CHORUS_SPEC_MODE=openspec`.
-3. Legacy `CHORUS_OPENSPEC_MODE=off` is still honored — it forces *not*-openspec (default is already lite).
+1. Explicit `CHORUS_SPEC_MODE` wins: `=lite` → spec-lite; `=openspec` → OpenSpec; `=off` → free-form (no spec artifact).
+2. **Unset → OpenSpec when it is usable** (`openspec/` dir + CLI on PATH, not disabled); otherwise → **lite**. OpenSpec stays the default when present; lite is the fallback.
+3. Legacy `CHORUS_OPENSPEC_MODE=off` (or the Enable-OpenSpec toggle off) forces *not*-openspec — so an unset `CHORUS_SPEC_MODE` then resolves to lite.
 
-| `CHORUS_SPEC_MODE` | Resolved mode |
-|---|---|
-| `lite` | **lite** |
-| `openspec` | **openspec** (fail fast if unusable — see below) |
-| `off` | **free-form** |
-| unset | **lite** (default) |
+| `CHORUS_SPEC_MODE` | OpenSpec usable? | Resolved mode |
+|---|---|---|
+| `lite` | any | **lite** |
+| `openspec` | yes | **openspec** |
+| `openspec` | no | **halt** (fail fast — see below) |
+| `off` | any | **free-form** |
+| unset | yes | **openspec** (default) |
+| unset | no | **lite** (fallback) |
 
 **Fail fast on an unsatisfiable explicit request.** `CHORUS_SPEC_MODE=openspec` when OpenSpec isn't
 usable must **halt**, never silently fall back: if OpenSpec is **not installed** (no `openspec/` dir or
