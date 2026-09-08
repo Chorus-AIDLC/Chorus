@@ -94,7 +94,7 @@ Before authoring document drafts, resolve which spec mode to author in. The orde
 3. Else, if a `.chorus/specs/` directory exists at the repo root → **spec-lite**.
 4. Else → **free-form**.
 
-**Fail fast on an unsatisfiable explicit request (check here, after resolving, before branching):** if the resolved mode is **OpenSpec** *because* `CHORUS_SPEC_MODE=openspec` was set, but OpenSpec isn't usable (`CHORUS_OPENSPEC_ACTIVE=0` — no `openspec/` dir or no `openspec` CLI), do **not** silently fall back to lite/free-form and do **not** drop into a branch that has no OpenSpec to author. Halt and surface the install hint (`npm i -g @fission-ai/openspec` / `openspec init`). (For unset `CHORUS_SPEC_MODE`, step 2 already routes a non-active OpenSpec onward to lite/free-form — no error.)
+**Fail fast on an unsatisfiable explicit request (check here, after resolving, before branching):** if the resolved mode is **OpenSpec** *because* `CHORUS_SPEC_MODE=openspec` was set, but OpenSpec isn't usable (`CHORUS_OPENSPEC_ACTIVE=0`), do **not** silently fall back to lite/free-form and do **not** drop into a branch with no OpenSpec to author — halt. Name the cause: if OpenSpec is **explicitly disabled** (`CHORUS_OPENSPEC_MODE=off` or the Enable-OpenSpec toggle is off) report a **config conflict**; if it's just **not installed** (no `openspec/` dir or CLI) surface the **install hint** (`npm i -g @fission-ai/openspec` / `openspec init`). (For unset `CHORUS_SPEC_MODE`, step 2 already routes a non-active OpenSpec onward to lite/free-form — no error.)
 
 Branch on the **resolved mode** (not on the raw `CHORUS_OPENSPEC_ACTIVE` flag — `lite` and `free-form` share `=0`):
 
