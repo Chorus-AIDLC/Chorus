@@ -13,16 +13,18 @@ metadata:
 
 This skill is a **shared sub-procedure** invoked by the Chorus stage skills (`/chorus-proposal`, `/chorus-develop`, `/chorus-yolo`) whenever the user wants spec-driven authoring through the [OpenSpec CLI](https://github.com/Fission-AI/OpenSpec). It is opt-in:
 
-- Activates when **all three** signals hold (see §1): `CHORUS_OPENSPEC_MODE` is not `off`, an `openspec/` directory exists at the project root, and the `openspec` CLI is on `PATH`.
-- Otherwise the calling skill falls back to its existing free-form behavior.
+- Activates when the resolved spec mode is a **usable OpenSpec** (see §1): `CHORUS_SPEC_MODE=openspec` *or* unset, **and** `CHORUS_OPENSPEC_MODE` not `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`.
+- Otherwise the calling skill follows the resolved `SPEC_MODE` — **spec-lite** (the default when OpenSpec isn't usable) or free-form (`=off`).
 
-When you reach a point in proposal / develop / yolo where this skill is referenced, **read the value of `CHORUS_OPENSPEC_ACTIVE`** (see §1) and branch on it.
+> **See also — `chorus-spec-lite` (the lightweight fallback):** OpenSpec (this skill) stays the default whenever usable. When OpenSpec is absent or disabled — or `CHORUS_SPEC_MODE=lite` — the mode resolves to **spec-lite**: a durable local `.chorus/specs/<slug>/spec.md` (never synced) + per-change dated folders `<slug>/<YYYY-MM-DD>-<change-slug>/` of Chorus-typed docs mirrored 1:1 into Chorus via the same `--arg-file` transport. See `/chorus-spec-lite`.
+
+When you reach a point in proposal / develop / yolo where this skill is referenced, **read the resolved mode from the `## Spec Mode` section** (see §1) and branch on it.
 
 ---
 
 ## §1. Detection
 
-The Chorus `chorus` main agent's `agentSpawn` hook may compute `CHORUS_OPENSPEC_ACTIVE` once at spawn and write a `## OpenSpec Mode` section into your startup context. If you see that section, use its value; otherwise run the manual probe below. The value of `CHORUS_OPENSPEC_ACTIVE` is `1` only when **all three** of these hold:
+The Chorus `chorus` main agent's `agentSpawn` hook resolves the spec mode once at spawn (via the shared `bin/resolve-spec-mode.sh`) and writes a `## Spec Mode` section into your startup context; when the resolved mode is a usable OpenSpec it also carries a `CHORUS_OPENSPEC_ACTIVE=1` line. If you see that section, use it; otherwise run the manual fallback below. That line is present only when `CHORUS_SPEC_MODE` is `openspec` **or unset**, **and all three** of these hold:
 
 1. `CHORUS_OPENSPEC_MODE` is **not** set to `off` (explicit opt-out wins).
 2. The project root contains an `openspec/` directory (i.e. someone ran `openspec init` here).
@@ -35,39 +37,36 @@ Both signals (2) and (3) are required because the OpenSpec authoring path needs 
 If your `agentSpawn` context includes it, you will see something like:
 
 ```
-## OpenSpec Mode
+## Spec Mode
+
+CHORUS_SPEC_MODE=openspec (default — openspec/ directory + openspec CLI both present)
 
 CHORUS_OPENSPEC_ACTIVE=1 (openspec/ directory + openspec CLI both present)
 ```
 
-or:
+or (resolved to lite / off — no `CHORUS_OPENSPEC_ACTIVE=1` line):
 
 ```
-## OpenSpec Mode
+## Spec Mode
 
-CHORUS_OPENSPEC_ACTIVE=0 (no openspec/ directory at /path/to/repo/openspec)
+CHORUS_SPEC_MODE=lite (default — OpenSpec not usable: no openspec/ directory at /path/to/repo/openspec)
 ```
 
 Branch:
 
-- `CHORUS_OPENSPEC_ACTIVE=1` → follow §3 (OpenSpec authoring).
-- `CHORUS_OPENSPEC_ACTIVE=0` → return to the calling skill's free-form path. **Do not** scaffold `openspec/changes/`. **Do not** add the slug line to the proposal description.
+- `CHORUS_OPENSPEC_ACTIVE=1` line present → follow §3 (OpenSpec authoring).
+- No `CHORUS_OPENSPEC_ACTIVE=1` line → this skill is a no-op; return to the caller, which follows the resolved `SPEC_MODE` (**spec-lite** or free-form). **Do not** scaffold `openspec/changes/`. **Do not** add the slug line to the proposal description.
 
-### Manual probe
+### Manual fallback
 
-If you did not see a `## OpenSpec Mode` section in your context (e.g. the `agentSpawn` hook did not inject it, or you are a subagent), compute the value yourself with the same three checks. Kiro CLI does not define a project-dir env var, so probe the current working directory:
+If you did not see a `## Spec Mode` section (e.g. the `agentSpawn` hook did not inject it, or you are a subagent), **do not hand-roll the detection** — source the *same* resolver the hook uses (the plugin's installed `chorus-bin/resolve-spec-mode.sh`, next to the other Chorus hooks), so there is one computation of the mode:
 
 ```bash
-if [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
-elif [ ! -d "$PWD/openspec" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
-elif ! openspec --version >/dev/null 2>&1; then
-  CHORUS_OPENSPEC_ACTIVE=0
-else
-  CHORUS_OPENSPEC_ACTIVE=1
-fi
+. "<chorus-bin>/resolve-spec-mode.sh"   # same file the agentSpawn hook sources
+# sets SPEC_MODE (lite|openspec|off), SPEC_FAIL (non-empty ⇒ halt), CHORUS_OPENSPEC_ACTIVE (1 only for a usable openspec)
 ```
+
+Then: if `SPEC_FAIL` is non-empty, halt and surface it; if `CHORUS_OPENSPEC_ACTIVE=1` follow §3; otherwise no-op — return to the caller per the resolved `SPEC_MODE`. **Never re-derive the rule inline.** If you cannot locate the helper, set `CHORUS_SPEC_MODE` explicitly and relaunch rather than guessing.
 
 ---
 
@@ -376,7 +375,7 @@ The hook is read-only; you (the agent) perform the archive:
 
 ## §4. Fallback authoring (no openspec)
 
-When detection puts the agent in fallback mode (`CHORUS_OPENSPEC_ACTIVE=0`), this skill is a **no-op**. Return to the calling skill's free-form path:
+When the resolved mode is not a usable OpenSpec (no `CHORUS_OPENSPEC_ACTIVE=1` line), this skill is a **no-op** — return to the calling skill, which follows the resolved `SPEC_MODE`: **spec-lite** (the default when OpenSpec isn't usable) or free-form (`=off`). From this skill's side:
 
 - No `openspec/changes/` folder is created or referenced.
 - No `OpenSpec change slug: …` line is added to the proposal description.
@@ -466,8 +465,8 @@ This is project-wide policy: no silent errors.
 
 When invoked from a stage skill (`/chorus-proposal` / `/chorus-develop` / `/chorus-yolo`):
 
-1. Read `CHORUS_OPENSPEC_ACTIVE` from the `## OpenSpec Mode` section in your `agentSpawn` context (§1). If it isn't there, fall back to the manual probe in §1.
-2. If `CHORUS_OPENSPEC_ACTIVE=0` → return to caller's free-form path (§4).
+1. Read the `## Spec Mode` section in your `agentSpawn` context (§1) — proceed only if it carries the `CHORUS_OPENSPEC_ACTIVE=1` line. If it isn't there, use the manual fallback (source the shared resolver) in §1.
+2. If there's no `CHORUS_OPENSPEC_ACTIVE=1` line → no-op; return to the caller per the resolved `SPEC_MODE` (spec-lite or free-form) — see §4.
 3. Otherwise:
    a. Pick `$SLUG` (§3.1).
    b. `openspec new change "$SLUG"` (§3.2).
