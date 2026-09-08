@@ -212,7 +212,7 @@ In $yolo mode, the agent generates elaboration questions and answers them itself
 
    Then continue to step 3 (task drafts).
 
-   **2b. Free-form mode (`CHORUS_OPENSPEC_ACTIVE=0`).** Add a tech design document draft directly via MCP, content authored inline:
+   **2b. Free-form mode (resolved mode = free-form).** Only when step 1 resolved to free-form — i.e. explicit `CHORUS_SPEC_MODE=off` (unset never comes here: it resolves to OpenSpec when usable, else spec-lite/2c). Add a tech design document draft directly via MCP, content authored inline:
 
    ```
    chorus_pm_add_document_draft({

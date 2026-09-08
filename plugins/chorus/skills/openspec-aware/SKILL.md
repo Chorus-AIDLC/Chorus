@@ -66,25 +66,12 @@ Branch:
 If you're in a sub-agent that did not see the `## Spec Mode` context (e.g. spawned mid-session with the parent's context not forwarded), **do not hand-roll the detection** — source the *same* resolver the hook uses, so there is one computation of the mode (Codex hooks run from `$PWD`, which the resolver uses as `PROJECT_ROOT`):
 
 ```bash
-. "$CHORUS_PLUGIN_DIR/hooks/resolve-spec-mode.sh"   # resolve $CHORUS_PLUGIN_DIR per §2.1
+# 1. Resolve $CHORUS_PLUGIN_DIR first (per §2.1). 2. Then source the shared resolver:
+. "$CHORUS_PLUGIN_DIR/hooks/resolve-spec-mode.sh"
 # sets SPEC_MODE (lite|openspec|off), SPEC_FAIL (non-empty ⇒ halt), CHORUS_OPENSPEC_ACTIVE (1 only for a usable openspec)
 ```
 
-Then: if `SPEC_FAIL` is non-empty, halt and surface it; if `CHORUS_OPENSPEC_ACTIVE=1` follow §3; otherwise no-op — return to the caller per the resolved `SPEC_MODE`. If you can't locate the helper, set `CHORUS_SPEC_MODE` explicitly and re-launch rather than guessing. (Legacy inline three-check, only if the helper is truly unreachable:)
-
-```bash
-if [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
-elif [ ! -d "$PWD/openspec" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
-elif ! openspec --version >/dev/null 2>&1; then
-  CHORUS_OPENSPEC_ACTIVE=0
-else
-  CHORUS_OPENSPEC_ACTIVE=1
-fi
-```
-
-Use this only when SessionStart context is genuinely unavailable — duplicating the detection is wasteful when the hook already computed it.
+Then: if `SPEC_FAIL` is non-empty, halt and surface it; if `CHORUS_OPENSPEC_ACTIVE=1` follow §3; otherwise no-op — return to the caller per the resolved `SPEC_MODE`. **Never re-derive the rule inline** — the hook/helper is the single source of truth. If you genuinely cannot locate the helper, set `CHORUS_SPEC_MODE` explicitly and re-launch rather than guessing.
 
 ---
 
