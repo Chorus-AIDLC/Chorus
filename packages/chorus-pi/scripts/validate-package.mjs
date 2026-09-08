@@ -39,6 +39,7 @@ const expectedSkills = [
   "proposal",
   "quick-dev",
   "review",
+  "spec-lite",
   "yolo",
 ];
 const expectedAgents = [

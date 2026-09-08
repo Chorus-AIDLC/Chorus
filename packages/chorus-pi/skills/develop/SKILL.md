@@ -140,7 +140,9 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
 >
 > When the LAST task of an OpenSpec idea is verified, the extension injects an archive reminder (`openspec-aware` §3.9) — run `openspec archive <slug> --yes`, then mirror each emitted `openspec/specs/<capability>/spec.md` back via §3.8.
 >
-> In the no-OpenSpec fallback (no slug line, or no `openspec` CLI), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
+> **Document update flow (spec-lite mode):** if the proposal `description` contains a line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/`, the project's PRD / tech_design / … Documents are **mirrors** of the files in that dated folder. To update such a Document, load the `spec-lite` skill (`/skill:spec-lite`) and follow its Mirror section: edit the local `<type>.md` file first, then mirror it via `chorus mcp call chorus_pm_update_document "{\"documentUuid\":\"<uuid>\"}" --arg-file content=<file>` (recorded `documentUuid` from the file's frontmatter), falling back to the `chorus-mcp-call.sh` wrapper when `chorus` is not on `PATH`, `chorus_check_response` halting on error. Same **⛔ do-not-hand-type-`content`** rule as OpenSpec. The durable `.chorus/specs/<slug>/spec.md` is edited in place too but is **never mirrored** (git history is its record). No archive flow — spec-lite has no CLI/validate/archive; on delivery just set `spec.md` `status: done`.
+>
+> In the no-OpenSpec, no-spec-lite fallback (free-form: no locator line), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
 
 ### Step 5: Start Working
 
