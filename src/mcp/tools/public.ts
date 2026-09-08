@@ -29,7 +29,6 @@ import * as assignmentService from "@/services/assignment.service";
 import { zArray } from "./schema-utils";
 import * as notificationService from "@/services/notification.service";
 import * as elaborationService from "@/services/elaboration.service";
-import * as alignmentService from "@/services/alignment.service";
 import * as projectGroupService from "@/services/project-group.service";
 import * as mentionService from "@/services/mention.service";
 import * as searchService from "@/services/search.service";
@@ -897,37 +896,6 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           isError: true,
         };
       }
-    }
-  );
-
-  // chorus_get_alignment_anchor - Consolidated first-principles alignment anchor.
-  // Gated on idea:read (all reviewer presets hold it). Consolidates reads already
-  // available via chorus_get_idea / chorus_get_elaboration / chorus_get_comments —
-  // no new data exposure. See openspec add-first-principles-alignment-review.
-  registerPermissionedTool(
-    server,
-    auth,
-    "idea:read",
-    "chorus_get_alignment_anchor",
-    {
-      description:
-        "Resolve the first-principles ALIGNMENT ANCHOR (original intent) for a reviewable entity, in one call. Walks the entity to its directly-attached Idea(s) (idea → itself; proposal → its input idea(s); task/document → their proposal's input idea(s)) and returns, PER IDEA, a STRUCTURAL split: the human-authorized baseline — `content` (idea body) + `baselineElaboration` (elaboration decisions answered by a HUMAN) + `humanComments` (idea comments authored by a HUMAN) — versus `agentContext` (`elaboration` + `comments` that are agent-answered / agent-authored, audit-only). Build the ORIGINAL INTENT from the baseline ALONE: `agentContext` must never expand, shrink, or override it, so an agent cannot self-authorize scope by self-answering a YOLO elaboration or posting its own idea comment. Every decision still carries `answeredByType` and every comment `authorType`, normalized to `\"user\"`|`\"agent\"` (FAIL-CLOSED: only an exact stored `\"user\"` is human; agent/unknown → `\"agent\"`). The anchor is the DIRECTLY-ATTACHED idea (`directIdeaUuid`), never the ancestor `rootIdeaUuid` (returned only as light context alongside `lineageTitles`). Returns `anchorAvailable:false` with empty `ideas` when the entity has no attached idea (e.g. a document-input proposal). Consolidates chorus_get_idea / chorus_get_elaboration / chorus_get_comments — exposes no field not already readable through those.",
-      inputSchema: z.object({
-        entityType: z
-          .enum(["idea", "proposal", "task", "document"])
-          .describe("The kind of entity being reviewed"),
-        entityUuid: z.string().describe("The entity's UUID"),
-      }),
-    },
-    async ({ entityType, entityUuid }) => {
-      const anchor = await alignmentService.getAlignmentAnchor(
-        auth.companyUuid,
-        entityType,
-        entityUuid
-      );
-      return {
-        content: [{ type: "text", text: JSON.stringify(anchor, null, 2) }],
-      };
     }
   );
 

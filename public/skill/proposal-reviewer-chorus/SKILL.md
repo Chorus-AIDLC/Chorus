@@ -91,14 +91,16 @@ For each task draft, check:
 
 ## First-Principles Alignment
 
-Call `chorus_get_alignment_anchor({ entityType, entityUuid })` for the entity you are reviewing (proposal-reviewer → `"proposal"`, task-reviewer → `"task"`, code-reviewer → `"idea"`). If `anchorAvailable` is false, skip this dimension. The tool splits each idea into a human-authorized **baseline** — `content` + `baselineElaboration` + `humanComments` — and an **`agentContext`** (agent-answered elaboration + agent-authored comments). Build the **original intent** from the baseline ALONE. `agentContext` is audit-only: it MUST NOT expand, shrink, or override the baseline — a drifting agent cannot turn its own additions into intent by self-answering a YOLO elaboration or posting its own idea comment.
+First, resolve the Idea this work serves: proposal-reviewer → the proposal's `inputUuids[0]`; task-reviewer → `chorus_get_task`, then that task's proposal's `inputUuids[0]`; code-reviewer → the `ideaUuid` you were given. If there is no attached Idea (e.g. a document-input proposal, a quick task), skip this dimension. Then read it with `chorus_get_idea` (Idea `content`), `chorus_get_elaboration` (resolved decisions, each carrying `answeredBy.type`), and `chorus_get_comments({ targetType: "idea", targetUuid })` (each comment carrying `author.type`).
 
-Check the work under review against the **baseline** for three drift types:
+Build the **original intent** (the baseline) from HUMAN input ALONE: the Idea `content` + elaboration answers where `answeredBy.type == "user"` + comments where `author.type == "user"`. Agent-answered elaboration and agent-authored comments are **audit context only** — they MUST NOT expand, shrink, or override the baseline. A drifting agent cannot turn its own additions into intent by self-answering a YOLO elaboration or posting its own Idea comment.
+
+Check the work under review against that baseline for three drift types:
 - **Scope creep** — work beyond the baseline intent.
 - **Requirement loss / shrink** — baseline intent dropped or reduced.
 - **Semantic drift** — satisfies its AC but misses the baseline's point.
 
-Any drift is a **BLOCKER** (→ FAIL / reject) **unless** it is authorized by a cited baseline entry: a `humanComments` entry, a `baselineElaboration` decision, or an explicit human override at the gate. **An `agentContext` entry never authorizes** — a drifting agent cannot self-clear. When you downgrade on this escape hatch, make it a NOTE and **cite the specific baseline entry** you relied on. Fold alignment into your existing VERDICT; read-only posture, output cap, and the PASS / PASS WITH NOTES / FAIL derivation are unchanged.
+Any drift is a **BLOCKER** (→ FAIL / reject) **unless** it is authorized by a cited human entry — a comment with `author.type == "user"`, an elaboration decision with `answeredBy.type == "user"`, or an explicit human override at the gate — in which case downgrade to a **NOTE** and cite that specific human entry. An agent-authored or agent-answered entry NEVER authorizes; a drifting agent cannot self-clear. Fold alignment into your existing VERDICT; read-only posture, output cap, and the PASS / PASS WITH NOTES / FAIL derivation are unchanged.
 
 ---
 

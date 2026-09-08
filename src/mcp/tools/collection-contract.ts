@@ -382,7 +382,6 @@ export const TOOL_COLLECTION_CLASSIFICATION = {
   chorus_create_tasks: "non-collection",
   chorus_edit_idea: "non-collection",
   chorus_get_activity: "collection",
-  chorus_get_alignment_anchor: "non-collection",
   chorus_get_available_ideas: "collection",
   chorus_get_available_tasks: "collection",
   chorus_get_comments: "collection",

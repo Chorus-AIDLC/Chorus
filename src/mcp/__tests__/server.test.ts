@@ -232,15 +232,9 @@ describe("MCP tool permission wiring", () => {
   });
 
   describe("backward-compat: developer_agent preset (AC4)", () => {
-    it("developer_agent sees the 0.6.x developer tool set plus the 0.18.0 idea:read-gated alignment anchor", () => {
+    it("developer_agent with empty custom permissions sees exactly the 0.6.x developer tool set", () => {
       const registered = registeredFor([...ROLE_PRESETS.developer_agent]);
-      // 0.18.0 (add-first-principles-alignment-review): chorus_get_alignment_anchor
-      // is the first read-gated tool (idea:read). developer_agent carries idea:read,
-      // so it now additionally sees this consolidated anchor read — but not with
-      // task:write alone (see the fine-grained AC7 assertion below).
-      expect(registered).toEqual(
-        new Set([...OLD_DEVELOPER_TOOLS, "chorus_get_alignment_anchor"])
-      );
+      expect(registered).toEqual(new Set(OLD_DEVELOPER_TOOLS));
     });
   });
 
@@ -310,10 +304,6 @@ describe("MCP tool permission wiring", () => {
         // idea:admin-gated (a directed reassignment/takeover). admin_agent
         // carries idea:admin; pm_agent (idea:write only) does not.
         "chorus_pm_assign_idea",
-        // 0.18.0 (add-first-principles-alignment-review): chorus_get_alignment_anchor
-        // is idea:read-gated (the first read-gated tool). All presets carry
-        // idea:read, so it is visible to developer, pm, and admin agents alike.
-        "chorus_get_alignment_anchor",
       ]);
       expect(registered).toEqual(expected);
     });
@@ -383,34 +373,6 @@ describe("MCP tool permission wiring", () => {
       expect(
         (TOOL_PERMISSIONS as Record<string, string>).chorus_pm_validate_elaboration
       ).toBe("idea:admin");
-    });
-  });
-
-  // chorus_get_alignment_anchor (0.18.0, add-first-principles-alignment-review)
-  // is the consolidated intent-anchor read every reviewer calls. It is the first
-  // read-gated tool — gated on idea:read, registered in public.ts.
-  describe("alignment anchor tool wiring", () => {
-    it("chorus_get_alignment_anchor is mapped to idea:read in the permission map", () => {
-      expect(
-        (TOOL_PERMISSIONS as Record<string, string>).chorus_get_alignment_anchor
-      ).toBe("idea:read");
-    });
-
-    it("is registered for an idea:read agent", () => {
-      const registered = registeredFor(["idea:read"]);
-      expect(registered.has("chorus_get_alignment_anchor")).toBe(true);
-    });
-
-    it("is NOT registered for an agent without idea:read (e.g. task:read + task:write)", () => {
-      const registered = registeredFor(["task:read", "task:write"]);
-      expect(registered.has("chorus_get_alignment_anchor")).toBe(false);
-    });
-
-    it("is classified non-collection in the collection contract", () => {
-      expect(
-        (TOOL_COLLECTION_CLASSIFICATION as Record<string, string>)
-          .chorus_get_alignment_anchor
-      ).toBe("non-collection");
     });
   });
 
