@@ -10,8 +10,9 @@ change) and contains two kinds of thing:
   `<slug>/`, **no `changes/` wrapper**). It holds the Chorus-typed docs for that change — `prd.md`
   (primary), optionally `tech_design.md` / `adr.md` / `guide.md` / `spec.md`. These **are** mirrored
   1:1 into **persistent** Chorus Documents of the matching type (later edits bump the Document version
-  = its history); their frontmatter carries `proposalUuid` / `documentUuid`. Old dated folders are
-  never rewritten — a new effort gets a new dated folder.
+  = its history); their frontmatter carries `proposalUuid` / `documentUuid`. The current change's
+  folder is edited/re-mirrored until delivery; only previously-delivered folders are frozen — a new
+  effort gets a new dated folder.
 
 The surrounding `.chorus/` directory is Chorus **plugin runtime state** (`artifacts/`, `state.json`)
 and is gitignored. Only `.chorus/specs/` is version-controlled — the repo `.gitignore` uses

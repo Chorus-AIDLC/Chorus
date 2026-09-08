@@ -27,7 +27,8 @@ two kinds of thing:
   byte-exact, into **persistent** Chorus Documents of the matching type via the existing document tools
   (`chorus_pm_add_document_draft --arg-file` the first time, `chorus_pm_update_document --arg-file`
   after — version auto-increments). Their frontmatter carries `proposalUuid` / `documentUuid`. A
-  different change to the same capability is a different dated folder; old folders are never rewritten.
+  different change to the same capability is a different dated folder; the current change's folder is
+  edited/re-mirrored until delivery, and only previously-delivered folders are left frozen.
 
 The proposal `description` carries one locator line pointing at the dated change folder. There is no
 `tasks.md` (tasks live in Chorus), no new MCP tool, CLI, backend, or schema. Naming caution: the
@@ -38,7 +39,7 @@ whenever usable and lite is the fallback; `=openspec` fails fast when OpenSpec i
 lives in `bin/resolve-spec-mode.sh` and the `## Spec Mode` SessionStart hook.
 
 - [ ] `<slug>/spec.md` is the durable local spec — edited in place, minimal frontmatter, no Chorus ids, never mirrored.
-- [ ] Each change effort is one dated folder `<slug>/<YYYY-MM-DD>-<change-slug>/` (no `changes/` wrapper) of Chorus-typed docs; old folders are never rewritten.
+- [ ] Each change effort is one dated folder `<slug>/<YYYY-MM-DD>-<change-slug>/` (no `changes/` wrapper) of Chorus-typed docs; the current change's folder is editable/re-mirrored until delivery, only previously-delivered folders are frozen.
 - [ ] Each dated-folder `<type>.md` mirrors to a persistent Chorus Document of that type (`--arg-file`, byte-exact, never re-typed); frontmatter carries `proposalUuid`/`documentUuid`.
 - [ ] Identity resolves by `documentUuid` / `(proposalUuid, type)`; zero/multi match halts (never by title alone). `spec.md` is never in the mirror loop.
 - [ ] The proposal `description` carries one locator line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` so develop finds the change docs.
