@@ -12,7 +12,7 @@ Across the Idea → Proposal → Task → execution chain, every local step can 
 - Each reviewer **resolves the originating Idea** from whatever entity it is reviewing (proposal → its input Idea, task → its proposal's input Idea, code → the Idea directly) using **existing reads**, builds the baseline, and compares the artifact under review against it for **three drift types**: scope creep, requirement loss / shrink, and semantic drift.
 - Detected drift is a **hard blocker** (contributes a `BLOCKER` → `FAIL` / reject), **except** when the deviation is traceable to a **human** authorized scope change in the baseline (a **human-authored** Idea comment or a **human-answered** elaboration entry), or a **human explicitly overrides** at the gate — an agent's own comment/answer never authorizes, so a drifting agent cannot self-clear. Authorized, human-documented evolution is *not* drift.
 - Output stays a **VERDICT comment** on the reviewed entity (no separate report artifact) — the alignment result is one clearly-labeled section of the existing verdict, not a new deliverable.
-- Implemented as **one compact, shared alignment-check snippet** — a reviewer-prompt reminder that self-gathers via existing reads — reused by all three reviewers across every plugin surface, so three separate prompts do not each balloon.
+- Implemented as a **reviewer-specific alignment instruction** — a reviewer-prompt reminder that self-gathers via existing reads — folded natively into each reviewer's own procedure (three distinct instruction bodies, one per reviewer type; each kept parity-consistent across every plugin surface), so no reviewer prompt balloons.
 
 ## Capabilities
 

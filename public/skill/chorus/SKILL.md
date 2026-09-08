@@ -449,7 +449,7 @@ This is the **single canonical description** of the reviewer pattern. The `devel
 
 > The verdict is advisory: even a `FAIL` does not hard-block, and a `PASS` does not auto-approve. A human/admin (or, under `/yolo`, the automated orchestrator) makes the final decision. The code-review gateway in particular is a **behavioral** gate — it does not change the Idea's stored status; the orchestrator honors its verdict.
 
-### First-Principles Alignment (built into all three reviewers)
+### First-Principles Alignment (a stage-tailored instruction in all three reviewers)
 
 Beyond their local checks, every reviewer also verifies **top-down** that the work still serves the *original Idea's intent*. Each one first **resolves the Idea** from the entity it is reviewing — proposal-reviewer → the proposal's `inputUuids[0]`; task-reviewer → `chorus_get_task`, then that task's proposal's `inputUuids[0]`; code-reviewer → the `ideaUuid` it was given (skip the dimension if there is no attached Idea) — then reads it with the **existing** reads: `chorus_get_idea` (content), `chorus_get_elaboration` (resolved decisions, each carrying `answeredBy.type`), and `chorus_get_comments({ targetType: "idea" })` (each comment carrying `author.type`). It builds the authoritative **baseline** of original intent from **human input alone**: the Idea content + elaboration answers where `answeredBy.type == "user"` + comments where `author.type == "user"`. Agent-answered elaboration and agent-authored comments are **audit context only** — they can never expand, shrink, or override the baseline, so a drifting agent cannot self-authorize by self-answering a YOLO elaboration or posting its own Idea comment. The work under review is checked against that baseline for three drift types:
 

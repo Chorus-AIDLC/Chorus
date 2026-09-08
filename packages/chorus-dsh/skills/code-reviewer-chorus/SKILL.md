@@ -61,23 +61,11 @@ Read each task's work report (in its comments) — the developers describe what 
 4. **Regression risk / impact on untouched areas / performance** — does the change break or degrade code no single task owned? N+1s, hot-path cost, shared-state contention.
 5. **Feature-level test coverage adequacy** — across the whole feature, are integration seams and end-to-end paths tested, or only per-task units? Gaps between tasks.
 6. **Code soundness, simplicity, correctness** — is the aggregate change correct, reasonably simple, free of obvious defects read as one body of work.
+7. **Intent alignment (whole-feature)** — Also read the Idea's resolved elaboration (`chorus_get_elaboration`); using ONLY human-authored intent (Idea body + human-answered elaboration + human-authored comments; agent-authored entries are audit context, not intent) as the baseline, judge whether the aggregate change still serves the original intent. Flag scope creep, dropped requirements, or intent missed despite passing AC as a **BLOCKER**, unless a cited human entry / human override authorizes it.
 
 **Step 4: Run feature-level build/test.** Run the project's declared commands. A broken build or failing tests is an automatic FAIL. Record command + exit code + relevant output. Results are context — verify each dimension independently.
 
 **Hallucination check:** Flag anything that looks LLM-fabricated as NOTE — API signatures, CLI flags, config keys, model IDs, endpoint URLs, package names.
-
-## First-principles alignment
-
-First, resolve the Idea this work serves: proposal-reviewer → the proposal's `inputUuids[0]`; task-reviewer → `chorus_get_task`, then that task's proposal's `inputUuids[0]`; code-reviewer → the `ideaUuid` you were given. If there is no attached Idea (e.g. a document-input proposal, a quick task), skip this dimension. Then read it with `chorus_get_idea` (Idea `content`), `chorus_get_elaboration` (resolved decisions, each carrying `answeredBy.type`), and `chorus_get_comments({ targetType: "idea", targetUuid })` (each comment carrying `author.type`).
-
-Build the **original intent** (the baseline) from HUMAN input ALONE: the Idea `content` + elaboration answers where `answeredBy.type == "user"` + comments where `author.type == "user"`. Agent-answered elaboration and agent-authored comments are **audit context only** — they MUST NOT expand, shrink, or override the baseline. A drifting agent cannot turn its own additions into intent by self-answering a YOLO elaboration or posting its own Idea comment.
-
-Check the work under review against that baseline for three drift types:
-- **Scope creep** — work beyond the baseline intent.
-- **Requirement loss / shrink** — baseline intent dropped or reduced.
-- **Semantic drift** — satisfies its AC but misses the baseline's point.
-
-Any drift is a **BLOCKER** (→ FAIL / reject) **unless** it is authorized by a cited human entry — a comment with `author.type == "user"`, an elaboration decision with `answeredBy.type == "user"`, or an explicit human override at the gate — in which case downgrade to a **NOTE** and cite that specific human entry. An agent-authored or agent-answered entry NEVER authorizes; a drifting agent cannot self-clear. Fold alignment into your existing VERDICT; read-only posture, output cap, and the PASS / PASS WITH NOTES / FAIL derivation are unchanged.
 
 ## Finding classification
 

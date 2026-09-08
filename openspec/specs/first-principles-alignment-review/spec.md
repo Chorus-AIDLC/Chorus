@@ -88,26 +88,26 @@ When a reviewer downgrades a deviation on the authorized-change escape hatch, it
 - **WHEN** an explicit human override for the deviation is present at the review gate
 - **THEN** the reviewer does not raise a `BLOCKER` for that deviation
 
-### Requirement: Compact shared alignment block without prompt bloat
+### Requirement: Reviewer-specific alignment instruction without prompt bloat
 
-The alignment instruction added to each reviewer SHALL be a single bounded block that carries the resolve-then-read recipe (how to resolve the Idea per reviewer type, and which existing reads to call) plus the baseline / drift / escape-hatch rule, kept compact so per-reviewer prompt growth stays small. The block's rule SHALL be identical across all reviewer definitions, differing only in host-specific tool-name prefix and section framing.
+The alignment instruction added to each reviewer SHALL be tailored to that reviewer's own stage — folded natively into its existing procedure (proposal-reviewer into its cross-check step, task-reviewer as a procedure step, code-reviewer as one more whole-feature dimension) and referencing ONLY that reviewer's own Idea-resolution path — and SHALL stay compact so per-reviewer prompt growth stays small. It SHALL NOT be one boilerplate block carrying every reviewer's resolution path; each reviewer TYPE SHALL carry its own instruction body (three distinct bodies in total), while the baseline / drift / escape-hatch semantics SHALL be preserved across all three.
 
-#### Scenario: Block self-gathers via existing reads
+#### Scenario: Instruction self-gathers via existing reads
 
-- **WHEN** a reviewer definition carries the alignment block
-- **THEN** the block references the existing `chorus_get_idea` / `chorus_get_elaboration` / `chorus_get_comments` reads (no new alignment tool) and states the human-baseline / agent-audit rule
+- **WHEN** a reviewer definition carries its alignment instruction
+- **THEN** the instruction references only the existing reads that reviewer already relies on (`chorus_get_idea` / `chorus_get_elaboration` / `chorus_get_comments`, no new alignment tool) and states the human-baseline / agent-audit rule
 
 #### Scenario: Bounded growth
 
-- **WHEN** the alignment block is added to a reviewer definition
-- **THEN** the net addition is a compact bounded block (not a large expansion of the prompt)
+- **WHEN** the reviewer-specific alignment instruction is added to a reviewer definition
+- **THEN** the net addition is a compact, stage-tailored instruction (not a large expansion of the prompt)
 
 ### Requirement: Seven-surface parity
 
-The alignment dimension SHALL be present in all three reviewers on every plugin surface — Claude Code, Codex, OpenClaw, Kiro, Pi, dsh, and the standalone skill library — each adapted to its host's tool-name prefix and spawn mechanism while preserving the same resolve-and-read recipe, baseline rule, drift taxonomy, escape-hatch rule, read-only posture, and VERDICT contract. The block body SHALL be byte-consistent across surfaces modulo the tool-name prefix and host section framing.
+The alignment dimension SHALL be present in all three reviewers on every plugin surface — Claude Code, Codex, OpenClaw, Kiro, Pi, dsh, and the standalone skill library — each adapted to its host's tool-name prefix and spawn mechanism while preserving the same resolve-and-read recipe, baseline rule, drift taxonomy, escape-hatch rule, read-only posture, and VERDICT contract. Parity SHALL hold per reviewer type: each reviewer type's instruction body SHALL be consistent across its seven surfaces (modulo host tool-name prefix and section framing), yielding exactly three distinct instruction bodies across the twenty-one reviewer definitions — not one identical block shared by all.
 
 #### Scenario: Alignment present on every surface
 
 - **WHEN** any of the three reviewers is invoked on any of the seven supported surfaces
-- **THEN** its definition carries the alignment block referencing the existing reads by that host's correct tool names (e.g. `chorus__get_idea` on OpenClaw), with the identical baseline / drift / escape-hatch rule
+- **THEN** its definition carries that reviewer type's alignment instruction referencing the existing reads by that host's correct tool names (e.g. `chorus__get_idea` on OpenClaw), with the same baseline / drift / escape-hatch semantics as the other surfaces of its reviewer type
 
