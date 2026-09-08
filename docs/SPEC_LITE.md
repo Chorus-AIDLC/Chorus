@@ -1,11 +1,13 @@
 # spec-lite — Lightweight Local Spec Management
 
-spec-lite is a low-ceremony, git-tracked, **Chorus-native** way to keep a spec for a change: one
-**folder per change** at `.chorus/specs/<slug>/`, holding plain-markdown docs named by Chorus's own
-Document types, each mirrored 1:1 into Chorus — a durable, human-readable record of *intent +
-requirements* without OpenSpec's four-file, strictly-validated ceremony. It is the **lightweight
-fallback** that takes over whenever OpenSpec isn't in use; the heavier `openspec-aware` path stays
-the default whenever it is usable.
+spec-lite is a low-ceremony, git-tracked, **Chorus-native** way to keep specs. A `<slug>/` under
+`.chorus/specs/` is a **durable spec for a capability/feature** — plain-markdown docs named by
+Chorus's own Document types, **edited in place** as the capability evolves, each mirrored 1:1 into a
+**persistent** Chorus Document. Every modification effort is captured separately as a **dated change
+record**. This mirrors **superpowers** (a lasting spec plus dated per-effort plans) and gives a
+durable, human-readable record of *intent + requirements* without OpenSpec's four-file,
+strictly-validated ceremony. It is the **lightweight fallback** that takes over whenever OpenSpec
+isn't in use; the heavier `openspec-aware` path stays the default whenever it is usable.
 
 ## Mode selection (OpenSpec-first when usable, lite fallback)
 
@@ -29,12 +31,13 @@ usable must **halt**, never silently fall back: if OpenSpec is **not installed**
 no CLI) surface the install hint (`npm i -g @fission-ai/openspec` / `openspec init`); if it is
 **explicitly disabled** (`CHORUS_OPENSPEC_MODE=off` or the Enable-OpenSpec toggle) report a config
 conflict (`CHORUS_SPEC_MODE=openspec` vs OpenSpec disabled). The stage skill (proposal/yolo) enforces
-this after resolving, before branching.
+this after resolving, before branching. This logic lives in `bin/resolve-spec-mode.sh` (pure, Bash 3.2).
 
-## The change folder
+## The durable spec folder
 
-`.chorus/specs/<slug>/` — one folder per change, `<slug>` kebab-case and unique. Inside it, plain
-markdown named by **Chorus `Document.type`**:
+`.chorus/specs/<slug>/` — `<slug>` (kebab-case) names a **capability/feature, not one change**. It is
+long-lived: successive changes edit its docs in place. Inside it, plain markdown named by **Chorus
+`Document.type`**:
 
 | File | `Document.type` | Required? |
 |---|---|---|
@@ -43,40 +46,60 @@ markdown named by **Chorus `Document.type`**:
 | `adr.md` / `spec.md` / `guide.md` | `adr` / `spec` / `guide` | optional |
 
 `prd.md` is a Chorus PRD: YAML frontmatter (`slug`, `title`, `status`, `created`, and optional
-`ideaUuid` / `proposalUuid` / `documentUuid` for mirroring) followed by `## Intent` (intent +
-background), `## Requirements` (plain prose with `- [ ]` acceptance points — no `SHALL`/scenario
-grammar), and `## Non-goals`. Copy `.chorus/specs/TEMPLATE/prd.md` to start. There is **no `tasks.md`**
-(Chorus Tasks own execution state) and **no changelog section** (git history is the audit trail).
+`ideaUuid` / `proposalUuid` / `documentUuid`) followed by `## Intent` (intent + background),
+`## Requirements` (plain prose with `- [ ]` acceptance points — no `SHALL`/scenario grammar), and
+`## Non-goals`. Each optional `<type>.md` carries its own short frontmatter incl. its own
+`documentUuid`. Copy `.chorus/specs/TEMPLATE/prd.md` to start. There is **no `tasks.md`** (Chorus
+Tasks own execution state) and **no changelog section** (git history + Document versions are the record).
 
 > Note: a lite `spec.md` (type `spec`) is just plain markdown — the *same* `Document.type=spec` carries
 > OpenSpec's delta/`SHALL`/scenario grammar under OpenSpec mode but has no such structure under lite.
 > The type alone doesn't tell the two apart; the change's mode (its folder vs an `openspec/` change) does.
 
-## Always mirror to Chorus
+## Dated change records
+
+Each modification effort is one file at `.chorus/specs/<slug>/changes/YYYY-MM-DD-<change-slug>.md` —
+lean markdown: frontmatter (`date`, `change` slug, `spec: ..` = the durable spec folder, `status`,
+optional `proposalUuid`), then `## What changes` (referencing `../prd.md`), `## Why`, and
+`## Acceptance` (`- [ ]` for **that change** only). The date prefix lets many changes to one spec
+coexist without collision; old change files are never rewritten. There is no task step-list (tasks
+live in Chorus) and no CLI / validate / archive / delta grammar. Copy
+`.chorus/specs/TEMPLATE/changes/YYYY-MM-DD-change.md`.
+
+**Flow for a change:** write the dated change doc, edit the durable spec docs in place to the new
+truth, then re-mirror the docs you touched. The proposal `description` carries one locator line —
+`Spec-lite: .chorus/specs/<slug>/ (change: changes/YYYY-MM-DD-<change-slug>.md)` — so develop finds
+both the durable folder and this effort's change doc.
+
+## Always mirror the durable docs to Chorus
 
 The local folder is the **source of truth**; Chorus is a one-way downstream mirror (no reverse pull).
-Each `<type>.md` mirrors byte-exact to a Chorus Document of that `type`, using the existing
-`chorus_pm_add_document_draft … --arg-file content=<file>` transport — content streamed from the file's
-bytes, never re-typed by the agent. `prd`, `tech_design`, `adr`, `spec`, `guide` are all pre-existing
-`Document.type` values, so spec-lite adds **no new MCP tool, CLI, backend, or schema**. Post-approval
-edits use `chorus_pm_update_document`; every mirror is guarded by the `chorus_check_response`
-halt-on-error helper (openspec-aware §6).
+Each durable `<type>.md` maps to **one persistent** Chorus Document of that `type`, using the existing
+`--arg-file content=<file>` transport — content streamed from the file's bytes, never re-typed by the
+agent:
 
-**Deterministic link.** The proposal `description` carries one literal `Spec-lite change slug: <slug>`
-line so develop can find the folder; `prd.md` frontmatter records `proposalUuid` (written **before**
-the first mirror) and, after approval, `documentUuid` (re-mirror after backfilling so local stays
-byte-identical to Chorus). With several files per folder, each `<type>.md` maps to the **one**
-materialized Document of that `type` under the proposal — resolve by `(proposalUuid, type)`; a lookup
-that finds zero or more than one MUST **halt**, never match by title alone.
+- **First time** a doc is specced: `chorus_pm_add_document_draft … --arg-file content=<file>` under the
+  introducing proposal (edit the draft with `chorus_pm_update_document_draft` before approval). On
+  approval it materializes into a persistent Document; record its `documentUuid` in the file's
+  frontmatter and re-mirror once.
+- **Later edits:** `chorus_pm_update_document … --arg-file content=<file>` against that `documentUuid`.
+  Each update **auto-increments the Document version** — the version history is the modification record
+  in Chorus, parallel to the local git history.
+
+`prd`, `tech_design`, `adr`, `spec`, `guide` are all pre-existing `Document.type` values, so spec-lite
+adds **no new MCP tool, CLI, backend, or schema**. Every mirror is guarded by the `chorus_check_response`
+halt-on-error helper (openspec-aware §6). With several files per folder, each `<type>.md` resolves to
+the **one** Document of that `type` by `documentUuid` / `(proposalUuid, type)`; a lookup that finds zero
+or more than one MUST **halt**, never match by title alone.
 
 ## Local audit trail (留痕)
 
 Because each spec is plain git-tracked markdown, its full history is `git log --
-.chorus/specs/<slug>/` (whole change; use `git log --follow -- <file>` to trace a single renamed
-file) — readable and diffable offline, with or without a Chorus connection. **Git
-history is the authoritative record**; there is no separate changelog file to maintain. Only
-`.chorus/specs/` is version-controlled — the rest of `.chorus/` (plugin runtime state) stays gitignored
-via `.chorus/*` + `!.chorus/specs/`.
+.chorus/specs/<slug>/` (the whole capability — dated change files + durable-doc diffs; use `git log
+--follow -- <file>` to trace a single renamed file) — readable and diffable offline, with or without a
+Chorus connection. The mirrored Documents' auto-incremented versions are the parallel record in
+Chorus. **There is no separate changelog file to maintain.** Only `.chorus/specs/` is version-controlled
+— the rest of `.chorus/` (plugin runtime state) stays gitignored via `.chorus/*` + `!.chorus/specs/`.
 
 **Single-writer under parallel tasks.** The folder is shared, so in a multi-task wave only the
 orchestrator / main agent edits + re-mirrors; parallel workers report via `chorus_report_work` and don't
@@ -91,7 +114,8 @@ touch the specs. A non-orchestrator that must write re-reads immediately before 
   skill small and loads it only when the mode resolves to `lite`.
 - **No subprocess, no strict validation.** Dropping the OpenSpec CLI round-trips and the
   `SHALL`/scenario grammar removes both wall-clock and cognitive overhead. **superpowers**
-  (`obra/superpowers`) similarly keeps its spec + plan as plain git-committed markdown, no validator.
+  (`obra/superpowers`) similarly keeps a durable spec plus dated per-effort plans as plain
+  git-committed markdown, no validator — the shape spec-lite adopts.
 - **Byte-exact mirror.** `--arg-file` streams the file into the document's `content` without the agent
   re-emitting it, saving the ~20k+ tokens a re-typed markdown body would cost per proposal.
 
