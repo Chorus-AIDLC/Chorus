@@ -46,6 +46,7 @@ jobs:
         run: |
           bash public/chorus-plugin/bin/test-syntax.sh
           bash public/chorus-plugin/bin/tests/test-spec-mode-resolution.sh
+          bash public/chorus-plugin/bin/tests/test-resolver-drift.sh
 
       - name: Upload coverage artifact
         if: always()
