@@ -31,6 +31,8 @@ Resolution produces exactly **one** mode; branch on that resolved value, never o
 | unset | no | yes | **lite** |
 | unset | no | no | **free-form** |
 
+`CHORUS_SPEC_MODE=off` is explicit free-form (distinct from unset). **Fail fast on an unsatisfiable explicit request:** `CHORUS_SPEC_MODE=openspec` when OpenSpec isn't usable (no `openspec/` dir or no CLI) must halt with the install hint (`npm i -g @fission-ai/openspec` / `openspec init`), not silently fall back — an explicit intent that can't be honored should be visible, not swallowed.
+
 ## The file format
 
 YAML frontmatter (`slug`, `title`, `status`, `created`, optional `ideaUuid`/`proposalUuid`) followed by four sections: **Intent** (1–2 lines), **Requirements** (plain prose, each with `- [ ]` acceptance-criterion items), **Tasks** (`- [ ]` checkboxes, dependencies inline), and **Changelog** (append-only, ISO-8601 timestamps). A `## Design` section may be added inline when a change warrants it. Copy `.chorus/specs/TEMPLATE.md` to start.
@@ -39,11 +41,13 @@ YAML frontmatter (`slug`, `title`, `status`, `created`, optional `ideaUuid`/`pro
 
 The local file is the **source of truth**; Chorus is a downstream mirror. Sync is **push-only** — there is no reverse pull in v1. At proposal submit (and on later edits), the file is mirrored into a Chorus `spec` document using the existing `chorus_pm_add_document_draft … --arg-file content=<file>` transport — byte-exact, with the document content streamed from the file's bytes (never re-typed by the agent). `spec` is a pre-existing document type; spec-lite adds **no new MCP tool, no CLI command, no backend, and no schema change**.
 
-**Deterministic proposal↔file link.** The proposal `description` carries a literal `Spec-lite change slug: <slug>` line (the analogue of OpenSpec's slug line), and the spec file's frontmatter records `proposalUuid`. Develop resolves the file from the slug line and the document from the frontmatter `proposalUuid` (unique match, else halt) — never by matching title+type, which isn't unique across changes. The `proposalUuid` is written into frontmatter **before** the first mirror, so the local file and the first Chorus copy are byte-consistent from the start.
+**Deterministic proposal↔file link.** The proposal `description` carries a literal `Spec-lite change slug: <slug>` line (the analogue of OpenSpec's slug line), and the spec file's frontmatter records `proposalUuid` (and, after approval, the materialized `documentUuid` — backfilled once known, so re-mirror is fully deterministic). Develop resolves the file from the slug line and the document from frontmatter `documentUuid`/`proposalUuid` (unique match, else halt) — never by matching title+type, which isn't unique across changes. The `proposalUuid` is written into frontmatter **before** the first mirror, so the local file and the first Chorus copy are byte-consistent from the start.
+
+**Task state authority.** The spec file's `## Tasks` checkboxes are a local authoring view. Once the proposal is approved, tasks materialize as real Chorus Tasks and **Chorus is authoritative for execution state** — the one-way push does not sync task status back into the file. The file boxes are a convenience, not the source of truth for progress.
 
 ## Local audit trail (留痕)
 
-Because each spec is plain git-tracked markdown, its full history is `git log --follow .chorus/specs/<slug>.md` — readable and diffable offline, with or without a Chorus connection. The `## Changelog` section is a human-facing, timestamped log appended as the change progresses (created → tasks done → status changes). No separate audit file is needed.
+Because each spec is plain git-tracked markdown, its full history is `git log --follow .chorus/specs/<slug>.md` — readable and diffable offline, with or without a Chorus connection. **Git is the authoritative record**; the `## Changelog` section is a lightweight human-readable summary appended as the change progresses (an agent-written timestamp may be approximate — git holds the exact times). Keep it minimal. No separate audit file is needed.
 
 Only `.chorus/specs/` is version-controlled; the rest of `.chorus/` (plugin runtime state) stays gitignored via `.chorus/*` + `!.chorus/specs/`.
 

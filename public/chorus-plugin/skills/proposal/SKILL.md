@@ -102,7 +102,7 @@ Branch on the **resolved mode** (not on the raw `CHORUS_OPENSPEC_ACTIVE` flag �
 
   > **⛔ Mandatory in OpenSpec mode:** mirror calls fill `content` from the local file — prefer `chorus mcp call … --arg-file content=<file>`, falling back to the `chorus-api.sh` wrapper with `json_encode_file` when `chorus` is not on `PATH` — see `openspec-aware` §3.6. Do **not** call `chorus_pm_add_document_draft` directly from the MCP harness with a hand-typed `content` field. Re-typing thousands of lines through the LLM burns 20k+ content tokens per proposal and breaks byte-equality with the local source of truth (`openspec-aware` §2 Rule 1 explains the full reasoning). Skip Step 2 below when in OpenSpec mode — the file-fill flow in `openspec-aware` §3.6 replaces it for documents.
 
-- **resolved = free-form** (step 4 above: no `CHORUS_SPEC_MODE`, OpenSpec inactive, and no `.chorus/specs/` dir) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
+- **resolved = free-form** (explicit `CHORUS_SPEC_MODE=off`, OR unset with OpenSpec inactive and no `.chorus/specs/` dir) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
 
 ### Step 2: Add Document Drafts
 
