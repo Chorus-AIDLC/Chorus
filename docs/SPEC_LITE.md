@@ -35,7 +35,7 @@ Resolution produces exactly **one** mode; branch on that resolved value, never o
 
 ## The file format
 
-YAML frontmatter (`slug`, `title`, `status`, `created`, optional `ideaUuid`/`proposalUuid`) followed by four sections: **Intent** (1–2 lines), **Requirements** (plain prose, each with `- [ ]` acceptance-criterion items), **Tasks** (`- [ ]` checkboxes, dependencies inline), and **Changelog** (append-only, ISO-8601 timestamps). A `## Design` section may be added inline when a change warrants it. Copy `.chorus/specs/TEMPLATE.md` to start.
+YAML frontmatter — `slug`, `title`, `status`, `created`, optional `ideaUuid`, `proposalUuid` (required before the first Chorus mirror), and optional `documentUuid` (backfilled after approval) — followed by four sections: **Intent** (1–2 lines), **Requirements** (plain prose, each with `- [ ]` acceptance-criterion items), **Tasks** (`- [ ]` checkboxes, dependencies inline), and **Changelog** (append-only, ISO-8601 timestamps). A `## Design` section may be added inline when a change warrants it. Copy `.chorus/specs/TEMPLATE.md` to start.
 
 ## One-way sync to Chorus
 
@@ -47,7 +47,7 @@ The local file is the **source of truth**; Chorus is a downstream mirror. Sync i
 
 ## Local audit trail (留痕)
 
-Because each spec is plain git-tracked markdown, its full history is `git log --follow .chorus/specs/<slug>.md` — readable and diffable offline, with or without a Chorus connection. **Git is the authoritative record**; the `## Changelog` section is a lightweight human-readable summary appended as the change progresses (an agent-written timestamp may be approximate — git holds the exact times). Keep it minimal. No separate audit file is needed.
+Because each spec is plain git-tracked markdown, its full history is `git log --follow .chorus/specs/<slug>.md` — readable and diffable offline, with or without a Chorus connection. **Git history is the authoritative record**; the `## Changelog` section is a lightweight human-readable summary appended as the change progresses. Generate timestamps with `date -u` rather than hand-writing them (or just record date + event). Keep it minimal. No separate audit file is needed.
 
 Only `.chorus/specs/` is version-controlled; the rest of `.chorus/` (plugin runtime state) stays gitignored via `.chorus/*` + `!.chorus/specs/`.
 

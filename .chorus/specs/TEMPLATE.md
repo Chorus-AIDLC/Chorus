@@ -4,7 +4,8 @@ title: <one-line change title>
 status: draft            # draft | active | done
 created: <YYYY-MM-DD>
 ideaUuid:                # optional — Chorus idea uuid
-proposalUuid:            # optional — filled after the first Chorus sync
+proposalUuid:            # REQUIRED before the first Chorus mirror — the originating proposal
+documentUuid:            # optional — backfill after approval; makes re-mirror deterministic
 ---
 
 ## Intent

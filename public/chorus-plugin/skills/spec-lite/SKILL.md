@@ -27,7 +27,9 @@ Resolve the active spec mode deterministically to **one** value. OpenSpec stays 
 
 Branch on the **resolved value**, not on `CHORUS_OPENSPEC_ACTIVE` — `lite` and `free-form` share `CHORUS_OPENSPEC_ACTIVE=0`, so keying off the raw flag double-matches. `CHORUS_SPEC_MODE=off` resolves to free-form explicitly (it is not the same as unset). If the resolution is not `lite`, this skill is a no-op — return to the caller.
 
-**Fail fast on an unsatisfiable explicit request.** If `CHORUS_SPEC_MODE=openspec` but OpenSpec isn't usable (no `openspec/` dir or no `openspec` CLI on `PATH`), do **not** silently fall back to lite/free-form — that buries an explicit user intent. Halt and surface the install hint (`npm i -g @fission-ai/openspec` / `openspec init`), same as `openspec-aware`. (`CHORUS_SPEC_MODE` is the spec-mode selector for this feature; the legacy `CHORUS_OPENSPEC_MODE=off` still hard-disables OpenSpec as before and, absent `CHORUS_SPEC_MODE`, yields free-form.)
+**Fail fast on an unsatisfiable explicit request.** If `CHORUS_SPEC_MODE=openspec` but OpenSpec isn't usable (no `openspec/` dir or no `openspec` CLI on `PATH`), the flow must halt and surface the install hint (`npm i -g @fission-ai/openspec` / `openspec init`) — never silently fall back. **This check is enforced by the calling stage skill's mode resolver (proposal / develop / yolo), after resolving and before branching** — spec-lite itself is not loaded when the mode is `openspec`, so it cannot be the enforcement point.
+
+`CHORUS_SPEC_MODE` is the spec-mode selector for this feature. The legacy `CHORUS_OPENSPEC_MODE=off` only **disables OpenSpec**; with no `CHORUS_SPEC_MODE` set, resolution then continues down the order — so it yields **lite** if a `.chorus/specs/` dir exists, otherwise free-form (it does not force free-form).
 
 ---
 
@@ -109,7 +111,7 @@ Guard every mirror call with the `chorus_check_response` halt-on-error helper fr
 **Locating the right file/document (develop-time).** Do NOT match by `title`+`type` alone — not unique across changes. Resolve deterministically:
 
 - From a proposal → its spec file: grep the proposal `description` for `^Spec-lite change slug: `, then open `.chorus/specs/<slug>.md`.
-- From a spec file → its Chorus document: prefer the frontmatter `documentUuid` when present (backfill it into frontmatter the first time you learn it — i.e. after the proposal is approved and the draft materializes). Absent that, use the frontmatter `proposalUuid`: among that proposal's `type: "spec"` documents there is exactly one — if zero or many match, **halt** and surface it rather than guessing.
+- From a spec file → its Chorus document: prefer the frontmatter `documentUuid` when present. Backfill it the first time you learn it (after the proposal is approved and the draft materializes into a Document). **Backfilling `documentUuid` changes the file, so immediately re-mirror the file via `chorus_pm_update_document` using that same `documentUuid`** — otherwise local ≠ mirror reappears right after approval. Absent a `documentUuid`, use the frontmatter `proposalUuid`: among that proposal's `type: "spec"` documents there is exactly one — if zero or many match, **halt** and surface it rather than guessing.
 
 **Task state authority.** The `## Tasks` checkboxes are a **local authoring view**. Once the proposal is approved, tasks materialize as real Chorus Tasks and **Chorus is authoritative for execution state** (claim / verify / done); the one-way push does not sync Chorus task status back into the file. Tick the file boxes as a convenience if you like, but don't treat them as the source of truth for task progress.
 
@@ -126,7 +128,7 @@ The `## Changelog` section is the local audit trail (留痕). As work proceeds:
 
 **Single-writer rule (concurrency).** The spec file is one shared file; parallel task workers all editing + re-mirroring it race (git conflicts, last-write-wins). So: **only the orchestrator / main agent updates the spec file and re-mirrors** — parallel workers report progress via `chorus_report_work` and do NOT touch the spec. If a non-orchestrator must update it, **re-read the file immediately before editing and detect conflicts** rather than blind-writing.
 
-**Git is the authoritative history**, not the Changelog. `git log --follow .chorus/specs/$SLUG.md` is the exact, tamper-evident record; the `## Changelog` is a lightweight human-readable summary (an agent-written timestamp may be approximate — that's fine, git holds the real times). Keep Changelog entries minimal. Because the file is plain git-tracked markdown, it and its history remain readable offline, with or without a Chorus connection.
+**Git history is the authoritative record**, not the Changelog. `git log --follow .chorus/specs/$SLUG.md` is the versioned history; the `## Changelog` is a lightweight human-readable summary. Generate any timestamp with `date -u +%Y-%m-%dT%H:%M:%SZ` (don't hand-write it) — or just record date + event. Keep entries minimal. Because the file is plain git-tracked markdown, it and its history remain readable offline, with or without a Chorus connection.
 
 When the change is delivered, set frontmatter `status: done` and append a final Changelog line.
 

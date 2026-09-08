@@ -121,3 +121,11 @@ Two blockers + two minors surfaced in peer review and folded in before PR:
 4. **Single-writer under parallel tasks.** Only the orchestrator/main agent updates + re-mirrors the shared spec file; parallel workers report via `chorus_report_work` only (re-read + conflict-detect if a non-orchestrator must write) — avoids git conflicts / last-write-wins.
 
 A mode-resolution matrix (`CHORUS_SPEC_MODE` × OpenSpec-active × `.chorus/specs/` present → resolved mode) is documented in `docs/SPEC_LITE.md` as the behavior contract.
+
+Second review round (Codex) corrected the *placement/consistency* of the above:
+
+- **Fail-fast lives in the stage-skill resolver, not spec-lite.** `CHORUS_SPEC_MODE=openspec` never loads the spec-lite skill, so the "explicit-openspec-but-unavailable → halt + install hint" check is enforced in proposal/yolo *after resolving, before branching* (avoids the resolve-to-OpenSpec-but-no-active-branch dead-end).
+- **`.chorus/specs/TEMPLATE.md` synced to the new contract** (`proposalUuid` required-before-mirror, `documentUuid` present) — the on-disk template is copied first, so a stale template would have resurrected the backfill-after-mirror drift.
+- **`documentUuid` backfill triggers an immediate re-mirror** (via `chorus_pm_update_document`) so local == mirror right after approval.
+- **Legacy `CHORUS_OPENSPEC_MODE=off`** only disables OpenSpec; resolution continues to lite (if `.chorus/specs/` present) or free-form — it does not force free-form.
+- **Git history is authoritative** for the audit trail (dropped the inaccurate "tamper-evident" claim; git can be rebased/force-pushed); Changelog timestamps are `date -u`-generated, not hand-written. The cumulative spec (`openspec/specs/spec-lite/spec.md`) was synced to record fail-fast, task-state authority, `documentUuid`, and the git-authoritative Changelog.

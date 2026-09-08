@@ -196,6 +196,8 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    - Else load the `openspec-aware` skill and run its §1 detection: `CHORUS_OPENSPEC_ACTIVE=1` → OpenSpec spec-driven branch (2a); `=0` → next check.
    - Else if a `.chorus/specs/` directory exists → **spec-lite (2c)**; else → free-form branch (2b).
 
+   **Fail fast (after resolving, before entering 2a/2b/2c):** if the resolved mode is OpenSpec *because* `CHORUS_SPEC_MODE=openspec` was set but OpenSpec is unusable (`CHORUS_OPENSPEC_ACTIVE=0`), halt with the install hint (`npm i -g @fission-ai/openspec` / `openspec init`) — do NOT silently fall back or enter 2a with no OpenSpec to author. (Unset `CHORUS_SPEC_MODE` with inactive OpenSpec routes on to 2c/2b, no error.)
+
    This is mandatory — yolo runs unattended, so silently picking the wrong mode is exactly the failure scenario this resolution exists to prevent.
 
 2. **Create the empty proposal container.** In OpenSpec mode, the `description` MUST contain the literal line `OpenSpec change slug: <slug>` (use the `$SLUG` you'll pick in 2a); in free-form mode, omit that line.
