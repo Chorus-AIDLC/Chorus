@@ -54,6 +54,8 @@ Code-Review Gateway  (all tasks done; up to maxCodeReviewRounds, default 3)
 Done  -->  Report summary + mandatory Idea Completion Report
 ```
 
+**First-principles alignment (a stage-tailored instruction in every reviewer).** The proposal-, task-, and code-reviewer each also verify, top-down, that the work still serves the *original Idea's intent* — building the intent baseline from the directly-attached Idea it resolves from the entity under review — via the existing `chorus_get_idea` + `chorus_get_elaboration` + `chorus_get_comments`, counting **human-authored** content only — and flagging **scope creep**, **requirement loss / shrink**, or **semantic drift**. Unauthorized drift is a **BLOCKER → FAIL / reject**, downgraded to a cited NOTE only when traceable to a **human-originated** authorization (a human-authored Idea comment, a human-answered elaboration entry, or an explicit human override) — an agent's own comment never authorizes. **In `/yolo` there is no human at the gate, so a self-generated (agent-authored) elaboration or comment does NOT clear alignment drift**: fix the drift (reject/reopen + revise) rather than rationalizing it away.
+
 **Escape hatch:** Interrupt at any time. Every created entity (project, idea, proposal, tasks, comments) persists in Chorus. Resume manually via `develop-chorus` or `review-chorus`.
 
 > **Base URL:** Skill files are hosted under `<BASE_URL>/skill/`. The user provides the Chorus access URL (e.g. `https://chorus.acme.com` or `http://localhost:8637`), referred to as `<BASE_URL>` below. See `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) for platform overview and shared tools.

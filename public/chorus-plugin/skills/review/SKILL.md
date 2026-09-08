@@ -73,6 +73,8 @@ When reviewing proposals, tasks, or an Idea's final aggregate code change, prefe
 4. **Track rounds.** Count existing VERDICT comments before spawning. After 3 rounds of FAIL on the same item, stop the loop and escalate to human review.
 5. **Fallback.** If the reviewer is unavailable (e.g., agent type not registered, sub-agent spawn fails), review the item yourself using the quality checklists in the workflows below.
 
+**First-principles alignment (a stage-tailored instruction in all three reviewers).** Each reviewer also checks, top-down, that the work still serves the *original Idea's intent*: it resolves the Idea from the entity under review, reads it via the existing `chorus_get_idea` + `chorus_get_elaboration` + `chorus_get_comments`, builds the intent baseline from **human-authored** content only, and flags **scope creep**, **requirement loss / shrink**, or **semantic drift**. Unauthorized drift is a **BLOCKER → VERDICT: FAIL / reject**, downgraded to a NOTE only when traceable to a **human-originated** authorization (a human-authored Idea comment, a human-answered elaboration, or an explicit human override at the gate) — an agent's own comment never authorizes, so a drifting agent cannot self-clear. So a `FAIL` may come from intent drift, not just local defects; treat it the same way — reject/reopen and fix, or record a human override.
+
 ---
 
 ## Workflow

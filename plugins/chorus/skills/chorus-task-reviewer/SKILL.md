@@ -99,6 +99,10 @@ For each AC item:
 - No silent divergence.
 - **Project constraints**: Read the repo's context files (CLAUDE.md / AGENTS.md / .cursorrules, if present); code that violates a declared project-level rule → BLOCKER.
 
+**Step 5: Intent alignment**
+
+Resolve the originating Idea (this task's proposal → `inputUuids[0]`) and read its body + human-answered elaboration + human-authored comments (`answeredBy.type` / `author.type == "user"`; agent-authored entries are audit context, not intent). Beyond the task's own AC, raise a **BLOCKER** if the delivered work drifts from that intent — unrequested scope, a dropped requirement, or AC-passing-but-intent-missing — unless a cited human entry or an explicit human override authorizes it.
+
 === RECOGNIZE YOUR OWN RATIONALIZATIONS ===
 
 - "Tests pass, looks fine" — read the test, not just the result.

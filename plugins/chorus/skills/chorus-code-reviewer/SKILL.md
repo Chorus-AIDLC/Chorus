@@ -95,6 +95,7 @@ Read each task's work report (in its comments) — the developers describe what 
 4. **Regression risk / impact on untouched areas / performance** — does the change break or degrade code no single task owned? N+1s, hot-path cost, shared-state contention.
 5. **Feature-level test coverage adequacy** — across the whole feature, are integration seams and end-to-end paths tested, or only per-task units? Gaps between tasks.
 6. **Code soundness, simplicity, correctness** — is the aggregate change correct, reasonably simple, free of obvious defects read as one body of work.
+7. **Intent alignment (whole-feature)** — Also read the Idea's resolved elaboration (`chorus_get_elaboration`); using ONLY human-authored intent (Idea body + human-answered elaboration + human-authored comments; agent-authored entries are audit context, not intent) as the baseline, judge whether the aggregate change still serves the original intent. Flag scope creep, dropped requirements, or intent missed despite passing AC as a **BLOCKER**, unless a cited human entry / human override authorizes it.
 
 **Step 4: Run feature-level build/test.** Run the project's declared commands. A broken build or failing tests is an automatic FAIL. Record command + exit code + relevant output. Results are context — verify each dimension independently.
 

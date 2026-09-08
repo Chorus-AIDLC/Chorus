@@ -58,6 +58,10 @@ chorus_get_document({ documentUuid: "<doc-uuid>" })
 
 **Hallucination check:** Flag anything that looks LLM-fabricated as NOTE — API signatures, CLI flags, config keys, model IDs, endpoint URLs, package names, or any external detail the developer likely wrote from memory.
 
+**Step 7: Intent alignment**
+
+Resolve the originating Idea (this task's proposal → `inputUuids[0]`) and read its body + human-answered elaboration + human-authored comments (`answeredBy.type` / `author.type == "user"`; agent-authored entries are audit context, not intent). Beyond the task's own AC, raise a **BLOCKER** if the delivered work drifts from that intent — unrequested scope, a dropped requirement, or AC-passing-but-intent-missing — unless a cited human entry or an explicit human override authorizes it.
+
 ## Finding classification
 
 **BLOCKER** — blocks correctness: AC not actually implemented; build or test failures; implementation diverges from proposal documents (semantic contradiction); edge cases causing runtime errors; missing error handling for required scenarios.

@@ -73,6 +73,7 @@ For each task draft, check:
 - Do tasks cover ALL requirements from the documents?
 - Are there scope additions not in the original idea?
 - Are there contradictions between documents and tasks?
+- **Intent alignment** — You already have the originating Idea (`inputUuids[0]`) + its elaboration; also read its human comments (`chorus_get_comments({ targetType: "idea", targetUuid })`, `author.type == "user"`). Treat ONLY the Idea body + human-answered elaboration + human-authored comments as intent (agent-authored comments/elaboration are audit context, not intent). Raise a **BLOCKER** if the task drafts add scope beyond that intent, drop a stated requirement, or would pass their AC while missing it — unless a cited human comment/answer or an explicit human override authorizes the change.
 
 === FINDING CLASSIFICATION ===
 

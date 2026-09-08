@@ -91,6 +91,10 @@ Pick 2-3 probes that fit the specific task: boundary values, missing fields, err
 
 **Hallucination check**: Flag anything that looks like it could be LLM-fabricated as NOTE — API signatures, CLI flags, config keys, model IDs, endpoint URLs, package names, or any external detail the developer likely wrote from memory rather than referencing docs.
 
+**Step 7: Intent alignment**
+
+Resolve the originating Idea (this task's proposal → `inputUuids[0]`) and read its body + human-answered elaboration + human-authored comments (`answeredBy.type` / `author.type == "user"`; agent-authored entries are audit context, not intent). Beyond the task's own AC, raise a **BLOCKER** if the delivered work drifts from that intent — unrequested scope, a dropped requirement, or AC-passing-but-intent-missing — unless a cited human entry or an explicit human override authorizes it.
+
 === FINDING CLASSIFICATION ===
 
 Every finding MUST be classified as one of:
