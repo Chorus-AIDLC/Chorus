@@ -87,7 +87,7 @@ chorus_pm_create_proposal({
 
 ### Step 1.5: Select spec mode
 
-The spec mode is **already computed for you** by the SessionStart hook (`bin/resolve-spec-mode.sh`) — do NOT re-derive it. Read the `## Spec Mode` section of your SessionStart context: it states `CHORUS_SPEC_MODE=<lite|openspec|off>` plus a one-line routing note. Just act on that value:
+The spec mode is **already computed for you** by the SessionStart hook (`bin/resolve-spec-mode.sh`) — do NOT re-derive it. Read the `## Spec Mode` section of your SessionStart context: it states `CHORUS_SPEC_MODE=<lite|openspec|off>` plus a one-line routing note. (Spawned without that context? Source the *same* `bin/resolve-spec-mode.sh` to get `SPEC_MODE`/`SPEC_FAIL` — never hand-roll the rule.) Just act on that value:
 
 - If the section says the requested mode **cannot be honored** (e.g. `CHORUS_SPEC_MODE=openspec` but OpenSpec isn't usable — it prints "cannot be honored" with a config-conflict or install-hint reason), **halt** and surface that reason; do not fall back.
 - Otherwise branch on the stated mode:

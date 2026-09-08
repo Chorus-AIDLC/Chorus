@@ -14,7 +14,7 @@ metadata:
 This skill is a **shared sub-procedure** invoked by the Chorus stage skills (proposal, develop, yolo) whenever the user wants spec-driven authoring through the [OpenSpec CLI](https://github.com/Fission-AI/OpenSpec). It is opt-in:
 
 - Activates when **all three** signals hold (see §1): `CHORUS_OPENSPEC_MODE` is not `off`, an `openspec/` directory exists at the project root, and the `openspec` CLI is on `PATH`.
-- Otherwise the calling skill falls back to its existing free-form behavior.
+- Otherwise the calling skill follows the resolved `SPEC_MODE` — **spec-lite** (the default when OpenSpec isn't usable) or free-form (`=off`).
 
 > **See also — `spec-lite` (the lightweight fallback):** OpenSpec (this skill) stays the **default whenever it is usable** (`openspec/` dir + CLI, not disabled). When OpenSpec is absent or disabled — or when `CHORUS_SPEC_MODE=lite` is set explicitly — the mode resolves to **spec-lite**: a Chorus-native, git-tracked change folder `.chorus/specs/<slug>/` of plain-markdown docs named by Document type (`prd.md`, `tech_design.md`, …), each mirrored 1:1 into Chorus via the same `--arg-file` transport, with no CLI and no strict validation. A session that resolves to OpenSpec follows everything below unchanged. See the `spec-lite` skill (`skills/spec-lite/SKILL.md`).
 
@@ -49,23 +49,18 @@ Branch:
 - `CHORUS_OPENSPEC_ACTIVE=1` → follow §3 (OpenSpec authoring).
 - No `CHORUS_OPENSPEC_ACTIVE=1` line (the section shows `CHORUS_SPEC_MODE=lite` / `off`, or you were spawned without SessionStart context) → this skill is a no-op; return to the calling skill's path. **Do not** scaffold `openspec/changes/`. **Do not** add the slug line to the proposal description. (Reconstruct the value with the manual fallback below if you genuinely have no context.)
 
-### Manual fallback
+### Manual fallback (no SessionStart context)
 
-If you're in a sub-shell, sub-agent, or session that did not see SessionStart context (e.g. you were spawned mid-session and the parent's context was not forwarded), reconstruct the value yourself with the same three checks:
+If you're in a sub-shell, sub-agent, or session that did not see the `## Spec Mode` section (e.g. spawned mid-session without the parent's context), **do not hand-roll the detection** — source the *same* resolver the hook uses, so there is one computation of the mode:
 
 ```bash
-if [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
-elif [ ! -d "${CLAUDE_PROJECT_DIR:-$PWD}/openspec" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
-elif ! openspec --version >/dev/null 2>&1; then
-  CHORUS_OPENSPEC_ACTIVE=0
-else
-  CHORUS_OPENSPEC_ACTIVE=1
-fi
+# resolve-spec-mode.sh lives next to the plugin hooks (beside on-session-start.sh).
+. "<chorus-plugin>/bin/resolve-spec-mode.sh"
+# It sets SPEC_MODE (lite|openspec|off), SPEC_FAIL (non-empty ⇒ halt),
+# and CHORUS_OPENSPEC_ACTIVE (1 only for a usable openspec).
 ```
 
-Use this only when SessionStart context is genuinely unavailable — duplicating the detection is wasteful when the hook already computed it.
+Then: if `SPEC_FAIL` is non-empty, halt and surface it; if `CHORUS_OPENSPEC_ACTIVE=1` follow §3; otherwise this skill is a no-op — return to the caller, which follows the resolved `SPEC_MODE` (spec-lite or free-form). If you genuinely cannot locate the helper, set `CHORUS_SPEC_MODE` explicitly and re-launch rather than guessing — never re-derive the rule inline (the hook/helper is the single source of truth).
 
 ---
 
@@ -372,14 +367,14 @@ The hook is read-only; you (the agent) perform the archive:
 
 ---
 
-## §4. Fallback authoring (no openspec)
+## §4. When OpenSpec is not the resolved mode
 
-When detection puts the agent in fallback mode (`CHORUS_OPENSPEC_ACTIVE=0`), this skill is a **no-op**. Return to the calling skill's free-form path:
+When `CHORUS_OPENSPEC_ACTIVE` is not `1`, this skill is a **no-op** — return to the calling skill, which follows whatever the resolved `SPEC_MODE` is: **spec-lite** (the default when OpenSpec isn't usable) or **free-form** (`CHORUS_SPEC_MODE=off`). Either way, from this skill's side:
 
 - No `openspec/changes/` folder is created or referenced.
 - No `OpenSpec change slug: …` line is added to the proposal description.
-- Document drafts are authored via direct MCP `chorus_pm_add_document_draft` calls with inline `content` — same as before this skill existed.
-- Rule 1 (wrapper-only mirror) does not apply — there is no local file source of truth.
+- Document authoring is whatever the resolved mode dictates (spec-lite: mirror `.chorus/specs/<slug>/<type>.md`; free-form: inline `chorus_pm_add_document_draft`) — not this skill's concern.
+- Rule 1 (wrapper-only mirror) does not apply to OpenSpec here — there is no `openspec/` local file for this skill to mirror.
 - The §3.9 archive hook does nothing (no slug → silent exit).
 
 ---
@@ -465,7 +460,7 @@ This is project-wide policy: no silent errors.
 When invoked from a stage skill (proposal / develop / yolo):
 
 1. Read `CHORUS_OPENSPEC_ACTIVE` from the `## Spec Mode` section in the SessionStart context (§1). If it isn't there, fall back to the manual probe in §1.
-2. If `CHORUS_OPENSPEC_ACTIVE=0` → return to caller's free-form path (§4).
+2. If `CHORUS_OPENSPEC_ACTIVE` is not `1` → no-op; return to the caller, which follows the resolved `SPEC_MODE` (spec-lite or free-form) — see §4.
 3. Otherwise:
    a. Pick `$SLUG` (§3.1).
    b. `openspec new change "$SLUG"` (§3.2).

@@ -40,7 +40,9 @@ jobs:
       - name: Run coordinated package-contract tests
         run: pnpm test:release-contract
 
-      - name: Run plugin shell tests (Bash 3.2 syntax + spec-mode resolver)
+      - name: Run plugin shell tests (Bash 3.2-compat syntax smoke + spec-mode resolver)
+        # Note: the runner's bash is 5.x, so test-syntax.sh is a compatibility
+        # smoke (it greps for Bash-4+ constructs), not execution on a real 3.2.
         run: |
           bash public/chorus-plugin/bin/test-syntax.sh
           bash public/chorus-plugin/bin/tests/test-spec-mode-resolution.sh
