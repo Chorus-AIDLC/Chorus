@@ -126,6 +126,8 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
 >
 > In the no-OpenSpec fallback (no slug line, or no `openspec` CLI), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
 
+> **Document update flow (spec-lite mode):** if the originating proposal `description` contains a locator line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/`, the `prd` / `tech_design` / … Documents are **persistent mirrors** of the Chorus-typed docs in that **dated change folder**. Load the `spec-lite` skill (`~/.codex/skills/spec-lite/SKILL.md`). Locate the dated folder from the locator line (not by title/type). Edit those `<type>.md` files in place and update the capability's durable `.chorus/specs/<slug>/spec.md` in place too — but **`spec.md` is never mirrored** (local only, no ids). Tick `- [ ]` acceptance points, then re-mirror each edited dated-folder file via `chorus mcp call chorus_pm_update_document … --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/<type>.md` against its `documentUuid` (each update auto-increments the Document version = its modification history; `chorus-mcp-call.sh` fallback when `chorus` not on `PATH`). **Git history is the audit trail** (`git log -- .chorus/specs/<slug>/`; `git log --follow -- <file>` for a single renamed file) — no changelog section.
+
 ### Step 5: Start Working
 
 ```
