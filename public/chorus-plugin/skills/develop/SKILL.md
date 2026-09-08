@@ -142,6 +142,8 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
 >
 > In the no-OpenSpec fallback (no slug line, or no `openspec` CLI), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
 
+> **Document update flow (spec-lite mode):** if the change is managed by **spec-lite** (a `.chorus/specs/<slug>.md` file exists / `CHORUS_SPEC_MODE=lite`), the `spec` Document is a **mirror** of that file. Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`): edit `.chorus/specs/<slug>.md` first (it is the source of truth), append a timestamped `## Changelog` entry (留痕) and tick `- [ ]` task/AC boxes as work completes, then re-mirror via `chorus mcp call chorus_pm_update_document … --arg-file content=.chorus/specs/<slug>.md`. No new tool/CLI — same `--arg-file` transport as OpenSpec.
+
 ### Step 5: Start Working
 
 **Sub-agent**: checkin to the task first:

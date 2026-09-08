@@ -190,12 +190,13 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 #### Step 1.4: Create Proposal
 
-1. **Detect OpenSpec mode.** Load the `openspec-aware` skill at `.claude/skills/openspec-aware/SKILL.md` and run its §1 detection contract. The result determines how the rest of this step authors documents:
+1. **Select spec mode.** Resolve deterministically (OpenSpec stays the default when active — spec-lite never overrides it silently):
 
-   - `CHORUS_OPENSPEC_ACTIVE=1` → spec-driven branch (sub-step 2a below).
-   - `CHORUS_OPENSPEC_ACTIVE=0` → free-form branch (sub-step 2b below).
+   - `CHORUS_SPEC_MODE=lite` → **spec-lite branch (sub-step 2c below)**; `=openspec` → OpenSpec; `=off` → free-form.
+   - Else load the `openspec-aware` skill and run its §1 detection: `CHORUS_OPENSPEC_ACTIVE=1` → OpenSpec spec-driven branch (2a); `=0` → next check.
+   - Else if a `.chorus/specs/` directory exists → **spec-lite (2c)**; else → free-form branch (2b).
 
-   This is mandatory — yolo runs unattended, so silently picking the wrong mode is exactly the failure scenario the detection contract exists to prevent.
+   This is mandatory — yolo runs unattended, so silently picking the wrong mode is exactly the failure scenario this resolution exists to prevent.
 
 2. **Create the empty proposal container.** In OpenSpec mode, the `description` MUST contain the literal line `OpenSpec change slug: <slug>` (use the `$SLUG` you'll pick in 2a); in free-form mode, omit that line.
 
@@ -232,6 +233,8 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
      content: "<markdown tech design covering architecture, data model, API, module contracts>"
    })
    ```
+
+   **2c. spec-lite mode.** Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG`, author one `.chorus/specs/<slug>.md` (Intent / Requirements+AC / Tasks / Changelog) from `.chorus/specs/TEMPLATE.md`, then mirror it into a single `spec` document draft byte-exact — `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"spec\",\"title\":\"Spec: <feature>\"}" --arg-file content=.chorus/specs/<slug>.md`. No `OpenSpec change slug:` line and no `openspec/changes/` scaffold. Then continue to step 3 for task drafts.
 
 3. **Add task drafts incrementally** (use returned `draftUuid` for dependency chaining). `acceptanceCriteriaItems` is **required** on every draft — at least one non-blank criterion, or the call is rejected:
    ```

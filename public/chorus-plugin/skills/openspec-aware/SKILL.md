@@ -16,6 +16,8 @@ This skill is a **shared sub-procedure** invoked by the Chorus stage skills (pro
 - Activates when **all three** signals hold (see §1): `CHORUS_OPENSPEC_MODE` is not `off`, an `openspec/` directory exists at the project root, and the `openspec` CLI is on `PATH`.
 - Otherwise the calling skill falls back to its existing free-form behavior.
 
+> **See also — `spec-lite`:** for a lighter alternative that keeps one git-tracked `.chorus/specs/<slug>.md` per change (no CLI, no strict validation, one-way `--arg-file` mirror to Chorus), see the `spec-lite` skill (`skills/spec-lite/SKILL.md`). The stage skills resolve OpenSpec vs spec-lite vs free-form via a deterministic order; OpenSpec (this skill) remains the default whenever it is active, so nothing below changes.
+
 When you reach a point in proposal / develop / yolo where this skill is referenced, **read the value of `CHORUS_OPENSPEC_ACTIVE` from the SessionStart context** (see §1) and branch on it. Do not re-run the detection block — the SessionStart hook has already done it once for this session.
 
 ---
