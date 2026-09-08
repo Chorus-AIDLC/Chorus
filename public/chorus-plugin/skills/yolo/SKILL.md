@@ -190,15 +190,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 #### Step 1.4: Create Proposal
 
-1. **Select spec mode.** `CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}` (the SessionStart `## Spec Mode` section states the resolved value):
-
-   - Explicit `CHORUS_SPEC_MODE` wins: `=lite` → **spec-lite (2c)**; `=openspec` → **OpenSpec (2a)**; `=off` → **free-form (2b)**.
-   - Unset → **OpenSpec (2a)** when it is usable (`openspec/` dir + CLI, not disabled); otherwise → **spec-lite (2c)**. (OpenSpec stays the default when present; lite is the fallback.)
-   - Legacy `CHORUS_OPENSPEC_MODE=off` (or the Enable-OpenSpec toggle off) forces *not*-openspec — an unset `CHORUS_SPEC_MODE` then resolves to lite.
-
-   **Fail fast (after resolving, before entering 2a/2b/2c):** if `CHORUS_SPEC_MODE=openspec` but OpenSpec is unusable, halt — do NOT silently fall back or enter 2a with no OpenSpec to author. Name the cause: **config conflict** if OpenSpec is explicitly disabled (`CHORUS_OPENSPEC_MODE=off` / toggle off), else the **install hint** (`npm i -g @fission-ai/openspec` / `openspec init`) if simply not installed.
-
-   This is mandatory — yolo runs unattended, so silently picking the wrong mode is exactly the failure scenario this resolution exists to prevent.
+1. **Read the spec mode (already computed).** The SessionStart hook (`bin/resolve-spec-mode.sh`) has already resolved it — do NOT re-derive. Read the `## Spec Mode` section: it states `CHORUS_SPEC_MODE=<lite|openspec|off>` + a routing note. Act on that value: `openspec` → **2a**, `off` → **2b**, `lite` → **2c**. If the section says the mode **cannot be honored** (e.g. explicit `openspec` but unusable — it prints the config-conflict or install-hint reason), **halt** and surface it; do NOT silently fall back or enter 2a with no OpenSpec to author. (This matters because yolo runs unattended — the hook, not the agent, is the single source of the decision.)
 
 2. **Create the empty proposal container.** In OpenSpec mode the `description` MUST contain `OpenSpec change slug: <slug>`; in spec-lite mode `Spec-lite change slug: <slug>` (use the `$SLUG` you'll pick in 2a / 2c); in free-form mode omit any slug line.
 

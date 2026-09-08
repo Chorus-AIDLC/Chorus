@@ -87,15 +87,10 @@ chorus_pm_create_proposal({
 
 ### Step 1.5: Select spec mode
 
-Before authoring document drafts, resolve which spec mode to author in. `CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}`. The SessionStart `## Spec Mode` section already states the resolved value:
+The spec mode is **already computed for you** by the SessionStart hook (`bin/resolve-spec-mode.sh`) — do NOT re-derive it. Read the `## Spec Mode` section of your SessionStart context: it states `CHORUS_SPEC_MODE=<lite|openspec|off>` plus a one-line routing note. Just act on that value:
 
-1. Explicit `CHORUS_SPEC_MODE` wins: `=lite` → **spec-lite** (lightweight branch below); `=openspec` → **OpenSpec**; `=off` → **free-form**.
-2. Unset → **OpenSpec** when it is usable (`openspec/` dir + CLI on PATH, not disabled); otherwise → **spec-lite**. (OpenSpec stays the default when present; lite is the fallback.)
-3. Legacy `CHORUS_OPENSPEC_MODE=off` (or the Enable-OpenSpec toggle off) forces *not*-openspec — so an unset `CHORUS_SPEC_MODE` then resolves to lite.
-
-**Fail fast on an unsatisfiable explicit request (check here, after resolving, before branching):** if `CHORUS_SPEC_MODE=openspec` but OpenSpec isn't usable, do **not** silently fall back — halt. Name the cause: if OpenSpec is **explicitly disabled** (`CHORUS_OPENSPEC_MODE=off` or the Enable-OpenSpec toggle is off) report a **config conflict**; if it's just **not installed** (no `openspec/` dir or CLI) surface the **install hint** (`npm i -g @fission-ai/openspec` / `openspec init`).
-
-Branch on the **resolved mode**:
+- If the section says the requested mode **cannot be honored** (e.g. `CHORUS_SPEC_MODE=openspec` but OpenSpec isn't usable — it prints "cannot be honored" with a config-conflict or install-hint reason), **halt** and surface that reason; do not fall back.
+- Otherwise branch on the stated mode:
 
 - **resolved = spec-lite** → load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG`, author a Chorus-native change folder `.chorus/specs/<slug>/` — at minimum `prd.md` (Chorus PRD: Intent / plain-prose Requirements + `- [ ]` acceptance points / Non-goals), plus `tech_design.md` etc. only if the change warrants them. Create the proposal container (Step 1 above) with a literal `Spec-lite change slug: <slug>` line in `description`, then mirror **each** `<type>.md` into a document draft of that `type` (`prd`, `tech_design`, …) via `chorus mcp call chorus_pm_add_document_draft … --arg-file content=.chorus/specs/<slug>/<type>.md`. Skip Step 2 below — the file-fill mirror replaces inline drafting for these documents. (Add tasks via `chorus_pm_add_task_draft` as usual — there is no `tasks.md`.)
 

@@ -17,12 +17,10 @@ backend, or schema — mirroring reuses the existing document tools.
 
 ## Mode (how you got here)
 
-`CHORUS_SPEC_MODE` resolves to one of `{lite, openspec, off}`; the SessionStart `## Spec Mode`
-section states the active value. **When `CHORUS_SPEC_MODE` is unset, OpenSpec stays the default
-whenever it is usable (`openspec/` dir + CLI on PATH, not disabled); lite is the fallback only when
-OpenSpec is absent or disabled.** An explicit `CHORUS_SPEC_MODE` always wins: `=lite` → this skill,
-`=openspec` → the `openspec-aware` skill, `=off` → free-form (no spec artifact). You are here because
-the mode resolved to `lite`. If it is not `lite`, this skill is a no-op — return to the caller.
+The spec mode is computed by the SessionStart hook (`bin/resolve-spec-mode.sh`), **not by you** — the
+`## Spec Mode` section of your context states the resolved `CHORUS_SPEC_MODE`. You are here because it
+resolved to `lite`; if it is anything else, this skill is a no-op — return to the caller. (For the
+record, the hook's rule: an explicit `CHORUS_SPEC_MODE` wins, else OpenSpec when usable, else lite.)
 
 ## The change folder
 
