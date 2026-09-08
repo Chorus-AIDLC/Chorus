@@ -67,98 +67,17 @@ if command -v jq >/dev/null 2>&1; then
 
 fi
 
-# Resolve the active spec mode for this repo, once per session.
+# Resolve the active spec mode for this repo, once per session. The resolution
+# logic lives in resolve-spec-mode.sh (pure: env + filesystem only) so it can be
+# unit-tested — see bin/tests/test-spec-mode-resolution.sh. It sets SPEC_MODE,
+# SPEC_REASON, SPEC_FAIL, OPENSPEC_USABLE_REASON, OPENSPEC_HINT, CHORUS_OPENSPEC_ACTIVE.
 #
-# CHORUS_SPEC_MODE ∈ {lite, openspec, off}. When it is UNSET, OpenSpec stays the
-# default whenever it is usable (openspec/ dir + CLI, not disabled); lite is the
-# fallback only when OpenSpec is absent or disabled. An explicit value always wins.
-#   - lite     → Chorus-native lightweight specs in .chorus/specs/<slug>/ (spec-lite skill)
-#   - openspec → openspec-aware §3 authoring; FAIL FAST if OpenSpec isn't usable
-#   - off      → free-form, no spec artifact
-# Legacy CHORUS_OPENSPEC_MODE=off is still honored: it forces not-openspec (→ lite when unset).
+# Summary: an explicit CHORUS_SPEC_MODE (lite|openspec|off) wins; when UNSET,
+# OpenSpec stays the default whenever it is usable (openspec/ dir + CLI, not
+# disabled) and lite is the fallback only when OpenSpec is absent or disabled.
+# Legacy CHORUS_OPENSPEC_MODE=off still forces not-openspec (→ lite when unset).
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
-
-# --- Is OpenSpec usable? (needs openspec/ dir + CLI on PATH + not disabled) ---
-OPENSPEC_DISABLED=0
-OPENSPEC_DISABLED_REASON=""
-if [ "${CLAUDE_PLUGIN_OPTION_ENABLEOPENSPEC:-true}" != "true" ]; then
-  OPENSPEC_DISABLED=1
-  OPENSPEC_DISABLED_REASON="enableOpenSpec userConfig=false (plugin-level opt-out)"
-elif [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
-  OPENSPEC_DISABLED=1
-  OPENSPEC_DISABLED_REASON="CHORUS_OPENSPEC_MODE=off (legacy opt-out)"
-fi
-
-OPENSPEC_USABLE=0
-OPENSPEC_USABLE_REASON=""
-OPENSPEC_HINT=""
-if [ "$OPENSPEC_DISABLED" = "1" ]; then
-  OPENSPEC_USABLE_REASON="$OPENSPEC_DISABLED_REASON"
-elif [ ! -d "${PROJECT_ROOT}/openspec" ]; then
-  OPENSPEC_USABLE_REASON="no openspec/ directory at ${PROJECT_ROOT}/openspec"
-  OPENSPEC_HINT="npm i -g @fission-ai/openspec && openspec init"
-elif ! command -v openspec >/dev/null 2>&1; then
-  OPENSPEC_USABLE_REASON="openspec/ directory present but \`openspec\` CLI not on PATH"
-  OPENSPEC_HINT="npm i -g @fission-ai/openspec"
-else
-  OPENSPEC_USABLE=1
-  OPENSPEC_USABLE_REASON="openspec/ directory + openspec CLI both present"
-fi
-
-# --- Resolve CHORUS_SPEC_MODE ---
-# SPEC_MODE: value surfaced to Claude. SPEC_FAIL: non-empty => the stage skill
-# (proposal/yolo) MUST halt (explicit openspec that can't be honored).
-SPEC_FAIL=""
-case "${CHORUS_SPEC_MODE:-}" in
-  lite)
-    SPEC_MODE="lite"
-    SPEC_REASON="explicit — Chorus-native lightweight specs in .chorus/specs/<slug>/"
-    ;;
-  off)
-    SPEC_MODE="off"
-    SPEC_REASON="explicit — free-form, no spec artifact"
-    ;;
-  openspec)
-    SPEC_MODE="openspec"
-    if [ "$OPENSPEC_USABLE" = "1" ]; then
-      SPEC_REASON="explicit; ${OPENSPEC_USABLE_REASON}"
-    elif [ "$OPENSPEC_DISABLED" = "1" ]; then
-      SPEC_REASON="explicit, but OpenSpec is disabled: ${OPENSPEC_USABLE_REASON}"
-      SPEC_FAIL="config conflict — CHORUS_SPEC_MODE=openspec vs OpenSpec disabled (${OPENSPEC_USABLE_REASON}); re-enable OpenSpec or set CHORUS_SPEC_MODE=lite"
-    else
-      SPEC_REASON="explicit, but OpenSpec is not installed: ${OPENSPEC_USABLE_REASON}"
-      SPEC_FAIL="OpenSpec not usable (${OPENSPEC_USABLE_REASON})"
-    fi
-    ;;
-  "")
-    # Unset: OpenSpec is the default when usable; lite is the fallback otherwise.
-    if [ "$OPENSPEC_USABLE" = "1" ]; then
-      SPEC_MODE="openspec"
-      SPEC_REASON="default — ${OPENSPEC_USABLE_REASON}; set CHORUS_SPEC_MODE=lite for Chorus-native specs, =off to disable"
-    else
-      SPEC_MODE="lite"
-      SPEC_REASON="default — OpenSpec not usable (${OPENSPEC_USABLE_REASON}); using Chorus-native lightweight specs in .chorus/specs/<slug>/"
-    fi
-    ;;
-  *)
-    # Unrecognized value: treat like unset (OpenSpec-if-usable, else lite).
-    if [ "$OPENSPEC_USABLE" = "1" ]; then
-      SPEC_MODE="openspec"
-      SPEC_REASON="CHORUS_SPEC_MODE='${CHORUS_SPEC_MODE}' unrecognized; falling back to default (${OPENSPEC_USABLE_REASON})"
-    else
-      SPEC_MODE="lite"
-      SPEC_REASON="CHORUS_SPEC_MODE='${CHORUS_SPEC_MODE}' unrecognized; OpenSpec not usable, defaulting to lite"
-    fi
-    ;;
-esac
-
-# Back-compat flag for the openspec-aware skill: active only when the resolved
-# mode is a USABLE openspec.
-if [ "$SPEC_MODE" = "openspec" ] && [ -z "$SPEC_FAIL" ]; then
-  CHORUS_OPENSPEC_ACTIVE=1
-else
-  CHORUS_OPENSPEC_ACTIVE=0
-fi
+. "${SCRIPT_DIR}/resolve-spec-mode.sh"
 
 # Build context for Claude (additionalContext)
 CONTEXT="# Chorus Plugin — Active

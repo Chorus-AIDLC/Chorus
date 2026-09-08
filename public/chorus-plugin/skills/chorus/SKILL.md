@@ -346,9 +346,11 @@ When enabled, reviewers run as read-only sub-agents and post a VERDICT comment o
 
 **First-principles alignment (a stage-tailored instruction in all three reviewers).** Each reviewer also checks, top-down, that the work still serves the *original Idea's intent*. It resolves the Idea from the entity under review (proposal-reviewer → the proposal's `inputUuids[0]`; task-reviewer → its proposal's `inputUuids[0]`; code-reviewer → the given `ideaUuid`), reads it with the existing `chorus_get_idea` + `chorus_get_elaboration` + `chorus_get_comments`, and builds the intent **baseline** from **human input only** — the Idea content + elaboration answers where `answeredBy.type == "user"` + comments where `author.type == "user"`. Agent-answered elaboration and agent-authored comments are audit context only: they cannot expand, shrink, or override the baseline. It flags **scope creep** (work beyond intent), **requirement loss / shrink** (intent dropped or reduced), or **semantic drift** (passes AC but misses the point). Unauthorized drift is a **BLOCKER → VERDICT: FAIL / reject**, downgraded to a cited `NOTE` only when traceable to a **human** authorization: a human-authored Idea comment (`author.type == "user"`), a human-answered elaboration entry (`answeredBy.type == "user"`), or an explicit human override at the gate. **An agent's own comment never authorizes**, so a drifting agent cannot self-clear. The alignment finding folds into the existing VERDICT; the dimension is skipped when the entity has no attached Idea.
 
-### 6. Enable OpenSpec Mode (Optional)
+### 6. Spec mode: OpenSpec (default when usable) vs spec-lite (fallback)
 
-Opt-in spec-driven path: `/proposal`, `/develop`, `/yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts. Fully optional — free-form authoring works without it. Activates only when all three hold: the `enableOpenSpec` toggle is on (default) and `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory exists at the project root, and the `openspec` CLI is on `PATH`.
+The SessionStart hook resolves one **spec mode** per session and prints a `## Spec Mode` section stating it. Resolution: an explicit `CHORUS_SPEC_MODE` (`lite`/`openspec`/`off`) wins; when unset, **OpenSpec is the default whenever it is usable** — the `enableOpenSpec` toggle on (default) and `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`. When OpenSpec is absent or disabled, the mode falls back to **spec-lite** — a Chorus-native, git-tracked change folder `.chorus/specs/<slug>/` of plain-markdown docs named by Document type, mirrored 1:1 into Chorus (see the `spec-lite` skill). `CHORUS_SPEC_MODE=off` selects free-form (no spec artifact).
+
+OpenSpec spec-driven path: `/proposal`, `/develop`, `/yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts.
 
 **When the user wants it on** (e.g. they ran `/chorus enable openspec` after the `(OpenSpec off — …)` banner), actually **enable it for them** — run whichever steps are missing, don't just describe them:
 
@@ -357,9 +359,9 @@ npm i -g @fission-ai/openspec       # 1. install the CLI if it's not on PATH (gl
 openspec init --tools claude        # 2. scaffold openspec/ + wire up Claude Code's native commands/skills
 ```
 
-`openspec init` is interactive if you omit `--tools`; pass `--tools claude` to run it unattended. Chorus's detection only needs the `openspec/` directory, but wiring up Claude Code also gives OpenSpec its own commands + skills. The OpenSpec signal is read **once at SessionStart**, so it can't flip mid-session — after the steps succeed, tell the user to **re-launch the session**; the banner then reads `(OpenSpec Enabled)` and the stage skills fold in the `openspec-aware` skill automatically.
+`openspec init` is interactive if you omit `--tools`; pass `--tools claude` to run it unattended. Chorus's detection only needs the `openspec/` directory, but wiring up Claude Code also gives OpenSpec its own commands + skills. The spec mode is resolved **once at SessionStart**, so it can't flip mid-session — after the steps succeed, tell the user to **re-launch the session**; the `## Spec Mode` section then reads `CHORUS_SPEC_MODE=openspec (…)` and the stage skills fold in the `openspec-aware` skill automatically.
 
-To turn it off, flip `enableOpenSpec` to `false` or set `CHORUS_OPENSPEC_MODE=off` — the banner then reads a neutral `(OpenSpec off)`.
+To turn OpenSpec off, flip `enableOpenSpec` to `false` or set `CHORUS_OPENSPEC_MODE=off` — the mode then falls back to **spec-lite** (or set `CHORUS_SPEC_MODE=off` for free-form). The `## Spec Mode` section always states the resolved mode + reason.
 
 ### 7. Daemon auto-start via `chorus agents add`
 

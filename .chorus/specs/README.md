@@ -13,5 +13,5 @@ The surrounding `.chorus/` directory is Chorus **plugin runtime state** (`artifa
 - **Start a new spec:** copy [`TEMPLATE/`](./TEMPLATE/) to `<slug>/` (at minimum `prd.md`).
 - **Format, mode selection, and mirroring:** see the `spec-lite` skill
   (`public/chorus-plugin/skills/spec-lite/SKILL.md`) and [`docs/SPEC_LITE.md`](../../docs/SPEC_LITE.md).
-- **Audit trail (留痕):** `git log --follow .chorus/specs/<slug>/` — no changelog file.
+- **Audit trail (留痕):** `git log -- .chorus/specs/<slug>/` for the whole change (use `git log --follow -- <file>` to track a single renamed file) — no changelog file.
 - **Living example:** [`spec-lite/prd.md`](./spec-lite/) — the spec-lite feature described in this format.

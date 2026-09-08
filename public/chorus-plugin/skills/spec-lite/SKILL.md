@@ -59,16 +59,27 @@ chorus mcp call chorus_pm_add_document_draft \
   --arg-file content=".chorus/specs/$SLUG/prd.md"
 ```
 
-One call per file (`type` matches the filename). Post-approval, propagate edits with
-`chorus_pm_update_document` against the materialized Document UUID (draft edits before approval:
-`chorus_pm_update_document_draft`). Guard every mirror with the `chorus_check_response` halt-on-error
-helper — copy it from `openspec-aware` §6 (checks exit code, `"error":` in body, empty body); no silent
-errors. Record `proposalUuid`/`documentUuid` in `prd.md` frontmatter once known and re-mirror, so local
-stays byte-identical to Chorus. (No `chorus` on `PATH`? Fall back to `chorus-api.sh` + `json_encode_file`, `openspec-aware` §3.6.)
+One call per file (`type` matches the filename). Write `proposalUuid` into `prd.md` frontmatter
+**before the first mirror** so local == Chorus from the first push. Guard every mirror with the
+`chorus_check_response` halt-on-error helper — copy it from `openspec-aware` §6 (checks exit code,
+`"error":` in body, empty body); no silent errors. (No `chorus` on `PATH`? Fall back to
+`chorus-api.sh` + `json_encode_file`, `openspec-aware` §3.6.)
+
+**Deterministic per-file Document mapping.** A change folder may hold several files (`prd.md`,
+`tech_design.md`, …), so each needs its own Document identity — do NOT match by `title` alone.
+- **Before approval:** capture the `draftUuid` returned by each `chorus_pm_add_document_draft` call
+  and update that draft via `chorus_pm_update_document_draft`.
+- **After approval:** each `<type>.md` maps to the **one** materialized Document of that `type` under
+  this proposal — resolve it by `(proposalUuid, type)` via `chorus_get_documents`; a lookup that
+  finds **zero or more than one** MUST **halt** and surface it rather than guessing. Optionally record
+  a `documents:` `type → documentUuid` map in `prd.md` frontmatter after approval to make re-mirror
+  O(1); if you backfill it, that edit changes `prd.md`, so re-mirror `prd.md` immediately. Then
+  propagate edits with `chorus_pm_update_document` against the resolved Document UUID.
 
 ## Develop-time: 留痕 via git history
 
-**Git history is the audit trail** — `git log --follow .chorus/specs/$SLUG/`. There is no changelog
+**Git history is the audit trail** — `git log -- .chorus/specs/$SLUG/` for the whole change (use
+`git log --follow -- <file>` to trace a single renamed file). There is no changelog
 section to maintain. As work proceeds, edit the docs, tick `- [ ]` acceptance points, set frontmatter
 `status: active` → `done`, and re-mirror each edited file so Chorus stays current.
 

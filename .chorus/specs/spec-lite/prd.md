@@ -30,10 +30,11 @@ fast with a clear reason when OpenSpec is unusable.
 
 - [ ] A change lives in `.chorus/specs/<slug>/` with at least `prd.md`; no `tasks.md`, no changelog section, no OpenSpec grammar.
 - [ ] Each `<type>.md` mirrors to a Chorus Document of the same `type` via `chorus_pm_add_document_draft` / `chorus_pm_update_document` with `--arg-file content=<file>` (byte-exact).
+- [ ] Each file maps deterministically to its Document: `proposalUuid` written before the first mirror; post-approval each `<type>.md` resolves to the one Document of that `type` under the proposal via `(proposalUuid, type)` — zero/multi match → halt (never by title alone).
 - [ ] When `CHORUS_SPEC_MODE` is unset, the mode resolves to `openspec` if OpenSpec is usable else `lite`; explicit `lite`/`openspec`/`off` win; legacy `CHORUS_OPENSPEC_MODE=off` still forces not-openspec (→ lite when unset).
 - [ ] `CHORUS_SPEC_MODE=openspec` halts with an install hint (missing dir/CLI) or a config-conflict message (explicitly disabled) — never silently falls back.
-- [ ] The SessionStart hook prints a `## Spec Mode` section that always states the active mode + a one-line routing note; passes `test-syntax.sh` (Bash 3.2).
-- [ ] The `spec-lite` skill, `docs/SPEC_LITE.md`, and the proposal/develop/yolo mode branches all speak Chorus-native (prd/tech_design), lite-default, always-mirror.
+- [ ] The mode resolver lives in `bin/resolve-spec-mode.sh` (pure); the SessionStart hook sources it and prints a `## Spec Mode` section stating the active mode + routing note; `test-syntax.sh` and `tests/test-spec-mode-resolution.sh` (Bash 3.2) both pass.
+- [ ] The `spec-lite` skill, `docs/SPEC_LITE.md`, and the proposal/develop/yolo mode branches all speak Chorus-native (prd/tech_design), OpenSpec-default-when-usable / lite-fallback, always-mirror.
 
 ## Non-goals
 - No bidirectional (Chorus → local) pull; mirroring stays one-way, local → Chorus.

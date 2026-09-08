@@ -48,6 +48,10 @@ background), `## Requirements` (plain prose with `- [ ]` acceptance points — n
 grammar), and `## Non-goals`. Copy `.chorus/specs/TEMPLATE/prd.md` to start. There is **no `tasks.md`**
 (Chorus Tasks own execution state) and **no changelog section** (git history is the audit trail).
 
+> Note: a lite `spec.md` (type `spec`) is just plain markdown — the *same* `Document.type=spec` carries
+> OpenSpec's delta/`SHALL`/scenario grammar under OpenSpec mode but has no such structure under lite.
+> The type alone doesn't tell the two apart; the change's mode (its folder vs an `openspec/` change) does.
+
 ## Always mirror to Chorus
 
 The local folder is the **source of truth**; Chorus is a one-way downstream mirror (no reverse pull).
@@ -59,13 +63,17 @@ edits use `chorus_pm_update_document`; every mirror is guarded by the `chorus_ch
 halt-on-error helper (openspec-aware §6).
 
 **Deterministic link.** The proposal `description` carries one literal `Spec-lite change slug: <slug>`
-line so develop can find the folder; `prd.md` frontmatter records `proposalUuid` / `documentUuid` once
-known (re-mirror after backfilling so local stays byte-identical to Chorus).
+line so develop can find the folder; `prd.md` frontmatter records `proposalUuid` (written **before**
+the first mirror) and, after approval, `documentUuid` (re-mirror after backfilling so local stays
+byte-identical to Chorus). With several files per folder, each `<type>.md` maps to the **one**
+materialized Document of that `type` under the proposal — resolve by `(proposalUuid, type)`; a lookup
+that finds zero or more than one MUST **halt**, never match by title alone.
 
 ## Local audit trail (留痕)
 
-Because each spec is plain git-tracked markdown, its full history is `git log --follow
-.chorus/specs/<slug>/` — readable and diffable offline, with or without a Chorus connection. **Git
+Because each spec is plain git-tracked markdown, its full history is `git log --
+.chorus/specs/<slug>/` (whole change; use `git log --follow -- <file>` to trace a single renamed
+file) — readable and diffable offline, with or without a Chorus connection. **Git
 history is the authoritative record**; there is no separate changelog file to maintain. Only
 `.chorus/specs/` is version-controlled — the rest of `.chorus/` (plugin runtime state) stays gitignored
 via `.chorus/*` + `!.chorus/specs/`.
