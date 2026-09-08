@@ -198,7 +198,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    chorus_pm_create_proposal({
      projectUuid: "<project-uuid>",
      title: "<feature name>",
-     description: "<summary>\n\nSpec-lite change slug: <slug>",  // spec-lite mode (default)
+     description: "<summary>\n\nSpec-lite change slug: <slug>",  // spec-lite mode
      // description: "<summary>\n\nOpenSpec change slug: <slug>", // OpenSpec mode
      // description: "<summary>",                                 // free-form mode
      inputType: "idea",
@@ -218,7 +218,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
    Then continue to step 3 (task drafts).
 
-   **2b. Free-form mode (resolved mode = free-form).** Only when step 1 resolved to free-form — i.e. explicit `CHORUS_SPEC_MODE=off`. (Unset resolves to spec-lite (2c), not free-form.) Add a tech design document draft directly via MCP, content authored inline:
+   **2b. Free-form mode (resolved mode = free-form).** Only when step 1 resolved to free-form — i.e. explicit `CHORUS_SPEC_MODE=off`. (Unset never resolves here — it resolves to OpenSpec when usable, else spec-lite.) Add a tech design document draft directly via MCP, content authored inline:
 
    ```
    chorus_pm_add_document_draft({
@@ -229,7 +229,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    })
    ```
 
-   **2c. spec-lite mode (resolved mode = lite — the default).** Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG`, author a Chorus-native change folder `.chorus/specs/<slug>/` from `.chorus/specs/TEMPLATE/` (or the skill's inline shape if the template isn't present) — at minimum `prd.md` (Chorus PRD: Intent / plain-prose Requirements + `- [ ]` acceptance points / Non-goals), plus `tech_design.md` etc. only if warranted. The proposal `description` MUST carry a literal `Spec-lite change slug: <slug>` line (the deterministic link develop uses). Mirror **each** `<type>.md` into a document draft of that `type` byte-exact — e.g. `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/prd.md`. No `OpenSpec change slug:` line and no `openspec/changes/` scaffold; there is no `tasks.md`. Then continue to step 3 for task drafts.
+   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG`, author a Chorus-native change folder `.chorus/specs/<slug>/` from `.chorus/specs/TEMPLATE/` (or the skill's inline shape if the template isn't present) — at minimum `prd.md` (Chorus PRD: Intent / plain-prose Requirements + `- [ ]` acceptance points / Non-goals), plus `tech_design.md` etc. only if warranted. The proposal `description` MUST carry a literal `Spec-lite change slug: <slug>` line (the deterministic link develop uses). Mirror **each** `<type>.md` into a document draft of that `type` byte-exact — e.g. `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/prd.md`. No `OpenSpec change slug:` line and no `openspec/changes/` scaffold; there is no `tasks.md`. Then continue to step 3 for task drafts.
 
 3. **Add task drafts incrementally** (use returned `draftUuid` for dependency chaining). `acceptanceCriteriaItems` is **required** on every draft — at least one non-blank criterion, or the call is rejected:
    ```

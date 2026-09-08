@@ -40,6 +40,11 @@ jobs:
       - name: Run coordinated package-contract tests
         run: pnpm test:release-contract
 
+      - name: Run plugin shell tests (Bash 3.2 syntax + spec-mode resolver)
+        run: |
+          bash public/chorus-plugin/bin/test-syntax.sh
+          bash public/chorus-plugin/bin/tests/test-spec-mode-resolution.sh
+
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
