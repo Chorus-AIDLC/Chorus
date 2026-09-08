@@ -51,8 +51,9 @@ section** (git history + the change docs' Document versions are the record).
 
 Each modification effort is **one dated folder directly under `<slug>/`** — e.g.
 `.chorus/specs/<slug>/2026-09-08-add-export/` — with **no `changes/` wrapper**. The date prefix +
-change slug lets many efforts (even same-day) coexist and sort by date; old folders are never
-rewritten. Inside it, plain markdown named by **Chorus `Document.type`**:
+change slug lets many efforts (even same-day) coexist and sort by date. The current change's folder is
+edited and re-mirrored until it delivers; only previously-delivered folders are left frozen. Inside it,
+plain markdown named by **Chorus `Document.type`**:
 
 | File | `Document.type` | Required? |
 |---|---|---|

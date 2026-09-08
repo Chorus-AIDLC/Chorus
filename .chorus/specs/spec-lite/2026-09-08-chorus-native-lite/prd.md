@@ -1,8 +1,8 @@
 ---
 title: "PRD: Chorus-native spec-lite (durable spec + dated change folders)"
 spec: ../spec.md
-proposalUuid:
-documentUuid:
+proposalUuid: 2902f602-5417-4357-af07-de2a614458c5
+documentUuid: 72947c25-cc9f-4e52-87fe-79f486e69900
 ---
 
 # Chorus-native spec-lite — durable spec + dated change folders

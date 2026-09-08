@@ -34,6 +34,10 @@ by every change, **never mirrored to Chorus, carries no Chorus ids**. Minimal fr
 Copy `.chorus/specs/TEMPLATE/spec.md` to start. Its git history is the whole record — no changelog
 section, no Chorus round-trip. **This file NEVER enters the mirror loop.**
 
+`status` describes the **capability**, not a single change: `active` while any change is in flight,
+`done` when the current change delivers and none is open. A **new** change against a `done` capability
+reopens it to `active`, back to `done` on delivery.
+
 ## Per-change dated folders — `<slug>/<YYYY-MM-DD>-<change-slug>/`
 
 Each change effort is **one dated folder directly under `<slug>/`** (no `changes/` wrapper), e.g.
@@ -49,7 +53,9 @@ folders sort by date. It holds the **Chorus-typed** docs for THAT change — one
 These files **ARE synced** — each maps to **one persistent Chorus Document** of its type. Their
 frontmatter carries the sync ids `proposalUuid` and `documentUuid` (the type is implied by the
 filename). Copy `.chorus/specs/TEMPLATE/YYYY-MM-DD-change/prd.md`. A different change to the same
-capability is a different dated folder; old folders are never rewritten.
+capability is a different dated folder. The **current change's** folder is edited and re-mirrored
+throughout its effort (until delivery); only **previously-delivered** dated folders are left frozen —
+you don't reach back and rewrite a past change.
 
 > **Two files named `spec.md`, different roles.** The durable `<slug>/spec.md` (local only, no ids) is
 > NOT the same as a per-change `spec`-type doc, which would live at `<slug>/<date>-<slug>/spec.md`

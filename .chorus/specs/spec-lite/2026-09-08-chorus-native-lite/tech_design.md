@@ -1,8 +1,8 @@
 ---
 title: "Tech Design: spec-lite storage + mirror mechanics"
 spec: ../spec.md
-proposalUuid:
-documentUuid:
+proposalUuid: 2902f602-5417-4357-af07-de2a614458c5
+documentUuid: e575352d-a8a4-4b27-9bc0-d1d767fc3e47
 ---
 
 # spec-lite — technical design (durable spec + dated change folders)
@@ -16,8 +16,9 @@ edited in place, never synced, minimal frontmatter (`slug`/`title`/`status`/`cre
 effort is a **dated folder** `<slug>/<YYYY-MM-DD>-<change-slug>/` (directly under `<slug>/`, no
 `changes/` wrapper) of Chorus-typed docs: `prd.md` (primary), optional
 `tech_design.md`/`adr.md`/`guide.md`/`spec.md`. Each such file carries `spec: ../spec.md`,
-`proposalUuid`, `documentUuid`; its Document type is implied by the filename. Old dated folders are
-never rewritten — a new effort gets a new dated folder.
+`proposalUuid`, `documentUuid`; its Document type is implied by the filename. The current change's
+dated folder is edited/re-mirrored until delivery; previously-delivered folders are left frozen — a
+new effort gets a new dated folder.
 
 > Naming: the durable `<slug>/spec.md` (local only, no ids) is distinct from a per-change `spec`-type
 > doc that would live at `<slug>/<date>-<slug>/spec.md` (synced, carries ids). Prefer `prd.md` as the
