@@ -223,7 +223,7 @@ In $yolo mode, the agent generates elaboration questions and answers them itself
    })
    ```
 
-   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite` skill (`~/.codex/skills/spec-lite/SKILL.md`). Pick `$SLUG` (a **capability**). Ensure the durable `.chorus/specs/<slug>/spec.md` exists (local-only, no ids; copy from `.chorus/specs/TEMPLATE/spec.md`) and update it in place. Create this change's **dated folder** `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` with its **synced** Chorus-typed docs from `.chorus/specs/TEMPLATE/YYYY-MM-DD-change/` — `prd.md` (primary), optional `tech_design.md`… The `description` carries the `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` locator (step 2). Mirror **each** dated-folder `<type>.md` to its persistent Document byte-exact — first time `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/prd.md`, later edits via `chorus_pm_update_document` against the recorded `documentUuid` (`chorus-mcp-call.sh` fallback when `chorus` not on `PATH`). **`spec.md` is never mirrored.** No `openspec/changes/` scaffold; no `tasks.md`. Then continue to step 3.
+   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite` skill (`~/.codex/skills/spec-lite/SKILL.md`). Pick `$SLUG` (a **capability**). Ensure the durable `.chorus/specs/<slug>/spec.md` exists (local-only, no ids; use the `spec-lite` skill's inline durable-spec template) and update it in place. Create this change's **dated folder** `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` with its **synced** Chorus-typed docs (shape = the `spec-lite` skill's inline dated-folder document template) — `prd.md` (primary), optional `tech_design.md`… The `description` carries the `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` locator (step 2). Mirror **each** dated-folder `<type>.md` to its persistent Document byte-exact — first time `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/prd.md`, later edits via `chorus_pm_update_document` against the recorded `documentUuid` (`chorus-mcp-call.sh` fallback when `chorus` not on `PATH`). **`spec.md` is never mirrored.** No `openspec/changes/` scaffold; no `tasks.md`. Then continue to step 3.
 
 3. **Add task drafts incrementally** (use returned `draftUuid` for dependency chaining). `acceptanceCriteriaItems` is **required** on every draft — at least one non-blank criterion, or the call is rejected:
    ```
@@ -286,7 +286,7 @@ Then:
    ```
    chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
    ```
-   Look for the most recent comment containing `VERDICT:`.
+   Look for THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's.
 
    **IMPORTANT — release thread slot**: after `wait_agent` returns, immediately call `close_agent({ target: reviewer.agent_id })`. Codex caps concurrent agent threads at 6; `completed` status does NOT free a slot — only `close_agent` does. On long `$yolo` runs you WILL hit the limit if you don't close each reviewer after use.
 
@@ -322,7 +322,7 @@ Then:
           Proposal UUID: <uuid>"
    ```
 
-4. **No new VERDICT comment after reviewer returns?** The reviewer exhausted its `maxTurns` budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep source verification. Fetch proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first 10 turns."* If the second attempt still produces no VERDICT, treat the proposal as PASS WITH NOTES and proceed — the pipeline cannot loop forever on a silent reviewer.
+4. **No new VERDICT comment after reviewer returns?** The reviewer exhausted its `maxTurns` budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep source verification. Fetch proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first 10 turns."* If the second attempt still produces no VERDICT, review the proposal yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted, so the pipeline cannot loop forever on a silent reviewer.
 
 ---
 
@@ -422,7 +422,7 @@ for each task in wave_tasks:
 
   # 3. Read task-reviewer VERDICT
   comments = chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
-  # Find the most recent comment containing "VERDICT:"
+  # Find THIS round's "VERDICT:" comment — the one posted after your dispatch, not an older round's
 
   # 4. Act on VERDICT — three possible outcomes:
   if VERDICT is "PASS":
@@ -460,7 +460,7 @@ ESCALATE: "Task '{title}' failed review after {maxRounds} rounds.
 
 Continue with remaining tasks -- do not halt the entire pipeline for one stuck task.
 
-**No new VERDICT comment after the task-reviewer returns?** It exhausted its `maxTurns` budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT within the first 12 turns."* If the second attempt also produces no VERDICT, treat as PASS WITH NOTES and proceed — do not loop indefinitely.
+**No new VERDICT comment after the task-reviewer returns?** It exhausted its `maxTurns` budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT within the first 12 turns."* If the second attempt also produces no VERDICT, review the task yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted. Do not loop indefinitely.
 
 ---
 
@@ -492,7 +492,7 @@ ESCALATE: "Idea '{title}' failed code review after {maxCodeReviewRounds} rounds.
            Last BLOCKERs: <list>. Manual intervention needed. Idea UUID: <uuid>"
 ```
 
-**No new VERDICT after the code-reviewer returns?** It exhausted its `maxTurns` budget (larger than the task-reviewer's because it reviews the whole feature). Respawn ONCE with a concise-budget hint; if still silent, treat as PASS WITH NOTES and proceed.
+**No new VERDICT after the code-reviewer returns?** It exhausted its `maxTurns` budget (larger than the task-reviewer's because it reviews the whole feature). Respawn ONCE with a concise-budget hint; if still silent, review the idea's aggregate change yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted.
 
 > The gateway is **behavioral** like the other two reviewers: its verdict is advisory and does not change the Idea's stored status; the orchestrator honors it. It runs **before** the completion report so the report is never written while a FAIL is outstanding.
 

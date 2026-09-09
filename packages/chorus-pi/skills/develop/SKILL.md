@@ -231,13 +231,13 @@ After the reviewer completes, read its VERDICT:
 ```
 chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 ```
-Find the most recent comment containing `VERDICT:` and act on it:
+Find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's — and act on it:
 
 - **VERDICT: PASS** — All AC verified, no issues. Proceed to admin verification.
 - **VERDICT: PASS WITH NOTES** — All AC verified, minor notes. Proceed to admin verification (notes are non-blocking).
 - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit.
 
-If no new `VERDICT:` comment appears after the reviewer returns, it exhausted its turn budget before posting. Respawn it ONCE with a concise-budget hint in the prompt: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT comment within the first 12 turns."* If the second attempt still produces no VERDICT, review manually using the checklist and proceed.
+If no new `VERDICT:` comment appears after the reviewer returns, it exhausted its turn budget before posting. Respawn it ONCE with a concise-budget hint in the prompt: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT comment within the first 12 turns."* If the second attempt still produces no VERDICT, review the task yourself as a read-only pass using the checklist and POST the VERDICT comment — absence is never a PASS — then proceed on what you posted.
 
 > **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the extension nudges you to spawn `chorus-code-reviewer` (gated by `CHORUS_ENABLE_CODE_REVIEWER`, default on). Spawn it yourself via the blocking `subagent` tool, passing the `ideaUuid` + round number; it reviews the Idea's **aggregate** code change across all its tasks (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via `/skill:quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it — do NOT reopen the verified tasks). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates, bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (env, default 3; 0 = unlimited). Advisory/behavioral, like the other reviewers. Run it **before** any idea-completion report.
 

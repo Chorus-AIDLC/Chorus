@@ -67,7 +67,7 @@ Key responsibilities:
 When reviewing proposals, tasks, or an Idea's final aggregate code change, get an independent VERDICT before approving/verifying/shipping. On OpenClaw there is **no PostToolUse hook** to remind you — invoke the review yourself, inline.
 
 1. **Preferred — spawn a reviewer sub-agent.** Use the OpenClaw `sessions_spawn` tool to spawn a sub-agent whose `task` tells it to **invoke the `/proposal-reviewer` skill** (for proposals), the `/task-reviewer` skill (for tasks), or the `/code-reviewer` skill (the final ship-time gateway over an Idea's aggregate code change, after its last task is verified — pass the `ideaUuid`; it posts its VERDICT on the **idea**) — all bundled with this plugin — against the entity. Wait for it (poll the `subagents` tool or use `sessions_yield` — do NOT detach; you must have the VERDICT before proceeding). The sub-agent inherits the plugin skills, so the reviewer skill is available to it; it posts a VERDICT comment with detailed findings. Example task prompt: `Run the /proposal-reviewer skill to review proposalUuid <uuid>; post your VERDICT comment when done.`
-2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find the most recent comment containing `VERDICT:`. There are exactly three possible outcomes:
+2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
    - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). For a **code-review gateway** FAIL, do not reopen the verified tasks — instead fix via the **quick-dev** workflow (`/quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Fix the specific BLOCKERs listed in the comment before resubmitting.
@@ -332,7 +332,7 @@ chorus_pm_update_document({ documentUuid: "<doc-uuid>", content: "Updated..." })
 - **Unblock the team** — Prioritize proposal reviews to keep PM and Developer work flowing
 - **Use delete sparingly** — Prefer closing over deleting; closing preserves history
 - **Document decisions** — Use comments to explain approval/rejection reasoning
-- **Verify between waves** — In sequential wave execution, verify tasks to `done` between waves to unblock downstream dependencies
+- **Verify between waves** — In wave-based execution, verify tasks to `done` between waves to unblock downstream dependencies
 
 ---
 

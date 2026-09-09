@@ -52,11 +52,11 @@ Example:
 
 The reviewer is read-only and will post its VERDICT as a comment on the proposal.
 
-After the reviewer completes, read comments and find the most recent \`VERDICT:\` line:
+Wait for the reviewer to complete (its completion notification), then read this round's \`VERDICT:\` comment with chorus_get_comments — on THIS proposal, posted after you dispatched the reviewer. Do not settle for an older VERDICT from a previous round:
 - **VERDICT: PASS** — No issues found. Proceed to approve (chorus_admin_approve_proposal).
 - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still proceed to approve.
 - **VERDICT: FAIL** — BLOCKERs found. Do NOT approve. Reject the proposal (chorus_pm_reject_proposal), fix BLOCKERs, and resubmit.
 
-IMPORTANT: Run the reviewer synchronously (do NOT set run_in_background). Wait for its VERDICT before proceeding."
+IMPORTANT: the launch result is not the verdict — these reviewer subagent types report an async launch regardless of the flag you pass. Do NOT approve or reject before you have read this round's VERDICT comment. If no such comment exists after the reviewer completes, respawn it once with a concise-budget hint; if still absent, review the proposal yourself as a read-only pass and post the VERDICT. Absence is never a PASS."
 
 "$API" hook-output "" "$CONTEXT" "PostToolUse"

@@ -15,7 +15,7 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
 
 > **Tool namespace:** Chorus tools are exposed by the connected MCP server under a `mcp__chorus__` prefix on dsh (e.g. `mcp__chorus__chorus_pm_create_proposal`). Bare names are used below for readability — prepend `mcp__chorus__` when invoking. See `chorus` for the full rule.
 
-> **dsh adaptations summarized (details inline below):** (1) elaboration is self-answered with no user interaction; (2) reviewers run inline after each submit by loading the exact reviewer through the `skill` tool in a foreground `subagent` (`run_in_background: false`, wait for the verdict), with a read-only self-review fallback; (3) sessions are manual if you dispatch sub-agents; (4) task execution uses sequential main-agent waves.
+> **dsh adaptations summarized (details inline below):** (1) elaboration is self-answered with no user interaction; (2) reviewers run inline after each submit by loading the exact reviewer through the `skill` tool in a foreground `subagent` (`run_in_background: false`, so the call waits for the reviewer to finish; the verdict is then read from the Chorus comment), with a read-only self-review fallback; (3) sessions are manual if you dispatch sub-agents; (4) task execution dispatches **one `subagent` per unblocked task** (`run_in_background: true`, whole wave in one message), falling back to **sequential main-agent waves** when `subagent` is unavailable or workers fail repeatedly — there is no team object to create first.
 
 ---
 
@@ -25,7 +25,7 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
 
 1. **Planning** -- create project, idea, self-elaboration, proposal with docs & tasks
 2. **Proposal Review** -- proposal-reviewer adversarial loop
-3. **Execution** -- sequential, dependency-ordered task execution by the main agent
+3. **Execution** -- dependency-ordered waves: one worker sub-agent per unblocked task, or sequential main-agent execution as fallback
 4. **Verification** -- task-reviewer adversarial loop + admin verify
 5. **Report** -- completion summary
 
@@ -42,7 +42,8 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
   Admin Approve --> Tasks materialize
        |
        v
-  Sequential wave execution (main agent: loop chorus_get_unblocked_tasks)
+  Wave execution (loop chorus_get_unblocked_tasks; one subagent per task,
+                  or sequential main-agent fallback)
        |  (implement task + task-reviewer per task)
        v
   Admin Verify each task --> unblock next
@@ -229,7 +230,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    })
    ```
 
-   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite-chorus` skill (via the `skill` tool). Pick `$SLUG` (a **capability**). Ensure the durable `.chorus/specs/<slug>/spec.md` exists (local-only, no ids; copy from `.chorus/specs/TEMPLATE/spec.md`) and update it in place. Create this change's **dated folder** `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` with its **synced** Chorus-typed docs from `.chorus/specs/TEMPLATE/YYYY-MM-DD-change/` — `prd.md` (primary), optional `tech_design.md`… The `description` carries the `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` locator (step 2). Mirror **each** dated-folder `<type>.md` to its persistent Document byte-exact — first time `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/prd.md`, later edits via `chorus_pm_update_document` against the recorded `documentUuid` (package-local `$CHORUS_MCP_CALL` / `chorus-mcp-call.mjs` fallback when `chorus` not on `PATH`). **`spec.md` is never mirrored.** No `openspec/changes/` scaffold; no `tasks.md`. Then continue to step 3.
+   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite-chorus` skill (via the `skill` tool). Pick `$SLUG` (a **capability**). Ensure the durable `.chorus/specs/<slug>/spec.md` exists (local-only, no ids; use the `spec-lite` skill's inline durable-spec template) and update it in place. Create this change's **dated folder** `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` with its **synced** Chorus-typed docs (shape = the `spec-lite` skill's inline dated-folder document template) — `prd.md` (primary), optional `tech_design.md`… The `description` carries the `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` locator (step 2). Mirror **each** dated-folder `<type>.md` to its persistent Document byte-exact — first time `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/prd.md`, later edits via `chorus_pm_update_document` against the recorded `documentUuid` (package-local `$CHORUS_MCP_CALL` / `chorus-mcp-call.mjs` fallback when `chorus` not on `PATH`). **`spec.md` is never mirrored.** No `openspec/changes/` scaffold; no `tasks.md`. Then continue to step 3.
 
 3. **Add task drafts incrementally** (use returned `draftUuid` for dependency chaining). `acceptanceCriteriaItems` is **required** on every draft — at least one non-blank criterion, or the call is rejected:
    ```
@@ -278,7 +279,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 Obtain an independent VERDICT on the proposal:
 
-- **Preferred — spawn a reviewer sub-agent (foreground).** Use the dsh `subagent` tool to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits and returns the result inline; the approve/reject decision depends on the verdict) whose task tells it to call the `skill` tool with `proposal-reviewer-chorus`, then review the proposal. The authoritative result is the newest `VERDICT:` comment on the proposal. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out and don't need the verdict before your next step.
+- **Preferred — spawn a reviewer sub-agent (foreground).** Use the dsh `subagent` tool to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits for the reviewer to finish, and the verdict is the `VERDICT:` comment it posts rather than the call's return value; the approve/reject decision depends on the verdict) whose task tells it to call the `skill` tool with `proposal-reviewer-chorus`, then review the proposal. The authoritative result is this round's `VERDICT:` comment on the proposal. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out and don't need the verdict before your next step.
   > `Load and run the proposal-reviewer-chorus skill to review proposalUuid <uuid>. This is review round <N>. Read the proposal, its documents, the idea, and the elaboration; classify findings as BLOCKER/NOTE; post your VERDICT comment on the proposal when done.`
 - **Fallback — review it yourself.** If `subagent` is unavailable (e.g. spawning disabled by policy), do the review yourself as a **focused, read-only pass** following the `proposal-reviewer-chorus` skill's procedure (read proposal + comments + idea + elaboration; check doc completeness, task granularity, AC↔requirement coverage, the DAG, and integration checkpoints; classify BLOCKER/NOTE) and record the result via `chorus_add_comment` ending with a `VERDICT:` line. Do not modify drafts during the review pass.
 
@@ -288,7 +289,7 @@ Then:
    ```
    chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
    ```
-   Look for the most recent comment containing `VERDICT:`.
+   Look for THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's.
 
 2. **Act on the VERDICT:**
 
@@ -326,11 +327,11 @@ Then:
 
 ---
 
-### Phase 3: Task Execution (Sequential Waves)
+### Phase 3: Task Execution (Waves)
 
 After proposal approval, tasks exist in `open` status. Execute them in dependency-ordered waves.
 
-> **dsh difference:** dsh has **no Agent Teams / `TeamCreate` primitive**. Run waves **sequentially as the main agent**: loop `chorus_get_unblocked_tasks`, implement each ready task yourself, verify it, then loop again for the next wave. Do NOT call `TeamCreate` — it does not exist on dsh. (Under the Claude Code plugin, each wave can be dispatched in parallel via `TeamCreate`; that is a Claude-Code-only optimization that degrades to the sequential loop here.)
+> **dsh difference:** there is no team or group object to create. To run a wave in parallel, dispatch **one `subagent` per unblocked task** with `run_in_background: true`, issuing the whole wave in a single message, then collect their settlement notices. If `subagent` is unavailable on your host (spawning disabled by policy) or workers fail repeatedly, run waves **sequentially as the main agent** using the loop below: `chorus_get_unblocked_tasks`, implement each ready task yourself, verify it, then loop again for the next wave.
 
 ```
 wave = 1
@@ -363,7 +364,7 @@ loop:
   wave += 1
 ```
 
-> **Optional sub-agent dispatch:** if your dsh host supports generic worker sub-agents (not Agent Teams), you may hand one task to a sub-agent at a time. Because there is no SubagentStart hook, the worker prompt **must** include the manual session instructions explicitly — see `develop-chorus` "Optional: sub-agent dispatch". The main agent still owns review + verification. This does not change the sequential, wave-by-wave structure above.
+> **Parallel form:** to run a wave in parallel instead of serially, dispatch one worker `subagent` per unblocked task with `run_in_background: true`, issuing the whole wave in a single message, then collect their settlement notices before verifying. Because there is no SubagentStart hook, each worker prompt **must** include the manual session instructions explicitly — see `develop-chorus` "Optional: sub-agent dispatch". The main agent still owns review + verification, and the wave-by-wave dependency structure above is unchanged.
 
 ---
 
@@ -381,10 +382,12 @@ for the just-submitted task:
     continue
 
   # 2. Run the task-reviewer INLINE (no hook on dsh):
-  #    - Preferred: use the subagent tool to spawn a sub-agent with run_in_background:false (foreground, wait for the verdict) whose
+  #    - Preferred: use the subagent tool to spawn a sub-agent with run_in_background:false (foreground; the call waits for the reviewer to finish) whose
   #      task says: "Call the skill tool with task-reviewer-chorus, verify taskUuid
   #      <uuid> (round <N>), and post the VERDICT comment." Let it finish, then
-  #      read the newest VERDICT comment on the task.
+  #      read THIS round's VERDICT comment on the task (posted after your dispatch,
+  #      not an older round's) and decide from that comment, not from what the
+  #      subagent call returned.
   #    - Fallback (subagent unavailable): review it yourself as a focused read-only
   #      pass following the task-reviewer-chorus procedure (read task + proposal + docs + code,
   #      run read-only tests, classify findings BLOCKER/NOTE) and post the VERDICT via
@@ -392,7 +395,7 @@ for the just-submitted task:
 
   # 3. Read task-reviewer VERDICT
   comments = chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
-  # Find the most recent comment containing "VERDICT:"
+  # Find THIS round's "VERDICT:" comment — the one posted after your dispatch, not an older round's
 
   # 4. Act on VERDICT — three possible outcomes:
   if VERDICT is "PASS":
@@ -436,7 +439,7 @@ Continue with remaining tasks -- do not halt the entire pipeline for one stuck t
 
 Once **every** task of the idea's proposal is verified (`done`) — Phase 3 finds no more unblocked tasks and none remain non-terminal — run the final ship-time code-review gateway **before** the Phase 5b completion report. It reviews the **whole Idea's aggregate code change** across all tasks (not a single task) and posts its verdict on the **idea**. Inline (no hook on dsh), same mechanism as Phase 4:
 
-- **Preferred — spawn a reviewer sub-agent (foreground).** Use `subagent` to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits and returns the verdict inline; the ship decision depends on it; do NOT detach — set `run_in_background: true` only to deliberately fan out) whose `task` tells it to **call the `skill` tool with `code-reviewer-chorus` and follow it** against the idea. Example task prompt: `Load and run the code-reviewer-chorus skill to review the aggregate code for ideaUuid <uuid> (round <N>); post your VERDICT comment on the idea when done.`
+- **Preferred — spawn a reviewer sub-agent (foreground).** Use `subagent` to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits for the reviewer to finish, and the verdict is the `VERDICT:` comment it posts rather than the call's return value; the ship decision depends on it; do NOT detach — set `run_in_background: true` only to deliberately fan out) whose `task` tells it to **call the `skill` tool with `code-reviewer-chorus` and follow it** against the idea. Example task prompt: `Load and run the code-reviewer-chorus skill to review the aggregate code for ideaUuid <uuid> (round <N>); post your VERDICT comment on the idea when done.`
 - **Fallback — review it yourself.** If `subagent` is unavailable, perform the review as a focused read-only pass following the `code-reviewer-chorus` procedure (read the idea, its approved proposals + documents + tasks; infer the aggregate diff from task reports + `git log/diff`; review cross-task integration, architecture, security, regression, feature-level coverage; run the project build/test) and post the `VERDICT:` comment on the idea yourself.
 
 Act on the VERDICT:

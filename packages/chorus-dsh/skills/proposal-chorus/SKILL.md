@@ -233,7 +233,7 @@ chorus_add_comment({
 
 Obtain an independent VERDICT before considering the proposal ready for Admin approval:
 
-1. **Preferred — spawn a reviewer sub-agent (foreground).** Use the dsh `subagent` tool to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits and returns the result inline; the approve/reject decision depends on the verdict) whose task tells it to call the `skill` tool with `proposal-reviewer-chorus`, then review the proposal. The authoritative result is the newest `VERDICT:` comment on the proposal. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out and don't need the verdict before your next step.
+1. **Preferred — spawn a reviewer sub-agent (foreground).** Use the dsh `subagent` tool to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits for the reviewer to finish, and the verdict is the `VERDICT:` comment it posts rather than the call's return value; the approve/reject decision depends on the verdict) whose task tells it to call the `skill` tool with `proposal-reviewer-chorus`, then review the proposal. The authoritative result is this round's `VERDICT:` comment on the proposal. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out and don't need the verdict before your next step.
    > `Load and run the proposal-reviewer-chorus skill to review proposalUuid <uuid>. Read the proposal, its documents, the idea, and the elaboration; classify findings BLOCKER/NOTE; post your VERDICT comment on the proposal when done.`
 
 2. **Fallback — review it yourself.** If `subagent` is unavailable on your host (spawning disabled by policy), perform the review yourself as a **focused, read-only pass** following the `proposal-reviewer-chorus` skill's procedure: read `chorus_get_proposal`, `chorus_get_comments`, the linked idea, and the elaboration; check document completeness, task granularity, AC ↔ requirement coverage, the dependency DAG, and integration checkpoints; then record the result yourself via `chorus_add_comment` ending with a `VERDICT:` line (PASS / PASS WITH NOTES / FAIL). Do NOT modify any drafts during this pass — it is review-only. Use the same BLOCKER vs NOTE classification the `proposal-reviewer-chorus` skill defines.
@@ -242,7 +242,7 @@ Obtain an independent VERDICT before considering the proposal ready for Admin ap
    ```
    chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
    ```
-   Find the most recent comment containing `VERDICT:`:
+   Find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's:
    - **PASS** / **PASS WITH NOTES** — proceed; an Admin can approve (notes are non-blocking).
    - **FAIL** — go to Step 6 and fix the BLOCKERs before resubmitting.
 

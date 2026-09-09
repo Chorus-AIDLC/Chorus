@@ -34,7 +34,7 @@ These hooks degrade gracefully: if Chorus is unreachable or unconfigured, they e
 
 ## Reviewer subagents (read-only)
 
-Three reviewer subagents are read-only (`tools: ["read", "@chorus"]`, no `write`/`shell`). You have `subagent` in your tools, so you can spawn them. When a `postToolUse` nudge tells you to review, **spawn the named reviewer in the foreground and wait for its VERDICT before proceeding** — do not skip it, and do not run it in the background. Each reviewer posts a single comment ending in `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`:
+Three reviewer subagents are read-only (`tools: ["read", "@chorus"]`, no `write`/`shell`). You have `subagent` in your tools, so you can spawn them. When a `postToolUse` nudge tells you to review, **spawn the named reviewer with the `subagent` tool, wait for that call to return, then read THIS round's `VERDICT:` comment on the entity under review with `chorus_get_comments` and act on what it says** — do not skip the reviewer, and do not decide from whatever the `subagent` call itself returned. Each reviewer posts a single comment ending in `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`:
 
 - **PASS** / **PASS WITH NOTES** -> proceed (notes are non-blocking).
 - **FAIL** -> do not approve/verify/ship. Fix the listed BLOCKERs, then re-run the reviewer.

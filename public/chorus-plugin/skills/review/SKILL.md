@@ -64,8 +64,8 @@ Key responsibilities:
 
 When reviewing proposals, tasks, or an Idea's final aggregate code change, prefer spawning an independent reviewer sub-agent over reviewing manually:
 
-1. **Try the reviewer first.** Spawn `chorus:proposal-reviewer` (for proposals), `chorus:task-reviewer` (for tasks), or `chorus:code-reviewer` (the final ship-time gateway over an Idea's aggregate code change, after its last task is verified — pass the `ideaUuid`; it posts its VERDICT on the **idea**) as a read-only sub-agent. **Run it in foreground** (do NOT set `run_in_background`) — you must wait for the VERDICT before proceeding. It posts a VERDICT comment with detailed findings.
-2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find the most recent comment containing `VERDICT:`. There are exactly three possible outcomes:
+1. **Try the reviewer first.** Spawn `chorus:proposal-reviewer` (for proposals), `chorus:task-reviewer` (for tasks), or `chorus:code-reviewer` (the final ship-time gateway over an Idea's aggregate code change, after its last task is verified — pass the `ideaUuid`; it posts its VERDICT on the **idea**) as a read-only sub-agent. Then wait for it to complete using this harness's waiting mechanism — in Claude Code, the sub-agent's completion notification. The launch result is not the verdict: these reviewer subagent types report an async launch regardless of the flag you pass, so the decision must come from the comment, not the dispatch. It posts a VERDICT comment with detailed findings.
+2. **Read THIS round's VERDICT.** After the reviewer completes, call `chorus_get_comments` for the entity under review and find the `VERDICT:` comment posted **after your dispatch** — not an older round's. Do not advance the pipeline before you have read that comment. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
    - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). Fix the specific BLOCKERs listed in the comment before resubmitting.
@@ -147,7 +147,7 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 #### A3.5: Independent Review
 
-Spawn `chorus:proposal-reviewer` per the [Review Strategy](#review-strategy) above — foreground, not background. Read its VERDICT comment before proceeding.
+Spawn `chorus:proposal-reviewer` per the [Review Strategy](#review-strategy) above, wait for its completion notification, then read THIS round's VERDICT comment on the proposal before proceeding.
 
 #### A4: Approve or Reject
 
@@ -212,14 +212,14 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 
 #### B2.5: Independent Review
 
-Spawn `chorus:task-reviewer` per the [Review Strategy](#review-strategy) above — foreground, not background. After it completes, read its VERDICT:
+Spawn `chorus:task-reviewer` per the [Review Strategy](#review-strategy) above. After it completes, read THIS round's VERDICT on the task:
 
 - **VERDICT: PASS** or **PASS WITH NOTES** → proceed to B3 (mark AC) and B4 (verify).
 - **VERDICT: FAIL** → skip to B4 and **reopen** the task. Do NOT mark AC as passed.
 
 #### B2.6: Final Code-Review Gateway (after an Idea's LAST task is verified)
 
-When the task you just verified is the **last** task of its idea-rooted proposal, run the ship-time code-review gateway before the Idea's code is considered shipped. The PostToolUse hook injects a reminder to spawn `chorus:code-reviewer` (gated by `enableCodeReviewer`, default on). Spawn it per the [Review Strategy](#review-strategy) — foreground, passing the `ideaUuid` + round number. It reviews the Idea's **aggregate** code change across all its tasks — cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage — dimensions a single-task review cannot see — and posts one `VERDICT` comment on the **idea**.
+When the task you just verified is the **last** task of its idea-rooted proposal, run the ship-time code-review gateway before the Idea's code is considered shipped. The PostToolUse hook injects a reminder to spawn `chorus:code-reviewer` (gated by `enableCodeReviewer`, default on). Spawn it per the [Review Strategy](#review-strategy), passing the `ideaUuid` + round number, and wait for its completion notification before reading THIS round's verdict. It reviews the Idea's **aggregate** code change across all its tasks — cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage — dimensions a single-task review cannot see — and posts one `VERDICT` comment on the **idea**.
 
 - **VERDICT: PASS** / **PASS WITH NOTES** → the feature may ship.
 - **VERDICT: FAIL** → do not reopen the verified tasks; instead add new fix tasks to the approved proposal via `/chorus:quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates. Bounded by `maxCodeReviewRounds`.

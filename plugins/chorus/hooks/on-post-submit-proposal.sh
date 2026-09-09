@@ -39,7 +39,7 @@ How to spawn (mount the reviewer skill explicitly):
 
 This gate depends on the verdict, so wait here. Routine entity-backed reviewers use a fresh context; set \`fork_context: true\` only when material parent-conversation state cannot be conveyed in the text item. Use \`send_input\` for an active reviewer and \`resume_agent\` only for one that was previously closed.
 
-The reviewer is read-only and posts its VERDICT as a comment on the proposal. Read comments after it returns, find the most recent \`VERDICT:\` line:
+The reviewer is read-only and posts its VERDICT as a comment on the proposal. Read comments after it returns and find THIS round's \`VERDICT:\` line — the comment posted after you dispatched the reviewer, not an older round's:
 - **VERDICT: PASS** — No issues. Proceed to \`chorus_admin_approve_proposal\`.
 - **VERDICT: PASS WITH NOTES** — Minor notes. Still approve.
 - **VERDICT: FAIL** — BLOCKERs found. Do NOT approve. Reject with \`chorus_pm_reject_proposal\`, fix, resubmit."

@@ -132,7 +132,7 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 #### A3.5: Independent Review
 
-Before approving, run an independent review of the proposal. Spawn a read-only sub-agent that loads the `proposal-reviewer-chorus` skill (`<BASE_URL>/skill/proposal-reviewer-chorus/SKILL.md`), pass it the `proposalUuid`, and let it adversarially audit document quality, task granularity, AC alignment, and the dependency DAG. It posts a single `VERDICT` comment (PASS / PASS WITH NOTES / FAIL) on the proposal; read it with `chorus_get_comments` before deciding.
+Before approving, run an independent review of the proposal. Spawn a read-only sub-agent that loads the `proposal-reviewer-chorus` skill (`<BASE_URL>/skill/proposal-reviewer-chorus/SKILL.md`), pass it the `proposalUuid`, and let it adversarially audit document quality, task granularity, AC alignment, and the dependency DAG. It posts a single `VERDICT` comment (PASS / PASS WITH NOTES / FAIL) on the proposal; read THIS round's verdict comment — the one posted after your dispatch, not an older round's — with `chorus_get_comments` before deciding.
 
 The spawn mechanism is harness-specific, and an inline self-review fallback exists when sub-agents are unavailable — see the canonical **Independent Review** section in the `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) for the full pattern.
 
@@ -201,7 +201,7 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 
 #### B2.5: Independent Review
 
-Before marking acceptance criteria and verifying, run an independent review of the task. Spawn a read-only sub-agent that loads the `task-reviewer-chorus` skill (`<BASE_URL>/skill/task-reviewer-chorus/SKILL.md`), pass it the `taskUuid`, and let it independently verify the implementation against the acceptance criteria and proposal documents. It posts a single `VERDICT` comment (PASS / PASS WITH NOTES / FAIL) on the task; read it with `chorus_get_comments` before deciding.
+Before marking acceptance criteria and verifying, run an independent review of the task. Spawn a read-only sub-agent that loads the `task-reviewer-chorus` skill (`<BASE_URL>/skill/task-reviewer-chorus/SKILL.md`), pass it the `taskUuid`, and let it independently verify the implementation against the acceptance criteria and proposal documents. It posts a single `VERDICT` comment (PASS / PASS WITH NOTES / FAIL) on the task; read THIS round's verdict comment — the one posted after your dispatch, not an older round's — with `chorus_get_comments` before deciding.
 
 The spawn mechanism is harness-specific, and an inline self-review fallback exists when sub-agents are unavailable — see the canonical **Independent Review** section in the `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) for the full pattern.
 
@@ -209,7 +209,7 @@ The spawn mechanism is harness-specific, and an inline self-review fallback exis
 
 #### B2.6: Final Code-Review Gateway (after an Idea's LAST task is verified)
 
-When the task you just verified is the **last** task of its idea-rooted proposal, run the ship-time code-review gateway before the Idea's code is considered shipped. Spawn a read-only sub-agent that loads the `code-reviewer-chorus` skill (`<BASE_URL>/skill/code-reviewer-chorus/SKILL.md`), pass it the `ideaUuid` + round number, and let it review the Idea's **aggregate** code change across all its tasks — cross-task integration, architecture/convention consistency, security, regression/performance, and feature-level test coverage — dimensions a single-task review cannot see. It posts one `VERDICT` comment on the **Idea**; read it with `chorus_get_comments({ targetType: "idea", targetUuid })` before deciding.
+When the task you just verified is the **last** task of its idea-rooted proposal, run the ship-time code-review gateway before the Idea's code is considered shipped. Spawn a read-only sub-agent that loads the `code-reviewer-chorus` skill (`<BASE_URL>/skill/code-reviewer-chorus/SKILL.md`), pass it the `ideaUuid` + round number, and let it review the Idea's **aggregate** code change across all its tasks — cross-task integration, architecture/convention consistency, security, regression/performance, and feature-level test coverage — dimensions a single-task review cannot see. It posts one `VERDICT` comment on the **Idea**; read THIS round's verdict comment on the Idea — posted after your dispatch, not an earlier round's — with `chorus_get_comments({ targetType: "idea", targetUuid })` before deciding.
 
 - `PASS` / `PASS WITH NOTES` → the feature may ship.
 - `FAIL` → fix via the **quick-dev** workflow (`<BASE_URL>/skill/quick-dev-chorus/SKILL.md`): `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it, targeting the BLOCKERs — do **not** reopen the already-verified tasks — then execute and verify them. Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates (next round), bounded by `maxCodeReviewRounds`.

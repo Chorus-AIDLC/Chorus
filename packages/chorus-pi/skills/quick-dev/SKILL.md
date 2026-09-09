@@ -152,7 +152,7 @@ chorus_submit_for_verify({
 })
 ```
 
-Submitting is not final verification. Spawn the required task-reviewer agent with `subagent_spawn` as described in `/skill:develop`, wait for it, and read the newest `VERDICT:` Task comment. `PASS` and `PASS WITH NOTES` continue. On `FAIL`, do not verify or hand off: fix every unresolved BLOCKER, repeat AC self-check and submission, then run a fresh independent task review.
+Submitting is not final verification. Spawn the required task-reviewer agent with `subagent_spawn` as described in `/skill:develop`, wait for it, and read THIS round's `VERDICT:` Task comment — the one posted after your dispatch, not an older round's. `PASS` and `PASS WITH NOTES` continue. On `FAIL`, do not verify or hand off: fix every unresolved BLOCKER, repeat AC self-check and submission, then run a fresh independent task review.
 
 ### Step 8: Permission-Aware Verification
 

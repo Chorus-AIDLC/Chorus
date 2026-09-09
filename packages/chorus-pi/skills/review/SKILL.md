@@ -65,7 +65,7 @@ Key responsibilities:
 When reviewing proposals, tasks, or an Idea's final aggregate code change, prefer spawning an independent reviewer sub-agent over reviewing manually:
 
 1. **Try the reviewer first.** Spawn `chorus-proposal-reviewer` (for proposals), `chorus-task-reviewer` (for tasks), or `chorus-code-reviewer` (the final ship-time gateway over an Idea's aggregate code change, after its last task is verified — pass the `ideaUuid`; it posts its VERDICT on the **idea**) as a read-only sub-agent. **Use the blocking `subagent` tool** (it waits for the VERDICT and returns it) — you must wait for the VERDICT before proceeding. It posts a VERDICT comment with detailed findings.
-2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find the most recent comment containing `VERDICT:`. There are exactly three possible outcomes:
+2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
    - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). Fix the specific BLOCKERs listed in the comment before resubmitting.

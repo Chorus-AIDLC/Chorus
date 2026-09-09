@@ -109,8 +109,8 @@ All tasks of idea-rooted proposal ${PROPOSAL_UUID} are now verified. This is the
 
 ACTION REQUESTED: spawn the read-only \`chorus-code-reviewer\` subagent for this idea — an independent review of the idea's AGGREGATE code change (the whole feature across all its tasks), not a single task. It is auto-selected by its description; you can also invoke it as /chorus-code-reviewer.
 
-1. Spawn the code-reviewer synchronously, passing ideaUuid=\"${IDEA_UUID}\" and the review round number (read prior code-review VERDICT comments on the idea to determine it). It reviews cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage, and overall soundness, then posts ONE VERDICT comment on the idea.
-2. Read its VERDICT on the idea (chorus_get_comments targetType=\"idea\").
+1. Spawn the code-reviewer and wait for the \`subagent\` call to return, passing ideaUuid=\"${IDEA_UUID}\" and the review round number (read prior code-review VERDICT comments on the idea to determine it). It reviews cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage, and overall soundness, then posts ONE VERDICT comment on the idea.
+2. Read THIS round's VERDICT on the idea (chorus_get_comments targetType=\"idea\") — the comment posted after your dispatch, not an earlier round's. The \`subagent\` call's own return value is not the verdict, and do not declare the feature shippable before you have read that comment; if it is missing, respawn once, then fall back to a read-only self-review that posts the VERDICT.
 3. VERDICT: PASS / PASS WITH NOTES — the feature may ship.
 4. VERDICT: FAIL — the orchestrator invokes Quick Dev to create new tasks on the original approved proposal; never reopen completed tasks or apply untracked fixes. Group related small BLOCKERs by default and split only materially large or independently testable fixes.
 5. Re-run only after every fix task passes AC self-check, independent task review, and admin verification to done. A failed or cancelled fix stops the loop and escalates. Keep maxCodeReviewRounds authoritative.

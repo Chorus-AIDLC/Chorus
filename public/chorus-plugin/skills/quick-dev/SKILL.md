@@ -152,7 +152,7 @@ chorus_submit_for_verify({
 })
 ```
 
-Submitting is not final verification. Spawn the required independent task-reviewer sub-agent as described in `/develop`, wait for it, and read the newest `VERDICT:` Task comment. `PASS` and `PASS WITH NOTES` continue. On `FAIL`, do not verify or hand off: fix every unresolved BLOCKER, repeat AC self-check and submission, then run a fresh independent task review.
+Submitting is not final verification. Spawn the required independent task-reviewer sub-agent as described in `/develop`, wait for it, and read THIS round's `VERDICT:` Task comment — the one posted after your dispatch, not an older round's. `PASS` and `PASS WITH NOTES` continue. On `FAIL`, do not verify or hand off: fix every unresolved BLOCKER, repeat AC self-check and submission, then run a fresh independent task review.
 
 ### Step 8: Permission-Aware Verification
 
@@ -170,11 +170,13 @@ This handoff applies in interactive and headless daemon sessions. Do not use an 
 
 ## Session Integration
 
-Quick Tasks work with Claude Code Agent Teams just like proposal-based tasks:
+Quick Tasks work with sub-agent execution just like proposal-based tasks:
 
-- **Team Lead**: create quick tasks, then assign to sub-agents via task UUIDs
+- **Main agent**: create quick tasks, then hand each to a sub-agent via its task UUID
 - **Sub-agents**: the Chorus Plugin auto-injects session context — just pass `sessionUuid` to `chorus_update_task` and `chorus_report_work`
 - **Session lifecycle** is fully automated by the plugin
+
+> There is no team object to create: to run several quick tasks in parallel, dispatch one sub-agent per task, issuing the whole batch in a single message — that is what makes them run in parallel. If sub-agent dispatch is unavailable (no sub-agent primitive, permission denied) or sub-agents fail repeatedly, work the tasks sequentially as the main agent.
 
 ---
 

@@ -25,7 +25,7 @@ Developer Agents take Tasks created by PM Agents (via `/proposal`) and turn them
 claim --> in_progress --> report work --> self-check AC --> submit for verify --> reviewer --> Admin /review
 ```
 
-For multi-task execution, OpenClaw runs **sequential waves** (the main agent works tasks in dependency order) — see [Wave-Based Execution](#wave-based-execution-on-openclaw) below.
+For multi-task execution, dispatch **one sub-agent per unblocked task** with `sessions_spawn` (whole wave in one message), falling back to **sequential waves** (the main agent works tasks in dependency order) when `sessions_spawn` is unavailable or workers fail repeatedly — see [Wave-Based Execution](#wave-based-execution-on-openclaw) below.
 
 ---
 
@@ -252,7 +252,7 @@ Obtain an independent VERDICT before the task is verified:
    ```
    chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
    ```
-   Find the most recent comment containing `VERDICT:`:
+   Find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's:
    - **VERDICT: PASS** — All AC verified, no issues. Proceed to admin verification.
    - **VERDICT: PASS WITH NOTES** — All AC verified, minor notes. Proceed to admin verification (notes are non-blocking).
    - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit (Step 9).
@@ -303,9 +303,9 @@ To keep a long-running session visible/active, send `chorus_session_heartbeat({ 
 
 ## Wave-Based Execution on OpenClaw
 
-> **OpenClaw difference:** OpenClaw has **no Agent Teams / `TeamCreate` primitive**. The Claude Code plugin can spawn a parallel team per wave; on OpenClaw you (the main agent) execute tasks **sequentially** in dependency order. This is slower than parallel teams but completes the same pipeline.
+> **OpenClaw difference:** there is no team or group object to create. Parallelism, where available, comes from dispatching **one sub-agent per unblocked task** with OpenClaw's own `sessions_spawn` tool, issuing the whole wave in a single message — see §"Optional: sub-agent dispatch" below, which also covers the manual session instructions workers need (no SubagentStart hook here). When `sessions_spawn` is unavailable or workers fail repeatedly, you (the main agent) execute tasks **sequentially** in dependency order. That is slower but completes the same pipeline.
 
-### Sequential wave loop
+### Sequential wave loop (fallback, always safe)
 
 ```
 loop:
@@ -334,11 +334,11 @@ loop:
 
 > **Critical:** `to_verify` does NOT resolve dependencies — only `done` or `closed` does. A task must be **verified to `done`** (by an Admin, or by you if you hold `task:admin`) before its dependents become unblocked. If you lack `task:admin`, submit each task for verify and ask the project's admin to verify between waves, then re-run `chorus_get_unblocked_tasks`.
 
-> **Claude-Code-only optimization (degrades to sequential here):** under the Claude Code plugin, each wave can be dispatched in parallel via `TeamCreate` + per-task sub-agents. OpenClaw has no such primitive, so the loop above runs serially. Do NOT attempt to call `TeamCreate` on OpenClaw — it does not exist.
+> **Parallel form:** to run a wave in parallel, dispatch one sub-agent per unblocked task in a single message (`sessions_spawn`) instead of the serial `for` loop above, then wait for the wave and verify. Everything else in the loop is unchanged.
 
 ### Optional: sub-agent dispatch
 
-If your OpenClaw host *does* support spawning worker sub-agents (not Agent Teams, just generic sub-agents), you may hand each a task. Because there is no SubagentStart hook, the worker prompt **must** include the manual session instructions explicitly:
+If your OpenClaw host *does* support spawning worker sub-agents (`sessions_spawn`), you may hand each a task — one per unblocked task, all dispatched in one message so the wave runs in parallel. Because there is no SubagentStart hook, the worker prompt **must** include the manual session instructions explicitly:
 
 ```
 Your Chorus task UUID: <task-uuid>

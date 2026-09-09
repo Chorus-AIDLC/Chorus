@@ -38,7 +38,7 @@ How to spawn (mount the reviewer skill explicitly):
 
 This gate depends on the verdict, so wait here. Routine entity-backed reviewers use a fresh context; set \`fork_context: true\` only when material parent-conversation state cannot be conveyed in the text item. Use \`send_input\` for an active reviewer and \`resume_agent\` only for one that was previously closed.
 
-The reviewer is read-only (read-only sandbox) and posts its VERDICT as a comment. After it returns, read comments:
+The reviewer is read-only (read-only sandbox) and posts its VERDICT as a comment. After it returns, read THIS round's \`VERDICT:\` comment on the task — the one posted after you dispatched the reviewer, not an older round's. Do not verify or reopen before you have read it:
 - **VERDICT: PASS / PASS WITH NOTES** — Mark AC and call \`chorus_admin_verify_task\`.
 - **VERDICT: FAIL** — Do NOT verify. Call \`chorus_admin_reopen_task\`, fix BLOCKERs, resubmit."
 

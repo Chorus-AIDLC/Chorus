@@ -25,7 +25,7 @@ Developer Agents take Tasks created by PM Agents (via `proposal-chorus`) and tur
 claim --> in_progress --> report work --> self-check AC --> submit for verify --> reviewer --> Admin /review
 ```
 
-For multi-task execution, dsh runs **sequential waves** (the main agent works tasks in dependency order) — see [Wave-Based Execution](#wave-based-execution-on-dsh) below.
+For multi-task execution, dispatch **one `subagent` per unblocked task** (whole wave in one message), falling back to **sequential waves** (the main agent works tasks in dependency order) when `subagent` is unavailable or workers fail repeatedly — see [Wave-Based Execution](#wave-based-execution-on-dsh) below.
 
 ---
 
@@ -243,7 +243,7 @@ chorus_submit_for_verify({
 
 Obtain an independent VERDICT before the task is verified:
 
-1. **Preferred — spawn a reviewer sub-agent (foreground).** Use the dsh `subagent` tool to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits and returns the result inline; the verify/reopen decision depends on the verdict) whose task tells it to call the `skill` tool with `task-reviewer-chorus`, then review the task. The authoritative result is the newest `VERDICT:` comment on the task. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out and don't need the verdict before your next step.
+1. **Preferred — spawn a reviewer sub-agent (foreground).** Use the dsh `subagent` tool to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits for the reviewer to finish, and the verdict is the `VERDICT:` comment it posts rather than the call's return value; the verify/reopen decision depends on the verdict) whose task tells it to call the `skill` tool with `task-reviewer-chorus`, then review the task. The authoritative result is this round's `VERDICT:` comment on the task. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out and don't need the verdict before your next step.
    > `Load and run the task-reviewer-chorus skill to verify taskUuid <uuid>. Read the task, its AC, the proposal documents, and the code; run the project's tests; verify each AC independently; post your VERDICT comment on the task when done.`
 
 2. **Fallback — review it yourself.** If `subagent` is unavailable on your host (spawning disabled by policy), perform the review yourself as a **focused, read-only pass** following the `task-reviewer-chorus` skill's procedure: read `chorus_get_task`, `chorus_get_comments`, the originating proposal and its documents; read the code that implements each AC (do not trust the developer summary); run the project's test/build commands; verify each acceptance criterion independently. Then record the result yourself via `chorus_add_comment` ending with a `VERDICT:` line (PASS / PASS WITH NOTES / FAIL). Do NOT modify project files during this pass — it is review-only (read-only bash for tests/build is fine). Use the same BLOCKER vs NOTE classification the `task-reviewer-chorus` skill defines.
@@ -252,14 +252,14 @@ Obtain an independent VERDICT before the task is verified:
    ```
    chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
    ```
-   Find the most recent comment containing `VERDICT:`:
+   Find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's:
    - **VERDICT: PASS** — All AC verified, no issues. Proceed to admin verification.
    - **VERDICT: PASS WITH NOTES** — All AC verified, minor notes. Proceed to admin verification (notes are non-blocking).
    - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit (Step 9).
 
 If you spawned a sub-agent and no new `VERDICT:` comment appears after it returns, it exhausted its turn budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT within the first 12 turns."* If the second attempt still produces no VERDICT, fall back to reviewing manually (Step 8.5 fallback) and post the VERDICT yourself.
 
-> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — run the ship-time code-review gateway before declaring the Idea done. Inline (no hook on dsh), same mechanism as Step 8.5: spawn a sub-agent via `subagent` with **`run_in_background: false`** (foreground — the call waits and returns the verdict inline; the ship decision depends on it; set `run_in_background: true` only to deliberately fan out) whose `task` tells it to **call the `skill` tool with `code-reviewer-chorus` and follow it** against the idea (pass the `ideaUuid` + round number); fallback is a read-only self-review following the `code-reviewer-chorus` procedure. It reviews the Idea's **aggregate** code change (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT:` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via the **quick-dev** workflow (`quick-dev-chorus`): `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it (do not reopen old tasks). Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Advisory/behavioral. Run it **before** any idea-completion report.
+> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — run the ship-time code-review gateway before declaring the Idea done. Inline (no hook on dsh), same mechanism as Step 8.5: spawn a sub-agent via `subagent` with **`run_in_background: false`** (foreground — the call waits for the reviewer to finish, and the verdict is the `VERDICT:` comment it posts rather than the call's return value; the ship decision depends on it; set `run_in_background: true` only to deliberately fan out) whose `task` tells it to **call the `skill` tool with `code-reviewer-chorus` and follow it** against the idea (pass the `ideaUuid` + round number); fallback is a read-only self-review following the `code-reviewer-chorus` procedure. It reviews the Idea's **aggregate** code change (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT:` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via the **quick-dev** workflow (`quick-dev-chorus`): `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it (do not reopen old tasks). Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Advisory/behavioral. Run it **before** any idea-completion report.
 
 ### Step 9: Handle Review Feedback
 
@@ -303,9 +303,9 @@ To keep a long-running session visible/active, send `chorus_session_heartbeat({ 
 
 ## Wave-Based Execution on dsh
 
-> **dsh difference:** dsh has **no Agent Teams / `TeamCreate` primitive**. The Claude Code plugin can spawn a parallel team per wave; on dsh you (the main agent) execute tasks **sequentially** in dependency order. This is slower than parallel teams but completes the same pipeline.
+> **dsh difference:** there is no team or group object to create. To run a wave in parallel on dsh, dispatch **one `subagent` per unblocked task** with `run_in_background: true`, issuing the whole wave in a single message, then collect their settlement notices. If `subagent` is unavailable on your host (spawning disabled by policy) or workers fail repeatedly, fall back to the sequential loop below: you (the main agent) execute tasks in dependency order. Sequential is slower but completes the same pipeline.
 
-### Sequential wave loop
+### Sequential wave loop (fallback, always safe)
 
 ```
 loop:
@@ -334,11 +334,11 @@ loop:
 
 > **Critical:** `to_verify` does NOT resolve dependencies — only `done` or `closed` does. A task must be **verified to `done`** (by an Admin, or by you if you hold `task:admin`) before its dependents become unblocked. If you lack `task:admin`, submit each task for verify and ask the project's admin to verify between waves, then re-run `chorus_get_unblocked_tasks`.
 
-> **Claude-Code-only optimization (degrades to sequential here):** under the Claude Code plugin, each wave can be dispatched in parallel via `TeamCreate` + per-task sub-agents. dsh has no such primitive, so the loop above runs serially. Do NOT attempt to call `TeamCreate` on dsh — it does not exist.
+> **Parallel form:** to run a wave in parallel, dispatch one `subagent` per unblocked task with `run_in_background: true`, issuing them in a single message — that is what makes them run in parallel. There is no team object to create first. The loop above is the sequential fallback for hosts where `subagent` is unavailable or workers keep failing.
 
 ### Optional: sub-agent dispatch
 
-If your dsh host *does* support spawning worker sub-agents (not Agent Teams, just generic sub-agents), you may hand each a task. Because there is no SubagentStart hook, the worker prompt **must** include the manual session instructions explicitly:
+If your dsh host *does* support spawning worker sub-agents, you may hand each a task. Because there is no SubagentStart hook, the worker prompt **must** include the manual session instructions explicitly:
 
 ```
 Your Chorus task UUID: <task-uuid>

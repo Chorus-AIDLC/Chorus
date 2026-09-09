@@ -225,21 +225,21 @@ chorus_submit_for_verify({
 
 > `to_verify` does NOT unblock downstream tasks — only `done` (after admin verification) does.
 
-> **Review Subagent:** After `chorus_submit_for_verify`, the `chorus` main agent's `postToolUse` hook injects a nudge instructing you to spawn the `chorus-task-reviewer` — an independent, read-only review subagent (`tools: ["read", "@chorus"]`). You MUST spawn it yourself (it is NOT auto-launched). **Run it in the foreground** — wait for the VERDICT before proceeding. The reviewer posts a VERDICT comment on the task.
+> **Review Subagent:** After `chorus_submit_for_verify`, the `chorus` main agent's `postToolUse` hook injects a nudge instructing you to spawn the `chorus-task-reviewer` — an independent, read-only review subagent (`tools: ["read", "@chorus"]`). You MUST spawn it yourself (it is NOT auto-launched) with the `subagent` tool and wait for that call to return. The reviewer posts a VERDICT comment on the task — that comment, not the `subagent` call's own return value, is the verdict.
 
-After the reviewer completes, read its VERDICT:
+After the reviewer completes, read **this round's** VERDICT:
 ```
 chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 ```
-Find the most recent comment containing `VERDICT:` and act on it:
+Find the `VERDICT:` comment posted **after you dispatched the reviewer** — not an older round's — and act on it. Do not verify or reopen before you have read that comment:
 
 - **VERDICT: PASS** — All AC verified, no issues. Proceed to admin verification.
 - **VERDICT: PASS WITH NOTES** — All AC verified, minor notes. Proceed to admin verification (notes are non-blocking).
 - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit.
 
-If no new `VERDICT:` comment appears after the reviewer returns, it exhausted its turn budget before posting. Respawn it ONCE with a concise-budget hint in the prompt: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, demand the developer's run evidence, and post your VERDICT comment within the first 12 turns."* If the second attempt still produces no VERDICT, review manually using the checklist and proceed.
+If no new `VERDICT:` comment appears after the reviewer returns, it exhausted its turn budget before posting. Respawn it ONCE with a concise-budget hint in the prompt: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, demand the developer's run evidence, and post your VERDICT comment within the first 12 turns."* If the second attempt still produces no VERDICT, review the task yourself as a read-only pass using the checklist and POST the VERDICT comment — absence is never a PASS — then proceed on what you posted.
 
-> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the `postToolUse` hook injects a reminder to spawn the `chorus-code-reviewer` subagent. Spawn it yourself in the **foreground**, passing the `ideaUuid` + round number; it reviews the Idea's **aggregate** code change across all its tasks (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via `/chorus-quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it — do NOT reopen the verified tasks). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates. Advisory/behavioral, like the other reviewers. Run it **before** any idea-completion report.
+> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the `postToolUse` hook injects a reminder to spawn the `chorus-code-reviewer` subagent. Spawn it yourself with the `subagent` tool and wait for that call to return, passing the `ideaUuid` + round number; then read THIS round's `VERDICT` comment on the idea before deciding. It reviews the Idea's **aggregate** code change across all its tasks (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via `/chorus-quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it — do NOT reopen the verified tasks). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates. Advisory/behavioral, like the other reviewers. Run it **before** any idea-completion report.
 
 ### Step 9: Handle Review Feedback
 

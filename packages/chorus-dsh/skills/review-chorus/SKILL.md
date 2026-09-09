@@ -66,8 +66,8 @@ Key responsibilities:
 
 When reviewing proposals, tasks, or an Idea's final aggregate code change, get an independent VERDICT before approving/verifying/shipping. On dsh there is **no PostToolUse hook** to remind you — invoke the review yourself, inline.
 
-1. **Preferred — spawn a reviewer sub-agent (foreground).** Use the dsh `subagent` tool to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits and returns the result inline; the approve/verify decision depends on the verdict). Its task must tell it to call the `skill` tool with exactly `proposal-reviewer-chorus`, `task-reviewer-chorus`, or `code-reviewer-chorus`, then review the matching entity. The authoritative result is the newest Chorus `VERDICT:` comment. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out and don't need the verdict before your next step.
-2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find the most recent comment containing `VERDICT:`. There are exactly three possible outcomes:
+1. **Preferred — spawn a reviewer sub-agent (foreground).** Use the dsh `subagent` tool to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits for the reviewer to finish, and the verdict is the `VERDICT:` comment it posts rather than the call's return value; the approve/verify decision depends on the verdict). Its task must tell it to call the `skill` tool with exactly `proposal-reviewer-chorus`, `task-reviewer-chorus`, or `code-reviewer-chorus`, then review the matching entity. The authoritative result is this round's Chorus `VERDICT:` comment. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out and don't need the verdict before your next step.
+2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
    - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). For a **code-review gateway** FAIL, do not reopen the verified tasks — instead fix via the **quick-dev** workflow (`quick-dev-chorus`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Fix the specific BLOCKERs listed in the comment before resubmitting.
@@ -147,7 +147,7 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 #### A3.5: Independent Review
 
-Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `subagent` with `run_in_background: false` (foreground — wait for the verdict) and have it call the `skill` tool with `proposal-reviewer-chorus` and follow it, otherwise review yourself as a read-only pass and post the VERDICT. Read its VERDICT comment before proceeding.
+Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `subagent` with `run_in_background: false` (foreground — the call waits for the reviewer to finish) and have it call the `skill` tool with `proposal-reviewer-chorus` and follow it, otherwise review yourself as a read-only pass and post the VERDICT. Read THIS round's VERDICT comment on the proposal — posted after your dispatch, not an older round's — before proceeding.
 
 #### A4: Approve or Reject
 
@@ -212,7 +212,7 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 
 #### B2.5: Independent Review
 
-Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `subagent` with `run_in_background: false` (foreground — wait for the verdict) and have it call the `skill` tool with `task-reviewer-chorus` and follow it, otherwise review yourself as a read-only pass and post the VERDICT. After it completes, read its VERDICT:
+Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `subagent` with `run_in_background: false` (foreground — the call waits for the reviewer to finish) and have it call the `skill` tool with `task-reviewer-chorus` and follow it, otherwise review yourself as a read-only pass and post the VERDICT. After it completes, read THIS round's VERDICT on the task — posted after your dispatch, not an older round's:
 
 - **VERDICT: PASS** or **PASS WITH NOTES** → proceed to B3 (mark AC) and B4 (verify).
 - **VERDICT: FAIL** → skip to B4 and **reopen** the task. Do NOT mark AC as passed.
@@ -332,7 +332,7 @@ chorus_pm_update_document({ documentUuid: "<doc-uuid>", content: "Updated..." })
 - **Unblock the team** — Prioritize proposal reviews to keep PM and Developer work flowing
 - **Use delete sparingly** — Prefer closing over deleting; closing preserves history
 - **Document decisions** — Use comments to explain approval/rejection reasoning
-- **Verify between waves** — In sequential wave execution, verify tasks to `done` between waves to unblock downstream dependencies
+- **Verify between waves** — In wave-based execution, verify tasks to `done` between waves to unblock downstream dependencies
 
 ---
 

@@ -317,8 +317,8 @@ All tasks of idea-rooted proposal ${PROPOSAL_UUID} are now done. This is the fin
 
 ACTION REQUESTED: spawn code-reviewer for this idea — an independent, read-only review of the idea's AGGREGATE code change (the whole feature across all its tasks), not a single task.
 
-1. Spawn the code-reviewer in FOREGROUND, passing it ideaUuid="${idea_uuid}" and the review round number (read prior code-review verdict comments on the idea to determine it). It reviews cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage, and overall code soundness, then posts ONE VERDICT comment on the idea.
-2. Read its VERDICT on the idea (chorus_get_comments targetType="idea").
+1. Spawn the code-reviewer and wait for its completion notification, passing it ideaUuid="${idea_uuid}" and the review round number (read prior code-review verdict comments on the idea to determine it). It reviews cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage, and overall code soundness, then posts ONE VERDICT comment on the idea.
+2. Read THIS round's VERDICT on the idea (chorus_get_comments targetType="idea") — the comment posted after your dispatch, not an earlier round's. The launch result is not the verdict, and do not declare the feature shippable before you have read that comment; if it is missing, respawn once, then fall back to a read-only self-review that posts the VERDICT.
 3. PASS / PASS WITH NOTES -> the feature may ship.
 4. FAIL -> the orchestrator invokes Quick Dev to create new tasks on the original approved proposal; never reopen completed tasks or apply untracked fixes. Group related small BLOCKERs by default and split only materially large or independently testable fixes.
 5. Re-run only after every fix task passes AC self-check, independent task review, and admin verification to done. A failed or cancelled fix stops the loop and escalates. Keep maxCodeReviewRounds authoritative.
