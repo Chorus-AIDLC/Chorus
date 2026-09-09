@@ -1,6 +1,6 @@
 ---
 name: openspec-aware
-description: Opt-in OpenSpec-mode authoring for Chorus PM workflows on OpenClaw. Runs inline three-check detection for the local `openspec` CLI, scaffolds `openspec/changes/<slug>/` on disk, and mirrors Markdown files into Chorus document drafts via `chorus mcp call --arg-file` (bash `chorus-api.sh` wrapper as fallback). Required reading for the proposal, develop, and yolo skills whenever the user has the `openspec` CLI installed.
+description: OpenSpec-mode authoring for Chorus PM workflows on OpenClaw — the default whenever OpenSpec is usable. Resolves the whole spec-mode contract (lite/openspec/off) INLINE (no SessionStart hook on OpenClaw), scaffolds `openspec/changes/<slug>/` on disk, and mirrors Markdown files into Chorus document drafts via `chorus mcp call --arg-file` (bash `chorus-api.sh` wrapper as fallback). When OpenSpec isn't usable the mode resolves to spec-lite (see the spec-lite skill). Required reading for the proposal, develop, and yolo skills.
 license: AGPL-3.0
 metadata:
   author: chorus
@@ -11,51 +11,74 @@ metadata:
 
 # OpenSpec-aware Authoring (OpenClaw plugin)
 
-This skill is a **shared sub-procedure** invoked by the Chorus stage skills (proposal, develop, yolo) whenever the user wants spec-driven authoring through the [OpenSpec CLI](https://github.com/Fission-AI/OpenSpec). It is opt-in:
+This skill is a **shared sub-procedure** invoked by the Chorus stage skills (proposal, develop, yolo) when the resolved spec mode is a **usable OpenSpec** — spec-driven authoring through the [OpenSpec CLI](https://github.com/Fission-AI/OpenSpec):
 
-- Activates when **all three** signals hold (see §1): `CHORUS_OPENSPEC_MODE` is not `off`, an `openspec/` directory exists at the project root, and the `openspec` CLI is on `PATH`.
-- Otherwise the calling skill falls back to its existing free-form behavior.
+- Activates when the resolved spec mode is a **usable OpenSpec** (see §1): `CHORUS_SPEC_MODE=openspec` *or* unset, **and** `CHORUS_OPENSPEC_MODE` not `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`.
+- Otherwise the calling skill follows the resolved mode — **spec-lite** (the default when OpenSpec isn't usable) or free-form (`CHORUS_SPEC_MODE=off`).
+
+> **See also — `spec-lite` (the lightweight fallback):** OpenSpec (this skill) stays the default whenever it is usable. When OpenSpec is absent or disabled — or `CHORUS_SPEC_MODE=lite` — the mode resolves to **spec-lite**: a durable local `.chorus/specs/<slug>/spec.md` (never synced) + per-change dated folders `<slug>/<YYYY-MM-DD>-<change-slug>/` of Chorus-typed docs mirrored 1:1 into Chorus via the same `--arg-file` transport. See the `spec-lite` skill.
 
 > **Tool namespace:** Chorus MCP tools are exposed under a `chorus__` prefix on OpenClaw (e.g. `chorus__chorus_pm_create_proposal`). Bare names are used in prose for readability — prepend `chorus__` when invoking the MCP tools directly. **Document-mirror calls do NOT go through the MCP harness at all** — they go through the `chorus` CLI (`chorus mcp call`, preferred) or the `chorus-api.sh` wrapper (fallback) (see §2 Rule 1), which talk to the Chorus MCP endpoint over HTTP using your API key, independent of the `chorus__` namespacing.
 
 ---
 
-## §1. Detection — run inline, every time (no SessionStart hook on OpenClaw)
+## §1. Resolve the spec mode — run inline, every time (no SessionStart hook on OpenClaw)
 
-> **OpenClaw difference:** the Claude Code plugin precomputes `CHORUS_OPENSPEC_ACTIVE` once in a SessionStart hook and injects it into context. **OpenClaw does not run that hook.** You MUST compute activeness yourself, inline, the moment you reach this skill from a stage skill. Do not look for an injected `CHORUS_OPENSPEC_ACTIVE` value — it will not exist on OpenClaw.
+> **OpenClaw difference:** the Claude Code / Codex / Pi ports precompute the spec mode once (in a SessionStart hook or an extension handler) and inject a `## Spec Mode` value into context. **OpenClaw does none of that.** You MUST resolve the mode yourself, **inline**, the moment you reach this skill from a stage skill. Do not look for an injected `CHORUS_OPENSPEC_ACTIVE` / `## Spec Mode` value — it will not exist on OpenClaw. Resolve the **whole** contract (lite / openspec / off), not just "is OpenSpec active" — the authoritative rule is the plugin's tested `src/spec-mode.ts` (the single source of truth) and this block reproduces it; `/chorus spec` prints the same result.
 
-Compute the value with the **three checks**. `CHORUS_OPENSPEC_ACTIVE` is `1` only when **all three** hold:
+**The rule:** an explicit `CHORUS_SPEC_MODE` (`lite`/`openspec`/`off`) wins; when unset, **OpenSpec is the default whenever it is usable** — else **spec-lite**. OpenSpec is *usable* only when **all three** hold:
 
-1. `CHORUS_OPENSPEC_MODE` is **not** set to `off` (explicit opt-out wins).
+1. OpenSpec is not disabled (`CHORUS_OPENSPEC_MODE` **not** `off`; the `enableOpenSpec` plugin toggle not `false`).
 2. The project root contains an `openspec/` directory (i.e. someone ran `openspec init` here).
 3. The `openspec` CLI is on `PATH`.
 
-Both signals (2) and (3) are required because the OpenSpec authoring path needs the working directory **and** the CLI — having one without the other leaves the workflow unrunnable. If signal (2) holds but (3) does not, surface a hint to the user — "OpenSpec repo detected — install with: `npm i -g @fission-ai/openspec`" — rather than silently choosing free-form.
+Both signals (2) and (3) are required because the OpenSpec authoring path needs the working directory **and** the CLI — having one without the other leaves the workflow unrunnable. When OpenSpec is *requested but usable=false* (signal 2 holds but 3 does not, say), surface a hint to the user — "OpenSpec repo detected — install with: `npm i -g @fission-ai/openspec`".
 
-### Inline detection block (run this)
+### Inline resolution block (run this)
 
 ```bash
-# Run the three checks directly. PROJECT_DIR is your project root
+# Resolve the whole spec-mode contract inline. PROJECT_DIR is your project root
 # (OpenClaw does not export CLAUDE_PROJECT_DIR — default to $PWD).
 PROJECT_DIR="${PWD}"
+
+# (a) Is OpenSpec usable? (not disabled + openspec/ dir + CLI on PATH)
+OPENSPEC_USABLE=0
 if [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
+  :                                              # disabled (legacy opt-out)
 elif [ ! -d "${PROJECT_DIR}/openspec" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
-elif ! openspec --version >/dev/null 2>&1; then
-  CHORUS_OPENSPEC_ACTIVE=0   # consider surfacing the install hint to the user
+  :                                              # no openspec/ dir
+elif ! command -v openspec >/dev/null 2>&1; then
+  :                                              # CLI not on PATH (consider the install hint)
 else
-  CHORUS_OPENSPEC_ACTIVE=1
+  OPENSPEC_USABLE=1
 fi
-echo "CHORUS_OPENSPEC_ACTIVE=$CHORUS_OPENSPEC_ACTIVE"
+
+# (b) Resolve CHORUS_SPEC_MODE: explicit wins; unset → openspec-if-usable else lite.
+SPEC_FAIL=""
+case "${CHORUS_SPEC_MODE:-}" in
+  lite) SPEC_MODE="lite" ;;
+  off)  SPEC_MODE="off"  ;;
+  openspec)
+    SPEC_MODE="openspec"
+    [ "$OPENSPEC_USABLE" = "1" ] || SPEC_FAIL="explicit CHORUS_SPEC_MODE=openspec but OpenSpec is not usable"
+    ;;
+  *)    # unset / unrecognized
+    if [ "$OPENSPEC_USABLE" = "1" ]; then SPEC_MODE="openspec"; else SPEC_MODE="lite"; fi
+    ;;
+esac
+
+# CHORUS_OPENSPEC_ACTIVE=1 only for a resolved, usable OpenSpec.
+if [ "$SPEC_MODE" = "openspec" ] && [ -z "$SPEC_FAIL" ]; then CHORUS_OPENSPEC_ACTIVE=1; else CHORUS_OPENSPEC_ACTIVE=0; fi
+echo "SPEC_MODE=$SPEC_MODE CHORUS_OPENSPEC_ACTIVE=$CHORUS_OPENSPEC_ACTIVE SPEC_FAIL=${SPEC_FAIL}"
 ```
 
 Branch on the result:
 
+- `SPEC_FAIL` non-empty (explicit `CHORUS_SPEC_MODE=openspec` that can't be honored) → the caller MUST **halt** and surface it. Do not silently fall back.
 - `CHORUS_OPENSPEC_ACTIVE=1` → follow §3 (OpenSpec authoring).
-- `CHORUS_OPENSPEC_ACTIVE=0` → return to the calling skill's free-form path. **Do not** scaffold `openspec/changes/`. **Do not** add the slug line to the proposal description.
+- Otherwise (`SPEC_MODE=lite` or `off`, no fail) → this skill is a **no-op**; return to the calling skill, which follows the resolved mode: **spec-lite** (the default when OpenSpec isn't usable — see the `spec-lite` skill) or free-form (`off`). **Do not** scaffold `openspec/changes/`. **Do not** add the slug line to the proposal description.
 
-Run this detection inline whenever proposal / develop / yolo reference this skill. There is no host-injected value to read on OpenClaw; recomputing the three checks is the contract.
+Run this resolution inline whenever proposal / develop / yolo reference this skill. There is no host-injected value to read on OpenClaw; recomputing the whole contract (never a hand-rolled OpenSpec-only check that ignores `CHORUS_SPEC_MODE` and the lite/off cases) is the contract.
 
 ---
 
@@ -363,15 +386,15 @@ When the trigger holds, you perform the archive:
 
 ---
 
-## §4. Fallback authoring (no openspec)
+## §4. Fallback authoring (resolved mode is not a usable OpenSpec)
 
-When the §1 detection puts the agent in fallback mode (`CHORUS_OPENSPEC_ACTIVE=0`), this skill is a **no-op**. Return to the calling skill's free-form path:
+When the §1 resolution does not yield a usable OpenSpec (`CHORUS_OPENSPEC_ACTIVE=0`, no `SPEC_FAIL`), this skill is a **no-op** — return to the calling skill, which follows the resolved mode: **spec-lite** (the default when OpenSpec isn't usable — see the `spec-lite` skill) or free-form (`CHORUS_SPEC_MODE=off`). From this skill's side, regardless of which:
 
 - No `openspec/changes/` folder is created or referenced.
 - No `OpenSpec change slug: …` line is added to the proposal description.
-- Document drafts are authored via direct MCP `chorus_pm_add_document_draft` calls with inline `content` — same as before this skill existed.
-- Rule 1 (wrapper-only mirror) does not apply — there is no local file source of truth.
-- The §3.9 archive flow does nothing (no slug → no archive).
+- The §3.9 archive flow does nothing (no OpenSpec slug → no archive).
+
+In **spec-lite** the caller mirrors the dated-folder docs under `.chorus/specs/<slug>/` via the same `--arg-file` transport + Rule 1 / Rule 2 (that is the `spec-lite` skill's job). In **free-form** (`off`) there is no local file source of truth, so document drafts are authored via direct MCP `chorus_pm_add_document_draft` calls with inline `content` — same as before this skill existed, and Rule 1 (file-fill mirror) does not apply.
 
 ---
 
@@ -455,9 +478,9 @@ This is project-wide policy: no silent errors.
 
 When invoked from a stage skill (proposal / develop / yolo):
 
-1. **Run the §1 inline three-check detection yourself** (no SessionStart hook on OpenClaw). Compute `CHORUS_OPENSPEC_ACTIVE` from: `CHORUS_OPENSPEC_MODE != off` + `openspec/` dir present + `openspec` CLI on PATH.
-2. If `CHORUS_OPENSPEC_ACTIVE=0` → return to caller's free-form path (§4).
-3. Otherwise:
+1. **Run the §1 inline resolution yourself** (no SessionStart hook on OpenClaw). Resolve the whole contract (lite / openspec / off) — the same rule as the tested `src/spec-mode.ts`; do NOT hand-roll an OpenSpec-only check.
+2. If `SPEC_FAIL` is set (explicit `CHORUS_SPEC_MODE=openspec` unusable) → **halt** and surface it. If `CHORUS_OPENSPEC_ACTIVE=0` (resolved mode = spec-lite or free-form) → no-op; return to the caller per the resolved mode (§4).
+3. Otherwise (`CHORUS_OPENSPEC_ACTIVE=1`):
    a. Pick `$SLUG` (§3.1).
    b. `openspec new change "$SLUG"` (§3.2).
    c. Author `proposal.md`, `design.md`, `specs/<capability>/spec.md` (§3.2–§3.3). Mix `ADDED` / `MODIFIED` / `REMOVED` / `RENAMED` blocks as needed; remember `MODIFIED` overwrites the whole Requirement.

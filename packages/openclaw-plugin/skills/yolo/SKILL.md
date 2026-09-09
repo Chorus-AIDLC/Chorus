@@ -188,21 +188,19 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 #### Step 1.4: Create Proposal
 
-1. **Detect OpenSpec mode (inline).** Load the `openspec-aware` skill and run its **§1 inline three-check detection** (`CHORUS_OPENSPEC_MODE != "off"`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`).
+1. **Resolve the spec mode (inline).** OpenClaw has no SessionStart hook to precompute it — so you resolve the **whole** contract yourself, not just "is OpenSpec active". Load the `openspec-aware` skill and run its **§1 inline resolution block**, which yields one of `lite` / `openspec` / `off` (the same contract as the plugin's tested `src/spec-mode.ts`, the single source of truth; `/chorus spec` prints the same value). Rule: an explicit `CHORUS_SPEC_MODE` wins; when unset, **OpenSpec is the default whenever usable** (`CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`), else **spec-lite**. Route: `openspec` (usable) → **2a**; `off` → **2b**; `lite` → **2c**. If the resolution says the mode **cannot be honored** (explicit `CHORUS_SPEC_MODE=openspec` but OpenSpec unusable), **halt** and surface it — do NOT fall back or enter 2a with no OpenSpec.
 
-   > **OpenClaw note:** there is no Claude Code SessionStart hook to precompute `CHORUS_OPENSPEC_ACTIVE`. You must run the three checks yourself, inline, here. This is mandatory — yolo runs unattended, so silently picking the wrong mode is exactly the failure scenario the detection contract exists to prevent.
+   > **OpenClaw note:** this is mandatory — yolo runs unattended, so silently picking the wrong mode is exactly the failure scenario the resolution contract exists to prevent.
 
-   - All three checks pass → spec-driven branch (sub-step 2a below).
-   - Any check fails (or `CHORUS_OPENSPEC_MODE=off`) → free-form branch (sub-step 2b below).
-
-2. **Create the empty proposal container.** In OpenSpec mode, the `description` MUST contain the literal line `OpenSpec change slug: <slug>` (use the `$SLUG` you'll pick in 2a); in free-form mode, omit that line.
+2. **Create the empty proposal container.** The `description` MUST carry the mode's locator line — OpenSpec: `OpenSpec change slug: <slug>`; spec-lite: `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/`; free-form: none. `description` is only settable at creation, so decide the slug/dated-path first.
 
    ```
    chorus_pm_create_proposal({
      projectUuid: "<project-uuid>",
      title: "<feature name>",
-     description: "<summary>\n\nOpenSpec change slug: <slug>",   // OpenSpec mode
-     // description: "<summary>",                                 // free-form mode
+     description: "<summary>\n\nOpenSpec change slug: <slug>",                          // OpenSpec (2a)
+     // description: "<summary>\n\nSpec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/", // spec-lite (2c)
+     // description: "<summary>",                                                        // free-form (2b)
      inputType: "idea",
      inputUuids: ["<idea-uuid>"]
    })
@@ -210,7 +208,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
    Then branch:
 
-   **2a. OpenSpec mode (all three checks pass).** Follow `openspec-aware` §3 end-to-end:
+   **2a. OpenSpec mode (resolved mode = openspec, usable).** Follow `openspec-aware` §3 end-to-end:
    - Pick `$SLUG`, run `openspec new change "$SLUG"` (§3.1–§3.2).
    - Author `proposal.md`, `design.md`, and one `specs/<capability>/spec.md` per capability locally on disk (§3.3). ADDED Requirements only; per-spec fallback to free-form Markdown if MODIFIED/REMOVED is needed.
    - Define the `chorus_check_response` helper (§6); prefer `chorus mcp call … --arg-file content=<file>` for mirrors (§3.4/§3.6) — the bash-wrapper fallback's `json_encode_file` is only needed when `chorus` is not on `PATH`.
@@ -220,7 +218,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
    Then continue to step 3 (task drafts).
 
-   **2b. Free-form mode (any check fails).** Add a tech design document draft directly via MCP, content authored inline:
+   **2b. Free-form mode (resolved mode = free-form).** Only when step 1 resolved to free-form — i.e. explicit `CHORUS_SPEC_MODE=off` (unset never comes here: it resolves to OpenSpec when usable, else spec-lite/2c). Add a tech design document draft directly via MCP, content authored inline:
 
    ```
    chorus_pm_add_document_draft({
@@ -230,6 +228,8 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
      content: "<markdown tech design covering architecture, data model, API, module contracts>"
    })
    ```
+
+   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite` skill. Pick `$SLUG` (a **capability**). Ensure the durable `.chorus/specs/<slug>/spec.md` exists (local-only, no ids; copy from `.chorus/specs/TEMPLATE/spec.md`) and update it in place. Create this change's **dated folder** `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` with its **synced** Chorus-typed docs from `.chorus/specs/TEMPLATE/YYYY-MM-DD-change/` — `prd.md` (primary), optional `tech_design.md`… The `description` carries the `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` locator (step 2). Mirror **each** dated-folder `<type>.md` to its persistent Document byte-exact — first time `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/prd.md`, later edits via `chorus_pm_update_document` against the recorded `documentUuid` (`chorus-api.sh mcp-tool …` fallback when `chorus` not on `PATH`). **`spec.md` is never mirrored.** No `openspec/changes/` scaffold; no `tasks.md`. Then continue to step 3.
 
 3. **Add task drafts incrementally** (use returned `draftUuid` for dependency chaining). `acceptanceCriteriaItems` is **required** on every draft — at least one non-blank criterion, or the call is rejected:
    ```

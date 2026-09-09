@@ -1,4 +1,5 @@
 import type { ChorusMcpClient } from "./mcp-client.js";
+import { resolveSpecModeFromEnv, type SpecModeResult } from "./spec-mode.js";
 
 // ===== Response types from Chorus MCP tools =====
 //
@@ -62,7 +63,7 @@ interface AssignmentsResponse {
 
 // ===== Skill catalog =====
 //
-// All 9 skills bundled with the Chorus OpenClaw plugin
+// All 11 skills bundled with the Chorus OpenClaw plugin
 // (packages/openclaw-plugin/skills/*/SKILL.md). The `name` here matches each
 // skill's SKILL.md frontmatter `name`, which is exactly the slash command
 // OpenClaw exposes (see invocation hint below).
@@ -76,7 +77,8 @@ const PLUGIN_SKILLS = [
   { name: "quick-dev", description: "Skip Idea→Proposal — create tasks directly, execute, verify" },
   { name: "review", description: "Approve/reject proposals, verify tasks, project governance" },
   { name: "yolo", description: "Full-auto AI-DLC pipeline — from prompt to done" },
-  { name: "openspec-aware", description: "Opt-in OpenSpec authoring for PM workflows when the openspec CLI is present" },
+  { name: "openspec-aware", description: "OpenSpec-mode authoring for PM workflows (the default when openspec/ + CLI present)" },
+  { name: "spec-lite", description: "Chorus-native lightweight local specs (.chorus/specs/<slug>/) — the fallback when OpenSpec isn't usable" },
   { name: "chorus-cli", description: "Install, configure agents (chorus agents add|remove|list), env vars, and chorus mcp operations" },
 ] as const;
 
@@ -104,7 +106,28 @@ function formatSkillsList(): string {
   ].join("\n");
 }
 
-function formatStatus(checkin: CheckinResponse, connectionStatus: string): string {
+// Spec-mode lines for the status block. Since OpenClaw has no SessionStart hook
+// to precompute the mode, `/chorus` is the resolver's real runtime caller and the
+// user-visible surface: it prints `CHORUS_SPEC_MODE=<mode> (<reason>)`, the
+// `CHORUS_OPENSPEC_ACTIVE=1` line only for a usable OpenSpec, and a halt warning
+// when an explicit `=openspec` cannot be honored. The stage skills resolve the
+// SAME contract inline (see src/spec-mode.ts — the single source of truth).
+function specModeLines(spec: SpecModeResult): string[] {
+  const lines = [`CHORUS_SPEC_MODE=${spec.specMode} (${spec.specReason})`];
+  if (spec.chorusOpenspecActive) {
+    lines.push(`CHORUS_OPENSPEC_ACTIVE=1 (${spec.openspecUsableReason})`);
+  }
+  if (spec.specFail) {
+    lines.push(`WARNING: spec-mode halt — ${spec.specFail}`);
+  }
+  return lines;
+}
+
+function formatStatus(
+  checkin: CheckinResponse,
+  connectionStatus: string,
+  spec: SpecModeResult,
+): string {
   const projects = Object.values(checkin?.activeProjects ?? {});
   const activeIdeaTotal = projects.reduce(
     (total, p) => total + (p.activeIdeaCount ?? 0),
@@ -116,8 +139,23 @@ function formatStatus(checkin: CheckinResponse, connectionStatus: string): strin
     `Active projects: ${projects.length} (${activeIdeaTotal} active idea(s))`,
     ...projects.map((p) => `  - ${p.name ?? "(unnamed)"}: ${p.activeIdeaCount ?? 0}`),
     `Notifications: ${checkin?.notifications?.unread ?? 0} unread`,
+    ...specModeLines(spec),
     `Skills: ${PLUGIN_SKILLS.map((s) => s.name).join(", ")}`,
   ];
+  return lines.join("\n");
+}
+
+// Detailed spec-mode view for `/chorus spec` — the mode + reason, the openspec
+// usability breakdown, and the install hint when OpenSpec is merely missing.
+function formatSpec(spec: SpecModeResult): string {
+  const lines = [
+    "Spec mode (resolved inline — OpenClaw has no SessionStart hook):",
+    ...specModeLines(spec).map((l) => `  ${l}`),
+    `  OpenSpec usable: ${spec.openspecUsable ? "yes" : "no"} (${spec.openspecUsableReason})`,
+  ];
+  if (spec.openspecHint) {
+    lines.push(`  Enable OpenSpec: ${spec.openspecHint}`);
+  }
   return lines.join("\n");
 }
 
@@ -159,6 +197,7 @@ const HELP_TEXT = [
   "Chorus commands:",
   "  /chorus           Show connection status and summary",
   "  /chorus status    Same as above",
+  "  /chorus spec      Show the resolved spec mode (OpenSpec / spec-lite / off)",
   "  /chorus tasks     List assigned tasks",
   "  /chorus ideas     List assigned ideas",
   "  /chorus skills    List available Chorus skills",
@@ -171,26 +210,38 @@ function errorText(prefix: string, err: unknown): string {
 
 // ===== Registration =====
 
+// Default spec-mode resolver: wires the real env + cwd. Injectable so the
+// command test can pass a deterministic result without touching the disk/PATH.
+function defaultResolveSpec(): SpecModeResult {
+  return resolveSpecModeFromEnv(process.env, process.cwd());
+}
+
 export function registerChorusCommands(
   api: { registerCommand: (command: unknown) => void },
   mcpClient: ChorusMcpClient,
-  getStatus: () => string
+  getStatus: () => string,
+  resolveSpec: () => SpecModeResult = defaultResolveSpec,
 ): void {
   api.registerCommand({
     name: "chorus",
-    description: "Chorus plugin commands: status, tasks, ideas, skills",
+    description: "Chorus plugin commands: status, spec, tasks, ideas, skills",
     acceptsArgs: true,
     async handler(ctx: { args?: string }) {
       const sub = (ctx.args ?? "").trim().toLowerCase();
 
-      // /chorus or /chorus status — connection + checkin summary via slim client.
+      // /chorus or /chorus status — connection + checkin + spec-mode summary.
       if (!sub || sub === "status") {
         try {
           const checkin = (await mcpClient.callTool("chorus_checkin", {})) as CheckinResponse;
-          return { text: formatStatus(checkin, getStatus()) };
+          return { text: formatStatus(checkin, getStatus(), resolveSpec()) };
         } catch (err) {
           return { text: errorText("Failed to check in", err), isError: true };
         }
+      }
+
+      // /chorus spec — the resolved spec mode (the resolver's user-visible surface).
+      if (sub === "spec") {
+        return { text: formatSpec(resolveSpec()) };
       }
 
       // /chorus tasks — assigned tasks via chorus_get_my_assignments.

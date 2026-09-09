@@ -321,18 +321,20 @@ The plugin bundles three independent **review skills**: `/proposal-reviewer`, `/
 
 Results are advisory — they do not hard-block approval, verification, or ship (the code-review gateway is behavioral — it does not change the Idea's stored status), but you should act on a FAIL by fixing the listed BLOCKERs before proceeding. For a code-review FAIL, the orchestrator invokes **quick-dev** (`/quick-dev`) to create new tasks on the original approved proposal; it does not reopen completed tasks or apply untracked fixes. Group related small BLOCKERs by default and split only materially large or independently testable fixes. Every fix task must pass AC self-check, independent task review, and admin verification. Re-run aggregate review only after all fixes are successfully `done`; a failed or cancelled fix stops the loop and escalates. Keep `maxCodeReviewRounds` authoritative.
 
-### 6. Enable OpenSpec Mode (Optional)
+### 6. Spec mode: OpenSpec (default when usable) vs spec-lite (fallback)
 
-Opt-in spec-driven path: `/proposal`, `/develop`, `/yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts. Fully optional — free-form authoring works without it. The stage skills re-check the three activation signals inline (OpenClaw has no SessionStart hook): `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`.
+Every PM authoring flow (`/proposal`, `/develop`, `/yolo`) runs in one **spec mode**. OpenClaw has **no SessionStart hook** to precompute it, so the stage skills resolve the mode **inline** (the tested `src/spec-mode.ts` is the single source of truth; `/chorus spec` prints the resolved value any time). Resolution: an explicit `CHORUS_SPEC_MODE` (`lite`/`openspec`/`off`) wins; when unset, **OpenSpec is the default whenever it is usable** (`CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`). When OpenSpec is absent or disabled, the mode falls back to **spec-lite** — a Chorus-native, git-tracked model with a durable local `.chorus/specs/<slug>/spec.md` per capability (never synced) plus dated per-change folders `<slug>/<YYYY-MM-DD>-<change-slug>/` of Chorus-typed docs mirrored 1:1 into Chorus (see the `/spec-lite` skill). `CHORUS_SPEC_MODE=off` selects free-form (no spec artifact).
 
-**When the user wants it on**, actually **enable it for them** — run whichever steps are missing, don't just describe them:
+In the OpenSpec path, `/proposal`, `/develop`, `/yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts (see `/openspec-aware`).
+
+**When the user wants OpenSpec on** (they saw spec-lite/off from `/chorus spec` and want the OpenSpec path), actually **enable it for them** — run whichever steps are missing, don't just describe them:
 
 ```bash
 npm i -g @fission-ai/openspec       # 1. install the CLI if it's not on PATH (global, pure Node)
 openspec init --tools none          # 2. scaffold the openspec/ directory
 ```
 
-OpenSpec has no OpenClaw integration (it's not in the `--tools` list), so `--tools none` is correct — Chorus's detection only needs the `openspec/` directory and the stage skills drive the CLI directly. There's no SessionStart banner on OpenClaw — the stage skills re-check the three signals inline, so once the directory and CLI are both present they fold in `/openspec-aware` automatically. To turn it off, set `CHORUS_OPENSPEC_MODE=off`.
+OpenSpec has no OpenClaw integration (it's not in the `--tools` list), so `--tools none` is correct — Chorus's resolution only needs the `openspec/` directory + the CLI, and the stage skills drive the CLI directly. There's no SessionStart banner on OpenClaw — the stage skills re-resolve the mode inline, so once the directory and CLI are both present the mode resolves to `openspec` and they fold in `/openspec-aware` automatically. To turn OpenSpec off, set `CHORUS_OPENSPEC_MODE=off` — the mode then falls back to **spec-lite** (or set `CHORUS_SPEC_MODE=off` for free-form). `/chorus spec` always prints the resolved mode + reason.
 
 ---
 
@@ -456,7 +458,8 @@ This is the core overview skill. For stage-specific workflows, use:
 | **Development** | `/develop` | Claim Tasks, report work, manual session & sub-agent management |
 | **Review** | `/review` | Approve/reject Proposals, verify Tasks, project governance |
 | **Docs** | `/docs` | Consult the live Chorus documentation site to answer product-usage questions — UI workflow, agent/plugin setup, API/MCP, deployment, operations |
-| **OpenSpec mode** | `openspec-aware` | Opt-in **shared sub-procedure** invoked by `/proposal`, `/develop`, and `/yolo` whenever the user has the `openspec` CLI installed. Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via the `chorus-api.sh` wrapper. Runs an inline three-check detection (no SessionStart hook on OpenClaw). Skips silently in fallback mode. |
+| **OpenSpec mode** | `openspec-aware` | **Shared sub-procedure** invoked by `/proposal`, `/develop`, `/yolo` when the resolved spec mode is a usable OpenSpec (the default when `openspec/` + CLI present and not disabled). Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via `chorus mcp call --arg-file` (`chorus-api.sh` wrapper as fallback). Resolves the whole spec-mode contract inline (no SessionStart hook on OpenClaw). No-op when the mode isn't a usable OpenSpec. |
+| **spec-lite mode** | `spec-lite` | **Shared sub-procedure** and the fallback when OpenSpec isn't usable (or `CHORUS_SPEC_MODE=lite`). Durable local `.chorus/specs/<slug>/spec.md` (never synced) + dated per-change folders of Chorus-typed docs mirrored 1:1 into Chorus via `--arg-file`. No CLI/validation/archive. |
 
 ### Getting Started
 

@@ -191,7 +191,8 @@ Skills are bundled under `skills/` and auto-discovered by OpenClaw. On OpenClaw 
 | `quick-dev` | `/quick-dev` | Skip Idea→Proposal — create tasks directly, execute, and verify |
 | `review` | `/review` | Approve/reject proposals, verify tasks, and manage project governance |
 | `yolo` | `/yolo` | Full-auto AI-DLC pipeline — from prompt to done |
-| `openspec-aware` | `/openspec-aware` | Opt-in OpenSpec authoring for PM workflows when the local `openspec` CLI is present |
+| `openspec-aware` | `/openspec-aware` | OpenSpec-mode authoring for PM workflows — the default whenever OpenSpec is usable (`openspec/` + CLI present, not disabled) |
+| `spec-lite` | `/spec-lite` | Chorus-native lightweight local specs (`.chorus/specs/<slug>/`) — the fallback when OpenSpec isn't usable |
 | `proposal-reviewer` | `/proposal-reviewer` | Read-only adversarial proposal review; ends with a `VERDICT:` comment |
 | `task-reviewer` | `/task-reviewer` | Read-only adversarial task verification (read-only bash for tests); ends with a `VERDICT:` comment |
 
