@@ -1818,5 +1818,8 @@
     "docs": "ドキュメント",
     "githubAria": "Chorus の GitHub リポジトリを開く（新しいタブで開きます）",
     "docsAria": "Chorus のドキュメントサイトを開く（新しいタブで開きます）"
+  },
+  "markdown": {
+    "frontmatterLabel": "ドキュメントのメタ情報"
   }
 }

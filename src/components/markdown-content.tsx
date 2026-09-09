@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Streamdown, type Components } from "streamdown";
 
+import { FrontmatterCard } from "@/components/frontmatter-card";
+import { splitFrontmatter } from "@/lib/frontmatter";
 import {
   streamdownPluginsFor,
   streamdownControls,
@@ -49,6 +51,14 @@ export function MarkdownContent({
 }: MarkdownContentProps) {
   const isDark = useDarkClass();
 
+  // A leading YAML frontmatter block is lifted out of the body and rendered as
+  // a metadata card. `splitFrontmatter` only recognizes a flat key/value
+  // mapping at offset 0 and otherwise returns the input untouched, so content
+  // without frontmatter (`entries === null`) hands Streamdown the exact same
+  // string as before — that identity is the regression guarantee for every
+  // existing surface. Don't "simplify" this into a conditional strip.
+  const { entries, body } = useMemo(() => splitFrontmatter(children), [children]);
+
   const mermaidOptions = useMemo(
     () => ({ config: { theme: isDark ? "dark" : "default" } as const }),
     [isDark],
@@ -68,16 +78,19 @@ export function MarkdownContent({
   // `components`/`allowedTags`/`literalTagContent` are forwarded only when set
   // (the default markdown surfaces pass none, so their render stays byte-stable).
   return (
-    <Streamdown
-      key={isDark ? "dark" : "light"}
-      plugins={plugins}
-      controls={streamdownControls}
-      mermaid={mermaidOptions}
-      components={components}
-      allowedTags={allowedTags}
-      literalTagContent={literalTagContent}
-    >
-      {children}
-    </Streamdown>
+    <>
+      {entries && <FrontmatterCard entries={entries} />}
+      <Streamdown
+        key={isDark ? "dark" : "light"}
+        plugins={plugins}
+        controls={streamdownControls}
+        mermaid={mermaidOptions}
+        components={components}
+        allowedTags={allowedTags}
+        literalTagContent={literalTagContent}
+      >
+        {body}
+      </Streamdown>
+    </>
   );
 }

@@ -1818,5 +1818,8 @@
     "docs": "Docs",
     "githubAria": "Open the Chorus GitHub repository (opens in a new tab)",
     "docsAria": "Open the Chorus documentation site (opens in a new tab)"
+  },
+  "markdown": {
+    "frontmatterLabel": "Document metadata"
   }
 }

@@ -1818,5 +1818,8 @@
     "docs": "문서",
     "githubAria": "Chorus GitHub 저장소 열기(새 탭에서 열림)",
     "docsAria": "Chorus 문서 사이트 열기(새 탭에서 열림)"
+  },
+  "markdown": {
+    "frontmatterLabel": "문서 메타데이터"
   }
 }
