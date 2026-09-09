@@ -92,6 +92,18 @@ for dirname in "plain" "with spaces"; do
   expect "check 2 catches 'in **foreground**' (dsh)" "$R" nonzero
 
   R="$(case_in "$dirname")"
+  printf 'the launch returns the VERDICT inline\n' \
+    >> "$R/public/chorus-plugin/skills/develop/SKILL.md"
+  expect "check 2 catches 'returns the VERDICT inline'" "$R" nonzero
+
+  # dsh legitimately keeps run_in_background: false, so only this exact
+  # parenthesised imperative is blacklisted — not the flag itself.
+  R="$(case_in "$dirname")"
+  printf 'wait for it (do NOT set run_in_background)\n' \
+    >> "$R/packages/chorus-dsh/skills/SKILL.md"
+  expect "check 2 catches '(do NOT set run_in_background)' (dsh)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
   printf 'Copy .chorus/specs/TEMPLATE/spec.md to start\n' >> "$R/docs/SPEC_LITE.md"
   expect "check 3 catches .chorus/specs/TEMPLATE" "$R" nonzero
 
@@ -102,6 +114,15 @@ for dirname in "plain" "with spaces"; do
   printf 'the blocking subagent waits and returns the VERDICT\n' \
     >> "$R/packages/chorus-pi/skills/SKILL.md"
   expect "check 2 still exempts packages/chorus-pi" "$R" zero
+
+  # dsh's real wording must stay green. If someone later replaces the literal
+  # blacklist with a proximity rule pairing run_in_background against
+  # "foreground"/"synchronous"/"inline", this case fails a correct tree — which
+  # is exactly the regression the guard's header forbids.
+  R="$(case_in "$dirname")"
+  printf 'Spawn the reviewer with run_in_background: false and read its result.\n' \
+    >> "$R/packages/chorus-dsh/skills/SKILL.md"
+  expect "check 2 allows dsh's legitimate run_in_background: false" "$R" zero
 
   # A scan that cannot run must never look like "no hits".
   R="$(case_in "$dirname")"
