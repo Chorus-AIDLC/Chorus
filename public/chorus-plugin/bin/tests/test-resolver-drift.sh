@@ -20,9 +20,12 @@ PASS=0
 FAIL=0
 echo "resolver drift-guard (canonical: public/chorus-plugin/bin/resolve-spec-mode.sh):"
 
-# Every bash copy under public/ or plugins/ (excludes node_modules / build output).
-COPIES=$(find "$ROOT/public" "$ROOT/plugins" -name resolve-spec-mode.sh 2>/dev/null \
-  | grep -v '/node_modules/' | sort)
+# Every bash copy under public/, plugins/ or packages/ (excludes node_modules /
+# build output). packages/ is included because the OpenClaw plugin — which has no
+# SessionStart channel and so resolves the mode from its skill — SHIPS this
+# resolver rather than hand-rolling the rule in Markdown.
+COPIES=$(find "$ROOT/public" "$ROOT/plugins" "$ROOT/packages" -name resolve-spec-mode.sh 2>/dev/null \
+  | grep -v '/node_modules/' | grep -v '/dist/' | sort)
 
 for f in $COPIES; do
   rel="${f#$ROOT/}"

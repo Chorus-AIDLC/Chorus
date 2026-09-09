@@ -280,17 +280,21 @@ export function apply(ctx: Context, config: Config): void {
   // gate so both interactive and daemon sessions inherit it. Rule: explicit
   // CHORUS_SPEC_MODE wins; unset → OpenSpec when usable, else spec-lite.
   //
-  // The two vars get DIFFERENT assignment semantics on purpose:
-  //   - CHORUS_SPEC_MODE is an operator INPUT — `??=` preserves whatever the
-  //     operator set (and `spec` was computed from that same value, so the two
-  //     can never disagree).
-  //   - CHORUS_OPENSPEC_ACTIVE is a DERIVED output — assign unconditionally, as
-  //     the bash SessionStart hook does (it recomputes and rewrites every
-  //     session). With `??=` a daemon child could inherit a stale `1` from a
-  //     parent that ran in an openspec repo, and then disagree with the freshly
-  //     resolved `## Spec Mode` guidance injected below.
+  // BOTH vars are published unconditionally, because both are now RESOLVER
+  // OUTPUTS — the raw operator input has already been consumed by
+  // resolveBundleSpecMode() above. Reasons this must not be `??=`:
+  //   - CHORUS_OPENSPEC_ACTIVE is purely derived: with `??=` a daemon child
+  //     could inherit a stale `1` from a parent that ran in an openspec repo and
+  //     then contradict the freshly resolved `## Spec Mode` guidance.
+  //   - CHORUS_SPEC_MODE must be NORMALIZED: an invalid raw value (say
+  //     `CHORUS_SPEC_MODE=bogus`) resolves to the default mode, so leaving the
+  //     raw `bogus` in the env would make anything reading the env disagree with
+  //     the injected guidance. Writing spec.specMode is also idempotent — the
+  //     resolver maps each valid mode to itself.
+  // The env is the ONLY channel for daemon-origin sessions (we return below
+  // without injecting guidance), so it has to carry the resolved truth.
   const spec = resolveBundleSpecMode();
-  process.env.CHORUS_SPEC_MODE ??= spec.specMode;
+  process.env.CHORUS_SPEC_MODE = spec.specMode;
   process.env.CHORUS_OPENSPEC_ACTIVE = spec.chorusOpenspecActive ? "1" : "0";
   const resolved = Config(config);
   ctx.provide(

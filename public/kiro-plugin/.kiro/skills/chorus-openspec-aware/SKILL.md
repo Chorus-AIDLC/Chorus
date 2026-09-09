@@ -11,7 +11,7 @@ metadata:
 
 # OpenSpec-aware Authoring (Kiro CLI plugin)
 
-This skill is a **shared sub-procedure** invoked by the Chorus stage skills (`/chorus-proposal`, `/chorus-develop`, `/chorus-yolo`) whenever the user wants spec-driven authoring through the [OpenSpec CLI](https://github.com/Fission-AI/OpenSpec). It is opt-in:
+This skill is a **shared sub-procedure** invoked by the Chorus stage skills (`/chorus-proposal`, `/chorus-develop`, `/chorus-yolo`) for spec-driven authoring through the [OpenSpec CLI](https://github.com/Fission-AI/OpenSpec). It is the **default whenever OpenSpec is usable**, and a no-op otherwise:
 
 - Activates when the resolved spec mode is a **usable OpenSpec** (see §1): `CHORUS_SPEC_MODE=openspec` *or* unset, **and** `CHORUS_OPENSPEC_MODE` not `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`.
 - Otherwise the calling skill follows the resolved `SPEC_MODE` — **spec-lite** (the default when OpenSpec isn't usable) or free-form (`=off`).
@@ -59,14 +59,23 @@ Branch:
 
 ### Manual fallback
 
-If you did not see a `## Spec Mode` section (e.g. the `agentSpawn` hook did not inject it, or you are a subagent), **do not hand-roll the detection** — source the *same* resolver the hook uses (the plugin's installed `chorus-bin/resolve-spec-mode.sh`, next to the other Chorus hooks), so there is one computation of the mode:
+If you did not see a `## Spec Mode` section (e.g. the `agentSpawn` hook did not inject it, or you are a subagent), **do not hand-roll the detection** — source the *same* resolver the hook uses, so there is one computation of the mode. `chorus init` installs it at `<KIRO_DIR>/chorus-bin/resolve-spec-mode.sh` (`<KIRO_DIR>` is normally `.kiro/` at the project root), which is the exact path substituted into the main agent's hook `command`:
 
 ```bash
-. "<chorus-bin>/resolve-spec-mode.sh"   # same file the agentSpawn hook sources
+# The installed resolver, next to the other Chorus hooks. Run from the project root.
+CHORUS_BIN=".kiro/chorus-bin"
+# Not there? Take the directory of the agentSpawn hook command itself — `chorus
+# init` substituted the absolute chorus-bin path into it, and the resolver is
+# the file that hook sources.
+[ -f "$CHORUS_BIN/resolve-spec-mode.sh" ] || CHORUS_BIN=$(dirname "$(
+  grep -o '"command": *"[^"]*on-agent-spawn\.sh"' .kiro/agents/chorus.json 2>/dev/null |
+    head -1 | sed 's/.*"command": *"//; s/"$//'
+)")
+. "$CHORUS_BIN/resolve-spec-mode.sh"   # same file the agentSpawn hook sources
 # sets SPEC_MODE (lite|openspec|off), SPEC_FAIL (non-empty ⇒ halt), CHORUS_OPENSPEC_ACTIVE (1 only for a usable openspec)
 ```
 
-Then: if `SPEC_FAIL` is non-empty, halt and surface it; if `CHORUS_OPENSPEC_ACTIVE=1` follow §3; otherwise no-op — return to the caller per the resolved `SPEC_MODE`. **Never re-derive the rule inline.** If you cannot locate the helper, set `CHORUS_SPEC_MODE` explicitly and relaunch rather than guessing.
+Then: if `SPEC_FAIL` is non-empty, halt and surface it; if `CHORUS_OPENSPEC_ACTIVE=1` follow §3; otherwise no-op — return to the caller per the resolved `SPEC_MODE`. **Never re-derive the rule inline.** If neither path locates the helper, set `CHORUS_SPEC_MODE` explicitly and relaunch rather than guessing.
 
 ---
 

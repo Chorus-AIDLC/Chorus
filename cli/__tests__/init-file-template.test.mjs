@@ -462,6 +462,21 @@ describe("kiro manifest (owned solely by file-template.mjs)", () => {
     expect(manifestSkills).toEqual(templateSkills);
   });
 
+  // The skill parity check above had no hook counterpart, which is how
+  // bin/resolve-spec-mode.sh shipped in-repo but never reached an installed
+  // .kiro/chorus-bin/ — the spawn hook then sourced a file that did not exist.
+  // Every executable in bin/ must be listed, so a new helper cannot be added
+  // without also being installed.
+  it("lists every hook script shipped in the Kiro template", () => {
+    const manifestHooks = [...readKiroManifestFile().hookScripts].sort();
+    const binDir = fileURLToPath(new URL("bin/", KIRO_MANIFEST_URL));
+    const templateHooks = readdirSync(binDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".sh"))
+      .map((entry) => entry.name)
+      .sort();
+    expect(manifestHooks).toEqual(templateHooks);
+  });
+
   it("readKiroManifestFile reads the repo manifest at its canonical path", () => {
     expect(existsSync(fileURLToPath(KIRO_MANIFEST_URL))).toBe(true);
   });

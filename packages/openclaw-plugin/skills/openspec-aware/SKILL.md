@@ -1,6 +1,6 @@
 ---
 name: openspec-aware
-description: OpenSpec-mode authoring for Chorus PM workflows on OpenClaw — the default whenever OpenSpec is usable. Resolves the whole spec-mode contract (lite/openspec/off) INLINE (no SessionStart hook on OpenClaw), scaffolds `openspec/changes/<slug>/` on disk, and mirrors Markdown files into Chorus document drafts via `chorus mcp call --arg-file` (bash `chorus-api.sh` wrapper as fallback). When OpenSpec isn't usable the mode resolves to spec-lite (see the spec-lite skill). Required reading for the proposal, develop, and yolo skills.
+description: OpenSpec-mode authoring for Chorus PM workflows on OpenClaw — the default whenever OpenSpec is usable. Resolves the whole spec-mode contract (lite/openspec/off) by sourcing the plugin's shipped `bin/resolve-spec-mode.sh` (no SessionStart hook on OpenClaw), scaffolds `openspec/changes/<slug>/` on disk, and mirrors Markdown files into Chorus document drafts via `chorus mcp call --arg-file` (bash `chorus-api.sh` wrapper as fallback). When OpenSpec isn't usable the mode resolves to spec-lite (see the spec-lite skill). Required reading for the proposal, develop, and yolo skills.
 license: AGPL-3.0
 metadata:
   author: chorus
@@ -22,9 +22,11 @@ This skill is a **shared sub-procedure** invoked by the Chorus stage skills (pro
 
 ---
 
-## §1. Resolve the spec mode — run inline, every time (no SessionStart hook on OpenClaw)
+## §1. Resolve the spec mode — run the shipped resolver, every time (no SessionStart hook on OpenClaw)
 
-> **OpenClaw difference:** the Claude Code / Codex / Pi ports precompute the spec mode once (in a SessionStart hook or an extension handler) and inject a `## Spec Mode` value into context. **OpenClaw does none of that.** You MUST resolve the mode yourself, **inline**, the moment you reach this skill from a stage skill. Do not look for an injected `CHORUS_OPENSPEC_ACTIVE` / `## Spec Mode` value — it will not exist on OpenClaw. Resolve the **whole** contract (lite / openspec / off), not just "is OpenSpec active" — the authoritative rule is the plugin's tested `src/spec-mode.ts` (the single source of truth) and this block reproduces it; `/chorus spec` prints the same result.
+> **OpenClaw difference:** the Claude Code / Codex / Pi ports precompute the spec mode once (in a SessionStart hook or an extension handler) and inject a `## Spec Mode` value into context. **OpenClaw does none of that.** You MUST resolve the mode yourself, at the moment you reach this skill from a stage skill. Do not look for an injected `CHORUS_OPENSPEC_ACTIVE` / `## Spec Mode` value — it will not exist on OpenClaw. Resolve the **whole** contract (lite / openspec / off), not just "is OpenSpec active".
+>
+> **Never hand-roll the rule in this Markdown.** The plugin ships the *canonical* resolver — `bin/resolve-spec-mode.sh`, byte-identical to the Claude Code copy and enforced so by `test-resolver-drift.sh` — precisely so this skill can **source** it instead of reproducing it. A prose copy of the rule drifts from the real one (it has); a sourced script cannot.
 
 **The rule:** an explicit `CHORUS_SPEC_MODE` (`lite`/`openspec`/`off`) wins; when unset, **OpenSpec is the default whenever it is usable** — else **spec-lite**. OpenSpec is *usable* only when **all three** hold:
 
@@ -34,51 +36,38 @@ This skill is a **shared sub-procedure** invoked by the Chorus stage skills (pro
 
 Both signals (2) and (3) are required because the OpenSpec authoring path needs the working directory **and** the CLI — having one without the other leaves the workflow unrunnable. When OpenSpec is *requested but usable=false* (signal 2 holds but 3 does not, say), surface a hint to the user — "OpenSpec repo detected — install with: `npm i -g @fission-ai/openspec`".
 
-### Inline resolution block (run this)
+### Resolution block (run this)
 
 ```bash
-# Resolve the whole spec-mode contract inline. PROJECT_DIR is your project root
-# (OpenClaw does not export CLAUDE_PROJECT_DIR — default to $PWD).
-PROJECT_DIR="${PWD}"
+# PROJECT_ROOT is your project root — OpenClaw does not export
+# CLAUDE_PROJECT_DIR, so default to $PWD. The resolver reads it.
+PROJECT_ROOT="${PWD}"
 
-# (a) Is OpenSpec usable? (not disabled + openspec/ dir + CLI on PATH)
-OPENSPEC_USABLE=0
-if [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
-  :                                              # disabled (legacy opt-out)
-elif [ ! -d "${PROJECT_DIR}/openspec" ]; then
-  :                                              # no openspec/ dir
-elif ! command -v openspec >/dev/null 2>&1; then
-  :                                              # CLI not on PATH (consider the install hint)
-else
-  OPENSPEC_USABLE=1
-fi
+# Locate the resolver the plugin ships. Covers the npm install, a global npm
+# install, and a linked dev checkout; the first hit wins.
+RESOLVER=""
+for candidate in \
+  "$PWD/node_modules/@chorus-aidlc/chorus-openclaw-plugin/bin/resolve-spec-mode.sh" \
+  "$(npm root -g 2>/dev/null)/@chorus-aidlc/chorus-openclaw-plugin/bin/resolve-spec-mode.sh" \
+  "$PWD/packages/openclaw-plugin/bin/resolve-spec-mode.sh"
+do
+  [ -f "$candidate" ] && { RESOLVER="$candidate"; break; }
+done
 
-# (b) Resolve CHORUS_SPEC_MODE: explicit wins; unset → openspec-if-usable else lite.
-SPEC_FAIL=""
-case "${CHORUS_SPEC_MODE:-}" in
-  lite) SPEC_MODE="lite" ;;
-  off)  SPEC_MODE="off"  ;;
-  openspec)
-    SPEC_MODE="openspec"
-    [ "$OPENSPEC_USABLE" = "1" ] || SPEC_FAIL="explicit CHORUS_SPEC_MODE=openspec but OpenSpec is not usable"
-    ;;
-  *)    # unset / unrecognized
-    if [ "$OPENSPEC_USABLE" = "1" ]; then SPEC_MODE="openspec"; else SPEC_MODE="lite"; fi
-    ;;
-esac
-
-# CHORUS_OPENSPEC_ACTIVE=1 only for a resolved, usable OpenSpec.
-if [ "$SPEC_MODE" = "openspec" ] && [ -z "$SPEC_FAIL" ]; then CHORUS_OPENSPEC_ACTIVE=1; else CHORUS_OPENSPEC_ACTIVE=0; fi
-echo "SPEC_MODE=$SPEC_MODE CHORUS_OPENSPEC_ACTIVE=$CHORUS_OPENSPEC_ACTIVE SPEC_FAIL=${SPEC_FAIL}"
+# shellcheck source=/dev/null
+. "$RESOLVER"    # sets SPEC_MODE, SPEC_REASON, SPEC_FAIL, OPENSPEC_HINT, CHORUS_OPENSPEC_ACTIVE
+echo "SPEC_MODE=$SPEC_MODE CHORUS_OPENSPEC_ACTIVE=$CHORUS_OPENSPEC_ACTIVE SPEC_FAIL=${SPEC_FAIL} REASON=${SPEC_REASON}"
 ```
+
+If `RESOLVER` came out empty (the loop found nothing), **halt** and ask the user to run `/chorus spec` — which resolves the same contract from the plugin's `src/spec-mode.ts` — and paste the result. Do **not** substitute your own detection.
 
 Branch on the result:
 
-- `SPEC_FAIL` non-empty (explicit `CHORUS_SPEC_MODE=openspec` that can't be honored) → the caller MUST **halt** and surface it. Do not silently fall back.
+- `SPEC_FAIL` non-empty (explicit `CHORUS_SPEC_MODE=openspec` that can't be honored — either a config conflict or OpenSpec not installed; `OPENSPEC_HINT` carries the install command when it is merely missing) → the caller MUST **halt** and surface it verbatim. Do not silently fall back.
 - `CHORUS_OPENSPEC_ACTIVE=1` → follow §3 (OpenSpec authoring).
 - Otherwise (`SPEC_MODE=lite` or `off`, no fail) → this skill is a **no-op**; return to the calling skill, which follows the resolved mode: **spec-lite** (the default when OpenSpec isn't usable — see the `spec-lite` skill) or free-form (`off`). **Do not** scaffold `openspec/changes/`. **Do not** add the slug line to the proposal description.
 
-Run this resolution inline whenever proposal / develop / yolo reference this skill. There is no host-injected value to read on OpenClaw; recomputing the whole contract (never a hand-rolled OpenSpec-only check that ignores `CHORUS_SPEC_MODE` and the lite/off cases) is the contract.
+Run this resolution whenever proposal / develop / yolo reference this skill. There is no host-injected value to read on OpenClaw — but "resolve it yourself" means *run the shipped resolver*, never re-derive the rule from this document's prose.
 
 ---
 
@@ -478,7 +467,7 @@ This is project-wide policy: no silent errors.
 
 When invoked from a stage skill (proposal / develop / yolo):
 
-1. **Run the §1 inline resolution yourself** (no SessionStart hook on OpenClaw). Resolve the whole contract (lite / openspec / off) — the same rule as the tested `src/spec-mode.ts`; do NOT hand-roll an OpenSpec-only check.
+1. **Run the §1 resolution yourself** (no SessionStart hook on OpenClaw) by sourcing the shipped `bin/resolve-spec-mode.sh`. It resolves the whole contract (lite / openspec / off); do NOT hand-roll an OpenSpec-only check or re-derive the rule from prose.
 2. If `SPEC_FAIL` is set (explicit `CHORUS_SPEC_MODE=openspec` unusable) → **halt** and surface it. If `CHORUS_OPENSPEC_ACTIVE=0` (resolved mode = spec-lite or free-form) → no-op; return to the caller per the resolved mode (§4).
 3. Otherwise (`CHORUS_OPENSPEC_ACTIVE=1`):
    a. Pick `$SLUG` (§3.1).

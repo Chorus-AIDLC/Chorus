@@ -49,6 +49,7 @@
     "!src/**/__tests__",
     "dist",
     "skills",
+    "bin/resolve-spec-mode.sh",
     "openclaw.plugin.json",
     "README.md"
   ]

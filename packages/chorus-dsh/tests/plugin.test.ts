@@ -215,29 +215,55 @@ describe("runtime", () => {
     expect(process.env.CHORUS_MCP_CALL).toBe("/operator/wrapper");
   });
 
-  // CHORUS_OPENSPEC_ACTIVE is a DERIVED output, not an operator input, so it is
-  // assigned unconditionally (as the bash SessionStart hook does) — a stale
-  // inherited value must NOT survive, or the env var could disagree with the
+  // Both spec vars are resolver OUTPUTS (the raw operator input is consumed by
+  // resolveBundleSpecMode before publication), so both are written
+  // unconditionally — as the bash SessionStart hook does, recomputing every
+  // session. `??=` on either lets a stale/raw value survive and contradict the
   // freshly resolved `## Spec Mode` guidance.
-  it("overwrites an inherited CHORUS_OPENSPEC_ACTIVE (derived, not operator input)", () => {
+  it("publishes both resolved spec vars, honouring a valid operator mode", () => {
     apply(new FakeContext() as any, config());
+    expect(["lite", "openspec", "off"]).toContain(process.env.CHORUS_SPEC_MODE);
     expect(["0", "1"]).toContain(process.env.CHORUS_OPENSPEC_ACTIVE);
-    // A stale `1` inherited from a parent that ran in an openspec repo, while
-    // this repo (the vitest cwd's resolution) is authoritative.
+    // A valid explicit mode survives, because the resolver maps it to itself.
+    process.env.CHORUS_SPEC_MODE = "off";
+    apply(new FakeContext() as any, config());
+    expect(process.env.CHORUS_SPEC_MODE).toBe("off");
+    // An explicit off resolves openspec-inactive.
+    expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe("0");
+  });
+
+  it("overwrites a stale inherited CHORUS_OPENSPEC_ACTIVE", () => {
+    apply(new FakeContext() as any, config());
     const fresh = process.env.CHORUS_OPENSPEC_ACTIVE;
+    // A stale value inherited from a parent that ran in a different repo, while
+    // this repo (the vitest cwd's resolution) is authoritative.
     process.env.CHORUS_OPENSPEC_ACTIVE = fresh === "1" ? "0" : "1";
     apply(new FakeContext() as any, config());
     expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe(fresh);
   });
 
-  it("publishes CHORUS_SPEC_MODE without overwriting an operator value", () => {
+  it("normalizes an invalid CHORUS_SPEC_MODE to the resolved default", () => {
+    process.env.CHORUS_SPEC_MODE = "bogus";
     apply(new FakeContext() as any, config());
-    expect(["lite", "openspec", "off"]).toContain(process.env.CHORUS_SPEC_MODE);
-    process.env.CHORUS_SPEC_MODE = "off";
-    apply(new FakeContext() as any, config());
-    expect(process.env.CHORUS_SPEC_MODE).toBe("off");
-    // An explicit off resolves openspec-inactive.
-    expect(process.env.CHORUS_OPENSPEC_ACTIVE).not.toBe("1");
+    // Never leaves the raw junk in the env for downstream readers.
+    expect(process.env.CHORUS_SPEC_MODE).not.toBe("bogus");
+    const resolved = resolveBundleSpecMode();
+    expect(process.env.CHORUS_SPEC_MODE).toBe(resolved.specMode);
+    expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe(resolved.chorusOpenspecActive ? "1" : "0");
+  });
+
+  it("publishes the resolved spec vars in daemon mode, where env is the only channel", () => {
+    // Daemon sessions return before any guidance injection, so the env vars are
+    // the sole carrier of the resolved mode — they must still be written.
+    process.env.CHORUS_DAEMON_HEADLESS = "1";
+    process.env.CHORUS_SPEC_MODE = "bogus";
+    process.env.CHORUS_OPENSPEC_ACTIVE = "1";
+    const ctx = new FakeContext();
+    apply(ctx as any, config());
+    expect(ctx.handlers.size).toBe(0);
+    const resolved = resolveBundleSpecMode();
+    expect(process.env.CHORUS_SPEC_MODE).toBe(resolved.specMode);
+    expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe(resolved.chorusOpenspecActive ? "1" : "0");
   });
 
   it("registers no lifecycle handlers or effects in daemon mode", () => {

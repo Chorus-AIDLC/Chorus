@@ -26,10 +26,10 @@ No new CLI, MCP tool, backend, or schema — mirroring reuses the existing docum
 ## Mode (how you got here)
 
 **OpenClaw has no SessionStart hook and no injected `## Spec Mode` value** — unlike the Claude Code /
-Codex / Pi ports, nothing precomputes the mode into your context. The mode is **resolved inline, per
-the documented contract**, the moment a stage skill reaches its spec-mode step (see `openspec-aware`
-§1 for the single inline resolution block; the authoritative rule lives in the plugin's tested
-`src/spec-mode.ts`). You can also print the resolved mode any time with **`/chorus spec`** (or the
+Codex / Pi ports, nothing precomputes the mode into your context. The mode is **resolved by sourcing
+the resolver the plugin ships** (`bin/resolve-spec-mode.sh`, byte-identical to the Claude Code copy),
+the moment a stage skill reaches its spec-mode step — see `openspec-aware` §1 for the locate-and-source
+block. Never re-derive the rule from prose. You can also print the resolved mode any time with **`/chorus spec`** (or the
 `## /chorus status` block). You are here because that resolution returned **`lite`**; if it returned
 anything else, this skill is a no-op — return to the caller. (For the record, the rule: an explicit
 `CHORUS_SPEC_MODE` wins, else OpenSpec when usable, else lite.)
@@ -74,7 +74,7 @@ you don't reach back and rewrite a past change.
 
 ## Flow (one change)
 
-1. Confirm mode = `lite` (resolved inline; else no-op).
+1. Confirm mode = `lite` (resolved by the shipped resolver, `openspec-aware` §1; else no-op).
 2. Create the dated folder `<slug>/<YYYY-MM-DD>-<change-slug>/` and write its **synced** change docs —
    `prd.md` (required), `tech_design.md` etc. only if warranted (copy from the template).
 3. **Update `<slug>/spec.md` in place** to the new cumulative truth (Requirements, acceptance points,
