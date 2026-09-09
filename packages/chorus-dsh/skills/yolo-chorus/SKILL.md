@@ -323,7 +323,7 @@ Then:
           Proposal UUID: <uuid>"
    ```
 
-4. **No new VERDICT comment after a spawned reviewer returns?** It exhausted its turn budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep source verification. Fetch proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first 10 turns."* If still no VERDICT, fall back to reviewing manually and post the VERDICT yourself — the pipeline cannot loop forever on a silent reviewer.
+4. **No new VERDICT comment after a spawned reviewer returns?** It exhausted its turn budget. **Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep source verification. Fetch proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first 10 turns."* If still no VERDICT, fall back to reviewing manually and post the VERDICT yourself — the pipeline cannot loop forever on a silent reviewer.
 
 ---
 
@@ -431,7 +431,7 @@ ESCALATE: "Task '{title}' failed review after {maxRounds} rounds.
 
 Continue with remaining tasks -- do not halt the entire pipeline for one stuck task.
 
-**No new VERDICT comment after a spawned task-reviewer returns?** It exhausted its turn budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT within the first 12 turns."* If still no VERDICT, fall back to reviewing manually and post the VERDICT yourself — do not loop indefinitely.
+**No new VERDICT comment after a spawned task-reviewer returns?** It exhausted its turn budget. **Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT within the first 12 turns."* If still no VERDICT, fall back to reviewing manually and post the VERDICT yourself — do not loop indefinitely.
 
 ---
 
@@ -452,7 +452,7 @@ ESCALATE: "Idea '{title}' failed code review after {maxCodeReviewRounds} rounds.
            Last BLOCKERs: <list>. Manual intervention needed. Idea UUID: <uuid>"
 ```
 
-**No VERDICT comment after the code-reviewer returns?** It exhausted its turn budget (larger than the task-reviewer's because it reviews the whole feature). Respawn ONCE with a concise-budget hint; if still silent, fall back to a manual read-only pass and post the VERDICT yourself.
+**No VERDICT comment after the code-reviewer returns?** It exhausted its turn budget (larger than the task-reviewer's because it reviews the whole feature). **Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn ONCE with a concise-budget hint; if still silent, fall back to a manual read-only pass and post the VERDICT yourself.
 
 > The gateway is **behavioral** like the other two reviewers: its verdict is advisory and does not change the Idea's stored status; the orchestrator honors it. It runs **before** the completion report so the report is never written while a FAIL is outstanding.
 

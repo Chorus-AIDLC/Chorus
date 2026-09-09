@@ -48,6 +48,10 @@ jobs:
           bash public/chorus-plugin/bin/tests/test-spec-mode-resolution.sh
           bash public/chorus-plugin/bin/tests/test-resolver-drift.sh
           bash public/chorus-plugin/bin/tests/test-skill-harness-fidelity.sh
+          # Negative cases for the guard above: proves it still FAILS on planted
+          # violations, including under a repo path containing a space (where an
+          # unquoted scope would silently scan nothing and report PASS).
+          bash public/chorus-plugin/bin/tests/test-skill-harness-fidelity-negative.sh
 
       - name: Upload coverage artifact
         if: always()

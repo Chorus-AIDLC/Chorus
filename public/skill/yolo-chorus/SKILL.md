@@ -342,7 +342,7 @@ loop:
           Human review needed. Proposal UUID: <proposal-uuid>."
    ```
 
-4. **No VERDICT comment after the reviewer returns?** The reviewer likely exhausted its turn budget. **Respawn it once** with a concise-budget hint: *"Stay within turn budget. Fetch the proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first ~10 turns."* If the second attempt still posts no VERDICT, review the proposal yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted, so the pipeline does not loop forever on a silent reviewer.
+4. **No VERDICT comment after the reviewer returns?** The reviewer likely exhausted its turn budget. ****Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn it once** with a concise-budget hint: *"Stay within turn budget. Fetch the proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first ~10 turns."* If the second attempt still posts no VERDICT, review the proposal yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted, so the pipeline does not loop forever on a silent reviewer.
 
 ---
 
@@ -453,7 +453,7 @@ ESCALATE: "Task '<title>' failed review after 3 rounds. Last BLOCKERs: <list>.
            Manual intervention needed. Task UUID: <task-uuid>."
 ```
 
-**No VERDICT comment after the reviewer returns?** It exhausted its turn budget. **Respawn it once** with a concise-budget hint: *"Stay within turn budget. Fetch the task/proposal/comments, run only the core tests, and post your VERDICT within the first ~12 turns."* If the second attempt still posts no VERDICT, review the task yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted. Do not loop indefinitely.
+**No VERDICT comment after the reviewer returns?** It exhausted its turn budget. ****Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn it once** with a concise-budget hint: *"Stay within turn budget. Fetch the task/proposal/comments, run only the core tests, and post your VERDICT within the first ~12 turns."* If the second attempt still posts no VERDICT, review the task yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted. Do not loop indefinitely.
 
 After verifying every task in the wave, return to **Phase 3** and re-run `chorus_get_unblocked_tasks` for newly unblocked tasks. Repeat until no tasks remain.
 
@@ -480,7 +480,7 @@ ESCALATE: "Idea '<title>' failed code review after 3 rounds. Last BLOCKERs: <lis
            Manual intervention needed. Idea UUID: <idea-uuid>."
 ```
 
-**No VERDICT comment after the code-reviewer returns?** It exhausted its turn budget (it carries a larger budget than the task-reviewer because it reviews the whole feature). Respawn it once with a concise-budget hint; if still none, review the idea's aggregate change yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted.
+**No VERDICT comment after the code-reviewer returns?** It exhausted its turn budget (it carries a larger budget than the task-reviewer because it reviews the whole feature). **Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn it once with a concise-budget hint; if still none, review the idea's aggregate change yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted.
 
 > The gateway is **behavioral**, consistent with the other two reviewers: its verdict is advisory and does not change the Idea's stored status; the orchestrator honors it. It runs **before** the completion report so the report is never written while a FAIL is outstanding.
 
@@ -539,7 +539,7 @@ result = chorus_create_report({
 | Proposal review FAILs after `maxProposalReviewRounds` (3) | Stop the pipeline; report the persisting BLOCKERs; recommend manual review of the proposal. |
 | Task review FAILs after `maxTaskReviewRounds` (3) | Flag the task as escalation-needed; continue with the other tasks. |
 | Code-review gateway FAILs after `maxCodeReviewRounds` (3) | Stop before ship; escalate the persisting feature-level BLOCKERs to a human (Idea UUID); do not write the completion report. |
-| Reviewer returns no VERDICT | Respawn the reviewer once with a concise-budget hint; if still none, review the entity yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted. |
+| Reviewer returns no VERDICT | **Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn the reviewer once with a concise-budget hint; if still none, review the entity yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted. |
 | Worker crashes / never submits | Log it, leave the task non-`to_verify`; re-pick it in a later wave or escalate if it stays stuck. |
 | No unblocked tasks but some not done | Stuck DAG (failed reviews or bad dependencies). Break with an escalation report; do not loop. |
 | Sub-agents unavailable | Use the inline self-review fallback (reviews) and the sequential main-agent fallback (execution). |

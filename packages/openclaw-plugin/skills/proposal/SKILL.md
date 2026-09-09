@@ -243,7 +243,7 @@ Obtain an independent VERDICT before considering the proposal ready for Admin ap
    - **PASS** / **PASS WITH NOTES** — proceed; an Admin can approve (notes are non-blocking).
    - **FAIL** — go to Step 6 and fix the BLOCKERs before resubmitting.
 
-If you spawned a sub-agent and no new `VERDICT:` comment appears after it returns, it likely exhausted its turn budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first 10 turns."* If still no VERDICT, fall back to reviewing manually (Step 5.5 fallback) and post the VERDICT yourself.
+If you spawned a sub-agent and no new `VERDICT:` comment appears after it returns, it likely exhausted its turn budget. **Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first 10 turns."* If still no VERDICT, fall back to reviewing manually (Step 5.5 fallback) and post the VERDICT yourself.
 
 ### Step 6: Handle Feedback
 
