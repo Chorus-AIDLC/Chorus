@@ -477,6 +477,26 @@ describe("kiro manifest (owned solely by file-template.mjs)", () => {
     expect(manifestHooks).toEqual(templateHooks);
   });
 
+  // The third and last variable kind. `agents/chorus.json` + `agents/chorus.md`
+  // are installed at FIXED paths by installKiroTemplate, so they are deliberately
+  // absent from the manifest; every OTHER agent json is fetched only because the
+  // manifest names it. Without this, a fourth reviewer would ship in-repo and be
+  // referenced by the skills while never landing in an installed tree — the same
+  // silent-omission failure the skill and hook checks above exist to prevent.
+  it("lists every reviewer agent shipped in the Kiro template", () => {
+    const manifestReviewers = [...readKiroManifestFile().reviewerAgents].sort();
+    const agentsDir = fileURLToPath(new URL(".kiro/agents/", KIRO_MANIFEST_URL));
+    const FIXED_PATH_AGENTS = new Set(["chorus.json"]);
+    const templateReviewers = readdirSync(agentsDir, { withFileTypes: true })
+      .filter(
+        (entry) =>
+          entry.isFile() && entry.name.endsWith(".json") && !FIXED_PATH_AGENTS.has(entry.name),
+      )
+      .map((entry) => entry.name.replace(/\.json$/, ""))
+      .sort();
+    expect(manifestReviewers).toEqual(templateReviewers);
+  });
+
   it("readKiroManifestFile reads the repo manifest at its canonical path", () => {
     expect(existsSync(fileURLToPath(KIRO_MANIFEST_URL))).toBe(true);
   });
