@@ -442,7 +442,8 @@ This is the core overview skill. For stage-specific workflows, use:
 | **Development** | `/develop` | Claim Tasks, report work, session & sub-agent management, Agent Teams integration |
 | **Review** | `/review` | Approve/reject Proposals, verify Tasks, project governance |
 | **Docs** | `/docs` | Consult the live Chorus documentation site to answer product-usage questions — UI workflow, agent/plugin setup, API/MCP, deployment, operations |
-| **OpenSpec mode** | `openspec-aware` | Opt-in **shared sub-procedure** invoked by `/proposal`, `/develop`, and `/yolo` whenever the user has the `openspec` CLI installed. Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via the `chorus-api.sh` wrapper. Skips silently in fallback mode. See `.claude/skills/openspec-aware/SKILL.md`. |
+| **OpenSpec mode** | `openspec-aware` | **Shared sub-procedure** invoked by `/proposal`, `/develop`, and `/yolo` when the resolved spec mode is a usable OpenSpec (the default when `openspec/` + CLI present and not disabled). Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via the `chorus-api.sh` wrapper. No-op when the mode isn't a usable OpenSpec. See `.claude/skills/openspec-aware/SKILL.md`. |
+| **spec-lite mode** | `spec-lite` | **Shared sub-procedure** and the fallback when OpenSpec isn't usable (or `CHORUS_SPEC_MODE=lite`). Durable local `.chorus/specs/<slug>/spec.md` (never synced) + dated per-change folders of Chorus-typed docs mirrored 1:1 into Chorus via `--arg-file`. No CLI/validation/archive. See `.claude/skills/spec-lite/SKILL.md`. |
 
 ### Getting Started
 

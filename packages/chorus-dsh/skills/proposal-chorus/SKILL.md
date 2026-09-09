@@ -73,6 +73,8 @@ Elaboration resolved --> Create Proposal --> Add drafts --> Validate --> Submit 
 
 **Recommended approach:** Create the proposal container first without any drafts, then incrementally add document and task drafts one by one.
 
+> **Resolve the spec mode BEFORE you create the container (Step 1.5).** The container `description` must carry the resolved mode's locator line (OpenSpec: `OpenSpec change slug: <slug>`; spec-lite: `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/`; free-form: none), and `description` is only settable at creation time. So read the `## Spec Mode` block and decide the slug / dated path first, then create the container with the right line already in place.
+
 ```
 chorus_pm_create_proposal({
   projectUuid: "<project-uuid>",
@@ -87,19 +89,23 @@ chorus_pm_create_proposal({
 
 > **A theme cannot be a proposal input** — `chorus_pm_create_proposal` rejects any input idea with `isContainer = true`. Derive a child idea from the theme and write the proposal on the child instead. (See the theme-ideas section of the `idea-chorus` skill.)
 
-### Step 1.5: Detect OpenSpec mode
+### Step 1.5: Select spec mode
 
-Before authoring document drafts, **load the `openspec-aware-chorus` skill** and run its **§1 inline detection** (three checks — `CHORUS_OPENSPEC_MODE != "off"`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`).
+The chorus-dsh bundle resolves **one spec mode** at plugin load and injects a `## Spec Mode` block into your first-step context stating `CHORUS_SPEC_MODE=<lite|openspec|off>` + a routing note (it also publishes `CHORUS_SPEC_MODE` / `CHORUS_OPENSPEC_ACTIVE` to the environment). **Consume that value — do NOT re-derive it.** Resolve the mode here, before creating the container (Step 1), so the `description` carries the right locator line.
 
-> **dsh note:** there is no Claude Code SessionStart hook to precompute `CHORUS_OPENSPEC_ACTIVE`. You must run the three checks yourself, inline, every time you reach this step. See `openspec-aware-chorus` §1.
+> **dsh note:** there is no Claude Code SessionStart hook, but the bundle precomputes the mode the same way. Read the `## Spec Mode` block (or the `CHORUS_SPEC_MODE` / `CHORUS_OPENSPEC_ACTIVE` env vars) — see `openspec-aware-chorus` §1. Only if that context is genuinely absent, resolve the full mode (never hand-roll an OpenSpec-only check that ignores `CHORUS_SPEC_MODE`).
 
-Branch on the result:
+Branch on the resolved mode (three branches):
 
-- **OpenSpec active (all three checks pass)** → follow `openspec-aware-chorus` §3. Pick `$SLUG`, scaffold `openspec/changes/<slug>/`, author `proposal.md` / `design.md` / `specs/<capability>/spec.md` locally, then create the proposal container (Step 1 above) with the literal line `OpenSpec change slug: <slug>` in `description`, and mirror each local file into a document draft.
+- **OpenSpec** (`CHORUS_OPENSPEC_ACTIVE=1` line present) → **load the `openspec-aware-chorus` skill** and follow its §3. Pick `$SLUG`, scaffold `openspec/changes/<slug>/`, author `proposal.md` / `design.md` / `specs/<capability>/spec.md` locally, create the container (Step 1) with the literal line `OpenSpec change slug: <slug>` in `description`, and mirror each local file into a document draft.
 
-  > **⛔ Mandatory in OpenSpec mode:** mirror calls fill `content` from the local file — prefer `chorus mcp call … --arg-file content=<file>`, falling back to the package-local `CHORUS_MCP_CALL` wrapper with `json_encode_file` when `chorus` is not on `PATH` — see `openspec-aware-chorus` §3.6. Do **not** call `chorus_pm_add_document_draft` directly from the MCP harness with a hand-typed `content` field. Re-typing thousands of lines through the LLM burns 20k+ content tokens per proposal and breaks byte-equality with the local source of truth (`openspec-aware-chorus` §2 Rule 1 explains the full reasoning). Skip Step 2 below when in OpenSpec mode — the file-fill flow in `openspec-aware-chorus` §3.6 replaces it for documents.
+  > **⛔ Mandatory in OpenSpec mode:** mirror calls fill `content` from the local file — prefer `chorus mcp call … --arg-file content=<file>`, falling back to the package-local `CHORUS_MCP_CALL` wrapper with `json_encode_file` when `chorus` is not on `PATH` — see `openspec-aware-chorus` §3.6. Do **not** call `chorus_pm_add_document_draft` directly from the MCP harness with a hand-typed `content` field. Re-typing thousands of lines through the LLM burns 20k+ content tokens per proposal and breaks byte-equality with the local source of truth (`openspec-aware-chorus` §2 Rule 1). Skip Step 2 below in OpenSpec mode — the file-fill flow in §3.6 replaces it for documents.
 
-- **OpenSpec inactive (any check fails, or `CHORUS_OPENSPEC_MODE=off`)** → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
+- **spec-lite** (`CHORUS_SPEC_MODE=lite`) → **load the `spec-lite-chorus` skill** and follow its flow. Pick `$SLUG` (a **capability**), ensure the durable `.chorus/specs/<slug>/spec.md` exists and update it in place (local-only, no ids, **never mirrored**), create this change's dated folder `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` with its Chorus-typed docs (`prd.md` required; `tech_design.md`… optional), create the container (Step 1) with the literal line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` in `description`, and mirror **each dated-folder `<type>.md`** into a document draft byte-exact (same `--arg-file` transport as OpenSpec). **`spec.md` is never mirrored.** No `openspec/changes/` scaffold, no `tasks.md`. Skip Step 2's inline free-form authoring — the file-fill flow replaces it for documents.
+
+- **free-form** (`CHORUS_SPEC_MODE=off`) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`. No `.chorus/specs/` or `openspec/changes/` files.
+
+> If the `## Spec Mode` block says the mode **cannot be honored** (explicit `CHORUS_SPEC_MODE=openspec` but OpenSpec is unusable), **halt** and surface it — do NOT silently fall back to spec-lite or free-form.
 
 ### Step 2: Add Document Drafts
 

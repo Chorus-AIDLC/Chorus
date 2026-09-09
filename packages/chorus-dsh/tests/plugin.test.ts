@@ -6,9 +6,9 @@ import {
   Config,
   apply,
   chorusMcpCallPath,
-  detectOpenspecActive,
   isDaemonOrigin,
   normalizeChorusToolName,
+  resolveBundleSpecMode,
   resolveConnectionConfig,
 } from "../src/index.js";
 
@@ -130,6 +130,7 @@ afterEach(() => {
   delete process.env.CHORUS_MCP_CALL;
   delete process.env.CHORUS_OPENSPEC_ACTIVE;
   delete process.env.CHORUS_OPENSPEC_MODE;
+  delete process.env.CHORUS_SPEC_MODE;
 });
 
 describe("configuration and helpers", () => {
@@ -171,11 +172,17 @@ describe("configuration and helpers", () => {
     expect(() => resolveConnectionConfig({}, {})).toThrow("url is required");
   });
 
-  it("treats openspec as inactive when opted out or missing the workspace", () => {
+  it("resolves spec mode to lite (never openspec-active) when opted out or missing the workspace", () => {
+    // (Full 13-case contract matrix lives in tests/spec-mode.test.ts; this just
+    // exercises the bundle wrapper that reads the process env + cwd.)
     process.env.CHORUS_OPENSPEC_MODE = "off";
-    expect(detectOpenspecActive()).toBe(false);
+    const optedOut = resolveBundleSpecMode();
+    expect(optedOut.specMode).toBe("lite");
+    expect(optedOut.chorusOpenspecActive).toBe(false);
     delete process.env.CHORUS_OPENSPEC_MODE;
-    expect(detectOpenspecActive("/nonexistent-openspec-root-xyz")).toBe(false);
+    const missingWorkspace = resolveBundleSpecMode("/nonexistent-openspec-root-xyz");
+    expect(missingWorkspace.specMode).toBe("lite");
+    expect(missingWorkspace.chorusOpenspecActive).toBe(false);
   });
 
   it("falls back to $DSH_HOME/.env for creds absent from config and env", () => {
@@ -216,6 +223,16 @@ describe("runtime", () => {
     expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe("1");
   });
 
+  it("publishes CHORUS_SPEC_MODE without overwriting an operator value", () => {
+    apply(new FakeContext() as any, config());
+    expect(["lite", "openspec", "off"]).toContain(process.env.CHORUS_SPEC_MODE);
+    process.env.CHORUS_SPEC_MODE = "off";
+    apply(new FakeContext() as any, config());
+    expect(process.env.CHORUS_SPEC_MODE).toBe("off");
+    // An explicit off resolves openspec-inactive.
+    expect(process.env.CHORUS_OPENSPEC_ACTIVE).not.toBe("1");
+  });
+
   it("registers no lifecycle handlers or effects in daemon mode", () => {
     process.env.CHORUS_DAEMON_HEADLESS = "1";
     process.env.CHORUS_URL = "https://chorus.example";
@@ -250,10 +267,14 @@ describe("runtime", () => {
     );
 
     expect(ctx.tools.execute).toHaveBeenCalledTimes(1);
-    // First step injects the check-in context message + the one-line guidance.
+    // First step injects the check-in context message + the guidance (one-line
+    // AI-DLC reminder followed by the resolved `## Spec Mode` block).
     expect(first.messages).toHaveLength(2);
     expect(first.messages[0].content[0].text).toBe("checked in");
-    expect(first.messages[1].content[0].text).toContain("AI-DLC");
+    const guidance = first.messages[1].content[0].text;
+    expect(guidance).toContain("AI-DLC");
+    expect(guidance).toContain("## Spec Mode");
+    expect(guidance).toContain("CHORUS_SPEC_MODE=");
     expect(second.messages).toHaveLength(0);
     await ctx.dispose();
   });

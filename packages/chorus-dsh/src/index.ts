@@ -8,12 +8,13 @@ import type {
   ToolExecutionResult,
 } from "@deepseek-ai/dsh-tools";
 import type {} from "@deepseek-ai/dsh-subagent";
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import z from "@deepseek-ai/schemastery";
+import { buildSpecModeGuidance, resolveSpecMode } from "./spec-mode.js";
 
 export const name = "chorus-dsh";
 export const inject = ["tools"];
@@ -21,20 +22,25 @@ export const chorusMcpCallPath = fileURLToPath(
   new URL("../bin/chorus-mcp-call.mjs", import.meta.url),
 );
 
-// OpenSpec activeness for the openspec-aware-chorus skill. dsh has no
-// SessionStart hook (unlike the Claude Code plugin), so the plugin precomputes
-// the three-check result at load and exports it via CHORUS_OPENSPEC_ACTIVE; the
-// skill reads it and only recomputes inline as a fallback. Mirrors how
+// Spec mode for the stage skills. dsh has no SessionStart hook (unlike the
+// Claude Code plugin), so the bundle resolves the mode once at load
+// (resolveSpecMode — the TS mirror of the canonical bash resolver), publishes
+// both CHORUS_SPEC_MODE and CHORUS_OPENSPEC_ACTIVE to the process environment,
+// and injects a `## Spec Mode` block into the first agent step. Mirrors how
 // CHORUS_MCP_CALL is published to the process environment.
-export function detectOpenspecActive(cwd: string = process.cwd()): boolean {
-  if (process.env.CHORUS_OPENSPEC_MODE === "off") return false;
-  if (!existsSync(join(cwd, "openspec"))) return false;
-  try {
-    execFileSync("openspec", ["--version"], { stdio: "ignore", timeout: 5000 });
-  } catch {
-    return false;
-  }
-  return true;
+export function resolveBundleSpecMode(cwd: string = process.cwd()) {
+  return resolveSpecMode(
+    {
+      specMode: process.env.CHORUS_SPEC_MODE,
+      openspecMode: process.env.CHORUS_OPENSPEC_MODE,
+      enableOpenSpec: process.env.CLAUDE_PLUGIN_OPTION_ENABLEOPENSPEC,
+      projectRoot: cwd,
+    },
+    { existsSync },
+    (cmd, opts) => {
+      execSync(cmd, opts);
+    },
+  );
 }
 
 const CHECKIN_TOOL = "mcp__chorus__chorus_checkin";
@@ -270,9 +276,13 @@ function waitForCheckin(
 
 export function apply(ctx: Context, config: Config): void {
   process.env.CHORUS_MCP_CALL ??= chorusMcpCallPath;
-  // Publish OpenSpec activeness before the daemon-origin gate so both
-  // interactive and daemon sessions get it; an explicit value always wins.
-  process.env.CHORUS_OPENSPEC_ACTIVE ??= detectOpenspecActive() ? "1" : "0";
+  // Resolve the spec mode once at load and publish it before the daemon-origin
+  // gate so both interactive and daemon sessions inherit it; an explicit
+  // operator value always wins (??= never clobbers). Rule: explicit
+  // CHORUS_SPEC_MODE wins; unset → OpenSpec when usable, else spec-lite.
+  const spec = resolveBundleSpecMode();
+  process.env.CHORUS_SPEC_MODE ??= spec.specMode;
+  process.env.CHORUS_OPENSPEC_ACTIVE ??= spec.chorusOpenspecActive ? "1" : "0";
   const resolved = Config(config);
   ctx.provide(
     "chorusDshConfig",
@@ -352,10 +362,16 @@ export function apply(ctx: Context, config: Config): void {
       const downstream = await next();
       if (!context || downstream.kind !== "enter") return downstream;
       const guidance = createPluginMessage([
-        { type: "text", text: SESSION_START_GUIDANCE },
+        {
+          type: "text",
+          text: `${SESSION_START_GUIDANCE}\n\n${buildSpecModeGuidance(spec)}`,
+        },
       ]);
       // First step only: inject the check-in context + the one-line session-start
-      // guidance. Fails open (no injection) when the check-in didn't resolve.
+      // guidance followed by the resolved `## Spec Mode` block (states
+      // CHORUS_SPEC_MODE + the route for lite / off / openspec / halt). Fails
+      // open (no injection) when the check-in didn't resolve; the published
+      // CHORUS_SPEC_MODE / CHORUS_OPENSPEC_ACTIVE env vars remain the fallback.
       return { kind: "enter", messages: [...downstream.messages, context, guidance] };
     },
   );
