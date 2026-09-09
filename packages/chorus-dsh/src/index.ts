@@ -277,12 +277,21 @@ function waitForCheckin(
 export function apply(ctx: Context, config: Config): void {
   process.env.CHORUS_MCP_CALL ??= chorusMcpCallPath;
   // Resolve the spec mode once at load and publish it before the daemon-origin
-  // gate so both interactive and daemon sessions inherit it; an explicit
-  // operator value always wins (??= never clobbers). Rule: explicit
+  // gate so both interactive and daemon sessions inherit it. Rule: explicit
   // CHORUS_SPEC_MODE wins; unset → OpenSpec when usable, else spec-lite.
+  //
+  // The two vars get DIFFERENT assignment semantics on purpose:
+  //   - CHORUS_SPEC_MODE is an operator INPUT — `??=` preserves whatever the
+  //     operator set (and `spec` was computed from that same value, so the two
+  //     can never disagree).
+  //   - CHORUS_OPENSPEC_ACTIVE is a DERIVED output — assign unconditionally, as
+  //     the bash SessionStart hook does (it recomputes and rewrites every
+  //     session). With `??=` a daemon child could inherit a stale `1` from a
+  //     parent that ran in an openspec repo, and then disagree with the freshly
+  //     resolved `## Spec Mode` guidance injected below.
   const spec = resolveBundleSpecMode();
   process.env.CHORUS_SPEC_MODE ??= spec.specMode;
-  process.env.CHORUS_OPENSPEC_ACTIVE ??= spec.chorusOpenspecActive ? "1" : "0";
+  process.env.CHORUS_OPENSPEC_ACTIVE = spec.chorusOpenspecActive ? "1" : "0";
   const resolved = Config(config);
   ctx.provide(
     "chorusDshConfig",

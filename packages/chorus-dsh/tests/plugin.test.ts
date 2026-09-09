@@ -215,12 +215,19 @@ describe("runtime", () => {
     expect(process.env.CHORUS_MCP_CALL).toBe("/operator/wrapper");
   });
 
-  it("publishes CHORUS_OPENSPEC_ACTIVE without overwriting an operator value", () => {
+  // CHORUS_OPENSPEC_ACTIVE is a DERIVED output, not an operator input, so it is
+  // assigned unconditionally (as the bash SessionStart hook does) — a stale
+  // inherited value must NOT survive, or the env var could disagree with the
+  // freshly resolved `## Spec Mode` guidance.
+  it("overwrites an inherited CHORUS_OPENSPEC_ACTIVE (derived, not operator input)", () => {
     apply(new FakeContext() as any, config());
     expect(["0", "1"]).toContain(process.env.CHORUS_OPENSPEC_ACTIVE);
-    process.env.CHORUS_OPENSPEC_ACTIVE = "1";
+    // A stale `1` inherited from a parent that ran in an openspec repo, while
+    // this repo (the vitest cwd's resolution) is authoritative.
+    const fresh = process.env.CHORUS_OPENSPEC_ACTIVE;
+    process.env.CHORUS_OPENSPEC_ACTIVE = fresh === "1" ? "0" : "1";
     apply(new FakeContext() as any, config());
-    expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe("1");
+    expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe(fresh);
   });
 
   it("publishes CHORUS_SPEC_MODE without overwriting an operator value", () => {

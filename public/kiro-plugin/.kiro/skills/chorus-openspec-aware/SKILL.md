@@ -1,6 +1,6 @@
 ---
 name: chorus-openspec-aware
-description: Opt-in OpenSpec-mode authoring for Chorus PM workflows in Kiro CLI. Detects the local `openspec` CLI, scaffolds `openspec/changes/<slug>/` on disk, and mirrors Markdown files into Chorus document drafts via `chorus mcp call --arg-file` (bash `chorus-api.sh` wrapper as fallback). Required reading for the chorus-proposal, chorus-develop, and chorus-yolo skills whenever the user has the `openspec` CLI installed.
+description: OpenSpec-mode authoring for Chorus PM workflows in Kiro CLI. The default whenever OpenSpec is usable; consumes the resolved `## Spec Mode` (never re-detects). Scaffolds `openspec/changes/<slug>/` on disk, and mirrors Markdown files into Chorus document drafts via `chorus mcp call --arg-file` (bash `chorus-api.sh` wrapper as fallback). Required reading for the chorus-proposal, chorus-develop, and chorus-yolo skills. When OpenSpec is not the resolved mode, this skill no-ops and the caller follows the resolved mode (spec-lite or free-form).
 license: AGPL-3.0
 metadata:
   author: chorus
