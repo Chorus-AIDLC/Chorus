@@ -242,11 +242,15 @@ The plugin bundles three independent **review skills**: `proposal-reviewer-choru
 
 Results are advisory — they do not hard-block approval, verification, or ship (the code-review gateway is behavioral — it does not change the Idea's stored status), but you should act on a FAIL by fixing the listed BLOCKERs before proceeding. For a code-review FAIL, the orchestrator invokes **quick-dev** (`quick-dev-chorus`) to create new tasks on the original approved proposal; it does not reopen completed tasks or apply untracked fixes. Group related small BLOCKERs by default and split only materially large or independently testable fixes. Every fix task must pass AC self-check, independent task review, and admin verification. Re-run aggregate review only after all fixes are successfully `done`; a failed or cancelled fix stops the loop and escalates. Keep `maxCodeReviewRounds` authoritative.
 
-### 6. Enable OpenSpec Mode (Optional)
+### 6. Spec mode: OpenSpec (default when usable) vs spec-lite (fallback)
 
-Opt-in spec-driven path: `proposal-chorus`, `develop-chorus`, `yolo-chorus` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts. Fully optional — free-form authoring works without it. The stage skills re-check the three activation signals inline (dsh has no SessionStart hook): `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`.
+Every PM authoring flow (`proposal-chorus`, `develop-chorus`, `yolo-chorus`) runs in one **spec mode**. dsh has no SessionStart hook, so the chorus-dsh bundle resolves the mode **once at load** (`resolveSpecMode` in `src/spec-mode.ts` — the tested single source of truth), publishes `CHORUS_SPEC_MODE` + `CHORUS_OPENSPEC_ACTIVE` to the process environment, and injects a `## Spec Mode` block into the first agent step stating the resolved mode + reason. Read that block; do not re-derive the rule.
 
-The `openspec-aware-chorus` skill reads the `CHORUS_OPENSPEC_ACTIVE` value the chorus-dsh bundle precomputes at load (three-check inline fallback). Byte-exact document mirroring prefers `chorus mcp call … --arg-file content=<file>`, falling back to the package-local wrapper path exported as `CHORUS_MCP_CALL` when `chorus` is not on `PATH`; a missing transport is a visible blocker, never a reason to retype document content.
+Resolution: an explicit `CHORUS_SPEC_MODE` (`lite`/`openspec`/`off`) wins; when unset, **OpenSpec is the default whenever it is usable** (`CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`). When OpenSpec is absent or disabled, the mode falls back to **spec-lite** — a Chorus-native, git-tracked model with a durable local `.chorus/specs/<slug>/spec.md` per capability (edited in place, **never synced**) plus dated per-change folders `<slug>/<YYYY-MM-DD>-<change-slug>/` of Chorus-typed docs (`prd.md` required; `tech_design.md` / `adr.md` / `guide.md` / `spec.md` optional) mirrored 1:1 into persistent Chorus Documents (see `spec-lite-chorus`). `CHORUS_SPEC_MODE=off` selects free-form (no spec artifact). An explicit `CHORUS_SPEC_MODE=openspec` that cannot be honored makes the stage skills **halt** — they never silently downgrade.
+
+In OpenSpec mode, `proposal-chorus` / `develop-chorus` / `yolo-chorus` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts via `openspec-aware-chorus`. In either spec mode, byte-exact document mirroring prefers `chorus mcp call … --arg-file content=<file>`, falling back to the package-local wrapper path exported as `CHORUS_MCP_CALL` when `chorus` is not on `PATH`; a missing transport is a visible blocker, never a reason to retype document content.
+
+**When the user wants OpenSpec on** (the `## Spec Mode` block reads spec-lite/off and they want the OpenSpec path), actually **enable it for them** — run whichever steps are missing, don't just describe them: `npm i -g @fission-ai/openspec` then `openspec init --tools none` (OpenSpec has no dsh integration, so `none` is correct — Chorus's resolution only needs the `openspec/` directory + CLI). The mode is resolved at bundle load, so tell the user to **restart the dsh session** afterwards. To turn OpenSpec off, set `CHORUS_OPENSPEC_MODE=off` — the mode then falls back to **spec-lite** (or set `CHORUS_SPEC_MODE=off` for free-form).
 
 ---
 
@@ -309,7 +313,8 @@ This is the core overview skill. For stage-specific workflows, use:
 | **Development** | `develop-chorus` | Claim Tasks, report work, manual session & sub-agent management |
 | **Review** | `review-chorus` | Approve/reject Proposals, verify Tasks, project governance |
 | **Docs** | `docs-chorus` | Consult the live Chorus documentation site to answer product-usage questions — UI workflow, agent/plugin setup, API/MCP, deployment, operations |
-| **OpenSpec mode** | `openspec-aware-chorus` | Detect and run the optional local OpenSpec authoring path |
+| **OpenSpec mode** | `openspec-aware-chorus` | **Shared sub-procedure** invoked by `proposal-chorus`, `develop-chorus`, `yolo-chorus` when the resolved spec mode is a usable OpenSpec (the default when `openspec/` + CLI present and not disabled). Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via `chorus mcp call --arg-file`. No-op when the mode isn't a usable OpenSpec |
+| **spec-lite mode** | `spec-lite-chorus` | **Shared sub-procedure** and the fallback when OpenSpec isn't usable (or `CHORUS_SPEC_MODE=lite`). Durable local `.chorus/specs/<slug>/spec.md` (never synced) + dated per-change folders of Chorus-typed docs mirrored 1:1 into Chorus via `--arg-file`. No CLI/validation/archive |
 
 ### Getting Started
 

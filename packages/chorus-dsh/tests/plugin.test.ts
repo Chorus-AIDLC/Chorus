@@ -6,9 +6,9 @@ import {
   Config,
   apply,
   chorusMcpCallPath,
-  detectOpenspecActive,
   isDaemonOrigin,
   normalizeChorusToolName,
+  resolveBundleSpecMode,
   resolveConnectionConfig,
 } from "../src/index.js";
 
@@ -130,6 +130,7 @@ afterEach(() => {
   delete process.env.CHORUS_MCP_CALL;
   delete process.env.CHORUS_OPENSPEC_ACTIVE;
   delete process.env.CHORUS_OPENSPEC_MODE;
+  delete process.env.CHORUS_SPEC_MODE;
 });
 
 describe("configuration and helpers", () => {
@@ -171,11 +172,17 @@ describe("configuration and helpers", () => {
     expect(() => resolveConnectionConfig({}, {})).toThrow("url is required");
   });
 
-  it("treats openspec as inactive when opted out or missing the workspace", () => {
+  it("resolves spec mode to lite (never openspec-active) when opted out or missing the workspace", () => {
+    // (Full 13-case contract matrix lives in tests/spec-mode.test.ts; this just
+    // exercises the bundle wrapper that reads the process env + cwd.)
     process.env.CHORUS_OPENSPEC_MODE = "off";
-    expect(detectOpenspecActive()).toBe(false);
+    const optedOut = resolveBundleSpecMode();
+    expect(optedOut.specMode).toBe("lite");
+    expect(optedOut.chorusOpenspecActive).toBe(false);
     delete process.env.CHORUS_OPENSPEC_MODE;
-    expect(detectOpenspecActive("/nonexistent-openspec-root-xyz")).toBe(false);
+    const missingWorkspace = resolveBundleSpecMode("/nonexistent-openspec-root-xyz");
+    expect(missingWorkspace.specMode).toBe("lite");
+    expect(missingWorkspace.chorusOpenspecActive).toBe(false);
   });
 
   it("falls back to $DSH_HOME/.env for creds absent from config and env", () => {
@@ -208,12 +215,55 @@ describe("runtime", () => {
     expect(process.env.CHORUS_MCP_CALL).toBe("/operator/wrapper");
   });
 
-  it("publishes CHORUS_OPENSPEC_ACTIVE without overwriting an operator value", () => {
+  // Both spec vars are resolver OUTPUTS (the raw operator input is consumed by
+  // resolveBundleSpecMode before publication), so both are written
+  // unconditionally — as the bash SessionStart hook does, recomputing every
+  // session. `??=` on either lets a stale/raw value survive and contradict the
+  // freshly resolved `## Spec Mode` guidance.
+  it("publishes both resolved spec vars, honouring a valid operator mode", () => {
     apply(new FakeContext() as any, config());
+    expect(["lite", "openspec", "off"]).toContain(process.env.CHORUS_SPEC_MODE);
     expect(["0", "1"]).toContain(process.env.CHORUS_OPENSPEC_ACTIVE);
-    process.env.CHORUS_OPENSPEC_ACTIVE = "1";
+    // A valid explicit mode survives, because the resolver maps it to itself.
+    process.env.CHORUS_SPEC_MODE = "off";
     apply(new FakeContext() as any, config());
-    expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe("1");
+    expect(process.env.CHORUS_SPEC_MODE).toBe("off");
+    // An explicit off resolves openspec-inactive.
+    expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe("0");
+  });
+
+  it("overwrites a stale inherited CHORUS_OPENSPEC_ACTIVE", () => {
+    apply(new FakeContext() as any, config());
+    const fresh = process.env.CHORUS_OPENSPEC_ACTIVE;
+    // A stale value inherited from a parent that ran in a different repo, while
+    // this repo (the vitest cwd's resolution) is authoritative.
+    process.env.CHORUS_OPENSPEC_ACTIVE = fresh === "1" ? "0" : "1";
+    apply(new FakeContext() as any, config());
+    expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe(fresh);
+  });
+
+  it("normalizes an invalid CHORUS_SPEC_MODE to the resolved default", () => {
+    process.env.CHORUS_SPEC_MODE = "bogus";
+    apply(new FakeContext() as any, config());
+    // Never leaves the raw junk in the env for downstream readers.
+    expect(process.env.CHORUS_SPEC_MODE).not.toBe("bogus");
+    const resolved = resolveBundleSpecMode();
+    expect(process.env.CHORUS_SPEC_MODE).toBe(resolved.specMode);
+    expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe(resolved.chorusOpenspecActive ? "1" : "0");
+  });
+
+  it("publishes the resolved spec vars in daemon mode, where env is the only channel", () => {
+    // Daemon sessions return before any guidance injection, so the env vars are
+    // the sole carrier of the resolved mode — they must still be written.
+    process.env.CHORUS_DAEMON_HEADLESS = "1";
+    process.env.CHORUS_SPEC_MODE = "bogus";
+    process.env.CHORUS_OPENSPEC_ACTIVE = "1";
+    const ctx = new FakeContext();
+    apply(ctx as any, config());
+    expect(ctx.handlers.size).toBe(0);
+    const resolved = resolveBundleSpecMode();
+    expect(process.env.CHORUS_SPEC_MODE).toBe(resolved.specMode);
+    expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe(resolved.chorusOpenspecActive ? "1" : "0");
   });
 
   it("registers no lifecycle handlers or effects in daemon mode", () => {
@@ -250,10 +300,14 @@ describe("runtime", () => {
     );
 
     expect(ctx.tools.execute).toHaveBeenCalledTimes(1);
-    // First step injects the check-in context message + the one-line guidance.
+    // First step injects the check-in context message + the guidance (one-line
+    // AI-DLC reminder followed by the resolved `## Spec Mode` block).
     expect(first.messages).toHaveLength(2);
     expect(first.messages[0].content[0].text).toBe("checked in");
-    expect(first.messages[1].content[0].text).toContain("AI-DLC");
+    const guidance = first.messages[1].content[0].text;
+    expect(guidance).toContain("AI-DLC");
+    expect(guidance).toContain("## Spec Mode");
+    expect(guidance).toContain("CHORUS_SPEC_MODE=");
     expect(second.messages).toHaveLength(0);
     await ctx.dispose();
   });

@@ -142,6 +142,10 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
 >
 > In the no-OpenSpec fallback (no slug line, or no `openspec` CLI), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
 
+> **Document update flow (spec-lite mode):** if the originating proposal `description` contains a locator line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/`, the project's `prd` / `tech_design` / … Documents are **persistent mirrors** of the Chorus-typed docs in that **dated change folder** (`prd.md`, `tech_design.md`, …, named by Chorus Document type). Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`). Locate the dated folder **deterministically** from that locator line (not by title/type, which isn't unique). Edit those `<type>.md` files in place (they are the source of truth for the change) and update the capability's durable `.chorus/specs/<slug>/spec.md` in place too — but **`spec.md` is never mirrored** (local only, no ids). Tick `- [ ]` acceptance points as work completes, then re-mirror each edited dated-folder file via `chorus mcp call chorus_pm_update_document … --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/<type>.md` against its `documentUuid` (each update auto-increments the Document version = its modification history). No new tool/CLI — same `--arg-file` transport as OpenSpec. **Git history is the audit trail** (`git log -- .chorus/specs/<slug>/` for the whole capability — the durable `spec.md`'s diffs + each dated folder's change docs; `git log --follow -- <file>` to trace a single renamed file) — there is no changelog section to maintain.
+>
+> **Single-writer:** the folder is shared — in a multi-task wave, only the **orchestrator / main agent** edits + re-mirrors it; parallel workers report via `chorus_report_work` only. A non-orchestrator that must update it re-reads immediately before writing to detect conflicts.
+
 ### Step 5: Start Working
 
 **Sub-agent**: checkin to the task first:

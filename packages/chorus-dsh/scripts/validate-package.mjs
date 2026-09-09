@@ -19,6 +19,7 @@ const expectedSkills = [
   "proposal-reviewer-chorus",
   "quick-dev-chorus",
   "review-chorus",
+  "spec-lite-chorus",
   "task-reviewer-chorus",
   "yolo-chorus",
 ];

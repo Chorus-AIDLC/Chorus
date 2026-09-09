@@ -151,8 +151,10 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
 > **⛔ Do not** call `chorus_pm_update_document` directly from the MCP harness with a hand-typed `content` field in OpenSpec mode. The local file is the source of truth; agent-typed content drifts and burns tokens (`openspec-aware` §2 Rule 1).
 >
 > When the LAST task of an OpenSpec idea is verified, run the archive flow yourself (`openspec-aware` §3.9): run `openspec archive <slug> --yes`, then mirror each emitted `openspec/specs/<capability>/spec.md` back via §3.8. **OpenClaw has no PostToolUse hook to remind you** — check after each verify whether the just-verified task was the last of its idea, and if so trigger the archive flow yourself.
+
+> **Document update flow (spec-lite mode):** if the originating proposal `description` contains a locator line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/`, the `prd` / `tech_design` / … Documents are **persistent mirrors** of the Chorus-typed docs in that **dated change folder**. Load the `spec-lite` skill. Locate the dated folder from the locator line (not by title/type). Edit those `<type>.md` files in place and update the capability's durable `.chorus/specs/<slug>/spec.md` in place too — but **`spec.md` is never mirrored** (local only, no ids). Tick `- [ ]` acceptance points, then re-mirror each edited dated-folder file via `chorus mcp call chorus_pm_update_document … --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/<type>.md` against its `documentUuid` (each update auto-increments the Document version = its modification history; `chorus-api.sh mcp-tool …` fallback when `chorus` not on `PATH`), with `chorus_check_response` halting on error. **Git history is the audit trail** (`git log -- .chorus/specs/<slug>/`) — no archive flow, no changelog section. (OpenClaw resolves the spec mode inline; see `openspec-aware` §1.)
 >
-> In the no-OpenSpec fallback (no slug line, or no `openspec` CLI), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
+> In the no-OpenSpec, no-spec-lite fallback (no locator line, or resolved mode = free-form), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
 
 ### Step 5: Start Working
 

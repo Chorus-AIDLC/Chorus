@@ -52,8 +52,8 @@ Tests the pure helpers extracted to `lib/lib.ts` (no Pi runtime, no live MCP):
 - `isWorkerAgent` — positive worker allowlist (`["worker"]`); the example read-only agents (scout/planner/reviewer) and arbitrary custom agents reject
 - `subagentTaskItems` — enumerates the (agent, task) items of a `subagent` tool call across single / parallel / chain modes; `setTask` mutates the ORIGINAL input in place; skips items with a missing/non-string agent or task; empty for non-object input
 - `sessionWorkflow` — UUID appears in every chorus_* step; contains the "do not manage lifecycle" line; starts with a blank separator line
-- `detectOpenSpec` — all four branches (optout / no dir / dir-but-no-CLI / both present); CLI probed only when the dir exists
-- `buildSessionBanner` — the five banner states (not-configured / connection-failed / connected+active / connected+opt-out / connected+not-set-up)
+- `resolveSpecMode` — the 13-case contract matrix (explicit `lite`/`openspec`/`off`/invalid/unset × OpenSpec usable / no dir / dir-but-no-CLI / disabled), plus the reason-precedence and short-circuit cases: `enableOpenSpec=false` outranks `CHORUS_OPENSPEC_MODE=off`, the CLI is probed only when the dir exists and OpenSpec isn't disabled, and `specFail` is set only when an explicit `openspec` cannot be honored (never a silent downgrade)
+- `buildSessionBanner` — the banner states: not-configured / connection-failed / connected × each resolved spec mode (`openspec` / `lite` / `off`) / connected + unhonorable explicit `openspec`; not-configured is checked before connection-failed
 - `parseMaxCodeReviewRounds` — default 3, 0 = unlimited, negatives/non-integers fall back to default
 - `resolveChorusBin` — resolves `bin/chorus-mcp-call.sh` relative to the extension for local-path installs
 - `parseChorusServerFromMcpJson` / `resolveChorusConfigFromMcpJson` — read the chorus server entry out of `.mcp.json` (the env-fallback path); the resolver only accepts a COMPLETE candidate (both url + apiKey) so a partial project config cannot shadow a complete global one
@@ -166,5 +166,5 @@ This exercises every extension event and every skill. If it completes with all V
 
 ## What is NOT yet covered
 
-- **`session_start` checkin + OpenSpec detection** (the `mcpCall("chorus_checkin")` + `detectOpenSpec` path): Layer C1 covers it empirically (a successful checkin banner means it works end to end). A fetch-mock test for this specific path is a future improvement; the session-lifecycle event tests in Layer B′ already prove the `mcpCall`/`pi.on` plumbing works against a mocked fetch.
+- **`session_start` checkin + spec-mode injection** (the `mcpCall("chorus_checkin")` call and the `## Spec Mode` block the handler assembles around `resolveSpecMode` — the resolver itself is unit-tested, its wiring into the injected context is not): Layer C1 covers it empirically (a successful checkin banner means it works end to end). A fetch-mock test for this specific path is a future improvement; the session-lifecycle event tests in Layer B′ already prove the `mcpCall`/`pi.on` plumbing works against a mocked fetch.
 - **Reviewer nudge `pi.sendUserMessage` calls**: Layer D2/D3 covers these empirically.

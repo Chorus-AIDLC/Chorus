@@ -67,45 +67,17 @@ if command -v jq >/dev/null 2>&1; then
 
 fi
 
-# Detect OpenSpec mode for this repo, once per session.
-# Both conditions are required for OpenSpec mode to be usable:
-#   (a) an openspec/ directory at the project root (this repo was inited via `openspec init`), AND
-#   (b) the `openspec` CLI on PATH (so we can `openspec new change`, `validate`, `archive`).
-# Overrides (precedence high -> low, first match wins):
-#   1. enableOpenSpec userConfig toggle (default true) — UI-level switch.
-#   2. CHORUS_OPENSPEC_MODE=off env var — env-level explicit opt-out.
-# When the folder is present but the CLI is missing, surface that as a
-# specific reason so the user-visible toast can hint at the install step
-# instead of silently falling back.
+# Resolve the active spec mode for this repo, once per session. The resolution
+# logic lives in resolve-spec-mode.sh (pure: env + filesystem only) so it can be
+# unit-tested — see bin/tests/test-spec-mode-resolution.sh. It sets SPEC_MODE,
+# SPEC_REASON, SPEC_FAIL, OPENSPEC_USABLE_REASON, OPENSPEC_HINT, CHORUS_OPENSPEC_ACTIVE.
 #
-# The inactive states split into two user-facing kinds:
-#   - OPENSPEC_OPTOUT=1 — the user explicitly turned OpenSpec off (plugin
-#     toggle or env var). Respect it: show a neutral note, no nag.
-#   - OPENSPEC_OPTOUT=0 — OpenSpec is simply not set up (no folder, or folder
-#     without the CLI). Point the user at `/chorus enable openspec`, which walks
-#     the actual install/init steps — the banner stays a one-liner.
+# Summary: an explicit CHORUS_SPEC_MODE (lite|openspec|off) wins; when UNSET,
+# OpenSpec stays the default whenever it is usable (openspec/ dir + CLI, not
+# disabled) and lite is the fallback only when OpenSpec is absent or disabled.
+# Legacy CHORUS_OPENSPEC_MODE=off still forces not-openspec (→ lite when unset).
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$PWD}"
-OPENSPEC_HINT=""
-OPENSPEC_OPTOUT=0
-if [ "${CLAUDE_PLUGIN_OPTION_ENABLEOPENSPEC:-true}" != "true" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
-  OPENSPEC_OPTOUT=1
-  OPENSPEC_REASON="enableOpenSpec userConfig=false (plugin-level opt-out)"
-elif [ "${CHORUS_OPENSPEC_MODE:-}" = "off" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
-  OPENSPEC_OPTOUT=1
-  OPENSPEC_REASON="CHORUS_OPENSPEC_MODE=off (explicit opt-out)"
-elif [ ! -d "${PROJECT_ROOT}/openspec" ]; then
-  CHORUS_OPENSPEC_ACTIVE=0
-  OPENSPEC_REASON="no openspec/ directory at ${PROJECT_ROOT}/openspec"
-elif ! command -v openspec >/dev/null 2>&1; then
-  CHORUS_OPENSPEC_ACTIVE=0
-  OPENSPEC_REASON="openspec/ directory present but \`openspec\` CLI not on PATH"
-  OPENSPEC_HINT="install with: npm i -g @fission-ai/openspec"
-else
-  CHORUS_OPENSPEC_ACTIVE=1
-  OPENSPEC_REASON="openspec/ directory + openspec CLI both present"
-fi
+. "${SCRIPT_DIR}/resolve-spec-mode.sh"
 
 # Build context for Claude (additionalContext)
 CONTEXT="# Chorus Plugin — Active
@@ -116,33 +88,33 @@ Chorus is connected at ${CHORUS_URL}. Session lifecycle hooks are enabled.
 
 ${CHECKIN_RESULT}
 
-## OpenSpec Mode
+## Spec Mode
 
-CHORUS_OPENSPEC_ACTIVE=${CHORUS_OPENSPEC_ACTIVE} (${OPENSPEC_REASON})"
+CHORUS_SPEC_MODE=${SPEC_MODE} (${SPEC_REASON})"
 
-if [ "$CHORUS_OPENSPEC_ACTIVE" = "1" ]; then
+if [ "$SPEC_MODE" = "lite" ]; then
   CONTEXT="${CONTEXT}
 
-OpenSpec mode is **active** for this session. When the proposal / develop / yolo skills reach an OpenSpec-aware step, load the openspec-aware skill at \`.claude/skills/openspec-aware/SKILL.md\` and follow §3 (OpenSpec authoring) — do NOT re-run the §1 detection block, the answer is already known.
+Routing: lite → follow the spec-lite skill (\`skills/spec-lite/SKILL.md\`). Author a Chorus-native change folder \`.chorus/specs/<slug>/\` (\`prd.md\` required; \`tech_design.md\` / \`adr.md\` / \`spec.md\` / \`guide.md\` optional) and mirror each \`<type>.md\` 1:1 into a Chorus Document of that type via \`chorus mcp call … --arg-file content=<file>\`. Do NOT scaffold \`openspec/changes/\` or add an \`OpenSpec change slug:\` line."
+elif [ "$SPEC_MODE" = "off" ]; then
+  CONTEXT="${CONTEXT}
 
-Critical rule (openspec-aware §2 Rule 1): document mirror calls (\`chorus_pm_add_document_draft\` / \`chorus_pm_update_document_draft\` / \`chorus_pm_update_document\`) MUST fill \`content\` from the local file — prefer \`chorus mcp call <tool> '<json>' --arg-file content=<file>\`, falling back to \`chorus-api.sh mcp-tool\` with \`json_encode_file\` when \`chorus\` is not on PATH. Do NOT invoke these MCP tools directly with hand-typed \`content\` in OpenSpec mode."
+Routing: off → free-form, no spec artifact. Do NOT create \`.chorus/specs/\` or \`openspec/changes/\` files; author document drafts inline via direct MCP."
+elif [ -n "$SPEC_FAIL" ]; then
+  CONTEXT="${CONTEXT}
+
+Routing: openspec → **cannot be honored** — ${SPEC_FAIL}. The proposal / yolo skill MUST halt after resolving the mode; do NOT silently fall back to lite/free-form. Surface this to the user."
+  if [ -n "$OPENSPEC_HINT" ]; then
+    CONTEXT="${CONTEXT} Install hint: ${OPENSPEC_HINT}."
+  fi
 else
   CONTEXT="${CONTEXT}
 
-OpenSpec mode is **inactive** for this session. The proposal / develop / yolo skills follow their free-form path; do NOT scaffold \`openspec/changes/\`, do NOT add an \`OpenSpec change slug:\` line to proposal descriptions, and do NOT route document mirror calls through the \`chorus\` CLI or \`chorus-api.sh\`."
-  if [ "$OPENSPEC_OPTOUT" = "1" ]; then
-    CONTEXT="${CONTEXT}
+CHORUS_OPENSPEC_ACTIVE=1 (${OPENSPEC_USABLE_REASON})
 
-OpenSpec was **explicitly turned off** (${OPENSPEC_REASON}), so this is a deliberate choice — do NOT nag the user to enable it. If they ask to turn it back on, point them at re-enabling the plugin's \`enableOpenSpec\` toggle / unsetting \`CHORUS_OPENSPEC_MODE\`, then the OpenSpec setup section in the \`/chorus\` skill."
-  elif [ -n "$OPENSPEC_HINT" ]; then
-    CONTEXT="${CONTEXT}
+Routing: openspec → load the openspec-aware skill at \`.claude/skills/openspec-aware/SKILL.md\` and follow §3 (OpenSpec authoring) — do NOT re-run the §1 detection block, the answer is already known.
 
-Note: this repo has an \`openspec/\` directory, so the user likely intends to use OpenSpec mode but the \`openspec\` CLI is not installed. Surface this to the user (e.g. \"This repo is OpenSpec-init'd but the \\\`openspec\\\` CLI isn't installed locally — ${OPENSPEC_HINT}\") before authoring documents. To set it up, run \`/chorus enable openspec\` (§6 walks the install + re-launch)."
-  else
-    CONTEXT="${CONTEXT}
-
-Note: OpenSpec is not set up in this repo (${OPENSPEC_REASON}). Spec-driven authoring is optional — free-form works fine. If the user wants spec-driven mode (proposal.md / design.md / spec deltas mirrored into Chorus), run \`/chorus enable openspec\` — §6 walks the \`npm i -g @fission-ai/openspec\` + \`openspec init\` steps and the re-launch."
-  fi
+Critical rule (openspec-aware §2 Rule 1): document mirror calls (\`chorus_pm_add_document_draft\` / \`chorus_pm_update_document_draft\` / \`chorus_pm_update_document\`) MUST fill \`content\` from the local file — prefer \`chorus mcp call <tool> '<json>' --arg-file content=<file>\`, falling back to \`chorus-api.sh mcp-tool\` with \`json_encode_file\` when \`chorus\` is not on PATH. Do NOT invoke these MCP tools directly with hand-typed \`content\` in OpenSpec mode."
 fi
 
 CONTEXT="${CONTEXT}
@@ -164,18 +136,21 @@ Resuming with existing Chorus session: ${MAIN_SESSION}"
   "$API" mcp-tool "chorus_session_heartbeat" "$(printf '{"sessionUuid":"%s"}' "$MAIN_SESSION")" >/dev/null 2>&1 || true
 fi
 
-# Build user-visible message. When OpenSpec is off-but-enable-able, point the
-# user at `/chorus enable openspec` — the skill walks the actual install/init.
-#   active            -> (OpenSpec Enabled)
-#   not set up        -> (OpenSpec off — run `/chorus enable openspec` to set it up)
-#   explicit opt-out  -> (OpenSpec off)  [neutral, no nag — respects the choice]
+# Build user-visible message. Always states the active spec mode (lite is the
+# default); an explicit openspec that can't be honored is flagged as not usable.
+#   lite              -> (Spec: lite)
+#   off               -> (Spec: off)
+#   openspec (usable) -> (Spec: openspec)
+#   openspec (broken) -> (Spec: openspec — not usable)
 USER_MSG="Chorus connected at ${CHORUS_URL}"
-if [ "$CHORUS_OPENSPEC_ACTIVE" = "1" ]; then
-  USER_MSG="${USER_MSG} (OpenSpec Enabled)"
-elif [ "$OPENSPEC_OPTOUT" = "1" ]; then
-  USER_MSG="${USER_MSG} (OpenSpec off)"
+if [ "$SPEC_MODE" = "lite" ]; then
+  USER_MSG="${USER_MSG} (Spec: lite)"
+elif [ "$SPEC_MODE" = "off" ]; then
+  USER_MSG="${USER_MSG} (Spec: off)"
+elif [ -n "$SPEC_FAIL" ]; then
+  USER_MSG="${USER_MSG} (Spec: openspec — not usable)"
 else
-  USER_MSG="${USER_MSG} (OpenSpec off — run \`/chorus enable openspec\` to set it up)"
+  USER_MSG="${USER_MSG} (Spec: openspec)"
 fi
 if [ -n "$MAIN_SESSION" ]; then
   USER_MSG="${USER_MSG} (resumed session)"

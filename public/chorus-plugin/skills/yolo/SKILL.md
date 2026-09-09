@@ -190,20 +190,16 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 #### Step 1.4: Create Proposal
 
-1. **Detect OpenSpec mode.** Load the `openspec-aware` skill at `.claude/skills/openspec-aware/SKILL.md` and run its §1 detection contract. The result determines how the rest of this step authors documents:
+1. **Read the spec mode (already computed).** The SessionStart hook (`bin/resolve-spec-mode.sh`) has already resolved it — do NOT re-derive. Read the `## Spec Mode` section: it states `CHORUS_SPEC_MODE=<lite|openspec|off>` + a routing note. (Spawned without that context? Source the *same* `bin/resolve-spec-mode.sh` for `SPEC_MODE`/`SPEC_FAIL` — never hand-roll the rule.) Act on that value: `openspec` → **2a**, `off` → **2b**, `lite` → **2c**. If the section says the mode **cannot be honored** (e.g. explicit `openspec` but unusable — it prints the config-conflict or install-hint reason), **halt** and surface it; do NOT silently fall back or enter 2a with no OpenSpec to author. (This matters because yolo runs unattended — the hook, not the agent, is the single source of the decision.)
 
-   - `CHORUS_OPENSPEC_ACTIVE=1` → spec-driven branch (sub-step 2a below).
-   - `CHORUS_OPENSPEC_ACTIVE=0` → free-form branch (sub-step 2b below).
-
-   This is mandatory — yolo runs unattended, so silently picking the wrong mode is exactly the failure scenario the detection contract exists to prevent.
-
-2. **Create the empty proposal container.** In OpenSpec mode, the `description` MUST contain the literal line `OpenSpec change slug: <slug>` (use the `$SLUG` you'll pick in 2a); in free-form mode, omit that line.
+2. **Create the empty proposal container.** In OpenSpec mode the `description` MUST contain `OpenSpec change slug: <slug>`; in spec-lite mode the locator line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` (use the `$SLUG` you'll pick in 2a / 2c); in free-form mode omit any slug line.
 
    ```
    chorus_pm_create_proposal({
      projectUuid: "<project-uuid>",
      title: "<feature name>",
-     description: "<summary>\n\nOpenSpec change slug: <slug>",   // OpenSpec mode
+     description: "<summary>\n\nSpec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/",  // spec-lite mode
+     // description: "<summary>\n\nOpenSpec change slug: <slug>", // OpenSpec mode
      // description: "<summary>",                                 // free-form mode
      inputType: "idea",
      inputUuids: ["<idea-uuid>"]
@@ -212,7 +208,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
    Then branch:
 
-   **2a. OpenSpec mode (`CHORUS_OPENSPEC_ACTIVE=1`).** Follow `openspec-aware` §3 end-to-end:
+   **2a. OpenSpec mode (resolved mode = openspec; `CHORUS_OPENSPEC_ACTIVE=1`).** Follow `openspec-aware` §3 end-to-end:
    - Pick `$SLUG`, run `openspec new change "$SLUG"` (§3.1–§3.2).
    - Author `proposal.md`, `design.md`, and one `specs/<capability>/spec.md` per capability locally on disk (§3.3). ADDED Requirements only; per-spec fallback to free-form Markdown if MODIFIED/REMOVED is needed.
    - Define the `chorus_check_response` helper (§6); prefer `chorus mcp call … --arg-file content=<file>` for mirrors (§3.4/§3.6) — the bash-wrapper fallback's `$API` + `json_encode_file` are only needed when `chorus` is not on `PATH`.
@@ -222,7 +218,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
    Then continue to step 3 (task drafts).
 
-   **2b. Free-form mode (`CHORUS_OPENSPEC_ACTIVE=0`).** Add a tech design document draft directly via MCP, content authored inline:
+   **2b. Free-form mode (resolved mode = free-form).** Only when step 1 resolved to free-form — i.e. explicit `CHORUS_SPEC_MODE=off`. (Unset never resolves here — it resolves to OpenSpec when usable, else spec-lite.) Add a tech design document draft directly via MCP, content authored inline:
 
    ```
    chorus_pm_add_document_draft({
@@ -232,6 +228,8 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
      content: "<markdown tech design covering architecture, data model, API, module contracts>"
    })
    ```
+
+   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG` (a **capability/feature** name — `.chorus/specs/<slug>/` holds the durable local spec `spec.md`, edited in place across changes, not one folder per change). Ensure the durable `spec.md` exists, copying from `.chorus/specs/TEMPLATE/spec.md` the first time this capability is specced (or the skill's inline shape if the template isn't present) — local-only, **no Chorus ids**: Intent / plain-prose Requirements + `- [ ]` acceptance points / Non-goals — and update it in place to the new truth. Create this change's **dated folder** `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` and write its **synced** Chorus-typed docs from `.chorus/specs/TEMPLATE/YYYY-MM-DD-change/` — `prd.md` (primary), plus `tech_design.md` etc. only if warranted. The proposal `description` MUST carry the literal locator line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` (the deterministic link develop uses). Mirror **each** dated-folder `<type>.md` to its persistent Document byte-exact — first time a doc is authored e.g. `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/prd.md`, later edits via `chorus_pm_update_document` against the recorded `documentUuid`. **`spec.md` is never mirrored.** No `OpenSpec change slug:` line and no `openspec/changes/` scaffold; there is no `tasks.md`. Then continue to step 3 for task drafts.
 
 3. **Add task drafts incrementally** (use returned `draftUuid` for dependency chaining). `acceptanceCriteriaItems` is **required** on every draft — at least one non-blank criterion, or the call is rejected:
    ```

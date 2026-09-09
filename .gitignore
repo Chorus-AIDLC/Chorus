@@ -59,8 +59,9 @@ default_deploy.sh
 packages/chorus-cdk/lib/*.js
 packages/chorus-cdk/lib/*.d.ts
 
-# Chorus plugin state
-.chorus/
+# Chorus plugin state (ignore runtime state, but keep git-tracked spec-lite specs)
+.chorus/*
+!.chorus/specs/
 
 # Chorus CLI data directory
 .chorus-data/

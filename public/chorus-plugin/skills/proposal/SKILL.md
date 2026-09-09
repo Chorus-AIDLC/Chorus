@@ -69,13 +69,15 @@ Elaboration resolved --> Create Proposal --> Add drafts --> Validate --> Submit 
 
 ### Step 1: Create an Empty Proposal
 
-**Recommended approach:** Create the proposal container first without any drafts, then incrementally add document and task drafts one by one.
+**Resolve the spec mode (Step 1.5) BEFORE this create.** In OpenSpec and spec-lite modes the container's `description` MUST carry a locator line (`OpenSpec change slug: <slug>` or `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/`), and `description` can only be set at creation — so decide the mode + slug/dated-path first and include that line in this single call. Do NOT create a bare container and then realize you needed the line (that would strand it without the locator or force a duplicate). Free-form mode omits any locator line.
+
+**Recommended approach:** Create the proposal container first (with the mode's locator line in `description` when applicable), then incrementally add document and task drafts one by one.
 
 ```
 chorus_pm_create_proposal({
   projectUuid: "<project-uuid>",
   title: "Implement <feature name>",
-  description: "Analysis and implementation plan for Idea #xxx",
+  description: "Analysis and implementation plan for Idea #xxx\n\n<locator line here in OpenSpec / spec-lite mode>",
   inputType: "idea",
   inputUuids: ["<idea-uuid>"]
 })
@@ -85,15 +87,20 @@ chorus_pm_create_proposal({
 
 > **A theme cannot be a proposal input** — `chorus_pm_create_proposal` rejects any input idea with `isContainer = true`. Derive a child idea from the theme and write the proposal on the child instead. (See the theme-ideas section of the `/idea` skill.)
 
-### Step 1.5: Detect OpenSpec mode
+### Step 1.5: Select spec mode
 
-Before authoring document drafts, **load the `openspec-aware` skill at `.claude/skills/openspec-aware/SKILL.md`** and run its §1 detection contract. Branch on the result:
+The spec mode is **already computed for you** by the SessionStart hook (`bin/resolve-spec-mode.sh`) — do NOT re-derive it. Read the `## Spec Mode` section of your SessionStart context: it states `CHORUS_SPEC_MODE=<lite|openspec|off>` plus a one-line routing note. (Spawned without that context? Source the *same* `bin/resolve-spec-mode.sh` to get `SPEC_MODE`/`SPEC_FAIL` — never hand-roll the rule.) Just act on that value:
 
-- **`CHORUS_OPENSPEC_ACTIVE=1`** → follow `openspec-aware` §3. Pick `$SLUG`, scaffold `openspec/changes/<slug>/`, author `proposal.md` / `design.md` / `specs/<capability>/spec.md` locally, then create the proposal container (Step 1 above) with the literal line `OpenSpec change slug: <slug>` in `description`, and mirror each local file into a document draft.
+- If the section says the requested mode **cannot be honored** (e.g. `CHORUS_SPEC_MODE=openspec` but OpenSpec isn't usable — it prints "cannot be honored" with a config-conflict or install-hint reason), **halt** and surface that reason; do not fall back.
+- Otherwise branch on the stated mode:
+
+- **resolved = spec-lite** → load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG` (a **capability/feature** name — `.chorus/specs/<slug>/` holds the durable local spec `spec.md`, edited in place across changes, not one folder per change). Ensure the durable `spec.md` exists (local-only, **no Chorus ids** — Intent / plain-prose Requirements + `- [ ]` acceptance points / Non-goals; copy from `.chorus/specs/TEMPLATE/spec.md`) and update it in place to the new truth. Create this change's **dated folder** `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` and write its **synced** Chorus-typed docs — `prd.md` (primary), plus `tech_design.md` etc. only if warranted (copy from `.chorus/specs/TEMPLATE/YYYY-MM-DD-change/`). Put the literal locator line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` in the **Step 1 create** `description` (that's why the mode is resolved before creating), then mirror **each** dated-folder `<type>.md` to its persistent Document (`chorus_pm_add_document_draft --arg-file` the first time a doc is authored, `chorus_pm_update_document --arg-file` after) via `chorus mcp call … --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/<type>.md`. **`spec.md` is never mirrored.** Skip Step 2 below — the file-fill mirror replaces inline drafting for these documents. (Add tasks via `chorus_pm_add_task_draft` as usual — there is no `tasks.md`.)
+
+- **resolved = OpenSpec** (the `## Spec Mode` section shows `CHORUS_OPENSPEC_ACTIVE=1` — i.e. `CHORUS_SPEC_MODE=openspec` *or* unset, with OpenSpec usable) → follow `openspec-aware` §3. Pick `$SLUG`, scaffold `openspec/changes/<slug>/`, author `proposal.md` / `design.md` / `specs/<capability>/spec.md` locally, then put the literal line `OpenSpec change slug: <slug>` in the **Step 1 create** `description` (mode resolved before creating), and mirror each local file into a document draft.
 
   > **⛔ Mandatory in OpenSpec mode:** mirror calls fill `content` from the local file — prefer `chorus mcp call … --arg-file content=<file>`, falling back to the `chorus-api.sh` wrapper with `json_encode_file` when `chorus` is not on `PATH` — see `openspec-aware` §3.6. Do **not** call `chorus_pm_add_document_draft` directly from the MCP harness with a hand-typed `content` field. Re-typing thousands of lines through the LLM burns 20k+ content tokens per proposal and breaks byte-equality with the local source of truth (`openspec-aware` §2 Rule 1 explains the full reasoning). Skip Step 2 below when in OpenSpec mode — the file-fill flow in `openspec-aware` §3.6 replaces it for documents.
 
-- **`CHORUS_OPENSPEC_ACTIVE=0`** (CLI absent or `CHORUS_OPENSPEC_MODE=off`) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
+- **resolved = free-form** (explicit `CHORUS_SPEC_MODE=off`) → proceed with Step 2 unchanged. Author drafts inline as free-form Markdown via direct MCP `chorus_pm_add_document_draft`.
 
 ### Step 2: Add Document Drafts
 

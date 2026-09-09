@@ -314,20 +314,22 @@ To disable in the Codex port, open `/hooks` and disable the matching Chorus plug
 
 When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task/idea. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the **quick-dev** workflow (`$quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Disabling reduces token usage but removes the independent quality gate.
 
-### 6. Enable OpenSpec Mode (Optional)
+### 6. Spec mode: OpenSpec (default when usable) vs spec-lite (fallback)
 
-Opt-in spec-driven path: `$proposal`, `$develop`, `$yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts. Fully optional — free-form authoring works without it. Activates only when all three hold: `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory exists at the project root, and the `openspec` CLI is on `PATH`.
+The SessionStart hook resolves one **spec mode** per session and prints a `## Spec Mode` section stating it. Resolution: an explicit `CHORUS_SPEC_MODE` (`lite`/`openspec`/`off`) wins; when unset, **OpenSpec is the default whenever it is usable** (`CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`). When OpenSpec is absent or disabled, the mode falls back to **spec-lite** — a Chorus-native, git-tracked model with a durable local `.chorus/specs/<slug>/spec.md` per capability (never synced) plus dated per-change folders `<slug>/<YYYY-MM-DD>-<change-slug>/` of Chorus-typed docs mirrored 1:1 into Chorus (see the `spec-lite` skill). `CHORUS_SPEC_MODE=off` selects free-form (no spec artifact).
 
-**When the user wants it on** (e.g. they ran `$chorus enable openspec` after the `(OpenSpec off — …)` banner), actually **enable it for them** — run whichever steps are missing, don't just describe them:
+OpenSpec spec-driven path: `$proposal`, `$develop`, `$yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts.
+
+**When the user wants OpenSpec on** (e.g. they ran `$chorus enable openspec` after seeing spec-lite/off in the banner), actually **enable it for them** — run whichever steps are missing, don't just describe them:
 
 ```bash
 npm i -g @fission-ai/openspec       # 1. install the CLI if it's not on PATH (global, pure Node)
 openspec init --tools codex         # 2. scaffold openspec/ + wire up Codex's native commands/skills
 ```
 
-`openspec init` is interactive if you omit `--tools`; pass `--tools codex` to run it unattended. Chorus's detection only needs the `openspec/` directory, but wiring up Codex also gives OpenSpec its own commands + skills. The OpenSpec signal is read **once at SessionStart**, so it can't flip mid-session — after the steps succeed, tell the user to **restart Codex**; the banner then reads `(OpenSpec Enabled)` and the stage skills fold in the `openspec-aware` skill automatically.
+`openspec init` is interactive if you omit `--tools`; pass `--tools codex` to run it unattended. The spec mode is resolved **once at SessionStart**, so it can't flip mid-session — after the steps succeed, tell the user to **restart Codex**; the `## Spec Mode` section then reads `CHORUS_SPEC_MODE=openspec (…)` and the stage skills fold in the `openspec-aware` skill automatically.
 
-To turn it off, set `CHORUS_OPENSPEC_MODE=off` — the banner then reads a neutral `(OpenSpec off)`.
+To turn OpenSpec off, set `CHORUS_OPENSPEC_MODE=off` — the mode then falls back to **spec-lite** (or set `CHORUS_SPEC_MODE=off` for free-form). The `## Spec Mode` section always states the resolved mode + reason.
 
 ---
 
@@ -388,7 +390,8 @@ This is the core overview skill. For stage-specific workflows, use:
 | **Development** | `$develop` | Claim Tasks, report work, and coordinate sub-agent workers |
 | **Review** | `$review` | Approve/reject Proposals, verify Tasks, project governance |
 | **Docs** | `$docs` | Consult the live Chorus documentation site to answer product-usage questions — UI workflow, agent/plugin setup, API/MCP, deployment, operations |
-| **OpenSpec mode** | `openspec-aware` | Opt-in **shared sub-procedure** invoked by `proposal`, `develop`, and `yolo` whenever the user has the `openspec` CLI installed. Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via `chorus mcp call --arg-file` (bash `chorus-mcp-call.sh` wrapper as fallback). Skips silently in fallback mode. See `~/.codex/skills/openspec-aware/SKILL.md`. |
+| **OpenSpec mode** | `openspec-aware` | **Shared sub-procedure** invoked by `proposal`, `develop`, `yolo` when the resolved spec mode is a usable OpenSpec (the default when `openspec/` + CLI present and not disabled). Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via `chorus mcp call --arg-file` (bash `chorus-mcp-call.sh` wrapper as fallback). See `~/.codex/skills/openspec-aware/SKILL.md`. |
+| **spec-lite mode** | `spec-lite` | **Shared sub-procedure** and the fallback when OpenSpec isn't usable (or `CHORUS_SPEC_MODE=lite`). Durable local `.chorus/specs/<slug>/spec.md` (never synced) + dated per-change folders of Chorus-typed docs mirrored 1:1 into Chorus via `--arg-file`. No CLI/validation. See `~/.codex/skills/spec-lite/SKILL.md`. |
 
 ### Getting Started
 
