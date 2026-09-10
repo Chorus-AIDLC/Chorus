@@ -40,13 +40,18 @@ jobs:
       - name: Run coordinated package-contract tests
         run: pnpm test:release-contract
 
-      - name: Run plugin shell tests (Bash 3.2-compat syntax smoke + spec-mode resolver)
+      - name: Run plugin shell tests (Bash 3.2-compat syntax smoke + spec-mode resolver + skill/harness string blacklist)
         # Note: the runner's bash is 5.x, so test-syntax.sh is a compatibility
         # smoke (it greps for Bash-4+ constructs), not execution on a real 3.2.
         run: |
           bash public/chorus-plugin/bin/test-syntax.sh
           bash public/chorus-plugin/bin/tests/test-spec-mode-resolution.sh
           bash public/chorus-plugin/bin/tests/test-resolver-drift.sh
+          bash public/chorus-plugin/bin/tests/test-skill-harness-fidelity.sh
+          # Negative cases for the guard above: proves it still FAILS on planted
+          # violations, including under a repo path containing a space (where an
+          # unquoted scope would silently scan nothing and report PASS).
+          bash public/chorus-plugin/bin/tests/test-skill-harness-fidelity-negative.sh
 
       - name: Upload coverage artifact
         if: always()

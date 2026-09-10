@@ -15,7 +15,7 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
 
 > **Tool namespace:** Chorus tools are exposed by the connected MCP server under a `chorus__` prefix on OpenClaw (e.g. `chorus__chorus_pm_create_proposal`). Bare names are used below for readability — prepend `chorus__` when invoking. See `/chorus` for the full rule.
 
-> **OpenClaw adaptations summarized (details inline below):** (1) elaboration is **self-answered as plain text** — no `AskUserQuestion`, no user interaction; (2) reviewers run **inline** after each submit — spawn a sub-agent with the OpenClaw `sessions_spawn` tool and tell it to run the `/proposal-reviewer` or `/task-reviewer` skill, with a read-only self-review fallback when `sessions_spawn` is unavailable; (3) sessions are **manual** if you dispatch sub-agents (no SubagentStart hook); (4) task execution is **sequential main-agent waves** — OpenClaw has no Agent Teams / `TeamCreate` primitive.
+> **OpenClaw adaptations summarized (details inline below):** (1) elaboration is **self-answered as plain text** — no `AskUserQuestion`, no user interaction; (2) reviewers run **inline** after each submit — spawn a sub-agent with the OpenClaw `sessions_spawn` tool and tell it to run the `/proposal-reviewer` or `/task-reviewer` skill, with a read-only self-review fallback when `sessions_spawn` is unavailable; (3) sessions are **manual** if you dispatch sub-agents (no SubagentStart hook); (4) task execution dispatches **one sub-agent per unblocked task via `sessions_spawn`** (whole wave in one message), falling back to **sequential main-agent waves** when `sessions_spawn` is unavailable or workers fail repeatedly — there is no team object to create first.
 
 ---
 
@@ -25,7 +25,7 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
 
 1. **Planning** -- create project, idea, self-elaboration, proposal with docs & tasks
 2. **Proposal Review** -- proposal-reviewer adversarial loop
-3. **Execution** -- sequential, dependency-ordered task execution by the main agent
+3. **Execution** -- dependency-ordered waves: one worker sub-agent per unblocked task, or sequential main-agent execution as fallback
 4. **Verification** -- task-reviewer adversarial loop + admin verify
 5. **Report** -- completion summary
 
@@ -42,7 +42,8 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
   Admin Approve --> Tasks materialize
        |
        v
-  Sequential wave execution (main agent: loop chorus_get_unblocked_tasks)
+  Wave execution (loop chorus_get_unblocked_tasks; one sessions_spawn worker
+                  per task, or sequential main-agent fallback)
        |  (implement task + task-reviewer per task)
        v
   Admin Verify each task --> unblock next
@@ -229,7 +230,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    })
    ```
 
-   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite` skill. Pick `$SLUG` (a **capability**). Ensure the durable `.chorus/specs/<slug>/spec.md` exists (local-only, no ids; copy from `.chorus/specs/TEMPLATE/spec.md`) and update it in place. Create this change's **dated folder** `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` with its **synced** Chorus-typed docs from `.chorus/specs/TEMPLATE/YYYY-MM-DD-change/` — `prd.md` (primary), optional `tech_design.md`… The `description` carries the `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` locator (step 2). Mirror **each** dated-folder `<type>.md` to its persistent Document byte-exact — first time `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/prd.md`, later edits via `chorus_pm_update_document` against the recorded `documentUuid` (`chorus-api.sh mcp-tool …` fallback when `chorus` not on `PATH`). **`spec.md` is never mirrored.** No `openspec/changes/` scaffold; no `tasks.md`. Then continue to step 3.
+   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite` skill. Pick `$SLUG` (a **capability**). Ensure the durable `.chorus/specs/<slug>/spec.md` exists (local-only, no ids; use the `spec-lite` skill's inline durable-spec template) and update it in place. Create this change's **dated folder** `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` with its **synced** Chorus-typed docs (shape = the `spec-lite` skill's inline dated-folder document template) — `prd.md` (primary), optional `tech_design.md`… The `description` carries the `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` locator (step 2). Mirror **each** dated-folder `<type>.md` to its persistent Document byte-exact — first time `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/prd.md`, later edits via `chorus_pm_update_document` against the recorded `documentUuid` (`chorus-api.sh mcp-tool …` fallback when `chorus` not on `PATH`). **`spec.md` is never mirrored.** No `openspec/changes/` scaffold; no `tasks.md`. Then continue to step 3.
 
 3. **Add task drafts incrementally** (use returned `draftUuid` for dependency chaining). `acceptanceCriteriaItems` is **required** on every draft — at least one non-blank criterion, or the call is rejected:
    ```
@@ -272,6 +273,20 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 ---
 
+### Reviewer contract (applies to every review gate below)
+
+Every gate in Phases 2, 4 and 4.5 follows the same three steps. They are written once here; the phases below only name their entity and their stage-specific actions.
+
+1. **Spawn and wait.** Spawn the reviewer as a read-only sub-agent, then wait for it: spawn it with `sessions_spawn` and wait by polling the `subagents` tool or via `sessions_yield` — do **not** detach. The verdict is the `VERDICT:` comment the reviewer posts, not the spawn result.
+2. **Read THIS round's VERDICT.** Call `chorus_get_comments` on the entity and find the `VERDICT:` comment posted **after your dispatch**, not an older round's. Do not advance the gate before you have read it.
+3. **No VERDICT for this round?** Check what the reviewer *did* post:
+   - **A reported round limit, or any other explicit refusal to review** — a deliberate escalation to a human. STOP: do not respawn, do not self-review, do not post a VERDICT of your own.
+   - **Nothing at all** — respawn ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you review the entity yourself as a read-only pass and POST the VERDICT, then proceed on what you posted rather than looping forever.
+
+**Absence is never a PASS**, and a round limit reached by someone else is never yours to clear.
+
+---
+
 ### Phase 2: Proposal Review Loop
 
 > **OpenClaw difference:** there is no PostToolUse hook injecting a "spawn the reviewer" reminder. Run the reviewer **inline**, right after `chorus_pm_submit_proposal`.
@@ -288,7 +303,7 @@ Then:
    ```
    chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
    ```
-   Look for the most recent comment containing `VERDICT:`.
+   Look for THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's.
 
 2. **Act on the VERDICT:**
 
@@ -322,15 +337,15 @@ Then:
           Proposal UUID: <uuid>"
    ```
 
-4. **No new VERDICT comment after a spawned reviewer returns?** It exhausted its turn budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep source verification. Fetch proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first 10 turns."* If still no VERDICT, fall back to reviewing manually and post the VERDICT yourself — the pipeline cannot loop forever on a silent reviewer.
+4. **No new VERDICT for this round?** Apply step 3 of the **Reviewer contract**, reviewing the proposal yourself if the reviewer stays silent.
 
 ---
 
-### Phase 3: Task Execution (Sequential Waves)
+### Phase 3: Task Execution (Waves)
 
 After proposal approval, tasks exist in `open` status. Execute them in dependency-ordered waves.
 
-> **OpenClaw difference:** OpenClaw has **no Agent Teams / `TeamCreate` primitive**. Run waves **sequentially as the main agent**: loop `chorus_get_unblocked_tasks`, implement each ready task yourself, verify it, then loop again for the next wave. Do NOT call `TeamCreate` — it does not exist on OpenClaw. (Under the Claude Code plugin, each wave can be dispatched in parallel via `TeamCreate`; that is a Claude-Code-only optimization that degrades to the sequential loop here.)
+> **OpenClaw difference:** there is no team or group object to create — parallelism comes from dispatching **one sub-agent per unblocked task** with OpenClaw's own `sessions_spawn` tool, issuing the whole wave in a single message. If your host does not expose `sessions_spawn`, or spawned workers fail repeatedly, run waves **sequentially as the main agent**: loop `chorus_get_unblocked_tasks`, implement each ready task yourself, verify it, then loop again for the next wave. The sequential loop below is written for that fallback and is always safe; see `/develop` §"Optional: sub-agent dispatch" for the parallel form (workers need the manual session instructions, since there is no SubagentStart hook).
 
 ```
 wave = 1
@@ -363,7 +378,7 @@ loop:
   wave += 1
 ```
 
-> **Optional sub-agent dispatch:** if your OpenClaw host supports generic worker sub-agents (not Agent Teams), you may hand one task to a sub-agent at a time. Because there is no SubagentStart hook, the worker prompt **must** include the manual session instructions explicitly — see `/develop` "Optional: sub-agent dispatch". The main agent still owns review + verification. This does not change the sequential, wave-by-wave structure above.
+> **Parallel form:** to run a wave in parallel instead of serially, dispatch one worker sub-agent per unblocked task with `sessions_spawn`, issuing the whole wave in a single message, then wait for the wave before verifying. Because there is no SubagentStart hook, each worker prompt **must** include the manual session instructions explicitly — see `/develop` "Optional: sub-agent dispatch". The main agent still owns review + verification, and the wave-by-wave dependency structure above is unchanged.
 
 ---
 
@@ -393,7 +408,7 @@ for the just-submitted task:
 
   # 3. Read task-reviewer VERDICT
   comments = chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
-  # Find the most recent comment containing "VERDICT:"
+  # Find THIS round's "VERDICT:" comment — the one posted after your dispatch, not an older round's
 
   # 4. Act on VERDICT — three possible outcomes:
   if VERDICT is "PASS":
@@ -429,7 +444,7 @@ ESCALATE: "Task '{title}' failed review after {maxRounds} rounds.
 
 Continue with remaining tasks -- do not halt the entire pipeline for one stuck task.
 
-**No new VERDICT comment after a spawned task-reviewer returns?** It exhausted its turn budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT within the first 12 turns."* If still no VERDICT, fall back to reviewing manually and post the VERDICT yourself — do not loop indefinitely.
+**No new VERDICT for this round?** Apply step 3 of the **Reviewer contract**, reviewing the task yourself if the reviewer stays silent.
 
 ---
 
@@ -450,7 +465,7 @@ ESCALATE: "Idea '{title}' failed code review after {maxCodeReviewRounds} rounds.
            Last BLOCKERs: <list>. Manual intervention needed. Idea UUID: <uuid>"
 ```
 
-**No VERDICT comment after the code-reviewer returns?** It exhausted its turn budget (larger than the task-reviewer's because it reviews the whole feature). Respawn ONCE with a concise-budget hint; if still silent, fall back to a manual read-only pass and post the VERDICT yourself.
+**No new VERDICT for this round?** Apply step 3 of the **Reviewer contract**, reviewing the idea's aggregate change yourself if the reviewer stays silent.
 
 > The gateway is **behavioral** like the other two reviewers: its verdict is advisory and does not change the Idea's stored status; the orchestrator honors it. It runs **before** the completion report so the report is never written while a FAIL is outstanding.
 

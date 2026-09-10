@@ -56,13 +56,13 @@ Max review rounds: ${MAX_ROUNDS} (0 = unlimited).
 
 ACTION REQUIRED: spawn the read-only \`chorus-task-reviewer\` subagent to perform an independent review before admin verification.
 
-In Kiro, hand the reviewer this task (auto-selected by its description; also invokable as /chorus-task-reviewer): \"Review task ${TASK_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the limit was reached — human decision needed. Otherwise, proceed with the review and post your VERDICT as a comment on the task.\"
+In Kiro, hand the reviewer this task (auto-selected by its description; also invokable as /chorus-task-reviewer): \"Review task ${TASK_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the round limit was reached and a human decision is needed, and post no VERDICT (this tells the main agent to stop rather than substitute its own verdict). Otherwise, proceed with the review and post your VERDICT as a comment on the task.\"
 
-The reviewer is read-only (tools: read + @chorus) and posts its VERDICT as a comment on the task. After it completes, read comments and act on the most recent \`VERDICT:\` line:
+The reviewer is read-only (tools: read + @chorus) and posts its VERDICT as a comment on the task. Wait for the \`subagent\` call to return, then read this round's \`VERDICT:\` comment with chorus_get_comments — on THIS task, posted after you dispatched the reviewer. Do not settle for an older VERDICT from a previous round:
 - VERDICT: PASS — all AC verified, no issues. Proceed to mark AC and call chorus_admin_verify_task.
 - VERDICT: PASS WITH NOTES — all AC verified, minor non-blocking notes. Still proceed to verify.
 - VERDICT: FAIL — BLOCKERs found. Do NOT verify. Reopen the task (chorus_admin_reopen_task) and fix the BLOCKERs.
 
-IMPORTANT: run the reviewer synchronously and wait for its VERDICT before proceeding."
+IMPORTANT: the \`subagent\` call's own return value is not the verdict — base the decision on the comment. Do NOT verify or reopen before you have read this round's VERDICT comment. If it is missing, check what the reviewer did post: a comment reporting the round limit was reached, or any other explicit refusal to review, is a deliberate escalation — STOP: do not respawn, do not self-review, do not post a VERDICT of your own; leave it pending the human's decision. If it posted nothing at all, respawn once and apply this same check again to what the retry posts — an explicit refusal still means STOP; only a second true silence lets you review the task yourself as a read-only pass and post the VERDICT. Absence is never a PASS."
 
 exit 0

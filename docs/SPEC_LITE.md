@@ -40,12 +40,33 @@ this after resolving, before branching. This logic lives in `bin/resolve-spec-mo
 It is the single, cumulative, human-readable "current truth" of the capability, **edited in place** by
 every change. It carries **minimal frontmatter only** (`slug`, `title`, `status`, `created`) — **no
 Chorus ids** — followed by plain prose: `## Intent`, `## Requirements` (plain prose with `- [ ]`
-acceptance points — no `SHALL`/scenario grammar), and `## Non-goals`. Copy
-`.chorus/specs/TEMPLATE/spec.md` to start.
+acceptance points — no `SHALL`/scenario grammar), and `## Non-goals`. Start from the template below.
 
 `spec.md` is **never synced to Chorus** and **never enters the mirror loop** — its git history is the
 whole record. There is **no `tasks.md`** (Chorus Tasks own execution state) and **no changelog
 section** (git history + the change docs' Document versions are the record).
+
+The `spec-lite` skill carries this same template inline — there is no template file to copy anywhere on
+disk:
+
+```markdown
+---
+slug: <kebab-case-capability>
+title: <Capability title>
+status: draft            # draft | active | done
+created: <YYYY-MM-DD>
+---
+
+## Intent
+<what this capability is for, in prose>
+
+## Requirements
+<prose, no SHALL/scenario grammar>
+- [ ] <acceptance point>
+
+## Non-goals
+- <explicitly out of scope>
+```
 
 ## Per-change dated folders — `<slug>/<YYYY-MM-DD>-<change-slug>/`
 
@@ -61,9 +82,24 @@ plain markdown named by **Chorus `Document.type`**:
 | `tech_design.md` | `tech_design` | optional — the "how" |
 | `adr.md` / `guide.md` / `spec.md` | `adr` / `guide` / `spec` | optional |
 
-Each dated-folder doc carries frontmatter with the **sync ids** — `proposalUuid`, `documentUuid` (the
-Document type is implied by the filename) — plus a `spec: ../spec.md` pointer back to the durable spec.
-Copy `.chorus/specs/TEMPLATE/YYYY-MM-DD-change/prd.md`.
+Each dated-folder doc carries frontmatter with a `title` plus the **sync ids** — `proposalUuid`,
+`documentUuid`. The document **type is implied by the filename** (`prd.md` → `prd`, `tech_design.md` →
+`tech_design`, …) and is deliberately **NOT** a frontmatter key: the type already comes from the table
+above, and a `type:` key would create a second, divergable source for the same fact. There is no
+back-pointer key to the durable spec either — the durable `spec.md` is the sibling `../spec.md` by
+construction. The `spec-lite` skill carries this same template inline; there is no template file to copy
+anywhere on disk:
+
+```markdown
+---
+title: <Document title as it appears in Chorus>
+proposalUuid: <uuid>      # written on first mirror
+documentUuid:             # empty until the draft materializes on approval
+---
+
+# <Document title>
+<body — this file's bytes are the source of truth for the Chorus Document>
+```
 
 > **Naming caution — two files named `spec.md`, different roles.** The **durable** `<slug>/spec.md` is
 > local only and carries no ids. A per-change `spec`-type doc, if you author one, lives at

@@ -154,7 +154,7 @@ chorus_submit_for_verify({
 })
 ```
 
-Submitting is not final verification. Spawn the required task-reviewer skill through `sessions_spawn` as described in `/develop`, wait for it, and read the newest `VERDICT:` Task comment. `PASS` and `PASS WITH NOTES` continue. On `FAIL`, do not verify or hand off: fix every unresolved BLOCKER, repeat AC self-check and submission, then run a fresh independent task review.
+Submitting is not final verification. Spawn the required task-reviewer skill through `sessions_spawn` as described in `/develop`, wait for it, and read THIS round's `VERDICT:` Task comment — the one posted after your dispatch, not an older round's. `PASS` and `PASS WITH NOTES` continue. On `FAIL`, do not verify or hand off: fix every unresolved BLOCKER, repeat AC self-check and submission, then run a fresh independent task review.
 
 ### Step 8: Permission-Aware Verification
 
@@ -177,7 +177,7 @@ Quick Tasks support sub-agent execution just like proposal-based tasks. **Sessio
 - **Main agent**: create quick tasks, work them yourself, or hand task UUIDs to sub-agents
 - **Sub-agents**: create your own session (`chorus_create_session`), checkin/checkout per task, pass `sessionUuid` to `chorus_update_task` / `chorus_report_work`, and close the session on exit — see `/develop` for the full manual protocol
 
-> OpenClaw has no Agent Teams / `TeamCreate` primitive; if you need to run several quick tasks, work them sequentially as the main agent (or dispatch generic sub-agents one at a time).
+> There is no team object to create: to run several quick tasks in parallel, dispatch one sub-agent per task with `sessions_spawn`, issuing them in a single message. If `sessions_spawn` is unavailable or workers fail repeatedly, work the tasks sequentially as the main agent.
 
 ---
 

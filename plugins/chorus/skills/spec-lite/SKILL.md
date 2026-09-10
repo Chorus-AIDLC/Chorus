@@ -4,6 +4,7 @@ description: Lightweight, Chorus-native local specs for Chorus PM workflows — 
 license: AGPL-3.0
 metadata:
   author: chorus
+  version: "0.17.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -31,12 +32,33 @@ This is the single, cumulative, human-readable "current truth" of the capability
 by every change, **never mirrored to Chorus, carries no Chorus ids**. Minimal frontmatter only
 (`slug`, `title`, `status: draft|active|done`, `created`), then plain prose — `## Intent`,
 `## Requirements` (prose + `- [ ]` acceptance points, no `SHALL`/scenario grammar), `## Non-goals`.
-Copy `.chorus/specs/TEMPLATE/spec.md` to start. Its git history is the whole record — no changelog
+Start from the inline **durable `spec.md` template** below. Its git history is the whole record — no changelog
 section, no Chorus round-trip. **This file NEVER enters the mirror loop.**
 
 `status` describes the **capability**, not a single change: `active` while any change is in flight,
 `done` when the current change delivers and none is open. A **new** change against a `done` capability
 reopens it to `active`, back to `done` on delivery.
+
+### Template — the durable `spec.md`
+
+```markdown
+---
+slug: <kebab-case-capability>
+title: <Capability title>
+status: draft            # draft | active | done
+created: <YYYY-MM-DD>
+---
+
+## Intent
+<what this capability is for, in prose>
+
+## Requirements
+<prose, no SHALL/scenario grammar>
+- [ ] <acceptance point>
+
+## Non-goals
+- <explicitly out of scope>
+```
 
 ## Per-change dated folders — `<slug>/<YYYY-MM-DD>-<change-slug>/`
 
@@ -52,7 +74,7 @@ folders sort by date. It holds the **Chorus-typed** docs for THAT change — one
 
 These files **ARE synced** — each maps to **one persistent Chorus Document** of its type. Their
 frontmatter carries the sync ids `proposalUuid` and `documentUuid` (the type is implied by the
-filename). Copy `.chorus/specs/TEMPLATE/YYYY-MM-DD-change/prd.md`. A different change to the same
+filename). Start from the inline **dated-folder document template** below. A different change to the same
 capability is a different dated folder. The **current change's** folder is edited and re-mirrored
 throughout its effort (until delivery); only **previously-delivered** dated folders are left frozen —
 you don't reach back and rewrite a past change.
@@ -61,11 +83,27 @@ you don't reach back and rewrite a past change.
 > NOT the same as a per-change `spec`-type doc, which would live at `<slug>/<date>-<slug>/spec.md`
 > (synced, carries ids). Prefer `prd.md` as the per-change primary doc to avoid the confusion.
 
+### Template — a dated-folder document
+
+The document **type is implied by the filename** (`prd.md` → `prd`, `tech_design.md` → `tech_design`, …),
+**NOT** a frontmatter key.
+
+```markdown
+---
+title: <Document title as it appears in Chorus>
+proposalUuid: <uuid>      # written on first mirror
+documentUuid:             # empty until the draft materializes on approval
+---
+
+# <Document title>
+<body — this file's bytes are the source of truth for the Chorus Document>
+```
+
 ## Flow (one change)
 
 1. Confirm mode = `lite` (else no-op).
 2. Create the dated folder `<slug>/<YYYY-MM-DD>-<change-slug>/` and write its **synced** change docs —
-   `prd.md` (required), `tech_design.md` etc. only if warranted (copy from the template).
+   `prd.md` (required), `tech_design.md` etc. only if warranted (use the **dated-folder document template** above).
 3. **Update `<slug>/spec.md` in place** to the new cumulative truth (Requirements, acceptance points,
    `status`) — local only, no sync.
 4. Create the proposal container with one literal locator line in `description` (own line, no trailing

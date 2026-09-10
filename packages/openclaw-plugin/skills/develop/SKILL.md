@@ -25,7 +25,7 @@ Developer Agents take Tasks created by PM Agents (via `/proposal`) and turn them
 claim --> in_progress --> report work --> self-check AC --> submit for verify --> reviewer --> Admin /review
 ```
 
-For multi-task execution, OpenClaw runs **sequential waves** (the main agent works tasks in dependency order) — see [Wave-Based Execution](#wave-based-execution-on-openclaw) below.
+For multi-task execution, dispatch **one sub-agent per unblocked task** with `sessions_spawn` (whole wave in one message), falling back to **sequential waves** (the main agent works tasks in dependency order) when `sessions_spawn` is unavailable or workers fail repeatedly — see [Wave-Based Execution](#wave-based-execution-on-openclaw) below.
 
 ---
 
@@ -252,12 +252,12 @@ Obtain an independent VERDICT before the task is verified:
    ```
    chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
    ```
-   Find the most recent comment containing `VERDICT:`:
+   Find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's:
    - **VERDICT: PASS** — All AC verified, no issues. Proceed to admin verification.
    - **VERDICT: PASS WITH NOTES** — All AC verified, minor notes. Proceed to admin verification (notes are non-blocking).
    - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit (Step 9).
 
-If you spawned a sub-agent and no new `VERDICT:` comment appears after it returns, it exhausted its turn budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT within the first 12 turns."* If the second attempt still produces no VERDICT, fall back to reviewing manually (Step 8.5 fallback) and post the VERDICT yourself.
+If no new `VERDICT:` comment appears after the reviewer returns, check what it *did* post. A comment reporting that the round limit was reached, or any other explicit refusal to review, is a deliberate escalation to a human: STOP — do not respawn, do not self-review, do not post a VERDICT of your own. If it posted nothing at all, respawn it ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you fall back to reviewing manually (Step 8.5 fallback) and post the VERDICT yourself. **Absence is never a PASS.**
 
 > **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — run the ship-time code-review gateway before declaring the Idea done. Inline (no hook on OpenClaw), same mechanism as Step 8.5: spawn a sub-agent via `sessions_spawn` whose `task` tells it to **invoke the `/code-reviewer` skill** against the idea (pass the `ideaUuid` + round number), and wait for it; fallback is a read-only self-review following the `/code-reviewer` procedure. It reviews the Idea's **aggregate** code change (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT:` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via the **quick-dev** workflow (`/quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it (do not reopen old tasks). Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Advisory/behavioral. Run it **before** any idea-completion report.
 
@@ -303,9 +303,9 @@ To keep a long-running session visible/active, send `chorus_session_heartbeat({ 
 
 ## Wave-Based Execution on OpenClaw
 
-> **OpenClaw difference:** OpenClaw has **no Agent Teams / `TeamCreate` primitive**. The Claude Code plugin can spawn a parallel team per wave; on OpenClaw you (the main agent) execute tasks **sequentially** in dependency order. This is slower than parallel teams but completes the same pipeline.
+> **OpenClaw difference:** there is no team or group object to create. Parallelism, where available, comes from dispatching **one sub-agent per unblocked task** with OpenClaw's own `sessions_spawn` tool, issuing the whole wave in a single message — see §"Optional: sub-agent dispatch" below, which also covers the manual session instructions workers need (no SubagentStart hook here). When `sessions_spawn` is unavailable or workers fail repeatedly, you (the main agent) execute tasks **sequentially** in dependency order. That is slower but completes the same pipeline.
 
-### Sequential wave loop
+### Sequential wave loop (fallback, always safe)
 
 ```
 loop:
@@ -334,11 +334,11 @@ loop:
 
 > **Critical:** `to_verify` does NOT resolve dependencies — only `done` or `closed` does. A task must be **verified to `done`** (by an Admin, or by you if you hold `task:admin`) before its dependents become unblocked. If you lack `task:admin`, submit each task for verify and ask the project's admin to verify between waves, then re-run `chorus_get_unblocked_tasks`.
 
-> **Claude-Code-only optimization (degrades to sequential here):** under the Claude Code plugin, each wave can be dispatched in parallel via `TeamCreate` + per-task sub-agents. OpenClaw has no such primitive, so the loop above runs serially. Do NOT attempt to call `TeamCreate` on OpenClaw — it does not exist.
+> **Parallel form:** to run a wave in parallel, dispatch one sub-agent per unblocked task in a single message (`sessions_spawn`) instead of the serial `for` loop above, then wait for the wave and verify. Everything else in the loop is unchanged.
 
 ### Optional: sub-agent dispatch
 
-If your OpenClaw host *does* support spawning worker sub-agents (not Agent Teams, just generic sub-agents), you may hand each a task. Because there is no SubagentStart hook, the worker prompt **must** include the manual session instructions explicitly:
+If your OpenClaw host *does* support spawning worker sub-agents (`sessions_spawn`), you may hand each a task — one per unblocked task, all dispatched in one message so the wave runs in parallel. Because there is no SubagentStart hook, the worker prompt **must** include the manual session instructions explicitly:
 
 ```
 Your Chorus task UUID: <task-uuid>

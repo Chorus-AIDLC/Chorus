@@ -59,19 +59,19 @@ const ACTIONS = {
     argument: "proposalUuid",
     label: "proposal-review",
     instruction: (target: string) =>
-      `Run the Chorus proposal reviewer for proposal ${target}: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits and returns the VERDICT inline; the approve/reject decision depends on it), then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
+      `Run the Chorus proposal reviewer for proposal ${target}: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits for the reviewer to finish), then read THIS round's "VERDICT:" comment on the proposal with chorus_get_comments and base the approve/reject decision on that comment, not on the call's return value. Then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
   },
   chorus_submit_for_verify: {
     argument: "taskUuid",
     label: "task-review",
     instruction: (target: string) =>
-      `Run the Chorus task reviewer for task ${target}: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits and returns the VERDICT inline; the verify/reopen decision depends on it), then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
+      `Run the Chorus task reviewer for task ${target}: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits for the reviewer to finish), then read THIS round's "VERDICT:" comment on the task with chorus_get_comments and base the verify/reopen decision on that comment, not on the call's return value. Then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
   },
   chorus_admin_verify_task: {
     argument: "taskUuid",
     label: "aggregate-review",
     instruction: (target: string) =>
-      `First verify whether task ${target} was the final task of an idea-rooted proposal. Only if it was the last task, run the aggregate Chorus code-review for that idea: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits and returns the VERDICT inline; the ship decision depends on it), then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
+      `First verify whether task ${target} was the final task of an idea-rooted proposal. Only if it was the last task, run the aggregate Chorus code-review for that idea: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits for the reviewer to finish), then read THIS round's "VERDICT:" comment on the idea with chorus_get_comments and base the ship decision on that comment, not on the call's return value. Then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
   },
 } as const;
 

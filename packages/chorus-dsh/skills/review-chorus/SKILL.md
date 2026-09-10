@@ -66,13 +66,13 @@ Key responsibilities:
 
 When reviewing proposals, tasks, or an Idea's final aggregate code change, get an independent VERDICT before approving/verifying/shipping. On dsh there is **no PostToolUse hook** to remind you — invoke the review yourself, inline.
 
-1. **Preferred — spawn a reviewer sub-agent (foreground).** Use the dsh `subagent` tool to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits and returns the result inline; the approve/verify decision depends on the verdict). Its task must tell it to call the `skill` tool with exactly `proposal-reviewer-chorus`, `task-reviewer-chorus`, or `code-reviewer-chorus`, then review the matching entity. The authoritative result is the newest Chorus `VERDICT:` comment. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out and don't need the verdict before your next step.
-2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find the most recent comment containing `VERDICT:`. There are exactly three possible outcomes:
+1. **Preferred — spawn a reviewer sub-agent (foreground).** Use the dsh `subagent` tool to spawn a sub-agent with **`run_in_background: false`** (foreground — the call waits for the reviewer to finish, and the verdict is the `VERDICT:` comment it posts rather than the call's return value; the approve/verify decision depends on the verdict). Its task must tell it to call the `skill` tool with exactly `proposal-reviewer-chorus`, `task-reviewer-chorus`, or `code-reviewer-chorus`, then review the matching entity. The authoritative result is this round's Chorus `VERDICT:` comment. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out and don't need the verdict before your next step.
+2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
    - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). For a **code-review gateway** FAIL, do not reopen the verified tasks — instead fix via the **quick-dev** workflow (`quick-dev-chorus`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Fix the specific BLOCKERs listed in the comment before resubmitting.
-3. **No new VERDICT comment?** The sub-agent exhausted its turn budget before posting. Respawn it ONCE with an explicit prompt like: *"Stay within your turn budget. Skip deep source verification — batch all MCP fetches up front, skim for obvious BLOCKERs only, and reserve your last few turns to post the VERDICT comment."* If the second attempt also fails to post, review manually (step 5).
-4. **Track rounds.** Count existing VERDICT comments before spawning. After 3 rounds of FAIL on the same item, stop the loop and escalate to human review.
+3. **No new VERDICT comment?** Check what the reviewer *did* post. A comment reporting that the round limit was reached, or any other explicit refusal to review, is a deliberate escalation to a human: STOP — do not respawn, do not self-review, do not post a VERDICT of your own. If it posted nothing at all, respawn it ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you review the item yourself as a read-only pass using the checklists below and POST the VERDICT — **absence is never a PASS**.
+4. **Track rounds.** Count existing VERDICT comments before spawning. After 3 rounds of FAIL on the same item, stop the loop and escalate to human review: post a comment saying the round limit was reached and a human decision is needed, and post no VERDICT. Nobody — including you on a later turn — may replace that escalation with a self-reviewed VERDICT.
 5. **Fallback — review it yourself (no `subagent` on the host).** If spawning is unavailable (disabled by policy, or the spawn fails), perform the review yourself as a **focused, read-only pass** using the quality checklists in the workflows below: read the entity, its comments, and the relevant documents/code, run read-only test/build commands where applicable, and do NOT modify anything. Then record your VERDICT via `chorus_add_comment` ending with a `VERDICT:` line (PASS / PASS WITH NOTES / FAIL), classifying every finding as BLOCKER or NOTE. The `proposal-reviewer-chorus`, `task-reviewer-chorus`, and `code-reviewer-chorus` skills are the authoritative checklists for this manual pass — read the relevant one and follow its procedure.
 
 ---
@@ -147,7 +147,7 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 #### A3.5: Independent Review
 
-Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `subagent` with `run_in_background: false` (foreground — wait for the verdict) and have it call the `skill` tool with `proposal-reviewer-chorus` and follow it, otherwise review yourself as a read-only pass and post the VERDICT. Read its VERDICT comment before proceeding.
+Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `subagent` with `run_in_background: false` (foreground — the call waits for the reviewer to finish) and have it call the `skill` tool with `proposal-reviewer-chorus` and follow it, otherwise review yourself as a read-only pass and post the VERDICT. Read THIS round's VERDICT comment on the proposal — posted after your dispatch, not an older round's — before proceeding.
 
 #### A4: Approve or Reject
 
@@ -212,7 +212,7 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 
 #### B2.5: Independent Review
 
-Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `subagent` with `run_in_background: false` (foreground — wait for the verdict) and have it call the `skill` tool with `task-reviewer-chorus` and follow it, otherwise review yourself as a read-only pass and post the VERDICT. After it completes, read its VERDICT:
+Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `subagent` with `run_in_background: false` (foreground — the call waits for the reviewer to finish) and have it call the `skill` tool with `task-reviewer-chorus` and follow it, otherwise review yourself as a read-only pass and post the VERDICT. After it completes, read THIS round's VERDICT on the task — posted after your dispatch, not an older round's:
 
 - **VERDICT: PASS** or **PASS WITH NOTES** → proceed to B3 (mark AC) and B4 (verify).
 - **VERDICT: FAIL** → skip to B4 and **reopen** the task. Do NOT mark AC as passed.
@@ -332,7 +332,7 @@ chorus_pm_update_document({ documentUuid: "<doc-uuid>", content: "Updated..." })
 - **Unblock the team** — Prioritize proposal reviews to keep PM and Developer work flowing
 - **Use delete sparingly** — Prefer closing over deleting; closing preserves history
 - **Document decisions** — Use comments to explain approval/rejection reasoning
-- **Verify between waves** — In sequential wave execution, verify tasks to `done` between waves to unblock downstream dependencies
+- **Verify between waves** — In wave-based execution, verify tasks to `done` between waves to unblock downstream dependencies
 
 ---
 

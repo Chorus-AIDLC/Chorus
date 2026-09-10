@@ -227,21 +227,21 @@ chorus_submit_for_verify({
 
 > `to_verify` does NOT unblock downstream tasks — only `done` (after admin verification) does.
 
-> **Review Agent:** After `chorus_submit_for_verify`, the Chorus plugin's PostToolUse hook injects context instructing you to spawn `chorus:task-reviewer` — an independent, read-only review agent. You MUST spawn it yourself (it is NOT auto-launched). **Run it in foreground** (do NOT set `run_in_background`) — wait for the VERDICT before proceeding. The reviewer posts a VERDICT comment on the task.
+> **Review Agent:** After `chorus_submit_for_verify`, the Chorus plugin's PostToolUse hook injects context instructing you to spawn `chorus:task-reviewer` — an independent, read-only review agent. You MUST spawn it yourself (it is NOT auto-launched). Wait for it to complete — in Claude Code, that means waiting for the sub-agent's completion notification; the launch result itself is never the verdict. The reviewer posts a VERDICT comment on the task.
 
-After the reviewer completes, read its VERDICT:
+After the reviewer completes, read **this round's** VERDICT:
 ```
 chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 ```
-Find the most recent comment containing `VERDICT:` and act on it:
+Find the `VERDICT:` comment posted **after you dispatched the reviewer** — not an older round's — and act on it. Do not advance the pipeline (verify or reopen) before you have read that comment:
 
 - **VERDICT: PASS** — All AC verified, no issues. Proceed to admin verification.
 - **VERDICT: PASS WITH NOTES** — All AC verified, minor notes. Proceed to admin verification (notes are non-blocking).
 - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit.
 
-If no new `VERDICT:` comment appears after the reviewer returns, it exhausted its `maxTurns` budget before posting. Respawn it ONCE with a concise-budget hint in the prompt: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT comment within the first 12 turns."* If the second attempt still produces no VERDICT, review manually using the checklist and proceed.
+If no new `VERDICT:` comment appears after the reviewer returns, check what it *did* post. A comment reporting that the round limit was reached, or any other explicit refusal to review, is a deliberate escalation to a human: STOP — do not respawn, do not self-review, do not post a VERDICT of your own. If it posted nothing at all, respawn it ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you review the task yourself as a read-only pass using the checklist and POST the VERDICT comment. **Absence is never a PASS.**
 
-> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the PostToolUse hook injects a reminder to spawn `chorus:code-reviewer` (gated by `enableCodeReviewer`, default on). Spawn it yourself in **foreground**, passing the `ideaUuid` + round number; it reviews the Idea's **aggregate** code change across all its tasks (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via `/chorus:quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it — do NOT reopen the verified tasks). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates, bounded by `maxCodeReviewRounds`. Advisory/behavioral, like the other reviewers. Run it **before** any idea-completion report.
+> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the PostToolUse hook injects a reminder to spawn `chorus:code-reviewer` (gated by `enableCodeReviewer`, default on). Spawn it yourself and wait for its completion notification, passing the `ideaUuid` + round number; then read THIS round's `VERDICT` comment on the idea before deciding. It reviews the Idea's **aggregate** code change across all its tasks (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via `/chorus:quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it — do NOT reopen the verified tasks). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates, bounded by `maxCodeReviewRounds`. Advisory/behavioral, like the other reviewers. Run it **before** any idea-completion report.
 
 ### Step 9: Handle Review Feedback
 
@@ -297,9 +297,8 @@ When using Claude Code's Agent Teams to run multiple sub-agents in parallel, Cho
 chorus_checkin()
 chorus_list_tasks({ projectUuid: "<project-uuid>" })
 
-# 2. Create Claude Code team and spawn sub-agents
-TeamCreate({ team_name: "feature-x" })
-
+# 2. Dispatch one sub-agent per unblocked task, issuing the whole wave in a
+#    SINGLE message so they run in parallel. There is no team object to create.
 # Pass only task UUIDs — plugin auto-injects session workflow
 Task({
   name: "frontend-worker",
@@ -310,6 +309,8 @@ Task({
 **What the Team Lead prompt needs:**
 - Task UUID(s)
 - NO session UUID, NO workflow boilerplate — plugin auto-injects everything
+
+> **Fallback:** if sub-agent dispatch is unavailable (no sub-agent primitive, permission denied) or sub-agents fail repeatedly, execute the wave's tasks sequentially as the main agent following Steps 1-9 above. Slower, same pipeline.
 
 ### Sub-Agent Workflow
 

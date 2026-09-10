@@ -461,7 +461,7 @@ Any drift is a **BLOCKER → `VERDICT: FAIL` / reject** — **unless** it is tra
 
 ### Spawn Mechanism Is Harness-Specific
 
-How you spawn the read-only sub-agent depends on your agent harness — give it the reviewer skill plus the target UUID and instruct it to post a single VERDICT comment. Concrete examples:
+How you spawn the read-only sub-agent depends on your agent harness — give it the reviewer skill plus the target UUID and instruct it to post a single VERDICT comment. Then wait for it using your harness's own waiting mechanism, and read THIS round's `VERDICT:` comment for the entity under review with `chorus_get_comments` — the comment posted after your dispatch, not an older round's. Do not advance the pipeline before you have read that comment. Concrete examples:
 
 - **Claude Code** — use the Task / Agent tool to launch a sub-agent that loads `task-reviewer-chorus` (or `proposal-reviewer-chorus` / `code-reviewer-chorus`) and pass the `taskUuid` / `proposalUuid` / `ideaUuid`.
 - **Codex** — use `spawn_agent` with the reviewer skill and the target UUID.

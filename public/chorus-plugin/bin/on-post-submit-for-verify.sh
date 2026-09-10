@@ -48,15 +48,15 @@ Max review rounds: ${MAX_ROUNDS} (0 = unlimited).
 ACTION REQUIRED: Spawn the \`chorus:task-reviewer\` agent to perform an independent review before admin verification.
 
 Example:
-  Agent({ subagent_type: \"chorus:task-reviewer\", prompt: \"Review task ${TASK_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the limit was reached — human decision needed. Otherwise, proceed with review. Post your VERDICT as a comment on the task.\" })
+  Agent({ subagent_type: \"chorus:task-reviewer\", prompt: \"Review task ${TASK_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the round limit was reached and a human decision is needed, and post no VERDICT (this tells the main agent to stop rather than substitute its own verdict). Otherwise, proceed with review. Post your VERDICT as a comment on the task.\" })
 
 The reviewer is read-only and will post its VERDICT as a comment on the task.
 
-After the reviewer completes, read comments and find the most recent \`VERDICT:\` line:
+Wait for the reviewer to complete (its completion notification), then read this round's \`VERDICT:\` comment with chorus_get_comments — on THIS task, posted after you dispatched the reviewer. Do not settle for an older VERDICT from a previous round:
 - **VERDICT: PASS** — All AC verified, no issues. Proceed to mark AC and call chorus_admin_verify_task.
 - **VERDICT: PASS WITH NOTES** — All AC verified, minor non-blocking notes. Still proceed to verify.
 - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Reopen the task (chorus_admin_reopen_task) and fix the BLOCKERs.
 
-IMPORTANT: Run the reviewer synchronously (do NOT set run_in_background). Wait for its VERDICT before proceeding."
+IMPORTANT: the launch result is not the verdict — these reviewer subagent types report an async launch regardless of the flag you pass. Do NOT verify or reopen before you have read this round's VERDICT comment. If it is missing, check what the reviewer did post: a comment reporting the round limit was reached, or any other explicit refusal to review, is a deliberate escalation — STOP: do not respawn, do not self-review, do not post a VERDICT of your own; leave it pending the human's decision. If it posted nothing at all, respawn once and apply this same check again to what the retry posts — an explicit refusal still means STOP; only a second true silence lets you review the task yourself as a read-only pass and post the VERDICT. Absence is never a PASS."
 
 "$API" hook-output "" "$CONTEXT" "PostToolUse"
