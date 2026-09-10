@@ -391,6 +391,11 @@ export function resolveMcpCredentials(flags = {}, deps = {}) {
  *   ("claude-code" | "codex" | "kiro" | "pi" | "offline" | …). The launcher maps this
  *   (or an explicit --type) to a binary.
  * @property {string} label                 Diagnostic display label (name/uuid), never the key.
+ * @property {unknown} [model]              RAW per-agent `model` (entry value, else the file's
+ *   top-level default). Raw on purpose: the launcher validates it with the SAME structural
+ *   helper the daemon uses, so a present-but-invalid value fails visibly instead of being
+ *   silently dropped here.
+ * @property {unknown} [thinking]           RAW per-agent `thinking`, same contract as `model`.
  */
 
 /**
@@ -448,6 +453,12 @@ export function resolveLaunchAgent(flags = {}, deps = {}) {
     agentUuid: nonEmpty(entry.agentUuid),
     agentName: nonEmpty(entry.agentName) ?? nonEmpty(entry.name),
     agentType: nonEmpty(entry.agentType),
+    // Per-agent model / thinking: the entry's value, else the file's top-level default —
+    // the same precedence the daemon applies. String-coerced here (via nonEmpty where it is
+    // a string) but kept visible even when it is NOT a string, so the launcher's shared
+    // structural check can reject it instead of this selector silently dropping it.
+    model: entry.model === undefined ? file?.model : entry.model,
+    thinking: entry.thinking === undefined ? file?.thinking : entry.thinking,
   }));
   const labels = resolved.map((a) => a.label).join(", ");
 
@@ -480,5 +491,10 @@ export function resolveLaunchAgent(flags = {}, deps = {}) {
     agentName: selected.agentName,
     agentType: selected.agentType,
     label: selected.label,
+    // RAW (entry value, else the file's top-level default) — the launcher runs the
+    // shared structural check on them, so a malformed value fails visibly instead of
+    // being dropped here.
+    model: selected.model,
+    thinking: selected.thinking,
   };
 }

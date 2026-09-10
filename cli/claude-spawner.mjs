@@ -192,10 +192,17 @@ export const CHORUS_MCP_SERVER_NAME = "chorus";
 
 /**
  * Build the argv for a headless run. Prompt is NEVER here — it goes over stdin.
- * @param {{ sessionId: string, isNew: boolean, mcpConfigPath?: string, permissionMode?: PermissionMode }} o
+ *
+ * `model` / `thinking` (add-daemon-per-agent-model-thinking) ride the backend's OWN
+ * flags — `--model <id>` and `--effort <level>` — forwarded VERBATIM: Claude Code owns
+ * the accepted vocabulary (model aliases / full ids / effort levels), so the daemon
+ * never validates a value. Both are optional; when absent the argv is byte-identical
+ * to the pre-feature shape. An explicit launch choice (`--effort`) is what Claude Code
+ * honours in a headless `-p` run, where a non-interactive `/effort` reports *Not applied*.
+ * @param {{ sessionId: string, isNew: boolean, mcpConfigPath?: string, permissionMode?: PermissionMode, model?: string, thinking?: string }} o
  * @returns {string[]}
  */
-export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "chorus" }) {
+export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "chorus", model, thinking }) {
   const args = ["-p", "--output-format", "stream-json", "--verbose"];
   if (isNew) args.push("--session-id", sessionId);
   else args.push("--resume", sessionId);
@@ -206,6 +213,8 @@ export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "c
     // Default: allow only this daemon's Chorus MCP tools through, nothing else.
     args.push("--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`);
   }
+  if (model) args.push("--model", model);
+  if (thinking) args.push("--effort", thinking);
   return args;
 }
 
@@ -285,6 +294,10 @@ export class ClaudeSpawner {
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.permissionMode = opts.permissionMode ?? "chorus";
     this.creds = opts.creds ?? null;
+    // Per-agent model / thinking (add-daemon-per-agent-model-thinking) — mapped to
+    // `--model` / `--effort` in buildArgs. null ⇒ the backend's own default resolution.
+    this.model = opts.model ?? null;
+    this.thinking = opts.thinking ?? null;
     // POSIX spawns `detached: true` (process-group leader) so the interrupt path
     // can group-kill the tree; Windows does not. Injectable so a POSIX test host
     // can exercise the Windows branch and vice versa.
@@ -337,7 +350,14 @@ export class ClaudeSpawner {
       return { sessionId: id, backendSessionId: null, exitCode: null, isNew };
     }
 
-    const args = buildArgs({ sessionId: id, isNew, mcpConfigPath, permissionMode: this.permissionMode });
+    const args = buildArgs({
+      sessionId: id,
+      isNew,
+      mcpConfigPath,
+      permissionMode: this.permissionMode,
+      model: this.model,
+      thinking: this.thinking,
+    });
     // On Windows, a .cmd/.bat shim must be run via cmd.exe /c (CreateProcess
     // can't exec a script directly). resolveSpawnCommand keeps shell:false and
     // passes argv as an array — no shell injection surface either way.

@@ -78,6 +78,33 @@ describe("buildArgs", () => {
     expect(args).toContain("--dangerously-skip-permissions");
     expect(args).not.toContain("--allowedTools");
   });
+
+  it("appends --model / --effort for a configured agent, values verbatim", () => {
+    const args = buildArgs({ sessionId: "s", isNew: true, model: "opus", thinking: "high" });
+    expect(args.slice(-4)).toEqual(["--model", "opus", "--effort", "high"]);
+  });
+
+  it("adds exactly one flag when only one field is configured", () => {
+    const modelOnly = buildArgs({ sessionId: "s", isNew: true, model: "opus" });
+    expect(modelOnly.slice(-2)).toEqual(["--model", "opus"]);
+    expect(modelOnly).not.toContain("--effort");
+    const effortOnly = buildArgs({ sessionId: "s", isNew: true, thinking: "low" });
+    expect(effortOnly.slice(-2)).toEqual(["--effort", "low"]);
+    expect(effortOnly).not.toContain("--model");
+  });
+
+  it("forwards an unrecognized value without validation (Claude Code owns the vocabulary)", () => {
+    const args = buildArgs({ sessionId: "s", isNew: false, model: "vendor/some-next-model", thinking: "turbo" });
+    expect(args[args.indexOf("--model") + 1]).toBe("vendor/some-next-model");
+    expect(args[args.indexOf("--effort") + 1]).toBe("turbo");
+  });
+
+  it("contributes nothing when both are unset (pre-feature argv, byte-identical)", () => {
+    const args = buildArgs({ sessionId: "s", isNew: true });
+    expect(args).not.toContain("--model");
+    expect(args).not.toContain("--effort");
+    expect(args).toEqual(buildArgs({ sessionId: "s", isNew: true, model: undefined, thinking: undefined }));
+  });
 });
 
 describe("isValidSessionId", () => {
@@ -248,6 +275,39 @@ describe("ClaudeSpawner.wake", () => {
     // prompt arrived via stdin
     expect(child.stdin.writes.join("")).toBe(longPrompt);
     expect(child.stdin.end).toHaveBeenCalled();
+  });
+
+  it("spawns with the spawner's configured --model / --effort (per-agent values reach the wake argv)", async () => {
+    const child = makeFakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const spawner = new ClaudeSpawner({
+      claudePath: "/usr/bin/claude",
+      spawnImpl,
+      logger: silent,
+      model: "opus",
+      thinking: "high",
+    });
+
+    const p = spawner.wake({ prompt: "hi", sessionId: SID, isNew: true });
+    child.emit("close", 0);
+    await p;
+
+    const args = spawnImpl.mock.calls[0][1];
+    expect(args.slice(-4)).toEqual(["--model", "opus", "--effort", "high"]);
+  });
+
+  it("spawns with no model/effort flag when the spawner has none configured", async () => {
+    const child = makeFakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const spawner = new ClaudeSpawner({ claudePath: "/usr/bin/claude", spawnImpl, logger: silent });
+
+    const p = spawner.wake({ prompt: "hi", sessionId: SID, isNew: true });
+    child.emit("close", 0);
+    await p;
+
+    const args = spawnImpl.mock.calls[0][1];
+    expect(args).not.toContain("--model");
+    expect(args).not.toContain("--effort");
   });
 
   it("exports CHORUS_AGENT_PROFILE=<agentUuid> into the woken child env (identity, uuid preferred, never argv)", async () => {

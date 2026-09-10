@@ -55,11 +55,19 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  * placed LAST so pi's arg parser can never mistake a following token for a message
  * positional (its `-p` handler slurps the next bare, non-flag arg as a message).
  *
- * @param {{ sessionId: string }} o
+ * @param {{ sessionId: string, model?: string, thinking?: string }} o
  * @returns {string[]}
  */
-export function buildPiArgs({ sessionId }) {
-  return ["--mode", "json", "--session-id", sessionId, "-p"];
+export function buildPiArgs({ sessionId, model, thinking }) {
+  const args = ["--mode", "json", "--session-id", sessionId];
+  // Per-agent model / thinking (add-daemon-per-agent-model-thinking) — pi's OWN flags,
+  // forwarded VERBATIM (`--model` accepts provider/id patterns; `--thinking` accepts
+  // off|minimal|low|medium|high|xhigh|max). Absent ⇒ this block contributes nothing.
+  if (model) args.push("--model", model);
+  if (thinking) args.push("--thinking", thinking);
+  // `-p` stays LAST (see above): the mapped flags must precede it, never follow it.
+  args.push("-p");
+  return args;
 }
 
 /**
@@ -149,6 +157,10 @@ export class PiSpawner {
     // args — pi has no permission surface, so no sandbox / skip-permissions flag.
     this.permissionMode = opts.permissionMode ?? "chorus";
     this.creds = opts.creds ?? null;
+    // Per-agent model / thinking (add-daemon-per-agent-model-thinking) — mapped to
+    // `--model` / `--thinking` in buildPiArgs. null ⇒ pi's own default resolution.
+    this.model = opts.model ?? null;
+    this.thinking = opts.thinking ?? null;
     this.platform = opts.platform ?? process.platform;
     this.resolvePiPathFn = opts.resolvePiPathFn ?? resolvePiPath;
   }
@@ -182,7 +194,7 @@ export class PiSpawner {
       return { sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag };
     }
 
-    const args = buildPiArgs({ sessionId: anchor });
+    const args = buildPiArgs({ sessionId: anchor, model: this.model, thinking: this.thinking });
     const { command, argv } = resolveSpawnCommand(piPath, args, this.platform);
 
     // POSIX: detached process group so the interrupt path can group-kill the tree

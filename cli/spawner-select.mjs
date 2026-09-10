@@ -55,11 +55,17 @@ export class OfflineSpawner {
  * Construct the spawner backend for `agentType`.
  * @param {string} agentType  "claude-code" | "codex" | "kiro" | "dsh" | "pi" | "offline"
  *   (already validated upstream). "offline" → OfflineSpawner (fail-closed no-op).
- * @param {{ logger?: any, permissionMode?: "chorus"|"yolo", creds?: { url: string, apiKey: string } }} [opts]
+ * @param {{ logger?: any, permissionMode?: "chorus"|"yolo", creds?: { url: string, apiKey: string },
+ *           model?: string, thinking?: string }} [opts]
+ *   `model` / `thinking` are the agent's resolved per-agent values
+ *   (add-daemon-per-agent-model-thinking). They are forwarded to every spawner;
+ *   the three backends with verified parameters map them onto their own flags, and
+ *   kiro / dsh / offline simply ignore them (the daemon warns separately) — passing
+ *   them can never make an unsupported backend throw.
  * @returns {import("./codex-spawner.mjs").Spawner}
  */
 export function selectSpawner(agentType, opts = {}) {
-  const { logger, permissionMode, creds } = opts;
+  const { logger, permissionMode, creds, model, thinking } = opts;
   if (agentType === "offline") {
     // Fail-closed: an offline agent has no local backend. Return the no-op spawner
     // explicitly so we NEVER fall through to the claude-code default below and wake
@@ -67,15 +73,17 @@ export function selectSpawner(agentType, opts = {}) {
     return new OfflineSpawner({ logger });
   }
   if (agentType === "codex") {
-    return new CodexSpawner({ logger, permissionMode, creds });
+    return new CodexSpawner({ logger, permissionMode, creds, model, thinking });
   }
   if (agentType === "kiro") {
-    return new KiroSpawner({ logger, permissionMode, creds });
+    return new KiroSpawner({ logger, permissionMode, creds, model, thinking });
   }
   if (agentType === "dsh") {
     return new DshSpawner({
       logger,
       creds,
+      model,
+      thinking,
       bundleVersion: opts.bundleVersion,
       prepareManagedConfigFn: opts.prepareManagedConfigFn,
     });
@@ -83,7 +91,7 @@ export function selectSpawner(agentType, opts = {}) {
   if (agentType === "pi") {
     // pi is a first-class wakeable backend — an explicit branch so it NEVER falls
     // through to the claude-code default below (nor is treated as offline).
-    return new PiSpawner({ logger, permissionMode, creds });
+    return new PiSpawner({ logger, permissionMode, creds, model, thinking });
   }
-  return new ClaudeSpawner({ logger, permissionMode, creds });
+  return new ClaudeSpawner({ logger, permissionMode, creds, model, thinking });
 }

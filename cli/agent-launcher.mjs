@@ -18,6 +18,7 @@ import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
 import { resolveLaunchAgent } from "./credentials.mjs";
+import { optionalAgentString, supportsModelFields } from "./daemon-config.mjs";
 
 /**
  * Launch agent-type → executable base name. Launch is a SUPERSET of daemon wake:
@@ -222,6 +223,52 @@ export function buildChildEnv(agent, baseEnv = process.env) {
   return childEnv;
 }
 
+/**
+ * Map the per-agent `model` / `thinking` fields onto the SELECTED backend's own flags
+ * (add-daemon-per-agent-model-thinking) — the foreground counterpart of the daemon
+ * spawners' argv builders, so one `daemon.json` entry behaves identically in a terminal
+ * and under the daemon. Values are forwarded VERBATIM (each harness owns its vocabulary:
+ * model aliases / ids, effort or thinking levels, codex's catalog-driven levels).
+ *
+ * A backend without a verified parameter maps to NO argument (the caller reports the
+ * omission rather than failing).
+ *
+ * @param {string} agentType  "claude-code" | "codex" | "pi" | others
+ * @param {{ model?: string, thinking?: string }} [fields]
+ * @returns {string[]} the flags to place BEFORE the passthrough arguments
+ */
+export function modelThinkingArgsFor(agentType, { model, thinking } = {}) {
+  const args = [];
+  if (agentType === "claude-code") {
+    if (model) args.push("--model", model);
+    if (thinking) args.push("--effort", thinking);
+  } else if (agentType === "pi") {
+    if (model) args.push("--model", model);
+    if (thinking) args.push("--thinking", thinking);
+  } else if (agentType === "codex") {
+    if (model) args.push("-m", model);
+    if (thinking) args.push("-c", `model_reasoning_effort=${thinking}`);
+  }
+  return args;
+}
+
+/** Flag tokens that mean "the user already chose a model on the command line". */
+const MODEL_FLAG_TOKENS = ["--model", "-m"];
+/** Flag tokens that mean "the user already chose a thinking / reasoning level". */
+const THINKING_FLAG_TOKENS = ["--effort", "--thinking"];
+/** codex expresses the level as a `-c key=value` pair rather than a flag + value. */
+const THINKING_TOKEN_PREFIXES = ["model_reasoning_effort="];
+
+/**
+ * Whether the verbatim passthrough already sets one of these knobs, so the launcher
+ * must NOT also inject its configured value (an explicit user argument always wins).
+ * @param {string[]} passthrough @param {string[]} tokens @param {string[]} [prefixes]
+ * @returns {boolean}
+ */
+function passthroughSets(passthrough, tokens, prefixes = []) {
+  return passthrough.some((a) => tokens.includes(a) || prefixes.some((p) => a.startsWith(p)));
+}
+
 /** Usage text for `chorus agents run`. */
 export function runHelpText(version = "") {
   const v = version ? ` v${version}` : "";
@@ -244,6 +291,10 @@ FLAGS
 Notes
   • Agents added as opencode / openclaw / dsh are stored as "offline"; pass
     --type explicitly to launch them.
+  • The agent's configured 'model' / 'thinking' (from daemon.json, entry value or the
+    file's top-level default) are applied as this backend's own flags — claude-code:
+    --model/--effort, pi: --model/--thinking, codex: -m/-c model_reasoning_effort=.
+    A flag you pass after \`--\` wins over the configured value.
   • The API key is injected into the launched process only — never printed.
 `;
 }
@@ -305,12 +356,52 @@ export async function runAgentLaunch(argv = [], opts = {}) {
     return 1;
   }
 
-  // 4. Build the child env and the spawn command.
-  const childEnv = buildChildEnv(agent, env);
-  const { command, argv: spawnArgv } = resolveSpawnCommand(binPath, parsed.passthrough, platform, env);
+  // 4. Resolve the per-agent model / thinking with the SAME structural validation as the
+  // daemon (a present-but-invalid value is an error, never silently dropped) and map them
+  // to this backend's flags. A user-supplied flag in the passthrough suppresses the
+  // injected one for that knob, so an explicit argument always wins.
+  let model;
+  let thinking;
+  try {
+    model = optionalAgentString(agent.model, `Agent ${agent.label}`, "model");
+    thinking = optionalAgentString(agent.thinking, `Agent ${agent.label}`, "thinking");
+  } catch (e) {
+    err.write(`error: ${e.message}\n`);
+    return 1;
+  }
+  const mappedArgs = modelThinkingArgsFor(typeRes.type, {
+    model: passthroughSets(parsed.passthrough, MODEL_FLAG_TOKENS) ? undefined : model,
+    thinking: passthroughSets(parsed.passthrough, THINKING_FLAG_TOKENS, THINKING_TOKEN_PREFIXES)
+      ? undefined
+      : thinking,
+  });
 
-  // Diagnostic — agent name/uuid + binary ONLY. Never the key or url userinfo.
-  out.write(`Launching ${agent.label} (${agent.agentUuid ?? "no uuid"}) → ${typeRes.binary}\n`);
+  // 5. Build the child env and the spawn command.
+  const childEnv = buildChildEnv(agent, env);
+  const { command, argv: spawnArgv } = resolveSpawnCommand(
+    binPath,
+    [...mappedArgs, ...parsed.passthrough],
+    platform,
+    env,
+  );
+
+  // Diagnostic — agent name/uuid + binary + the resolved model/thinking ONLY. Never the key.
+  const resolvedFields = [model ? `model=${model}` : null, thinking ? `thinking=${thinking}` : null]
+    .filter(Boolean)
+    .join(", ");
+  out.write(
+    `Launching ${agent.label} (${agent.agentUuid ?? "no uuid"}) → ${typeRes.binary}` +
+      `${resolvedFields ? ` [${resolvedFields}]` : ""}\n`,
+  );
+  // A backend without a verified model/thinking parameter cannot receive them — say so
+  // rather than letting the operator believe the values took effect.
+  if ((model || thinking) && !supportsModelFields(typeRes.type)) {
+    const what = [model ? "model" : null, thinking ? "thinking" : null].filter(Boolean).join(" + ");
+    err.write(
+      `note: ${typeRes.type} has no verified model/thinking parameter — ${what} NOT applied ` +
+        "(supported: claude-code, pi, codex).\n",
+    );
+  }
 
   return new Promise((resolve) => {
     let child;

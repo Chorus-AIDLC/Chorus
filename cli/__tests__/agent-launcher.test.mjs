@@ -13,9 +13,13 @@ import {
   resolveSpawnCommand,
   buildChildEnv,
   runAgentLaunch,
+  modelThinkingArgsFor,
   TYPE_TO_BINARY,
 } from "../agent-launcher.mjs";
 import { resolveLaunchAgent } from "../credentials.mjs";
+import { buildArgs as buildClaudeArgs } from "../claude-spawner.mjs";
+import { buildPiArgs } from "../pi-spawner.mjs";
+import { buildCodexArgs } from "../codex-spawner.mjs";
 
 const LOGIN_PATH = "/home/u/.chorus/daemon.json";
 const SECRET = "cho_SUPERSECRET_KEY_should_never_print";
@@ -346,5 +350,107 @@ describe("runAgentLaunch", () => {
     t = opts({ agents: [{ agentUuid: "x", agentName: "oc", agentType: "offline", url: "u", apiKey: SECRET }] });
     await runAgentLaunch(["--name", "oc"], t.o);
     expect(t.io.all()).not.toContain(SECRET);
+  });
+});
+
+describe("runAgentLaunch — per-agent model / thinking (foreground parity)", () => {
+  const DEV = { ...AGENT, model: "opus", thinking: "high" };
+
+  it("applies the agent's own values ahead of the verbatim passthrough (claude-code)", async () => {
+    const { calls, o } = opts({ agents: [DEV] });
+    const code = await runAgentLaunch(["--name", "work", "--", "--resume", "abc"], o);
+    expect(code).toBe(0);
+    expect(calls[0].argv).toEqual(["--model", "opus", "--effort", "high", "--resume", "abc"]);
+  });
+
+  it("maps to pi's own flags and codex's -m / -c pair", async () => {
+    const pi = opts({ agents: [{ ...DEV, agentType: "pi" }] });
+    await runAgentLaunch(["--name", "work"], pi.o);
+    expect(pi.calls[0].command).toBe("/usr/bin/pi");
+    expect(pi.calls[0].argv).toEqual(["--model", "opus", "--thinking", "high"]);
+
+    const codex = opts({ agents: [{ ...DEV, agentType: "codex" }] });
+    await runAgentLaunch(["--name", "work"], codex.o);
+    expect(codex.calls[0].argv).toEqual(["-m", "opus", "-c", "model_reasoning_effort=high"]);
+  });
+
+  it("inherits the file's top-level default when the entry omits a field", async () => {
+    const { calls, o } = opts({ agents: [AGENT] });
+    const code = await runAgentLaunch(["--name", "work"], {
+      ...o,
+      readJson: () => ({ model: "sonnet", thinking: "medium", agents: [AGENT] }),
+    });
+    expect(code).toBe(0);
+    expect(calls[0].argv).toEqual(["--model", "sonnet", "--effort", "medium"]);
+  });
+
+  it("does NOT inject a knob the passthrough already sets (explicit argument wins)", async () => {
+    const { calls, o } = opts({ agents: [DEV] });
+    await runAgentLaunch(["--name", "work", "--", "--model", "sonnet"], o);
+    expect(calls[0].argv).toEqual(["--effort", "high", "--model", "sonnet"]);
+  });
+
+  it("suppresses the thinking knob for codex when the passthrough carries the key", async () => {
+    const { calls, o } = opts({ agents: [{ ...DEV, agentType: "codex" }] });
+    await runAgentLaunch(["--name", "work", "--", "-c", "model_reasoning_effort=low"], o);
+    expect(calls[0].argv).toEqual(["-m", "opus", "-c", "model_reasoning_effort=low"]);
+  });
+
+  it("adds nothing when the agent configures neither field", async () => {
+    const { calls, o } = opts();
+    await runAgentLaunch(["--name", "work"], o);
+    expect(calls[0].argv).toEqual([]);
+  });
+
+  it("prints the resolved values in its diagnostics, never the key", async () => {
+    const { io, o } = opts({ agents: [DEV] });
+    await runAgentLaunch(["--name", "work"], o);
+    expect(io.text()).toContain("model=opus");
+    expect(io.text()).toContain("thinking=high");
+    expect(io.all()).not.toContain(SECRET);
+  });
+
+  it("reports the omission (and adds no flag) for a backend without the parameter", async () => {
+    const { calls, io, o } = opts({ agents: [{ ...DEV, agentType: "dsh" }] });
+    const code = await runAgentLaunch(["--name", "work"], o);
+    expect(code).toBe(0);
+    expect(calls[0].argv).toEqual([]);
+    expect(io.errText()).toContain("no verified model/thinking parameter");
+    expect(io.errText()).toContain("model + thinking");
+  });
+
+  it("fails visibly (exit 1, no spawn) on a present-but-invalid value", async () => {
+    const { calls, io, o } = opts({ agents: [{ ...AGENT, model: "" }] });
+    const code = await runAgentLaunch(["--name", "work"], o);
+    expect(code).toBe(1);
+    expect(calls).toHaveLength(0);
+    expect(io.errText()).toMatch(/invalid model/);
+  });
+});
+
+describe("per-agent model/thinking — the launcher and the daemon spawners agree", () => {
+  it("emits the identical flag fragment each spawner's argv builder uses", () => {
+    const fields = { model: "vendor/model-x", thinking: "high" };
+
+    const claudeArgv = buildClaudeArgs({ sessionId: "s", isNew: true, ...fields });
+    expect(modelThinkingArgsFor("claude-code", fields)).toEqual(claudeArgv.slice(-4));
+
+    const piArgv = buildPiArgs({ sessionId: "s", ...fields });
+    expect(piArgv[piArgv.length - 1]).toBe("-p");
+    expect(modelThinkingArgsFor("pi", fields)).toEqual(piArgv.slice(piArgv.length - 5, piArgv.length - 1));
+
+    const codexArgv = buildCodexArgs({ isNew: true, permissionMode: "yolo", ...fields });
+    expect(modelThinkingArgsFor("codex", fields)).toEqual(codexArgv.slice(-4));
+  });
+
+  it("also agrees on the single-field and unset cases", () => {
+    expect(modelThinkingArgsFor("claude-code", { model: "opus" })).toEqual(
+      buildClaudeArgs({ sessionId: "s", isNew: true, model: "opus" }).slice(-2),
+    );
+    expect(modelThinkingArgsFor("codex", { thinking: "low" })).toEqual(
+      buildCodexArgs({ isNew: true, permissionMode: "yolo", thinking: "low" }).slice(-2),
+    );
+    expect(modelThinkingArgsFor("pi", {})).toEqual([]);
+    expect(modelThinkingArgsFor("dsh", { model: "x", thinking: "y" })).toEqual([]);
   });
 });

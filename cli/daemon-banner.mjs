@@ -24,6 +24,8 @@ import { backendCli } from "./daemon-agent.mjs";
  * @property {string} [connection]     connection state line (default "connecting…").
  * @property {string} [configPath]     absolute path to the daemon.json the CLI reads.
  * @property {boolean} [configExists]  whether that daemon.json exists on disk.
+ * @property {string} [model]          resolved per-agent model, when configured (row shown only then).
+ * @property {string} [thinking]       resolved per-agent thinking/reasoning level, when configured.
  */
 
 /** Right-pad to width (banner box alignment). */
@@ -58,6 +60,10 @@ export function bannerRows(info) {
     ["Connection", info.connection ?? "connecting…"],
     [`${cli.name} CLI`, cliValue],
   ];
+  // Model / Thinking rows — shown only when resolved from daemon.json, so an agent
+  // whose backend resolves its own default keeps the shorter banner.
+  if (info.model) rows.push(["Model", info.model]);
+  if (info.thinking) rows.push(["Thinking", info.thinking]);
   // Config file row — shown only when the path is known. Tells the operator
   // exactly which daemon.json the CLI read (and whether it exists), so a
   // mis-located or absent config is obvious at a glance.
@@ -96,6 +102,28 @@ export function agentNotFoundWarningLine(agentType) {
  */
 export function claudeNotFoundWarningLine() {
   return agentNotFoundWarningLine("claude-code");
+}
+
+/**
+ * The single visible line emitted when an agent configures `model` / `thinking`
+ * but its backend has no verified parameter for them (v1 supports claude-code, pi,
+ * codex). The daemon stays non-fatal and passes nothing — this warning exists so
+ * the configuration gap can never be mistaken for an applied setting, which is the
+ * silent-ignore failure mode these fields were added to remove.
+ * @param {string} label        where the fields live ("agent <name>" / "agents[i]" /
+ *                              "the configured agent" for a flat config) — the caller
+ *                              supplies the noun so the line never reads "agent agent"
+ * @param {string[]} fields     which of the fields are set (["model"], ["thinking"], both)
+ * @param {string} agentType    the agent's backend
+ * @returns {string}
+ */
+export function modelFieldsUnsupportedWarningLine(label, fields, agentType) {
+  const what = fields.join(" + ");
+  return (
+    `⚠ ${label}: ${what} configured but the "${agentType}" backend has no verified ` +
+    `model/thinking parameter — ${what} NOT applied. Remove the field(s), or use one of: ` +
+    "claude-code, pi, codex."
+  );
 }
 
 /**

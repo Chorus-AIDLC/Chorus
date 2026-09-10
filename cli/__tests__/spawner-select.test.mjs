@@ -59,6 +59,23 @@ describe("selectSpawner", () => {
     expect(selectSpawner("pi", { logger, creds }).creds).toEqual(creds);
   });
 
+  it("threads per-agent model/thinking into the three backends with verified parameters", () => {
+    for (const type of ["claude-code", "pi", "codex"]) {
+      const s = selectSpawner(type, { logger, creds, model: "opus", thinking: "high" });
+      expect(s.model).toBe("opus");
+      expect(s.thinking).toBe("high");
+    }
+  });
+
+  it("constructs every backend when model/thinking are passed, including the ones that ignore them", () => {
+    // kiro / dsh / offline have no verified parameter: the daemon warns, but passing
+    // the fields must never make construction throw (one such agent must not break a
+    // daemon serving supported agents).
+    for (const type of ["kiro", "dsh", "offline"]) {
+      expect(() => selectSpawner(type, { logger, creds, model: "opus", thinking: "high" })).not.toThrow();
+    }
+  });
+
   it("defaults to claude-code when the agent type is unrecognized (no throw — selection is post-validation)", () => {
     // resolveAgentType already rejected unknowns before this point; selectSpawner
     // is total and falls back to the safe default rather than throwing.

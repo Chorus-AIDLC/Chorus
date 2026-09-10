@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveAgentConfigs, DEFAULT_MAX_CONCURRENCY } from "../daemon-config.mjs";
 import { DEFAULT_SIGINT_TIMEOUT_MS } from "../daemon-config.mjs";
+import { resolveFlatModelFields, supportsModelFields } from "../daemon-config.mjs";
 
 const HOME = "/home/tester";
 
@@ -235,5 +236,130 @@ describe("resolveAgentConfigs — strict per-agent validation", () => {
   it("throws when an agent omits agentType and the top-level default is invalid", () => {
     const file = { url: "https://t", agent: "gpt", agents: [{ apiKey: "cho_a" }] };
     expect(() => resolveAgentConfigs({}, mkDeps(file))).toThrow(/top-level agent default is invalid/);
+  });
+});
+
+describe("resolveAgentConfigs — per-agent model / thinking", () => {
+  it("resolves per-agent model and thinking on the agents[] path", () => {
+    const out = resolveAgentConfigs(
+      {},
+      mkDeps({ url: "https://c", apiKey: "cho_d", agents: [{ label: "dev", model: "opus", thinking: "high" }] }),
+    );
+    expect(out[0]).toMatchObject({ label: "dev", model: "opus", thinking: "high" });
+  });
+
+  it("inherits the top-level default when an entry omits a field, per-agent value wins", () => {
+    const file = {
+      url: "https://c",
+      apiKey: "cho_d",
+      model: "sonnet",
+      thinking: "medium",
+      agents: [{ label: "a" }, { label: "b", model: "opus" }],
+    };
+    const out = resolveAgentConfigs({}, mkDeps(file));
+    expect(out[0]).toMatchObject({ model: "sonnet", thinking: "medium" });
+    expect(out[1]).toMatchObject({ model: "opus", thinking: "medium" });
+  });
+
+  it("trims whitespace and passes an unrecognized value through verbatim (no whitelist)", () => {
+    const out = resolveAgentConfigs(
+      {},
+      mkDeps({
+        url: "https://c",
+        apiKey: "cho_d",
+        agents: [{ label: "a", model: "  vendor/brand-new-model  ", thinking: "turbo" }],
+      }),
+    );
+    expect(out[0].model).toBe("vendor/brand-new-model");
+    expect(out[0].thinking).toBe("turbo");
+  });
+
+  it("leaves both undefined when neither level sets them (byte-compatible default)", () => {
+    const out = resolveAgentConfigs({}, mkDeps({ url: "https://c", apiKey: "cho_d" }));
+    expect(out[0].model).toBeUndefined();
+    expect(out[0].thinking).toBeUndefined();
+  });
+
+  for (const bad of ["", "   ", 5, null, {}, []]) {
+    it(`throws naming the agent AND the field for a present-but-invalid value (${JSON.stringify(bad)})`, () => {
+      const file = { url: "https://c", apiKey: "cho_d", model: bad, agents: [{ label: "dev" }] };
+      expect(() => resolveAgentConfigs({}, mkDeps(file))).toThrow(/Agent dev: invalid model/);
+    });
+  }
+
+  it("names the offending agent even when the bad value came from the top-level default", () => {
+    const file = {
+      url: "https://c",
+      apiKey: "cho_d",
+      thinking: 42,
+      agents: [{ label: "one" }, { label: "two" }],
+    };
+    expect(() => resolveAgentConfigs({}, mkDeps(file))).toThrow(/Agent one: invalid thinking/);
+  });
+
+  it("rejects a bad TOP-LEVEL value even when EVERY agent overrides it (never silently ignored)", () => {
+    // Regression: the entry map reads the top-level value lazily, so a fully-overriding
+    // agents[] would otherwise never read it — and a broken top-level value would be
+    // silently ignored, which the daemon-multi-agent contract forbids.
+    const file = {
+      url: "https://c",
+      apiKey: "cho_d",
+      model: 7,
+      agents: [{ label: "a", model: "opus" }, { label: "b", model: "sonnet" }],
+    };
+    expect(() => resolveAgentConfigs({}, mkDeps(file))).toThrow(/daemon.json top-level: invalid model/);
+  });
+
+  it("rejects a bad top-level value even when the only entry sets its own valid value", () => {
+    const file = {
+      url: "https://c",
+      apiKey: "cho_d",
+      thinking: {},
+      agents: [{ label: "solo", thinking: "low" }],
+    };
+    expect(() => resolveAgentConfigs({}, mkDeps(file))).toThrow(/daemon.json top-level: invalid thinking/);
+  });
+
+  it("still resolves normally when the top-level pair is valid and every entry overrides it", () => {
+    const file = {
+      url: "https://c",
+      apiKey: "cho_d",
+      model: "sonnet",
+      thinking: "low",
+      agents: [{ label: "a", model: "opus", thinking: "high" }],
+    };
+    const out = resolveAgentConfigs({}, mkDeps(file));
+    expect(out[0]).toMatchObject({ model: "opus", thinking: "high" });
+  });
+
+  it("flat path: honors the file's top-level model/thinking", () => {
+    const out = resolveAgentConfigs(
+      {},
+      mkDeps({ url: "https://c", apiKey: "cho_flat", model: "haiku", thinking: "low" }),
+    );
+    expect(out[0]).toMatchObject({ label: "agent", model: "haiku", thinking: "low" });
+  });
+
+  it("flat path: rejects a present-but-invalid top-level value", () => {
+    expect(() => resolveAgentConfigs({}, mkDeps({ url: "https://c", apiKey: "cho_x", model: 3 }))).toThrow(
+      /daemon.json top-level: invalid model/,
+    );
+  });
+});
+
+describe("resolveFlatModelFields / supportsModelFields", () => {
+  it("reads and validates the flat top-level pair from daemon.json", () => {
+    const deps = (file) => ({ readJson: () => file, loginPath: "/cfg/daemon.json" });
+    expect(resolveFlatModelFields(deps({ model: "opus", thinking: "high" }))).toEqual({
+      model: "opus",
+      thinking: "high",
+    });
+    expect(resolveFlatModelFields(deps(null))).toEqual({ model: undefined, thinking: undefined });
+    expect(() => resolveFlatModelFields(deps({ thinking: {} }))).toThrow(/top-level: invalid thinking/);
+  });
+
+  it("whitelists exactly the three backends with verified model/thinking parameters", () => {
+    expect(["claude-code", "pi", "codex"].every(supportsModelFields)).toBe(true);
+    expect(["kiro", "dsh", "offline", "bogus"].some(supportsModelFields)).toBe(false);
   });
 });

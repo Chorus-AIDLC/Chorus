@@ -97,16 +97,26 @@ export function sandboxFlags(permissionMode, opts = {}) {
 /**
  * Build the argv for a headless codex run. Prompt is NEVER here — it goes over
  * stdin. `--skip-git-repo-check` lets a non-repo cwd still run.
- * @param {{ isNew: boolean, threadId?: string|null, permissionMode?: "yolo"|"chorus" }} o
+ *
+ * `model` / `thinking` (add-daemon-per-agent-model-thinking) ride codex's OWN flags,
+ * forwarded VERBATIM: `-m <model>`, and `-c model_reasoning_effort=<level>` (the same
+ * key codex reads from `$CODEX_HOME/config.toml`, overridden for this invocation only —
+ * the accepted level set comes from the model catalog, so the daemon never validates it).
+ * Appended in BOTH invocation shapes (fresh `exec` and `exec resume <id>`); absent ⇒ no
+ * extra tokens, so the argv stays byte-identical to the pre-feature shape.
+ * @param {{ isNew: boolean, threadId?: string|null, permissionMode?: "yolo"|"chorus", model?: string, thinking?: string }} o
  * @returns {string[]}
  */
-export function buildCodexArgs({ isNew, threadId, permissionMode }) {
+export function buildCodexArgs({ isNew, threadId, permissionMode, model, thinking }) {
+  const modelArgs = [];
+  if (model) modelArgs.push("-m", model);
+  if (thinking) modelArgs.push("-c", `model_reasoning_effort=${thinking}`);
   if (!isNew && threadId) {
     const sandbox = sandboxFlags(permissionMode, { resume: true });
-    return ["exec", "resume", threadId, "--json", ...sandbox, "--skip-git-repo-check"];
+    return ["exec", "resume", threadId, "--json", ...sandbox, "--skip-git-repo-check", ...modelArgs];
   }
   const sandbox = sandboxFlags(permissionMode);
-  return ["exec", "--json", ...sandbox, "--skip-git-repo-check"];
+  return ["exec", "--json", ...sandbox, "--skip-git-repo-check", ...modelArgs];
 }
 
 /**
@@ -209,6 +219,10 @@ export class CodexSpawner {
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.permissionMode = opts.permissionMode ?? "chorus";
     this.creds = opts.creds ?? null;
+    // Per-agent model / thinking (add-daemon-per-agent-model-thinking) — mapped to
+    // `-m` / `-c model_reasoning_effort=` in buildCodexArgs. null ⇒ codex's own default.
+    this.model = opts.model ?? null;
+    this.thinking = opts.thinking ?? null;
     this.platform = opts.platform ?? process.platform;
     this.getThreadIdFn = opts.getThreadIdFn ?? defaultGetThreadId;
     this.setThreadIdFn = opts.setThreadIdFn ?? defaultSetThreadId;
@@ -262,7 +276,13 @@ export class CodexSpawner {
       }
     }
 
-    const args = buildCodexArgs({ isNew, threadId: knownThreadId, permissionMode: this.permissionMode });
+    const args = buildCodexArgs({
+      isNew,
+      threadId: knownThreadId,
+      permissionMode: this.permissionMode,
+      model: this.model,
+      thinking: this.thinking,
+    });
     const { command, argv } = resolveSpawnCommand(codexPath, args, this.platform);
 
     // POSIX: detached process group so the interrupt path can group-kill the tree

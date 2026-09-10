@@ -32,7 +32,7 @@ import {
 } from "./daemon-permission-mode.mjs";
 import { resolveAgentType, backendClientType } from "./daemon-agent.mjs";
 import { isWakeableAgentType } from "./init/agent-type-map.mjs";
-import { formatBanner, agentNotFoundWarningLine } from "./daemon-banner.mjs";
+import { formatBanner, agentNotFoundWarningLine, modelFieldsUnsupportedWarningLine } from "./daemon-banner.mjs";
 import { ChorusClient, validateAndFetchIdentity } from "./chorus-client.mjs";
 import { SseListener } from "./sse-listener.mjs";
 import { createBackfill } from "./backfill.mjs";
@@ -62,6 +62,8 @@ import {
   resolveBrowseRoots,
   resolveAgentConfigs,
   hasConfiguredAgents,
+  resolveFlatModelFields,
+  supportsModelFields,
 } from "./daemon-config.mjs";
 import { discoverDirectories, validateDirectory } from "./directory-discovery.mjs";
 import {
@@ -136,6 +138,13 @@ export function buildDaemon(creds, deps = {}) {
   // hard-wired ClaudeSpawner. The spawn path below is backend-agnostic — it only
   // ever calls the shared wake(...) contract.
   const agentType = deps.agentType ?? "claude-code";
+  // Per-agent model / thinking (add-daemon-per-agent-model-thinking): forwarded to
+  // the spawner, which maps them onto the backend's OWN flags. Undefined ⇒ the
+  // backend resolves its own default, so the spawned argv is byte-identical to the
+  // pre-feature behavior. An unsupported backend ignores them (see the caller's
+  // warning) rather than throwing — one such agent must never break the others.
+  const model = deps.model;
+  const thinking = deps.thinking;
   // Per-wake verbose logging (daemon-startup-output), threaded into the Waker.
   const verbose = deps.verbose ?? false;
   // Escalation window for the interrupt killer (子3). Pre-resolved by runDaemon via
@@ -160,6 +169,8 @@ export function buildDaemon(creds, deps = {}) {
     logger,
     permissionMode,
     creds,
+    model,
+    thinking,
     bundleVersion: deps.bundleVersion,
     prepareManagedConfigFn: deps.prepareManagedDshConfig,
   });
@@ -669,6 +680,8 @@ export function buildMultiAgentDaemon(agentConfigs, deps = {}) {
         maxConcurrency: cfg.maxConcurrency,
         sigintTimeoutMs: cfg.sigintTimeoutMs,
         browseRoots: cfg.browseRoots,
+        model: cfg.model,
+        thinking: cfg.thinking,
         mcpClient: perAgent("mcpClient", i),
         lineage: perAgent("lineage", i),
         spawner: perAgent("spawner", i),
@@ -923,10 +936,22 @@ export async function runDaemon(flags = {}, deps = {}) {
         cfg.agentUuid = cfg.agentUuid ?? id.uuid;
         cfg.agentName = cfg.agentName ?? id.name;
         okConfigs.push(cfg);
+        const modelThinking = `${cfg.model ? `, model=${cfg.model}` : ""}${
+          cfg.thinking ? `, thinking=${cfg.thinking}` : ""
+        }`;
         log(
           `[Chorus] agent ${cfg.label}: ${id.name} (${id.uuid}) — ${cfg.agentType}, ` +
-            `${cfg.permissionMode}, ${cfg.cwds.length} path(s), maxConcurrency=${cfg.maxConcurrency}`,
+            `${cfg.permissionMode}, ${cfg.cwds.length} path(s), maxConcurrency=${cfg.maxConcurrency}${modelThinking}`,
         );
+        const unsupportedFields = [
+          cfg.model ? "model" : null,
+          cfg.thinking ? "thinking" : null,
+        ].filter(Boolean);
+        if (unsupportedFields.length > 0 && !supportsModelFields(cfg.agentType)) {
+          errLog(
+            `[Chorus] ${modelFieldsUnsupportedWarningLine(`agent ${cfg.label}`, unsupportedFields, cfg.agentType)}`,
+          );
+        }
         if (cfg.permissionMode === "yolo") errLog(`[Chorus] agent ${cfg.label}: ${yoloWarningLine()}`);
       } catch (err) {
         errLog(
@@ -1017,6 +1042,19 @@ export async function runDaemon(flags = {}, deps = {}) {
   const configPath = loginFilePath();
   const configExists = existsSync(configPath);
 
+  // Per-agent model / thinking for the FLAT (no `agents[]`) shape. This path resolves
+  // credentials through its own preflight and never calls `resolveAgentConfigs`, so the
+  // file's top-level values must be read here — otherwise a flat install keeps ignoring
+  // them, which is the exact bug class this feature removes. A present-but-invalid value
+  // throws (same contract as the agents[] path) and startup exits non-zero.
+  let flatFields;
+  try {
+    flatFields = resolveFlatModelFields({ readJson: deps.readJson, loginPath: deps.loginPath });
+  } catch (err) {
+    errLog(`[Chorus] ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+
   // Boxed startup banner — one screen replacing the scattered [Chorus] lines.
   log(
     formatBanner(
@@ -1032,6 +1070,8 @@ export async function runDaemon(flags = {}, deps = {}) {
         connection: "connecting…",
         configPath,
         configExists,
+        model: flatFields.model,
+        thinking: flatFields.thinking,
       },
       { isTTY: isTTY && Boolean(process.stdout.isTTY) }
     )
@@ -1040,6 +1080,18 @@ export async function runDaemon(flags = {}, deps = {}) {
   // ⚠ warning on stderr (it also names --chorus-only as the reclaim switch).
   if (permissionMode === "yolo") {
     errLog(`[Chorus] ${yoloWarningLine()}`);
+  }
+  // A configured model/thinking that the selected backend cannot receive must be said
+  // out loud — silently ignoring it is the failure mode these fields exist to remove.
+  // Non-fatal: the daemon still serves, on the backend's own defaults.
+  const flatUnsupportedFields = [
+    flatFields.model ? "model" : null,
+    flatFields.thinking ? "thinking" : null,
+  ].filter(Boolean);
+  if (flatUnsupportedFields.length > 0 && !supportsModelFields(agentType)) {
+    errLog(
+      `[Chorus] ${modelFieldsUnsupportedWarningLine("the configured agent", flatUnsupportedFields, agentType)}`,
+    );
   }
   // A missing backend binary is non-fatal (the daemon still subscribes), but the
   // banner row alone is easy to miss in a systemd journal — emit one loud ⚠ line
@@ -1072,6 +1124,8 @@ export async function runDaemon(flags = {}, deps = {}) {
     sigintTimeoutMs,
     cwds,
     browseRoots,
+    model: flatFields.model,
+    thinking: flatFields.thinking,
     bundleVersion: version,
     prepareManagedDshConfig: deps.prepareManagedDshConfig,
   });

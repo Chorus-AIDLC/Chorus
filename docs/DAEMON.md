@@ -200,6 +200,18 @@ agent **overrides** it for that agent only. Per-agent fields:
 | `maxConcurrency` | this agent's own wake-concurrency cap (default `4`) |
 | `sigintTimeoutMs` | interrupt escalation window (ms) |
 | `browseRoots` | directory-discovery allowlist |
+| `model` | backend model id/alias for this agent — forwarded verbatim (see below) |
+| `thinking` | backend thinking / reasoning-effort level for this agent — forwarded verbatim (see below) |
+
+`model` and `thinking` are the two fields that let one daemon wake different agents on
+different models and different reasoning levels. Both are optional and both are also
+accepted at the **top level** as defaults, with the usual precedence (an agent's own
+value wins, an omitted field inherits, and a flat `daemon.json` without `agents[]`
+honors the top-level pair too). Values are **never validated against a list** — write
+them exactly as your harness expects, and the harness is what accepts or rejects them.
+A value that is present but not a non-empty string, on the other hand, is a startup
+error: the daemon exits non-zero naming the agent and the field, instead of quietly
+ignoring it.
 
 Each agent gets its own identity (via its key), its own connections (one per its
 `cwds`), its own wake queue, and its own spawner — so they run and are woken
@@ -220,6 +232,46 @@ are treated as exactly one agent — existing single-agent installs run unchange
 - **`chorus daemon install --add`** — the install wizard offers to add more agents in
   one run (TTY only).
 - **Hand-editing** `~/.chorus/daemon.json` is always supported.
+
+### Per-agent model & thinking delivery
+
+Each backend receives the agent's `model` / `thinking` as **its own** command-line
+arguments; the daemon never translates one backend's vocabulary into another's:
+
+| `agentType` | `model` → | `thinking` → |
+|-------------|-----------|--------------|
+| `claude-code` | `--model <value>` | `--effort <value>` |
+| `pi` | `--model <value>` | `--thinking <value>` |
+| `codex` | `-m <value>` | `-c model_reasoning_effort=<value>` |
+| `dsh`, `kiro`, `offline` | _not delivered (see below)_ | _not delivered (see below)_ |
+
+Notes per backend:
+
+- **claude-code** — `--effort` is the lever for a **headless** run: an explicit launch
+  choice outranks the settings `effortLevel` and the model default, whereas a
+  non-interactive `/effort` reports *Not applied* in `-p` runs. A managed
+  `maxEffortLevel` cap still applies, and a level the active model does not support
+  falls back to the highest supported level at or below it.
+- **pi** — the flags are inserted **before** `pi`'s trailing `-p` (its parser treats a
+  bare token after `-p` as the message, so `-p` must stay last). `--model` accepts
+  `provider/id`; `--thinking` accepts `off`, `minimal`, `low`, `medium`, `high`,
+  `xhigh`, `max`.
+- **codex** — `-c model_reasoning_effort=<value>` overrides the same key codex reads
+  from `$CODEX_HOME/config.toml`, for that invocation only; the accepted levels come
+  from the model catalog (`supported_reasoning_levels[].effort`). Both flags are added
+  for a fresh `exec` and for `exec resume <id>`.
+- **dsh / kiro** — no verified parameter in this version, so the daemon delivers
+  nothing and logs one visible `⚠` warning naming the agent, the field, and the
+  backend. This is deliberate: a configured value must never look applied when it is
+  not. (For `dsh`, the harness's own `initialize.params.model` is the future extension
+  point; it is not wired yet because it could not be verified here.)
+
+The daemon's startup output shows what each agent resolved: the multi-agent per-agent
+line appends `, model=…` / `, thinking=…` when set, and the single-agent banner gains
+`Model` / `Thinking` rows.
+
+The foreground launcher (`chorus agents run`) applies the same fields with the same
+mapping; a flag you pass after `--` wins over the configured value.
 
 ### Per-backend key delivery (important)
 

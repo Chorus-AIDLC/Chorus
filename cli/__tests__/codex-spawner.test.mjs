@@ -106,6 +106,46 @@ describe("buildCodexArgs — new vs resume", () => {
     const args = buildCodexArgs({ isNew: true, permissionMode: "yolo" });
     expect(args.join(" ")).not.toContain("PROMPT");
   });
+
+  it("appends -m / -c model_reasoning_effort= for a configured agent (fresh exec shape)", () => {
+    const args = buildCodexArgs({ isNew: true, permissionMode: "chorus", model: "gpt-5-codex", thinking: "high" });
+    expect(args.slice(-4)).toEqual(["-m", "gpt-5-codex", "-c", "model_reasoning_effort=high"]);
+  });
+
+  it("appends them in the resume shape too (after exec resume <id>)", () => {
+    const args = buildCodexArgs({
+      isNew: false,
+      threadId: TID,
+      permissionMode: "chorus",
+      model: "gpt-5-codex",
+      thinking: "high",
+    });
+    expect(args.slice(0, 3)).toEqual(["exec", "resume", TID]);
+    expect(args.slice(-4)).toEqual(["-m", "gpt-5-codex", "-c", "model_reasoning_effort=high"]);
+  });
+
+  it("adds exactly one flag when only one field is configured", () => {
+    const modelOnly = buildCodexArgs({ isNew: true, permissionMode: "yolo", model: "gpt-5-codex" });
+    expect(modelOnly.slice(-2)).toEqual(["-m", "gpt-5-codex"]);
+    expect(modelOnly.join(" ")).not.toContain("model_reasoning_effort");
+    const thinkingOnly = buildCodexArgs({ isNew: true, permissionMode: "yolo", thinking: "low" });
+    expect(thinkingOnly.slice(-2)).toEqual(["-c", "model_reasoning_effort=low"]);
+    expect(thinkingOnly).not.toContain("-m");
+  });
+
+  it("forwards an unrecognized value verbatim (the level set comes from the model catalog)", () => {
+    const args = buildCodexArgs({ isNew: true, permissionMode: "yolo", thinking: "ultra" });
+    expect(args).toContain("model_reasoning_effort=ultra");
+  });
+
+  it("contributes nothing when both are unset (pre-feature argv, byte-identical)", () => {
+    expect(buildCodexArgs({ isNew: true, permissionMode: "yolo" })).toEqual([
+      "exec",
+      "--json",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--skip-git-repo-check",
+    ]);
+  });
 });
 
 describe("extractThreadId — capture from the thread.started event", () => {

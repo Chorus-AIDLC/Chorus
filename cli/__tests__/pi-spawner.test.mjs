@@ -66,6 +66,40 @@ describe("buildPiArgs — client-owned session-id anchor (new === resume)", () =
   it("never contains the prompt (prompt is stdin-only)", () => {
     expect(buildPiArgs({ sessionId: ANCHOR }).join(" ")).not.toContain("PROMPT");
   });
+
+  it("inserts --model / --thinking BEFORE the trailing -p", () => {
+    const args = buildPiArgs({ sessionId: ANCHOR, model: "anthropic/claude-haiku-4-5", thinking: "low" });
+    expect(args).toEqual([
+      "--mode",
+      "json",
+      "--session-id",
+      ANCHOR,
+      "--model",
+      "anthropic/claude-haiku-4-5",
+      "--thinking",
+      "low",
+      "-p",
+    ]);
+    expect(args[args.length - 1]).toBe("-p");
+  });
+
+  it("adds exactly one flag when only one field is configured", () => {
+    const modelOnly = buildPiArgs({ sessionId: ANCHOR, model: "sonnet" });
+    expect(modelOnly).toEqual(["--mode", "json", "--session-id", ANCHOR, "--model", "sonnet", "-p"]);
+    const thinkingOnly = buildPiArgs({ sessionId: ANCHOR, thinking: "xhigh" });
+    expect(thinkingOnly).toEqual(["--mode", "json", "--session-id", ANCHOR, "--thinking", "xhigh", "-p"]);
+  });
+
+  it("forwards an unrecognized value verbatim (pi owns the model/level vocabulary)", () => {
+    const args = buildPiArgs({ sessionId: ANCHOR, model: "vendor/next:max", thinking: "ludicrous" });
+    expect(args).toContain("vendor/next:max");
+    expect(args).toContain("ludicrous");
+    expect(args[args.length - 1]).toBe("-p");
+  });
+
+  it("contributes nothing when both are unset (pre-feature argv, byte-identical)", () => {
+    expect(buildPiArgs({ sessionId: ANCHOR })).toEqual(["--mode", "json", "--session-id", ANCHOR, "-p"]);
+  });
 });
 
 describe("resolvePiPath", () => {

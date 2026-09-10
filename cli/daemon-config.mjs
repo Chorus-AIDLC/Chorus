@@ -249,7 +249,9 @@ export function resolveBrowseRoots(flags = {}, deps = {}) {
 // ===== Multi-agent config (daemon-multi-agent — N independent agents per daemon) =====
 //
 // One daemon process may serve a LIST of fully-independent agents, each with its
-// own credentials + working directories + backend + permission mode + concurrency.
+// own credentials + working directories + backend + permission mode + concurrency +
+// model & thinking level (the latter two forwarded verbatim to the backend's own
+// flags; `dsh` / `kiro` / `offline` accept them in config but do not receive them).
 // `resolveAgentConfigs` returns that list as `AgentConfig[]`, every field already
 // merged with its default. Two shapes are supported:
 //
@@ -271,6 +273,74 @@ export function resolveBrowseRoots(flags = {}, deps = {}) {
 /** A non-empty trimmed string, or undefined. */
 function nonEmptyStr(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/**
+ * Resolve one optional per-agent string field (`model` / `thinking`).
+ *
+ * Structural validation ONLY: the VALUE is never checked against a
+ * backend-specific list — the vocabulary differs per harness and evolves with it,
+ * so the value is forwarded verbatim and the backend accepts or rejects it. A value
+ * that is PRESENT but not a non-empty string is a configuration error and THROWS,
+ * naming the agent and the field, so it can never be silently ignored (the failure
+ * mode bare `model` / `thinking` keys used to have). An OMITTED key (undefined) ⇒
+ * undefined ⇒ the backend's own default resolution applies (today's behavior); an
+ * explicit `null` is treated as a present-but-invalid value, not as "unset".
+ *
+ * @param {unknown} value  raw `model` / `thinking` from daemon.json
+ * @param {string} where   "Agent <label>" (or the flat top-level description) for the error
+ * @param {string} field   "model" | "thinking" — named in the error
+ * @returns {string|undefined}
+ *
+ * Exported so the foreground launcher (`chorus agents run`) enforces the IDENTICAL
+ * contract — one definition of "present but unusable", two surfaces.
+ */
+export function optionalAgentString(value, where, field) {
+  if (value === undefined) return undefined;
+  const resolved = typeof value === "string" ? value.trim() : "";
+  if (!resolved) {
+    throw new Error(`${where}: invalid ${field} — expected a non-empty string.`);
+  }
+  return resolved;
+}
+
+/**
+ * The flat (file-level) `model` / `thinking` pair, validated. One source of truth
+ * for both the synthesized flat agent and the single-agent daemon path, which
+ * bypasses `resolveAgentConfigs` entirely.
+ * @param {Record<string, unknown>|null} file  parsed daemon.json
+ * @returns {{ model?: string, thinking?: string }}
+ */
+function flatModelFieldsFrom(file) {
+  const { model, thinking, errors } = collectFlatModelFields(file);
+  if (errors.model) throw errors.model;
+  if (errors.thinking) throw errors.thinking;
+  return { model, thinking };
+}
+
+/**
+ * Non-throwing counterpart of {@link flatModelFieldsFrom}: the validated pair plus, for
+ * each field that is present-but-unusable, the error to surface.
+ *
+ * Why it exists: the `agents[]` map reads the top-level value LAZILY (each entry falls
+ * back to `file.model` only when it does not set its own). A top-level value that EVERY
+ * entry overrides would therefore never be read — and a broken one would be silently
+ * ignored, the exact failure this field set exists to remove. The multi-agent path uses
+ * this to fail on such a value (naming the top level, the only place it lives) while
+ * still naming the AGENT for the inherited case.
+ * @param {Record<string, unknown>|null} file
+ * @returns {{ model?: string, thinking?: string, errors: { model?: Error, thinking?: Error } }}
+ */
+function collectFlatModelFields(file) {
+  const out = { model: undefined, thinking: undefined, errors: {} };
+  for (const field of ["model", "thinking"]) {
+    try {
+      out[field] = optionalAgentString(file?.[field], "daemon.json top-level", field);
+    } catch (err) {
+      out.errors[field] = err;
+    }
+  }
+  return out;
 }
 
 /**
@@ -314,6 +384,12 @@ function positiveInt(value) {
  * @property {number} maxConcurrency            This agent's wake-queue cap.
  * @property {number} sigintTimeoutMs           Interrupt escalation window (ms).
  * @property {string[]} browseRoots             Directory-discovery allowlist.
+ * @property {string} [model]                   Backend model id/alias, forwarded VERBATIM to that
+ *                                              backend's own model flag. Absent ⇒ the backend's own
+ *                                              default model resolution (today's behavior).
+ * @property {string} [thinking]                Backend thinking / reasoning-effort level, forwarded
+ *                                              VERBATIM to that backend's own flag. Absent ⇒ the
+ *                                              backend's default level.
  * @property {string} label                     Diagnostic label ("agent" or "agents[i]").
  * @property {string} [agentUuid]               This agent's Chorus UUID — exported to a
  *                                              woken session as CHORUS_AGENT_PROFILE so its
@@ -373,6 +449,10 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
         label: "agent",
         agentUuid: nonEmptyStr(file?.agentUuid),
         agentName: nonEmptyStr(file?.agentName),
+        // A flat install honors the file's top-level model/thinking too — otherwise
+        // the single-agent daemon would silently ignore them (the exact bug this
+        // field set exists to remove).
+        ...flatModelFieldsFrom(file),
       },
     ];
   }
@@ -384,8 +464,9 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
   const defaultSigint = resolveSigintTimeoutMs(flags, deps);
   const defaultBrowseRoots = resolveBrowseRoots(flags, deps);
   const defaultMaxConcurrency = positiveInt(file?.maxConcurrency) ?? DEFAULT_MAX_CONCURRENCY;
+  const topLevelFields = collectFlatModelFields(file);
 
-  return agentEntries.map((entry, i) => {
+  const resolvedAgents = agentEntries.map((entry, i) => {
     const label = nonEmptyStr(entry.label) ?? nonEmptyStr(entry.name) ?? `agents[${i}]`;
 
     const url = nonEmptyStr(entry.url) ?? credDefaults.url;
@@ -441,6 +522,20 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
     const browseRoots =
       entry.browseRoots !== undefined ? cleanCwdList(entry.browseRoots, home) : defaultBrowseRoots;
 
+    // model / thinking: per-agent value, else the file's top-level default. The error
+    // names THIS agent even when the bad value came from the top-level default, so the
+    // operator knows which entry is affected.
+    const model = optionalAgentString(
+      entry.model !== undefined ? entry.model : file?.model,
+      `Agent ${label}`,
+      "model",
+    );
+    const thinking = optionalAgentString(
+      entry.thinking !== undefined ? entry.thinking : file?.thinking,
+      `Agent ${label}`,
+      "thinking",
+    );
+
     // daemonWake: per-agent opt-in for daemon waking (pass-through boolean). Only
     // `=== false` disables waking; absent (undefined) or true ⇒ woken, so agent
     // entries written before this field existed keep being woken. Orthogonal to
@@ -458,6 +553,47 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
       label,
       agentUuid: nonEmptyStr(entry.agentUuid),
       agentName: nonEmptyStr(entry.agentName),
+      model,
+      thinking,
     };
   });
+
+  // A top-level value that EVERY entry overrides was never read by the map above
+  // (each entry's own value won), so validate it here: a present-but-unusable top-level
+  // value must fail whether or not any agent happens to inherit it.
+  if (topLevelFields.errors.model) throw topLevelFields.errors.model;
+  if (topLevelFields.errors.thinking) throw topLevelFields.errors.thinking;
+  return resolvedAgents;
+}
+
+/**
+ * The backends whose model / thinking parameters are verified, and therefore the
+ * only ones the spawners deliver these fields to (add-daemon-per-agent-model-thinking).
+ * `dsh` / `kiro` / `offline` accept the fields in configuration but receive nothing;
+ * the daemon warns rather than silently dropping them.
+ * @type {readonly string[]}
+ */
+export const MODEL_THINKING_AGENT_TYPES = Object.freeze(["claude-code", "pi", "codex"]);
+
+/**
+ * Whether this backend receives the per-agent `model` / `thinking` fields.
+ * @param {string} agentType
+ * @returns {boolean}
+ */
+export function supportsModelFields(agentType) {
+  return MODEL_THINKING_AGENT_TYPES.includes(agentType);
+}
+
+/**
+ * Resolve the flat (no `agents[]`) top-level `model` / `thinking` for the
+ * single-agent daemon path. That path resolves credentials through its own preflight
+ * and bypasses `resolveAgentConfigs`, so it needs this to avoid silently ignoring a
+ * top-level value. Same structural validation: a present-but-invalid value throws.
+ * @param {{ readJson?: (p: string) => (Record<string, unknown>|null), loginPath?: string }} [deps]
+ * @returns {{ model?: string, thinking?: string }}
+ */
+export function resolveFlatModelFields(deps = {}) {
+  const readJson = deps.readJson ?? readJsonSafe;
+  const loginPath = deps.loginPath ?? loginFilePath();
+  return flatModelFieldsFrom(readJson(loginPath));
 }

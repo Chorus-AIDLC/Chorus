@@ -68,6 +68,26 @@ describe("buildMultiAgentDaemon — fan-out composition", () => {
     expect(d.agents).toHaveLength(2);
   });
 
+  it("hands each agent its OWN model/thinking through the per-agent deps", () => {
+    const seen = [];
+    const build = (creds, deps) => {
+      seen.push({ creds, deps });
+      return fakeDaemon(creds.apiKey, { connections: deps.cwds.length });
+    };
+    const cfgs = [
+      CFG({ apiKey: "k1", label: "agents[0]", model: "opus", thinking: "high" }),
+      CFG({ apiKey: "k2", label: "agents[1]" }),
+    ];
+    buildMultiAgentDaemon(cfgs, { build, logger: silent });
+
+    expect(seen[0].deps.model).toBe("opus");
+    expect(seen[0].deps.thinking).toBe("high");
+    // A sibling without the fields carries nothing — its spawned argv stays
+    // byte-identical to the pre-feature shape.
+    expect(seen[1].deps.model).toBeUndefined();
+    expect(seen[1].deps.thinking).toBeUndefined();
+  });
+
   it("start()/stop() fan out to every agent", async () => {
     const built = [];
     const build = (creds) => {
