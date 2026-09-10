@@ -243,7 +243,7 @@ Obtain an independent VERDICT before considering the proposal ready for Admin ap
    - **PASS** / **PASS WITH NOTES** — proceed; an Admin can approve (notes are non-blocking).
    - **FAIL** — go to Step 6 and fix the BLOCKERs before resubmitting.
 
-If no new `VERDICT:` comment appears after the reviewer returns, check what it *did* post. A `REVIEW SKIPPED:` comment or any other explicit refusal to review is a deliberate escalation to a human: STOP — do not respawn, do not self-review, do not post a VERDICT of your own. If it posted nothing at all, respawn it ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT. If it is still silent, fall back to reviewing manually (Step 5.5 fallback) and post the VERDICT yourself. **Absence is never a PASS.**
+If no new `VERDICT:` comment appears after the reviewer returns, check what it *did* post. A `REVIEW SKIPPED:` comment or any other explicit refusal to review is a deliberate escalation to a human: STOP — do not respawn, do not self-review, do not post a VERDICT of your own. If it posted nothing at all, respawn it ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you fall back to reviewing manually (Step 5.5 fallback) and post the VERDICT yourself. **Absence is never a PASS.**
 
 ### Step 6: Handle Feedback
 

@@ -289,7 +289,7 @@ Every gate in Phases 2, 4 and 4.5 follows the same three steps. They are written
 2. **Read THIS round's VERDICT.** Call `chorus_get_comments` on the entity and find the `VERDICT:` comment posted **after your dispatch**, not an older round's. Do not advance the gate before you have read it.
 3. **No VERDICT for this round?** Check what the reviewer *did* post:
    - **`REVIEW SKIPPED:` or any other explicit refusal** — a deliberate escalation to a human. STOP: do not respawn, do not self-review, do not post a VERDICT of your own.
-   - **Nothing at all** — respawn ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT. If it is still silent, review the entity yourself as a read-only pass and POST the VERDICT, then proceed on what you posted rather than looping forever.
+   - **Nothing at all** — respawn ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you review the entity yourself as a read-only pass and POST the VERDICT, then proceed on what you posted rather than looping forever.
 
 **Absence is never a PASS**, and a round limit reached by someone else is never yours to clear.
 
@@ -553,7 +553,7 @@ result = chorus_create_report({
 | Proposal review FAILs after `maxProposalReviewRounds` (3) | Stop the pipeline; report the persisting BLOCKERs; recommend manual review of the proposal. |
 | Task review FAILs after `maxTaskReviewRounds` (3) | Flag the task as escalation-needed; continue with the other tasks. |
 | Code-review gateway FAILs after `maxCodeReviewRounds` (3) | Stop before ship; escalate the persisting feature-level BLOCKERs to a human (Idea UUID); do not write the completion report. |
-| Reviewer returns no VERDICT | Apply step 3 of the **Reviewer contract**: an explicit `REVIEW SKIPPED:` / refusal is an escalation — STOP; genuine silence — respawn once, then review the entity yourself and POST the VERDICT. |
+| Reviewer returns no VERDICT | Apply step 3 of the **Reviewer contract**: an explicit `REVIEW SKIPPED:` / refusal is an escalation — STOP; genuine silence — respawn once and re-check what the retry posts, and only on a second true silence review the entity yourself and POST the VERDICT. |
 | Worker crashes / never submits | Log it, leave the task non-`to_verify`; re-pick it in a later wave or escalate if it stays stuck. |
 | No unblocked tasks but some not done | Stuck DAG (failed reviews or bad dependencies). Break with an escalation report; do not loop. |
 | Sub-agents unavailable | Use the inline self-review fallback (reviews) and the sequential main-agent fallback (execution). |

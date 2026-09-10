@@ -274,7 +274,7 @@ Every gate in Phases 2, 4 and 4.5 follows the same three steps. They are written
 2. **Read THIS round's VERDICT.** Call `chorus_get_comments` on the entity and find the `VERDICT:` comment posted **after your dispatch**, not an older round's. Do not advance the gate before you have read it.
 3. **No VERDICT for this round?** Check what the reviewer *did* post:
    - **`REVIEW SKIPPED:` or any other explicit refusal** — a deliberate escalation to a human. STOP: do not respawn, do not self-review, do not post a VERDICT of your own.
-   - **Nothing at all** — respawn ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT. If it is still silent, review the entity yourself as a read-only pass and POST the VERDICT, then proceed on what you posted rather than looping forever.
+   - **Nothing at all** — respawn ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you review the entity yourself as a read-only pass and POST the VERDICT, then proceed on what you posted rather than looping forever.
 
 **Absence is never a PASS**, and a round limit reached by someone else is never yours to clear.
 
