@@ -4,9 +4,24 @@
 // threaded into build(). Also covers recordYoloAck (preserve creds) and login
 // PRESERVING the ack via field-level merge (daemon-config-field-merge) — those
 // helpers still exist even though the daemon path no longer prompts/persists an ack.
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runDaemon } from "../daemon.mjs";
 import { recordYoloAck, writeLoginFile } from "../login.mjs";
+
+// Isolate from the DEVELOPER's real ~/.chorus state (see the sibling runDaemon suites):
+// a machine with a configured daemon.json must not change this file's behavior.
+const REAL_HOME = process.env.HOME;
+const TMP_HOME = mkdtempSync(join(tmpdir(), "chorus-permwiring-home-"));
+beforeAll(() => {
+  process.env.HOME = TMP_HOME;
+});
+afterAll(() => {
+  process.env.HOME = REAL_HOME;
+  rmSync(TMP_HOME, { recursive: true, force: true });
+});
 
 /** Minimal happy-path deps; per-test overrides merge on top. */
 function baseDeps(over = {}) {

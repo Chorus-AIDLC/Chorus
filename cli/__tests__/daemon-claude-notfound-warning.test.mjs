@@ -1,9 +1,26 @@
 // cli/__tests__/daemon-claude-notfound-warning.test.mjs
 // Covers daemon-startup-output spec: a missing `claude` emits exactly one loud ⚠
 // stderr warning at startup, while the daemon STILL subscribes (non-fatal).
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runDaemon } from "../daemon.mjs";
 import { agentNotFoundWarningLine, claudeNotFoundWarningLine } from "../daemon-banner.mjs";
+
+// Isolate from the DEVELOPER's real ~/.chorus state: runDaemon's config readers
+// (credentials, cwds, sigint timeout, daemon.json agents) resolve paths through
+// homedir(), so a machine that actually runs a configured daemon would otherwise
+// change this file's behavior. HOME points at a temp dir for this file only.
+const REAL_HOME = process.env.HOME;
+const TMP_HOME = mkdtempSync(join(tmpdir(), "chorus-notfound-home-"));
+beforeAll(() => {
+  process.env.HOME = TMP_HOME;
+});
+afterAll(() => {
+  process.env.HOME = REAL_HOME;
+  rmSync(TMP_HOME, { recursive: true, force: true });
+});
 
 /** Minimal happy-path deps; per-test overrides merge on top. */
 function baseDeps(over = {}) {

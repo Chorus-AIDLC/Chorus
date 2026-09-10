@@ -11,15 +11,20 @@
 //      CodexSpawner; driving its wake() through a fake spawn yields the expected
 //      `codex exec --json` (new) and `codex exec resume <id>` (known anchor) argv,
 //      prompt on stdin, daemon URL/key in the child env (never argv).
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildDaemon } from "../daemon.mjs";
 import { ClaudeSpawner } from "../claude-spawner.mjs";
 import { CodexSpawner } from "../codex-spawner.mjs";
 import { getThreadId, setThreadId } from "../codex-session-map.mjs";
+import {
+  codexUsageMapPath,
+  getCodexUsageSnapshot,
+  setCodexUsageSnapshot,
+} from "../codex-usage-map.mjs";
 import { Waker } from "../waker.mjs";
 import { createTranscriptUploadHooks } from "../upload-hooks.mjs";
 import { killProcessTree } from "../process-killer.mjs";
@@ -28,6 +33,30 @@ const CREDS = { url: "https://chorus.test", apiKey: "cho_daemonkey" };
 const ANCHOR = "11111111-1111-4111-8111-111111111111";
 const TID = "019f091a-844e-7b43-8c31-6b04ffa38149";
 const silent = { info() {}, warn() {}, error() {} };
+
+// ===== Test hygiene: never write the DEVELOPER's real usage map ===============
+// The Codex usage map's default path is ~/.chorus/codex-usage.json. Tests that
+// exercise the real capture path (rather than stubbing it) must point it at a temp
+// file, and this file asserts at the end that nothing wrote the real one. The
+// developer's file may legitimately exist, so the guard compares CONTENT (before vs
+// after) instead of asserting absence — only an actual write fails it.
+const REAL_USAGE_MAP = codexUsageMapPath();
+const readRealUsageMap = () =>
+  existsSync(REAL_USAGE_MAP) ? readFileSync(REAL_USAGE_MAP, "utf8") : null;
+let realUsageMapBefore = null;
+beforeAll(() => {
+  realUsageMapBefore = readRealUsageMap();
+});
+afterAll(() => {
+  expect(readRealUsageMap()).toBe(realUsageMapBefore);
+});
+
+// Temp usage-map file for tests that keep the real capture/normalize logic.
+const USAGE_DIR = mkdtempSync(join(tmpdir(), "chorus-codex-usage-"));
+const USAGE_PATH = join(USAGE_DIR, "codex-usage.json");
+afterAll(() => {
+  rmSync(USAGE_DIR, { recursive: true, force: true });
+});
 
 // Real codex-cli 0.145.0 turn.completed usage frame (verified live + against
 // ../codex/codex-rs/exec/src/exec_events.rs Usage struct).
@@ -174,6 +203,7 @@ describe("codex backend end-to-end argv (via the daemon-selected spawner)", () =
   it("resumes an interrupted first turn from persisted state in a fresh spawner", async () => {
     const dir = mkdtempSync(join(tmpdir(), "chorus-codex-interrupt-"));
     const path = join(dir, "codex-sessions.json");
+    const usagePath = join(dir, "codex-usage.json");
     const children = [];
     const calls = [];
     const makeSpawner = () =>
@@ -185,6 +215,11 @@ describe("codex backend end-to-end argv (via the daemon-selected spawner)", () =
         logger: silent,
         getThreadIdFn: (anchor) => getThreadId(anchor, { path, logger: silent }),
         setThreadIdFn: (anchor, threadId) => setThreadId(anchor, threadId, { path, logger: silent }),
+        // Isolated usage map — the default would write ~/.chorus/codex-usage.json.
+        getUsageSnapshotFn: (anchor, threadId) =>
+          getCodexUsageSnapshot(anchor, threadId, { path: usagePath, logger: silent }),
+        setUsageSnapshotFn: (anchor, threadId, usage) =>
+          setCodexUsageSnapshot(anchor, threadId, usage, { path: usagePath, logger: silent }),
         spawnImpl: (_command, argv) => {
           calls.push(argv);
           const child = makeFakeChild();
@@ -213,6 +248,7 @@ describe("codex backend end-to-end argv (via the daemon-selected spawner)", () =
   it("keeps resuming the same known thread after an interrupted resumed wake", async () => {
     const dir = mkdtempSync(join(tmpdir(), "chorus-codex-reinterrupt-"));
     const path = join(dir, "codex-sessions.json");
+    const usagePath = join(dir, "codex-usage.json");
     setThreadId(ANCHOR, TID, { path, logger: silent });
     const calls = [];
     const children = [];
@@ -225,6 +261,11 @@ describe("codex backend end-to-end argv (via the daemon-selected spawner)", () =
         logger: silent,
         getThreadIdFn: (anchor) => getThreadId(anchor, { path, logger: silent }),
         setThreadIdFn: (anchor, threadId) => setThreadId(anchor, threadId, { path, logger: silent }),
+        // Isolated usage map — the default would write ~/.chorus/codex-usage.json.
+        getUsageSnapshotFn: (anchor, threadId) =>
+          getCodexUsageSnapshot(anchor, threadId, { path: usagePath, logger: silent }),
+        setUsageSnapshotFn: (anchor, threadId, usage) =>
+          setCodexUsageSnapshot(anchor, threadId, usage, { path: usagePath, logger: silent }),
         spawnImpl: (_command, argv) => {
           calls.push(argv);
           const child = makeFakeChild();
@@ -276,7 +317,8 @@ describe("codex token usage end-to-end (daemon-token-usage): real CodexSpawner �
    * Build a Waker driven by the REAL CodexSpawner (fake child process) and the REAL
    * transcript upload hooks, capturing every advanceTurn payload. The stream frames the
    * fake codex child emits on stdout are the test's input. This exercises capture →
-   * onSessionEnd → waker #advanceTurn (terminal edge) together — no mocked usage.
+   * onSessionEnd → waker #advanceTurn (terminal edge) together — no mocked usage, but
+   * pointed at an ISOLATED usage file so the developer's real map stays untouched.
    */
   function makeCodexWaker({ streamFrames, exitCode = 0, batchDelayMs = 0 } = {}) {
     const child = makeFakeChild();
@@ -288,6 +330,10 @@ describe("codex token usage end-to-end (daemon-token-usage): real CodexSpawner �
       logger: silent,
       getThreadIdFn: () => null,
       setThreadIdFn: () => {},
+      getUsageSnapshotFn: (anchor, threadId) =>
+        getCodexUsageSnapshot(anchor, threadId, { path: USAGE_PATH, logger: silent }),
+      setUsageSnapshotFn: (anchor, threadId, usage) =>
+        setCodexUsageSnapshot(anchor, threadId, usage, { path: USAGE_PATH, logger: silent }),
       // Emit the stream frames + close AFTER the spawner has attached its stdout/close
       // listeners. spawnImpl returns synchronously and the listeners are wired right after;
       // queueMicrotask defers the emission just past that synchronous wiring so `close`
