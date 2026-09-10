@@ -40,8 +40,6 @@ reopens it to `active`, back to `done` on delivery.
 
 ### Template — the durable `spec.md`
 
-Inlined here on purpose: there is no template file to copy anywhere on disk.
-
 ```markdown
 ---
 slug: <kebab-case-capability>
@@ -86,10 +84,8 @@ you don't reach back and rewrite a past change.
 
 ### Template — a dated-folder document
 
-Inlined here on purpose: there is no template file to copy anywhere on disk. The document **type is
-implied by the filename** (`prd.md` → `prd`, `tech_design.md` → `tech_design`, …) and is deliberately
-**NOT** a frontmatter key — the type already comes from the file table above, and a `type:` key would
-create a second, divergable source for the same fact.
+The document **type is implied by the filename** (`prd.md` → `prd`, `tech_design.md` → `tech_design`, …),
+**NOT** a frontmatter key.
 
 ```markdown
 ---

@@ -270,6 +270,20 @@ In `/chorus-yolo` mode, the agent generates elaboration questions and answers th
 
 ---
 
+### Reviewer contract (applies to every review gate below)
+
+Every gate in Phases 2, 4 and 4.5 follows the same three steps. They are written once here; the phases below only name their entity and their stage-specific actions.
+
+1. **Spawn and wait.** Spawn the reviewer as a read-only sub-agent, then wait for it: spawn it with the `subagent` tool and wait for that call to return. The call's own return value is not the verdict — the verdict is the `VERDICT:` comment the reviewer posts.
+2. **Read THIS round's VERDICT.** Call `chorus_get_comments` on the entity and find the `VERDICT:` comment posted **after your dispatch**, not an older round's. Do not advance the gate before you have read it.
+3. **No VERDICT for this round?** Check what the reviewer *did* post:
+   - **`REVIEW SKIPPED:` or any other explicit refusal** — a deliberate escalation to a human. STOP: do not respawn, do not self-review, do not post a VERDICT of your own.
+   - **Nothing at all** — respawn ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT. If it is still silent, review the entity yourself as a read-only pass and POST the VERDICT, then proceed on what you posted rather than looping forever.
+
+**Absence is never a PASS**, and a round limit reached by someone else is never yours to clear.
+
+---
+
 ### Phase 2: Proposal Review Loop
 
 After `chorus_pm_submit_proposal`, the `postToolUse` hook injects a nudge to spawn the `chorus-proposal-reviewer`. You MUST manually spawn it as a read-only subagent with the `subagent` tool, then wait for that call to return, then:
@@ -312,7 +326,7 @@ After `chorus_pm_submit_proposal`, the `postToolUse` hook injects a nudge to spa
           Proposal UUID: <uuid>"
    ```
 
-4. **No new VERDICT comment after reviewer returns?** The reviewer exhausted its turn budget. **Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep source verification. Fetch proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first 10 turns."* If the second attempt still produces no VERDICT, review the proposal yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted, so the pipeline cannot loop forever on a silent reviewer.
+4. **No new VERDICT for this round?** Apply step 3 of the **Reviewer contract**, reviewing the proposal yourself if the reviewer stays silent.
 
 ---
 
@@ -443,7 +457,7 @@ ESCALATE: "Task '{title}' failed review after {maxRounds} rounds.
 
 Continue with remaining tasks -- do not halt the entire pipeline for one stuck task.
 
-**No new VERDICT comment after the task-reviewer returns?** It exhausted its turn budget. **Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, demand the developer's run evidence, and post your VERDICT within the first 12 turns."* If the second attempt also produces no VERDICT, review the task yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted. Do not loop indefinitely.
+**No new VERDICT for this round?** Apply step 3 of the **Reviewer contract**, reviewing the task yourself if the reviewer stays silent.
 
 ---
 
@@ -473,7 +487,7 @@ ESCALATE: "Idea '<title>' failed code review after {maxCodeReviewRounds} rounds.
            Last BLOCKERs: <list>. Manual intervention needed. Idea UUID: <uuid>"
 ```
 
-**No new VERDICT comment after the code-reviewer returns?** It exhausted its turn budget (the code-reviewer runs with a larger budget than the task-reviewer because it reviews the whole feature). **Not every missing VERDICT is silence:** if the reviewer instead posted a `REVIEW SKIPPED:` comment (round limit reached — human decision needed) or any other explicit refusal to review, that is a deliberate escalation — STOP: do not respawn, do not self-review, and do not post a VERDICT of your own; leave the entity as it is for the human to decide. If it truly posted nothing, respawn it ONCE with a concise-budget hint; if still silent, review the idea's aggregate change yourself as a read-only pass and post the VERDICT — absence is never a PASS — then proceed on what you posted rather than looping forever on a silent reviewer.
+**No new VERDICT for this round?** Apply step 3 of the **Reviewer contract**, reviewing the idea's aggregate change yourself if the reviewer stays silent.
 
 > The code-review gateway is **behavioral**, consistent with the proposal/task reviewers: its verdict is advisory and does not change the Idea's stored status. The `/chorus-yolo` orchestrator honors it — PASS to ship, FAIL to loop. It runs **before** the completion report so the report is never written for a feature with an outstanding FAIL.
 
