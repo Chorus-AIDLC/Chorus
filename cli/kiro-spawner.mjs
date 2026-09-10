@@ -28,6 +28,7 @@
 // no-op here (this task owns spawn/resume/trust/interrupt + sessionId capture).
 
 import { spawn } from "node:child_process";
+import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { win32 as pathWin32, posix as pathPosix, join } from "node:path";
@@ -37,8 +38,8 @@ import { reconstructTranscript as defaultReconstructTranscript } from "./kiro-tr
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
 /** Directory Kiro persists its CLI session store under (per-cwd conversations). */
-export function kiroSessionsDir() {
-  return join(homedir(), ".kiro", "sessions", "cli");
+export function kiroSessionsDir(env = process.env, platform = process.platform) {
+  return join(getAgentEnv(env, "HOME", platform) || getAgentEnv(env, "USERPROFILE", platform) || homedir(), ".kiro", "sessions", "cli");
 }
 
 /**
@@ -96,14 +97,15 @@ export function resolveKiroPath(deps = {}) {
       }
     });
 
-  if (env.CHORUS_KIRO_PATH && isFile(env.CHORUS_KIRO_PATH)) {
-    return env.CHORUS_KIRO_PATH;
+  const override = getAgentEnv(env, "CHORUS_KIRO_PATH", platform);
+  if (override && isFile(override)) {
+    return override;
   }
 
   const isWin = platform === "win32";
   const p = isWin ? pathWin32 : pathPosix;
   const names = isWin ? ["kiro-cli.cmd", "kiro-cli.exe", "kiro-cli"] : ["kiro-cli"];
-  const pathVar = env.PATH || env.Path || "";
+  const pathVar = getAgentEnv(env, "PATH", platform) || env.Path || "";
   const dirs = pathVar.split(p.delimiter).filter(Boolean);
   for (const dir of dirs) {
     for (const name of names) {
@@ -126,7 +128,7 @@ export function resolveSpawnCommand(kiroPath, args, platform = process.platform,
   const isWin = platform === "win32";
   const lower = kiroPath.toLowerCase();
   if (isWin && (lower.endsWith(".cmd") || lower.endsWith(".bat"))) {
-    const comspec = env.ComSpec || env.COMSPEC || "cmd.exe";
+    const comspec = getAgentEnv(env, "COMSPEC", platform) || "cmd.exe";
     return { command: comspec, argv: ["/d", "/s", "/c", kiroPath, ...args] };
   }
   return { command: kiroPath, argv: args };
@@ -229,6 +231,8 @@ export class KiroSpawner {
     this.permissionMode = opts.permissionMode ?? "chorus";
     this.creds = opts.creds ?? null;
     this.platform = opts.platform ?? process.platform;
+    this.cliConfig = validateAgentCliConfig(opts.cliConfig, "kiro", opts.label);
+    this.env = overlayAgentEnv(opts.env ?? process.env, this.cliConfig.env, this.platform);
     this.getSessionIdFn = opts.getSessionIdFn ?? defaultGetSessionId;
     this.setSessionIdFn = opts.setSessionIdFn ?? defaultSetSessionId;
     this.resolveKiroPathFn = opts.resolveKiroPathFn ?? resolveKiroPath;
@@ -260,15 +264,16 @@ export class KiroSpawner {
     const knownSessionId = anchor ? this.getSessionIdFn(anchor) : null;
     const isNew = !knownSessionId;
 
-    const kiroPath = this.kiroPath ?? this.resolveKiroPathFn();
+    const kiroPath = this.kiroPath ?? this.resolveKiroPathFn({ env: this.env, platform: this.platform });
     if (!kiroPath) {
       // No crash — surface visibly and resolve with a failure result.
       this.logger.error("[Chorus] cannot locate the `kiro-cli` executable on PATH; skipping wake");
       return { sessionId: anchor, exitCode: null, isNew };
     }
 
-    const args = buildKiroArgs({ isNew, sessionId: knownSessionId, permissionMode: this.permissionMode });
-    const { command, argv } = resolveSpawnCommand(kiroPath, args, this.platform);
+    assertConfiguredShimArgs(kiroPath, this.cliConfig.args, this.platform);
+    const args = [...buildKiroArgs({ isNew, sessionId: knownSessionId, permissionMode: this.permissionMode }), ...this.cliConfig.args];
+    const { command, argv } = resolveSpawnCommand(kiroPath, args, this.platform, this.env);
 
     // POSIX: detached process group so the interrupt path can group-kill the tree
     // (kiro-cli forks child shells for tools). Windows uses taskkill /T. stdio
@@ -277,7 +282,7 @@ export class KiroSpawner {
 
     // Export the daemon's authoritative connection pair. CHORUS_API_KEY is also
     // referenced by the plugin's MCP config; neither value is placed in argv.
-    const childEnv = { ...process.env, CHORUS_DAEMON_HEADLESS: "1" };
+    const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
     if (this.creds) {
       if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
       if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
@@ -303,8 +308,8 @@ export class KiroSpawner {
           detached,
           windowsHide: true,
         });
-      } catch (err) {
-        this.logger.error(`[Chorus] failed to spawn kiro-cli: ${err}`);
+      } catch {
+        this.logger.error("[Chorus] failed to spawn kiro-cli");
         resolve({ sessionId: anchor, exitCode: null, isNew });
         return;
       }
@@ -332,8 +337,8 @@ export class KiroSpawner {
         if (text) this.logger.warn(`[Chorus] kiro-cli stderr: ${text}`);
       });
 
-      child.on("error", (err) => {
-        this.logger.error(`[Chorus] kiro-cli process error: ${err}`);
+      child.on("error", () => {
+        this.logger.error("[Chorus] kiro-cli process error");
         resolve({ sessionId: knownSessionId || anchor, exitCode: null, isNew });
       });
 
@@ -376,6 +381,7 @@ export class KiroSpawner {
             this.reconstructTranscript({
               sessionId: observedSessionId ?? "",
               cwd: runCwd,
+              dir: kiroSessionsDir(this.env, this.platform),
               onMessage,
               stdout: stdoutBuf,
               logger: this.logger,
@@ -407,7 +413,7 @@ export class KiroSpawner {
   /** Snapshot the store, swallowing any failure (best-effort id capture). */
   #safeSnapshot(cwd) {
     try {
-      return this.snapshotSessionsFn(cwd, { logger: this.logger });
+      return this.snapshotSessionsFn(cwd, { logger: this.logger, dir: kiroSessionsDir(this.env, this.platform) });
     } catch (err) {
       this.logger.warn(`[Chorus] kiro session snapshot failed (${err}) — id capture degraded`);
       return new Map();

@@ -18,6 +18,14 @@ import { isAbsolute, resolve as resolvePath } from "node:path";
 import { loginFilePath, resolveCredentials, resolveCredentialDefaults } from "./credentials.mjs";
 import { resolveAgentType, KNOWN_AGENTS } from "./daemon-agent.mjs";
 import { resolvePermissionMode } from "./daemon-permission-mode.mjs";
+import { rejectSharedCliConfig, validateAgentCliConfig } from "./agent-cli-config.mjs";
+
+/** Read only the flat profile customization; also used by the legacy startup path. */
+export function resolveFlatAgentCliConfig(type, deps = {}) {
+  const file = (deps.readJson ?? readJsonSafe)(deps.loginPath ?? loginFilePath());
+  rejectSharedCliConfig(file);
+  return validateAgentCliConfig(file ?? {}, type, "agent");
+}
 
 /** Built-in default escalation window (ms) — matches the spec's 10 seconds. */
 export const DEFAULT_SIGINT_TIMEOUT_MS = 10_000;
@@ -307,6 +315,8 @@ function positiveInt(value) {
  * @property {string} url                       Chorus server URL for this agent.
  * @property {string} apiKey                    This agent's `cho_` API key.
  * @property {string} agentType                 Backend: claude-code | codex | kiro | dsh | offline.
+ * @property {string[]} args                   Literal extra backend arguments (per-agent only).
+ * @property {Record<string,string>} env       Literal child environment overrides (per-agent only).
  * @property {boolean} [daemonWake]             Wake opt-in for a wakeable backend; only
  *                                              `false` disables (absent/true ⇒ woken).
  * @property {Array<string|undefined>} cwds     Served paths (`undefined` ⇒ process cwd).
@@ -344,6 +354,8 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
   const home = deps.home ?? homedir();
   const file = readJson(loginPath);
 
+  rejectSharedCliConfig(file);
+
   // Global default permission posture; a per-agent `permissionMode` overrides it.
   // needConfirm/hasAck is vestigial, so isTTY/hasAck do not affect the resolved mode.
   const defaultPermissionMode =
@@ -365,6 +377,7 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
         url: creds.url,
         apiKey: creds.apiKey,
         agentType: at.agent,
+        ...validateAgentCliConfig(file ?? {}, at.agent, "agent"),
         cwds: resolveDaemonCwds(flags, deps),
         permissionMode: defaultPermissionMode,
         maxConcurrency: positiveInt(file?.maxConcurrency) ?? DEFAULT_MAX_CONCURRENCY,
@@ -449,6 +462,7 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
       url,
       apiKey,
       agentType,
+      ...validateAgentCliConfig(entry, agentType, label),
       cwds,
       permissionMode,
       maxConcurrency,

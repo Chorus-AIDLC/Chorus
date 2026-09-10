@@ -27,6 +27,7 @@
 // stream parse) and the PATH-walk shape of resolveClaudePath.
 
 import { spawn } from "node:child_process";
+import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, win32 as pathWin32, posix as pathPosix } from "node:path";
@@ -49,8 +50,9 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 export function hasChorusMcpServer(deps = {}) {
   const env = deps.env ?? process.env;
   const readFile = deps.readFile ?? readFileSync;
-  const home = deps.home ?? homedir();
-  const configPath = join(env.CODEX_HOME || join(home, ".codex"), "config.toml");
+  const platform = deps.platform ?? process.platform;
+  const home = deps.home ?? getAgentEnv(env, "HOME", platform) ?? getAgentEnv(env, "USERPROFILE", platform) ?? homedir();
+  const configPath = join(getAgentEnv(env, "CODEX_HOME", platform) || join(home, ".codex"), "config.toml");
   try {
     const config = readFile(configPath, "utf8");
     return /^\s*\[mcp_servers\.chorus\]\s*(?:#.*)?$/m.test(config);
@@ -148,14 +150,15 @@ export function resolveCodexPath(deps = {}) {
       }
     });
 
-  if (env.CHORUS_CODEX_PATH && isFile(env.CHORUS_CODEX_PATH)) {
-    return env.CHORUS_CODEX_PATH;
+  const override = getAgentEnv(env, "CHORUS_CODEX_PATH", platform);
+  if (override && isFile(override)) {
+    return override;
   }
 
   const isWin = platform === "win32";
   const p = isWin ? pathWin32 : pathPosix;
   const names = isWin ? ["codex.cmd", "codex.exe", "codex"] : ["codex"];
-  const pathVar = env.PATH || env.Path || "";
+  const pathVar = getAgentEnv(env, "PATH", platform) || env.Path || "";
   const dirs = pathVar.split(p.delimiter).filter(Boolean);
   for (const dir of dirs) {
     for (const name of names) {
@@ -178,7 +181,7 @@ export function resolveSpawnCommand(codexPath, args, platform = process.platform
   const isWin = platform === "win32";
   const lower = codexPath.toLowerCase();
   if (isWin && (lower.endsWith(".cmd") || lower.endsWith(".bat"))) {
-    const comspec = env.ComSpec || env.COMSPEC || "cmd.exe";
+    const comspec = getAgentEnv(env, "COMSPEC", platform) || "cmd.exe";
     return { command: comspec, argv: ["/d", "/s", "/c", codexPath, ...args] };
   }
   return { command: codexPath, argv: args };
@@ -210,6 +213,8 @@ export class CodexSpawner {
     this.permissionMode = opts.permissionMode ?? "chorus";
     this.creds = opts.creds ?? null;
     this.platform = opts.platform ?? process.platform;
+    this.cliConfig = validateAgentCliConfig(opts.cliConfig, "codex", opts.label);
+    this.env = overlayAgentEnv(opts.env ?? process.env, this.cliConfig.env, this.platform);
     this.getThreadIdFn = opts.getThreadIdFn ?? defaultGetThreadId;
     this.setThreadIdFn = opts.setThreadIdFn ?? defaultSetThreadId;
     this.getUsageSnapshotFn = opts.getUsageSnapshotFn ?? defaultGetUsageSnapshot;
@@ -246,7 +251,7 @@ export class CodexSpawner {
     // instead of publishing the entire historical cumulative total.
     let needsUsageSeed = Boolean(knownThreadId && !previousUsage);
 
-    const codexPath = this.codexPath ?? this.resolveCodexPathFn();
+    const codexPath = this.codexPath ?? this.resolveCodexPathFn({ env: this.env, platform: this.platform });
     if (!codexPath) {
       // No crash — surface visibly and resolve with a failure result.
       this.logger.error("[Chorus] cannot locate the `codex` executable on PATH; skipping wake");
@@ -255,15 +260,17 @@ export class CodexSpawner {
 
     if (!this.mcpConfigChecked) {
       this.mcpConfigChecked = true;
-      if (!this.hasChorusMcpServerFn()) {
+      if (!this.hasChorusMcpServerFn({ env: this.env, platform: this.platform })) {
         this.logger.warn(
           "[Chorus] Codex config has no [mcp_servers.chorus] entry; wake will continue without Chorus MCP tools",
         );
       }
     }
 
-    const args = buildCodexArgs({ isNew, threadId: knownThreadId, permissionMode: this.permissionMode });
-    const { command, argv } = resolveSpawnCommand(codexPath, args, this.platform);
+    assertConfiguredShimArgs(codexPath, this.cliConfig.args, this.platform);
+    const args = [...buildCodexArgs({ isNew, threadId: knownThreadId, permissionMode: this.permissionMode }), ...this.cliConfig.args,
+      ...(this.cliConfig.args.length ? ["-"] : [])];
+    const { command, argv } = resolveSpawnCommand(codexPath, args, this.platform, this.env);
 
     // POSIX: detached process group so the interrupt path can group-kill the tree
     // (codex exec forks child shells for tools). Windows uses taskkill /T. stdio
@@ -273,7 +280,7 @@ export class CodexSpawner {
     // Export the daemon's resolved connection pair for both Codex MCP auth and
     // SessionStart hooks. Explicitly overwrite inherited values so the hook and
     // daemon cannot disagree about which Chorus instance this wake belongs to.
-    const childEnv = { ...process.env, CHORUS_DAEMON_HEADLESS: "1" };
+    const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
     if (this.creds) {
       if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
       if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
@@ -294,8 +301,8 @@ export class CodexSpawner {
           detached,
           windowsHide: true,
         });
-      } catch (err) {
-        this.logger.error(`[Chorus] failed to spawn codex: ${err}`);
+      } catch {
+        this.logger.error("[Chorus] failed to spawn codex");
         resolve({ sessionId: anchor, backendSessionId: knownThreadId, exitCode: null, isNew });
         return;
       }
@@ -357,8 +364,8 @@ export class CodexSpawner {
         if (text) this.logger.warn(`[Chorus] codex stderr: ${text}`);
       });
 
-      child.on("error", (err) => {
-        this.logger.error(`[Chorus] codex process error: ${err}`);
+      child.on("error", () => {
+        this.logger.error("[Chorus] codex process error");
         resolve({ sessionId: anchor, backendSessionId: observedThreadId, exitCode: null, isNew });
       });
 

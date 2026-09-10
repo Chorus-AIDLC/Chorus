@@ -20,6 +20,7 @@
 // chorus-dsh-lifecycle plugin's documented fallback also reads $DSH_HOME/.env).
 
 import { spawnSync } from "node:child_process";
+import { getAgentEnv, overlayAgentEnv } from "./agent-cli-config.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -70,8 +71,8 @@ function readJson(path) {
   }
 }
 
-export function managedDshRoot(env = process.env) {
-  const home = env.HOME || env.USERPROFILE || homedir();
+export function managedDshRoot(env = process.env, platform = process.platform) {
+  const home = getAgentEnv(env, "HOME", platform) || getAgentEnv(env, "USERPROFILE", platform) || homedir();
   return join(home, ".chorus", "dsh");
 }
 
@@ -103,7 +104,7 @@ export function buildProviderPatch(provider) {
 function runCommand(command, argv, opts) {
   const platform = opts.platform ?? process.platform;
   const isCmd = platform === "win32" && /\.(cmd|bat)$/i.test(command);
-  const executable = isCmd ? opts.env?.ComSpec || opts.env?.COMSPEC || "cmd.exe" : command;
+  const executable = isCmd ? getAgentEnv(opts.env ?? process.env, "COMSPEC", platform) || "cmd.exe" : command;
   const commandArgs = isCmd ? ["/d", "/s", "/c", command, ...argv] : argv;
   const result = spawnSync(executable, commandArgs, {
     cwd: opts.cwd,
@@ -179,14 +180,13 @@ export function validateManagedDshProfile(home, opts = {}) {
 export function validateManagedDshComposition(home, opts = {}) {
   const dshPath = opts.dshPath;
   if (!dshPath) throw new Error("cannot validate dsh composition: the dsh CLI was not found");
-  const env = {
-    ...(opts.env ?? process.env),
+  const env = overlayAgentEnv(opts.env ?? process.env, {
     CHORUS_DAEMON_HEADLESS: "1",
     CHORUS_URL: opts.creds?.url ?? "http://127.0.0.1",
     CHORUS_API_KEY: opts.creds?.apiKey ?? "cho_validation",
     DSH_HOME: home,
     DSH_CWD: home,
-  };
+  }, opts.platform);
   const argv = ["--profile", DSH_PROFILE, ...(opts.patchPath ? ["--patch", opts.patchPath] : [])];
   const request = `${JSON.stringify({
     jsonrpc: "2.0",
@@ -232,7 +232,8 @@ function activeState(root, pathExists = existsSync) {
  */
 export async function prepareManagedDshConfig(opts = {}) {
   const env = opts.env ?? process.env;
-  const root = opts.root ?? managedDshRoot(env);
+  const platform = opts.platform ?? process.platform;
+  const root = opts.root ?? managedDshRoot(env, platform);
   const bundleVersion = opts.bundleVersion;
   if (!bundleVersion) throw new Error("dsh managed preparation requires a Chorus bundle version");
   const dshPath = opts.dshPath;
@@ -246,8 +247,8 @@ export async function prepareManagedDshConfig(opts = {}) {
   // and tested end-to-end against a real dsh runtime without publishing first.
   // Unset in production. `opts.bundleSpec` (tests) still wins over the env.
   const bundleSpec =
-    opts.bundleSpec ?? nonEmpty(env.CHORUS_DSH_BUNDLE_SPEC) ?? `${DSH_BUNDLE}@${bundleVersion}`;
-  const provider = nonEmpty(env.CHORUS_DSH_PROVIDER) ?? nonEmpty(env.DSH_PROVIDER) ?? DEFAULT_DSH_PROVIDER;
+    opts.bundleSpec ?? nonEmpty(getAgentEnv(env, "CHORUS_DSH_BUNDLE_SPEC", platform)) ?? `${DSH_BUNDLE}@${bundleVersion}`;
+  const provider = nonEmpty(getAgentEnv(env, "CHORUS_DSH_PROVIDER", platform)) ?? nonEmpty(getAgentEnv(env, "DSH_PROVIDER", platform)) ?? DEFAULT_DSH_PROVIDER;
   const providerPatch = buildProviderPatch(provider);
   // Bind the fingerprint to the ACTUAL external dsh runtime version: peers are a
   // lenient range now, so a managed profile composed against an older `dsh` must
@@ -278,14 +279,14 @@ export async function prepareManagedDshConfig(opts = {}) {
     const install = opts.install ?? ((home) => runner(
       dshPath,
       ["plugin", "--profile", DSH_PROFILE, "add", bundleSpec, "-w"],
-      { cwd: home, env: { ...env, DSH_HOME: home }, timeout: opts.installTimeoutMs ?? 300_000, platform: opts.platform },
+      { cwd: home, env: overlayAgentEnv(env, { DSH_HOME: home }, platform), timeout: opts.installTimeoutMs ?? 300_000, platform: opts.platform },
     ));
     try {
       install(releaseDir);
     } catch (error) {
       throw new Error(
         `dsh managed profile installation failed: ` +
-          redactedErrorText(error, [env.CHORUS_API_KEY, opts.creds?.apiKey]),
+          redactedErrorText(error, [getAgentEnv(env, "CHORUS_API_KEY", platform), opts.creds?.apiKey]),
       );
     }
 
@@ -311,7 +312,7 @@ export async function prepareManagedDshConfig(opts = {}) {
           : "";
       throw new Error(
         `dsh managed composition validation failed${hint}: ` +
-          redactedErrorText(error, [env.CHORUS_API_KEY, opts.creds?.apiKey]),
+          redactedErrorText(error, [getAgentEnv(env, "CHORUS_API_KEY", platform), opts.creds?.apiKey]),
       );
     }
 

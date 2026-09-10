@@ -40,12 +40,13 @@ import { EventRouter } from "./event-router.mjs";
 import { WakeQueue } from "./wake-queue.mjs";
 import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
-import { resolveClaudePath } from "./claude-spawner.mjs";
+import { resolveClaudePath, isNewSession } from "./claude-spawner.mjs";
 import { resolveCodexPath } from "./codex-spawner.mjs";
 import { resolveDshPath } from "./dsh-spawner.mjs";
 import { prepareManagedDshConfig } from "./dsh-managed-config.mjs";
 import { resolveKiroPath } from "./kiro-spawner.mjs";
 import { selectSpawner } from "./spawner-select.mjs";
+import { overlayAgentEnv } from "./agent-cli-config.mjs";
 import {
   createExecutionUploadHooks,
   createTranscriptUploadHooks,
@@ -61,6 +62,7 @@ import {
   resolveDaemonCwds,
   resolveBrowseRoots,
   resolveAgentConfigs,
+  resolveFlatAgentCliConfig,
   hasConfiguredAgents,
 } from "./daemon-config.mjs";
 import { discoverDirectories, validateDirectory } from "./directory-discovery.mjs";
@@ -157,6 +159,10 @@ export function buildDaemon(creds, deps = {}) {
   // passed through so the Codex backend can export the daemon key into the woken
   // process env (the Claude backend ignores creds — it gets its key via --mcp-config).
   const spawner = deps.spawner ?? selectSpawner(agentType, {
+    ...deps.spawnerOptions,
+    cliConfig: deps.cliConfig,
+    env: deps.env,
+    label: deps.label,
     logger,
     permissionMode,
     creds,
@@ -306,6 +312,7 @@ export function buildDaemon(creds, deps = {}) {
         creds,
         lineage,
         spawner,
+        isNewSessionFn: (sessionId, runCwd) => isNewSession(sessionId, runCwd, { env: spawner.env, platform: spawner.platform }),
         cwd: boundCwd,
         hooks,
         logger,
@@ -664,6 +671,8 @@ export function buildMultiAgentDaemon(agentConfigs, deps = {}) {
         logger,
         permissionMode: cfg.permissionMode,
         agentType: cfg.agentType,
+        cliConfig: { args: cfg.args, env: cfg.env },
+        label: cfg.label,
         cwds: cfg.cwds,
         cwd: undefined,
         maxConcurrency: cfg.maxConcurrency,
@@ -862,6 +871,19 @@ export async function runDaemon(flags = {}, deps = {}) {
     return handleLifecycleAction(action, { log, errLog, lifecycle, service, pfDeps });
   }
 
+  // Validate flat customization before credential/network preflight, including
+  // the detach path. Lifecycle-only actions above do not launch an agent.
+  const multiAgent = hasConfiguredAgents({ readJson: deps.readJson, loginPath: deps.loginPath });
+  let cliConfig;
+  if (!multiAgent) {
+    try {
+      cliConfig = resolveFlatAgentCliConfig(agentType, { readJson: deps.readJson, loginPath: deps.loginPath });
+    } catch (error) {
+      errLog(`[Chorus] ${error.message}`);
+      return 1;
+    }
+  }
+
   // `-d` / --detach: complete any interactive preflight in THIS foreground process
   // (which holds the TTY), then spawn the daemon detached and return. The detached
   // child re-enters runDaemon with the DETACHED_ENV marker set, so it skips the
@@ -889,7 +911,7 @@ export async function runDaemon(flags = {}, deps = {}) {
   // credential preflight (interactive credential completion is a single-agent
   // affordance). Each agent authenticates on its own key; a failure is isolated
   // (logged + that agent skipped) so the rest still serve.
-  if (hasConfiguredAgents({ readJson: deps.readJson, loginPath: deps.loginPath })) {
+  if (multiAgent) {
     const buildMulti = deps.buildMulti ?? buildMultiAgentDaemon;
     let agentConfigs;
     try {
@@ -950,6 +972,7 @@ export async function runDaemon(flags = {}, deps = {}) {
     const multiDaemon = buildMulti(okConfigs, {
       logger: { info: log, warn: errLog, error: errLog },
       verbose,
+      env,
       fetchImpl: deps.fetchImpl,
       killer: deps.killer,
       sseListener: deps.sseListener,
@@ -1002,14 +1025,15 @@ export async function runDaemon(flags = {}, deps = {}) {
   // arrives. The resolved path (or absence) is shown in the banner below. Each
   // backend probes its own binary, including the `dsh` CLI for dsh, so the
   // startup banner and warning report the selected runtime rather than Claude.
+  const discoveryEnv = overlayAgentEnv(env, cliConfig.env);
   const cliPath =
     agentType === "codex"
-      ? findCodex()
+      ? findCodex({ env: discoveryEnv })
       : agentType === "kiro"
-        ? findKiro()
+        ? findKiro({ env: discoveryEnv })
         : agentType === "dsh"
-          ? findDsh()
-          : findClaude();
+          ? findDsh({ env: discoveryEnv })
+          : findClaude({ env: discoveryEnv });
 
   // The daemon.json the layered config readers (credentials, sigint timeout, cwds)
   // consult. Surfacing its absolute path + presence in the banner makes it obvious
@@ -1068,6 +1092,8 @@ export async function runDaemon(flags = {}, deps = {}) {
     logger: { info: log, warn: errLog, error: errLog },
     permissionMode,
     agentType,
+    cliConfig,
+    env,
     verbose,
     sigintTimeoutMs,
     cwds,

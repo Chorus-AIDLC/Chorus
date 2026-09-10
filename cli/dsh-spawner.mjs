@@ -2,6 +2,7 @@
 // session are created per wake; no dsh session state is persisted by Chorus.
 
 import { spawn } from "node:child_process";
+import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
@@ -36,13 +37,13 @@ export function resolveDshPath(deps = {}) {
   const env = deps.env ?? process.env;
   const platform = deps.platform ?? process.platform;
   const fileProbe = deps.isFile ?? isFile;
-  const override = nonEmpty(env.CHORUS_DSH_PATH);
+  const override = nonEmpty(getAgentEnv(env, "CHORUS_DSH_PATH", platform));
   if (override && fileProbe(override)) return override;
 
   const windows = platform === "win32";
   const path = windows ? pathWin32 : pathPosix;
   const names = windows ? ["dsh.cmd", "dsh.exe", "dsh"] : ["dsh"];
-  const dirs = (env.PATH || env.Path || "").split(path.delimiter).filter(Boolean);
+  const dirs = (getAgentEnv(env, "PATH", platform) || env.Path || "").split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
     for (const name of names) {
       const candidate = path.join(dir, name);
@@ -58,8 +59,8 @@ export function resolveDshPath(deps = {}) {
  * profile preparation entirely (the escape hatch replacing the old
  * DSH_CORDIS_CONFIG override — which is gone with the removed cordis.yml model).
  */
-export function resolveDshHome(env = process.env) {
-  return nonEmpty(env.CHORUS_DSH_HOME);
+export function resolveDshHome(env = process.env, platform = process.platform) {
+  return nonEmpty(getAgentEnv(env, "CHORUS_DSH_HOME", platform)) ?? nonEmpty(getAgentEnv(env, "DSH_HOME", platform));
 }
 
 /** Windows npm command shims need cmd.exe while retaining argv isolation. */
@@ -67,7 +68,7 @@ export function resolveDshSpawnCommand(dshPath, platform = process.platform, env
   const lower = dshPath.toLowerCase();
   if (platform === "win32" && (lower.endsWith(".cmd") || lower.endsWith(".bat"))) {
     return {
-      command: env.ComSpec || env.COMSPEC || "cmd.exe",
+      command: getAgentEnv(env, "COMSPEC", platform) || "cmd.exe",
       argv: ["/d", "/s", "/c", dshPath],
     };
   }
@@ -139,7 +140,8 @@ export class DshSpawner {
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.creds = opts.creds ?? null;
     this.platform = opts.platform ?? process.platform;
-    this.env = opts.env ?? process.env;
+    this.cliConfig = validateAgentCliConfig(opts.cliConfig, "dsh", opts.label);
+    this.env = overlayAgentEnv(opts.env ?? process.env, this.cliConfig.env, this.platform);
     this.bundleVersion = opts.bundleVersion ?? null;
     this.prepareManagedConfigFn = opts.prepareManagedConfigFn ?? prepareManagedDshConfig;
     this.timeoutMs = opts.timeoutMs ?? positiveInt(this.env.CHORUS_DSH_TIMEOUT_MS, DEFAULT_DSH_TIMEOUT_MS);
@@ -150,7 +152,7 @@ export class DshSpawner {
 
   async wake({ prompt, sessionId: anchor, cwd, onMessage, onChild }) {
     const dshPath = this.dshPath ?? this.resolveDshPathFn({ env: this.env, platform: this.platform });
-    let dshHome = resolveDshHome(this.env);
+    let dshHome = resolveDshHome(this.env, this.platform);
     let patchPath = null;
     const result = (backendSessionId, exitCode) => ({
       sessionId: backendSessionId || anchor || "",
@@ -165,33 +167,34 @@ export class DshSpawner {
       );
       return result(null, null);
     }
+    assertConfiguredShimArgs(dshPath, this.cliConfig.args, this.platform);
     if (!dshHome) {
       try {
         const managed = await this.prepareManagedConfigFn({
           env: this.env,
+          platform: this.platform,
           bundleVersion: this.bundleVersion,
           dshPath,
           creds: this.creds,
         });
         dshHome = managed.home;
         patchPath = managed.patchPath ?? null;
-      } catch (error) {
-        this.logger.error(`[Chorus] cannot prepare managed dsh profile: ${errorText(error)}`);
+      } catch {
+        this.logger.error("[Chorus] cannot prepare managed dsh profile");
         return result(null, null);
       }
     }
 
     const dshSessionId = `chorus-${this.uuidFn().replaceAll("-", "")}`;
     const provider =
-      nonEmpty(this.env.CHORUS_DSH_PROVIDER) ?? nonEmpty(this.env.DSH_PROVIDER) ?? "deepseek-official";
+      nonEmpty(getAgentEnv(this.env, "CHORUS_DSH_PROVIDER", this.platform)) ?? nonEmpty(getAgentEnv(this.env, "DSH_PROVIDER", this.platform)) ?? "deepseek-official";
     const model =
-      nonEmpty(this.env.CHORUS_DSH_MODEL) ?? nonEmpty(this.env.DSH_MODEL) ?? "deepseek-v4-flash";
-    const childEnv = {
-      ...this.env,
+      nonEmpty(getAgentEnv(this.env, "CHORUS_DSH_MODEL", this.platform)) ?? nonEmpty(getAgentEnv(this.env, "DSH_MODEL", this.platform)) ?? "deepseek-v4-flash";
+    const childEnv = overlayAgentEnv(this.env, {
       CHORUS_DAEMON_HEADLESS: "1",
       DSH_HOME: dshHome,
       DSH_CWD: cwd || process.cwd(),
-    };
+    }, this.platform);
     if (this.creds?.url) childEnv.CHORUS_URL = this.creds.url;
     if (this.creds?.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
     // Identity profile — the dsh doc-mirror wrapper passes this to `chorus mcp
@@ -213,6 +216,7 @@ export class DshSpawner {
       "--profile",
       "sdk",
       ...(patchPath ? ["--patch", patchPath] : []),
+      ...this.cliConfig.args,
     ];
     let child;
     try {
@@ -224,8 +228,8 @@ export class DshSpawner {
         detached: this.platform !== "win32",
         windowsHide: true,
       });
-    } catch (error) {
-      this.logger.error(`[Chorus] failed to start dsh runtime: ${errorText(error)}`);
+    } catch {
+      this.logger.error("[Chorus] failed to start dsh runtime");
       return result(dshSessionId, null);
     }
 
@@ -367,7 +371,7 @@ export class DshSpawner {
         if (line) this.logger.warn(`[dsh] ${line}`);
       }
     });
-    child.on?.("error", (error) => fail(`dsh runtime process error: ${errorText(error)}`));
+    child.on?.("error", () => fail("dsh runtime process error"));
     child.on?.("close", (code) => {
       closeSeen = true;
       exitCode = code;

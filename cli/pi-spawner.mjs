@@ -38,6 +38,7 @@
 // PATH-walk / .cmd-shim shape of the other spawners' path resolution.
 
 import { spawn } from "node:child_process";
+import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
 import { parseNdjsonChunk } from "./claude-spawner.mjs";
@@ -83,14 +84,15 @@ export function resolvePiPath(deps = {}) {
       }
     });
 
-  if (env.CHORUS_PI_PATH && isFile(env.CHORUS_PI_PATH)) {
-    return env.CHORUS_PI_PATH;
+  const override = getAgentEnv(env, "CHORUS_PI_PATH", platform);
+  if (override && isFile(override)) {
+    return override;
   }
 
   const isWin = platform === "win32";
   const p = isWin ? pathWin32 : pathPosix;
   const names = isWin ? ["pi.cmd", "pi.exe", "pi"] : ["pi"];
-  const pathVar = env.PATH || env.Path || "";
+  const pathVar = getAgentEnv(env, "PATH", platform) || env.Path || "";
   const dirs = pathVar.split(p.delimiter).filter(Boolean);
   for (const dir of dirs) {
     for (const name of names) {
@@ -113,7 +115,7 @@ export function resolveSpawnCommand(piPath, args, platform = process.platform, e
   const isWin = platform === "win32";
   const lower = piPath.toLowerCase();
   if (isWin && (lower.endsWith(".cmd") || lower.endsWith(".bat"))) {
-    const comspec = env.ComSpec || env.COMSPEC || "cmd.exe";
+    const comspec = getAgentEnv(env, "COMSPEC", platform) || "cmd.exe";
     return { command: comspec, argv: ["/d", "/s", "/c", piPath, ...args] };
   }
   return { command: piPath, argv: args };
@@ -150,6 +152,8 @@ export class PiSpawner {
     this.permissionMode = opts.permissionMode ?? "chorus";
     this.creds = opts.creds ?? null;
     this.platform = opts.platform ?? process.platform;
+    this.cliConfig = validateAgentCliConfig(opts.cliConfig, "pi", opts.label);
+    this.env = overlayAgentEnv(opts.env ?? process.env, this.cliConfig.env, this.platform);
     this.resolvePiPathFn = opts.resolvePiPathFn ?? resolvePiPath;
   }
 
@@ -174,7 +178,7 @@ export class PiSpawner {
     const anchor = typeof sessionId === "string" ? sessionId : "";
     const isNewFlag = Boolean(isNew);
 
-    const piPath = this.piPath ?? this.resolvePiPathFn();
+    const piPath = this.piPath ?? this.resolvePiPathFn({ env: this.env, platform: this.platform });
     if (!piPath) {
       // No crash — surface visibly and resolve with a failure result (matches the
       // other spawners' "skipping wake" convention: exitCode null, no throw).
@@ -182,8 +186,10 @@ export class PiSpawner {
       return { sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag };
     }
 
-    const args = buildPiArgs({ sessionId: anchor });
-    const { command, argv } = resolveSpawnCommand(piPath, args, this.platform);
+    assertConfiguredShimArgs(piPath, this.cliConfig.args, this.platform);
+    const fixed = buildPiArgs({ sessionId: anchor });
+    const args = [...fixed.slice(0, -1), ...this.cliConfig.args, fixed.at(-1)];
+    const { command, argv } = resolveSpawnCommand(piPath, args, this.platform, this.env);
 
     // POSIX: detached process group so the interrupt path can group-kill the tree
     // (pi may fork child shells / subagents). Windows uses taskkill /T. stdio stays
@@ -193,7 +199,7 @@ export class PiSpawner {
     // Export the daemon's resolved connection pair for the chorus-pi extension's
     // Chorus tooling. Explicitly overwrite inherited values so the extension and the
     // daemon cannot disagree about which Chorus instance this wake belongs to.
-    const childEnv = { ...process.env, CHORUS_DAEMON_HEADLESS: "1" };
+    const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
     if (this.creds) {
       if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
       if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
@@ -214,8 +220,8 @@ export class PiSpawner {
           detached,
           windowsHide: true,
         });
-      } catch (err) {
-        this.logger.error(`[Chorus] failed to spawn pi: ${err}`);
+      } catch {
+        this.logger.error("[Chorus] failed to spawn pi");
         resolve({ sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag });
         return;
       }
@@ -256,8 +262,8 @@ export class PiSpawner {
         if (text) this.logger.warn(`[Chorus] pi stderr: ${text}`);
       });
 
-      child.on("error", (err) => {
-        this.logger.error(`[Chorus] pi process error: ${err}`);
+      child.on("error", () => {
+        this.logger.error("[Chorus] pi process error");
         resolve({ sessionId: anchor, backendSessionId: anchor || null, exitCode: null, isNew: isNewFlag });
       });
 

@@ -10,6 +10,7 @@ import { createInterface } from "node:readline";
 import { loginFilePath } from "./credentials.mjs";
 import { validateAndFetchIdentity } from "./chorus-client.mjs";
 import { promptAgentBackend } from "./agent-backend-prompt.mjs";
+import { rejectSharedCliConfig } from "./agent-cli-config.mjs";
 
 /**
  * Prompt for a line of input. When `mask` is true, typed characters are not
@@ -177,9 +178,12 @@ export function appendAgentConfig(agentObj, deps = {}) {
     // treat as empty
   }
 
+  // Refuse already-misplaced customization before any write (even duplicates).
+  rejectSharedCliConfig(current);
   const existingAgents =
     Array.isArray(current.agents) ? current.agents.filter((a) => a && typeof a === "object") : [];
 
+  let migratedFlat = false;
   /** @type {object[]} */
   let agents;
   if (existingAgents.length > 0) {
@@ -192,6 +196,12 @@ export function appendAgentConfig(agentObj, deps = {}) {
     if (Array.isArray(current.cwds)) flat.cwds = current.cwds;
     if (nonEmpty(current.agentName)) flat.agentName = current.agentName;
     if (nonEmpty(current.agentUuid)) flat.agentUuid = current.agentUuid;
+    // Move by presence, not validity: later validation must attribute malformed
+    // values to the original agent rather than lose them or leave shared keys.
+    for (const field of ["args", "env"]) {
+      if (Object.hasOwn(current, field)) flat[field] = current[field];
+    }
+    migratedFlat = true;
     agents = [flat];
   } else {
     agents = [];
@@ -206,7 +216,13 @@ export function appendAgentConfig(agentObj, deps = {}) {
   }
 
   agents.push(agentObj);
-  const writtenPath = updateDaemonConfig({ agents }, deps);
+  // JSON serialization omits undefined keys; the existing temp-file rename
+  // commits the fold and top-level removal together in one atomic write.
+  const update = { agents, ...(migratedFlat ? { args: undefined, env: undefined } : {}) };
+  // A flat file without a key cannot be folded into an original agent. Do not
+  // turn that partial config into an invalid shared file by adding an agent.
+  if (!migratedFlat) rejectSharedCliConfig({ ...current, agents });
+  const writtenPath = updateDaemonConfig(update, deps);
   return { ok: true, path: writtenPath, agents, index: agents.length - 1 };
 }
 

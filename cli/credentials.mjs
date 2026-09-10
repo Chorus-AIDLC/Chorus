@@ -19,6 +19,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { rejectSharedCliConfig } from "./agent-cli-config.mjs";
 
 /** Absolute path to the login file written by `chorus login`. */
 export function loginFilePath() {
@@ -425,6 +426,7 @@ export function resolveLaunchAgent(flags = {}, deps = {}) {
   const wanted = nonEmpty(flags.name) ?? nonEmpty(flags.agent) ?? nonEmpty(env.CHORUS_AGENT_PROFILE);
 
   const file = readJson(loginPath);
+  rejectSharedCliConfig(file);
   const agentEntries =
     file && Array.isArray(file.agents)
       ? file.agents.filter((a) => a && typeof a === "object")
@@ -448,6 +450,8 @@ export function resolveLaunchAgent(flags = {}, deps = {}) {
     agentUuid: nonEmpty(entry.agentUuid),
     agentName: nonEmpty(entry.agentName) ?? nonEmpty(entry.name),
     agentType: nonEmpty(entry.agentType),
+    args: entry.args,
+    env: entry.env,
   }));
   const labels = resolved.map((a) => a.label).join(", ");
 
@@ -479,6 +483,9 @@ export function resolveLaunchAgent(flags = {}, deps = {}) {
     agentUuid: selected.agentUuid,
     agentName: selected.agentName,
     agentType: selected.agentType,
+    // Validation uses the launcher's effective --type, not the stored classification.
+    args: selected.args,
+    env: selected.env,
     label: selected.label,
   };
 }
