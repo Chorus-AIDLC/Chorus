@@ -61,8 +61,9 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 export function buildPiArgs({ sessionId, model, thinking }) {
   const args = ["--mode", "json", "--session-id", sessionId];
   // Per-agent model / thinking (add-daemon-per-agent-model-thinking) — pi's OWN flags,
-  // forwarded VERBATIM (`--model` accepts provider/id patterns; `--thinking` accepts
-  // off|minimal|low|medium|high|xhigh|max). Absent ⇒ this block contributes nothing.
+  // forwarded verbatim once surrounding whitespace is trimmed (`--model` accepts
+  // provider/id patterns; `--thinking` accepts off|minimal|low|medium|high|xhigh|max).
+  // Absent ⇒ this block contributes nothing.
   if (model) args.push("--model", model);
   if (thinking) args.push("--thinking", thinking);
   // `-p` stays LAST (see above): the mapped flags must precede it, never follow it.

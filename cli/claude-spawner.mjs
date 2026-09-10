@@ -194,8 +194,8 @@ export const CHORUS_MCP_SERVER_NAME = "chorus";
  * Build the argv for a headless run. Prompt is NEVER here — it goes over stdin.
  *
  * `model` / `thinking` (add-daemon-per-agent-model-thinking) ride the backend's OWN
- * flags — `--model <id>` and `--effort <level>` — forwarded VERBATIM: Claude Code owns
- * the accepted vocabulary (model aliases / full ids / effort levels), so the daemon
+ * flags — `--model <id>` and `--effort <level>` — forwarded verbatim (after trimming
+ * surrounding whitespace): Claude Code owns the accepted vocabulary (model aliases / full ids / effort levels), so the daemon
  * never validates a value. Both are optional; when absent the argv is byte-identical
  * to the pre-feature shape. An explicit launch choice (`--effort`) is what Claude Code
  * honours in a headless `-p` run, where a non-interactive `/effort` reports *Not applied*.

@@ -390,6 +390,20 @@ describe("runAgentLaunch — per-agent model / thinking (foreground parity)", ()
     expect(calls[0].argv).toEqual(["--effort", "high", "--model", "sonnet"]);
   });
 
+  it("also detects the equals forms (--model=…, -m=…, -c=model_reasoning_effort=…)", async () => {
+    const claude = opts({ agents: [DEV] });
+    await runAgentLaunch(["--name", "work", "--", "--model=sonnet"], claude.o);
+    expect(claude.calls[0].argv).toEqual(["--effort", "high", "--model=sonnet"]);
+
+    const shorthand = opts({ agents: [DEV] });
+    await runAgentLaunch(["--name", "work", "--", "-m=sonnet", "--effort=xhigh"], shorthand.o);
+    expect(shorthand.calls[0].argv).toEqual(["-m=sonnet", "--effort=xhigh"]);
+
+    const codex = opts({ agents: [{ ...DEV, agentType: "codex" }] });
+    await runAgentLaunch(["--name", "work", "--", "-c=model_reasoning_effort=low"], codex.o);
+    expect(codex.calls[0].argv).toEqual(["-m", "opus", "-c=model_reasoning_effort=low"]);
+  });
+
   it("suppresses the thinking knob for codex when the passthrough carries the key", async () => {
     const { calls, o } = opts({ agents: [{ ...DEV, agentType: "codex" }] });
     await runAgentLaunch(["--name", "work", "--", "-c", "model_reasoning_effort=low"], o);

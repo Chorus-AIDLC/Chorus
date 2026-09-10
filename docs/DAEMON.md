@@ -207,8 +207,9 @@ agent **overrides** it for that agent only. Per-agent fields:
 different models and different reasoning levels. Both are optional and both are also
 accepted at the **top level** as defaults, with the usual precedence (an agent's own
 value wins, an omitted field inherits, and a flat `daemon.json` without `agents[]`
-honors the top-level pair too). Values are **never validated against a list** — write
-them exactly as your harness expects, and the harness is what accepts or rejects them.
+honors the top-level pair too). Values are **never validated against a list** — they are
+trimmed of surrounding whitespace and then forwarded as-is, so write them exactly as
+your harness expects and let the harness accept or reject them.
 A value that is present but not a non-empty string, on the other hand, is a startup
 error: the daemon exits non-zero naming the agent and the field, instead of quietly
 ignoring it.
@@ -271,7 +272,10 @@ line appends `, model=…` / `, thinking=…` when set, and the single-agent ban
 `Model` / `Thinking` rows.
 
 The foreground launcher (`chorus agents run`) applies the same fields with the same
-mapping; a flag you pass after `--` wins over the configured value.
+mapping; a flag you pass after `--` wins over the configured value. Note that the
+launcher selects from an `agents[]` entry — a **flat** `daemon.json` (no `agents[]`)
+has nothing for it to launch, so the top-level `model`/`thinking` of a flat config
+apply to the daemon's wakes only.
 
 ### Per-backend key delivery (important)
 

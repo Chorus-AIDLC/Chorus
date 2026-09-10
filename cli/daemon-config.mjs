@@ -384,11 +384,12 @@ function positiveInt(value) {
  * @property {number} maxConcurrency            This agent's wake-queue cap.
  * @property {number} sigintTimeoutMs           Interrupt escalation window (ms).
  * @property {string[]} browseRoots             Directory-discovery allowlist.
- * @property {string} [model]                   Backend model id/alias, forwarded VERBATIM to that
+ * @property {string} [model]                   Backend model id/alias, forwarded verbatim (after
+ *                                              trimming whitespace) to that
  *                                              backend's own model flag. Absent ⇒ the backend's own
  *                                              default model resolution (today's behavior).
  * @property {string} [thinking]                Backend thinking / reasoning-effort level, forwarded
- *                                              VERBATIM to that backend's own flag. Absent ⇒ the
+ *                                              verbatim to that backend's own flag. Absent ⇒ the
  *                                              backend's default level.
  * @property {string} label                     Diagnostic label ("agent" or "agents[i]").
  * @property {string} [agentUuid]               This agent's Chorus UUID — exported to a

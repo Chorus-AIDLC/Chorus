@@ -99,7 +99,7 @@ export function sandboxFlags(permissionMode, opts = {}) {
  * stdin. `--skip-git-repo-check` lets a non-repo cwd still run.
  *
  * `model` / `thinking` (add-daemon-per-agent-model-thinking) ride codex's OWN flags,
- * forwarded VERBATIM: `-m <model>`, and `-c model_reasoning_effort=<level>` (the same
+ * forwarded verbatim (after trimming surrounding whitespace): `-m <model>`, and `-c model_reasoning_effort=<level>` (the same
  * key codex reads from `$CODEX_HOME/config.toml`, overridden for this invocation only —
  * the accepted level set comes from the model catalog, so the daemon never validates it).
  * Appended in BOTH invocation shapes (fresh `exec` and `exec resume <id>`); absent ⇒ no

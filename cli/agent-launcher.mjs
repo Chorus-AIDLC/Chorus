@@ -262,11 +262,21 @@ const THINKING_TOKEN_PREFIXES = ["model_reasoning_effort="];
 /**
  * Whether the verbatim passthrough already sets one of these knobs, so the launcher
  * must NOT also inject its configured value (an explicit user argument always wins).
+ *
+ * Detects the space-separated form (`--model sonnet`), the equals form
+ * (`--model=sonnet`, `-m=…`), and codex's `-c model_reasoning_effort=` in either
+ * spelling — hence the `=`-suffix check on the tokens and the substring check on the
+ * prefixes (`-c=model_reasoning_effort=low` has to match too).
  * @param {string[]} passthrough @param {string[]} tokens @param {string[]} [prefixes]
  * @returns {boolean}
  */
 function passthroughSets(passthrough, tokens, prefixes = []) {
-  return passthrough.some((a) => tokens.includes(a) || prefixes.some((p) => a.startsWith(p)));
+  return passthrough.some(
+    (a) =>
+      tokens.includes(a) ||
+      tokens.some((t) => a.startsWith(`${t}=`)) ||
+      prefixes.some((p) => a.includes(p)),
+  );
 }
 
 /** Usage text for `chorus agents run`. */
