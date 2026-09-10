@@ -1,8 +1,23 @@
 // cli/__tests__/daemon-lifecycle-dispatch.test.mjs
 // Covers runDaemon's lifecycle-action dispatch (stop/status/restart/logs) and
 // the -d detach ordering (foreground preflight BEFORE detach; double-start guard).
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runDaemon, DETACHED_ENV } from "../daemon.mjs";
+
+// Isolate from the DEVELOPER's real ~/.chorus state (see the sibling runDaemon suites):
+// a machine with a configured daemon.json must not change this file's behavior.
+const REAL_HOME = process.env.HOME;
+const TMP_HOME = mkdtempSync(join(tmpdir(), "chorus-lifecycle-home-"));
+beforeAll(() => {
+  process.env.HOME = TMP_HOME;
+});
+afterAll(() => {
+  process.env.HOME = REAL_HOME;
+  rmSync(TMP_HOME, { recursive: true, force: true });
+});
 
 /** A fake lifecycle injected into runDaemon. */
 function fakeLifecycle(over = {}) {

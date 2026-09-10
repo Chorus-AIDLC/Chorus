@@ -2,13 +2,25 @@
 // Full-chain integration: a task_assigned SSE event flows through the assembled
 // daemon (mock MCP + mock SSE + mock claude subprocess) all the way to the
 // spawn args. Covers the integration AC and "task-dispatch wakes Claude Code".
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import { buildDaemon, runDaemon } from "../daemon.mjs";
 import { transcriptPath, SESSION_CONFLICT_FAILURE } from "../claude-spawner.mjs";
+
+// Isolate from the DEVELOPER's real ~/.chorus state (see the sibling runDaemon suites):
+// a machine with a configured daemon.json must not change this file's behavior.
+const REAL_HOME = process.env.HOME;
+const TMP_HOME = mkdtempSync(join(tmpdir(), "chorus-integration-home-"));
+beforeAll(() => {
+  process.env.HOME = TMP_HOME;
+});
+afterAll(() => {
+  process.env.HOME = REAL_HOME;
+  rmSync(TMP_HOME, { recursive: true, force: true });
+});
 
 const silent = { info() {}, warn() {}, error() {} };
 

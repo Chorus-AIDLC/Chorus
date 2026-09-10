@@ -1,9 +1,25 @@
 // cli/__tests__/daemon-credential-completion.test.mjs
 // Covers cli-auth ADDED requirement: interactive credential completion at
 // daemon start (TTY only); non-TTY preserves the hard error.
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runDaemon } from "../daemon.mjs";
 import { writeLoginFile } from "../login.mjs";
+
+// Isolate from the DEVELOPER's real ~/.chorus state (see the same block in the sibling
+// runDaemon suites): otherwise a machine with a configured daemon.json changes what
+// these preflight/completion tests observe.
+const REAL_HOME = process.env.HOME;
+const TMP_HOME = mkdtempSync(join(tmpdir(), "chorus-credcompletion-home-"));
+beforeAll(() => {
+  process.env.HOME = TMP_HOME;
+});
+afterAll(() => {
+  process.env.HOME = REAL_HOME;
+  rmSync(TMP_HOME, { recursive: true, force: true });
+});
 
 const NO_CREDS = () => {
   throw new Error(
