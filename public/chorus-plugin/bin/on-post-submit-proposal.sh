@@ -48,7 +48,7 @@ Max review rounds: ${MAX_ROUNDS} (0 = unlimited).
 ACTION REQUIRED: Spawn the \`chorus:proposal-reviewer\` agent to perform an independent quality review before admin approval.
 
 Example:
-  Agent({ subagent_type: \"chorus:proposal-reviewer\", prompt: \"Review proposal ${PROPOSAL_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment whose first line is exactly REVIEW SKIPPED: round limit reached — human decision needed (this marker tells the main agent to stop rather than substitute its own verdict). Otherwise, proceed with review. Post your VERDICT as a comment on the proposal.\" })
+  Agent({ subagent_type: \"chorus:proposal-reviewer\", prompt: \"Review proposal ${PROPOSAL_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the round limit was reached and a human decision is needed, and post no VERDICT (this tells the main agent to stop rather than substitute its own verdict). Otherwise, proceed with review. Post your VERDICT as a comment on the proposal.\" })
 
 The reviewer is read-only and will post its VERDICT as a comment on the proposal.
 
@@ -57,6 +57,6 @@ Wait for the reviewer to complete (its completion notification), then read this 
 - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still proceed to approve.
 - **VERDICT: FAIL** — BLOCKERs found. Do NOT approve. Reject the proposal (chorus_pm_reject_proposal), fix BLOCKERs, and resubmit.
 
-IMPORTANT: the launch result is not the verdict — these reviewer subagent types report an async launch regardless of the flag you pass. Do NOT approve or reject before you have read this round's VERDICT comment. If it is missing, check what the reviewer did post: a REVIEW SKIPPED: comment (round limit reached, human decision needed) or any other explicit refusal is a deliberate escalation — STOP: do not respawn, do not self-review, do not post a VERDICT of your own; leave it pending the human's decision. If it posted nothing at all, respawn once and apply this same check again to what the retry posts — an explicit refusal still means STOP; only a second true silence lets you review the proposal yourself as a read-only pass and post the VERDICT. Absence is never a PASS."
+IMPORTANT: the launch result is not the verdict — these reviewer subagent types report an async launch regardless of the flag you pass. Do NOT approve or reject before you have read this round's VERDICT comment. If it is missing, check what the reviewer did post: a comment reporting the round limit was reached, or any other explicit refusal to review, is a deliberate escalation — STOP: do not respawn, do not self-review, do not post a VERDICT of your own; leave it pending the human's decision. If it posted nothing at all, respawn once and apply this same check again to what the retry posts — an explicit refusal still means STOP; only a second true silence lets you review the proposal yourself as a read-only pass and post the VERDICT. Absence is never a PASS."
 
 "$API" hook-output "" "$CONTEXT" "PostToolUse"
