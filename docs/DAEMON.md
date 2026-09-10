@@ -2,8 +2,9 @@
 
 The Chorus daemon is a local, long-lived client. It connects to a remote Chorus
 server, subscribes to the agent notification stream, and wakes a local headless
-Claude Code on task dispatch — so an assigned agent can act on work even when no
-one is at a terminal.
+coding agent on task dispatch — so an assigned agent can act on work even when no
+one is at a terminal. The backend is selectable per agent and defaults to
+Claude Code.
 
 ```bash
 npx @chorus-aidlc/chorus daemon          # foreground
@@ -194,7 +195,7 @@ agent **overrides** it for that agent only. Per-agent fields:
 |-------|---------|
 | `apiKey` | *(required)* the agent's `cho_` key — determines its identity |
 | `url` | Chorus server (may differ per agent — different server/company) |
-| `agentType` | `claude-code` \| `codex` \| `kiro` (backends may be mixed) |
+| `agentType` | `claude-code` \| `codex` \| `kiro` \| `pi` \| `dsh` \| `offline` (backends may be mixed; `offline` is never woken) |
 | `cwds` | working directories this agent serves (one connection each) |
 | `permissionMode` | `yolo` \| `chorus` |
 | `maxConcurrency` | this agent's own wake-concurrency cap (default `4`) |
