@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "@/hooks/use-progress-router";
 import { toast } from "sonner";
-import { X, Loader2, Pencil, GitFork, CornerLeftUp, CornerDownRight, Link as LinkIcon } from "lucide-react";
+import { X, Loader2, GitFork, CornerLeftUp, CornerDownRight, Link as LinkIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -744,6 +744,7 @@ function IdeaDetailPanelContent({
                 editReason={idea.status === "elaborated" ? tTracker("panel.actions.editUnavailable") : undefined}
                 onVerify={handleVerify}
                 onDerive={() => setShowDeriveDialog(true)}
+                onSetParent={() => setShowSetParentDialog(true)}
                 onMove={() => setShowMoveDialog(true)}
                 onEdit={handleStartEdit}
                 onDelete={() => setShowDeleteDialog(true)}
@@ -892,22 +893,14 @@ function IdeaDetailPanelContent({
                         onSelectTask={openTask}
                       />
 
-                      {/* Lineage section — parent breadcrumb + set-parent + derived children */}
+                      {/* Lineage section — parent breadcrumb + derived children.
+                          Parent assignment lives in the unified Actions surface. */}
                       <div className="mt-5 space-y-2">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center">
                           <div className="flex items-center gap-1.5">
                             <GitFork className="h-3.5 w-3.5 text-primary" />
                             <span className="text-[12px] font-semibold text-foreground/80">{tLineage("title")}</span>
                           </div>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 gap-1 border-border px-2 text-[11px] text-muted-foreground"
-                            onClick={() => setShowSetParentDialog(true)}
-                          >
-                            <Pencil className="h-3 w-3" />
-                            {idea.parentUuid ? tLineage("changeParent") : tLineage("setParent")}
-                          </Button>
                         </div>
 
                         {/* Parent breadcrumb */}
@@ -1102,6 +1095,7 @@ function IdeaDetailPanelContent({
           currentParentUuid={idea.parentUuid ?? null}
           descendantUuids={idea.descendantUuids ?? []}
           onChanged={fetchIdea}
+          onCloseAutoFocus={returnFocusToActions}
         />
       )}
 

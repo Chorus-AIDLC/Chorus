@@ -28,7 +28,7 @@ vi.mock("../panels/activity-comments-view", () => ({ ActivityCommentsView: () =>
 vi.mock("@/app/(dashboard)/projects/[uuid]/tasks/task-detail-panel", () => ({ TaskDetailPanel: () => null }));
 vi.mock("../panels/document-panel", () => ({ DocumentPanel: () => null }));
 vi.mock("../panels/move-idea-dialog", () => ({ MoveIdeaDialog: ({ open }: { open: boolean }) => open ? <div role="dialog">Move</div> : null }));
-vi.mock("../panels/set-parent-dialog", () => ({ SetParentDialog: () => null }));
+vi.mock("../panels/set-parent-dialog", () => ({ SetParentDialog: ({ open }: { open: boolean }) => open ? <div role="dialog">Set parent</div> : null }));
 vi.mock("../new-idea-dialog", () => ({ NewIdeaDialog: ({ open }: { open: boolean }) => open ? <div role="dialog">Derive</div> : null }));
 vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/assign-idea-modal", () => ({ AssignIdeaModal: () => null }));
 vi.mock("@/components/references-section", () => ({ ReferencesSection: () => null }));
@@ -118,6 +118,17 @@ describe("Tracker panel action integration", () => {
     expect(screen.getByRole("menuitem", { name: en.ideas.actions.move }).getAttribute("aria-disabled")).toBe("false");
     await user.click(screen.getByRole("menuitem", { name: en.ideaTracker.lineage.deriveIdea }));
     expect(screen.getByRole("dialog").textContent).toBe("Derive");
+  });
+
+  it("opens one consistently named parent action from Actions and removes the old inline button", async () => {
+    const user = userEvent.setup();
+    render(<Panel />);
+    expect(screen.queryByRole("button", { name: en.ideaTracker.lineage.setParent })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.ideaTracker.lineage.changeParent })).toBeNull();
+    await open(user);
+    await user.click(screen.getByRole("menuitem", { name: en.ideaTracker.lineage.setParentTitle }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("dialog").textContent).toBe("Set parent");
   });
 
   it("keeps the elaborated edit lock visible and blocks mutations during a container update", async () => {
