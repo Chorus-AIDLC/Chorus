@@ -24,6 +24,7 @@ skill chorus-review
 skill chorus-quick-dev
 skill chorus-brainstorm
 skill chorus-openspec-aware
+skill chorus-spec-lite
 skill chorus-orchestrate
 skill chorus-docs
 skill chorus-cli
@@ -38,5 +39,6 @@ hook on-post-submit-proposal.sh
 hook on-post-submit-for-verify.sh
 hook on-post-verify-task.sh
 hook chorus-api.sh
+hook resolve-spec-mode.sh
 hook verify-document-roundtrip.sh
 hook test-syntax.sh

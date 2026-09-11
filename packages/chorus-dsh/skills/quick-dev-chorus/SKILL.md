@@ -4,7 +4,7 @@ description: Quick Task workflow — skip Idea→Proposal, create tasks directly
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.3"
+  version: "0.18.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -154,7 +154,7 @@ chorus_submit_for_verify({
 })
 ```
 
-Submitting is not final verification. Spawn the required task-reviewer skill through `subagent` with **`run_in_background: false`** (foreground — the call waits and returns the verdict inline; your verify/reopen decision depends on it) as described in `develop-chorus`, and read the newest `VERDICT:` Task comment. (Set `run_in_background: true` only when you deliberately want to fan out and collect the verdict later.) `PASS` and `PASS WITH NOTES` continue. On `FAIL`, do not verify or hand off: fix every unresolved BLOCKER, repeat AC self-check and submission, then run a fresh independent task review.
+Submitting is not final verification. Spawn the required task-reviewer skill through `subagent` with **`run_in_background: false`** (foreground — the call waits for the reviewer to finish, and the verdict is the `VERDICT:` comment it posts rather than the call's return value; your verify/reopen decision depends on it) as described in `develop-chorus`, and read this round's `VERDICT:` Task comment. (Set `run_in_background: true` only when you deliberately want to fan out and collect the verdict later.) `PASS` and `PASS WITH NOTES` continue. On `FAIL`, do not verify or hand off: fix every unresolved BLOCKER, repeat AC self-check and submission, then run a fresh independent task review.
 
 ### Step 8: Permission-Aware Verification
 
@@ -177,7 +177,7 @@ Quick Tasks support sub-agent execution just like proposal-based tasks. **Sessio
 - **Main agent**: create quick tasks, work them yourself, or hand task UUIDs to sub-agents
 - **Sub-agents**: create your own session (`chorus_create_session`), checkin/checkout per task, pass `sessionUuid` to `chorus_update_task` / `chorus_report_work`, and close the session on exit — see `develop-chorus` for the full manual protocol
 
-> dsh has no Agent Teams / `TeamCreate` primitive; if you need to run several quick tasks, work them sequentially as the main agent (or dispatch generic sub-agents one at a time).
+> There is no team object to create: to run several quick tasks in parallel, dispatch one `subagent` per task with `run_in_background: true`, issuing them in a single message. If `subagent` is unavailable on your host or workers fail repeatedly, work the tasks sequentially as the main agent.
 
 ---
 

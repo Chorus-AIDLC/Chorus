@@ -34,8 +34,8 @@ for file in \
 done
 
 skill_count="$(grep -Ec '^package/skills/[^/]+/SKILL[.]md$' "$tmp/files.txt")"
-if [ "$skill_count" -ne 12 ]; then
-  echo "expected 12 skills in tarball, found $skill_count" >&2
+if [ "$skill_count" -ne 13 ]; then
+  echo "expected 13 skills in tarball, found $skill_count" >&2
   exit 1
 fi
 

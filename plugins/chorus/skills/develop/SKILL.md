@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, and spawn
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.3"
+  version: "0.18.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -126,6 +126,8 @@ Each task and proposal includes a `commentCount` field — use it to decide whic
 >
 > In the no-OpenSpec fallback (no slug line, or no `openspec` CLI), edit the Document content directly via the existing MCP tool with no wrapper, no local file step.
 
+> **Document update flow (spec-lite mode):** if the originating proposal `description` contains a locator line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/`, the `prd` / `tech_design` / … Documents are **persistent mirrors** of the Chorus-typed docs in that **dated change folder**. Load the `spec-lite` skill (`~/.codex/skills/spec-lite/SKILL.md`). Locate the dated folder from the locator line (not by title/type). Edit those `<type>.md` files in place and update the capability's durable `.chorus/specs/<slug>/spec.md` in place too — but **`spec.md` is never mirrored** (local only, no ids). Tick `- [ ]` acceptance points, then re-mirror each edited dated-folder file via `chorus mcp call chorus_pm_update_document … --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/<type>.md` against its `documentUuid` (each update auto-increments the Document version = its modification history; `chorus-mcp-call.sh` fallback when `chorus` not on `PATH`). **Git history is the audit trail** (`git log -- .chorus/specs/<slug>/`; `git log --follow -- <file>` for a single renamed file) — no changelog section.
+
 ### Step 5: Start Working
 
 ```
@@ -211,13 +213,13 @@ After the reviewer completes, read its VERDICT:
 ```
 chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 ```
-Find the most recent comment containing `VERDICT:` and act on it:
+Find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's — and act on it:
 
 - **VERDICT: PASS** — All AC verified, no issues. Proceed to admin verification.
 - **VERDICT: PASS WITH NOTES** — All AC verified, minor notes. Proceed to admin verification (notes are non-blocking).
 - **VERDICT: FAIL** — BLOCKERs found. Do NOT verify. Fix the BLOCKERs listed in the reviewer's comment, then resubmit.
 
-If no new `VERDICT:` comment appears after the reviewer returns, it exhausted its `maxTurns` budget before posting. Respawn it ONCE with a concise-budget hint in the prompt: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT comment within the first 12 turns."* If the second attempt still produces no VERDICT, review manually using the checklist and proceed.
+If no new `VERDICT:` comment appears after the reviewer returns, check what it *did* post. A comment reporting that the round limit was reached, or any other explicit refusal to review, is a deliberate escalation to a human: STOP — do not respawn, do not self-review, do not post a VERDICT of your own. If it posted nothing at all, respawn it ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you review the task yourself as a read-only pass using the checklist and POST the VERDICT comment. **Absence is never a PASS.**
 
 ### Step 9: Handle Review Feedback
 

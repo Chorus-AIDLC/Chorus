@@ -47,7 +47,9 @@ import { reassignIdeaInstanceNoWakeAction } from "@/app/(dashboard)/projects/[uu
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
 import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
 
-interface YoloButtonProps {
+import type { StageActionPresentation } from "@/components/stage-action";
+
+interface YoloButtonProps extends StageActionPresentation {
   ideaUuid: string;
   assignee: YoloAssignee | null | undefined;
   // Assignee agent display name — shown in the cwd picker subtitle when the
@@ -85,6 +87,9 @@ export function YoloButton({
   proposals,
   tasks,
   onStarted,
+  renderAction,
+  disabledReason,
+  onCloseAutoFocus,
 }: YoloButtonProps) {
   const t = useTranslations("yolo");
   // Optional: a missing provider (isolated render) reads as no presence data →
@@ -96,8 +101,8 @@ export function YoloButton({
   // Pin-then-wake: after the human confirms the Yolo run, consult the wake-target
   // preview and (pick) prompt for a cwd / (auto_pin) persist the sole cwd /
   // (direct) wake as-is. The picker dialog is mounted below, driven by pickerState.
-  // `isResolving` is true while the preview fetch is in flight — the confirm CTA
-  // is disabled through it so a double-tap can't fire two preview→wake runs.
+  // `isResolving` covers preview, picker, pin and wake so the trigger and any
+  // competing menu actions stay disabled until the entire flow settles.
   const {
     start: startPinThenWake,
     pickerState,
@@ -138,7 +143,7 @@ export function YoloButton({
   // The button renders only while the stage preconditions hold (agent assignee +
   // not-done idea); an offline agent keeps it visible-but-disabled with a hint,
   // matching the optimistic-display contract.
-  if (!preconditionsMet || started) {
+  if (!renderAction && (!preconditionsMet || started)) {
     return started ? (
       <span className="text-[11px] text-[#00796B] dark:text-[#4FD1C0]">{t("startedHint")}</span>
     ) : null;
@@ -152,21 +157,32 @@ export function YoloButton({
     validationRequestUuid: string;
   }) => {
     setIsStarting(true);
-    const result = temporary
-      ? await yoloRequestedAction(ideaUuid, temporary)
-      : await yoloRequestedAction(ideaUuid);
-    setIsStarting(false);
-
-    if (result.success) {
-      setStarted(true);
-      toast.success(t("startedHint"));
-      onStarted?.();
-    } else {
-      toast.error(t(ERROR_CODE_I18N_KEY[result.errorCode ?? "unknown"]));
+    try {
+      const result = temporary
+        ? await yoloRequestedAction(ideaUuid, temporary)
+        : await yoloRequestedAction(ideaUuid);
+      if (result.success) {
+        setStarted(true);
+        toast.success(t("startedHint"));
+        onStarted?.();
+      } else {
+        toast.error(t(ERROR_CODE_I18N_KEY[result.errorCode ?? "unknown"]));
+      }
+    } catch {
+      toast.error(t("errorGeneric"));
+    } finally {
+      setIsStarting(false);
     }
   };
 
+  const reason = disabledReason || (isStarting || isResolving ? t("starting")
+    : started ? t("startedHint")
+    : !owningAgentUuid ? t("errorAssigneeNotAgent")
+    : !preconditionsMet ? t("completedHint")
+    : !enabled ? t("offlineHint") : undefined);
+
   const handleConfirm = () => {
+    if (reason) return;
     // The human has committed to the Yolo run (this IS the confirm step). Close
     // the confirm dialog, then route through pin-then-wake: it wakes immediately
     // (direct/auto_pin) or opens the cwd picker (pick) before firing runWake.
@@ -182,7 +198,7 @@ export function YoloButton({
   // AlertDialogTrigger would make two Radix primitives fight over one child.
   // Offline and interactive states are mutually exclusive, so each path owns a
   // single trigger.
-  if (!agentOnline) {
+  if (!renderAction && !agentOnline) {
     return (
       <TooltipProvider delayDuration={300}>
         <Tooltip>
@@ -205,20 +221,25 @@ export function YoloButton({
 
   return (
     <>
+      {renderAction?.({
+        label: t("button"), disabledReason: reason,
+        busy: isStarting || isResolving || pickerState !== null || dialogOpen,
+        onSelect: () => { if (!reason) setDialogOpen(true); },
+      })}
       <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
         {/* Icon + label: the footer now has room (the standalone reassign button
             moved onto the assignee block), so Yolo reads as a full text button
             like Start Development rather than an icon-only shortcut. */}
-        <AlertDialogTrigger asChild>
+        {!renderAction && <AlertDialogTrigger asChild>
           <Button
             className={YOLO_BUTTON_CLASS}
-            disabled={!enabled}
+            disabled={!enabled || isStarting || isResolving}
           >
             <Rocket className="mr-2 h-4 w-4" />
             {t("button")}
           </Button>
-        </AlertDialogTrigger>
-        <AlertDialogContent>
+        </AlertDialogTrigger>}
+        <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("confirmTitle")}</AlertDialogTitle>
             <AlertDialogDescription>{t("confirmDescription")}</AlertDialogDescription>
@@ -233,7 +254,7 @@ export function YoloButton({
             <Button
               className={YOLO_BUTTON_CLASS}
               onClick={handleConfirm}
-              disabled={isStarting || isResolving}
+              disabled={!!reason}
             >
               {isStarting ? (
                 <>
@@ -252,6 +273,7 @@ export function YoloButton({
           runWake. */}
       <WakeCwdPickerDialog
         open={pickerState !== null}
+        onCloseAutoFocus={onCloseAutoFocus}
         agentName={assigneeName ?? ""}
         instances={pickerState?.instances ?? []}
         agentUuid={pickerState?.agentUuid}

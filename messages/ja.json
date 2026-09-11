@@ -50,6 +50,7 @@
     "currentAssignee": "現在の担当者",
     "failedToAssign": "割り当てに失敗しました",
     "actions": "操作",
+    "close": "閉じる",
     "genericError": "エラーが発生しました。もう一度お試しください。",
     "unknown": "不明",
     "system": "システム",
@@ -1003,6 +1004,7 @@
     "confirmCta": "Yolo を実行",
     "starting": "開始中...",
     "startedHint": "Yolo を開始しました — エージェントがこの着想を完了まで進めています",
+    "completedHint": "この着想はすでに完了しています",
     "offlineHint": "エージェントオフライン — 再接続で有効化",
     "errorAgentOffline": "割り当てられたエージェントはオフラインです。再接続後に Yolo を実行してください。",
     "errorInstanceOffline": "この着想はオフラインのデーモンインスタンスに固定されています。そのインスタンスの再接続後に Yolo を実行してください。",
@@ -1374,6 +1376,17 @@
       "noActivity": "最近のアクティビティはありません"
     },
     "panel": {
+      "actions": {
+        "busy": "現在の操作が完了するまでお待ちください",
+        "loadingStage": "提案と課題のデータを待っています。読み込まれない場合は、着想を開き直して再試行してください。",
+        "verifyUnavailable": "要件詳細化を完了してから確認してください",
+        "editUnavailable": "要件詳細化が完了した着想は編集できません",
+        "copyLink": "リンクをコピー",
+        "copyUuid": "UUID をコピー",
+        "linkCopied": "着想のリンクをコピーしました",
+        "uuidCopied": "着想の UUID をコピーしました",
+        "copyFailed": "コピーできませんでした。クリップボードの権限を確認して再試行してください。"
+      },
       "notFound": "着想が見つかりません",
       "loadFailed": "着想の読み込みに失敗しました",
       "verifyingPlaceholder": "検証中...",
@@ -1818,5 +1831,8 @@
     "docs": "ドキュメント",
     "githubAria": "Chorus の GitHub リポジトリを開く（新しいタブで開きます）",
     "docsAria": "Chorus のドキュメントサイトを開く（新しいタブで開きます）"
+  },
+  "markdown": {
+    "frontmatterLabel": "ドキュメントのメタ情報"
   }
 }

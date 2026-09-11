@@ -4,7 +4,7 @@ description: Multi-agent orchestration playbook — coordinate OTHER agents and 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.3"
+  version: "0.18.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -79,7 +79,7 @@ Chorus ships three read-only reviewer skills. As orchestrator you run them at th
 | `task-reviewer-chorus` | a task is submitted for verify | one task vs its acceptance criteria (VERDICT on the task) |
 | `code-reviewer-chorus` | the idea's last task is verified | the idea's **aggregate** code change — the final ship gateway (VERDICT on the idea) |
 
-Spawn the reviewer with **`run_in_background: false`** (foreground — the call waits and returns the VERDICT inline; the gate decision depends on it): a read-only `subagent` whose task must tell it to call the `skill` tool with the exact reviewer name and review the entity (pass the `ideaUuid` for code review); then read the newest Chorus `VERDICT:` comment. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out. If spawning is disabled by policy, load the reviewer skill and run its procedure yourself as a focused read-only pass. Each review posts exactly one `VERDICT: PASS` / `PASS WITH NOTES` / `FAIL` comment.
+Spawn the reviewer with **`run_in_background: false`** (foreground — the call waits for the reviewer to finish, and the verdict is the `VERDICT:` comment it posts rather than the call's return value; the gate decision depends on it): a read-only `subagent` whose task must tell it to call the `skill` tool with the exact reviewer name and review the entity (pass the `ideaUuid` for code review); then read this round's Chorus `VERDICT:` comment. Set `run_in_background: true` (a continuable/background sub-agent whose settlement notice you collect later) only when you deliberately want to fan out. If spawning is disabled by policy, load the reviewer skill and run its procedure yourself as a focused read-only pass. Each review posts exactly one `VERDICT: PASS` / `PASS WITH NOTES` / `FAIL` comment.
 
 ---
 
@@ -103,6 +103,14 @@ Guidance: start narrow. If a single owner can hold the whole feature in their he
 - **One responsible assignee per idea at a time.** This mirrors the daemon's single-owner semantics: the idea is the authoritative pin root, and its owner's proposals/tasks/wakes inherit that identity. Don't leave an idea ambiguously "owned by the team."
 - **Don't race duplicate sessions on the same work.** Two daemon sessions (or two agents) driving the same idea/task will collide on status transitions and produce conflicting wakes. Assign, then let one owner run.
 - **Pin with `instanceUuid` when the work is tied to a place.** If a child idea's code lives on a specific host/cwd, pin the assignment to that AgentInstance so every downstream wake lands there instead of a random daemon.
+
+---
+
+## Replying to the agent who woke you (advisory)
+
+When an agent wakes a peer on a shared idea or task — an orchestrator dispatching a worker, or any agent `@mention`-ing another — the wake surfaces the **waker's live session anchor**: a note naming the waking agent and telling the woken peer that the waker has an open conversation on this idea. If you are the woken peer, **reply on the same idea/task resource** (comment there rather than opening a brand-new session) and your reply lands back in the waker's existing live session, keeping the collaboration on one thread instead of scattering into a fresh one.
+
+This is **advisory, not routing.** There is no automatic server subscription and nothing is force-delivered — replying on the shared resource is simply *where a reply lands* (via the existing return path), not a guaranteed channel. When the waker's origin is **offline** at wake time, no live anchor is surfaced and the exchange degrades to **notify-only**: the reply reaches the waker as an ordinary notification it picks up on its next turn. Only idea/theme-anchored wakes carry this anchor; ad-hoc wakes with no shared idea do not.
 
 ---
 

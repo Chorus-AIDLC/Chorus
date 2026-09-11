@@ -392,7 +392,13 @@ vi.mock("@/lib/logger", () => ({ default: mockLogger, createRequestLogger: () =>
 
 // Lineage: a task / idea under IDEA resolves to that direct idea; everything else → null.
 const mockResolveRootIdea = vi.hoisted(() => vi.fn());
-vi.mock("@/services/lineage.service", () => ({ resolveRootIdea: mockResolveRootIdea }));
+vi.mock("@/services/lineage.service", () => ({
+  resolveRootIdea: mockResolveRootIdea,
+  // daemon-session.service re-exports resolveDirectIdeaUuid from here; keep it consistent
+  // with the mocked resolveRootIdea's directIdeaUuid (the value the old path returned).
+  resolveDirectIdeaUuid: async (...args: unknown[]) =>
+    (await mockResolveRootIdea(...args))?.directIdeaUuid ?? null,
+}));
 
 // Connection registry: the wake bridge AND the mention picker ask for the agent's
 // connections. Keep STALE_THRESHOLD_MS REAL (the session service re-exports it) — only

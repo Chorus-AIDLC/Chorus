@@ -50,6 +50,7 @@
     "currentAssignee": "当前负责人",
     "failedToAssign": "分配失败",
     "actions": "操作",
+    "close": "关闭",
     "genericError": "发生错误，请重试。",
     "unknown": "未知",
     "system": "系统",
@@ -1003,6 +1004,7 @@
     "confirmCta": "执行 Yolo",
     "starting": "启动中...",
     "startedHint": "Yolo 已启动 —— agent 正在推进这个 idea 到完成",
+    "completedHint": "该想法已完成",
     "offlineHint": "Agent 离线，重连后可用",
     "errorAgentOffline": "该 agent 当前离线，请等它重新连接后再执行 Yolo。",
     "errorInstanceOffline": "该 idea 已固定到一个离线的 daemon 实例，请等该实例重新连接后再执行 Yolo。",
@@ -1374,6 +1376,17 @@
       "noActivity": "暂无活动"
     },
     "panel": {
+      "actions": {
+        "busy": "请等待当前操作完成",
+        "loadingStage": "正在等待方案和任务数据。如一直未加载，请重新打开想法重试。",
+        "verifyUnavailable": "完成需求澄清后才能确认",
+        "editUnavailable": "已完成澄清的想法无法编辑",
+        "copyLink": "复制链接",
+        "copyUuid": "复制 UUID",
+        "linkCopied": "已复制想法链接",
+        "uuidCopied": "已复制想法 UUID",
+        "copyFailed": "无法复制，请检查剪贴板权限后重试。"
+      },
       "notFound": "未找到想法",
       "loadFailed": "加载想法失败",
       "verifyingPlaceholder": "验证进行中...",
@@ -1818,5 +1831,8 @@
     "docs": "文档",
     "githubAria": "打开 Chorus GitHub 仓库（在新标签页打开）",
     "docsAria": "打开 Chorus 文档站（在新标签页打开）"
+  },
+  "markdown": {
+    "frontmatterLabel": "文档元信息"
   }
 }

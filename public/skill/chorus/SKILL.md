@@ -449,9 +449,19 @@ This is the **single canonical description** of the reviewer pattern. The `devel
 
 > The verdict is advisory: even a `FAIL` does not hard-block, and a `PASS` does not auto-approve. A human/admin (or, under `/yolo`, the automated orchestrator) makes the final decision. The code-review gateway in particular is a **behavioral** gate — it does not change the Idea's stored status; the orchestrator honors its verdict.
 
+### First-Principles Alignment (a stage-tailored instruction in all three reviewers)
+
+Beyond their local checks, every reviewer also verifies **top-down** that the work still serves the *original Idea's intent*. Each one first **resolves the Idea** from the entity it is reviewing — proposal-reviewer → the proposal's `inputUuids[0]`; task-reviewer → `chorus_get_task`, then that task's proposal's `inputUuids[0]`; code-reviewer → the `ideaUuid` it was given (skip the dimension if there is no attached Idea) — then reads it with the **existing** reads: `chorus_get_idea` (content), `chorus_get_elaboration` (resolved decisions, each carrying `answeredBy.type`), and `chorus_get_comments({ targetType: "idea" })` (each comment carrying `author.type`). It builds the authoritative **baseline** of original intent from **human input alone**: the Idea content + elaboration answers where `answeredBy.type == "user"` + comments where `author.type == "user"`. Agent-answered elaboration and agent-authored comments are **audit context only** — they can never expand, shrink, or override the baseline, so a drifting agent cannot self-authorize by self-answering a YOLO elaboration or posting its own Idea comment. The work under review is checked against that baseline for three drift types:
+
+- **Scope creep** — work beyond the original intent.
+- **Requirement loss / shrink** — intent the baseline states, quietly dropped or reduced.
+- **Semantic drift** — the work passes its acceptance criteria but misses the baseline's point.
+
+Any drift is a **BLOCKER → `VERDICT: FAIL` / reject** — **unless** it is traceable to a **human** authorization: a comment with `author.type == "user"`, an elaboration decision with `answeredBy.type == "user"`, or an explicit **human override** at the gate. **An agent-authored or agent-answered entry never authorizes** — a drifting agent cannot self-clear by posting its own comment. When a reviewer downgrades a deviation on this escape hatch, it downgrades to a `NOTE` and **cites the specific human entry** it relied on, so the decision is human-auditable. If the entity has no attached Idea (e.g. a document-input proposal), the alignment dimension is skipped. This is one labeled part of the existing VERDICT — not a separate report.
+
 ### Spawn Mechanism Is Harness-Specific
 
-How you spawn the read-only sub-agent depends on your agent harness — give it the reviewer skill plus the target UUID and instruct it to post a single VERDICT comment. Concrete examples:
+How you spawn the read-only sub-agent depends on your agent harness — give it the reviewer skill plus the target UUID and instruct it to post a single VERDICT comment. Then wait for it using your harness's own waiting mechanism, and read THIS round's `VERDICT:` comment for the entity under review with `chorus_get_comments` — the comment posted after your dispatch, not an older round's. Do not advance the pipeline before you have read that comment. Concrete examples:
 
 - **Claude Code** — use the Task / Agent tool to launch a sub-agent that loads `task-reviewer-chorus` (or `proposal-reviewer-chorus` / `code-reviewer-chorus`) and pass the `taskUuid` / `proposalUuid` / `ideaUuid`.
 - **Codex** — use `spawn_agent` with the reviewer skill and the target UUID.

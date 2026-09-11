@@ -46,7 +46,7 @@ import {
   sessionWorkflow,
   hasSessionMarker,
   extractRunIdFromToolResultEvent,
-  detectOpenSpec,
+  resolveSpecMode,
   buildSessionBanner,
   parseMaxCodeReviewRounds,
   resolveChorusBin,
@@ -77,7 +77,18 @@ const _mcp = _envUrl && _envKey
     })();
 const CHORUS_URL = _envUrl || _mcp.url;
 const CHORUS_API_KEY = _envKey || _mcp.apiKey;
-const OPENSPEC_OPTOUT = process.env.CHORUS_OPENSPEC_MODE === "off";
+
+// A neutral SpecModeResult for the not-configured / connection-failed banners,
+// where buildSessionBanner returns before reading the spec fields.
+const NO_SPEC = {
+  specMode: "off" as const,
+  specReason: "",
+  specFail: "",
+  openspecUsable: false,
+  openspecUsableReason: "",
+  openspecHint: "",
+  chorusOpenspecActive: false,
+};
 
 // Reviewer toggle envs (mirror Claude Code plugin userConfig; Pi has no plugin
 // settings UI, so env vars drive them). Defaults: all enabled.
@@ -265,11 +276,14 @@ async function closeCallSessions(
 // ─── Extension ────────────────────────────────────────────────────────────
 export default function (pi: ExtensionAPI) {
   // SessionStart → checkin + build context (replaces Claude's on-session-start.sh)
-  // Emits a user-visible one-line banner (ctx.ui.notify) mirroring the Claude
-  // plugin's SessionStart `systemMessage` / the Codex `$chorus` toast (#442):
-  //   connected + active   -> "Chorus connected at <url> (OpenSpec Enabled)"
-  //   connected + opt-out   -> "Chorus connected at <url> (OpenSpec off)"
-  //   connected + unset     -> "Chorus connected at <url> (OpenSpec off — run /skill:chorus enable openspec to set it up)"
+  // Resolves the spec mode once (resolveSpecMode, the TS mirror of the bash
+  // resolver) and injects a `## Spec Mode` block, plus a user-visible one-line
+  // banner (ctx.ui.notify) mirroring the Claude plugin `systemMessage` / Codex
+  // `$chorus` toast:
+  //   connected + openspec -> "Chorus connected at <url> (spec: OpenSpec)"
+  //   connected + lite      -> "Chorus connected at <url> (spec: spec-lite)"
+  //   connected + off       -> "Chorus connected at <url> (spec: off — free-form)"
+  //   connected + openspec-requested-but-unusable -> warning "(spec: OpenSpec requested but unusable — …)"
   //   not configured        -> warning (env vars missing)
   //   connection failed     -> error (checkin couldn't reach Chorus)
   pi.on("session_start", async (event, ctx) => {
@@ -279,7 +293,7 @@ export default function (pi: ExtensionAPI) {
         configured: false,
         connected: false,
         chorusUrl: CHORUS_URL,
-        openspec: { active: false, reason: "not configured", optout: false, hint: "" },
+        spec: NO_SPEC,
       });
       ctx.ui.notify(banner.message, banner.level);
       return;
@@ -288,13 +302,30 @@ export default function (pi: ExtensionAPI) {
     try {
       const checkin = await mcpCall("chorus_checkin");
       connected = true;
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const os = detectOpenSpec(
-        ctx.cwd,
-        OPENSPEC_OPTOUT,
+      // Resolve the spec mode once per session (single source of truth — the TS
+      // reimplementation of the bash resolver). Rule: explicit CHORUS_SPEC_MODE
+      // wins; unset → OpenSpec when usable, else spec-lite.
+      const spec = resolveSpecMode(
+        {
+          specMode: process.env.CHORUS_SPEC_MODE,
+          openspecMode: process.env.CHORUS_OPENSPEC_MODE,
+          enableOpenSpec: process.env.CLAUDE_PLUGIN_OPTION_ENABLEOPENSPEC,
+          projectRoot: ctx.cwd,
+        },
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         require("node:fs"),
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         require("node:child_process").execSync,
       );
+      // Route note per resolved mode (mirrors the bash/Codex `## Spec Mode` block).
+      const specRoute =
+        spec.specMode === "lite"
+          ? "Routing: lite → follow the `spec-lite` skill (/skill:spec-lite). A capability's durable spec is `.chorus/specs/<slug>/spec.md` (edited in place, **never synced**, git history is its record); each change is a dated folder `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` of Chorus-typed docs (`prd.md` required; `tech_design.md` / `adr.md` / `guide.md` / `spec.md` optional) that **are** mirrored 1:1 into persistent Chorus Documents via `chorus mcp call … --arg-file content=<file>` (fallback `chorus-mcp-call.sh`). Put a `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` locator line in the proposal description. Do NOT scaffold `openspec/changes/` or add an `OpenSpec change slug:` line."
+          : spec.specMode === "off"
+            ? "Routing: off → free-form, no spec artifact. Do NOT create `.chorus/specs/` or `openspec/changes/` files; author document drafts inline via direct MCP."
+            : spec.specFail
+              ? `Routing: openspec → **cannot be honored** — ${spec.specFail}. The proposal / yolo skill MUST halt after resolving the mode; do NOT silently fall back to lite/free-form. Surface this to the user.${spec.openspecHint ? ` Install hint: ${spec.openspecHint}.` : ""}`
+              : `CHORUS_OPENSPEC_ACTIVE=1 (${spec.openspecUsableReason})\n\nRouting: openspec → load the openspec-aware skill (/skill:openspec-aware) and follow §3 (OpenSpec authoring) — do NOT re-run the §1 detection block, the answer is already known.\n\nCritical rule (openspec-aware §2 Rule 1): document mirror calls (\`chorus_pm_add_document_draft\` / \`chorus_pm_update_document_draft\` / \`chorus_pm_update_document\`) MUST fill \`content\` from the local file — prefer \`chorus mcp call <tool> '<json>' --arg-file content=<file>\`, falling back to \`chorus-mcp-call.sh\` when \`chorus\` is not on PATH. Do NOT invoke these MCP tools directly with hand-typed \`content\` in OpenSpec mode.`;
       checkinContext = [
         "# Chorus Plugin — Active",
         "",
@@ -306,16 +337,11 @@ export default function (pi: ExtensionAPI) {
         JSON.stringify(checkin, null, 2),
         "```",
         "",
-        "## OpenSpec Mode",
+        "## Spec Mode",
         "",
-        `CHORUS_OPENSPEC_ACTIVE=${os.active} (${os.reason})`,
-        os.active
-          ? "OpenSpec mode is **active**. proposal/develop/yolo skills follow the openspec-aware path."
-          : os.optout
-            ? "OpenSpec was **explicitly turned off** — do not nag."
-            : os.hint
-              ? `Note: this repo has an \`openspec/\` directory but the \`openspec\` CLI is not installed — ${os.hint}. Run \`/skill:chorus enable openspec\` to set it up.`
-              : "OpenSpec is not set up in this repo. Spec-driven authoring is optional — free-form works fine. If the user wants spec-driven mode, run `/skill:chorus enable openspec` (§6 walks the install + re-launch).",
+        `CHORUS_SPEC_MODE=${spec.specMode} (${spec.specReason})`,
+        "",
+        specRoute,
         "",
         "## Quick Reference",
         "- **Sessions**: auto-managed. When you dispatch a WORKER via the `subagent` tool (single/parallel/chain), the extension creates a Chorus session per worker task and injects its UUID + the session workflow into that task automatically; the session is closed when the `subagent` tool call returns (children are ephemeral). Do NOT call chorus_create_session/close_session yourself.",
@@ -325,13 +351,13 @@ export default function (pi: ExtensionAPI) {
         (CHORUS_BIN
           ? "- **OpenSpec wrapper**: `bin/chorus-mcp-call.sh` is at `" + CHORUS_BIN + "` — the CLI-absent fallback for OpenSpec-mode document mirrors. Prefer `chorus mcp call <tool> '<json>' --arg-file content=<file>` (chorus >= 0.17.0); use this wrapper only when `chorus` is not on PATH (a bare `chorus-mcp-call.sh` will NOT be on PATH for local-path installs). See /skill:openspec-aware §2."
           : "- **OpenSpec wrapper**: `bin/chorus-mcp-call.sh` was not resolved relative to the extension — it is the CLI-absent fallback for OpenSpec-mode document mirrors (prefer `chorus mcp call <tool> '<json>' --arg-file content=<file>`). If you need it, locate it with `find ~/.pi/agent/npm -path '*chorus-pi/bin/chorus-mcp-call.sh'`. See /skill:openspec-aware §2."),
-        "- **Skills**: /skill:chorus, /skill:idea, /skill:proposal, /skill:develop, /skill:review, /skill:quick-dev, /skill:yolo",
+        "- **Skills**: /skill:chorus, /skill:idea, /skill:proposal, /skill:develop, /skill:review, /skill:quick-dev, /skill:yolo, /skill:spec-lite, /skill:openspec-aware",
       ].join("\n");
       const banner = buildSessionBanner({
         configured: true,
         connected: true,
         chorusUrl: CHORUS_URL,
-        openspec: os,
+        spec,
       });
       ctx.ui.notify(banner.message, banner.level);
     } catch (e) {
@@ -340,7 +366,7 @@ export default function (pi: ExtensionAPI) {
         configured: true,
         connected: false,
         chorusUrl: CHORUS_URL,
-        openspec: { active: false, reason: "connection failed", optout: false, hint: "" },
+        spec: NO_SPEC,
       });
       ctx.ui.notify(banner.message, banner.level);
     }

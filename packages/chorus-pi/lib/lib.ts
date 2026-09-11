@@ -1,7 +1,7 @@
 /**
  * Pure helpers extracted from the chorus-pi extension for unit testing.
  *
- * These functions hold no mutable state and (except for detectOpenSpec, which
+ * These functions hold no mutable state and (except for resolveSpecMode, which
  * takes injectable fs/execSync) have no I/O — so they can be tested without a
  * running Pi session or a live Chorus instance. The extension imports them
  * from here; tests import the same functions.
@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 
 /**
  * Minimal fs surface needed by the config readers below.
- * (detectOpenSpec already uses FsLike; keep this as the shared type.)
+ * (resolveSpecMode already uses FsLike; keep this as the shared type.)
  */
 export interface FsLike {
   existsSync(p: string): boolean;
@@ -226,68 +226,168 @@ export function extractRunIdFromToolResultEvent(event: {
 }
 
 /**
- * Resolved OpenSpec mode for a repo. `active` is the effective on/off; `reason`
- * is a human-readable explanation; `optout` marks an explicit opt-out (so the
- * banner does not nag); `hint` is an optional install hint when the directory
- * exists but the CLI is missing.
+ * The resolved spec mode surfaced to the agent. `openspec` = the OpenSpec
+ * (openspec-aware) path; `lite` = Chorus-native lightweight specs
+ * (`.chorus/specs/<slug>/`); `off` = free-form, no spec artifact.
  */
-export interface OpenSpecState {
-  active: boolean;
-  reason: string;
-  optout: boolean;
-  hint: string;
+export type SpecMode = "lite" | "openspec" | "off";
+
+/**
+ * Inputs to the spec-mode resolver (env values + repo root). Mirrors the
+ * canonical bash resolver `public/chorus-plugin/bin/resolve-spec-mode.sh`.
+ */
+export interface SpecModeInputs {
+  /** CHORUS_SPEC_MODE — explicit override: "lite" | "openspec" | "off" (else unset/""). */
+  specMode?: string;
+  /** CHORUS_OPENSPEC_MODE — legacy opt-out: "off" disables OpenSpec. */
+  openspecMode?: string;
+  /** CLAUDE_PLUGIN_OPTION_ENABLEOPENSPEC — plugin toggle: "false" disables OpenSpec (default "true"). */
+  enableOpenSpec?: string;
+  /** Repo root to probe for openspec/. */
+  projectRoot: string;
 }
 
 /**
- * Detect OpenSpec mode for a repo. Active only when all three hold:
- *   (1) not explicitly opted out (CHORUS_OPENSPEC_MODE != "off")
- *   (2) an openspec/ directory exists at the project root
- *   (3) the `openspec` CLI is on PATH
- *
- * fs and execSync are injected so tests can stub the filesystem and the CLI
- * presence check without touching the real environment.
+ * Resolved spec mode for a repo — the TS mirror of the bash resolver's output
+ * vars. `specFail` non-empty ⇒ a stage skill MUST halt (an explicit
+ * `CHORUS_SPEC_MODE=openspec` that cannot be honored); `chorusOpenspecActive`
+ * is true only when the resolved mode is a USABLE openspec.
  */
-export function detectOpenSpec(
-  cwd: string,
-  optout: boolean,
+export interface SpecModeResult {
+  specMode: SpecMode;
+  specReason: string;
+  specFail: string;
+  openspecUsable: boolean;
+  openspecUsableReason: string;
+  openspecHint: string;
+  chorusOpenspecActive: boolean;
+}
+
+/**
+ * Resolve the active Chorus spec mode for a repo — the TypeScript reimplementation
+ * of `public/chorus-plugin/bin/resolve-spec-mode.sh` (which the bash ports copy
+ * byte-identically; the TS ports reimplement + ship a same-contract test). Pure
+ * given injectable fs + execSync.
+ *
+ * Rule (per owner): an explicit `CHORUS_SPEC_MODE` wins; when unset, OpenSpec stays
+ * the default whenever it is usable (openspec/ dir + CLI, not disabled), and lite
+ * is the fallback only when OpenSpec is absent or disabled. An explicit
+ * `=openspec` that isn't usable fails fast (`specFail`).
+ */
+export function resolveSpecMode(
+  inputs: SpecModeInputs,
   fs: FsLike,
   execSync: ExecSync,
-): OpenSpecState {
-  if (optout) {
-    return { active: false, reason: "CHORUS_OPENSPEC_MODE=off (explicit opt-out)", optout: true, hint: "" };
+): SpecModeResult {
+  const projectRoot = inputs.projectRoot || "";
+
+  // --- Is OpenSpec usable? (needs openspec/ dir + CLI on PATH + not disabled) ---
+  // enableOpenSpec toggle is checked BEFORE the legacy CHORUS_OPENSPEC_MODE, so a
+  // plugin-level opt-out wins the reason string (matches the bash resolver order).
+  let openspecDisabled = false;
+  let disabledReason = "";
+  if ((inputs.enableOpenSpec ?? "true") !== "true") {
+    openspecDisabled = true;
+    disabledReason = "enableOpenSpec userConfig=false (plugin-level opt-out)";
+  } else if (inputs.openspecMode === "off") {
+    openspecDisabled = true;
+    disabledReason = "CHORUS_OPENSPEC_MODE=off (legacy opt-out)";
   }
-  const openspecDir = `${cwd}/openspec`;
-  if (!fs.existsSync(openspecDir)) {
-    return { active: false, reason: `no openspec/ directory at ${openspecDir}`, optout: false, hint: "" };
+
+  let openspecUsable = false;
+  let openspecUsableReason = "";
+  let openspecHint = "";
+  if (openspecDisabled) {
+    openspecUsableReason = disabledReason;
+  } else if (!fs.existsSync(`${projectRoot}/openspec`)) {
+    openspecUsableReason = `no openspec/ directory at ${projectRoot}/openspec`;
+    openspecHint = "npm i -g @fission-ai/openspec && openspec init";
+  } else if (!openspecCliPresent(execSync)) {
+    openspecUsableReason = "openspec/ directory present but `openspec` CLI not on PATH";
+    openspecHint = "npm i -g @fission-ai/openspec";
+  } else {
+    openspecUsable = true;
+    openspecUsableReason = "openspec/ directory + openspec CLI both present";
   }
-  let cliPresent = false;
+
+  // --- Resolve CHORUS_SPEC_MODE (unset and "" are treated the same, as in bash) ---
+  let specMode: SpecMode;
+  let specReason: string;
+  let specFail = "";
+  const raw = inputs.specMode ?? "";
+  switch (raw) {
+    case "lite":
+      specMode = "lite";
+      specReason = "explicit — Chorus-native lightweight specs in .chorus/specs/<slug>/";
+      break;
+    case "off":
+      specMode = "off";
+      specReason = "explicit — free-form, no spec artifact";
+      break;
+    case "openspec":
+      specMode = "openspec";
+      if (openspecUsable) {
+        specReason = `explicit; ${openspecUsableReason}`;
+      } else if (openspecDisabled) {
+        specReason = `explicit, but OpenSpec is disabled: ${openspecUsableReason}`;
+        specFail = `config conflict — CHORUS_SPEC_MODE=openspec vs OpenSpec disabled (${openspecUsableReason}); re-enable OpenSpec or set CHORUS_SPEC_MODE=lite`;
+      } else {
+        specReason = `explicit, but OpenSpec is not installed: ${openspecUsableReason}`;
+        specFail = `OpenSpec not usable (${openspecUsableReason})`;
+      }
+      break;
+    case "":
+      // Unset: OpenSpec is the default when usable; lite is the fallback otherwise.
+      if (openspecUsable) {
+        specMode = "openspec";
+        specReason = `default — ${openspecUsableReason}; set CHORUS_SPEC_MODE=lite for Chorus-native specs, =off to disable`;
+      } else {
+        specMode = "lite";
+        specReason = `default — OpenSpec not usable (${openspecUsableReason}); using Chorus-native lightweight specs in .chorus/specs/<slug>/`;
+      }
+      break;
+    default:
+      // Unrecognized value: treat like unset (OpenSpec-if-usable, else lite).
+      if (openspecUsable) {
+        specMode = "openspec";
+        specReason = `CHORUS_SPEC_MODE='${raw}' unrecognized; falling back to default (${openspecUsableReason})`;
+      } else {
+        specMode = "lite";
+        specReason = `CHORUS_SPEC_MODE='${raw}' unrecognized; OpenSpec not usable, defaulting to lite`;
+      }
+  }
+
+  const chorusOpenspecActive = specMode === "openspec" && specFail === "";
+  return {
+    specMode,
+    specReason,
+    specFail,
+    openspecUsable,
+    openspecUsableReason,
+    openspecHint,
+    chorusOpenspecActive,
+  };
+}
+
+function openspecCliPresent(execSync: ExecSync): boolean {
   try {
     execSync("command -v openspec", { stdio: "ignore" });
-    cliPresent = true;
+    return true;
   } catch {
-    cliPresent = false;
+    return false;
   }
-  if (!cliPresent) {
-    return {
-      active: false,
-      reason: "openspec/ directory present but `openspec` CLI not on PATH",
-      optout: false,
-      hint: "install with: npm i -g @fission-ai/openspec",
-    };
-  }
-  return { active: true, reason: "openspec/ directory + openspec CLI both present", optout: false, hint: "" };
 }
 
 /**
  * Build the user-visible one-line startup banner (the Pi equivalent of the
- * Claude plugin's SessionStart `systemMessage` / Codex `$chorus` toast).
+ * Claude plugin's SessionStart `systemMessage` / Codex `$chorus` toast). The
+ * suffix reflects the resolved spec mode:
+ *   - openspec (usable) -> "(spec: OpenSpec)"
+ *   - lite              -> "(spec: spec-lite)"
+ *   - off               -> "(spec: off — free-form)"
+ *   - openspec requested but unusable (specFail) -> warning, "(spec: OpenSpec unusable — …)"
  *
- * Mirrors the three OpenSpec states from upstream (#442):
- *   - active            -> "(OpenSpec Enabled)"
- *   - explicit opt-out  -> "(OpenSpec off)"            [neutral, no nag]
- *   - not set up        -> "(OpenSpec off — run /skill:chorus enable openspec to set it up)"
- *
- * Plus two non-OpenSpec states:
+ * Plus two non-connected states:
  *   - not configured    -> warning that CHORUS_URL / CHORUS_API_KEY are missing
  *   - connection failed -> error that the checkin couldn't reach Chorus
  *
@@ -302,7 +402,7 @@ export function buildSessionBanner(args: {
   configured: boolean;
   connected: boolean;
   chorusUrl: string;
-  openspec: OpenSpecState;
+  spec: SpecModeResult;
 }): SessionBanner {
   // Not configured at all — env vars missing. Warn once so the user knows
   // the plugin loaded but is inert (Claude's hook emits the same warning).
@@ -321,18 +421,23 @@ export function buildSessionBanner(args: {
     };
   }
 
-  // Connected. Append the OpenSpec status suffix.
+  // Connected. Append the resolved spec-mode suffix.
+  const spec = args.spec;
   let suffix: string;
-  if (args.openspec.active) {
-    suffix = "(OpenSpec Enabled)";
-  } else if (args.openspec.optout) {
-    suffix = "(OpenSpec off)";
+  let level: "info" | "warning" = "info";
+  if (spec.specFail) {
+    suffix = `(spec: OpenSpec requested but unusable — ${spec.openspecUsableReason}; spec authoring will halt)`;
+    level = "warning";
+  } else if (spec.specMode === "openspec") {
+    suffix = "(spec: OpenSpec)";
+  } else if (spec.specMode === "lite") {
+    suffix = "(spec: spec-lite)";
   } else {
-    suffix = "(OpenSpec off — run /skill:chorus enable openspec to set it up)";
+    suffix = "(spec: off — free-form)";
   }
   return {
     message: `Chorus connected at ${args.chorusUrl} ${suffix}`,
-    level: "info",
+    level,
   };
 }
 

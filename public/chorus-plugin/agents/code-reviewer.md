@@ -87,6 +87,7 @@ These are the dimensions that per-task review structurally cannot catch. Cover e
 4. **Regression risk / impact on untouched areas / performance** — Does the change break or degrade code no single task "owned"? N+1s, hot-path cost, shared-state contention introduced by the aggregate.
 5. **Feature-level test coverage adequacy** — Across the whole feature, are the integration seams and end-to-end paths tested, or only per-task units? Gaps between tasks.
 6. **Code soundness, simplicity, correctness** — Is the aggregate change correct, reasonably simple, and free of obvious defects when read as one body of work?
+7. **Intent alignment (whole-feature)** — Also read the Idea's resolved elaboration (`chorus_get_elaboration`); using ONLY human-authored intent (Idea body + human-answered elaboration + human-authored comments; agent-authored entries are audit context, not intent) as the baseline, judge whether the aggregate change still serves the original intent. Flag scope creep, dropped requirements, or intent missed despite passing AC as a **BLOCKER**, unless a cited human entry / human override authorizes it.
 
 **Step 4: Run feature-level build/test**
 

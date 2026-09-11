@@ -64,13 +64,13 @@ Max review rounds: ${MAX_ROUNDS} (0 = unlimited).
 
 ACTION REQUIRED: spawn the read-only \`chorus-proposal-reviewer\` subagent to perform an independent quality review before admin approval.
 
-In Kiro, hand the reviewer this task (it is auto-selected by its description; you can also invoke it as /chorus-proposal-reviewer): \"Review proposal ${PROPOSAL_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the limit was reached — human decision needed. Otherwise, proceed with the review and post your VERDICT as a comment on the proposal.\"
+In Kiro, hand the reviewer this task (it is auto-selected by its description; you can also invoke it as /chorus-proposal-reviewer): \"Review proposal ${PROPOSAL_UUID}. Max review rounds: ${MAX_ROUNDS}. First, read existing comments to count previous VERDICTs and determine your round number. If max > 0 and your round exceeds max, skip the review and post a comment saying the round limit was reached and a human decision is needed, and post no VERDICT (this tells the main agent to stop rather than substitute its own verdict). Otherwise, proceed with the review and post your VERDICT as a comment on the proposal.\"
 
-The reviewer is read-only (tools: read + @chorus) and posts its VERDICT as a comment on the proposal. After it completes, read comments and act on the most recent \`VERDICT:\` line:
+The reviewer is read-only (tools: read + @chorus) and posts its VERDICT as a comment on the proposal. Wait for the \`subagent\` call to return, then read this round's \`VERDICT:\` comment with chorus_get_comments — on THIS proposal, posted after you dispatched the reviewer. Do not settle for an older VERDICT from a previous round:
 - VERDICT: PASS — no issues. Proceed to approve (chorus_admin_approve_proposal).
 - VERDICT: PASS WITH NOTES — minor non-blocking notes. Still proceed to approve.
 - VERDICT: FAIL — BLOCKERs found. Do NOT approve. Reject (chorus_pm_reject_proposal), fix the BLOCKERs, and resubmit.
 
-IMPORTANT: run the reviewer synchronously and wait for its VERDICT before proceeding."
+IMPORTANT: the \`subagent\` call's own return value is not the verdict — base the decision on the comment. Do NOT approve or reject before you have read this round's VERDICT comment. If it is missing, check what the reviewer did post: a comment reporting the round limit was reached, or any other explicit refusal to review, is a deliberate escalation — STOP: do not respawn, do not self-review, do not post a VERDICT of your own; leave it pending the human's decision. If it posted nothing at all, respawn once and apply this same check again to what the retry posts — an explicit refusal still means STOP; only a second true silence lets you review the proposal yourself as a read-only pass and post the VERDICT. Absence is never a PASS."
 
 exit 0

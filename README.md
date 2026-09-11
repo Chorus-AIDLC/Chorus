@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.18.0](https://chorus-ai.dev/blog/chorus-v0.18.0-release/)** — Built-in `spec-lite` adds a lightweight, Git-native local spec workflow alongside OpenSpec. Live session anchors let daemon agents return replies to the initiating agent's existing Idea session.
+
 **[v0.17.2](https://chorus-ai.dev/blog/chorus-v0.17.2-release/)** — Pi is now a published, wakeable Chorus agent, and `chorus agents run` switches local agent profiles with one command.
 
 **[v0.17.0–0.17.1](https://github.com/Chorus-AIDLC/Chorus/releases/tag/v0.17.1)** — One CLI now installs and refreshes Chorus across your coding agents. Live daemon activity is visible directly on Ideas in Tracker, Graph, and detail views.
@@ -52,8 +54,6 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 **[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI is the fourth way to connect (Kiro CLI v2): a one-command Kiro plugin via `chorus agents add` and a `--agent kiro` daemon backend, plus daemon fixes.
 
-**[v0.14.0](https://chorus-ai.dev/blog/chorus-v0.14.0-release/)** — Dark mode across the app (light / dark / system). Reference artifacts: attach docs, repos, issues, and articles to any idea, proposal, or task, readable inline and over MCP. Korean and Japanese locales (Korean contributed by the community). **Theme** ideas for grouping, plus daemon Start Development / Yolo buttons, conversational idea entry, crash-resume, and `chorus daemon install`.
-
 > Full changelog: [CHANGELOG.md](CHANGELOG.md)
 
 ---
@@ -63,7 +63,7 @@ The labels under each stage are the **permissions** an actor needs there — gra
 Two commands. No database, no Docker, no config files.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.1
+npm install -g @chorus-aidlc/chorus@0.18.0
 chorus
 ```
 

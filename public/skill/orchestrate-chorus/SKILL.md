@@ -77,7 +77,9 @@ Chorus uses three read-only adversarial reviewers as quality gates. As orchestra
 | `task-reviewer-chorus` | a task is submitted for verify | one task vs its acceptance criteria (VERDICT on the task) |
 | `code-reviewer-chorus` | the idea's last task is verified | the idea's **aggregate** code change — the final ship gateway (VERDICT on the idea) |
 
-Spawn a read-only sub-agent that loads the matching reviewer skill and the target UUID (pass the `ideaUuid` for code review); if your harness has no sub-agent primitive, run the reviewer's procedure inline yourself. Each posts exactly one `VERDICT: PASS` / `PASS WITH NOTES` / `FAIL` comment. Verdicts are **advisory** — they do not auto-approve, auto-verify, or hard-block; you read the BLOCKERs and decide. A `FAIL` means route the BLOCKERs back for a fix before advancing (for a code-review FAIL, add fix tasks to the *approved* proposal via `quick-dev-chorus` and re-run once they are `done`). The **Independent Review** section of the core `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) is the canonical description of this pattern.
+Spawn a read-only sub-agent that loads the matching reviewer skill and the target UUID (pass the `ideaUuid` for code review); if your harness has no sub-agent primitive, run the reviewer's procedure inline yourself. Wait for it with your harness's own waiting mechanism, then read THIS round's `VERDICT:` comment for the entity under review with `chorus_get_comments` — posted after your dispatch, not an older round's — before advancing. Each posts exactly one `VERDICT: PASS` / `PASS WITH NOTES` / `FAIL` comment. Verdicts are **advisory** — they do not auto-approve, auto-verify, or hard-block; you read the BLOCKERs and decide. A `FAIL` means route the BLOCKERs back for a fix before advancing (for a code-review FAIL, add fix tasks to the *approved* proposal via `quick-dev-chorus` and re-run once they are `done`). The **Independent Review** section of the core `chorus` skill (`<BASE_URL>/skill/chorus/SKILL.md`) is the canonical description of this pattern.
+
+**First-principles alignment (a stage-tailored instruction in each reviewer).** Every one of the three reviewers also checks, top-down, that the work still serves the *original Idea's intent* — it resolves the Idea from the entity under review, reads it via the existing `chorus_get_idea` + `chorus_get_elaboration` + `chorus_get_comments`, builds the intent baseline from **human-authored** content only, and flags **scope creep**, **requirement loss / shrink**, or **semantic drift**. Unauthorized drift is a **BLOCKER → FAIL / reject**, downgraded to a cited NOTE only when traceable to a **human-originated** authorization (a human-authored Idea comment, a human-answered elaboration entry, or an explicit human override at the gate) — an agent's own comment never authorizes, so a drifting agent cannot self-clear. As orchestrator, route an alignment FAIL back for a fix like any other BLOCKER, or record the human override at the gate.
 
 ---
 
@@ -101,6 +103,14 @@ Guidance: start narrow. If a single owner can hold the whole feature in their he
 - **One responsible assignee per idea at a time.** This mirrors the daemon's single-owner semantics: the idea is the authoritative pin root, and its owner's proposals/tasks/wakes inherit that identity. Don't leave an idea ambiguously "owned by the team."
 - **Don't race duplicate sessions on the same work.** Two daemon sessions (or two agents) driving the same idea/task will collide on status transitions and produce conflicting wakes. Assign, then let one owner run.
 - **Pin with `instanceUuid` when the work is tied to a place.** If a child idea's code lives on a specific host/cwd, pin the assignment to that AgentInstance so every downstream wake lands there instead of a random daemon.
+
+---
+
+## Replying to the agent who woke you (advisory)
+
+When an agent wakes a peer on a shared idea or task — an orchestrator dispatching a worker, or any agent `@mention`-ing another — the wake surfaces the **waker's live session anchor**: a note naming the waking agent and telling the woken peer that the waker has an open conversation on this idea. If you are the woken peer, **reply on the same idea/task resource** (comment there rather than opening a brand-new session) and your reply lands back in the waker's existing live session, keeping the collaboration on one thread instead of scattering into a fresh one.
+
+This is **advisory, not routing.** There is no automatic server subscription and nothing is force-delivered — replying on the shared resource is simply *where a reply lands* (via the existing return path), not a guaranteed channel. When the waker's origin is **offline** at wake time, no live anchor is surfaced and the exchange degrades to **notify-only**: the reply reaches the waker as an ordinary notification it picks up on its next turn. Only idea/theme-anchored wakes carry this anchor; ad-hoc wakes with no shared idea do not.
 
 ---
 

@@ -4,7 +4,7 @@ description: Adversarial verification of a submitted Chorus task against its AC 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.3"
+  version: "0.18.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -57,6 +57,10 @@ chorus_get_document({ documentUuid: "<doc-uuid>" })
 **Step 6: Adversarial probes.** Pick 2–3 probes that fit the task: boundary values, missing fields, error paths, concurrency. Run them — don't just describe them.
 
 **Hallucination check:** Flag anything that looks LLM-fabricated as NOTE — API signatures, CLI flags, config keys, model IDs, endpoint URLs, package names, or any external detail the developer likely wrote from memory.
+
+**Step 7: Intent alignment**
+
+Resolve the originating Idea (this task's proposal → `inputUuids[0]`) and read its body + human-answered elaboration + human-authored comments (`answeredBy.type` / `author.type == "user"`; agent-authored entries are audit context, not intent). Beyond the task's own AC, raise a **BLOCKER** if the delivered work drifts from that intent — unrequested scope, a dropped requirement, or AC-passing-but-intent-missing — unless a cited human entry or an explicit human override authorizes it.
 
 ## Finding classification
 

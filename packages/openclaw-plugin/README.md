@@ -191,7 +191,8 @@ Skills are bundled under `skills/` and auto-discovered by OpenClaw. On OpenClaw 
 | `quick-dev` | `/quick-dev` | Skip Idea→Proposal — create tasks directly, execute, and verify |
 | `review` | `/review` | Approve/reject proposals, verify tasks, and manage project governance |
 | `yolo` | `/yolo` | Full-auto AI-DLC pipeline — from prompt to done |
-| `openspec-aware` | `/openspec-aware` | Opt-in OpenSpec authoring for PM workflows when the local `openspec` CLI is present |
+| `openspec-aware` | `/openspec-aware` | OpenSpec-mode authoring for PM workflows — the default whenever OpenSpec is usable (`openspec/` + CLI present, not disabled) |
+| `spec-lite` | `/spec-lite` | Chorus-native lightweight local specs (`.chorus/specs/<slug>/`) — the fallback when OpenSpec isn't usable |
 | `proposal-reviewer` | `/proposal-reviewer` | Read-only adversarial proposal review; ends with a `VERDICT:` comment |
 | `task-reviewer` | `/task-reviewer` | Read-only adversarial task verification (read-only bash for tests); ends with a `VERDICT:` comment |
 
@@ -205,7 +206,7 @@ They are meant to run inside a **spawned sub-agent**: the orchestrating skill (`
 
 | Skill | Description |
 |-------|-------------|
-| `/proposal-reviewer` | Reviews submitted proposals — document completeness, task granularity, AC alignment, cross-task dependencies. No Bash. |
+| `/proposal-reviewer` | Reviews submitted proposals — document completeness, task granularity, AC alignment, cross-task dependencies. Read-only Bash allowed for inspection only (`cat`/`grep`/`ls`/`find`, `git ls-files`/`log`/`show`/`diff`) — no file writes, git write ops, installs, or test/build runs. |
 | `/task-reviewer` | Verifies submitted tasks against the AC and proposal documents. Read-only Bash allowed for verification only (tests/build, `cat`/`grep`/`ls`, `git diff`/`log`/`show`). |
 
 ---

@@ -4,7 +4,7 @@ description: Chorus documentation router — consult the live Chorus docs site t
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.3"
+  version: "0.18.0"
   category: project-management
   mcp_server: chorus
 ---

@@ -15,9 +15,11 @@
 // name/UUID and the resolved binary, nothing else.
 
 import { spawn } from "node:child_process";
+import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
 import { resolveLaunchAgent } from "./credentials.mjs";
+import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, planAgentArgs, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 
 /**
  * Launch agent-type → executable base name. Launch is a SUPERSET of daemon wake:
@@ -173,7 +175,7 @@ export function resolveBinaryPath(binName, deps = {}) {
   const isWin = platform === "win32";
   const p = isWin ? pathWin32 : pathPosix;
   const names = isWin ? [`${binName}.cmd`, `${binName}.exe`, binName] : [binName];
-  const pathVar = env.PATH || env.Path || "";
+  const pathVar = getAgentEnv(env, "PATH", platform) || env.Path || "";
   const dirs = pathVar.split(p.delimiter).filter(Boolean);
   for (const dir of dirs) {
     for (const name of names) {
@@ -197,7 +199,7 @@ export function resolveSpawnCommand(binPath, args, platform = process.platform, 
   const isWin = platform === "win32";
   const lower = binPath.toLowerCase();
   if (isWin && (lower.endsWith(".cmd") || lower.endsWith(".bat"))) {
-    const comspec = env.ComSpec || env.COMSPEC || "cmd.exe";
+    const comspec = getAgentEnv(env, "COMSPEC", platform) || "cmd.exe";
     return { command: comspec, argv: ["/d", "/s", "/c", binPath, ...args] };
   }
   return { command: binPath, argv: args };
@@ -212,13 +214,20 @@ export function resolveSpawnCommand(binPath, args, platform = process.platform, 
  * @param {NodeJS.ProcessEnv} [baseEnv]
  * @returns {NodeJS.ProcessEnv}
  */
-export function buildChildEnv(agent, baseEnv = process.env) {
-  const childEnv = { ...baseEnv };
+export function buildChildEnv(agent, baseEnv = process.env, platform = process.platform) {
+  const childEnv = overlayAgentEnv(baseEnv, agent.env, platform);
   if (agent.url) childEnv.CHORUS_URL = agent.url;
   if (agent.apiKey) childEnv.CHORUS_API_KEY = agent.apiKey;
   const profile = agent.agentUuid || agent.agentName;
   if (profile) childEnv.CHORUS_AGENT_PROFILE = profile;
-  delete childEnv.CHORUS_DAEMON_HEADLESS;
+  for (const key of Object.keys(childEnv)) {
+    if (key.toUpperCase() === "CHORUS_DAEMON_HEADLESS") delete childEnv[key];
+  }
+  if (agent.agentType === "claude-code" || agent.agentType === "claude") {
+    for (const key of Object.keys(childEnv)) {
+      if (["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"].includes(key.toUpperCase())) delete childEnv[key];
+    }
+  }
   return childEnv;
 }
 
@@ -233,8 +242,11 @@ USAGE
 
 Launches the agent's binary in the FOREGROUND with this agent's Chorus connection
 injected into the child (CHORUS_URL / CHORUS_API_KEY / CHORUS_AGENT_PROFILE).
-Everything after \`--\` is passed to the agent verbatim — the agent's full flag
-surface is available and is never inspected by chorus.
+Everything after \`--\` is passed to the agent verbatim. Recognized explicit model/
+reasoning options suppress configured equivalents in the selected command scope.
+Configured args precede explicit options after known commands (Codex exec, exec
+resume, resume; Kiro chat; OpenClaw agent), otherwise they go first. Unknown
+command grammars are not inferred. Analysis stops at the first bare \`--\`.
 
 FLAGS
   --name <name|uuid>   Which configured agent to launch (default: the only one).
@@ -295,8 +307,18 @@ export async function runAgentLaunch(argv = [], opts = {}) {
     return 1;
   }
 
-  // 3. Locate the binary on PATH.
-  const binPath = resolveBinaryPath(typeRes.binary, { env, platform, isFile: opts.isFile });
+  // Validate before binary discovery or spawn, against the effective --type.
+  let config;
+  try {
+    config = validateAgentCliConfig(agent, typeRes.type, agent.label);
+  } catch (e) {
+    err.write(`error: ${e.message}\n`);
+    return 1;
+  }
+  const childEnv = buildChildEnv({ ...agent, agentType: typeRes.type, env: config.env }, env, platform);
+
+  // 3. Locate the binary using this profile's effective PATH.
+  const binPath = resolveBinaryPath(typeRes.binary, { env: childEnv, platform, isFile: opts.isFile });
   if (!binPath) {
     err.write(
       `error: could not find the \`${typeRes.binary}\` executable on PATH ` +
@@ -305,9 +327,15 @@ export async function runAgentLaunch(argv = [], opts = {}) {
     return 1;
   }
 
-  // 4. Build the child env and the spawn command.
-  const childEnv = buildChildEnv(agent, env);
-  const { command, argv: spawnArgv } = resolveSpawnCommand(binPath, parsed.passthrough, platform, env);
+  // 4. Filter only configured recognized duplicates; explicit argv stays untouched.
+  const { args, configuredArgs } = planAgentArgs(typeRes.type, config.args, parsed.passthrough);
+  try {
+    assertConfiguredShimArgs(binPath, configuredArgs, platform, agent.label);
+  } catch (e) {
+    err.write(`error: ${e.message}\n`);
+    return 1;
+  }
+  const { command, argv: spawnArgv } = resolveSpawnCommand(binPath, args, platform, childEnv);
 
   // Diagnostic — agent name/uuid + binary ONLY. Never the key or url userinfo.
   out.write(`Launching ${agent.label} (${agent.agentUuid ?? "no uuid"}) → ${typeRes.binary}\n`);
@@ -321,13 +349,13 @@ export async function runAgentLaunch(argv = [], opts = {}) {
         env: childEnv,
         shell: false,
       });
-    } catch (e) {
-      err.write(`error: failed to launch ${typeRes.binary}: ${e.message}\n`);
+    } catch (error) {
+      err.write(`error: failed to launch ${typeRes.binary}: ${safeSpawnError(error)}\n`);
       resolve(1);
       return;
     }
-    child.on("error", (e) => {
-      err.write(`error: ${typeRes.binary} failed to start: ${e.message}\n`);
+    child.on("error", (error) => {
+      err.write(`error: ${typeRes.binary} failed to start: ${safeSpawnError(error)}\n`);
       resolve(1);
     });
     child.on("close", (code, signal) => {

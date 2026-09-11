@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.3"
+  version: "0.18.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -50,6 +50,8 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
        v
   Done. Report summary.
 ```
+
+**First-principles alignment (a stage-tailored instruction in every reviewer).** The proposal-, task-, and code-reviewer each also verify, top-down, that the work still serves the *original Idea's intent* — building the intent baseline from the Idea it resolves from the entity under review — via the existing `chorus_get_idea` + `chorus_get_elaboration` + `chorus_get_comments`, counting **human-authored** content only — and flagging scope creep, requirement loss/shrink, or semantic drift. Unauthorized drift is a **BLOCKER → FAIL / reject**, downgraded to a NOTE only when traceable to a **human-originated** authorization (a human-authored Idea comment, a human-answered elaboration, or an explicit human override) — an agent's own comment never authorizes. In `/yolo` there is no human at the gate, so a self-generated (agent-authored) elaboration or comment does NOT clear alignment drift: fix the drift (reject/reopen + revise) rather than rationalizing it.
 
 **Escape hatch:** Ctrl+C at any time. All created entities (project, idea, proposal, tasks) persist in Chorus. Resume manually via `/develop` or `/review`.
 
@@ -188,20 +190,16 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 #### Step 1.4: Create Proposal
 
-1. **Detect OpenSpec mode.** Load the `openspec-aware` skill at `.claude/skills/openspec-aware/SKILL.md` and run its §1 detection contract. The result determines how the rest of this step authors documents:
+1. **Read the spec mode (already computed).** The SessionStart hook (`bin/resolve-spec-mode.sh`) has already resolved it — do NOT re-derive. Read the `## Spec Mode` section: it states `CHORUS_SPEC_MODE=<lite|openspec|off>` + a routing note. (Spawned without that context? Source the *same* `bin/resolve-spec-mode.sh` for `SPEC_MODE`/`SPEC_FAIL` — never hand-roll the rule.) Act on that value: `openspec` → **2a**, `off` → **2b**, `lite` → **2c**. If the section says the mode **cannot be honored** (e.g. explicit `openspec` but unusable — it prints the config-conflict or install-hint reason), **halt** and surface it; do NOT silently fall back or enter 2a with no OpenSpec to author. (This matters because yolo runs unattended — the hook, not the agent, is the single source of the decision.)
 
-   - `CHORUS_OPENSPEC_ACTIVE=1` → spec-driven branch (sub-step 2a below).
-   - `CHORUS_OPENSPEC_ACTIVE=0` → free-form branch (sub-step 2b below).
-
-   This is mandatory — yolo runs unattended, so silently picking the wrong mode is exactly the failure scenario the detection contract exists to prevent.
-
-2. **Create the empty proposal container.** In OpenSpec mode, the `description` MUST contain the literal line `OpenSpec change slug: <slug>` (use the `$SLUG` you'll pick in 2a); in free-form mode, omit that line.
+2. **Create the empty proposal container.** In OpenSpec mode the `description` MUST contain `OpenSpec change slug: <slug>`; in spec-lite mode the locator line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` (use the `$SLUG` you'll pick in 2a / 2c); in free-form mode omit any slug line.
 
    ```
    chorus_pm_create_proposal({
      projectUuid: "<project-uuid>",
      title: "<feature name>",
-     description: "<summary>\n\nOpenSpec change slug: <slug>",   // OpenSpec mode
+     description: "<summary>\n\nSpec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/",  // spec-lite mode
+     // description: "<summary>\n\nOpenSpec change slug: <slug>", // OpenSpec mode
      // description: "<summary>",                                 // free-form mode
      inputType: "idea",
      inputUuids: ["<idea-uuid>"]
@@ -210,7 +208,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
    Then branch:
 
-   **2a. OpenSpec mode (`CHORUS_OPENSPEC_ACTIVE=1`).** Follow `openspec-aware` §3 end-to-end:
+   **2a. OpenSpec mode (resolved mode = openspec; `CHORUS_OPENSPEC_ACTIVE=1`).** Follow `openspec-aware` §3 end-to-end:
    - Pick `$SLUG`, run `openspec new change "$SLUG"` (§3.1–§3.2).
    - Author `proposal.md`, `design.md`, and one `specs/<capability>/spec.md` per capability locally on disk (§3.3). ADDED Requirements only; per-spec fallback to free-form Markdown if MODIFIED/REMOVED is needed.
    - Define the `chorus_check_response` helper (§6); prefer `chorus mcp call … --arg-file content=<file>` for mirrors (§3.4/§3.6) — the bash-wrapper fallback's `$API` + `json_encode_file` are only needed when `chorus` is not on `PATH`.
@@ -220,7 +218,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
    Then continue to step 3 (task drafts).
 
-   **2b. Free-form mode (`CHORUS_OPENSPEC_ACTIVE=0`).** Add a tech design document draft directly via MCP, content authored inline:
+   **2b. Free-form mode (resolved mode = free-form).** Only when step 1 resolved to free-form — i.e. explicit `CHORUS_SPEC_MODE=off`. (Unset never resolves here — it resolves to OpenSpec when usable, else spec-lite.) Add a tech design document draft directly via MCP, content authored inline:
 
    ```
    chorus_pm_add_document_draft({
@@ -230,6 +228,8 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
      content: "<markdown tech design covering architecture, data model, API, module contracts>"
    })
    ```
+
+   **2c. spec-lite mode (resolved mode = lite).** Load the `spec-lite` skill (`skills/spec-lite/SKILL.md`) and follow it: pick `$SLUG` (a **capability/feature** name — `.chorus/specs/<slug>/` holds the durable local spec `spec.md`, edited in place across changes, not one folder per change). Ensure the durable `spec.md` exists, using the `spec-lite` skill's inline durable-spec template the first time this capability is specced — local-only, **no Chorus ids**: Intent / plain-prose Requirements + `- [ ]` acceptance points / Non-goals — and update it in place to the new truth. Create this change's **dated folder** `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` and write its **synced** Chorus-typed docs (shape = the `spec-lite` skill's inline dated-folder document template) — `prd.md` (primary), plus `tech_design.md` etc. only if warranted. The proposal `description` MUST carry the literal locator line `Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` (the deterministic link develop uses). Mirror **each** dated-folder `<type>.md` to its persistent Document byte-exact — first time a doc is authored e.g. `chorus mcp call chorus_pm_add_document_draft "{\"proposalUuid\":\"<uuid>\",\"type\":\"prd\",\"title\":\"PRD: <feature>\"}" --arg-file content=.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/prd.md`, later edits via `chorus_pm_update_document` against the recorded `documentUuid`. **`spec.md` is never mirrored.** No `OpenSpec change slug:` line and no `openspec/changes/` scaffold; there is no `tasks.md`. Then continue to step 3 for task drafts.
 
 3. **Add task drafts incrementally** (use returned `draftUuid` for dependency chaining). `acceptanceCriteriaItems` is **required** on every draft — at least one non-blank criterion, or the call is rejected:
    ```
@@ -268,19 +268,33 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    ```
    chorus_pm_submit_proposal({ proposalUuid: "<proposal-uuid>" })
    ```
-   After this call, the PostToolUse hook injects context instructing you to spawn `chorus:proposal-reviewer`. You MUST spawn it yourself in **foreground** (do NOT set `run_in_background`) — it is NOT auto-launched.
+   After this call, the PostToolUse hook injects context instructing you to spawn `chorus:proposal-reviewer`. You MUST spawn it yourself — it is NOT auto-launched — and wait for it to complete before approving.
+
+---
+
+### Reviewer contract (applies to every review gate below)
+
+Every gate in Phases 2, 4 and 4.5 follows the same three steps. They are written once here; the phases below only name their entity and their stage-specific actions.
+
+1. **Spawn and wait.** Spawn the reviewer as a read-only sub-agent, then wait for it using this harness's waiting mechanism — in Claude Code, the sub-agent's completion notification. The launch result is not the verdict: these reviewer subagent types report an async launch regardless of the flag you pass.
+2. **Read THIS round's VERDICT.** Call `chorus_get_comments` on the entity and find the `VERDICT:` comment posted **after your dispatch**, not an older round's. Do not advance the gate before you have read it.
+3. **No VERDICT for this round?** Check what the reviewer *did* post:
+   - **A reported round limit, or any other explicit refusal to review** — a deliberate escalation to a human. STOP: do not respawn, do not self-review, do not post a VERDICT of your own.
+   - **Nothing at all** — respawn ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you review the entity yourself as a read-only pass and POST the VERDICT, then proceed on what you posted rather than looping forever.
+
+**Absence is never a PASS**, and a round limit reached by someone else is never yours to clear.
 
 ---
 
 ### Phase 2: Proposal Review Loop
 
-After `chorus_pm_submit_proposal`, the PostToolUse hook injects context instructing you to spawn `chorus:proposal-reviewer`. You MUST manually spawn it as a read-only sub-agent in **foreground** (do NOT set `run_in_background`). Wait for it to complete, then:
+After `chorus_pm_submit_proposal`, the PostToolUse hook injects context instructing you to spawn `chorus:proposal-reviewer`. Apply the **Reviewer contract** above with the proposal as the entity. Then:
 
-1. **Read the reviewer's VERDICT:**
+1. **Read THIS round's VERDICT:**
    ```
    chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
    ```
-   Look for the most recent comment containing `VERDICT:`.
+   Look for the `VERDICT:` comment posted **after your dispatch** — not an older round's. Do not approve or reject before you have read it.
 
 2. **Act on the VERDICT:**
 
@@ -314,15 +328,15 @@ After `chorus_pm_submit_proposal`, the PostToolUse hook injects context instruct
           Proposal UUID: <uuid>"
    ```
 
-4. **No new VERDICT comment after reviewer returns?** The reviewer exhausted its `maxTurns` budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep source verification. Fetch proposal + comments + idea only, skim for obvious BLOCKERs, and post your VERDICT within the first 10 turns."* If the second attempt still produces no VERDICT, treat the proposal as PASS WITH NOTES and proceed — the pipeline cannot loop forever on a silent reviewer.
+4. **No new VERDICT for this round?** Apply step 3 of the **Reviewer contract**, reviewing the proposal yourself if the reviewer stays silent.
 
 ---
 
 ### Phase 3: Task Execution (Wave-Based)
 
-After proposal approval, tasks exist in `open` status. Execute them in dependency-ordered waves using Agent Teams. If team creation fails, fall back to main agent execution.
+After proposal approval, tasks exist in `open` status. Execute them in dependency-ordered waves: one sub-agent per unblocked task, the whole wave dispatched in a single message. If sub-agent dispatch is unavailable or sub-agents fail repeatedly, fall back to main agent execution.
 
-#### Primary: Agent Team (parallel)
+#### Primary: one sub-agent per task, whole wave in a single message (parallel)
 
 ```
 wave = 1
@@ -338,22 +352,21 @@ loop:
     # Stuck -- tasks failed review and can't proceed
     break with escalation report
 
-  # 2. Try to create team for this wave
-  TeamCreate({ team_name: "yolo-wave-{wave}" })
-
-  # 3. Spawn a sub-agent for each unblocked task
+  # 2. Dispatch ONE sub-agent per unblocked task, issuing the whole wave
+  #    in a SINGLE message — that is what makes them run in parallel.
+  #    There is no team or group object to create first.
   for each task in unblocked:
     Agent({
       name: "task-{short-title}",
       prompt: "Your Chorus task UUID: {task.uuid}\nProject UUID: {project-uuid}\n\nImplement the task per its description and acceptance criteria. Read the task, proposal, and project documents for context."
     })
 
-  # 4. Wait for all sub-agents to complete
+  # 3. Wait for all sub-agents to complete
   #    Each sub-agent follows the /develop workflow:
   #    claim -> in_progress -> develop -> report -> self-check AC -> submit_for_verify
   #    PostToolUse hook injects context — main agent must spawn task-reviewer after submit_for_verify
 
-  # 5. Proceed to Phase 4 (verification) for this wave
+  # 4. Proceed to Phase 4 (verification) for this wave
   wave += 1
 ```
 
@@ -364,7 +377,7 @@ loop:
 
 #### Fallback: Main Agent (sequential)
 
-If `TeamCreate` fails (e.g., Agent Teams not available, permission denied, or sub-agents crash repeatedly), fall back to executing tasks sequentially as the main agent:
+If sub-agent dispatch is unavailable (no sub-agent primitive, permission denied) or sub-agents fail repeatedly, fall back to executing tasks sequentially as the main agent:
 
 ```
 for each task in unblocked:
@@ -399,13 +412,14 @@ for each task in wave_tasks:
     # Sub-agent may have failed; skip or handle
     continue
 
-  # 2. Spawn task-reviewer in FOREGROUND (hook injects context — you must spawn it yourself)
-  #    Do NOT set run_in_background — you need the VERDICT before proceeding
+  # 2. Spawn task-reviewer (hook injects context — you must spawn it yourself),
+  #    then wait for its completion notification. The launch result is NOT the
+  #    verdict — the dispatch reports an async launch whatever flag you pass.
   Agent({ subagent_type: "chorus:task-reviewer", prompt: "Review task <task-uuid>..." })
 
-  # 3. Read task-reviewer VERDICT
+  # 3. Read THIS round's task-reviewer VERDICT — the comment posted after your
+  #    dispatch, not an older round's. Do not verify or reopen before you have it.
   comments = chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
-  # Find the most recent comment containing "VERDICT:"
 
   # 4. Act on VERDICT — three possible outcomes:
   if VERDICT is "PASS":
@@ -443,13 +457,13 @@ ESCALATE: "Task '{title}' failed review after {maxRounds} rounds.
 
 Continue with remaining tasks -- do not halt the entire pipeline for one stuck task.
 
-**No new VERDICT comment after the task-reviewer returns?** It exhausted its `maxTurns` budget. Respawn it ONCE with a concise-budget hint: *"Stay within turn budget. Skip deep verification. Fetch task/proposal/comments, run only the core tests, and post your VERDICT within the first 12 turns."* If the second attempt also produces no VERDICT, treat as PASS WITH NOTES and proceed — do not loop indefinitely.
+**No new VERDICT for this round?** Apply step 3 of the **Reviewer contract**, reviewing the task yourself if the reviewer stays silent.
 
 ---
 
 ### Phase 4.5: Code-Review Gateway (mandatory pre-ship)
 
-Once **every** task of the idea's proposal is verified (`done`) — i.e. Phase 3 finds no more unblocked tasks and all are terminal — run the final ship-time code-review gateway **before** declaring the Idea done and **before** the Phase 5b completion report. After the last task is verified, the PostToolUse hook injects a reminder to spawn the code-reviewer; you MUST spawn it yourself in **foreground** (do NOT set `run_in_background`).
+Once **every** task of the idea's proposal is verified (`done`) — i.e. Phase 3 finds no more unblocked tasks and all are terminal — run the final ship-time code-review gateway **before** declaring the Idea done and **before** the Phase 5b completion report. After the last task is verified, the PostToolUse hook injects a reminder to spawn the code-reviewer; you MUST spawn it yourself, wait for its completion notification, then read THIS round's `VERDICT` comment on the idea and act on what it says.
 
 ```
 # Spawn the code-reviewer for the IDEA (not a task). Determine the round
@@ -457,9 +471,10 @@ Once **every** task of the idea's proposal is verified (`done`) — i.e. Phase 3
 Agent({ subagent_type: "chorus:code-reviewer",
         prompt: "Review the aggregate code for idea <idea-uuid>. Round: N." })
 
-# Read its VERDICT on the idea
+# Wait for its completion notification, then read THIS round's VERDICT on the idea
 comments = chorus_get_comments({ targetType: "idea", targetUuid: "<idea-uuid>" })
-# Find the most recent comment containing "VERDICT:"
+# Find the "VERDICT:" comment posted after your dispatch, not an older round's.
+# Do not declare the feature shippable before you have read it.
 ```
 
 Act on the VERDICT:
@@ -473,7 +488,7 @@ ESCALATE: "Idea '<title>' failed code review after {maxCodeReviewRounds} rounds.
            Last BLOCKERs: <list>. Manual intervention needed. Idea UUID: <uuid>"
 ```
 
-**No new VERDICT comment after the code-reviewer returns?** It exhausted its `maxTurns` budget (the code-reviewer runs with a larger budget than the task-reviewer because it reviews the whole feature). Respawn it ONCE with a concise-budget hint, then if still silent treat as PASS WITH NOTES and proceed — do not loop forever on a silent reviewer.
+**No new VERDICT for this round?** Apply step 3 of the **Reviewer contract**, reviewing the idea's aggregate change yourself if the reviewer stays silent.
 
 > The code-review gateway is **behavioral**, consistent with the proposal/task reviewers: its verdict is advisory and does not change the Idea's stored status. The /yolo orchestrator honors it — PASS to ship, FAIL to loop. It runs **before** the completion report so the report is never written for a feature with an outstanding FAIL.
 

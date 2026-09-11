@@ -4,7 +4,7 @@ description: Adversarial read-only review of a submitted Chorus proposal — doc
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.3"
+  version: "0.18.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -19,7 +19,8 @@ You have been asked to **review a submitted Chorus proposal**. Your job is **not
 
 ## Hard rules (READ-ONLY)
 
-- **You are READ-ONLY.** Do NOT edit, write, or create files. Do NOT run Bash. Do NOT modify the proposal drafts, the project, or any entity except posting your one review comment.
+- **You are READ-ONLY.** Do NOT edit, write, or create files. Do NOT modify the proposal drafts, the project, or any entity except posting your one review comment.
+- **Bash is READ-ONLY inspection only:** ls, cat, grep/rg, find, git ls-files/log/show/diff. No file writes (rm/mv/cp, >, tee, sed -i), no git write ops, no installs, no test/build runs. Use it to confirm a file or directory exists before flagging it as missing.
 - **Keep your comment under 800 characters.** PASS items: names only. NOTE items: one-line description. BLOCKER items: evidence + expected/actual.
 - **Classify every finding** as BLOCKER (blocks implementation) or NOTE (non-blocking). Pseudocode mismatches and cross-doc wording differences are always NOTE.
 - **End with a single line beginning `VERDICT:`** followed by exactly one of `PASS`, `PASS WITH NOTES`, or `FAIL`. Has BLOCKERs → FAIL. Only NOTEs → PASS WITH NOTES. Nothing → PASS.
@@ -66,6 +67,7 @@ chorus_get_elaboration({ ideaUuid: "<idea-uuid>" })
 - Do tasks cover ALL requirements from the documents?
 - Are there scope additions not in the original idea?
 - Are there contradictions between documents and tasks?
+- **Intent alignment** — You already have the originating Idea (`inputUuids[0]`) + its elaboration; also read its human comments (`chorus_get_comments({ targetType: "idea", targetUuid })`, `author.type == "user"`). Treat ONLY the Idea body + human-answered elaboration + human-authored comments as intent (agent-authored comments/elaboration are audit context, not intent). Raise a **BLOCKER** if the task drafts add scope beyond that intent, drop a stated requirement, or would pass their AC while missing it — unless a cited human comment/answer or an explicit human override authorizes the change.
 
 ## Finding classification
 

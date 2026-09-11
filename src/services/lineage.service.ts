@@ -96,6 +96,73 @@ export async function resolveRootIdea(
 }
 
 /**
+ * Resolve an entity's DIRECT idea anchor — the first idea node of its lineage — WITHOUT
+ * walking parent/container idea ancestry. This is the canonical direct-idea primitive:
+ * it keys the `DaemonSession` (`--session-id`, via notification-turn) AND derives the
+ * waker-session anchor (via notification.service), so both stay same-source by
+ * construction.
+ *
+ * Per spec `agent-orchestrator-handoff` (and task T1's acceptance criteria) this
+ * resolution MUST read ONLY the resource's own idea anchor and MUST NOT climb
+ * parent/container idea ancestry. It therefore reads at most one idea (the direct one,
+ * for an existence check) and never a `parentUuid`:
+ *   - `idea`      → itself (existence-checked)
+ *   - `task`      → `task.proposalUuid` → the proposal's `inputUuids[0]` idea
+ *   - `document`  → `doc.proposalUuid`  → the proposal's `inputUuids[0]` idea
+ *   - `proposal`  → its own `inputUuids[0]` idea
+ *
+ * Returns null on any broken link (quick task / standalone document with no proposal,
+ * a non-idea proposal input, an empty input list, a missing/cross-company entity) — the
+ * same "no idea ancestor" successful-null outcome as `resolveRootIdea().directIdeaUuid`,
+ * to which this is VALUE-identical while reading strictly fewer rows (no ancestry).
+ * companyUuid-scoped via the same raw getters; a query failure propagates.
+ */
+export async function resolveDirectIdeaUuid(
+  companyUuid: string,
+  entityType: LineageEntityType,
+  entityUuid: string
+): Promise<string | null> {
+  switch (entityType) {
+    case "idea": {
+      const idea = await getIdeaByUuid(companyUuid, entityUuid);
+      return idea ? idea.uuid : null;
+    }
+    case "task": {
+      const task = await getTaskByUuid(companyUuid, entityUuid);
+      if (!task?.proposalUuid) return null;
+      return directIdeaOfProposal(companyUuid, task.proposalUuid);
+    }
+    case "document": {
+      const doc = await getDocumentByUuid(companyUuid, entityUuid);
+      if (!doc?.proposalUuid) return null;
+      return directIdeaOfProposal(companyUuid, doc.proposalUuid);
+    }
+    case "proposal":
+      return directIdeaOfProposal(companyUuid, entityUuid);
+    default:
+      // Unreachable for typed callers; defensive for runtime (e.g. MCP input).
+      return null;
+  }
+}
+
+/**
+ * The direct input idea of a proposal: `inputUuids[0]` when the proposal is idea-derived
+ * and that idea exists in this company. Never reads the idea's ancestry (no `parentUuid`
+ * hop) — mirrors `resolveFromProposal`'s FIRST idea node without the `walkToRoot` climb.
+ */
+async function directIdeaOfProposal(
+  companyUuid: string,
+  proposalUuid: string
+): Promise<string | null> {
+  const proposal = await getProposalByUuid(companyUuid, proposalUuid);
+  if (!proposal || proposal.inputType !== "idea") return null;
+  const inputUuids = normalizeUuidArray(proposal.inputUuids);
+  if (inputUuids.length === 0) return null;
+  const idea = await getIdeaByUuid(companyUuid, inputUuids[0]);
+  return idea ? idea.uuid : null;
+}
+
+/**
  * Inner resolver: produces every field of ResolveRootIdeaResult EXCEPT directIdeaUuid,
  * which the public wrapper derives from `lineage`. Returns the field typed as optional so
  * the branches need not set it; the wrapper always fills it in.

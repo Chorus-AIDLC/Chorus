@@ -59,7 +59,7 @@ export class OfflineSpawner {
  * @returns {import("./codex-spawner.mjs").Spawner}
  */
 export function selectSpawner(agentType, opts = {}) {
-  const { logger, permissionMode, creds } = opts;
+  const { logger } = opts;
   if (agentType === "offline") {
     // Fail-closed: an offline agent has no local backend. Return the no-op spawner
     // explicitly so we NEVER fall through to the claude-code default below and wake
@@ -67,23 +67,18 @@ export function selectSpawner(agentType, opts = {}) {
     return new OfflineSpawner({ logger });
   }
   if (agentType === "codex") {
-    return new CodexSpawner({ logger, permissionMode, creds });
+    return new CodexSpawner(opts);
   }
   if (agentType === "kiro") {
-    return new KiroSpawner({ logger, permissionMode, creds });
+    return new KiroSpawner(opts);
   }
   if (agentType === "dsh") {
-    return new DshSpawner({
-      logger,
-      creds,
-      bundleVersion: opts.bundleVersion,
-      prepareManagedConfigFn: opts.prepareManagedConfigFn,
-    });
+    return new DshSpawner(opts);
   }
   if (agentType === "pi") {
     // pi is a first-class wakeable backend — an explicit branch so it NEVER falls
     // through to the claude-code default below (nor is treated as offline).
-    return new PiSpawner({ logger, permissionMode, creds });
+    return new PiSpawner(opts);
   }
-  return new ClaudeSpawner({ logger, permissionMode, creds });
+  return new ClaudeSpawner(opts);
 }

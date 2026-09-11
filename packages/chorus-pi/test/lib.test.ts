@@ -7,7 +7,7 @@ import {
   sessionWorkflow,
   hasSessionMarker,
   extractRunIdFromToolResultEvent,
-  detectOpenSpec,
+  resolveSpecMode,
   buildSessionBanner,
   parseMaxCodeReviewRounds,
   DEFAULT_MAX_CODE_REVIEW_ROUNDS,
@@ -141,8 +141,14 @@ test("sessionWorkflow: starts with a blank line so it separates cleanly from the
   expect(sessionWorkflow("u").startsWith("\n")).toBe(true);
 });
 
-// ─── detectOpenSpec ──────────────────────────────────────────────────────────
-// Helpers to build injectable fs/execSync stubs.
+// ─── resolveSpecMode ─────────────────────────────────────────────────────────
+// The TS reimplementation of the canonical bash resolver
+// (public/chorus-plugin/bin/resolve-spec-mode.sh). This mirrors that resolver's
+// 13-case matrix test (bin/tests/test-spec-mode-resolution.sh) so the TS port
+// stays contract-identical: explicit CHORUS_SPEC_MODE {lite, openspec, off,
+// <invalid>} × OpenSpec {usable, missing-dir, missing-CLI, disabled} + unset.
+// Only mode / chorusOpenspecActive / (specFail?) are asserted (as in the bash
+// matrix); reason strings may differ across ports.
 function fsWith(dirs: string[]): FsLike {
   return { existsSync: (p: string) => dirs.includes(p) };
 }
@@ -156,59 +162,90 @@ function execMissing(): ExecSync {
 }
 
 const CWD = "/proj";
+const USABLE = { fs: fsWith([`${CWD}/openspec`]), exec: execOk() };
+const NO_DIR = { fs: fsWith([]), exec: execOk() };
+const NO_CLI = { fs: fsWith([`${CWD}/openspec`]), exec: execMissing() };
 
-test("detectOpenSpec: optout wins even if dir + CLI present", () => {
-  const r = detectOpenSpec(CWD, true, fsWith([`${CWD}/openspec`]), execOk());
-  expect(r).toEqual({
-    active: false,
-    reason: "CHORUS_OPENSPEC_MODE=off (explicit opt-out)",
-    optout: true,
-    hint: "",
-  });
+// run(label, inputs, fs, exec) → assert {specMode, chorusOpenspecActive, hasFail}
+function rsm(specMode: string | undefined, env: { openspecMode?: string; enableOpenSpec?: string }, io: { fs: FsLike; exec: ExecSync }) {
+  return resolveSpecMode({ specMode, projectRoot: CWD, ...env }, io.fs, io.exec);
+}
+function expectMode(r: ReturnType<typeof resolveSpecMode>, mode: string, active: boolean, hasFail: boolean) {
+  expect(r.specMode).toBe(mode);
+  expect(r.chorusOpenspecActive).toBe(active);
+  expect(r.specFail !== "").toBe(hasFail);
+}
+
+// --- unset ---
+test("resolveSpecMode: unset + usable → openspec", () => {
+  expectMode(rsm(undefined, {}, USABLE), "openspec", true, false);
+});
+test("resolveSpecMode: unset + no openspec dir → lite", () => {
+  expectMode(rsm(undefined, {}, NO_DIR), "lite", false, false);
+});
+test("resolveSpecMode: unset + dir but no CLI → lite", () => {
+  expectMode(rsm(undefined, {}, NO_CLI), "lite", false, false);
+});
+test("resolveSpecMode: unset + disabled(CHORUS_OPENSPEC_MODE=off) → lite", () => {
+  expectMode(rsm(undefined, { openspecMode: "off" }, USABLE), "lite", false, false);
+});
+test("resolveSpecMode: unset + disabled(enableOpenSpec toggle) → lite", () => {
+  expectMode(rsm(undefined, { enableOpenSpec: "false" }, USABLE), "lite", false, false);
 });
 
-test("detectOpenSpec: no openspec/ dir → inactive, not optout", () => {
-  const r = detectOpenSpec(CWD, false, fsWith([]), execOk());
-  expect(r.active).toBe(false);
-  expect(r.optout).toBe(false);
-  expect(r.reason).toContain("no openspec/ directory");
-  expect(r.hint).toBe("");
+// --- explicit lite / off ---
+test("resolveSpecMode: lite + usable → lite (never openspec-active)", () => {
+  expectMode(rsm("lite", {}, USABLE), "lite", false, false);
+});
+test("resolveSpecMode: off + usable → off", () => {
+  expectMode(rsm("off", {}, USABLE), "off", false, false);
 });
 
-test("detectOpenSpec: dir present but CLI missing → inactive with install hint", () => {
-  const r = detectOpenSpec(CWD, false, fsWith([`${CWD}/openspec`]), execMissing());
-  expect(r).toEqual({
-    active: false,
-    reason: "openspec/ directory present but `openspec` CLI not on PATH",
-    optout: false,
-    hint: "install with: npm i -g @fission-ai/openspec",
-  });
+// --- explicit openspec ---
+test("resolveSpecMode: openspec + usable → openspec active", () => {
+  expectMode(rsm("openspec", {}, USABLE), "openspec", true, false);
+});
+test("resolveSpecMode: openspec + no dir → FAIL (halt)", () => {
+  const r = rsm("openspec", {}, NO_DIR);
+  expectMode(r, "openspec", false, true);
+  expect(r.specFail).toContain("not usable");
+});
+test("resolveSpecMode: openspec + no CLI → FAIL (halt)", () => {
+  expectMode(rsm("openspec", {}, NO_CLI), "openspec", false, true);
+});
+test("resolveSpecMode: openspec + disabled → FAIL (config conflict)", () => {
+  const r = rsm("openspec", { openspecMode: "off" }, USABLE);
+  expectMode(r, "openspec", false, true);
+  expect(r.specFail).toContain("config conflict");
 });
 
-test("detectOpenSpec: dir + CLI both present → active", () => {
-  const r = detectOpenSpec(CWD, false, fsWith([`${CWD}/openspec`]), execOk());
-  expect(r).toEqual({
-    active: true,
-    reason: "openspec/ directory + openspec CLI both present",
-    optout: false,
-    hint: "",
-  });
+// --- invalid value falls back to default resolution ---
+test("resolveSpecMode: invalid + usable → openspec (default)", () => {
+  expectMode(rsm("bogus", {}, USABLE), "openspec", true, false);
+});
+test("resolveSpecMode: invalid + no dir → lite (default)", () => {
+  expectMode(rsm("bogus", {}, NO_DIR), "lite", false, false);
 });
 
-test("detectOpenSpec: CLI presence is probed only when the dir exists (optout short-circuits first)", () => {
+// enableOpenSpec toggle is checked before CHORUS_OPENSPEC_MODE (reason order).
+test("resolveSpecMode: enableOpenSpec=false wins the disabled reason over CHORUS_OPENSPEC_MODE=off", () => {
+  const r = rsm(undefined, { enableOpenSpec: "false", openspecMode: "off" }, USABLE);
+  expect(r.specMode).toBe("lite");
+  expect(r.openspecUsableReason).toContain("enableOpenSpec userConfig=false");
+});
+
+// CLI probe is skipped when disabled or dir-missing (short-circuit).
+test("resolveSpecMode: CLI probe skipped when disabled or dir missing", () => {
   let calls = 0;
   const exec = (() => {
     calls++;
   }) as unknown as ExecSync;
-  // optout=true → must NOT touch execSync even if dir missing
-  detectOpenSpec(CWD, true, fsWith([]), exec);
-  expect(calls).toBe(0);
-  // dir missing → must NOT touch execSync either
-  detectOpenSpec(CWD, false, fsWith([]), exec);
-  expect(calls).toBe(0);
-  // dir present → must probe execSync
-  detectOpenSpec(CWD, false, fsWith([`${CWD}/openspec`]), exec);
-  expect(calls).toBe(1);
+  resolveSpecMode({ projectRoot: CWD, enableOpenSpec: "false" }, fsWith([`${CWD}/openspec`]), exec);
+  expect(calls).toBe(0); // disabled → no probe
+  resolveSpecMode({ projectRoot: CWD }, fsWith([]), exec);
+  expect(calls).toBe(0); // dir missing → no probe
+  resolveSpecMode({ projectRoot: CWD }, fsWith([`${CWD}/openspec`]), exec);
+  expect(calls).toBe(1); // dir present → probe once
 });
 
 // ─── normalizeChorusToolName + resolveChorusToolName ────────────────────────
@@ -253,16 +290,30 @@ test("NUDGE_TOOL_NAMES: the three reviewer-trigger tools", () => {
 });
 
 // ─── buildSessionBanner (user-visible startup banner) ───────────────────────
-// Mirrors the Claude plugin's SessionStart `systemMessage` (#442): a one-line
-// toast with the connection + OpenSpec status.
+// Mirrors the Claude plugin's SessionStart `systemMessage`: a one-line toast
+// with the connection + resolved spec-mode status.
 const URL = "http://localhost:8637";
+
+// Build a SpecModeResult for the banner tests without touching the resolver.
+function spec(overrides: Partial<ReturnType<typeof resolveSpecMode>>): ReturnType<typeof resolveSpecMode> {
+  return {
+    specMode: "off",
+    specReason: "",
+    specFail: "",
+    openspecUsable: false,
+    openspecUsableReason: "",
+    openspecHint: "",
+    chorusOpenspecActive: false,
+    ...overrides,
+  };
+}
 
 test("buildSessionBanner: not configured → warning, no URL surfaced", () => {
   const r = buildSessionBanner({
     configured: false,
     connected: false,
     chorusUrl: "",
-    openspec: { active: false, reason: "not configured", optout: false, hint: "" },
+    spec: spec({}),
   });
   expect(r.level).toBe("warning");
   expect(r.message).toContain("not configured");
@@ -275,67 +326,62 @@ test("buildSessionBanner: connection failed → error with the URL", () => {
     configured: true,
     connected: false,
     chorusUrl: URL,
-    openspec: { active: false, reason: "connection failed", optout: false, hint: "" },
+    spec: spec({}),
   });
   expect(r.level).toBe("error");
   expect(r.message).toContain("connection failed");
   expect(r.message).toContain(URL);
 });
 
-test("buildSessionBanner: connected + OpenSpec active → info, (OpenSpec Enabled)", () => {
+test("buildSessionBanner: connected + openspec → info, (spec: OpenSpec)", () => {
   const r = buildSessionBanner({
     configured: true,
     connected: true,
     chorusUrl: URL,
-    openspec: { active: true, reason: "both present", optout: false, hint: "" },
+    spec: spec({ specMode: "openspec", chorusOpenspecActive: true, openspecUsable: true }),
   });
   expect(r.level).toBe("info");
   expect(r.message).toContain("connected at " + URL);
-  expect(r.message).toContain("(OpenSpec Enabled)");
+  expect(r.message).toContain("(spec: OpenSpec)");
 });
 
-test("buildSessionBanner: connected + explicit opt-out → info, neutral (OpenSpec off), no nag", () => {
+test("buildSessionBanner: connected + lite → info, (spec: spec-lite)", () => {
   const r = buildSessionBanner({
     configured: true,
     connected: true,
     chorusUrl: URL,
-    openspec: { active: false, reason: "CHORUS_OPENSPEC_MODE=off", optout: true, hint: "" },
+    spec: spec({ specMode: "lite" }),
   });
   expect(r.level).toBe("info");
-  expect(r.message).toContain("(OpenSpec off)");
-  // the opt-out case must NOT carry the enable-openspec nudge
+  expect(r.message).toContain("(spec: spec-lite)");
+  // spec-lite is a first-class fallback — it must NOT nag to enable openspec.
   expect(r.message).not.toContain("enable openspec");
 });
 
-test("buildSessionBanner: connected + not set up (no dir) → info, nudge to enable openspec", () => {
+test("buildSessionBanner: connected + off → info, (spec: off — free-form)", () => {
   const r = buildSessionBanner({
     configured: true,
     connected: true,
     chorusUrl: URL,
-    openspec: { active: false, reason: "no openspec/ directory", optout: false, hint: "" },
+    spec: spec({ specMode: "off" }),
   });
   expect(r.level).toBe("info");
-  expect(r.message).toContain("(OpenSpec off");
-  expect(r.message).toContain("/skill:chorus enable openspec");
-  expect(r.message).toContain("to set it up");
+  expect(r.message).toContain("(spec: off");
 });
 
-test("buildSessionBanner: connected + dir present but CLI missing → info, still nudges (not-set-up kind)", () => {
-  // The hint case is still a "not set up" state (optout=false), so the banner
-  // nudges the same way — the richer hint lives in the injected agent context, not the toast.
+test("buildSessionBanner: connected + explicit openspec unusable (specFail) → warning", () => {
   const r = buildSessionBanner({
     configured: true,
     connected: true,
     chorusUrl: URL,
-    openspec: {
-      active: false,
-      reason: "openspec/ directory present but `openspec` CLI not on PATH",
-      optout: false,
-      hint: "install with: npm i -g @fission-ai/openspec",
-    },
+    spec: spec({
+      specMode: "openspec",
+      specFail: "OpenSpec not usable (no openspec/ directory at /proj/openspec)",
+      openspecUsableReason: "no openspec/ directory at /proj/openspec",
+    }),
   });
-  expect(r.level).toBe("info");
-  expect(r.message).toContain("/skill:chorus enable openspec");
+  expect(r.level).toBe("warning");
+  expect(r.message).toContain("unusable");
 });
 
 test("buildSessionBanner: not-configured wins over connection-failed (configured checked first)", () => {
@@ -345,7 +391,7 @@ test("buildSessionBanner: not-configured wins over connection-failed (configured
     configured: false,
     connected: true, // hypothetical: even if we pretend connected
     chorusUrl: "",
-    openspec: { active: false, reason: "x", optout: false, hint: "" },
+    spec: spec({}),
   });
   expect(r.level).toBe("warning");
   expect(r.message).toContain("not configured");

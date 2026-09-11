@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.3"
+  version: "0.18.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -344,9 +344,13 @@ To disable, reconfigure the plugin via `/plugin` settings or manually edit `~/.c
 
 When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task/idea. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the `/chorus:quick-dev` workflow: `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Disabling reduces token usage but removes the independent quality gate.
 
-### 6. Enable OpenSpec Mode (Optional)
+**First-principles alignment (a stage-tailored instruction in all three reviewers).** Each reviewer also checks, top-down, that the work still serves the *original Idea's intent*. It resolves the Idea from the entity under review (proposal-reviewer → the proposal's `inputUuids[0]`; task-reviewer → its proposal's `inputUuids[0]`; code-reviewer → the given `ideaUuid`), reads it with the existing `chorus_get_idea` + `chorus_get_elaboration` + `chorus_get_comments`, and builds the intent **baseline** from **human input only** — the Idea content + elaboration answers where `answeredBy.type == "user"` + comments where `author.type == "user"`. Agent-answered elaboration and agent-authored comments are audit context only: they cannot expand, shrink, or override the baseline. It flags **scope creep** (work beyond intent), **requirement loss / shrink** (intent dropped or reduced), or **semantic drift** (passes AC but misses the point). Unauthorized drift is a **BLOCKER → VERDICT: FAIL / reject**, downgraded to a cited `NOTE` only when traceable to a **human** authorization: a human-authored Idea comment (`author.type == "user"`), a human-answered elaboration entry (`answeredBy.type == "user"`), or an explicit human override at the gate. **An agent's own comment never authorizes**, so a drifting agent cannot self-clear. The alignment finding folds into the existing VERDICT; the dimension is skipped when the entity has no attached Idea.
 
-Opt-in spec-driven path: `/proposal`, `/develop`, `/yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts. Fully optional — free-form authoring works without it. Activates only when all three hold: the `enableOpenSpec` toggle is on (default) and `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory exists at the project root, and the `openspec` CLI is on `PATH`.
+### 6. Spec mode: OpenSpec (default when usable) vs spec-lite (fallback)
+
+The SessionStart hook resolves one **spec mode** per session and prints a `## Spec Mode` section stating it. Resolution: an explicit `CHORUS_SPEC_MODE` (`lite`/`openspec`/`off`) wins; when unset, **OpenSpec is the default whenever it is usable** — the `enableOpenSpec` toggle on (default) and `CHORUS_OPENSPEC_MODE` ≠ `off`, an `openspec/` directory at the project root, and the `openspec` CLI on `PATH`. When OpenSpec is absent or disabled, the mode falls back to **spec-lite** — a Chorus-native, git-tracked model: a durable local spec `.chorus/specs/<slug>/spec.md` per capability (edited in place, **never synced** to Chorus), plus one dated folder per change effort `.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/` of plain-markdown docs named by Document type (`prd.md`, `tech_design.md`, …), each of those dated-folder docs mirrored 1:1 into a persistent Chorus Document (see the `spec-lite` skill). `CHORUS_SPEC_MODE=off` selects free-form (no spec artifact).
+
+OpenSpec spec-driven path: `/proposal`, `/develop`, `/yolo` write `proposal.md` / `design.md` / spec deltas on disk and mirror them into Chorus drafts.
 
 **When the user wants it on** (e.g. they ran `/chorus enable openspec` after the `(OpenSpec off — …)` banner), actually **enable it for them** — run whichever steps are missing, don't just describe them:
 
@@ -355,9 +359,9 @@ npm i -g @fission-ai/openspec       # 1. install the CLI if it's not on PATH (gl
 openspec init --tools claude        # 2. scaffold openspec/ + wire up Claude Code's native commands/skills
 ```
 
-`openspec init` is interactive if you omit `--tools`; pass `--tools claude` to run it unattended. Chorus's detection only needs the `openspec/` directory, but wiring up Claude Code also gives OpenSpec its own commands + skills. The OpenSpec signal is read **once at SessionStart**, so it can't flip mid-session — after the steps succeed, tell the user to **re-launch the session**; the banner then reads `(OpenSpec Enabled)` and the stage skills fold in the `openspec-aware` skill automatically.
+`openspec init` is interactive if you omit `--tools`; pass `--tools claude` to run it unattended. Chorus's detection only needs the `openspec/` directory, but wiring up Claude Code also gives OpenSpec its own commands + skills. The spec mode is resolved **once at SessionStart**, so it can't flip mid-session — after the steps succeed, tell the user to **re-launch the session**; the `## Spec Mode` section then reads `CHORUS_SPEC_MODE=openspec (…)` and the stage skills fold in the `openspec-aware` skill automatically.
 
-To turn it off, flip `enableOpenSpec` to `false` or set `CHORUS_OPENSPEC_MODE=off` — the banner then reads a neutral `(OpenSpec off)`.
+To turn OpenSpec off, flip `enableOpenSpec` to `false` or set `CHORUS_OPENSPEC_MODE=off` — the mode then falls back to **spec-lite** (or set `CHORUS_SPEC_MODE=off` for free-form). The `## Spec Mode` section always states the resolved mode + reason.
 
 ### 7. Daemon auto-start via `chorus agents add`
 
@@ -438,7 +442,8 @@ This is the core overview skill. For stage-specific workflows, use:
 | **Development** | `/develop` | Claim Tasks, report work, session & sub-agent management, Agent Teams integration |
 | **Review** | `/review` | Approve/reject Proposals, verify Tasks, project governance |
 | **Docs** | `/docs` | Consult the live Chorus documentation site to answer product-usage questions — UI workflow, agent/plugin setup, API/MCP, deployment, operations |
-| **OpenSpec mode** | `openspec-aware` | Opt-in **shared sub-procedure** invoked by `/proposal`, `/develop`, and `/yolo` whenever the user has the `openspec` CLI installed. Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via the `chorus-api.sh` wrapper. Skips silently in fallback mode. See `.claude/skills/openspec-aware/SKILL.md`. |
+| **OpenSpec mode** | `openspec-aware` | **Shared sub-procedure** invoked by `/proposal`, `/develop`, and `/yolo` when the resolved spec mode is a usable OpenSpec (the default when `openspec/` + CLI present and not disabled). Scaffolds `openspec/changes/<slug>/` on disk and mirrors files into Chorus document drafts via the `chorus-api.sh` wrapper. No-op when the mode isn't a usable OpenSpec. See `.claude/skills/openspec-aware/SKILL.md`. |
+| **spec-lite mode** | `spec-lite` | **Shared sub-procedure** and the fallback when OpenSpec isn't usable (or `CHORUS_SPEC_MODE=lite`). Durable local `.chorus/specs/<slug>/spec.md` (never synced) + dated per-change folders of Chorus-typed docs mirrored 1:1 into Chorus via `--arg-file`. No CLI/validation/archive. See `.claude/skills/spec-lite/SKILL.md`. |
 
 ### Getting Started
 

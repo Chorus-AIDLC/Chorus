@@ -8,12 +8,13 @@ import type {
   ToolExecutionResult,
 } from "@deepseek-ai/dsh-tools";
 import type {} from "@deepseek-ai/dsh-subagent";
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import z from "@deepseek-ai/schemastery";
+import { buildSpecModeGuidance, resolveSpecMode } from "./spec-mode.js";
 
 export const name = "chorus-dsh";
 export const inject = ["tools"];
@@ -21,20 +22,25 @@ export const chorusMcpCallPath = fileURLToPath(
   new URL("../bin/chorus-mcp-call.mjs", import.meta.url),
 );
 
-// OpenSpec activeness for the openspec-aware-chorus skill. dsh has no
-// SessionStart hook (unlike the Claude Code plugin), so the plugin precomputes
-// the three-check result at load and exports it via CHORUS_OPENSPEC_ACTIVE; the
-// skill reads it and only recomputes inline as a fallback. Mirrors how
+// Spec mode for the stage skills. dsh has no SessionStart hook (unlike the
+// Claude Code plugin), so the bundle resolves the mode once at load
+// (resolveSpecMode — the TS mirror of the canonical bash resolver), publishes
+// both CHORUS_SPEC_MODE and CHORUS_OPENSPEC_ACTIVE to the process environment,
+// and injects a `## Spec Mode` block into the first agent step. Mirrors how
 // CHORUS_MCP_CALL is published to the process environment.
-export function detectOpenspecActive(cwd: string = process.cwd()): boolean {
-  if (process.env.CHORUS_OPENSPEC_MODE === "off") return false;
-  if (!existsSync(join(cwd, "openspec"))) return false;
-  try {
-    execFileSync("openspec", ["--version"], { stdio: "ignore", timeout: 5000 });
-  } catch {
-    return false;
-  }
-  return true;
+export function resolveBundleSpecMode(cwd: string = process.cwd()) {
+  return resolveSpecMode(
+    {
+      specMode: process.env.CHORUS_SPEC_MODE,
+      openspecMode: process.env.CHORUS_OPENSPEC_MODE,
+      enableOpenSpec: process.env.CLAUDE_PLUGIN_OPTION_ENABLEOPENSPEC,
+      projectRoot: cwd,
+    },
+    { existsSync },
+    (cmd, opts) => {
+      execSync(cmd, opts);
+    },
+  );
 }
 
 const CHECKIN_TOOL = "mcp__chorus__chorus_checkin";
@@ -53,19 +59,19 @@ const ACTIONS = {
     argument: "proposalUuid",
     label: "proposal-review",
     instruction: (target: string) =>
-      `Run the Chorus proposal reviewer for proposal ${target}: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits and returns the VERDICT inline; the approve/reject decision depends on it), then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
+      `Run the Chorus proposal reviewer for proposal ${target}: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits for the reviewer to finish), then read THIS round's "VERDICT:" comment on the proposal with chorus_get_comments and base the approve/reject decision on that comment, not on the call's return value. Then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
   },
   chorus_submit_for_verify: {
     argument: "taskUuid",
     label: "task-review",
     instruction: (target: string) =>
-      `Run the Chorus task reviewer for task ${target}: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits and returns the VERDICT inline; the verify/reopen decision depends on it), then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
+      `Run the Chorus task reviewer for task ${target}: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits for the reviewer to finish), then read THIS round's "VERDICT:" comment on the task with chorus_get_comments and base the verify/reopen decision on that comment, not on the call's return value. Then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
   },
   chorus_admin_verify_task: {
     argument: "taskUuid",
     label: "aggregate-review",
     instruction: (target: string) =>
-      `First verify whether task ${target} was the final task of an idea-rooted proposal. Only if it was the last task, run the aggregate Chorus code-review for that idea: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits and returns the VERDICT inline; the ship decision depends on it), then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
+      `First verify whether task ${target} was the final task of an idea-rooted proposal. Only if it was the last task, run the aggregate Chorus code-review for that idea: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits for the reviewer to finish), then read THIS round's "VERDICT:" comment on the idea with chorus_get_comments and base the ship decision on that comment, not on the call's return value. Then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
   },
 } as const;
 
@@ -270,9 +276,26 @@ function waitForCheckin(
 
 export function apply(ctx: Context, config: Config): void {
   process.env.CHORUS_MCP_CALL ??= chorusMcpCallPath;
-  // Publish OpenSpec activeness before the daemon-origin gate so both
-  // interactive and daemon sessions get it; an explicit value always wins.
-  process.env.CHORUS_OPENSPEC_ACTIVE ??= detectOpenspecActive() ? "1" : "0";
+  // Resolve the spec mode once at load and publish it before the daemon-origin
+  // gate so both interactive and daemon sessions inherit it. Rule: explicit
+  // CHORUS_SPEC_MODE wins; unset → OpenSpec when usable, else spec-lite.
+  //
+  // BOTH vars are published unconditionally, because both are now RESOLVER
+  // OUTPUTS — the raw operator input has already been consumed by
+  // resolveBundleSpecMode() above. Reasons this must not be `??=`:
+  //   - CHORUS_OPENSPEC_ACTIVE is purely derived: with `??=` a daemon child
+  //     could inherit a stale `1` from a parent that ran in an openspec repo and
+  //     then contradict the freshly resolved `## Spec Mode` guidance.
+  //   - CHORUS_SPEC_MODE must be NORMALIZED: an invalid raw value (say
+  //     `CHORUS_SPEC_MODE=bogus`) resolves to the default mode, so leaving the
+  //     raw `bogus` in the env would make anything reading the env disagree with
+  //     the injected guidance. Writing spec.specMode is also idempotent — the
+  //     resolver maps each valid mode to itself.
+  // The env is the ONLY channel for daemon-origin sessions (we return below
+  // without injecting guidance), so it has to carry the resolved truth.
+  const spec = resolveBundleSpecMode();
+  process.env.CHORUS_SPEC_MODE = spec.specMode;
+  process.env.CHORUS_OPENSPEC_ACTIVE = spec.chorusOpenspecActive ? "1" : "0";
   const resolved = Config(config);
   ctx.provide(
     "chorusDshConfig",
@@ -352,10 +375,16 @@ export function apply(ctx: Context, config: Config): void {
       const downstream = await next();
       if (!context || downstream.kind !== "enter") return downstream;
       const guidance = createPluginMessage([
-        { type: "text", text: SESSION_START_GUIDANCE },
+        {
+          type: "text",
+          text: `${SESSION_START_GUIDANCE}\n\n${buildSpecModeGuidance(spec)}`,
+        },
       ]);
       // First step only: inject the check-in context + the one-line session-start
-      // guidance. Fails open (no injection) when the check-in didn't resolve.
+      // guidance followed by the resolved `## Spec Mode` block (states
+      // CHORUS_SPEC_MODE + the route for lite / off / openspec / halt). Fails
+      // open (no injection) when the check-in didn't resolve; the published
+      // CHORUS_SPEC_MODE / CHORUS_OPENSPEC_ACTIVE env vars remain the fallback.
       return { kind: "enter", messages: [...downstream.messages, context, guidance] };
     },
   );

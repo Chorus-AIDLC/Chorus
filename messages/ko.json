@@ -50,6 +50,7 @@
     "currentAssignee": "현재 담당자",
     "failedToAssign": "배정에 실패했습니다",
     "actions": "작업",
+    "close": "닫기",
     "genericError": "오류가 발생했습니다. 다시 시도해 주세요.",
     "unknown": "알 수 없음",
     "system": "시스템",
@@ -1003,6 +1004,7 @@
     "confirmCta": "Yolo 실행",
     "starting": "시작 중...",
     "startedHint": "Yolo가 시작되었습니다 — 에이전트가 이 아이디어를 완료까지 진행시키고 있습니다",
+    "completedHint": "이 아이디어는 이미 완료되었습니다",
     "offlineHint": "에이전트 오프라인 — 재연결 시 사용 가능",
     "errorAgentOffline": "배정된 에이전트가 오프라인입니다. 다시 연결된 후 Yolo를 실행하세요.",
     "errorInstanceOffline": "이 아이디어는 오프라인 상태인 데몬 인스턴스에 고정되어 있습니다. 해당 인스턴스가 다시 연결된 후 Yolo를 실행하세요.",
@@ -1374,6 +1376,17 @@
       "noActivity": "최근 활동이 없습니다"
     },
     "panel": {
+      "actions": {
+        "busy": "현재 작업이 완료될 때까지 기다려 주세요",
+        "loadingStage": "제안과 작업 데이터를 기다리고 있습니다. 계속 로드되지 않으면 아이디어를 다시 열어 재시도하세요.",
+        "verifyUnavailable": "요구사항 구체화를 완료한 후 확인하세요",
+        "editUnavailable": "구체화가 완료된 아이디어는 편집할 수 없습니다",
+        "copyLink": "링크 복사",
+        "copyUuid": "UUID 복사",
+        "linkCopied": "아이디어 링크를 복사했습니다",
+        "uuidCopied": "아이디어 UUID를 복사했습니다",
+        "copyFailed": "복사하지 못했습니다. 클립보드 권한을 확인하고 다시 시도하세요."
+      },
       "notFound": "아이디어를 찾을 수 없습니다",
       "loadFailed": "아이디어를 불러오지 못했습니다",
       "verifyingPlaceholder": "검증이 진행 중입니다...",
@@ -1818,5 +1831,8 @@
     "docs": "문서",
     "githubAria": "Chorus GitHub 저장소 열기(새 탭에서 열림)",
     "docsAria": "Chorus 문서 사이트 열기(새 탭에서 열림)"
+  },
+  "markdown": {
+    "frontmatterLabel": "문서 메타데이터"
   }
 }

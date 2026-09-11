@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.18.0] - 2026-09-11
+
+### Added
+- **Spec-lite local specifications**: Added a lightweight, Git-tracked specification workflow that complements OpenSpec across all six plugin surfaces. (#546)
+- **Waker session anchors**: Added live Idea-session context to agent-originated Idea and Task wakes so daemon agents can return replies to the initiating session. (#544)
+- **First-principles review alignment**: Proposal, task, and aggregate code reviewers now check delivered work against human-authored intent from the originating Idea. (#545)
+- **Per-agent launch configuration**: Added shared `args` and `env` configuration for daemon wakes and `chorus agents run`. (#553)
+- **Markdown frontmatter cards**: Added structured rendering for leading flat metadata across Markdown surfaces. (#547)
+
+### Changed
+- **Tracker Idea actions**: Consolidated Idea operations into an Actions menu with a mobile bottom sheet, copy utilities, disabled-state explanations, and preserved workflow gates. (#557, #558)
+
+### Fixed
+- **Reviewer harness fidelity**: Aligned reviewer waiting, parallel dispatch, and spec-lite templates with actual harness behavior; a missing verdict is no longer treated as approval. (#548)
+- **Proposal reviewer inspection**: Added read-only shell inspection across all seven skill surfaces so proposal reviewers can verify referenced paths before reporting blockers. (#554)
+- **CLI test isolation and Pi specifications**: Isolated CLI tests from developers' real Chorus state and corrected specifications that described Pi as non-wakeable. (#551, #552)
+
+### Plugin
+- **Plugin and package versions → 0.18.0**: Aligned Claude Code, Codex, OpenClaw, Kiro, Pi, dsh, and all four coordinated npm packages.
+
+---
+
 ## [0.17.3] - 2026-09-07
 
 ### Added

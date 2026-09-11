@@ -5,10 +5,15 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import { createTurnAndResolveTarget } from "@/services/notification-turn";
-import type { TurnView } from "@/services/daemon-session.service";
+import {
+  resolveDirectIdeaUuid,
+  type TurnView,
+} from "@/services/daemon-session.service";
 import {
   resolveResourceOrchestrator,
+  resolveWakerSessionAnchor,
   type OrchestratorAttribution,
+  type WakerSessionAnchor,
 } from "@/services/orchestrator.service";
 
 // ===== Type Definitions =====
@@ -90,6 +95,15 @@ export interface NotificationResponse {
   // it into the wake prompt.
   instructionText: string | null;
   orchestrator: OrchestratorAttribution | null;
+  // Derived, NON-persisted waker-session anchor (wake-carry-waker-session-anchor, T1). Present
+  // (non-null) ONLY for an agent-caused wake on an idea/task-anchored resource whose waking
+  // agent has a live, ONLINE-origin session for that idea — it tells a woken peer that replying
+  // on this resource reaches the waker's existing live session. A SIBLING of `orchestrator`
+  // (actor-scoped vs assignment-scoped): either, both, or neither may be present, and they may
+  // name different agents. Null for user-actor wakes, an offline/missing waker session, and
+  // proposal/document-addressed wakes (no idea/task key). Derived at read time from existing
+  // session + connection state — no schema column, no write.
+  wakerSession: WakerSessionAnchor | null;
 }
 
 export interface NotificationPreferenceFields {
@@ -185,11 +199,98 @@ async function formatNotifications(
     }),
   );
 
-  return notifications.map((notification) => {
+  // ===== Waker-session anchor (wake-carry-waker-session-anchor, T1) =====
+  // For an AGENT-caused wake on an idea/task-anchored resource, resolve the waking agent's
+  // live session anchor so the woken peer can be told where a reply lands. The waker is the
+  // notification's actor (`actorUuid`). Two idea anchors:
+  //   - idea entity  → the idea itself (`entityUuid`, no lookup, no traversal).
+  //   - task entity  → the task's DIRECT containing idea. A Task has no `ideaUuid` column;
+  //                    it links to its idea via `proposalUuid` → Proposal.inputUuids[0].
+  //                    `resolveDirectIdeaUuid` (the shallow canonical primitive) reads exactly
+  //                    that — task → proposal → inputUuids[0] — and NEVER hops a `parentUuid`,
+  //                    honoring the AC's no-ancestry-climb rule. It is the SAME primitive that
+  //                    keys the idea-anchored `DaemonSession` (`sessionId === directIdeaUuid`,
+  //                    via notification-turn), so the anchor lookup matches a real session by
+  //                    construction — same source, no parent/container/root idea ever read.
+  // User-actor wakes and proposal/document-addressed wakes never qualify.
+
+  // (a) Batch-resolve the direct idea for each distinct agent-caused TASK wake (one resolve
+  //     per distinct task; the direct idea node, never the ancestry root).
+  const wakerTasks = new Map<string, { companyUuid: string; taskUuid: string }>();
+  for (const n of notifications) {
+    if (n.actorType === "agent" && n.actorUuid && n.entityType === "task") {
+      const key = `${n.companyUuid}:${n.entityUuid}`;
+      if (!wakerTasks.has(key)) {
+        wakerTasks.set(key, { companyUuid: n.companyUuid, taskUuid: n.entityUuid });
+      }
+    }
+  }
+  const taskIdeaUuids = new Map<string, string | null>();
+  await Promise.all(
+    [...wakerTasks.entries()].map(async ([key, { companyUuid, taskUuid }]) => {
+      taskIdeaUuids.set(
+        key,
+        await resolveDirectIdeaUuid(companyUuid, "task", taskUuid),
+      );
+    }),
+  );
+
+  // (b) Per-notification anchor key `(companyUuid, agentUuid, ideaUuid)`, or null when the
+  //     notification does not qualify. Computed once and reused for both the batch-resolve
+  //     target set and the final projection.
+  const wakerKeys = notifications.map((n) => {
+    if (n.actorType !== "agent" || !n.actorUuid) return null;
+    let ideaUuid: string | null = null;
+    if (n.entityType === "idea") {
+      ideaUuid = n.entityUuid;
+    } else if (n.entityType === "task") {
+      ideaUuid = taskIdeaUuids.get(`${n.companyUuid}:${n.entityUuid}`) ?? null;
+    }
+    if (!ideaUuid) return null;
+    return {
+      key: `${n.companyUuid}:${n.actorUuid}:${ideaUuid}`,
+      companyUuid: n.companyUuid,
+      agentUuid: n.actorUuid,
+      ideaUuid,
+    };
+  });
+
+  // (c) Batch-resolve distinct `(agentUuid, ideaUuid)` pairs in parallel, mirroring the
+  //     orchestrator map — at most one session + one connection lookup per distinct pair.
+  const wakerResolveTargets = new Map<
+    string,
+    { companyUuid: string; agentUuid: string; ideaUuid: string }
+  >();
+  for (const parts of wakerKeys) {
+    if (parts && !wakerResolveTargets.has(parts.key)) {
+      wakerResolveTargets.set(parts.key, {
+        companyUuid: parts.companyUuid,
+        agentUuid: parts.agentUuid,
+        ideaUuid: parts.ideaUuid,
+      });
+    }
+  }
+  const wakerAnchors = new Map<string, WakerSessionAnchor | null>();
+  await Promise.all(
+    [...wakerResolveTargets.entries()].map(async ([key, target]) => {
+      wakerAnchors.set(
+        key,
+        await resolveWakerSessionAnchor(
+          target.companyUuid,
+          target.agentUuid,
+          target.ideaUuid,
+        ),
+      );
+    }),
+  );
+
+  return notifications.map((notification, index) => {
     const key = notificationResourceKey(notification);
+    const wakerParts = wakerKeys[index];
     return formatNotification(
       notification,
       key ? orchestrators.get(key) ?? null : null,
+      wakerParts ? wakerAnchors.get(wakerParts.key) ?? null : null,
     );
   });
 }
@@ -197,6 +298,7 @@ async function formatNotifications(
 function formatNotification(
   n: RawNotification,
   orchestrator: OrchestratorAttribution | null,
+  wakerSession: WakerSessionAnchor | null,
 ): NotificationResponse {
   return {
     uuid: n.uuid,
@@ -218,6 +320,9 @@ function formatNotification(
     // Denormalized human_instruction body (子1) — null for every non-instruction action.
     instructionText: n.instructionText ?? null,
     orchestrator,
+    // Derived waker-session anchor (T1) — sibling of `orchestrator`, null unless the waking
+    // agent has a live, online-origin session for this resource's idea.
+    wakerSession,
   };
 }
 

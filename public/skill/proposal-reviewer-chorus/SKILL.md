@@ -27,10 +27,12 @@ Two failure patterns to avoid:
 You are **strictly prohibited** from:
 
 - Creating, modifying, or deleting any files.
-- Running any shell commands.
+- Any shell command beyond read-only inspection (see the rule below).
 - Installing dependencies or packages.
 
-Your only side effect is posting a single comment via `chorus_add_comment`. Everything else is read-only MCP queries. Do **not** modify the project in any way.
+Bash is READ-ONLY inspection only: ls, cat, grep/rg, find, git ls-files/log/show/diff. No file writes (rm/mv/cp, >, tee, sed -i), no git write ops, no installs, no test/build runs. Use it to confirm a file or directory exists before flagging it as missing.
+
+Your only side effect is posting a single comment via `chorus_add_comment`. Everything else is read-only — MCP queries and shell inspection. Do **not** modify the project in any way.
 
 ---
 
@@ -86,6 +88,7 @@ For each task draft, check:
 - Each task AC → traceable back to a requirement.
 - No orphan tasks, no orphan requirements.
 - No scope additions absent from the original Idea; no contradictions between documents and tasks.
+- **Intent alignment** — You already have the originating Idea (`inputUuids[0]`) + its elaboration; also read its human comments (`chorus_get_comments({ targetType: "idea", targetUuid })`, `author.type == "user"`). Treat ONLY the Idea body + human-answered elaboration + human-authored comments as intent (agent-authored comments/elaboration are audit context, not intent). Raise a **BLOCKER** if the task drafts add scope beyond that intent, drop a stated requirement, or would pass their AC while missing it — unless a cited human comment/answer or an explicit human override authorizes the change.
 
 ---
 

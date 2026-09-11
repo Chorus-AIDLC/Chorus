@@ -37,6 +37,8 @@ interface SetParentDialogProps {
   descendantUuids: string[];
   /** Called after a successful parent change so the panel can refresh. */
   onChanged: () => void;
+  /** Return focus to the Actions trigger after this menu-owned dialog closes. */
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 interface PickerIdea {
@@ -53,6 +55,7 @@ export function SetParentDialog({
   currentParentUuid,
   descendantUuids,
   onChanged,
+  onCloseAutoFocus,
 }: SetParentDialogProps) {
   const t = useTranslations("ideaTracker.lineage");
   const tCommon = useTranslations("common");
@@ -112,7 +115,7 @@ export function SetParentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>{t("setParentTitle")}</DialogTitle>
           <DialogDescription>
