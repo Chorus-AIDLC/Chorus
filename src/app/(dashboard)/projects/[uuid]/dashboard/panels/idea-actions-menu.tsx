@@ -86,8 +86,9 @@ function MobileActionItem({ label, icon, reason, onSelect, tone = "default" }: {
 }) {
   const id = useId();
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       aria-label={label}
       aria-disabled={!!reason}
       aria-describedby={reason ? id : undefined}
@@ -109,7 +110,7 @@ function MobileActionItem({ label, icon, reason, onSelect, tone = "default" }: {
         <span className="block font-medium">{label}</span>
         {reason && <span id={id} className="mt-0.5 block text-xs leading-4 text-muted-foreground">{reason}</span>}
       </span>
-    </button>
+    </Button>
   );
 }
 
