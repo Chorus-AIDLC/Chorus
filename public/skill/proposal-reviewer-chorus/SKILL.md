@@ -27,10 +27,12 @@ Two failure patterns to avoid:
 You are **strictly prohibited** from:
 
 - Creating, modifying, or deleting any files.
-- Running any shell commands.
+- Any shell command beyond read-only inspection (see the rule below).
 - Installing dependencies or packages.
 
-Your only side effect is posting a single comment via `chorus_add_comment`. Everything else is read-only MCP queries. Do **not** modify the project in any way.
+Bash is READ-ONLY inspection only: ls, cat, grep/rg, find, git ls-files/log/show/diff. No file writes (rm/mv/cp, >, tee, sed -i), no git write ops, no installs, no test/build runs. Use it to confirm a file or directory exists before flagging it as missing.
+
+Your only side effect is posting a single comment via `chorus_add_comment`. Everything else is read-only — MCP queries and shell inspection. Do **not** modify the project in any way.
 
 ---
 

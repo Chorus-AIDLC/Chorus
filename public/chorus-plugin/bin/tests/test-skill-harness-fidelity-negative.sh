@@ -28,14 +28,70 @@ scaffold() {
   _r="$1"
   mkdir -p "$_r/public/chorus-plugin/bin/tests" \
            "$_r/public/chorus-plugin/skills/develop" \
+           "$_r/public/chorus-plugin/agents" \
            "$_r/public/kiro-plugin/.kiro/skills" \
+           "$_r/public/kiro-plugin/.kiro/agents" \
+           "$_r/public/kiro-plugin/.kiro/steering" \
+           "$_r/public/skill/proposal-reviewer-chorus" \
            "$_r/packages/chorus-dsh/skills" \
+           "$_r/packages/chorus-dsh/skills/proposal-reviewer-chorus" \
+           "$_r/packages/chorus-pi/agents" \
+           "$_r/packages/openclaw-plugin/skills/proposal-reviewer" \
            "$_r/plugins/chorus/skills" \
+           "$_r/plugins/chorus/skills/chorus-proposal-reviewer" \
            "$_r/docs"
   printf 'clean skill text, wait using your harness mechanism\n' \
     > "$_r/public/chorus-plugin/skills/develop/SKILL.md"
   printf '# SPEC_LITE\nthe template is inlined here\n' > "$_r/docs/SPEC_LITE.md"
   cp "$GUARD" "$_r/public/chorus-plugin/bin/tests/$(basename "$GUARD")"
+
+  # ── The seven proposal-reviewer surfaces, all carrying the canonical rule.
+  # Checks 4-6 fail on a missing enumerated path, so a clean tree needs all seven
+  # present AND compliant. The truthful "Any shell command beyond read-only
+  # inspection —" sentence is included deliberately: it must not trip check 4.
+  for _pr in "public/chorus-plugin/agents/proposal-reviewer.md" \
+             "plugins/chorus/skills/chorus-proposal-reviewer/SKILL.md" \
+             "packages/chorus-pi/agents/chorus-proposal-reviewer.md" \
+             "packages/chorus-dsh/skills/proposal-reviewer-chorus/SKILL.md" \
+             "packages/openclaw-plugin/skills/proposal-reviewer/SKILL.md" \
+             "public/skill/proposal-reviewer-chorus/SKILL.md"; do
+    printf 'Bash is READ-ONLY inspection only: ls, cat, grep/rg, find.\n' > "$_r/$_pr"
+    printf 'No file writes, no git write ops, no installs, no test/build runs.\n' >> "$_r/$_pr"
+    printf 'Any shell command beyond read-only inspection — no file writes.\n' >> "$_r/$_pr"
+    printf 'Use it to confirm a file or directory exists before flagging it as missing.\n' >> "$_r/$_pr"
+  done
+  # Claude Code's file additionally needs the frontmatter list check 6 reads.
+  cat > "$_r/public/chorus-plugin/agents/proposal-reviewer.md" <<'CCAGENT'
+---
+disallowedTools:
+  - Agent
+  - Edit
+  - Write
+---
+Bash is READ-ONLY inspection only: ls, cat, grep/rg, find.
+No file writes, no git write ops, no installs, no test/build runs.
+Any shell command beyond read-only inspection — no file writes.
+Use it to confirm a file or directory exists before flagging it as missing.
+CCAGENT
+  # Kiro states the rule inside a JSON prompt string and names its tool `shell`.
+  cat > "$_r/public/kiro-plugin/.kiro/agents/chorus-proposal-reviewer.json" <<'KIROAGENT'
+{
+  "name": "chorus-proposal-reviewer",
+  "tools": [
+    "read",
+    "shell",
+    "@chorus"
+  ],
+  "prompt": "Shell is READ-ONLY inspection only: ls, cat, grep/rg, find. No file writes, no git write ops, no installs, no test/build runs. Use it to confirm a file or directory exists before flagging it as missing."
+}
+KIROAGENT
+  # ── Check 4's extra scope: the Kiro orchestrator prompt and steering doc.
+  # Not reviewer definitions (so check 5 never looks at them), but they describe the
+  # grant to the agent that spawns the reviewer — a false claim here misleads it.
+  printf 'chorus-proposal-reviewer is scoped `tools: ["read", "shell", "@chorus"]`.\n' \
+    > "$_r/public/kiro-plugin/.kiro/agents/chorus.md"
+  printf 'chorus-proposal-reviewer is scoped `tools: ["read", "shell", "@chorus"]`.\n' \
+    > "$_r/public/kiro-plugin/.kiro/steering/chorus.md"
 }
 
 # run_guard <repo-root> — echo the guard's exit code, discarding its output.
@@ -128,6 +184,127 @@ for dirname in "plain" "with spaces"; do
   R="$(case_in "$dirname")"
   rm -rf "$R/packages/chorus-dsh"
   expect "missing scope path fails instead of passing" "$R" nonzero
+
+  # ── Check 4 — shell-disabled claims, one fixture per phrasing family ──────
+  R="$(case_in "$dirname")"
+  printf -- '- **You are READ-ONLY.** Do NOT run Bash.\n' \
+    >> "$R/packages/chorus-dsh/skills/proposal-reviewer-chorus/SKILL.md"
+  expect "check 4 catches 'Do NOT run Bash' (dsh reviewer)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  printf 'You have `read` and `@chorus` tools — no `shell`, no `write`.\n' \
+    >> "$R/public/kiro-plugin/.kiro/agents/chorus-proposal-reviewer.json"
+  expect "check 4 catches 'no \`shell\`' (kiro reviewer)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  printf 'Bash is disabled for this agent.\n' \
+    >> "$R/packages/chorus-pi/agents/chorus-proposal-reviewer.md"
+  expect "check 4 catches 'Bash is disabled' (pi reviewer)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  printf 'Running any shell commands is prohibited.\n' \
+    >> "$R/plugins/chorus/skills/chorus-proposal-reviewer/SKILL.md"
+  expect "check 4 catches 'Running any shell commands' (codex reviewer)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  printf 'You cannot run shell commands.\n' \
+    >> "$R/public/skill/proposal-reviewer-chorus/SKILL.md"
+  expect "check 4 catches 'cannot run shell' (standalone skill)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  printf 'Do not edit files or run Bash commands.\n' \
+    >> "$R/packages/openclaw-plugin/skills/proposal-reviewer/SKILL.md"
+  expect "check 4 catches 'or run Bash commands' (openclaw reviewer)" "$R" nonzero
+
+  # Check 4's extra scope: the orchestrator prompt and the steering doc. These two
+  # carried the "no `shell`" claim while sitting outside the guard, which is how the
+  # false statement survived the fix — so each gets its own fixture.
+  R="$(case_in "$dirname")"
+  printf 'Each reviewer is scoped `tools: ["read", "@chorus"]`, no `shell`.\n' \
+    >> "$R/public/kiro-plugin/.kiro/agents/chorus.md"
+  expect "check 4 catches 'no \`shell\`' (kiro orchestrator prompt)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  printf 'The reviewer cannot run shell commands.\n' \
+    >> "$R/public/kiro-plugin/.kiro/steering/chorus.md"
+  expect "check 4 catches 'cannot run shell' (kiro steering doc)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  rm -f "$R/public/kiro-plugin/.kiro/agents/chorus.md"
+  expect "a deleted check-4-only file fails instead of being skipped" "$R" nonzero
+
+  # The clean tree passes with neither of those two files carrying the canonical
+  # rule markers — that is check 5 correctly ignoring them (they are orchestrator
+  # prose, not reviewer definitions). Adding them to PR_FILES would break it.
+
+  # The truthful sentence every surface keeps must NOT trip check 4. This is the
+  # false positive an under-anchored blacklist (a bare "shell"/"Bash") would cause.
+  R="$(case_in "$dirname")"
+  printf 'Any shell command beyond read-only inspection — no git write ops.\n' \
+    >> "$R/public/skill/proposal-reviewer-chorus/SKILL.md"
+  expect "check 4 allows the truthful 'beyond read-only inspection' prose" "$R" zero
+
+  # ── Check 5 — the canonical rule must be present, all three markers ───────
+  R="$(case_in "$dirname")"
+  grep -v 'READ-ONLY inspection only' \
+    "$R/packages/openclaw-plugin/skills/proposal-reviewer/SKILL.md" > "$R/tmp.md"
+  mv "$R/tmp.md" "$R/packages/openclaw-plugin/skills/proposal-reviewer/SKILL.md"
+  expect "check 5 catches a missing read-only-inspection marker (openclaw)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  grep -v 'before flagging it as missing' \
+    "$R/packages/chorus-dsh/skills/proposal-reviewer-chorus/SKILL.md" > "$R/tmp.md"
+  mv "$R/tmp.md" "$R/packages/chorus-dsh/skills/proposal-reviewer-chorus/SKILL.md"
+  expect "check 5 catches a missing existence-check obligation (dsh)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  grep -v 'no installs, no test/build runs' \
+    "$R/packages/chorus-pi/agents/chorus-proposal-reviewer.md" > "$R/tmp.md"
+  mv "$R/tmp.md" "$R/packages/chorus-pi/agents/chorus-proposal-reviewer.md"
+  expect "check 5 catches a missing forbidden-command list (pi)" "$R" nonzero
+
+  # ── Enumerated path deleted — must FAIL, never be silently skipped ────────
+  R="$(case_in "$dirname")"
+  rm -f "$R/public/skill/proposal-reviewer-chorus/SKILL.md"
+  expect "a deleted enumerated surface fails instead of being skipped" "$R" nonzero
+
+  # ── Check 6 — the tool grants behind the rule ────────────────────────────
+  R="$(case_in "$dirname")"
+  # awk, not `sed 's/…/…\n…/'` — BSD sed (macOS) does not expand \n in the
+  # replacement, so the sed form would silently insert a literal "n" and the
+  # fixture would prove nothing.
+  awk '{print} /^  - Agent$/{print "  - Bash"}' \
+    "$R/public/chorus-plugin/agents/proposal-reviewer.md" > "$R/tmp.md"
+  mv "$R/tmp.md" "$R/public/chorus-plugin/agents/proposal-reviewer.md"
+  expect "check 6 catches '- Bash' re-added to disallowedTools (claude code)" "$R" nonzero
+
+  # Two evasions of a whole-line `- Bash` match, both of which YAML accepts and a
+  # harness would honour: flow style, and a quoted entry.
+  R="$(case_in "$dirname")"
+  awk '/^disallowedTools:$/{print "disallowedTools: [Bash, Agent, Edit, Write]"; skip=1; next}
+       skip&&/^[[:space:]]*-[[:space:]]/{next} {skip=0; print}' \
+    "$R/public/chorus-plugin/agents/proposal-reviewer.md" > "$R/tmp.md"
+  mv "$R/tmp.md" "$R/public/chorus-plugin/agents/proposal-reviewer.md"
+  expect "check 6 catches Bash in a YAML flow-style disallowedTools (claude code)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  awk '{print} /^  - Agent$/{print "  - \"Bash\""}' \
+    "$R/public/chorus-plugin/agents/proposal-reviewer.md" > "$R/tmp.md"
+  mv "$R/tmp.md" "$R/public/chorus-plugin/agents/proposal-reviewer.md"
+  expect "check 6 catches a quoted '- \"Bash\"' entry (claude code)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  grep -v '"shell",' "$R/public/kiro-plugin/.kiro/agents/chorus-proposal-reviewer.json" \
+    > "$R/tmp.json"
+  mv "$R/tmp.json" "$R/public/kiro-plugin/.kiro/agents/chorus-proposal-reviewer.json"
+  expect "check 6 catches \`shell\` dropped from kiro's tools" "$R" nonzero
+
+  # A `Bash` mention elsewhere in the Claude Code agent body is not a tool denial —
+  # only a `- Bash` entry inside the disallowedTools list is.
+  R="$(case_in "$dirname")"
+  printf 'Bash inspection findings belong in the VERDICT comment.\n' \
+    >> "$R/public/chorus-plugin/agents/proposal-reviewer.md"
+  expect "check 6 does not fire on 'Bash' outside the disallowedTools list" "$R" zero
 
   echo ""
 done

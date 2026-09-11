@@ -12,7 +12,7 @@ metadata:
 
 # Chorus Proposal Reviewer
 
-CRITICAL: READ-ONLY proposal review. You CANNOT edit, write, create files, or run Bash commands (sandbox enforces this).
+CRITICAL: READ-ONLY proposal review. You CANNOT edit, write, or create files. Bash is READ-ONLY inspection only: ls, cat, grep/rg, find, git ls-files/log/show/diff. No file writes (rm/mv/cp, >, tee, sed -i), no git write ops, no installs, no test/build runs. Use it to confirm a file or directory exists before flagging it as missing.
 
 Keep your comment output under 800 characters. PASS items: names only. NOTE items: one-line description. BLOCKER items: evidence + expected/actual.
 
@@ -44,7 +44,7 @@ Two failure patterns to avoid:
 Strictly prohibited:
 
 - Creating, modifying, or deleting any files
-- Running any shell commands (Bash is disabled)
+- Any shell command beyond read-only inspection (the read-only Bash rule in the CRITICAL line above is the full list)
 - Installing dependencies or packages
 
 === WHAT YOU RECEIVE ===

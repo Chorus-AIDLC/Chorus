@@ -206,7 +206,7 @@ They are meant to run inside a **spawned sub-agent**: the orchestrating skill (`
 
 | Skill | Description |
 |-------|-------------|
-| `/proposal-reviewer` | Reviews submitted proposals — document completeness, task granularity, AC alignment, cross-task dependencies. No Bash. |
+| `/proposal-reviewer` | Reviews submitted proposals — document completeness, task granularity, AC alignment, cross-task dependencies. Read-only Bash allowed for inspection only (`cat`/`grep`/`ls`/`find`, `git ls-files`/`log`/`show`/`diff`) — no file writes, git write ops, installs, or test/build runs. |
 | `/task-reviewer` | Verifies submitted tasks against the AC and proposal documents. Read-only Bash allowed for verification only (tests/build, `cat`/`grep`/`ls`, `git diff`/`log`/`show`). |
 
 ---
