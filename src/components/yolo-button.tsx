@@ -101,8 +101,8 @@ export function YoloButton({
   // Pin-then-wake: after the human confirms the Yolo run, consult the wake-target
   // preview and (pick) prompt for a cwd / (auto_pin) persist the sole cwd /
   // (direct) wake as-is. The picker dialog is mounted below, driven by pickerState.
-  // `isResolving` is true while the preview fetch is in flight — the confirm CTA
-  // is disabled through it so a double-tap can't fire two preview→wake runs.
+  // `isResolving` covers preview, picker, pin and wake so the trigger and any
+  // competing menu actions stay disabled until the entire flow settles.
   const {
     start: startPinThenWake,
     pickerState,
@@ -157,17 +157,21 @@ export function YoloButton({
     validationRequestUuid: string;
   }) => {
     setIsStarting(true);
-    const result = temporary
-      ? await yoloRequestedAction(ideaUuid, temporary)
-      : await yoloRequestedAction(ideaUuid);
-    setIsStarting(false);
-
-    if (result.success) {
-      setStarted(true);
-      toast.success(t("startedHint"));
-      onStarted?.();
-    } else {
-      toast.error(t(ERROR_CODE_I18N_KEY[result.errorCode ?? "unknown"]));
+    try {
+      const result = temporary
+        ? await yoloRequestedAction(ideaUuid, temporary)
+        : await yoloRequestedAction(ideaUuid);
+      if (result.success) {
+        setStarted(true);
+        toast.success(t("startedHint"));
+        onStarted?.();
+      } else {
+        toast.error(t(ERROR_CODE_I18N_KEY[result.errorCode ?? "unknown"]));
+      }
+    } catch {
+      toast.error(t("errorGeneric"));
+    } finally {
+      setIsStarting(false);
     }
   };
 
@@ -229,7 +233,7 @@ export function YoloButton({
         {!renderAction && <AlertDialogTrigger asChild>
           <Button
             className={YOLO_BUTTON_CLASS}
-            disabled={!enabled}
+            disabled={!enabled || isStarting || isResolving}
           >
             <Rocket className="mr-2 h-4 w-4" />
             {t("button")}

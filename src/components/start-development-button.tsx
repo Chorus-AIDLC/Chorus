@@ -83,9 +83,8 @@ export function StartDevelopmentButton({
   // Pin-then-wake: before firing the wake, consult the wake-target preview and
   // (pick) prompt for a cwd / (auto_pin) persist the sole cwd / (direct) wake
   // as-is. The picker dialog is mounted below, driven by pickerState.
-  // `isResolving` is true while the preview fetch is in flight — the button is
-  // disabled through it so a second click can't kick off a duplicate
-  // preview→wake before the first resolves.
+  // `isResolving` covers preview, picker, pin and wake so the button and any
+  // competing menu actions stay disabled until the entire flow settles.
   const {
     start: startPinThenWake,
     pickerState,
@@ -144,17 +143,21 @@ export function StartDevelopmentButton({
     validationRequestUuid: string;
   }) => {
     setIsStarting(true);
-    const result = temporary
-      ? await startDevelopmentAction(ideaUuid, temporary)
-      : await startDevelopmentAction(ideaUuid);
-    setIsStarting(false);
-
-    if (result.success) {
-      setStarted(true);
-      toast.success(t("startedHint"));
-      onStarted?.();
-    } else {
-      toast.error(t(ERROR_CODE_I18N_KEY[result.errorCode ?? "unknown"]));
+    try {
+      const result = temporary
+        ? await startDevelopmentAction(ideaUuid, temporary)
+        : await startDevelopmentAction(ideaUuid);
+      if (result.success) {
+        setStarted(true);
+        toast.success(t("startedHint"));
+        onStarted?.();
+      } else {
+        toast.error(t(ERROR_CODE_I18N_KEY[result.errorCode ?? "unknown"]));
+      }
+    } catch {
+      toast.error(t("errorGeneric"));
+    } finally {
+      setIsStarting(false);
     }
   };
 

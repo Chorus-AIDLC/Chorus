@@ -33,8 +33,15 @@ function Harness({ overrides = {}, locale = "en" }: { overrides?: Overrides; loc
 }
 const instances = [1, 2].map((n) => ({ connectionUuid: `c${n}`, agentInstanceUuid: `i${n}`, host: `host-${n}`, cwd: `/repo-${n}`, effectiveStatus: "online", isOnline: true }));
 function preview(outcome = "direct") {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: { outcome, assigneeAgentUuid: "agent-1", onlineInstances: outcome === "pick" ? instances : [] } }) }));
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: { outcome, assigneeAgentUuid: "agent-1", onlineInstances: outcome === "pick" ? instances : outcome === "auto_pin" ? instances.slice(0, 1) : [] } }) }));
 }
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.connections = [{ agentUuid: "agent-1", effectiveStatus: "online" }];
@@ -156,12 +163,22 @@ describe("Tracker Actions — real Radix interactions", () => {
     expect(mocks.reassign.mock.invocationCallOrder[0]).toBeLessThan((label === "Yolo" ? mocks.yolo : mocks.start).mock.invocationCallOrder[0]);
   });
 
-  it("picker cancellation does not pin/wake and returns focus", async () => {
+  it.each(["Start Development", "Yolo"])("%s picker cancellation releases the gate without pin/wake", async (label) => {
     preview("pick"); const user = userEvent.setup(); render(<Harness />); await open(user);
-    await user.click(screen.getByRole("menuitem", { name: "Start Development" }));
+    await user.click(screen.getByRole("menuitem", { name: label }));
+    if (label === "Yolo") await user.click(screen.getByRole("button", { name: en.yolo.confirmCta }));
     await screen.findByRole("dialog"); await user.click(screen.getByRole("button", { name: en.wakeCwdPicker.cancel }));
-    expect(mocks.reassign).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled();
+    expect(mocks.reassign).not.toHaveBeenCalled(); expect(mocks.start).not.toHaveBeenCalled(); expect(mocks.yolo).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Actions" }));
+    await open(user);
+    for (const name of ["Start Development", "Yolo", "Delete Idea"]) {
+      expect(screen.getByRole("menuitem", { name }).getAttribute("aria-disabled")).toBe("false");
+    }
+    await user.click(screen.getByRole("menuitem", { name: label }));
+    if (label === "Yolo") await user.click(screen.getByRole("button", { name: en.yolo.confirmCta }));
+    await screen.findByRole("dialog");
+    await user.click(screen.getByRole("button", { name: en.wakeCwdPicker.confirm }));
+    await waitFor(() => expect(label === "Yolo" ? mocks.yolo : mocks.start).toHaveBeenCalledOnce());
   });
 
   it("uses Chinese menu, gate and clipboard feedback", async () => {
@@ -200,6 +217,77 @@ describe("Tracker Actions — real Radix interactions", () => {
     expect(callbacks.onVerify).not.toHaveBeenCalled(); expect(mocks.yolo).not.toHaveBeenCalled();
     await act(async () => resolve({ success: true }));
     expect(callbacks.onStarted).toHaveBeenCalledOnce();
+  });
+
+  describe.each(["auto_pin", "pick"])("deferred %s flow", (outcome) => {
+    it.each([
+      ["Start Development", "success"], ["Yolo", "success"],
+      ["Start Development", "failure"], ["Yolo", "failure"],
+      ["Start Development", "throw"], ["Yolo", "throw"],
+    ])("locks %s through pin+wake and releases after %s", async (label, result) => {
+      preview(outcome);
+      const pin = deferred<{ success: boolean }>();
+      const wake = deferred<{ success: boolean }>();
+      mocks.reassign.mockReturnValueOnce(pin.promise);
+      const action = label === "Yolo" ? mocks.yolo : mocks.start;
+      action.mockReturnValueOnce(wake.promise);
+      const user = userEvent.setup(); render(<Harness />); await open(user);
+      await user.click(screen.getByRole("menuitem", { name: label }));
+      if (label === "Yolo") await user.click(screen.getByRole("button", { name: en.yolo.confirmCta }));
+      if (outcome === "pick") {
+        await screen.findByRole("dialog");
+        await user.click(screen.getByRole("button", { name: en.wakeCwdPicker.confirm }));
+      }
+      await waitFor(() => expect(mocks.reassign).toHaveBeenCalledOnce());
+      expect(mocks.reassign).toHaveBeenCalledWith("idea-1", "agent-1", "i1");
+      expect(action).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await open(user);
+      const assertLocked = async () => {
+        for (const name of ["Start Development", "Yolo", "Verify Elaborate", "Delete Idea", "Edit Idea", en.ideaTracker.lineage.deriveIdea, en.ideas.actions.move]) {
+          const item = screen.getByRole("menuitem", { name });
+          expect(item.getAttribute("aria-disabled")).toBe("true");
+          await user.click(item);
+          act(() => item.focus()); await user.keyboard("{Enter} ");
+        }
+        expect(callbacks.onDelete).not.toHaveBeenCalled();
+        expect(callbacks.onVerify).not.toHaveBeenCalled();
+        expect(callbacks.onEdit).not.toHaveBeenCalled();
+        expect(callbacks.onDerive).not.toHaveBeenCalled();
+        expect(callbacks.onMove).not.toHaveBeenCalled();
+        expect(screen.queryByRole("alertdialog")).toBeNull();
+        expect(mocks.reassign).toHaveBeenCalledOnce();
+        expect(label === "Yolo" ? mocks.start : mocks.yolo).not.toHaveBeenCalled();
+      };
+      await assertLocked();
+      // Even a failed/thrown best-effort pin proceeds to exactly one wake,
+      // without an unlocked render between the two deferred requests.
+      await act(async () => {
+        if (result === "throw") pin.reject(new Error("pin failed"));
+        else pin.resolve({ success: result === "success" });
+      });
+      expect(action).toHaveBeenCalledOnce();
+      await assertLocked();
+      await act(async () => {
+        if (result === "throw") wake.reject(new Error("wake failed"));
+        else wake.resolve({ success: result === "success" });
+      });
+      expect(action).toHaveBeenCalledOnce();
+      expect(screen.getByRole("menuitem", { name: "Delete Idea" }).getAttribute("aria-disabled")).toBe("false");
+      if (result !== "success") {
+        expect(mocks.error).toHaveBeenCalledWith(label === "Yolo" ? en.yolo.errorGeneric : en.startDevelopment.errorGeneric);
+        expect(mocks.success).not.toHaveBeenCalled();
+        // Error releases both the hook and the surface's own pending flag.
+        expect(screen.getByRole("menuitem", { name: label }).getAttribute("aria-disabled")).toBe("false");
+        await user.click(screen.getByRole("menuitem", { name: label }));
+        if (label === "Yolo") await user.click(screen.getByRole("button", { name: en.yolo.confirmCta }));
+        if (outcome === "pick") {
+          await screen.findByRole("dialog");
+          await user.click(screen.getByRole("button", { name: en.wakeCwdPicker.confirm }));
+        }
+        await waitFor(() => expect(action).toHaveBeenCalledTimes(2));
+      }
+    });
   });
 
   it("does not submit an IME-composing Enter selection", async () => {
