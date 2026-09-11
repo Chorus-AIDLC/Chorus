@@ -327,7 +327,13 @@ else
   # The key line itself is kept so YAML flow style (`disallowedTools: [Bash, Edit]`)
   # is covered too, and the match is word-boundary rather than a whole-line `- Bash`
   # so a quoted entry (`- "Bash"`) cannot slip through either.
-  CC_BLOCK="$(awk '/^disallowedTools:/{f=1;print;next} f&&/^[[:space:]]*-[[:space:]]/{print;next} f{exit}' "$CC_AGENT")"
+  # Blank lines and `#` comments INSIDE the list are skipped rather than treated as
+  # the end of it: YAML allows both, so exiting on one let `- Bash` placed after a
+  # comment sit in the deny list while this check reported PASS.
+  CC_BLOCK="$(awk '/^disallowedTools:/{f=1;print;next}
+                   f&&/^[[:space:]]*$/{next}
+                   f&&/^[[:space:]]*#/{next}
+                   f&&/^[[:space:]]*-[[:space:]]/{print;next} f{exit}' "$CC_AGENT")"
   if printf '%s\n' "$CC_BLOCK" | grep -qw 'Bash'; then
     CHECK6_FAILED=1
     echo "  FAIL  \`- Bash\` is back in \`disallowedTools\` of:"

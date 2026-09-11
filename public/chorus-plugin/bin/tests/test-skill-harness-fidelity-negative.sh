@@ -293,6 +293,21 @@ for dirname in "plain" "with spaces"; do
   mv "$R/tmp.md" "$R/public/chorus-plugin/agents/proposal-reviewer.md"
   expect "check 6 catches a quoted '- \"Bash\"' entry (claude code)" "$R" nonzero
 
+  # Two more evasions YAML accepts inside the list: a `#` comment line and a blank
+  # line before `- Bash`. An extractor that treats either as the end of the list
+  # reports PASS on a tree whose deny list really does contain Bash.
+  R="$(case_in "$dirname")"
+  awk '{print} /^  - Agent$/{print "  # restrict shell"; print "  - Bash"}' \
+    "$R/public/chorus-plugin/agents/proposal-reviewer.md" > "$R/tmp.md"
+  mv "$R/tmp.md" "$R/public/chorus-plugin/agents/proposal-reviewer.md"
+  expect "check 6 catches '- Bash' after a comment line in the list (claude code)" "$R" nonzero
+
+  R="$(case_in "$dirname")"
+  awk '{print} /^  - Agent$/{print ""; print "  - Bash"}' \
+    "$R/public/chorus-plugin/agents/proposal-reviewer.md" > "$R/tmp.md"
+  mv "$R/tmp.md" "$R/public/chorus-plugin/agents/proposal-reviewer.md"
+  expect "check 6 catches '- Bash' after a blank line in the list (claude code)" "$R" nonzero
+
   R="$(case_in "$dirname")"
   grep -v '"shell",' "$R/public/kiro-plugin/.kiro/agents/chorus-proposal-reviewer.json" \
     > "$R/tmp.json"
