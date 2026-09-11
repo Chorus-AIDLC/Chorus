@@ -159,6 +159,8 @@ export function validateAgentCliConfig(config = {}, type, label = "agent") {
   for (const [i, [key, value]] of Object.entries(env).entries()) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) invalid(label, `env entry[${i}]`, "has an invalid variable name");
     if (/^CHORUS_/i.test(key)) invalid(label, `env entry[${i}]`, "cannot override managed CHORUS_* variables");
+    if (/^(CLAUDECODE|CLAUDE_CODE_ENTRYPOINT)$/i.test(key))
+      invalid(label, `env entry[${i}]`, "cannot override managed nested-Claude context variables");
     if (typeof value !== "string" || value.includes("\0")) invalid(label, `env entry[${i}]`, "must have a string value without NUL");
   }
   const backend = canonicalType(type);

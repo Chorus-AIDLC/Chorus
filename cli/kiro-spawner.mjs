@@ -28,6 +28,7 @@
 // no-op here (this task owns spawn/resume/trust/interrupt + sessionId capture).
 
 import { spawn } from "node:child_process";
+import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -308,8 +309,8 @@ export class KiroSpawner {
           detached,
           windowsHide: true,
         });
-      } catch {
-        this.logger.error("[Chorus] failed to spawn kiro-cli");
+      } catch (error) {
+        this.logger.error(`[Chorus] failed to spawn kiro-cli: ${safeSpawnError(error)}`);
         resolve({ sessionId: anchor, exitCode: null, isNew });
         return;
       }
@@ -337,8 +338,8 @@ export class KiroSpawner {
         if (text) this.logger.warn(`[Chorus] kiro-cli stderr: ${text}`);
       });
 
-      child.on("error", () => {
-        this.logger.error("[Chorus] kiro-cli process error");
+      child.on("error", (error) => {
+        this.logger.error(`[Chorus] kiro-cli process error: ${safeSpawnError(error)}`);
         resolve({ sessionId: knownSessionId || anchor, exitCode: null, isNew });
       });
 

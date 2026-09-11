@@ -1,7 +1,7 @@
 # agent-cli-config Specification
 
 ## Purpose
-TBD - created by archiving change add-agent-cli-args-env. Update Purpose after archive.
+Define per-agent literal CLI arguments and environment overrides shared by daemon wakes and foreground launches, preserving profile isolation, managed runtime controls, explicit-option precedence, and safe diagnostics.
 ## Requirements
 ### Requirement: Per-agent literal configuration
 The system SHALL accept optional args (string array) and env (string-to-string object) on each agents[] entry. Multi-agent args/env SHALL NOT inherit top-level defaults. Flat daemon mode SHALL apply top-level args/env to its sole agent. Foreground shared configuration SHALL use the existing agents[] profile selection.
@@ -31,7 +31,7 @@ The system SHALL accept optional args (string array) and env (string-to-string o
 - **THEN** supported spawn paths pass them as literal data without interpolation or shell evaluation; a platform shim unable to preserve safe literal semantics SHALL fail explicitly rather than execute syntax.
 
 ### Requirement: Guard managed runtime controls
-Configured args SHALL NOT override known backend controls for protocol, output, session, prompt, cwd, managed MCP or permission posture, including supported aliases and equals/attached forms. Configured env SHALL NOT override CHORUS_* variables case-insensitively. Bare argument terminators SHALL be rejected in persistent args.
+Configured args SHALL NOT override known backend controls for protocol, output, session, prompt, cwd, managed MCP or permission posture, including supported aliases and equals/attached forms. Configured env SHALL NOT override CHORUS_* variables or nested-Claude context names CLAUDECODE / CLAUDE_CODE_ENTRYPOINT, case-insensitively. Bare argument terminators SHALL be rejected in persistent args.
 
 #### Scenario: Protected configuration
 - **WHEN** configured args attempt a protected flag or configured env includes a protected name
@@ -44,6 +44,10 @@ Configured args SHALL NOT override known backend controls for protocol, output, 
 #### Scenario: Literal known option values
 - **WHEN** a known value-taking option receives option-looking literal data
 - **THEN** validation consumes that value without treating it as a managed control; persistent bare sentinels remain forbidden.
+
+#### Scenario: Reserved nested-Claude context
+- **WHEN** persistent env includes CLAUDECODE or CLAUDE_CODE_ENTRYPOINT in any casing, including a Claude type alias
+- **THEN** validation rejects the entry rather than accepting and silently deleting it; absent configuration retains existing inherited-context sanitation.
 
 #### Scenario: Ordinary variables and fresh environment
 - **WHEN** env overrides an ordinary inherited variable
@@ -105,6 +109,18 @@ For documented recognizable singleton options, explicit foreground tokens in the
 
 ### Requirement: Restart semantics and documentation
 The system SHALL read customization at daemon startup and on each foreground invocation, without hot-reloading running children. Documentation SHALL describe schema, per-agent isolation, protected controls, exact override support, literal values, flat-to-agents[] usage, restart requirements and secret-handling limitations. Values SHALL NOT be proactively emitted in diagnostics.
+
+#### Scenario: Safe actionable launch diagnostics
+- **WHEN** a launcher or daemon backend encounters a thrown or emitted spawn error
+- **THEN** diagnostics report only allowlisted OS error classifications with fixed troubleshooting guidance, or a generic hint for unknown codes; raw code/syscall, message, path and argv fields are not echoed.
+
+#### Scenario: Managed dsh preparation diagnostics
+- **WHEN** managed dsh preparation fails
+- **THEN** the failure retains a meaningful sanitized cause and applicable profile/provider hints, redacting configured argv/env values and credentials, including ordinary variable values and inline option payloads.
+
+#### Scenario: Existing dsh profile
+- **WHEN** the effective environment selects an existing DSH_HOME or CHORUS_DSH_HOME
+- **THEN** managed preparation is skipped with a value-free informational notice and the selected profile is preserved.
 
 #### Scenario: Configuration changes
 - **WHEN** daemon.json is edited while a daemon or child is running

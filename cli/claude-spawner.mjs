@@ -23,6 +23,7 @@
 // carried per-turn by the wake-prompt preamble in prompts.mjs, not at the system level.
 
 import { spawn } from "node:child_process";
+import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -387,8 +388,8 @@ export class ClaudeSpawner {
           detached,
           windowsHide: true,
         });
-      } catch {
-        this.logger.error("[Chorus] failed to spawn claude");
+      } catch (error) {
+        this.logger.error(`[Chorus] failed to spawn claude: ${safeSpawnError(error)}`);
         resolve({ sessionId: id, backendSessionId: null, exitCode: null, isNew });
         return;
       }
@@ -437,9 +438,9 @@ export class ClaudeSpawner {
         if (text) this.logger.warn(`[Chorus] claude stderr: ${text}`);
       });
 
-      child.on("error", () => {
+      child.on("error", (error) => {
         // e.g. ENOENT if the resolved path vanished — log, don't throw.
-        this.logger.error("[Chorus] claude process error");
+        this.logger.error(`[Chorus] claude process error: ${safeSpawnError(error)}`);
         // backendSessionId is the `--resume` anchor (`id`), NOT observedSessionId:
         // a fork-on-resume claude can emit a new stream session_id, but the daemon
         // resumes and files the transcript under `id`, so `id` is the resumable value.

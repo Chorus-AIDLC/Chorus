@@ -1,3 +1,5 @@
+import { safeSpawnError, redactedSetupError } from "../launch-diagnostics.mjs";
+import { validateAgentCliConfig } from "../agent-cli-config.mjs";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -131,10 +133,13 @@ describe("actual daemon spawn customization", () => {
   });
   it("dsh custom DSH_HOME skips managed setup without losing the child override", async () => {
     const prepare = vi.fn();
-    const opts = backendOpts("dsh", { cliConfig: { env: { DSH_HOME: "/sdk-profile" } }, prepareManagedConfigFn: prepare });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const opts = backendOpts("dsh", { logger, cliConfig: { env: { DSH_HOME: "/sdk-profile" } }, prepareManagedConfigFn: prepare });
     await selectSpawner("dsh", opts).wake(wake);
     expect(prepare).not.toHaveBeenCalled();
     expect(opts.spawnImpl.mock.calls[0][2].env.DSH_HOME).toBe("/sdk-profile");
+    expect(logger.info).toHaveBeenCalledWith("[Chorus] using existing DSH_HOME profile, skipping managed preparation");
+    expect(logger.info.mock.calls.flat().join()).not.toContain("/sdk-profile");
   });
   it.each(["DSH_HOME", "dsh_home", "dSh_HoMe"])("Windows dsh %s skips setup and remains the sole child home", async (key) => {
     const prepare = vi.fn();
@@ -360,6 +365,124 @@ describe("actual foreground launches", () => {
     profile.env.path = "C:\\unsafe&dir";
     expect(await runAgentLaunch([], opts)).toBe(1);
     expect(opts.spawnImpl).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("safe launch diagnostics", () => {
+  const secrets = ["private-env-value", "private-argv-value", "cho_private_credential"];
+  const cliConfig = { args: [`--custom=${secrets[1]}`], env: { ORDINARY: secrets[0] } };
+  const privateCreds = { ...creds, apiKey: secrets[2] };
+  const errorFor = (code) => Object.assign(new Error(secrets.join(" ")), {
+    code, syscall: `spawn ${secrets.join(" ")}`, path: secrets[0], spawnargs: cliConfig.args,
+  });
+  const assertPrivate = (output) => {
+    for (const secret of secrets) expect(output).not.toContain(secret);
+  };
+  it.each(["ENOENT", "EACCES", "EPERM", "ENOEXEC", "ENOTDIR", "EINVAL", "E2BIG", "ENOMEM", "EAGAIN", "EMFILE", "ENFILE", "ETIMEDOUT"])("classifies only allowlisted %s", (code) => {
+    expect(safeSpawnError(errorFor(code))).toContain(code);
+    assertPrivate(safeSpawnError(errorFor(code)));
+  });
+  it.each([undefined, null, 1, {}, "ESECRET", "ENOENT private-env-value", "private-env-value", "ENOENT\nsecret"])("does not trust raw code %j or syscall", (code) => {
+    expect(safeSpawnError(errorFor(code))).toMatch(/^unclassified startup failure;/);
+    assertPrivate(safeSpawnError(errorFor(code)));
+  });
+  for (const type of [...types, "foreground"]) {
+    for (const mode of ["throw", "emit"]) {
+      it.each(["ENOENT", "EACCES", "EPERM", secrets.join(" ")])(`${type} ${mode} failure preserves classification without values: %s`, async (code) => {
+        const error = errorFor(code);
+        const spawnImpl = vi.fn(() => {
+          if (mode === "throw") throw error;
+          const child = fakeSpawn(type)();
+          queueMicrotask(() => child.emit("error", error));
+          return child;
+        });
+        let output;
+        if (type === "foreground") {
+          const stderr = { write: vi.fn() };
+          await runAgentLaunch([], launchOpts({ agents: [{ agentType: "pi", ...privateCreds, ...cliConfig }] }, { spawnImpl, stderr }));
+          output = stderr.write.mock.calls.flat().join(" ");
+        } else {
+          const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+          await selectSpawner(type, backendOpts(type, { spawnImpl, logger, cliConfig, creds: privateCreds })).wake(wake);
+          output = logger.error.mock.calls.flat().join(" ");
+        }
+        expect(spawnImpl).toHaveBeenCalledTimes(1);
+        expect(output).toContain(code.startsWith("private") ? "unclassified startup failure" : code);
+        assertPrivate(output);
+      });
+    }
+  }
+  it("redacts overlapping, regex-shaped, ordinary values and inline argv payloads", () => {
+    const output = redactedSetupError(new Error("overlap-long regex.[*] private-argv-value cho_unknown_key Bearer unseen-token https://user:password@host/path padded-private attached-private"));
+    expect(output).toContain("unclassified setup failure; check dsh installation");
+    for (const value of ["overlap", "-long", "regex.[*]", "private-argv-value", "cho_unknown_key", "unseen-token", "user:password", "padded-private", "attached-private"]) expect(output).not.toContain(value);
+  });
+  it("sanitizes injected dsh preparation errors but retains useful causes", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const opts = backendOpts("dsh", { logger, cliConfig, creds: privateCreds,
+      prepareManagedConfigFn: async () => { throw Object.assign(errorFor("malicious-code"), { message: `version mismatch; check dsh runtime: ${secrets.join(" ")}` }); },
+    });
+    await selectSpawner("dsh", opts).wake(wake);
+    expect(opts.spawnImpl).not.toHaveBeenCalled();
+    const output = logger.error.mock.calls.flat().join(" ");
+    expect(output).toContain("cannot prepare managed dsh profile: version mismatch; check dsh runtime and Chorus bundle compatibility");
+    assertPrivate(output);
+  });
+  it.each(["install", "validateComposition"])("dsh %s failure survives both diagnostic boundaries with safe hints", async (stage) => {
+    const root = mkdtempSync(join(tmpdir(), "chorus-dsh-diagnostic-"));
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const opts = backendOpts("dsh", { logger, creds: privateCreds,
+      cliConfig: { ...cliConfig, env: { ...cliConfig.env, DSH_PROVIDER: " private-provider " } },
+      prepareManagedConfigFn: (options) => prepareManagedDshConfig({
+        ...options, root, bundleVersion: "0.18.0", runtimeVersion: "test",
+        install() {}, validateProfile() {}, validateComposition() {},
+        [stage]: () => { throw new Error(`version mismatch; no adapter registered: private-provider ${secrets.join(" ")}`); },
+      }),
+    });
+    try {
+      await selectSpawner("dsh", opts).wake(wake);
+      expect(opts.spawnImpl).not.toHaveBeenCalled();
+      const output = logger.error.mock.calls.flat().join(" ");
+      expect(output).toContain(stage === "install" ? "profile installation failed" : "composition validation failed");
+      expect(output).toContain("version mismatch; check dsh runtime and Chorus bundle compatibility");
+      expect(output).toContain("no adapter registered; check that the selected provider adapter is installed");
+      if (stage === "validateComposition") expect(output).toContain("CHORUS_DSH_HOME");
+      expect(output).not.toContain("private-provider");
+      assertPrivate(output);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  it.each(["DSH_HOME", "CHORUS_DSH_HOME", "dsh_home"])("existing inherited %s notice is value-free", async (key) => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const prepare = vi.fn();
+    const opts = backendOpts("dsh", { platform: "win32", env: { [key]: secrets[0] }, logger, prepareManagedConfigFn: prepare });
+    await selectSpawner("dsh", opts).wake(wake);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(opts.spawnImpl.mock.calls[0][2].env.DSH_HOME).toBe(secrets[0]);
+    expect(logger.info).toHaveBeenCalledWith("[Chorus] using existing DSH_HOME profile, skipping managed preparation");
+    assertPrivate(logger.info.mock.calls.flat().join(" "));
+  });
+  it.each(["daemon", "foreground"])("%s still sanitizes inherited Claude context when config is absent", async (surface) => {
+    const env = { PATH: "/base", CLAUDECODE: "inherited-nested", CLAUDE_CODE_ENTRYPOINT: "inherited-entrypoint" };
+    const before = { ...env };
+    const opts = surface === "daemon"
+      ? backendOpts("claude-code", { env })
+      : launchOpts({ agents: [{ agentType: "claude", ...creds }] }, { env });
+    if (surface === "daemon") await selectSpawner("claude-code", opts).wake(wake);
+    else expect(await runAgentLaunch([], opts)).toBe(0);
+    const childEnv = opts.spawnImpl.mock.calls[0][2].env;
+    expect(childEnv.CLAUDECODE).toBeUndefined();
+    expect(childEnv.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    expect(env).toEqual(before);
+  });
+  it.each(["CLAUDECODE", "claudecode", "ClAuDeCoDe", "CLAUDE_CODE_ENTRYPOINT", "claude_code_entrypoint", "ClAuDe_CoDe_EnTrYpOiNt"])("rejects configured nested context %s across aliases and launch surfaces", async (key) => {
+    for (const type of ["claude", "claude-code", "codex", "kiro", "pi", "dsh", "opencode", "openclaw", "offline"]) {
+      expect(() => validateAgentCliConfig({ env: { [key]: secrets[0] } }, type)).toThrow(/managed nested-Claude context/);
+    }
+    const stderr = { write: vi.fn() };
+    const opts = launchOpts({ agents: [{ agentType: "claude-code", env: { [key]: secrets[0] } }] }, { stderr });
+    expect(await runAgentLaunch([], opts)).toBe(1);
+    expect(opts.spawnImpl).not.toHaveBeenCalled();
+    assertPrivate(stderr.write.mock.calls.flat().join(" "));
   });
 });
 

@@ -38,6 +38,7 @@
 // PATH-walk / .cmd-shim shape of the other spawners' path resolution.
 
 import { spawn } from "node:child_process";
+import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
@@ -220,8 +221,8 @@ export class PiSpawner {
           detached,
           windowsHide: true,
         });
-      } catch {
-        this.logger.error("[Chorus] failed to spawn pi");
+      } catch (error) {
+        this.logger.error(`[Chorus] failed to spawn pi: ${safeSpawnError(error)}`);
         resolve({ sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag });
         return;
       }
@@ -262,8 +263,8 @@ export class PiSpawner {
         if (text) this.logger.warn(`[Chorus] pi stderr: ${text}`);
       });
 
-      child.on("error", () => {
-        this.logger.error("[Chorus] pi process error");
+      child.on("error", (error) => {
+        this.logger.error(`[Chorus] pi process error: ${safeSpawnError(error)}`);
         resolve({ sessionId: anchor, backendSessionId: anchor || null, exitCode: null, isNew: isNewFlag });
       });
 

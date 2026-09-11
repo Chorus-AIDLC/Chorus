@@ -20,6 +20,7 @@
 // chorus-dsh-lifecycle plugin's documented fallback also reads $DSH_HOME/.env).
 
 import { spawnSync } from "node:child_process";
+import { safeSpawnError, redactedSetupError } from "./launch-diagnostics.mjs";
 import { getAgentEnv, overlayAgentEnv } from "./agent-cli-config.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -47,20 +48,8 @@ export const DEFAULT_DSH_PROVIDER = "deepseek-official";
 // check in activeState() and is transparently re-prepared.
 const STATE_VERSION = 2;
 
-function errorText(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function nonEmpty(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function redactedErrorText(error, values = []) {
-  let text = errorText(error);
-  for (const value of values) {
-    if (typeof value === "string" && value) text = text.replaceAll(value, "[REDACTED]");
-  }
-  return text;
 }
 
 function readJson(path) {
@@ -116,7 +105,7 @@ function runCommand(command, argv, opts) {
     windowsHide: true,
   });
   if (result.error || result.status !== 0) {
-    const detail = result.error?.message || result.stderr?.trim() || `exit ${result.status}`;
+    const detail = result.error ? safeSpawnError(result.error) : result.stderr?.trim() || `exit ${result.status}`;
     throw new Error(detail);
   }
   return result;
@@ -231,6 +220,16 @@ function activeState(root, pathExists = existsSync) {
  *   patchPath:(string|null), validatedAt:string, reused:boolean }>}
  */
 export async function prepareManagedDshConfig(opts = {}) {
+  try {
+    return await prepareManagedDshConfigInternal(opts);
+  } catch (error) {
+    // Cover every failure path, including reuse validation and filesystem errors.
+    // Only fixed classifications/hints cross this boundary, never raw stderr.
+    throw new Error(redactedSetupError(error));
+  }
+}
+
+async function prepareManagedDshConfigInternal(opts) {
   const env = opts.env ?? process.env;
   const platform = opts.platform ?? process.platform;
   const root = opts.root ?? managedDshRoot(env, platform);
@@ -285,8 +284,7 @@ export async function prepareManagedDshConfig(opts = {}) {
       install(releaseDir);
     } catch (error) {
       throw new Error(
-        `dsh managed profile installation failed: ` +
-          redactedErrorText(error, [getAgentEnv(env, "CHORUS_API_KEY", platform), opts.creds?.apiKey]),
+        `dsh managed profile installation failed: ` + redactedSetupError(error),
       );
     }
 
@@ -308,11 +306,10 @@ export async function prepareManagedDshConfig(opts = {}) {
     } catch (error) {
       const hint =
         provider !== DEFAULT_DSH_PROVIDER
-          ? ` (provider "${provider}" is non-default — the managed sdk profile mounts only the ${DEFAULT_DSH_PROVIDER} adapter; a custom provider needs its adapter pre-composed, e.g. point CHORUS_DSH_HOME at your own sdk profile)`
+          ? ` (a non-default provider is configured — the managed sdk profile mounts only the ${DEFAULT_DSH_PROVIDER} adapter; a custom provider needs its adapter pre-composed, e.g. point CHORUS_DSH_HOME at your own sdk profile)`
           : "";
       throw new Error(
-        `dsh managed composition validation failed${hint}: ` +
-          redactedErrorText(error, [getAgentEnv(env, "CHORUS_API_KEY", platform), opts.creds?.apiKey]),
+        `dsh managed composition validation failed${hint}: ` + redactedSetupError(error),
       );
     }
 

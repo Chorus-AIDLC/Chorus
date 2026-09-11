@@ -2,6 +2,7 @@
 // session are created per wake; no dsh session state is persisted by Chorus.
 
 import { spawn } from "node:child_process";
+import { safeSpawnError, redactedSetupError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
@@ -179,10 +180,13 @@ export class DshSpawner {
         });
         dshHome = managed.home;
         patchPath = managed.patchPath ?? null;
-      } catch {
-        this.logger.error("[Chorus] cannot prepare managed dsh profile");
+      } catch (error) {
+        const detail = redactedSetupError(error);
+        this.logger.error(`[Chorus] cannot prepare managed dsh profile: ${detail}`);
         return result(null, null);
       }
+    } else {
+      this.logger.info("[Chorus] using existing DSH_HOME profile, skipping managed preparation");
     }
 
     const dshSessionId = `chorus-${this.uuidFn().replaceAll("-", "")}`;
@@ -228,8 +232,8 @@ export class DshSpawner {
         detached: this.platform !== "win32",
         windowsHide: true,
       });
-    } catch {
-      this.logger.error("[Chorus] failed to start dsh runtime");
+    } catch (error) {
+      this.logger.error(`[Chorus] failed to start dsh runtime: ${safeSpawnError(error)}`);
       return result(dshSessionId, null);
     }
 
@@ -371,7 +375,7 @@ export class DshSpawner {
         if (line) this.logger.warn(`[dsh] ${line}`);
       }
     });
-    child.on?.("error", () => fail("dsh runtime process error"));
+    child.on?.("error", (error) => fail(`dsh runtime process error: ${safeSpawnError(error)}`));
     child.on?.("close", (code) => {
       closeSeen = true;
       exitCode = code;

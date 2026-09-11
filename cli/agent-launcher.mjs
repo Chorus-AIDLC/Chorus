@@ -15,6 +15,7 @@
 // name/UUID and the resolved binary, nothing else.
 
 import { spawn } from "node:child_process";
+import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
 import { resolveLaunchAgent } from "./credentials.mjs";
@@ -348,13 +349,13 @@ export async function runAgentLaunch(argv = [], opts = {}) {
         env: childEnv,
         shell: false,
       });
-    } catch {
-      err.write(`error: failed to launch ${typeRes.binary}\n`);
+    } catch (error) {
+      err.write(`error: failed to launch ${typeRes.binary}: ${safeSpawnError(error)}\n`);
       resolve(1);
       return;
     }
-    child.on("error", () => {
-      err.write(`error: ${typeRes.binary} failed to start\n`);
+    child.on("error", (error) => {
+      err.write(`error: ${typeRes.binary} failed to start: ${safeSpawnError(error)}\n`);
       resolve(1);
     });
     child.on("close", (code, signal) => {

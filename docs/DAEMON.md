@@ -90,6 +90,8 @@ preflight reads the effective `CODEX_HOME`. dsh uses the effective environment f
 managed-home/provider setup and its RPC initialize request: `DSH_PROVIDER` and
 `DSH_MODEL` select those values, and `DSH_HOME` can select an existing SDK profile
 (the inherited `CHORUS_DSH_*` administrator overrides still take precedence).
+Using an existing home skips managed preparation and emits an informational notice
+without printing the home value.
 There are no separate `model` or `thinking` fields in daemon.json.
 
 - Omitted fields mean `[]` and `{}`. Explicit `null`, non-string tokens/values,
@@ -126,9 +128,18 @@ There are no separate `model` or `thinking` fields in daemon.json.
   OS process inspection may expose them. Protect daemon.json with local file
   permissions (e.g. `chmod 600` on POSIX); do not commit secrets. There is no
   special encryption or vault support.
+- Spawn failures report only allowlisted OS error classifications (such as
+  `ENOENT`, `EACCES`, or `EPERM`) and fixed troubleshooting guidance; unknown
+  error codes use a generic startup hint. Raw error messages, paths, argv, and
+  syscall fields are not echoed. Managed dsh setup failures retain sanitized
+  causes and provider/profile hints, redacting environment and configured argv
+  values as well as credentials; matching diagnostic text may also be redacted.
 
-**Protected persistent controls.** All `CHORUS_*` env names are reserved,
-case-insensitively. Known backend session/resume, prompt, transport/output,
+**Protected persistent controls.** All `CHORUS_*` env names and the nested-Claude
+context names `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` are reserved,
+case-insensitively. Configuring them fails validation instead of silently dropping
+them; inherited Claude context is still cleared when launching Claude.
+Known backend session/resume, prompt, transport/output,
 cwd, managed MCP, and permission flags are rejected, including long `--flag=value`
 forms and known short aliases/attached forms. Examples:
 
