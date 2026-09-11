@@ -68,7 +68,7 @@ function nonEmpty(value) {
  * Whether an init selection id is the DeepSeek Harness (dsh). dsh needs a SECOND
  * credential sink beyond ~/.chorus/daemon.json — see {@link writeDshCredentialsEnv}.
  * We gate on the selection id, NOT the daemon agentType: dsh maps to the shared
- * "offline" agentType (agent-type-map.mjs) alongside opencode/openclaw/pi, so the
+ * "offline" agentType (agent-type-map.mjs) alongside opencode/openclaw, so the
  * agentType cannot single dsh out. The id can.
  * @param {string} id
  */
