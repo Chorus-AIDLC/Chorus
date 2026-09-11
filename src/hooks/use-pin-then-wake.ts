@@ -28,7 +28,7 @@
 // or fail validation between preview and submission. A failed pin never blocks
 // the wake; the server falls back to its own wake-target resolution.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { clientLogger } from "@/lib/logger-client";
 import {
   filterOnlineInstances,
@@ -123,8 +123,8 @@ async function defaultFetchPreview(
  *    `<WakeCwdPickerDialog>`.
  *  - `confirmPick(instance)` — call from the dialog's onConfirm.
  *  - `cancelPick()` — call from the dialog's onCancel.
- *  - `isResolving` — true while the preview is being fetched (button can show a
- *    spinner). Independent of the surface's own wake-pending flag.
+ *  - `isResolving` — true for the entire preview → picker → pin → wake flow.
+ *    Existing consumers can use it to block competing actions until completion.
  */
 export function usePinThenWake({
   fetchPreview = defaultFetchPreview,
@@ -135,13 +135,18 @@ export function usePinThenWake({
   const [isResolving, setIsResolving] = useState(false);
   const [fixedTarget, setFixedTarget] =
     useState<ResolvedProjectAgentCwdTarget | null>(null);
-  // The wake bound to the currently-open picker, captured at `start` time so
-  // `confirmPick` fires the exact wake the user initiated.
-  const [pendingWake, setPendingWake] = useState<{
-    run: (temporary?: TemporaryCwdSelection) => void | Promise<void>;
-  } | null>(
-    null,
-  );
+  // Refs guard same-tick/stale-handler reentry before React commits state.
+  // Only the picker phase is cancellable; closing an already-confirmed picker
+  // must never release the lock while its pin/wake is still in flight.
+  const phase = useRef<"idle" | "running" | "picking">("idle");
+  const pendingPick = useRef<{
+    state: PickerState;
+    wake: StartPinThenWakeArgs["wake"];
+  } | null>(null);
+  const finish = useCallback(() => {
+    phase.current = "idle";
+    setIsResolving(false);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,89 +190,105 @@ export function usePinThenWake({
 
   const start = useCallback(
     async ({ ideaUuid, wake }: StartPinThenWakeArgs) => {
+      if (phase.current !== "idle") return;
+      phase.current = "running";
       setIsResolving(true);
-      let preview: WakeTargetPreview | null = null;
       try {
-        preview = await fetchPreview(ideaUuid);
+        const preview = await fetchPreview(ideaUuid);
         setFixedTarget(
           preview?.resolvedTarget?.source === "project_fixed"
             ? preview.resolvedTarget
             : null,
         );
-      } finally {
-        setIsResolving(false);
-      }
 
-      // No preview (endpoint hiccup / not-found) OR no assignee agent OR the
-      // `direct` outcome → wake immediately, exactly as before this change.
-      if (!preview || !preview.assigneeAgentUuid || preview.outcome === "direct") {
-        await wake();
-        return;
-      }
-
-      const agentUuid = preview.assigneeAgentUuid;
-      const online = filterOnlineInstances(preview.onlineInstances);
-
-      if (preview.outcome === "pick") {
-        // Defensive: `pick` implies >=2 online, but if the list somehow arrived
-        // empty just wake (nothing to prompt with).
-        if (online.length === 0) {
+        // No preview (endpoint hiccup / not-found) OR no assignee agent OR the
+        // `direct` outcome → wake immediately, exactly as before this change.
+        if (!preview || !preview.assigneeAgentUuid || preview.outcome === "direct") {
           await wake();
           return;
         }
-        setPendingWake({ run: wake });
-        setPickerState({ ideaUuid, agentUuid, instances: online });
-        return;
-      }
 
-      // auto_pin → persist the sole online instance (best-effort), then wake.
-      if (preview.outcome === "auto_pin") {
-        const sole = online[0];
-        if (sole?.agentInstanceUuid) {
-          await reassignBestEffort(ideaUuid, agentUuid, sole.agentInstanceUuid);
+        const agentUuid = preview.assigneeAgentUuid;
+        const online = filterOnlineInstances(preview.onlineInstances);
+
+        if (preview.outcome === "pick") {
+          // Defensive: `pick` implies >=2 online, but if the list somehow arrived
+          // empty just wake (nothing to prompt with).
+          if (online.length === 0) {
+            await wake();
+            return;
+          }
+          const state = { ideaUuid, agentUuid, instances: online };
+          pendingPick.current = { state, wake };
+          phase.current = "picking";
+          setPickerState(state);
+          return;
         }
-        await wake();
-        return;
+
+        // auto_pin → persist the sole online instance (best-effort), then wake.
+        if (preview.outcome === "auto_pin") {
+          const sole = online[0];
+          if (sole?.agentInstanceUuid) {
+            await reassignBestEffort(ideaUuid, agentUuid, sole.agentInstanceUuid);
+          }
+          await wake();
+          return;
+        }
+      } finally {
+        // The picker owns the lock until confirm/cancel. All other paths,
+        // including thrown previews/wakes, release it here.
+        if (phase.current !== "picking") finish();
       }
     },
-    [fetchPreview, reassignBestEffort],
+    [fetchPreview, reassignBestEffort, finish],
   );
 
   const confirmPick = useCallback(
     async (instance: InstanceCandidate) => {
-      const state = pickerState;
-      const wake = pendingWake;
-      // Close the dialog first so the UI feels responsive; the reassign+wake
-      // then run against the captured state.
+      if (phase.current !== "picking" || !pendingPick.current) return;
+      const { state, wake } = pendingPick.current;
+      phase.current = "running";
+      pendingPick.current = null;
+      // Close promptly, but retain the busy flag through BOTH pin and wake.
       setPickerState(null);
-      setPendingWake(null);
-      if (!state || !wake) return;
-      if (instance.agentInstanceUuid) {
-        await reassignBestEffort(
-          state.ideaUuid,
-          state.agentUuid,
-          instance.agentInstanceUuid,
-        );
+      try {
+        if (instance.agentInstanceUuid) {
+          await reassignBestEffort(
+            state.ideaUuid,
+            state.agentUuid,
+            instance.agentInstanceUuid,
+          );
+        }
+        await wake();
+      } finally {
+        finish();
       }
-      await wake.run();
     },
-    [pickerState, pendingWake, reassignBestEffort],
+    [reassignBestEffort, finish],
   );
 
   const cancelPick = useCallback(() => {
     // Dismissing the picker aborts the whole action — no reassign, no wake.
+    if (phase.current !== "picking") return;
+    pendingPick.current = null;
     setPickerState(null);
-    setPendingWake(null);
-  }, []);
+    finish();
+  }, [finish]);
 
   const confirmTemporary = useCallback(
     async (selection: TemporaryCwdSelection) => {
-      const wake = pendingWake;
+      if (phase.current !== "picking" || !pendingPick.current) return;
+      const { wake } = pendingPick.current;
+      phase.current = "running";
+      pendingPick.current = null;
       setPickerState(null);
-      setPendingWake(null);
-      if (wake) await wake.run(selection);
+      try {
+        await wake(selection);
+      } finally {
+        finish();
+      }
     },
-    [pendingWake],
+    [finish],
   );
 
   return {

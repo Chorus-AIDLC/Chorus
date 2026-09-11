@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 //
-// UI tests for the dashboard idea-tracker IdeaDetailPanel footer "Verify
-// Elaborate" button (task: Frontend Verify Elaborate button). Covers:
+// UI tests for the dashboard idea-tracker IdeaDetailPanel Actions menu's Verify
+// Elaborate action (task: Frontend Verify Elaborate button). Covers:
 //  - the button is gated by the shared canVerifyElaboration predicate,
 //  - clicking calls verifyElaborationAction and shows the queued hint on success,
 //  - the failure path surfaces an inline error.
-// Heavy tab/child views are stubbed so the test focuses on the footer contract.
+// Heavy tab/child views are stubbed so the test focuses on the verify contract.
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -179,6 +179,11 @@ function renderPanel() {
 }
 
 beforeEach(() => {
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
+  Element.prototype.scrollIntoView = () => {};
   vi.clearAllMocks();
   getIdeaActionMock.mockResolvedValue(ideaResponse());
   getProposalsForIdeaActionMock.mockResolvedValue({ success: true, data: [] });
@@ -201,7 +206,7 @@ beforeEach(() => {
   );
 });
 
-describe("dashboard IdeaDetailPanel — Verify Elaborate footer button", () => {
+describe("dashboard IdeaDetailPanel — Verify Elaborate menu action", () => {
   it.each(["open", "elaborating", "elaborated"])(
     "keeps the assignee control interactive for %s Ideas",
     async (status) => {
@@ -213,34 +218,36 @@ describe("dashboard IdeaDetailPanel — Verify Elaborate footer button", () => {
     },
   );
 
-  it("renders an enabled Verify Elaborate button when every round is answered", async () => {
+  it("renders an enabled Verify Elaborate action when every round is answered", async () => {
+    const user = userEvent.setup();
     renderPanel();
-    const btn = (await screen.findByRole("button", { name: "Verify Elaborate" })) as HTMLButtonElement;
-    expect(btn.disabled).toBe(false);
+    await user.click(await screen.findByRole("button", { name: "Actions" }));
+    expect(screen.getByRole("menuitem", { name: "Verify Elaborate" }).getAttribute("aria-disabled")).toBe("false");
   });
 
-  it("does not render the button while a round is still pending", async () => {
+  it("disables the action while a round is still pending", async () => {
     getElaborationActionMock.mockResolvedValue(elaborationResponse("pending_answers"));
+    const user = userEvent.setup();
     renderPanel();
-    // The idea loads (the stubbed elaboration view proves the panel body
-    // rendered — reassign now lives inside that view, not the footer) but no
-    // verify button.
     await screen.findByTestId("elaboration-view");
-    expect(screen.queryByRole("button", { name: "Verify Elaborate" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    expect(screen.getByRole("menuitem", { name: "Verify Elaborate" }).getAttribute("aria-disabled")).toBe("true");
   });
 
-  it("does not render the button once elaboration is resolved", async () => {
+  it("disables the action once elaboration is resolved", async () => {
     getIdeaActionMock.mockResolvedValue(ideaResponse({ elaborationStatus: "resolved" }));
+    const user = userEvent.setup();
     renderPanel();
     await screen.findByTestId("elaboration-view");
-    expect(screen.queryByRole("button", { name: "Verify Elaborate" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    expect(screen.getByRole("menuitem", { name: "Verify Elaborate" }).getAttribute("aria-disabled")).toBe("true");
   });
 
   it("calls verifyElaborationAction on click and shows the queued hint on success", async () => {
     const user = userEvent.setup();
     renderPanel();
-    const btn = await screen.findByRole("button", { name: "Verify Elaborate" });
-    await user.click(btn);
+    await user.click(await screen.findByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Verify Elaborate" }));
 
     await waitFor(() => {
       expect(verifyElaborationActionMock).toHaveBeenCalledWith(IDEA_UUID);
@@ -252,14 +259,16 @@ describe("dashboard IdeaDetailPanel — Verify Elaborate footer button", () => {
     expect(screen.queryByRole("button", { name: "Create Proposal" })).toBeNull();
   });
 
-  it("surfaces an inline error and keeps the button when verify fails", async () => {
+  it("surfaces an inline error and keeps the action when verify fails", async () => {
     verifyElaborationActionMock.mockResolvedValueOnce({ success: false, error: "boom" });
     const user = userEvent.setup();
     renderPanel();
-    const btn = await screen.findByRole("button", { name: "Verify Elaborate" });
-    await user.click(btn);
+    await user.click(await screen.findByRole("button", { name: "Actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Verify Elaborate" }));
 
     await waitFor(() => expect(verifyElaborationActionMock).toHaveBeenCalled());
     expect(await screen.findByText("boom")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Actions" }));
+    expect(screen.getByRole("menuitem", { name: "Verify Elaborate" }).getAttribute("aria-disabled")).toBe("false");
   });
 });

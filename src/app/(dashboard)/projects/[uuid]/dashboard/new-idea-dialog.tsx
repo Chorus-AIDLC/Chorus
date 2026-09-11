@@ -49,6 +49,7 @@ import type { SessionView } from "@/services/daemon-session.service";
 interface NewIdeaDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCloseAutoFocus?: (event: Event) => void;
   projectUuid: string;
   onCreated?: (uuid: string) => void;
   /** When set, the new idea is derived as a child of this idea (single-parent
@@ -67,6 +68,7 @@ type EntryMode = "form" | "conversation";
 export function NewIdeaDialog({
   open,
   onOpenChange,
+  onCloseAutoFocus,
   projectUuid,
   onCreated,
   parentUuid,
@@ -333,7 +335,7 @@ export function NewIdeaDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px]">
+      <DialogContent className="sm:max-w-[480px]" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>{isDerive ? tLineage("deriveIdea") : t("newIdea.title")}</DialogTitle>
           {isDerive && parentTitle && (

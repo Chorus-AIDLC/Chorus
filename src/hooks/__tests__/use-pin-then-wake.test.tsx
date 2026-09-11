@@ -15,7 +15,7 @@
 
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import {
@@ -117,6 +117,83 @@ beforeEach(() => {
 });
 
 describe("usePinThenWake", () => {
+  it.each(["auto_pin", "pick", "temporary"] as const)("guards same-tick and stale-handler reentry throughout %s", async (path) => {
+    let releasePin!: () => void;
+    let releaseWake!: () => void;
+    const reassignNoWake = vi.fn(() => new Promise<{ success: boolean }>((resolve) => {
+      releasePin = () => resolve({ success: true });
+    }));
+    const wake = vi.fn(() => new Promise<void>((resolve) => { releaseWake = resolve; }));
+    const fetchPreview = vi.fn().mockResolvedValue({
+      outcome: path === "auto_pin" ? "auto_pin" : "pick",
+      assigneeAgentUuid: AGENT, onlineInstances: [candidate()],
+    });
+    const { result } = renderHook(() => usePinThenWake({ fetchPreview, reassignNoWake }));
+    const stale = result.current;
+    let running!: Promise<void>;
+    await act(async () => {
+      running = stale.start({ ideaUuid: IDEA, wake });
+      void stale.start({ ideaUuid: IDEA, wake });
+    });
+    expect(fetchPreview).toHaveBeenCalledOnce();
+    expect(result.current.isResolving).toBe(true);
+    if (path !== "auto_pin") {
+      expect(result.current.pickerState).not.toBeNull();
+      const confirm = () => path === "pick"
+        ? stale.confirmPick(candidate())
+        : stale.confirmTemporary({ agentUuid: AGENT, validationRequestUuid: "request" });
+      act(() => {
+        running = confirm();
+        void confirm();
+        // The dialog's late close event cannot unlock a committed operation.
+        stale.cancelPick();
+        void stale.start({ ideaUuid: IDEA, wake });
+      });
+    }
+    expect(result.current.isResolving).toBe(true);
+    expect(result.current.pickerState).toBeNull();
+    if (path !== "temporary") {
+      expect(reassignNoWake).toHaveBeenCalledOnce();
+      expect(wake).not.toHaveBeenCalled();
+      await act(async () => releasePin());
+    } else expect(reassignNoWake).not.toHaveBeenCalled();
+    expect(wake).toHaveBeenCalledOnce();
+    act(() => { stale.cancelPick(); void stale.start({ ideaUuid: IDEA, wake }); });
+    expect(result.current.isResolving).toBe(true);
+    expect(fetchPreview).toHaveBeenCalledOnce();
+    await act(async () => { releaseWake(); await running; });
+    expect(result.current.isResolving).toBe(false);
+  });
+
+  it.each(["preview", "direct", "pick", "temporary"] as const)("releases the lock after a thrown %s and allows retry", async (path) => {
+    const fetchPreview = vi.fn().mockResolvedValue({
+      outcome: path === "pick" || path === "temporary" ? "pick" : "direct",
+      assigneeAgentUuid: AGENT, onlineInstances: [candidate()],
+    });
+    if (path === "preview") fetchPreview.mockRejectedValueOnce(new Error("preview failed"));
+    const wake = vi.fn().mockRejectedValueOnce(new Error("wake failed")).mockResolvedValue(undefined);
+    const reassignNoWake = vi.fn().mockResolvedValue({ success: true });
+    const { result } = renderHook(() => usePinThenWake({ fetchPreview, reassignNoWake }));
+    await act(async () => {
+      if (path === "preview" || path === "direct") {
+        await expect(result.current.start({ ideaUuid: IDEA, wake })).rejects.toThrow();
+      } else {
+        await result.current.start({ ideaUuid: IDEA, wake });
+        const promise = path === "pick" ? result.current.confirmPick(candidate())
+          : result.current.confirmTemporary({ agentUuid: AGENT, validationRequestUuid: "request" });
+        await expect(promise).rejects.toThrow("wake failed");
+      }
+    });
+    expect(result.current.isResolving).toBe(false);
+    expect(result.current.pickerState).toBeNull();
+    await act(async () => {
+      await result.current.start({ ideaUuid: IDEA, wake: async () => {} });
+      result.current.cancelPick();
+    });
+    expect(fetchPreview).toHaveBeenCalledTimes(2);
+    expect(result.current.isResolving).toBe(false);
+  });
+
   it("preloads a fixed target and clears it when selection behavior is restored", async () => {
     const reassign = vi.fn();
     const wake = vi.fn();

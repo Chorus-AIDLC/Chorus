@@ -50,6 +50,7 @@
     "currentAssignee": "Currently assigned to",
     "failedToAssign": "Failed to assign",
     "actions": "Actions",
+    "close": "Close",
     "genericError": "An error occurred. Please try again.",
     "unknown": "Unknown",
     "system": "System",
@@ -1003,6 +1004,7 @@
     "confirmCta": "Run Yolo",
     "starting": "Starting...",
     "startedHint": "Yolo started — the agent is driving this idea to done",
+    "completedHint": "This idea is already complete",
     "offlineHint": "Agent offline — enables on reconnect",
     "errorAgentOffline": "The assigned agent is offline. Run Yolo after it reconnects.",
     "errorInstanceOffline": "The idea is pinned to a daemon instance that is offline. Run Yolo after that instance reconnects.",
@@ -1374,6 +1376,17 @@
       "noActivity": "No recent activity"
     },
     "panel": {
+      "actions": {
+        "busy": "Wait for the current operation to finish",
+        "loadingStage": "Waiting for proposal and task data. If this persists, reopen the idea to retry.",
+        "verifyUnavailable": "Complete elaboration before verifying it",
+        "editUnavailable": "Elaborated ideas cannot be edited",
+        "copyLink": "Copy link",
+        "copyUuid": "Copy UUID",
+        "linkCopied": "Idea link copied",
+        "uuidCopied": "Idea UUID copied",
+        "copyFailed": "Could not copy. Check clipboard permissions and try again."
+      },
       "notFound": "Idea not found",
       "loadFailed": "Failed to load idea",
       "verifyingPlaceholder": "Verification in progress...",

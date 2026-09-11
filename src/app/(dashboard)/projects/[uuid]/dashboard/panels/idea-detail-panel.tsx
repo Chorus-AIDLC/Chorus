@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "@/hooks/use-progress-router";
 import { toast } from "sonner";
-import { X, Loader2, Trash2, ArrowRightLeft, Pencil, GitFork, CornerLeftUp, CornerDownRight, CheckCircle2, Link as LinkIcon } from "lucide-react";
+import { X, Loader2, Pencil, GitFork, CornerLeftUp, CornerDownRight, Link as LinkIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +21,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { ElaborationView } from "./elaboration-view";
@@ -42,8 +41,7 @@ import { AssignIdeaModal } from "@/app/(dashboard)/projects/[uuid]/ideas/assign-
 import type { IdeaResponse } from "@/services/idea.service";
 import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
-import { StartDevelopmentButton } from "@/components/start-development-button";
-import { YoloButton } from "@/components/yolo-button";
+import { IdeaActionsMenu } from "./idea-actions-menu";
 import { ReferencesSection } from "@/components/references-section";
 import { ActiveSessionIndicator } from "@/components/active-session-indicator";
 import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
@@ -160,7 +158,12 @@ interface IdeaDetailPanelProps {
   onNavigate?: (ideaUuid: string) => void;
 }
 
-export function IdeaDetailPanel({
+export function IdeaDetailPanel(props: IdeaDetailPanelProps) {
+  // A new URL-selected idea must not inherit another idea's gates or dialogs.
+  return <IdeaDetailPanelContent key={props.ideaUuid} {...props} />;
+}
+
+function IdeaDetailPanelContent({
   ideaUuid,
   projectUuid,
   currentUserUuid,
@@ -184,6 +187,10 @@ export function IdeaDetailPanel({
   // Top-level data: proposals and tasks
   const [proposals, setProposals] = useState<ProposalData[]>([]);
   const [tasks, setTasks] = useState<FlatTask[]>([]);
+  const [loadedProposalSource, setLoadedProposalSource] = useState<string | null>(null);
+  const [loadedTaskSource, setLoadedTaskSource] = useState<ProposalData[] | null>(null);
+  const proposalRequestRef = useRef(0);
+  const taskRequestRef = useRef(0);
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabId>("overview");
@@ -193,12 +200,18 @@ export function IdeaDetailPanel({
   // Comment count for activity badge
   const [commentCount, setCommentCount] = useState(0);
 
-  // Footer/modal state
+  // Modal owners live outside the Actions menu's unmounting content.
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const actionsTriggerRef = useRef<HTMLButtonElement>(null);
+  const returnFocusToActions = useCallback((event: Event) => {
+    event.preventDefault();
+    actionsTriggerRef.current?.focus();
+  }, []);
 
   // Elaboration data — loaded once here and shared between the elaboration tab
-  // view and the footer's "Verify Elaborate" gate (no separate fetch each).
+  // view and the Actions menu's "Verify Elaborate" gate (no separate fetch each).
   const [elaboration, setElaboration] = useState<ElaborationResponse | null>(null);
   const [isLoadingElaboration, setIsLoadingElaboration] = useState(true);
 
@@ -306,20 +319,26 @@ export function IdeaDetailPanel({
   // ===== Lift data fetching: Proposals =====
   const ideaUuidForFetch = idea?.uuid;
   const ideaStatusForFetch = idea?.status;
+  const proposalSource = `${ideaUuidForFetch}:${ideaStatusForFetch}`;
   const fetchProposals = useCallback(async () => {
-    if (!ideaUuidForFetch || ideaStatusForFetch === "open") {
+    const request = ++proposalRequestRef.current;
+    setLoadedProposalSource(null);
+    if (!ideaUuidForFetch) return;
+    if (ideaStatusForFetch === "open") {
       setProposals([]);
+      setLoadedProposalSource(proposalSource);
       return;
     }
     try {
       const result = await getProposalsForIdeaAction(projectUuid, ideaUuidForFetch);
-      if (result.success) {
+      if (request === proposalRequestRef.current && result.success) {
         setProposals(result.data);
+        setLoadedProposalSource(proposalSource);
       }
     } catch (e) {
       clientLogger.error("Failed to fetch proposals:", e);
     }
-  }, [projectUuid, ideaUuidForFetch, ideaStatusForFetch]);
+  }, [projectUuid, ideaUuidForFetch, ideaStatusForFetch, proposalSource]);
 
   useEffect(() => {
     fetchProposals();
@@ -329,15 +348,19 @@ export function IdeaDetailPanel({
 
   // ===== Lift data fetching: Tasks (from approved proposals) =====
   const fetchTasks = useCallback(async () => {
+    const request = ++taskRequestRef.current;
+    setLoadedTaskSource(null);
     const approvedProposals = proposals.filter((p) => p.status === "approved");
     if (approvedProposals.length === 0) {
       setTasks([]);
+      setLoadedTaskSource(proposals);
       return;
     }
     try {
       const results = await Promise.all(
         approvedProposals.map((p) => getTasksForProposalAction(projectUuid, p.uuid))
       );
+      if (request !== taskRequestRef.current || results.some((result) => !result.success)) return;
       const allTasks: FlatTask[] = results.flatMap((result) =>
         result.success && result.data
           ? result.data.map((t) => {
@@ -361,6 +384,7 @@ export function IdeaDetailPanel({
           : []
       );
       setTasks(allTasks);
+      setLoadedTaskSource(proposals);
     } catch (e) {
       clientLogger.error("Failed to fetch tasks:", e);
     }
@@ -487,7 +511,7 @@ export function IdeaDetailPanel({
   }, [idea?.uuid, idea?.title, idea?.content]);
 
   const handleStartEdit = () => {
-    if (!idea) return;
+    if (!idea || idea.status === "elaborated") return;
     setEditTitle(idea.title);
     setEditContent(idea.content || "");
     setEditError(null);
@@ -539,7 +563,7 @@ export function IdeaDetailPanel({
   };
 
   const handleDelete = async () => {
-    if (!idea) return;
+    if (!idea || isDeleting) return;
     setIsDeleting(true);
     const result = await deleteIdeaAction(idea.uuid, projectUuid);
     setIsDeleting(false);
@@ -572,7 +596,7 @@ export function IdeaDetailPanel({
   };
 
   const handleVerify = () => {
-    if (!idea) return;
+    if (!idea || idea.isContainer || !canVerify || verified || isLoadingElaboration || isVerifying || isResolvingVerify || isTogglingContainer) return;
     // Route through pin-then-wake: `pick` opens the cwd picker before waking.
     startVerifyPinThenWake({ ideaUuid: idea.uuid, wake: runVerifyWake });
   };
@@ -702,48 +726,37 @@ export function IdeaDetailPanel({
             )}
           </div>
 
-          <div className="flex items-center gap-2 ml-4">
-            {idea && !isEditing && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 border-border px-2.5"
-                onClick={() => setShowDeriveDialog(true)}
-                title={tLineage("deriveIdea")}
-                aria-label={tLineage("deriveIdea")}
-              >
-                <GitFork className="h-3.5 w-3.5 text-primary" />
-                <span className="text-[12px] font-medium text-primary">{tLineage("derive")}</span>
-              </Button>
-            )}
-            {idea && !isEditing && (
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8 border-border"
-                onClick={() => setShowMoveDialog(true)}
-                title={t("ideas.actions.move")}
-                aria-label={t("ideas.actions.move")}
-              >
-                <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
-              </Button>
-            )}
-            {idea && idea.status !== "elaborated" && !isEditing && (
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-8 w-8 border-border"
-                onClick={handleStartEdit}
-                title={t("ideas.editIdea")}
-              >
-                <Pencil className="h-4 w-4 text-muted-foreground" />
-              </Button>
+          <div className="flex shrink-0 items-center gap-2 ml-3">
+            {idea && !isLoading && !isEditing && (
+              <IdeaActionsMenu
+                key={idea.uuid}
+                ideaUuid={idea.uuid}
+                projectUuid={projectUuid}
+                assignee={idea.assignee}
+                assigneeName={idea.assignee?.name}
+                proposals={proposals}
+                tasks={tasks}
+                triggerRef={actionsTriggerRef}
+                busy={isDeleting || isVerifying || isResolvingVerify || isSaving || isTogglingContainer || verifyPickerState !== null}
+                stageReason={isContainer ? tLineage("containerHint") : undefined}
+                stageDataReason={loadedProposalSource !== proposalSource || loadedTaskSource !== proposals ? tTracker("panel.actions.loadingStage") : undefined}
+                verifyReason={isLoadingElaboration ? tTracker("loading") : verified ? t("elaboration.verifiedQueuedHint") : !canVerify ? tTracker("panel.actions.verifyUnavailable") : undefined}
+                editReason={idea.status === "elaborated" ? tTracker("panel.actions.editUnavailable") : undefined}
+                onVerify={handleVerify}
+                onDerive={() => setShowDeriveDialog(true)}
+                onMove={() => setShowMoveDialog(true)}
+                onEdit={handleStartEdit}
+                onDelete={() => setShowDeleteDialog(true)}
+                onStarted={fetchIdea}
+                onCloseAutoFocus={returnFocusToActions}
+              />
             )}
             <Button
               variant="outline"
               size="icon"
               className="h-8 w-8 border-border"
               onClick={isEditing ? handleCancelEdit : onClose}
+              aria-label={t("common.close")}
             >
               <X className="h-4 w-4 text-muted-foreground" />
             </Button>
@@ -829,10 +842,22 @@ export function IdeaDetailPanel({
                       className="border-border text-sm resize-none focus-visible:ring-primary"
                     />
                   </div>
+                  <div className="flex items-center justify-end gap-3">
+                    <Button variant="outline" onClick={handleCancelEdit} disabled={isSaving}>
+                      {t("common.cancel")}
+                    </Button>
+                    <Button onClick={handleSaveEdit} disabled={isSaving || !editTitle.trim()}>
+                      {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      {t("common.save")}
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 /* Tab Content with visitedTabs caching */
                 <>
+                  {verified && <p role="status" className="mb-4 text-xs text-muted-foreground">{t("elaboration.verifiedQueuedHint")}</p>}
+                  {verifyError && <p role="alert" className="mb-4 text-xs text-destructive">{verifyError}</p>}
+                  {isContainer && <p className="mb-4 text-xs text-muted-foreground">{tLineage("containerHint")}</p>}
                   {/* Overview Tab */}
                   {visitedTabs.has("overview") && (
                     <div style={{ display: activeTab === "overview" ? "block" : "none" }}>
@@ -1035,155 +1060,24 @@ export function IdeaDetailPanel({
           </div>
         </ScrollArea>
 
-        {/* Footer */}
-        {idea && !isLoading && (
-          <div className="border-t border-secondary px-6 py-4">
-            {isEditing ? (
-              <div className="flex items-center justify-end gap-3">
-                <Button
-                  variant="outline"
-                  className="border-border"
-                  onClick={handleCancelEdit}
-                  disabled={isSaving}
-                >
-                  {t("common.cancel")}
-                </Button>
-                <Button
-                  className="bg-primary hover:bg-[#B56A42] text-white"
-                  onClick={handleSaveEdit}
-                  disabled={isSaving || !editTitle.trim()}
-                >
-                  {isSaving ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      {t("common.save")}
-                    </>
-                  ) : (
-                    t("common.save")
-                  )}
-                </Button>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between gap-3">
-                {/* Reassign moved onto the assignee block in the elaboration tab
-                    (see ElaborationView onReassign/canReassign) — the footer no
-                    longer carries a standalone reassign button, which frees room
-                    for Yolo to render as a full icon+label CTA. */}
-                <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
-                  {/* Proposal-progression CTAs are hidden on a container idea:
-                      a container may elaborate + derive children but MUST NOT
-                      create a proposal, so Verify Elaborate / Start Development
-                      / Yolo are suppressed. "Derive child idea" (header GitFork
-                      button) is the primary progression path instead. */}
-                  {!isContainer && (
-                    <>
-                      {/* Verify Elaborate — human "elaboration confirmed, agent
-                          writes the proposal" action, gated by the shared
-                          predicate. No manual create-proposal fallback here. */}
-                      {canVerify && !verified && (
-                        <Button
-                          className="bg-primary hover:bg-[#B56A42] text-white"
-                          onClick={handleVerify}
-                          disabled={isVerifying || isResolvingVerify}
-                        >
-                          {isVerifying ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              {t("elaboration.verifying")}
-                            </>
-                          ) : (
-                            <>
-                              <CheckCircle2 className="mr-2 h-4 w-4" />
-                              {t("elaboration.verifyButton")}
-                            </>
-                          )}
-                        </Button>
-                      )}
-                      {verified && (
-                        <span className="text-[11px] text-[#00796B] dark:text-[#4FD1C0]">
-                          {t("elaboration.verifiedQueuedHint")}
-                        </span>
-                      )}
-                      {verifyError && (
-                        <span className="text-[11px] text-destructive">{verifyError}</span>
-                      )}
-                      {/* Start Development — human "the plan is approved, go build
-                          it" action (add-stage-advance-start-development). Same
-                          shared-predicate contract as Verify Elaborate; presence
-                          gating + per-error-code toasts live in the component. */}
-                      <StartDevelopmentButton
-                        ideaUuid={idea.uuid}
-                        assignee={idea.assignee}
-                        assigneeName={idea.assignee?.name}
-                        proposals={proposals}
-                        tasks={tasks}
-                        onStarted={() => {
-                          fetchIdea();
-                        }}
-                      />
-                      {/* Yolo — human "drive this whole idea to done via the yolo
-                          skill" action (add-stage-advance-yolo). Shows at any
-                          incomplete stage (relaxed predicate), so it can coexist
-                          with Start Development on a building-stage idea. */}
-                      <YoloButton
-                        ideaUuid={idea.uuid}
-                        assignee={idea.assignee}
-                        assigneeName={idea.assignee?.name}
-                        proposals={proposals}
-                        tasks={tasks}
-                        onStarted={() => {
-                          fetchIdea();
-                        }}
-                      />
-                    </>
-                  )}
-                  {/* Container hint — replaces the proposal CTAs so the footer
-                      is never empty and the "derive instead" affordance reads. */}
-                  {isContainer && (
-                    <span className="text-[11px] text-muted-foreground">
-                      {tLineage("containerHint")}
-                    </span>
-                  )}
-                </div>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      className="shrink-0 h-8 w-8 border-border text-[#EF4444] dark:text-[#F0897E] hover:bg-[#FFEBEE] dark:hover:bg-[#331619] hover:text-[#EF4444] hover:border-[#EF4444]"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>{t("ideas.deleteIdea")}</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        {t("ideas.deleteIdeaConfirm", { title: idea.title })}
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-                      <AlertDialogAction
-                        variant="destructive"
-                        onClick={handleDelete}
-                        disabled={isDeleting}
-                      >
-                        {isDeleting ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            {t("common.delete")}
-                          </>
-                        ) : (
-                          t("common.delete")
-                        )}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
-            )}
-          </div>
+        {/* Confirmation is owned by the panel, never the menu content. */}
+        {idea && (
+          <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+            <AlertDialogContent onCloseAutoFocus={returnFocusToActions}>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t("ideas.deleteIdea")}</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {t("ideas.deleteIdeaConfirm", { title: idea.title })}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" onClick={handleDelete} disabled={isDeleting}>
+                  {t("common.delete")}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         )}
       </div>
 
@@ -1191,6 +1085,7 @@ export function IdeaDetailPanel({
       <MoveIdeaDialog
         open={showMoveDialog}
         onOpenChange={setShowMoveDialog}
+        onCloseAutoFocus={returnFocusToActions}
         ideaUuid={ideaUuid}
         projectUuid={projectUuid}
         onMoved={() => onClose()}
@@ -1215,6 +1110,7 @@ export function IdeaDetailPanel({
         <NewIdeaDialog
           open={showDeriveDialog}
           onOpenChange={setShowDeriveDialog}
+          onCloseAutoFocus={returnFocusToActions}
           projectUuid={projectUuid}
           parentUuid={idea.uuid}
           parentTitle={idea.title}
@@ -1244,6 +1140,7 @@ export function IdeaDetailPanel({
       {/* Verify Elaborate cwd picker — pin-then-wake `pick` outcome. */}
       <WakeCwdPickerDialog
         open={verifyPickerState !== null}
+        onCloseAutoFocus={returnFocusToActions}
         agentName={idea?.assignee?.name ?? ""}
         instances={verifyPickerState?.instances ?? []}
         onConfirm={confirmVerifyPick}
