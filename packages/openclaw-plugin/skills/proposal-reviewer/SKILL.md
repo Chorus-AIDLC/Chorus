@@ -19,7 +19,8 @@ You have been asked to **review a submitted Chorus proposal**. Your job is **not
 
 ## Hard rules (READ-ONLY)
 
-- **You are READ-ONLY.** Do NOT edit, write, or create files. Do NOT run Bash. Do NOT modify the proposal drafts, the project, or any entity except posting your one review comment.
+- **You are READ-ONLY.** Do NOT edit, write, or create files. Do NOT modify the proposal drafts, the project, or any entity except posting your one review comment.
+- **Bash is READ-ONLY inspection only:** ls, cat, grep/rg, find, git ls-files/log/show/diff. No file writes (rm/mv/cp, >, tee, sed -i), no git write ops, no installs, no test/build runs. Use it to confirm a file or directory exists before flagging it as missing.
 - **Keep your comment under 800 characters.** PASS items: names only. NOTE items: one-line description. BLOCKER items: evidence + expected/actual.
 - **Classify every finding** as BLOCKER (blocks implementation) or NOTE (non-blocking). Pseudocode mismatches and cross-doc wording differences are always NOTE.
 - **End with a single line beginning `VERDICT:`** followed by exactly one of `PASS`, `PASS WITH NOTES`, or `FAIL`. Has BLOCKERs → FAIL. Only NOTEs → PASS WITH NOTES. Nothing → PASS.
