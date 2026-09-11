@@ -4,7 +4,7 @@
 // Container Model: Proposal contains documentDrafts and taskDrafts
 
 import { randomUUID } from "crypto";
-import { prisma } from "@/lib/prisma";
+import { prisma, TransactionClient } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
@@ -1139,7 +1139,7 @@ async function withLockedDraftProposal<T>(
   proposalUuid: string,
   companyUuid: string,
   mutate: (
-    tx: Prisma.TransactionClient,
+    tx: TransactionClient,
     proposal: Prisma.ProposalGetPayload<Record<string, never>>
   ) => Promise<T>
 ): Promise<T> {
