@@ -19,7 +19,7 @@ vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/stage-advance-action
 vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions", () => ({ reassignIdeaInstanceNoWakeAction: mocks.reassign }));
 vi.mock("sonner", () => ({ toast: { success: mocks.success, error: mocks.error } }));
 
-const callbacks = { onVerify: vi.fn(), onDerive: vi.fn(), onMove: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), onStarted: vi.fn() };
+const callbacks = { onVerify: vi.fn(), onDerive: vi.fn(), onSetParent: vi.fn(), onMove: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), onStarted: vi.fn() };
 const base = {
   ideaUuid: "idea-1", projectUuid: "project-1", assignee: { type: "agent", uuid: "agent-1" },
   assigneeName: "Agent", proposals: [{ status: "approved" }], tasks: [{ status: "open" }], busy: false, ...callbacks,
@@ -41,6 +41,21 @@ function deferred<T>() {
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
   return { promise, resolve, reject };
 }
+function mockViewport(mobile: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query === "(max-width: 639px)" ? mobile : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,6 +64,7 @@ beforeEach(() => {
   mocks.yolo.mockResolvedValue({ success: true });
   mocks.reassign.mockResolvedValue({ success: true });
   preview();
+  mockViewport(false);
   window.history.replaceState(null, "", "/projects/project-1/dashboard?panel=old&tab=tasks&search=noise#hash");
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
   Element.prototype.hasPointerCapture = () => false;
@@ -59,9 +75,61 @@ beforeEach(() => {
 async function open(user: ReturnType<typeof userEvent.setup>) { await user.click(screen.getByRole("button", { name: "Actions" })); }
 
 describe("Tracker Actions — real Radix interactions", () => {
+  it("uses a touch-sized bottom sheet on mobile with visible disabled reasons and safe-area padding", async () => {
+    mockViewport(true);
+    const user = userEvent.setup();
+    render(<Harness overrides={{ stageReason: en.ideaTracker.lineage.containerHint }} />);
+    const trigger = screen.getByRole("button", { name: "Actions" });
+    expect(trigger.className).toContain("h-11");
+    await user.click(trigger);
+
+    const sheet = screen.getByRole("dialog");
+    expect(sheet.getAttribute("data-slot")).toBe("sheet-content");
+    expect(sheet.className).toContain("rounded-t-2xl");
+    expect(sheet.className).toContain("safe-area-inset-bottom");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Actions" })).toBeTruthy();
+
+    const start = screen.getByRole("button", { name: "Start Development" });
+    expect(start.className).toContain("min-h-12");
+    expect(start.getAttribute("aria-disabled")).toBe("true");
+    expect(start.textContent).toContain(en.ideaTracker.lineage.containerHint);
+    await user.click(start);
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("closes the mobile sheet before running an action and restores trigger focus on Escape", async () => {
+    mockViewport(true);
+    const user = userEvent.setup();
+    render(<Harness />);
+    const trigger = screen.getByRole("button", { name: "Actions" });
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "Verify Elaborate" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(callbacks.onVerify).toHaveBeenCalledOnce();
+
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("gives the AI-DLC actions distinct theme-safe foreground colors", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await open(user);
+    expect(screen.getByRole("menuitem", { name: "Verify Elaborate" }).className).toContain("text-[#1976D2]");
+    expect(screen.getByRole("menuitem", { name: "Verify Elaborate" }).className).toContain("dark:text-[#64B5F6]");
+    expect(screen.getByRole("menuitem", { name: "Start Development" }).className).toContain("text-[#2E7D32]");
+    expect(screen.getByRole("menuitem", { name: "Start Development" }).className).toContain("dark:text-[#72D572]");
+    expect(screen.getByRole("menuitem", { name: "Yolo" }).className).toContain("text-[#6A4FB6]");
+    expect(screen.getByRole("menuitem", { name: "Yolo" }).className).toContain("dark:text-[#B39DDB]");
+  });
+
   it("groups all actions with separated destructive Delete and no nested buttons", async () => {
     const user = userEvent.setup(); render(<Harness />); await open(user);
-    expect(screen.getAllByRole("menuitem")).toHaveLength(9);
+    expect(screen.getAllByRole("menuitem")).toHaveLength(10);
     expect(screen.getByRole("menuitem", { name: "Delete Idea" }).getAttribute("data-variant")).toBe("destructive");
     expect(screen.getByRole("menuitem", { name: "Delete Idea" }).previousElementSibling?.getAttribute("role")).toBe("separator");
     expect(document.querySelector("button button")).toBeNull();
