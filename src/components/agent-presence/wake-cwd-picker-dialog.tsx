@@ -57,6 +57,7 @@ export interface WakeCwdPickerDialogProps {
   }) => void;
   /** Fires when the human dismisses the dialog (Cancel / overlay / Esc). */
   onCancel: () => void;
+  onCloseAutoFocus?: (event: Event) => void;
 }
 
 /**
@@ -72,6 +73,7 @@ export function WakeCwdPickerDialog({
   agentUuid,
   onTemporaryConfirm,
   onCancel,
+  onCloseAutoFocus,
 }: WakeCwdPickerDialogProps) {
   const t = useTranslations("wakeCwdPicker");
   const [selected, setSelected] = useState<InstanceCandidate | null>(null);
@@ -113,6 +115,7 @@ export function WakeCwdPickerDialog({
           the only scroll region so the footer stays reachable under the mobile
           soft keyboard. Identical contract to MentionInstancePickerDialog. */}
       <DialogContent
+        onCloseAutoFocus={onCloseAutoFocus}
         className="z-[110] flex max-h-[85svh] flex-col gap-0 sm:max-w-md"
         overlayClassName="z-[110]"
       >

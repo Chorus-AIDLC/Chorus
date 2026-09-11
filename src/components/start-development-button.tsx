@@ -33,7 +33,9 @@ import { reassignIdeaInstanceNoWakeAction } from "@/app/(dashboard)/projects/[uu
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
 import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
 
-interface StartDevelopmentButtonProps {
+import type { StageActionPresentation } from "@/components/stage-action";
+
+interface StartDevelopmentButtonProps extends StageActionPresentation {
   ideaUuid: string;
   assignee: StartDevelopmentAssignee | null | undefined;
   // Assignee agent display name — shown in the cwd picker subtitle when the
@@ -68,6 +70,9 @@ export function StartDevelopmentButton({
   proposals,
   tasks,
   onStarted,
+  renderAction,
+  disabledReason,
+  onCloseAutoFocus,
 }: StartDevelopmentButtonProps) {
   const t = useTranslations("startDevelopment");
   // Optional: a missing provider (isolated render) reads as no presence data →
@@ -125,7 +130,7 @@ export function StartDevelopmentButton({
   // The button renders only while the stage preconditions hold (approved
   // proposal + unfinished tasks + agent assignee); an offline agent keeps it
   // visible-but-disabled with a hint, matching the optimistic-display contract.
-  if (!preconditionsMet || started) {
+  if (!renderAction && (!preconditionsMet || started)) {
     return started ? (
       <span className="text-[11px] text-[#00796B] dark:text-[#4FD1C0]">{t("startedHint")}</span>
     ) : null;
@@ -153,7 +158,15 @@ export function StartDevelopmentButton({
     }
   };
 
+  const reason = disabledReason || (isStarting || isResolving ? t("starting")
+    : started ? t("startedHint")
+    : !owningAgentUuid ? t("errorAssigneeNotAgent")
+    : !proposals?.some((p) => p.status === "approved") ? t("errorNoApprovedProposal")
+    : !preconditionsMet ? t("errorNoUnfinishedTasks")
+    : !enabled ? t("offlineHint") : undefined);
+
   const handleClick = () => {
+    if (reason) return;
     // Route through the pin-then-wake flow: it fetches the preview and either
     // wakes immediately (direct/auto_pin) or opens the picker (pick), then calls
     // runWake once the cwd is resolved.
@@ -184,7 +197,7 @@ export function StartDevelopmentButton({
   // events, so the offline explanation rides a tooltip whose trigger is a
   // focusable wrapper span (tabIndex=0) around the button — reachable by both
   // hover and keyboard focus. Online: render the button as-is, no wrapper.
-  if (!agentOnline) {
+  if (!renderAction && !agentOnline) {
     return (
       <TooltipProvider delayDuration={300}>
         <Tooltip>
@@ -201,12 +214,17 @@ export function StartDevelopmentButton({
 
   return (
     <>
-      {button}
+      {renderAction ? renderAction({
+        label: t("button"), disabledReason: reason,
+        busy: isStarting || isResolving || pickerState !== null,
+        onSelect: handleClick,
+      }) : button}
       {/* Pin-then-wake cwd picker — mounted only on the online path (the offline
           path keeps the button disabled, so it never opens). Driven by the hook;
           on confirm it persists the pin then fires runWake. */}
       <WakeCwdPickerDialog
         open={pickerState !== null}
+        onCloseAutoFocus={onCloseAutoFocus}
         agentName={assigneeName ?? ""}
         instances={pickerState?.instances ?? []}
         agentUuid={pickerState?.agentUuid}
