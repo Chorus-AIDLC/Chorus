@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import {
   DSH_BUNDLE,
   DSH_PROFILE,
@@ -285,7 +285,7 @@ describe("managed dsh profile composition", () => {
         bundleVersion: "0.16.3",
         dshPath: "/opt/dsh",
         runtimeVersion: "rt-a",
-        env: { ...process.env, CHORUS_DSH_PROVIDER: "acme-cloud" },
+        env: { CHORUS_DSH_PROVIDER: "acme-cloud" },
         install: vi.fn(),
         validateProfile: vi.fn(),
         validateComposition: () => { throw new Error("no adapter registered for provider acme-cloud"); },
@@ -306,7 +306,7 @@ describe("managed dsh profile composition", () => {
         install: vi.fn(),
         validateProfile: vi.fn(),
         validateComposition: () => { throw new Error("bad key cho_do_not_log"); },
-      })).rejects.toThrow(/bad key \[REDACTED\]/);
+      })).rejects.toThrow(/authentication failed; check provider and Chorus credentials/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -347,11 +347,63 @@ describe("managed dsh profile composition", () => {
         bundleVersion: "0.16.3",
         dshPath: "/opt/dsh",
         install: () => { throw new Error("dsh plugin add: ERR_PNPM offline"); },
-      })).rejects.toThrow(/profile installation failed.*ERR_PNPM offline/);
+      })).rejects.toThrow(/profile installation failed.*package registry unavailable; check network access and pnpm registry configuration/);
       expect(existsSync(join(root, "active.json"))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it.each(["install", "validateProfile", "validateComposition", "reuse"])("sanitizes every managed setup failure at %s without losing cause/hints", async (stage) => {
+    const root = tempRoot();
+    const values = ["ordinary-value", "longer-ordinary-value", "secret.[*]", "argv-payload", "cho_credential", "private-provider"];
+    const diagnostic = "version mismatch; no adapter registered: " + values.join(" ");
+    const fail = () => { throw Object.assign(new Error(diagnostic), { code: "private-code", syscall: "private-syscall" }); };
+    const opts = {
+      root, bundleVersion: "0.18.0", dshPath: "/fake/dsh", runtimeVersion: "test",
+      env: { ORDINARY: values[0], OVERLAP: values[1], PATTERN: values[2], DSH_PROVIDER: values[5] },
+      creds: { apiKey: values[4] },
+      install: vi.fn(), validateProfile: vi.fn(), validateComposition: vi.fn(),
+    };
+    try {
+      if (stage === "reuse") await prepareManagedDshConfig(opts);
+      const error = await prepareManagedDshConfig({ ...opts, [stage === "reuse" ? "validateProfile" : stage]: fail }).catch((e) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("version mismatch; check dsh runtime and Chorus bundle compatibility");
+      expect(error.message).toContain("no adapter registered; check that the selected provider adapter is installed");
+      if (stage === "install") expect(error.message).toContain("profile installation failed");
+      if (stage === "validateComposition") expect(error.message).toMatch(/non-default.*CHORUS_DSH_HOME/);
+      for (const value of [...values, "private-code", "private-syscall"]) expect(error.message).not.toContain(value);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies a real missing setup executable without echoing its path", async () => {
+    const root = tempRoot();
+    try {
+      const error = await prepareManagedDshConfig({
+        root, bundleVersion: "0.18.0", runtimeVersion: "test", env: {},
+        dshPath: join(root, "private-missing-executable"),
+      }).catch((e) => e);
+      expect(error.message).toMatch(/profile installation failed: ENOENT: executable or working directory not found/);
+      expect(error.message).not.toContain(root);
+      expect(error.message).not.toContain("private-missing-executable");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("sanitizes filesystem errors outside installation/composition", async () => {
+    const root = tempRoot();
+    const home = join(root, "private-home-value");
+    writeFileSync(home, "not a directory");
+    try {
+      const error = await prepareManagedDshConfig({
+        bundleVersion: "0.18.0", runtimeVersion: "test", dshPath: "/fake/dsh", env: { HOME: home },
+      }).catch((e) => e);
+      expect(error.message).toContain("ENOTDIR");
+      expect(error.message).not.toContain(home);
+      expect(error.message).not.toContain("private-home-value");
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it("requires a bundle version and the dsh CLI path", async () => {

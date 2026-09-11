@@ -23,6 +23,8 @@
 // carried per-turn by the wake-prompt preamble in prompts.mjs, not at the system level.
 
 import { spawn } from "node:child_process";
+import { safeSpawnError } from "./launch-diagnostics.mjs";
+import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { win32 as pathWin32, posix as pathPosix, join as pathJoin } from "node:path";
@@ -102,7 +104,7 @@ export function escapeCwd(cwd, platform = process.platform) {
 export function transcriptPath(sessionId, cwd, deps = {}) {
   const env = deps.env ?? process.env;
   const platform = deps.platform ?? process.platform;
-  const configDir = env.CLAUDE_CONFIG_DIR || pathJoin(deps.home ?? homedir(), ".claude");
+  const configDir = getAgentEnv(env, "CLAUDE_CONFIG_DIR", platform) || pathJoin(deps.home ?? getAgentEnv(env, "HOME", platform) ?? getAgentEnv(env, "USERPROFILE", platform) ?? homedir(), ".claude");
   return pathJoin(configDir, "projects", escapeCwd(cwd, platform), `${sessionId}.jsonl`);
 }
 
@@ -146,8 +148,9 @@ export function resolveClaudePath(deps = {}) {
     });
 
   // An explicit override always wins (set by the daemon if the user configured it).
-  if (env.CHORUS_CLAUDE_PATH && isFile(env.CHORUS_CLAUDE_PATH)) {
-    return env.CHORUS_CLAUDE_PATH;
+  const override = getAgentEnv(env, "CHORUS_CLAUDE_PATH", platform);
+  if (override && isFile(override)) {
+    return override;
   }
 
   // Use platform-correct path semantics so the resolver is testable for
@@ -155,7 +158,7 @@ export function resolveClaudePath(deps = {}) {
   const isWin = platform === "win32";
   const p = isWin ? pathWin32 : pathPosix;
   const names = isWin ? ["claude.cmd", "claude.exe", "claude"] : ["claude"];
-  const pathVar = env.PATH || env.Path || "";
+  const pathVar = getAgentEnv(env, "PATH", platform) || env.Path || "";
   const dirs = pathVar.split(p.delimiter).filter(Boolean);
   for (const dir of dirs) {
     for (const name of names) {
@@ -228,7 +231,7 @@ export function resolveSpawnCommand(claudePath, args, platform = process.platfor
   const isWin = platform === "win32";
   const lower = claudePath.toLowerCase();
   if (isWin && (lower.endsWith(".cmd") || lower.endsWith(".bat"))) {
-    const comspec = env.ComSpec || env.COMSPEC || "cmd.exe";
+    const comspec = getAgentEnv(env, "COMSPEC", platform) || "cmd.exe";
     // /d skip AutoRun, /s treat everything after /c literally, /c run then exit.
     return { command: comspec, argv: ["/d", "/s", "/c", claudePath, ...args] };
   }
@@ -289,6 +292,8 @@ export class ClaudeSpawner {
     // can group-kill the tree; Windows does not. Injectable so a POSIX test host
     // can exercise the Windows branch and vice versa.
     this.platform = opts.platform ?? process.platform;
+    this.cliConfig = validateAgentCliConfig(opts.cliConfig, "claude-code", opts.label);
+    this.env = overlayAgentEnv(opts.env ?? process.env, this.cliConfig.env, this.platform);
   }
 
   /**
@@ -330,18 +335,19 @@ export class ClaudeSpawner {
       return { sessionId: typeof id === "string" ? id : "", backendSessionId: null, exitCode: null, isNew: Boolean(isNew) };
     }
 
-    const claudePath = this.claudePath ?? resolveClaudePath();
+    const claudePath = this.claudePath ?? resolveClaudePath({ env: this.env, platform: this.platform });
     if (!claudePath) {
       // No crash — surface visibly and resolve with a failure result.
       this.logger.error("[Chorus] cannot locate the `claude` executable on PATH; skipping wake");
       return { sessionId: id, backendSessionId: null, exitCode: null, isNew };
     }
 
-    const args = buildArgs({ sessionId: id, isNew, mcpConfigPath, permissionMode: this.permissionMode });
+    assertConfiguredShimArgs(claudePath, this.cliConfig.args, this.platform);
+    const args = [...buildArgs({ sessionId: id, isNew, mcpConfigPath, permissionMode: this.permissionMode }), ...this.cliConfig.args];
     // On Windows, a .cmd/.bat shim must be run via cmd.exe /c (CreateProcess
     // can't exec a script directly). resolveSpawnCommand keeps shell:false and
     // passes argv as an array — no shell injection surface either way.
-    const { command, argv } = resolveSpawnCommand(claudePath, args);
+    const { command, argv } = resolveSpawnCommand(claudePath, args, this.platform, this.env);
 
     // POSIX: spawn `detached: true` so the child becomes a PROCESS GROUP LEADER
     // (its pgid === its pid). The interrupt path then signals the whole group via
@@ -353,7 +359,10 @@ export class ClaudeSpawner {
     // stream and observe the exit. On Windows `detached` is NOT used: taskkill /T
     // walks the tree by pid, and detached there only spawns a new console window.
     const detached = (this.platform ?? process.platform) !== "win32";
-    const childEnv = { ...process.env, CHORUS_DAEMON_HEADLESS: "1" };
+    const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
+    for (const key of Object.keys(childEnv)) {
+      if (["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"].includes(key.toUpperCase())) delete childEnv[key];
+    }
     if (this.creds) {
       if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
       if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
@@ -379,8 +388,8 @@ export class ClaudeSpawner {
           detached,
           windowsHide: true,
         });
-      } catch (err) {
-        this.logger.error(`[Chorus] failed to spawn claude: ${err}`);
+      } catch (error) {
+        this.logger.error(`[Chorus] failed to spawn claude: ${safeSpawnError(error)}`);
         resolve({ sessionId: id, backendSessionId: null, exitCode: null, isNew });
         return;
       }
@@ -429,9 +438,9 @@ export class ClaudeSpawner {
         if (text) this.logger.warn(`[Chorus] claude stderr: ${text}`);
       });
 
-      child.on("error", (err) => {
+      child.on("error", (error) => {
         // e.g. ENOENT if the resolved path vanished — log, don't throw.
-        this.logger.error(`[Chorus] claude process error: ${err}`);
+        this.logger.error(`[Chorus] claude process error: ${safeSpawnError(error)}`);
         // backendSessionId is the `--resume` anchor (`id`), NOT observedSessionId:
         // a fork-on-resume claude can emit a new stream session_id, but the daemon
         // resumes and files the transcript under `id`, so `id` is the resumable value.

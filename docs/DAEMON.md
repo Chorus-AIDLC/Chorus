@@ -39,14 +39,263 @@ chorus agents run --name work --type codex -- resume # override the backend, the
 - **Which binary.** The backend defaults to the agent's stored `agentType`;
   `--type <type>` overrides it. Types map to binaries: `claude-code`/`claude` →
   `claude`, `codex` → `codex`, `kiro` → `kiro-cli`, `pi` → `pi`, `opencode` →
-  `opencode`, `openclaw` → `openclaw`, `dsh` → `dsh-jsonrpc-agent`. Agents added as
-  opencode / openclaw / dsh are stored as `offline` (the daemon does not auto-wake
-  them), so pass `--type` explicitly to launch those.
-- **Passthrough.** Everything after `--` is handed to the agent **verbatim** and
-  never inspected, so the agent's full flag surface is available. The launched
-  agent inherits your terminal, and `chorus agents run` exits with its exit code.
+  `opencode`, `openclaw` → `openclaw`, `dsh` → `dsh`. Agents stored as
+  `offline` have no concrete backend, so pass `--type` explicitly for them.
+- **Passthrough.** Everything after the first `--` is handed to the agent
+  **verbatim**. Recognized explicit options suppress equivalent persistent options
+  (see below); the explicit tokens themselves are never rewritten or rejected by
+  the persistent-config validator. Interactive resume/subcommands remain available.
+  The agent inherits your terminal, and `chorus agents run` exits with its exit code.
 
 See `chorus agents run --help`.
+
+### Per-agent CLI arguments and environment
+
+Each `agents[]` entry in `~/.chorus/daemon.json` may specify **`args: string[]`**
+and **`env: Record<string, string>`**. Both daemon wakes and foreground launches
+use these fields. For example (replace the illustrative credentials):
+
+```json
+{
+  "url": "https://chorus.example.com",
+  "agents": [
+    {
+      "agentName": "reviewer",
+      "apiKey": "cho_replace_me",
+      "agentType": "claude-code",
+      "args": ["--model", "sonnet", "--effort", "high"],
+      "env": { "ANTHROPIC_BASE_URL": "https://provider.example.com" }
+    },
+    {
+      "agentName": "implementer",
+      "apiKey": "cho_replace_me_too",
+      "agentType": "codex",
+      "args": ["--model", "gpt-5.4", "-c", "model_reasoning_effort=high"],
+      "env": { "CODEX_HOME": "/home/me/.codex-work" }
+    },
+    {
+      "agentName": "pi-worker",
+      "apiKey": "cho_replace_me_three",
+      "agentType": "pi",
+      "args": ["--model", "anthropic/claude-sonnet-4-6", "--thinking", "high"],
+      "env": { "PI_CODING_AGENT_DIR": "/home/me/.pi-work" }
+    }
+  ]
+}
+```
+
+Model IDs above are examples, not Chorus defaults; use IDs your provider supports.
+Configure the Chorus integration in any custom harness home too. Codex's MCP
+preflight reads the effective `CODEX_HOME`. dsh uses the effective environment for
+managed-home/provider setup and its RPC initialize request: `DSH_PROVIDER` and
+`DSH_MODEL` select those values, and `DSH_HOME` can select an existing SDK profile
+(the inherited `CHORUS_DSH_*` administrator overrides still take precedence).
+Using an existing home skips managed preparation and emits an informational notice
+without printing the home value.
+There are no separate `model` or `thinking` fields in daemon.json.
+
+- Omitted fields mean `[]` and `{}`. Explicit `null`, non-string tokens/values,
+  NUL characters, and non-portable env names are errors. Env names must match
+  `[A-Za-z_][A-Za-z0-9_]*`. Empty string option values and env values are valid.
+- **No shared defaults:** top-level `args`/`env` alongside nonempty `agents[]`
+  are rejected with a migration hint, not inherited or silently ignored. Put
+  them on each intended entry. One profile never mutates another or `process.env`.
+- Values are literal: each array element is one argv token. Do not add shell
+  quoting around tokens. Spaces, `$HOME`, `${TOKEN}`, `$(command)`, semicolons,
+  and other shell syntax are not expanded. No dotenv loading, interpolation,
+  or secret-manager lookup is added. Use option/value pairs, not positional
+  prompts/subcommands; explicit foreground passthrough is available for those.
+- Env overlays a fresh inherited environment; backend-managed identity, cwd and
+  headless controls are then applied. On Windows, env overrides replace inherited
+  names case-insensitively (`Path`/`PATH` cannot compete). Harness-home and
+  provider/model lookups, transcript/MCP preflight, managed dsh preparation, and
+  `COMSPEC` selection use that same Windows case-insensitive environment: e.g.
+  `dsh_home` and `DSH_HOME` select the same existing profile and skip preparation.
+  Managed dsh home/cwd writes remove differently-cased duplicates. POSIX names
+  remain case-sensitive. Executable discovery
+  uses the effective per-agent PATH. Foreground clears `CHORUS_DAEMON_HEADLESS`;
+  Claude launches also clear nested-session markers `CLAUDECODE` and
+  `CLAUDE_CODE_ENTRYPOINT`.
+- Native executables and POSIX launches preserve literal configured argv. Windows
+  `.cmd`/`.bat` shims run through `cmd.exe` even with `shell:false`: configured
+  empty tokens or tokens containing whitespace, quotes, `%`, `!`, `^`, `&`, `|`,
+  `<`, `>`, or parentheses are **rejected before spawn**, as are executable paths
+  containing command metacharacters. Use a native executable for such tokens.
+  Existing explicit foreground passthrough is unchanged and is
+  not promised shell-safe through a Windows command shim.
+- Env values can contain plaintext provider credentials. Chorus does not print
+  configured values in its validation/launch diagnostics, but child programs and
+  OS process inspection may expose them. Protect daemon.json with local file
+  permissions (e.g. `chmod 600` on POSIX); do not commit secrets. There is no
+  special encryption or vault support.
+- Spawn failures report only allowlisted OS error classifications (such as
+  `ENOENT`, `EACCES`, or `EPERM`) and fixed troubleshooting guidance; unknown
+  error codes use a generic startup hint. Raw error messages, paths, argv, and
+  syscall fields are not echoed. Managed dsh setup failures retain sanitized
+  causes and provider/profile hints, redacting environment and configured argv
+  values as well as credentials; matching diagnostic text may also be redacted.
+
+**Protected persistent controls.** All `CHORUS_*` env names and the nested-Claude
+context names `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` are reserved,
+case-insensitively. Configuring them fails validation instead of silently dropping
+them; inherited Claude context is still cleared when launching Claude.
+Known backend session/resume, prompt, transport/output,
+cwd, managed MCP, and permission flags are rejected, including long `--flag=value`
+forms and known short aliases/attached forms. Examples:
+
+| Backend | Protected controls (scope/examples) |
+|---|---|
+| Claude | `-p/--print`, output/input format, session/resume/continue (`-r`, `-c`), MCP config, permissions/allowed tools, settings, system prompt, worktree (`-w`), remote/background modes |
+| Codex | JSON/output (`-o`, `--experimental-json`), sandbox (`-s`, `--yolo`), approvals (`-a`, `--not-so-yolo`), cwd (`-C`), profile (`-p`), remote/session controls; `-c`/`--config` keys rooted at `mcp_servers`, `sandbox*`, `approval_policy`, `approvals_reviewer`, `cwd`, `permissions`, `developer_instructions`, `model_instructions_file`, `experimental_instructions_file`, `base_instructions` |
+| Kiro | non-interactive/engine/UI mode, agent, trust (`-a`), resume (`-r`), session operations/output (`-l`, `-d`, `-f`) |
+| Pi | `-p/--print`, mode, session/resume/continue (`-r`, `-c`), session directory, system prompt, export, model inspection (`--list-models`, with or without a search filter) |
+| dsh | SDK profile, patch overlays, config dumps, session/cwd/protocol/prompt controls |
+| OpenCode/OpenClaw | Known foreground session, prompt/message, agent and connection controls |
+
+Bare `--` and the stdin prompt marker `-` are forbidden in persistent args, as
+are help/version and known inspection exits that bypass the wake prompt (including
+Pi `--list-models`; equals forms are also guarded). Explicit foreground inspection
+remains allowed. Codex config keys may use simple dotted/quoted TOML keys;
+ambiguous keys are rejected rather than bypassing protection.
+
+**Option/value boundaries.** Known backend options have separate arity metadata
+in `cli/agent-cli-config.mjs`: zero-value flags (for example Pi `--verbose`,
+`--offline`, `-nt`/`-nbt`, Codex `--oss`, Claude `--brief`, Kiro
+`--require-mcp-startup`, OpenCode `--print-logs`, OpenClaw `--deliver`) cannot
+consume a following positional prompt. Known valued options consume their values
+as data, even when those values look like flags; e.g. Pi `--api-key --session`
+does not set a session. A missing required value is rejected before managed argv
+can be swallowed. The registry also covers exact Pi multi-character aliases,
+ordinary valued options such as extension/skill/theme paths, Codex feature/image
+options, Kiro `-w/--wrap`, Claude optional `-d/--debug [filter]` and variadic
+`--betas`/`--file`. It is arity metadata, not a backend value/schema validator.
+
+Unknown ordinary options remain pass-through, **not an allowlist**. However, their
+arity is unknowable: persistent `['--future', 'text']` fails closed because `text`
+could be a positional prompt after an unknown boolean. Use `['--future=text']`
+**only if the backend supports that spelling**, or use explicit foreground
+passthrough for its full native syntax. Unknown standalone flags and inline values
+are retained; no unknown separated value is silently presumed safe. Backend/plugin
+flag additions may require updating the arity registry for persistent separated
+values. This guards known conflicts, **not a sandbox** against someone who controls
+the executable, plugins, or harness config. The third-party CLI remains responsible
+for validating flags, value syntax, and CLI-version compatibility.
+Offline agents remain non-wakeable, regardless of customization.
+
+**Foreground precedence registry.** `--type` first selects the effective backend
+for both validation and precedence. For the following options, an explicit
+occurrence in the selected command scope suppresses every configured equivalent
+and its value. Local root/parent options do not suppress child-command options;
+Codex `-c`/`--config` keys apply across scopes:
+
+| Effective type | Recognized singleton options |
+|---|---|
+| `claude-code` / `claude` | `--model`, `--effort` |
+| `codex` | `--model` / `-m` / config key `model`; config key `model_reasoning_effort` |
+| `kiro` | `--model`, `--effort` |
+| `pi` | `--model`, `--thinking`, `--provider` |
+| `opencode` | `--model` / `-m` |
+| `openclaw` | `--model`, `--thinking` (agent subcommand options) |
+| `dsh` | None: the SDK launcher has no model/reasoning argv singleton; use env |
+
+The matcher recognizes separated and equals long forms, and attached short model
+forms (`-mVALUE`, `-m=VALUE`) where `-m` is listed. Codex config supports
+`-c key=value`, `-ckey=value`, `-c=key=value`, `--config key=value`, and
+`--config=key=value`. Only the two registered Codex keys participate in precedence;
+unrelated `-c` entries are retained. Unknown/repeatable options retain
+configured-then-explicit order within the selected command scope, with no generic
+last-wins guarantee. Both configured and explicit scans skip known option values:
+`--append-system-prompt --model` on Pi is prompt data, not a model override.
+Chorus analysis stops at the **first bare `--` anywhere in the explicit agent
+argv**, even if Pi or a Commander-based backend would consume it as a required
+option value. (The outer `chorus agents run --` delimiter is already removed.)
+Persistent sentinels remain forbidden even in value position. After an unknown option without an inline
+value (including an unknown short form/cluster), the scan stops inferring
+precedence: its arity could make any subsequent token a value. Thus a later
+explicit model may coexist with the configured model, with native CLI semantics,
+rather than risk silently deleting configuration based on a value. Put known
+overrides before that ambiguous option, or use a supported inline unknown value.
+**All explicit tokens are forwarded unchanged**, including unknown options,
+subcommands, prompts and native separated-value syntax; this parser never rejects
+or rewrites the full explicit CLI surface.
+
+**Foreground subcommand scope.** Configured args are inserted after the deepest
+recognized command in these paths, before its explicit options/positionals:
+
+| Effective type | Recognized command paths |
+|---|---|
+| `codex` | `exec`, `exec resume`, `resume` |
+| `kiro` | `chat` |
+| `openclaw` | `agent` |
+
+Known root/parent options can precede these commands. For example, configured
+`--model chosen` plus explicit `--cd /work exec prompt` becomes
+`--cd /work exec --model chosen prompt`. Explicit `--model root exec prompt`
+retains the root model but still inserts the configured model after `exec`;
+to override the configured exec model, use `exec --model explicit prompt`.
+Command discovery skips known value spans, so `--enable exec` (Codex) or
+`--profile agent` (OpenClaw) does not falsely select a command. It stops at the
+first bare `--`, positional prompt/unknown command, or ambiguous option. A
+command name later in prompt data is never searched for.
+
+Without a recognized command, configured args retain prefix insertion. Unknown
+command grammars and other nested command paths are **not inferred**; Chorus
+cannot guarantee that persistent options work in those scopes. Use native
+explicit passthrough and omit incompatible persistent args for such commands.
+Unknown ordinary standalone flags and inline extension values are still allowed;
+this is not a blanket flag allowlist. Windows shim safety checks inspect only
+the actual retained configured tokens, regardless of where they were inserted.
+
+This registry recognizes spelling, not CLI-version compatibility. Checked against
+local help: Claude Code **2.1.267**, Codex **0.153.4** (including `exec resume`),
+Kiro **2.12.1**, Pi **0.85.1**, dsh **0.1.2-rc.1**, and OpenCode `--help`.
+Pi 0.85.1's `dist/cli/args.js` accepts **separated** `--model`/`--thinking`/
+`--provider` forms; use those, not equals syntax, with that version. Its
+`dist/main.js` exits on `--list-models` before reading the wake prompt, even with
+`-p`, so persistent model-inspection flags are protected. Codex's
+`codex-rs/core/src/config/mod.rs` confirms `model_reasoning_effort`, and
+`codex-rs/utils/cli/src/shared_options.rs` / `exec/src/cli.rs` confirm the hidden
+`--yolo`, `--not-so-yolo`, and `--experimental-json` aliases. OpenClaw's
+`src/cli/program/register.agent.ts` confirms `--model` and `--thinking` (its `-m`
+is **message**, not model). Chorus never translates an unsupported CLI spelling.
+
+```bash
+# Persistent model/effort are removed; explicit values are passed unchanged:
+chorus agents run --name reviewer -- --model opus --effort medium
+# Explicit session controls are allowed even though persistent ones are not:
+chorus agents run --name reviewer -- --resume SESSION_ID
+```
+
+**Legacy flat config and restart behavior.** With no nonempty `agents[]`, the
+legacy daemon path accepts top-level `args`/`env` for its sole agent. Foreground
+selection still requires `agents[]`. Adding another agent via `chorus agents add`
+or `chorus login --add` automatically folds the original flat credential profile
+into `agents[0]`, moving args/env and removing their top-level keys in the same
+atomic write. Malformed values move too, so subsequent validation identifies the
+original entry rather than losing settings. Already-shared top-level args/env
+is rejected without changing the file; only an actual flat fold removes keys.
+A partial flat file without its credential key cannot be folded and must be
+completed or converted manually before adding a profile. Flat daemon run validates
+customization before credential/network preflight (including detach).
+
+To convert a flat profile manually, move its URL, key, identity, `args`, and `env`
+into an entry and rename flat `agent` to `agentType`:
+
+```json
+{
+  "agents": [{
+    "agentName": "work", "agentType": "pi",
+    "url": "https://chorus.example.com", "apiKey": "cho_replace_me",
+    "args": ["--thinking", "high"], "env": { "PROVIDER_REGION": "us-east-1" }
+  }]
+}
+```
+
+The daemon snapshots customization at startup, including spawners used by newly
+created runtime-cwd contexts. Editing daemon.json does not hot-reload existing
+children or future wakes in that daemon: **restart the daemon** to apply changes.
+Every new `chorus agents run` invocation rereads the selected profile; an already
+running foreground child is unaffected. Removing the fields restores defaults.
 
 ---
 
