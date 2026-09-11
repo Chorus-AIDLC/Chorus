@@ -1085,6 +1085,7 @@ function IdeaDetailPanelContent({
       <MoveIdeaDialog
         open={showMoveDialog}
         onOpenChange={setShowMoveDialog}
+        onCloseAutoFocus={returnFocusToActions}
         ideaUuid={ideaUuid}
         projectUuid={projectUuid}
         onMoved={() => onClose()}
@@ -1109,6 +1110,7 @@ function IdeaDetailPanelContent({
         <NewIdeaDialog
           open={showDeriveDialog}
           onOpenChange={setShowDeriveDialog}
+          onCloseAutoFocus={returnFocusToActions}
           projectUuid={projectUuid}
           parentUuid={idea.uuid}
           parentTitle={idea.title}

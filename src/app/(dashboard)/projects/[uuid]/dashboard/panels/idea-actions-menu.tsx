@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, type ReactNode, type RefObject } from "react";
+import { useId, useState, type ReactNode, type RefObject } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ArrowRightLeft, CheckCircle2, ChevronDown, Copy, GitFork, Link, Pencil, Play, Rocket, Trash2 } from "lucide-react";
@@ -14,8 +14,9 @@ import { isImeComposing } from "@/lib/ime";
 
 /** aria-disabled rather than Radix disabled: unavailable operations remain in
  * the roving focus order so keyboard users can discover the explanation. */
-function ActionItem({ label, icon, reason, onSelect, destructive = false }: {
-  label: string; icon: ReactNode; reason?: string; onSelect: () => void; destructive?: boolean;
+function ActionItem({ label, icon, reason, onSelect, onTooltipEscape, destructive = false }: {
+  label: string; icon: ReactNode; reason?: string; onSelect: () => void;
+  onTooltipEscape: () => void; destructive?: boolean;
 }) {
   const id = useId();
   const item = (
@@ -40,7 +41,13 @@ function ActionItem({ label, icon, reason, onSelect, destructive = false }: {
   return reason ? (
     <Tooltip>
       <TooltipTrigger asChild>{item}</TooltipTrigger>
-      <TooltipContent side="left" className="z-[120] max-w-64">{reason}</TooltipContent>
+      <TooltipContent
+        side="left"
+        className="z-[120] max-w-64"
+        onEscapeKeyDown={onTooltipEscape}
+      >
+        {reason}
+      </TooltipContent>
     </Tooltip>
   ) : item;
 }
@@ -70,6 +77,7 @@ interface IdeaActionsMenuProps {
 export function IdeaActionsMenu(props: IdeaActionsMenuProps) {
   const t = useTranslations();
   const ta = useTranslations("ideaTracker.panel.actions");
+  const [menuOpen, setMenuOpen] = useState(false);
   const busyReason = props.busy ? ta("busy") : undefined;
   const stageReason = busyReason || props.stageReason || props.stageDataReason;
   const copy = async (link: boolean) => {
@@ -97,25 +105,25 @@ export function IdeaActionsMenu(props: IdeaActionsMenuProps) {
         const mutationReason = busyReason || (start.busy || yolo.busy ? ta("busy") : undefined);
         return (
           <TooltipProvider delayDuration={300}>
-            <DropdownMenu>
+            <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
               <DropdownMenuTrigger asChild>
                 <Button ref={props.triggerRef} variant="outline" size="sm" className="h-8 gap-1.5 border-border px-2.5">
                   {t("common.actions")}<ChevronDown className="h-3.5 w-3.5" aria-hidden />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="z-[100] w-64 max-w-[calc(100vw-1rem)] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto">
-                <ActionItem label={t("elaboration.verifyButton")} icon={<CheckCircle2 />} reason={mutationReason || props.stageReason || props.verifyReason} onSelect={props.onVerify} />
-                <ActionItem label={start.label} icon={<Play />} reason={mutationReason || start.disabledReason} onSelect={start.onSelect} />
-                <ActionItem label={yolo.label} icon={<Rocket />} reason={mutationReason || yolo.disabledReason} onSelect={yolo.onSelect} />
+                <ActionItem label={t("elaboration.verifyButton")} icon={<CheckCircle2 />} reason={mutationReason || props.stageReason || props.verifyReason} onSelect={props.onVerify} onTooltipEscape={() => setMenuOpen(false)} />
+                <ActionItem label={start.label} icon={<Play />} reason={mutationReason || start.disabledReason} onSelect={start.onSelect} onTooltipEscape={() => setMenuOpen(false)} />
+                <ActionItem label={yolo.label} icon={<Rocket />} reason={mutationReason || yolo.disabledReason} onSelect={yolo.onSelect} onTooltipEscape={() => setMenuOpen(false)} />
                 <DropdownMenuSeparator />
-                <ActionItem label={t("ideaTracker.lineage.deriveIdea")} icon={<GitFork />} reason={mutationReason} onSelect={props.onDerive} />
-                <ActionItem label={t("ideas.actions.move")} icon={<ArrowRightLeft />} reason={mutationReason} onSelect={props.onMove} />
-                <ActionItem label={t("ideas.editIdea")} icon={<Pencil />} reason={mutationReason || props.editReason} onSelect={props.onEdit} />
+                <ActionItem label={t("ideaTracker.lineage.deriveIdea")} icon={<GitFork />} reason={mutationReason} onSelect={props.onDerive} onTooltipEscape={() => setMenuOpen(false)} />
+                <ActionItem label={t("ideas.actions.move")} icon={<ArrowRightLeft />} reason={mutationReason} onSelect={props.onMove} onTooltipEscape={() => setMenuOpen(false)} />
+                <ActionItem label={t("ideas.editIdea")} icon={<Pencil />} reason={mutationReason || props.editReason} onSelect={props.onEdit} onTooltipEscape={() => setMenuOpen(false)} />
                 <DropdownMenuSeparator />
-                <ActionItem label={ta("copyLink")} icon={<Link />} onSelect={() => { void copy(true); }} />
-                <ActionItem label={ta("copyUuid")} icon={<Copy />} onSelect={() => { void copy(false); }} />
+                <ActionItem label={ta("copyLink")} icon={<Link />} onSelect={() => { void copy(true); }} onTooltipEscape={() => setMenuOpen(false)} />
+                <ActionItem label={ta("copyUuid")} icon={<Copy />} onSelect={() => { void copy(false); }} onTooltipEscape={() => setMenuOpen(false)} />
                 <DropdownMenuSeparator />
-                <ActionItem label={t("ideas.deleteIdea")} icon={<Trash2 />} reason={mutationReason} onSelect={props.onDelete} destructive />
+                <ActionItem label={t("ideas.deleteIdea")} icon={<Trash2 />} reason={mutationReason} onSelect={props.onDelete} onTooltipEscape={() => setMenuOpen(false)} destructive />
               </DropdownMenuContent>
             </DropdownMenu>
           </TooltipProvider>

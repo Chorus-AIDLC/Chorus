@@ -51,6 +51,7 @@ interface MoveCounts {
 interface MoveIdeaDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCloseAutoFocus?: (event: Event) => void;
   ideaUuid: string;
   /** Current project — excluded from the target list. */
   projectUuid: string;
@@ -62,6 +63,7 @@ interface MoveIdeaDialogProps {
 export function MoveIdeaDialog({
   open,
   onOpenChange,
+  onCloseAutoFocus,
   ideaUuid,
   projectUuid,
   onMoved,
@@ -238,7 +240,7 @@ export function MoveIdeaDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>{t("moveDialog.title")}</DialogTitle>
           <DialogDescription>{t("moveDialog.description")}</DialogDescription>

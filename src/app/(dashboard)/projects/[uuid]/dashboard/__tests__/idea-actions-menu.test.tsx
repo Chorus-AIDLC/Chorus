@@ -87,6 +87,18 @@ describe("Tracker Actions — real Radix interactions", () => {
     expect(screen.getByRole("menuitem", { name: "Edit Idea" }).getAttribute("aria-disabled")).toBe("true");
   });
 
+  it("closes the menu and restores trigger focus when Escape dismisses a disabled-item tooltip", async () => {
+    const user = userEvent.setup();
+    render(<Harness overrides={{ stageReason: en.ideaTracker.lineage.containerHint }} />);
+    await open(user);
+    const item = screen.getByRole("menuitem", { name: "Start Development" });
+    act(() => item.focus());
+    expect(await screen.findByRole("tooltip")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Actions" }));
+  });
+
   it.each([
     { overrides: { assignee: null }, label: "Yolo", reason: en.yolo.errorAssigneeNotAgent },
     { overrides: { proposals: [] }, label: "Start Development", reason: en.startDevelopment.errorNoApprovedProposal },
