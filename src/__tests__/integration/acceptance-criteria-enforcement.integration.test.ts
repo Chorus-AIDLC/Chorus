@@ -35,6 +35,8 @@ const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockIsA
       createMany: vi.fn(),
       deleteMany: vi.fn(),
     },
+    $queryRaw: vi.fn(async () => []),
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockPrisma)),
   };
   return {
     mockPrisma,

@@ -57,7 +57,12 @@ vi.mock("@/lib/uuid-resolver", () => ({
 vi.mock("@/services/document.service", () => ({ createDocumentFromProposal: vi.fn() }));
 vi.mock("@/services/task.service", () => ({ createTasksFromProposal: vi.fn() }));
 
-import { addDocumentDraft, updateDocumentDraft, updateTaskDraft } from "@/services/proposal.service";
+import {
+  addTaskDraft,
+  removeDocumentDraft,
+  updateDocumentDraft,
+  updateTaskDraft,
+} from "@/services/proposal.service";
 
 const baseProposal = () => ({
   uuid: "proposal-1",
@@ -107,16 +112,29 @@ describe("proposal draft mutators under concurrency (#555)", () => {
     expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps a concurrent add and update on task drafts", async () => {
+  it("keeps a concurrent add and update on the same task-draft list", async () => {
     await Promise.all([
       updateTaskDraft("proposal-1", "company-1", "task-a", { title: "Task A updated" }),
-      addDocumentDraft("proposal-1", "company-1", { type: "spec", title: "C", content: "c" }),
+      addTaskDraft("proposal-1", "company-1", {
+        title: "Task C",
+        acceptanceCriteriaItems: [{ description: "done" }],
+      }),
     ]);
 
     const tasks = state.proposal!.taskDrafts as Array<{ uuid: string; title: string }>;
-    const docs = state.proposal!.documentDrafts as Array<{ uuid: string; title: string }>;
-    expect(tasks.map((t) => t.title)).toEqual(["Task A updated", "Task B"]);
-    expect(docs.map((d) => d.title)).toEqual(["A", "B", "C"]);
+    expect(tasks.map((t) => t.title)).toEqual(["Task A updated", "Task B", "Task C"]);
+  });
+
+  it("keeps a concurrent update and removal on the same document-draft list", async () => {
+    await Promise.all([
+      updateDocumentDraft("proposal-1", "company-1", "doc-a", { title: "A updated" }),
+      removeDocumentDraft("proposal-1", "company-1", "doc-b"),
+    ]);
+
+    const drafts = state.proposal!.documentDrafts as Array<{ uuid: string; title: string }>;
+    expect(drafts).toEqual([
+      expect.objectContaining({ uuid: "doc-a", title: "A updated" }),
+    ]);
   });
 
   it("still reports a proposal that is not in draft status", async () => {

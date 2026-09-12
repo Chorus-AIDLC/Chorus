@@ -4,7 +4,7 @@
 // Container Model: Proposal contains documentDrafts and taskDrafts
 
 import { randomUUID } from "crypto";
-import { prisma, TransactionClient } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
@@ -15,6 +15,11 @@ import {
   hasNonEmptyAcceptanceCriteria,
   normalizeAcceptanceCriteria,
 } from "@/lib/acceptance-criteria";
+
+type ExtendedTransactionClient = Omit<
+  typeof prisma,
+  "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends"
+>;
 
 // ===== UUID Helper Functions =====
 
@@ -1139,7 +1144,7 @@ async function withLockedDraftProposal<T>(
   proposalUuid: string,
   companyUuid: string,
   mutate: (
-    tx: TransactionClient,
+    tx: ExtendedTransactionClient,
     proposal: Prisma.ProposalGetPayload<Record<string, never>>
   ) => Promise<T>
 ): Promise<T> {
