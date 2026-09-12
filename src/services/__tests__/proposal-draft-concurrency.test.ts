@@ -19,7 +19,7 @@ const { mockPrisma, state, calls, mockEventBus } = vi.hoisted(() => {
     proposal: {
       findFirst: vi.fn(async () => {
         calls.push("findFirst");
-        return state.proposal;
+        return state.proposal ? structuredClone(state.proposal) : null;
       }),
       update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         calls.push("update");
