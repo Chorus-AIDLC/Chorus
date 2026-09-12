@@ -16,6 +16,11 @@ import {
   normalizeAcceptanceCriteria,
 } from "@/lib/acceptance-criteria";
 
+type ExtendedTransactionClient = Omit<
+  typeof prisma,
+  "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends"
+>;
+
 // ===== UUID Helper Functions =====
 
 // Ensure DocumentDraft has a UUID
@@ -1127,35 +1132,61 @@ export async function submitProposal(
   return formatProposalResponse(updated);
 }
 
+/**
+ * Run a read-modify-write of a draft proposal's JSON draft lists under a row
+ * lock. `documentDrafts` / `taskDrafts` are whole JSON columns: two concurrent
+ * updates that read the same snapshot and each write back "their" array lose
+ * the other's change with the last write winning (#555). `SELECT ... FOR
+ * UPDATE` serializes them on the proposal row for the length of the
+ * transaction, so the second caller reads the first caller's result.
+ */
+async function withLockedDraftProposal<T>(
+  proposalUuid: string,
+  companyUuid: string,
+  mutate: (
+    tx: ExtendedTransactionClient,
+    proposal: Prisma.ProposalGetPayload<Record<string, never>>
+  ) => Promise<T>
+): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "uuid" FROM "Proposal" WHERE "uuid" = ${proposalUuid} FOR UPDATE`;
+    const proposal = await tx.proposal.findFirst({
+      where: { uuid: proposalUuid, companyUuid, status: "draft" },
+    });
+    if (!proposal) {
+      throw new Error("Proposal not found or not in draft status");
+    }
+    return mutate(tx, proposal);
+  });
+}
+
 // Add document draft to Proposal
 export async function addDocumentDraft(
   proposalUuid: string,
   companyUuid: string,
   draft: Omit<DocumentDraft, "uuid"> & { uuid?: string }
 ): Promise<ProposalResponse> {
-  const proposal = await prisma.proposal.findFirst({
-    where: { uuid: proposalUuid, companyUuid, status: "draft" },
-  });
+  const { updated, projectUuid } = await withLockedDraftProposal(
+    proposalUuid,
+    companyUuid,
+    async (tx, proposal) => {
+      const existingDrafts = (proposal.documentDrafts as unknown as DocumentDraft[]) || [];
+      const newDraft = ensureDocumentDraftUuid(draft);
+      const updatedDrafts = [...existingDrafts, newDraft];
+      const updated = await tx.proposal.update({
+        where: { uuid: proposalUuid },
+        data: {
+          documentDrafts: updatedDrafts as unknown as Prisma.InputJsonValue,
+        },
+        include: {
+          project: { select: { uuid: true, name: true } },
+        },
+      });
+      return { updated, projectUuid: proposal.projectUuid };
+    }
+  );
 
-  if (!proposal) {
-    throw new Error("Proposal not found or not in draft status");
-  }
-
-  const existingDrafts = (proposal.documentDrafts as unknown as DocumentDraft[]) || [];
-  const newDraft = ensureDocumentDraftUuid(draft);
-  const updatedDrafts = [...existingDrafts, newDraft];
-
-  const updated = await prisma.proposal.update({
-    where: { uuid: proposalUuid },
-    data: {
-      documentDrafts: updatedDrafts as unknown as Prisma.InputJsonValue,
-    },
-    include: {
-      project: { select: { uuid: true, name: true } },
-    },
-  });
-
-  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
+  eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
@@ -1165,38 +1196,36 @@ export async function addTaskDraft(
   companyUuid: string,
   draft: Omit<TaskDraft, "uuid"> & { uuid?: string }
 ): Promise<ProposalResponse> {
-  const proposal = await prisma.proposal.findFirst({
-    where: { uuid: proposalUuid, companyUuid, status: "draft" },
-  });
+  const { updated, projectUuid } = await withLockedDraftProposal(
+    proposalUuid,
+    companyUuid,
+    async (tx, proposal) => {
+      // Acceptance criteria are mandatory on creation: a task draft must carry at
+      // least one criterion with a non-blank description.
+      if (!hasNonEmptyAcceptanceCriteria(draft.acceptanceCriteriaItems)) {
+        throw new Error(ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE);
+      }
 
-  if (!proposal) {
-    throw new Error("Proposal not found or not in draft status");
-  }
+      const existingDrafts = (proposal.taskDrafts as unknown as TaskDraft[]) || [];
+      const newDraft = ensureTaskDraftUuid({
+        ...draft,
+        acceptanceCriteriaItems: normalizeAcceptanceCriteria(draft.acceptanceCriteriaItems),
+      });
+      const updatedDrafts = [...existingDrafts, newDraft];
+      const updated = await tx.proposal.update({
+        where: { uuid: proposalUuid },
+        data: {
+          taskDrafts: updatedDrafts as unknown as Prisma.InputJsonValue,
+        },
+        include: {
+          project: { select: { uuid: true, name: true } },
+        },
+      });
+      return { updated, projectUuid: proposal.projectUuid };
+    }
+  );
 
-  // Acceptance criteria are mandatory on creation: a task draft must carry at
-  // least one criterion with a non-blank description.
-  if (!hasNonEmptyAcceptanceCriteria(draft.acceptanceCriteriaItems)) {
-    throw new Error(ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE);
-  }
-
-  const existingDrafts = (proposal.taskDrafts as unknown as TaskDraft[]) || [];
-  const newDraft = ensureTaskDraftUuid({
-    ...draft,
-    acceptanceCriteriaItems: normalizeAcceptanceCriteria(draft.acceptanceCriteriaItems),
-  });
-  const updatedDrafts = [...existingDrafts, newDraft];
-
-  const updated = await prisma.proposal.update({
-    where: { uuid: proposalUuid },
-    data: {
-      taskDrafts: updatedDrafts as unknown as Prisma.InputJsonValue,
-    },
-    include: {
-      project: { select: { uuid: true, name: true } },
-    },
-  });
-
-  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
+  eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
@@ -1207,34 +1236,32 @@ export async function updateDocumentDraft(
   draftUuid: string,
   updates: Partial<Omit<DocumentDraft, "uuid">>
 ): Promise<ProposalResponse> {
-  const proposal = await prisma.proposal.findFirst({
-    where: { uuid: proposalUuid, companyUuid, status: "draft" },
-  });
+  const { updated, projectUuid } = await withLockedDraftProposal(
+    proposalUuid,
+    companyUuid,
+    async (tx, proposal) => {
+      const existingDrafts = (proposal.documentDrafts as unknown as DocumentDraft[]) || [];
+      const draftIndex = existingDrafts.findIndex(d => d.uuid === draftUuid);
 
-  if (!proposal) {
-    throw new Error("Proposal not found or not in draft status");
-  }
+      if (draftIndex === -1) {
+        throw new Error("Document draft not found");
+      }
 
-  const existingDrafts = (proposal.documentDrafts as unknown as DocumentDraft[]) || [];
-  const draftIndex = existingDrafts.findIndex(d => d.uuid === draftUuid);
+      existingDrafts[draftIndex] = { ...existingDrafts[draftIndex], ...updates };
+      const updated = await tx.proposal.update({
+        where: { uuid: proposalUuid },
+        data: {
+          documentDrafts: existingDrafts as unknown as Prisma.InputJsonValue,
+        },
+        include: {
+          project: { select: { uuid: true, name: true } },
+        },
+      });
+      return { updated, projectUuid: proposal.projectUuid };
+    }
+  );
 
-  if (draftIndex === -1) {
-    throw new Error("Document draft not found");
-  }
-
-  existingDrafts[draftIndex] = { ...existingDrafts[draftIndex], ...updates };
-
-  const updated = await prisma.proposal.update({
-    where: { uuid: proposalUuid },
-    data: {
-      documentDrafts: existingDrafts as unknown as Prisma.InputJsonValue,
-    },
-    include: {
-      project: { select: { uuid: true, name: true } },
-    },
-  });
-
-  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
+  eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
@@ -1245,45 +1272,43 @@ export async function updateTaskDraft(
   draftUuid: string,
   updates: Partial<Omit<TaskDraft, "uuid">>
 ): Promise<ProposalResponse> {
-  const proposal = await prisma.proposal.findFirst({
-    where: { uuid: proposalUuid, companyUuid, status: "draft" },
-  });
+  const { updated, projectUuid } = await withLockedDraftProposal(
+    proposalUuid,
+    companyUuid,
+    async (tx, proposal) => {
+      const existingDrafts = (proposal.taskDrafts as unknown as TaskDraft[]) || [];
+      const draftIndex = existingDrafts.findIndex(d => d.uuid === draftUuid);
 
-  if (!proposal) {
-    throw new Error("Proposal not found or not in draft status");
-  }
+      if (draftIndex === -1) {
+        throw new Error("Task draft not found");
+      }
 
-  const existingDrafts = (proposal.taskDrafts as unknown as TaskDraft[]) || [];
-  const draftIndex = existingDrafts.findIndex(d => d.uuid === draftUuid);
+      // Partial-update semantics for acceptance criteria: if the caller supplied the
+      // field (including an explicit empty array), it must be non-empty — the field
+      // cannot be used to clear AC. If the caller omitted it, existing AC are kept.
+      const appliedUpdates = { ...updates };
+      if ("acceptanceCriteriaItems" in updates) {
+        if (!hasNonEmptyAcceptanceCriteria(updates.acceptanceCriteriaItems)) {
+          throw new Error(ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE);
+        }
+        appliedUpdates.acceptanceCriteriaItems = normalizeAcceptanceCriteria(updates.acceptanceCriteriaItems);
+      }
 
-  if (draftIndex === -1) {
-    throw new Error("Task draft not found");
-  }
-
-  // Partial-update semantics for acceptance criteria: if the caller supplied the
-  // field (including an explicit empty array), it must be non-empty — the field
-  // cannot be used to clear AC. If the caller omitted it, existing AC are kept.
-  const appliedUpdates = { ...updates };
-  if ("acceptanceCriteriaItems" in updates) {
-    if (!hasNonEmptyAcceptanceCriteria(updates.acceptanceCriteriaItems)) {
-      throw new Error(ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE);
+      existingDrafts[draftIndex] = { ...existingDrafts[draftIndex], ...appliedUpdates };
+      const updated = await tx.proposal.update({
+        where: { uuid: proposalUuid },
+        data: {
+          taskDrafts: existingDrafts as unknown as Prisma.InputJsonValue,
+        },
+        include: {
+          project: { select: { uuid: true, name: true } },
+        },
+      });
+      return { updated, projectUuid: proposal.projectUuid };
     }
-    appliedUpdates.acceptanceCriteriaItems = normalizeAcceptanceCriteria(updates.acceptanceCriteriaItems);
-  }
+  );
 
-  existingDrafts[draftIndex] = { ...existingDrafts[draftIndex], ...appliedUpdates };
-
-  const updated = await prisma.proposal.update({
-    where: { uuid: proposalUuid },
-    data: {
-      taskDrafts: existingDrafts as unknown as Prisma.InputJsonValue,
-    },
-    include: {
-      project: { select: { uuid: true, name: true } },
-    },
-  });
-
-  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
+  eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
@@ -1293,30 +1318,28 @@ export async function removeDocumentDraft(
   companyUuid: string,
   draftUuid: string
 ): Promise<ProposalResponse> {
-  const proposal = await prisma.proposal.findFirst({
-    where: { uuid: proposalUuid, companyUuid, status: "draft" },
-  });
+  const { updated, projectUuid } = await withLockedDraftProposal(
+    proposalUuid,
+    companyUuid,
+    async (tx, proposal) => {
+      const existingDrafts = (proposal.documentDrafts as unknown as DocumentDraft[]) || [];
+      const updatedDrafts = existingDrafts.filter(d => d.uuid !== draftUuid);
+      const updated = await tx.proposal.update({
+        where: { uuid: proposalUuid },
+        data: {
+          documentDrafts: updatedDrafts.length > 0
+            ? (updatedDrafts as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+        },
+        include: {
+          project: { select: { uuid: true, name: true } },
+        },
+      });
+      return { updated, projectUuid: proposal.projectUuid };
+    }
+  );
 
-  if (!proposal) {
-    throw new Error("Proposal not found or not in draft status");
-  }
-
-  const existingDrafts = (proposal.documentDrafts as unknown as DocumentDraft[]) || [];
-  const updatedDrafts = existingDrafts.filter(d => d.uuid !== draftUuid);
-
-  const updated = await prisma.proposal.update({
-    where: { uuid: proposalUuid },
-    data: {
-      documentDrafts: updatedDrafts.length > 0
-        ? (updatedDrafts as unknown as Prisma.InputJsonValue)
-        : Prisma.JsonNull,
-    },
-    include: {
-      project: { select: { uuid: true, name: true } },
-    },
-  });
-
-  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
+  eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
@@ -1326,35 +1349,33 @@ export async function removeTaskDraft(
   companyUuid: string,
   draftUuid: string
 ): Promise<ProposalResponse> {
-  const proposal = await prisma.proposal.findFirst({
-    where: { uuid: proposalUuid, companyUuid, status: "draft" },
-  });
+  const { updated, projectUuid } = await withLockedDraftProposal(
+    proposalUuid,
+    companyUuid,
+    async (tx, proposal) => {
+      const existingDrafts = (proposal.taskDrafts as unknown as TaskDraft[]) || [];
+      const updatedDrafts = existingDrafts
+        .filter(d => d.uuid !== draftUuid)
+        .map(d => ({
+          ...d,
+          dependsOnDraftUuids: d.dependsOnDraftUuids?.filter(uuid => uuid !== draftUuid),
+        }));
+      const updated = await tx.proposal.update({
+        where: { uuid: proposalUuid },
+        data: {
+          taskDrafts: updatedDrafts.length > 0
+            ? (updatedDrafts as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+        },
+        include: {
+          project: { select: { uuid: true, name: true } },
+        },
+      });
+      return { updated, projectUuid: proposal.projectUuid };
+    }
+  );
 
-  if (!proposal) {
-    throw new Error("Proposal not found or not in draft status");
-  }
-
-  const existingDrafts = (proposal.taskDrafts as unknown as TaskDraft[]) || [];
-  const updatedDrafts = existingDrafts
-    .filter(d => d.uuid !== draftUuid)
-    .map(d => ({
-      ...d,
-      dependsOnDraftUuids: d.dependsOnDraftUuids?.filter(uuid => uuid !== draftUuid),
-    }));
-
-  const updated = await prisma.proposal.update({
-    where: { uuid: proposalUuid },
-    data: {
-      taskDrafts: updatedDrafts.length > 0
-        ? (updatedDrafts as unknown as Prisma.InputJsonValue)
-        : Prisma.JsonNull,
-    },
-    include: {
-      project: { select: { uuid: true, name: true } },
-    },
-  });
-
-  eventBus.emitChange({ companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
+  eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
   return formatProposalResponse(updated);
 }
 
