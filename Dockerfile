@@ -80,8 +80,9 @@ COPY --from=builder /app/node_modules/dotenv ./node_modules/dotenv
 # Copy PGlite packages for embedded DB mode (when no DATABASE_URL is provided)
 COPY --from=builder /pglite-deps/node_modules/@electric-sql ./node_modules/@electric-sql
 
-# Copy entrypoint script
+# Copy entrypoint script + sourced secret-bootstrap library
 COPY docker-entrypoint.sh /usr/local/bin/
+COPY docker/ensure-secret.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8637

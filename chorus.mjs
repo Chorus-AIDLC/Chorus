@@ -315,11 +315,39 @@ function isPortOccupied(host, tcpPort, timeoutMs = 1000) {
   });
 }
 
+// Publicly known placeholder secrets (GitHub #559). Must stay identical to
+// KNOWN_INSECURE_SECRETS in src/lib/secret-check.ts and
+// CHORUS_KNOWN_INSECURE_SECRETS in docker/ensure-secret.sh (parity-tested).
+const KNOWN_INSECURE_SECRETS = [
+  "chorus-docker-secret-change-in-production",
+  "chorus-local-secret",
+  "your-secret-key-change-in-production",
+  "change-me-to-a-random-secret",
+];
+
 function ensureSecret() {
   const secretPath = join(dataDir, ".secret");
-  if (process.env.NEXTAUTH_SECRET) return;
+  const fromEnv = process.env.NEXTAUTH_SECRET;
+  if (fromEnv) {
+    if (!KNOWN_INSECURE_SECRETS.includes(fromEnv.trim())) return;
+    // A pasted placeholder is treated exactly like "unset": fall through to the
+    // persisted / generated secret instead of signing JWTs with a public value.
+    console.error(
+      "WARNING: NEXTAUTH_SECRET is set to a publicly known placeholder (GitHub #559); ignoring it and using the persisted secret in " +
+        secretPath
+    );
+  }
   if (existsSync(secretPath)) {
-    process.env.NEXTAUTH_SECRET = readFileSync(secretPath, "utf8").trim();
+    // Fail closed, matching docker/ensure-secret.sh: a persisted file that is
+    // empty or holds a publicly known placeholder must never be exported.
+    const persisted = readFileSync(secretPath, "utf8").trim();
+    if (!persisted || KNOWN_INSECURE_SECRETS.includes(persisted)) {
+      console.error(
+        `ERROR: the secret persisted at ${secretPath} is ${persisted ? "a publicly known placeholder" : "empty"} (GitHub #559); refusing to start — delete the file to regenerate, or set NEXTAUTH_SECRET explicitly.`
+      );
+      process.exit(1);
+    }
+    process.env.NEXTAUTH_SECRET = persisted;
     return;
   }
   const secret = createHash("sha256")
