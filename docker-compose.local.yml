@@ -12,7 +12,15 @@ services:
     environment:
       # No DATABASE_URL — entrypoint auto-starts embedded PGlite
       - REDIS_URL=
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-chorus-local-secret}
+      # ── JWT signing secret (signs user + super-admin session tokens) ──────
+      # Leave empty and the container auto-generates a random secret on first
+      # start and persists it to /app/data/.secret in the chorus-local-data
+      # volume below (single replica only). To set your own value, put it in
+      # .env or the environment:
+      #   openssl rand -base64 32
+      # Rotating the secret logs every user out. See docs/DOCKER.md
+      # ("JWT secret security") and GitHub issue #559.
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
       - COOKIE_SECURE=false
       - DEFAULT_USER=${DEFAULT_USER:-admin@example.com}
       - DEFAULT_PASSWORD=${DEFAULT_PASSWORD:-changeme}

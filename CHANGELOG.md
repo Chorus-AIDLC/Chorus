@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.18.1] - 2026-09-12
+
+### Security
+- **Publicly known default JWT signing secret removed** (#559): `docker-compose.yml` no longer falls back to `chorus-docker-secret-change-in-production` and `docker-compose.local.yml` no longer falls back to `chorus-local-secret`. Anyone who had read the repository could use those values to forge `user_session` **and super-admin** `admin_session` tokens against any default Compose deployment. Both files now pass through `NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}` with no default, and `docker-compose.yml` gains a `chorus-app-data:/app/data` volume for the app service.
+  - **Docker entrypoint auto-generates and persists the secret.** When `NEXTAUTH_SECRET` is unset, empty, or equal to a known public placeholder (`chorus-docker-secret-change-in-production`, `chorus-local-secret`, `your-secret-key-change-in-production`, `change-me-to-a-random-secret`), the image reuses `/app/data/.secret` or generates a new value with `openssl rand -hex 32` (mode `0600`) before running migrations. It never falls back to a public value, never prints the secret, and fails closed on any file error. An explicit non-placeholder `NEXTAUTH_SECRET` disables this entirely. Auto-generation is a **single-replica** guarantee — multi-replica deployments must set the same `NEXTAUTH_SECRET` on every replica.
+  - **App-layer startup warning.** The app now logs an `error`-level `security` entry (`reason: "default_secret"`) when a known placeholder is still in effect (covers non-Docker deployments and pasted placeholders), and a `warn`-level `reason: "missing_secret"` entry when the variable is unset. Behaviour when unset is otherwise unchanged.
+  - **Docs**: new "JWT secret security" section in `docs/DOCKER.md`; `.env.example` and the ARCHITECTURE docs updated.
+- **Migration impact** — rotating the JWT secret invalidates every existing session, so read the row that matches your deployment:
+  - (a) **`docker-compose.local.yml` (embedded PGlite)** — `/app/data` is already a volume, so the secret is generated once on the first start after upgrading; **all users re-login once**.
+  - (b) **`docker-compose.yml` (Postgres) with the updated compose file** — the new `chorus-app-data` volume persists the secret; it is generated once and **all users re-login once**.
+  - (c) **`docker-compose.yml` NOT updated (new image pulled, old compose file kept)** — the old file still passes the public placeholder, which the entrypoint now ignores, and it mounts no `/app/data` volume, so the secret is regenerated on **every container recreate / image upgrade**, forcing a re-login each time. Secure, but noisy — the startup log says so explicitly. Fix it by adding a `/app/data` volume (pull the new compose file) or by setting `NEXTAUTH_SECRET` explicitly (`openssl rand -base64 32`).
+  - (d) **Explicit secure `NEXTAUTH_SECRET`, AWS CDK deployment, or the npm `chorus` launcher** — no change. CDK already injects a random value from Secrets Manager and the launcher already persists its own generated secret to `~/.chorus/.secret`.
+
+---
+
 ## [0.18.0] - 2026-09-11
 
 ### Added

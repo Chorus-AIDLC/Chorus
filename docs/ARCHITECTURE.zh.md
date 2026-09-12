@@ -1526,7 +1526,10 @@ services:
     environment:
       - DATABASE_URL=postgres://chorus:chorus@db:5432/chorus
       - NEXTAUTH_URL=http://localhost:8637
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      # 留空即可：镜像首次启动时自动生成随机 JWT 密钥并持久化到
+      # /app/data/.secret（仅适用于单副本）。生产 / 多副本部署请显式设置
+      #（openssl rand -base64 32）。
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
       - OIDC_ISSUER=${OIDC_ISSUER}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
@@ -1536,6 +1539,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./prisma:/app/prisma
+      - chorus-app-data:/app/data   # 持久化自动生成的 JWT 密钥
 
   db:
     image: postgres:16-alpine
@@ -1555,7 +1559,10 @@ services:
 
 volumes:
   postgres_data:
+  chorus-app-data:
 ```
+
+**JWT 签名密钥（`NEXTAUTH_SECRET`）**：用于签发 `user_session` 和 `admin_session` 两种 JWT。随仓库交付的 compose 文件**不再带任何默认值**（GitHub #559 — 之前的公开回退值使任何人都能伪造会话）。当该变量为空或等于已知的公开占位符时，`docker-entrypoint.sh`（通过 `docker/ensure-secret.sh`）会在运行迁移之前复用或生成一个随机密钥并存入 `/app/data/.secret`（权限 `0600`，从不打印到日志）；因此 `/app/data` 必须是持久化卷，且自动生成仅保证单副本可用 — 多副本部署必须在所有副本上显式注入同一个值（CDK 堆栈已通过 Secrets Manager 实现）。此外 `src/instrumentation.ts` 会在启动时检测占位符，一旦仍在使用则输出 `error` 级别的 `security` 告警。轮换密钥会使所有会话失效。详见 [DOCKER.md → JWT secret security](DOCKER.md#jwt-secret-security)。
 
 ### 8.2 生产部署（AWS CDK）
 
@@ -1655,7 +1662,10 @@ DATABASE_URL=postgres://chorus:chorus@localhost:5432/chorus
 
 # NextAuth
 NEXTAUTH_URL=http://localhost:8637
-NEXTAUTH_SECRET=your-secret-key
+# JWT 签名密钥（普通用户 + 超级管理员会话）。生成：openssl rand -base64 32
+# Docker 中可不设置，将自动生成并持久化到 /app/data/.secret（仅单副本）。
+# 已知占位符（如 your-secret-key-change-in-production）会被检测并拒绝/告警（#559）。
+NEXTAUTH_SECRET=<openssl rand -base64 32>
 
 # Super Admin（系统启动配置，管理 Company 和全局设置）
 SUPER_ADMIN_EMAIL=admin@example.com
