@@ -7,7 +7,7 @@
  * are unavailable (e.g. Windows dev boxes).
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -36,6 +36,16 @@ function hasBin(bin: string): boolean {
 const shAvailable = hasBin("sh") && fs.existsSync(LIB);
 const opensslAvailable = shAvailable && spawnSync("sh", ["-c", "command -v openssl"], { stdio: "ignore" }).status === 0;
 const canRun = shAvailable && opensslAvailable;
+// BusyBox ash is the shell inside the production image; exercise the new
+// failure / race paths under it too when a `busybox` binary is on PATH.
+const busybox =
+  canRun && spawnSync("sh", ["-c", "command -v busybox"], { stdio: "ignore" }).status === 0
+    ? spawnSync("busybox", ["sh", "-c", "true"], { stdio: "ignore" }).status === 0
+    : false;
+
+type Shell = { name: string; argv: string[] };
+const HOST_SH: Shell = { name: "sh", argv: ["sh"] };
+const BUSYBOX_SH: Shell = { name: "busybox sh", argv: ["busybox", "sh"] };
 
 interface RunResult {
   status: number | null;
@@ -51,13 +61,17 @@ interface RunResult {
  * Source the library, call ensure_nextauth_secret, then print the exported
  * value on a sentinel line (only used by tests — the library itself never
  * prints the secret). `extraAfter` runs after the call and before the sentinel.
+ * `prelude` runs BEFORE the library is sourced (same shell, so stub functions
+ * such as `openssl(){ ...; }` are visible inside the library's subshells).
  */
 function runEnsure(
   dataDir: string,
   env: Record<string, string | undefined> = {},
-  opts: { extraAfter?: string; pathPrefix?: string } = {}
+  opts: { extraAfter?: string; pathPrefix?: string; prelude?: string; shell?: Shell } = {}
 ): RunResult {
+  const shell = opts.shell ?? HOST_SH;
   const script = [
+    opts.prelude ?? "",
     `. "${LIB}"`,
     // Use a subshell so a non-zero return from the function does not abort
     // before we print the sentinel; `${NEXTAUTH_SECRET-}` shows the env-visible value.
@@ -78,7 +92,7 @@ function runEnsure(
     if (v !== undefined) childEnv[k] = v;
   }
 
-  const res = spawnSync("sh", ["-c", script], { env: childEnv, encoding: "utf8" });
+  const res = spawnSync(shell.argv[0], [...shell.argv.slice(1), "-c", script], { env: childEnv, encoding: "utf8" });
   const lines = res.stdout.split("\n");
   const sentinelLine = lines.find((l) => l.startsWith(SENTINEL)) ?? SENTINEL;
   const exported = sentinelLine.slice(SENTINEL.length);
@@ -216,7 +230,7 @@ describe.skipIf(!canRun)("docker/ensure-secret.sh", () => {
     expect(r.log).toContain("reusing the persisted secret");
   });
 
-  it("empty .secret → regenerated (noclobber does not block)", () => {
+  it("empty .secret → regenerated (stale empty file is removed before install)", () => {
     fs.writeFileSync(secretFile, "");
     const r = runEnsure(dataDir);
     expect(r.status, r.stderr).toBe(0);
@@ -332,5 +346,131 @@ describe.skipIf(!canRun)("docker/ensure-secret.sh", () => {
     const src = fs.readFileSync(path.join(REPO_ROOT, "Dockerfile"), "utf8");
     expect(src).toContain("COPY docker/ensure-secret.sh /usr/local/bin/");
     expect(src).toContain("COPY docker-entrypoint.sh /usr/local/bin/");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Review follow-ups (#559 round 2): fail closed on partial generation, and
+  // install exclusively with `ln` instead of `rm -f` + noclobber.
+  // ---------------------------------------------------------------------------
+
+  it("source: generates into a same-dir temp file, validates 64-hex, installs with ln, no blanket rm -f / set -C", () => {
+    const src = fs.readFileSync(LIB, "utf8");
+    expect(src).toContain('_ens_tmp="$CHORUS_DATA_DIR/.secret.tmp.$$"');
+    expect(src).toMatch(/\(\s*umask 077;\s*openssl rand -hex 32 > "\$_ens_tmp"\s*\)/);
+    expect(src).toContain("grep -qxE '[0-9a-f]{64}'");
+    expect(src).toContain('ln "$_ens_tmp" "$CHORUS_SECRET_FILE"');
+    expect(src).not.toMatch(/^\s*set -C\b/m);
+    // The only rm of the target must be guarded by the emptiness check on the same line.
+    const rmTargetLines = src.split("\n").filter((l) => /rm -f "\$CHORUS_SECRET_FILE"/.test(l));
+    expect(rmTargetLines).toHaveLength(1);
+    const rmIdx = src.indexOf(rmTargetLines[0]);
+    const guard = src.slice(Math.max(0, rmIdx - 200), rmIdx);
+    expect(guard).toMatch(/if \[ -f "\$CHORUS_SECRET_FILE" \] && \[ -z "\$\(tr -d '\[:space:\]' < "\$CHORUS_SECRET_FILE"/);
+    // The misleading race-safety comment is gone; the actual guarantee is stated.
+    expect(src).not.toMatch(/noclobber.*race/i);
+    expect(src).toMatch(/single-replica correctness/);
+    expect(src).toMatch(/best-effort/);
+  });
+
+  const shells: Shell[] = busybox ? [HOST_SH, BUSYBOX_SH] : [HOST_SH];
+
+  for (const shell of shells) {
+    describe(`generator failure & race paths under ${shell.name}`, () => {
+      it("openssl writes 1 byte then exits non-zero → rc≠0, nothing exported, no .secret, no temp file", () => {
+        const r = runEnsure(dataDir, {}, { shell, prelude: "openssl(){ printf x; return 1; }" });
+        expect(r.status).not.toBe(0);
+        expect(r.exported).toBe("");
+        expect(r.stderr).toContain("failed to generate");
+        expect(r.log).not.toContain("generated a new random secret");
+        expect(fs.existsSync(secretFile)).toBe(false);
+        expect(fs.readdirSync(dataDir)).toEqual([]);
+      });
+
+      it("openssl exits 0 but output is not 64 lowercase hex → rc≠0, nothing exported, no .secret", () => {
+        for (const bad of ["echo not-hex-at-all", "printf '%s' \"$(printf 'a%.0s' $(seq 1 63))\"", "echo ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"]) {
+          fs.rmSync(dataDir, { recursive: true, force: true });
+          fs.mkdirSync(dataDir);
+          const r = runEnsure(dataDir, {}, { shell, prelude: `openssl(){ ${bad}; return 0; }` });
+          expect(r.status, bad).not.toBe(0);
+          expect(r.exported, bad).toBe("");
+          expect(r.stderr, bad).toContain("failed to generate");
+          expect(fs.existsSync(secretFile), bad).toBe(false);
+          expect(fs.readdirSync(dataDir), bad).toEqual([]);
+        }
+      });
+
+      it("partial generation never replaces an existing empty .secret with garbage", () => {
+        fs.writeFileSync(secretFile, "");
+        const r = runEnsure(dataDir, {}, { shell, prelude: "openssl(){ printf x; return 1; }" });
+        expect(r.status).not.toBe(0);
+        expect(r.exported).toBe("");
+        // The empty file is left as-is (unchanged), not overwritten with "x".
+        expect(fs.readFileSync(secretFile, "utf8")).toBe("");
+        expect(fs.readdirSync(dataDir)).toEqual([".secret"]);
+      });
+
+      it("a concurrent writer that installs a valid secret during generation wins; loser re-reads it", () => {
+        const racer = "b".repeat(64);
+        // Stub openssl: emit a valid 64-hex value AND simulate a competitor
+        // having installed its own secret in the meantime.
+        const prelude = `openssl(){ printf '%s\\n' "${racer}" > "${secretFile}"; printf '%s\\n' "$(printf 'c%.0s' $(seq 1 64))"; return 0; }`;
+        const r = runEnsure(dataDir, {}, { shell, prelude });
+        expect(r.status, r.stderr).toBe(0);
+        expect(r.exported).toBe(racer);
+        expect(fs.readFileSync(secretFile, "utf8").trim()).toBe(racer);
+        expect(fs.readdirSync(dataDir)).toEqual([".secret"]); // temp file cleaned up
+      });
+
+      it("a competitor landing between the emptiness check and `ln` wins (ln is exclusive)", () => {
+        const racer = "d".repeat(64);
+        // Stub ln as a shell FUNCTION (BusyBox ash may resolve applets before
+        // PATH, so a PATH stub is unreliable there): install the competitor's
+        // secret first, then run the real ln, which must fail on the existing target.
+        const prelude = `ln(){ printf '%s\\n' "${racer}" > "$2"; command ln "$@"; }`;
+        const r = runEnsure(dataDir, {}, { shell, prelude });
+        expect(r.status, r.stderr).toBe(0);
+        expect(r.exported).toBe(racer);
+        expect(fs.readFileSync(secretFile, "utf8").trim()).toBe(racer);
+        expect(fs.readdirSync(dataDir)).toEqual([".secret"]);
+      });
+
+      it("N concurrent first starts on the same data dir all export the same secret", async () => {
+        const N = 8;
+        const script = [
+          `. "${LIB}"`,
+          `ensure_nextauth_secret >/dev/null 2>&1 || exit 1`,
+          `printf '%s' "$NEXTAUTH_SECRET"`,
+        ].join("\n");
+        const env: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV, PATH: process.env.PATH, HOME: process.env.HOME, CHORUS_DATA_DIR: dataDir };
+        const results = await Promise.all(
+          Array.from({ length: N }, () =>
+            new Promise<{ code: number | null; out: string }>((resolve) => {
+              const child = spawn(shell.argv[0], [...shell.argv.slice(1), "-c", script], { env });
+              let out = "";
+              child.stdout.on("data", (d: Buffer) => (out += d.toString()));
+              child.on("close", (code: number | null) => resolve({ code, out }));
+            })
+          )
+        );
+        for (const r of results) {
+          expect(r.code).toBe(0);
+          expect(r.out).toMatch(HEX64);
+        }
+        const distinct = new Set(results.map((r) => r.out));
+        expect(distinct.size).toBe(1);
+        expect(fs.readFileSync(secretFile, "utf8").trim()).toBe(results[0].out);
+        expect(fs.statSync(secretFile).mode & 0o777).toBe(0o600);
+        expect(fs.readdirSync(dataDir)).toEqual([".secret"]); // no leftover temp files
+      });
+    });
+  }
+
+  it.skipIf(!busybox)("busybox sh: happy path still generates 64-hex with mode 0600 and no umask leak", () => {
+    const r = runEnsure(dataDir, {}, { shell: BUSYBOX_SH, extraAfter: `printf 'UMASK=%s\\n' "$(umask)"` });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.exported).toMatch(HEX64);
+    expect(fs.statSync(secretFile).mode & 0o777).toBe(0o600);
+    const baseline = spawnSync("busybox", ["sh", "-c", "umask"], { encoding: "utf8" }).stdout.trim();
+    expect(r.log).toContain(`UMASK=${baseline}`);
   });
 });

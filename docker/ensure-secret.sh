@@ -8,8 +8,10 @@
 #
 # Rules:
 #   - An explicit, non-placeholder NEXTAUTH_SECRET always wins; the filesystem is untouched.
-#   - Any failure (unreadable / non-regular file, write failure, persisted placeholder)
-#     fails CLOSED: the function returns non-zero and nothing is exported.
+#   - Any failure (unreadable / non-regular file, generator or write failure, malformed
+#     output, persisted placeholder) fails CLOSED: the function returns non-zero and
+#     nothing is exported. A generated value is accepted only if openssl exits 0 AND
+#     the output is exactly 64 lowercase hex characters.
 #   - The secret value is never printed.
 #
 # CHORUS_DATA_DIR is INTERNAL (tests point it at a tmp dir); it defaults to /app/data.
@@ -59,21 +61,48 @@ ensure_nextauth_secret() {
   fi
 
   if [ -z "$_ens_existing" ]; then
-    # Exclusive create inside a subshell so umask / noclobber never leak into
-    # `exec node server.js`. `rm -f` first: an existing EMPTY file would
-    # otherwise block the noclobber (`set -C`) redirect. Failure here is
-    # tolerated (another process may have won the race) — we re-read below
-    # in the PARENT shell; exporting inside the subshell would be lost.
-    (
-      umask 077
-      set -C
-      rm -f "$CHORUS_SECRET_FILE" 2>/dev/null
-      openssl rand -hex 32 > "$CHORUS_SECRET_FILE"
-    ) 2>/dev/null || true
+    # 1. Generate into a PRIVATE temp file in the same directory. `umask 077`
+    #    lives inside the subshell so it never leaks into `exec node server.js`.
+    #    The result is accepted only if openssl exited 0 AND the content is
+    #    exactly 64 lowercase hex chars — a partial write (disk full, killed
+    #    generator) must never become the JWT signing key.
+    _ens_tmp="$CHORUS_DATA_DIR/.secret.tmp.$$"
+    _ens_new=""
+    if ( umask 077; openssl rand -hex 32 > "$_ens_tmp" ) 2>/dev/null \
+      && _ens_new=$(tr -d '[:space:]' < "$_ens_tmp" 2>/dev/null) \
+      && printf '%s\n' "$_ens_new" | grep -qxE '[0-9a-f]{64}'; then
+      :
+    else
+      rm -f "$_ens_tmp" 2>/dev/null
+      echo "ERROR: failed to generate and persist a secret at $CHORUS_SECRET_FILE (openssl failed or produced malformed output)" >&2
+      unset _ens_tmp _ens_new
+      return 1
+    fi
 
-    _ens_existing=$(cat "$CHORUS_SECRET_FILE" 2>/dev/null | tr -d '[:space:]') || _ens_existing=""
+    # 2. Install atomically and EXCLUSIVELY with `ln tmp target`, which fails if
+    #    the target already exists — so a concurrent starter that already
+    #    installed a valid secret wins and we re-read its value below. There is
+    #    deliberately NO blanket `rm -f`: only a file re-verified as empty /
+    #    whitespace-only (stale remnant of an interrupted write) is removed
+    #    first. Guarantee: single-replica correctness; same-volume concurrent
+    #    first starts converge on one value on a best-effort basis (the check-
+    #    then-remove window on an empty file is the residual race). Multi-
+    #    replica deployments must inject NEXTAUTH_SECRET explicitly.
+    if [ -f "$CHORUS_SECRET_FILE" ] && [ -z "$(tr -d '[:space:]' < "$CHORUS_SECRET_FILE" 2>/dev/null)" ]; then
+      rm -f "$CHORUS_SECRET_FILE" 2>/dev/null
+    fi
+    ln "$_ens_tmp" "$CHORUS_SECRET_FILE" 2>/dev/null || true
+    rm -f "$_ens_tmp" 2>/dev/null
+    unset _ens_tmp _ens_new
+
+    # 3. Re-read in the PARENT shell (exporting inside a subshell would be lost).
+    if ! _ens_existing=$(cat "$CHORUS_SECRET_FILE" 2>/dev/null); then
+      echo "ERROR: failed to generate and persist a secret at $CHORUS_SECRET_FILE (cannot read back)" >&2
+      return 1
+    fi
+    _ens_existing=$(printf '%s' "$_ens_existing" | tr -d '[:space:]')
     if [ -z "$_ens_existing" ]; then
-      echo "ERROR: failed to generate and persist a secret at $CHORUS_SECRET_FILE" >&2
+      echo "ERROR: failed to generate and persist a secret at $CHORUS_SECRET_FILE (installed file is empty)" >&2
       return 1
     fi
     _ens_action="generated a new random secret and persisted it to $CHORUS_SECRET_FILE"

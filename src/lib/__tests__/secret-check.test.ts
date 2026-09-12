@@ -181,8 +181,9 @@ describe("warnOnInsecureNextAuthSecret", () => {
   });
 });
 
-describe("parity with docker/ensure-secret.sh", () => {
+describe("parity with docker/ensure-secret.sh and chorus.mjs", () => {
   const SH_PATH = path.resolve(__dirname, "../../../docker/ensure-secret.sh");
+  const MJS_PATH = path.resolve(__dirname, "../../../chorus.mjs");
 
   function parseShPlaceholders(): string[] {
     // Fail clearly (not skip) if the sh file is missing.
@@ -196,11 +197,38 @@ describe("parity with docker/ensure-secret.sh", () => {
       .filter((line) => line.length > 0);
   }
 
+  function parseMjsPlaceholders(): string[] {
+    expect(fs.existsSync(MJS_PATH), `expected ${MJS_PATH} to exist`).toBe(true);
+    const source = fs.readFileSync(MJS_PATH, "utf8");
+    const match = source.match(/^const KNOWN_INSECURE_SECRETS = \[([\s\S]*?)\];\s*$/m);
+    expect(match, "KNOWN_INSECURE_SECRETS array not found in chorus.mjs").not.toBeNull();
+    return [...match![1].matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+  }
+
   it("KNOWN_INSECURE_SECRETS is set-equal to CHORUS_KNOWN_INSECURE_SECRETS", () => {
     const shList = parseShPlaceholders();
     expect(shList.length).toBeGreaterThan(0);
     expect(new Set(shList)).toEqual(new Set(KNOWN_INSECURE_SECRETS));
     // Also guard against duplicates on either side
     expect(shList.length).toBe(KNOWN_INSECURE_SECRETS.length);
+  });
+
+  it("chorus.mjs KNOWN_INSECURE_SECRETS is set-equal to the TS list (npm launcher parity)", () => {
+    const mjsList = parseMjsPlaceholders();
+    expect(mjsList.length).toBeGreaterThan(0);
+    expect(new Set(mjsList)).toEqual(new Set(KNOWN_INSECURE_SECRETS));
+    expect(mjsList.length).toBe(KNOWN_INSECURE_SECRETS.length);
+  });
+
+  it("chorus.mjs ensureSecret ignores a placeholder NEXTAUTH_SECRET and warns on stderr naming #559", () => {
+    const source = fs.readFileSync(MJS_PATH, "utf8");
+    const fnStart = source.indexOf("function ensureSecret()");
+    expect(fnStart).toBeGreaterThan(-1);
+    const body = source.slice(fnStart, source.indexOf("\n}\n", fnStart));
+    expect(body).toContain("KNOWN_INSECURE_SECRETS.includes(");
+    expect(body).toContain("console.error(");
+    expect(body).toContain("#559");
+    // The old unconditional early-return on any non-empty value must be gone.
+    expect(body).not.toContain("if (process.env.NEXTAUTH_SECRET) return;");
   });
 });

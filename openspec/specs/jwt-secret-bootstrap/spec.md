@@ -37,6 +37,16 @@ entrypoint MUST NOT fall back to any publicly known value and MUST NOT print the
 - **THEN** the entrypoint exits non-zero with a descriptive error before running migrations
 - **AND** no publicly known value is exported
 
+#### Scenario: Partial or malformed generation fails closed
+- **WHEN** the generator (`openssl rand -hex 32`) exits non-zero, or exits zero with output that is not exactly 64 lowercase hex characters
+- **THEN** the entrypoint removes its temporary file, exits non-zero with a descriptive error, and exports nothing
+- **AND** any pre-existing `/app/data/.secret` is left unchanged
+
+#### Scenario: Concurrent first starts on one volume converge
+- **WHEN** two starters sharing `/app/data` both find no usable secret and one installs a valid secret first
+- **THEN** the install is exclusive (`ln tmp target`), so the second starter does not overwrite it and instead re-reads and exports the first starter's value
+- **AND** an existing empty or whitespace-only `.secret` is removed only after being re-verified as empty (best-effort convergence; multi-replica deployments still MUST inject `NEXTAUTH_SECRET` explicitly)
+
 #### Scenario: Explicit secure value is untouched
 - **WHEN** the container starts with `NEXTAUTH_SECRET` set to a value that is not a known placeholder
 - **THEN** the entrypoint does not create, read, or modify `/app/data/.secret`
@@ -44,18 +54,25 @@ entrypoint MUST NOT fall back to any publicly known value and MUST NOT print the
 
 #### Scenario: Shell state does not leak into the application
 - **WHEN** the bootstrap generates a new secret
-- **THEN** the parent shell's `umask` and noclobber (`set -C`) state are unchanged after the bootstrap returns
+- **THEN** the parent shell's `umask` and noclobber state are unchanged after the bootstrap returns
 
 ### Requirement: Single source of truth for known insecure placeholders
 The system SHALL treat exactly the following values as known public placeholders:
 `chorus-docker-secret-change-in-production`, `chorus-local-secret`,
 `your-secret-key-change-in-production`, `change-me-to-a-random-secret`. The list SHALL be
-defined in the shell bootstrap library and in `src/lib/secret-check.ts`, and an automated
-test SHALL fail if the two lists differ.
+defined in the shell bootstrap library, in `src/lib/secret-check.ts`, and in the npm launcher
+`chorus.mjs`, and an automated test SHALL fail if any of the three lists differ.
 
 #### Scenario: Lists are identical
 - **WHEN** the test suite runs
-- **THEN** the placeholder values parsed from `docker/ensure-secret.sh` equal `KNOWN_INSECURE_SECRETS` from `src/lib/secret-check.ts` as sets
+- **THEN** the placeholder values parsed from `docker/ensure-secret.sh` and from `chorus.mjs` each equal `KNOWN_INSECURE_SECRETS` from `src/lib/secret-check.ts` as sets
+
+### Requirement: npm launcher ignores placeholder secrets
+The `chorus` npm launcher (`chorus.mjs#ensureSecret`) SHALL treat a `NEXTAUTH_SECRET` equal to a known placeholder like unset: it SHALL print a one-line warning to stderr referencing #559 and fall through to the persisted or newly generated `~/.chorus/.secret`.
+
+#### Scenario: Pasted placeholder is not used for signing
+- **WHEN** the launcher starts with `NEXTAUTH_SECRET` equal to a known placeholder
+- **THEN** the process signs JWTs with the value from `~/.chorus/.secret`, not the placeholder
 
 ### Requirement: Application warns at startup when a known placeholder is in effect
 At Node.js process start, the application SHALL assess the effective `NEXTAUTH_SECRET`.
