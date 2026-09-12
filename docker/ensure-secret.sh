@@ -66,7 +66,17 @@ ensure_nextauth_secret() {
     #    The result is accepted only if openssl exited 0 AND the content is
     #    exactly 64 lowercase hex chars — a partial write (disk full, killed
     #    generator) must never become the JWT signing key.
-    _ens_tmp="$CHORUS_DATA_DIR/.secret.tmp.$$"
+    #    The temp name comes from `mktemp` (BusyBox-compatible template), NOT
+    #    from `$$`: the entrypoint is PID 1 in every container (exec-form
+    #    ENTRYPOINT), so a `$$` suffix is identical across containers sharing a
+    #    volume and two concurrent first starts would truncate each other's
+    #    temp file. mktemp failure fails closed.
+    _ens_tmp=""
+    if ! _ens_tmp=$(umask 077; mktemp "$CHORUS_DATA_DIR/.secret.tmp.XXXXXX" 2>/dev/null) || [ -z "$_ens_tmp" ]; then
+      echo "ERROR: failed to generate and persist a secret at $CHORUS_SECRET_FILE (cannot create a temp file in $CHORUS_DATA_DIR)" >&2
+      unset _ens_tmp
+      return 1
+    fi
     _ens_new=""
     if ( umask 077; openssl rand -hex 32 > "$_ens_tmp" ) 2>/dev/null \
       && _ens_new=$(tr -d '[:space:]' < "$_ens_tmp" 2>/dev/null) \

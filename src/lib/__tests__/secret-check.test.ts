@@ -4,7 +4,9 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 const mockLogger = vi.hoisted(() => {
   const l = {
@@ -230,5 +232,119 @@ describe("parity with docker/ensure-secret.sh and chorus.mjs", () => {
     expect(body).toContain("#559");
     // The old unconditional early-return on any non-empty value must be gone.
     expect(body).not.toContain("if (process.env.NEXTAUTH_SECRET) return;");
+  });
+
+  it("chorus.mjs ensureSecret refuses a persisted placeholder / empty .secret (structural)", () => {
+    const source = fs.readFileSync(MJS_PATH, "utf8");
+    const fnStart = source.indexOf("function ensureSecret()");
+    const body = source.slice(fnStart, source.indexOf("\n}\n", fnStart));
+    // The persisted value must be checked against the placeholder list and the
+    // process must exit non-zero — the raw readFileSync(...).trim() must no
+    // longer be assigned straight into the env.
+    expect(body).not.toContain('process.env.NEXTAUTH_SECRET = readFileSync(secretPath, "utf8").trim();');
+    expect(body).toContain("KNOWN_INSECURE_SECRETS.includes(persisted)");
+    expect(body).toContain("process.exit(1)");
+  });
+
+  /**
+   * Behavioural harness for chorus.mjs#ensureSecret. The launcher runs side
+   * effects at import, so we lift the KNOWN_INSECURE_SECRETS constant and the
+   * ensureSecret function verbatim out of the source and run them in a child
+   * node process with `dataDir` pointed at a tmp dir.
+   */
+  function runMjsEnsureSecret(dataDir: string, env: Record<string, string> = {}) {
+    const source = fs.readFileSync(MJS_PATH, "utf8");
+    const constMatch = source.match(/^const KNOWN_INSECURE_SECRETS = \[[\s\S]*?\];\s*$/m);
+    const fnStart = source.indexOf("function ensureSecret()");
+    const fnEnd = source.indexOf("\n}\n", fnStart) + 3;
+    expect(constMatch).not.toBeNull();
+    expect(fnStart).toBeGreaterThan(-1);
+    const script = [
+      'import { randomBytes, createHash } from "node:crypto";',
+      'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
+      'import { join } from "node:path";',
+      `const dataDir = ${JSON.stringify(dataDir)};`,
+      constMatch![0],
+      source.slice(fnStart, fnEnd),
+      "ensureSecret();",
+      'process.stdout.write("EXPORTED=" + (process.env.NEXTAUTH_SECRET ?? "<unset>"));',
+    ].join("\n");
+    const scriptPath = path.join(dataDir, "harness.mjs");
+    fs.writeFileSync(scriptPath, script);
+    const childEnv: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV, PATH: process.env.PATH, ...env };
+    return spawnSync(process.execPath, [scriptPath], { env: childEnv, encoding: "utf8" });
+  }
+
+  describe("chorus.mjs ensureSecret behaviour (persisted file)", () => {
+    let dataDir: string;
+    let secretPath: string;
+    beforeEach(() => {
+      dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "chorus-mjs-secret-"));
+      secretPath = path.join(dataDir, ".secret");
+    });
+    afterEach(() => {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    });
+
+    for (const placeholder of KNOWN_INSECURE_SECRETS) {
+      it(`persisted placeholder "${placeholder}" → exit 1, stderr names #559 + path, nothing exported`, () => {
+        fs.writeFileSync(secretPath, `${placeholder}\n`);
+        const r = runMjsEnsureSecret(dataDir);
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain("#559");
+        expect(r.stderr).toContain(secretPath);
+        expect(r.stderr).toContain("publicly known placeholder");
+        expect(r.stderr.trim().split("\n")).toHaveLength(1);
+        expect(r.stdout).not.toContain("EXPORTED=");
+        // File is left untouched (no silent regeneration).
+        expect(fs.readFileSync(secretPath, "utf8")).toBe(`${placeholder}\n`);
+      });
+    }
+
+    it("persisted empty / whitespace-only .secret → exit 1, stderr names #559 + path, nothing exported", () => {
+      for (const content of ["", "  \n\t"]) {
+        fs.writeFileSync(secretPath, content);
+        const r = runMjsEnsureSecret(dataDir);
+        expect(r.status, JSON.stringify(content)).toBe(1);
+        expect(r.stderr).toContain("#559");
+        expect(r.stderr).toContain(secretPath);
+        expect(r.stderr).toContain("empty");
+        expect(r.stdout).not.toContain("EXPORTED=");
+      }
+    });
+
+    it("persisted placeholder is refused even when env also holds a placeholder", () => {
+      fs.writeFileSync(secretPath, KNOWN_INSECURE_SECRETS[0]);
+      const r = runMjsEnsureSecret(dataDir, { NEXTAUTH_SECRET: KNOWN_INSECURE_SECRETS[1] });
+      expect(r.status).toBe(1);
+      expect(r.stdout).not.toContain("EXPORTED=");
+    });
+
+    it("persisted secure value → exported trimmed, exit 0", () => {
+      const secure = "f".repeat(64);
+      fs.writeFileSync(secretPath, `${secure}\n`);
+      const r = runMjsEnsureSecret(dataDir);
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain(`EXPORTED=${secure}`);
+      expect(r.stderr).toBe("");
+    });
+
+    it("no persisted file → generates 64-hex with mode 0600 and exports it", () => {
+      const r = runMjsEnsureSecret(dataDir);
+      expect(r.status, r.stderr).toBe(0);
+      const persisted = fs.readFileSync(secretPath, "utf8").trim();
+      expect(persisted).toMatch(/^[0-9a-f]{64}$/);
+      expect(r.stdout).toContain(`EXPORTED=${persisted}`);
+      if (process.platform !== "win32") {
+        expect(fs.statSync(secretPath).mode & 0o777).toBe(0o600);
+      }
+    });
+
+    it("explicit secure env → untouched, no file written", () => {
+      const r = runMjsEnsureSecret(dataDir, { NEXTAUTH_SECRET: "a-perfectly-fine-secret" });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("EXPORTED=a-perfectly-fine-secret");
+      expect(fs.existsSync(secretPath)).toBe(false);
+    });
   });
 });

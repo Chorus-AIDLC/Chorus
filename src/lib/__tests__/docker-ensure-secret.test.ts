@@ -353,9 +353,15 @@ describe.skipIf(!canRun)("docker/ensure-secret.sh", () => {
   // install exclusively with `ln` instead of `rm -f` + noclobber.
   // ---------------------------------------------------------------------------
 
-  it("source: generates into a same-dir temp file, validates 64-hex, installs with ln, no blanket rm -f / set -C", () => {
+  it("source: generates into a same-dir mktemp file (no `$$`), validates 64-hex, installs with ln, no blanket rm -f / set -C", () => {
     const src = fs.readFileSync(LIB, "utf8");
-    expect(src).toContain('_ens_tmp="$CHORUS_DATA_DIR/.secret.tmp.$$"');
+    // PID-1 collision (#559 / PR #561 review): the entrypoint is PID 1 in every
+    // container, so a `$$`-suffixed temp name is NOT unique across containers
+    // sharing a volume. The temp file must come from mktemp and fail closed.
+    const codeLines = src.split("\n").filter((l) => !/^\s*#/.test(l));
+    expect(codeLines.join("\n")).not.toContain("$$");
+    expect(src).toContain('mktemp "$CHORUS_DATA_DIR/.secret.tmp.XXXXXX"');
+    expect(src).toMatch(/if ! _ens_tmp=\$\(umask 077; mktemp "\$CHORUS_DATA_DIR\/\.secret\.tmp\.XXXXXX" 2>\/dev\/null\) \|\| \[ -z "\$_ens_tmp" \]; then\n\s*echo "ERROR: [^"]*" >&2\n\s*unset _ens_tmp\n\s*return 1/);
     expect(src).toMatch(/\(\s*umask 077;\s*openssl rand -hex 32 > "\$_ens_tmp"\s*\)/);
     expect(src).toContain("grep -qxE '[0-9a-f]{64}'");
     expect(src).toContain('ln "$_ens_tmp" "$CHORUS_SECRET_FILE"');
@@ -431,6 +437,70 @@ describe.skipIf(!canRun)("docker/ensure-secret.sh", () => {
         expect(r.status, r.stderr).toBe(0);
         expect(r.exported).toBe(racer);
         expect(fs.readFileSync(secretFile, "utf8").trim()).toBe(racer);
+        expect(fs.readdirSync(dataDir)).toEqual([".secret"]);
+      });
+
+      it("mktemp failure → rc≠0, nothing exported, no .secret, no temp file (fails closed)", () => {
+        const r = runEnsure(dataDir, {}, { shell, prelude: "mktemp(){ return 1; }" });
+        expect(r.status).not.toBe(0);
+        expect(r.exported).toBe("");
+        expect(r.stderr).toContain("failed to generate");
+        expect(r.stderr).toContain("cannot create a temp file");
+        expect(fs.existsSync(secretFile)).toBe(false);
+        expect(fs.readdirSync(dataDir)).toEqual([]);
+      });
+
+      it("two concurrent first starts overlapping inside the generate window both succeed and converge (PID-1 collision regression)", async () => {
+        // Regression for the PR #561 review finding: the entrypoint is PID 1 in
+        // every container (exec-form ENTRYPOINT), so a `$$`-suffixed temp name
+        // was identical across containers sharing a volume and two overlapping
+        // first starts truncated each other's temp file (observed 4/120 fail-
+        // closed starts). A slow generator forces both racers into the temp-
+        // file window simultaneously; with mktemp both must still succeed.
+        const script = [
+          `openssl(){ sleep 0.3; command openssl "$@"; }`,
+          `. "${LIB}"`,
+          `ensure_nextauth_secret >/dev/null 2>&1 || exit 1`,
+          `printf '%s' "$NEXTAUTH_SECRET"`,
+        ].join("\n");
+        const env: NodeJS.ProcessEnv = { NODE_ENV: process.env.NODE_ENV, PATH: process.env.PATH, HOME: process.env.HOME, CHORUS_DATA_DIR: dataDir };
+        const run = () =>
+          new Promise<{ code: number | null; out: string }>((resolve) => {
+            const child = spawn(shell.argv[0], [...shell.argv.slice(1), "-c", script], { env });
+            let out = "";
+            child.stdout.on("data", (d: Buffer) => (out += d.toString()));
+            child.on("close", (code: number | null) => resolve({ code, out }));
+          });
+        const [a, b] = await Promise.all([run(), run()]);
+        expect(a.code).toBe(0);
+        expect(b.code).toBe(0);
+        expect(a.out).toMatch(HEX64);
+        expect(b.out).toBe(a.out);
+        expect(fs.readFileSync(secretFile, "utf8").trim()).toBe(a.out);
+        expect(fs.readdirSync(dataDir)).toEqual([".secret"]); // no leftover temp files
+      });
+
+      it("same `$$`: a `$$`-suffixed name would collide, mktemp names in one shell are distinct", () => {
+        // Within ONE shell `$$` is constant, so under the old scheme two temp
+        // names computed here would be byte-identical. Prove the mktemp
+        // template yields distinct, private (0600) files under identical `$$`.
+        const r = runEnsure(dataDir, {}, {
+          shell,
+          extraAfter: [
+            `old1="$CHORUS_DATA_DIR/.secret.tmp.$$"; old2="$CHORUS_DATA_DIR/.secret.tmp.$$"`,
+            `[ "$old1" = "$old2" ] && printf 'OLD_SCHEME_COLLIDES=1\\n'`,
+            `t1=$(umask 077; mktemp "$CHORUS_DATA_DIR/.secret.tmp.XXXXXX")`,
+            `t2=$(umask 077; mktemp "$CHORUS_DATA_DIR/.secret.tmp.XXXXXX")`,
+            `[ "$t1" != "$t2" ] && printf 'DISTINCT_TMP=1\\n'`,
+            `printf 'T1MODE=%s\\n' "$(stat -c %a "$t1" 2>/dev/null || stat -f %Lp "$t1")"`,
+            `rm -f "$t1" "$t2"`,
+          ].join("\n"),
+        });
+        expect(r.status, r.stderr).toBe(0);
+        expect(r.exported).toMatch(HEX64);
+        expect(r.log).toContain("OLD_SCHEME_COLLIDES=1");
+        expect(r.log).toContain("DISTINCT_TMP=1");
+        expect(r.log).toContain("T1MODE=600");
         expect(fs.readdirSync(dataDir)).toEqual([".secret"]);
       });
 

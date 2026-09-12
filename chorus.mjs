@@ -338,7 +338,16 @@ function ensureSecret() {
     );
   }
   if (existsSync(secretPath)) {
-    process.env.NEXTAUTH_SECRET = readFileSync(secretPath, "utf8").trim();
+    // Fail closed, matching docker/ensure-secret.sh: a persisted file that is
+    // empty or holds a publicly known placeholder must never be exported.
+    const persisted = readFileSync(secretPath, "utf8").trim();
+    if (!persisted || KNOWN_INSECURE_SECRETS.includes(persisted)) {
+      console.error(
+        `ERROR: the secret persisted at ${secretPath} is ${persisted ? "a publicly known placeholder" : "empty"} (GitHub #559); refusing to start — delete the file to regenerate, or set NEXTAUTH_SECRET explicitly.`
+      );
+      process.exit(1);
+    }
+    process.env.NEXTAUTH_SECRET = persisted;
     return;
   }
   const secret = createHash("sha256")
