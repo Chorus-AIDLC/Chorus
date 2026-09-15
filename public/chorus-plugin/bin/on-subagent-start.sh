@@ -2,8 +2,12 @@
 # on-subagent-start.sh — SubagentStart hook
 # Triggered SYNCHRONOUSLY when a sub-agent (teammate) is spawned.
 #
-# Name resolution: Claims a per-agent pending file written by PreToolUse:Task
-# using atomic mv (only one process can successfully mv a given file).
+# Name resolution: the session name is the event's own agent_type (the value the
+# spawning Task call passed as subagent_type), falling back to worker-<agentId8>.
+#
+# Spawn gate: claims a per-spawn pending file written by PreToolUse:Task using
+# atomic mv (only one process can successfully mv a given file). The file only
+# proves the spawn was a real Task call — it never carries the name.
 #
 # Session reuse logic:
 #   1. List existing sessions via MCP
@@ -45,14 +49,14 @@ export CHORUS_SESSION_ID
 [ -f "${SCRIPT_DIR}/chorus-paths.sh" ] && { . "${SCRIPT_DIR}/chorus-paths.sh" 2>/dev/null || true; }
 CHORUS_STATE_DIR="${CHORUS_STATE_DIR:-${CLAUDE_PROJECT_DIR:-.}/.chorus}"
 
-# Extract agent info from event
-# Note: SubagentStart only provides agent_id and agent_type — NOT the name
-# from the Task tool call. The name is captured by on-pre-spawn-agent.sh
-# (PreToolUse:Task) and stored as a per-agent file in .chorus/pending/.
+# Extract agent info from event.
+# agent_type is the same value the spawning Task call passed as subagent_type,
+# so it is the session name source (see SESSION_NAME below).
 AGENT_ID=$(echo "$EVENT" | jq -r '.agent_id // .agentId // empty' 2>/dev/null) || true
 AGENT_TYPE=$(echo "$EVENT" | jq -r '.agent_type // .agentType // empty' 2>/dev/null) || true
 
-# Skip non-worker agent types (read-only agents don't need sessions)
+# Skip non-worker agent types (read-only agents don't need sessions).
+# This list MUST stay identical to the skip list in on-pre-spawn-agent.sh.
 case "$(printf '%s' "$AGENT_TYPE" | tr '[:upper:]' '[:lower:]')" in
   explore|plan|haiku|claude-code-guide|statusline-setup|chorus:proposal-reviewer|chorus:task-reviewer)
     exit 0
@@ -66,35 +70,24 @@ fi
 # Claim a pending file written by PreToolUse:Task (on-pre-spawn-agent.sh).
 # Each pending file represents one expected sub-agent spawn.
 #
-# Claim strategy (atomic mv — only one process can succeed per file):
-#   1. Try exact match: mv .chorus/pending/{agent_type} → claimed/{agent_id}
-#      (CC often sets agent_type to the name from the Task tool call)
-#   2. Fallback: claim the oldest pending file (FIFO by modification time)
+# The pending file is a SPAWN GATE, not a name channel: it only proves this
+# SubagentStart corresponds to a real Task spawn. Neither its filename nor its
+# contents influence the session name, so plain FIFO claiming is safe even when a
+# mixed parallel batch pairs this agent with another spawn's file.
 #
-# If no pending file exists, this is an internal/cleanup agent → skip.
-AGENT_NAME=""
+# Claim strategy: FIFO by modification time, atomic mv (only one process can
+# succeed per file). If no pending file can be claimed, this is one of Claude
+# Code's internal/cleanup agents (they bypass PreToolUse:Task) → skip.
 PENDING_DIR="${CHORUS_STATE_DIR}/pending"
 CLAIMED_DIR="${CHORUS_STATE_DIR}/claimed"
 mkdir -p "$CLAIMED_DIR" 2>/dev/null || true
 
 CLAIMED_FILE=""
 
-# Strategy 1: exact match by agent_type (CC uses name as agent_type)
-if [ -f "${PENDING_DIR}/${AGENT_TYPE}" ]; then
-  if mv "${PENDING_DIR}/${AGENT_TYPE}" "${CLAIMED_DIR}/${AGENT_ID}" 2>/dev/null; then
-    CLAIMED_FILE="${CLAIMED_DIR}/${AGENT_ID}"
-    AGENT_NAME="$AGENT_TYPE"
-  fi
-fi
-
-# Strategy 2: FIFO — claim oldest pending file
-if [ -z "$CLAIMED_FILE" ] && [ -d "$PENDING_DIR" ]; then
+if [ -d "$PENDING_DIR" ]; then
   for candidate in $(ls -tr "$PENDING_DIR" 2>/dev/null); do
     if mv "${PENDING_DIR}/${candidate}" "${CLAIMED_DIR}/${AGENT_ID}" 2>/dev/null; then
       CLAIMED_FILE="${CLAIMED_DIR}/${AGENT_ID}"
-      # Read name from file content if available
-      FILE_NAME=$(jq -r '.name // empty' "$CLAIMED_FILE" 2>/dev/null) || true
-      AGENT_NAME="${FILE_NAME:-$candidate}"
       break
     fi
     # mv failed → another process claimed it first, try next
@@ -106,8 +99,17 @@ if [ -z "$CLAIMED_FILE" ]; then
   exit 0
 fi
 
-# Fallback: use agent_type + short ID if no name was captured
-SESSION_NAME="${AGENT_NAME:-${AGENT_TYPE:-worker}-${AGENT_ID:0:8}}"
+# Session name comes from this event's own agent_type (the same value the Task
+# call passed as subagent_type). Falls back to an agent-id-derived name only when
+# agent_type is empty — never a placeholder like "unknown-<digits>".
+SESSION_NAME="${AGENT_TYPE:-worker-${AGENT_ID:0:8}}"
+
+# Sanitized form for on-disk filenames only. Namespaced types such as
+# chorus:code-reviewer are not skipped, so they reach this path and must not put
+# a ":" or "/" into a path. The name sent to Chorus, the state keys and the
+# injected workflow text all keep the raw agent_type.
+SESSION_NAME_FILE=$(printf '%s' "$SESSION_NAME" | tr -c '[:alnum:]._-' '_')
+[ -z "$SESSION_NAME_FILE" ] && SESSION_NAME_FILE="worker-${AGENT_ID:0:8}"
 
 # === Session reuse: list existing sessions, find by name ===
 SESSION_UUID=""
@@ -187,11 +189,24 @@ fi
 "$API" state-set "session_${SESSION_NAME}" "$SESSION_UUID"
 "$API" state-set "name_for_agent_${AGENT_ID}" "$SESSION_NAME"
 
+# === Holder refcount: register this agent as a holder of the session NAME ===
+# Because the name is the repeating agent_type, two parallel sub-agents of the
+# same type converge on ONE session (reuse-by-name above). on-subagent-stop.sh
+# removes its own entry here and only tears the shared session down when no other
+# holder remains — otherwise the first sibling to exit would close the session,
+# check the other sibling's task out and delete state its sibling still reads.
+# Registered on every path (created / reused / reopened). The directory component
+# uses the SAME sanitization as the sessions/<name>.json filename — a namespaced
+# type such as chorus:code-reviewer must never put a ":" or "/" into a path.
+HOLDERS_DIR="${CHORUS_STATE_DIR}/holders/${SESSION_NAME_FILE}"
+mkdir -p "$HOLDERS_DIR" 2>/dev/null || true
+: > "${HOLDERS_DIR}/${AGENT_ID}" 2>/dev/null || true
+
 # === Session file: minimal metadata for other hooks (TeammateIdle, SubagentStop) ===
 SESSIONS_DIR="${CHORUS_STATE_DIR}/sessions"
 mkdir -p "$SESSIONS_DIR" 2>/dev/null || true
 
-cat > "${SESSIONS_DIR}/${SESSION_NAME}.json" <<SESSIONEOF
+cat > "${SESSIONS_DIR}/${SESSION_NAME_FILE}.json" <<SESSIONEOF
 {
   "sessionUuid": "${SESSION_UUID}",
   "agentId": "${AGENT_ID}",
