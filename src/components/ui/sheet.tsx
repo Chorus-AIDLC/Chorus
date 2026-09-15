@@ -70,9 +70,12 @@ function SheetContent({
   className,
   children,
   side = "right",
+  showCloseButton = true,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> &
-  VariantProps<typeof sheetVariants>) {
+  VariantProps<typeof sheetVariants> & {
+    showCloseButton?: boolean
+  }) {
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -82,13 +85,15 @@ function SheetContent({
         {...props}
       >
         {children}
-        <DialogPrimitive.Close
-          data-slot="sheet-close"
-          className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none"
-        >
-          <XIcon className="size-4" />
-          <span className="sr-only">Close</span>
-        </DialogPrimitive.Close>
+        {showCloseButton ? (
+          <DialogPrimitive.Close
+            data-slot="sheet-close"
+            className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none"
+          >
+            <XIcon className="size-4" />
+            <span className="sr-only">Close</span>
+          </DialogPrimitive.Close>
+        ) : null}
       </DialogPrimitive.Content>
     </SheetPortal>
   )

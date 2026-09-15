@@ -123,9 +123,9 @@ being online.
 
 ### Requirement: The conversation surface SHALL be a near-full-height bottom sheet on mobile with the reply input kept reachable
 
-On a mobile-width viewport (below the `sm` breakpoint), the "View all" daemon conversation surface SHALL open from the bottom as a near-full-height sheet using the product's existing mobile Sheet visual language and entrance/exit motion. The sheet SHALL leave a fixed 16 CSS-pixel strip of backdrop visible above it, use rounded top corners and a visible top handle, and retain a height bounded by the dynamic viewport so mobile browser chrome and safe-area insets do not make the reply composer unreachable. The selected conversation's transcript SHALL fill the middle region and scroll within itself, and the reply/send input SHALL remain at the bottom of the bounded sheet without dead space below it.
+On a mobile-width viewport (below the `sm` breakpoint), the "View all" daemon conversation surface SHALL open from the bottom as a near-full-height sheet using the product's existing mobile Sheet visual language and entrance/exit motion. The sheet SHALL leave a fixed 16 CSS-pixel strip of backdrop visible above it, use rounded top corners and a visible top handle within a compact 28 CSS-pixel handle row, and retain a height bounded by the dynamic viewport so mobile browser chrome and safe-area insets do not make the reply composer unreachable. The selected conversation's transcript SHALL fill the middle region and scroll within itself, and the reply/send input SHALL remain at the bottom of the bounded sheet without dead space below it.
 
-The mobile sheet SHALL close when the user clicks/taps the exposed backdrop, presses Escape, activates the explicit close control, or drags the sheet's top handle downward at least 96 CSS pixels. Drag recognition SHALL be limited to the top handle: vertical scrolling or swiping within the conversation list, transcript, or composer MUST NOT move or dismiss the sheet. A handle drag released before 96 CSS pixels SHALL return the sheet to its resting position, respecting reduced-motion preferences.
+The mobile sheet SHALL close when the user clicks/taps the exposed backdrop, presses Escape, or drags the sheet's top handle downward at least 96 CSS pixels. It SHALL NOT render the shared Sheet primitive's default top-right close control. Drag recognition SHALL be limited to the top handle: vertical scrolling or swiping within the conversation list, transcript, or composer MUST NOT move or dismiss the sheet. A handle drag released before 96 CSS pixels SHALL return the sheet to its resting position, respecting reduced-motion preferences.
 
 On desktop-width viewports (`sm` and above), the conversation surface SHALL remain the existing floating, height-capped dialog, and on `lg` and above the two-pane conversation-list + transcript layout SHALL be unchanged.
 
@@ -151,11 +151,11 @@ On desktop-width viewports (`sm` and above), the conversation surface SHALL rema
 - **WHEN** a top-handle drag is released before 96 CSS pixels
 - **THEN** the sheet returns to its resting position
 
-#### Scenario: Keyboard and explicit close remain available
+#### Scenario: Keyboard dismissal remains available
 
 - **WHEN** keyboard focus is inside the mobile sheet
 - **THEN** pressing Escape closes it and restores focus according to the existing Radix behavior
-- **AND** an accessible explicit close control remains available
+- **AND** no top-right close control consumes mobile header space
 
 #### Scenario: Desktop layout is preserved
 
@@ -428,4 +428,3 @@ The daemon conversation-list row's live status indicator (running / interrupted 
 - **GIVEN** a conversation whose origin slice has no match but whose matching execution on another connection is `interrupted` with reason `user`
 - **WHEN** the conversation list renders that row
 - **THEN** the row's status indicator MUST read `interrupted` (resumable); a crash-interrupt MUST read `error`
-

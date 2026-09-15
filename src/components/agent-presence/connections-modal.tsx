@@ -160,6 +160,7 @@ export function AgentConnectionsModal() {
         <SheetContent
           ref={sheetRef}
           side="bottom"
+          showCloseButton={false}
           data-top-gap-px={MOBILE_SHEET_TOP_GAP_PX}
           className="h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] gap-0 overflow-hidden rounded-t-2xl border-x border-t p-0 pb-[env(safe-area-inset-bottom)]"
         >
@@ -169,7 +170,7 @@ export function AgentConnectionsModal() {
           </VisuallyHidden.Root>
           <div
             data-slot="daemon-chat-sheet-handle"
-            className="flex h-11 shrink-0 touch-none cursor-grab items-center justify-center active:cursor-grabbing"
+            className="flex h-7 shrink-0 touch-none cursor-grab items-center justify-center active:cursor-grabbing"
             aria-hidden="true"
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
