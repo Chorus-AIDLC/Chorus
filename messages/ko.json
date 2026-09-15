@@ -114,7 +114,17 @@
     "loadError": "댓글을 불러오지 못했습니다",
     "retry": "다시 시도",
     "loadingMore": "더 불러오는 중...",
-    "noMoreComments": "더 이상 댓글이 없습니다"
+    "noMoreComments": "더 이상 댓글이 없습니다",
+    "actionsLabel": "{name}님의 댓글 작업",
+    "actionsTitle": "댓글 작업",
+    "actionsDescription": "{name}님의 댓글에 수행할 작업을 선택하세요.",
+    "reply": "답글",
+    "replyFailed": "답글을 준비하지 못했습니다. 다시 시도하세요.",
+    "delete": "삭제",
+    "deleteTitle": "댓글을 삭제할까요?",
+    "deleteDescription": "이 댓글은 영구적으로 삭제되며 되돌릴 수 없습니다.",
+    "deleteConfirm": "댓글 삭제",
+    "deleteFailed": "댓글을 삭제하지 못했습니다. 다시 시도하세요."
   },
   "mentions": {
     "noResults": "결과 없음",

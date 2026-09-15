@@ -1,16 +1,35 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useSyncExternalStore,
+} from "react";
 import { useTranslations } from "next-intl";
 import type { useTranslations as UseTranslationsType } from "next-intl";
-import { Send, Loader2, User, AlertCircle } from "lucide-react";
+import {
+  Send,
+  Loader2,
+  User,
+  AlertCircle,
+  MoreHorizontal,
+  Reply,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
-import { MentionEditor, type MentionEditorRef } from "@/components/mention-editor";
+import {
+  MentionEditor,
+  type MentionEditorRef,
+  type ReplyMentionTarget,
+} from "@/components/mention-editor";
 import {
   getCommentsAction,
   createCommentAction,
+  deleteCommentAction,
 } from "@/app/(dashboard)/projects/comment-actions";
 import type { CommentWithOwner } from "@/services/comment.service";
 import {
@@ -23,11 +42,59 @@ import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { getAgentColor } from "@/lib/agent-color";
 import { formatDateTime } from "@/lib/format-date";
 import { toast } from "sonner";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type TargetType = "idea" | "proposal" | "task" | "document";
 type TranslateFn = ReturnType<typeof UseTranslationsType>;
 
 const COLLAPSE_THRESHOLD = 200;
+const MOBILE_ACTIONS_QUERY = "(max-width: 639px)";
+
+function subscribeToMobileActions(onChange: () => void) {
+  if (typeof window === "undefined" || !window.matchMedia) return () => {};
+  const query = window.matchMedia(MOBILE_ACTIONS_QUERY);
+  query.addEventListener?.("change", onChange);
+  return () => query.removeEventListener?.("change", onChange);
+}
+
+function getMobileActionsSnapshot() {
+  return (
+    typeof window !== "undefined" &&
+    !!window.matchMedia?.(MOBILE_ACTIONS_QUERY).matches
+  );
+}
+
+function useMobileCommentActions() {
+  return useSyncExternalStore(
+    subscribeToMobileActions,
+    getMobileActionsSnapshot,
+    () => false,
+  );
+}
 
 // React-native mention rendering for the COMMENT surface only (passed as the opt-in
 // `renderMention` prop to ContentWithMentions). AGENT mentions become an interactive
@@ -213,6 +280,8 @@ export function UnifiedComments({
   const [total, setTotal] = useState(0);
   const editorRef = useRef<MentionEditorRef>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const deletingCommentUuidsRef = useRef(new Set<string>());
+  const deletedCommentUuidsRef = useRef(new Set<string>());
 
   // Mutable mirrors of state the IntersectionObserver / SSE callbacks read, so they
   // see fresh values without being torn down + rebuilt on every state change.
@@ -334,6 +403,45 @@ export function UnifiedComments({
     }
   };
 
+  const handleReply = useCallback(
+    (author: ReplyMentionTarget) => {
+      void editorRef.current?.replyToAuthor(author).catch(() => {
+        toast.error(t("comments.replyFailed"));
+      });
+    },
+    [t],
+  );
+
+  const handleDelete = useCallback(
+    async (commentUuid: string): Promise<boolean> => {
+      if (deletedCommentUuidsRef.current.has(commentUuid)) return true;
+      if (deletingCommentUuidsRef.current.has(commentUuid)) return false;
+
+      deletingCommentUuidsRef.current.add(commentUuid);
+      try {
+        const result = await deleteCommentAction(commentUuid);
+        if (!result.success) {
+          toast.error(t("comments.deleteFailed"));
+          return false;
+        }
+
+        deletedCommentUuidsRef.current.add(commentUuid);
+        if (commentsRef.current.some((item) => item.uuid === commentUuid)) {
+          const nextComments = commentsRef.current.filter(
+            (item) => item.uuid !== commentUuid,
+          );
+          commentsRef.current = nextComments;
+          setComments(nextComments);
+          setTotal((previous) => Math.max(0, previous - 1));
+        }
+        return true;
+      } finally {
+        deletingCommentUuidsRef.current.delete(commentUuid);
+      }
+    },
+    [t],
+  );
+
   return (
     <PresenceIndicator entityType={targetType} entityUuid={targetUuid} subEntityType="comment">
     <div className="flex flex-col gap-0">
@@ -409,6 +517,9 @@ export function UnifiedComments({
               avatarSize={avatarSize}
               gap={gap}
               t={t}
+              currentUserUuid={currentUserUuid}
+              onReply={handleReply}
+              onDelete={handleDelete}
             />
           ))}
           {/* Bottom sentinel + loading / end-of-list affordance */}
@@ -434,21 +545,208 @@ export function UnifiedComments({
   );
 }
 
+function CommentActions({
+  author,
+  canDelete,
+  t,
+  onReply,
+  onDelete,
+}: {
+  author: ReplyMentionTarget;
+  canDelete: boolean;
+  t: TranslateFn;
+  onReply: () => void;
+  onDelete: () => Promise<boolean>;
+}) {
+  const isMobile = useMobileCommentActions();
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const actionSelectedRef = useRef(false);
+
+  const onActionsCloseAutoFocus = (event: Event) => {
+    event.preventDefault();
+    if (!actionSelectedRef.current) {
+      triggerRef.current?.focus();
+    }
+    actionSelectedRef.current = false;
+  };
+
+  const selectAction = (action: () => void) => {
+    actionSelectedRef.current = true;
+    setActionsOpen(false);
+    const run = () => action();
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(run);
+    } else {
+      window.setTimeout(run, 0);
+    }
+  };
+
+  const trigger = (
+    <Button
+      ref={triggerRef}
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="size-11 shrink-0 text-muted-foreground hover:bg-accent hover:text-foreground sm:size-8"
+      aria-label={t("comments.actionsLabel", { name: author.name })}
+    >
+      <MoreHorizontal className="size-4" aria-hidden />
+    </Button>
+  );
+
+  const replyAction = () => selectAction(onReply);
+  const deleteAction = () => selectAction(() => setDeleteOpen(true));
+
+  return (
+    <>
+      {isMobile ? (
+        <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
+          <SheetTrigger asChild>{trigger}</SheetTrigger>
+          <SheetContent
+            side="bottom"
+            data-comment-actions-variant="mobile"
+            className="max-h-[min(82svh,32rem)] gap-0 overflow-hidden rounded-t-2xl pb-[max(1rem,env(safe-area-inset-bottom))]"
+            onCloseAutoFocus={onActionsCloseAutoFocus}
+          >
+            <div
+              className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/25"
+              aria-hidden
+            />
+            <SheetHeader className="border-b px-4 pt-3 pb-3 text-left">
+              <SheetTitle>{t("comments.actionsTitle")}</SheetTitle>
+              <SheetDescription>
+                {t("comments.actionsDescription", { name: author.name })}
+              </SheetDescription>
+            </SheetHeader>
+            <div className="overflow-y-auto overscroll-contain px-2 py-2">
+              <Button
+                type="button"
+                variant="ghost"
+                className="min-h-11 w-full justify-start gap-3 rounded-lg px-3 text-sm"
+                onClick={replyAction}
+              >
+                <Reply className="size-5" aria-hidden />
+                {t("comments.reply")}
+              </Button>
+              {canDelete && (
+                <div className="mt-1 border-t pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11 w-full justify-start gap-3 rounded-lg px-3 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:text-destructive"
+                    onClick={deleteAction}
+                  >
+                    <Trash2 className="size-5" aria-hidden />
+                    {t("comments.delete")}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <DropdownMenu open={actionsOpen} onOpenChange={setActionsOpen}>
+          <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            data-comment-actions-variant="desktop"
+            className="z-[100] w-44"
+            onCloseAutoFocus={onActionsCloseAutoFocus}
+          >
+            <DropdownMenuItem onSelect={replyAction}>
+              <Reply aria-hidden />
+              {t("comments.reply")}
+            </DropdownMenuItem>
+            {canDelete && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  variant="destructive"
+                  onSelect={deleteAction}
+                >
+                  <Trash2 aria-hidden />
+                  {t("comments.delete")}
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          if (!isDeleting) setDeleteOpen(open);
+        }}
+      >
+        <AlertDialogContent
+          className="z-[120]"
+          overlayClassName="z-[120]"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            triggerRef.current?.focus();
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("comments.deleteTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("comments.deleteDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>
+              {t("common.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={isDeleting}
+              onClick={async (event) => {
+                event.preventDefault();
+                setIsDeleting(true);
+                const deleted = await onDelete();
+                setIsDeleting(false);
+                if (deleted) setDeleteOpen(false);
+              }}
+            >
+              {isDeleting && <Loader2 className="animate-spin" aria-hidden />}
+              {t("comments.deleteConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
 function CommentItem({
   comment: c,
   compact,
   avatarSize,
   gap,
   t,
+  currentUserUuid,
+  onReply,
+  onDelete,
 }: {
   comment: CommentWithOwner;
   compact: boolean;
   avatarSize: string;
   gap: string;
   t: TranslateFn;
+  currentUserUuid?: string;
+  onReply: (author: ReplyMentionTarget) => void;
+  onDelete: (commentUuid: string) => Promise<boolean>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const isAgent = c.author.type === "agent";
+  const canDelete =
+    !!currentUserUuid &&
+    ((c.author.type === "user" && c.author.uuid === currentUserUuid) ||
+      (c.author.type === "agent" &&
+        c.author.owner?.uuid === currentUserUuid));
   const agentColor = isAgent ? getAgentColor(c.author.name) : null;
   const shouldCollapse = c.content.length > COLLAPSE_THRESHOLD;
 
@@ -472,25 +770,44 @@ function CommentItem({
       )}
       <div className="flex-1 min-w-0">
         {/* Meta line */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className={`${compact ? "text-xs" : "text-[13px]"} font-semibold text-[#1A1A1A] dark:text-[#CFCFCF]`}>
-            {c.author.name}
-          </span>
-          <span
-            style={
-              isAgent
-                ? { backgroundColor: agentBgColor, color: agentColor ?? undefined }
-                : undefined
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 pt-1 sm:pt-0">
+            <span className={`${compact ? "text-xs" : "text-[13px]"} font-semibold text-[#1A1A1A] dark:text-[#CFCFCF]`}>
+              {c.author.name}
+            </span>
+            <span
+              style={
+                isAgent
+                  ? { backgroundColor: agentBgColor, color: agentColor ?? undefined }
+                  : undefined
+              }
+              className={`inline-flex items-center rounded px-1.5 py-px text-[9px] font-medium ${
+                isAgent ? "" : "bg-[#F0EDE8] dark:bg-[#1f1e1c] text-muted-foreground"
+              }`}
+            >
+              {isAgent ? t("comments.roleAgent") : t("comments.roleHuman")}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {formatRelativeTime(c.createdAt, t)}
+            </span>
+          </div>
+          <CommentActions
+            author={{
+              type: isAgent ? "agent" : "user",
+              uuid: c.author.uuid,
+              name: c.author.name,
+            }}
+            canDelete={canDelete}
+            t={t}
+            onReply={() =>
+              onReply({
+                type: isAgent ? "agent" : "user",
+                uuid: c.author.uuid,
+                name: c.author.name,
+              })
             }
-            className={`inline-flex items-center rounded px-1.5 py-px text-[9px] font-medium ${
-              isAgent ? "" : "bg-[#F0EDE8] dark:bg-[#1f1e1c] text-muted-foreground"
-            }`}
-          >
-            {isAgent ? t("comments.roleAgent") : t("comments.roleHuman")}
-          </span>
-          <span className="text-[11px] text-muted-foreground">
-            {formatRelativeTime(c.createdAt, t)}
-          </span>
+            onDelete={() => onDelete(c.uuid)}
+          />
         </div>
 
         {/* Delegation line */}

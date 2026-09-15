@@ -114,7 +114,17 @@
     "loadError": "Failed to load comments",
     "retry": "Retry",
     "loadingMore": "Loading more...",
-    "noMoreComments": "No more comments"
+    "noMoreComments": "No more comments",
+    "actionsLabel": "Actions for comment by {name}",
+    "actionsTitle": "Comment actions",
+    "actionsDescription": "Choose an action for {name}'s comment.",
+    "reply": "Reply",
+    "replyFailed": "Couldn't prepare the reply. Try again.",
+    "delete": "Delete",
+    "deleteTitle": "Delete comment?",
+    "deleteDescription": "This comment will be permanently deleted. This action cannot be undone.",
+    "deleteConfirm": "Delete comment",
+    "deleteFailed": "Couldn't delete the comment. Try again."
   },
   "mentions": {
     "noResults": "No results",
