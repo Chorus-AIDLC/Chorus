@@ -18,7 +18,7 @@
 //   - a list-load failure renders the distinct error card, never a silent empty.
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // next-intl: resolve real en strings (a missing key surfaces as its dotted path and
@@ -309,8 +309,30 @@ function respondWith(opts: {
   });
 }
 
+function mockViewport(mobile: boolean, reduceMotion = false) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches:
+        query === "(max-width: 639px)"
+          ? mobile
+          : query === "(prefers-reduced-motion: reduce)"
+            ? reduceMotion
+            : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockViewport(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).EventSource = NoopEventSource;
   // jsdom lacks scrollIntoView (used by the transcript auto-scroll).
@@ -323,6 +345,9 @@ beforeEach(() => {
     unobserve() {}
     disconnect() {}
   };
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-06-16T12:05:00.000Z"));
 });
@@ -346,6 +371,133 @@ async function renderAndOpenModal() {
   await user.click(screen.getByText("view-all-trigger"));
   return { user, ...utils };
 }
+
+describe("Daemon chat responsive surface", () => {
+  it("uses a bounded, accessible bottom sheet below sm and closes from its backdrop and explicit control", async () => {
+    mockViewport(true);
+    respondWith({
+      connections: [conn({ uuid: "1", agentName: "Alpha" })],
+      sessions: [session({ uuid: "s1", agentUuid: "agent-1" })],
+    });
+
+    const { user } = await renderAndOpenModal();
+    const sheet = screen.getByRole("dialog");
+    expect(sheet.getAttribute("data-slot")).toBe("sheet-content");
+    expect(sheet.getAttribute("data-top-gap-px")).toBe("16");
+    expect(sheet.className).toContain("h-[calc(100dvh-1rem)]");
+    expect(sheet.className).toContain("rounded-t-2xl");
+    expect(sheet.className).toContain("safe-area-inset-bottom");
+    expect(sheet.getAttribute("aria-label")).toBeNull();
+    expect(
+      document.getElementById(sheet.getAttribute("aria-labelledby") ?? "")?.textContent,
+    ).toBe("Conversations");
+    expect(
+      document.getElementById(sheet.getAttribute("aria-describedby") ?? "")?.textContent,
+    ).toBe(
+      "Read what your agents did, turn by turn. Continue or interrupt a conversation inline.",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await user.click(screen.getByText("view-all-trigger"));
+    const overlay = document.querySelector<HTMLElement>('[data-slot="sheet-overlay"]');
+    expect(overlay).not.toBeNull();
+    await user.click(overlay as HTMLElement);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("only drags from the handle, snaps back below 96px, and dismisses at the threshold", async () => {
+    mockViewport(true);
+    respondWith({
+      connections: [conn({ uuid: "1", agentName: "Alpha" })],
+      sessions: [session({ uuid: "s1", agentUuid: "agent-1" })],
+    });
+
+    await renderAndOpenModal();
+    const sheet = screen.getByRole("dialog");
+    const handle = sheet.querySelector<HTMLElement>(
+      '[data-slot="daemon-chat-sheet-handle"]',
+    );
+    const body = sheet.querySelector<HTMLElement>(
+      '[data-slot="daemon-chat-sheet-body"]',
+    );
+    expect(handle).not.toBeNull();
+    expect(body).not.toBeNull();
+    expect(handle?.className).toContain("h-11");
+    expect(handle?.className).toContain("touch-none");
+
+    fireEvent.pointerDown(body as HTMLElement, {
+      pointerId: 1,
+      isPrimary: true,
+      button: 0,
+      clientY: 20,
+    });
+    fireEvent.pointerMove(body as HTMLElement, {
+      pointerId: 1,
+      isPrimary: true,
+      clientY: 180,
+    });
+    expect(sheet.style.transform).toBe("");
+
+    fireEvent.pointerDown(handle as HTMLElement, {
+      pointerId: 2,
+      isPrimary: true,
+      button: 0,
+      clientY: 20,
+    });
+    fireEvent.pointerMove(handle as HTMLElement, {
+      pointerId: 2,
+      isPrimary: true,
+      clientY: 115,
+    });
+    expect(sheet.style.transform).toBe("translate3d(0, 95px, 0)");
+    fireEvent.pointerUp(handle as HTMLElement, {
+      pointerId: 2,
+      isPrimary: true,
+      clientY: 115,
+    });
+    expect(screen.getByRole("dialog")).toBe(sheet);
+    expect(sheet.style.transform).toBe("translate3d(0, 0, 0)");
+    act(() => vi.advanceTimersByTime(200));
+    expect(sheet.style.transform).toBe("");
+
+    fireEvent.pointerDown(handle as HTMLElement, {
+      pointerId: 3,
+      isPrimary: true,
+      button: 0,
+      clientY: 20,
+    });
+    fireEvent.pointerMove(handle as HTMLElement, {
+      pointerId: 3,
+      isPrimary: true,
+      clientY: 116,
+    });
+    fireEvent.pointerUp(handle as HTMLElement, {
+      pointerId: 3,
+      isPrimary: true,
+      clientY: 116,
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps the existing floating dialog at sm and wider", async () => {
+    mockViewport(false);
+    respondWith({
+      connections: [conn({ uuid: "1", agentName: "Alpha" })],
+      sessions: [session({ uuid: "s1", agentUuid: "agent-1" })],
+    });
+
+    await renderAndOpenModal();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.getAttribute("data-slot")).toBe("dialog-content");
+    expect(dialog.className).toContain("sm:h-[92vh]");
+    expect(dialog.className).toContain("sm:w-[min(96vw,1100px)]");
+    expect(
+      dialog.querySelector('[data-slot="daemon-chat-sheet-handle"]'),
+    ).toBeNull();
+  });
+});
 
 describe("Daemon chat modal — opening + conversation list", () => {
   it("opens the modal and shows the chat title", async () => {
