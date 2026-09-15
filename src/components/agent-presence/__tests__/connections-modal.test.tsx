@@ -373,7 +373,7 @@ async function renderAndOpenModal() {
 }
 
 describe("Daemon chat responsive surface", () => {
-  it("uses a bounded, accessible bottom sheet below sm and closes from its backdrop and explicit control", async () => {
+  it("uses a compact, accessible bottom sheet below sm without a close button", async () => {
     mockViewport(true);
     respondWith({
       connections: [conn({ uuid: "1", agentName: "Alpha" })],
@@ -397,7 +397,12 @@ describe("Daemon chat responsive surface", () => {
       "Read what your agents did, turn by turn. Continue or interrupt a conversation inline.",
     );
 
-    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(
+      sheet.querySelector('[data-slot="daemon-chat-sheet-handle"]')?.className,
+    ).toContain("h-7");
+
+    await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     await user.click(screen.getByText("view-all-trigger"));
@@ -424,7 +429,7 @@ describe("Daemon chat responsive surface", () => {
     );
     expect(handle).not.toBeNull();
     expect(body).not.toBeNull();
-    expect(handle?.className).toContain("h-11");
+    expect(handle?.className).toContain("h-7");
     expect(handle?.className).toContain("touch-none");
 
     fireEvent.pointerDown(body as HTMLElement, {
@@ -493,6 +498,7 @@ describe("Daemon chat responsive surface", () => {
     expect(dialog.getAttribute("data-slot")).toBe("dialog-content");
     expect(dialog.className).toContain("sm:h-[92vh]");
     expect(dialog.className).toContain("sm:w-[min(96vw,1100px)]");
+    expect(screen.getByRole("button", { name: "Close" })).not.toBeNull();
     expect(
       dialog.querySelector('[data-slot="daemon-chat-sheet-handle"]'),
     ).toBeNull();
