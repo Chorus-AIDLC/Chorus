@@ -140,8 +140,12 @@ assert_eq "no session id -> <slug>/no-session" \
 #    the global root, and does NOT create a .chorus/ in the project dir.
 printf '%s' '{"session_id":"sess-place","tool_input":{"subagent_type":"general-purpose","name":"placer"}}' \
   | "$BASH" "$DIR/on-pre-spawn-agent.sh" >/dev/null 2>&1 || true
-assert_true "pending file written under global root" \
-  test -f "${CHORUS_PLUGIN_STATE_ROOT}/${EXPECT_SLUG}/sess-place/pending/placer"
+# The pending filename is <sanitized subagent_type>__<epoch>-<pid>, never unknown-*.
+PENDING_PLACED="$( ls "${CHORUS_PLUGIN_STATE_ROOT}/${EXPECT_SLUG}/sess-place/pending" 2>/dev/null | head -1 )"
+case "$PENDING_PLACED" in
+  general-purpose__*) assert_true "pending file written under global root" true ;;
+  *)                  assert_true "pending file written under global root" false ;;
+esac
 assert_true "no .chorus/ created in project dir" \
   test ! -d "${CLAUDE_PROJECT_DIR}/.chorus"
 

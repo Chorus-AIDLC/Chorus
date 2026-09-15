@@ -40,7 +40,7 @@ jobs:
       - name: Run coordinated package-contract tests
         run: pnpm test:release-contract
 
-      - name: Run plugin shell tests (Bash 3.2-compat syntax smoke + spec-mode resolver + skill/harness string blacklist)
+      - name: Run plugin shell tests (Bash 3.2-compat syntax smoke + spec-mode resolver + skill/harness string blacklist + sub-agent session naming)
         # Note: the runner's bash is 5.x, so test-syntax.sh is a compatibility
         # smoke (it greps for Bash-4+ constructs), not execution on a real 3.2.
         run: |
@@ -52,6 +52,9 @@ jobs:
           # violations, including under a repo path containing a space (where an
           # unquoted scope would silently scan nothing and report PASS).
           bash public/chorus-plugin/bin/tests/test-skill-harness-fidelity-negative.sh
+          # Sub-agent session naming: name comes from the SubagentStart event's
+          # agent_type (never the pre-fix `unknown-<digits>` pending filename).
+          bash public/chorus-plugin/bin/tests/test-subagent-session-name.sh
 
       - name: Upload coverage artifact
         if: always()
