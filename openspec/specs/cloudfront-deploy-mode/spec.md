@@ -188,4 +188,3 @@ The installer SHALL support a non-interactive path in which every value it would
 
 - **WHEN** the installer runs with none of the non-interactive switches set
 - **THEN** it MUST prompt interactively and write to `default_deploy.sh` as it does today
-

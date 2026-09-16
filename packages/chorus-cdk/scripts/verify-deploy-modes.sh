@@ -37,6 +37,11 @@ REPO_ROOT="$(cd "${CDK_DIR}/../.." && pwd)"
 # still valid (it is an ancestor of develop); to re-baseline against a newer
 # pre-change commit, pass CHORUS_VERIFY_BASELINE_REF. The script refuses a
 # baseline that already knows `deployMode`.
+#
+# This guard proves *this* change replaces nothing. A later change that
+# legitimately alters the alb-mode template will make it fail by design — at
+# that point move the baseline forward to the commit before that change (it must
+# still be an ancestor of develop), rather than deleting the check.
 BASELINE_REF="${CHORUS_VERIFY_BASELINE_REF:-243ba34a}"
 
 STACK_NAME="Chorus"
@@ -224,9 +229,11 @@ cat > "${WORK}/stub-forward/pnpm" <<STUB
 echo "pnpm \$*" >> "\${CHORUS_STUB_LOG}"
 exec "${REAL_PNPM}" "\$@"
 STUB
+# Logs the working directory too, so the generated config's SCRIPT_DIR
+# resolution is observable and not just assumed.
 cat > "${WORK}/stub-record/pnpm" <<'STUB'
 #!/usr/bin/env bash
-echo "pnpm $*" >> "${CHORUS_STUB_LOG}"
+echo "pnpm $* [pwd=${PWD}]" >> "${CHORUS_STUB_LOG}"
 exit 0
 STUB
 chmod +x "${WORK}/stub-forward/pnpm" "${WORK}/stub-record/pnpm"
@@ -286,6 +293,15 @@ run_installer() { # run_installer <label> <DEPLOY_MODE> <ACM_CERT_ARN> <CUSTOM_D
   ( PATH="${WORK}/stub-record:${PATH}" CHORUS_STUB_LOG="$ctxlog" bash "$cfg" ) \
     >"${WORK}/config-run-${label}.log" 2>&1
   ok "installer(${label}): generated config runs" $?
+  # This config was written to the scratch directory, which has no
+  # packages/chorus-cdk next to it, so `cd "${SCRIPT_DIR}"` must land on the
+  # recorded repo root — otherwise every cdk command in it would fail.
+  if grep -qF "pwd=${REPO_ROOT}" "$ctxlog"; then
+    ok "installer(${label}): config written outside the repo runs cdk from the repo root" 0
+  else
+    ok "installer(${label}): config written outside the repo runs cdk from the repo root" 1 \
+      "$(grep -m1 -oE 'pwd=[^ ]+' "$ctxlog")"
+  fi
   local deploy_line
   deploy_line="$(grep -m1 'cdk deploy' "$ctxlog")"
   if [ -z "$deploy_line" ]; then
