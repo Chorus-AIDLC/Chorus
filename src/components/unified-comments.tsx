@@ -590,7 +590,10 @@ function CommentActions({
       type="button"
       variant="ghost"
       size="icon"
-      className="size-11 shrink-0 text-muted-foreground hover:bg-accent hover:text-foreground sm:size-8"
+      // Visually compact (24px, negative vertical margin so it never grows the
+      // meta line), but keeps a ~44px touch target on mobile via an invisible
+      // pseudo-element hit area.
+      className="relative -my-1 size-6 shrink-0 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground before:absolute before:-inset-2.5 before:content-[''] sm:before:hidden"
       aria-label={t("comments.actionsLabel", { name: author.name })}
     >
       <MoreHorizontal className="size-4" aria-hidden />
@@ -770,8 +773,8 @@ function CommentItem({
       )}
       <div className="flex-1 min-w-0">
         {/* Meta line */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 pt-1 sm:pt-0">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
             <span className={`${compact ? "text-xs" : "text-[13px]"} font-semibold text-[#1A1A1A] dark:text-[#CFCFCF]`}>
               {c.author.name}
             </span>
