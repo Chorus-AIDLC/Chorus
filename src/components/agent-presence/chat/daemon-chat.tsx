@@ -544,6 +544,29 @@ export function DaemonChat() {
   const [selectedSessionUuid, setSelectedSessionUuid] = useState<string | null>(
     null,
   );
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  // A one-shot focus can identify a conversation outside the selected agent's
+  // first server-paginated page. Keep that UUID while its direct detail read is
+  // in flight so the transcript can open independently of the 12 loaded rows.
+  // Once the detail succeeds it is injected into `sessions`; on failure the
+  // marker lets us safely fall back to the conversation list instead of leaving
+  // a phantom selection or an empty mobile drill-down behind.
+  const focusedSessionUuidRef = useRef<string | null>(null);
+  const focusedSessionNeedsInjectionRef = useRef<string | null>(null);
+  const connectionsRef = useRef(connections);
+  useEffect(() => {
+    connectionsRef.current = connections;
+  }, [connections]);
+  const abandonFocusedSession = useCallback((sessionUuid: string) => {
+    if (focusedSessionUuidRef.current !== sessionUuid) return false;
+    focusedSessionUuidRef.current = null;
+    focusedSessionNeedsInjectionRef.current = null;
+    setSelectedSessionUuid((current) =>
+      current === sessionUuid ? null : current,
+    );
+    setMobileDetailOpen(false);
+    return true;
+  }, []);
   // Resolve the selection: explicit pick wins when it's still in the current agent's
   // rows; otherwise null (the right pane shows the select prompt).
   const selectedSession = useMemo(
@@ -580,7 +603,10 @@ export function DaemonChat() {
   // carries only the turn, not the session, so the rollup would otherwise never update live.
   const rolledUpTurnsRef = useRef<Set<string>>(new Set());
 
-  const openUuid = selectedSession?.session.uuid ?? null;
+  // A direct focus target is authoritative even before its row is present in the
+  // current server page. Driving the detail read from the UUID (rather than the
+  // resolved row) is what lets an older active session open immediately.
+  const openUuid = selectedSessionUuid;
 
   // Tell the provider which session is open so it subscribes that transcript
   // channel; clear on close/unmount.
@@ -619,7 +645,9 @@ export function DaemonChat() {
         const res = await authFetch(`/api/daemon-sessions/${openUuid}`);
         if (reqId !== detailReqRef.current) return; // superseded
         if (!res.ok) {
-          setDetailError(true);
+          if (!abandonFocusedSession(openUuid)) {
+            setDetailError(true);
+          }
           return;
         }
         const json = await res.json();
@@ -627,6 +655,42 @@ export function DaemonChat() {
         if (json.success) {
           const data = json.data as SessionDetailView;
           setDetail(data);
+          if (focusedSessionUuidRef.current === openUuid) {
+            focusedSessionUuidRef.current = null;
+            const needsInjection =
+              focusedSessionNeedsInjectionRef.current === openUuid;
+            focusedSessionNeedsInjectionRef.current = null;
+            const session = data.session;
+            const originOnline = connectionsRef.current.some(
+              (connection) =>
+                connection.uuid === session.originConnectionUuid &&
+                connection.effectiveStatus === "online",
+            );
+            // Preserve bounded server pagination: add only the explicitly-focused
+            // row instead of walking older pages or restoring an all-history read.
+            if (needsInjection) {
+              setSessions((current) =>
+                mergeSessionsById(
+                  [
+                    {
+                      uuid: session.uuid,
+                      agentUuid: session.agentUuid,
+                      sessionId: session.sessionId,
+                      directIdeaUuid: session.directIdeaUuid,
+                      originConnectionUuid: session.originConnectionUuid,
+                      status: session.status,
+                      title: session.title,
+                      lastTurnAt: session.lastTurnAt,
+                      originOnline,
+                      firstInstruction: null,
+                      ideaTitle: null,
+                    },
+                  ],
+                  current,
+                ),
+              );
+            }
+          }
           // The server rollup on `data.session` already accounts for every terminal turn
           // that existed at fetch time — record their uuids so a live terminal event for
           // one of them can't double-count into the local header total (daemon-token-usage).
@@ -649,17 +713,21 @@ export function DaemonChat() {
               : null,
           );
         } else {
-          setDetailError(true);
+          if (!abandonFocusedSession(openUuid)) {
+            setDetailError(true);
+          }
         }
       } catch (error) {
         if (reqId !== detailReqRef.current) return;
         clientLogger.error("Failed to fetch daemon session detail:", error);
-        setDetailError(true);
+        if (!abandonFocusedSession(openUuid)) {
+          setDetailError(true);
+        }
       } finally {
         if (reqId === detailReqRef.current) setDetailLoading(false);
       }
     })();
-  }, [openUuid]);
+  }, [openUuid, abandonFocusedSession]);
 
   // Load the page of MESSAGES older than the loaded window and merge it in. The cursor is
   // the SERVER-RETURNED composite `(oldestTurnSeq, oldestMsgSeq)` of the previous page —
@@ -841,12 +909,12 @@ export function DaemonChat() {
       : "";
 
   // ===== Mobile drill-down =====
-  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   useEffect(() => {
     if (
       listStatus !== "loading" &&
       mobileDetailOpen &&
       selectedSessionUuid &&
+      focusedSessionUuidRef.current !== selectedSessionUuid &&
       !rows.some((r) => r.session.uuid === selectedSessionUuid)
     ) {
       setMobileDetailOpen(false);
@@ -854,12 +922,16 @@ export function DaemonChat() {
   }, [rows, listStatus, mobileDetailOpen, selectedSessionUuid]);
 
   const selectSession = useCallback((uuid: string) => {
+    focusedSessionUuidRef.current = null;
+    focusedSessionNeedsInjectionRef.current = null;
     setSelectedSessionUuid(uuid);
   }, []);
 
   // "New conversation" — clear the selection so the right pane (desktop) / drill-down
   // (mobile) shows the new-conversation composer instead of a transcript.
   const startNewConversation = useCallback(() => {
+    focusedSessionUuidRef.current = null;
+    focusedSessionNeedsInjectionRef.current = null;
     setSelectedSessionUuid(null);
     setMobileDetailOpen(true);
   }, []);
@@ -954,19 +1026,31 @@ export function DaemonChat() {
     if (!focusTarget) return;
     setPickedAgentUuid(focusTarget.agentUuid);
     if (focusTarget.sessionSeed) {
+      focusedSessionUuidRef.current = null;
+      focusedSessionNeedsInjectionRef.current = null;
       handleSessionStarted(focusTarget.sessionSeed);
       // The seeded conversation must also open on the MOBILE breakpoint, where a
       // selection only shows once the drill-down is open.
       setMobileDetailOpen(true);
     } else if (focusTarget.sessionUuid) {
-      // Session focus without a seed — select it if/when the list has it.
+      // Session focus without a seed — select it immediately. If it is outside
+      // the current first page, the detail read above resolves it by UUID and
+      // injects that one row without unbounding the paginated list.
+      focusedSessionUuidRef.current = focusTarget.sessionUuid;
+      focusedSessionNeedsInjectionRef.current = sessions.some(
+        (session) => session.uuid === focusTarget.sessionUuid,
+      )
+        ? null
+        : focusTarget.sessionUuid;
       setSelectedSessionUuid(focusTarget.sessionUuid);
       setMobileDetailOpen(true);
     } else {
+      focusedSessionUuidRef.current = null;
+      focusedSessionNeedsInjectionRef.current = null;
       setSelectedSessionUuid(null);
     }
     clearChatFocusTarget();
-  }, [focusTarget, clearChatFocusTarget, handleSessionStarted]);
+  }, [focusTarget, clearChatFocusTarget, handleSessionStarted, sessions]);
 
   // ===== States =====
   // The chat body's card + list-loading flag, derived by the pure `deriveChatBodyState`
@@ -1032,7 +1116,7 @@ export function DaemonChat() {
   // selected but the drill-down was opened via "New conversation") the composer.
   // The mobile transcript stacks its reply action row beneath the textarea (the
   // narrow drill-down has no room for an inline footer line), per Q4=mobile-syncs.
-  const mobileDrillContent = selectedSession
+  const mobileDrillContent = selectedSessionUuid
     ? renderTranscript("stacked")
     : newConversationPane;
 
@@ -1162,7 +1246,7 @@ export function DaemonChat() {
               {/* Right pane: the selected transcript, or — when nothing is selected —
                   the new-conversation composer (chat-app default), never a dead end. */}
               <Card className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border-border bg-card p-0 shadow-none">
-                {selectedSession ? transcriptPane : newConversationPane}
+                {selectedSessionUuid ? transcriptPane : newConversationPane}
               </Card>
             </div>
           </>
