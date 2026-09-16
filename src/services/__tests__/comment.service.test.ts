@@ -8,6 +8,7 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     count: vi.fn(),
     groupBy: vi.fn(),
+    deleteMany: vi.fn(),
   },
   task: {
     findUnique: vi.fn(),
@@ -26,11 +27,16 @@ const mockPrisma = vi.hoisted(() => ({
     findFirst: vi.fn(),
   },
   agent: {
+    findFirst: vi.fn(),
     findMany: vi.fn(),
+  },
+  mention: {
+    deleteMany: vi.fn(),
   },
   user: {
     findMany: vi.fn(),
   },
+  $transaction: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
@@ -56,6 +62,7 @@ vi.mock("@/services/activity.service", () => ({
 
 import {
   createComment,
+  deleteComment,
   listComments,
   batchCommentCounts,
   resolveProjectUuid,
@@ -90,6 +97,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetActorName.mockResolvedValue("Test User");
   mockValidateTargetExists.mockResolvedValue(true);
+  mockPrisma.$transaction.mockImplementation(
+    async (callback: (tx: typeof mockPrisma) => unknown) => callback(mockPrisma)
+  );
 });
 
 // ===== createComment =====
@@ -525,6 +535,168 @@ describe("createComment", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     // Should not throw, fire-and-forget handles errors
+    expect(eventBus.emitChange).not.toHaveBeenCalled();
+  });
+});
+
+// ===== deleteComment =====
+describe("deleteComment", () => {
+  const projectUuid = "project-0000-0000-0000-000000000001";
+
+  beforeEach(() => {
+    mockPrisma.comment.findFirst.mockResolvedValue(makeCommentRecord());
+    mockPrisma.task.findFirst.mockResolvedValue({ projectUuid });
+    mockPrisma.comment.deleteMany.mockResolvedValue({ count: 1 });
+    mockPrisma.mention.deleteMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("deletes the acting user's own comment and its derived mentions", async () => {
+    await deleteComment({
+      companyUuid,
+      commentUuid,
+      actingUserUuid: authorUuid,
+    });
+
+    expect(mockPrisma.comment.findFirst).toHaveBeenCalledWith({
+      where: { uuid: commentUuid, companyUuid },
+      select: {
+        uuid: true,
+        targetType: true,
+        targetUuid: true,
+        authorType: true,
+        authorUuid: true,
+      },
+    });
+    expect(mockPrisma.mention.deleteMany).toHaveBeenCalledWith({
+      where: {
+        companyUuid,
+        sourceType: "comment",
+        sourceUuid: commentUuid,
+      },
+    });
+    expect(mockPrisma.comment.deleteMany).toHaveBeenCalledWith({
+      where: { uuid: commentUuid, companyUuid },
+    });
+    expect(eventBus.emitChange).toHaveBeenCalledWith({
+      companyUuid,
+      projectUuid,
+      entityType: "task",
+      entityUuid: targetUuid,
+      action: "updated",
+      actorUuid: authorUuid,
+    });
+  });
+
+  it("deletes a comment authored by an Agent owned by the acting user", async () => {
+    const agentUuid = "agent-0000-0000-0000-000000000001";
+    mockPrisma.comment.findFirst.mockResolvedValue(
+      makeCommentRecord({ authorType: "agent", authorUuid: agentUuid })
+    );
+    mockPrisma.agent.findFirst.mockResolvedValue({ uuid: agentUuid });
+
+    await deleteComment({
+      companyUuid,
+      commentUuid,
+      actingUserUuid: authorUuid,
+    });
+
+    expect(mockPrisma.agent.findFirst).toHaveBeenCalledWith({
+      where: { uuid: agentUuid, companyUuid, ownerUuid: authorUuid },
+      select: { uuid: true },
+    });
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a comment authored by another user", async () => {
+    mockPrisma.comment.findFirst.mockResolvedValue(
+      makeCommentRecord({ authorUuid: "user-someone-else" })
+    );
+
+    await expect(
+      deleteComment({ companyUuid, commentUuid, actingUserUuid: authorUuid })
+    ).rejects.toThrow("Comment cannot be deleted");
+
+    expect(mockPrisma.agent.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(eventBus.emitChange).not.toHaveBeenCalled();
+  });
+
+  it("rejects a comment authored by another user's Agent", async () => {
+    mockPrisma.comment.findFirst.mockResolvedValue(
+      makeCommentRecord({ authorType: "agent", authorUuid: "agent-other" })
+    );
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+
+    await expect(
+      deleteComment({ companyUuid, commentUuid, actingUserUuid: authorUuid })
+    ).rejects.toThrow("Comment cannot be deleted");
+
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(eventBus.emitChange).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cross-company comment through the company-scoped lookup", async () => {
+    mockPrisma.comment.findFirst.mockResolvedValue(null);
+
+    await expect(
+      deleteComment({ companyUuid, commentUuid, actingUserUuid: authorUuid })
+    ).rejects.toThrow("Comment cannot be deleted");
+
+    expect(mockPrisma.comment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { uuid: commentUuid, companyUuid },
+      })
+    );
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing comment", async () => {
+    mockPrisma.comment.findFirst.mockResolvedValue(null);
+
+    await expect(
+      deleteComment({
+        companyUuid,
+        commentUuid: "comment-missing",
+        actingUserUuid: authorUuid,
+      })
+    ).rejects.toThrow("Comment cannot be deleted");
+
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(eventBus.emitChange).not.toHaveBeenCalled();
+  });
+
+  it("rejects deletion when the company-scoped parent entity is missing", async () => {
+    mockPrisma.task.findFirst.mockResolvedValue(null);
+
+    await expect(
+      deleteComment({ companyUuid, commentUuid, actingUserUuid: authorUuid })
+    ).rejects.toThrow("Comment cannot be deleted");
+
+    expect(mockPrisma.task.findFirst).toHaveBeenCalledWith({
+      where: { uuid: targetUuid, companyUuid },
+      select: { projectUuid: true },
+    });
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("does not emit an update when the transaction fails", async () => {
+    mockPrisma.mention.deleteMany.mockRejectedValue(new Error("DB down"));
+
+    await expect(
+      deleteComment({ companyUuid, commentUuid, actingUserUuid: authorUuid })
+    ).rejects.toThrow("DB down");
+
+    expect(mockPrisma.comment.deleteMany).not.toHaveBeenCalled();
+    expect(eventBus.emitChange).not.toHaveBeenCalled();
+  });
+
+  it("rolls back when the comment disappears before the transactional delete", async () => {
+    mockPrisma.comment.deleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      deleteComment({ companyUuid, commentUuid, actingUserUuid: authorUuid })
+    ).rejects.toThrow("Comment cannot be deleted");
+
     expect(eventBus.emitChange).not.toHaveBeenCalled();
   });
 });
