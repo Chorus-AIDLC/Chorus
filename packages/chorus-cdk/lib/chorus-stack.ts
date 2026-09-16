@@ -4,8 +4,11 @@ import { Network } from './network';
 import { Database } from './database';
 import { Cache } from './cache';
 import { Service } from './service';
+import { DeployMode } from './deploy-mode';
 
 export interface ChorusStackProps extends StackProps {
+  /** Front-door topology. Defaults to `alb` at the entrypoint. */
+  readonly deployMode: DeployMode;
   readonly acmCertificateArn: string;
   readonly customDomain: string;
   readonly superAdminEmail: string;
@@ -35,6 +38,7 @@ export class ChorusStack extends Stack {
       networkStack: network,
       database,
       cache,
+      deployMode: props.deployMode,
       acmCertificateArn: props.acmCertificateArn,
       customDomain: props.customDomain,
     });

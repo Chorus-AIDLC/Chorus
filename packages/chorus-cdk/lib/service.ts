@@ -11,6 +11,8 @@ import {
   aws_logs as logs,
   aws_iam as iam,
   aws_ecr_assets as ecr_assets,
+  aws_cloudfront as cloudfront,
+  aws_cloudfront_origins as origins,
 } from 'aws-cdk-lib';
 import {
   ApplicationLoadBalancer,
@@ -19,11 +21,13 @@ import {
   ListenerCondition,
   ListenerCertificate,
 } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
 import { Secret } from 'aws-cdk-lib/aws-ecs';
 import path from 'path';
 import { Database, DB_NAME } from './database';
 import { Network } from './network';
 import { Cache } from './cache';
+import { DeployMode } from './deploy-mode';
 
 const SERVICE_PORT = 8637;
 
@@ -32,6 +36,11 @@ export interface ServiceProps {
   readonly networkStack: Network;
   readonly database: Database;
   readonly cache?: Cache;
+  /**
+   * Front-door topology. `alb` keeps the internet-facing HTTPS load balancer;
+   * `cloudfront` puts an internal load balancer behind a CloudFront VPC origin.
+   */
+  readonly deployMode: DeployMode;
   readonly acmCertificateArn: string;
   readonly customDomain: string;
   readonly desiredCount?: number;
@@ -50,25 +59,161 @@ export class Service extends Construct {
       vpc: props.vpc,
     });
 
+    const isCloudFrontMode = props.deployMode === 'cloudfront';
+
+    // In `cloudfront` mode the load balancer is private and reached only through
+    // a CloudFront VPC origin; in `alb` mode it stays the public front door.
+    // NOTE: in `alb` mode the props below must remain byte-for-byte equivalent to
+    // the pre-CloudFront version so the logical ID (ServiceAlbC1AFD770) is stable —
+    // an ALB's scheme is immutable and a renamed logical ID is a replacement.
     this.alb = new ApplicationLoadBalancer(this, 'Alb', {
       vpc: props.vpc,
-      internetFacing: true,
+      internetFacing: !isCloudFrontMode,
       idleTimeout: Duration.minutes(60),
+      ...(isCloudFrontMode
+        ? {
+            vpcSubnets: {
+              subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+            },
+          }
+        : {}),
     });
 
-    const listenerCertificate = ListenerCertificate.fromArn(
-      props.acmCertificateArn,
-    );
-
-    const listener = this.alb.addListener('Listener', {
-      port: 443,
-      protocol: ApplicationProtocol.HTTPS,
-      certificates: [listenerCertificate],
+    const targetGroup = new elbv2.ApplicationTargetGroup(this, 'TargetGroup', {
+      vpc: props.vpc,
+      port: SERVICE_PORT,
+      protocol: elbv2.ApplicationProtocol.HTTP,
+      targetType: elbv2.TargetType.IP,
+      healthCheck: {
+        path: '/',
+        healthyHttpCodes: '200-399',
+        interval: Duration.seconds(30),
+      },
     });
 
-    const hasCustomDomain = new CfnCondition(this, 'HasCustomDomain', {
-      expression: Fn.conditionNot(Fn.conditionEquals(props.customDomain, '')),
-    });
+    if (isCloudFrontMode) {
+      // Private ALB behind exactly one distribution: no host-header rules and no
+      // 403 default are needed, because there is no public listener to protect.
+      // `open` is left at its default `true` so the ALB security group admits
+      // port 80 from inside the VPC / the CloudFront VPC origin. A listener with
+      // `open: false` would synth cleanly and fail every request at runtime.
+      this.alb.addListener('Listener', {
+        port: 80,
+        protocol: ApplicationProtocol.HTTP,
+        defaultTargetGroups: [targetGroup],
+      });
+
+      const hasAlternateDomain = Boolean(
+        props.customDomain && props.acmCertificateArn,
+      );
+
+      const distribution = new cloudfront.Distribution(this, 'Distribution', {
+        comment: 'Chorus front door',
+        defaultBehavior: {
+          origin: origins.VpcOrigin.withApplicationLoadBalancer(this.alb, {
+            // 60s (max without an approved quota increase) so the 30s SSE
+            // heartbeat is not racing the origin response timeout.
+            // `keepaliveTimeout` stays at its default; `VpcOriginProps` exposes
+            // no response-completion timeout, which is what would kill SSE.
+            readTimeout: Duration.seconds(60),
+            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+            httpPort: 80,
+          }),
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+          viewerProtocolPolicy:
+            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        // Without both a domain and a us-east-1 certificate, fall back to the
+        // default CloudFront certificate on *.cloudfront.net.
+        ...(hasAlternateDomain
+          ? {
+              domainNames: [props.customDomain],
+              certificate: Certificate.fromCertificateArn(
+                this,
+                'CloudFrontCertificate',
+                props.acmCertificateArn,
+              ),
+            }
+          : {}),
+      });
+
+      // `distribution.domainName` is a CloudFormation attribute reference, so a
+      // single deploy pass yields a working NEXTAUTH_URL / OIDC callback.
+      this.endpoint = Fn.join('', [
+        'https://',
+        hasAlternateDomain ? props.customDomain : distribution.domainName,
+      ]);
+
+      new CfnOutput(this, 'CloudFrontDomainName', {
+        description:
+          'CloudFront distribution domain name — the public endpoint when no custom domain is set, otherwise the CNAME target for the custom domain',
+        value: distribution.domainName,
+      }).overrideLogicalId('CloudFrontDomainName');
+    } else {
+      const listenerCertificate = ListenerCertificate.fromArn(
+        props.acmCertificateArn,
+      );
+
+      const listener = this.alb.addListener('Listener', {
+        port: 443,
+        protocol: ApplicationProtocol.HTTPS,
+        certificates: [listenerCertificate],
+      });
+
+      const hasCustomDomain = new CfnCondition(this, 'HasCustomDomain', {
+        expression: Fn.conditionNot(Fn.conditionEquals(props.customDomain, '')),
+      });
+
+      // ALB DNS rule (priority 1)
+      listener.addAction('AlbDnsRule', {
+        conditions: [
+          ListenerCondition.hostHeaders([this.alb.loadBalancerDnsName]),
+        ],
+        action: ListenerAction.forward([targetGroup]),
+        priority: 1,
+      });
+
+      // Default 403
+      listener.addAction('DefaultAction', {
+        action: ListenerAction.fixedResponse(403, {
+          contentType: 'text/plain',
+          messageBody: 'Forbidden: Access denied',
+        }),
+      });
+
+      // Conditional custom domain rule (priority 2)
+      const cfnListenerRule = new elbv2.CfnListenerRule(
+        this,
+        'CustomDomainRule',
+        {
+          actions: [
+            {
+              type: 'forward',
+              targetGroupArn: targetGroup.targetGroupArn,
+            },
+          ],
+          conditions: [
+            {
+              field: 'host-header',
+              values: [props.customDomain],
+            },
+          ],
+          listenerArn: listener.listenerArn,
+          priority: 2,
+        },
+      );
+      cfnListenerRule.cfnOptions.condition = hasCustomDomain;
+
+      // Determine NEXTAUTH_URL at deploy time
+      const endpointBase = Fn.conditionIf(
+        hasCustomDomain.logicalId,
+        props.customDomain,
+        this.alb.loadBalancerDnsName,
+      ).toString();
+      this.endpoint = Fn.join('', ['https://', endpointBase]);
+    }
 
     const taskExecutionRole = new iam.Role(this, 'TaskExecutionRole', {
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
@@ -113,14 +258,6 @@ export class Service extends Construct {
         ],
       }),
     );
-
-    // Determine NEXTAUTH_URL at deploy time
-    const endpointBase = Fn.conditionIf(
-      hasCustomDomain.logicalId,
-      props.customDomain,
-      this.alb.loadBalancerDnsName,
-    ).toString();
-    this.endpoint = Fn.join('', ['https://', endpointBase]);
 
     const container = taskDefinition.addContainer('App', {
       image: containerImage,
@@ -175,58 +312,6 @@ export class Service extends Construct {
       containerPort: SERVICE_PORT,
     });
 
-    const targetGroup = new elbv2.ApplicationTargetGroup(this, 'TargetGroup', {
-      vpc: props.vpc,
-      port: SERVICE_PORT,
-      protocol: elbv2.ApplicationProtocol.HTTP,
-      targetType: elbv2.TargetType.IP,
-      healthCheck: {
-        path: '/',
-        healthyHttpCodes: '200-399',
-        interval: Duration.seconds(30),
-      },
-    });
-
-    // ALB DNS rule (priority 1)
-    listener.addAction('AlbDnsRule', {
-      conditions: [
-        ListenerCondition.hostHeaders([this.alb.loadBalancerDnsName]),
-      ],
-      action: ListenerAction.forward([targetGroup]),
-      priority: 1,
-    });
-
-    // Default 403
-    listener.addAction('DefaultAction', {
-      action: ListenerAction.fixedResponse(403, {
-        contentType: 'text/plain',
-        messageBody: 'Forbidden: Access denied',
-      }),
-    });
-
-    // Conditional custom domain rule (priority 2)
-    const cfnListenerRule = new elbv2.CfnListenerRule(
-      this,
-      'CustomDomainRule',
-      {
-        actions: [
-          {
-            type: 'forward',
-            targetGroupArn: targetGroup.targetGroupArn,
-          },
-        ],
-        conditions: [
-          {
-            field: 'host-header',
-            values: [props.customDomain],
-          },
-        ],
-        listenerArn: listener.listenerArn,
-        priority: 2,
-      },
-    );
-    cfnListenerRule.cfnOptions.condition = hasCustomDomain;
-
     const service = new ecs.FargateService(this, 'FargateService', {
       cluster,
       taskDefinition,
@@ -248,8 +333,9 @@ export class Service extends Construct {
     }).overrideLogicalId('portalURL');
 
     new CfnOutput(this, 'AlbDnsName', {
-      description:
-        'DNS name for ALB, should be the CNAME target of custom domain',
+      description: isCloudFrontMode
+        ? 'DNS name of the internal ALB (CloudFront origin, not publicly reachable)'
+        : 'DNS name for ALB, should be the CNAME target of custom domain',
       value: this.alb.loadBalancerDnsName,
     }).overrideLogicalId('AlbDnsName');
   }
