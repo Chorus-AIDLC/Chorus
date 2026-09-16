@@ -116,7 +116,8 @@ function OpenForSessionTrigger({
 
 // A stand-in for the Idea Tracker / graph running-session affordance. Unlike
 // openChatForSession, this path has no SessionView seed; it must preserve the
-// activity's sessionUuid and let the already-fetched conversation list resolve it.
+// activity's sessionUuid and resolve it even when the first conversation page
+// does not contain that session.
 function OpenActiveIdeaSessionTrigger() {
   const { openChatForActiveSession } = useAgentPresence();
   return (
@@ -1180,6 +1181,146 @@ describe("Daemon chat modal — active Idea session focus", () => {
     ).toBeTruthy();
     expect(
       screen.getAllByText("Current idea conversation").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("loads and injects the exact transcript when the active session is outside the first page", async () => {
+    mockViewport(true);
+    const ideaSession = session({
+      uuid: "s-idea",
+      agentUuid: "agent-1",
+      directIdeaUuid: "idea-1",
+      title: "Older active idea conversation",
+      originConnectionUuid: "1",
+      lastTurnAt: "2026-06-15T10:00:00.000Z",
+    });
+    respondWith({
+      connections: [
+        conn({
+          uuid: "1",
+          agentUuid: "agent-1",
+          agentName: "Alpha",
+          host: "host",
+          cwd: "/workspace/chorus",
+        }),
+      ],
+      // Simulate the bounded first page: another newer row is present, while
+      // the active target can only be resolved through its UUID detail read.
+      sessions: [
+        session({
+          uuid: "s-newer",
+          agentUuid: "agent-1",
+          title: "Newer conversation",
+          originConnectionUuid: "1",
+        }),
+      ],
+      detail: { session: ideaSession, turns: [] },
+    });
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AgentPresenceProvider>
+        <OpenActiveIdeaSessionTrigger />
+        <AgentConnectionsModal />
+      </AgentPresenceProvider>,
+    );
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    await user.click(screen.getByText("open-active-idea-session"));
+
+    await waitFor(() =>
+      expect(
+        mockAuthFetch.mock.calls.some(
+          (call) =>
+            typeof call[0] === "string" &&
+            call[0] === "/api/daemon-sessions/s-idea",
+        ),
+      ).toBe(true),
+    );
+    expect(
+      screen.getAllByText("Older active idea conversation").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Conversations" })).toBeTruthy();
+    expect(
+      mockAuthFetch.mock.calls.some(
+        (call) =>
+          typeof call[0] === "string" &&
+          call[0].startsWith(
+            "/api/daemon-sessions?agentUuid=agent-1&limit=12",
+          ),
+      ),
+    ).toBe(true);
+    expect(
+      mockAuthFetch.mock.calls.filter(
+        (call) =>
+          typeof call[0] === "string" &&
+          call[0] === "/api/daemon-sessions/s-idea",
+      ),
+    ).toHaveLength(1);
+    expect(
+      mockAuthFetch.mock.calls.some(
+        (call) =>
+          typeof call[0] === "string" &&
+          call[0] === "/api/daemon-sessions",
+      ),
+    ).toBe(false);
+  });
+
+  it("falls back to the conversation list when an active session already in the first page cannot be loaded", async () => {
+    const ideaSession = session({
+      uuid: "s-idea",
+      agentUuid: "agent-1",
+      directIdeaUuid: "idea-1",
+      title: "Unavailable active conversation",
+      originConnectionUuid: "1",
+    });
+    respondWith({
+      connections: [
+        conn({
+          uuid: "1",
+          agentUuid: "agent-1",
+          agentName: "Alpha",
+          host: "host",
+          cwd: "/workspace/chorus",
+        }),
+      ],
+      sessions: [
+        ideaSession,
+        session({
+          uuid: "s-newer",
+          agentUuid: "agent-1",
+          title: "Available conversation",
+          originConnectionUuid: "1",
+        }),
+      ],
+      detail: null,
+    });
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AgentPresenceProvider>
+        <OpenActiveIdeaSessionTrigger />
+        <AgentConnectionsModal />
+      </AgentPresenceProvider>,
+    );
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    await user.click(screen.getByText("open-active-idea-session"));
+
+    await waitFor(() =>
+      expect(
+        mockAuthFetch.mock.calls.some(
+          (call) =>
+            typeof call[0] === "string" &&
+            call[0] === "/api/daemon-sessions/s-idea",
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Conversations" }),
+      ).toBeNull(),
+    );
+    expect(
+      screen.getAllByText("Available conversation").length,
     ).toBeGreaterThan(0);
   });
 });

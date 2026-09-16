@@ -87,7 +87,13 @@ live status, and an entity-bearing turn SHALL link to its related task/idea.
 Connection metadata (host, client version, uptime, started) SHALL be demoted from
 the headline to a secondary/collapsible position. The right pane SHALL offer
 inline send-instruction and interrupt controls, each gated on the session's origin
-being online.
+being online. When an entry point focuses a specific visible session UUID, the
+surface SHALL load and display that exact transcript even when the target session
+is older than the selected agent's currently loaded server-paginated page. The
+focused read SHALL add only that target session to the local conversation rows and
+MUST NOT restore an unbounded all-history list read. If the focused session cannot
+be loaded, the surface SHALL clear the unresolved selection and fall back to the
+selected agent's conversation list.
 
 #### Scenario: Selecting an agent then a conversation
 
@@ -120,6 +126,24 @@ being online.
 - **WHEN** the selected agent has no conversations
 - **THEN** the surface shows a calm empty state that invites starting a
   conversation, never an error treatment
+
+#### Scenario: A focused session outside the first page opens directly
+
+- **WHEN** the Idea Tracker or another entry point focuses a visible session UUID
+  that is not present in the selected agent's currently loaded conversation page
+- **THEN** the surface reads that session by UUID and directly renders its transcript
+- **AND** mobile opens the transcript drill-down while desktop selects the same
+  transcript in the two-pane layout
+- **AND** only the focused row is added locally; the bounded server pagination
+  remains in effect
+
+#### Scenario: An unavailable focused session falls back safely
+
+- **WHEN** a focused session UUID cannot be read because it is missing, no longer
+  visible, or the request fails
+- **THEN** the unresolved selection is cleared
+- **AND** the surface falls back to the selected agent's conversation list without
+  leaving an empty mobile drill-down or requesting the full conversation history
 
 ### Requirement: The conversation surface SHALL be a near-full-height bottom sheet on mobile with the reply input kept reachable
 
