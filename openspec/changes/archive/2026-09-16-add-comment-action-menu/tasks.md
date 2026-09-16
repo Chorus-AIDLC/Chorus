@@ -15,8 +15,8 @@
 
 ## 4. Delivery
 
-- [ ] 4.1 Deploy the verified change through the repository's existing deployment workflow and smoke-test Delete and Reply on the configured live Chorus environment.
-- [ ] 4.2 Inspect the final diff, push the feature branch, and open (but do not merge) a pull request targeting `develop`.
+- [x] 4.1 Deploy the verified change through the repository's existing deployment workflow and smoke-test Delete and Reply on the configured live Chorus environment.
+- [x] 4.2 Inspect the final diff, push the feature branch, and open (but do not merge) a pull request targeting `develop`.
 
 ## Deferred follow-up
 
