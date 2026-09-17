@@ -18,7 +18,7 @@
 //   - a list-load failure renders the distinct error card, never a silent empty.
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // next-intl: resolve real en strings (a missing key surfaces as its dotted path and
@@ -116,7 +116,8 @@ function OpenForSessionTrigger({
 
 // A stand-in for the Idea Tracker / graph running-session affordance. Unlike
 // openChatForSession, this path has no SessionView seed; it must preserve the
-// activity's sessionUuid and let the already-fetched conversation list resolve it.
+// activity's sessionUuid and resolve it even when the first conversation page
+// does not contain that session.
 function OpenActiveIdeaSessionTrigger() {
   const { openChatForActiveSession } = useAgentPresence();
   return (
@@ -309,8 +310,30 @@ function respondWith(opts: {
   });
 }
 
+function mockViewport(mobile: boolean, reduceMotion = false) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches:
+        query === "(max-width: 639px)"
+          ? mobile
+          : query === "(prefers-reduced-motion: reduce)"
+            ? reduceMotion
+            : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockViewport(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).EventSource = NoopEventSource;
   // jsdom lacks scrollIntoView (used by the transcript auto-scroll).
@@ -323,6 +346,9 @@ beforeEach(() => {
     unobserve() {}
     disconnect() {}
   };
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => {};
+  Element.prototype.releasePointerCapture = () => {};
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-06-16T12:05:00.000Z"));
 });
@@ -346,6 +372,139 @@ async function renderAndOpenModal() {
   await user.click(screen.getByText("view-all-trigger"));
   return { user, ...utils };
 }
+
+describe("Daemon chat responsive surface", () => {
+  it("uses a compact, accessible bottom sheet below sm without a close button", async () => {
+    mockViewport(true);
+    respondWith({
+      connections: [conn({ uuid: "1", agentName: "Alpha" })],
+      sessions: [session({ uuid: "s1", agentUuid: "agent-1" })],
+    });
+
+    const { user } = await renderAndOpenModal();
+    const sheet = screen.getByRole("dialog");
+    expect(sheet.getAttribute("data-slot")).toBe("sheet-content");
+    expect(sheet.getAttribute("data-top-gap-px")).toBe("16");
+    expect(sheet.className).toContain("h-[calc(100dvh-1rem)]");
+    expect(sheet.className).toContain("rounded-t-2xl");
+    expect(sheet.className).toContain("safe-area-inset-bottom");
+    expect(sheet.getAttribute("aria-label")).toBeNull();
+    expect(
+      document.getElementById(sheet.getAttribute("aria-labelledby") ?? "")?.textContent,
+    ).toBe("Conversations");
+    expect(
+      document.getElementById(sheet.getAttribute("aria-describedby") ?? "")?.textContent,
+    ).toBe(
+      "Read what your agents did, turn by turn. Continue or interrupt a conversation inline.",
+    );
+
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(
+      sheet.querySelector('[data-slot="daemon-chat-sheet-handle"]')?.className,
+    ).toContain("h-7");
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    await user.click(screen.getByText("view-all-trigger"));
+    const overlay = document.querySelector<HTMLElement>('[data-slot="sheet-overlay"]');
+    expect(overlay).not.toBeNull();
+    await user.click(overlay as HTMLElement);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("only drags from the handle, snaps back below 96px, and dismisses at the threshold", async () => {
+    mockViewport(true);
+    respondWith({
+      connections: [conn({ uuid: "1", agentName: "Alpha" })],
+      sessions: [session({ uuid: "s1", agentUuid: "agent-1" })],
+    });
+
+    await renderAndOpenModal();
+    const sheet = screen.getByRole("dialog");
+    const handle = sheet.querySelector<HTMLElement>(
+      '[data-slot="daemon-chat-sheet-handle"]',
+    );
+    const body = sheet.querySelector<HTMLElement>(
+      '[data-slot="daemon-chat-sheet-body"]',
+    );
+    expect(handle).not.toBeNull();
+    expect(body).not.toBeNull();
+    expect(handle?.className).toContain("h-7");
+    expect(handle?.className).toContain("touch-none");
+
+    fireEvent.pointerDown(body as HTMLElement, {
+      pointerId: 1,
+      isPrimary: true,
+      button: 0,
+      clientY: 20,
+    });
+    fireEvent.pointerMove(body as HTMLElement, {
+      pointerId: 1,
+      isPrimary: true,
+      clientY: 180,
+    });
+    expect(sheet.style.transform).toBe("");
+
+    fireEvent.pointerDown(handle as HTMLElement, {
+      pointerId: 2,
+      isPrimary: true,
+      button: 0,
+      clientY: 20,
+    });
+    fireEvent.pointerMove(handle as HTMLElement, {
+      pointerId: 2,
+      isPrimary: true,
+      clientY: 115,
+    });
+    expect(sheet.style.transform).toBe("translate3d(0, 95px, 0)");
+    fireEvent.pointerUp(handle as HTMLElement, {
+      pointerId: 2,
+      isPrimary: true,
+      clientY: 115,
+    });
+    expect(screen.getByRole("dialog")).toBe(sheet);
+    expect(sheet.style.transform).toBe("translate3d(0, 0, 0)");
+    act(() => vi.advanceTimersByTime(200));
+    expect(sheet.style.transform).toBe("");
+
+    fireEvent.pointerDown(handle as HTMLElement, {
+      pointerId: 3,
+      isPrimary: true,
+      button: 0,
+      clientY: 20,
+    });
+    fireEvent.pointerMove(handle as HTMLElement, {
+      pointerId: 3,
+      isPrimary: true,
+      clientY: 116,
+    });
+    fireEvent.pointerUp(handle as HTMLElement, {
+      pointerId: 3,
+      isPrimary: true,
+      clientY: 116,
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps the existing floating dialog at sm and wider", async () => {
+    mockViewport(false);
+    respondWith({
+      connections: [conn({ uuid: "1", agentName: "Alpha" })],
+      sessions: [session({ uuid: "s1", agentUuid: "agent-1" })],
+    });
+
+    await renderAndOpenModal();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.getAttribute("data-slot")).toBe("dialog-content");
+    expect(dialog.className).toContain("sm:h-[92vh]");
+    expect(dialog.className).toContain("sm:w-[min(96vw,1100px)]");
+    expect(screen.getByRole("button", { name: "Close" })).not.toBeNull();
+    expect(
+      dialog.querySelector('[data-slot="daemon-chat-sheet-handle"]'),
+    ).toBeNull();
+  });
+});
 
 describe("Daemon chat modal — opening + conversation list", () => {
   it("opens the modal and shows the chat title", async () => {
@@ -776,10 +935,16 @@ describe("Daemon chat modal — opening + conversation list", () => {
     ).toBe(false);
   });
 
-  it("does NOT show another conversation's execution in this conversation's footer (per-session scope)", async () => {
+  it("does NOT adopt another conversation's execution in this conversation's footer (per-session scope)", async () => {
     // An execution for a DIFFERENT ad-hoc session on the same connection must not leak
     // into the open conversation's footer (point: cards only in their own conversation).
-    await openShipLogin({
+    //
+    // Since fix-phantom-running-turn C2 a `running` turn ALWAYS offers a control, so the
+    // absence of a leak is no longer "no button at all" — it is that the button is the
+    // STUCK-TURN variant (derived from THIS conversation's own session key) rather than the
+    // other session's live-execution variant. The two are distinguished by their confirm
+    // copy, which is exactly the user-visible difference that matters.
+    const user = await openShipLogin({
       turnStatus: "running",
       executions: [adHocExec({ entityUuid: "sid-OTHER" })],
     });
@@ -788,7 +953,20 @@ describe("Daemon chat modal — opening + conversation list", () => {
         screen.getAllByPlaceholderText("Reply in this conversation…").length,
       ).toBeGreaterThan(0),
     );
-    expect(screen.queryByRole("button", { name: /interrupt/i })).toBeNull();
+    // The rendered control is the stuck-turn variant, identifiable by its own accessible
+    // name — the other session's live-execution variant keeps "Interrupt this running
+    // execution", so this query alone would fail if the foreign row had been adopted.
+    expect(
+      screen.queryByRole("button", { name: /Interrupt this running execution/i }),
+    ).toBeNull();
+    await user.click(
+      (await screen.findAllByRole("button", { name: /Clear this stuck turn/i }))[0],
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Clear this stuck turn?")).toBeTruthy(),
+    );
+    // The other session's live execution was NOT borrowed.
+    expect(screen.queryByText("Interrupt this execution?")).toBeNull();
   });
 });
 
@@ -1022,6 +1200,146 @@ describe("Daemon chat modal — active Idea session focus", () => {
     ).toBeTruthy();
     expect(
       screen.getAllByText("Current idea conversation").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("loads and injects the exact transcript when the active session is outside the first page", async () => {
+    mockViewport(true);
+    const ideaSession = session({
+      uuid: "s-idea",
+      agentUuid: "agent-1",
+      directIdeaUuid: "idea-1",
+      title: "Older active idea conversation",
+      originConnectionUuid: "1",
+      lastTurnAt: "2026-06-15T10:00:00.000Z",
+    });
+    respondWith({
+      connections: [
+        conn({
+          uuid: "1",
+          agentUuid: "agent-1",
+          agentName: "Alpha",
+          host: "host",
+          cwd: "/workspace/chorus",
+        }),
+      ],
+      // Simulate the bounded first page: another newer row is present, while
+      // the active target can only be resolved through its UUID detail read.
+      sessions: [
+        session({
+          uuid: "s-newer",
+          agentUuid: "agent-1",
+          title: "Newer conversation",
+          originConnectionUuid: "1",
+        }),
+      ],
+      detail: { session: ideaSession, turns: [] },
+    });
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AgentPresenceProvider>
+        <OpenActiveIdeaSessionTrigger />
+        <AgentConnectionsModal />
+      </AgentPresenceProvider>,
+    );
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    await user.click(screen.getByText("open-active-idea-session"));
+
+    await waitFor(() =>
+      expect(
+        mockAuthFetch.mock.calls.some(
+          (call) =>
+            typeof call[0] === "string" &&
+            call[0] === "/api/daemon-sessions/s-idea",
+        ),
+      ).toBe(true),
+    );
+    expect(
+      screen.getAllByText("Older active idea conversation").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Conversations" })).toBeTruthy();
+    expect(
+      mockAuthFetch.mock.calls.some(
+        (call) =>
+          typeof call[0] === "string" &&
+          call[0].startsWith(
+            "/api/daemon-sessions?agentUuid=agent-1&limit=12",
+          ),
+      ),
+    ).toBe(true);
+    expect(
+      mockAuthFetch.mock.calls.filter(
+        (call) =>
+          typeof call[0] === "string" &&
+          call[0] === "/api/daemon-sessions/s-idea",
+      ),
+    ).toHaveLength(1);
+    expect(
+      mockAuthFetch.mock.calls.some(
+        (call) =>
+          typeof call[0] === "string" &&
+          call[0] === "/api/daemon-sessions",
+      ),
+    ).toBe(false);
+  });
+
+  it("falls back to the conversation list when an active session already in the first page cannot be loaded", async () => {
+    const ideaSession = session({
+      uuid: "s-idea",
+      agentUuid: "agent-1",
+      directIdeaUuid: "idea-1",
+      title: "Unavailable active conversation",
+      originConnectionUuid: "1",
+    });
+    respondWith({
+      connections: [
+        conn({
+          uuid: "1",
+          agentUuid: "agent-1",
+          agentName: "Alpha",
+          host: "host",
+          cwd: "/workspace/chorus",
+        }),
+      ],
+      sessions: [
+        ideaSession,
+        session({
+          uuid: "s-newer",
+          agentUuid: "agent-1",
+          title: "Available conversation",
+          originConnectionUuid: "1",
+        }),
+      ],
+      detail: null,
+    });
+
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(
+      <AgentPresenceProvider>
+        <OpenActiveIdeaSessionTrigger />
+        <AgentConnectionsModal />
+      </AgentPresenceProvider>,
+    );
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    await user.click(screen.getByText("open-active-idea-session"));
+
+    await waitFor(() =>
+      expect(
+        mockAuthFetch.mock.calls.some(
+          (call) =>
+            typeof call[0] === "string" &&
+            call[0] === "/api/daemon-sessions/s-idea",
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Conversations" }),
+      ).toBeNull(),
+    );
+    expect(
+      screen.getAllByText("Available conversation").length,
     ).toBeGreaterThan(0);
   });
 });

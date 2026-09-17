@@ -4,6 +4,7 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import {
   listComments,
   createComment,
+  deleteComment,
   resolveProjectUuid,
   resolveAgentOwners,
   type CommentWithOwner,
@@ -127,5 +128,32 @@ export async function createCommentAction(
   } catch (error) {
     logger.error({ err: error, targetType }, "Failed to create comment");
     return { success: false, error: "Failed to create comment" };
+  }
+}
+
+/**
+ * Delete a comment as the currently authenticated dashboard user.
+ *
+ * Ownership is intentionally not accepted from the client. The service derives
+ * authorization from the persisted comment author and the acting user's UUID.
+ */
+export async function deleteCommentAction(
+  commentUuid: string
+): Promise<{ success: true } | { success: false; error: string }> {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  try {
+    await deleteComment({
+      companyUuid: auth.companyUuid,
+      commentUuid,
+      actingUserUuid: auth.actorUuid,
+    });
+    return { success: true };
+  } catch (error) {
+    logger.error({ err: error, commentUuid }, "Failed to delete comment");
+    return { success: false, error: "Failed to delete comment" };
   }
 }

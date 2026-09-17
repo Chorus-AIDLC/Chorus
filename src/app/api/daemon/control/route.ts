@@ -13,6 +13,13 @@
 // is NOT a persisted Notification and the command is NOT a member of the daemon's
 // WAKE_ACTIONS — it never enters the wake path.
 //
+// Phantom-turn convergence (fix-phantom-running-turn C3): for `interrupt` ONLY, after the
+// unconditional dispatch, the endpoint additionally settles the session's `running` turn as
+// `interrupted(user)` when the server's own state shows no live run can act on the command
+// (the connection is not effectively online, OR it reports no `running` execution for the
+// entity — the zombie-SSE case). The response carries `settled` so the client can tell
+// "asked the daemon" from "cleared it here"; a failed settle never fails the dispatch.
+//
 // Authorization (q2=a): resolve `targetConnectionUuid` → its DaemonConnection
 // within the caller's company → the connection's agent → that agent's human owner.
 // Allow iff the caller IS that owner OR holds `task:admin`; else 403. A connection
@@ -32,6 +39,15 @@ import {
   dispatchControl,
   type DispatchControlParams,
 } from "@/services/daemon-control.service";
+import {
+  isConnectionLive,
+  hasRunningExecution,
+} from "@/services/daemon-execution.service";
+import {
+  advanceTurnForWake,
+  resolveControlSessionId,
+} from "@/services/daemon-session.service";
+import logger from "@/lib/logger";
 
 // Request body schema. This PUBLIC endpoint accepts ONLY the entity-bearing control
 // verbs (`interrupt`/`resume`, 子3): they target a specific running/resumable resource,
@@ -103,5 +119,105 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     entityUuid: body.entityUuid,
   } satisfies DispatchControlParams);
 
-  return success({ dispatched: true });
+  // Converge a PHANTOM `running` turn (fix-phantom-running-turn C3). Publishing the
+  // control event above is unconditional and unchanged; this is an ADDITIONAL settle, for
+  // `interrupt` only, taken exactly when the server's OWN state shows there is no live run
+  // that could act on the command:
+  //
+  //   (a) the target connection is not effectively online — the SSE event is dropped and
+  //       never replays (a control command is not a persisted notification), OR
+  //   (b) the connection looks online but reports NO `running` execution for this entity —
+  //       the zombie-SSE case: a silently-dead reverse channel still keeps `lastSeenAt`
+  //       fresh via REST heartbeats, so liveness alone would publish into a channel nobody
+  //       listens on and the turn would stay `running` forever.
+  //
+  // We deliberately do NOT settle when the connection is online AND has a live `running`
+  // row: there the daemon is the authority (its SIGINT escalation window is up to 10s), and
+  // writing the terminal state first would tell the UI "interrupted" while the child is
+  // still winding down. Stale evidence is safe in the other direction: if a `running`
+  // upload was lost while a subprocess really is alive, the connection is online, the event
+  // IS delivered, the daemon kills the child and reports `interrupted(user)` — the same
+  // terminal state written here, absorbed by `advanceTurnForWake`'s idempotent terminal
+  // short-circuit. Both paths land on the state the human asked for.
+  let settled = false;
+  if (body.command === "interrupt") {
+    // The gate queries live INSIDE the try together with the settle: the control event is
+    // already published, so a transient DB failure while EVALUATING the gate must not turn
+    // a dispatched interrupt into a 500 — it must degrade to `settled: false` exactly like a
+    // failed settle does.
+    try {
+      const noLiveRun =
+        !(await isConnectionLive(auth.companyUuid, targetConnectionUuid)) ||
+        !(await hasRunningExecution(
+          auth.companyUuid,
+          targetConnectionUuid,
+          body.entityType,
+          body.entityUuid,
+        ));
+      if (noLiveRun) {
+        // Never assume `sessionId === body.entityUuid`. That identity holds for a modern
+        // idea-anchored session and for `daemon_session`, but a LEGACY residual session's
+        // key is `${ideaUuid}::${connectionUuid}` — and the client heals the `::` away, so
+        // both shapes arrive as `idea:<ideaUuid>`. The resolver picks the candidate that
+        // actually holds a `running` turn, and refuses (null) when the choice is ambiguous
+        // or nothing matches, rather than clearing an unrelated conversation's turn.
+        // `task` / `proposal` / `document` resolve no session here (their key is the
+        // resource's DIRECT idea) and the UI never emits them on this path.
+        const { sessionId, ambiguous } = await resolveControlSessionId({
+          companyUuid: auth.companyUuid,
+          agentUuid: target.agentUuid,
+          connectionUuid: targetConnectionUuid,
+          entityUuid: body.entityUuid,
+        });
+        if (!sessionId) {
+          logger.info(
+            {
+              targetConnectionUuid,
+              entityType: body.entityType,
+              entityUuid: body.entityUuid,
+              ambiguous,
+            },
+            ambiguous
+              ? "daemon control interrupt: ambiguous session for this entity; settling nothing"
+              : "daemon control interrupt: no session resolved for this entity",
+          );
+          return success({ dispatched: true, settled: false });
+        }
+        const result = await advanceTurnForWake({
+          companyUuid: auth.companyUuid,
+          agentUuid: target.agentUuid,
+          connectionUuid: targetConnectionUuid,
+          sessionId,
+          status: "interrupted",
+          interruptedReason: "user",
+          entityType: body.entityType,
+          entityUuid: body.entityUuid,
+        });
+        settled = result.ok;
+        if (!result.ok) {
+          // Not an error path: no `running` turn to settle (or an illegal transition) is
+          // the common, benign outcome. Logged so it is never silent.
+          logger.info(
+            {
+              targetConnectionUuid,
+              entityType: body.entityType,
+              entityUuid: body.entityUuid,
+              reason: result.reason,
+            },
+            "daemon control interrupt: no turn settled",
+          );
+        }
+      }
+    } catch (error) {
+      // A failed gate query OR settle must NEVER fail the dispatch — the control event is
+      // already published. Report it in the body (`settled: false`) and log it.
+      logger.error(
+        { err: error, targetConnectionUuid, entityUuid: body.entityUuid },
+        "daemon control interrupt: failed to settle the running turn",
+      );
+    }
+  }
+
+  // `settled` lets the client tell "asked the daemon to stop it" from "cleared it here".
+  return success({ dispatched: true, settled });
 });

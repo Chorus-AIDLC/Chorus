@@ -92,6 +92,12 @@ export interface CommentCreateParams {
   authorUuid: string;
 }
 
+export interface CommentDeleteParams {
+  companyUuid: string;
+  commentUuid: string;
+  actingUserUuid: string;
+}
+
 // Comment response format (using UUIDs)
 export interface CommentResponse {
   uuid: string;
@@ -270,6 +276,89 @@ export async function createComment({
     createdAt: comment.createdAt.toISOString(),
     updatedAt: comment.updatedAt.toISOString(),
   };
+}
+
+/**
+ * Delete a comment when the acting dashboard user owns its author identity.
+ *
+ * The comment lookup and owned-Agent check are company-scoped. Mention rows are
+ * derived from the comment, so both resources are removed in one transaction.
+ * All authorization/missing-target failures use the same error to avoid leaking
+ * whether a comment exists in another company.
+ */
+export async function deleteComment({
+  companyUuid,
+  commentUuid,
+  actingUserUuid,
+}: CommentDeleteParams): Promise<void> {
+  const comment = await prisma.comment.findFirst({
+    where: { uuid: commentUuid, companyUuid },
+    select: {
+      uuid: true,
+      targetType: true,
+      targetUuid: true,
+      authorType: true,
+      authorUuid: true,
+    },
+  });
+
+  if (!comment) {
+    throw new Error("Comment cannot be deleted");
+  }
+
+  let canDelete =
+    comment.authorType === "user" && comment.authorUuid === actingUserUuid;
+
+  if (!canDelete && comment.authorType === "agent") {
+    const ownedAgent = await prisma.agent.findFirst({
+      where: {
+        uuid: comment.authorUuid,
+        companyUuid,
+        ownerUuid: actingUserUuid,
+      },
+      select: { uuid: true },
+    });
+    canDelete = ownedAgent !== null;
+  }
+
+  if (!canDelete) {
+    throw new Error("Comment cannot be deleted");
+  }
+
+  const projectUuid = await resolveProjectUuid(
+    comment.targetType,
+    comment.targetUuid,
+    companyUuid,
+  );
+  if (!projectUuid) {
+    throw new Error("Comment cannot be deleted");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.mention.deleteMany({
+      where: {
+        companyUuid,
+        sourceType: "comment",
+        sourceUuid: comment.uuid,
+      },
+    });
+
+    const deleted = await tx.comment.deleteMany({
+      where: { uuid: comment.uuid, companyUuid },
+    });
+    if (deleted.count !== 1) {
+      throw new Error("Comment cannot be deleted");
+    }
+  });
+
+  eventBus.emitChange({
+    companyUuid,
+    projectUuid,
+    entityType: comment.targetType as RealtimeEvent["entityType"],
+    entityUuid: comment.targetUuid,
+    action: "updated",
+    actorUuid: actingUserUuid,
+  });
 }
 
 export interface CommentAuthor {

@@ -55,7 +55,6 @@ import { ConversationReplyBox } from "../send-instruction-box";
 import {
   useElapsedMono,
   useNowTick,
-  useRelativeTime,
   useUptimeMono,
 } from "../hooks";
 import type { ConnectionView, ExecutionView } from "../types";
@@ -64,6 +63,7 @@ import type {
   TurnWithMessagesView,
 } from "@/services/daemon-session.service";
 import { TurnBand } from "./turn-band";
+import { sessionControlTarget } from "./session-execution";
 
 // A render group: an absorbing turn plus the coalesced-away `merged` turns folded into it.
 // Wake coalescing settles the next N-1 same-session pending turns (by ascending seq,
@@ -296,7 +296,6 @@ export function TranscriptView({
 }) {
   const t = useTranslations("daemonChat");
   const nowMs = useNowTick();
-  const formatRelative = useRelativeTime();
   const formatUptime = useUptimeMono();
   const formatElapsed = useElapsedMono();
 
@@ -362,6 +361,37 @@ export function TranscriptView({
     [composerExecution],
   );
 
+  // A PHANTOM `running` turn: the conversation's turn is `running` server-side while NO
+  // execution row matches it (the daemon's row is gone — a lost terminal report, a dead
+  // reverse channel, a daemon that restarted). Without this the composer offered no control
+  // at all and the turn stayed `running` forever, because the only interrupt entry point was
+  // an execution row that does not exist.
+  //
+  // The target is derived from the conversation's OWN session key through the same
+  // `sessionControlTarget` the execution matcher uses (idea-anchored → `idea:<directIdea>`,
+  // ad-hoc → `daemon_session:<sessionId>`, legacy `::` residual healed identically), aimed
+  // at the session's origin connection. NOT a synthesized execution row — a fake row would
+  // leak into the status rollup and the elapsed timer above.
+  const hasRunningTurn = useMemo(
+    () => turns.some((tn) => tn.status === "running"),
+    [turns],
+  );
+  // Gated on the absence of a RUNNING execution, not of any execution at all: a stale
+  // terminal row (`interrupted(user|crash)`) alongside a still-`running` turn is ALSO a
+  // phantom — the two disagree, and the row's Resume alone would leave the turn
+  // unclearable. "No live execution row" is the spec's condition, and a terminal row is
+  // not live. Once the turn is cleared this returns null and the row's Resume comes back.
+  const stuckTurnTarget = useMemo(() => {
+    if (runningExecution || !hasRunningTurn || !session) return null;
+    const { entityType, entityUuid } = sessionControlTarget(session);
+    return {
+      connectionUuid: session.originConnectionUuid,
+      entityType,
+      entityUuid,
+      entityTitle: title,
+    };
+  }, [runningExecution, hasRunningTurn, session, title]);
+
   // Auto-scroll the transcript to the newest turn when the turn list grows or
   // messages append. A ref to the scroll viewport's bottom sentinel.
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -371,16 +401,17 @@ export function TranscriptView({
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [lastTurnUuid, lastMsgCount]);
 
-  // The status label for the header (active/ended on the session, plus a live
-  // running marker driven by the current turn).
+  // Ended remains explicit terminal context. Active sessions need no lifecycle
+  // badge because the selected conversation already establishes availability;
+  // live work is represented independently by the running marker below.
   const sessionEnded = session?.status === "ended";
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header — the title row carries the <h3> on the LEFT and the path-first instance
           identity chip RIGHT-ALIGNED on the SAME line (justify-between), then a SINGLE
-          flex-wrap line below that carries the status badges (active/ended + running pulse
-          + elapsed) AND the 'Connection details' disclosure trigger together (wrapping only
+          flex-wrap line below that carries terminal status when ended, the running pulse
+          + elapsed, AND the 'Connection details' disclosure trigger together (wrapping only
           if truly unavoidable). Two rows, not three. The collapsible CONTENT still expands
           below the whole line on click. The Collapsible wraps both the inline trigger and
           the content so Radix open/close state binds correctly. */}
@@ -407,16 +438,14 @@ export function TranscriptView({
         </div>
         <Collapsible>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge
-              variant="secondary"
-              className={`border-0 px-2 py-0.5 text-[10px] font-medium ${
-                sessionEnded
-                  ? "bg-[#F0EDE8] dark:bg-[#1f1e1c] text-muted-foreground"
-                  : "bg-[#DCFCE7] dark:bg-[#13291d] text-[#15803D] dark:text-[#4FD07A]"
-              }`}
-            >
-              {sessionEnded ? t("statusEnded") : t("statusActive")}
-            </Badge>
+            {sessionEnded && (
+              <Badge
+                variant="secondary"
+                className="border-0 bg-[#F0EDE8] dark:bg-[#1f1e1c] px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+              >
+                {t("statusEnded")}
+              </Badge>
+            )}
             {currentTurn && currentTurn.status === "running" && (
               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary">
                 <span className="relative inline-flex h-2 w-2 items-center justify-center">
@@ -461,8 +490,8 @@ export function TranscriptView({
                   />
                 )}
                 {/* Connection details — DEMOTED to a collapsible disclosure that shares
-                    the status line. The content (host / version / uptime / started via
-                    the reused IdentityBlock + formatters) expands below the line. */}
+                    the status line. The content (identity / uptime / host via the reused
+                    IdentityBlock + formatter) expands below the line. */}
                 {originConnection && (
                   <CollapsibleTrigger className="group inline-flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground hover:text-foreground">
                     <Info className="h-3.5 w-3.5" aria-hidden />
@@ -497,12 +526,6 @@ export function TranscriptView({
                     }
                     mono
                   />
-                  {displayConnection.startedAt && (
-                    <DetailField
-                      label={t("detailStarted")}
-                      value={formatRelative(displayConnection.startedAt, nowMs)}
-                    />
-                  )}
                 </div>
               </div>
             </CollapsibleContent>
@@ -617,6 +640,7 @@ export function TranscriptView({
             originOnline={originOnline}
             layout={footerLayout}
             controllableExecution={composerExecution}
+            stuckTurnTarget={stuckTurnTarget}
             agentUuid={originConnection?.agentUuid ?? null}
             onlineConnections={originAgentOnlineConnections}
             onSessionStarted={onSessionStarted}

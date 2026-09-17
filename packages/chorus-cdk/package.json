@@ -9,7 +9,8 @@
     "synth": "cdk synth",
     "deploy": "cdk deploy",
     "diff": "cdk diff",
-    "destroy": "cdk destroy"
+    "destroy": "cdk destroy",
+    "verify:modes": "bash scripts/verify-deploy-modes.sh"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

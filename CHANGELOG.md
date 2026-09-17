@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.18.1] - 2026-09-17
+
+### Security
+- **JWT secrets**: Removed public default signing keys; Docker now generates and persists a secure secret. (#561)
+- **Upgrade note**: Replacing placeholder secrets requires Default Auth users and the Super Admin to sign in again. Update Compose to persist `/app/data`, or configure `NEXTAUTH_SECRET`; replicas must share the same secret. See [Docker migration guidance](https://github.com/Chorus-AIDLC/Chorus/blob/v0.18.1/docs/DOCKER.md).
+
+### Added
+- **CloudFront deployment**: Added an optional private-ALB deployment mode with custom-domain support. (#566)
+- **Comment actions**: Added responsive reply and owner-only delete actions. (#565)
+
+### Changed
+- **Daemon chat**: Improved mobile layout and simplified status details. (#563, #564, #567)
+
+### Fixed
+- **Proposal drafts**: Prevented concurrent edits from overwriting each other. (#556)
+- **Daemon sessions**: Fixed navigation to paginated sessions and turns stuck in the running state. (#568, #569)
+
+### Plugin
+- **Claude Code sessions**: Fixed subagent names and premature closure of shared sessions. (#562)
+- **Versions**: Upgraded all six plugins and four npm packages to `0.18.1`.
+
+---
+
 ## [0.18.0] - 2026-09-11
 
 ### Added

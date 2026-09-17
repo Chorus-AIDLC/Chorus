@@ -95,6 +95,7 @@ import {
   assertContinuable,
   appendTranscriptMessages,
   advanceTurnForWake,
+  resolveControlSessionId,
   getPendingTurnsForConnection,
   reconcileOrphanTurns,
   SessionReadOnlyError,
@@ -2279,6 +2280,111 @@ describe("appendTranscriptMessages", () => {
   });
 });
 
+// ===== resolveControlSessionId (control key → session business key) =====
+//
+// The control route has an ENTITY key, not a session id. `sessionId === entityUuid` holds
+// for a modern idea-anchored session and for an ad-hoc `daemon_session`, but a LEGACY
+// residual session's key is `${ideaUuid}::${connectionUuid}` and the client heals the `::`
+// away — so both shapes arrive as `idea:<ideaUuid>`. Settling the raw entityUuid could clear
+// an unrelated modern session that merely shares the idea uuid.
+describe("resolveControlSessionId", () => {
+  const args = {
+    companyUuid,
+    agentUuid,
+    connectionUuid,
+    entityUuid: "idea-A",
+  };
+
+  it("considers the exact key AND legacy `entityUuid::` keys on the TARGET connection only", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([]);
+
+    await resolveControlSessionId(args);
+
+    expect(mockPrisma.daemonSession.findMany.mock.calls[0][0].where).toEqual({
+      companyUuid,
+      agentUuid,
+      OR: [
+        { sessionId: "idea-A" },
+        {
+          sessionId: { startsWith: "idea-A::" },
+          originConnectionUuid: connectionUuid,
+        },
+      ],
+    });
+  });
+
+  it("returns the single candidate's business key (modern shape → identity)", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { uuid: "s-1", sessionId: "idea-A" },
+    ]);
+
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: "idea-A",
+      ambiguous: false,
+    });
+    // One candidate needs no turn evidence at all.
+    expect(mockPrisma.daemonSessionTurn.findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns the LEGACY key when that is the only candidate", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { uuid: "s-legacy", sessionId: `idea-A::${connectionUuid}` },
+    ]);
+
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: `idea-A::${connectionUuid}`,
+      ambiguous: false,
+    });
+  });
+
+  it("with two candidates, picks the one that actually holds a running turn", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { uuid: "s-modern", sessionId: "idea-A" },
+      { uuid: "s-legacy", sessionId: `idea-A::${connectionUuid}` },
+    ]);
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([{ sessionUuid: "s-legacy" }]);
+
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: `idea-A::${connectionUuid}`,
+      ambiguous: false,
+    });
+  });
+
+  it("refuses (null, ambiguous) when BOTH candidates hold a running turn", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { uuid: "s-modern", sessionId: "idea-A" },
+      { uuid: "s-legacy", sessionId: `idea-A::${connectionUuid}` },
+    ]);
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      { sessionUuid: "s-modern" },
+      { sessionUuid: "s-legacy" },
+    ]);
+
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: null,
+      ambiguous: true,
+    });
+  });
+
+  it("returns null when no candidate holds a running turn, and when there is no candidate", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { uuid: "s-modern", sessionId: "idea-A" },
+      { uuid: "s-legacy", sessionId: `idea-A::${connectionUuid}` },
+    ]);
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: null,
+      ambiguous: false,
+    });
+
+    mockPrisma.daemonSession.findMany.mockResolvedValue([]);
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: null,
+      ambiguous: false,
+    });
+  });
+});
+
 // ===== advanceTurnForWake (daemon → server, by session business key) =====
 describe("advanceTurnForWake", () => {
   // Resolve the agent's own session, then the turn matching the FROM-status (pending for
@@ -2505,6 +2611,89 @@ describe("advanceTurnForWake", () => {
     expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  // The daemon's bounded retry on the terminal turn-advance edge (fix-phantom-running-turn)
+  // needs NO server-side dedupe code — these two tests pin the property it relies on.
+  it("RETRY IDEMPOTENCE: a correlated terminal replay publishes no turn-status event and writes no timestamps or usage", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    const endedAt = new Date("2026-01-01T00:00:00.000Z");
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(
+      turnRow({
+        status: "ended",
+        backendSessionId: "thread-1",
+        endedAt,
+        usage: { inputTokens: 10, outputTokens: 20 },
+      }),
+    );
+
+    // The retry repeats the ORIGINAL report verbatim: same turnUuid, same terminal
+    // status, same usage — exactly what a lost-response retry looks like on the wire.
+    const replay = () =>
+      advanceTurnForWake({
+        companyUuid,
+        agentUuid,
+        connectionUuid,
+        sessionId,
+        turnUuid,
+        backendSessionId: "thread-1",
+        status: "ended" as const,
+        usage: {
+          inputTokens: 10,
+          outputTokens: 20,
+          cacheCreationTokens: null,
+          cacheReadTokens: null,
+          model: "m",
+          source: "dsh" as const,
+        },
+      });
+
+    const res = await replay();
+
+    // The caller gets the EXISTING projection (so the daemon sees its 2xx and stops).
+    expect(res).toMatchObject({
+      ok: true,
+      turn: { uuid: turnUuid, status: "ended", endedAt: endedAt.toISOString() },
+    });
+    // No second usage rollup, no second timestamp write…
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    // …and no turn-status event, so the UI is not told twice that the turn ended.
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
+
+    // Any number of further retries stays a no-op.
+    await replay();
+    await replay();
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it("RETRY IDEMPOTENCE: an UNCORRELATED terminal replay finds no running turn → not_found, changing nothing", async () => {
+    // An older daemon omits turnUuid, so the retry resolves by FIFO status. The lost-but-
+    // applied first attempt already left no `running` turn, so there is nothing to hit.
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(null);
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      status: "ended",
+    });
+
+    expect(res).toEqual({ ok: false, reason: "not_found" });
+    expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
+      where: { sessionUuid, status: "running" },
+      orderBy: { seq: "asc" },
+    });
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSession.updateMany).not.toHaveBeenCalled();
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
   });
 
   it("deduplicates concurrent identical terminal reports to one rollup and one lifecycle event pair", async () => {

@@ -1578,7 +1578,10 @@ services:
     environment:
       - DATABASE_URL=postgres://chorus:chorus@db:5432/chorus
       - NEXTAUTH_URL=http://localhost:8637
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      # Leave empty: the image auto-generates a random JWT secret on first start
+      # and persists it to /app/data/.secret (single replica only). Set it
+      # explicitly (openssl rand -base64 32) for production / multi-replica.
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
       - OIDC_ISSUER=${OIDC_ISSUER}
       - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
@@ -1588,6 +1591,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./prisma:/app/prisma
+      - chorus-app-data:/app/data   # persists the auto-generated JWT secret
 
   db:
     image: postgres:16-alpine
@@ -1607,7 +1611,10 @@ services:
 
 volumes:
   postgres_data:
+  chorus-app-data:
 ```
+
+**JWT signing secret (`NEXTAUTH_SECRET`)**: signs both `user_session` and `admin_session` JWTs. The shipped compose files carry **no** default value (GitHub #559 — the previous public fallback allowed anyone to forge sessions). When the variable is empty or equals a known public placeholder, `docker-entrypoint.sh` (via `docker/ensure-secret.sh`) reuses or generates a random secret in `/app/data/.secret` (mode `0600`, never logged) before migrations run; `/app/data` must therefore be a persistent volume, and auto-generation covers a single replica only — multi-replica deployments must inject the same explicit value everywhere (the CDK stack does this from Secrets Manager). `src/instrumentation.ts` additionally logs an `error`-level `security` warning at startup if a placeholder is still in effect. Rotating the secret invalidates every session. See [DOCKER.md → JWT secret security](DOCKER.md#jwt-secret-security).
 
 ### 8.2 Production Deployment (AWS CDK)
 
@@ -1707,7 +1714,10 @@ DATABASE_URL=postgres://chorus:chorus@localhost:5432/chorus
 
 # NextAuth
 NEXTAUTH_URL=http://localhost:8637
-NEXTAUTH_SECRET=your-secret-key
+# JWT signing secret (user + super-admin sessions). Generate: openssl rand -base64 32
+# In Docker, leave unset to auto-generate + persist to /app/data/.secret (single replica).
+# Known placeholders (e.g. your-secret-key-change-in-production) are detected and rejected/warned (#559).
+NEXTAUTH_SECRET=<openssl rand -base64 32>
 
 # Super Admin (system startup config, manages Companies and global settings)
 SUPER_ADMIN_EMAIL=admin@example.com

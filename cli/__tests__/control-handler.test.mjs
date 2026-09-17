@@ -431,3 +431,244 @@ describe("control-handler browse_directory", () => {
     });
   });
 });
+
+// --- fix-phantom-running-turn, Tech Design "D — a no-child interrupt reports the
+//     truth": an interrupt that finds no live child must no longer be a silent
+//     no-op — it reports the turn as interrupted(user) so a server-side `running`
+//     turn with nothing behind it converges. ---
+const IDEA_UUID = "idea-1111-2222-3333-444455556666";
+
+describe("control-handler no-child interrupt reports interrupted(user)", () => {
+  it("reports advanceTurn with status=interrupted / reason=user / sessionId=entityUuid for an idea, and logs the miss", () => {
+    const infos = [];
+    const waker = makeWaker([]); // no running child on this daemon
+    const killer = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      killer,
+      advanceTurn,
+      logger: { ...silent, info: (m) => infos.push(m) },
+    });
+
+    onControl(controlEvent({ entityType: "idea", entityUuid: IDEA_UUID }));
+
+    expect(killer).not.toHaveBeenCalled();
+    expect(waker.markInterrupting).not.toHaveBeenCalled();
+    expect(advanceTurn).toHaveBeenCalledTimes(1);
+    expect(advanceTurn).toHaveBeenCalledWith({
+      sessionId: IDEA_UUID,
+      status: "interrupted",
+      interruptedReason: "user",
+      entityType: "idea",
+      entityUuid: IDEA_UUID,
+    });
+    expect(infos.join("")).toMatch(/no running subprocess/i);
+    expect(infos.join("")).toMatch(/interrupted\(user\)/i);
+  });
+
+  it("reports for a daemon_session entity too (sessionId = its own business uuid)", () => {
+    const waker = makeWaker([]);
+    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      killer: vi.fn(async () => {}),
+      advanceTurn,
+      logger: silent,
+    });
+
+    onControl(controlEvent({ entityType: "daemon_session", entityUuid: "sess-9" }));
+
+    expect(advanceTurn).toHaveBeenCalledWith({
+      sessionId: "sess-9",
+      status: "interrupted",
+      interruptedReason: "user",
+      entityType: "daemon_session",
+      entityUuid: "sess-9",
+    });
+  });
+
+  it("reports when the entry exists but is only QUEUED (no child yet)", () => {
+    const waker = makeWaker([
+      [`idea:${IDEA_UUID}`, { entityType: "idea", entityUuid: IDEA_UUID, status: "queued", child: null }],
+    ]);
+    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      killer: vi.fn(async () => {}),
+      advanceTurn,
+      logger: silent,
+    });
+
+    onControl(controlEvent({ entityType: "idea", entityUuid: IDEA_UUID }));
+
+    expect(advanceTurn).toHaveBeenCalledTimes(1);
+    expect(advanceTurn.mock.calls[0][0]).toMatchObject({ status: "interrupted", interruptedReason: "user" });
+  });
+
+  it("an idea interrupt with no direct child KILLS a sibling wake running on the same session", () => {
+    // A `task:T` wake whose directIdeaUuid is the idea runs on that idea's session, and the
+    // registry is keyed by the WAKE's own resource (`task:T`). Without the sibling match the
+    // exact-key lookup misses, we report a turn miss, the server's FIFO grabs the sibling's
+    // running turn, and NOTHING is killed — the UI would say interrupted while work continues.
+    const child = { pid: 9191 };
+    const waker = makeWaker([
+      [
+        "task:T-1",
+        {
+          entityType: "task",
+          entityUuid: "T-1",
+          directIdeaUuid: "idea-9",
+          status: "running",
+          child,
+        },
+      ],
+    ]);
+    const killer = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const infos = [];
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      killer,
+      advanceTurn,
+      logger: { ...silent, info: (m) => infos.push(m) },
+    });
+
+    onControl(controlEvent({ entityType: "idea", entityUuid: "idea-9" }));
+
+    // The sibling's wake is what gets flagged and killed — not a turn-miss report.
+    expect(waker.markInterrupting).toHaveBeenCalledWith("task", "T-1");
+    expect(killer).toHaveBeenCalledTimes(1);
+    expect(killer.mock.calls[0][0]).toBe(child);
+    expect(advanceTurn).not.toHaveBeenCalled();
+    expect(infos.join("")).toMatch(/sibling wake task:T-1/);
+  });
+
+  it("still reports the turn when a sibling entry exists but is NOT running", () => {
+    const waker = makeWaker([
+      [
+        "task:T-2",
+        {
+          entityType: "task",
+          entityUuid: "T-2",
+          directIdeaUuid: "idea-9",
+          status: "queued",
+          child: null,
+        },
+      ],
+    ]);
+    const killer = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      killer,
+      advanceTurn,
+      logger: silent,
+    });
+
+    onControl(controlEvent({ entityType: "idea", entityUuid: "idea-9" }));
+
+    expect(killer).not.toHaveBeenCalled();
+    expect(advanceTurn).toHaveBeenCalledTimes(1);
+    expect(advanceTurn.mock.calls[0][0]).toMatchObject({
+      sessionId: "idea-9",
+      status: "interrupted",
+      interruptedReason: "user",
+    });
+  });
+
+  it("does NOT report for task / proposal / document (session not derivable locally); logs only", () => {
+    for (const entityType of ["task", "proposal", "document"]) {
+      const infos = [];
+      const advanceTurn = vi.fn(async () => ({ ok: true }));
+      const onControl = createControlHandler({
+        waker: makeWaker([]),
+        getConnectionUuid: () => CONN,
+        killer: vi.fn(async () => {}),
+        advanceTurn,
+        logger: { ...silent, info: (m) => infos.push(m) },
+      });
+
+      onControl(controlEvent({ entityType, entityUuid: `${entityType}-7` }));
+
+      expect(advanceTurn).not.toHaveBeenCalled();
+      expect(infos.join("")).toMatch(/ignoring interrupt/i);
+    }
+  });
+
+  it("with a LIVE child it still marks interrupting + kills, and reports NO terminal state here", () => {
+    const child = { pid: 7007 };
+    const waker = makeWaker([
+      [`idea:${IDEA_UUID}`, { entityType: "idea", entityUuid: IDEA_UUID, status: "running", child }],
+    ]);
+    const killer = vi.fn(async () => ({ killed: true }));
+    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      killer,
+      advanceTurn,
+      logger: silent,
+    });
+
+    onControl(controlEvent({ entityType: "idea", entityUuid: IDEA_UUID }));
+
+    expect(waker.markInterrupting).toHaveBeenCalledWith("idea", IDEA_UUID);
+    expect(killer).toHaveBeenCalledTimes(1);
+    expect(killer.mock.calls[0][0]).toBe(child);
+    // The wake path owns the terminal report — NOT the control handler.
+    expect(advanceTurn).not.toHaveBeenCalled();
+  });
+
+  it("stays a no-op-but-logged when advanceTurn is not injected at all", () => {
+    const waker = makeWaker([]);
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      killer: vi.fn(async () => {}),
+      logger: silent,
+    });
+
+    expect(() => onControl(controlEvent({ entityType: "idea", entityUuid: IDEA_UUID }))).not.toThrow();
+  });
+
+  it("does not throw when advanceTurn throws synchronously; the failure is logged", () => {
+    const warns = [];
+    const advanceTurn = vi.fn(() => {
+      throw new Error("boom-sync");
+    });
+    const onControl = createControlHandler({
+      waker: makeWaker([]),
+      getConnectionUuid: () => CONN,
+      killer: vi.fn(async () => {}),
+      advanceTurn,
+      logger: { ...silent, warn: (m) => warns.push(m) },
+    });
+
+    expect(() => onControl(controlEvent({ entityType: "idea", entityUuid: IDEA_UUID }))).not.toThrow();
+    expect(warns.join("")).toMatch(/boom-sync/);
+  });
+
+  it("does not throw and logs when the advanceTurn promise rejects (no unhandled rejection)", async () => {
+    const warns = [];
+    const advanceTurn = vi.fn(async () => {
+      throw new Error("boom-async");
+    });
+    const onControl = createControlHandler({
+      waker: makeWaker([]),
+      getConnectionUuid: () => CONN,
+      killer: vi.fn(async () => {}),
+      advanceTurn,
+      logger: { ...silent, warn: (m) => warns.push(m) },
+    });
+
+    expect(() => onControl(controlEvent({ entityType: "idea", entityUuid: IDEA_UUID }))).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(warns.join("")).toMatch(/boom-async/);
+  });
+});

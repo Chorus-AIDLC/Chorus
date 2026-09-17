@@ -1,6 +1,12 @@
 #!/bin/sh
 set -e
 
+# Ensure a secure JWT signing secret BEFORE any DB work (see GitHub issue #559).
+# Generates + persists to /app/data/.secret when NEXTAUTH_SECRET is unset or a
+# known public placeholder; fails closed (exit 1) on any error.
+. /usr/local/bin/ensure-secret.sh
+ensure_nextauth_secret || exit 1
+
 # Build DATABASE_URL from individual env vars if not already set
 if [ -n "$DB_HOST" ] && [ -z "$DATABASE_URL" ]; then
   export DATABASE_URL="postgresql://${DB_USERNAME}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"

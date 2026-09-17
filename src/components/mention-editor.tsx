@@ -93,7 +93,7 @@ const CustomMention = Mention.extend({
 
 // ── Types ──────────────────────────────────────────────────────
 
-interface Mentionable {
+export interface Mentionable {
   type: "user" | "agent";
   uuid: string;
   name: string;
@@ -227,6 +227,69 @@ export interface MentionEditorProps {
 export interface MentionEditorRef {
   focus: () => void;
   clear: () => void;
+  replyToAuthor: (author: ReplyMentionTarget) => Promise<void>;
+}
+
+export interface ReplyMentionTarget {
+  type: "user" | "agent";
+  uuid: string;
+  name: string;
+}
+
+export interface ReplyMentionAppendResult {
+  value: string;
+  appended: boolean;
+}
+
+/**
+ * Append a structured author mention without replacing the existing draft.
+ *
+ * Identity, rather than the display label or pin suffix, defines an adjacent
+ * duplicate: replying twice to the same author should not add two neighboring
+ * mentions just because their name or current route changed.
+ */
+export function appendReplyMention(
+  value: string,
+  author: ReplyMentionTarget,
+  pin: MentionPin | null = null,
+): ReplyMentionAppendResult {
+  const escapedType = author.type.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedUuid = author.uuid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const trailingIdentity = new RegExp(
+    `@\\[[^\\]]+\\]\\(${escapedType}:${escapedUuid}(?:\\?[^)]*)?\\)\\s*$`,
+    "i",
+  );
+
+  if (trailingIdentity.test(value)) {
+    return { value, appended: false };
+  }
+
+  const marker = buildMentionMarker(
+    author.name,
+    author.type,
+    author.uuid,
+    pin?.host ?? null,
+    pin?.cwd ?? null,
+    pin?.runtimeCwd === true,
+  );
+  const boundary = value.length > 0 && !/\s$/.test(value) ? " " : "";
+  return {
+    value: `${value}${boundary}${marker} `,
+    appended: true,
+  };
+}
+
+export function findReplyMentionable(
+  author: ReplyMentionTarget,
+  mentionables: Mentionable[],
+): Mentionable {
+  const candidate = mentionables.find(
+    (item) => item.type === author.type && item.uuid === author.uuid,
+  );
+  if (!candidate) {
+    throw new Error("Reply author is unavailable for mention routing");
+  }
+  return candidate;
 }
 
 // Local type definitions to avoid importing from @tiptap/suggestion
@@ -772,6 +835,17 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
       activeCount: (n: number) => t("activeCount", { count: n }),
     };
 
+    const buildMentionablesUrl = useCallback(
+      (query: string, limit: number) => {
+        let url = `/api/mentionables?q=${encodeURIComponent(query)}&limit=${limit}&withInstances=1`;
+        if (entityType && entityUuid) {
+          url += `&entityType=${encodeURIComponent(entityType)}&entityUuid=${encodeURIComponent(entityUuid)}`;
+        }
+        return url;
+      },
+      [entityType, entityUuid],
+    );
+
     // Fetch mentionables from API
     const fetchMentionables = useCallback(async (query: string) => {
       suggestionLoadingRef.current = true;
@@ -787,11 +861,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
         // comment's direct-idea assignee/pin annotation (isIdeaAssignee /
         // ideaPin). Appended only when both are present — otherwise the query
         // is byte-identical to before and the search is unchanged.
-        let url = `/api/mentionables?q=${encodeURIComponent(query)}&limit=10&withInstances=1`;
-        if (entityType && entityUuid) {
-          url += `&entityType=${encodeURIComponent(entityType)}&entityUuid=${encodeURIComponent(entityUuid)}`;
-        }
-        const res = await fetch(url);
+        const res = await fetch(buildMentionablesUrl(query, 10));
         if (res.ok) {
           const json = await res.json();
           if (json.success) {
@@ -804,7 +874,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
         suggestionLoadingRef.current = false;
         forceUpdate((n) => n + 1);
       }
-    }, [entityType, entityUuid]);
+    }, [buildMentionablesUrl]);
 
     const debouncedFetch = useDebouncedCallback(fetchMentionables, 250);
 
@@ -1074,13 +1144,81 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
       }
     }, [disabled, editor]);
 
+    const insertProgrammaticReply = useCallback(
+      (attrs: {
+        id: string;
+        label: string;
+        mentionType: "user" | "agent";
+        pinnedHost: string | null;
+        pinnedCwd: string | null;
+        runtimeCwd?: boolean;
+      }) => {
+        if (!editor) return;
+        const pin =
+          attrs.pinnedHost !== null || attrs.pinnedCwd !== null
+            ? {
+                host: attrs.pinnedHost ?? "",
+                cwd: attrs.pinnedCwd,
+                runtimeCwd: attrs.runtimeCwd === true,
+              }
+            : null;
+        const next = appendReplyMention(
+          editorToPlainText(editor),
+          {
+            type: attrs.mentionType,
+            uuid: attrs.id,
+            name: attrs.label,
+          },
+          pin,
+        );
+        if (next.appended) {
+          editor.commands.setContent(plainTextToEditorContent(next.value));
+        }
+        editor.commands.focus("end");
+      },
+      [editor],
+    );
+
+    const replyToAuthor = useCallback(
+      async (author: ReplyMentionTarget) => {
+        let candidate: Mentionable = author;
+
+        // Human replies need no routing enrichment. Agent replies deliberately
+        // reuse the same entity-aware candidate payload and selection resolver
+        // as typed mentions. The UUID/type match is authoritative; name is only
+        // the search term used to retrieve that candidate.
+        if (author.type === "agent") {
+          const response = await fetch(buildMentionablesUrl(author.name, 50));
+          if (!response.ok) {
+            throw new Error("Failed to load Agent mention routing");
+          }
+          const json = await response.json();
+          if (!json.success || !Array.isArray(json.data)) {
+            throw new Error("Invalid Agent mention routing response");
+          }
+          candidate = findReplyMentionable(
+            author,
+            json.data as Mentionable[],
+          );
+        }
+
+        selectMentionableRef.current(candidate, (attrs) => {
+          insertProgrammaticReply(
+            attrs as Parameters<typeof insertProgrammaticReply>[0],
+          );
+        });
+      },
+      [buildMentionablesUrl, insertProgrammaticReply],
+    );
+
     useImperativeHandle(ref, () => ({
       focus: () => editor?.commands.focus(),
       clear: () => {
         editor?.commands.clearContent();
         onChange("");
       },
-    }));
+      replyToAuthor,
+    }), [editor, onChange, replyToAuthor]);
 
     return (
       <div

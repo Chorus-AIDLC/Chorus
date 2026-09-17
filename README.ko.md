@@ -63,7 +63,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 두 개의 명령이면 됩니다. 데이터베이스도, Docker도, 설정 파일도 필요 없습니다.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.18.0
+npm install -g @chorus-aidlc/chorus@0.18.1
 chorus
 ```
 

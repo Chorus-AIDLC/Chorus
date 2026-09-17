@@ -33,6 +33,7 @@ import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, win32 as pathWin32, posix as pathPosix } from "node:path";
 import { parseNdjsonChunk } from "./claude-spawner.mjs";
+import { awaitChildSettled } from "./child-exit.mjs";
 import { getThreadId as defaultGetThreadId, setThreadId as defaultSetThreadId } from "./codex-session-map.mjs";
 import {
   getCodexUsageSnapshot as defaultGetUsageSnapshot,
@@ -370,7 +371,9 @@ export class CodexSpawner {
         resolve({ sessionId: anchor, backendSessionId: observedThreadId, exitCode: null, isNew });
       });
 
-      child.on("close", (code) => {
+      // Settle on process exit, not only on stdio close: a detached descendant can
+      // inherit the pipes and keep `close` from ever firing (see cli/child-exit.mjs).
+      awaitChildSettled(child, { logger: this.logger, label: "codex" }).then((code) => {
         if (code !== 0) {
           this.logger.warn(`[Chorus] codex exited with code ${code}`);
         }

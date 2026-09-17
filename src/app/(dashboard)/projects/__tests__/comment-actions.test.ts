@@ -8,11 +8,13 @@ vi.mock("@/lib/auth-server", () => ({
 
 const mockListComments = vi.hoisted(() => vi.fn());
 const mockResolveAgentOwners = vi.hoisted(() => vi.fn());
+const mockDeleteComment = vi.hoisted(() => vi.fn());
 vi.mock("@/services/comment.service", () => ({
   // Sibling actions in the same module reference these — stub so the module
   // loads without pulling in prisma.
   listComments: mockListComments,
   createComment: vi.fn(),
+  deleteComment: mockDeleteComment,
   resolveProjectUuid: vi.fn(),
   resolveAgentOwners: mockResolveAgentOwners,
 }));
@@ -32,7 +34,7 @@ vi.mock("@/lib/logger", () => {
   return { default: noopLogger };
 });
 
-import { getCommentsAction } from "../comment-actions";
+import { deleteCommentAction, getCommentsAction } from "../comment-actions";
 
 const COMPANY = "company-a";
 const TARGET = "idea-1";
@@ -134,5 +136,51 @@ describe("getCommentsAction (cursor pagination)", () => {
     const result = await getCommentsAction("idea", TARGET, { limit: 10 });
 
     expect(result).toEqual({ success: false, error: "Failed to load comments" });
+  });
+});
+
+describe("deleteCommentAction", () => {
+  it("uses only the authenticated user's company and identity", async () => {
+    mockDeleteComment.mockResolvedValue(undefined);
+
+    const result = await deleteCommentAction("comment-1");
+
+    expect(result).toEqual({ success: true });
+    expect(mockDeleteComment).toHaveBeenCalledWith({
+      companyUuid: COMPANY,
+      commentUuid: "comment-1",
+      actingUserUuid: "user-1",
+    });
+  });
+
+  it("returns Unauthorized without calling the service when auth is missing", async () => {
+    mockGetServerAuthContext.mockResolvedValue(null);
+
+    const result = await deleteCommentAction("comment-1");
+
+    expect(result).toEqual({ success: false, error: "Unauthorized" });
+    expect(mockDeleteComment).not.toHaveBeenCalled();
+  });
+
+  it("returns a stable failure result when the service rejects deletion", async () => {
+    mockDeleteComment.mockRejectedValue(new Error("Comment cannot be deleted"));
+
+    const result = await deleteCommentAction("comment-1");
+
+    expect(result).toEqual({
+      success: false,
+      error: "Failed to delete comment",
+    });
+  });
+
+  it("returns the same stable failure result for unexpected persistence errors", async () => {
+    mockDeleteComment.mockRejectedValue(new Error("DB down"));
+
+    const result = await deleteCommentAction("comment-1");
+
+    expect(result).toEqual({
+      success: false,
+      error: "Failed to delete comment",
+    });
   });
 });

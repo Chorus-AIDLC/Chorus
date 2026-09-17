@@ -87,7 +87,13 @@ live status, and an entity-bearing turn SHALL link to its related task/idea.
 Connection metadata (host, client version, uptime, started) SHALL be demoted from
 the headline to a secondary/collapsible position. The right pane SHALL offer
 inline send-instruction and interrupt controls, each gated on the session's origin
-being online.
+being online. When an entry point focuses a specific visible session UUID, the
+surface SHALL load and display that exact transcript even when the target session
+is older than the selected agent's currently loaded server-paginated page. The
+focused read SHALL add only that target session to the local conversation rows and
+MUST NOT restore an unbounded all-history list read. If the focused session cannot
+be loaded, the surface SHALL clear the unresolved selection and fall back to the
+selected agent's conversation list.
 
 #### Scenario: Selecting an agent then a conversation
 
@@ -121,22 +127,70 @@ being online.
 - **THEN** the surface shows a calm empty state that invites starting a
   conversation, never an error treatment
 
-### Requirement: The conversation surface SHALL be fullscreen on mobile with the reply input pinned to the bottom
+#### Scenario: A focused session outside the first page opens directly
 
-On a mobile-width viewport (below the `sm` breakpoint), the "View all" daemon conversation modal SHALL fill the viewport edge-to-edge — occupying the full dynamic viewport height and width with no rounded corners, border, or floating margin — so it reads like a native chat screen. The selected conversation's transcript SHALL fill the middle region and scroll within itself, and the reply/send input SHALL be pinned to the bottom edge of the viewport (not floated mid-screen with dead space below it). The modal height SHALL be measured against the dynamic viewport height so the mobile browser's collapsing/expanding URL bar cannot push the pinned input off-screen. On desktop-width viewports (`sm` and above) the modal SHALL remain the floating, height-capped card, and on `lg` and above the two-pane (conversation list + transcript) layout SHALL be unchanged.
+- **WHEN** the Idea Tracker or another entry point focuses a visible session UUID
+  that is not present in the selected agent's currently loaded conversation page
+- **THEN** the surface reads that session by UUID and directly renders its transcript
+- **AND** mobile opens the transcript drill-down while desktop selects the same
+  transcript in the two-pane layout
+- **AND** only the focused row is added locally; the bounded server pagination
+  remains in effect
 
-#### Scenario: Modal is fullscreen on a mobile viewport
+#### Scenario: An unavailable focused session falls back safely
 
-- **WHEN** a user opens the daemon conversation modal on a mobile-width viewport and drills into a conversation
-- **THEN** the modal fills the viewport edge-to-edge with no rounded card, border, or surrounding margin
-- **AND** the transcript fills the middle region and scrolls within itself
-- **AND** the reply/send input is pinned to the bottom edge of the viewport with no dead space below it
+- **WHEN** a focused session UUID cannot be read because it is missing, no longer
+  visible, or the request fails
+- **THEN** the unresolved selection is cleared
+- **AND** the surface falls back to the selected agent's conversation list without
+  leaving an empty mobile drill-down or requesting the full conversation history
+
+### Requirement: The conversation surface SHALL be a near-full-height bottom sheet on mobile with the reply input kept reachable
+
+On a mobile-width viewport (below the `sm` breakpoint), the "View all" daemon conversation surface SHALL open from the bottom as a near-full-height sheet using the product's existing mobile Sheet visual language and entrance/exit motion. The sheet SHALL leave a fixed 16 CSS-pixel strip of backdrop visible above it, use rounded top corners and a visible top handle within a compact 28 CSS-pixel handle row, and retain a height bounded by the dynamic viewport so mobile browser chrome and safe-area insets do not make the reply composer unreachable. The selected conversation's transcript SHALL fill the middle region and scroll within itself, and the reply/send input SHALL remain at the bottom of the bounded sheet without dead space below it.
+
+The mobile sheet SHALL close when the user clicks/taps the exposed backdrop, presses Escape, or drags the sheet's top handle downward at least 96 CSS pixels. It SHALL NOT render the shared Sheet primitive's default top-right close control. Drag recognition SHALL be limited to the top handle: vertical scrolling or swiping within the conversation list, transcript, or composer MUST NOT move or dismiss the sheet. A handle drag released before 96 CSS pixels SHALL return the sheet to its resting position, respecting reduced-motion preferences.
+
+On desktop-width viewports (`sm` and above), the conversation surface SHALL remain the existing floating, height-capped dialog, and on `lg` and above the two-pane conversation-list + transcript layout SHALL be unchanged.
+
+#### Scenario: Mobile conversation opens as a bottom sheet
+
+- **WHEN** a user opens the daemon conversation surface below the `sm` breakpoint
+- **THEN** it enters from the bottom as a near-full-height sheet with rounded top corners and a visible top handle
+- **AND** a fixed 16 CSS-pixel backdrop strip remains visible above the sheet
+- **AND** the transcript scrolls within the bounded sheet while the reply/send input remains reachable at its bottom
+
+#### Scenario: Backdrop and top handle dismiss the mobile sheet
+
+- **WHEN** the mobile sheet is open and the user clicks or taps the exposed backdrop
+- **THEN** the sheet closes through its normal exit motion
+- **WHEN** the user instead drags the top handle downward by at least 96 CSS pixels
+- **THEN** the sheet follows the handle and closes
+
+#### Scenario: Conversation scrolling never drags the sheet
+
+- **WHEN** the user scrolls or swipes vertically inside the conversation list, transcript, or composer
+- **THEN** the content scrolls normally
+- **AND** the sheet does not translate or dismiss
+- **WHEN** a top-handle drag is released before 96 CSS pixels
+- **THEN** the sheet returns to its resting position
+
+#### Scenario: Keyboard dismissal remains available
+
+- **WHEN** keyboard focus is inside the mobile sheet
+- **THEN** pressing Escape closes it and restores focus according to the existing Radix behavior
+- **AND** no top-right close control consumes mobile header space
 
 #### Scenario: Desktop layout is preserved
 
-- **WHEN** the same modal is opened on a desktop-width viewport
-- **THEN** it renders as the floating, height-capped card
-- **AND** at the `lg`-and-above width the two-pane conversation-list + transcript layout and behavior are unchanged
+- **WHEN** the same conversation surface is opened at the `sm` breakpoint or wider
+- **THEN** it renders as the existing floating, height-capped dialog
+- **AND** at `lg` and above the two-pane conversation-list + transcript layout and behavior are unchanged
+
+#### Scenario: Both themes represent the mobile sheet
+
+- **WHEN** the mobile conversation surface is delivered
+- **THEN** the sheet remains legible and free of overflow in both light and dark themes
 
 ### Requirement: Wide markdown blocks in a transcript message SHALL be constrained to the available content width
 
@@ -399,3 +453,33 @@ The daemon conversation-list row's live status indicator (running / interrupted 
 - **WHEN** the conversation list renders that row
 - **THEN** the row's status indicator MUST read `interrupted` (resumable); a crash-interrupt MUST read `error`
 
+### Requirement: The daemon transcript header SHALL omit redundant lifecycle metadata
+
+The Agent Daemon transcript header SHALL NOT render an “Active” lifecycle badge for an active conversation. It SHALL retain an explicit “Ended” badge for an ended conversation and SHALL preserve the independent running indicator and live elapsed runtime whenever the current turn is running.
+
+The expanded connection-details disclosure SHALL NOT render the connection process start time or its relative “Started” value. It SHALL retain connection identity, online uptime, host, and all existing actions, and the retained fields SHALL reflow without an empty placeholder.
+
+These presentation rules SHALL apply to every Agent Daemon transcript regardless of whether the session is idea-anchored or ad-hoc. They SHALL NOT remove `startedAt` from the connection data contract or change other connection-observability surfaces.
+
+#### Scenario: Active conversation omits the lifecycle badge
+
+- **WHEN** an active Agent Daemon conversation transcript renders
+- **THEN** the header MUST NOT show the “Active” lifecycle badge
+- **AND** the running indicator and elapsed runtime MUST still appear when the current turn is running
+
+#### Scenario: Ended conversation retains terminal status
+
+- **WHEN** an ended Agent Daemon conversation transcript renders
+- **THEN** the header MUST show the existing “Ended” badge
+
+#### Scenario: Connection disclosure omits relative start time
+
+- **WHEN** the user expands connection details for a connection with a non-null `startedAt`
+- **THEN** the disclosure MUST NOT show a “Started” field or relative process-start value
+- **AND** connection identity, uptime when online, and host MUST remain visible without an empty reserved row
+
+#### Scenario: Presentation scope does not alter the connection contract
+
+- **WHEN** this header simplification is implemented
+- **THEN** the connection API and frontend connection type MUST retain `startedAt`
+- **AND** connection views outside the Agent Daemon transcript MUST remain unchanged

@@ -6,6 +6,8 @@
 import { describe, it, expect } from "vitest";
 import type { ExecutionView } from "@/services/daemon-execution.service";
 import {
+  executionMatchesSession,
+  sessionControlTarget,
   sessionExecStatus,
   sessionExecStatusForRow,
   sessionExecutionsForComposer,
@@ -129,5 +131,62 @@ describe("sessionExecStatusForRow", () => {
     };
     const composerSet = sessionExecutionsForComposer(byConn, ideaSession);
     expect(sessionExecStatusForRow(byConn, ideaSession)).toBe(sessionExecStatus(composerSet, ideaSession));
+  });
+});
+
+// ===== The shared control-target derivation (fix-phantom-running-turn C2) =====
+//
+// `sessionControlTarget` is the ONE place the "which entity key addresses this
+// conversation's work" rule lives. The composer uses it to target an interrupt at a
+// conversation whose execution row is MISSING (a phantom `running` turn), and
+// `executionMatchesSession` uses it to decide which live rows belong to a conversation —
+// so the entity the UI sends can never drift from the entity the matcher accepts.
+describe("sessionControlTarget", () => {
+  it("idea-anchored conversation → idea:<directIdeaUuid>", () => {
+    expect(
+      sessionControlTarget({ sessionId: "idea-A", directIdeaUuid: "idea-A" }),
+    ).toEqual({ entityType: "idea", entityUuid: "idea-A" });
+  });
+
+  it("a re-pointed idea conversation still targets its DIRECT idea, not its sessionId", () => {
+    expect(
+      sessionControlTarget({ sessionId: "sess-random", directIdeaUuid: "idea-child" }),
+    ).toEqual({ entityType: "idea", entityUuid: "idea-child" });
+  });
+
+  it("ad-hoc conversation → daemon_session:<sessionId>", () => {
+    expect(
+      sessionControlTarget({ sessionId: "sess-xyz", directIdeaUuid: null }),
+    ).toEqual({ entityType: "daemon_session", entityUuid: "sess-xyz" });
+  });
+
+  it("legacy `::` residual session recovers the idea from the sessionId prefix", () => {
+    // The old `${ideaUuid}::${connectionUuid}` fork carried directIdeaUuid = null; the
+    // control target must still reach the idea's running turn.
+    expect(
+      sessionControlTarget({ sessionId: "idea-A::conn-1", directIdeaUuid: null }),
+    ).toEqual({ entityType: "idea", entityUuid: "idea-A" });
+  });
+
+  it("agrees with executionMatchesSession for all three session shapes", () => {
+    const sessions = [
+      { sessionId: "idea-A", directIdeaUuid: "idea-A" },
+      { sessionId: "sess-xyz", directIdeaUuid: null },
+      { sessionId: "idea-A::conn-1", directIdeaUuid: null },
+    ];
+    for (const session of sessions) {
+      const target = sessionControlTarget(session);
+      // A row reported against the derived target key must match the conversation.
+      expect(
+        executionMatchesSession(
+          {
+            entityType: target.entityType,
+            entityUuid: target.entityUuid,
+            directIdeaUuid: target.entityType === "idea" ? target.entityUuid : null,
+          },
+          session,
+        ),
+      ).toBe(true);
+    }
   });
 });

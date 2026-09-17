@@ -73,7 +73,14 @@ import {
   CopySessionIdButton,
   TranscriptView,
 } from "@/components/agent-presence/chat/transcript-view";
-import type { SessionView } from "@/services/daemon-session.service";
+import type {
+  SessionView,
+  TurnWithMessagesView,
+} from "@/services/daemon-session.service";
+import type {
+  ConnectionView,
+  ExecutionView,
+} from "@/components/agent-presence/types";
 
 const NOW = "2026-06-22T03:00:00.000Z";
 
@@ -125,6 +132,68 @@ function transcriptProps(session: SessionView | null) {
     hasMoreEarlier: false,
     loadingEarlier: false,
     onLoadEarlier: () => {},
+  };
+}
+
+function connectionView(
+  overrides: Partial<ConnectionView> = {},
+): ConnectionView {
+  return {
+    uuid: "conn-1",
+    agentUuid: "agent-1",
+    ownerUuid: "owner-1",
+    agentName: "Alpha",
+    clientType: "claude_code",
+    clientVersion: "1.0.0",
+    host: "host-a",
+    cwd: "/work/ai-pm",
+    startedAt: "2026-06-22T01:00:00.000Z",
+    status: "online",
+    effectiveStatus: "online",
+    connectedAt: NOW,
+    lastSeenAt: NOW,
+    disconnectedAt: null,
+    ...overrides,
+  };
+}
+
+function runningTurn(): TurnWithMessagesView {
+  return {
+    uuid: "turn-1",
+    sessionUuid: "sess-1",
+    backendSessionId: null,
+    seq: 1,
+    trigger: "instruction",
+    promptText: null,
+    status: "running",
+    interruptedReason: null,
+    relayError: null,
+    usage: null,
+    executionUuid: null,
+    startedAt: NOW,
+    endedAt: null,
+    createdAt: NOW,
+    messages: [],
+  };
+}
+
+function runningExecution(): ExecutionView {
+  return {
+    uuid: "exec-1",
+    agentUuid: "agent-1",
+    connectionUuid: "conn-1",
+    entityType: "daemon_session",
+    entityUuid: "sess-1",
+    rootIdeaUuid: null,
+    directIdeaUuid: null,
+    status: "running",
+    interruptedReason: null,
+    startedAt: NOW,
+    createdAt: NOW,
+    updatedAt: NOW,
+    entityTitle: "Refactor auth",
+    projectUuid: null,
+    rootIdeaTitle: null,
   };
 }
 
@@ -386,5 +455,55 @@ describe("TranscriptView header — conversation token total (daemon-token-usage
     fireEvent.click(screen.getByLabelText(/Conversation token usage/));
     expect(screen.getAllByText("Input").length).toBeGreaterThan(0);
     expect(screen.queryByText(/Cache/i)).toBeNull();
+  });
+});
+
+describe("TranscriptView header — streamlined status metadata", () => {
+  it("omits the active lifecycle badge while preserving running pulse and elapsed runtime", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-06-22T03:02:00.000Z");
+    const session = sessionView({ status: "active" });
+
+    render(
+      <TranscriptView
+        {...transcriptProps(session)}
+        turns={[runningTurn()]}
+        sessionExecutions={[runningExecution()]}
+      />,
+    );
+
+    expect(screen.queryByText("Active")).toBeNull();
+    expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
+    expect(
+      screen.getByTitle("Elapsed since this run started").textContent,
+    ).toBe("00:02:00");
+  });
+
+  it("retains the ended lifecycle badge", () => {
+    const session = sessionView({ status: "ended" });
+    render(<TranscriptView {...transcriptProps(session)} />);
+
+    expect(screen.getByText("Ended")).toBeTruthy();
+    expect(screen.queryByText("Active")).toBeNull();
+  });
+
+  it("omits started metadata while retaining identity, uptime, and host details", () => {
+    const session = sessionView({ status: "active" });
+    render(
+      <TranscriptView
+        {...transcriptProps(session)}
+        originConnection={connectionView()}
+        originOnline
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Connection details"));
+
+    expect(screen.getByText("Alpha")).toBeTruthy();
+    expect(screen.getByText("Uptime")).toBeTruthy();
+    expect(screen.getByText("Host")).toBeTruthy();
+    expect(screen.getAllByText("host-a").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Started")).toBeNull();
+    expect(screen.queryByText("2 hours ago")).toBeNull();
   });
 });

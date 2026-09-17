@@ -39,30 +39,54 @@ export function executionMatchesSession(
   exec: Pick<ExecutionView, "entityType" | "entityUuid" | "directIdeaUuid">,
   session: { sessionId: string; directIdeaUuid: string | null },
 ): boolean {
-  // The idea this conversation is anchored on. Normally the session's own directIdeaUuid;
-  // for a LEGACY residual per-instance session (fix-daemon-conversation-split-cwd-agent:
-  // the old `${ideaUuid}::${connectionUuid}` fork, which carried directIdeaUuid = null) we
-  // recover the idea from the `::`-prefix — the same split the daemon router uses for
-  // notification matching (cli/event-router.mjs). This is a UI-only fix-forward heal so a
-  // pre-existing residual thread regains a working Interrupt; no DaemonSession row is
-  // migrated. A genuinely ad-hoc session (random sessionId, no `::`, null directIdeaUuid)
-  // has ideaUuid = null and keeps its unchanged daemon_session:<sessionId> match below.
-  const ideaUuid =
-    session.directIdeaUuid ??
-    (session.sessionId.includes("::") ? session.sessionId.split("::")[0] : null);
+  // The key this conversation's work is addressed by — the SINGLE derivation shared with
+  // the composer's stuck-turn control (see `sessionControlTarget`), so the entity the UI
+  // sends and the entity the matcher accepts can never drift.
+  const target = sessionControlTarget(session);
 
-  if (ideaUuid) {
+  if (target.entityType === "idea") {
     // Direct wake on the idea itself, OR any wake whose DIRECT idea IS this conversation's
     // idea (its child task/proposal/document wakes). Matched strictly by the DIRECT idea,
     // never the root idea.
     return (
-      (exec.entityType === "idea" && exec.entityUuid === ideaUuid) ||
-      exec.directIdeaUuid === ideaUuid
+      (exec.entityType === "idea" && exec.entityUuid === target.entityUuid) ||
+      exec.directIdeaUuid === target.entityUuid
     );
   }
   return (
-    exec.entityType === "daemon_session" && exec.entityUuid === session.sessionId
+    exec.entityType === "daemon_session" && exec.entityUuid === target.entityUuid
   );
+}
+
+// The control-entity key a conversation's own work is addressed by:
+//   idea-anchored → `idea:<directIdeaUuid>`
+//   ad-hoc        → `daemon_session:<sessionId>`
+//
+// This is the ONE place the rule lives. `executionMatchesSession` reads it to decide which
+// live execution rows belong to a conversation, and the composer reads it to target an
+// interrupt at a conversation whose execution row is MISSING (a phantom `running` turn —
+// nothing left to match against, so the control must be derived from the session itself).
+// Keeping both on one function is what stops the sent entity and the matched entity from
+// drifting apart.
+//
+// The idea is normally the session's own `directIdeaUuid`; for a LEGACY residual
+// per-instance session (fix-daemon-conversation-split-cwd-agent: the old
+// `${ideaUuid}::${connectionUuid}` fork, which carried directIdeaUuid = null) we recover it
+// from the `::`-prefix — the same split the daemon router uses for notification matching
+// (cli/event-router.mjs). This is a UI-only fix-forward heal so a pre-existing residual
+// thread regains a working Interrupt; no DaemonSession row is migrated. A genuinely ad-hoc
+// session (random sessionId, no `::`, null directIdeaUuid) resolves no idea and keeps its
+// `daemon_session:<sessionId>` key.
+export function sessionControlTarget(session: {
+  sessionId: string;
+  directIdeaUuid: string | null;
+}): { entityType: "idea" | "daemon_session"; entityUuid: string } {
+  const ideaUuid =
+    session.directIdeaUuid ??
+    (session.sessionId.includes("::") ? session.sessionId.split("::")[0] : null);
+  return ideaUuid
+    ? { entityType: "idea", entityUuid: ideaUuid }
+    : { entityType: "daemon_session", entityUuid: session.sessionId };
 }
 
 // The executions (from the conversation's origin connection slice) that belong to it.

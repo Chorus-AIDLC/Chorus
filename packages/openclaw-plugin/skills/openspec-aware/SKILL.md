@@ -4,7 +4,7 @@ description: OpenSpec-mode authoring for Chorus PM workflows on OpenClaw — the
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.18.0"
+  version: "0.18.1"
   category: project-management
   mcp_server: chorus
 ---

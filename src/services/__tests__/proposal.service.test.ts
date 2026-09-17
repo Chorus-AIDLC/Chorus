@@ -51,7 +51,10 @@ const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockRes
     comment: {
       deleteMany: vi.fn(),
     },
-    $transaction: vi.fn(),
+    // Draft mutators run inside prisma.$transaction with a row lock (#555); the
+    // transaction client is this same mock so their reads/writes stay observable.
+    $queryRaw: vi.fn(async () => []),
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockPrisma)),
   };
   const mockEventBus = { emitChange: vi.fn() };
   const mockFormatCreatedBy = vi.fn().mockResolvedValue({ type: "agent", uuid: "actor-uuid", name: "Agent" });

@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
 import { prepareManagedDshConfig } from "./dsh-managed-config.mjs";
+import { awaitChildSettled } from "./child-exit.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 export const DEFAULT_DSH_TIMEOUT_MS = 30 * 60 * 1000;
@@ -376,7 +377,9 @@ export class DshSpawner {
       }
     });
     child.on?.("error", (error) => fail(`dsh runtime process error: ${safeSpawnError(error)}`));
-    child.on?.("close", (code) => {
+    // Settle on process exit, not only on stdio close: a detached descendant can
+    // inherit the pipes and keep `close` from ever firing (see cli/child-exit.mjs).
+    awaitChildSettled(child, { logger: this.logger, label: "dsh" }).then((code) => {
       closeSeen = true;
       exitCode = code;
       if (stderrBuffer.trim()) this.logger.warn(`[dsh] ${stderrBuffer.trim()}`);
