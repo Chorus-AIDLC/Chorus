@@ -470,3 +470,130 @@ describe("createDaemonRestClient — error surfacing (no silent errors)", () => 
     await expect(client.readPendingTurns()).resolves.toBeTruthy();
   });
 });
+
+// A lost TERMINAL turn-advance is the one transport failure that strands a turn as a
+// phantom `running` forever (fix-phantom-running-turn), so that edge — and only that edge —
+// gets a bounded retry: 3 attempts, 500ms then 2000ms, retryable = network / 429 / 5xx.
+describe("createDaemonRestClient — bounded retry on the terminal turn-advance edge", () => {
+  // Fails the first `failCount` attempts at the network level, then answers 200.
+  function flakyFetch(failCount, status = 200) {
+    let calls = 0;
+    return vi.fn(async () => {
+      calls += 1;
+      if (calls <= failCount) throw new Error("ECONNREFUSED");
+      return { ok: status >= 200 && status < 300, status, json: async () => ({}) };
+    });
+  }
+
+  function retryClient(overrides = {}) {
+    const warns = [];
+    const slept = [];
+    const client = makeClient({
+      logger: { ...silent, warn: (m) => warns.push(m) },
+      sleep: async (ms) => { slept.push(ms); },
+      ...overrides,
+    });
+    return { client, warns, slept };
+  }
+
+  for (const status of ["ended", "interrupted"]) {
+    it(`→ ${status} recovers from a first network failure on the second attempt (exactly 2 requests)`, async () => {
+      const fetchImpl = flakyFetch(1);
+      const { client, warns, slept } = retryClient({ fetchImpl });
+
+      const result = await client.turnAdvance({ sessionId: "idea-1", status });
+
+      expect(result).toMatchObject({ ok: true, status: 200 });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(slept).toEqual([500]);
+      // The failed attempt is visible WITH its ordinal and its cause.
+      expect(warns).toHaveLength(1);
+      expect(warns[0]).toMatch(/turn-advance request failed \(attempt 1\/3\).*ECONNREFUSED/);
+    });
+  }
+
+  it("retries a 503 and a 429 up to the budget", async () => {
+    for (const status of [503, 429]) {
+      const fetchImpl = okFetch(status);
+      const { client, slept } = retryClient({ fetchImpl });
+
+      const result = await client.turnAdvance({ sessionId: "idea-1", status: "ended" });
+
+      expect(result).toMatchObject({ ok: false, status });
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+      expect(slept).toEqual([500, 2000]);
+    }
+  });
+
+  it("never retries a 4xx — a server verdict cannot become true by repeating", async () => {
+    for (const status of [400, 401, 404]) {
+      const fetchImpl = okFetch(status);
+      const { client, warns, slept } = retryClient({ fetchImpl });
+
+      const result = await client.turnAdvance({ sessionId: "idea-1", status: "ended" });
+
+      expect(result).toMatchObject({ ok: false, status });
+      expect(result.error).toBe(`turn-advance returned ${status}`);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(slept).toEqual([]);
+      // The final failure line keeps its pre-retry wording (log-grep compatibility).
+      expect(warns.at(-1)).toBe(`[Chorus] turn-advance returned ${status}`);
+    }
+  });
+
+  it("stops at exactly 3 attempts with 500ms then 2000ms delays and surfaces the original failure result", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    const { client, warns, slept } = retryClient({ fetchImpl });
+
+    const result = await client.turnAdvance({ sessionId: "idea-1", status: "ended" });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(slept).toEqual([500, 2000]);
+    expect(result).toMatchObject({ ok: false, status: null });
+    // Structured failure result is byte-identical to the pre-retry one — never thrown.
+    expect(result.error).toMatch(/^turn-advance request failed: Error: ECONNREFUSED$/);
+    // An ordinal line is emitted only when another attempt actually follows — the ordinal
+    // exists to explain a retry. So attempts 1 and 2 carry one; the LAST failure does not,
+    // because it is re-logged verbatim below (no redundant near-duplicate pair).
+    expect(warns.filter((m) => /\(attempt \d\/3\)/.test(m))).toHaveLength(2);
+    expect(warns[0]).toMatch(/\(attempt 1\/3\)/);
+    expect(warns[1]).toMatch(/\(attempt 2\/3\)/);
+    expect(warns.some((m) => /\(attempt 3\/3\)/.test(m))).toBe(false);
+    // …and the last line is the unchanged final-failure wording.
+    expect(warns.at(-1)).toBe("[Chorus] turn-advance request failed: Error: ECONNREFUSED");
+  });
+
+  it("does NOT retry the → running edge (the wake runs anyway; a stale retry could race the terminal edge)", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    const { client, warns, slept } = retryClient({ fetchImpl });
+
+    const result = await client.turnAdvance({ sessionId: "idea-1", status: "running" });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(slept).toEqual([]);
+    expect(result).toMatchObject({ ok: false, status: null });
+    // Single-shot ops keep byte-identical logs: no ordinal noise at all.
+    expect(warns).toEqual(["[Chorus] turn-advance request failed: Error: ECONNREFUSED"]);
+  });
+
+  it("leaves the other ops single-shot (transcript / executionState / reportInterrupt / heartbeat)", async () => {
+    const calls = [
+      (c) => c.transcript({ sessionId: "s", messages: [{ role: "user", text: "x" }] }),
+      (c) => c.executionState({ executions: [] }),
+      (c) => c.reportInterrupt({ entityType: "task", entityUuid: "t-1", reason: "crash" }),
+      (c) => c.heartbeat({ connectionUuid: "conn-1", connectedAt: "g" }),
+    ];
+    for (const call of calls) {
+      const fetchImpl = okFetch(503);
+      const { client, slept } = retryClient({ fetchImpl });
+      const result = await call(client);
+      expect(result).toMatchObject({ ok: false, status: 503 });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(slept).toEqual([]);
+    }
+  });
+});

@@ -935,10 +935,16 @@ describe("Daemon chat modal — opening + conversation list", () => {
     ).toBe(false);
   });
 
-  it("does NOT show another conversation's execution in this conversation's footer (per-session scope)", async () => {
+  it("does NOT adopt another conversation's execution in this conversation's footer (per-session scope)", async () => {
     // An execution for a DIFFERENT ad-hoc session on the same connection must not leak
     // into the open conversation's footer (point: cards only in their own conversation).
-    await openShipLogin({
+    //
+    // Since fix-phantom-running-turn C2 a `running` turn ALWAYS offers a control, so the
+    // absence of a leak is no longer "no button at all" — it is that the button is the
+    // STUCK-TURN variant (derived from THIS conversation's own session key) rather than the
+    // other session's live-execution variant. The two are distinguished by their confirm
+    // copy, which is exactly the user-visible difference that matters.
+    const user = await openShipLogin({
       turnStatus: "running",
       executions: [adHocExec({ entityUuid: "sid-OTHER" })],
     });
@@ -947,7 +953,20 @@ describe("Daemon chat modal — opening + conversation list", () => {
         screen.getAllByPlaceholderText("Reply in this conversation…").length,
       ).toBeGreaterThan(0),
     );
-    expect(screen.queryByRole("button", { name: /interrupt/i })).toBeNull();
+    // The rendered control is the stuck-turn variant, identifiable by its own accessible
+    // name — the other session's live-execution variant keeps "Interrupt this running
+    // execution", so this query alone would fail if the foreign row had been adopted.
+    expect(
+      screen.queryByRole("button", { name: /Interrupt this running execution/i }),
+    ).toBeNull();
+    await user.click(
+      (await screen.findAllByRole("button", { name: /Clear this stuck turn/i }))[0],
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Clear this stuck turn?")).toBeTruthy(),
+    );
+    // The other session's live execution was NOT borrowed.
+    expect(screen.queryByText("Interrupt this execution?")).toBeNull();
   });
 });
 

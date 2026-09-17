@@ -604,6 +604,42 @@ export async function isConnectionLive(
 }
 
 /**
+ * Does `connectionUuid` currently report a `running` execution for
+ * `entityType:entityUuid` (within `companyUuid`)? A narrow existence read over the
+ * very table `reconcileSnapshot` already maintains — it introduces NO new rule and
+ * duplicates no threshold or status logic (liveness stays `isConnectionLive`'s job).
+ *
+ * This is the server's own, timely evidence that a live subprocess exists for an
+ * entity: the daemon uploads its FULL execution snapshot on every lifecycle
+ * transition, captured synchronously at emit time (`cli/upload-hooks.mjs`
+ * `onExecutionChange`), so the absence of a `running` row is a daemon-reported fact,
+ * not a client assertion.
+ *
+ * The control route pairs it with `isConnectionLive` to decide whether an `interrupt`
+ * has any live run to act on: an ONLINE connection with a silently-dead reverse
+ * channel still keeps `lastSeenAt` fresh via REST heartbeats, so liveness alone would
+ * publish the control event into a channel nobody listens on and never converge.
+ */
+export async function hasRunningExecution(
+  companyUuid: string,
+  connectionUuid: string,
+  entityType: string,
+  entityUuid: string,
+): Promise<boolean> {
+  const row = await prisma.daemonExecution.findFirst({
+    where: {
+      companyUuid,
+      connectionUuid,
+      entityType,
+      entityUuid,
+      status: "running",
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
+/**
  * List the active (`running`/`queued`) execution rows visible to a caller,
  * scoped exactly like `daemon-connection.service`'s connection visibility:
  *  - a USER caller sees only execution for connections whose agent the user owns

@@ -6,18 +6,43 @@ const mockGetAuthContext = vi.fn();
 const mockHasPermission = vi.fn();
 const mockResolveConnectionOwner = vi.fn();
 const mockDispatchControl = vi.fn();
+const mockIsConnectionLive = vi.fn();
+const mockHasRunningExecution = vi.fn();
+const mockAdvanceTurnForWake = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
   hasPermission: (...args: unknown[]) => mockHasPermission(...args),
 }));
 
+// The two server-side predicates behind the phantom-turn settle gate, plus the shared
+// turn-advance chokepoint the settle goes through. Mocked so the route's gate logic is the
+// unit under test (the predicates keep their own service tests).
+vi.mock("@/services/daemon-execution.service", () => ({
+  isConnectionLive: (...args: unknown[]) => mockIsConnectionLive(...args),
+  hasRunningExecution: (...args: unknown[]) => mockHasRunningExecution(...args),
+}));
+
+vi.mock("@/services/daemon-session.service", () => ({
+  advanceTurnForWake: (...args: unknown[]) => mockAdvanceTurnForWake(...args),
+}));
+
+// Silence the route's settle logging. `createRequestLogger` must stay provided — the shared
+// withErrorHandler wrapper calls it on every request.
+vi.mock("@/lib/logger", () => {
+  const stub = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  return {
+    default: stub,
+    createRequestLogger: () => ({ ...stub, child: () => stub }),
+  };
+});
+
 // Mock the control service: the route is the unit under test. CONTROL_ENTITY_TYPES feeds
 // the route's zod enum for the entity-bearing commands, so the mock must provide it
 // verbatim. (CONTROL_COMMANDS is no longer imported by the route — the discriminated zod
 // body hard-codes the per-command literals.)
 vi.mock("@/services/daemon-control.service", () => ({
-  CONTROL_ENTITY_TYPES: ["task", "idea", "proposal", "document"],
+  CONTROL_ENTITY_TYPES: ["task", "idea", "proposal", "document", "daemon_session"],
   resolveConnectionOwner: (...args: unknown[]) => mockResolveConnectionOwner(...args),
   dispatchControl: (...args: unknown[]) => mockDispatchControl(...args),
 }));
@@ -75,6 +100,12 @@ beforeEach(() => {
   // hasPermission default: deny unless a test opts in. The route only calls it for
   // agent/super_admin callers.
   mockHasPermission.mockReturnValue(false);
+  // Default: a healthy live run (online connection + a `running` execution row) so the
+  // settle gate is CLOSED — the pre-existing envelope/authz expectations below are about
+  // dispatch only and must stay byte-identical apart from `settled: false`.
+  mockIsConnectionLive.mockResolvedValue(true);
+  mockHasRunningExecution.mockResolvedValue(true);
+  mockAdvanceTurnForWake.mockResolvedValue({ ok: true, turn: { uuid: "turn-1" } });
 });
 
 describe("POST /api/daemon/control — auth + validation envelope", () => {
@@ -138,7 +169,13 @@ describe("POST /api/daemon/control — authz matrix (q2=a)", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body).toEqual({ success: true, data: { dispatched: true }, meta: undefined });
+    expect(body).toEqual({
+      success: true,
+      // `settled` is false here: the connection is online AND has a live `running`
+      // execution row, so the daemon keeps sole authority over the outcome.
+      data: { dispatched: true, settled: false },
+      meta: undefined,
+    });
 
     // Owner resolution was company-scoped to the authenticated company.
     expect(mockResolveConnectionOwner).toHaveBeenCalledWith(companyUuid, connectionUuid);
@@ -271,6 +308,170 @@ describe("POST /api/daemon/control — deliver_turn is NOT a public verb (子2, 
       emptyCtx,
     );
     expect(res.status).toBe(422);
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+  });
+});
+
+// ===== Phantom-turn convergence (fix-phantom-running-turn C3) =====
+//
+// The endpoint always dispatches. On top of that, for `interrupt` ONLY, it settles the
+// session's `running` turn as `interrupted(user)` exactly when the server's own state shows
+// no live run can act on the command: the connection is not effectively online, OR it
+// reports no `running` execution for the entity (the zombie-SSE case). The four-way matrix
+// below pins that gate, plus resume-never-settles and the "settle failure cannot fail the
+// dispatch" contract.
+const ideaUuid = "idea-0000-0000-0000-000000000001";
+const interruptIdeaBody = {
+  command: "interrupt",
+  targetConnectionUuid: connectionUuid,
+  entityType: "idea",
+  entityUuid: ideaUuid,
+};
+
+describe("POST /api/daemon/control — settles a phantom running turn", () => {
+  it("OFFLINE connection ⇒ settles interrupted/user and reports settled: true", async () => {
+    mockIsConnectionLive.mockResolvedValue(false);
+
+    const res = await POST(postRequest(interruptIdeaBody), emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: true });
+    // The control event is still published unconditionally.
+    expect(mockDispatchControl).toHaveBeenCalledTimes(1);
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledTimes(1);
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledWith({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      // `sessionId = entityUuid` — an identity for `idea` / `daemon_session` only.
+      sessionId: ideaUuid,
+      status: "interrupted",
+      interruptedReason: "user",
+      entityType: "idea",
+      entityUuid: ideaUuid,
+    });
+  });
+
+  it("ONLINE connection WITH a running execution row ⇒ does not settle (daemon owns it)", async () => {
+    mockIsConnectionLive.mockResolvedValue(true);
+    mockHasRunningExecution.mockResolvedValue(true);
+
+    const res = await POST(postRequest(interruptIdeaBody), emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: false });
+    expect(mockDispatchControl).toHaveBeenCalledTimes(1);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+    expect(mockHasRunningExecution).toHaveBeenCalledWith(
+      companyUuid,
+      connectionUuid,
+      "idea",
+      ideaUuid,
+    );
+  });
+
+  it("ONLINE connection with NO running execution row (zombie SSE) ⇒ settles", async () => {
+    // The reverse channel is silently dead while REST heartbeats keep `lastSeenAt` fresh,
+    // so liveness alone reads as online. The execution snapshot is the direct evidence.
+    mockIsConnectionLive.mockResolvedValue(true);
+    mockHasRunningExecution.mockResolvedValue(false);
+
+    const res = await POST(postRequest(interruptIdeaBody), emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: true });
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledTimes(1);
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "interrupted", interruptedReason: "user" }),
+    );
+  });
+
+  it("no running turn to settle ⇒ still succeeds, reports settled: false", async () => {
+    mockIsConnectionLive.mockResolvedValue(false);
+    mockAdvanceTurnForWake.mockResolvedValue({ ok: false, reason: "not_found" });
+
+    const res = await POST(postRequest(interruptIdeaBody), emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: false });
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledTimes(1);
+  });
+
+  it("an ad-hoc daemon_session interrupt settles on its own session business key", async () => {
+    mockIsConnectionLive.mockResolvedValue(false);
+    const sessionId = "sess-abc";
+
+    const res = await POST(
+      postRequest({
+        command: "interrupt",
+        targetConnectionUuid: connectionUuid,
+        entityType: "daemon_session",
+        entityUuid: sessionId,
+      }),
+      emptyCtx,
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId, entityType: "daemon_session" }),
+    );
+  });
+
+  it("a failed settle NEVER fails the dispatch (reported as settled: false)", async () => {
+    mockIsConnectionLive.mockResolvedValue(false);
+    mockAdvanceTurnForWake.mockRejectedValue(new Error("db down"));
+
+    const res = await POST(postRequest(interruptIdeaBody), emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: false });
+    expect(mockDispatchControl).toHaveBeenCalledTimes(1);
+  });
+
+  it("RESUME never settles — offline", async () => {
+    mockIsConnectionLive.mockResolvedValue(false);
+
+    const res = await POST(
+      postRequest({ ...interruptIdeaBody, command: "resume" }),
+      emptyCtx,
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: false });
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+    // The gate is not even evaluated for a non-interrupt command.
+    expect(mockIsConnectionLive).not.toHaveBeenCalled();
+  });
+
+  it("RESUME never settles — online", async () => {
+    mockIsConnectionLive.mockResolvedValue(true);
+    mockHasRunningExecution.mockResolvedValue(false);
+
+    const res = await POST(
+      postRequest({ ...interruptIdeaBody, command: "resume" }),
+      emptyCtx,
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: false });
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
+  it("an unauthorized caller settles nothing (403 before the gate)", async () => {
+    mockGetAuthContext.mockResolvedValue(strangerUserAuth);
+    mockIsConnectionLive.mockResolvedValue(false);
+
+    const res = await POST(postRequest(interruptIdeaBody), emptyCtx);
+
+    expect(res.status).toBe(403);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
     expect(mockDispatchControl).not.toHaveBeenCalled();
   });
 });

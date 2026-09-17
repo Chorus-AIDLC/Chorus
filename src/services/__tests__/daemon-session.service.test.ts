@@ -2507,6 +2507,89 @@ describe("advanceTurnForWake", () => {
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 
+  // The daemon's bounded retry on the terminal turn-advance edge (fix-phantom-running-turn)
+  // needs NO server-side dedupe code — these two tests pin the property it relies on.
+  it("RETRY IDEMPOTENCE: a correlated terminal replay publishes no turn-status event and writes no timestamps or usage", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    const endedAt = new Date("2026-01-01T00:00:00.000Z");
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(
+      turnRow({
+        status: "ended",
+        backendSessionId: "thread-1",
+        endedAt,
+        usage: { inputTokens: 10, outputTokens: 20 },
+      }),
+    );
+
+    // The retry repeats the ORIGINAL report verbatim: same turnUuid, same terminal
+    // status, same usage — exactly what a lost-response retry looks like on the wire.
+    const replay = () =>
+      advanceTurnForWake({
+        companyUuid,
+        agentUuid,
+        connectionUuid,
+        sessionId,
+        turnUuid,
+        backendSessionId: "thread-1",
+        status: "ended" as const,
+        usage: {
+          inputTokens: 10,
+          outputTokens: 20,
+          cacheCreationTokens: null,
+          cacheReadTokens: null,
+          model: "m",
+          source: "dsh" as const,
+        },
+      });
+
+    const res = await replay();
+
+    // The caller gets the EXISTING projection (so the daemon sees its 2xx and stops).
+    expect(res).toMatchObject({
+      ok: true,
+      turn: { uuid: turnUuid, status: "ended", endedAt: endedAt.toISOString() },
+    });
+    // No second usage rollup, no second timestamp write…
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    // …and no turn-status event, so the UI is not told twice that the turn ended.
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
+
+    // Any number of further retries stays a no-op.
+    await replay();
+    await replay();
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it("RETRY IDEMPOTENCE: an UNCORRELATED terminal replay finds no running turn → not_found, changing nothing", async () => {
+    // An older daemon omits turnUuid, so the retry resolves by FIFO status. The lost-but-
+    // applied first attempt already left no `running` turn, so there is nothing to hit.
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(null);
+
+    const res = await advanceTurnForWake({
+      companyUuid,
+      agentUuid,
+      connectionUuid,
+      sessionId,
+      status: "ended",
+    });
+
+    expect(res).toEqual({ ok: false, reason: "not_found" });
+    expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
+      where: { sessionUuid, status: "running" },
+      orderBy: { seq: "asc" },
+    });
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSession.updateMany).not.toHaveBeenCalled();
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
+  });
+
   it("deduplicates concurrent identical terminal reports to one rollup and one lifecycle event pair", async () => {
     let persistedStatus = "running";
     let persistedBackendSessionId: string | null = null;

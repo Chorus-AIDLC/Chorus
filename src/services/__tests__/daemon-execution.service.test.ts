@@ -67,6 +67,7 @@ import {
   reportExecutionInterrupt,
   resumeExecution,
   isConnectionLive,
+  hasRunningExecution,
   INTERRUPTED_EXECUTION_STATUS,
   DISPLAYABLE_EXECUTION_STATUSES,
   type SnapshotExecution,
@@ -1074,5 +1075,41 @@ describe("isConnectionLive", () => {
       lastSeenAt: new Date(),
     });
     expect(await isConnectionLive(companyUuid, connectionUuid)).toBe(false);
+  });
+});
+
+// ===== hasRunningExecution (phantom-turn settle evidence) =====
+//
+// A NARROW existence read over the table `reconcileSnapshot` already maintains — company
+// scoped, keyed by connection + entity, `running` only. It must restate no liveness rule of
+// its own (that stays `isConnectionLive`'s job) so the control route's gate has exactly one
+// source for each half of its verdict.
+describe("hasRunningExecution", () => {
+  it("true when the connection reports a running row for that entity", async () => {
+    mockPrisma.daemonExecution.findFirst.mockResolvedValue({ id: 7 });
+    expect(
+      await hasRunningExecution(companyUuid, connectionUuid, "idea", "idea-A"),
+    ).toBe(true);
+  });
+
+  it("false when no running row exists (the zombie-SSE evidence)", async () => {
+    mockPrisma.daemonExecution.findFirst.mockResolvedValue(null);
+    expect(
+      await hasRunningExecution(companyUuid, connectionUuid, "idea", "idea-A"),
+    ).toBe(false);
+  });
+
+  it("queries company + connection + entity scoped to status running only", async () => {
+    mockPrisma.daemonExecution.findFirst.mockResolvedValue(null);
+    await hasRunningExecution(companyUuid, connectionUuid, "daemon_session", "sess-1");
+    expect(mockPrisma.daemonExecution.findFirst.mock.calls[0][0].where).toEqual({
+      companyUuid,
+      connectionUuid,
+      entityType: "daemon_session",
+      entityUuid: "sess-1",
+      status: "running",
+    });
+    // No connection read at all — this predicate carries no liveness/threshold logic.
+    expect(mockPrisma.daemonConnection.findFirst).not.toHaveBeenCalled();
   });
 });
