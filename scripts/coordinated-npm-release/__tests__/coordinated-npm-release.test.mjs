@@ -246,7 +246,7 @@ if (args.join(" ") === "config get registry") {
 } else if (args[0] === "config" && args[1] === "get" && args[2].endsWith(":registry")) {
   console.log(scenario === "scope-registry-hijack" ? "https://malicious.example.com/" : "undefined");
 } else if (args[0] === "view" && args[2] === "version") {
-  if (scenario.startsWith("first-published") && index === 0) {
+  if (scenario === "all-published" || (scenario === "first-published" && index === 0)) {
     console.log(JSON.stringify("0.17.0"));
   } else if (scenario === "lookup-error-second" && index === 1) {
     console.error("E401 registry authorization failure");
@@ -260,22 +260,6 @@ if (args.join(" ") === "config get registry") {
   if (scenario === "publish-fail-second" && args[1].includes("chorus-openclaw-plugin")) {
     console.error("mock publish rejected");
     process.exitCode = 1;
-  }
-} else if (args[0] === "view" && args[2] === "dist.attestations") {
-  if (scenario === "first-published-provenance-missing" && index === 0) {
-    // npm prints an empty successful response when this property is not yet present.
-  } else if (scenario === "first-published-provenance-not-visible" && index === 0) {
-    console.error("npm error code E404");
-    console.error("npm error 404 No match found for version - " + spec);
-    process.exitCode = 1;
-  } else if (scenario === "first-published-provenance-error" && index === 0) {
-    console.error("E503 attestation metadata unavailable");
-    process.exitCode = 1;
-  } else {
-    console.log(JSON.stringify({
-      url: "https://registry.npmjs.org/-/npm/v1/attestations/example",
-      provenance: { predicateType: "https://slsa.dev/provenance/v1" },
-    }));
   }
 } else {
   console.error("unexpected mock npm invocation: " + args.join(" "));
@@ -293,8 +277,6 @@ async function runPublish(root, scenario) {
   const npmCommand = await installMockNpm(root);
   const result = runScript(root, "publish.mjs", [releaseTag], {
     CHORUS_RELEASE_NPM_CLI: npmCommand,
-    CHORUS_RELEASE_PROVENANCE_RETRY_DELAY_MS: "0",
-    CHORUS_RELEASE_PROVENANCE_RETRY_ATTEMPTS: "5",
     GITHUB_STEP_SUMMARY: summary,
     MOCK_NPM_LOG: npmLog,
     MOCK_NPM_SCENARIO: scenario,
@@ -468,7 +450,7 @@ test("real npm pack prepares all four contract-shaped tarballs in fixed order", 
   }
 });
 
-test("fresh publication uses fixed order and verifies automatic provenance", async (t) => {
+test("accepted uploads continue in fixed order while registry reads still return 404", async (t) => {
   const root = await prepareFixture(t);
   const { result, calls, summary } = await runPublish(root, "all-missing");
   assert.equal(result.status, 0, result.stderr);
@@ -480,16 +462,23 @@ test("fresh publication uses fixed order and verifies automatic provenance", asy
   );
   assert.ok(publishes.every(({ args }) => args.at(-2) === "--access" && args.at(-1) === "public"));
   assert.ok(publishes.every(({ args }) => !args.some((arg) => /provenance/i.test(arg))));
-  assert.equal(
-    calls.filter(({ args }) => args[2] === "dist.attestations").length,
-    4,
+  // The fake registry keeps returning 404 even after a successful upload and
+  // rejects metadata lookups. Only the pre-upload version reads are needed.
+  assert.deepEqual(
+    calls.filter(({ args }) => args[0] === "view" || args[0] === "publish")
+      .map(({ args }) => args[0] === "view" ? args.slice(0, 3) : [args[0]]),
+    packageDefinitions.flatMap(({ packageName }) => [
+      ["view", `${packageName}@${version}`, "version"],
+      ["publish"],
+    ]),
   );
   for (const { packageName } of packageDefinitions) {
-    assert.match(summary, new RegExp(`${packageName.replaceAll("/", "\\/")}\\\` \\| published`));
+    assert.match(summary, new RegExp(`${packageName.replaceAll("/", "\\/")}\\\` \\| accepted-by-npm`));
   }
+  assert.match(summary, /metadata may appear later/);
 });
 
-test("an already-published version is skipped and remaining packages continue", async (t) => {
+test("an existing version is skipped without attestation queries and remaining uploads continue", async (t) => {
   const root = await prepareFixture(t);
   const { result, calls, summary } = await runPublish(root, "first-published");
   assert.equal(result.status, 0, result.stderr);
@@ -502,72 +491,22 @@ test("an already-published version is skipped and remaining packages continue", 
         args[1] === "@chorus-aidlc/chorus@0.17.0" &&
         args[2] === "dist.attestations",
     ).length,
-    1,
+    0,
   );
   assert.match(summary, /@chorus-aidlc\/chorus` \| skipped-already-published/);
+  assert.match(summary, /chorus-openclaw-plugin` \| accepted-by-npm/);
 });
 
-test("missing provenance on an already-published version fails the rerun", async (t) => {
+test("a completed release rerun skips all four versions without uploads or metadata waits", async (t) => {
   const root = await prepareFixture(t);
-  const { result, calls, summary } = await runPublish(
-    root,
-    "first-published-provenance-missing",
-  );
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /does not contain an SLSA provenance attestation/);
+  const { result, calls, summary } = await runPublish(root, "all-published");
+  assert.equal(result.status, 0, result.stderr);
   assert.equal(calls.filter(({ args }) => args[0] === "publish").length, 0);
   assert.equal(
     calls.filter(({ args }) => args[2] === "dist.attestations").length,
-    5,
+    0,
   );
-  assert.match(summary, /@chorus-aidlc\/chorus` \| failed/);
-  assert.match(summary, /chorus-openclaw-plugin` \| not-attempted/);
-});
-
-test("a not-yet-visible npm version retries provenance until the budget is exhausted", async (t) => {
-  const root = await prepareFixture(t);
-  const { result, calls, summary } = await runPublish(
-    root,
-    "first-published-provenance-not-visible",
-  );
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /E404/);
-  assert.equal(calls.filter(({ args }) => args[0] === "publish").length, 0);
-  assert.equal(
-    calls.filter(({ args }) => args[2] === "dist.attestations").length,
-    5,
-  );
-  assert.match(summary, /@chorus-aidlc\/chorus` \| failed/);
-  assert.match(summary, /chorus-openclaw-plugin` \| not-attempted/);
-});
-
-test("provenance query failure on an already-published version fails the rerun", async (t) => {
-  const root = await prepareFixture(t);
-  const { result, calls, summary } = await runPublish(
-    root,
-    "first-published-provenance-error",
-  );
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /E503 attestation metadata unavailable/);
-  assert.equal(calls.filter(({ args }) => args[0] === "publish").length, 0);
-  assert.equal(
-    calls.filter(({ args }) => args[2] === "dist.attestations").length,
-    1,
-  );
-  assert.match(summary, /@chorus-aidlc\/chorus` \| failed/);
-  assert.match(summary, /chorus-openclaw-plugin` \| not-attempted/);
-});
-
-test("default provenance retry window tolerates slow npm registry propagation", async () => {
-  const source = await readFile(resolve(sourceDirectory, "publish.mjs"), "utf8");
-  assert.match(
-    source,
-    /CHORUS_RELEASE_PROVENANCE_RETRY_DELAY_MS\s*\?\?\s*"3000"/,
-  );
-  assert.match(
-    source,
-    /CHORUS_RELEASE_PROVENANCE_RETRY_ATTEMPTS\s*\?\?\s*"60"/,
-  );
+  assert.equal(summary.match(/\| skipped-already-published/g)?.length, 4);
 });
 
 test("registry lookup errors stop later uploads and mark failed/not-attempted", async (t) => {
@@ -576,6 +515,7 @@ test("registry lookup errors stop later uploads and mark failed/not-attempted", 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Unable to determine/);
   assert.equal(calls.filter(({ args }) => args[0] === "publish").length, 1);
+  assert.match(summary, /@chorus-aidlc\/chorus` \| accepted-by-npm/);
   assert.match(summary, /chorus-openclaw-plugin` \| failed/);
   assert.match(summary, /chorus-dsh` \| not-attempted/);
 });
@@ -586,6 +526,7 @@ test("publish failures stop later uploads and mark failed/not-attempted", async 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /publish failed/);
   assert.equal(calls.filter(({ args }) => args[0] === "publish").length, 2);
+  assert.match(summary, /@chorus-aidlc\/chorus` \| accepted-by-npm/);
   assert.match(summary, /chorus-openclaw-plugin` \| failed/);
   assert.match(summary, /chorus-dsh` \| not-attempted/);
 });
@@ -617,6 +558,6 @@ test("workflow is release-only, tokenless, minimally privileged, and provenance-
   assert.match(workflow, /runs-on: ubuntu-latest/);
   assert.match(workflow, /node-version: ['"]24['"]/);
   assert.match(workflow, /npm install --global ['"]npm@11[.]19[.]1['"]/);
-  assert.match(workflow, /CHORUS_RELEASE_EXPECT_PROVENANCE:.*repository[.]private/);
+  assert.doesNotMatch(workflow, /provenance:\s*false|--provenance=false|NPM_CONFIG_PROVENANCE:\s*false/i);
   assert.match(workflow, /prepare[.]mjs[\s\S]*publish[.]mjs/);
 });

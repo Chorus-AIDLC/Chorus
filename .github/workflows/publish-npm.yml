@@ -62,6 +62,4 @@ jobs:
         run: node scripts/coordinated-npm-release/prepare.mjs '${{ github.event.release.tag_name }}'
 
       - name: Publish validated tarballs in manifest order
-        env:
-          CHORUS_RELEASE_EXPECT_PROVENANCE: ${{ !github.event.repository.private }}
         run: node scripts/coordinated-npm-release/publish.mjs '${{ github.event.release.tag_name }}'
