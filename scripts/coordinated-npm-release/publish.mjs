@@ -16,15 +16,6 @@ import {
 
 const releaseTag = process.argv[2];
 const npmCommand = process.env.CHORUS_RELEASE_NPM_CLI || "npm";
-const expectProvenance = process.env.CHORUS_RELEASE_EXPECT_PROVENANCE !== "false";
-const provenanceRetryDelayMs = Number(
-  process.env.CHORUS_RELEASE_PROVENANCE_RETRY_DELAY_MS ?? "3000",
-);
-// Fresh publishes need time for the registry/CDN to expose the attestation.
-// Default budget ~= (attempts - 1) * delay ≈ 177s; both are env-overridable.
-const provenanceRetryAttempts = Number(
-  process.env.CHORUS_RELEASE_PROVENANCE_RETRY_ATTEMPTS ?? "60",
-);
 const npmPublicRegistry = "https://registry.npmjs.org/";
 const manifest = await loadManifest();
 const version = parseReleaseTag(releaseTag);
@@ -125,51 +116,6 @@ function registryState(packageName, cwd) {
   );
 }
 
-async function verifyProvenance(packageName, cwd) {
-  const spec = `${packageName}@${version}`;
-  let lastDetail = "no registry response";
-  for (let attempt = 1; attempt <= provenanceRetryAttempts; attempt++) {
-    const lookup = runFile(
-      npmCommand,
-      ["view", spec, "dist.attestations", "--json"],
-      { cwd, capture: true },
-    );
-    if (lookup.status === 0) {
-      const response = lookup.stdout.trim();
-      if (response === "") {
-        lastDetail = "registry metadata does not contain an SLSA provenance attestation";
-      } else {
-        try {
-          const attestations = JSON.parse(response);
-          if (
-            typeof attestations?.url === "string" &&
-            attestations.provenance?.predicateType === "https://slsa.dev/provenance/v1"
-          ) {
-            console.log(`${spec} provenance attestation verified`);
-            return;
-          }
-          lastDetail = "registry metadata does not contain an SLSA provenance attestation";
-        } catch {
-          throw new Error(
-            `Unable to verify automatic provenance for ${spec}: registry returned invalid attestation JSON`,
-          );
-        }
-      }
-    } else {
-      lastDetail = [lookup.stdout, lookup.stderr].filter(Boolean).join("\n").trim();
-      const versionNotVisibleYet =
-        /\bE404\b/.test(lastDetail) && lastDetail.includes(spec);
-      if (!versionNotVisibleYet) {
-        throw new Error(`Unable to query automatic provenance for ${spec}: ${lastDetail}`);
-      }
-    }
-    if (attempt < provenanceRetryAttempts) {
-      await new Promise((resolve) => setTimeout(resolve, provenanceRetryDelayMs));
-    }
-  }
-  throw new Error(`Unable to verify automatic provenance for ${spec}: ${lastDetail}`);
-}
-
 try {
   const prepared = await validatePreparedResult();
 
@@ -189,15 +135,13 @@ try {
         { cwd: packageDirectory },
       );
       assertSuccessful(publish, `${entry.packageName} publish`);
-    }
-    if (expectProvenance) {
-      await verifyProvenance(entry.packageName, packageDirectory);
-    } else {
-      console.log(`${entry.packageName}@${version} provenance check skipped for a private source repository`);
+      // npm can accept the upload before the version and its automatic
+      // provenance appear in registry reads. Acceptance completes this step.
+      console.log(`${entry.packageName}@${version} upload accepted by npm`);
     }
     setStatus(
       entry.packageName,
-      alreadyPublished ? "skipped-already-published" : "published",
+      alreadyPublished ? "skipped-already-published" : "accepted-by-npm",
     );
   }
 } catch (error) {
@@ -205,5 +149,10 @@ try {
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 } finally {
-  await appendJobSummary(summaryTable(version, statuses));
+  await appendJobSummary([
+    summaryTable(version, statuses),
+    "",
+    "`accepted-by-npm` means `npm publish` exited successfully. Registry visibility",
+    "and automatic provenance metadata may appear later; this job does not wait for them.",
+  ].join("\n"));
 }
