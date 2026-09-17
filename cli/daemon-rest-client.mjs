@@ -40,6 +40,26 @@
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
+// Bounded retry policy for the TERMINAL turn-advance edge only (fix-phantom-running-turn).
+// A lost terminal report is the one failure that leaves a permanently phantom `running`
+// turn, so it — and only it — is worth retrying. Fixed constants on purpose: one more
+// configuration knob buys nothing here.
+const TERMINAL_TURN_ADVANCE_ATTEMPTS = 3;
+const TERMINAL_TURN_ADVANCE_DELAYS_MS = [500, 2000];
+
+/** Real-time delay; tests inject their own so they never sleep for real. */
+const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A failure is retryable when repeating it can plausibly succeed: a network-level failure
+ * (no HTTP response at all), a `429`, or any `5xx`. Every `4xx` is a server VERDICT
+ * (invalid_transition, not_found, auth) — repeating it cannot make it true.
+ * @param {number|null} status
+ */
+function isRetryableFailure(status) {
+  return status === null || status === 429 || status >= 500;
+}
+
 /**
  * @typedef {Object} DaemonRestResult
  * @property {boolean} ok           True only on a 2xx response (and, for reads, a
@@ -70,6 +90,8 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *                                         executionState, reportInterrupt, readPendingTurns)
  *                                         require it; a null value skips the call (logged).
  *   fetchImpl?: typeof fetch,             Injectable for tests (defaults to global fetch).
+ *   sleep?: (ms: number) => Promise<void>, Injectable retry delay (defaults to setTimeout).
+ *                                         Only the terminal turn-advance edge retries.
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  * }} opts
  * @returns {{
@@ -88,6 +110,8 @@ export function createDaemonRestClient(opts) {
   const getConnectionUuid = opts.getConnectionUuid ?? (() => null);
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   const logger = opts.logger ?? NOOP_LOGGER;
+  // Injectable retry delay so tests assert the schedule without spending real seconds.
+  const sleepImpl = opts.sleep ?? realSleep;
 
   const jsonHeaders = {
     Authorization: `Bearer ${apiKey}`,
@@ -111,41 +135,71 @@ export function createDaemonRestClient(opts) {
    *                         `<op> request failed` / `<op> returned <status>` core, so the
    *                         failing entity stays visible in the log without disturbing the
    *                         established op-prefixed message.
+   * @param {boolean} [readData]   Parse the response envelope's `data` on success.
+   * @param {{ attempts: number, delaysMs: number[], sleep?: (ms: number) => Promise<void> }|null} [retry]
+   *                         Optional bounded retry policy. Absent/null = today's exact
+   *                         single-shot behaviour (used by every op but the terminal
+   *                         turn-advance edge).
    * @returns {Promise<DaemonRestResult>}
    */
-  async function post(op, path, body, successLog, context = "", readData = false) {
-    let response;
-    try {
-      response = await fetchImpl(`${url}${path}`, {
-        method: "POST",
-        headers: jsonHeaders,
-        body: JSON.stringify(body),
-      });
-    } catch (err) {
-      // Network-level failure (DNS, connection refused, abort, …). Surface WITH cause.
-      const error = `${op} request failed${context}: ${err}`;
-      logger.warn(`[Chorus] ${error}`);
-      return { ok: false, status: null, error };
-    }
-    if (!response.ok) {
-      // Non-2xx. Surface WITH the status so a 4xx/5xx is debuggable.
-      const error = `${op} returned ${response.status}${context}`;
-      logger.warn(`[Chorus] ${error}`);
-      return { ok: false, status: response.status, error };
-    }
-    let data;
-    if (readData) {
+  async function post(op, path, body, successLog, context = "", readData = false, retry = null) {
+    const attempts = retry ? retry.attempts : 1;
+    const delaysMs = retry?.delaysMs ?? [];
+    // Named distinctly from the module-closure `sleepImpl` so this local never reads as a
+    // shadow: callers with a retry policy pass their own sleep explicitly.
+    const retrySleep = retry?.sleep ?? realSleep;
+
+    let failure;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      failure = undefined;
+      let response;
       try {
-        const parsed = await response.json();
-        data = parsed && typeof parsed === "object" ? parsed.data : undefined;
+        response = await fetchImpl(`${url}${path}`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify(body),
+        });
       } catch (err) {
-        // Mixed-version fallback: older servers may return an empty successful body.
-        // Keep the lifecycle report successful, but make the missing correlation visible.
-        logger.warn(`[Chorus] ${op} response correlation unavailable: ${err}`);
+        // Network-level failure (DNS, connection refused, abort, …). Surface WITH cause.
+        // `head`/`tail` are split so the attempt ordinal can be injected before the cause.
+        failure = { status: null, head: `${op} request failed${context}`, tail: `: ${err}` };
       }
+      if (!failure && !response.ok) {
+        // Non-2xx. Surface WITH the status so a 4xx/5xx is debuggable.
+        failure = { status: response.status, head: `${op} returned ${response.status}${context}`, tail: "" };
+      }
+      if (!failure) {
+        let data;
+        if (readData) {
+          try {
+            const parsed = await response.json();
+            data = parsed && typeof parsed === "object" ? parsed.data : undefined;
+          } catch (err) {
+            // Mixed-version fallback: older servers may return an empty successful body.
+            // Keep the lifecycle report successful, but make the missing correlation visible.
+            logger.warn(`[Chorus] ${op} response correlation unavailable: ${err}`);
+          }
+        }
+        if (successLog) logger.info(`[Chorus] ${successLog}`);
+        return { ok: true, status: response.status, ...(data !== undefined ? { data } : {}) };
+      }
+
+      const canRetry = attempt < attempts && isRetryableFailure(failure.status);
+      // Per-attempt visibility, but ONLY when another attempt actually follows: the ordinal
+      // exists to explain a retry. A single-shot op, or a terminal failure that will be
+      // re-logged verbatim two lines below, must not emit a redundant ordinal line.
+      if (canRetry) {
+        logger.warn(`[Chorus] ${failure.head} (attempt ${attempt}/${attempts})${failure.tail}`);
+      }
+      if (!canRetry) break;
+      await retrySleep(delaysMs[attempt - 1] ?? delaysMs[delaysMs.length - 1] ?? 0);
     }
-    if (successLog) logger.info(`[Chorus] ${successLog}`);
-    return { ok: true, status: response.status, ...(data !== undefined ? { data } : {}) };
+
+    // Final failure: the message and the structured result are EXACTLY what they were
+    // before retries existed, so existing log-grep expectations still match.
+    const error = `${failure.head}${failure.tail}`;
+    logger.warn(`[Chorus] ${error}`);
+    return { ok: false, status: failure.status, error };
   }
 
   return {
@@ -203,6 +257,21 @@ export function createDaemonRestClient(opts) {
         `advanced turn for session ${sessionId} → ${status}`,
         "",
         status === "running",
+        // Bounded retry on the TERMINAL edge only. A lost `→ ended`/`→ interrupted` report
+        // is what strands a turn as phantom `running` forever; the `→ running` edge is not
+        // retried because the wake is about to run anyway and a stale retry could race the
+        // terminal edge. The repeat is safe: the daemon sends the `turnUuid` it learned
+        // from its own → running report, and advanceTurnForWake returns the existing
+        // projection for a same-turn same-terminal-status replay (no second usage rollup,
+        // timestamp write or SSE publish). Without a turnUuid, the FIFO lookup finds no
+        // `running` turn and answers not_found, changing nothing.
+        isTerminal
+          ? {
+              attempts: TERMINAL_TURN_ADVANCE_ATTEMPTS,
+              delaysMs: TERMINAL_TURN_ADVANCE_DELAYS_MS,
+              sleep: sleepImpl,
+            }
+          : null,
       );
       const resolvedTurnUuid =
         typeof result.data?.turn?.uuid === "string" ? result.data.turn.uuid : null;

@@ -35,6 +35,7 @@ import { homedir } from "node:os";
 import { win32 as pathWin32, posix as pathPosix, join } from "node:path";
 import { getSessionId as defaultGetSessionId, setSessionId as defaultSetSessionId } from "./kiro-session-map.mjs";
 import { reconstructTranscript as defaultReconstructTranscript } from "./kiro-transcript.mjs";
+import { awaitChildSettled } from "./child-exit.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -343,7 +344,9 @@ export class KiroSpawner {
         resolve({ sessionId: knownSessionId || anchor, exitCode: null, isNew });
       });
 
-      child.on("close", (code) => {
+      // Settle on process exit, not only on stdio close: a detached descendant can
+      // inherit the pipes and keep `close` from ever firing (see cli/child-exit.mjs).
+      awaitChildSettled(child, { logger: this.logger, label: "kiro-cli" }).then((code) => {
         if (code !== 0) {
           this.logger.warn(`[Chorus] kiro-cli exited with code ${code}`);
         }

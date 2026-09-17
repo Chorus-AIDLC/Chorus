@@ -1915,6 +1915,59 @@ export type AdvanceTurnForWakeResult =
  * → interrupted edge). A query/write failure propagates (no swallow): a lost
  * transition would strand a turn's lifecycle.
  */
+/**
+ * Resolve the session business key a CONTROL command should settle, for the one caller
+ * that has an entity key rather than a session id (`POST /api/daemon/control`).
+ *
+ * `sessionId === entityUuid` is an identity for a modern idea-anchored session and for an
+ * ad-hoc `daemon_session`, but NOT for a LEGACY residual session, whose business key is
+ * `${ideaUuid}::${connectionUuid}` (fix-daemon-conversation-split-cwd-agent). The client
+ * derives `idea:<ideaUuid>` for both shapes — it healed the `::` away — so settling
+ * `sessionId = entityUuid` blindly can address a DIFFERENT, modern session that merely
+ * shares the idea uuid: it would clear an unrelated turn and leave the legacy one running.
+ *
+ * Candidates are therefore the exact-key session plus any legacy `${entityUuid}::…`
+ * session ORIGINATING on the targeted connection, and the winner is decided by evidence:
+ * the candidate that actually holds a `running` turn. Zero candidates with a running turn
+ * → null (nothing to settle). More than one → null: the command is ambiguous and guessing
+ * would write to the wrong conversation. Both cases are the caller's no-op.
+ *
+ * Read-only. Returns the session's `sessionId`, never a uuid.
+ */
+export async function resolveControlSessionId(params: {
+  companyUuid: string;
+  agentUuid: string;
+  connectionUuid: string;
+  entityUuid: string;
+}): Promise<{ sessionId: string | null; ambiguous: boolean }> {
+  const candidates = await prisma.daemonSession.findMany({
+    where: {
+      companyUuid: params.companyUuid,
+      agentUuid: params.agentUuid,
+      OR: [
+        { sessionId: params.entityUuid },
+        {
+          sessionId: { startsWith: `${params.entityUuid}::` },
+          originConnectionUuid: params.connectionUuid,
+        },
+      ],
+    },
+    select: { uuid: true, sessionId: true },
+  });
+  if (candidates.length === 0) return { sessionId: null, ambiguous: false };
+  if (candidates.length === 1) return { sessionId: candidates[0].sessionId, ambiguous: false };
+
+  const running = await prisma.daemonSessionTurn.findMany({
+    where: { sessionUuid: { in: candidates.map((c) => c.uuid) }, status: "running" },
+    select: { sessionUuid: true },
+    distinct: ["sessionUuid"],
+  });
+  if (running.length === 0) return { sessionId: null, ambiguous: false };
+  if (running.length > 1) return { sessionId: null, ambiguous: true };
+  const winner = candidates.find((c) => c.uuid === running[0].sessionUuid);
+  return { sessionId: winner?.sessionId ?? null, ambiguous: false };
+}
+
 export async function advanceTurnForWake(params: {
   companyUuid: string;
   agentUuid: string;

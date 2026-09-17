@@ -28,6 +28,7 @@ import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredS
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { win32 as pathWin32, posix as pathPosix, join as pathJoin } from "node:path";
+import { awaitChildSettled } from "./child-exit.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -447,7 +448,9 @@ export class ClaudeSpawner {
         resolve({ sessionId: observedSessionId, backendSessionId: id, exitCode: null, isNew });
       });
 
-      child.on("close", (code) => {
+      // Settle on process exit, not only on stdio close: a detached descendant can
+      // inherit the pipes and keep `close` from ever firing (see cli/child-exit.mjs).
+      awaitChildSettled(child, { logger: this.logger, label: "claude" }).then((code) => {
         if (code !== 0) {
           this.logger.warn(`[Chorus] claude exited with code ${code}`);
         }

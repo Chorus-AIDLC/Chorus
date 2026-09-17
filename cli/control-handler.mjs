@@ -12,6 +12,17 @@
 // so a stale / recycled connection uuid can never make the daemon kill the wrong
 // subprocess (Tech Design "Risks": mis-kill after a reconnect).
 //
+// When Check-2 fails for an `interrupt` (no live child here) the command is NOT
+// silently dropped (fix-phantom-running-turn, Tech Design "D — a no-child interrupt
+// reports the truth"): the handler logs the miss AND fire-and-forgets one
+// `advanceTurn({ status: "interrupted", interruptedReason: "user" })` so a server-side
+// `running` turn with no daemon child behind it converges instead of hanging forever.
+// The session business key is derived without any lookup, and therefore only for the
+// two control entity types where the derivation is an identity (`idea`,
+// `daemon_session` → sessionId === entityUuid). `task` / `proposal` / `document` keep
+// the pure-log behaviour: their session is anchored on the resource's DIRECT idea,
+// which the daemon cannot resolve locally, and guessing would converge the wrong turn.
+//
 // On a verified match it (a) sets a per-entity "interrupting" flag on the waker so
 // the waker reports the resulting exit as interrupted(reason="user") rather than a
 // crash, then (b) invokes the injected killer (process-killer.killProcessTree) on
@@ -24,6 +35,16 @@
 import { killProcessTree } from "./process-killer.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
+
+/**
+ * Control entity types whose session business key is the entityUuid itself, so a
+ * no-child interrupt can report the turn terminal WITHOUT any REST lookup:
+ *   • `idea`           — the session anchor IS the direct idea uuid.
+ *   • `daemon_session` — the ad-hoc session's own business id.
+ * Every other member of CONTROL_ENTITY_TYPES (`task`, `proposal`, `document`) is
+ * anchored on that resource's DIRECT idea, which is not derivable locally.
+ */
+const SELF_ANCHORED_ENTITY_TYPES = new Set(["idea", "daemon_session"]);
 
 /**
  * Build the `onControl(event)` callback the SseListener invokes for a
@@ -56,6 +77,15 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
  *                                            other still-pending turn along. Injected by the
  *                                            daemon (`backfill.pendingTurnsOnly`); the
  *                                            arg-less form (reconnect) still sweeps all.
+ *   advanceTurn?: (params: { sessionId: string, status: string, interruptedReason?: string,
+ *                            entityType?: string|null, entityUuid?: string|null }) => any,
+ *                                            The SAME `createTurnReporter(...)` instance the
+ *                                            waker uses (injected by `cli/daemon.mjs`; no
+ *                                            second transport, no new endpoint). Invoked
+ *                                            fire-and-forget ONLY when an `interrupt` finds no
+ *                                            live child for a self-anchored entity type, to
+ *                                            close a server-side `running` turn that nothing
+ *                                            else would ever close.
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  * }} deps
  * @returns {(event: any) => void}  The onControl callback (synchronous, non-throwing).
@@ -67,6 +97,7 @@ export function createControlHandler(deps) {
   const sigintTimeoutMs = deps.sigintTimeoutMs;
   const redispatchResume = deps.redispatchResume;
   const deliverTurn = deps.deliverTurn;
+  const advanceTurn = deps.advanceTurn;
   const handleDirectoryRequest = deps.handleDirectoryRequest;
   const reportDirectoryRequest = deps.reportDirectoryRequest;
   const logger = deps.logger ?? NOOP_LOGGER;
@@ -202,11 +233,76 @@ export function createControlHandler(deps) {
       }
 
       // --- interrupt path: Check 2 — in-memory entity ownership (running child) ---
+      //
+      // The registry is keyed by the WAKE's own resource (`task:T`), while a
+      // conversation's control key is its session anchor (`idea:A`). A wake on a CHILD
+      // resource of idea A runs on session A (waker: `sessionId = directIdeaUuid`), so an
+      // `idea:A` interrupt must also find a running `task:T` / `proposal:P` / `document:D`
+      // entry whose `directIdeaUuid` is A — the same rule the UI's `executionMatchesSession`
+      // applies. Without this the exact-key lookup misses, we report a turn miss, the
+      // server's FIFO resolution grabs the SIBLING wake's `running` turn, and NOTHING is
+      // killed: the UI would say interrupted while the agent keeps working.
       const key = execKey(entityType, entityUuid);
-      const entry = waker?.executions?.get(key);
+      let entry = waker?.executions?.get(key);
+      // The entity the kill actually targets — normally the command's own, but a sibling
+      // wake when the match below re-points it.
+      let killEntityType = entityType;
+      let killEntityUuid = entityUuid;
+      let killKey = key;
+      if ((!entry || entry.status !== "running" || !entry.child) && entityType === "idea") {
+        for (const candidate of waker?.executions?.values() ?? []) {
+          if (
+            candidate.status === "running" &&
+            candidate.child &&
+            candidate.directIdeaUuid === entityUuid
+          ) {
+            killEntityType = candidate.entityType;
+            killEntityUuid = candidate.entityUuid;
+            killKey = execKey(killEntityType, killEntityUuid);
+            logger.info(
+              `[Chorus] control: no direct child for ${key}, but sibling wake ${killKey} ` +
+                `runs on this session; interrupting that instead`
+            );
+            entry = candidate;
+            break;
+          }
+        }
+      }
       if (!entry || entry.status !== "running" || !entry.child) {
         // Either we never ran this entity, it's only queued (no child yet), or the
-        // wake already finished (race: interrupt arrived after exit). Safe no-op.
+        // wake already finished (race: interrupt arrived after exit). There is nothing
+        // to kill — but the SERVER may still hold a `running` turn for this session
+        // that nothing else will ever close (the phantom-running-turn bug). Report it
+        // terminal so the UI converges. Only for the self-anchored entity types; for
+        // the rest we cannot know the session locally, so keep the old pure log.
+        if (SELF_ANCHORED_ENTITY_TYPES.has(entityType)) {
+          logger.info(
+            `[Chorus] control: no running subprocess for ${key} on this daemon; ` +
+              `reporting the turn as interrupted(user)`
+          );
+          // Fire-and-forget: createTurnReporter never throws and logs its own
+          // failures, but guard both the synchronous throw and the rejection so
+          // nothing escapes into the SSE loop. A server with no `running` turn
+          // answers not_found — a harmless no-op (losing race).
+          try {
+            Promise.resolve(
+              advanceTurn?.({
+                sessionId: entityUuid,
+                status: "interrupted",
+                interruptedReason: "user",
+                entityType,
+                entityUuid,
+              })
+            ).catch((err) => {
+              logger.warn(
+                `[Chorus] control: interrupted-turn report rejected for ${key}: ${err}`
+              );
+            });
+          } catch (err) {
+            logger.warn(`[Chorus] control: interrupted-turn report failed for ${key}: ${err}`);
+          }
+          return;
+        }
         logger.info(
           `[Chorus] control: no running subprocess for ${key} on this daemon; ignoring interrupt`
         );
@@ -215,18 +311,20 @@ export function createControlHandler(deps) {
 
       // --- Both checks passed: mark interrupting (so the waker reports reason=user),
       //     then kill the tree. ---
-      logger.info(`[Chorus] control: interrupting running subprocess for ${key} (pid=${entry.child.pid})`);
+      logger.info(`[Chorus] control: interrupting running subprocess for ${killKey} (pid=${entry.child.pid})`);
       try {
-        waker.markInterrupting?.(entityType, entityUuid);
+        // Flag the entity whose wake we are actually killing — a sibling re-point must
+        // mark THAT wake interrupting, or its exit would be reported as a crash.
+        waker.markInterrupting?.(killEntityType, killEntityUuid);
       } catch (err) {
-        logger.warn(`[Chorus] control: markInterrupting failed for ${key}: ${err}`);
+        logger.warn(`[Chorus] control: markInterrupting failed for ${killKey}: ${err}`);
       }
 
       // Fire-and-forget the kill: the waker observes the child's exit and reports
       // the interrupted state. The killer never throws, but guard the promise
       // anyway so a rejection can't surface as an unhandled rejection.
       Promise.resolve(killer(entry.child, { sigintTimeoutMs, logger })).catch((err) => {
-        logger.warn(`[Chorus] control: killProcessTree rejected for ${key}: ${err}`);
+        logger.warn(`[Chorus] control: killProcessTree rejected for ${killKey}: ${err}`);
       });
     } catch (err) {
       // Absolute backstop — a control event must never crash the SSE loop.

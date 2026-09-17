@@ -126,7 +126,7 @@ function defaultLogger() {
  *   maxConcurrency?: number,
  *   permissionMode?: "chorus"|"yolo",
  *   reportInterrupt?: (entityType: string, entityUuid: string, reason: "user"|"crash") => Promise<void>,
- *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended", entityType?: string|null, entityUuid?: string|null }) => Promise<void>,
+ *   advanceTurn?: (params: { sessionId: string, status: "running"|"ended"|"interrupted", interruptedReason?: "user"|"crash"|"shutdown"|"invalid_path"|null, entityType?: string|null, entityUuid?: string|null }) => Promise<void>,
  *   sigintTimeoutMs?: number,
  * }} [deps]
  */
@@ -430,6 +430,10 @@ export function buildDaemon(creds, deps = {}) {
       sigintTimeoutMs,
       redispatchResume,
       deliverTurn,
+      // The SAME turn reporter the wakers use (declared above and passed into
+      // makeWaker) — one transport, so a no-child interrupt can close the
+      // server-side `running` turn (fix-phantom-running-turn, Tech Design D).
+      advanceTurn,
       handleDirectoryRequest: async (event) => {
         if (event.operation === "roots") {
           return { roots: [...browseRoots] };

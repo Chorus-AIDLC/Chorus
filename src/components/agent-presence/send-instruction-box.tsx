@@ -45,7 +45,7 @@ import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
 import { isImeComposing } from "@/lib/ime";
 import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
-import { InterruptButton, ResumeButton } from "./execution-row";
+import { InterruptButton, ResumeButton, type InterruptTarget } from "./execution-row";
 import { InstancePicker, type InstanceCandidate } from "./instance-picker";
 import type { ConnectionView, ExecutionView } from "./types";
 import type { SessionView } from "@/services/daemon-session.service";
@@ -129,6 +129,7 @@ function ComposeField({
   sendLabel,
   layout,
   controllableExecution,
+  stuckTurnTarget,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -149,6 +150,12 @@ function ComposeField({
   // renders — same AlertDialog confirm, same endpoints, same wiring. Null/undefined
   // when the conversation is idle (just Send).
   controllableExecution?: ExecutionView | null;
+  // Fallback interrupt target for a PHANTOM `running` turn (fix-phantom-running-turn C2):
+  // the conversation's turn is `running` server-side but NO execution row matched, so
+  // there is no row to hang the control off. Derived from the conversation's own session
+  // key by the caller (see `sessionControlTarget`). Only consulted when
+  // `controllableExecution` is absent — a real row always wins.
+  stuckTurnTarget?: InterruptTarget | null;
 }) {
   const tc = useTranslations("agentConnections");
   const empty = value.trim().length === 0;
@@ -194,23 +201,33 @@ function ComposeField({
   //                                    (add-crash-execution-resume: a crash is manually
   //                                    resumable — backfill only auto-recovers it if
   //                                    the daemon restarts, not while it stays online).
+  //
+  // A supplied `stuckTurnTarget` (a phantom `running` turn — the turn is running while no
+  // LIVE execution row matches it) takes PRECEDENCE over the row-driven controls above.
+  // That ordering matters for the stale-terminal-row case: an `interrupted` row alongside a
+  // still-`running` turn is a disagreement, and rendering only that row's Resume would leave
+  // the turn permanently unclearable — the exact symptom this change exists to fix. Clearing
+  // the turn is the honest primary action; once cleared, the turn is no longer `running`, the
+  // target goes away, and the row's Resume comes back on the next render.
   const exec = controllableExecution ?? null;
-  const execControl = exec
-    ? exec.status === "running"
-      ? <InterruptButton exec={exec} />
-      : exec.status === "interrupted" && exec.interruptedReason === "user"
-        ? <ResumeButton exec={exec} />
-        : exec.status === "interrupted" && exec.interruptedReason === "crash"
-          ? (
-              <>
-                <span className="text-[11px] font-medium text-[#B45309] dark:text-[#E0A34E]">
-                  {tc("execCrashExited")}
-                </span>
-                <ResumeButton exec={exec} />
-              </>
-            )
-          : null
-    : null;
+  const execControl = stuckTurnTarget
+    ? <InterruptButton target={stuckTurnTarget} variant="stuckTurn" />
+    : exec
+      ? exec.status === "running"
+        ? <InterruptButton target={exec} />
+        : exec.status === "interrupted" && exec.interruptedReason === "user"
+          ? <ResumeButton exec={exec} />
+          : exec.status === "interrupted" && exec.interruptedReason === "crash"
+            ? (
+                <>
+                  <span className="text-[11px] font-medium text-[#B45309] dark:text-[#E0A34E]">
+                    {tc("execCrashExited")}
+                  </span>
+                  <ResumeButton exec={exec} />
+                </>
+              )
+            : null
+      : null;
 
   // Action group: the state-driven control (if any) beside the always-present
   // Send. OVERLAID in the input's bottom-right corner (see the return) — the same
@@ -300,6 +317,7 @@ export function ConversationReplyBox({
   originOnline,
   layout = "inline",
   controllableExecution,
+  stuckTurnTarget,
   agentUuid,
   onlineConnections = [],
   onSessionStarted,
@@ -313,6 +331,11 @@ export function ConversationReplyBox({
   // THIS conversation's controllable execution (running or user/crash-interrupted),
   // if any — hosted in the composer's action row (Interrupt / Resume / hint).
   controllableExecution?: ExecutionView | null;
+  // Fallback interrupt target when this conversation has a `running` turn but NO matching
+  // execution row (fix-phantom-running-turn C2). Derived by the caller from the session's
+  // own control key. It also makes the origin-offline read-only notice truthful: with a
+  // stuck turn to clear, "read-only" alone would be misleading — one action IS available.
+  stuckTurnTarget?: InterruptTarget | null;
   // The conversation's agent — the target for the origin-offline escape hatch's
   // ad-hoc start. Null when the origin connection isn't resolved (no escape hatch).
   agentUuid?: string | null;
@@ -375,11 +398,22 @@ export function ConversationReplyBox({
         onSend={send}
         pending={pending}
         disabled={!originOnline}
-        disabledReason={!originOnline ? tc("originOfflineNote") : null}
+        // The read-only notice gains its "the stuck turn can still be cleared here" clause
+        // ONLY when a stuck-turn target exists — otherwise the flat read-only copy is
+        // unchanged. (The Interrupt control lives in the action group, which the `disabled`
+        // origin-offline gate never covers, so the action really is reachable here.)
+        disabledReason={
+          !originOnline
+            ? stuckTurnTarget
+              ? tc("originOfflineNoteStuckTurn")
+              : tc("originOfflineNote")
+            : null
+        }
         placeholder={tc("replyPlaceholder")}
         sendLabel={t("send")}
         layout={layout}
         controllableExecution={controllableExecution}
+        stuckTurnTarget={stuckTurnTarget}
       />
       {/* Origin-offline escape hatch — only when the same agent has another online
           instance. This RE-POINTS the SAME conversation's origin onto a chosen online

@@ -66,13 +66,39 @@ import { execHref, useElapsedMono, useEntityTypeLabel } from "./hooks";
 // internals are prop-driven and surface-agnostic; the standalone ExecutionRow
 // and its other call sites (sidebar popover, Agent Connections deck) keep using
 // it unchanged.
-export function InterruptButton({ exec }: { exec: ExecutionView }) {
+//
+// Props are the MINIMAL target shape (fix-phantom-running-turn C1), not an
+// `ExecutionView`: the button only ever reads these four fields, and a `running` turn
+// with no execution row at all must still be interruptible. `ExecutionView`
+// structurally satisfies `InterruptTarget`, so every execution-row call site passes its
+// `exec` straight through. A synthesized execution row was deliberately NOT used — a fake
+// row would leak into status rollups and the elapsed-time header, i.e. into places that
+// would then report a run that does not exist.
+export type InterruptTarget = {
+  connectionUuid: string;
+  entityType: string;
+  entityUuid: string;
+  entityTitle?: string | null;
+};
+
+export function InterruptButton({
+  target,
+  // `stuckTurn` swaps ONLY the confirm-dialog copy + the success toast (the button face
+  // is intentionally identical). It is used when the turn is `running` server-side but no
+  // execution row exists, so the human is told the stuck turn is being cleared rather than
+  // that a live subprocess — demonstrably already gone — was killed.
+  variant = "execution",
+}: {
+  target: InterruptTarget;
+  variant?: "execution" | "stuckTurn";
+}) {
   const t = useTranslations("agentConnections");
   const tc = useTranslations("common");
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
 
-  const title = exec.entityTitle?.trim() || t("execEntityUnknown");
+  const stuck = variant === "stuckTurn";
+  const title = target.entityTitle?.trim() || t("execEntityUnknown");
 
   const handleInterrupt = async () => {
     setPending(true);
@@ -82,9 +108,9 @@ export function InterruptButton({ exec }: { exec: ExecutionView }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           command: "interrupt",
-          targetConnectionUuid: exec.connectionUuid,
-          entityType: exec.entityType,
-          entityUuid: exec.entityUuid,
+          targetConnectionUuid: target.connectionUuid,
+          entityType: target.entityType,
+          entityUuid: target.entityUuid,
         }),
       });
       if (!res.ok) {
@@ -100,7 +126,24 @@ export function InterruptButton({ exec }: { exec: ExecutionView }) {
         toast.error(message);
         return;
       }
-      toast.success(t("interruptSuccess", { title }));
+      // The endpoint reports whether IT settled the turn (`settled: true`) or merely
+      // forwarded the command to a live daemon (`settled: false`). Only the first case
+      // actually cleared anything, so the stuck-turn toast must not claim otherwise —
+      // an unconditional "cleared" would be a false success the user cannot check.
+      let settled = false;
+      try {
+        const json = await res.json();
+        settled = json?.data?.settled === true;
+      } catch {
+        // Non-JSON success body (older server): fall back to the forwarded wording.
+      }
+      toast.success(
+        stuck
+          ? settled
+            ? t("interruptStuckSuccess", { title })
+            : t("interruptStuckRequested", { title })
+          : t("interruptSuccess", { title }),
+      );
       setOpen(false);
     } catch (error) {
       clientLogger.error("Failed to request daemon interrupt:", error);
@@ -116,7 +159,7 @@ export function InterruptButton({ exec }: { exec: ExecutionView }) {
         <Button
           variant="ghost"
           size="sm"
-          aria-label={t("interruptAria")}
+          aria-label={stuck ? t("clearStuckTurnAria") : t("interruptAria")}
           className="h-7 shrink-0 gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-[#B45309] dark:text-[#E0A34E] hover:bg-[#FEF3C7] dark:hover:bg-[#33270f] hover:text-[#92400E]"
         >
           <OctagonX className="h-3.5 w-3.5" aria-hidden />
@@ -125,9 +168,13 @@ export function InterruptButton({ exec }: { exec: ExecutionView }) {
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t("interruptConfirmTitle")}</AlertDialogTitle>
+          <AlertDialogTitle>
+            {stuck ? t("interruptStuckConfirmTitle") : t("interruptConfirmTitle")}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            {t("interruptConfirmBody", { title })}
+            {stuck
+              ? t("interruptStuckConfirmBody", { title })
+              : t("interruptConfirmBody", { title })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -147,6 +194,8 @@ export function InterruptButton({ exec }: { exec: ExecutionView }) {
                 <Loader2 className="mr-2 h-4 w-4 motion-safe:animate-spin" aria-hidden />
                 {t("interrupting")}
               </>
+            ) : stuck ? (
+              t("interruptStuckConfirmAction")
             ) : (
               t("interruptConfirmAction")
             )}
@@ -356,7 +405,8 @@ export function ExecutionRow({
           {formatElapsed(exec.startedAt, nowMs)}
         </span>
       )}
-      <InterruptButton exec={exec} />
+      {/* `ExecutionView` structurally satisfies `InterruptTarget` — passed through as-is. */}
+      <InterruptButton target={exec} />
     </>
   ) : interrupted ? (
     <>

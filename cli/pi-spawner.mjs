@@ -43,6 +43,7 @@ import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredS
 import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
 import { parseNdjsonChunk } from "./claude-spawner.mjs";
+import { awaitChildSettled } from "./child-exit.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -268,7 +269,9 @@ export class PiSpawner {
         resolve({ sessionId: anchor, backendSessionId: anchor || null, exitCode: null, isNew: isNewFlag });
       });
 
-      child.on("close", (code) => {
+      // Settle on process exit, not only on stdio close: a detached descendant can
+      // inherit the pipes and keep `close` from ever firing (see cli/child-exit.mjs).
+      awaitChildSettled(child, { logger: this.logger, label: "pi" }).then((code) => {
         if (code !== 0) {
           this.logger.warn(`[Chorus] pi exited with code ${code}`);
         }
