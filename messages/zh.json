@@ -1583,7 +1583,7 @@
     "interruptStuckConfirmTitle": "确定清理这个卡住的回合？",
     "interruptStuckConfirmBody": "Chorus 仍显示「{title}」有一个正在运行的回合，但 daemon 并未报告任何对应的进程。清理会把该回合标记为已打断，让对话重新可用。不会杀掉任何进程 —— 已经没有进程可杀。之后你可以恢复它。",
     "interruptStuckConfirmAction": "清理回合",
-    "interruptStuckRequested": "\u5df2\u8bf7\u6c42 daemon \u505c\u6b62\u300c{title}\u300d\uff0c\u56de\u5408\u5c06\u5728\u5b83\u4e0a\u62a5\u540e\u6536\u655b\u3002",
+    "interruptStuckRequested": "已请求 daemon 停止「{title}」，daemon 响应后该回合会标记为已打断。",
     "interruptStuckSuccess": "已清理「{title}」卡住的回合。",
     "resume": "恢复",
     "resuming": "正在恢复…",
