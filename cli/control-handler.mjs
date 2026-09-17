@@ -233,8 +233,41 @@ export function createControlHandler(deps) {
       }
 
       // --- interrupt path: Check 2 — in-memory entity ownership (running child) ---
+      //
+      // The registry is keyed by the WAKE's own resource (`task:T`), while a
+      // conversation's control key is its session anchor (`idea:A`). A wake on a CHILD
+      // resource of idea A runs on session A (waker: `sessionId = directIdeaUuid`), so an
+      // `idea:A` interrupt must also find a running `task:T` / `proposal:P` / `document:D`
+      // entry whose `directIdeaUuid` is A — the same rule the UI's `executionMatchesSession`
+      // applies. Without this the exact-key lookup misses, we report a turn miss, the
+      // server's FIFO resolution grabs the SIBLING wake's `running` turn, and NOTHING is
+      // killed: the UI would say interrupted while the agent keeps working.
       const key = execKey(entityType, entityUuid);
-      const entry = waker?.executions?.get(key);
+      let entry = waker?.executions?.get(key);
+      // The entity the kill actually targets — normally the command's own, but a sibling
+      // wake when the match below re-points it.
+      let killEntityType = entityType;
+      let killEntityUuid = entityUuid;
+      let killKey = key;
+      if ((!entry || entry.status !== "running" || !entry.child) && entityType === "idea") {
+        for (const candidate of waker?.executions?.values() ?? []) {
+          if (
+            candidate.status === "running" &&
+            candidate.child &&
+            candidate.directIdeaUuid === entityUuid
+          ) {
+            killEntityType = candidate.entityType;
+            killEntityUuid = candidate.entityUuid;
+            killKey = execKey(killEntityType, killEntityUuid);
+            logger.info(
+              `[Chorus] control: no direct child for ${key}, but sibling wake ${killKey} ` +
+                `runs on this session; interrupting that instead`
+            );
+            entry = candidate;
+            break;
+          }
+        }
+      }
       if (!entry || entry.status !== "running" || !entry.child) {
         // Either we never ran this entity, it's only queued (no child yet), or the
         // wake already finished (race: interrupt arrived after exit). There is nothing
@@ -278,18 +311,20 @@ export function createControlHandler(deps) {
 
       // --- Both checks passed: mark interrupting (so the waker reports reason=user),
       //     then kill the tree. ---
-      logger.info(`[Chorus] control: interrupting running subprocess for ${key} (pid=${entry.child.pid})`);
+      logger.info(`[Chorus] control: interrupting running subprocess for ${killKey} (pid=${entry.child.pid})`);
       try {
-        waker.markInterrupting?.(entityType, entityUuid);
+        // Flag the entity whose wake we are actually killing — a sibling re-point must
+        // mark THAT wake interrupting, or its exit would be reported as a crash.
+        waker.markInterrupting?.(killEntityType, killEntityUuid);
       } catch (err) {
-        logger.warn(`[Chorus] control: markInterrupting failed for ${key}: ${err}`);
+        logger.warn(`[Chorus] control: markInterrupting failed for ${killKey}: ${err}`);
       }
 
       // Fire-and-forget the kill: the waker observes the child's exit and reports
       // the interrupted state. The killer never throws, but guard the promise
       // anyway so a rejection can't surface as an unhandled rejection.
       Promise.resolve(killer(entry.child, { sigintTimeoutMs, logger })).catch((err) => {
-        logger.warn(`[Chorus] control: killProcessTree rejected for ${key}: ${err}`);
+        logger.warn(`[Chorus] control: killProcessTree rejected for ${killKey}: ${err}`);
       });
     } catch (err) {
       // Absolute backstop — a control event must never crash the SSE loop.

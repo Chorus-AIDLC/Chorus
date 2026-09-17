@@ -1099,6 +1099,23 @@ describe("hasRunningExecution", () => {
     ).toBe(false);
   });
 
+  it("an `idea` key ALSO matches a sibling wake on a child resource (directIdeaUuid)", async () => {
+    // A `task:T` wake whose directIdeaUuid is A runs on session A, so such a row IS a live
+    // run for the `idea:A` conversation. Matching the exact pair only would report "no live
+    // run" while that subprocess works, and the caller would settle a genuinely live turn.
+    mockPrisma.daemonExecution.findFirst.mockResolvedValue(null);
+    await hasRunningExecution(companyUuid, connectionUuid, "idea", "idea-A");
+    expect(mockPrisma.daemonExecution.findFirst.mock.calls[0][0].where).toEqual({
+      companyUuid,
+      connectionUuid,
+      status: "running",
+      OR: [
+        { entityType: "idea", entityUuid: "idea-A" },
+        { directIdeaUuid: "idea-A" },
+      ],
+    });
+  });
+
   it("queries company + connection + entity scoped to status running only", async () => {
     mockPrisma.daemonExecution.findFirst.mockResolvedValue(null);
     await hasRunningExecution(companyUuid, connectionUuid, "daemon_session", "sess-1");

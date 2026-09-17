@@ -95,6 +95,7 @@ import {
   assertContinuable,
   appendTranscriptMessages,
   advanceTurnForWake,
+  resolveControlSessionId,
   getPendingTurnsForConnection,
   reconcileOrphanTurns,
   SessionReadOnlyError,
@@ -2276,6 +2277,111 @@ describe("appendTranscriptMessages", () => {
         messages: [{ role: "user", text: "hi" }],
       }),
     ).rejects.toThrow(/db down/);
+  });
+});
+
+// ===== resolveControlSessionId (control key → session business key) =====
+//
+// The control route has an ENTITY key, not a session id. `sessionId === entityUuid` holds
+// for a modern idea-anchored session and for an ad-hoc `daemon_session`, but a LEGACY
+// residual session's key is `${ideaUuid}::${connectionUuid}` and the client heals the `::`
+// away — so both shapes arrive as `idea:<ideaUuid>`. Settling the raw entityUuid could clear
+// an unrelated modern session that merely shares the idea uuid.
+describe("resolveControlSessionId", () => {
+  const args = {
+    companyUuid,
+    agentUuid,
+    connectionUuid,
+    entityUuid: "idea-A",
+  };
+
+  it("considers the exact key AND legacy `entityUuid::` keys on the TARGET connection only", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([]);
+
+    await resolveControlSessionId(args);
+
+    expect(mockPrisma.daemonSession.findMany.mock.calls[0][0].where).toEqual({
+      companyUuid,
+      agentUuid,
+      OR: [
+        { sessionId: "idea-A" },
+        {
+          sessionId: { startsWith: "idea-A::" },
+          originConnectionUuid: connectionUuid,
+        },
+      ],
+    });
+  });
+
+  it("returns the single candidate's business key (modern shape → identity)", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { uuid: "s-1", sessionId: "idea-A" },
+    ]);
+
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: "idea-A",
+      ambiguous: false,
+    });
+    // One candidate needs no turn evidence at all.
+    expect(mockPrisma.daemonSessionTurn.findMany).not.toHaveBeenCalled();
+  });
+
+  it("returns the LEGACY key when that is the only candidate", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { uuid: "s-legacy", sessionId: `idea-A::${connectionUuid}` },
+    ]);
+
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: `idea-A::${connectionUuid}`,
+      ambiguous: false,
+    });
+  });
+
+  it("with two candidates, picks the one that actually holds a running turn", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { uuid: "s-modern", sessionId: "idea-A" },
+      { uuid: "s-legacy", sessionId: `idea-A::${connectionUuid}` },
+    ]);
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([{ sessionUuid: "s-legacy" }]);
+
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: `idea-A::${connectionUuid}`,
+      ambiguous: false,
+    });
+  });
+
+  it("refuses (null, ambiguous) when BOTH candidates hold a running turn", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { uuid: "s-modern", sessionId: "idea-A" },
+      { uuid: "s-legacy", sessionId: `idea-A::${connectionUuid}` },
+    ]);
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      { sessionUuid: "s-modern" },
+      { sessionUuid: "s-legacy" },
+    ]);
+
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: null,
+      ambiguous: true,
+    });
+  });
+
+  it("returns null when no candidate holds a running turn, and when there is no candidate", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValue([
+      { uuid: "s-modern", sessionId: "idea-A" },
+      { uuid: "s-legacy", sessionId: `idea-A::${connectionUuid}` },
+    ]);
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([]);
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: null,
+      ambiguous: false,
+    });
+
+    mockPrisma.daemonSession.findMany.mockResolvedValue([]);
+    expect(await resolveControlSessionId(args)).toEqual({
+      sessionId: null,
+      ambiguous: false,
+    });
   });
 });
 

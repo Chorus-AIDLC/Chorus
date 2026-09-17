@@ -9,6 +9,7 @@ const mockDispatchControl = vi.fn();
 const mockIsConnectionLive = vi.fn();
 const mockHasRunningExecution = vi.fn();
 const mockAdvanceTurnForWake = vi.fn();
+const mockResolveControlSessionId = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
@@ -25,6 +26,7 @@ vi.mock("@/services/daemon-execution.service", () => ({
 
 vi.mock("@/services/daemon-session.service", () => ({
   advanceTurnForWake: (...args: unknown[]) => mockAdvanceTurnForWake(...args),
+  resolveControlSessionId: (...args: unknown[]) => mockResolveControlSessionId(...args),
 }));
 
 // Silence the route's settle logging. `createRequestLogger` must stay provided — the shared
@@ -106,6 +108,11 @@ beforeEach(() => {
   mockIsConnectionLive.mockResolvedValue(true);
   mockHasRunningExecution.mockResolvedValue(true);
   mockAdvanceTurnForWake.mockResolvedValue({ ok: true, turn: { uuid: "turn-1" } });
+  // Default: the entity key resolves to itself (the modern idea-anchored / ad-hoc shape).
+  mockResolveControlSessionId.mockImplementation(async (p: { entityUuid: string }) => ({
+    sessionId: p.entityUuid,
+    ambiguous: false,
+  }));
 });
 
 describe("POST /api/daemon/control — auth + validation envelope", () => {
@@ -431,6 +438,61 @@ describe("POST /api/daemon/control — settles a phantom running turn", () => {
     expect(res.status).toBe(200);
     expect(body.data).toEqual({ dispatched: true, settled: false });
     expect(mockDispatchControl).toHaveBeenCalledTimes(1);
+  });
+
+  it("a THROWING gate query never fails the dispatch either (reported as settled: false)", async () => {
+    // The control event is published BEFORE the gate is evaluated, so a transient failure
+    // while deciding whether to settle must degrade to `settled: false`, not a 500 that
+    // hides the fact that the interrupt was already dispatched.
+    mockIsConnectionLive.mockRejectedValue(new Error("db down"));
+
+    const res = await POST(postRequest(interruptIdeaBody), emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: false });
+    expect(mockDispatchControl).toHaveBeenCalledTimes(1);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
+  it("settles the session the resolver picks, NOT the raw entityUuid (legacy `::` session)", async () => {
+    mockIsConnectionLive.mockResolvedValue(false);
+    const legacyKey = `${interruptIdeaBody.entityUuid}::${connectionUuid}`;
+    mockResolveControlSessionId.mockResolvedValue({ sessionId: legacyKey, ambiguous: false });
+
+    const res = await POST(postRequest(interruptIdeaBody), emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: true });
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: legacyKey, interruptedReason: "user" }),
+    );
+  });
+
+  it("settles NOTHING when the session cannot be resolved", async () => {
+    mockIsConnectionLive.mockResolvedValue(false);
+    mockResolveControlSessionId.mockResolvedValue({ sessionId: null, ambiguous: false });
+
+    const res = await POST(postRequest(interruptIdeaBody), emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: false });
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+    expect(mockDispatchControl).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles NOTHING when two candidate sessions are ambiguous (never guesses)", async () => {
+    mockIsConnectionLive.mockResolvedValue(false);
+    mockResolveControlSessionId.mockResolvedValue({ sessionId: null, ambiguous: true });
+
+    const res = await POST(postRequest(interruptIdeaBody), emptyCtx);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.data).toEqual({ dispatched: true, settled: false });
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
   });
 
   it("RESUME never settles — offline", async () => {

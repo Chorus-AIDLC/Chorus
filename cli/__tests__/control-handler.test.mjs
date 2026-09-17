@@ -509,6 +509,79 @@ describe("control-handler no-child interrupt reports interrupted(user)", () => {
     expect(advanceTurn.mock.calls[0][0]).toMatchObject({ status: "interrupted", interruptedReason: "user" });
   });
 
+  it("an idea interrupt with no direct child KILLS a sibling wake running on the same session", () => {
+    // A `task:T` wake whose directIdeaUuid is the idea runs on that idea's session, and the
+    // registry is keyed by the WAKE's own resource (`task:T`). Without the sibling match the
+    // exact-key lookup misses, we report a turn miss, the server's FIFO grabs the sibling's
+    // running turn, and NOTHING is killed — the UI would say interrupted while work continues.
+    const child = { pid: 9191 };
+    const waker = makeWaker([
+      [
+        "task:T-1",
+        {
+          entityType: "task",
+          entityUuid: "T-1",
+          directIdeaUuid: "idea-9",
+          status: "running",
+          child,
+        },
+      ],
+    ]);
+    const killer = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const infos = [];
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      killer,
+      advanceTurn,
+      logger: { ...silent, info: (m) => infos.push(m) },
+    });
+
+    onControl(controlEvent({ entityType: "idea", entityUuid: "idea-9" }));
+
+    // The sibling's wake is what gets flagged and killed — not a turn-miss report.
+    expect(waker.markInterrupting).toHaveBeenCalledWith("task", "T-1");
+    expect(killer).toHaveBeenCalledTimes(1);
+    expect(killer.mock.calls[0][0]).toBe(child);
+    expect(advanceTurn).not.toHaveBeenCalled();
+    expect(infos.join("")).toMatch(/sibling wake task:T-1/);
+  });
+
+  it("still reports the turn when a sibling entry exists but is NOT running", () => {
+    const waker = makeWaker([
+      [
+        "task:T-2",
+        {
+          entityType: "task",
+          entityUuid: "T-2",
+          directIdeaUuid: "idea-9",
+          status: "queued",
+          child: null,
+        },
+      ],
+    ]);
+    const killer = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const onControl = createControlHandler({
+      waker,
+      getConnectionUuid: () => CONN,
+      killer,
+      advanceTurn,
+      logger: silent,
+    });
+
+    onControl(controlEvent({ entityType: "idea", entityUuid: "idea-9" }));
+
+    expect(killer).not.toHaveBeenCalled();
+    expect(advanceTurn).toHaveBeenCalledTimes(1);
+    expect(advanceTurn.mock.calls[0][0]).toMatchObject({
+      sessionId: "idea-9",
+      status: "interrupted",
+      interruptedReason: "user",
+    });
+  });
+
   it("does NOT report for task / proposal / document (session not derivable locally); logs only", () => {
     for (const entityType of ["task", "proposal", "document"]) {
       const infos = [];

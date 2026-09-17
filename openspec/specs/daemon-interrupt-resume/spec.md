@@ -531,6 +531,15 @@ fire-and-forget: a failing or throwing report MUST NOT propagate into the SSE co
 - **THEN** the daemon SHALL mark the entity interrupting and kill the process tree as before,
   and SHALL NOT itself report a terminal turn — the wake path reports the resulting exit
 
+#### Scenario: An idea interrupt finds a sibling wake running on that session
+
+- **WHEN** an `interrupt` for `idea:A` finds no running child under its own key, but the
+  registry holds a running child for a child resource whose direct idea is A — that wake runs
+  on session A
+- **THEN** the daemon SHALL interrupt THAT wake (marking the sibling's own entity interrupting
+  so its exit is attributed to the user) and SHALL NOT report a turn miss, which would settle
+  the sibling's turn while its subprocess kept running
+
 #### Scenario: A failing report cannot break the control loop
 
 - **WHEN** the no-child report rejects or throws
@@ -599,8 +608,41 @@ execution for the targeted entity. It SHALL NOT settle when the connection is ef
 online **and** reports a `running` execution for that entity, because in that window the
 daemon owns the outcome. Both determinations SHALL reuse the existing company-scoped
 predicates over the connection registry and execution snapshot rather than restating their
-rules. The response SHALL indicate whether a settle occurred, and a failed settle SHALL NOT
-fail the dispatch.
+rules. An `idea` control key SHALL count a `running` execution reported against a CHILD
+resource of that idea (a sibling wake, matched by its direct idea) as a live run, because
+such a wake runs on that idea's session. The endpoint SHALL resolve which session the entity
+key denotes rather than assuming the key IS the session's business key, and SHALL settle
+nothing when that resolution is empty or ambiguous. The response SHALL indicate whether a
+settle occurred; neither a failed settle NOR a failed liveness/evidence query SHALL fail the
+dispatch, since the control event is published first.
+
+#### Scenario: A sibling wake on the same session counts as a live run
+
+- **WHEN** an authorized caller interrupts `idea:A` on an effectively online connection that
+  reports no `running` execution for `idea:A` itself, but does report one for a child
+  resource whose direct idea is A
+- **THEN** the endpoint SHALL treat that as a live run, SHALL NOT settle any turn, and SHALL
+  report that it did not settle
+
+#### Scenario: A legacy residual session is not confused with a modern one
+
+- **WHEN** an authorized caller interrupts `idea:A` and the agent has both a modern session
+  keyed `A` and a legacy residual session keyed `A::<connectionUuid>` on the target
+  connection, exactly one of which holds a `running` turn
+- **THEN** the endpoint SHALL settle the turn of the session that holds it, and SHALL NOT
+  settle the other
+
+#### Scenario: An ambiguous session resolution settles nothing
+
+- **WHEN** two candidate sessions for the same entity key BOTH hold a `running` turn
+- **THEN** the endpoint SHALL settle neither, and SHALL report that it did not settle
+
+#### Scenario: A failing liveness or evidence query does not fail the dispatch
+
+- **WHEN** the liveness or execution-evidence query throws after the control event has been
+  published
+- **THEN** the endpoint SHALL still succeed, SHALL report that it did not settle, and SHALL
+  NOT attempt a settle
 
 #### Scenario: Interrupt against an offline connection
 

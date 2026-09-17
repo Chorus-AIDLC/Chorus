@@ -630,9 +630,17 @@ export async function hasRunningExecution(
     where: {
       companyUuid,
       connectionUuid,
-      entityType,
-      entityUuid,
       status: "running",
+      // An `idea:A` control key must also match a wake on a CHILD resource of idea A
+      // (`task:T` / `proposal:P` / `document:D` with `directIdeaUuid = A`): those run on
+      // session A (the daemon anchors `sessionId = directIdeaUuid`), so such a row IS a
+      // live run for this conversation. Matching only the exact pair would report "no live
+      // run" while a sibling subprocess is working, and the settle would then mark a
+      // genuinely live turn `interrupted`. This mirrors the client's
+      // `executionMatchesSession` rule — same rule, deliberately expressed on both sides.
+      ...(entityType === "idea"
+        ? { OR: [{ entityType, entityUuid }, { directIdeaUuid: entityUuid }] }
+        : { entityType, entityUuid }),
     },
     select: { id: true },
   });
