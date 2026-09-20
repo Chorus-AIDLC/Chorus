@@ -64,7 +64,7 @@ Key responsibilities:
 
 When reviewing proposals, tasks, or an Idea's final aggregate code change, prefer spawning an independent reviewer sub-agent over reviewing manually:
 
-1. **Try the reviewer first.** Spawn `chorus-proposal-reviewer` (for proposals), `chorus-task-reviewer` (for tasks), or `chorus-code-reviewer` (the final ship-time gateway over an Idea's aggregate code change, after its last task is verified — pass the `ideaUuid`; it posts its VERDICT on the **idea**) as a read-only sub-agent. **Use the blocking `subagent` tool** (it waits for the VERDICT and returns it) — you must wait for the VERDICT before proceeding. It posts a VERDICT comment with detailed findings.
+1. **Try the reviewer first.** Spawn `chorus-proposal-reviewer` (for proposals), `chorus-task-reviewer` (for tasks), or `chorus-code-reviewer` (the final ship-time gateway over an Idea's aggregate code change, after its last task is verified — pass the `ideaUuid`; it posts its VERDICT on the **idea**) as a read-only sub-agent. **Spawn it with the `subagent` tool and wait for its VERDICT** — you must wait before proceeding. The verdict is the VERDICT comment it posts on the entity, not the call's return value, so read the comment (step 2). It posts a VERDICT comment with detailed findings.
 2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
@@ -145,7 +145,7 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 #### A3.5: Independent Review
 
-Spawn `chorus-proposal-reviewer` per the [Review Strategy](#review-strategy) above — use the blocking `subagent` tool (it waits). Read its VERDICT comment before proceeding.
+Spawn `chorus-proposal-reviewer` per the [Review Strategy](#review-strategy) above — spawn it with the `subagent` tool and wait for its VERDICT. Read its VERDICT comment before proceeding.
 
 #### A4: Approve or Reject
 
@@ -210,14 +210,14 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 
 #### B2.5: Independent Review
 
-Spawn `chorus-task-reviewer` per the [Review Strategy](#review-strategy) above — use the blocking `subagent` tool (it waits). After it completes, read its VERDICT:
+Spawn `chorus-task-reviewer` per the [Review Strategy](#review-strategy) above — spawn it with the `subagent` tool and wait for its VERDICT. After it completes, read its VERDICT:
 
 - **VERDICT: PASS** or **PASS WITH NOTES** → proceed to B3 (mark AC) and B4 (verify).
 - **VERDICT: FAIL** → skip to B4 and **reopen** the task. Do NOT mark AC as passed.
 
 #### B2.6: Final Code-Review Gateway (after an Idea's LAST task is verified)
 
-When the task you just verified is the **last** task of its idea-rooted proposal, run the ship-time code-review gateway before the Idea's code is considered shipped. The the extension injects a reminder to spawn `chorus-code-reviewer` (gated by `enableCodeReviewer`, default on). Spawn it per the [Review Strategy](#review-strategy) — via the blocking `subagent` tool, passing the `ideaUuid` + round number. It reviews the Idea's **aggregate** code change across all its tasks — cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage — dimensions a single-task review cannot see — and posts one `VERDICT` comment on the **idea**.
+When the task you just verified is the **last** task of its idea-rooted proposal, run the ship-time code-review gateway before the Idea's code is considered shipped. The the extension injects a reminder to spawn `chorus-code-reviewer` (gated by `enableCodeReviewer`, default on). Spawn it per the [Review Strategy](#review-strategy) — with the `subagent` tool, passing the `ideaUuid` + round number. It reviews the Idea's **aggregate** code change across all its tasks — cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage — dimensions a single-task review cannot see — and posts one `VERDICT` comment on the **idea**.
 
 - **VERDICT: PASS** / **PASS WITH NOTES** → the feature may ship.
 - **VERDICT: FAIL** → do not reopen the verified tasks; instead add new fix tasks to the approved proposal via `/skill:quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates. Bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (env, default 3; 0 = unlimited).
@@ -339,7 +339,7 @@ chorus_pm_update_document({ documentUuid: "<doc-uuid>", content: "Updated..." })
 - **Unblock the team** — Prioritize proposal reviews to keep PM and Developer work flowing
 - **Use delete sparingly** — Prefer closing over deleting; closing preserves history
 - **Document decisions** — Use comments to explain approval/rejection reasoning
-- **Verify between waves** — In parallel-subagent mode, verify tasks to `done` between waves to unblock downstream dependencies (and `subagent_manage close` finished workers to release their slots)
+- **Verify between waves** — In wave mode, verify tasks to `done` between waves to unblock downstream dependencies; each worker's dispatch/run owns its own lifecycle, so there is no handle to close
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: chorus-task-reviewer
-description: Review submitted Chorus tasks — verify implementation against AC and proposal documents. Spawn via the blocking subagent tool after chorus_submit_for_verify.
+description: Review submitted Chorus tasks — verify implementation against AC and proposal documents. Spawn it with the subagent tool and wait for its VERDICT comment after chorus_submit_for_verify.
 tools: read, grep, find, ls, bash, mcp, mcpScript
 acceptance: { level: "none", reason: "read-only chorus reviewer; verdict is posted via chorus_add_comment to Chorus, not returned to parent; suppress acceptance-report injection" }
 ---

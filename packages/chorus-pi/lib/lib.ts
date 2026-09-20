@@ -119,11 +119,14 @@ export function isWorkerAgent(name: string): boolean {
  *   - parallel: { tasks: [{ agent, task }, ...] }
  *   - chain:    { chain: [{ agent, task }, ...] }
  *
- * Each returned holder carries the agent name, the current task text, and a
+ * Each returned holder carries the agent name, the current task text, a
  * `setTask` that writes back into the SAME input object in place — so the
  * extension can inject the Chorus session workflow into a worker's task before
  * the ephemeral child `pi` process is spawned (pi's `tool_call` event input is
  * mutable). Holders with a non-string / empty agent or task are skipped.
+ *
+ * Pinning a call to the background path is a separate, CALL-level operation
+ * (one call has exactly one mode) — see forceSubagentCallAsync().
  *
  * Replaces the old persistent-model agentId extraction: the official subagent
  * children are ephemeral (spawn → run → exit within one tool call) and expose
@@ -142,6 +145,11 @@ export function subagentTaskItems(input: unknown): SubagentTaskItem[] {
   const collect = (holder: Record<string, unknown>): void => {
     const agent = typeof holder.agent === "string" ? holder.agent : "";
     const task = typeof holder.task === "string" ? holder.task : "";
+    // Both fields are required to enumerate — do NOT relax this to agent-only
+    // to widen the pin: the worker path writes sessionWorkflow() into `task`,
+    // and a chain step may deliberately omit it (ChainItem.task is optional and
+    // defaults to {previous}), so an agent-only enumeration would corrupt that
+    // step's prompt instead of pinning it.
     if (!agent || !task) return;
     items.push({
       agent,
@@ -159,6 +167,57 @@ export function subagentTaskItems(input: unknown): SubagentTaskItem[] {
     collect(obj);
   }
   return items;
+}
+
+/**
+ * Force a `subagent` CALL onto the background (async) path: writes
+ * `async: true` into the ROOT input object in place, and REMOVES `clarify`.
+ *
+ * Takes the CALL object, not a task item, because `async` is a run-level
+ * parameter: it exists only as a top-level field (pi-subagents
+ * `extension/schemas.ts` — neither `ParallelTaskSchema` nor `ChainItem` has one,
+ * and `ChainItem` even sets `additionalProperties: false`), and both mode
+ * decisions read it there (`requestedAsync = effectiveParams.async ??
+ * asyncByDefault`, `runsForeground = ... (dispatchParams.async ??
+ * asyncByDefault) !== true` in `src/runs/foreground/subagent-executor.ts`). An
+ * item-level `async` on `tasks[]` / `chain[]` is read by nothing — writing one
+ * is a silent no-op, which is exactly how a "pin the reviewer" fix can look
+ * right while doing nothing for composite calls.
+ *
+ * Used for agents that need ambient MCP tools. Under the nicobailon
+ * `pi-subagents` implementation an in-process foreground child
+ * (`async: false`) never loads the parent's ambient extensions, so `mcp` /
+ * `mcpScript` / `chorus_*` do not exist for it. Verified 2026-09-20 with a probe
+ * agent that declares no `tools` allowlist (so no diagnostic can fire): its
+ * whole tool set was `read, bash, edit, write, bg_wait, contact_supervisor` —
+ * no `mcp`, no `chorus_*` — and it could not post a comment. The bundled
+ * subagent ignores the flag entirely (its child is a separate `pi` process,
+ * which does load extensions), so forcing it is safe under either
+ * implementation.
+ *
+ * `clarify` is DELETED, not assigned: it disables async in nicobailon's
+ * executor (`effectiveAsync = requestedAsync && clarify !== true`), and the
+ * public normalizer (`normalizePublicSubagentExecution`) additionally rejects
+ * any call where the property is merely **present** — `params.clarify !==
+ * undefined` in `src/extension/public-execution.js` (0.70.0:91, same in
+ * 0.66.0), "Public workflowScript execution does not support clarify UI." — so
+ * a leftover `clarify: false` would be a hard pre-dispatch rejection rather
+ * than a pin. Deleting mirrors the package's own
+ * applyForceTopLevelAsyncOverride() (that helper also honors `foregroundOnly`;
+ * a Chorus agent cannot run foreground at all, so this one deliberately does
+ * not).
+ *
+ * @returns true when the caller had explicitly asked for foreground
+ * (`async: false`) and was overridden — so the caller can surface the override
+ * instead of silently changing the dispatch mode.
+ */
+export function forceSubagentCallAsync(input: unknown): boolean {
+  if (!input || typeof input !== "object") return false;
+  const obj = input as Record<string, unknown>;
+  const overrodeExplicitForeground = obj.async === false;
+  obj.async = true;
+  if ("clarify" in obj) delete obj.clarify;
+  return overrodeExplicitForeground;
 }
 
 /**

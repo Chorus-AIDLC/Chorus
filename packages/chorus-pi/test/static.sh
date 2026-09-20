@@ -81,8 +81,12 @@ echo "═══ A5. wrapper bash syntax ═══"
 bash -n bin/chorus-mcp-call.sh && ok "chorus-mcp-call.sh syntax" || no "wrapper syntax"
 
 echo "═══ A6. no Claude/Codex product residual ═══"
-if grep -rnE "Claude Code|CLAUDE_PROJECT|CLAUDE_PLUGIN|\.claude/|Codex specifics|\.codex/plugins|PLUGIN_ROOT|subagent_type|run_in_background|TeamCreate|SendMessage|\bTask\(\{|Agent\(\{" skills/ agents/ bin/ 2>/dev/null | grep -vE "chorus_[a-z_]+\(" | grep -q .; then
-  no "residual Claude/Codex refs found:"; grep -rnE "Claude Code|CLAUDE_PROJECT|CLAUDE_PLUGIN|\.claude/|Codex specifics|\.codex/plugins|PLUGIN_ROOT|subagent_type|run_in_background|TeamCreate|SendMessage|\bTask\(\{|Agent\(\{" skills/ agents/ bin/ | grep -vE "chorus_[a-z_]+\(" | sed 's/^/    /'
+# subagent_spawn / subagent_manage close are Claude-Code-era tool names: this
+# package's only dispatch tool is `subagent` (pi's bundled pattern / nicobailon),
+# and no handle exists to close.
+RESIDUAL_RE='Claude Code|CLAUDE_PROJECT|CLAUDE_PLUGIN|\.claude/|Codex specifics|\.codex/plugins|PLUGIN_ROOT|subagent_type|run_in_background|subagent_spawn|subagent_manage|TeamCreate|SendMessage|\bTask\(\{|Agent\(\{'
+if grep -rnE "$RESIDUAL_RE" skills/ agents/ bin/ 2>/dev/null | grep -vE "chorus_[a-z_]+\(" | grep -q .; then
+  no "residual Claude/Codex refs found:"; grep -rnE "$RESIDUAL_RE" skills/ agents/ bin/ | grep -vE "chorus_[a-z_]+\(" | sed 's/^/    /'
 else ok "no Claude/Codex product residual"
 fi
 
