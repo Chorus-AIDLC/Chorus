@@ -339,7 +339,7 @@ chorus_pm_update_document({ documentUuid: "<doc-uuid>", content: "Updated..." })
 - **Unblock the team** — Prioritize proposal reviews to keep PM and Developer work flowing
 - **Use delete sparingly** — Prefer closing over deleting; closing preserves history
 - **Document decisions** — Use comments to explain approval/rejection reasoning
-- **Verify between waves** — In parallel-subagent mode, verify tasks to `done` between waves to unblock downstream dependencies (and `subagent_manage close` finished workers to release their slots)
+- **Verify between waves** — In wave mode, verify tasks to `done` between waves to unblock downstream dependencies; each worker's dispatch/run owns its own lifecycle, so there is no handle to close
 
 ---
 

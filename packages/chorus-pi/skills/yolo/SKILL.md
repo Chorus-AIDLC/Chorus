@@ -336,7 +336,7 @@ After proposal approval, tasks exist in `open` status. Execute them in dependenc
 
 #### Primary: subagent parallel dispatch (wave-based)
 
-A parallel dispatch is still one call, but the **run mode depends on the installed implementation**: the bundled subagent is blocking (the call returns when every worker in the wave has exited), while nicobailon `pi-subagents` is **async/background by default** (the call returns a run receipt; completion arrives on the run notification / `bg_wait`). Either way there is no `agentId` to track and no manual close. The chorus-pi extension auto-injects each worker's Chorus session UUID + workflow at `tool_call` time and closes the sessions when the dispatch returns (blocking) or when the run settles (`subagent:async-complete` / `process-terminal`).
+The **dispatch shape and the run mode both depend on the installed implementation**: the bundled subagent takes one composite call (`subagent({ tasks: [...] })`, max 8 per call, concurrency 4) and is blocking (the call returns when every worker in the wave has exited); nicobailon `pi-subagents` takes **one single dispatch per worker** (its public tool rejects top-level `tasks`/`chain` before dispatch) and is **async/background by default** (each call returns a run receipt; completion arrives on the run notification / `bg_wait`). Either way there is no `agentId` to track and no manual close. The chorus-pi extension auto-injects each worker's Chorus session UUID + workflow at `tool_call` time and closes the sessions when the dispatch returns (blocking) or when the run settles (`subagent:async-complete` / `process-terminal`).
 
 ```
 wave = 1
@@ -352,29 +352,37 @@ loop:
     # Stuck -- tasks failed review and can't proceed
     break with escalation report
 
-  # 2. Dispatch one chorus-worker per unblocked task in a SINGLE
-  #    parallel call. Max 8 tasks per call (concurrency 4) — if the wave has
-  #    more than 8 ready tasks, split into batches of <=8 sequential calls.
+  # 2. Dispatch one chorus-worker per unblocked task as a single wave.
+  #    Shape follows the installed implementation:
+  #      bundled subagent    → ONE composite call (max 8 tasks/call,
+  #        concurrency 4; a bigger wave splits into batches of <=8 calls)
+  #      nicobailon          → ONE single dispatch per worker, issued together
+  #        (it rejects top-level `tasks`/`chain` before dispatch)
   #    Pass only task + project UUIDs; the chorus-pi extension auto-injects the
   #    session UUID + workflow into each worker's task at tool_call time.
   subagent({
     tasks: [
       { agent: "chorus-worker",
         task: "Your Chorus task UUID: {task.uuid}\nProject UUID: {project-uuid}\n\nImplement the task per its description and acceptance criteria. Read the task, proposal, and project documents for context." },
-      // ... one entry per unblocked task, max 8
+      // ... one entry per unblocked task, max 8  (bundled subagent only)
     ]
   })
-  # Wait for the whole wave to settle — with the bundled subagent the call returns
-  # when every worker finishes; under nicobailon `pi-subagents` it returns a run
-  # receipt, so wait on the run notification / `bg_wait`. Each worker follows
+  # ... or, under nicobailon `pi-subagents`, one call per worker in the wave:
+  subagent({ agent: "chorus-worker", task: "Your Chorus task UUID: {task.uuid}\n..." })  # worker 1
+  subagent({ agent: "chorus-worker", task: "Your Chorus task UUID: {task.uuid}\n..." })  # worker 2
+  # Wait for the whole wave to settle — the bundled composite call returns when
+  # every worker finishes; under nicobailon each call returns a run receipt, so
+  # wait on the run notifications / `bg_wait`. Each worker follows
   # the /skill:develop workflow: claim -> in_progress -> report -> self-check AC
   # -> submit_for_verify (leaving its task at to_verify).
-  # For a single ready task, use single mode instead:
+  # For a single ready task, single mode is all you need:
   #   subagent({ agent: "chorus-worker", task: "..." })
 
   # 3. Proceed to Phase 4 (verification) for this wave
   wave += 1
 ```
+
+> Do **not** dispatch Chorus workers from a `workflowScript` — children created there are invisible to the extension's session hook, so they would get no Chorus session. One call per worker (or one bundled `tasks` composite) is the supported shape.
 
 **What each worker task needs:**
 - Task UUID + Project UUID

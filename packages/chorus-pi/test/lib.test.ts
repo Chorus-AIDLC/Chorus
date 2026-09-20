@@ -1,4 +1,7 @@
 import { test, expect } from "bun:test";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   forceSubagentCallAsync,
   isReviewerAgent,
@@ -145,11 +148,25 @@ test("forceSubagentCallAsync: pins the ROOT flag for parallel and chain, never i
   expect("async" in chain.chain[0]).toBe(false);
 });
 
-test("forceSubagentCallAsync: clears a ROOT clarify (clarify:true defeats async in pi-subagents)", () => {
-  const input: any = { clarify: true, tasks: [{ agent: "chorus-task-reviewer", task: "review it" }] };
-  forceSubagentCallAsync(input);
-  expect(input.async).toBe(true);
-  expect(input.clarify).toBe(false);
+test("forceSubagentCallAsync: REMOVES a ROOT clarify (any defined value is rejected)", () => {
+  // pi-subagents' public normalizer rejects a call whenever `clarify` is
+  // DEFINED — `params.clarify !== undefined` in src/extension/public-execution.js
+  // (0.70.0:91, same in 0.66.0) — false included, so `delete` is the only safe
+  // rewrite. Assigned `false` the pin would turn a `clarify: true` call into a
+  // hard pre-dispatch rejection.
+  for (const clarify of [true, false]) {
+    const input: any = { agent: "chorus-task-reviewer", task: "review it", clarify };
+    forceSubagentCallAsync(input);
+    expect(input.async).toBe(true);
+    expect("clarify" in input).toBe(false);
+    expect(Object.keys(input)).not.toContain("clarify");
+  }
+
+  // Same for a composite call: the property is gone, not falsified.
+  const composite: any = { clarify: true, tasks: [{ agent: "chorus-task-reviewer", task: "review it" }] };
+  forceSubagentCallAsync(composite);
+  expect(composite.async).toBe(true);
+  expect("clarify" in composite).toBe(false);
 });
 
 test("forceSubagentCallAsync: no gratuitous clarify key, and reports an override only when there was one", () => {
@@ -168,6 +185,44 @@ test("forceSubagentCallAsync: non-object input is a no-op", () => {
   expect(forceSubagentCallAsync(null)).toBe(false);
   expect(forceSubagentCallAsync("nope")).toBe(false);
 });
+
+// ─── public-dispatch boundary: the pin is only worth anything if the rewritten
+// call survives pi-subagents' public normalizer — the authoritative gate the
+// subagent tool runs before dispatch. Runs where pi-subagents is installed
+// (env override, ~/.pi/agent/npm, project node_modules); skipped elsewhere.
+const upstreamNormalizerPath = [
+  process.env.PI_SUBAGENTS_PUBLIC_EXECUTION,
+  join(homedir(), ".pi/agent/npm/node_modules/pi-subagents/src/extension/public-execution.js"),
+  join(process.cwd(), "node_modules/pi-subagents/src/extension/public-execution.js"),
+].filter((p): p is string => typeof p === "string" && existsSync(p))[0];
+
+test.skipIf(!upstreamNormalizerPath)(
+  "public boundary: a pinned call passes pi-subagents' normalizePublicSubagentExecution",
+  async () => {
+    const { normalizePublicSubagentExecution } = await import(upstreamNormalizerPath as string);
+
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["reviewer, omitted async", { agent: "chorus-task-reviewer", task: "review it" }],
+      ["reviewer, async:false", { agent: "chorus-task-reviewer", task: "review it", async: false }],
+      ["worker, clarify:true", { agent: "chorus-worker", task: "impl", clarify: true }],
+      ["worker, clarify:false", { agent: "chorus-worker", task: "impl", clarify: false }],
+    ];
+
+    for (const [name, call] of calls) {
+      const input = { ...call } as any;
+      // Unpinned, a `clarify` call is rejected before launch — the failure mode
+      // this test pins down. `false` is rejected exactly like `true`.
+      if ("clarify" in call) {
+        expect(normalizePublicSubagentExecution(input).ok, `${name}: unpinned`).toBe(false);
+      }
+      forceSubagentCallAsync(input);
+      const normalized = normalizePublicSubagentExecution(input);
+      expect(normalized.ok, `${name}: ${normalized.error ?? ""}`).toBe(true);
+      expect(normalized.params.async, `${name}: stays on the background path`).toBe(true);
+      expect("clarify" in normalized.params, `${name}: no clarify survives`).toBe(false);
+    }
+  },
+);
 
 test("isReviewerAgent: rejects near-miss names (versioned copies, prefixes, plurals)", () => {
   for (const name of ["chorus-task-reviewer-2", "my-chorus-task-reviewer", "chorus-task-reviewers", "reviewer", "chorus-worker", ""]) {

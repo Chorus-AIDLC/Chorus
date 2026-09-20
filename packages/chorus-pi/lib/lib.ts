@@ -171,7 +171,7 @@ export function subagentTaskItems(input: unknown): SubagentTaskItem[] {
 
 /**
  * Force a `subagent` CALL onto the background (async) path: writes
- * `async: true` into the ROOT input object in place, and clears `clarify`.
+ * `async: true` into the ROOT input object in place, and REMOVES `clarify`.
  *
  * Takes the CALL object, not a task item, because `async` is a run-level
  * parameter: it exists only as a top-level field (pi-subagents
@@ -195,11 +195,17 @@ export function subagentTaskItems(input: unknown): SubagentTaskItem[] {
  * which does load extensions), so forcing it is safe under either
  * implementation.
  *
- * `clarify: true` also disables async in nicobailon
- * (`effectiveAsync = requestedAsync && clarify !== true`), so it is cleared too
- * — what the package's own applyForceTopLevelAsyncOverride() does for top-level
- * launches (that helper also honors `foregroundOnly`; a Chorus agent cannot run
- * foreground at all, so this one deliberately does not).
+ * `clarify` is DELETED, not assigned: it disables async in nicobailon's
+ * executor (`effectiveAsync = requestedAsync && clarify !== true`), and the
+ * public normalizer (`normalizePublicSubagentExecution`) additionally rejects
+ * any call where the property is merely **present** — `params.clarify !==
+ * undefined` in `src/extension/public-execution.js` (0.70.0:91, same in
+ * 0.66.0), "Public workflowScript execution does not support clarify UI." — so
+ * a leftover `clarify: false` would be a hard pre-dispatch rejection rather
+ * than a pin. Deleting mirrors the package's own
+ * applyForceTopLevelAsyncOverride() (that helper also honors `foregroundOnly`;
+ * a Chorus agent cannot run foreground at all, so this one deliberately does
+ * not).
  *
  * @returns true when the caller had explicitly asked for foreground
  * (`async: false`) and was overridden — so the caller can surface the override
@@ -210,7 +216,7 @@ export function forceSubagentCallAsync(input: unknown): boolean {
   const obj = input as Record<string, unknown>;
   const overrodeExplicitForeground = obj.async === false;
   obj.async = true;
-  if (obj.clarify === true) obj.clarify = false;
+  if ("clarify" in obj) delete obj.clarify;
   return overrodeExplicitForeground;
 }
 

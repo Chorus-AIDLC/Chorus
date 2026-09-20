@@ -213,12 +213,24 @@ test("reviewer subagent: an explicit async:false is rewritten to true, no sessio
   expect(input.task).toBe("review the task");
 });
 
-test("reviewer subagent: an omitted async flag is pinned to true and clarify is cleared", async () => {
+test("reviewer subagent: an omitted async flag is pinned to true and clarify is removed", async () => {
   await resetState();
   const input: any = { agent: "chorus-proposal-reviewer", task: "review the proposal", clarify: true };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-rev-om", input }, ctx);
   expect(input.async).toBe(true);
-  expect(input.clarify).toBe(false); // clarify:true would defeat async
+  // clarify:true would defeat async, and ANY defined clarify (false included) is
+  // rejected by pi-subagents' public normalizer before dispatch → delete it.
+  expect("clarify" in input).toBe(false);
+});
+
+test("reviewer subagent: an incoming clarify:false is deleted too (any defined clarify is rejected)", async () => {
+  await resetState();
+  const input: any = { agent: "chorus-task-reviewer", task: "review the task", clarify: false };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-rev-clar-false", input }, ctx);
+  expect(input.async).toBe(true);
+  // The public normalizer rejects `clarify !== undefined`, so `false` must not
+  // be left behind — assigning it would be a hard pre-dispatch rejection.
+  expect("clarify" in input).toBe(false);
 });
 
 test("reviewer pinning sets the RUN-level async flag on a composite call", async () => {

@@ -279,15 +279,22 @@ The Chorus extension **fully automates** session lifecycle — a Chorus session 
 
 ## Parallel Sub-Agent Integration
 
-Use the `subagent` tool to run multiple Chorus workers in parallel; Chorus provides full work observability. A parallel dispatch is still a single call, but the **run mode depends on the installed implementation**: the bundled subagent is blocking (the call returns when the workers exit), while nicobailon `pi-subagents` is **async/background by default** (the call returns a run receipt; completion arrives on the run notification / `bg_wait`). Either way there is no `agentId` to track and no manual close. The `chorus-pi` extension automates session lifecycle: when you dispatch a `chorus-worker`, it creates a Chorus session and injects the session UUID + workflow into that worker's task, then closes the session when the dispatch returns (blocking) or when the run settles (`subagent:async-complete` / `process-terminal`).
+Use the `subagent` tool to run multiple Chorus workers in parallel; Chorus provides full work observability. **Both the dispatch shape and the run mode depend on the installed implementation**, so pick the shape that matches the active one:
 
-> The `subagent` tool has three modes — **single** (`{ agent, task }`), **parallel** (`{ tasks: [...] }`, max 8 per call, concurrency 4), and **chain** (`{ chain: [...] }`, sequential with a `{previous}` placeholder). Dispatch `agent: "chorus-worker"` for Chorus task implementation.
+| Implementation | Wave call shape | Run mode |
+|---|---|---|
+| Bundled subagent (pi's official reference pattern) | one composite call: `subagent({ tasks: [...] })` or `{ chain: [...] }` | blocking — the call returns when the workers exit |
+| nicobailon `pi-subagents` | **one single dispatch per worker** (`subagent({ agent, task })`), issued together for the same wave — it rejects top-level `tasks`/`chain` before dispatch | async/background by default — each call returns a run receipt; completion arrives on the run notification / `bg_wait` |
+
+Either way there is no `agentId` to track and no manual close. The `chorus-pi` extension automates session lifecycle: when you dispatch a `chorus-worker`, it creates a Chorus session and injects the session UUID + workflow into that worker's task, then closes the session when the dispatch returns (blocking) or when the run settles (`subagent:async-complete` / `process-terminal`).
+
+> The three modes — **single** (`{ agent, task }`), **parallel** (`{ tasks: [...] }`, max 8 per call, concurrency 4), and **chain** (`{ chain: [...] }`, sequential with a `{previous}` placeholder) — are the **bundled** subagent's schema. Under nicobailon `pi-subagents` the public tool rejects top-level `tasks`/`chain` (`Legacy top-level chain and parallel inputs were removed; use workflowScript.`), and its `workflowScript` children are invisible to the extension's session hook — so under nicobailon dispatch one worker per call. Dispatch `agent: "chorus-worker"` for Chorus task implementation.
 
 ### Two-Layer Architecture
 
 | Layer | System | Purpose |
 |-------|--------|---------|
-| **Orchestration** | The `subagent` tool (single / parallel / chain) | Dispatching workers to isolated pi subprocesses and collecting their results |
+| **Orchestration** | The `subagent` tool (one child per call; bundled-only `tasks`/`chain` composites) | Dispatching workers to isolated pi subprocesses and collecting their results |
 | **Work Tracking** | Chorus | Task lifecycle, session observability, activity stream |
 
 ### Team Lead Workflow
@@ -297,9 +304,9 @@ Use the `subagent` tool to run multiple Chorus workers in parallel; Chorus provi
 chorus_checkin()
 chorus_list_tasks({ projectUuid: "<project-uuid>" })
 
-# 2. Dispatch a worker per ready task in ONE parallel call (max 8).
-# Pass only task + project UUIDs — the chorus-pi extension auto-injects the
-# session UUID + workflow into each worker's task.
+# 2. Dispatch a worker per ready task in ONE wave — the call shape follows the
+#    installed implementation:
+#      bundled subagent    → one composite call, max 8 entries:
 subagent({
   tasks: [
     { agent: "chorus-worker",
@@ -307,10 +314,17 @@ subagent({
     // ... one entry per ready task, max 8 (batch into multiple calls if more)
   ]
 })
-# The call returns when every worker finishes (bundled subagent) or immediately
-# with a run receipt (nicobailon pi-subagents, async by default) — wait for the
-# wave to settle either way.
-# For a single task, use single mode: subagent({ agent: "chorus-worker", task: "..." })
+#      nicobailon pi-subagents → one single dispatch per worker (it rejects
+#      top-level `tasks`); issue them together for the same wave:
+subagent({ agent: "chorus-worker", task: "Your Chorus task UUID: <task-uuid>\n..." })  # task 1
+subagent({ agent: "chorus-worker", task: "Your Chorus task UUID: <task-uuid>\n..." })  # task 2
+# Pass only task + project UUIDs — the chorus-pi extension auto-injects the
+# session UUID + workflow into each worker's task.
+# The composite call returns when every worker finishes (bundled subagent); each
+# nicobailon call returns a run receipt (async by default) — wait for the wave to
+# settle either way.
+# For a single task, single mode is all you need:
+#   subagent({ agent: "chorus-worker", task: "..." })
 ```
 
 **What the Team Lead prompt needs:**
@@ -349,7 +363,7 @@ chorus_submit_for_verify({ taskUuid: "<my-task-uuid>", summary: "..." })
 
 **Wave-based execution (recommended):**
 1. `chorus_get_unblocked_tasks` — find ready tasks
-2. Dispatch a `chorus-worker` per ready task in ONE `subagent({ tasks: [...] })` call (max 8; batch if more). Wait for the whole wave to settle (each worker at `to_verify`) — under nicobailon `pi-subagents` the call returns a run receipt, so wait on the run notification / `bg_wait`.
+2. Dispatch a `chorus-worker` per ready task as one wave — one `subagent({ tasks: [...] })` call under the bundled subagent (max 8; batch if more), or one `subagent({ agent, task })` call per ready task under nicobailon `pi-subagents` (which rejects top-level `tasks`). Wait for the whole wave to settle (each worker at `to_verify`): the bundled call returns when its workers exit; under nicobailon each call returns a run receipt, so wait on the run notifications / `bg_wait`.
 3. **Verify each task** — spawn `chorus-task-reviewer`, act on its VERDICT, then `chorus_admin_verify_task` → `done`.
 4. `chorus_get_unblocked_tasks` — find newly unblocked tasks (Wave 2)
 5. Repeat until all tasks done
@@ -367,7 +381,7 @@ subagent({
 })
 ```
 
-For strictly dependent stages where each step consumes the previous output, use chain mode: `subagent({ chain: [{ agent: "chorus-worker", task: "..." }, { agent: "chorus-worker", task: "... {previous} ..." }] })`.
+For strictly dependent stages where each step consumes the previous output, use chain mode — **bundled subagent only** (nicobailon `pi-subagents` has no top-level `chain`; run its stages as separate dispatches, or as `workflowScript` steps, which the session hook cannot reach): `subagent({ chain: [{ agent: "chorus-worker", task: "..." }, { agent: "chorus-worker", task: "... {previous} ..." }] })`.
 
 ### MCP Access for Sub-Agents
 

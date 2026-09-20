@@ -98,10 +98,15 @@ The extension goes beyond the Codex port in one key way: by using Pi's `tool_cal
 
 The bundled `subagent` tool (pi's official reference pattern) is **blocking**:
 spawn → run → exit within one tool call, so the extension closes the Chorus
-session at `tool_result`. If you instead use the nicobailon `pi-subagents`
-package's `subagent` tool, top-level launches are **async (detached)** by
-default: `tool_result` returns immediately with `details.asyncId` and the run
-completes later. The extension detects this case (`asyncId`/`runId` in
+session at `tool_result`. It is also the only implementation that takes a
+composite call (`{ tasks: [...] }` / `{ chain: [...] }`). If you instead use the
+nicobailon `pi-subagents` package's `subagent` tool, top-level launches are
+**async (detached)** by default: `tool_result` returns immediately with
+`details.asyncId` and the run completes later. That tool takes **one child per
+call** — its public normalizer rejects top-level `tasks`/`chain` with *"Legacy
+top-level chain and parallel inputs were removed; use workflowScript."* (verified
+on 0.66.0 and 0.70.0), so a wave is several single dispatches rather than one
+composite. The extension detects the async case (`asyncId`/`runId` in
 `details`) and defers session close to `subagent:async-complete` /
 `subagent:process-terminal` (with `session_shutdown` sweep as a final guard).
 Tasks that already carry an injected `--- Chorus session` block (e.g. a
@@ -136,7 +141,7 @@ no conflict error, nicobailon wins deterministically.
 | Setup | What happens |
 |-------|--------------|
 | Only `@chorus-aidlc/chorus-pi` (no external subagents) | Bundled subagent registers and handles dispatch (single/parallel/chain, blocking) |
-| Both installed, with the filter above | nicobailon's `subagent` tool is the only one. Chorus session hooks keep working (they match on the tool name) |
+| Both installed, with the filter above | nicobailon's `subagent` tool is the only one — one child per call (`tasks`/`chain` composites are not available). Chorus session hooks keep working (they match on the tool name) |
 | Both installed, no filter: `npm:pi-subagents` listed **before** chorus-pi | nicobailon wins; the bundled subagent reports a conflict error at load (harmless inside an interactive session, noisy for CLI commands like `pi packages list`) |
 | Both installed, no filter: `npm:pi-subagents` listed **after** chorus-pi | Bundled subagent wins (it loaded first); nicobailon's tool is rejected. Flip the order to switch |
 **How to verify which implementation is active**: run
@@ -170,10 +175,16 @@ such sections.
   `read, bash, edit, write, bg_wait, contact_supervisor` — no `mcp`, no
   `chorus_*` — and it could not post a comment.) The extension therefore pins the
   run-level `async: true` at `tool_call` whenever a `chorus-*-reviewer` or a
-  worker (`worker`, `chorus-worker`) is in the call, clearing `clarify` as well
-  (it disables async), and notifies once when it overrode an explicit
-  `async: false`. One `subagent` call has one mode, so pinning any Chorus item
-  pins the whole call — `tasks[]` and `chain[]` composites included.
+  worker (`worker`, `chorus-worker`) is in the call, **removing** the `clarify`
+  property (`delete`, not `clarify: false` — `clarify: true` defeats async anyway,
+  and nicobailon's public normalizer rejects a call whenever `clarify` is
+  *defined*, `false` included: `params.clarify !== undefined` in
+  `src/extension/public-execution.js`), and notifies once when it overrode an
+  explicit `async: false`. One `subagent` call has one mode, so
+  pinning any Chorus item pins the whole call. That covers `tasks[]` / `chain[]`
+  calls, which are the bundled subagent's composite schema — nicobailon rejects
+  top-level `tasks`/`chain` before dispatch, so under nicobailon a wave is one
+  single dispatch per child.
   Known gaps of that hook: reviewers nested in a chain step's `parallel[]` or
   dynamic `expand` fanout are not enumerated, nor is a chain step that names only
   `agent` (its `task` defaults to `{previous}`, so the item carries no `task` to
@@ -181,8 +192,11 @@ such sections.
   `{action:"resume"}` replays keep the stored run's mode; and spawns that bypass
   the `subagent` tool are never seen.
 - **`workflowScript` / `runs.run` / `runs.all`**: nicobailon-only. The bundled
-  subagent has no `workflowScript` mode — use `parallel`/`chain` via its own
-  schema, or keep nicobailon for scripted waves.
+  subagent has no `workflowScript` mode — use its own `tasks`/`chain` composite
+  schema (nicobailon rejects those top-level fields), or keep nicobailon for
+  scripted waves. Note the gap above: children a `workflowScript` creates are
+  invisible to the session hook, so a Chorus worker dispatched that way gets no
+  auto-created session — prefer one call per child for Chorus work.
 - **Model selection per reviewer**: nicobailon honors `subagent({..., model})`
   per call, `subagents.agentOverrides.<name>.model` in settings, and agent
   frontmatter `model:`. The bundled subagent honors only agent frontmatter
