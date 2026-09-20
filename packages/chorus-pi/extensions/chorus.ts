@@ -17,6 +17,17 @@
  *                              injecting session context — a capability the Codex port
  *                              lacks (Codex has no pre-spawn mutation channel, so its
  *                              workers must manage sessions manually).
+ *                            → pin every REVIEWER and WORKER task to the background
+ *                              (`async: true`), so it keeps the ambient MCP tools it
+ *                              needs (reviewers: chorus_add_comment for the VERDICT;
+ *                              workers: chorus_session_checkin_task / chorus_update_task
+ *                              / chorus_report_work / chorus_submit_for_verify). A
+ *                              foreground (`async: false`) child is in-process and never
+ *                              loads ambient extensions, so those tools are missing:
+ *                              a reviewer's declared allowlist makes that a failed run,
+ *                              a worker (no allowlist) degrades silently. The bundled
+ *                              subagent ignores the flag (its child is a separate `pi`
+ *                              process) and is unaffected.
  *   - tool_result            → close the ephemeral worker session(s) once the `subagent`
  *   - tool_result            → for the official blocking subagent, close the ephemeral
  *                              worker session(s) once the `subagent` tool call returns
@@ -41,6 +52,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+  forceSubagentCallAsync,
+  isReviewerAgent,
   isWorkerAgent,
   subagentTaskItems,
   sessionWorkflow,
@@ -344,9 +357,9 @@ export default function (pi: ExtensionAPI) {
         specRoute,
         "",
         "## Quick Reference",
-        "- **Sessions**: auto-managed. When you dispatch a WORKER via the `subagent` tool (single/parallel/chain), the extension creates a Chorus session per worker task and injects its UUID + the session workflow into that task automatically; the session is closed when the `subagent` tool call returns (children are ephemeral). Do NOT call chorus_create_session/close_session yourself.",
+        "- **Sessions**: auto-managed. When you dispatch a WORKER via the `subagent` tool (single/parallel/chain), the extension creates a Chorus session per worker task and injects its UUID + the session workflow into that task automatically; the extension closes that session when the dispatch returns (blocking implementations) or when the run settles — `subagent:async-complete` / `process-terminal` — under nicobailon `pi-subagents`, which is where Chorus agents run by default. Do NOT call chorus_create_session/close_session yourself.",
         "- **Notifications**: chorus_get_notifications() fetches and auto-marks read.",
-        "- **Reviewer sub-agents**: after submit_proposal/submit_for_verify the extension nudges you to spawn chorus-proposal-reviewer / chorus-task-reviewer. Use the blocking `subagent` tool so it waits for the VERDICT; reviewers do NOT get a Chorus session.",
+        "- **Reviewer sub-agents**: after submit_proposal/submit_for_verify the extension nudges you to spawn chorus-proposal-reviewer / chorus-task-reviewer. Dispatch it with the `subagent` tool and wait for its VERDICT comment — reviewers are pinned to the background/async path, because a foreground child has no `mcp` and could not post the comment; reviewers do NOT get a Chorus session.",
         "- **Code-review gateway**: bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (current: " + (MAX_CODE_REVIEW_ROUNDS === 0 ? "unlimited" : String(MAX_CODE_REVIEW_ROUNDS)) + "; on FAIL, fix via /skill:quick-dev and re-run — after the limit, escalate the Idea's feature-level BLOCKERs to a human instead of shipping.",
         (CHORUS_BIN
           ? "- **OpenSpec wrapper**: `bin/chorus-mcp-call.sh` is at `" + CHORUS_BIN + "` — the CLI-absent fallback for OpenSpec-mode document mirrors. Prefer `chorus mcp call <tool> '<json>' --arg-file content=<file>` (chorus >= 0.17.0); use this wrapper only when `chorus` is not on PATH (a bare `chorus-mcp-call.sh` will NOT be on PATH for local-path installs). See /skill:openspec-aware §2."
@@ -386,15 +399,37 @@ export default function (pi: ExtensionAPI) {
   // `subagent` invocation (single / parallel / chain), create a Chorus session
   // and inject its UUID + the session workflow into that task. The ephemeral
   // child pi subprocess spawned for that task receives the UUID in its prompt.
-  pi.on("tool_call", async (event, _ctx) => {
+  pi.on("tool_call", async (event, ctx) => {
     if (!CONFIGURED || event.toolName !== "subagent") return;
+    const items = subagentTaskItems(event.input);
+    // Every Chorus agent this extension spawns needs ambient MCP tools: the
+    // reviewers post their VERDICT with chorus_add_comment, and the workers run
+    // the whole task lifecycle (chorus_session_checkin_task / chorus_update_task
+    // / chorus_report_work / chorus_submit_for_verify) — both agent bodies forbid
+    // curl. Under the nicobailon `pi-subagents` implementation an in-process
+    // foreground child (`async: false`) never loads the parent's ambient
+    // extensions, so those tools simply do not exist: for a reviewer the declared
+    // `tools` allowlist turns that into a failed run, for a worker (no allowlist)
+    // it degrades silently. Pin both to the background path whatever the caller
+    // asked for; the bundled subagent ignores the flag and keeps blocking + MCP.
+    // The pin is CALL-level: one call has one mode, derived from the top-level
+    // `async` (an item-level one is read by nothing), so a composite carrying a
+    // Chorus agent is pinned as a whole.
+    if (items.some((item) => isReviewerAgent(item.agent) || isWorkerAgent(item.agent)) && forceSubagentCallAsync(event.input)) {
+      // The caller asked for foreground and we overrode it — surface that
+      // instead of silently changing how their dispatch runs.
+      ctx.ui.notify(
+        "Chorus agents need ambient `mcp`/`chorus_*` tools, which a foreground child does not have — this dispatch was pinned to the background (async) path.",
+        "info",
+      );
+    }
     // Positive worker classification: only canonical worker agents get a Chorus
     // session + task-lifecycle injection. The three Chorus reviewers are not
     // workers (read-only), and the example scout/planner/reviewer agents are
     // read-only too — injecting the session workflow into them adds irrelevant
     // instructions and unnecessary chorus_create_session traffic. See isWorkerAgent().
     const created: string[] = [];
-    for (const item of subagentTaskItems(event.input)) {
+    for (const item of items) {
       if (!isWorkerAgent(item.agent)) continue;
       // Manual main-agent template already injected — never double-inject.
       if (hasSessionMarker(item.task)) continue;
@@ -453,15 +488,15 @@ export default function (pi: ExtensionAPI) {
     if (native && (NUDGE_TOOL_NAMES as readonly string[]).includes(native)) {
       const nudges: Record<string, { spawn: string; enabled: boolean }> = {
         chorus_pm_submit_proposal: {
-          spawn: "spawn chorus-proposal-reviewer to review the proposal (blocking subagent tool), then close the agent",
+          spawn: "spawn chorus-proposal-reviewer to review the proposal, wait for its VERDICT comment, then close the agent",
           enabled: ENABLE_PROPOSAL_REVIEWER,
         },
         chorus_submit_for_verify: {
-          spawn: "spawn chorus-task-reviewer to review the task (blocking subagent tool), then close the agent",
+          spawn: "spawn chorus-task-reviewer to review the task, wait for its VERDICT comment, then close the agent",
           enabled: ENABLE_TASK_REVIEWER,
         },
         chorus_admin_verify_task: {
-          spawn: "if this was the last task of an idea-rooted proposal: spawn chorus-code-reviewer over the idea's aggregate change (blocking subagent tool), then remind to archive the openspec change",
+          spawn: "if this was the last task of an idea-rooted proposal: spawn chorus-code-reviewer over the idea's aggregate change, wait for its VERDICT comment, then remind to archive the openspec change",
           enabled: ENABLE_CODE_REVIEWER,
         },
       };

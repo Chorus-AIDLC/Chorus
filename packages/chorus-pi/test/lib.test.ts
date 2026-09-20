@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import {
+  forceSubagentCallAsync,
   isReviewerAgent,
   isWorkerAgent,
   WORKER_AGENT_NAMES,
@@ -115,6 +116,63 @@ test("subagentTaskItems: tasks[] takes precedence over a stray top-level task", 
   // parallel invocation — the array is the source of truth, not any single-mode fields
   const items = subagentTaskItems({ tasks: [{ agent: "worker", task: "a" }], agent: "x", task: "y" });
   expect(items.map((i) => i.agent)).toEqual(["worker"]);
+});
+
+// ─── forceSubagentCallAsync: the pin is a CALL-level operation ───────────────
+// `async` is a RUN-level parameter: only the top-level field decides the mode, so
+// the pin must be written on the root object (an item-level async is read by none).
+test("forceSubagentCallAsync: writes the run-level flag (single mode)", () => {
+  const input: any = { agent: "chorus-task-reviewer", task: "review it", async: false };
+  expect(forceSubagentCallAsync(input)).toBe(true); // caller had asked for foreground
+  expect(input.async).toBe(true);
+});
+
+test("forceSubagentCallAsync: pins the ROOT flag for parallel and chain, never item-level", () => {
+  const parallel: any = {
+    async: false,
+    tasks: [
+      { agent: "chorus-task-reviewer", task: "a" },
+      { agent: "chorus-code-reviewer", task: "b" },
+    ],
+  };
+  forceSubagentCallAsync(parallel);
+  expect(parallel.async).toBe(true); // the field the mode is derived from
+  expect("async" in parallel.tasks[0]).toBe(false); // inert item-level write avoided
+
+  const chain: any = { async: false, chain: [{ agent: "chorus-proposal-reviewer", task: "c" }] };
+  forceSubagentCallAsync(chain);
+  expect(chain.async).toBe(true);
+  expect("async" in chain.chain[0]).toBe(false);
+});
+
+test("forceSubagentCallAsync: clears a ROOT clarify (clarify:true defeats async in pi-subagents)", () => {
+  const input: any = { clarify: true, tasks: [{ agent: "chorus-task-reviewer", task: "review it" }] };
+  forceSubagentCallAsync(input);
+  expect(input.async).toBe(true);
+  expect(input.clarify).toBe(false);
+});
+
+test("forceSubagentCallAsync: no gratuitous clarify key, and reports an override only when there was one", () => {
+  const omitted: any = { agent: "chorus-task-reviewer", task: "review it" };
+  expect(forceSubagentCallAsync(omitted)).toBe(false); // nothing to override
+  expect(omitted.async).toBe(true);
+  expect("clarify" in omitted).toBe(false);
+
+  const alreadyAsync: any = { agent: "chorus-task-reviewer", task: "review it", async: true };
+  expect(forceSubagentCallAsync(alreadyAsync)).toBe(false);
+  expect(alreadyAsync.async).toBe(true);
+});
+
+test("forceSubagentCallAsync: non-object input is a no-op", () => {
+  expect(forceSubagentCallAsync(undefined)).toBe(false);
+  expect(forceSubagentCallAsync(null)).toBe(false);
+  expect(forceSubagentCallAsync("nope")).toBe(false);
+});
+
+test("isReviewerAgent: rejects near-miss names (versioned copies, prefixes, plurals)", () => {
+  for (const name of ["chorus-task-reviewer-2", "my-chorus-task-reviewer", "chorus-task-reviewers", "reviewer", "chorus-worker", ""]) {
+    expect(isReviewerAgent(name)).toBe(false);
+  }
 });
 
 // ─── sessionWorkflow ─────────────────────────────────────────────────────────

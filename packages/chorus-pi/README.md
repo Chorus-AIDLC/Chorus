@@ -58,7 +58,7 @@ that wakes it. See [`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md#run-pi-as-a-w
 
 - **MCP: adapter path, keyless config.** `pi-mcp-adapter` reads the `mcp.json` `chorus agents add` writes at `~/.pi/agent/mcp.json` (or a project-root `.mcp.json`) and exposes all 40+ `chorus_*` tools — the extension never registers tools itself. The `Authorization` header references the key by env var (`Bearer ${CHORUS_API_KEY}`, which the adapter interpolates at connect time), so no `cho_` key lands on disk. A literal Bearer also works, but the env-referenced form is what the CLI writes.
 - **Hooks: TypeScript, not bash.** The extension replaces ~10 bash hook scripts with one TS file. No `curl`/`jq`, no Bash 3.2 compatibility traps (the `${2:-{}}` JSON-parse bug that plagued the Codex port is structurally impossible here).
-- **Sub-agent sessions: automatic.** By monitoring `subagent` tool events, the extension auto-creates a Chorus session for each worker task in a dispatch and closes it when the tool call returns — a capability the Codex port lacks (Codex has no sub-agent lifecycle events, so its workers manage sessions manually).
+- **Sub-agent sessions: automatic.** By monitoring `subagent` tool events, the extension auto-creates a Chorus session for each worker task in a dispatch and closes it when the dispatch returns (or when the run settles — `subagent:async-complete` / `process-terminal` — under nicobailon `pi-subagents`) — a capability the Codex port lacks (Codex has no sub-agent lifecycle events, so its workers manage sessions manually).
 - **Skills: same standard.** Pi implements the Agent Skills standard, so the skill bodies port with find/replace only (Claude's `Task` tool → the `subagent` tool; `/chorus:develop` → `/skill:develop`).
 
 ## Structure
@@ -91,7 +91,7 @@ packages/chorus-pi/
 
 **Complete port** of the Claude Code / Codex plugins to Pi. All 12 skills, all 3 reviewer sub-agents plus the `chorus-worker` implementer, the session-aware extension, the bundled official subagent pattern, and the OpenSpec wrapper are implemented and validated (TS transpiles, JSON valid, all skill/agent names compliant with the Agent Skills standard, no Claude/Codex-specific references remain).
 
-The extension goes beyond the Codex port in one key way: by using Pi's `tool_call` event (pre-execution, mutable input), it **auto-injects the Chorus session UUID + workflow into each dispatched worker's task** — the Pi-native equivalent of Claude's `SubagentStart` hook. The Codex port has no pre-spawn mutation channel, so its workers must manage sessions manually. On Pi, dispatch a worker via the `subagent` tool and the extension handles session creation + context injection, then closes the session when the (ephemeral) tool call returns.
+The extension goes beyond the Codex port in one key way: by using Pi's `tool_call` event (pre-execution, mutable input), it **auto-injects the Chorus session UUID + workflow into each dispatched worker's task** — the Pi-native equivalent of Claude's `SubagentStart` hook. The Codex port has no pre-spawn mutation channel, so its workers must manage sessions manually. On Pi, dispatch a worker via the `subagent` tool and the extension handles session creation + context injection, then closes the session when the dispatch returns — or when the run settles (`subagent:async-complete` / `process-terminal`) under nicobailon `pi-subagents`.
 
 
 ### Subagent run modes: blocking (bundled) vs async (nicobailon `pi-subagents`)
@@ -151,7 +151,7 @@ such sections.
   identical; only close timing differs (blocking closes at `tool_result`, async
   closes on `subagent:async-complete`/`process-terminal`).
 - **Why the packaged agents do not set `async: false`.** Under nicobailon
-  0.65 a foreground (`async: false`) child runs inside the parent process
+  0.65+ a foreground (`async: false`) child runs inside the parent process
   and never loads the parent's ambient extensions — tools registered by an
   ambient adapter such as `pi-mcp-adapter` (`mcp`, `mcpScript`) are
   unavailable, and nicobailon's child-tool diagnostic treats an allowlist
@@ -161,6 +161,25 @@ such sections.
   for completion with `bg_wait`/the run notification; the bundled subagent
   is unaffected because its child is a separate `pi --mode json` process
   that loads extensions.
+- **Reviewers and workers are pinned to the background path.** "Async is the
+  default" is not a guarantee: a caller that passes `async: false` gets an
+  in-process foreground child in which every Chorus agent loses `chorus_*` — for
+  a reviewer the declared `tools` allowlist turns that into a failed run, for a
+  worker (no allowlist) it degrades quietly. (Measured 2026-09-20 with a probe
+  agent that declares no `tools`: a foreground child's whole tool set was
+  `read, bash, edit, write, bg_wait, contact_supervisor` — no `mcp`, no
+  `chorus_*` — and it could not post a comment.) The extension therefore pins the
+  run-level `async: true` at `tool_call` whenever a `chorus-*-reviewer` or a
+  worker (`worker`, `chorus-worker`) is in the call, clearing `clarify` as well
+  (it disables async), and notifies once when it overrode an explicit
+  `async: false`. One `subagent` call has one mode, so pinning any Chorus item
+  pins the whole call — `tasks[]` and `chain[]` composites included.
+  Known gaps of that hook: reviewers nested in a chain step's `parallel[]` or
+  dynamic `expand` fanout are not enumerated, nor is a chain step that names only
+  `agent` (its `task` defaults to `{previous}`, so the item carries no `task` to
+  match on); children created inside a `workflowScript` are invisible to it;
+  `{action:"resume"}` replays keep the stored run's mode; and spawns that bypass
+  the `subagent` tool are never seen.
 - **`workflowScript` / `runs.run` / `runs.all`**: nicobailon-only. The bundled
   subagent has no `workflowScript` mode — use `parallel`/`chain` via its own
   schema, or keep nicobailon for scripted waves.
