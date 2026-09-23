@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.19.0] - 2026-09-23
+
+### Added
+- **Review finding tracking**: Added stable BLOCKER/NOTE IDs and explicit re-verification states across review rounds. (#573)
+
+### Changed
+- **Review quality**: Task reviews now check correctness, security, reuse, meaningful tests, and required-operation failures by default, even beyond acceptance criteria. (#573)
+- **Review signal**: Replaced output character caps with evidence-based reporting, limited new non-blocking notes, and clarified each review gate's scope across all seven surfaces. (#573)
+
+### Fixed
+- **Kiro reviewers**: Enabled constrained read-only shell inspection for task and code reviewers and tightened proposal-reviewer shell permissions. (#573)
+- **Pi subagents**: Corrected background dispatch and tool access for Chorus workers and reviewers, fixed agent frontmatter parsing, and ensured offline test failures propagate. (#572)
+- **npm publishing**: Successful uploads now advance without waiting for registry propagation, while retaining automatic provenance and safe reruns. (#571)
+
+### Plugin
+- **Versions**: Upgraded all six plugins and four npm packages to `0.19.0`.
+
+---
+
 ## [0.18.1] - 2026-09-17
 
 ### Security

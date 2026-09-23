@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.19.0](https://chorus-ai.dev/blog/chorus-v0.19.0-release/)** — Cloudflare-inspired reviewer rules: clearer scope, complete blocker evidence, and stable finding IDs across rounds. Task reviews now check code quality beyond acceptance criteria.
+
 **[v0.18.0](https://chorus-ai.dev/blog/chorus-v0.18.0-release/)** — Built-in `spec-lite` adds a lightweight, Git-native local spec workflow alongside OpenSpec. Live session anchors let daemon agents return replies to the initiating agent's existing Idea session.
 
 **[v0.17.2](https://chorus-ai.dev/blog/chorus-v0.17.2-release/)** — Pi is now a published, wakeable Chorus agent, and `chorus agents run` switches local agent profiles with one command.
@@ -63,7 +65,7 @@ The labels under each stage are the **permissions** an actor needs there — gra
 Two commands. No database, no Docker, no config files.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.18.1
+npm install -g @chorus-aidlc/chorus@0.19.0
 chorus
 ```
 

@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.19.0](https://chorus-ai.dev/blog/chorus-v0.19.0-release/)** — Cloudflare を参考にレビューの範囲を明確化し、問題の根拠を省略せず、固定 ID で再レビュー時も追跡。タスクレビューでは受け入れ基準に加え、コード品質も標準で確認します。
+
 **[v0.18.0](https://chorus-ai.dev/blog/chorus-v0.18.0-release/)** — OpenSpec を補う、軽量で Git ネイティブなローカル Spec 管理として `spec-lite` を内蔵しました。live session anchor により、デーモンエージェントからの返信が、起点となったエージェントの既存 Idea セッションへ戻ります。
 
 **[v0.17.2](https://chorus-ai.dev/blog/chorus-v0.17.2-release/)** — Pi が正式配布とデーモンウェイクに対応し、`chorus agents run` でローカルのエージェントプロファイルをすぐ切り替えられます。
@@ -63,7 +65,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 2 つのコマンドだけです — データベースも Docker も設定ファイルも不要です。
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.18.1
+npm install -g @chorus-aidlc/chorus@0.19.0
 chorus
 ```
 
