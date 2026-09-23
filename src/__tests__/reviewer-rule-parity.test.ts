@@ -253,6 +253,37 @@ describe("reviewer definition parity across all surfaces", () => {
     }
   });
 
+  // Kiro is the only surface whose tool grant is declarative, so it is the only
+  // one where the stated posture can be checked against the real grant rather
+  // than against prose. All three reviewers get read-only shell (the code and
+  // task reviewers previously had none, which left them unable to run the very
+  // build/test their review procedure is built around) and none gets `write`.
+  describe.each(REVIEWER_FILES.filter((r) => r.surface === "kiro"))(
+    "kiro tool grant — $kind",
+    ({ file }) => {
+      const declared = JSON.parse(readFileSync(path.join(REPO_ROOT, file), "utf8")) as {
+        tools?: string[];
+      };
+
+      it("grants read + read-only shell + @chorus, and never write", () => {
+        expect(declared.tools, `${file}: unexpected tool grant`).toEqual(["read", "shell", "@chorus"]);
+      });
+
+      it("states a read-only shell posture instead of claiming it has no shell", () => {
+        const prompt = readPrompt(file);
+        const denies = prompt.match(/no `?shell`?\b|cannot run shell|reading is your only confirmation/i);
+        expect(
+          denies?.[0] ?? null,
+          `${file} still claims it has no shell while the grant includes one — stated posture must match the real grant`,
+        ).toBeNull();
+        expect(
+          /READ-ONLY inspection|read-only shell/i.test(prompt),
+          `${file} must bound its shell to read-only inspection in the prompt, since Kiro's tools field has no per-command allow-list`,
+        ).toBe(true);
+      });
+    },
+  );
+
   describe.each(REVIEWER_FILES)("$surface / $kind ($file)", ({ file, kind }) => {
     const prompt = readPrompt(file);
 
