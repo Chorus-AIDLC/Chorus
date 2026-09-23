@@ -151,10 +151,62 @@ const SHARED_RULES: ReadonlyArray<{ label: string; pattern: RegExp }> = [
  * collapse into a single generic checklist copied three times.
  */
 const KIND_ONLY_ANCHORS: Record<ReviewerKind, RegExp> = {
-  code: /only by reading code to BLOCKER severity/i,
+  code: /redo the per-line review/i,
   task: /absent end-to-end integration tests/i,
   proposal: /propose alternative architectures/i,
 };
+
+/**
+ * Coverage-preservation rules. The DO/NOT-DO lists narrow each gate's scope, and
+ * the union of the three gates must still catch everything a feature review
+ * should catch. These pin the carve-outs that keep that true — each one exists
+ * because its absence created a real hole:
+ *
+ * - Intent alignment: the DO lists read as exhaustive scope boundaries and did
+ *   not name it, contradicting the intent-alignment step in the same file and
+ *   threatening to silently drop the capability PR #545 shipped.
+ * - Evidence bar: requiring run evidence for any BLOCKER demoted
+ *   statically-visible defects (missing authz, missing tenant scoping) to NOTE,
+ *   and made the shell-less Kiro code/task reviewers structurally unable to
+ *   return FAIL at all.
+ * - Pre-existing carve-out: a latent bug the change makes reachable was excluded
+ *   by the task gate AND the aggregate gate, so it fell through both.
+ * - Delegated gaps must name their owning gate, so "not mine" never means "nobody's".
+ */
+const COVERAGE_RULES: Partial<Record<ReviewerKind, ReadonlyArray<{ label: string; pattern: RegExp }>>> = {
+  task: [
+    {
+      label: "intent alignment is explicitly exempt from the AC/diff scope boundary",
+      pattern: /intent-alignment step[^.\n]{0,120}(?:in scope|IN scope)|never (?:counts as|")?wider/i,
+    },
+    {
+      label: "a pre-existing defect this change makes reachable stays in scope",
+      pattern: /makes? one reachable|makes one reachable, worse/i,
+    },
+    { label: "delegated inter-task gaps name the owning gate", pattern: /aggregate code reviewer owns inter-task gaps/i },
+    { label: "severity is not lowered for lack of a shell", pattern: /as written|never lower/i },
+  ],
+  code: [
+    { label: "feature-level intent drift is named in the DO list", pattern: /intent drift/i },
+    { label: "severity is not lowered for lack of a shell", pattern: /as written|never lower/i },
+  ],
+};
+
+/** Superseded wording that must not come back. */
+const SUPERSEDED: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+  {
+    // Re-verification narrowed to BLOCKER-tied files makes a prior NOTE in any
+    // other file permanently `not-verifiable` — the ledger could never close it,
+    // which contradicts the archived reviewer-finding-identity spec.
+    label: "round-2+ re-verification narrowed to BLOCKERs only",
+    pattern: /tied to previous BLOCKERs/i,
+  },
+  {
+    // Demoted every statically-visible defect to NOTE; see COVERAGE_RULES above.
+    label: "run-evidence-only BLOCKER bar",
+    pattern: /BLOCKER (?:requires|needs) demonstration/i,
+  },
+];
 
 /**
  * State words that would imply a fourth acknowledgement state. Deliberately
@@ -249,6 +301,24 @@ describe("reviewer definition parity across all surfaces", () => {
       const match = prompt.match(pattern);
       expect(match?.[0] ?? null, `${file} reintroduces a construct the human rejected`).toBeNull();
     });
+
+    it.each(SUPERSEDED)("does not reinstate the superseded $label", ({ pattern }) => {
+      const match = prompt.match(pattern);
+      expect(
+        match?.[0] ?? null,
+        `${file} reinstates wording that created a coverage hole — see COVERAGE_RULES for why`,
+      ).toBeNull();
+    });
+
+    const coverage = COVERAGE_RULES[kind] ?? [];
+    if (coverage.length > 0) {
+      it.each(coverage)("preserves coverage: $label", ({ pattern }) => {
+        expect(
+          pattern.test(prompt),
+          `${file} drops a carve-out that keeps the three gates' combined coverage complete (${pattern})`,
+        ).toBe(true);
+      });
+    }
 
     // Guard on the guard. A pattern that matches the real file proves nothing
     // about whether it would catch the rule being reversed — the previous
