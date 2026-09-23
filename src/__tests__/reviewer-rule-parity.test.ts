@@ -210,7 +210,30 @@ const COVERAGE_RULES: Partial<Record<ReviewerKind, ReadonlyArray<{ label: string
       pattern: /security in this task'?s own code/i,
     },
     { label: "a test that cannot fail leaves its AC unverified", pattern: /tests that cannot fail/i },
+    {
+      // Classifying by mechanism ("asserts a mock was called") fires on correct
+      // code: when the AC is itself about invocation, a call-count assertion IS
+      // the verification. The axis is capability — would it fail if the
+      // behaviour were wrong — so the mutation question must be explicit.
+      label: "tests are judged by capability (mutation question), not by mechanism",
+      pattern: /implemented wrongly/i,
+    },
+    {
+      label: "a mock or call-count assertion is not itself a defect",
+      pattern: /never its mechanism|never mechanism/i,
+    },
     { label: "silent failure is BLOCKER-bearing", pattern: /silent failure/i },
+    {
+      // Blocking every "logged then discarded" fires on deliberate degradation;
+      // cli/kiro-spawner.mjs's best-effort transcript reconstruction is the
+      // in-repo counterexample. Only a REQUIRED operation's masked failure blocks.
+      label: "silent failure is scoped to required operations",
+      pattern: /\brequired\b[^.\n]{0,60}operation/i,
+    },
+    {
+      label: "documented best-effort degradation is excluded",
+      pattern: /best-effort/i,
+    },
     {
       // Anchored on "Taste never blocks", which appears only in the block's own
       // severity paragraph. A bare /name the concrete defect/ would be vacuous:
@@ -304,10 +327,45 @@ describe("reviewer definition parity across all surfaces", () => {
     ({ file }) => {
       const declared = JSON.parse(readFileSync(path.join(REPO_ROOT, file), "utf8")) as {
         tools?: string[];
+        permissions?: { rules?: Array<{ capability: string; match: string[]; effect: string }> };
       };
 
       it("grants read + read-only shell + @chorus, and never write", () => {
         expect(declared.tools, `${file}: unexpected tool grant`).toEqual(["read", "shell", "@chorus"]);
+      });
+
+      // Kiro's agent profile supports `permissions.rules` (capability / match /
+      // effect), so this is the one surface where read-only-ness can be enforced
+      // by configuration rather than only instructed by the prompt. An earlier
+      // revision wrongly claimed no per-command scoping existed and accepted
+      // prompt-only enforcement on that basis.
+      it("denies mutating operations by configuration, not only by prompt", () => {
+        const rules = declared.permissions?.rules;
+        expect(Array.isArray(rules) && rules.length > 0, `${file}: no permissions.rules`).toBe(true);
+
+        // Deny-only: an allow-list would have to name project-specific test and
+        // build commands, and these templates install into arbitrary repos.
+        expect(
+          [...new Set(rules!.map((r) => r.effect))],
+          `${file}: permissions must be deny-only`,
+        ).toEqual(["deny"]);
+
+        expect(
+          rules!.some((r) => r.capability === "fs_write"),
+          `${file}: missing an fs_write deny rule`,
+        ).toBe(true);
+
+        const shellPatterns = rules!.filter((r) => r.capability === "shell").flatMap((r) => r.match);
+        for (const required of ["git commit", "pip install", "sudo "]) {
+          expect(
+            shellPatterns.some((p) => p.startsWith(required)),
+            `${file}: shell deny patterns must cover ${required}`,
+          ).toBe(true);
+        }
+        expect(
+          shellPatterns.some((p) => /^(rm |mv |tee )/.test(p)),
+          `${file}: shell deny patterns must cover file-write commands`,
+        ).toBe(true);
       });
 
       it("states a read-only shell posture instead of claiming it has no shell", () => {

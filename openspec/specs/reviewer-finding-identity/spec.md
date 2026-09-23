@@ -73,9 +73,16 @@ proposal, pre-existing problems the task did not touch, gaps belonging to anothe
 raising a BLOCKER for absent end-to-end integration tests.
 
 The `code-reviewer` NOT-DO list SHALL exclude redoing the per-line review each task already
-passed, style and naming, pre-existing issues outside the aggregate diff, speculative race
-conditions with no demonstrable trigger path, and escalating a conclusion reached only by reading
-code to BLOCKER severity.
+passed, style and naming, pre-existing issues outside the aggregate diff, and speculative race
+conditions with no demonstrable trigger path.
+
+The `code-reviewer` NOT-DO list SHALL NOT prohibit escalating a statically-derived conclusion to
+BLOCKER severity. The evidence bar is matched to the kind of claim, not to whether a command was
+run: a defect visible in the code as written is BLOCKER-eligible on file-and-line evidence, while
+a claim about runtime behaviour requires a named trigger path or an observed failure. Requiring
+run evidence for every BLOCKER demoted statically-visible defects — a missing authorization check,
+absent tenant scoping — to NOTE, and left any reviewer without a shell structurally unable to
+return FAIL.
 
 #### Scenario: Task reviewer sees no end-to-end test
 
@@ -84,11 +91,17 @@ code to BLOCKER severity.
 - **THEN** it does not raise a BLOCKER for that absence, because feature-level coverage is the
   aggregate reviewer's dimension
 
-#### Scenario: Code reviewer suspects a problem it could not execute
+#### Scenario: Code reviewer finds a defect visible in the code as written
 
-- **WHEN** the `code-reviewer` suspects a defect purely from reading code and cannot demonstrate
-  it by running anything
-- **THEN** it does not classify that conclusion as a BLOCKER
+- **WHEN** the `code-reviewer` identifies a missing authorization check by reading the diff and
+  cannot execute anything that demonstrates exploitation
+- **THEN** it raises a BLOCKER citing file and line, rather than demoting it to a NOTE
+
+#### Scenario: Code reviewer has an undemonstrated runtime suspicion
+
+- **WHEN** the `code-reviewer` suspects a race condition but can name neither the interleaving nor
+  a code path that reaches it
+- **THEN** it does not raise that suspicion at all
 
 #### Scenario: A reviewer believes something is missing
 
