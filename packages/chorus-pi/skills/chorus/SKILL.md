@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.18.1"
+  version: "0.19.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -112,7 +112,7 @@ Results can be filtered by project(s) using optional HTTP headers in your `.mcp.
 
 ### Session (Sub-Agents Only)
 
-The Chorus Pi extension **fully automates** session lifecycle. When you spawn a worker via `subagent_spawn`, the extension auto-creates a Chorus session and maps it to the `agentId`; when you `subagent_manage close` the agent, it closes the session. Sub-agents only need to:
+The Chorus Pi extension **fully automates** session lifecycle. When you dispatch a worker with the `subagent` tool, the extension auto-creates a Chorus session and injects its UUID + workflow into that worker's task; it closes the session when the dispatch returns (bundled subagent) or when the run settles (`subagent:async-complete` / `process-terminal` under nicobailon `pi-subagents`). Sub-agents only need to:
 
 1. `chorus_session_checkin_task` — before starting work on a task
 2. `chorus_session_checkout_task` — when done with a task
@@ -331,7 +331,7 @@ The table below shows default tool availability for each preset (no custom permi
 
 ### 5. Review Agent Configuration
 
-The extension includes three independent review agents. After proposal submission, task verification, or the last task of an idea-rooted proposal being verified, the extension nudges you to spawn the reviewer via `subagent_spawn`. You must spawn it manually — it is NOT auto-launched. All are **enabled by default**.
+The extension includes three independent review agents. After proposal submission, task verification, or the last task of an idea-rooted proposal being verified, the extension nudges you to dispatch the reviewer with the `subagent` tool. You must spawn it manually — it is NOT auto-launched. All are **enabled by default**.
 
 | Setting | Controls | Default |
 |---------|----------|---------|
@@ -372,7 +372,7 @@ To turn OpenSpec off, set `CHORUS_OPENSPEC_MODE=off` — the mode then falls bac
 ## Execution Rules
 
 1. **Always check in first** — Call `chorus_checkin()` at session start (the extension does this automatically and injects the result)
-2. **Sessions are automatic** — The extension creates, heartbeats, and closes sessions on `subagent_spawn` / `subagent_manage close`. Never call `chorus_create_session` or `chorus_close_session` yourself.
+2. **Sessions are automatic** — The extension creates the session when you dispatch a worker with the `subagent` tool, and closes it when the dispatch returns (bundled subagent) or when the run settles (nicobailon `pi-subagents`). Never call `chorus_create_session` or `chorus_close_session` yourself.
 3. **Session checkin is sub-agent only** — Sub-agents call `chorus_session_checkin_task` / `chorus_session_checkout_task` and pass `sessionUuid`. Main agent skips session tools entirely.
 4. **Stay in your role** — Only use tools available to your role
 5. **Report progress** — Use `chorus_report_work` or `chorus_add_comment`
@@ -382,7 +382,7 @@ To turn OpenSpec off, set `CHORUS_OPENSPEC_MODE=off` — the mode then falls bac
 9. **Document decisions** — Add comments explaining your reasoning
 10. **Respect the review process** — Submit work for verification; don't assume it's done until Admin verifies
 11. **Always use AskUserQuestion for human interaction** — NEVER display questions as plain text; use interactive radio buttons (the `ask_user_question` tool)
-12. **Close sub-agents after use** — Pi limits concurrent sub-agents; after a reviewer/worker finishes, call `subagent_manage close` to release the slot. `completed` does not release it.
+12. **No close step** — a `subagent` dispatch owns its children's whole lifecycle: the bundled subagent's children exit within the call, and a nicobailon run settles on its own, so there is nothing to close (inspect a run with `subagent({ action: "status" })` if needed).
 
 ---
 

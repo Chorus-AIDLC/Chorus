@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.19.0](https://chorus-ai.dev/blog/chorus-v0.19.0-release/)** — Cloudflare를 참고해 리뷰 범위를 명확히 하고, 문제의 근거를 온전히 남기며, 고정 ID로 재검토까지 추적합니다. 태스크 리뷰는 인수 기준 외의 코드 품질도 기본으로 검사합니다.
+
 **[v0.18.0](https://chorus-ai.dev/blog/chorus-v0.18.0-release/)** — OpenSpec을 보완하는 가볍고 Git 친화적인 로컬 Spec 관리 방식으로 `spec-lite`를 내장했습니다. live session anchor를 통해 데몬 에이전트의 응답이 작업을 시작한 에이전트의 기존 Idea 세션으로 돌아갑니다.
 
 **[v0.17.2](https://chorus-ai.dev/blog/chorus-v0.17.2-release/)** — Pi를 정식 패키지와 데몬 웨이크로 사용할 수 있으며, `chorus agents run`으로 로컬 에이전트 프로파일을 빠르게 전환할 수 있습니다.
@@ -63,7 +65,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 두 개의 명령이면 됩니다. 데이터베이스도, Docker도, 설정 파일도 필요 없습니다.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.18.1
+npm install -g @chorus-aidlc/chorus@0.19.0
 chorus
 ```
 

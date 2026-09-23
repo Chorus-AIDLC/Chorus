@@ -200,6 +200,119 @@ test("mixed parallel: only worker tasks get a session (reviewer skipped)", async
   expect(toolCalls.filter((t) => t === "chorus_close_session").length).toBe(1);
 });
 
+// ─── reviewers are pinned to the background path (they need ambient mcp) ────
+test("reviewer subagent: an explicit async:false is rewritten to true, no session created", async () => {
+  await resetState();
+  const input: any = { agent: "chorus-task-reviewer", task: "review the task", async: false };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-rev-fg", input }, ctx);
+  // Foreground (in-process) children have no ambient extensions → no `mcp`, so
+  // the reviewer could never post its VERDICT. Pin it to the background path.
+  expect(input.async).toBe(true);
+  // Reviewers still get no Chorus session, and their task text is untouched.
+  expect(toolCalls).not.toContain("chorus_create_session");
+  expect(input.task).toBe("review the task");
+});
+
+test("reviewer subagent: an omitted async flag is pinned to true and clarify is removed", async () => {
+  await resetState();
+  const input: any = { agent: "chorus-proposal-reviewer", task: "review the proposal", clarify: true };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-rev-om", input }, ctx);
+  expect(input.async).toBe(true);
+  // clarify:true would defeat async, and ANY defined clarify (false included) is
+  // rejected by pi-subagents' public normalizer before dispatch → delete it.
+  expect("clarify" in input).toBe(false);
+});
+
+test("reviewer subagent: an incoming clarify:false is deleted too (any defined clarify is rejected)", async () => {
+  await resetState();
+  const input: any = { agent: "chorus-task-reviewer", task: "review the task", clarify: false };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-rev-clar-false", input }, ctx);
+  expect(input.async).toBe(true);
+  // The public normalizer rejects `clarify !== undefined`, so `false` must not
+  // be left behind — assigning it would be a hard pre-dispatch rejection.
+  expect("clarify" in input).toBe(false);
+});
+
+test("reviewer pinning sets the RUN-level async flag on a composite call", async () => {
+  await resetState();
+  // One call has ONE mode, derived from the top-level `async`, so pinning a
+  // reviewer inside a composite pins the whole call. An item-level `async`
+  // would be inert: it is not a parameter of the composite schemas.
+  const input: any = {
+    async: false,
+    tasks: [
+      { agent: "chorus-code-reviewer", task: "review" },
+      { agent: "worker", task: "impl" },
+      { agent: "scout", task: "explore" },
+    ],
+  };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-mix-async", input }, ctx);
+  expect(input.async).toBe(true);
+  expect("async" in input.tasks[0]).toBe(false); // no inert item-level write
+  expect(toolCalls.filter((t) => t === "chorus_create_session").length).toBe(1); // worker only
+});
+
+test("reviewer pinning also covers chain launches", async () => {
+  await resetState();
+  const input: any = { async: false, chain: [{ agent: "chorus-task-reviewer", task: "review" }] };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-chain-rev", input }, ctx);
+  expect(input.async).toBe(true);
+  expect(input.chain[0].task).toBe("review"); // reviewer task text untouched
+});
+
+test("worker pinning sets the RUN-level async flag (workers need chorus_* too)", async () => {
+  await resetState();
+  // chorus-worker.md: "Use the `chorus_*` MCP tools for all Chorus data access —
+  // do NOT use curl", and it runs the full task lifecycle (checkin / in_progress /
+  // report / self-check AC / submit_for_verify). A foreground child has none of
+  // them, and it has no `tools` allowlist, so the loss is silent rather than a
+  // failed run — worse, not better.
+  const input: any = { agent: "chorus-worker", task: "impl", async: false };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-w-pin", input }, ctx);
+  expect(input.async).toBe(true);
+  // The worker's own session path is unaffected by the pin.
+  expect(toolCalls.filter((t) => t === "chorus_create_session").length).toBe(1);
+  expect(input.task).toContain("Session UUID:");
+});
+
+test("a composite with no Chorus agent keeps the caller's async flag", async () => {
+  await resetState();
+  const input: any = {
+    async: false,
+    tasks: [
+      { agent: "scout", task: "explore" },
+      { agent: "oracle", task: "advise" },
+    ],
+  };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-no-chorus", input }, ctx);
+  expect(input.async).toBe(false); // untouched — nothing here needs ambient mcp
+  expect(toolCalls).not.toContain("chorus_create_session");
+});
+
+test("pinning an explicit async:false notifies once (no silent mode change)", async () => {
+  await resetState();
+  const input: any = { agent: "chorus-task-reviewer", task: "review", async: false };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-notify", input }, ctx);
+  expect(input.async).toBe(true);
+  expect(notifyMessages.some((n) => /pinned to the background/i.test(n.msg))).toBe(true);
+});
+
+test("no notification when the caller did not ask for foreground", async () => {
+  await resetState();
+  const input: any = { agent: "chorus-task-reviewer", task: "review" };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-notify-silent", input }, ctx);
+  expect(input.async).toBe(true);
+  expect(notifyMessages.some((n) => /pinned to the background/i.test(n.msg))).toBe(false);
+});
+
+test("no notification (and no pin) for a composite with no Chorus agent", async () => {
+  await resetState();
+  const input: any = { async: false, tasks: [{ agent: "scout", task: "explore" }] };
+  await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-notify-none", input }, ctx);
+  expect(input.async).toBe(false);
+  expect(notifyMessages.some((n) => /pinned to the background/i.test(n.msg))).toBe(false);
+});
+
 // ─── failed close retained → session_shutdown retries (no leak) ─────────────
 test("failed close is retained and retried on session_shutdown", async () => {
   await resetState();

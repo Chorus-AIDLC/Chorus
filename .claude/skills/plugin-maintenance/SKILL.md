@@ -203,8 +203,10 @@ the npm Environment field blank while the workflow job has no `environment`;
 if an Environment is introduced, configure the exact same case-sensitive name
 on npm and on the workflow job. Keep `id-token: write`, do not add
 `NPM_TOKEN`, `NODE_AUTH_TOKEN`, or a setup-node token placeholder, and do not
-disable npm's automatic provenance. A public-repository publish is accepted
-only after the workflow observes its SLSA provenance attestation.
+disable npm's automatic provenance. A zero exit status from `npm publish`
+completes the upload and is recorded as `accepted-by-npm`. Registry visibility
+and provenance metadata can lag behind acceptance; the workflow does not poll
+them or use them to gate subsequent packages.
 `@chorus-aidlc/chorus-pi` is the newest package: its Trusted Publisher must be
 registered on npmjs.org before its first coordinated publish, or the run stops
 at chorus-pi with the first three already published — a human/ops step, not

@@ -38,7 +38,7 @@ Verifies the package is well-formed and internally consistent, with no runtime d
 | A3 skill frontmatter | every skill has `name` + `description`; name matches Agent Skills rules (lowercase, hyphens ok, no leading/trailing/double hyphen) |
 | A4 agent frontmatter | every agent has `name` + `description` + `tools`; reviewer `tools` is read-only (no write/edit/replace) |
 | A5 wrapper syntax | `bash -n bin/chorus-mcp-call.sh` |
-| A6 no residual | no `Claude Code` / `CLAUDE_PROJECT_DIR` / `.claude/` / `subagent_type` / `run_in_background` / `TeamCreate` / `Task({` / `Agent({` references left in skills/agents/bin |
+| A6 no residual | no `Claude Code` / `CLAUDE_PROJECT_DIR` / `.claude/` / `subagent_type` / `run_in_background` / `subagent_spawn` / `subagent_manage` / `TeamCreate` / `Task({` / `Agent({` references left in skills/agents/bin (the last two are Claude-Code-era dispatch/close names — the only dispatch tool here is `subagent`, with no handle to close) |
 | A7 skill cross-refs | every `/skill:X` in a skill maps to a real `name:` in `skills/*/SKILL.md` |
 | A8 agent cross-refs | every `agent: "X"` spawn in a skill maps to either a `chorus-*-reviewer` in `agents/` or a pi official subagent example agent (scout/planner/reviewer/worker) |
 

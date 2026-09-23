@@ -123,7 +123,7 @@ The extension has no plugin-settings UI (Pi extensions are config-by-env). All t
 
 ## Sub-agent concurrency discipline
 
-The bundled `subagent` tool (pi's official pattern) spawns **ephemeral** children — each runs and exits within one tool call, so there is no slot to release manually. The extension auto-creates a Chorus session when a `subagent` call starts and closes it when the tool call returns. Long chains (`/skill:yolo`) spawn multiple reviewers/workers in sequence; because each child is short-lived, no `subagent_manage close` bookkeeping is required.
+The bundled `subagent` tool (pi's official pattern) spawns **ephemeral** children — each runs and exits within one tool call, so there is no slot to release manually. The extension auto-creates a Chorus session when a `subagent` call starts and closes it when the tool call returns (or when the run settles, under nicobailon `pi-subagents`). Long chains (`/skill:yolo`) spawn multiple reviewers/workers in sequence; because each child is short-lived, there is no handle to close and no bookkeeping — `subagent_manage close` does not exist in this package.
 
 ## Troubleshooting
 

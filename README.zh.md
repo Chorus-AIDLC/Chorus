@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.19.0](https://chorus-ai.dev/zh/blog/chorus-v0.19.0-release/)**：借鉴 Cloudflare，明确 reviewer 职责、保留完整证据，用稳定 ID 逐轮追踪问题。任务审查默认检查验收标准之外的代码质量。
+
 **[v0.18.0](https://chorus-ai.dev/zh/blog/chorus-v0.18.0-release/)** — 内置 `spec-lite`，作为 OpenSpec 之外更轻量、可直接进 Git 的本地 Spec 管理方案。live session anchor 让 daemon Agent 的回复回到发起者已有的 Idea 会话。
 
 **[v0.17.2](https://chorus-ai.dev/zh/blog/chorus-v0.17.2-release/)** — Pi 现在可以正式安装并由 daemon 唤醒，`chorus agents run` 还能一条命令切换本地 Agent profile。
@@ -54,7 +56,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 两条命令即可，无需数据库、无需 Docker、无需配置文件。
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.18.1
+npm install -g @chorus-aidlc/chorus@0.19.0
 chorus
 ```
 

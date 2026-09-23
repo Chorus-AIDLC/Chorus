@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.18.1"
+  version: "0.19.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -266,7 +266,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
    ```
    chorus_pm_submit_proposal({ proposalUuid: "<proposal-uuid>" })
    ```
-   After this call, the extension nudges you to spawn `chorus-proposal-reviewer`. You MUST spawn it yourself via the blocking `subagent` tool (it waits for the VERDICT) — it is NOT auto-launched.
+   After this call, the extension nudges you to spawn `chorus-proposal-reviewer`. You MUST spawn it yourself with the `subagent` tool and wait for its VERDICT — it is NOT auto-launched.
 
 ---
 
@@ -274,7 +274,7 @@ In /yolo mode, the agent generates elaboration questions and answers them itself
 
 Every gate in Phases 2, 4 and 4.5 follows the same three steps. They are written once here; the phases below only name their entity and their stage-specific actions.
 
-1. **Spawn and wait.** Spawn the reviewer as a read-only sub-agent, then wait for it: spawn it via the blocking `subagent` tool, which waits for the reviewer to finish. Read the verdict from the reviewer's `VERDICT:` comment on the entity.
+1. **Spawn and wait.** Spawn the reviewer as a read-only sub-agent, then wait for it to finish. Read the verdict from the reviewer's `VERDICT:` comment on the entity — the verdict is that comment, not the dispatch's return value.
 2. **Read THIS round's VERDICT.** Call `chorus_get_comments` on the entity and find the `VERDICT:` comment posted **after your dispatch**, not an older round's. Do not advance the gate before you have read it.
 3. **No VERDICT for this round?** Check what the reviewer *did* post:
    - **A reported round limit, or any other explicit refusal to review** — a deliberate escalation to a human. STOP: do not respawn, do not self-review, do not post a VERDICT of your own.
@@ -286,7 +286,7 @@ Every gate in Phases 2, 4 and 4.5 follows the same three steps. They are written
 
 ### Phase 2: Proposal Review Loop
 
-After `chorus_pm_submit_proposal`, the extension nudges you to spawn `chorus-proposal-reviewer`. You MUST manually spawn it as a read-only sub-agent via the blocking `subagent` tool (it waits for the VERDICT). Wait for it to complete, then:
+After `chorus_pm_submit_proposal`, the extension nudges you to spawn `chorus-proposal-reviewer`. You MUST manually spawn it as a read-only sub-agent with the `subagent` tool and wait for its VERDICT. Wait for it to complete, then:
 
 1. **Read the reviewer's VERDICT:**
    ```
@@ -336,7 +336,7 @@ After proposal approval, tasks exist in `open` status. Execute them in dependenc
 
 #### Primary: subagent parallel dispatch (wave-based)
 
-The `subagent` tool is **blocking** — a parallel dispatch runs every worker in the wave to completion and returns their aggregated output in one call. There is no async spawn, no `agentId` to track, and no manual close. The chorus-pi extension auto-injects each worker's Chorus session UUID + workflow at `tool_call` time and closes the sessions when the dispatch returns.
+The **dispatch shape and the run mode both depend on the installed implementation**: the bundled subagent takes one composite call (`subagent({ tasks: [...] })`, max 8 per call, concurrency 4) and is blocking (the call returns when every worker in the wave has exited); nicobailon `pi-subagents` takes **one single dispatch per worker** (its public tool rejects top-level `tasks`/`chain` before dispatch) and is **async/background by default** (each call returns a run receipt; completion arrives on the run notification / `bg_wait`). Either way there is no `agentId` to track and no manual close. The chorus-pi extension auto-injects each worker's Chorus session UUID + workflow at `tool_call` time and closes the sessions when the dispatch returns (blocking) or when the run settles (`subagent:async-complete` / `process-terminal`).
 
 ```
 wave = 1
@@ -352,32 +352,42 @@ loop:
     # Stuck -- tasks failed review and can't proceed
     break with escalation report
 
-  # 2. Dispatch one chorus-worker per unblocked task in a SINGLE blocking
-  #    parallel call. Max 8 tasks per call (concurrency 4) — if the wave has
-  #    more than 8 ready tasks, split into batches of <=8 sequential calls.
+  # 2. Dispatch one chorus-worker per unblocked task as a single wave.
+  #    Shape follows the installed implementation:
+  #      bundled subagent    → ONE composite call (max 8 tasks/call,
+  #        concurrency 4; a bigger wave splits into batches of <=8 calls)
+  #      nicobailon          → ONE single dispatch per worker, issued together
+  #        (it rejects top-level `tasks`/`chain` before dispatch)
   #    Pass only task + project UUIDs; the chorus-pi extension auto-injects the
   #    session UUID + workflow into each worker's task at tool_call time.
   subagent({
     tasks: [
       { agent: "chorus-worker",
         task: "Your Chorus task UUID: {task.uuid}\nProject UUID: {project-uuid}\n\nImplement the task per its description and acceptance criteria. Read the task, proposal, and project documents for context." },
-      // ... one entry per unblocked task, max 8
+      // ... one entry per unblocked task, max 8  (bundled subagent only)
     ]
   })
-  # The call BLOCKS until EVERY worker in the wave finishes. Each worker follows
+  # ... or, under nicobailon `pi-subagents`, one call per worker in the wave:
+  subagent({ agent: "chorus-worker", task: "Your Chorus task UUID: {task.uuid}\n..." })  # worker 1
+  subagent({ agent: "chorus-worker", task: "Your Chorus task UUID: {task.uuid}\n..." })  # worker 2
+  # Wait for the whole wave to settle — the bundled composite call returns when
+  # every worker finishes; under nicobailon each call returns a run receipt, so
+  # wait on the run notifications / `bg_wait`. Each worker follows
   # the /skill:develop workflow: claim -> in_progress -> report -> self-check AC
   # -> submit_for_verify (leaving its task at to_verify).
-  # For a single ready task, use single mode instead:
+  # For a single ready task, single mode is all you need:
   #   subagent({ agent: "chorus-worker", task: "..." })
 
   # 3. Proceed to Phase 4 (verification) for this wave
   wave += 1
 ```
 
+> Do **not** dispatch Chorus workers from a `workflowScript` — children created there are invisible to the extension's session hook, so they would get no Chorus session. One call per worker (or one bundled `tasks` composite) is the supported shape.
+
 **What each worker task needs:**
 - Task UUID + Project UUID
 - NO session UUID, NO workflow boilerplate -- the extension auto-injects via tool_call mutation
-- No `agentId` and no close step — the blocking call owns the worker's whole lifecycle
+- No `agentId` and no close step — the dispatch owns the worker's whole lifecycle
 
 
 #### Fallback: Main Agent (sequential)
@@ -418,7 +428,7 @@ for each task in wave_tasks:
     continue
 
   # 2. Spawn chorus-task-reviewer (the extension nudges you; you must spawn it yourself)
-  #    Use the blocking `subagent` tool (it waits for the VERDICT before returning)
+  #    Use the `subagent` tool and wait for its VERDICT comment
   subagent({ agent: "chorus-task-reviewer", task: "Review task <task-uuid>..." })
 
   # 3. Read task-reviewer VERDICT
@@ -467,7 +477,7 @@ Continue with remaining tasks -- do not halt the entire pipeline for one stuck t
 
 ### Phase 4.5: Code-Review Gateway (mandatory pre-ship)
 
-Once **every** task of the idea's proposal is verified (`done`) — i.e. Phase 3 finds no more unblocked tasks and all are terminal — run the final ship-time code-review gateway **before** declaring the Idea done and **before** the Phase 5b completion report. After the last task is verified, the extension nudges you to spawn the code-reviewer; you MUST spawn it yourself via the blocking `subagent` tool (it waits for the VERDICT).
+Once **every** task of the idea's proposal is verified (`done`) — i.e. Phase 3 finds no more unblocked tasks and all are terminal — run the final ship-time code-review gateway **before** declaring the Idea done and **before** the Phase 5b completion report. After the last task is verified, the extension nudges you to spawn the code-reviewer; you MUST spawn it yourself with the `subagent` tool and wait for its VERDICT.
 
 ```
 # Spawn the code-reviewer for the IDEA (not a task). Determine the round

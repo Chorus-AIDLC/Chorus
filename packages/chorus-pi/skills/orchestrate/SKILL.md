@@ -4,7 +4,7 @@ description: Multi-agent orchestration playbook — coordinate OTHER agents and 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.18.1"
+  version: "0.19.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -77,7 +77,7 @@ The extension ships three read-only reviewer subagents. As orchestrator you spaw
 | `chorus-task-reviewer` | a task is submitted for verify | one task vs its acceptance criteria (VERDICT on the task) |
 | `chorus-code-reviewer` | the idea's last task is verified | the idea's **aggregate** code change — the final ship gateway (VERDICT on the idea) |
 
-Spawn a reviewer via `subagent_spawn` with the reviewer skill and the target UUID; after it posts, `subagent_manage close` it to release Pi's concurrency slot. Each posts exactly one `VERDICT: PASS` / `PASS WITH NOTES` / `FAIL` comment. Verdicts are **advisory** — they do not auto-approve, auto-verify, or hard-block; you read the BLOCKERs and decide. A `FAIL` means route the BLOCKERs back for a fix before advancing (for a code-review FAIL, add fix tasks to the *approved* proposal via `/skill:quick-dev` and re-run once they are `done`). See `/skill:review` for the full pattern.
+Dispatch a reviewer with the `subagent` tool — `{ agent: "chorus-proposal-reviewer" | "chorus-task-reviewer" | "chorus-code-reviewer", task: "<target UUID> + what to review" }` — and wait for its VERDICT comment. There is no handle to close and no slot to release: the dispatch owns the child's lifecycle, and a reviewer gets no Chorus session. Each posts exactly one `VERDICT: PASS` / `PASS WITH NOTES` / `FAIL` comment. Verdicts are **advisory** — they do not auto-approve, auto-verify, or hard-block; you read the BLOCKERs and decide. A `FAIL` means route the BLOCKERs back for a fix before advancing (for a code-review FAIL, add fix tasks to the *approved* proposal via `/skill:quick-dev` and re-run once they are `done`). See `/skill:review` for the full pattern.
 
 ---
 

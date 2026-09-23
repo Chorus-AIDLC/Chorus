@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.18.1"
+  version: "0.19.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -225,7 +225,7 @@ chorus_submit_for_verify({
 
 > `to_verify` does NOT unblock downstream tasks — only `done` (after admin verification) does.
 
-> **Review Agent:** After `chorus_submit_for_verify`, the Chorus extension nudges you to spawn `chorus-task-reviewer` — an independent, read-only review agent. You MUST spawn it yourself (it is NOT auto-launched). **Use the blocking `subagent` tool** (it waits for the VERDICT and returns it) — wait for the VERDICT before proceeding. The reviewer posts a VERDICT comment on the task.
+> **Review Agent:** After `chorus_submit_for_verify`, the Chorus extension nudges you to spawn `chorus-task-reviewer` — an independent, read-only review agent. You MUST spawn it yourself (it is NOT auto-launched). **Spawn it with the `subagent` tool and wait for its VERDICT** — wait before proceeding. The verdict is the comment the reviewer posts on the task, not the call's return value.
 
 After the reviewer completes, read its VERDICT:
 ```
@@ -239,7 +239,7 @@ Find THIS round's `VERDICT:` comment — the one posted after your dispatch, not
 
 If no new `VERDICT:` comment appears after the reviewer returns, check what it *did* post. A comment reporting that the round limit was reached, or any other explicit refusal to review, is a deliberate escalation to a human: STOP — do not respawn, do not self-review, do not post a VERDICT of your own. If it posted nothing at all, respawn it ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you review the task yourself as a read-only pass using the checklist and POST the VERDICT comment. **Absence is never a PASS.**
 
-> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the extension nudges you to spawn `chorus-code-reviewer` (gated by `CHORUS_ENABLE_CODE_REVIEWER`, default on). Spawn it yourself via the blocking `subagent` tool, passing the `ideaUuid` + round number; it reviews the Idea's **aggregate** code change across all its tasks (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via `/skill:quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it — do NOT reopen the verified tasks). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates, bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (env, default 3; 0 = unlimited). Advisory/behavioral, like the other reviewers. Run it **before** any idea-completion report.
+> **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — the extension nudges you to spawn `chorus-code-reviewer` (gated by `CHORUS_ENABLE_CODE_REVIEWER`, default on). Spawn it yourself with the `subagent` tool, passing the `ideaUuid` + round number; it reviews the Idea's **aggregate** code change across all its tasks (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via `/skill:quick-dev` (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it — do NOT reopen the verified tasks). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates, bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (env, default 3; 0 = unlimited). Advisory/behavioral, like the other reviewers. Run it **before** any idea-completion report.
 
 ### Step 9: Handle Review Feedback
 
@@ -267,7 +267,7 @@ If the task you just self-verified was the LAST one of its Idea (every Task acro
 
 ## Session (Sub-Agents Only)
 
-The Chorus extension **fully automates** session lifecycle — a Chorus session is created (on `subagent` dispatch, via `tool_call` task injection) and closed (when the blocking `subagent` call returns) by the extension. Sub-agents only do 3 things manually:
+The Chorus extension **fully automates** session lifecycle — a Chorus session is created (on `subagent` dispatch, via `tool_call` task injection) and closed by the extension (when the call returns for a blocking implementation, or when the run settles — `subagent:async-complete` / `process-terminal` — under nicobailon `pi-subagents`). Sub-agents only do 3 things manually:
 
 1. `chorus_session_checkin_task({ sessionUuid, taskUuid })` — before starting work
 2. `chorus_session_checkout_task({ sessionUuid, taskUuid })` — when done (recommended; plugin also auto-checkouts on exit)
@@ -279,15 +279,22 @@ The Chorus extension **fully automates** session lifecycle — a Chorus session 
 
 ## Parallel Sub-Agent Integration
 
-Use the `subagent` tool to run multiple Chorus workers in parallel; Chorus provides full work observability. The `subagent` tool is **blocking** — a parallel dispatch runs every worker to completion and returns their aggregated output in one call (there is no async spawn, no `agentId`, and no manual close). The `chorus-pi` extension automates session lifecycle: when you dispatch a `chorus-worker`, it creates a Chorus session and injects the session UUID + workflow into that worker's task; when the `subagent` call returns, it closes the session.
+Use the `subagent` tool to run multiple Chorus workers in parallel; Chorus provides full work observability. **Both the dispatch shape and the run mode depend on the installed implementation**, so pick the shape that matches the active one:
 
-> The `subagent` tool has three modes — **single** (`{ agent, task }`), **parallel** (`{ tasks: [...] }`, max 8 per call, concurrency 4), and **chain** (`{ chain: [...] }`, sequential with a `{previous}` placeholder). Dispatch `agent: "chorus-worker"` for Chorus task implementation.
+| Implementation | Wave call shape | Run mode |
+|---|---|---|
+| Bundled subagent (pi's official reference pattern) | one composite call: `subagent({ tasks: [...] })` or `{ chain: [...] }` | blocking — the call returns when the workers exit |
+| nicobailon `pi-subagents` | **one single dispatch per worker** (`subagent({ agent, task })`), issued together for the same wave — it rejects top-level `tasks`/`chain` before dispatch | async/background by default — each call returns a run receipt; completion arrives on the run notification / `bg_wait` |
+
+Either way there is no `agentId` to track and no manual close. The `chorus-pi` extension automates session lifecycle: when you dispatch a `chorus-worker`, it creates a Chorus session and injects the session UUID + workflow into that worker's task, then closes the session when the dispatch returns (blocking) or when the run settles (`subagent:async-complete` / `process-terminal`).
+
+> The three modes — **single** (`{ agent, task }`), **parallel** (`{ tasks: [...] }`, max 8 per call, concurrency 4), and **chain** (`{ chain: [...] }`, sequential with a `{previous}` placeholder) — are the **bundled** subagent's schema. Under nicobailon `pi-subagents` the public tool rejects top-level `tasks`/`chain` (`Legacy top-level chain and parallel inputs were removed; use workflowScript.`), and its `workflowScript` children are invisible to the extension's session hook — so under nicobailon dispatch one worker per call. Dispatch `agent: "chorus-worker"` for Chorus task implementation.
 
 ### Two-Layer Architecture
 
 | Layer | System | Purpose |
 |-------|--------|---------|
-| **Orchestration** | The `subagent` tool (single / parallel / chain) | Dispatching workers to isolated pi subprocesses and collecting their results |
+| **Orchestration** | The `subagent` tool (one child per call; bundled-only `tasks`/`chain` composites) | Dispatching workers to isolated pi subprocesses and collecting their results |
 | **Work Tracking** | Chorus | Task lifecycle, session observability, activity stream |
 
 ### Team Lead Workflow
@@ -297,9 +304,9 @@ Use the `subagent` tool to run multiple Chorus workers in parallel; Chorus provi
 chorus_checkin()
 chorus_list_tasks({ projectUuid: "<project-uuid>" })
 
-# 2. Dispatch a worker per ready task in ONE blocking parallel call (max 8).
-# Pass only task + project UUIDs — the chorus-pi extension auto-injects the
-# session UUID + workflow into each worker's task.
+# 2. Dispatch a worker per ready task in ONE wave — the call shape follows the
+#    installed implementation:
+#      bundled subagent    → one composite call, max 8 entries:
 subagent({
   tasks: [
     { agent: "chorus-worker",
@@ -307,14 +314,23 @@ subagent({
     // ... one entry per ready task, max 8 (batch into multiple calls if more)
   ]
 })
-# The call BLOCKS until every worker finishes and returns their outputs.
-# For a single task, use single mode: subagent({ agent: "chorus-worker", task: "..." })
+#      nicobailon pi-subagents → one single dispatch per worker (it rejects
+#      top-level `tasks`); issue them together for the same wave:
+subagent({ agent: "chorus-worker", task: "Your Chorus task UUID: <task-uuid>\n..." })  # task 1
+subagent({ agent: "chorus-worker", task: "Your Chorus task UUID: <task-uuid>\n..." })  # task 2
+# Pass only task + project UUIDs — the chorus-pi extension auto-injects the
+# session UUID + workflow into each worker's task.
+# The composite call returns when every worker finishes (bundled subagent); each
+# nicobailon call returns a run receipt (async by default) — wait for the wave to
+# settle either way.
+# For a single task, single mode is all you need:
+#   subagent({ agent: "chorus-worker", task: "..." })
 ```
 
 **What the Team Lead prompt needs:**
 - Task UUID(s) + Project UUID
 - NO session UUID, NO workflow boilerplate — the extension auto-injects everything
-- No `agentId` to track and no close step — the blocking call owns the worker's whole lifecycle
+- No `agentId` to track and no close step — the dispatch owns the worker's whole lifecycle
 
 ### Sub-Agent Workflow
 
@@ -338,7 +354,7 @@ chorus_submit_for_verify({ taskUuid: "<my-task-uuid>", summary: "..." })
 
 # The worker's final message is returned to the Team Lead as the subagent result.
 # DO NOT call chorus_close_session — the extension closes the session when the
-# blocking `subagent` call returns.
+# dispatch returns (blocking) or when the run settles (async).
 ```
 
 ### Handling Task Dependencies (DAG)
@@ -347,12 +363,12 @@ chorus_submit_for_verify({ taskUuid: "<my-task-uuid>", summary: "..." })
 
 **Wave-based execution (recommended):**
 1. `chorus_get_unblocked_tasks` — find ready tasks
-2. Dispatch a `chorus-worker` per ready task in ONE blocking `subagent({ tasks: [...] })` call (max 8; batch if more). The call returns when the whole wave has finished (each worker at `to_verify`).
+2. Dispatch a `chorus-worker` per ready task as one wave — one `subagent({ tasks: [...] })` call under the bundled subagent (max 8; batch if more), or one `subagent({ agent, task })` call per ready task under nicobailon `pi-subagents` (which rejects top-level `tasks`). Wait for the whole wave to settle (each worker at `to_verify`): the bundled call returns when its workers exit; under nicobailon each call returns a run receipt, so wait on the run notifications / `bg_wait`.
 3. **Verify each task** — spawn `chorus-task-reviewer`, act on its VERDICT, then `chorus_admin_verify_task` → `done`.
 4. `chorus_get_unblocked_tasks` — find newly unblocked tasks (Wave 2)
 5. Repeat until all tasks done
 
-> **Critical:** `to_verify` does NOT resolve dependencies — only `done` or `closed` does. The Team Lead must verify tasks between waves. The blocking `subagent` call already released each worker's slot on return, so there is nothing to close.
+> **Critical:** `to_verify` does NOT resolve dependencies — only `done` or `closed` does. The Team Lead must verify tasks between waves. The dispatch already released each worker's slot once the wave settled, so there is nothing to close.
 
 ### Multiple Tasks Per Sub-Agent
 
@@ -365,7 +381,7 @@ subagent({
 })
 ```
 
-For strictly dependent stages where each step consumes the previous output, use chain mode: `subagent({ chain: [{ agent: "chorus-worker", task: "..." }, { agent: "chorus-worker", task: "... {previous} ..." }] })`.
+For strictly dependent stages where each step consumes the previous output, use chain mode — **bundled subagent only** (nicobailon `pi-subagents` has no top-level `chain`; run its stages as separate dispatches, or as `workflowScript` steps, which the session hook cannot reach): `subagent({ chain: [{ agent: "chorus-worker", task: "..." }, { agent: "chorus-worker", task: "... {previous} ..." }] })`.
 
 ### MCP Access for Sub-Agents
 

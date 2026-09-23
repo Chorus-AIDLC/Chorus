@@ -164,8 +164,11 @@ Each npm package's Trusted Publisher settings must match:
 The workflow file path is `.github/workflows/publish-npm.yml`; npm's Trusted
 Publisher form takes the filename, not the full path. The job runs on a
 GitHub-hosted runner with `id-token: write`, does not use `NPM_TOKEN` or
-`NODE_AUTH_TOKEN`, and leaves provenance enabled. Public-repository publishes
-must expose an SLSA provenance attestation after upload.
+`NODE_AUTH_TOKEN`, and leaves automatic provenance enabled. A zero exit status
+from `npm publish` is sufficient for the workflow to record `accepted-by-npm`
+and continue. Registry visibility and provenance metadata can lag behind npm's
+acceptance; do not wait for them or fail an accepted upload because they are
+not yet visible.
 
 **New package — one-time ops step for `@chorus-aidlc/chorus-pi`.** chorus-pi is
 the 4th coordinated package and was added after the first three. Before its
@@ -212,8 +215,8 @@ gh release view vX.Y.Z
 - [ ] PR from `develop` → `main` created, CI passed, and merged
 - [ ] `gh release create` with tag targeting `main`
 - [ ] `@chorus-aidlc/chorus-pi` Trusted Publisher registered on npmjs.org (one-time, before its first coordinated publish)
-- [ ] `publish-npm.yml` run passed for all four packages (published or safely skipped)
-- [ ] Public-package provenance attestations were verified by the workflow
+- [ ] `publish-npm.yml` run passed for all four packages (`accepted-by-npm` or safely skipped)
+- [ ] Automatic provenance remained enabled; registry propagation was not a release gate
 - [ ] Release notes contain only the new version's section
 - [ ] `develop` synced with `main` after merge
 - [ ] `gh release view` confirms everything looks correct
