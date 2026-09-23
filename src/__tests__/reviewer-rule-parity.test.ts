@@ -327,45 +327,95 @@ describe("reviewer definition parity across all surfaces", () => {
     ({ file }) => {
       const declared = JSON.parse(readFileSync(path.join(REPO_ROOT, file), "utf8")) as {
         tools?: string[];
-        permissions?: { rules?: Array<{ capability: string; match: string[]; effect: string }> };
+        permissions?: unknown;
+        toolsSettings?: {
+          shell?: {
+            autoAllowReadonly?: boolean;
+            denyByDefault?: boolean;
+            deniedCommands?: string[];
+            allowedCommands?: string[];
+          };
+        };
       };
 
       it("grants read + read-only shell + @chorus, and never write", () => {
         expect(declared.tools, `${file}: unexpected tool grant`).toEqual(["read", "shell", "@chorus"]);
       });
 
-      // Kiro's agent profile supports `permissions.rules` (capability / match /
-      // effect), so this is the one surface where read-only-ness can be enforced
-      // by configuration rather than only instructed by the prompt. An earlier
-      // revision wrongly claimed no per-command scoping existed and accepted
-      // prompt-only enforcement on that basis.
-      it("denies mutating operations by configuration, not only by prompt", () => {
-        const rules = declared.permissions?.rules;
-        expect(Array.isArray(rules) && rules.length > 0, `${file}: no permissions.rules`).toBe(true);
-
-        // Deny-only: an allow-list would have to name project-specific test and
-        // build commands, and these templates install into arbitrary repos.
+      // Kiro is the one surface whose grant is declarative, so it is the one
+      // surface where read-only-ness can be enforced by configuration rather than
+      // only instructed by the prompt. These templates target Kiro 2.x, so the
+      // mechanism is `toolsSettings.shell`, not the CLI 3.0 `permissions.rules`
+      // key whose handling on 2.x is undocumented.
+      it("enforces read-only with the Kiro 2.x mechanism, not the 3.0 key", () => {
+        expect(declared.permissions, `${file}: carries the CLI 3.0 permissions key`).toBeUndefined();
+        const shell = declared.toolsSettings?.shell;
+        expect(shell, `${file}: no toolsSettings.shell`).toBeDefined();
+        expect(shell!.autoAllowReadonly, `${file}: autoAllowReadonly must be on`).toBe(true);
         expect(
-          [...new Set(rules!.map((r) => r.effect))],
-          `${file}: permissions must be deny-only`,
-        ).toEqual(["deny"]);
-
-        expect(
-          rules!.some((r) => r.capability === "fs_write"),
-          `${file}: missing an fs_write deny rule`,
+          Array.isArray(shell!.deniedCommands) && shell!.deniedCommands.length > 0,
+          `${file}: deniedCommands must be non-empty`,
         ).toBe(true);
+      });
 
-        const shellPatterns = rules!.filter((r) => r.capability === "shell").flatMap((r) => r.match);
-        for (const required of ["git commit", "pip install", "sudo "]) {
+      // Kiro anchors these patterns with \A and \z. A prefix-style pattern such
+      // as `git commit` therefore matches ONLY that exact command line and
+      // silently enforces nothing — `git commit -m "x"` would pass.
+      it("writes anchor-safe patterns", () => {
+        const shell = declared.toolsSettings!.shell!;
+        for (const p of [...shell.deniedCommands!, ...(shell.allowedCommands ?? [])]) {
+          const takesArgs = / |-/.test(p);
+          const wildcardTerminated = /\.\*\)?$/.test(p);
           expect(
-            shellPatterns.some((p) => p.startsWith(required)),
-            `${file}: shell deny patterns must cover ${required}`,
+            !takesArgs || wildcardTerminated,
+            `${file}: pattern "${p}" is meant to match arguments but is not wildcard-terminated; ` +
+              `anchoring with \\A and \\z reduces it to an exact-string match`,
           ).toBe(true);
+          expect(() => new RegExp(`^(?:${p})$`), `${file}: pattern "${p}" is not a valid regex`).not.toThrow();
         }
-        expect(
-          shellPatterns.some((p) => /^(rm |mv |tee )/.test(p)),
-          `${file}: shell deny patterns must cover file-write commands`,
-        ).toBe(true);
+      });
+
+      it("denies mutating commands and leaves read-only ones alone", () => {
+        const deny = declared.toolsSettings!.shell!.deniedCommands!;
+        const denies = (cmd: string) => deny.some((p) => new RegExp(`^(?:${p})$`).test(cmd));
+
+        for (const cmd of [
+          'git commit -m "x"',
+          "pip install requests",
+          "rm -rf build",
+          "sudo apt install x",
+          "curl -X POST https://host/path",
+        ]) {
+          expect(denies(cmd), `${file}: must deny \`${cmd}\``).toBe(true);
+        }
+        for (const cmd of ["git log --oneline", "grep -rn foo src/"]) {
+          expect(denies(cmd), `${file}: must not deny read-only \`${cmd}\``).toBe(false);
+        }
+      });
+
+      it("uses denyByDefault only where no project command is needed", () => {
+        const shell = declared.toolsSettings!.shell!;
+        const isProposal = file.includes("proposal-reviewer");
+        if (isProposal) {
+          // Proposal review precedes implementation, so its contract forbids test
+          // and build runs outright. denyByDefault plus a project-independent
+          // read-only allow-list enforces exactly that.
+          expect(shell.denyByDefault, `${file}: proposal review must deny by default`).toBe(true);
+          const allow = shell.allowedCommands ?? [];
+          const allows = (cmd: string) => allow.some((p) => new RegExp(`^(?:${p})$`).test(cmd));
+          for (const cmd of ["pnpm test", "make build", "cargo test"]) {
+            expect(allows(cmd), `${file}: must not allow \`${cmd}\``).toBe(false);
+          }
+          for (const cmd of ["ls -la", "git ls-files", "grep -rn x src/"]) {
+            expect(allows(cmd), `${file}: must allow read-only \`${cmd}\``).toBe(true);
+          }
+        } else {
+          // The code and task reviewers must run the project's own test and build
+          // commands, which these templates cannot know, so denyByDefault would
+          // block their defining job and no allow-list may be shipped.
+          expect(shell.denyByDefault ?? false, `${file}: must not deny by default`).toBe(false);
+          expect(shell.allowedCommands, `${file}: must ship no command allow-list`).toBeUndefined();
+        }
       });
 
       it("states a read-only shell posture instead of claiming it has no shell", () => {
