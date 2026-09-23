@@ -60,6 +60,19 @@ chorus_get_document({ documentUuid: "<doc-uuid>" })
 
 **Hallucination check:** Flag anything that looks LLM-fabricated as NOTE — API signatures, CLI flags, config keys, model IDs, endpoint URLs, package names, or any external detail the developer likely wrote from memory.
 
+**Code quality and correctness beyond the AC — checked by default**
+
+The AC were written before the code existed: they describe what to build, never how well it was built. Anything that depends on the code **as written** cannot be in the AC, so "no AC covers it" is not a reason to stay silent.
+
+- **Correctness without an AC.** Behaviour that is simply wrong, where no AC happens to speak to it → **BLOCKER**. You do not need an acceptance criterion to report a bug.
+- **Reimplementation.** Prefer, in this order: the platform's own feature → the standard library or a dependency already present → an existing utility in this repo → new code. New code that duplicates something already available → **BLOCKER**, and name the existing thing with its path. "This could be shorter" with nothing named is not a finding.
+- **Security in this task's own code.** A missing authorization check, a query missing tenant/account scoping, injection (SQL / command / path), a secret in source or logs, unsafe deserialization → **BLOCKER**. Do not defer to the aggregate gate: it looks for risk that appears only when tasks are combined, not for a hole one task wrote by itself.
+- **Tests that cannot fail.** A test offered as covering an AC that only asserts a mock was called, snapshots nothing, or asserts a tautology → **BLOCKER**: that AC is unverified. Thin-but-real tests → NOTE.
+- **Silent failure.** An empty catch, an error logged then discarded, an ignored rejected promise, a failure path that returns success → **BLOCKER**.
+- **Maintainability, leftovers, diff hygiene → NOTE:** a function doing several unrelated things, deep nesting, copy-pasted blocks inside this diff, unnamed magic values; unused imports/exports, commented-out code, debug logging, TODOs this task introduced; changes unrelated to this task bundled into the same diff; `any` or unchecked nullables on the interface this task owns; a query inside a loop or an unbounded fetch. Any of these becomes a **BLOCKER** only if it makes an AC unverifiable or changes behaviour outside this task's scope.
+
+**Severity rule.** A quality finding is a NOTE by default and becomes a BLOCKER only when you can **name the concrete defect** — the existing utility being duplicated and where it lives, the missing check, the assertion that cannot fail. Taste never blocks: if you cannot point at it, it is a NOTE or it is nothing. Report the cheapest concrete change, never a redesign.
+
 **Step 7: Intent alignment**
 
 Resolve the originating Idea (this task's proposal → `inputUuids[0]`) and read its body + human-answered elaboration + human-authored comments (`answeredBy.type` / `author.type == "user"`; agent-authored entries are audit context, not intent). Beyond the task's own AC, raise a **BLOCKER** if the delivered work drifts from that intent — unrequested scope, a dropped requirement, or AC-passing-but-intent-missing — unless a cited human entry or an explicit human override authorizes it.
@@ -70,7 +83,7 @@ Resolve the originating Idea (this task's proposal → `inputUuids[0]`) and read
 
 **NOTE** — does not block: pseudocode signature mismatch; wording differences between docs and comments; style/naming suggestions; non-semantic inconsistencies.
 
-Rules: Pseudocode inconsistencies → always NOTE. Cross-document wording differences → always NOTE. Only functional/behavioral issues → BLOCKER. VERDICT: has BLOCKERs → FAIL; only NOTEs → PASS WITH NOTES; nothing → PASS.
+Rules: Style, naming, and pseudocode inconsistencies → always NOTE. Functional, security, and verification-integrity issues → BLOCKER. A quality finding blocks only when you can name the concrete defect. VERDICT: has BLOCKERs → FAIL; only NOTEs → PASS WITH NOTES; nothing → PASS.
 
 ## What to report / what NOT to report
 

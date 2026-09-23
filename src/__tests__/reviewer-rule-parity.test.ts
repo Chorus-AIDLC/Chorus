@@ -185,6 +185,40 @@ const COVERAGE_RULES: Partial<Record<ReviewerKind, ReadonlyArray<{ label: string
     },
     { label: "delegated inter-task gaps name the owning gate", pattern: /aggregate code reviewer owns inter-task gaps/i },
     { label: "severity is not lowered for lack of a shell", pattern: /as written|never lower/i },
+
+    // The AC are authored before the code exists, so they describe what to build
+    // and never how well it was built. Without these, a defect no criterion
+    // happens to mention had no owner: the task gate was AC-driven and the
+    // aggregate gate declines to "redo the per-line review each task passed".
+    {
+      label: "the AC are a floor, not a ceiling",
+      pattern: /not a reason to stay silent|no AC covers it/i,
+    },
+    { label: "correctness is checked without an AC", pattern: /correctness without an AC/i },
+    {
+      label: "reimplementation preference order, with the existing thing named",
+      pattern: /reimplementation/i,
+    },
+    {
+      label: "a brevity opinion with nothing named is not a finding",
+      pattern: /nothing named is not a finding/i,
+    },
+    {
+      // The aggregate gate's security dimension is scoped to risk that appears
+      // only when tasks are combined, so a hole one task wrote alone had no gate.
+      label: "security defects in this task's own code are BLOCKER-bearing",
+      pattern: /security in this task'?s own code/i,
+    },
+    { label: "a test that cannot fail leaves its AC unverified", pattern: /tests that cannot fail/i },
+    { label: "silent failure is BLOCKER-bearing", pattern: /silent failure/i },
+    {
+      // Anchored on "Taste never blocks", which appears only in the block's own
+      // severity paragraph. A bare /name the concrete defect/ would be vacuous:
+      // the rewritten classification rule carries that phrase too, so deleting
+      // the paragraph outright would still have passed.
+      label: "quality findings block only on a nameable concrete defect",
+      pattern: /Taste never blocks/i,
+    },
   ],
   code: [
     { label: "feature-level intent drift is named in the DO list", pattern: /intent drift/i },
@@ -205,6 +239,13 @@ const SUPERSEDED: ReadonlyArray<{ label: string; pattern: RegExp }> = [
     // Demoted every statically-visible defect to NOTE; see COVERAGE_RULES above.
     label: "run-evidence-only BLOCKER bar",
     pattern: /BLOCKER (?:requires|needs) demonstration/i,
+  },
+  {
+    // Contradicts the reimplementation, verification-integrity and security
+    // dimensions: a duplicated utility and a tautological test are neither
+    // functional nor behavioural, yet both are BLOCKERs.
+    label: "BLOCKER severity restricted to functional/behavioural issues alone",
+    pattern: /only functional ?\/? ?\/? ?behavio[u]?ral issues/i,
   },
 ];
 
