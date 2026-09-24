@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { motion, AnimatePresence } from "framer-motion";
@@ -39,75 +39,117 @@ export function CreateProjectDialog({
 }: CreateProjectDialogProps) {
   const t = useTranslations();
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cwdError, setCwdError] = useState<{ agentUuid: string; message: string } | null>(null);
   const [success, setSuccess] = useState(false);
   const cwdSettingsRef = useRef<ProjectAgentCwdSettingsHandle>(null);
+  const submittingRef = useRef(false);
+  const mountedRef = useRef(false);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (successTimerRef.current !== null) {
+        clearTimeout(successTimerRef.current);
+      }
+    };
+  }, []);
 
   const displayGroupName = groupName || t("projectGroups.ungrouped");
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!submittingRef.current) onOpenChange(nextOpen);
+  };
+
   const handleSubmit = async () => {
-    if (!title.trim()) return;
+    if (submittingRef.current || !mountedRef.current || !title.trim()) return;
+    // Lock before validation: React state alone cannot exclude same-tick events.
+    submittingRef.current = true;
+    setIsPending(true);
+    const submittedProject = {
+      name: title.trim(),
+      description: description.trim() || undefined,
+      groupUuid: groupUuid || undefined,
+    };
     setError(null);
     setCwdError(null);
-    const cwdDrafts = await cwdSettingsRef.current?.validate();
-    if (!cwdDrafts) return;
+    let created = false;
 
-    startTransition(async () => {
-      try {
-        const res = await fetch("/api/projects", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: title.trim(),
-            description: description.trim() || undefined,
-            groupUuid: groupUuid || undefined,
-            agentCwds: cwdDrafts.upserts.map(({ agentUuid, validationRequestUuid }) => ({
-              agentUuid,
-              validationRequestUuid,
-            })),
-          }),
-        });
-        const data = await res.json();
+    try {
+      const cwdDrafts = await cwdSettingsRef.current?.validate();
+      if (!mountedRef.current || !cwdDrafts) return;
 
-        if (data.success) {
-          setSuccess(true);
-          setTimeout(() => {
-            setTitle("");
-            setDescription("");
-            onOpenChange(false);
-            onCreated?.();
-            router.refresh();
-            setSuccess(false);
-          }, 600);
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...submittedProject,
+          agentCwds: cwdDrafts.upserts.map(({ agentUuid, validationRequestUuid }) => ({
+            agentUuid,
+            validationRequestUuid,
+          })),
+        }),
+      });
+      if (!mountedRef.current) return;
+      const data = await res.json();
+      if (!mountedRef.current) return;
+
+      if (data.success) {
+        created = true;
+        setSuccess(true);
+        // Keep the lock until successful closure, including the feedback interval.
+        successTimerRef.current = setTimeout(() => {
+          successTimerRef.current = null;
+          if (!mountedRef.current) return;
+          setTitle("");
+          setDescription("");
+          setSuccess(false);
+          setIsPending(false);
+          onOpenChange(false);
+          submittingRef.current = false;
+          if (mountedRef.current) onCreated?.();
+          if (mountedRef.current) router.refresh();
+        }, 600);
+      } else {
+        const message = typeof data.error === "object" && data.error
+          ? data.error.message
+          : data.error;
+        const agentUuid = typeof data.error === "object" && data.error
+          && typeof data.error.details?.agentUuid === "string"
+          ? data.error.details.agentUuid
+          : null;
+        if (agentUuid) {
+          setCwdError({ agentUuid, message: message || t("projects.createFailed") });
         } else {
-          const message = typeof data.error === "object" && data.error
-            ? data.error.message
-            : data.error;
-          const agentUuid = typeof data.error === "object" && data.error
-            && typeof data.error.details?.agentUuid === "string"
-            ? data.error.details.agentUuid
-            : null;
-          if (agentUuid) {
-            setCwdError({ agentUuid, message: message || t("projects.createFailed") });
-          } else {
-            setError(message || t("projects.createFailed"));
-          }
+          setError(message || t("projects.createFailed"));
         }
-      } catch {
-        setError(t("common.genericError"));
       }
-    });
+    } catch {
+      if (mountedRef.current) setError(t("common.genericError"));
+    } finally {
+      if (!created && mountedRef.current) {
+        submittingRef.current = false;
+        setIsPending(false);
+      }
+    }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className="flex max-h-[90svh] flex-col gap-0 overflow-hidden rounded-[16px] p-0 sm:max-w-[620px]"
         showCloseButton={false}
+        onEscapeKeyDown={(event) => {
+          if (submittingRef.current) event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          if (submittingRef.current) event.preventDefault();
+        }}
       >
         <DialogHeader className="flex flex-row items-center justify-between p-[20px_24px] border-b border-[#E5E2DC] dark:border-[#2a2a2e]">
           <div className="flex flex-col gap-1">
@@ -169,7 +211,8 @@ export function CreateProjectDialog({
         <div className="flex justify-end gap-3 p-[16px_24px] border-t border-[#E5E2DC] dark:border-[#2a2a2e]">
           <Button
             variant="outline"
-            onClick={() => onOpenChange(false)}
+            onClick={() => handleOpenChange(false)}
+            disabled={isPending}
             className="rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] text-[13px]"
           >
             {t("common.cancel")}
