@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useRef,
   useState,
 } from "react";
 import { useTranslations } from "next-intl";
@@ -61,6 +62,7 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
   const [drafts, setDrafts] = useState<Record<string, ProjectAgentCwdDraft>>(
     () => initialDrafts ?? {},
   );
+  const draftsRef = useRef(drafts);
   const [clears, setClears] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
@@ -89,6 +91,7 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
   }, [load]);
 
   const updateMutations = (next: Record<string, ProjectAgentCwdDraft>, nextClears: Set<string>) => {
+    draftsRef.current = next;
     setDrafts(next);
     setClears(nextClears);
     onDraftsChange?.(next);
@@ -121,19 +124,19 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
     validate: async (signal) => {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const validated: ProjectAgentCwdMutations["upserts"] = [];
-      let nextDrafts = drafts;
       for (const draft of Object.values(drafts)) {
         try {
           const result = await validateDirectorySelection(draft, signal);
           if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
           validated.push(result);
-          nextDrafts = {
-            ...nextDrafts,
-            [draft.agentUuid]: result,
-          };
-          const validatedDrafts = nextDrafts;
-          setDrafts((current) => signal?.aborted ? current : validatedDrafts);
-          onDraftsChange?.(validatedDrafts);
+          // Keep the submitted snapshot separate from edits made while awaiting.
+          // Only normalize a selection that the user has not replaced or cleared.
+          if (draftsRef.current[draft.agentUuid] === draft) {
+            const next = { ...draftsRef.current, [draft.agentUuid]: result };
+            draftsRef.current = next;
+            setDrafts(next);
+            onDraftsChange?.(next);
+          }
         } catch (validationError) {
           if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
           if (

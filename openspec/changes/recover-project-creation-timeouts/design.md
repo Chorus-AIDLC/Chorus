@@ -8,6 +8,8 @@ Use one current attempt object from validation start. Its identity, AbortControl
 
 During validation, Cancel, Escape and outside dismissal abort the actual directory request/poll, invalidate the attempt and preserve drafts. Both the validation adapter and dialog recheck cancellation after awaiting. Existing no-argument validation callers remain compatible. Directory drafts are retained in the dialog parent because Radix unmounts content on dismissal.
 
+Validation returns the submitted snapshot, but normalization merges into the latest editable draft map and is published to the parent only if that Agent's selection is still unchanged. Other Agents' new drafts, replaced selections and explicit clears must survive a pending validation result.
+
 Once POST starts, block dismissal for at most 20 seconds including response-body reading. Do not abort POST at this UI deadline: continue listening for a definitive result. Timeout, transport/parse failures, malformed responses and 5xx leave the outcome unconfirmed. Only a recognized API 4xx rejection or a valid success resolves it.
 
 Unconfirmed state allows dismissal but disables submission, including after close/reopen. The message explicitly says the old request may still create a project even when absent from the list. The action “I've checked the list and still want to create again” releases the guard for an informed new operation; it does not submit automatically or establish that the earlier operation failed.

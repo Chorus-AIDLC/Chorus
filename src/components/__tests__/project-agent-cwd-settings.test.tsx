@@ -10,7 +10,8 @@ vi.mock("next-intl", () => ({
 const validateDirectorySelection = vi.fn();
 vi.mock("@/components/agent-presence/directory-browser", () => ({
   validateDirectorySelection: (...args: unknown[]) => validateDirectorySelection(...args),
-  DirectoryBrowser: ({ onSelectionChange, showConfirm }: {
+  DirectoryBrowser: ({ agentUuid, onSelectionChange, showConfirm }: {
+    agentUuid: string;
     onSelectionChange: (selection: Record<string, string>) => void;
     showConfirm: boolean;
   }) => (
@@ -18,13 +19,13 @@ vi.mock("@/components/agent-presence/directory-browser", () => ({
       <button
         type="button"
         onClick={() => onSelectionChange({
-          agentUuid: "agent-1",
+          agentUuid,
           connectionUuid: "connection-1",
           host: "host-1",
-          cwd: "/workspace/draft",
+          cwd: agentUuid === "agent-1" ? "/workspace/draft" : "/workspace/agent-2",
         })}
       >
-        choose draft
+        {agentUuid === "agent-1" ? "choose draft" : "choose agent-2"}
       </button>
       {showConfirm && <button type="button">confirm cwd</button>}
     </div>
@@ -254,4 +255,66 @@ describe("ProjectAgentCwdSettings", () => {
     expect(onDraftsChange).toHaveBeenLastCalledWith({});
     expect(screen.queryByText("/workspace/draft")).toBeNull();
   });
+
+  it.each(["add another agent", "replace selection", "clear selection"])(
+    "preserves newer drafts when the user chooses to %s during validation",
+    async (edit) => {
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { agents: ["agent-1", "agent-2"].map((uuid) => ({
+            agent: { uuid, name: uuid }, onlineInstances: [], preference: null,
+          })) },
+        }),
+      } as Response);
+      let resolve!: (value: ProjectAgentCwdDraft) => void;
+      validateDirectorySelection.mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+      const ref = createRef<ProjectAgentCwdSettingsHandle>();
+      const onDraftsChange = vi.fn();
+      const original = { ...draft, cwd: "/workspace/original" };
+      const { unmount } = render(<ProjectAgentCwdSettings
+        ref={ref}
+        initialDrafts={{ "agent-1": original }}
+        onDraftsChange={onDraftsChange}
+      />);
+      await screen.findByText("agent-2");
+      const pending = ref.current!.validate(new AbortController().signal);
+      if (edit === "add another agent") {
+        fireEvent.click(screen.getByLabelText("projectSettings.agentCwds.configure"));
+        fireEvent.click(screen.getByText("choose agent-2"));
+      } else if (edit === "replace selection") {
+        fireEvent.click(screen.getByLabelText("projectSettings.agentCwds.replace"));
+        fireEvent.click(screen.getByText("choose draft"));
+      } else {
+        fireEvent.click(screen.getByLabelText("projectSettings.agentCwds.clear"));
+      }
+      const normalized = { ...original, cwd: "/normalized/original", validationRequestUuid: "old-token" };
+      await act(async () => {
+        resolve(normalized);
+        // Submitted payload still belongs to the original operation.
+        await expect(pending).resolves.toEqual({ upserts: [normalized], clears: [] });
+      });
+      const retained = onDraftsChange.mock.calls.at(-1)![0];
+      if (edit === "add another agent") {
+        expect(screen.getByText("/workspace/agent-2")).toBeTruthy();
+        expect(retained).toEqual({
+          "agent-1": normalized,
+          "agent-2": { ...draft, agentUuid: "agent-2", cwd: "/workspace/agent-2" },
+        });
+      } else if (edit === "replace selection") {
+        expect(screen.getByText("/workspace/draft")).toBeTruthy();
+        expect(retained).toEqual({ "agent-1": draft });
+      } else {
+        expect(screen.queryByText("/normalized/original")).toBeNull();
+        expect(retained).toEqual({});
+      }
+      unmount();
+      render(<ProjectAgentCwdSettings initialDrafts={retained} />);
+      await screen.findByText("agent-2");
+      if (edit === "add another agent") expect(screen.getByText("/workspace/agent-2")).toBeTruthy();
+      else if (edit === "replace selection") expect(screen.getByText("/workspace/draft")).toBeTruthy();
+      else expect(screen.queryByText("/normalized/original")).toBeNull();
+    },
+  );
 });
