@@ -54,6 +54,17 @@ The dialog SHALL preserve drafts, permit cancellation before POST, and distingui
 - **AND** a late successful creation can refresh data without closing the new dialog
 - **AND** no callbacks run after unmount
 
+#### Scenario: Dismissed late success requires a new-operation acknowledgement
+- **WHEN** a dismissed but still current attempt succeeds, whether the dialog remains closed or has been reopened
+- **THEN** the dialog preserves drafts and displays that the previous request created a project
+- **AND** ordinary Enter or submit remains blocked across reopening until the user explicitly confirms creating another project
+- **AND** a superseded attempt only refreshes data and does not change the current operation
+
+#### Scenario: Unexpected cancellation-shaped failure
+- **WHEN** validation rejects with AbortError but this attempt's signal is not aborted
+- **THEN** the dialog shows an error and permits deliberate retry
+- **AND** only actual cancellation of this attempt suppresses the error
+
 ### Requirement: Preserve creation semantics
 The dialog SHALL preserve group and cwd payloads, title validation and IME behavior.
 
