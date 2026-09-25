@@ -20,6 +20,7 @@ import { isImeComposing } from "@/lib/ime";
 import {
   ProjectAgentCwdSettings,
   type ProjectAgentCwdSettingsHandle,
+  type ProjectAgentCwdDraft,
 } from "@/components/project-agent-cwd-settings";
 
 interface CreateProjectDialogProps {
@@ -27,8 +28,23 @@ interface CreateProjectDialogProps {
   onOpenChange: (open: boolean) => void;
   groupUuid: string | null;
   groupName: string;
+  /** Refresh data only: may run for a late success after this dialog was reopened. */
   onCreated?: () => void;
 }
+
+type Phase = "idle" | "validating" | "posting" | "unconfirmed" | "success";
+interface CreationAttempt {
+  controller: AbortController;
+  phase: Phase;
+  dismissed: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+const CREATE_WAIT_MS = 20_000;
+// These API rejections occur before creation or after the cwd transaction rolls back.
+const REJECTION_CODES = new Set([
+  "BAD_REQUEST", "UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND", "CONFLICT", "VALIDATION_ERROR",
+]);
 
 export function CreateProjectDialog({
   open,
@@ -39,38 +55,81 @@ export function CreateProjectDialog({
 }: CreateProjectDialogProps) {
   const t = useTranslations();
   const router = useRouter();
-  const [isPending, setIsPending] = useState(false);
+  const [phase, setPhase] = useState<Phase>("idle");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cwdError, setCwdError] = useState<{ agentUuid: string; message: string } | null>(null);
-  const [success, setSuccess] = useState(false);
+  const [cwdDrafts, setCwdDrafts] = useState<Record<string, ProjectAgentCwdDraft>>({});
   const cwdSettingsRef = useRef<ProjectAgentCwdSettingsHandle>(null);
-  const submittingRef = useRef(false);
+  const attemptRef = useRef<CreationAttempt | null>(null);
   const mountedRef = useRef(false);
-  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const callbacksRef = useRef({ onOpenChange, onCreated, router });
+  const isPending = phase === "validating" || phase === "posting";
+  const success = phase === "success";
+  const dismissalBlocked = phase === "posting" || success;
+
+  useEffect(() => {
+    callbacksRef.current = { onOpenChange, onCreated, router };
+  });
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (successTimerRef.current !== null) {
-        clearTimeout(successTimerRef.current);
-      }
+      const attempt = attemptRef.current;
+      attempt?.controller.abort();
+      clearTimeout(attempt?.timer);
+      attemptRef.current = null;
     };
   }, []);
 
+  // Also handle a host closing the dialog without going through Radix's callback.
+  useEffect(() => {
+    const attempt = attemptRef.current;
+    if (!open && attempt) {
+      attempt.dismissed = true;
+      if (attempt.phase === "validating") {
+        attempt.controller.abort();
+        attemptRef.current = null;
+        setPhase("idle");
+      }
+    }
+  }, [open]);
+
   const displayGroupName = groupName || t("projectGroups.ungrouped");
+  const isCurrent = (attempt: CreationAttempt) =>
+    mountedRef.current && attemptRef.current === attempt;
+  const blocksDismissal = () =>
+    attemptRef.current?.phase === "posting" || attemptRef.current?.phase === "success";
 
   const handleOpenChange = (nextOpen: boolean) => {
-    if (!submittingRef.current) onOpenChange(nextOpen);
+    if (blocksDismissal()) return;
+    const attempt = attemptRef.current;
+    if (!nextOpen && attempt) {
+      attempt.dismissed = true;
+      if (attempt.phase === "validating") {
+        attempt.controller.abort();
+        attemptRef.current = null;
+        setPhase("idle");
+      }
+    }
+    onOpenChange(nextOpen);
+  };
+
+  const refreshProjects = () => {
+    if (mountedRef.current) callbacksRef.current.onCreated?.();
+    if (mountedRef.current) callbacksRef.current.router.refresh();
   };
 
   const handleSubmit = async () => {
-    if (submittingRef.current || !mountedRef.current || !title.trim()) return;
-    // Lock before validation: React state alone cannot exclude same-tick events.
-    submittingRef.current = true;
-    setIsPending(true);
+    if (attemptRef.current || !mountedRef.current || !open || !title.trim()) return;
+    // Identity and lock are installed synchronously, before the first await.
+    const attempt: CreationAttempt = {
+      controller: new AbortController(), phase: "validating", dismissed: false,
+    };
+    attemptRef.current = attempt;
+    setPhase("validating");
     const submittedProject = {
       name: title.trim(),
       description: description.trim() || undefined,
@@ -78,18 +137,36 @@ export function CreateProjectDialog({
     };
     setError(null);
     setCwdError(null);
-    let created = false;
+
+    const release = () => {
+      if (!isCurrent(attempt)) return;
+      clearTimeout(attempt.timer);
+      attemptRef.current = null;
+      setPhase("idle");
+    };
+    const markUnconfirmed = () => {
+      if (!isCurrent(attempt)) return;
+      clearTimeout(attempt.timer);
+      attempt.phase = "unconfirmed";
+      setPhase("unconfirmed");
+    };
 
     try {
-      const cwdDrafts = await cwdSettingsRef.current?.validate();
-      if (!mountedRef.current || !cwdDrafts) return;
+      const validated = await cwdSettingsRef.current?.validate(attempt.controller.signal);
+      if (!isCurrent(attempt) || attempt.controller.signal.aborted) return;
+      if (!validated) { release(); return; }
 
+      attempt.phase = "posting";
+      setPhase("posting");
+      // Bound the UI wait, including response-body reading. Aborting a POST does
+      // not roll back the server, so keep listening for a definitive late result.
+      attempt.timer = setTimeout(markUnconfirmed, CREATE_WAIT_MS);
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...submittedProject,
-          agentCwds: cwdDrafts.upserts.map(({ agentUuid, validationRequestUuid }) => ({
+          agentCwds: validated.upserts.map(({ agentUuid, validationRequestUuid }) => ({
             agentUuid,
             validationRequestUuid,
           })),
@@ -98,45 +175,66 @@ export function CreateProjectDialog({
       if (!mountedRef.current) return;
       const data = await res.json();
       if (!mountedRef.current) return;
+      clearTimeout(attempt.timer);
 
-      if (data.success) {
-        created = true;
-        setSuccess(true);
-        // Keep the lock until successful closure, including the feedback interval.
-        successTimerRef.current = setTimeout(() => {
-          successTimerRef.current = null;
-          if (!mountedRef.current) return;
+      if (res.ok && data?.success === true && typeof data.data?.uuid === "string") {
+        if (!isCurrent(attempt) || attempt.dismissed) {
+          // A closed/reopened dialog belongs to the user now. Only refresh data.
+          release();
+          refreshProjects();
+          return;
+        }
+        attempt.phase = "success";
+        setPhase("success");
+        attempt.timer = setTimeout(() => {
+          if (!isCurrent(attempt)) return;
+          if (attempt.dismissed) {
+            release();
+            refreshProjects();
+            return;
+          }
           setTitle("");
           setDescription("");
-          setSuccess(false);
-          setIsPending(false);
-          onOpenChange(false);
-          submittingRef.current = false;
-          if (mountedRef.current) onCreated?.();
-          if (mountedRef.current) router.refresh();
+          setCwdDrafts({});
+          release();
+          callbacksRef.current.onOpenChange(false);
+          refreshProjects();
         }, 600);
+      } else if (data?.success === false && res.status >= 400 && res.status < 500
+        && REJECTION_CODES.has(data.error?.code)) {
+        if (!isCurrent(attempt)) return;
+        release();
+        if (attempt.dismissed) return;
+        const message = typeof data.error.message === "string"
+          ? data.error.message : t("projects.createFailed");
+        const agentUuid = data.error.details?.agentUuid;
+        if (typeof agentUuid === "string") setCwdError({ agentUuid, message });
+        else setError(message);
       } else {
-        const message = typeof data.error === "object" && data.error
-          ? data.error.message
-          : data.error;
-        const agentUuid = typeof data.error === "object" && data.error
-          && typeof data.error.details?.agentUuid === "string"
-          ? data.error.details.agentUuid
-          : null;
-        if (agentUuid) {
-          setCwdError({ agentUuid, message: message || t("projects.createFailed") });
-        } else {
-          setError(message || t("projects.createFailed"));
-        }
+        markUnconfirmed();
       }
-    } catch {
-      if (mountedRef.current) setError(t("common.genericError"));
-    } finally {
-      if (!created && mountedRef.current) {
-        submittingRef.current = false;
-        setIsPending(false);
+    } catch (cause) {
+      if (!isCurrent(attempt)) return;
+      if (attempt.phase === "validating") {
+        if (!attempt.controller.signal.aborted
+          && !(cause instanceof Error && cause.name === "AbortError")) {
+          setError(t("common.genericError"));
+        }
+        release();
+      } else {
+        markUnconfirmed();
       }
     }
+  };
+
+  const allowNewAttempt = () => {
+    if (attemptRef.current?.phase !== "unconfirmed") return;
+    // An informed new operation, NOT proof that the earlier POST failed.
+    clearTimeout(attemptRef.current.timer);
+    attemptRef.current = null;
+    setPhase("idle");
+    setError(null);
+    setCwdError(null);
   };
 
   return (
@@ -145,10 +243,10 @@ export function CreateProjectDialog({
         className="flex max-h-[90svh] flex-col gap-0 overflow-hidden rounded-[16px] p-0 sm:max-w-[620px]"
         showCloseButton={false}
         onEscapeKeyDown={(event) => {
-          if (submittingRef.current) event.preventDefault();
+          if (blocksDismissal()) event.preventDefault();
         }}
         onInteractOutside={(event) => {
-          if (submittingRef.current) event.preventDefault();
+          if (blocksDismissal()) event.preventDefault();
         }}
       >
         <DialogHeader className="flex flex-row items-center justify-between p-[20px_24px] border-b border-[#E5E2DC] dark:border-[#2a2a2e]">
@@ -166,6 +264,19 @@ export function CreateProjectDialog({
         </DialogDescription>
 
         <div className="flex min-h-0 flex-col gap-5 overflow-y-auto p-6">
+          {phase === "unconfirmed" && (
+            <div role="alert" className="rounded-lg border border-border bg-muted p-3 text-sm text-foreground">
+              <p>{t("projects.creationUnconfirmed")}</p>
+              <p className="mt-2 text-muted-foreground">{t("projects.creationRetryWarning")}</p>
+              <Button
+                variant="outline"
+                className="mt-3 h-auto whitespace-normal text-left"
+                onClick={allowNewAttempt}
+              >
+                {t("projects.confirmNewCreation")}
+              </Button>
+            </div>
+          )}
           {error && (
             <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
               {error}
@@ -204,6 +315,8 @@ export function CreateProjectDialog({
             <ProjectAgentCwdSettings
               ref={cwdSettingsRef}
               agentError={cwdError}
+              initialDrafts={cwdDrafts}
+              onDraftsChange={setCwdDrafts}
             />
           </div>
         </div>
@@ -212,14 +325,14 @@ export function CreateProjectDialog({
           <Button
             variant="outline"
             onClick={() => handleOpenChange(false)}
-            disabled={isPending}
+            disabled={dismissalBlocked}
             className="rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] text-[13px]"
           >
             {t("common.cancel")}
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={isPending || success || !title.trim()}
+            disabled={phase !== "idle" || !title.trim()}
             className="rounded-lg bg-primary hover:bg-[#B56A42] text-white text-[13px] gap-1.5"
           >
             <AnimatePresence mode="wait">

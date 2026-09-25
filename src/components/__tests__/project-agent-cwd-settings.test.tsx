@@ -33,8 +33,16 @@ vi.mock("@/components/agent-presence/directory-browser", () => ({
 
 import {
   ProjectAgentCwdSettings,
+  type ProjectAgentCwdDraft,
   type ProjectAgentCwdSettingsHandle,
 } from "@/components/project-agent-cwd-settings";
+
+const draft: ProjectAgentCwdDraft = {
+  agentUuid: "agent-1",
+  connectionUuid: "connection-1",
+  host: "host-1",
+  cwd: "/workspace/draft",
+};
 
 describe("ProjectAgentCwdSettings", () => {
   beforeEach(() => {
@@ -128,9 +136,122 @@ describe("ProjectAgentCwdSettings", () => {
 
     expect(validateDirectorySelection).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "/workspace/draft",
-    }));
+    }), undefined);
     expect(screen.getByText("/workspace/draft")).toBeTruthy();
     expect(screen.getByRole("alert").textContent)
       .toBe("directoryBrowser.errors.NOT_FOUND");
+  });
+
+  it("forwards the caller signal and persists successful normalization", async () => {
+    const ref = createRef<ProjectAgentCwdSettingsHandle>();
+    const onDraftsChange = vi.fn();
+    const controller = new AbortController();
+    render(<ProjectAgentCwdSettings
+      ref={ref}
+      initialDrafts={{ "agent-1": draft }}
+      onDraftsChange={onDraftsChange}
+    />);
+    await screen.findByText("Agent One");
+
+    await act(async () => {
+      await ref.current!.validate(controller.signal);
+    });
+
+    expect(validateDirectorySelection).toHaveBeenCalledWith(draft, controller.signal);
+    expect(screen.getByText("/workspace/normalized")).toBeTruthy();
+    expect(onDraftsChange).toHaveBeenCalledWith({
+      "agent-1": { ...draft, cwd: "/workspace/normalized", validationRequestUuid: "validation-1" },
+    });
+  });
+
+  it.each([false, true])("rejects an already cancelled validation (has drafts: %s)", async (hasDrafts) => {
+    const ref = createRef<ProjectAgentCwdSettingsHandle>();
+    const onDraftsChange = vi.fn();
+    render(<ProjectAgentCwdSettings
+      ref={ref}
+      initialDrafts={hasDrafts ? { "agent-1": draft } : {}}
+      onDraftsChange={onDraftsChange}
+    />);
+    await screen.findByText("Agent One");
+    const controller = new AbortController();
+    controller.abort("dialog closed");
+
+    await expect(ref.current!.validate(controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(validateDirectorySelection).not.toHaveBeenCalled();
+    expect(onDraftsChange).not.toHaveBeenCalled();
+    expect(screen.queryByText("choose draft")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it.each(["resolve", "reject"])("ignores a late %s after cancellation", async (outcome) => {
+    let resolve!: (value: ProjectAgentCwdDraft) => void;
+    let reject!: (error: Error) => void;
+    validateDirectorySelection.mockReturnValueOnce(new Promise((done, fail) => {
+      resolve = done;
+      reject = fail;
+    }));
+    const ref = createRef<ProjectAgentCwdSettingsHandle>();
+    const onDraftsChange = vi.fn();
+    render(<ProjectAgentCwdSettings
+      ref={ref}
+      initialDrafts={{ "agent-1": draft }}
+      onDraftsChange={onDraftsChange}
+    />);
+    await screen.findByText("Agent One");
+    const controller = new AbortController();
+    const validation = ref.current!.validate(controller.signal);
+    const rejection = expect(validation).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort("dialog closed");
+
+    await act(async () => {
+      if (outcome === "resolve") {
+        resolve({ ...draft, cwd: "/late", validationRequestUuid: "late" });
+      } else {
+        reject(new Error("TIMEOUT"));
+      }
+      await rejection;
+    });
+
+    expect(screen.getByText("/workspace/draft")).toBeTruthy();
+    expect(screen.queryByText("/late")).toBeNull();
+    expect(screen.queryByText("choose draft")).toBeNull();
+    expect(onDraftsChange).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText("projectSettings.agentCwds.replace"));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("propagates AbortError without displaying a generic validation failure", async () => {
+    validateDirectorySelection.mockRejectedValueOnce(new DOMException("Aborted", "AbortError"));
+    const ref = createRef<ProjectAgentCwdSettingsHandle>();
+    render(<ProjectAgentCwdSettings ref={ref} initialDrafts={{ "agent-1": draft }} />);
+    await screen.findByText("Agent One");
+
+    await act(async () => {
+      await expect(ref.current!.validate()).rejects.toMatchObject({ name: "AbortError" });
+    });
+    expect(screen.queryByText("choose draft")).toBeNull();
+    fireEvent.click(screen.getByLabelText("projectSettings.agentCwds.replace"));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("/workspace/draft")).toBeTruthy();
+  });
+
+  it("restores parent-retained drafts after remount and reports explicit clears", async () => {
+    const onDraftsChange = vi.fn();
+    const { unmount } = render(<ProjectAgentCwdSettings onDraftsChange={onDraftsChange} />);
+    await screen.findByText("Agent One");
+    fireEvent.click(screen.getByLabelText("projectSettings.agentCwds.replace"));
+    fireEvent.click(screen.getByText("choose draft"));
+    expect(onDraftsChange).toHaveBeenLastCalledWith({ "agent-1": draft });
+    const retainedDrafts = onDraftsChange.mock.calls.at(-1)![0];
+    unmount();
+
+    render(<ProjectAgentCwdSettings initialDrafts={retainedDrafts} onDraftsChange={onDraftsChange} />);
+    await screen.findByText("Agent One");
+    expect(screen.getByText("/workspace/draft")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("projectSettings.agentCwds.clear"));
+    expect(onDraftsChange).toHaveBeenLastCalledWith({});
+    expect(screen.queryByText("/workspace/draft")).toBeNull();
   });
 });

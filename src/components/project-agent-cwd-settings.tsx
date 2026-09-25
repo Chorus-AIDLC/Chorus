@@ -42,19 +42,25 @@ export interface ProjectAgentCwdMutations {
 }
 
 export interface ProjectAgentCwdSettingsHandle {
-  validate: () => Promise<ProjectAgentCwdMutations | null>;
+  validate: (signal?: AbortSignal) => Promise<ProjectAgentCwdMutations | null>;
 }
 
 export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle, {
   projectUuid?: string;
   agentError?: { agentUuid: string; message: string } | null;
+  initialDrafts?: Record<string, ProjectAgentCwdDraft>;
+  onDraftsChange?: (drafts: Record<string, ProjectAgentCwdDraft>) => void;
 }>(function ProjectAgentCwdSettings({
   projectUuid,
   agentError,
+  initialDrafts,
+  onDraftsChange,
 }, ref) {
   const t = useTranslations();
   const [items, setItems] = useState<AgentCwdItem[]>([]);
-  const [drafts, setDrafts] = useState<Record<string, ProjectAgentCwdDraft>>({});
+  const [drafts, setDrafts] = useState<Record<string, ProjectAgentCwdDraft>>(
+    () => initialDrafts ?? {},
+  );
   const [clears, setClears] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [editingAgent, setEditingAgent] = useState<string | null>(null);
@@ -85,6 +91,7 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
   const updateMutations = (next: Record<string, ProjectAgentCwdDraft>, nextClears: Set<string>) => {
     setDrafts(next);
     setClears(nextClears);
+    onDraftsChange?.(next);
   };
 
   const select = (selection: DirectorySelection | null, agentUuid: string) => {
@@ -111,17 +118,30 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
   };
 
   useImperativeHandle(ref, () => ({
-    validate: async () => {
+    validate: async (signal) => {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const validated: ProjectAgentCwdMutations["upserts"] = [];
+      let nextDrafts = drafts;
       for (const draft of Object.values(drafts)) {
         try {
-          const result = await validateDirectorySelection(draft);
+          const result = await validateDirectorySelection(draft, signal);
+          if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
           validated.push(result);
-          setDrafts((current) => ({
-            ...current,
+          nextDrafts = {
+            ...nextDrafts,
             [draft.agentUuid]: result,
-          }));
+          };
+          const validatedDrafts = nextDrafts;
+          setDrafts((current) => signal?.aborted ? current : validatedDrafts);
+          onDraftsChange?.(validatedDrafts);
         } catch (validationError) {
+          if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+          if (
+            (validationError instanceof DOMException || validationError instanceof Error)
+            && validationError.name === "AbortError"
+          ) {
+            throw validationError;
+          }
           const code = validationError instanceof Error
             ? validationError.message
             : "INTERNAL_ERROR";
@@ -135,7 +155,7 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
       }
       return { upserts: validated, clears: [...clears] };
     },
-  }), [clears, drafts, t]);
+  }), [clears, drafts, onDraftsChange, t]);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">

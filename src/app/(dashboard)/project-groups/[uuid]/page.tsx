@@ -356,7 +356,6 @@ export default function ProjectGroupDashboardPage() {
         groupUuid={group.uuid}
         groupName={group.name}
         onCreated={() => {
-          setShowCreateProject(false);
           fetchDashboard();
         }}
       />
