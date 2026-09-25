@@ -32,7 +32,7 @@ interface CreateProjectDialogProps {
   onCreated?: () => void;
 }
 
-type Phase = "idle" | "validating" | "posting" | "unconfirmed" | "success";
+type Phase = "idle" | "validating" | "posting" | "unconfirmed" | "confirmed" | "success";
 interface CreationAttempt {
   controller: AbortController;
   phase: Phase;
@@ -150,6 +150,15 @@ export function CreateProjectDialog({
       attempt.phase = "unconfirmed";
       setPhase("unconfirmed");
     };
+    const confirmDismissedSuccess = () => {
+      if (isCurrent(attempt)) {
+        // Preserve edits made after reopening, but don't silently enable a
+        // duplicate submission of a draft whose project has already been created.
+        attempt.phase = "confirmed";
+        setPhase("confirmed");
+      }
+      refreshProjects();
+    };
 
     try {
       const validated = await cwdSettingsRef.current?.validate(attempt.controller.signal);
@@ -179,9 +188,7 @@ export function CreateProjectDialog({
 
       if (res.ok && data?.success === true && typeof data.data?.uuid === "string") {
         if (!isCurrent(attempt) || attempt.dismissed) {
-          // A closed/reopened dialog belongs to the user now. Only refresh data.
-          release();
-          refreshProjects();
+          confirmDismissedSuccess();
           return;
         }
         attempt.phase = "success";
@@ -189,8 +196,7 @@ export function CreateProjectDialog({
         attempt.timer = setTimeout(() => {
           if (!isCurrent(attempt)) return;
           if (attempt.dismissed) {
-            release();
-            refreshProjects();
+            confirmDismissedSuccess();
             return;
           }
           setTitle("");
@@ -213,11 +219,10 @@ export function CreateProjectDialog({
       } else {
         markUnconfirmed();
       }
-    } catch (cause) {
+    } catch {
       if (!isCurrent(attempt)) return;
       if (attempt.phase === "validating") {
-        if (!attempt.controller.signal.aborted
-          && !(cause instanceof Error && cause.name === "AbortError")) {
+        if (!attempt.controller.signal.aborted) {
           setError(t("common.genericError"));
         }
         release();
@@ -228,7 +233,8 @@ export function CreateProjectDialog({
   };
 
   const allowNewAttempt = () => {
-    if (attemptRef.current?.phase !== "unconfirmed") return;
+    if (attemptRef.current?.phase !== "unconfirmed"
+      && attemptRef.current?.phase !== "confirmed") return;
     // An informed new operation, NOT proof that the earlier POST failed.
     clearTimeout(attemptRef.current.timer);
     attemptRef.current = null;
@@ -264,16 +270,18 @@ export function CreateProjectDialog({
         </DialogDescription>
 
         <div className="flex min-h-0 flex-col gap-5 overflow-y-auto p-6">
-          {phase === "unconfirmed" && (
+          {(phase === "unconfirmed" || phase === "confirmed") && (
             <div role="alert" className="rounded-lg border border-border bg-muted p-3 text-sm text-foreground">
-              <p>{t("projects.creationUnconfirmed")}</p>
-              <p className="mt-2 text-muted-foreground">{t("projects.creationRetryWarning")}</p>
+              <p>{t(phase === "confirmed" ? "projects.creationConfirmed" : "projects.creationUnconfirmed")}</p>
+              {phase === "unconfirmed" && (
+                <p className="mt-2 text-muted-foreground">{t("projects.creationRetryWarning")}</p>
+              )}
               <Button
                 variant="outline"
                 className="mt-3 h-auto whitespace-normal text-left"
                 onClick={allowNewAttempt}
               >
-                {t("projects.confirmNewCreation")}
+                {t(phase === "confirmed" ? "projects.confirmAnotherCreation" : "projects.confirmNewCreation")}
               </Button>
             </div>
           )}

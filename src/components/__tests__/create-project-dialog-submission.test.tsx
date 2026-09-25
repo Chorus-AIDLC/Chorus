@@ -214,7 +214,7 @@ describe("CreateProjectDialog submission exclusion", () => {
 describe("CreateProjectDialog error recovery", () => {
   it.each([
     "validation null", "validation rejection", "validation throw", "API error",
-    "Agent error",
+    "Agent error", "validation unexpected AbortError",
   ])("preserves drafts and allows a deliberate retry after %s", async (failure) => {
     let expectedError: string | null = null;
     switch (failure) {
@@ -223,6 +223,10 @@ describe("CreateProjectDialog error recovery", () => {
         break;
       case "validation rejection":
         validate.mockRejectedValueOnce(new Error("validation failed"));
+        expectedError = "common.genericError";
+        break;
+      case "validation unexpected AbortError":
+        validate.mockRejectedValueOnce(new DOMException("Not this attempt's cancellation", "AbortError"));
         expectedError = "common.genericError";
         break;
       case "validation throw":
@@ -272,6 +276,7 @@ describe("CreateProjectDialog error recovery", () => {
 describe("CreateProjectDialog unconfirmed creation", () => {
   it.each([
     ["network failure", () => Promise.reject(new Error("offline"))],
+    ["POST AbortError", () => Promise.reject(new DOMException("Connection aborted", "AbortError"))],
     ["invalid JSON", () => Promise.resolve(new Response("{", { status: 201 }))],
     ["5xx with known code", () => Promise.resolve(response({
       success: false, error: { code: "CONFLICT", message: "Unknown outcome" },
@@ -532,6 +537,48 @@ describe("CreateProjectDialog stale attempts", () => {
       expect(onOpenChange).not.toHaveBeenCalled();
       expect(onCreated).toHaveBeenCalledTimes(1);
       expect(refresh).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("alert")).toHaveTextContent("projects.creationConfirmed");
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "projectGroups.createProject" })).toBeDisabled();
+    },
+  );
+
+  it.each(["unconfirmed", "posting", "success feedback"] as const)(
+    "requires an explicit new operation when %s succeeds while closed",
+    async (stage) => {
+      const request = deferred<Response>();
+      vi.mocked(fetch).mockReturnValueOnce(request.promise);
+      const { button, setOpen, onCreated, onOpenChange } = setup();
+      await act(async () => fireEvent.click(button));
+      if (stage === "unconfirmed") await act(async () => vi.advanceTimersByTime(20_000));
+      if (stage === "success feedback") await act(async () => request.resolve(response()));
+      setOpen(false);
+      if (stage !== "success feedback") await act(async () => request.resolve(response()));
+      await act(async () => vi.advanceTimersByTime(600));
+      expect(onCreated).toHaveBeenCalledTimes(1);
+      expect(onOpenChange).not.toHaveBeenCalled();
+      setOpen(true);
+      expect(screen.getByRole("alert")).toHaveTextContent("projects.creationConfirmed");
+      expect(screen.queryByText("projects.creationRetryWarning")).not.toBeInTheDocument();
+      const input = screen.getByPlaceholderText("projectGroups.projectTitlePlaceholder");
+      expect(input).toHaveValue("  New project  ");
+      const submit = screen.getByRole("button", { name: "projectGroups.createProject" });
+      expect(submit).toBeDisabled();
+      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.click(submit);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      // A second close/reopen must not reset the acknowledgement.
+      fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
+      setOpen(false);
+      setOpen(true);
+      expect(screen.getByRole("alert")).toHaveTextContent("projects.creationConfirmed");
+      fireEvent.click(screen.getByRole("button", { name: "projects.confirmAnotherCreation" }));
+      expect(fetch).toHaveBeenCalledTimes(1);
+      await act(async () => fireEvent.keyDown(
+        screen.getByPlaceholderText("projectGroups.projectTitlePlaceholder"), { key: "Enter" },
+      ));
+      expect(fetch).toHaveBeenCalledTimes(2);
     },
   );
 });

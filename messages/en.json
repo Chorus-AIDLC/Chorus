@@ -371,6 +371,8 @@
     "loadingProjects": "Loading projects...",
     "createFailed": "Failed to create project",
     "creationUnconfirmed": "The creation result is not confirmed. You can close this dialog and check or refresh the project list. Your draft will be kept.",
+    "creationConfirmed": "The previous request created a project successfully. Your draft has been kept. Confirm below only if you want to create another project.",
+    "confirmAnotherCreation": "I want to create another project",
     "creationRetryWarning": "The previous request may still create a project, even if it is not in the list yet. Creating again could produce a duplicate.",
     "confirmNewCreation": "I’ve checked the list and still want to create again",
     "activeProjects": "Active projects",

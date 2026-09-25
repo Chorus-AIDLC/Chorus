@@ -371,6 +371,8 @@
     "loadingProjects": "프로젝트를 불러오는 중...",
     "createFailed": "프로젝트를 만들지 못했습니다",
     "creationUnconfirmed": "생성 결과가 아직 확인되지 않았습니다. 이 창을 닫고 프로젝트 목록을 확인하거나 새로고침할 수 있습니다. 초안은 유지됩니다.",
+    "creationConfirmed": "이전 요청으로 프로젝트가 생성되었습니다. 초안은 유지됩니다. 다른 프로젝트를 추가로 생성하려는 경우에만 아래에서 확인해 주세요.",
+    "confirmAnotherCreation": "다른 프로젝트를 추가로 생성하겠습니다",
     "creationRetryWarning": "목록에 아직 표시되지 않아도 이전 요청으로 프로젝트가 생성될 수 있습니다. 다시 생성하면 중복될 수 있습니다.",
     "confirmNewCreation": "목록을 확인했으며 그래도 다시 생성하겠습니다",
     "activeProjects": "활성 프로젝트",
