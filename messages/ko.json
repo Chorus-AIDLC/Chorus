@@ -722,6 +722,11 @@
     "deleteFailedNotFound": "이 문서는 더 이상 존재하지 않습니다."
   },
   "references": {
+    "citationLoading": "근거를 불러오는 중…",
+    "citationMissing": "근거를 찾을 수 없습니다",
+    "citationError": "근거를 불러오지 못했습니다. 마우스를 올리거나 포커스하여 다시 시도하세요.",
+    "citationOpen": "새 탭에서 근거 열기",
+    "citationUnsafe": "이 근거 URL을 열 수 없습니다.",
     "title": "참고 자료",
     "empty": "공식 문서, 참고 구현체 또는 이슈 스레드를 연결해 근거를 마련하세요.",
     "loading": "참고 자료를 불러오는 중...",

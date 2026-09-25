@@ -1,17 +1,67 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Streamdown, type Components } from "streamdown";
+import {
+  createContext, useContext, useEffect, useMemo, useState,
+  type ComponentProps, type ElementType,
+} from "react";
+import {
+  Block, Streamdown, defaultRehypePlugins, defaultUrlTransform,
+  type BlockProps, type Components, type UrlTransform,
+} from "streamdown";
 
 import { FrontmatterCard } from "@/components/frontmatter-card";
+import { ReferenceCitation } from "@/components/reference-citation";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { createCitationStore, type CitationStore } from "@/lib/reference-citation-store";
+import { referenceUuid } from "@/lib/reference-citations";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import {
   streamdownPluginsFor,
   streamdownControls,
 } from "@/lib/streamdown-plugins";
 
-// Custom-tag passthrough for Streamdown. The default markdown surfaces pass none
-// of these, so their render is byte-identical to before. The comment mention path
+const CitationContext = createContext<CitationStore | null>(null);
+const citationUrlTransform: UrlTransform = (url, key, node) => {
+  // Streamdown's transform is currently an identity function: its sanitizer
+  // handles safety. Explicitly reject invalid refs after extending that schema.
+  if (/^ref:/i.test(url)) {
+    return key === "href" && node.tagName === "a" && referenceUuid(url) ? url : "";
+  }
+  return defaultUrlTransform(url, key, node);
+};
+
+function CitationBlock({ components, rehypePlugins, ...props }: BlockProps) {
+  const store = useContext(CitationContext)!;
+  // Block receives Streamdown's merged components, including its private default
+  // anchor. Delegating preserves link safety, styles and caller overrides.
+  const mergedComponents = useMemo(() => {
+    const NormalLink = components!.a! as ElementType<ComponentProps<"a">>;
+    function CitationLink(props: ComponentProps<"a">) {
+      const uuid = referenceUuid(props.href);
+      return uuid ? (
+        <ReferenceCitation uuid={uuid} store={store}>
+          {props.children}
+        </ReferenceCitation>
+      ) : <NormalLink {...props} />;
+    }
+    return { ...components, a: CitationLink } as Components;
+  }, [components, store]);
+  // Extend the already-resolved sanitizer, after Streamdown adds custom tags.
+  const plugins = useMemo(() => rehypePlugins?.map((plugin) => {
+    const sanitize = defaultRehypePlugins.sanitize;
+    if (!Array.isArray(plugin) || !Array.isArray(sanitize) || plugin[0] !== sanitize[0]) return plugin;
+    const schema = plugin[1] as { protocols?: Record<string, string[]> };
+    return [plugin[0], {
+      ...schema,
+      protocols: { ...schema.protocols, href: [...(schema.protocols?.href ?? []), "ref"] },
+    }] as typeof plugin;
+  }), [rehypePlugins]);
+  // Streamdown memoizes paragraphs by source position, so equal-length UUID
+  // edits otherwise keep stale anchors mounted.
+  return <Block key={props.content} {...props} components={mergedComponents} rehypePlugins={plugins} />;
+}
+
+// Custom-tag passthrough for Streamdown. The comment mention path
 // (ContentWithMentions' opt-in `renderMention`) passes a `<chorus-mention>` custom
 // tag mapping so an agent @mention renders as a real, interactive React node
 // (MentionBadge) instead of imperatively-injected DOM — which a Radix Popover
@@ -50,6 +100,11 @@ export function MarkdownContent({
   literalTagContent,
 }: MarkdownContentProps) {
   const isDark = useDarkClass();
+  const [citations] = useState(createCitationStore);
+  useEffect(() => {
+    window.addEventListener("focus", citations.refreshAll);
+    return () => window.removeEventListener("focus", citations.refreshAll);
+  }, [citations]);
 
   // A leading YAML frontmatter block is lifted out of the body and rendered as
   // a metadata card. `splitFrontmatter` only recognizes a flat key/value
@@ -75,22 +130,25 @@ export function MarkdownContent({
   // actually triggers the repaint. Don't drop the key while keeping the prop —
   // the prop alone won't repaint cached diagrams and the bug returns silently.
   //
-  // `components`/`allowedTags`/`literalTagContent` are forwarded only when set
-  // (the default markdown surfaces pass none, so their render stays byte-stable).
+  // Caller components and mention tag configuration still reach Streamdown.
   return (
-    <>
-      {entries && <FrontmatterCard entries={entries} />}
-      <Streamdown
-        key={isDark ? "dark" : "light"}
-        plugins={plugins}
-        controls={streamdownControls}
-        mermaid={mermaidOptions}
-        components={components}
-        allowedTags={allowedTags}
-        literalTagContent={literalTagContent}
-      >
-        {body}
-      </Streamdown>
-    </>
+    <CitationContext.Provider value={citations}>
+      <TooltipProvider>
+        {entries && <FrontmatterCard entries={entries} />}
+        <Streamdown
+          key={isDark ? "dark" : "light"}
+          plugins={plugins}
+          controls={streamdownControls}
+          mermaid={mermaidOptions}
+          components={components}
+          allowedTags={allowedTags}
+          literalTagContent={literalTagContent}
+          BlockComponent={CitationBlock}
+          urlTransform={citationUrlTransform}
+        >
+          {body}
+        </Streamdown>
+      </TooltipProvider>
+    </CitationContext.Provider>
   );
 }
