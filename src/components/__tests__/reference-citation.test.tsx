@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { Streamdown } from "streamdown";
 import { MarkdownContent } from "@/components/markdown-content";
 import { ContentWithMentions } from "@/components/mention-renderer";
+import { CITATION_REQUEST_TIMEOUT_MS } from "@/lib/reference-citation-store";
 import en from "../../../messages/en.json";
 import ja from "../../../messages/ja.json";
 import ko from "../../../messages/ko.json";
@@ -45,6 +46,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   document.documentElement.classList.remove("dark");
 });
@@ -58,7 +60,7 @@ describe("real Markdown citation rendering", () => {
     expect(marker().getAttribute("href")).toBeNull();
     expect(marker().getAttribute("aria-label")).toBe(en.references.citationLoading);
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(`/api/references/${uuid}`, {
-      credentials: "same-origin", cache: "no-store",
+      credentials: "same-origin", cache: "no-store", signal: expect.any(AbortSignal),
     });
     await act(async () => request.resolve(ok()));
     await ready();
@@ -120,6 +122,67 @@ describe("real Markdown citation rendering", () => {
     expect([...document.querySelectorAll("[data-citation-state]")].every((node) => !node.hasAttribute("href"))).toBe(true);
   });
 
+  it.each([401, 503, "network"] as const)("retains loaded details after a %s refresh failure and recovers", async (failure) => {
+    render(<MarkdownContent>{markdown}</MarkdownContent>, { wrapper });
+    await ready();
+    fetchMock.mockImplementation(async () => {
+      if (failure === "network") throw new Error("offline");
+      return new Response(null, { status: failure });
+    });
+    fireEvent.focus(marker());
+    await waitFor(() => expect(screen.getByRole("tooltip").textContent).toContain(en.references.citationRefreshError));
+    expect(marker().getAttribute("href")).toBe(reference.url);
+    expect(marker().getAttribute("data-citation-state")).toBe("ready");
+    fetchMock.mockImplementation(async () => ok({ ...reference, title: "Recovered", url: "https://example.com/recovered" }));
+    fireEvent.mouseEnter(marker());
+    await waitFor(() => expect(marker().getAttribute("href")).toBe("https://example.com/recovered"));
+    expect(screen.getByRole("tooltip").textContent).not.toContain(en.references.citationRefreshError);
+  });
+
+  it("times out a hung request, retries, and ignores its late response", async () => {
+    vi.useFakeTimers();
+    const hung = deferred();
+    fetchMock.mockReturnValueOnce(hung.promise);
+    render(<MarkdownContent>{markdown}</MarkdownContent>, { wrapper });
+    const signal = fetchMock.mock.calls[0][1]?.signal;
+    await act(async () => vi.advanceTimersByTimeAsync(CITATION_REQUEST_TIMEOUT_MS));
+    expect(signal?.aborted).toBe(true);
+    expect(marker().getAttribute("data-citation-state")).toBe("error");
+    await act(async () => fireEvent.focus(marker()));
+    expect(marker().getAttribute("data-citation-state")).toBe("ready");
+    await act(async () => hung.resolve(new Response(null, { status: 404 })));
+    expect(marker().getAttribute("href")).toBe(reference.url);
+  });
+
+  it("deduplicates requests across forty Markdown mounts on load and window focus", async () => {
+    const request = deferred();
+    fetchMock.mockImplementation(() => request.promise.then((response) => response.clone()));
+    const text = `${markdown} [2](ref:${other}) [3](ref:750e8400-e29b-41d4-a716-446655440000)`;
+    render(<>{Array.from({ length: 40 }, (_, i) => <MarkdownContent key={i}>{text}</MarkdownContent>)}</>, { wrapper });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await act(async () => request.resolve(ok()));
+    expect(document.querySelectorAll('[data-citation-state="ready"]')).toHaveLength(120);
+    const refresh = deferred();
+    fetchMock.mockImplementation(() => refresh.promise.then((response) => response.clone()));
+    fireEvent(window, new Event("focus"));
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    await act(async () => refresh.resolve(ok()));
+  });
+
+  it("defers clipped/offscreen citations until visible or keyboard-focused", async () => {
+    const observers: IntersectionObserverCallback[] = [];
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(callback: IntersectionObserverCallback) { observers.push(callback); }
+      observe() {} disconnect() {}
+    });
+    render(<MarkdownContent>{markdown}</MarkdownContent>, { wrapper });
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => observers[0]([{ isIntersecting: false }] as IntersectionObserverEntry[], {} as IntersectionObserver));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => observers[0]([{ isIntersecting: true }] as IntersectionObserverEntry[], {} as IntersectionObserver));
+    await ready();
+  });
+
   it("ignores old responses after UUID changes and after unmount, without a global cache", async () => {
     const old = deferred();
     fetchMock.mockReturnValueOnce(old.promise);
@@ -148,7 +211,9 @@ describe("real Markdown citation rendering", () => {
     const abandoned = deferred();
     fetchMock.mockReturnValueOnce(abandoned.promise);
     const view = render(<MarkdownContent>{markdown}</MarkdownContent>, { wrapper });
+    const signal = fetchMock.mock.calls[0][1]?.signal;
     view.unmount();
+    expect(signal?.aborted).toBe(true);
     render(<MarkdownContent>{markdown}</MarkdownContent>, { wrapper });
     await ready();
     await act(async () => abandoned.resolve(new Response(null, { status: 404 })));
@@ -201,8 +266,28 @@ describe("real Markdown citation rendering", () => {
     const { container } = render(<MarkdownContent>{content}</MarkdownContent>, { wrapper });
     expect(container.querySelector("[data-citation-state]")).toBeNull();
     expect(container.querySelector('code[data-language="mermaid"], [data-language="mermaid"]')).toBeTruthy();
-    expect([...container.querySelectorAll("a")].some((a) => a.getAttribute("href")?.startsWith("ref:"))).toBe(false);
+    expect(container.querySelector("a")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([`ref:${uuid.slice(0, -1)}`, "ref:not-a-uuid", `ref:${uuid}?x=1`, `ref:${uuid}#x`, `REF:${uuid}/`])(
+    "renders malformed %s as non-interactive text, never an empty href",
+    (href) => {
+      const { container } = render(<MarkdownContent>{`[bad](${href})`}</MarkdownContent>, { wrapper });
+      expect(screen.getByText(/^bad/).closest("a,button,[role=link]")).toBeNull();
+      expect(container.querySelector("a")).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps unrelated code blocks mounted when citation content changes", async () => {
+    const view = render(<MarkdownContent>{`${markdown}\n\n\`\`\`text\nunchanged\n\`\`\``}</MarkdownContent>, { wrapper });
+    await ready();
+    const code = view.container.querySelector("pre");
+    await act(async () => view.rerender(<MarkdownContent>{`[2](ref:${other})\n\n\`\`\`text\nunchanged\n\`\`\``}</MarkdownContent>));
+    await ready();
+    expect(marker().textContent).toBe("[2]");
+    expect(view.container.querySelector("pre")).toBe(code);
   });
 
   it("composes frontmatter, literal mention custom tags and citations, including theme changes", async () => {

@@ -725,6 +725,7 @@
     "citationLoading": "Loading evidence…",
     "citationMissing": "Evidence not found",
     "citationError": "Could not load evidence. Hover or focus to retry.",
+    "citationRefreshError": "Could not refresh evidence. Showing previously loaded details.",
     "citationOpen": "Open evidence in a new tab",
     "citationUnsafe": "This evidence URL cannot be opened.",
     "title": "References",

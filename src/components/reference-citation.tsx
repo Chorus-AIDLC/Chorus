@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isKnownReferenceType, referenceTypeConfig } from "@/components/reference-type-config";
@@ -18,9 +18,25 @@ export function ReferenceCitation({
   children: ReactNode;
 }) {
   const t = useTranslations();
+  const anchor = useRef<HTMLAnchorElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    });
+    if (anchor.current) observer.observe(anchor.current);
+    return () => observer.disconnect();
+  }, []);
   const subscribe = useCallback(
-    (notify: () => void) => store.subscribe(uuid, notify),
-    [store, uuid],
+    (notify: () => void) => visible ? store.subscribe(uuid, notify) : () => {},
+    [store, uuid, visible],
   );
   const snapshot = useCallback(() => store.snapshot(uuid), [store, uuid]);
   const state = useSyncExternalStore(subscribe, snapshot, store.serverSnapshot);
@@ -34,6 +50,7 @@ export function ReferenceCitation({
     <Tooltip>
       <TooltipTrigger asChild>
         <a
+          ref={anchor}
           href={href}
           target={href ? "_blank" : undefined}
           rel={href ? "noopener noreferrer" : undefined}
@@ -42,8 +59,8 @@ export function ReferenceCitation({
           aria-disabled={!href}
           aria-label={description}
           data-citation-state={state.status}
-          onMouseEnter={() => store.refresh(uuid)}
-          onFocus={() => store.refresh(uuid)}
+          onMouseEnter={() => { setVisible(true); store.refresh(uuid); }}
+          onFocus={() => { setVisible(true); store.refresh(uuid); }}
           className={cn(
             "inline rounded-sm px-0.5 text-xs font-medium align-super focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             // Keep unavailable citations muted inside prose wrappers that color all anchors.
@@ -68,6 +85,7 @@ export function ReferenceCitation({
             <span>{reference.url}</span>
             {reference.notes?.trim() && <span>{reference.notes}</span>}
             {!href && <span>{t("references.citationUnsafe")}</span>}
+            {state.status === "ready" && state.refreshError && <span>{t("references.citationRefreshError")}</span>}
           </span>
         ) : description}
       </TooltipContent>

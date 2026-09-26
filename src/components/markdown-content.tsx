@@ -25,7 +25,7 @@ const citationUrlTransform: UrlTransform = (url, key, node) => {
   // Streamdown's transform is currently an identity function: its sanitizer
   // handles safety. Explicitly reject invalid refs after extending that schema.
   if (/^ref:/i.test(url)) {
-    return key === "href" && node.tagName === "a" && referenceUuid(url) ? url : "";
+    return key === "href" && node.tagName === "a" && referenceUuid(url) ? url : undefined;
   }
   return defaultUrlTransform(url, key, node);
 };
@@ -35,30 +35,48 @@ function CitationBlock({ components, rehypePlugins, ...props }: BlockProps) {
   // Block receives Streamdown's merged components, including its private default
   // anchor. Delegating preserves link safety, styles and caller overrides.
   const mergedComponents = useMemo(() => {
-    const NormalLink = components!.a! as ElementType<ComponentProps<"a">>;
+    const NormalLink = components?.a as ElementType<ComponentProps<"a">> | undefined;
+    if (!NormalLink && process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console -- surface upstream contract drift during development
+      console.warn("Streamdown default anchor is unavailable; ordinary links will render as text.");
+    }
     function CitationLink(props: ComponentProps<"a">) {
       const uuid = referenceUuid(props.href);
       return uuid ? (
         <ReferenceCitation uuid={uuid} store={store}>
           {props.children}
         </ReferenceCitation>
+      ) : !props.href || !NormalLink ? (
+        <span className="text-muted-foreground">{props.children}</span>
       ) : <NormalLink {...props} />;
     }
     return { ...components, a: CitationLink } as Components;
   }, [components, store]);
   // Extend the already-resolved sanitizer, after Streamdown adds custom tags.
-  const plugins = useMemo(() => rehypePlugins?.map((plugin) => {
-    const sanitize = defaultRehypePlugins.sanitize;
-    if (!Array.isArray(plugin) || !Array.isArray(sanitize) || plugin[0] !== sanitize[0]) return plugin;
-    const schema = plugin[1] as { protocols?: Record<string, string[]> };
-    return [plugin[0], {
-      ...schema,
-      protocols: { ...schema.protocols, href: [...(schema.protocols?.href ?? []), "ref"] },
-    }] as typeof plugin;
-  }), [rehypePlugins]);
-  // Streamdown memoizes paragraphs by source position, so equal-length UUID
-  // edits otherwise keep stale anchors mounted.
-  return <Block key={props.content} {...props} components={mergedComponents} rehypePlugins={plugins} />;
+  const plugins = useMemo(() => {
+    let patched = false;
+    const plugins = rehypePlugins?.map((plugin) => {
+      const sanitize = defaultRehypePlugins.sanitize;
+      if (!Array.isArray(plugin) || !Array.isArray(sanitize) || plugin[0] !== sanitize[0]) return plugin;
+      patched = true;
+      const schema = plugin[1] as { protocols?: Record<string, string[]> };
+      return [plugin[0], {
+        ...schema,
+        protocols: { ...schema.protocols, href: [...(schema.protocols?.href ?? []), "ref"] },
+      }] as typeof plugin;
+    });
+    if (!patched && process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console -- surface upstream contract drift during development
+      console.warn("Streamdown sanitizer was not found; evidence links may be blocked.");
+    }
+    return plugins;
+  }, [rehypePlugins]);
+  // Block compares content, but its default paragraph/list children compare
+  // only source positions. Equal-length UUID/label edits otherwise stay stale
+  // (covered by the real-renderer UUID replacement test). Invalidate citation
+  // blocks only, leaving unrelated code/Mermaid blocks mounted.
+  const citationKey = /\]\(ref:/i.test(props.content) ? props.content : undefined;
+  return <Block key={citationKey} {...props} components={mergedComponents} rehypePlugins={plugins} />;
 }
 
 // Custom-tag passthrough for Streamdown. The comment mention path

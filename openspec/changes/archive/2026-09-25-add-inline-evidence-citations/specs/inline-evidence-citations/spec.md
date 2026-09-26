@@ -10,7 +10,7 @@ The renderer SHALL recognize ordinary Markdown links of the form `[1](ref:<uuid>
 #### Scenario: Literal and ordinary Markdown
 - **WHEN** citation-like text is in code or escaped text, or a regular Markdown link is present
 - **THEN** normal Markdown semantics and existing link rendering are preserved
-- **AND** malformed ref URLs never become active custom-protocol links
+- **AND** malformed ref URLs render as non-interactive text, never an empty or custom-protocol href
 
 ### Requirement: Current evidence details and navigation
 Valid citations SHALL expose the current title, type, URL and nonempty notes on hover and keyboard focus. Clicking SHALL directly open the evidence's HTTP(S) URL in a new tab with safe opener behavior. Evidence retrieval MUST use the existing same-origin authenticated UUID endpoint and its tenant checks. The renderer MUST NOT fetch external evidence pages.
@@ -29,16 +29,30 @@ Deleted or nonexistent evidence SHALL preserve the gray citation marker, reveal 
 - **AND** after deletion a 404 lookup retains the marker with missing text and no href
 
 #### Scenario: Request failure
-- **WHEN** the endpoint fails or a request is still loading
+- **WHEN** the first lookup fails or a request is still loading without previously loaded evidence
 - **THEN** the marker shows a distinct non-navigable loading/error state
 - **AND** subsequent interaction can retry
 
+#### Scenario: Refresh failure after successful lookup
+- **WHEN** refreshing previously loaded evidence fails
+- **THEN** retain the last loaded details and HTTP(S) link with a localized refresh-failure note
+- **AND** a later successful lookup replaces those details, while a 404 removes the link
+
+#### Scenario: Hung request
+- **WHEN** a lookup does not settle within ten seconds
+- **THEN** cancel it and allow subsequent interaction to retry
+- **AND** a late result cannot overwrite a newer result
+
 ### Requirement: Shared renderer and accessible display
-The implementation SHALL apply in MarkdownContent without per-resource data plumbing and SHALL preserve existing mention custom tags, frontmatter, Mermaid, code and ordinary links. Repeated UUIDs within one Markdown tree SHALL share in-flight requests; old responses MUST NOT replace a changed citation. Citation colors and detail layout SHALL work in both themes and with long content, keyboard focus and all supported locale catalogs.
+The implementation SHALL apply in MarkdownContent without per-resource data plumbing and SHALL preserve existing mention custom tags, frontmatter, Mermaid, code and ordinary links. Repeated UUIDs across concurrently mounted Markdown trees SHALL share in-flight requests without globally caching resolved evidence; old responses MUST NOT replace a changed citation. Offscreen citations SHALL defer their first lookup until visible or interacted with. Citation colors and detail layout SHALL work in both themes and with long content, keyboard focus and all supported locale catalogs.
 
 #### Scenario: Repeated citation and mixed content
 - **WHEN** a content block mixes repeated UUID references with existing Markdown features
 - **THEN** repeated references share lookup work and all existing features render correctly
+
+#### Scenario: Equal-length citation edit
+- **WHEN** an author replaces a citation UUID or label with another of equal length
+- **THEN** the rendered citation updates, and unrelated code blocks remain mounted
 
 #### Scenario: Accessible missing marker
 - **WHEN** a keyboard user focuses a missing marker in either theme

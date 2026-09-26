@@ -22,9 +22,11 @@
 
 引用组件调用现有 GET `/api/references/<uuid>`（same-origin credentials）。渲染代码不接收 targetType/targetUuid，不验证“挂载在当前资源”；权限完全沿用现有接口。
 
-同一 Markdown 渲染树重复 UUID 共用客户端请求/状态，避免重复并发 fetch；组件卸载或 UUID 改变后忽略旧响应。不得做跨登录永久全局缓存。初次渲染加载，之后 hover/focus 再校验以取得最新信息；错误及删除后也允许下一次交互重试，窗口重新聚焦可刷新已挂载引用。无需改造服务端变更事件。
+同一 Markdown 渲染树重复 UUID 共用客户端状态；不同渲染树只共用进行中的请求，请求结束即移除，不缓存全局已解析证据。最后一个消费者卸载时取消请求；组件卸载或 UUID 改变后忽略旧响应。IntersectionObserver 延迟屏幕外/被裁切引用的首次读取，进入可见区域或交互时加载；之后 hover/focus 与窗口重新聚焦可刷新已加载引用。请求和响应体解析整体限时 10 秒，超时取消并允许重试。无需改造服务端变更事件。
 
-区分 loading、ready、missing（404）、error（网络/其他 HTTP 错误）。loading/error 提示本地化文案且不导航，不能误报“证据不存在”。引用删除后下一次成功校验呈现 missing；不承诺实时推送。
+区分 loading、ready、missing（404）、error（网络/其他 HTTP 错误）。无已加载数据时 loading/error 提示本地化文案且不导航，不能误报“证据不存在”。已 ready 的引用刷新失败时保留已有详情与链接，并显示本地化刷新失败说明；后续成功清除提示，404 必须移除链接。不承诺实时推送。
+
+格式错误的 ref 目标转为无 href 的普通文本，不生成空链接。Streamdown 默认 anchor 缺失时安全降级为文本，并在开发环境告警；sanitizer 匹配失败也在开发环境告警。仅含引用的 Markdown block 使用内容 key，绕过 Streamdown paragraph/list 子元素仅比较源码位置导致的等长 UUID 修改缓存问题；相邻代码/Mermaid block 不因此重新挂载。
 
 ### 引用交互
 

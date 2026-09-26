@@ -725,6 +725,7 @@
     "citationLoading": "エビデンスを読み込み中…",
     "citationMissing": "エビデンスが見つかりません",
     "citationError": "エビデンスを読み込めませんでした。ホバーまたはフォーカスで再試行します。",
+    "citationRefreshError": "エビデンスを更新できませんでした。前回読み込んだ詳細を表示しています。",
     "citationOpen": "新しいタブでエビデンスを開く",
     "citationUnsafe": "このエビデンスのURLは開けません。",
     "title": "参考資料",
