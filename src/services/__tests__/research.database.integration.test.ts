@@ -33,6 +33,7 @@ describe.skipIf(!url)("Research real database integration", () => {
   let startDevelopment: typeof import("../start-development.service").startDevelopment;
   let createActivity: typeof import("../activity.service").createActivity;
   let updateTask: typeof import("../task.service").updateTask;
+  let deleteTask: typeof import("../task.service").deleteTask;
   let researchIdeaAction: typeof import("../../app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/research-actions").researchIdeaAction;
   let project: string;
   let agent: string;
@@ -50,7 +51,7 @@ describe.skipIf(!url)("Research real database integration", () => {
     ({ getPendingTurnsForConnection, advanceTurn, advanceTurnForWake } = await import("../daemon-session.service"));
     ({ startDevelopment } = await import("../start-development.service"));
     ({ createActivity } = await import("../activity.service"));
-    ({ updateTask } = await import("../task.service"));
+    ({ updateTask, deleteTask } = await import("../task.service"));
     ({ researchIdeaAction } = await import("../../app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/research-actions"));
     state.company = (await db.company.create({ data: { name: `Research integration ${randomUUID()}` } })).uuid;
     state.actor = randomUUID();
@@ -246,7 +247,7 @@ describe.skipIf(!url)("Research real database integration", () => {
         .toMatchObject({ backendSessionId: null });
     },
   );
-  it.each(["crash", "invalid_path"])("retires exact pending Research for %s once, without starting or binding a backend", async (interruptedReason) => {
+  it.each(["crash", "invalid_path", "user"])("retires exact pending Research for %s once, without starting or binding a backend", async (interruptedReason) => {
     const result = await requestResearch(params());
     const abort = {
       companyUuid: state.company, agentUuid: agent, connectionUuid: connection, sessionId: idea,
@@ -284,12 +285,83 @@ describe.skipIf(!url)("Research real database integration", () => {
     expect(await db.daemonSession.findUnique({ where: { uuid: result.sessionUuid } }))
       .toMatchObject({ backendSessionId: null });
   });
+  it("real control-handler interrupt during a delayed successful admission prevents Waker spawn", async () => {
+    const { Waker } = await import("../../../cli/waker.mjs");
+    const { createControlHandler } = await import("../../../cli/control-handler.mjs");
+    const research = await requestResearch(params());
+    let releaseAdmission!: () => void;
+    const heldResponse = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+    const reporter = vi.fn(async (report: Parameters<typeof advanceTurnForWake>[0]) => {
+      const result = await advanceTurnForWake({
+        ...report, companyUuid: state.company, agentUuid: agent, connectionUuid: connection,
+      });
+      if (report.status === "running") await heldResponse;
+      return result.ok
+        ? { ok: true, data: { turnUuid: result.turn.uuid } }
+        : { ok: false, status: result.reason === "not_found" ? 404 : 409 };
+    });
+    const spawner = { wake: vi.fn(async ({ sessionId, onChild }) => {
+      onChild?.({ pid: 4242, on() {}, kill() {} });
+      return { sessionId, exitCode: 0, isNew: true };
+    }) };
+    const silent = { info() {}, warn() {}, error() {} };
+    const waker = new Waker({
+      creds: { url: "http://research-test", apiKey: "test" },
+      lineage: { resolve: async () => ({ rootIdeaUuid: idea, directIdeaUuid: idea }) },
+      cwd: "/tmp/research-test", spawner, logger: silent,
+      writeMcpConfigFn: () => ({ path: "/tmp/research-test-unused.json", cleanup() {} }),
+      isNewSessionFn: () => true, reportInterrupt: async () => {}, advanceTurn: reporter,
+    });
+    const onControl = createControlHandler({
+      waker, getConnectionUuid: () => connection, advanceTurn: reporter, logger: silent,
+    });
+    const notification = {
+      uuid: randomUUID(), projectUuid: project, entityType: "idea", entityUuid: idea,
+      entityTitle: "Research fixture", action: "human_instruction",
+      instructionText: "[Chorus Tracker Research] Research only, then return.",
+      turnUuid: research.turnUuid, researchOnly: true,
+      actorType: "user", actorUuid: state.actor, actorName: "Research test", message: "",
+    };
+    const resolved = await waker.keyFor(notification);
+    const work = waker.wake(notification, resolved.key, resolved);
+    try {
+      await vi.waitFor(async () => {
+        expect(await db.daemonSessionTurn.findUnique({ where: { uuid: research.turnUuid } })).toMatchObject({ status: "running" });
+      });
+      expect(spawner.wake).not.toHaveBeenCalled();
+      onControl({
+        type: "control", command: "interrupt", targetConnectionUuid: randomUUID(),
+        entityType: "idea", entityUuid: idea,
+      });
+      expect(reporter).toHaveBeenCalledTimes(1);
+      onControl({
+        type: "control", command: "interrupt", targetConnectionUuid: connection,
+        entityType: "idea", entityUuid: idea,
+      });
+      await vi.waitFor(async () => {
+        expect(await db.daemonSessionTurn.findUnique({ where: { uuid: research.turnUuid } }))
+          .toMatchObject({ status: "interrupted", interruptedReason: "user" });
+      });
+      expect(reporter).toHaveBeenCalledWith(expect.objectContaining({
+        turnUuid: research.turnUuid, status: "interrupted", interruptedReason: "user",
+      }));
+      releaseAdmission();
+      await work;
+      expect(spawner.wake).not.toHaveBeenCalled();
+      expect(await db.daemonSessionTurn.findUnique({ where: { uuid: research.turnUuid } }))
+        .toMatchObject({ status: "interrupted", interruptedReason: "user", backendSessionId: null });
+    } finally {
+      releaseAdmission();
+      await work;
+      waker.interruptAll();
+    }
+  });
   it("rejects unsupported pending Research aborts and backend binding without changing the generic FSM", async () => {
     const result = await requestResearch(params());
     const exact = {
       companyUuid: state.company, agentUuid: agent, connectionUuid: connection, sessionId: idea, turnUuid: result.turnUuid,
     };
-    for (const interruptedReason of ["user", "shutdown", "offline"]) {
+    for (const interruptedReason of ["shutdown", "offline"]) {
       expect(await advanceTurnForWake({ ...exact, status: "interrupted", interruptedReason }))
         .toMatchObject({ ok: false, reason: "invalid_transition" });
     }
@@ -301,7 +373,7 @@ describe.skipIf(!url)("Research real database integration", () => {
     const ordinary = await db.daemonSessionTurn.create({ data: {
       sessionUuid: result.sessionUuid, seq: 2, trigger: "human_instruction", promptText: "Ordinary", status: "pending",
     } });
-    for (const interruptedReason of ["crash", "invalid_path"]) {
+    for (const interruptedReason of ["crash", "invalid_path", "user"]) {
       expect(await advanceTurnForWake({
         ...exact, turnUuid: ordinary.uuid, status: "interrupted", interruptedReason, backendSessionId: "must-not-bind",
       })).toMatchObject({ ok: false, reason: "invalid_transition" });
@@ -317,6 +389,143 @@ describe.skipIf(!url)("Research real database integration", () => {
     await proposalTask();
     expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: false, reason: "development_started" });
     expect(await db.activity.count({ where: { targetUuid: task.uuid, action: "execution_started" } })).toBeGreaterThan(0);
+  });
+  it("executing then deleting a task preserves the Idea boundary and retires queued Research", async () => {
+    const task = await proposalTask();
+    const pending = await requestResearch(params());
+    await updateTask(task.uuid, { status: "in_progress" });
+    // The new writer must anchor execution before deletion, not rely on delete's legacy repair.
+    expect(await db.activity.findFirst({ where: {
+      companyUuid: state.company, projectUuid: project, targetType: "idea", targetUuid: idea, action: "execution_started",
+    } })).toMatchObject({ value: { taskUuid: task.uuid, proposalUuid: task.proposalUuid } });
+    await deleteTask(task.uuid);
+    expect(await db.task.findUnique({ where: { uuid: task.uuid } })).toBeNull();
+    expect(await db.activity.count({ where: { targetType: "task", targetUuid: task.uuid, action: "execution_started" } })).toBe(1);
+    expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: false, reason: "development_started" });
+    await expect(requestResearch(params())).rejects.toMatchObject({ code: "development_started" });
+    expect(await advanceTurnForWake({
+      companyUuid: state.company, agentUuid: agent, connectionUuid: connection,
+      sessionId: idea, turnUuid: pending.turnUuid, status: "running",
+    })).toMatchObject({ ok: false, reason: "invalid_transition" });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: pending.turnUuid } }))
+      .toMatchObject({ status: "interrupted", interruptedReason: "research_stage_changed" });
+    // No live proposal is required to retrieve the durable Idea fact either.
+    await db.proposal.delete({ where: { uuid: task.proposalUuid! } });
+    expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: false, reason: "development_started" });
+  });
+  it.each([
+    ["execution_started", { from: "open", to: "in_progress" }],
+    ["force_status_change", { from: "to_verify", to: "open" }],
+    ["comment_added", { statusUpdated: "in_progress" }],
+    ["submitted", {}],
+    ["verified", {}],
+    ["completed", {}],
+  ])("deleting a reopened descendant task preserves older-proposal %s history for every input Idea", async (action, value) => {
+    const child = await db.idea.create({ data: {
+      companyUuid: state.company, projectUuid: project, title: "Child", parentUuid: idea, createdByUuid: agent,
+    } });
+    const sibling = await db.idea.create({ data: {
+      companyUuid: state.company, projectUuid: project, title: "Other input", createdByUuid: agent,
+    } });
+    const task = await proposalTask("open", child.uuid);
+    await db.proposal.update({ where: { uuid: task.proposalUuid! }, data: {
+      inputUuids: [child.uuid, sibling.uuid], createdAt: new Date("2020-01-01"),
+    } });
+    await proposalTask("open", child.uuid);
+    // Fixture represents older writers: the task is already reopened and only task history exists.
+    await db.activity.create({ data: {
+      companyUuid: state.company, projectUuid: project, targetType: "task", targetUuid: task.uuid,
+      actorType: "agent", actorUuid: agent, action, value,
+    } });
+    await deleteTask(task.uuid);
+    expect(await db.task.findUnique({ where: { uuid: task.uuid } })).toBeNull();
+    for (const targetUuid of [idea, child.uuid, sibling.uuid]) {
+      expect(await getResearchEligibility(state.company, targetUuid)).toEqual({ eligible: false, reason: "development_started" });
+    }
+    expect(await db.activity.count({ where: {
+      companyUuid: state.company, targetType: "idea", action: "execution_started",
+      targetUuid: { in: [child.uuid, sibling.uuid] },
+    } })).toBe(2);
+  });
+  it.each(["in_progress", "to_verify", "done"])("preserves legacy %s tasks without any activity on deletion", async (status) => {
+    const task = await proposalTask(status);
+    await deleteTask(task.uuid);
+    expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: false, reason: "development_started" });
+  });
+  it.each(["open", "assigned", "closed"])("deleting never-executed %s tasks does not deny Research", async (status) => {
+    const task = await proposalTask(status);
+    await db.activity.create({ data: {
+      companyUuid: state.company, projectUuid: project, targetType: "task", targetUuid: task.uuid,
+      actorType: "agent", actorUuid: agent, action: "status_changed", value: { from: "assigned", to: status },
+    } });
+    await deleteTask(task.uuid);
+    expect(await db.activity.count({ where: {
+      companyUuid: state.company, targetType: "idea", targetUuid: idea, action: "execution_started",
+    } })).toBe(0);
+    expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: true });
+    expect(await requestResearch(params())).toHaveProperty("turnUuid");
+  });
+  it("rolls back task execution and deletion when the Idea execution fact cannot persist", async () => {
+    const task = await proposalTask();
+    state.db = db.$extends({ query: { activity: {
+      createMany() { throw new Error("execution fact unavailable"); },
+    } } });
+    try {
+      await expect(updateTask(task.uuid, { status: "in_progress" })).rejects.toThrow("execution fact unavailable");
+      expect(await db.task.findUnique({ where: { uuid: task.uuid } })).toMatchObject({ status: "open" });
+      expect(await db.activity.count({ where: { companyUuid: state.company, targetUuid: task.uuid } })).toBe(0);
+      await db.activity.create({ data: {
+        companyUuid: state.company, projectUuid: project, targetType: "task", targetUuid: task.uuid,
+        actorType: "system", actorUuid: "", action: "execution_started",
+      } });
+      await expect(deleteTask(task.uuid)).rejects.toThrow("execution fact unavailable");
+      expect(await db.task.findUnique({ where: { uuid: task.uuid } })).not.toBeNull();
+      expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: false, reason: "development_started" });
+    } finally {
+      state.db = db;
+    }
+  });
+  it("fences legacy history and affected Proposal input Ideas by tenant and project", async () => {
+    const foreignCompany = await db.company.create({ data: { name: `Foreign research ${randomUUID()}` } });
+    const foreignProject = await db.project.create({ data: { companyUuid: foreignCompany.uuid, name: "Foreign" } });
+    const foreignIdea = await db.idea.create({ data: {
+      companyUuid: foreignCompany.uuid, projectUuid: foreignProject.uuid, title: "Foreign", createdByUuid: state.actor,
+    } });
+    const otherProject = await db.project.create({ data: { companyUuid: state.company, name: "Unrelated project" } });
+    const otherIdea = await db.idea.create({ data: {
+      companyUuid: state.company, projectUuid: otherProject.uuid, title: "Unrelated", createdByUuid: state.actor,
+    } });
+    try {
+      const neverExecuted = await proposalTask();
+      // Invalid cross-tenant/project activities must not become evidence for this task.
+      await db.activity.createMany({ data: [
+        { companyUuid: foreignCompany.uuid, projectUuid: foreignProject.uuid },
+        { companyUuid: state.company, projectUuid: otherProject.uuid },
+      ].flatMap((scope) => [
+        { ...scope, targetType: "task", targetUuid: neverExecuted.uuid, actorType: "system", actorUuid: "", action: "execution_started" },
+        { ...scope, targetType: "idea", targetUuid: idea, actorType: "system", actorUuid: "", action: "execution_started" },
+      ]) });
+      await deleteTask(neverExecuted.uuid);
+      expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: true });
+      const executed = await proposalTask();
+      await db.proposal.update({ where: { uuid: executed.proposalUuid! }, data: {
+        inputUuids: [idea, foreignIdea.uuid, otherIdea.uuid, idea, randomUUID()],
+      } });
+      await updateTask(executed.uuid, { status: "in_progress" });
+      await deleteTask(executed.uuid);
+      expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: false, reason: "development_started" });
+      expect(await getResearchEligibility(foreignCompany.uuid, foreignIdea.uuid)).toEqual({ eligible: true });
+      expect(await getResearchEligibility(state.company, otherIdea.uuid)).toEqual({ eligible: true });
+      expect(await getResearchEligibility(foreignCompany.uuid, idea)).toEqual({ eligible: false, reason: "idea_not_found" });
+      expect(await db.activity.count({ where: {
+        targetType: "idea", targetUuid: { in: [foreignIdea.uuid, otherIdea.uuid] }, action: "execution_started",
+      } })).toBe(0);
+    } finally {
+      await db.activity.deleteMany({ where: { companyUuid: foreignCompany.uuid } });
+      await db.idea.delete({ where: { uuid: foreignIdea.uuid } });
+      await db.project.delete({ where: { uuid: foreignProject.uuid } });
+      await db.company.delete({ where: { uuid: foreignCompany.uuid } });
+    }
   });
   it("theme descendants close Research only on actual execution", async () => {
     const child = await db.idea.create({ data: {

@@ -88,3 +88,18 @@ Pencil `get_app_state` failed four times with `transport not connected to app: v
 Tracker implementation and its automated verification are tracked by task `2b4ea9e5-96ec-453e-babb-425ad904388b`. Formal task and aggregate review results are recorded in Chorus; this verification record alone does not declare completion.
 
 The test browser, temporary auth-state file and fixture heartbeat were cleaned up. Screenshots and the isolated port-5435 database directory remain available for resumed review.
+
+
+## Final review fixes and full coverage
+
+Task 4 Round 1 identified two blockers: deletion could lose the Idea's execution boundary, and a user interrupt during admission could be ignored. Execution now records an Idea-anchored Activity; deletion preserves older task history under the same project lock. The existing interrupt handler retains the exact Research turn and local cancellation, preventing launch after delayed admission and terminating a child that appears after cancellation during backend preparation.
+
+The final full coverage run used the isolated port-5435 database:
+
+```sh
+env -u CHORUS_AGENT_PROFILE RESEARCH_DATABASE_URL='postgresql://postgres:postgres@localhost:5435/postgres?sslmode=disable' pnpm exec vitest run --coverage
+```
+
+Result: **7,551 passed, 16 skipped, 376 passing files**; statements **95.93%**, branches **89.07%**, functions **97.68%**, lines **97.16%**. This includes **57 real-database tests**, including actual Waker/control-handler/production-admission cancellation with zero subprocesses. TypeScript and changed production source ESLint pass. CI now provisions an isolated PostgreSQL 17 service on port 5435 and initializes its empty schema so these tests participate in required coverage. Without the opt-in test database the new persistence suite is skipped and the global coverage threshold is not met.
+
+Existing in-memory integration fixtures now model SQL `NOT`/`startsWith`/null predicates, and the Tracker menu assertion includes the Research item. These changes fix test fidelity and retain the production exclusion of Research from generic FIFO resolution.

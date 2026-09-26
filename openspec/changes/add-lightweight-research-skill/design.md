@@ -81,11 +81,11 @@ Research 请求写入已有初始 turn 的指令，继续使用原事务和 comp
 - 不把 yolo 请求本身等同于开发，因为它可能仍在澄清／规划；实际任务执行事实仍会关闭 Research 入口。
 - 已完成的 Idea 及主题下已实际启动开发的相关子树不开放入口。主题只有规划活动时可调研，不能复用 Start Development 的一刀切 container 禁用原因。
 
-客户端 eligibility 仅作提示；服务端点击时重新读取租户内真实状态，拒绝已进入开发的请求。对开发开始与 Research 派发的并发，服务层应让最终 eligibility 检查和 Research turn 创建与开发启动建立明确顺序（复用事务／同 Idea 行级锁或等价协调），并在 Research Agent 执行前再次核对；若后来已进入开发，返回阶段已变化而不执行调研或改写正文。不新增持久化调研状态。
+客户端 eligibility 仅作提示；服务端点击时重新读取租户内真实状态，拒绝已进入开发的请求。对开发开始与 Research 派发的并发，服务层应让最终 eligibility 检查和 Research turn 创建与开发启动建立明确顺序（复用事务／同 Idea 行级锁或等价协调），并在 Research Agent 执行前再次核对；若后来已进入开发，返回阶段已变化而不执行调研或改写正文。不新增持久化调研状态。任务实际执行时同时保存关联 Idea 上的执行事实；删除任务前也将已有任务历史转存为 Idea 执行事实，避免删除／重新开放任务或更换 Proposal 后重新开放 Research。
 
 实现使用项目行锁协调主题子树／多输入 Proposal 与任务历史写入，Idea 行锁保护派发与分配。daemon 保留 Research 的精确 turn UUID，在同一会话串行队列中将它单独成批；不能与初始化、审批或开发 wake 合并。启动任何子进程前，必须等待既有 turn-advance 接口确认该 turn 从 pending 进入 running：服务端在锁内复核阶段并核对根会话 origin connection。拒绝、离线、缺失或不匹配的响应均不启动进程；许可后启动失败则中断同一 turn。正常生命周期 wake 保持原行为。此保障需要本次更新后的 CLI；旧 CLI 无法提供启动前许可，部署时应同步更新服务端与 daemon。运行中仍按共享 skill 在查证／保存前读取当前阶段，不把 turn ended 当作调研成功。
 
-服务端的非精确 FIFO 领取和批量 merged 结算排除 Research，防止通知抵达顺序与 turn seq 不同而误消费。Research 启动要求精确 UUID、origin 且单条执行；cwd 校验失败或许可响应丢失时，daemon 用精确 interrupted 报告结束尚未启动的请求（仅 Research 可由 pending 走这条中断边）。若连接仍不可用，daemon 每 30 秒重试清理直到恢复，不重试启动，也不依赖 seen 去重集合中的旧请求重新派发。明确 409 拒绝不能中断已被另一消费者领取的 turn。daemon 停止时清理本地重试定时器，既有离线对账／pending backfill 承接重启。
+服务端的非精确 FIFO 领取和批量 merged 结算排除 Research，防止通知抵达顺序与 turn seq 不同而误消费。Research 启动要求精确 UUID、origin 且单条执行；cwd 校验失败、许可响应丢失或用户中断时，daemon 用精确 interrupted 报告结束尚未启动的请求（仅 Research 可由 pending 走这条中断边）。若连接仍不可用，daemon 每 30 秒重试清理直到恢复，不重试启动，也不依赖 seen 去重集合中的旧请求重新派发。明确 409 拒绝不能中断已被另一消费者领取的 turn。既有用户中断操作保留精确 Research turn UUID 并设置本地取消标志，启动许可前、启动前和 fallback 前检查该标志；若后端准备期间才收到中断，在 child 出现时立即终止。daemon 停止时清理本地重试定时器，既有离线对账／pending backfill 承接重启。
 
 服务端提供 Research 专用 action／service，将意图写成现有 `human_instruction`，经既有通知／会话 chokepoint 解析或创建该 Idea 的 root session，保持 Idea anchor、用户权限、项目固定 cwd／实例 pin 及 origin 路由。不能构造无关 ad-hoc 会话，不能复用 conversational-create endpoint 重建 Idea。没有关联 Agent 时由既有选择／分配交互明确选择；所选实例离线、缺少权限或存在同 Idea 未完成请求时返回具体提示，不静默成功。仅限制同一运行窗口的重复点击，结束后仍在开发前可再次显式调研。
 
@@ -122,3 +122,5 @@ Research 请求写入已有初始 turn 的指令，继续使用原事务和 comp
 ## 用户授权的验收调整（2026-09-26）
 
 用户在 Idea 评论 `25a4d74c-3e9f-4aaf-a019-75344cc77a50` 明确要求「跳过pencil，把chorus推进完成，开pr然后用脚本部署上线」。本次豁免上文涉及的 `docs/design.pen` 同步和 Pencil 截图要求；其余功能、四语言、可访问性、明暗主题及移动浏览器验收保持。没有将设计文件更新标为实际完成。
+
+CI 使用独立 PostgreSQL 测试服务（5435）运行 Research 持久化与执行边界测试，并纳入现有覆盖率门禁；本地等价验证显式设置 RESEARCH_DATABASE_URL，不能连接日常开发数据库。

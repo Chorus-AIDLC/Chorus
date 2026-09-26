@@ -12,6 +12,20 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      research-postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout code
@@ -34,7 +48,14 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: Initialize isolated Research test database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5435/postgres?sslmode=disable
+        run: pnpm exec prisma db push
+
       - name: Run tests with coverage
+        env:
+          RESEARCH_DATABASE_URL: postgresql://postgres:postgres@localhost:5435/postgres?sslmode=disable
         run: pnpm test:coverage -- --reporter=json --outputFile=coverage/test-results.json
 
       - name: Run coordinated package-contract tests

@@ -731,7 +731,7 @@ export async function advanceTurn(
     current === "pending" && opts.expectedStatus === "pending" &&
     turn.promptText?.startsWith(RESEARCH_INSTRUCTION_PREFIX) &&
     status === "interrupted" &&
-    (opts.interruptedReason === "crash" || opts.interruptedReason === "invalid_path");
+    (opts.interruptedReason === "crash" || opts.interruptedReason === "invalid_path" || opts.interruptedReason === "user");
   if (!legalNext.includes(status) && !pendingResearchAbort) {
     return { ok: false, reason: "invalid_transition", from: turn.status, to: status };
   }
@@ -2119,7 +2119,7 @@ export async function advanceTurnForWake(params: {
 
   const pendingResearchAbort = isResearch && turn.status === "pending" &&
     params.status === "interrupted" &&
-    (params.interruptedReason === "crash" || params.interruptedReason === "invalid_path") &&
+    (params.interruptedReason === "crash" || params.interruptedReason === "invalid_path" || params.interruptedReason === "user") &&
     !params.backendSessionId && !turn.backendSessionId;
   // Reject pending terminal reports before any backend binding can mutate state.
   if (turn.status === "pending" &&

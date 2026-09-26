@@ -57,7 +57,9 @@ const mockPrisma = vi.hoisted(() => {
       findFirst: vi.fn(),
     },
     $queryRaw: vi.fn().mockResolvedValue([]),
-    activity: { create: vi.fn() },
+    activity: { create: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
+    proposal: { findFirst: vi.fn() },
+    idea: { findMany: vi.fn() },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(txProxy)),
   };
 });
@@ -833,6 +835,12 @@ describe("releaseTask", () => {
 // ---------- deleteTask ----------
 
 describe("deleteTask", () => {
+  beforeEach(() => {
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask());
+    mockPrisma.activity.findMany.mockResolvedValue([]);
+    mockPrisma.proposal.findFirst.mockResolvedValue(null);
+  });
+
   it("deletes the task by uuid", async () => {
     const task = rawTask();
     mockPrisma.task.delete.mockResolvedValue(task);
@@ -856,6 +864,48 @@ describe("deleteTask", () => {
         action: "deleted",
       }),
     );
+  });
+
+  it("reads legacy execution after taking the project lock and anchors it before deleting", async () => {
+    const task = rawTask({ status: "open", proposalUuid: "proposal" });
+    mockPrisma.task.findUnique.mockResolvedValue(task);
+    mockPrisma.task.delete.mockResolvedValue(task);
+    mockPrisma.activity.findMany.mockResolvedValue([{ action: "force_status_change", value: { from: "done", to: "open" } }]);
+    mockPrisma.proposal.findFirst.mockResolvedValue({ inputUuids: ["idea", "other-idea"] });
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: "idea" }, { uuid: "other-idea" }]);
+    await deleteTask(TASK_UUID);
+    expect(mockPrisma.activity.findMany).toHaveBeenCalledWith({
+      where: { companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, targetType: "task", targetUuid: TASK_UUID },
+      select: { action: true, value: true },
+    });
+    expect(mockPrisma.proposal.findFirst).toHaveBeenCalledWith({
+      where: { uuid: "proposal", companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, inputType: "idea" },
+      select: { inputUuids: true },
+    });
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith({
+      where: { companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, uuid: { in: ["idea", "other-idea"] } },
+      select: { uuid: true },
+    });
+    expect(mockPrisma.activity.createMany.mock.calls[0][0].data).toEqual(
+      ["idea", "other-idea"].map((targetUuid) => expect.objectContaining({
+        companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, targetType: "idea", targetUuid,
+        action: "execution_started", value: { taskUuid: TASK_UUID, proposalUuid: "proposal" },
+      })),
+    );
+    expect(mockPrisma.$queryRaw.mock.invocationCallOrder[0])
+      .toBeLessThan(mockPrisma.task.findUnique.mock.invocationCallOrder[1]);
+    expect(mockPrisma.activity.createMany.mock.invocationCallOrder[0])
+      .toBeLessThan(mockPrisma.task.delete.mock.invocationCallOrder[0]);
+  });
+
+  it("does not delete or emit success when preserving execution fails", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask({ status: "in_progress", proposalUuid: "proposal" }));
+    mockPrisma.proposal.findFirst.mockResolvedValue({ inputUuids: ["idea"] });
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: "idea" }]);
+    mockPrisma.activity.createMany.mockRejectedValueOnce(new Error("history unavailable"));
+    await expect(deleteTask(TASK_UUID)).rejects.toThrow("history unavailable");
+    expect(mockPrisma.task.delete).not.toHaveBeenCalled();
+    expect(mockEventBus.emitChange).not.toHaveBeenCalled();
   });
 });
 

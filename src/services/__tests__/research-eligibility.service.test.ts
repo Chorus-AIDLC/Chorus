@@ -70,7 +70,18 @@ describe("Research eligibility", () => {
     db.task.findMany.mockResolvedValue([{ uuid: "task", status: "closed" }]);
     db.activity.findMany.mockResolvedValue([{ targetType: "task", action: "status_changed", value: { from: "assigned", to: "closed" } }]);
     expect(await getResearchEligibility("company", "idea")).toEqual({ eligible: true });
-    expect(db.activity.findMany.mock.calls[0][0].where.OR[0].action).toBe("start_development");
+    expect(db.activity.findMany.mock.calls[0][0].where.OR[0].action).toEqual({ in: ["start_development", "execution_started"] });
+  });
+  it("queries Idea execution facts with no surviving proposals or tasks and a tenant/project fence", async () => {
+    db.activity.findMany.mockResolvedValue([{ targetType: "idea", action: "execution_started" }]);
+    expect(await getResearchEligibility("company", "idea")).toEqual({ eligible: false, reason: "development_started" });
+    expect(db.activity.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      companyUuid: "company", projectUuid: "project",
+      OR: [
+        { targetType: "idea", targetUuid: { in: ["idea"] }, action: { in: ["start_development", "execution_started"] } },
+        { targetType: "task", targetUuid: { in: [] } },
+      ],
+    } }));
   });
   it.each(["activity", "turn"])("rejects development accepted via %s before task changes", async (source) => {
     if (source === "activity") db.activity.findMany.mockResolvedValue([{ targetType: "idea", action: "start_development" }]);

@@ -3,7 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma, TransactionClient } from "@/lib/prisma";
-import { lockResearchProject, EXECUTED_TASK_STATUSES } from "@/services/research-eligibility.service";
+import { lockResearchProject, EXECUTED_TASK_STATUSES, provesTaskExecution, type ResearchDb } from "@/services/research-eligibility.service";
 import { formatAssigneeComplete, formatCreatedBy, batchGetActorNames, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, batchResolveAssignmentActors, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
@@ -612,6 +612,36 @@ export async function createTask(params: TaskCreateParams): Promise<TaskResponse
   return formatTaskResponse(task);
 }
 
+/**
+ * Preserve the execution boundary independently of the task (and proposal) row.
+ * Call only inside the execution/deletion transaction, holding the project lock.
+ * Resolve every valid input Idea; eligibility already rolls these facts up subtrees.
+ */
+async function preserveIdeaExecution(
+  tx: ResearchDb,
+  task: { uuid: string; companyUuid: string; projectUuid: string; proposalUuid: string | null },
+  actorContext?: { actorType: string; actorUuid: string },
+) {
+  if (!task.proposalUuid) return;
+  const proposal = await tx.proposal.findFirst({
+    where: { uuid: task.proposalUuid, companyUuid: task.companyUuid, projectUuid: task.projectUuid, inputType: "idea" },
+    select: { inputUuids: true },
+  });
+  if (!Array.isArray(proposal?.inputUuids)) return;
+  const inputUuids = proposal.inputUuids.filter((id): id is string => typeof id === "string");
+  const ideas = await tx.idea.findMany({
+    where: { companyUuid: task.companyUuid, projectUuid: task.projectUuid, uuid: { in: inputUuids } },
+    select: { uuid: true },
+  });
+  if (!ideas.length) return;
+  await tx.activity.createMany({ data: ideas.map((idea) => ({
+    companyUuid: task.companyUuid, projectUuid: task.projectUuid,
+    targetType: "idea", targetUuid: idea.uuid, action: "execution_started",
+    actorType: actorContext?.actorType ?? "system", actorUuid: actorContext?.actorUuid ?? "",
+    value: { taskUuid: task.uuid, proposalUuid: task.proposalUuid },
+  })) });
+}
+
 // Update Task
 export async function updateTask(
   uuid: string,
@@ -629,17 +659,19 @@ export async function updateTask(
   // Wrapped in transaction to prevent TOCTOU race condition
   const task = await prisma.$transaction(async (tx) => {
     if (data.status) {
-      const anchor = await tx.task.findUnique({ where: { uuid }, select: { companyUuid: true, projectUuid: true, status: true } });
+      const anchor = await tx.task.findUnique({ where: { uuid }, select: { companyUuid: true, projectUuid: true } });
       if (anchor) {
         await lockResearchProject(tx, anchor.companyUuid, anchor.projectUuid);
+        const current = await tx.task.findUnique({ where: { uuid } });
         // Route activity writes happen later: persist history atomically with execution.
-        if (EXECUTED_TASK_STATUSES.includes(data.status) || EXECUTED_TASK_STATUSES.includes(anchor.status)) {
+        if (current && (EXECUTED_TASK_STATUSES.includes(data.status) || EXECUTED_TASK_STATUSES.includes(current.status))) {
           await tx.activity.create({ data: {
             companyUuid: anchor.companyUuid, projectUuid: anchor.projectUuid,
             targetType: "task", targetUuid: uuid, action: "execution_started",
             actorType: actorContext?.actorType ?? "system", actorUuid: actorContext?.actorUuid ?? "",
-            value: { from: anchor.status, to: data.status },
+            value: { from: current.status, to: data.status },
           } });
+          await preserveIdeaExecution(tx, current, actorContext);
         }
       }
     }
@@ -778,7 +810,24 @@ export async function releaseTask(uuid: string): Promise<TaskResponse> {
 
 // Delete Task
 export async function deleteTask(uuid: string) {
-  const task = await prisma.task.delete({ where: { uuid } });
+  const task = await prisma.$transaction(async (tx) => {
+    const anchor = await tx.task.findUnique({ where: { uuid }, select: { companyUuid: true, projectUuid: true } });
+    if (anchor) {
+      await lockResearchProject(tx, anchor.companyUuid, anchor.projectUuid);
+      // Re-read after the lock: an execution/reopen may have committed while waiting.
+      const current = await tx.task.findUnique({ where: { uuid } });
+      if (current?.proposalUuid) {
+        const history = await tx.activity.findMany({
+          where: { companyUuid: current.companyUuid, projectUuid: current.projectUuid, targetType: "task", targetUuid: uuid },
+          select: { action: true, value: true },
+        });
+        if (EXECUTED_TASK_STATUSES.includes(current.status) || history.some((a) => provesTaskExecution(a.action, a.value))) {
+          await preserveIdeaExecution(tx, current);
+        }
+      }
+    }
+    return tx.task.delete({ where: { uuid } });
+  });
   eventBus.emitChange({ companyUuid: task.companyUuid, projectUuid: task.projectUuid, entityType: "task", entityUuid: task.uuid, action: "deleted" });
   return task;
 }

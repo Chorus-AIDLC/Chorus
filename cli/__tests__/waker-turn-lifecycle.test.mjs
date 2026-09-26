@@ -5,6 +5,7 @@
 // entity threaded so the server can stamp the executionUuid linkage.
 import { describe, it, expect, vi } from "vitest";
 import { Waker } from "../waker.mjs";
+import { createControlHandler } from "../control-handler.mjs";
 
 const silent = { info() {}, warn() {}, error() {} };
 
@@ -65,6 +66,7 @@ function makeWaker(overrides = {}) {
     isNewSessionFn: vi.fn(() => true),
     reportInterrupt: vi.fn(async () => {}),
     validateRuntimeCwd: overrides.validateRuntimeCwd,
+    killer: overrides.killer,
     advanceTurn,
   });
   return { waker, advanceTurn, spawner: waker.spawner };
@@ -202,6 +204,89 @@ describe("Waker turn lifecycle (子1)", () => {
     expect(advanceTurn.mock.lastCall[0]).toMatchObject({
       turnUuid: "research-turn", status: "interrupted", interruptedReason: "shutdown",
     });
+  });
+
+  it("honors a real control-handler interrupt while the successful admission response is delayed", async () => {
+    let admit;
+    let serverStatus = "pending";
+    const advanceTurn = vi.fn((report) => {
+      expect(report.turnUuid).toBe("research-turn");
+      if (report.status === "running") {
+        serverStatus = "running";
+        return new Promise((resolve) => { admit = resolve; });
+      }
+      expect(report.interruptedReason).toBe("user");
+      serverStatus = "interrupted";
+      return Promise.resolve({ ok: true });
+    });
+    const { waker, spawner } = makeWaker({ advanceTurn });
+    const onControl = createControlHandler({
+      waker, advanceTurn, getConnectionUuid: () => "research-connection", logger: silent,
+    });
+    const resolved = await waker.keyFor(RESEARCH_NOTIF);
+    const pending = waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
+    await vi.waitFor(() => expect(admit).toBeTypeOf("function"));
+    onControl({
+      type: "control", command: "interrupt", targetConnectionUuid: "research-connection",
+      entityType: "idea", entityUuid: DIRECT_IDEA,
+    });
+    expect(waker.interrupting.has(`idea:${DIRECT_IDEA}`)).toBe(true);
+    admit({ ok: true, data: { turnUuid: "research-turn" } });
+    await pending;
+    expect(spawner.wake).not.toHaveBeenCalled();
+    expect(serverStatus).toBe("interrupted");
+    expect(waker.executions.size).toBe(0);
+  });
+
+  it("cancels Research during cwd validation before requesting admission", async () => {
+    let validate;
+    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const { waker, spawner } = makeWaker({
+      advanceTurn, validateRuntimeCwd: () => new Promise((resolve) => { validate = resolve; }),
+    });
+    const onControl = createControlHandler({
+      waker, advanceTurn, getConnectionUuid: () => "research-connection", logger: silent,
+    });
+    const notification = { ...RESEARCH_NOTIF, runtimeCwd: "/research" };
+    const resolved = await waker.keyFor(notification);
+    const pending = waker.wake(notification, resolved.key, resolved);
+    await vi.waitFor(() => expect(validate).toBeTypeOf("function"));
+    onControl({
+      type: "control", command: "interrupt", targetConnectionUuid: "research-connection",
+      entityType: "idea", entityUuid: DIRECT_IDEA,
+    });
+    validate({ normalizedPath: "/research" });
+    await pending;
+    expect(spawner.wake).not.toHaveBeenCalled();
+    expect(advanceTurn.mock.calls.every(([p]) =>
+      p.turnUuid === "research-turn" && p.status === "interrupted" && p.interruptedReason === "user")).toBe(true);
+  });
+
+  it("kills a child that appears after cancellation during backend setup", async () => {
+    let release;
+    const child = { pid: 42 };
+    const killer = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "research-turn" } }));
+    const spawner = { wake: vi.fn(async ({ onChild, sessionId }) => {
+      await new Promise((resolve) => { release = resolve; });
+      onChild(child);
+      return { sessionId, exitCode: null };
+    }) };
+    const { waker } = makeWaker({ advanceTurn, spawner, killer });
+    const onControl = createControlHandler({
+      waker, advanceTurn, getConnectionUuid: () => "research-connection", logger: silent,
+    });
+    const resolved = await waker.keyFor(RESEARCH_NOTIF);
+    const pending = waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    onControl({
+      type: "control", command: "interrupt", targetConnectionUuid: "research-connection",
+      entityType: "idea", entityUuid: DIRECT_IDEA,
+    });
+    release();
+    await pending;
+    expect(killer).toHaveBeenCalledWith(child, expect.any(Object));
+    expect(advanceTurn.mock.lastCall[0].interruptedReason).toBe("user");
   });
 
   it("retries exact cleanup when a spawner returns failure without onChild", async () => {

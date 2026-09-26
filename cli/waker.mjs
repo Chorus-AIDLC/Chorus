@@ -489,6 +489,7 @@ export class Waker {
           status: "running",
           startedAt: new Date().toISOString(),
           child: null,
+          ...(researchRequestUuid ? { researchTurnUuid: researchRequestUuid } : {}),
         });
         this.#emitExecutionChange();
       }
@@ -541,6 +542,13 @@ export class Waker {
       // under the same lock as development acceptance. Await admission BEFORE any
       // backend can spawn; an offline/rejected/missing reporter must fail closed.
       if (research.length) {
+        if (execKey && this.interrupting.has(execKey)) {
+          await this.#retireUnstartedResearch({
+            sessionId, turnUuid: researchRequestUuid, status: "interrupted",
+            interruptedReason: "user",
+          });
+          return;
+        }
         const admission = await this.advanceTurn({
           sessionId, turnUuid: first.turnUuid, status: "running",
           entityType: entity?.entityType ?? null,
@@ -551,10 +559,10 @@ export class Waker {
           // A conflict may belong to an already-running consumer; never abort it.
           // Otherwise the response may have been lost AFTER admission committed.
           // Retire this exact unstarted request whether it is pending or running.
-          if (![404, 409].includes(admission?.status)) {
+          if ((execKey && this.interrupting.has(execKey)) || ![404, 409].includes(admission?.status)) {
             await this.#retireUnstartedResearch({
               sessionId, turnUuid: researchRequestUuid, status: "interrupted",
-              interruptedReason: "crash",
+              interruptedReason: execKey && this.interrupting.has(execKey) ? "user" : "crash",
               transcriptRelayError: "Research launch admission unavailable; no subprocess started",
             });
           }
@@ -588,6 +596,17 @@ export class Waker {
         childStarted = true;
         const entry = execKey ? this.executions.get(execKey) : null;
         if (entry && entry.status === "running") entry.child = child;
+        if (researchTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) {
+          // Some backends await binary discovery before onChild. A stop during
+          // that interval must still terminate the child as soon as it exists.
+          try {
+            Promise.resolve(this.killer(child, {
+              sigintTimeoutMs: this.sigintTimeoutMs, logger: this.logger,
+            })).catch((err) => this.logger.warn(`[Chorus] cancelled Research child kill failed: ${err}`));
+          } catch (err) {
+            this.logger.warn(`[Chorus] cancelled Research child kill failed: ${err}`);
+          }
+        }
         if (sessionId && !turnAdvancedToRunning) {
           turnAdvancedToRunning = true;
           // Fire-and-forget; #advanceTurn swallows + logs its own failures so a
@@ -631,11 +650,11 @@ export class Waker {
         onChild,
         onMessage,
       };
-      if (researchTurnUuid && this.shuttingDown) {
+      if (researchTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) {
         await this.#retireUnstartedResearch({
           sessionId, turnUuid: researchTurnUuid, status: "interrupted",
-          interruptedReason: "shutdown",
-          transcriptRelayError: "Daemon stopped before Research subprocess launch",
+          interruptedReason: execKey && this.interrupting.has(execKey) ? "user" : "shutdown",
+          transcriptRelayError: "Research cancelled before subprocess launch",
         });
         return;
       }
@@ -647,7 +666,7 @@ export class Waker {
       // child for interrupt handling; onChild's gate keeps pending→running exactly once.
       if (
         isNew &&
-        !(researchTurnUuid && this.shuttingDown) &&
+        !(researchTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) &&
         result?.failureClassification === SESSION_CONFLICT_FAILURE
       ) {
         this.logger.warn(
@@ -665,7 +684,7 @@ export class Waker {
       if (researchTurnUuid && !childStarted) {
         await this.#retireUnstartedResearch({
           sessionId, turnUuid: researchTurnUuid, status: "interrupted",
-          interruptedReason: "crash",
+          interruptedReason: execKey && this.interrupting.has(execKey) ? "user" : "crash",
           transcriptRelayError: "Research subprocess did not start",
         });
         return;
@@ -811,7 +830,8 @@ export class Waker {
         // failed launch cannot leave an indefinitely running Research request.
         await this.#retireUnstartedResearch({
           sessionId, turnUuid: researchRequestUuid, status: "interrupted",
-          interruptedReason: requestedRuntimeCwd && typeof err?.code === "string" ? "invalid_path" : "crash",
+          interruptedReason: execKey && this.interrupting.has(execKey) ? "user"
+            : requestedRuntimeCwd && typeof err?.code === "string" ? "invalid_path" : "crash",
           transcriptRelayError: String(err?.message ?? err).slice(0, 500),
         });
       } else if (sessionId && requestedRuntimeCwd && typeof err?.code === "string") {

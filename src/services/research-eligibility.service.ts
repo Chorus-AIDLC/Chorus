@@ -16,7 +16,7 @@ export async function lockResearchProject(tx: ResearchDb, companyUuid: string, p
   await tx.$queryRaw`SELECT uuid FROM "Project" WHERE uuid = ${projectUuid} AND "companyUuid" = ${companyUuid} FOR UPDATE`;
 }
 
-function provesExecution(action: string, value: unknown): boolean {
+export function provesTaskExecution(action: string, value: unknown): boolean {
   if (["execution_started", "submitted", "verified", "completed"].includes(action)) return true;
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
@@ -91,7 +91,7 @@ export async function getResearchEligibility(
   if (completed.get(ideaUuid)) return { eligible: false, reason: "idea_completed" };
   const activities = await db.activity.findMany({
     where: { companyUuid, projectUuid: idea.projectUuid, OR: [
-      { targetType: "idea", targetUuid: { in: ids }, action: "start_development" },
+      { targetType: "idea", targetUuid: { in: ids }, action: { in: ["start_development", "execution_started"] } },
       { targetType: "task", targetUuid: { in: tasks.map((t) => t.uuid) } },
     ] },
     select: { action: true, value: true, targetType: true },
@@ -100,7 +100,7 @@ export async function getResearchEligibility(
     where: { trigger: "start_development", session: { companyUuid, directIdeaUuid: { in: ids } } },
     select: { uuid: true },
   });
-  if (developmentTurn || activities.some((a) => a.targetType === "idea" || provesExecution(a.action, a.value))) {
+  if (developmentTurn || activities.some((a) => a.targetType === "idea" || provesTaskExecution(a.action, a.value))) {
     return { eligible: false, reason: "development_started" };
   }
   if (!options.stageOnly) {
