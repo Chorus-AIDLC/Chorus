@@ -24,6 +24,12 @@ const TASK_NOTIF = {
   actorName: "Alice",
 };
 
+const RESEARCH_NOTIF = {
+  ...TASK_NOTIF, action: "human_instruction", entityType: "idea", entityUuid: DIRECT_IDEA,
+  instructionText: "[Chorus Tracker Research] Research only, then return.",
+  turnUuid: "research-turn", researchOnly: true,
+};
+
 // A spawner that DOES invoke onChild (the live-spawn moment the running turn-advance
 // hangs off) before resolving with the given exit code.
 function spawnerThatSpawns(exitCode = 0) {
@@ -58,12 +64,178 @@ function makeWaker(overrides = {}) {
     writeMcpConfigFn: vi.fn(() => ({ path: "/tmp/m.json", cleanup: vi.fn() })),
     isNewSessionFn: vi.fn(() => true),
     reportInterrupt: vi.fn(async () => {}),
+    validateRuntimeCwd: overrides.validateRuntimeCwd,
     advanceTurn,
   });
   return { waker, advanceTurn, spawner: waker.spawner };
 }
 
 describe("Waker turn lifecycle (子1)", () => {
+  it("awaits exact Research admission before spawning and reports running only once", async () => {
+    let admit;
+    const advanceTurn = vi.fn(({ status }) => status === "running"
+      ? new Promise((resolve) => { admit = resolve; })
+      : Promise.resolve({ ok: true }));
+    const { waker, spawner } = makeWaker({ advanceTurn });
+    const resolved = await waker.keyFor(RESEARCH_NOTIF);
+    const pending = waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
+    await vi.waitFor(() => expect(advanceTurn).toHaveBeenCalledTimes(1));
+    expect(spawner.wake).not.toHaveBeenCalled();
+    expect(advanceTurn.mock.calls[0][0]).toMatchObject({ turnUuid: "research-turn", status: "running" });
+    admit({ ok: true, data: { turnUuid: "research-turn" } });
+    await pending;
+    expect(spawner.wake).toHaveBeenCalledTimes(1);
+    expect(advanceTurn.mock.calls.map(([p]) => [p.status, p.turnUuid]))
+      .toEqual([["running", "research-turn"], ["ended", "research-turn"]]);
+  });
+
+  it.each([
+    { ok: false, status: 409 },
+    { ok: false, status: null, error: "offline" },
+    undefined,
+    { ok: true, data: { turnUuid: "wrong-turn" } },
+  ])("never spawns Research when admission is rejected/unavailable/miscorrelated: %j", async (result) => {
+    const { waker, spawner } = makeWaker({ advanceTurn: vi.fn(async () => result) });
+    const resolved = await waker.keyFor(RESEARCH_NOTIF);
+    await waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
+    expect(spawner.wake).not.toHaveBeenCalled();
+    expect(waker.executions.size).toBe(0);
+    waker.interruptAll();
+  });
+
+  it("retires an exact Research turn when the admission response is lost after commit", async () => {
+    let status = "pending";
+    const advanceTurn = vi.fn(async (report) => {
+      expect(report.turnUuid).toBe("research-turn");
+      if (report.status === "running") {
+        status = "running"; // server committed, response lost
+        throw new Error("socket closed");
+      }
+      status = "interrupted";
+      return { ok: true };
+    });
+    const { waker, spawner } = makeWaker({ advanceTurn });
+    const resolved = await waker.keyFor(RESEARCH_NOTIF);
+    await waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
+    expect(status).toBe("interrupted");
+    expect(spawner.wake).not.toHaveBeenCalled();
+    expect(waker.researchRecoveryTimers.size).toBe(0);
+  });
+
+  it.each(["pending", "running"])("recovers an unstarted %s Research after a prolonged outage without another wake", async (serverStatus) => {
+    vi.useFakeTimers();
+    let online = false;
+    let status = serverStatus;
+    const advanceTurn = vi.fn(async (report) => {
+      if (!online) return { ok: false, status: null };
+      expect(report).toMatchObject({ status: "interrupted", turnUuid: "research-turn" });
+      status = "interrupted";
+      return { ok: true };
+    });
+    const { waker, spawner } = makeWaker({ advanceTurn });
+    try {
+      const resolved = await waker.keyFor(RESEARCH_NOTIF);
+      await waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
+      expect(waker.researchRecoveryTimers.size).toBe(1);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(waker.researchRecoveryTimers.size).toBe(1);
+      online = true;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(status).toBe("interrupted");
+      expect(waker.researchRecoveryTimers.size).toBe(0);
+      expect(spawner.wake).not.toHaveBeenCalled();
+    } finally {
+      waker.interruptAll();
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not abort an existing consumer when exact admission returns conflict", async () => {
+    const advanceTurn = vi.fn(async () => ({ ok: false, status: 409 }));
+    const { waker } = makeWaker({ advanceTurn });
+    const resolved = await waker.keyFor(RESEARCH_NOTIF);
+    await waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
+    expect(advanceTurn).toHaveBeenCalledTimes(1);
+    expect(waker.researchRecoveryTimers.size).toBe(0);
+  });
+
+  it("cwd failure retires only the exact Research without an uncorrelated running report", async () => {
+    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const { waker, spawner } = makeWaker({
+      advanceTurn,
+      validateRuntimeCwd: async () => { throw Object.assign(new Error("missing cwd"), { code: "ENOENT" }); },
+    });
+    const notification = { ...RESEARCH_NOTIF, runtimeCwd: "/missing/research" };
+    const resolved = await waker.keyFor(notification);
+    await waker.wake(notification, resolved.key, resolved);
+    expect(spawner.wake).not.toHaveBeenCalled();
+    expect(advanceTurn.mock.calls.map(([report]) => report)).toEqual([
+      expect.objectContaining({ turnUuid: "research-turn", status: "interrupted", interruptedReason: "invalid_path" }),
+    ]);
+  });
+
+  it("retires an admitted Research turn if spawning throws", async () => {
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "research-turn" } }));
+    const { waker } = makeWaker({
+      advanceTurn, spawner: { wake: vi.fn(async () => { throw new Error("spawn failed"); }) },
+    });
+    const resolved = await waker.keyFor(RESEARCH_NOTIF);
+    await waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
+    expect(advanceTurn.mock.lastCall[0]).toMatchObject({
+      turnUuid: "research-turn", status: "interrupted", interruptedReason: "crash",
+    });
+  });
+
+  it("does not spawn if daemon shutdown happened while Research admission was pending", async () => {
+    let admit;
+    const advanceTurn = vi.fn(({ status }) => status === "running"
+      ? new Promise((resolve) => { admit = resolve; })
+      : Promise.resolve({ ok: true }));
+    const { waker, spawner } = makeWaker({ advanceTurn });
+    const resolved = await waker.keyFor(RESEARCH_NOTIF);
+    const pending = waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
+    await vi.waitFor(() => expect(admit).toBeTypeOf("function"));
+    waker.interruptAll();
+    admit({ ok: true, data: { turnUuid: "research-turn" } });
+    await pending;
+    expect(spawner.wake).not.toHaveBeenCalled();
+    expect(advanceTurn.mock.lastCall[0]).toMatchObject({
+      turnUuid: "research-turn", status: "interrupted", interruptedReason: "shutdown",
+    });
+  });
+
+  it("retries exact cleanup when a spawner returns failure without onChild", async () => {
+    vi.useFakeTimers();
+    let online = false;
+    const advanceTurn = vi.fn(async ({ status }) => status === "running"
+      ? { ok: true, data: { turnUuid: "research-turn" } }
+      : online ? { ok: true } : { ok: false, status: null });
+    const { waker } = makeWaker({ advanceTurn, spawner: spawnerThatNeverSpawns() });
+    try {
+      const resolved = await waker.keyFor(RESEARCH_NOTIF);
+      await waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
+      expect(waker.researchRecoveryTimers.size).toBe(1);
+      online = true;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(waker.researchRecoveryTimers.size).toBe(0);
+      expect(advanceTurn.mock.lastCall[0]).toMatchObject({
+        turnUuid: "research-turn", status: "interrupted", interruptedReason: "crash",
+      });
+    } finally {
+      waker.interruptAll();
+      vi.useRealTimers();
+    }
+  });
+
+  it("refuses Research without exact correlation or inside a mixed batch", async () => {
+    const { waker, spawner, advanceTurn } = makeWaker();
+    const resolved = await waker.keyFor(RESEARCH_NOTIF);
+    await waker.wake({ ...RESEARCH_NOTIF, turnUuid: undefined }, resolved.key, resolved);
+    await waker.wakeBatch([RESEARCH_NOTIF, TASK_NOTIF], resolved.key, resolved);
+    expect(advanceTurn).not.toHaveBeenCalled();
+    expect(spawner.wake).not.toHaveBeenCalled();
+  });
+
   it("advances pending→running on spawn and running→ended on exit, keyed on the session id, with the entity for executionUuid linkage", async () => {
     const { waker, advanceTurn } = makeWaker();
     const resolved = await waker.keyFor(TASK_NOTIF);

@@ -3,6 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma, TransactionClient } from "@/lib/prisma";
+import { lockResearchProject, EXECUTED_TASK_STATUSES } from "@/services/research-eligibility.service";
 import { formatAssigneeComplete, formatCreatedBy, batchGetActorNames, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, batchResolveAssignmentActors, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
@@ -627,6 +628,21 @@ export async function updateTask(
   // If moving FROM to_verify to any status EXCEPT done, reset acceptance criteria
   // Wrapped in transaction to prevent TOCTOU race condition
   const task = await prisma.$transaction(async (tx) => {
+    if (data.status) {
+      const anchor = await tx.task.findUnique({ where: { uuid }, select: { companyUuid: true, projectUuid: true, status: true } });
+      if (anchor) {
+        await lockResearchProject(tx, anchor.companyUuid, anchor.projectUuid);
+        // Route activity writes happen later: persist history atomically with execution.
+        if (EXECUTED_TASK_STATUSES.includes(data.status) || EXECUTED_TASK_STATUSES.includes(anchor.status)) {
+          await tx.activity.create({ data: {
+            companyUuid: anchor.companyUuid, projectUuid: anchor.projectUuid,
+            targetType: "task", targetUuid: uuid, action: "execution_started",
+            actorType: actorContext?.actorType ?? "system", actorUuid: actorContext?.actorUuid ?? "",
+            value: { from: anchor.status, to: data.status },
+          } });
+        }
+      }
+    }
     if (data.status && data.status !== "done") {
       const current = await tx.task.findUnique({ where: { uuid }, select: { status: true } });
       if (current?.status === "to_verify") {

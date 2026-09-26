@@ -3,12 +3,13 @@
 import { Fragment, useId, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { ArrowRightLeft, CheckCircle2, ChevronDown, Copy, CornerLeftUp, GitFork, Link, Pencil, Play, Rocket, Trash2 } from "lucide-react";
+import { ArrowRightLeft, CheckCircle2, ChevronDown, Copy, CornerLeftUp, GitFork, Link, Pencil, Play, Rocket, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { StartDevelopmentButton } from "@/components/start-development-button";
+import { ResearchAction } from "@/components/research-action";
 import { YoloButton } from "@/components/yolo-button";
 import type { StartDevelopmentAssignee } from "@/lib/start-development";
 import { isImeComposing } from "@/lib/ime";
@@ -93,7 +94,7 @@ function MobileActionItem({ label, icon, reason, onSelect, tone = "default" }: {
       aria-disabled={!!reason}
       aria-describedby={reason ? id : undefined}
       className={cn(
-        "focus-visible:ring-ring flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm outline-none transition-colors",
+        "focus-visible:ring-ring flex h-auto min-h-12 w-full items-center gap-3 whitespace-normal rounded-lg px-3 py-2 text-left text-sm outline-none transition-colors",
         "hover:bg-accent focus-visible:ring-2 [&_svg]:size-5 [&_svg]:shrink-0",
         toneClasses[tone],
         reason && "cursor-default text-muted-foreground hover:bg-transparent focus:bg-accent focus:text-muted-foreground dark:focus:bg-accent dark:text-muted-foreground dark:focus:text-muted-foreground",
@@ -108,7 +109,7 @@ function MobileActionItem({ label, icon, reason, onSelect, tone = "default" }: {
       {icon}
       <span className="min-w-0 flex-1">
         <span className="block font-medium">{label}</span>
-        {reason && <span id={id} className="mt-0.5 block text-xs leading-4 text-muted-foreground">{reason}</span>}
+        {reason && <span id={id} className="mt-0.5 block break-words whitespace-normal text-xs leading-4 text-muted-foreground">{reason}</span>}
       </span>
     </Button>
   );
@@ -164,11 +165,18 @@ export function IdeaActionsMenu(props: IdeaActionsMenuProps) {
   // These owners deliberately wrap the menu, NOT its content. Radix unmounts
   // content on selection; confirmation/picker state must survive that unmount.
   return (
-    <StartDevelopmentButton {...shared} renderAction={(start) => (
+    <ResearchAction ideaUuid={props.ideaUuid} projectUuid={props.projectUuid} assignee={props.assignee}
+      disabledReason={busyReason}
+      onCloseAutoFocus={props.onCloseAutoFocus}
+      refreshKey={JSON.stringify([props.proposals, props.tasks])}
+      onStarted={props.onStarted}
+      renderAction={(research) => (
+    <StartDevelopmentButton {...shared} disabledReason={stageReason || (research.busy ? ta("busy") : undefined)} renderAction={(start) => (
       <YoloButton {...shared} disabledReason={stageReason || (start.busy ? ta("busy") : undefined)} renderAction={(yolo) => {
-        const mutationReason = busyReason || (start.busy || yolo.busy ? ta("busy") : undefined);
+        const mutationReason = busyReason || (start.busy || yolo.busy || research.busy ? ta("busy") : undefined);
         const groups = [
           [
+            { label: research.label, icon: <Search />, reason: mutationReason || research.disabledReason, onSelect: research.onSelect, tone: "default" as const },
             { label: t("elaboration.verifyButton"), icon: <CheckCircle2 />, reason: mutationReason || props.stageReason || props.verifyReason, onSelect: props.onVerify, tone: "verify" as const },
             { label: start.label, icon: <Play />, reason: mutationReason || start.disabledReason, onSelect: start.onSelect, tone: "develop" as const },
             { label: yolo.label, icon: <Rocket />, reason: mutationReason || yolo.disabledReason, onSelect: yolo.onSelect, tone: "yolo" as const },
@@ -256,6 +264,7 @@ export function IdeaActionsMenu(props: IdeaActionsMenuProps) {
           </TooltipProvider>
         );
       }} />
+    )} />
     )} />
   );
 }

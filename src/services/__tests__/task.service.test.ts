@@ -56,6 +56,8 @@ const mockPrisma = vi.hoisted(() => {
     agentInstance: {
       findFirst: vi.fn(),
     },
+    $queryRaw: vi.fn().mockResolvedValue([]),
+    activity: { create: vi.fn() },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(txProxy)),
   };
 });
