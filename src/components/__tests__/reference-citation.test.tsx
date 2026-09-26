@@ -238,7 +238,7 @@ describe("real Markdown citation rendering", () => {
   );
 
   it("keeps ordinary links identical to Streamdown, including its safety dialog", async () => {
-    const text = "[ordinary](https://example.com) [mail](mailto:hi@example.com) [bad](javascript:alert%281%29)";
+    const text = "[ordinary](https://example.com) [mail](mailto:hi@example.com) [bad](javascript:alert%281%29) [empty]()";
     const baseline = render(<Streamdown>{text}</Streamdown>);
     const expected = baseline.container.innerHTML;
     baseline.unmount();

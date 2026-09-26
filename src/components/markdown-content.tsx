@@ -46,7 +46,7 @@ function CitationBlock({ components, rehypePlugins, ...props }: BlockProps) {
         <ReferenceCitation uuid={uuid} store={store}>
           {props.children}
         </ReferenceCitation>
-      ) : !props.href || !NormalLink ? (
+      ) : props.href === undefined || !NormalLink ? (
         <span className="text-muted-foreground">{props.children}</span>
       ) : <NormalLink {...props} />;
     }
