@@ -23,6 +23,10 @@ Only as a sub-step of the idea skill, only after the user has explicitly opted i
 
 ---
 
+## Research boundary
+
+Reuse the calling Idea's findings and follow `$research` ([shared rules](../research/SKILL.md)); switching into brainstorm does not grant a second investigation. If the goal needed focusing first, after the user selects a direction and before synthesis, apply the caller's optional research decision once with that focus. Return any findings alongside the synthesized round for the Idea caller to persist. Research does not choose the user's direction, remove the opt-in/selection gate, write files/comments, or resolve elaboration.
+
 ## Hard rules
 
 1. **One question at a time.** Each `AskUserQuestion` call MUST contain exactly one question entry. Wait for the answer before asking the next.
