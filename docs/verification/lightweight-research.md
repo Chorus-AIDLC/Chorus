@@ -103,3 +103,14 @@ env -u CHORUS_AGENT_PROFILE RESEARCH_DATABASE_URL='postgresql://postgres:postgre
 Result: **7,551 passed, 16 skipped, 376 passing files**; statements **95.93%**, branches **89.07%**, functions **97.68%**, lines **97.16%**. This includes **57 real-database tests**, including actual Waker/control-handler/production-admission cancellation with zero subprocesses. TypeScript and changed production source ESLint pass. CI now provisions an isolated PostgreSQL 17 service on port 5435 and initializes its empty schema so these tests participate in required coverage. Without the opt-in test database the new persistence suite is skipped and the global coverage threshold is not met.
 
 Existing in-memory integration fixtures now model SQL `NOT`/`startsWith`/null predicates, and the Tracker menu assertion includes the Research item. These changes fix test fidelity and retain the production exclusion of Research from generic FIFO resolution.
+
+
+## Final task review and production-image smoke
+
+Creation task passed independent Round 1 review (`2d94da2f-3d5a-4d36-acc9-a249fde4cc63`, nonblocking test act warnings). Tracker task passed independent Round 2 review (`f3dc3cf5-3698-4238-8595-a53e5e3717da`), with both blockers independently verified fixed. All four tasks are admin-verified.
+
+A production Docker image was built successfully from a clean detached checkout of `2033562d`. Running that image against the isolated database with the server entrypoint returned HTTP 200 and `database: connected` from `/api/health`. The Claude/Codex static plugin path, standalone skill path and Kiro skill path all returned the Research skill with HTTP 200. The smoke container was stopped afterward. This check intentionally bypassed database migration startup; the actual deployment script performs the normal production deployment.
+
+The coordinated release-contract command and all six plugin shell checks from CI passed.
+
+Aggregate code review Round 1 PASS: Idea comment `e10a081d-1810-4654-b12b-8a3eb07cb935`; reviewer independently repeated all 7,551 tests. OpenSpec archived as `2026-09-26-add-lightweight-research-skill`; both cumulative specs passed the supported document round-trip verifier. Chorus completion report: `58e07155-40f4-4175-8064-02b79b39a288`.
