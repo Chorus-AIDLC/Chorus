@@ -26,7 +26,7 @@
 
 区分 loading、ready、missing（404）、error（网络/其他 HTTP 错误）。无已加载数据时 loading/error 提示本地化文案且不导航，不能误报“证据不存在”。已 ready 的引用刷新失败时保留已有详情与链接，并显示本地化刷新失败说明；后续成功清除提示，404 必须移除链接。不承诺实时推送。
 
-格式错误的 ref 目标转为无 href 的普通文本，不生成空链接。Streamdown 默认 anchor 缺失时安全降级为文本，并在开发环境告警；sanitizer 匹配失败也在开发环境告警。仅含引用的 Markdown block 使用内容 key，绕过 Streamdown paragraph/list 子元素仅比较源码位置导致的等长 UUID 修改缓存问题；相邻代码/Mermaid block 不因此重新挂载。
+格式错误的 ref 目标转为无 href 的普通文本，不生成空链接。Streamdown 默认 anchor 缺失时安全降级为文本，并在开发环境告警；sanitizer 匹配失败也在开发环境告警。仅以 block 中的引用链接组成 key，绕过 Streamdown paragraph/list 子元素仅比较源码位置导致的等长 UUID 修改缓存问题；周围正文增长与相邻代码/Mermaid block 不因此重新挂载或重新取数。
 
 ### 引用交互
 

@@ -4,7 +4,7 @@ description: Multi-agent orchestration playbook — coordinate OTHER agents and 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.19.1"
+  version: "0.19.0"
   category: project-management
   mcp_server: chorus
 ---

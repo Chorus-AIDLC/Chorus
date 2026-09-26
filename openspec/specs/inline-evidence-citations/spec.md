@@ -57,6 +57,10 @@ The implementation SHALL apply in MarkdownContent without per-resource data plum
 - **WHEN** an author replaces a citation UUID or label with another of equal length
 - **THEN** the rendered citation updates, and unrelated code blocks remain mounted
 
+#### Scenario: Surrounding prose updates
+- **WHEN** surrounding prose grows while citation links remain unchanged
+- **THEN** mounted citations retain their identity without redundant lookups
+
 #### Scenario: Accessible missing marker
 - **WHEN** a keyboard user focuses a missing marker in either theme
 - **THEN** a readable, localized missing message is exposed without requiring color perception or mouse hover

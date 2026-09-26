@@ -290,6 +290,18 @@ describe("real Markdown citation rendering", () => {
     expect(view.container.querySelector("pre")).toBe(code);
   });
 
+  it("preserves citation identity and avoids refetching when surrounding prose grows", async () => {
+    const view = render(<MarkdownContent>{`Evidence ${markdown} says`}</MarkdownContent>, { wrapper });
+    await ready();
+    const original = marker();
+    for (let i = 1; i <= 5; i++) {
+      await act(async () => view.rerender(<MarkdownContent>{`Evidence ${markdown} says ${"more ".repeat(i)}`}</MarkdownContent>));
+      expect(marker()).toBe(original);
+      expect(view.container.textContent).toContain("more ".repeat(i).trim());
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("composes frontmatter, literal mention custom tags and citations, including theme changes", async () => {
     const text = `---\ntitle: Metadata\n---\n@[agent_name](agent:${other}) ${markdown}`;
     const { container } = render(

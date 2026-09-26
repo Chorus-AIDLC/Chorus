@@ -74,8 +74,9 @@ function CitationBlock({ components, rehypePlugins, ...props }: BlockProps) {
   // Block compares content, but its default paragraph/list children compare
   // only source positions. Equal-length UUID/label edits otherwise stay stale
   // (covered by the real-renderer UUID replacement test). Invalidate citation
-  // blocks only, leaving unrelated code/Mermaid blocks mounted.
-  const citationKey = /\]\(ref:/i.test(props.content) ? props.content : undefined;
+  // blocks only when their links change, leaving surrounding prose updates
+  // and unrelated code/Mermaid blocks mounted.
+  const citationKey = props.content.match(/\[[^\]]*\]\(ref:[^)]*\)/gi)?.join("|");
   return <Block key={citationKey} {...props} components={mergedComponents} rehypePlugins={plugins} />;
 }
 

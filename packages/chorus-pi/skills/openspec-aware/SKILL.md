@@ -4,7 +4,7 @@ description: OpenSpec-mode authoring for Chorus PM workflows in Pi. The default 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.19.1"
+  version: "0.19.0"
   category: project-management
   mcp_server: chorus
 ---
