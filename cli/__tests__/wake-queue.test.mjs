@@ -32,6 +32,28 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const silent = { info() {}, warn() {}, error() {} };
 
 describe("WakeQueue coalescing", () => {
+  it("keeps an isolated Research item between ordinary batches on the same serial lane", async () => {
+    const batches = [];
+    const gate = deferred();
+    const q = new WakeQueue({
+      logger: silent,
+      runBatch: async (_key, items) => {
+        batches.push(items.map((item) => item.n));
+        if (batches.length === 1) await gate.promise;
+      },
+    });
+    q.enqueue("idea", { n: 0 });
+    await flushMicrotasks();
+    q.enqueue("idea", { n: 1 });
+    q.enqueue("idea", { n: 2 });
+    q.enqueue("idea", { n: "research", isolated: true });
+    q.enqueue("idea", { n: 3 });
+    q.enqueue("idea", { n: 4 });
+    gate.release();
+    await flushMicrotasks(80);
+    expect(batches).toEqual([[0], [1, 2], ["research"], [3, 4]]);
+  });
+
   it("coalesces same-key items that pile up during a running batch into ONE runBatch with all items", async () => {
     const batches = [];
     const firstStarted = deferred();

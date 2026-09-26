@@ -394,7 +394,9 @@ export function createDaemonRestClient(opts) {
         // No connectionUuid yet: nothing to read against. A normal early state — skip.
         return { ok: false, status: null, skipped: true };
       }
-      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}`;
+      // Opt in only with exact Research admission + isolated queue support. The
+      // server withholds Research from older clients that cannot acknowledge it.
+      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&researchProtocol=1`;
       let response;
       try {
         response = await fetchImpl(endpoint, {

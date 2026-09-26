@@ -305,7 +305,7 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(result.data).toEqual({ turns });
     const [endpoint, init] = fetchImpl.mock.calls[0];
     // No explicit method on a GET; connectionUuid is URL-encoded.
-    expect(endpoint).toBe("https://chorus.example.com/api/daemon/pending-turns?connectionUuid=conn%2F1");
+    expect(endpoint).toBe("https://chorus.example.com/api/daemon/pending-turns?connectionUuid=conn%2F1&researchProtocol=1");
     expect(init.method).toBeUndefined();
     expect(init.headers.Authorization).toBe("Bearer cho_secret");
   });

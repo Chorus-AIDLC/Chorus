@@ -34,10 +34,11 @@ for file in \
 done
 
 skill_count="$(grep -Ec '^package/skills/[^/]+/SKILL[.]md$' "$tmp/files.txt")"
-if [ "$skill_count" -ne 13 ]; then
-  echo "expected 13 skills in tarball, found $skill_count" >&2
+if [ "$skill_count" -ne 14 ]; then
+  echo "expected 14 skills in tarball, found $skill_count" >&2
   exit 1
 fi
+grep -Fx 'package/skills/research/SKILL.md' "$tmp/files.txt" >/dev/null
 
 # ─── Forbidden artifacts absent ─────────────────────────────────────────────
 if grep -Eq '^package/(test|tests|node_modules|scripts)/' "$tmp/files.txt"; then

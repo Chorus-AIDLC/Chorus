@@ -88,6 +88,10 @@ $yolo <prompt> --project <project-uuid>
 
 ---
 
+## Research routing
+
+During planning, follow the Idea and Proposal routes to `$research` ([shared rules](../research/SKILL.md)): Idea before formal clarification once focused, Proposal after reusing evidence and only for new gaps or an explicit request. Carry findings and the request context across wakes and brainstorm; do not restart the same investigation on resume. Preserve the existing yolo decision/review gates. A Tracker Research action is research-only even inside a yolo-associated conversation: use the Idea research-only branch, save/report, and return without advancing to elaboration, proposal submission, or development. A yolo request alone does not prove development started; use actual execution facts.
+
 ## Workflow
 
 ### Phase 1: Planning

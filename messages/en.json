@@ -1365,6 +1365,8 @@
       "modeForm": "Fill a form",
       "modeConversation": "Describe to an agent",
       "modeConversationOfflineHint": "Describing to an agent needs an online daemon.",
+      "researchFirst": "Research before clarifying",
+      "researchFirstHint": "When unchecked, the agent may still research as needed.",
       "decompose": "Help me break this into child ideas",
       "decomposeHint": "Creates a theme and asks the agent to propose child ideas for you to confirm."
     },
@@ -1862,5 +1864,27 @@
   },
   "markdown": {
     "frontmatterLabel": "Document metadata"
+  },
+  "research": {
+    "button": "Research",
+    "loading": "Checking research availability…",
+    "dispatching": "Dispatching research…",
+    "dispatched": "Research requested. Follow the agent conversation for findings.",
+    "development_started": "Development has started. Research is only available before execution.",
+    "idea_completed": "This idea is complete. Research is available only before development.",
+    "already_running": "A research request is already pending or running.",
+    "idea_not_found": "This idea is no longer available.",
+    "unauthorized": "Sign in as a user to request research.",
+    "assignment_required": "Select an agent and instance to request research.",
+    "permission_denied": "You must own the assigned agent, and it needs permission to read the plan, edit ideas, and attach references.",
+    "agent_offline": "The assigned instance or conversation origin is offline. Reconnect it and retry.",
+    "origin_conflict": "The conversation origin conflicts with the fixed working directory. Resolve the session target before retrying.",
+    "target_changed": "The assignment or working directory changed. Refresh and retry.",
+    "unknown": "Could not request research. Refresh and retry.",
+    "selectAgent": "Choose a research agent",
+    "selectionHint": "Choose an agent and working directory. This request keeps the idea’s current stage and questions.",
+    "agentLabel": "Agent",
+    "noAgents": "No eligible agents are available.",
+    "requestButton": "Request research"
   }
 }

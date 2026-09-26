@@ -69,6 +69,14 @@ Elaboration resolved --> Create Proposal --> Add drafts --> Validate --> Submit 
 
 ## Workflow
 
+### Step 0: Reuse Evidence and Check New Factual Gaps
+
+Read the confirmed input Idea(s) or Documents, current specifications, References and recent context before drafting. Reuse existing findings first; invoke `research-chorus` ([shared rules](../research-chorus/SKILL.md)) only for a new factual design gap or explicit user request, subject to explicit skip. Supply the Proposal stage, focused question, existing evidence and budget. Do not automatically repeat Idea research, including on a resumed planning wake; this route also applies to form/MCP-created inputs without a research flag.
+
+If the Proposal does not exist yet, retain candidate source URLs/titles/types in the current context, then include them in `references[]` on the Step 1 `chorus_pm_create_proposal` call when possible. Read `chorus_get_proposal` afterward to obtain actual `references[].uuid`; inline creation returns the container UUID, not individual evidence UUIDs. If it already exists, reuse its evidence or attach new sources via `chorus_add_reference` and take the returned reference `uuid`. Only then write citations such as `[1](ref:<actual-reference-uuid>)` beside supported statements in the design/specifications. Never invent UUIDs or substitute the Proposal UUID.
+
+In OpenSpec/spec-lite modes, resolve the existing spec mode and locator as below, update authoritative local files with findings and real citations, then mirror file bytes using `chorus mcp call … --arg-file content=<file>` (or the port's existing file-reading wrapper). No hand-typed MCP document `content`; spec-lite's durable `spec.md` remains local-only. Free-form mode keeps its normal draft-saving path. Empty/partial results preserve unknowns and continue preparation. Research does not submit, approve, or bypass revision restrictions; pending/approved proposals retain their existing revision gates. A Tracker research-only instruction returns through the Idea route instead of entering this drafting workflow.
+
 ### Step 1: Create an Empty Proposal
 
 **Recommended approach:** Create the proposal container first without any drafts, then incrementally add document and task drafts one by one.

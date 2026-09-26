@@ -1365,6 +1365,8 @@
       "modeForm": "填写表单",
       "modeConversation": "对智能体描述",
       "modeConversationOfflineHint": "对智能体描述需要一个在线的守护进程。",
+      "researchFirst": "先调研再澄清",
+      "researchFirstHint": "未勾选时，Agent 仍会在需要时调研。",
       "decompose": "帮我拆解为子想法",
       "decomposeHint": "创建一个主题，并让智能体提出候选子想法供你确认。"
     },
@@ -1862,5 +1864,27 @@
   },
   "markdown": {
     "frontmatterLabel": "文档元信息"
+  },
+  "research": {
+    "button": "调研",
+    "loading": "正在检查调研条件…",
+    "dispatching": "正在派发调研…",
+    "dispatched": "已请求调研，请在 Agent 会话中查看发现。",
+    "development_started": "已开始开发。调研仅在实际执行前可用。",
+    "idea_completed": "此 Idea 已完成。调研仅在开发前可用。",
+    "already_running": "已有调研请求在排队或运行。",
+    "idea_not_found": "此 Idea 已不可用。",
+    "unauthorized": "请以用户身份登录后请求调研。",
+    "assignment_required": "请选择 Agent 和实例以请求调研。",
+    "permission_denied": "你需要拥有所分配的 Agent，且它必须有读取方案、编辑 Idea 和挂载引用的权限。",
+    "agent_offline": "所分配的实例或会话来源已离线，请恢复连接后重试。",
+    "origin_conflict": "会话来源与固定工作目录冲突，请先解决会话目标再重试。",
+    "target_changed": "分配或工作目录已改变，请刷新后重试。",
+    "unknown": "无法请求调研，请刷新后重试。",
+    "selectAgent": "选择调研 Agent",
+    "selectionHint": "选择 Agent 和工作目录。本次请求会保留 Idea 当前阶段及问答。",
+    "agentLabel": "Agent",
+    "noAgents": "没有可用的 Agent。",
+    "requestButton": "请求调研"
   }
 }

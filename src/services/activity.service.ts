@@ -5,6 +5,7 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import { getActorName } from "@/lib/uuid-resolver";
+import { lockResearchProject } from "@/services/research-eligibility.service";
 
 export type TargetType = "idea" | "task" | "proposal" | "document";
 
@@ -126,7 +127,7 @@ export async function createActivity({
   sessionUuid,
   sessionName,
 }: ActivityCreateParams) {
-  const activity = await prisma.activity.create({
+  const write = {
     data: {
       companyUuid,
       projectUuid,
@@ -139,7 +140,14 @@ export async function createActivity({
       sessionUuid: sessionUuid || undefined,
       sessionName: sessionName || undefined,
     },
-  });
+  };
+  // Publish after commit: downstream notification listeners use global Prisma.
+  const activity = action === "start_development"
+    ? await prisma.$transaction(async (tx) => {
+        await lockResearchProject(tx, companyUuid, projectUuid);
+        return tx.activity.create(write);
+      })
+    : await prisma.activity.create(write);
 
   eventBus.emit("activity", {
     companyUuid,

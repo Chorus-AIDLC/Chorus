@@ -20,6 +20,7 @@ import { success, errors } from "@/lib/api-response";
 import { getAuthContext } from "@/lib/auth";
 import { connectionBelongsToAgent } from "@/services/daemon-execution.service";
 import { getPendingTurnsForConnection } from "@/services/daemon-session.service";
+import { RESEARCH_INSTRUCTION_PREFIX } from "@/services/research-eligibility.service";
 
 // GET /api/daemon/pending-turns?connectionUuid=… — list this connection's origin-pinned
 // sessions' unstarted (pending) turns.
@@ -49,5 +50,13 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     connectionUuid,
   });
 
-  return success({ turns });
+  // Research requires exact-turn admission and isolated queue handling. Legacy
+  // daemons cannot acknowledge these turns; delivering them would rerun Research
+  // on every reconnect. Keep them pending for an upgraded daemon instead.
+  const supportsResearch = request.nextUrl.searchParams.get("researchProtocol") === "1";
+  return success({
+    turns: supportsResearch
+      ? turns
+      : turns.filter((turn) => !turn.promptText?.startsWith(RESEARCH_INSTRUCTION_PREFIX)),
+  });
 });

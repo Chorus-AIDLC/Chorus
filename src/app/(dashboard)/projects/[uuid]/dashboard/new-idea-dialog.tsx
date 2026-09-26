@@ -90,6 +90,12 @@ export function NewIdeaDialog({
   // agent to propose child ideas as an elaboration round. Rides the existing
   // conversational wake — no new action type.
   const [decompose, setDecompose] = useState(false);
+  const [researchFirst, setResearchFirst] = useState(false);
+  const [isDispatching, setIsDispatching] = useState(false);
+  useEffect(() => {
+    // An explicit request belongs to this opening/project, not future Ideas.
+    setResearchFirst(false);
+  }, [open, projectUuid]);
   const [hasProjectFixedTarget, setHasProjectFixedTarget] = useState(false);
   useEffect(() => {
     if (!open || isDerive) return;
@@ -261,48 +267,72 @@ export function NewIdeaDialog({
     connectionUuid: string;
     userText: string;
   }): Promise<SessionView> => {
-    const res = await authFetch("/api/ideas/conversational", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        projectUuid,
-        agentUuid: args.agentUuid,
-        connectionUuid: args.connectionUuid,
-        descriptionText: args.userText,
-        ...(decompose ? { decompose: true } : {}),
-      }),
-    });
-    if (!res.ok) {
-      // Surface the server reason through the component's status-aware error
-      // mapping (409 → retryable offline copy + connection re-poll).
-      let serverMessage: string | null = null;
+    setIsDispatching(true);
+    try {
+      const res = await authFetch("/api/ideas/conversational", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectUuid,
+          agentUuid: args.agentUuid,
+          connectionUuid: args.connectionUuid,
+          descriptionText: args.userText,
+          researchFirst,
+          ...(decompose ? { decompose: true } : {}),
+        }),
+      });
+      if (!res.ok) {
+        // Surface the server reason through the component's status-aware error
+        // mapping (409 → retryable offline copy + connection re-poll).
+        let serverMessage: string | null = null;
+        try {
+          const json = await res.json();
+          if (typeof json?.error === "string" && json.error) {
+            serverMessage = json.error;
+          }
+        } catch {
+          // Non-JSON error body — fall back to the component's generic copy.
+        }
+        throw new ConversationalDispatchError(res.status, serverMessage);
+      }
+      let session: SessionView | null = null;
       try {
         const json = await res.json();
-        if (typeof json?.error === "string" && json.error) {
-          serverMessage = json.error;
+        if (json?.success && json.data?.session) {
+          session = json.data.session as SessionView;
         }
       } catch {
-        // Non-JSON error body — fall back to the component's generic copy.
+        // Non-JSON success body — treated as a failed dispatch below.
       }
-      throw new ConversationalDispatchError(res.status, serverMessage);
-    }
-    let session: SessionView | null = null;
-    try {
-      const json = await res.json();
-      if (json?.success && json.data?.session) {
-        session = json.data.session as SessionView;
+      if (!session) {
+        throw new ConversationalDispatchError(res.status, null);
       }
-    } catch {
-      // Non-JSON success body — treated as a failed dispatch below.
+      return session;
+    } finally {
+      setIsDispatching(false);
     }
-    if (!session) {
-      throw new ConversationalDispatchError(res.status, null);
-    }
-    return session;
   };
 
   const conversationPane = (
     <div className="space-y-3 py-2">
+      <div className="flex items-start gap-2">
+        <Checkbox
+          id="idea-research-first"
+          checked={researchFirst}
+          onCheckedChange={(checked) => setResearchFirst(checked === true)}
+          disabled={isDispatching}
+          aria-describedby="idea-research-first-hint"
+          className="mt-0.5"
+        />
+        <div className="grid gap-1">
+          <Label htmlFor="idea-research-first" className="cursor-pointer">
+            {t("newIdea.researchFirst")}
+          </Label>
+          <p id="idea-research-first-hint" className="text-xs leading-4 text-muted-foreground">
+            {t("newIdea.researchFirstHint")}
+          </p>
+        </div>
+      </div>
       {/* Decompose intent — ask the agent to break the described work into child
           ideas under a new container, proposed as an elaboration round to confirm.
           Only meaningful in conversational mode (needs an online daemon). */}
@@ -310,6 +340,7 @@ export function NewIdeaDialog({
         <Checkbox
           id="idea-decompose"
           checked={decompose}
+          disabled={isDispatching}
           onCheckedChange={(checked) => setDecompose(checked === true)}
           className="mt-0.5"
         />

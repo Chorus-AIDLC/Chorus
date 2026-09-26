@@ -23,6 +23,10 @@ Only as a sub-step of the `/chorus-idea` skill, only after the user has explicit
 
 ---
 
+## Research boundary
+
+Reuse the calling Idea's findings and follow `/chorus-research` ([shared rules](../chorus-research/SKILL.md)); switching into brainstorm does not grant a second investigation. If the goal needed focusing first, after the user selects a direction and before synthesis, apply the caller's optional research decision once with that focus. Return any findings alongside the synthesized round for the Idea caller to persist. Research does not choose the user's direction, remove the opt-in/selection gate, write files/comments, or resolve elaboration.
+
 ## Hard rules
 
 1. **One question at a time.** Each interactive question you pose MUST be a single question. Wait for the answer before asking the next.
