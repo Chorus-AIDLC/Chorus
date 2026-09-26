@@ -15,10 +15,11 @@ import type { StartDevelopmentAssignee } from "@/lib/start-development";
 import { isImeComposing } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
-type ActionTone = "default" | "verify" | "develop" | "yolo" | "destructive";
+type ActionTone = "default" | "research" | "verify" | "develop" | "yolo" | "destructive";
 
 const toneClasses: Record<ActionTone, string> = {
   default: "",
+  research: "text-[#9A6700] focus:text-[#7A5100] focus:bg-[#FFF4CE] dark:text-[#F2C45D] dark:focus:text-[#F7D990] dark:focus:bg-[#3B2D12]",
   verify: "text-[#1976D2] focus:text-[#155FA0] focus:bg-[#E3F2FD] dark:text-[#64B5F6] dark:focus:text-[#90CAF9] dark:focus:bg-[#102A43]",
   develop: "text-[#2E7D32] focus:text-[#256628] focus:bg-[#E8F5E9] dark:text-[#72D572] dark:focus:text-[#9AE69A] dark:focus:bg-[#17351D]",
   yolo: "text-[#6A4FB6] focus:text-[#584098] focus:bg-[#F1ECFA] dark:text-[#B39DDB] dark:focus:text-[#D1C4E9] dark:focus:bg-[#2A2040]",
@@ -176,7 +177,7 @@ export function IdeaActionsMenu(props: IdeaActionsMenuProps) {
         const mutationReason = busyReason || (start.busy || yolo.busy || research.busy ? ta("busy") : undefined);
         const groups = [
           [
-            { label: research.label, icon: <Search />, reason: mutationReason || research.disabledReason, onSelect: research.onSelect, tone: "default" as const },
+            { label: research.label, icon: <Search />, reason: mutationReason || research.disabledReason, onSelect: research.onSelect, tone: "research" as const },
             { label: t("elaboration.verifyButton"), icon: <CheckCircle2 />, reason: mutationReason || props.stageReason || props.verifyReason, onSelect: props.onVerify, tone: "verify" as const },
             { label: start.label, icon: <Play />, reason: mutationReason || start.disabledReason, onSelect: start.onSelect, tone: "develop" as const },
             { label: yolo.label, icon: <Rocket />, reason: mutationReason || yolo.disabledReason, onSelect: yolo.onSelect, tone: "yolo" as const },
