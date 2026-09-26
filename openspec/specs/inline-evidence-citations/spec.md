@@ -53,4 +53,3 @@ Agent skills SHALL explain UUID linking alongside existing evidence guidance acr
 #### Scenario: Agent authors a citation
 - **WHEN** an Agent follows the reference instructions
 - **THEN** it obtains the existing evidence UUID and writes `[1](ref:UUID)` in Markdown without inventing identifiers or changing evidence storage
-
