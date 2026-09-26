@@ -215,6 +215,18 @@ describe("composeConversationalIdeaInstruction", () => {
     }
   });
 
+  it.each(["elaborate", "decompose"] as const)("bounds a long project label without truncating the description in %s", (mode) => {
+    const projectName = "项目".repeat(50_000);
+    const descriptionText = "x".repeat(3000);
+    for (const researchFirst of [undefined, false, true]) {
+      const text = composeConversationalIdeaInstruction({ ...base, projectName, descriptionText, mode, researchFirst });
+      expect(text).toContain(`"${projectName.slice(0, 199)}…" (projectUuid: ${projectUuid})`);
+      expect(text).not.toContain(projectName);
+      expect(text.endsWith(`--- User's idea description ---\n${descriptionText}`)).toBe(true);
+      expect(text.length).toBeLessThan(8000);
+    }
+  });
+
   it("embeds the ideaUuid, project identity, and the description verbatim", () => {
     const text = composeConversationalIdeaInstruction(base);
     expect(text).toContain(`ideaUuid: ${STUB_IDEA_UUID}`);

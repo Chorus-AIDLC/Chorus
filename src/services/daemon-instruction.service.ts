@@ -550,6 +550,7 @@ export class ProjectCwdTargetUnavailableError extends Error {
 
 /** Max length of the server-derived placeholder title for a pre-created idea. */
 export const PLACEHOLDER_TITLE_MAX = 60;
+const PROJECT_INSTRUCTION_LABEL_MAX_CHARS = 200;
 
 /**
  * Derive the placeholder title for a pre-created conversational idea: the description's
@@ -609,9 +610,14 @@ export function composeConversationalIdeaInstruction(params: {
   mode?: ConversationalIdeaMode;
   researchFirst?: boolean;
 }): string {
-  // Name is display sugar; the uuid is the machine anchor and is always present.
-  const projectLabel = params.projectName?.trim()
-    ? `"${params.projectName.trim()}" (projectUuid: ${params.projectUuid})`
+  // Name is display sugar; bound this user-controlled metadata independently of
+  // the description. The complete UUID remains the authoritative machine anchor.
+  const projectName = params.projectName?.trim();
+  const displayName = projectName && projectName.length > PROJECT_INSTRUCTION_LABEL_MAX_CHARS
+    ? `${projectName.slice(0, PROJECT_INSTRUCTION_LABEL_MAX_CHARS - 1)}…`
+    : projectName;
+  const projectLabel = displayName
+    ? `"${displayName}" (projectUuid: ${params.projectUuid})`
     : `projectUuid: ${params.projectUuid}`;
 
   const researchInstruction = [

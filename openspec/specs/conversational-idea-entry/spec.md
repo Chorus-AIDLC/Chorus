@@ -66,6 +66,11 @@ On send, the client SHALL post the user's verbatim description together with the
 - **WHEN** the user sends a nonempty description of at most 3000 characters after trimming, in either elaboration or decomposition mode, with Research enabled, disabled, or omitted
 - **THEN** the description is preserved in full in the Idea content and opening instruction; server-generated template text does not consume the description budget
 
+#### Scenario: Long project name cannot inflate the generated instruction
+- **WHEN** a project's name exceeds 200 characters
+- **THEN** only its display label in the generated instruction is shortened to 200 characters, including an ellipsis
+- **AND** the full project UUID and user description are preserved, without changing the stored project name
+
 #### Scenario: Description length enforced server-side
 - **WHEN** the user's trimmed description is empty or exceeds the shared client/server limit of 3000 characters
 - **THEN** the request is rejected with a validation error and nothing is persisted
