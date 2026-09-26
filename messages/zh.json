@@ -722,6 +722,12 @@
     "deleteFailedNotFound": "该文档已不存在。"
   },
   "references": {
+    "citationLoading": "正在加载证据…",
+    "citationMissing": "证据不存在",
+    "citationError": "无法加载证据。悬停或聚焦以重试。",
+    "citationRefreshError": "无法刷新证据，当前显示上次加载的详情。",
+    "citationOpen": "在新标签页打开证据",
+    "citationUnsafe": "无法打开此证据链接。",
     "title": "参考资料",
     "empty": "链接官方文档、参考实现或 issue 讨论，为它提供佐证。",
     "loading": "加载参考资料中...",
