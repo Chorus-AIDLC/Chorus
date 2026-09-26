@@ -45,6 +45,9 @@ const bodySchema = z.object({
   // instruction template. Optional + defaulting false so the existing conversational
   // path is unchanged. Rides the SAME human_instruction wake — no new action type.
   decompose: z.boolean().optional(),
+  // True requests research for this initialization; false/omitted allow automatic
+  // judgment. This is independent of container decomposition.
+  researchFirst: z.boolean().optional(),
 });
 
 // POST /api/ideas/conversational — pre-create idea + root session + first instruction.

@@ -584,7 +584,7 @@ export type ConversationalIdeaMode = "elaborate" | "decompose";
  *
  * The idea is PRE-CREATED and already instance-assigned + elaborating, so both templates
  * direct EDIT (never create, never claim — a claim would fail on the existing assignee).
- *  - `elaborate` (default): edit → immediate start-elaboration → panel guidance → end turn.
+ *  - `elaborate` (default): edit → optional research → elaboration → panel guidance → end turn.
  *  - `decompose`: edit the CONTAINER → keep isContainer → one lightweight scope-clarifying
  *    elaboration → propose candidate CHILDREN as a structured elaboration round (one
  *    single-select question per child, ≤15/round, never a multi-select) → end turn → on the
@@ -603,11 +603,23 @@ export function composeConversationalIdeaInstruction(params: {
   projectName?: string | null;
   descriptionText: string;
   mode?: ConversationalIdeaMode;
+  researchFirst?: boolean;
 }): string {
   // Name is display sugar; the uuid is the machine anchor and is always present.
   const projectLabel = params.projectName?.trim()
     ? `"${params.projectName.trim()}" (projectUuid: ${params.projectUuid})`
     : `projectUuid: ${params.projectUuid}`;
+
+  const researchInstruction = [
+    params.researchFirst
+      ? "The user explicitly requested lightweight research before clarification."
+      : "Research is optional: use automatic judgment for a concrete, externally verifiable factual gap.",
+    "An explicit request to skip research in the user's instructions takes precedence.",
+    "Follow the shared research skill before the first formal elaboration: one bounded pass, approximately 2–5 minutes, at most 5 deeply read relevant sources; reuse existing evidence.",
+    "Save useful findings in the existing Idea content, preserving the user's meaning, and attach evidence with real ref:UUID citations. Do not create or claim this already-created Idea.",
+    "If tools are unavailable, results are empty, or the budget is exhausted, record the limitation and continue the normal steps in this turn. Do not research user preferences; ask through the elaboration panel when needed.",
+    "This initialization request applies once, not on every later wake or stage re-entry.",
+  ].join(" ");
 
   if (params.mode === "decompose") {
     return [
@@ -617,6 +629,7 @@ export function composeConversationalIdeaInstruction(params: {
       `This conversation IS that container idea's root session. The user wants help DECOMPOSING it into child ideas. Do the following, in order:`,
       `1. Edit the container via chorus_edit_idea: derive a concise title from the description and polish the content (keep the user's meaning). The current title is a placeholder.`,
       `2. Ensure it stays a container: it was pre-created with isContainer=true — do NOT clear that flag (a container groups its child ideas and MUST NOT get a proposal of its own).`,
+      `Before step 3: ${researchInstruction}`,
       `3. Run ONE lightweight elaboration round (chorus_pm_start_elaboration) to clarify the decomposition scope/dimension — how to slice the work into children. Keep it short; you may self-answer in headless or ask the user, then continue.`,
       `4. Propose the candidate child ideas AS A STRUCTURED ELABORATION ROUND (chorus_pm_start_elaboration) for the user to review/edit/confirm — use ONE elaboration question PER proposed child (the child's title as the question text, a short rationale as its description), single-select. Elaboration questions are single-select and a round is capped at 15 questions, so propose at most 15 candidates per round and NEVER a single multi-select question; if you need more children, propose them across additional rounds. Do NOT create any child ideas yet — this round is the preview the user accepts/edits/declines per child.`,
       `5. End the turn. The user's answers in the idea's elaboration panel will wake this same conversation (the existing elaboration-answered wake).`,
@@ -635,8 +648,9 @@ export function composeConversationalIdeaInstruction(params: {
     ``,
     `This conversation IS that idea's root session — its elaboration and lifecycle wakes will continue here. Do the following, in order:`,
     `1. Edit the idea via chorus_edit_idea: derive a concise title from the description and polish the content (keep the user's meaning; you may restructure). The current title is a placeholder.`,
-    `2. Immediately start elaboration on the idea (chorus_pm_start_elaboration), following the idea skill — do NOT wait for another wake. Post a short summary of your questions in this conversation and direct the user to answer in the idea's elaboration panel.`,
-    `3. End the turn. The user's panel answers will wake this same conversation.`,
+    `2. ${researchInstruction}`,
+    `3. After that optional step, start elaboration on the idea (chorus_pm_start_elaboration), following the idea skill — do NOT wait for another wake. Post a short summary of your questions in this conversation and direct the user to answer in the idea's elaboration panel.`,
+    `4. End the turn. The user's panel answers will wake this same conversation.`,
     ``,
     `Reference reflex: whenever an external link is evidence for this idea (a precedent issue/PR, a reference implementation, official docs, a paper/blog), attach it via references — prefer the inline references[] param at creation time over a post-hoc chorus_add_reference.`,
     ``,
@@ -715,8 +729,9 @@ export async function createConversationalIdeaSession(
     // `elaborate` (default) is the original single-idea contract; `decompose`
     // (add-container-idea-ui Block 3) pre-creates the idea with isContainer=true and
     // dispatches the decompose instruction so the agent proposes child ideas as an
-    // elaboration round. Optional so existing callers (byte-identical) stay unchanged.
+    // elaboration round. Optional so existing callers keep their mode.
     mode?: ConversationalIdeaMode;
+    researchFirst?: boolean;
   },
 ): Promise<{ idea: ConversationalIdeaView; session: SessionView; turn: TurnView }> {
   const mode: ConversationalIdeaMode = params.mode ?? "elaborate";
@@ -807,6 +822,7 @@ export async function createConversationalIdeaSession(
       projectName: project.name,
       descriptionText,
       mode,
+      researchFirst: params.researchFirst,
     }),
   );
 

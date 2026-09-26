@@ -201,6 +201,20 @@ describe("composeConversationalIdeaInstruction", () => {
     descriptionText: "The user's exact words\nacross lines — 保留原文。",
   };
 
+  it.each(["elaborate", "decompose"] as const)("composes bounded research before formal questions in %s", (mode) => {
+    for (const researchFirst of [undefined, false, true]) {
+      const text = composeConversationalIdeaInstruction({ ...base, mode, researchFirst });
+      expect(text).toContain(researchFirst ? "explicitly requested lightweight research" : "automatic judgment");
+      expect(text).toContain("skip research in the user's instructions takes precedence");
+      expect(text).toContain("at most 5 deeply read");
+      expect(text).toContain("tools are unavailable");
+      expect(text).toContain("not on every later wake");
+      expect(text).toContain("ref:UUID");
+      expect(text.indexOf("shared research skill")).toBeLessThan(text.indexOf("chorus_pm_start_elaboration"));
+      expect(text.endsWith(base.descriptionText)).toBe(true);
+    }
+  });
+
   it("embeds the ideaUuid, project identity, and the description verbatim", () => {
     const text = composeConversationalIdeaInstruction(base);
     expect(text).toContain(`ideaUuid: ${STUB_IDEA_UUID}`);
@@ -297,6 +311,27 @@ describe("composeConversationalIdeaInstruction", () => {
 
 // ===== createConversationalIdeaSession — happy path =====
 describe("createConversationalIdeaSession", () => {
+  it.each(["elaborate", "decompose"] as const)("persists the composed research intent for %s without altering description or mode", async (mode) => {
+    for (const researchFirst of [undefined, false, true]) {
+      await createConversationalIdeaSession(userAuth, { ...validParams, mode, researchFirst });
+      expect(mockTx.idea.create).toHaveBeenLastCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          content: validParams.descriptionText,
+          isContainer: mode === "decompose",
+        }),
+      }));
+      expect(mockTx.daemonSessionTurn.create).toHaveBeenLastCalledWith({
+        data: expect.objectContaining({
+          trigger: "human_instruction",
+          promptText: composeConversationalIdeaInstruction({
+            ideaUuid: STUB_IDEA_UUID, projectUuid, projectName: "Chorus",
+            descriptionText: validParams.descriptionText, mode, researchFirst,
+          }),
+        }),
+      });
+    }
+  });
+
   it("uses the project-fixed target and snapshots it on the Idea and root session", async () => {
     mockResolveProjectAgentCwdTarget.mockResolvedValue({
       actorUserUuid: ownerUuid,
