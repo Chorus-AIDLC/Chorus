@@ -311,6 +311,25 @@ describe("composeConversationalIdeaInstruction", () => {
 
 // ===== createConversationalIdeaSession — happy path =====
 describe("createConversationalIdeaSession", () => {
+  it.each(["elaborate", "decompose"] as const)("accepts the full advertised 3000-character description in %s with every Research setting", async (mode) => {
+    const descriptionText = "调研".repeat(1500);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid, name: "研究项目".repeat(50) });
+    for (const researchFirst of [undefined, false, true]) {
+      await createConversationalIdeaSession(userAuth, {
+        ...validParams, mode, researchFirst, descriptionText: ` \n${descriptionText}\n `,
+      });
+      expect(mockTx.idea.create).toHaveBeenLastCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ content: descriptionText, isContainer: mode === "decompose" }),
+      }));
+      const prompt = mockTx.daemonSessionTurn.create.mock.lastCall![0].data.promptText as string;
+      expect(prompt).toContain(STUB_IDEA_UUID);
+      expect(prompt).toContain(researchFirst ? "explicitly requested lightweight research" : "automatic judgment");
+      expect(prompt.endsWith(`--- User's idea description ---\n${descriptionText}`)).toBe(true);
+      // The generated wrapper must not consume any of the advertised input budget.
+      expect(prompt.length).toBeGreaterThan(MAX_INSTRUCTION_CHARS);
+    }
+  });
+
   it.each(["elaborate", "decompose"] as const)("persists the composed research intent for %s without altering description or mode", async (mode) => {
     for (const researchFirst of [undefined, false, true]) {
       await createConversationalIdeaSession(userAuth, { ...validParams, mode, researchFirst });
@@ -581,16 +600,18 @@ describe("createConversationalIdeaSession gates", () => {
     await expectNoMutation();
   });
 
-  it("over-length COMPOSED instruction → InstructionTextError(too_long), nothing persisted", async () => {
-    // The description alone fits, but template overhead pushes the composed text over.
-    const nearCap = "z".repeat(MAX_INSTRUCTION_CHARS - 10);
-    await expect(
-      createConversationalIdeaSession(userAuth, {
-        ...validParams,
-        descriptionText: nearCap,
-      }),
-    ).rejects.toBeInstanceOf(InstructionTextError);
-    await expectNoMutation();
+  it.each(["elaborate", "decompose"] as const)("rejects 3001-character descriptions in %s before persistence with every Research setting", async (mode) => {
+    for (const researchFirst of [undefined, false, true]) {
+      await expect(
+        createConversationalIdeaSession(userAuth, {
+          ...validParams, mode, researchFirst, descriptionText: "z".repeat(3001),
+        }),
+      ).rejects.toMatchObject({
+        name: "InstructionTextError", reason: "too_long",
+        message: "Instruction text exceeds the maximum of 3000 characters.",
+      });
+      await expectNoMutation();
+    }
   });
 
   it("mid-transaction failure propagates and persists nothing after it", async () => {

@@ -62,9 +62,14 @@ On send, the client SHALL post the user's verbatim description together with the
 - **WHEN** the dispatch returns the connection-offline conflict error
 - **THEN** the component surfaces a retryable error message and refreshes the online-connection list instead of failing silently
 
-#### Scenario: Composed instruction length enforced server-side
-- **WHEN** the composed instruction (template + description) would exceed the server instruction length limit
+#### Scenario: Full advertised description budget is accepted
+- **WHEN** the user sends a nonempty description of at most 3000 characters after trimming, in either elaboration or decomposition mode, with Research enabled, disabled, or omitted
+- **THEN** the description is preserved in full in the Idea content and opening instruction; server-generated template text does not consume the description budget
+
+#### Scenario: Description length enforced server-side
+- **WHEN** the user's trimmed description is empty or exceeds the shared client/server limit of 3000 characters
 - **THEN** the request is rejected with a validation error and nothing is persisted
+- **AND** ordinary human instruction endpoints retain their separate 4000-character limit
 
 ### Requirement: The dispatched instruction SHALL direct the agent to edit the pre-created Idea and start elaboration in the same turn
 The server-side instruction template SHALL direct the woken agent to (1) edit the pre-created Idea via chorus_edit_idea, deriving a concise title and polishing content while preserving the user's meaning; (2) assess relevant factual gaps and invoke the shared lightweight research skill when requested or useful, incorporating findings and real evidence citations; (3) start elaboration on the Idea in the same turn after optional research, post a summary of the questions and direct the user to the Idea's elaboration panel; and (4) end the turn. It SHALL NOT direct the Agent to create or claim the already assigned Idea. Research failure, unavailability or budget exhaustion SHALL NOT prevent proceeding to clarification with known limitations. Existing user-decision gates SHALL remain intact when focusing or decomposition requires human input.
@@ -156,4 +161,3 @@ The conversational pane SHALL provide a default-unchecked, accessible Checkbox r
 #### Scenario: Design artifact and theme acceptance
 - **WHEN** the UI change is delivered
 - **THEN** browser acceptance evidence for the creation dialog's Checkbox and hint covers both light and dark themes; Pencil synchronization is waived for this delivery by explicit user instruction in Idea comment 25a4d74c-3e9f-4aaf-a019-75344cc77a50
-

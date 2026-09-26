@@ -26,10 +26,9 @@
 //              conversation (`openChatForSession`).
 //
 // Char budget: the USER text is capped at USER_TEXT_MAX_CHARS (3000) with a
-// visible counter near the limit, reserving template headroom under the server's
-// MAX_INSTRUCTION_CHARS (4000) so a composed instruction never 400s on length —
-// wherever the template is applied (client `buildInstruction` or a custom
-// dispatch's server-side composition).
+// visible counter near the limit. Idea creation validates that same user-text
+// budget separately from its server-generated template. Default ad-hoc dispatch
+// still has a 4000-character total budget, including any client-built template.
 //
 // Errors are never silent: a 409 (the picked connection went offline between the
 // presence poll and the send) renders an inline retryable error AND re-polls the
@@ -64,13 +63,9 @@ import {
   extractInstructionError,
 } from "./send-instruction-box";
 import type { ConnectionView } from "./types";
+import { CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS } from "@/lib/conversational-idea";
 
-// Client cap on the USER's free text. The composed instruction = template + user
-// text and must stay under the server's MAX_INSTRUCTION_CHARS (4000); capping the
-// user share at 3000 leaves ~1000 chars of template headroom (the create-idea
-// template uses ~500). Consumers with a heavier template should keep it inside
-// that headroom rather than raising this cap.
-export const USER_TEXT_MAX_CHARS = 3000;
+export const USER_TEXT_MAX_CHARS = CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS;
 
 // Show the live character counter once the user is within this many chars of the
 // cap (a counter from char 0 is noise; near the limit it is the affordance).

@@ -58,6 +58,7 @@ import {
   isConnectionLive,
 } from "@/services/daemon-execution.service";
 import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
+import { CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS } from "@/lib/conversational-idea";
 
 // ===== Constants =====
 
@@ -157,11 +158,11 @@ export type InstructionTextErrorReason = "empty" | "too_long";
 export class InstructionTextError extends Error {
   readonly code = "invalid_instruction_text";
   readonly reason: InstructionTextErrorReason;
-  constructor(reason: InstructionTextErrorReason) {
+  constructor(reason: InstructionTextErrorReason, maxChars = MAX_INSTRUCTION_CHARS) {
     super(
       reason === "empty"
         ? "Instruction text must not be empty."
-        : `Instruction text exceeds the maximum of ${MAX_INSTRUCTION_CHARS} characters.`,
+        : `Instruction text exceeds the maximum of ${maxChars} characters.`,
     );
     this.name = "InstructionTextError";
     this.reason = reason;
@@ -208,13 +209,16 @@ export interface SessionTargetView extends SessionView {
  * trimmed, canonical text on success; throws `InstructionTextError` otherwise. Called
  * before any mutation so a bad instruction never creates a turn.
  */
-export function validateInstructionText(instructionText: string): string {
+export function validateInstructionText(
+  instructionText: string,
+  maxChars = MAX_INSTRUCTION_CHARS,
+): string {
   const trimmed = (instructionText ?? "").trim();
   if (trimmed.length === 0) {
     throw new InstructionTextError("empty");
   }
-  if (trimmed.length > MAX_INSTRUCTION_CHARS) {
-    throw new InstructionTextError("too_long");
+  if (trimmed.length > maxChars) {
+    throw new InstructionTextError("too_long", maxChars);
   }
   return trimmed;
 }
@@ -688,7 +692,7 @@ export interface ConversationalIdeaView {
  *  3. The connection's durable `agentInstanceUuid` must resolve — the idea's instance
  *     pin must point at a real place → `ConnectionInstanceMissingError` (route → 409).
  *  4. SERVER generates the ideaUuid, composes the instruction around it, and validates
- *     the COMPOSED text (`validateInstructionText`) → `InstructionTextError` (route →
+ *     the user's description against its shared UI limit → `InstructionTextError` (route →
  *     400). Generating the uuid before the transaction is what lets the instruction
  *     embed it while keeping all writes atomic.
  *  5. ONE `prisma.$transaction`: create the Idea (createdBy = caller, placeholder
@@ -807,24 +811,23 @@ export async function createConversationalIdeaSession(
   }
 
   // (4) Server-generated ideaUuid FIRST, so the composed instruction can embed it while
-  // the idea write stays inside the transaction. Reject empty descriptions before
-  // composing (the template alone would otherwise pass the non-empty check), then
-  // validate the COMPOSED length against the single MAX_INSTRUCTION_CHARS cap.
-  const descriptionText = params.descriptionText?.trim() ?? "";
-  if (descriptionText.length === 0) {
-    throw new InstructionTextError("empty");
-  }
-  const ideaUuid = randomUUID();
-  const instructionText = validateInstructionText(
-    composeConversationalIdeaInstruction({
-      ideaUuid,
-      projectUuid: project.uuid,
-      projectName: project.name,
-      descriptionText,
-      mode,
-      researchFirst: params.researchFirst,
-    }),
+  // the idea write stays inside the transaction. Validate the USER description
+  // against the same budget shown in the UI before adding the trusted server
+  // template. Generated research/decomposition instructions do not consume the
+  // user's budget; ordinary human instructions retain their separate 4000 cap.
+  const descriptionText = validateInstructionText(
+    params.descriptionText,
+    CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS,
   );
+  const ideaUuid = randomUUID();
+  const instructionText = composeConversationalIdeaInstruction({
+    ideaUuid,
+    projectUuid: project.uuid,
+    projectName: project.name,
+    descriptionText,
+    mode,
+    researchFirst: params.researchFirst,
+  });
 
   // (5) All-or-nothing: idea + idea-anchored session + first turn in one transaction.
   const { ideaRow, sessionRow, turnRow } = await prisma.$transaction(async (tx) => {

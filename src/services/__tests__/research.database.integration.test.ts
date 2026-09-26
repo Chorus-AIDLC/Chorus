@@ -26,6 +26,7 @@ describe.skipIf(!url)("Research real database integration", () => {
   let db: PrismaClient;
   let pool: pg.Pool;
   let requestResearch: typeof import("../research.service").requestResearch;
+  let createConversationalIdeaSession: typeof import("../daemon-instruction.service").createConversationalIdeaSession;
   let getResearchEligibility: typeof import("../research-eligibility.service").getResearchEligibility;
   let getPendingTurnsForConnection: typeof import("../daemon-session.service").getPendingTurnsForConnection;
   let advanceTurn: typeof import("../daemon-session.service").advanceTurn;
@@ -47,6 +48,7 @@ describe.skipIf(!url)("Research real database integration", () => {
     db = new PrismaClient({ adapter: new PrismaPg(pool) });
     state.db = db;
     ({ requestResearch } = await import("../research.service"));
+    ({ createConversationalIdeaSession } = await import("../daemon-instruction.service"));
     ({ getResearchEligibility } = await import("../research-eligibility.service"));
     ({ getPendingTurnsForConnection, advanceTurn, advanceTurnForWake } = await import("../daemon-session.service"));
     ({ startDevelopment } = await import("../start-development.service"));
@@ -108,6 +110,37 @@ describe.skipIf(!url)("Research real database integration", () => {
   const development = () => createActivity({
     companyUuid: state.company, projectUuid: project, targetType: "idea", targetUuid: idea,
     actorType: "user", actorUuid: state.actor, action: "start_development",
+  });
+  it.each(["elaborate", "decompose"] as const)("persists all 3000 description characters in %s for every Research setting", async (mode) => {
+    const descriptionText = "调研".repeat(1500);
+    for (const researchFirst of [undefined, false, true]) {
+      const result = await createConversationalIdeaSession(
+        { type: "user", companyUuid: state.company, actorUuid: state.actor },
+        { projectUuid: project, agentUuid: agent, connectionUuid: connection, descriptionText, mode, researchFirst },
+      );
+      const saved = await db.idea.findUniqueOrThrow({ where: { uuid: result.idea.uuid } });
+      const turn = await db.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: result.turn.uuid } });
+      expect(saved.content).toBe(descriptionText);
+      expect(saved.isContainer).toBe(mode === "decompose");
+      expect(turn.promptText).toContain(researchFirst ? "explicitly requested lightweight research" : "automatic judgment");
+      expect(turn.promptText?.endsWith(`--- User's idea description ---\n${descriptionText}`)).toBe(true);
+      expect(turn.promptText!.length).toBeGreaterThan(4000);
+    }
+  });
+  it.each(["elaborate", "decompose"] as const)("rejects empty and 3001-character descriptions in %s without persisting partial resources", async (mode) => {
+    const counts = async () => [
+      await db.idea.count({ where: { companyUuid: state.company } }),
+      await db.daemonSession.count({ where: { companyUuid: state.company } }),
+      await db.daemonSessionTurn.count({ where: { session: { companyUuid: state.company } } }),
+    ];
+    const before = await counts();
+    for (const descriptionText of [" \n ", "x".repeat(3001)]) {
+      await expect(createConversationalIdeaSession(
+        { type: "user", companyUuid: state.company, actorUuid: state.actor },
+        { projectUuid: project, agentUuid: agent, connectionUuid: connection, descriptionText, mode },
+      )).rejects.toMatchObject({ name: "InstructionTextError", reason: descriptionText.trim() ? "too_long" : "empty" });
+      expect(await counts()).toEqual(before);
+    }
   });
   it("server action dispatches human_instruction to the existing Idea root and preserves state", async () => {
     await proposalTask();
