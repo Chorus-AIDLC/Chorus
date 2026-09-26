@@ -29,7 +29,7 @@ The conversational pane SHALL provide a default-unchecked, accessible Checkbox r
 
 #### Scenario: Design artifact and theme acceptance
 - **WHEN** the UI change is delivered
-- **THEN** the creation dialog's Checkbox and hint are reflected in docs/design.pen using Pencil MCP, and browser acceptance evidence covers both light and dark themes
+- **THEN** browser acceptance evidence for the creation dialog's Checkbox and hint covers both light and dark themes; Pencil synchronization is waived for this delivery by explicit user instruction in Idea comment 25a4d74c-3e9f-4aaf-a019-75344cc77a50
 
 ## MODIFIED Requirements
 

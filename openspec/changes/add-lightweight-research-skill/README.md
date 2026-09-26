@@ -49,3 +49,5 @@ User comment `b73abf2d-1684-49d2-8684-dbee456e6670` (2026-09-26 10:10) adds a Re
 - The prior reviewer PASS applies to the original scope; this explicit user-requested amendment has not undergone a separate independent proposal review.
 
 Execution DAG refinement: task 4 does not consume the creation-dialog Checkbox; both UI surfaces consume tasks 1 and 2. Removed its unnecessary dependency on task 3 so design-tool availability cannot block independent implementation. Required design.pen acceptance remains unchanged.
+
+2026-09-26 user amendment: comment25a4d74c-3e9f-4aaf-a019-75344cc77a50 explicitly waives Pencil synchronization and authorizes opening a PR and script deployment. Current task AC and specs retain all functional/browser checks.

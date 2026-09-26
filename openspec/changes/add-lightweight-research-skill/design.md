@@ -68,7 +68,7 @@ Research 请求写入已有初始 turn 的指令，继续使用原事务和 comp
 
 勾选与 decompose 可组合。沿用现有在线 Agent／实例选择、提交忙碌保护及错误反馈；提交失败保留选择便于重试，新一次打开创建对话框时恢复默认，不跨项目泄漏。为 label/hint 提供 en／zh／ja／ko 文案与可访问关联，沿用键盘及窄屏行为。结果展示继续使用正文引用和现有会话，UI 不承诺调研完成状态或硬时限。
 
-按 CLAUDE.md 的界面交付要求，通过 Pencil MCP 更新 `docs/design.pen` 中的创建对话框、Checkbox 与提示，保持设计稿和实现一致；不能用普通文件工具读取或修改加密 `.pen` 内容。沿用语义主题 token，真实浏览器分别检查明亮与深色主题下的文字、Checkbox 状态、焦点及提示可读性。此设计稿更新与两种主题验收均属于 UI 任务的必需交付。
+本次 Pencil 设计同步按用户明确授权豁免；不使用普通文件工具读取或修改加密 `.pen` 内容。沿用语义主题 token，真实浏览器分别检查明亮与深色主题下的文字、Checkbox 状态、焦点及提示可读性。两种主题验收仍属于 UI 任务的必需交付。
 
 ### Tracker action：开发前 Research
 
@@ -91,7 +91,7 @@ Research 请求写入已有初始 turn 的指令，继续使用原事务和 comp
 
 菜单 instruction 的结束点是保存本轮发现并报告，不包含“立即开始新 elaboration”“提交 Proposal”或“开始开发”。已有轮次、答案、resolved 标志、Proposal 审批和任务状态不被重置。Idea 尚未进入澄清时，菜单调用也只调研；正常初始化入口仍执行原来的研究后澄清。若发现影响已批准方案的新事实，只记录影响和待修订事项，不直接修改锁定提案或扩大已批准任务。
 
-菜单结果保存在 Idea 正文及真实证据引用中，使用最新内容合并，保留用户文本。通过既有会话入口展示派发反馈；已进入开发时 action 禁用并说明原因，仍遵循明暗主题、键盘与移动布局。`docs/design.pen` 同步 Tracker 桌面／移动菜单的 Research 及禁用态。
+菜单结果保存在 Idea 正文及真实证据引用中，使用最新内容合并，保留用户文本。通过既有会话入口展示派发反馈；已进入开发时 action 禁用并说明原因，仍遵循明暗主题、键盘与移动布局。Tracker 的 Pencil 同步按用户明确授权豁免。
 
 ## Module Contracts
 
@@ -112,8 +112,13 @@ Research 请求写入已有初始 turn 的指令，继续使用原事务和 comp
 
 ## Validation and rollout
 
-运行相关 route／service／dialog 测试、TypeScript／lint 与语言完整性检查；验证七端包发现与行为说明覆盖。真实浏览器在明亮与深色两种主题分别检查默认／勾选／失败重试／与 decompose 组合／表单隐藏／键盘和窄屏，并记录验收证据。通过 Pencil 更新并截图核对 `docs/design.pen` 的对应创建界面。阶段演练覆盖 Idea 与 Proposal、显式跳过、空结果／工具不可用、现有证据复用及 OpenSpec 文件镜像。
+运行相关 route／service／dialog 测试、TypeScript／lint 与语言完整性检查；验证七端包发现与行为说明覆盖。真实浏览器在明亮与深色两种主题分别检查默认／勾选／失败重试／与 decompose 组合／表单隐藏／键盘和窄屏，并记录验收证据。Pencil 同步按用户明确授权豁免。阶段演练覆盖 Idea 与 Proposal、显式跳过、空结果／工具不可用、现有证据复用及 OpenSpec 文件镜像。
 
 此阶段只提出规格与任务，不部署或发布。实施后按现有版本与插件发布流程分发；老客户端省略字段保持兼容。回滚移除 Checkbox 与请求扩展、恢复流程文案，无数据迁移。
 
 第 4 项另覆盖：无 Proposal、pending answers、提案 pending、approved+任务全 open／assigned 均可请求；start_development 已排队、关联任务执行过、旧 Proposal 执行过而新 Proposal 未执行、主题子树已执行均拒绝。验证无 Agent 的选择流程、离线／权限／重复点击、开发启动并发及根会话路由；明暗主题和移动菜单实际点击后不创建新 Idea、不重置问答、不触发开发。
+
+
+## 用户授权的验收调整（2026-09-26）
+
+用户在 Idea 评论 `25a4d74c-3e9f-4aaf-a019-75344cc77a50` 明确要求「跳过pencil，把chorus推进完成，开pr然后用脚本部署上线」。本次豁免上文涉及的 `docs/design.pen` 同步和 Pencil 截图要求；其余功能、四语言、可访问性、明暗主题及移动浏览器验收保持。没有将设计文件更新标为实际完成。

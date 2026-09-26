@@ -81,10 +81,10 @@ The final expanded CLI/service/UI run passed **2,534 tests across 99 files**, wi
 
 The pre-spawn guarantee requires the updated CLI alongside the server. Existing daemons must be updated for that guarantee; delivery-time checks and skill instructions alone cannot enforce it before an old daemon spawns.
 
-## Pending design acceptance
+## User-authorized design waiver
 
-Pencil `get_app_state` failed four times with `transport not connected to app: visual_studio_code` (each call retried three times), including a final check after code verification. No encrypted `.pen` file was read or modified with filesystem tools. The required `docs/design.pen` updates and screenshot comparisons remain **pending**. Browser screenshots are not a substitute for that requirement.
+Pencil `get_app_state` failed four times with `transport not connected to app: visual_studio_code` (each call retried three times), including a final check after code verification. No encrypted `.pen` file was read or modified with filesystem tools. The user explicitly waived `docs/design.pen` updates in Idea comment `25a4d74c-3e9f-4aaf-a019-75344cc77a50` on 2026-09-26. These updates were not performed; browser verification remains completed.
 
-Tracker implementation and its automated verification are tracked by task `2b4ea9e5-96ec-453e-babb-425ad904388b`. This record does not declare that task, the final aggregate code review, or the Idea complete.
+Tracker implementation and its automated verification are tracked by task `2b4ea9e5-96ec-453e-babb-425ad904388b`. Formal task and aggregate review results are recorded in Chorus; this verification record alone does not declare completion.
 
 The test browser, temporary auth-state file and fixture heartbeat were cleaned up. Screenshots and the isolated port-5435 database directory remain available for resumed review.

@@ -29,3 +29,8 @@ Idea 初始化需要少量外部背景来改善澄清问题，当前对话式入
 - 现有 ReferenceArtifact、Idea.content、Activity 和 daemon turn 足以承载这次功能。独立调研状态、取消／重试、自动跨 Idea 复用和深度调研不在范围内。
 
 参考既有挂载证据：GSD 的提问前搜索 [GSD](ref:d102cd82-ca4f-4473-bcf9-51da9c6d0c09)、按范围控制调查深度 [Superpowers](ref:065dffec-dfed-4832-93cc-9176ed2e4603)、上下文传递原则 [BMad](ref:02869f60-1baf-4761-aa0b-28734214b1ed)。
+
+
+## 用户授权的验收调整（2026-09-26）
+
+用户在 Idea 评论 `25a4d74c-3e9f-4aaf-a019-75344cc77a50` 明确要求「跳过pencil，把chorus推进完成，开pr然后用脚本部署上线」。本次豁免上文涉及的 `docs/design.pen` 同步和 Pencil 截图要求；其余功能、四语言、可访问性、明暗主题及移动浏览器验收保持。没有将设计文件更新标为实际完成。

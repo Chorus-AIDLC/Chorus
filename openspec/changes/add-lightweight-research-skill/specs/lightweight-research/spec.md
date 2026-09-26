@@ -115,4 +115,4 @@ The server SHALL authorize and dispatch a focused Research instruction through t
 
 #### Scenario: Menu acceptance and design artifact
 - **WHEN** the Tracker action is delivered
-- **THEN** localized desktop and mobile menu, eligible and disabled states are verified in light and dark themes, and docs/design.pen is updated through Pencil MCP to reflect them
+- **THEN** localized desktop and mobile menu, eligible and disabled states are verified in light and dark themes; Pencil design synchronization is waived for this delivery by the explicit user instruction recorded in Idea comment 25a4d74c-3e9f-4aaf-a019-75344cc77a50
