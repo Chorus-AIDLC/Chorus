@@ -119,3 +119,11 @@ The server SHALL authorize and dispatch a focused Research instruction through t
 #### Scenario: Menu acceptance and design artifact
 - **WHEN** the Tracker action is delivered
 - **THEN** localized desktop and mobile menu, eligible and disabled states are verified in light and dark themes; Pencil design synchronization is waived for this delivery by the explicit user instruction recorded in Idea comment 25a4d74c-3e9f-4aaf-a019-75344cc77a50
+
+### Requirement: Research delivery SHALL require an explicitly supported daemon protocol
+The pending-turns HTTP endpoint SHALL only include Research turns when the client declares `researchProtocol=1`, denoting exact-turn admission and isolated queue support. The current CLI SHALL declare this in its shared read path for both live delivery and reconnect backfill. This declaration SHALL NOT bypass ownership or admission checks. Legacy clients SHALL continue receiving ordinary turns; Research SHALL remain pending for an upgraded client instead of repeatedly executing without acknowledgement.
+
+#### Scenario: Legacy client reconnects before upgrading
+- **WHEN** a connection reads pending turns without the supported protocol declaration, including repeated reconnects
+- **THEN** ordinary turns remain available and Research turns are withheld without deletion
+- **AND** a later supported read can deliver the Research turn subject to the existing development boundary checks
