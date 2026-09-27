@@ -1869,7 +1869,7 @@
     "button": "Research",
     "loading": "Checking research availability…",
     "dispatching": "Dispatching research…",
-    "dispatched": "Research queued. Each request runs in turn in the idea conversation.",
+    "dispatched": "Research request submitted to the idea conversation.",
     "development_started": "Development has started. Research is only available before execution.",
     "idea_completed": "This idea is complete. Research is available only before development.",
     "idea_not_found": "This idea is no longer available.",

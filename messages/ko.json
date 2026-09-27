@@ -1869,7 +1869,7 @@
     "button": "리서치",
     "loading": "리서치 가능 여부 확인 중…",
     "dispatching": "리서치 요청 중…",
-    "dispatched": "리서치를 대기열에 추가했습니다. Idea 대화에서 순서대로 실행됩니다.",
+    "dispatched": "리서치 요청을 Idea 대화에 제출했습니다.",
     "development_started": "개발이 시작되었습니다. 리서치는 실행 시작 전에만 가능합니다.",
     "idea_completed": "이 아이디어는 완료되었습니다. 리서치는 개발 시작 전에만 가능합니다.",
     "idea_not_found": "이 아이디어를 사용할 수 없습니다.",

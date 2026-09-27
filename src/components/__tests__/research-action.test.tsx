@@ -119,7 +119,7 @@ describe("Tracker Research action", () => {
     expect(mocks.dispatch).toHaveBeenCalledTimes(1);
     await act(async () => accept({ success: true, session: { uuid: "session", sessionId: "idea" } }));
     expect(button.disabled).toBe(false);
-    expect(mocks.success).toHaveBeenCalledWith("Research queued. Each request runs in turn in the idea conversation.");
+    expect(mocks.success).toHaveBeenCalledWith("Research request submitted to the idea conversation.");
     await user.click(button);
     expect(mocks.dispatch).toHaveBeenCalledTimes(2);
     expect(button.disabled).toBe(false);

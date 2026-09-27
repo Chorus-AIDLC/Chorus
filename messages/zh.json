@@ -1869,7 +1869,7 @@
     "button": "调研",
     "loading": "正在检查调研条件…",
     "dispatching": "正在派发调研…",
-    "dispatched": "调研已加入队列，将在 Idea 会话中逐轮执行。",
+    "dispatched": "调研请求已提交到 Idea 会话。",
     "development_started": "已开始开发。调研仅在实际执行前可用。",
     "idea_completed": "此 Idea 已完成。调研仅在开发前可用。",
     "idea_not_found": "此 Idea 已不可用。",
