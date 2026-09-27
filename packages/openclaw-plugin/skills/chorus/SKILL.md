@@ -468,6 +468,7 @@ This is the core overview skill. For stage-specific workflows, use:
 | **Orchestration** | `/orchestrate` | Coordinate OTHER agents & humans across the lifecycle — delegate ideas (`chorus_pm_assign_idea`) & tasks, fan a theme out to child ideas, run independent reviewers, and gatekeep the proposal/verify gates |
 | **Quick Dev** | `/quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
 | **Ideation** | `/idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
+| **Research** | `/research` | Optional bounded factual checks shared by Idea and Proposal; explicit Tracker Research saves findings to the Idea and returns without advancing lifecycle |
 | **Planning** | `/proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
 | **Development** | `/develop` | Claim Tasks, report work, manual session & sub-agent management |
 | **Review** | `/review` | Approve/reject Proposals, verify Tasks, project governance |

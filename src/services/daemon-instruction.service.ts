@@ -58,6 +58,7 @@ import {
   isConnectionLive,
 } from "@/services/daemon-execution.service";
 import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
+import { CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS } from "@/lib/conversational-idea";
 
 // ===== Constants =====
 
@@ -157,11 +158,11 @@ export type InstructionTextErrorReason = "empty" | "too_long";
 export class InstructionTextError extends Error {
   readonly code = "invalid_instruction_text";
   readonly reason: InstructionTextErrorReason;
-  constructor(reason: InstructionTextErrorReason) {
+  constructor(reason: InstructionTextErrorReason, maxChars = MAX_INSTRUCTION_CHARS) {
     super(
       reason === "empty"
         ? "Instruction text must not be empty."
-        : `Instruction text exceeds the maximum of ${MAX_INSTRUCTION_CHARS} characters.`,
+        : `Instruction text exceeds the maximum of ${maxChars} characters.`,
     );
     this.name = "InstructionTextError";
     this.reason = reason;
@@ -208,13 +209,16 @@ export interface SessionTargetView extends SessionView {
  * trimmed, canonical text on success; throws `InstructionTextError` otherwise. Called
  * before any mutation so a bad instruction never creates a turn.
  */
-export function validateInstructionText(instructionText: string): string {
+export function validateInstructionText(
+  instructionText: string,
+  maxChars = MAX_INSTRUCTION_CHARS,
+): string {
   const trimmed = (instructionText ?? "").trim();
   if (trimmed.length === 0) {
     throw new InstructionTextError("empty");
   }
-  if (trimmed.length > MAX_INSTRUCTION_CHARS) {
-    throw new InstructionTextError("too_long");
+  if (trimmed.length > maxChars) {
+    throw new InstructionTextError("too_long", maxChars);
   }
   return trimmed;
 }
@@ -546,6 +550,7 @@ export class ProjectCwdTargetUnavailableError extends Error {
 
 /** Max length of the server-derived placeholder title for a pre-created idea. */
 export const PLACEHOLDER_TITLE_MAX = 60;
+const PROJECT_INSTRUCTION_LABEL_MAX_CHARS = 200;
 
 /**
  * Derive the placeholder title for a pre-created conversational idea: the description's
@@ -584,7 +589,7 @@ export type ConversationalIdeaMode = "elaborate" | "decompose";
  *
  * The idea is PRE-CREATED and already instance-assigned + elaborating, so both templates
  * direct EDIT (never create, never claim — a claim would fail on the existing assignee).
- *  - `elaborate` (default): edit → immediate start-elaboration → panel guidance → end turn.
+ *  - `elaborate` (default): edit → optional research → elaboration → panel guidance → end turn.
  *  - `decompose`: edit the CONTAINER → keep isContainer → one lightweight scope-clarifying
  *    elaboration → propose candidate CHILDREN as a structured elaboration round (one
  *    single-select question per child, ≤15/round, never a multi-select) → end turn → on the
@@ -603,11 +608,28 @@ export function composeConversationalIdeaInstruction(params: {
   projectName?: string | null;
   descriptionText: string;
   mode?: ConversationalIdeaMode;
+  researchFirst?: boolean;
 }): string {
-  // Name is display sugar; the uuid is the machine anchor and is always present.
-  const projectLabel = params.projectName?.trim()
-    ? `"${params.projectName.trim()}" (projectUuid: ${params.projectUuid})`
+  // Name is display sugar; bound this user-controlled metadata independently of
+  // the description. The complete UUID remains the authoritative machine anchor.
+  const projectName = params.projectName?.trim();
+  const displayName = projectName && projectName.length > PROJECT_INSTRUCTION_LABEL_MAX_CHARS
+    ? `${projectName.slice(0, PROJECT_INSTRUCTION_LABEL_MAX_CHARS - 1)}…`
+    : projectName;
+  const projectLabel = displayName
+    ? `"${displayName}" (projectUuid: ${params.projectUuid})`
     : `projectUuid: ${params.projectUuid}`;
+
+  const researchInstruction = [
+    params.researchFirst
+      ? "The user explicitly requested lightweight research before clarification."
+      : "Research is optional: use automatic judgment for a concrete, externally verifiable factual gap.",
+    "An explicit request to skip research in the user's instructions takes precedence.",
+    "Follow the shared research skill before the first formal elaboration: one bounded pass, approximately 2–5 minutes, at most 5 deeply read relevant sources; reuse existing evidence.",
+    "Save useful findings in the existing Idea content, preserving the user's meaning, and attach evidence with real ref:UUID citations. Do not create or claim this already-created Idea.",
+    "If tools are unavailable, results are empty, or the budget is exhausted, record the limitation and continue the normal steps in this turn. Do not research user preferences; ask through the elaboration panel when needed.",
+    "This initialization request applies once, not on every later wake or stage re-entry.",
+  ].join(" ");
 
   if (params.mode === "decompose") {
     return [
@@ -617,6 +639,7 @@ export function composeConversationalIdeaInstruction(params: {
       `This conversation IS that container idea's root session. The user wants help DECOMPOSING it into child ideas. Do the following, in order:`,
       `1. Edit the container via chorus_edit_idea: derive a concise title from the description and polish the content (keep the user's meaning). The current title is a placeholder.`,
       `2. Ensure it stays a container: it was pre-created with isContainer=true — do NOT clear that flag (a container groups its child ideas and MUST NOT get a proposal of its own).`,
+      `Before step 3: ${researchInstruction}`,
       `3. Run ONE lightweight elaboration round (chorus_pm_start_elaboration) to clarify the decomposition scope/dimension — how to slice the work into children. Keep it short; you may self-answer in headless or ask the user, then continue.`,
       `4. Propose the candidate child ideas AS A STRUCTURED ELABORATION ROUND (chorus_pm_start_elaboration) for the user to review/edit/confirm — use ONE elaboration question PER proposed child (the child's title as the question text, a short rationale as its description), single-select. Elaboration questions are single-select and a round is capped at 15 questions, so propose at most 15 candidates per round and NEVER a single multi-select question; if you need more children, propose them across additional rounds. Do NOT create any child ideas yet — this round is the preview the user accepts/edits/declines per child.`,
       `5. End the turn. The user's answers in the idea's elaboration panel will wake this same conversation (the existing elaboration-answered wake).`,
@@ -635,8 +658,9 @@ export function composeConversationalIdeaInstruction(params: {
     ``,
     `This conversation IS that idea's root session — its elaboration and lifecycle wakes will continue here. Do the following, in order:`,
     `1. Edit the idea via chorus_edit_idea: derive a concise title from the description and polish the content (keep the user's meaning; you may restructure). The current title is a placeholder.`,
-    `2. Immediately start elaboration on the idea (chorus_pm_start_elaboration), following the idea skill — do NOT wait for another wake. Post a short summary of your questions in this conversation and direct the user to answer in the idea's elaboration panel.`,
-    `3. End the turn. The user's panel answers will wake this same conversation.`,
+    `2. ${researchInstruction}`,
+    `3. After that optional step, start elaboration on the idea (chorus_pm_start_elaboration), following the idea skill — do NOT wait for another wake. Post a short summary of your questions in this conversation and direct the user to answer in the idea's elaboration panel.`,
+    `4. End the turn. The user's panel answers will wake this same conversation.`,
     ``,
     `Reference reflex: whenever an external link is evidence for this idea (a precedent issue/PR, a reference implementation, official docs, a paper/blog), attach it via references — prefer the inline references[] param at creation time over a post-hoc chorus_add_reference.`,
     ``,
@@ -674,7 +698,7 @@ export interface ConversationalIdeaView {
  *  3. The connection's durable `agentInstanceUuid` must resolve — the idea's instance
  *     pin must point at a real place → `ConnectionInstanceMissingError` (route → 409).
  *  4. SERVER generates the ideaUuid, composes the instruction around it, and validates
- *     the COMPOSED text (`validateInstructionText`) → `InstructionTextError` (route →
+ *     the user's description against its shared UI limit → `InstructionTextError` (route →
  *     400). Generating the uuid before the transaction is what lets the instruction
  *     embed it while keeping all writes atomic.
  *  5. ONE `prisma.$transaction`: create the Idea (createdBy = caller, placeholder
@@ -715,8 +739,9 @@ export async function createConversationalIdeaSession(
     // `elaborate` (default) is the original single-idea contract; `decompose`
     // (add-container-idea-ui Block 3) pre-creates the idea with isContainer=true and
     // dispatches the decompose instruction so the agent proposes child ideas as an
-    // elaboration round. Optional so existing callers (byte-identical) stay unchanged.
+    // elaboration round. Optional so existing callers keep their mode.
     mode?: ConversationalIdeaMode;
+    researchFirst?: boolean;
   },
 ): Promise<{ idea: ConversationalIdeaView; session: SessionView; turn: TurnView }> {
   const mode: ConversationalIdeaMode = params.mode ?? "elaborate";
@@ -792,23 +817,23 @@ export async function createConversationalIdeaSession(
   }
 
   // (4) Server-generated ideaUuid FIRST, so the composed instruction can embed it while
-  // the idea write stays inside the transaction. Reject empty descriptions before
-  // composing (the template alone would otherwise pass the non-empty check), then
-  // validate the COMPOSED length against the single MAX_INSTRUCTION_CHARS cap.
-  const descriptionText = params.descriptionText?.trim() ?? "";
-  if (descriptionText.length === 0) {
-    throw new InstructionTextError("empty");
-  }
-  const ideaUuid = randomUUID();
-  const instructionText = validateInstructionText(
-    composeConversationalIdeaInstruction({
-      ideaUuid,
-      projectUuid: project.uuid,
-      projectName: project.name,
-      descriptionText,
-      mode,
-    }),
+  // the idea write stays inside the transaction. Validate the USER description
+  // against the same budget shown in the UI before adding the trusted server
+  // template. Generated research/decomposition instructions do not consume the
+  // user's budget; ordinary human instructions retain their separate 4000 cap.
+  const descriptionText = validateInstructionText(
+    params.descriptionText,
+    CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS,
   );
+  const ideaUuid = randomUUID();
+  const instructionText = composeConversationalIdeaInstruction({
+    ideaUuid,
+    projectUuid: project.uuid,
+    projectName: project.name,
+    descriptionText,
+    mode,
+    researchFirst: params.researchFirst,
+  });
 
   // (5) All-or-nothing: idea + idea-anchored session + first turn in one transaction.
   const { ideaRow, sessionRow, turnRow } = await prisma.$transaction(async (tx) => {

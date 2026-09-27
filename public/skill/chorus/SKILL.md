@@ -31,6 +31,7 @@ Skill files are hosted under the `<BASE_URL>/skill/` path.
 | **develop-chorus** | Task execution workflow | `/skill/develop-chorus/SKILL.md` |
 | **review-chorus** | Proposal approval, task verification, governance | `/skill/review-chorus/SKILL.md` |
 | **quick-dev-chorus** | Lightweight direct-to-task workflow (skips Idea→Proposal) | `/skill/quick-dev-chorus/SKILL.md` |
+| **research-chorus** | Bounded factual research shared by Idea, Proposal and Tracker Research | `/skill/research-chorus/SKILL.md` |
 | **brainstorm-chorus** | Optional divergent→convergent dialogue, prelude to elaboration | `/skill/brainstorm-chorus/SKILL.md` |
 | **proposal-reviewer-chorus** | Read-only adversarial proposal reviewer (posts VERDICT) | `/skill/proposal-reviewer-chorus/SKILL.md` |
 | **task-reviewer-chorus** | Read-only adversarial task reviewer (posts VERDICT) | `/skill/task-reviewer-chorus/SKILL.md` |
@@ -42,13 +43,14 @@ Skill files are hosted under the `<BASE_URL>/skill/` path.
 
 ```bash
 BASE_URL="<BASE_URL>"
-mkdir -p .claude/skills/chorus .claude/skills/idea-chorus .claude/skills/proposal-chorus .claude/skills/develop-chorus .claude/skills/review-chorus .claude/skills/quick-dev-chorus .claude/skills/brainstorm-chorus .claude/skills/proposal-reviewer-chorus .claude/skills/task-reviewer-chorus .claude/skills/code-reviewer-chorus .claude/skills/yolo-chorus
+mkdir -p .claude/skills/chorus .claude/skills/idea-chorus .claude/skills/proposal-chorus .claude/skills/develop-chorus .claude/skills/review-chorus .claude/skills/quick-dev-chorus .claude/skills/research-chorus .claude/skills/brainstorm-chorus .claude/skills/proposal-reviewer-chorus .claude/skills/task-reviewer-chorus .claude/skills/code-reviewer-chorus .claude/skills/yolo-chorus
 curl -s $BASE_URL/skill/chorus/SKILL.md > .claude/skills/chorus/SKILL.md
 curl -s $BASE_URL/skill/idea-chorus/SKILL.md > .claude/skills/idea-chorus/SKILL.md
 curl -s $BASE_URL/skill/proposal-chorus/SKILL.md > .claude/skills/proposal-chorus/SKILL.md
 curl -s $BASE_URL/skill/develop-chorus/SKILL.md > .claude/skills/develop-chorus/SKILL.md
 curl -s $BASE_URL/skill/review-chorus/SKILL.md > .claude/skills/review-chorus/SKILL.md
 curl -s $BASE_URL/skill/quick-dev-chorus/SKILL.md > .claude/skills/quick-dev-chorus/SKILL.md
+curl -s $BASE_URL/skill/research-chorus/SKILL.md > .claude/skills/research-chorus/SKILL.md
 curl -s $BASE_URL/skill/brainstorm-chorus/SKILL.md > .claude/skills/brainstorm-chorus/SKILL.md
 curl -s $BASE_URL/skill/proposal-reviewer-chorus/SKILL.md > .claude/skills/proposal-reviewer-chorus/SKILL.md
 curl -s $BASE_URL/skill/task-reviewer-chorus/SKILL.md > .claude/skills/task-reviewer-chorus/SKILL.md
@@ -61,13 +63,14 @@ curl -s $BASE_URL/skill/package.json > .claude/skills/chorus/package.json
 
 ```bash
 BASE_URL="<BASE_URL>"
-mkdir -p ~/.moltbot/skills/chorus ~/.moltbot/skills/idea-chorus ~/.moltbot/skills/proposal-chorus ~/.moltbot/skills/develop-chorus ~/.moltbot/skills/review-chorus ~/.moltbot/skills/quick-dev-chorus ~/.moltbot/skills/brainstorm-chorus ~/.moltbot/skills/proposal-reviewer-chorus ~/.moltbot/skills/task-reviewer-chorus ~/.moltbot/skills/code-reviewer-chorus ~/.moltbot/skills/yolo-chorus
+mkdir -p ~/.moltbot/skills/chorus ~/.moltbot/skills/idea-chorus ~/.moltbot/skills/proposal-chorus ~/.moltbot/skills/develop-chorus ~/.moltbot/skills/review-chorus ~/.moltbot/skills/quick-dev-chorus ~/.moltbot/skills/research-chorus ~/.moltbot/skills/brainstorm-chorus ~/.moltbot/skills/proposal-reviewer-chorus ~/.moltbot/skills/task-reviewer-chorus ~/.moltbot/skills/code-reviewer-chorus ~/.moltbot/skills/yolo-chorus
 curl -s $BASE_URL/skill/chorus/SKILL.md > ~/.moltbot/skills/chorus/SKILL.md
 curl -s $BASE_URL/skill/idea-chorus/SKILL.md > ~/.moltbot/skills/idea-chorus/SKILL.md
 curl -s $BASE_URL/skill/proposal-chorus/SKILL.md > ~/.moltbot/skills/proposal-chorus/SKILL.md
 curl -s $BASE_URL/skill/develop-chorus/SKILL.md > ~/.moltbot/skills/develop-chorus/SKILL.md
 curl -s $BASE_URL/skill/review-chorus/SKILL.md > ~/.moltbot/skills/review-chorus/SKILL.md
 curl -s $BASE_URL/skill/quick-dev-chorus/SKILL.md > ~/.moltbot/skills/quick-dev-chorus/SKILL.md
+curl -s $BASE_URL/skill/research-chorus/SKILL.md > ~/.moltbot/skills/research-chorus/SKILL.md
 curl -s $BASE_URL/skill/brainstorm-chorus/SKILL.md > ~/.moltbot/skills/brainstorm-chorus/SKILL.md
 curl -s $BASE_URL/skill/proposal-reviewer-chorus/SKILL.md > ~/.moltbot/skills/proposal-reviewer-chorus/SKILL.md
 curl -s $BASE_URL/skill/task-reviewer-chorus/SKILL.md > ~/.moltbot/skills/task-reviewer-chorus/SKILL.md
@@ -495,6 +498,7 @@ This is the core overview skill. For stage-specific workflows, download and read
 |-------|-------|------|
 | **Overview** (this file) | `chorus` | `<BASE_URL>/skill/chorus/SKILL.md` |
 | **Quick Dev** | `quick-dev-chorus` | `<BASE_URL>/skill/quick-dev-chorus/SKILL.md` |
+| **Research** | `research-chorus` | `<BASE_URL>/skill/research-chorus/SKILL.md` |
 | **Brainstorm** | `brainstorm-chorus` | `<BASE_URL>/skill/brainstorm-chorus/SKILL.md` |
 | **Ideation** | `idea-chorus` | `<BASE_URL>/skill/idea-chorus/SKILL.md` |
 | **Planning** | `proposal-chorus` | `<BASE_URL>/skill/proposal-chorus/SKILL.md` |

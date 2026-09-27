@@ -43,6 +43,19 @@ const INSTRUCTION_NOTIF = {
   instructionText: "Please add a retry with backoff to the uploader.",
 };
 
+it("preserves the exact Research turn and isolates it from coalesced lifecycle wakes", () => {
+  const { router, enqueued } = wire([]);
+  router.dispatchPendingTurn({
+    turnUuid: "research-turn", sessionId: DIRECT_IDEA, directIdeaUuid: DIRECT_IDEA,
+    trigger: "human_instruction", promptText: "[Chorus Tracker Research] Research only.",
+  });
+  expect(enqueued).toHaveLength(1);
+  expect(enqueued[0].task).toMatchObject({
+    isolated: true,
+    notification: { turnUuid: "research-turn", researchOnly: true },
+  });
+});
+
 describe("event-router human_instruction is NOT woken from the notification path", () => {
   // Regression: a human_instruction used to be woken here AND via the deliver_turn /
   // pending-turn paths (keyed turn:{uuid}) → the same instruction ran twice under two

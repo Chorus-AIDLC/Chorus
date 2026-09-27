@@ -377,6 +377,8 @@ export class EventRouter {
       entityType: directIdeaUuid ? "idea" : "daemon_session",
       entityUuid: directIdeaUuid ? directIdeaUuid : sessionId,
       instructionText: instruction,
+      // Research must retain its exact turn for admission immediately before spawn.
+      ...(instruction.startsWith("[Chorus Tracker Research]") ? { turnUuid, researchOnly: true } : {}),
       ...(typeof pending.runtimeCwd === "string" ? { runtimeCwd: pending.runtimeCwd } : {}),
     };
     const key = directIdeaUuid ? `idea:${directIdeaUuid}` : `entity:daemon_session:${sessionId}`;
@@ -392,7 +394,10 @@ export class EventRouter {
     // Enqueue an opaque DATA payload (add-daemon-wake-coalescing §C4), NOT a thunk: the
     // queue coalesces all same-key pending items and hands the whole batch to its runBatch
     // (wired to waker.wakeBatch in daemon.mjs). markQueued was already called per-item above.
-    this.queue.enqueue(key, { notification: n, attribution });
+    this.queue.enqueue(key, {
+      notification: n, attribution,
+      ...(n.researchOnly ? { isolated: true } : {}),
+    });
   }
 
   /**

@@ -113,6 +113,27 @@ beforeEach(() => {
 });
 
 describe("POST /api/ideas/conversational", () => {
+  it.each([false, true])("threads research intent independently of decompose=%s", async (decompose) => {
+    for (const researchFirst of [undefined, false, true]) {
+      const descriptionText = "原始描述\n  keep these words";
+      const res = await POST(makeRequest({
+        ...validBody, descriptionText, decompose, researchFirst,
+      }), emptyCtx);
+      expect(res.status).toBe(200);
+      expect(mockCreateConversational).toHaveBeenLastCalledWith(userAuth, {
+        ...validBody, descriptionText,
+        ...(researchFirst === undefined ? {} : { researchFirst }),
+        mode: decompose ? "decompose" : "elaborate",
+      });
+    }
+  });
+
+  it.each(["true", 1, null, {}, []])("rejects non-boolean researchFirst=%j", async (researchFirst) => {
+    const res = await POST(makeRequest({ ...validBody, researchFirst }), emptyCtx);
+    expect(res.status).toBe(422);
+    expect(mockCreateConversational).not.toHaveBeenCalled();
+  });
+
   it("401 when unauthenticated", async () => {
     mockGetAuthContext.mockResolvedValue(null);
     const res = await POST(makeRequest(validBody), emptyCtx);

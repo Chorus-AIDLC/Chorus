@@ -129,7 +129,8 @@ describe("Tracker Actions — real Radix interactions", () => {
 
   it("groups all actions with separated destructive Delete and no nested buttons", async () => {
     const user = userEvent.setup(); render(<Harness />); await open(user);
-    expect(screen.getAllByRole("menuitem")).toHaveLength(10);
+    expect(screen.getAllByRole("menuitem")).toHaveLength(11);
+    expect(screen.getByRole("menuitem", { name: /^Research$/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Delete Idea" }).getAttribute("data-variant")).toBe("destructive");
     expect(screen.getByRole("menuitem", { name: "Delete Idea" }).previousElementSibling?.getAttribute("role")).toBe("separator");
     expect(document.querySelector("button button")).toBeNull();

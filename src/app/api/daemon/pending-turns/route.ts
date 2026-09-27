@@ -49,5 +49,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     connectionUuid,
   });
 
+  // Both generations receive ordinary human_instruction turns. New clients declare
+  // researchProtocol=1 and isolate Research locally; legacy clients keep their existing queue.
   return success({ turns });
 });

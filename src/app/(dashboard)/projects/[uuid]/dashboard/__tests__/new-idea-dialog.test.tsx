@@ -14,7 +14,7 @@
 // test the DIALOG's gating, template threading, and handoff wiring.
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("next-intl", async () => {
@@ -171,6 +171,7 @@ describe("NewIdeaDialog — mode gating", () => {
       agentUuid: "agent-1",
       connectionUuid: "c1",
       descriptionText: "my idea",
+      researchFirst: false,
     });
   });
 
@@ -206,6 +207,7 @@ describe("NewIdeaDialog — mode gating", () => {
       agentUuid: "agent-1",
       connectionUuid: "c1",
       descriptionText: "big feature to split",
+      researchFirst: false,
       decompose: true,
     });
   });
@@ -240,6 +242,59 @@ describe("NewIdeaDialog — mode gating", () => {
     await expect(
       props.dispatch({ agentUuid: "a", connectionUuid: "c", userText: "x" }),
     ).rejects.toMatchObject({ name: "ConversationalDispatchError" });
+  });
+
+  it("research is conversational-only, keyboard accessible, and combines with decomposition", async () => {
+    setPresence(true);
+    const user = userEvent.setup();
+    const { rerender, onOpenChange } = renderDialog();
+    expect(screen.queryByRole("checkbox", { name: "Research before clarifying" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Describe to an agent" }));
+    const checkbox = screen.getByRole("checkbox", { name: "Research before clarifying" });
+    expect(checkbox.getAttribute("aria-checked")).toBe("false");
+    expect(document.getElementById(checkbox.getAttribute("aria-describedby")!)?.textContent)
+      .toBe("When unchecked, the agent may still research as needed.");
+    checkbox.focus();
+    await user.keyboard(" ");
+    await user.click(screen.getByLabelText("Help me break this into child ideas"));
+    mockAuthFetch.mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ success: true, data: { session: { uuid: "s-research" } } }),
+    });
+    await act(async () => {
+      await entryProps.mock.lastCall![0].dispatch({ agentUuid: "a", connectionUuid: "c", userText: "原文" });
+    });
+    const [, init] = mockAuthFetch.mock.calls.find(([url]) => url === "/api/ideas/conversational")!;
+    expect(JSON.parse(init.body)).toMatchObject({ researchFirst: true, decompose: true, descriptionText: "原文" });
+    rerender(<NewIdeaDialog open projectUuid="proj-1" parentUuid="parent" onOpenChange={onOpenChange} />);
+    expect(screen.queryByRole("checkbox", { name: "Research before clarifying" })).toBeNull();
+  });
+
+  it("retains research after failure, disables it during dispatch, resets on reopen and project change", async () => {
+    setPresence(true);
+    const user = userEvent.setup();
+    const { rerender, onOpenChange } = renderDialog();
+    await user.click(screen.getByRole("tab", { name: "Describe to an agent" }));
+    await user.click(screen.getByRole("checkbox", { name: "Research before clarifying" }));
+    let reject!: (reason: Error) => void;
+    mockAuthFetch.mockReturnValue(new Promise((_, rejectPromise) => { reject = rejectPromise; }));
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = entryProps.mock.lastCall![0].dispatch({ agentUuid: "a", connectionUuid: "c", userText: "x" });
+    });
+    expect((screen.getByRole("checkbox", { name: "Research before clarifying" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      reject(new Error("network"));
+      await expect(pending).rejects.toThrow("network");
+    });
+    expect(screen.getByRole("checkbox", { name: "Research before clarifying" }).getAttribute("aria-checked")).toBe("true");
+    mockAuthFetch.mockResolvedValue({ ok: true, json: async () => ({ data: { agents: [] } }) });
+    rerender(<NewIdeaDialog open={false} projectUuid="proj-1" onOpenChange={onOpenChange} />);
+    rerender(<NewIdeaDialog open projectUuid="proj-1" onOpenChange={onOpenChange} />);
+    expect(screen.getByRole("checkbox", { name: "Research before clarifying" }).getAttribute("aria-checked")).toBe("false");
+    await user.click(screen.getByRole("checkbox", { name: "Research before clarifying" }));
+    rerender(<NewIdeaDialog open projectUuid="proj-2" onOpenChange={onOpenChange} />);
+    expect(screen.getByRole("checkbox", { name: "Research before clarifying" }).getAttribute("aria-checked")).toBe("false");
   });
 
   it("successful dispatch closes the dialog and opens the chat on the session — never onCreated", async () => {

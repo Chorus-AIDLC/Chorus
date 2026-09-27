@@ -23,6 +23,7 @@ skill chorus-yolo
 skill chorus-review
 skill chorus-quick-dev
 skill chorus-brainstorm
+skill chorus-research
 skill chorus-openspec-aware
 skill chorus-spec-lite
 skill chorus-orchestrate

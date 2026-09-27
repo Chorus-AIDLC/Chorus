@@ -38,6 +38,7 @@ const expectedSkills = [
   "orchestrate",
   "proposal",
   "quick-dev",
+  "research",
   "review",
   "spec-lite",
   "yolo",

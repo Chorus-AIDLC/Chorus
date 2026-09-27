@@ -38,7 +38,7 @@ describe("backfill pending-turns re-derivation", () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [endpoint, init] = fetchImpl.mock.calls[0];
-    expect(endpoint).toBe("https://chorus.example.com/api/daemon/pending-turns?connectionUuid=conn-1");
+    expect(endpoint).toBe("https://chorus.example.com/api/daemon/pending-turns?connectionUuid=conn-1&researchProtocol=1");
     expect(init.headers.Authorization).toBe("Bearer cho_secret");
     expect(dispatched).toEqual(pendingTurns);
   });

@@ -56,6 +56,12 @@ All post-elaboration progress (planning, building, verifying, done) is **derived
 
 ---
 
+## Tracker Research action: research-only entry
+
+When the current instruction is an explicit Tracker Research action, route directly to `/chorus-research` ([research-only contract](../chorus-research/SKILL.md)) and the result-saving rules in Step 4.45. Check current authoritative development eligibility before executing. This branch bypasses the normal claim and elaboration sequence below: preserve the existing Idea, root session, pending questions, answers, resolution, proposal approval and task states. Save findings to the latest Idea body with real citations and report, then **return**. If development has begun, report the changed stage without researching or editing. Record impacts on approved scope as follow-up in the Idea; do not mutate locked proposals.
+
+---
+
 ## Workflow
 
 ### Step 1: Check In
@@ -146,6 +152,12 @@ chorus_pm_create_idea({
   ]
 })
 ```
+
+### Step 4.45: Optional Lightweight Research
+
+Before the first formal clarification round, delegate factual checks to `/chorus-research` ([shared rules](../chorus-research/SKILL.md)). Supply the Idea stage, focused question, current body and evidence, user intent and budget. This applies equally to conversational, form-created and MCP-created Ideas; it does not depend on a Checkbox or daemon flag. Follow the shared trigger/skip and re-entry rules. If the direction is still fuzzy, use the existing focusing/brainstorm choice first; once focused, apply these rules before synthesizing formal questions.
+
+Consume useful findings by reusing existing References or attaching new sources with `chorus_add_reference` (the Idea already exists). Use its returned reference `uuid`, or read `chorus_get_idea().references[].uuid`; the Idea UUID is not an evidence UUID. Re-read the latest Idea body, merge facts and implications while preserving user text, and save with `chorus_edit_idea`, citing relevant statements as `[1](ref:<actual-reference-uuid>)`. Keep uncertainty explicit; empty/unavailable results do not need invented citations. Then continue the existing elaboration/decomposition flow and human gates. Returning from brainstorm consumes any returned findings here without searching again.
 
 ### Step 4.5: Brainstorm Mode (Optional Prelude)
 
