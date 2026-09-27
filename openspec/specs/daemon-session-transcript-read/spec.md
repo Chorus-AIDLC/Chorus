@@ -279,9 +279,13 @@ turn remains reachable — including a turn whose messages were all removed by t
 rolling-window cap, which the old pager returned with an empty message list. The
 slot behaves as follows:
 
-- For a turn with a non-empty `promptText` (e.g. a `human_instruction` turn), the
+- For a non-operation turn with a non-empty `promptText` (e.g. a historical `human_instruction` turn), the
   `seq = 0` slot SHALL carry a synthetic message with `role = "user"` and `text`
   equal to the promptText.
+- For canonical `idea_creation_requested` and `research_requested` turns, the
+  `seq = 0` slot SHALL reserve the band position without rendering the compatibility
+  system prompt as a user message. The localized operation band provides context;
+  retained real transcript messages SHALL still render normally.
 - For a turn with no `promptText` and no retained real messages (e.g. an autonomous
   `agent_wake` turn whose messages were all trimmed), the `seq = 0` slot SHALL still
   reserve the turn's place so the turn is returned as a band with an empty rendered
@@ -312,7 +316,7 @@ SHALL NOT be persisted and SHALL NOT require any schema or message-role change.
 
 #### Scenario: The synthetic message orders ahead of real messages in its turn
 
-- **WHEN** a turn has both a `promptText` and one or more stored `assistant`/`user`
+- **WHEN** a non-operation turn has both a `promptText` and one or more stored `assistant`/`user`
   messages (`seq >= 1`)
 - **THEN** the rebuilt turn band lists the synthetic promptText message first,
   followed by the real messages in ascending `seq`
@@ -322,6 +326,11 @@ SHALL NOT be persisted and SHALL NOT require any schema or message-role change.
 - **WHEN** a page that includes a turn's `seq = 0` slot is merged with another page
   or a live event that also references the same turn
 - **THEN** the slot is de-duplicated by its stable uuid and is not rendered twice
+
+#### Scenario: Canonical operation does not impersonate user input
+- **WHEN** a canonical operation turn contains a nonempty compatibility promptText
+- **THEN** its stable seq=0 slot counts toward pagination and preserves the localized turn band without displaying that prompt as a synthetic user message
+- **AND** overlap merging, live updates and retained real messages preserve their existing cursor, order and deduplication behavior
 
 ### Requirement: The daemon conversation surface SHALL minimize header chrome and top-align content
 

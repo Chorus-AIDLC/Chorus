@@ -44,3 +44,20 @@ RESEARCH_DATABASE_URL='postgresql://postgres:postgres@localhost:5435/postgres?ss
 ```
 
 Do not point this test variable at the application database.
+
+The final integration suite also crosses the real CLI/HTTP/DB boundary:
+
+```sh
+env -u REDIS_URL -u REDIS_HOST \
+  RESEARCH_DATABASE_URL='postgresql://postgres:postgres@localhost:5435/postgres?sslmode=disable' \
+  pnpm exec vitest run src/services/__tests__/daemon-operation-http.database.integration.test.ts
+```
+
+It requires the migrated isolated database, opens only an ephemeral loopback HTTP
+listener, and removes its own tenant fixtures. It does not launch agents.
+Four capability combinations and an old-server flag-ignore adapter exercise
+creation, Research, terminal acknowledgement and reconnect; legacy merged rows
+do not replay. This verifies the compatibility contract rather than installing a
+historical server or CLI binary. The actual-server smoke, exact results and
+remaining execution boundaries are recorded in
+[the verification record](../verification/daemon-operation-events.md#t4-integration-acceptance).

@@ -28,5 +28,5 @@
 - 客户端：pending-turns/turn-advance HTTP 契约、CLI router/prompts/queue/waker/reporter，以及共用这些 API 的旧 CLI/OpenClaw 回归覆盖。
 - 前端：NewIdeaDialog、ResearchAction、会话 trigger 标签、en/zh/ja/ko 文案；沿用现有组件和明暗主题。
 - 使用现有持久化实体，仅新增可空 JSON 操作载荷；不新增 Research 实体或生命周期状态，不改普通消息、Yolo、静态创建和手动会话操作。
-- 交付包括数据库与 CLI 集成测试、浏览器明暗主题/窄屏验收、`docs/design.pen` 对应交互与标签更新。此前父功能的设计同步豁免不自动延续。
+- 交付包括数据库与 CLI 集成测试、浏览器明暗主题/窄屏验收。`docs/design.pen` 同步原为要求，后由本 Idea 用户于 2026-09-27 08:18 UTC 明确豁免，评论 e072b3a2-15df-4f98-9dd3-595eadc1c49d：“不用管pen文件，继续推进”。这不是沿用父功能豁免。
 - 证据：复用来源 Idea `761b9e5d-7bbf-46e2-aff2-7ec1d3ac027c` 的 PR #577 及固定提交源码引用；本方案是后续改造，不修改父功能已批准提案。

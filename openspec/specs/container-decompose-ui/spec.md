@@ -38,7 +38,7 @@ A container idea SHALL render a whole-element visual distinction (e.g. a header 
 
 ### Requirement: A container-decompose intent SHALL wake a daemon agent via the existing conversational entry
 
-The create-idea flow SHALL offer, when an online daemon connection exists, a "help me decompose into child ideas" intent. Selecting it SHALL pre-create the idea as a container (`isContainer = true`) and dispatch an idea-anchored daemon session carrying a decompose instruction, reusing the existing conversational-idea-entry transactional pre-create + assign + wake. No new wake/notification action type SHALL be introduced for this flow; it rides the existing `human_instruction` conversational wake.
+The create-idea flow SHALL offer, when an online daemon connection exists, a "help me decompose into child ideas" intent. Selecting it SHALL pre-create the idea as a container (`isContainer = true`) and dispatch an idea-anchored daemon session carrying a decompose instruction, reusing the existing conversational-idea-entry transactional pre-create + assign + wake. The initial dispatch SHALL persist an `idea_creation_requested` turn whose versioned payload selects decompose mode; clients without operationProtocol=1 SHALL receive the same turn through the human_instruction compatibility projection. This change applies only to initialization; later child-review confirmation SHALL retain the existing elaboration_answered action and all child-creation human gates.
 
 #### Scenario: Decompose intent pre-creates a container and wakes the agent
 

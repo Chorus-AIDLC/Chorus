@@ -37,18 +37,22 @@ The conversational mode SHALL list agents that have at least one online daemon c
 - **THEN** that instance is auto-selected and the user can send without an extra pick
 
 ### Requirement: Successful dispatch SHALL hand the user off to the daemon chat view focused on the new session
-After a successful dispatch, the create-idea modal SHALL close and the daemon chat modal SHALL open with the newly created session selected and its live transcript subscribed, using a one-shot session-focus extension of the presence context's chat focus target. The freshly created session SHALL be selectable immediately (seeded from the dispatch response) even if the session list has not yet refreshed. Existing agent-only focus callers SHALL be unaffected.
+Successful daemon-assisted Idea dispatch SHALL close the create-idea dialog, show localized submitted feedback, and keep the user on the current page without automatically opening or focusing the daemon chat. The session SHALL remain available through existing manual conversation controls and the Idea SHALL appear through existing list updates. The historical requirement title is retained for compatibility with the cumulative spec; its automatic-chat behavior is replaced by this requirement.
 
-#### Scenario: Handoff to chat on new session
-- **WHEN** the ad-hoc dispatch succeeds
-- **THEN** the create-idea modal closes, the daemon chat modal opens with that session selected, and transcript events for the session stream live
+#### Scenario: Submission stays on the current page
+- **WHEN** ordinary or decomposition dispatch succeeds
+- **THEN** the create dialog closes and submitted feedback appears without a chat modal, automatic navigation or stored session-focus target
 
-#### Scenario: Focus target is one-shot
-- **WHEN** the chat modal consumes the session-focus target and the user later reopens the chat modal manually
-- **THEN** the previous session focus is not re-applied
+#### Scenario: Manual session access
+- **WHEN** the user later opens the conversation manually
+- **THEN** its session and transcript can be read normally with no stale submission focus applied
+
+#### Scenario: Existing chat and static creation
+- **WHEN** a conversation was already open or the static creation path is used
+- **THEN** this change does not close or switch the existing conversation or alter static creation behavior
 
 ### Requirement: Sending SHALL pre-create the Idea and dispatch an idea-anchored daemon session in one transactional operation
-On send, the client SHALL post the user's verbatim description together with the picked project, agent, and connection to a dedicated conversational-idea endpoint (`POST /api/ideas/conversational`). The server SHALL, atomically: (1) create the Idea with `createdBy` = the initiating user, a server-derived single-line placeholder title, and the verbatim description as content; (2) assign the Idea to the picked agent instance (`assigneeType = "agent_instance"`) and set its status to `elaborating`; (3) create the daemon session idea-anchored from birth (`sessionId = ideaUuid`, `directIdeaUuid = ideaUuid`, origin = the picked connection); and (4) create the first `human_instruction` turn whose instruction text is composed server-side from a fixed template embedding the ideaUuid, project identity, and the user's verbatim description. If any of these steps fails, none of them SHALL persist. The frontend SHALL NOT create the Idea entity itself, and the pre-existing ad-hoc endpoint (`POST /api/daemon-sessions/ad-hoc`) SHALL remain unchanged.
+On send, the client SHALL post the user's verbatim description together with the picked project, agent, and connection to a dedicated conversational-idea endpoint (`POST /api/ideas/conversational`). The server SHALL, atomically: (1) create the Idea with `createdBy` = the initiating user, a server-derived single-line placeholder title, and the verbatim description as content; (2) assign the Idea to the picked agent instance (`assigneeType = "agent_instance"`) and set its status to `elaborating`; (3) create the daemon session idea-anchored from birth (`sessionId = ideaUuid`, `directIdeaUuid = ideaUuid`, origin = the picked connection); and (4) create the first `idea_creation_requested` turn with versioned operationPayload containing the ideaUuid, projectUuid, elaborate/decompose mode, researchFirst and the verbatim description, plus a server-composed compatibility prompt snapshot. Clients without operationProtocol=1 receive a human_instruction projection of the same turn, without additional writes. If any of these steps fails, none of them SHALL persist. The frontend SHALL NOT create the Idea entity itself, and the pre-existing ad-hoc endpoint (`POST /api/daemon-sessions/ad-hoc`) SHALL remain unchanged.
 
 #### Scenario: Successful dispatch creates idea plus anchored session
 - **WHEN** the user enters a description and sends with a valid online instance selected
@@ -75,6 +79,10 @@ On send, the client SHALL post the user's verbatim description together with the
 - **WHEN** the user's trimmed description is empty or exceeds the shared client/server limit of 3000 characters
 - **THEN** the request is rejected with a validation error and nothing is persisted
 - **AND** ordinary human instruction endpoints retain their separate 4000-character limit
+
+#### Scenario: Dedicated first turn on both modes
+- **WHEN** elaborate or decompose dispatch commits
+- **THEN** the canonical first turn uses idea_creation_requested with mode and researchFirst preserved, while old clients receive the same turn UUID through compatible instruction delivery
 
 ### Requirement: The dispatched instruction SHALL direct the agent to edit the pre-created Idea and start elaboration in the same turn
 The server-side instruction template SHALL direct the woken agent to (1) edit the pre-created Idea via chorus_edit_idea, deriving a concise title and polishing content while preserving the user's meaning; (2) assess relevant factual gaps and invoke the shared lightweight research skill when requested or useful, incorporating findings and real evidence citations; (3) start elaboration on the Idea in the same turn after optional research, post a summary of the questions and direct the user to the Idea's elaboration panel; and (4) end the turn. It SHALL NOT direct the Agent to create or claim the already assigned Idea. Research failure, unavailability or budget exhaustion SHALL NOT prevent proceeding to clarification with known limitations. Existing user-decision gates SHALL remain intact when focusing or decomposition requires human input.
@@ -122,7 +130,7 @@ The pre-created Idea SHALL be a normal, immediately visible Idea (no hidden or d
 - **THEN** the system does not automatically delete or archive it
 
 ### Requirement: The conversational entry component SHALL accept a consumer-owned dispatch function
-The reusable conversational entry component SHALL accept an optional dispatch function that replaces its default ad-hoc dispatch while the component retains ownership of online detection, agent and instance selection, input budgeting, error presentation, and the session handoff callback. When the dispatch function is omitted, the component SHALL behave exactly as before this change (ad-hoc endpoint dispatch). The create-idea modal SHALL supply the conversational-idea dispatch and remain the only production consumer in this change.
+The reusable conversational entry component SHALL accept an optional dispatch function that replaces its default ad-hoc dispatch while the component retains ownership of online detection, agent and instance selection, input budgeting, error presentation, and the consumer-owned success callback. When the dispatch function is omitted, the component SHALL behave exactly as before this change (ad-hoc endpoint dispatch). The create-idea modal SHALL supply the conversational-idea dispatch and remain the only production consumer in this change.
 
 #### Scenario: Default dispatch unchanged
 - **WHEN** a consumer renders the component without a dispatch function
@@ -130,7 +138,7 @@ The reusable conversational entry component SHALL accept an optional dispatch fu
 
 #### Scenario: Create-idea modal uses the conversational-idea dispatch
 - **WHEN** the user sends from the create-idea modal's conversational mode
-- **THEN** the component invokes the supplied dispatch (hitting the conversational-idea endpoint) and hands the returned session to the existing chat handoff
+- **THEN** the component invokes the supplied dispatch (hitting the conversational-idea endpoint) and passes the returned session to its success callback, which closes the create dialog and shows submitted feedback without automatic chat opening
 
 #### Scenario: Dispatch errors map to the component's error surface
 - **WHEN** the supplied dispatch rejects with a connection-offline conflict
@@ -141,7 +149,7 @@ The conversational pane SHALL provide a default-unchecked, accessible Checkbox r
 
 #### Scenario: Checked explicit request
 - **WHEN** the user checks the control and successfully submits
-- **THEN** the initial turn's server-composed instruction includes the explicit research request while preserving the user's verbatim description and existing chat handoff
+- **THEN** the initial turn's server-composed instruction includes the explicit research request while preserving the user's verbatim description and showing submitted feedback without opening chat
 
 #### Scenario: Unchecked or older client
 - **WHEN** researchFirst is false or omitted
@@ -165,4 +173,4 @@ The conversational pane SHALL provide a default-unchecked, accessible Checkbox r
 
 #### Scenario: Design artifact and theme acceptance
 - **WHEN** the UI change is delivered
-- **THEN** browser acceptance evidence for the creation dialog's Checkbox and hint covers both light and dark themes; Pencil synchronization is waived for this delivery by explicit user instruction in Idea comment 25a4d74c-3e9f-4aaf-a019-75344cc77a50
+- **THEN** browser acceptance evidence for the creation dialog's Checkbox and hint covers both light and dark themes; design.pen synchronization for this delivery is explicitly waived by the human in Idea comment e072b3a2-15df-4f98-9dd3-595eadc1c49d (2026-09-27); all browser and functional acceptance remains required

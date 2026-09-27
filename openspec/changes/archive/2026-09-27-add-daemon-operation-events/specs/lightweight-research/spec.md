@@ -26,7 +26,7 @@ The server SHALL authorize and dispatch a focused Research instruction as a cano
 
 #### Scenario: Menu acceptance and design artifact
 - **WHEN** the Tracker action is delivered
-- **THEN** localized desktop and mobile menu, eligible and disabled states are verified in light and dark themes; the dedicated-operation labels and no-auto-chat behavior are synchronized in docs/design.pen; the earlier Idea comment 25a4d74c-3e9f-4aaf-a019-75344cc77a50 waived only its historical delivery
+- **THEN** localized desktop and mobile menu, eligible and disabled states are verified in light and dark themes; design.pen synchronization for this delivery is explicitly waived by the human in Idea comment e072b3a2-15df-4f98-9dd3-595eadc1c49d (2026-09-27); all browser and functional acceptance remains required
 
 #### Scenario: Submitted Research does not open chat
 - **WHEN** a Research submission succeeds

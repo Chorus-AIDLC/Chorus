@@ -82,7 +82,7 @@ Research 资格不改变：提交事务、pending read、running transition 都�
 - 主动查看：保留现有手动会话入口、会话列表与实时 transcript，不留下上次提交的隐藏 focus target。
 - 新 trigger 在 turn-band、通知及 transcript 中显示“创建 Idea”/“Research”等本地化业务标签，不能把长系统提示当成用户输入消息。可查看执行历史与实际失败状态；协议字段留在诊断层。transcript read 对专用操作保留稳定的 seq=0 分页位置、UUID、cursor 和 page-size 计数，但不将兼容 promptText 合成为 role=user 文本；普通/历史指令与真实 transcript 消息保持原样。
 
-验收覆盖 en/zh/ja/ko、明暗主题、桌面/窄屏、键盘提交后焦点恢复、双击防重复与再次提交、会话原本已打开和关闭的情况。更新 docs/design.pen 中相关行为说明/标签；此处未申请父功能豁免。
+验收覆盖 en/zh/ja/ko、明暗主题、桌面/窄屏、键盘提交后焦点恢复、双击防重复与再次提交、会话原本已打开和关闭的情况。docs/design.pen 同步原为要求；本 Idea 用户于 2026-09-27 08:18 UTC 在评论 e072b3a2-15df-4f98-9dd3-595eadc1c49d 明确指示“不用管pen文件，继续推进”，本次据此豁免文件同步。其它验收要求保持有效。
 
 ## Migration and rollout
 

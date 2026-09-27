@@ -62,3 +62,11 @@ cannot be completed without an editor connection. No waiver was assumed.
 T3 remains in_progress; T4 remains open. No aggregate gateway or completion report
 has run. See `docs/verification/daemon-operation-events.md` for actual evidence and
 the exact resumption boundary.
+
+2026-09-27 08:18 UTC: user explicitly waived design.pen synchronization in Idea comment e072b3a2-15df-4f98-9dd3-595eadc1c49d (“不用管pen文件，继续推进”). The previous design gate is resolved; resume T3 independent review and then T4. Other acceptance and no-push/no-merge boundaries remain.
+
+T3 verified done after independent Round1 PASS (6b365ec0-d05a-4907-a024-b96c389e8d0f), including repeated real HTTP pagination and explicit pen-only waiver. T4 integration is in progress.
+
+T4 verified done after independent Round1 PASS (1470bb5e-82b5-4954-bce3-bee726a81b32). All four tasks are done. Combined regression4924 passed/16 unrelated skipped;202 OpenClaw passed/3 live-stack skipped;111 realDB cases passed. Final aggregate review and completion report remain next.
+
+OpenSpec archived successfully as2026-09-27-add-daemon-operation-events; all six cumulative specs mirrored to the materialized Documents and passed the supported verify-document-roundtrip.sh byte check. Aggregate code-review gateway remains pending.

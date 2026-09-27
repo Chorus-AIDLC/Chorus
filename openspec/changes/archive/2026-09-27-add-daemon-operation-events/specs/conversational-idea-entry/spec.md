@@ -92,4 +92,4 @@ The conversational pane SHALL provide a default-unchecked, accessible Checkbox r
 
 #### Scenario: Design artifact and theme acceptance
 - **WHEN** the UI change is delivered
-- **THEN** browser acceptance evidence for the creation dialog's Checkbox and hint covers both light and dark themes; docs/design.pen reflects the dedicated-operation labels and no-auto-chat behavior; Idea comment 25a4d74c-3e9f-4aaf-a019-75344cc77a50 waived only the historical Checkbox delivery
+- **THEN** browser acceptance evidence for the creation dialog's Checkbox and hint covers both light and dark themes; design.pen synchronization for this delivery is explicitly waived by the human in Idea comment e072b3a2-15df-4f98-9dd3-595eadc1c49d (2026-09-27); all browser and functional acceptance remains required

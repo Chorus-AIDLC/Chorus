@@ -98,7 +98,7 @@ The Idea Tracker action menu SHALL include Research in both desktop and mobile r
 - **THEN** the yolo request alone does not permanently mark development as started; an explicit Research request may queue on the same conversation
 
 ### Requirement: Tracker Research SHALL dispatch without changing lifecycle
-The server SHALL authorize and dispatch a focused Research instruction through the existing idea-root session and human_instruction path, preserving instance and cwd routing. It SHALL use current eligibility at dispatch and check again before execution if the stage changed. Each explicit submission SHALL create a distinct bounded Research turn, even when earlier Research turns are pending or running. The client SHALL prevent repeat clicks only while its submission is in flight. Accepted requests SHALL be described as queued, not running or completed; the existing conversation turn records SHALL show their execution states. Clients declaring `researchProtocol=1` SHALL execute Research turns separately and serially on the existing root conversation, without coalescing; legacy clients retain ordinary instruction batching. Stage changes SHALL be ordered consistently with dispatch; stale UI SHALL NOT bypass server checks.
+The server SHALL authorize and dispatch a focused Research instruction as a canonical research_requested turn with a versioned operationPayload on the existing idea-root session, with human_instruction compatibility projection for clients without operationProtocol=1, preserving instance and cwd routing. It SHALL use current eligibility at dispatch and check again before execution if the stage changed. Each explicit submission SHALL create a distinct bounded Research turn, even when earlier Research turns are pending or running. The client SHALL prevent repeat clicks only while its submission is in flight. Accepted requests SHALL be described as queued, not running or completed; the existing conversation turn records SHALL show their execution states. Clients declaring `operationProtocol=1` or `researchProtocol=1` SHALL execute Research turns separately and serially on the existing root conversation, without coalescing; legacy clients retain ordinary instruction batching. Stage changes SHALL be ordered consistently with dispatch; stale UI SHALL NOT bypass server checks.
 
 #### Scenario: Existing answers preserved
 - **WHEN** Research finishes on an Idea with answered or pending elaboration rounds
@@ -123,13 +123,18 @@ The server SHALL authorize and dispatch a focused Research instruction through t
 
 #### Scenario: Menu acceptance and design artifact
 - **WHEN** the Tracker action is delivered
-- **THEN** localized desktop and mobile menu, eligible and disabled states are verified in light and dark themes; Pencil design synchronization is waived for this delivery by the explicit user instruction recorded in Idea comment 25a4d74c-3e9f-4aaf-a019-75344cc77a50
+- **THEN** localized desktop and mobile menu, eligible and disabled states are verified in light and dark themes; design.pen synchronization for this delivery is explicitly waived by the human in Idea comment e072b3a2-15df-4f98-9dd3-595eadc1c49d (2026-09-27); all browser and functional acceptance remains required
+
+#### Scenario: Submitted Research does not open chat
+- **WHEN** a Research submission succeeds
+- **THEN** queued feedback and status refresh remain visible, the current view stays in place, and no chat modal or deferred session focus is opened
+- **AND** existing manual conversation access, Agent/cwd selection, retry errors and in-flight submission protection remain usable
 
 ### Requirement: Research execution SHALL progressively enhance legacy instruction delivery
-The pending-turns HTTP endpoint SHALL deliver eligible Research instructions to both legacy and upgraded clients. The current CLI SHALL declare `researchProtocol=1` on pending reads and turn-advance requests, execute each Research queue item independently on the existing serial session lane, and retain exact turn UUID admission and terminal reporting. The turn-advance HTTP boundary SHALL enable isolated mode only when `researchProtocol=1`; missing or other values SHALL preserve legacy FIFO and coalesced settlement, including Research turns for their origin connection. Neither mode SHALL bypass company, agent, session-origin or development-boundary checks. Research-only pending cancellation SHALL continue requiring exact turn identity.
+The pending-turns HTTP endpoint SHALL deliver eligible Research instructions to both legacy and upgraded clients. The current CLI SHALL declare `operationProtocol=1` and `researchProtocol=1` on pending reads and turn-advance requests, execute each Research queue item independently on the existing serial session lane, and retain exact turn UUID admission and terminal reporting. The turn-advance HTTP boundary SHALL enable isolated Research mode when either `operationProtocol=1` or `researchProtocol=1`; when neither capability is declared, missing or other values SHALL preserve legacy FIFO and coalesced settlement, including Research turns for their origin connection. Neither mode SHALL bypass company, agent, session-origin or development-boundary checks. Research-only pending cancellation SHALL continue requiring exact turn identity.
 
 #### Scenario: Legacy client completes queued instructions
-- **WHEN** a legacy CLI reads pending turns and reports execution without `researchProtocol=1`
+- **WHEN** a legacy CLI reads pending turns and reports execution without either `researchProtocol=1` or `operationProtocol=1`
 - **THEN** Research instructions are delivered and can follow ordinary FIFO start, coalesced settlement and terminal acknowledgement
 - **AND** ended or merged turns are absent from subsequent pending reads, without requiring a CLI upgrade
 
@@ -141,4 +146,16 @@ The pending-turns HTTP endpoint SHALL deliver eligible Research instructions to 
 #### Scenario: Legacy execution guarantees
 - **WHEN** a legacy CLI uses its original batching and subprocess-start behavior
 - **THEN** the system does not promise isolated Research batches or pre-launch admission for that client, while retaining the bounded research prompt, dispatch/read stage checks and origin-scoped acknowledgement
+
+#### Scenario: Intermediate client compatibility
+- **WHEN** a CLI declares researchProtocol=1 but not operationProtocol=1
+- **THEN** canonical Research turns are projected as human_instruction with the existing Research prefix and retain exact-turn isolation and acknowledgement
+
+#### Scenario: Canonical Research classification
+- **WHEN** a new research_requested turn is checked for eligibility or consumption
+- **THEN** the canonical trigger applies all Research safeguards independently of prompt text, while historical human_instruction Research retains its existing prefix-based safeguards
+
+#### Scenario: Operation capability alone
+- **WHEN** a client sends operationProtocol=1 without researchProtocol=1
+- **THEN** canonical operations are delivered and Research is isolated with exact-turn admission; legacy FIFO cannot consume it
 
