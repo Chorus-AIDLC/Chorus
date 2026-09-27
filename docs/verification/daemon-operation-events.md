@@ -335,7 +335,16 @@ PGlite :5435. The count changes by +5 cross-runtime/boundary cases and -2 obsole
 sessionSeed cases. The first full run had one assertion failure because a generic
 headless-prompt test required the exact `[Chorus]` marker; it now accepts the
 historical `[Chorus ...]` entry prefixes while still requiring a Chorus body after
-the preamble. The complete rerun passed. Changed-production ESLint and diff checks
-passed, as did root TypeScript (`--noEmit --incremental false`).
+the preamble. The complete rerun passed. Changed-production ESLint and root
+TypeScript (`--noEmit --incremental false`) passed.
 `npm pack --dry-run --ignore-scripts --json` confirmed both new shared
 modules are included without building, publishing or modifying package metadata.
+
+Independent task review Round 1 returned PASS WITH NOTES in comment
+`0d0c3aa3-e85c-4634-9557-d329e14151eb`: 7,696 tests passed / 16 skipped,
+TypeScript/lint/package checks passed, and 108 comparisons against extracted
+pre-patch server composer bodies were byte-equal. Its one new note,
+`N1-shared-prompt-eof`, found an extra EOF blank line in the new shared template.
+The earlier working-tree diff check had omitted this then-untracked file. The
+blank line is now removed; the full patch check against `f9d6e403` passes.
+The two deliberately retained second-opinion notes remain recorded above.

@@ -97,4 +97,3 @@ export function composeResearchInstruction(ideaUuid) {
     "Report the findings and END this turn. This menu invocation does not resume the Idea or Proposal workflow. A later explicit Research request may run another bounded pass.",
   ].join("\n");
 }
-
