@@ -109,7 +109,7 @@ export interface ConversationalEntryProps {
   // absent). Defaults to the shared DaemonConnectCta guidance.
   offlineFallback?: ReactNode;
   // Called with the created session after a successful dispatch — the consumer
-  // typically closes itself and calls `openChatForSession(session)`.
+  // decides whether to close the form, show feedback or select it within an open chat.
   onStarted: (session: SessionView) => void;
   // Preselect this agent when it has an online connection (e.g. a future
   // idea-detail entry point that already knows the assignee).

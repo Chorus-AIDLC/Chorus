@@ -1,7 +1,8 @@
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 
-export const RESEARCH_INSTRUCTION_PREFIX = "[Chorus Tracker Research]";
+import { CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS, RESEARCH_INSTRUCTION_PREFIX } from "../../cli/operation-contract.mjs";
+export { RESEARCH_INSTRUCTION_PREFIX } from "../../cli/operation-contract.mjs";
 export const OPERATION_TRIGGERS = ["idea_creation_requested", "research_requested"] as const;
 export type OperationTrigger = (typeof OPERATION_TRIGGERS)[number];
 
@@ -11,7 +12,7 @@ export const operationPayloadSchema = z.discriminatedUnion("kind", [
     version: z.literal(1), kind: z.literal("idea_creation"),
     ideaUuid: identity, projectUuid: identity,
     mode: z.enum(["elaborate", "decompose"]), researchFirst: z.boolean(),
-    descriptionText: z.string().min(1).max(3000).refine((text) => text.trim().length > 0),
+    descriptionText: z.string().min(1).max(CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS).refine((text) => text.trim().length > 0),
   }).strict(),
   z.object({ version: z.literal(1), kind: z.literal("research"), ideaUuid: identity }).strict(),
 ]);

@@ -17,7 +17,7 @@ vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/research-actions", (
   researchEligibilityAction: mocks.eligibility, researchIdeaAction: mocks.dispatch,
 }));
 vi.mock("@/contexts/agent-presence-context", () => ({
-  useAgentPresenceOptional: () => ({ openChatForSession: mocks.openSession }),
+  useAgentPresenceOptional: () => ({ setModalOpen: mocks.openSession }),
 }));
 vi.mock("sonner", () => ({ toast: { success: mocks.success, error: mocks.error, info: mocks.info } }));
 vi.mock("@/hooks/use-pin-then-wake", () => ({

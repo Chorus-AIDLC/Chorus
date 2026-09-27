@@ -308,3 +308,34 @@ Push and merge still require explicit human approval.
 
 Deployment order and safe rollback boundaries are documented in
 [the rollout guide](../deployment/daemon-operation-events.md).
+
+## Second-opinion follow-up (2026-09-27)
+
+Human comment `56a5dfef-1fb5-4ac1-8d26-fd533a49b0d0` authorized selecting and
+fixing worthwhile notes from Admin Claude's independent review
+`7f2561a2-e059-49bc-86f1-1fff2136ede3`. Follow-up task:
+`6df48a6b-c709-4f33-9bd1-cd7a131e209b`, attached to the same approved proposal.
+The completion and review counts above describe the earlier delivery.
+
+| Review note | Disposition |
+| --- | --- |
+| Duplicated operation prompts | Fixed. `cli/operation-prompts.mjs` is the shared source for the server's compatibility snapshot and the CLI's payload-selected prompt. Existing server wording, Research isolation prefix, creation modes, researchFirst, bounded research and human confirmation constraints remain. The server may include its display-only project name; the CLI only has the authoritative project UUID. |
+| Hardcoded description cap | Fixed. Server entry validation, payload schema, browser limit and CLI validator import one constant from dependency-free `cli/operation-contract.mjs`, included by the existing npm `cli/**/*.mjs` file rule. Boundary regressions exercise persisted server payloads in the CLI at the advertised limit and reject limit+1 in both modes and Research settings. |
+| Unproduced creation audit notification | Retained intentionally. No current creation Notification producer exists. The action mapping and no-turn/no-wake guards keep the dedicated action from becoming another execution source; its display label is harmless defensive presentation for the recognized action. No extra notification producer was added. |
+| Dead openChatForSession API | Fixed. Removed the API and its unused sessionSeed focus path, stale comments and two tests specific to that removed API. Manual agent focus and active-session UUID focus remain, including out-of-page lookup and mobile transcript selection; in-chat creation still uses handleSessionStarted. No-auto-open regressions now observe the actual modal setter. |
+| Global pending-dispatch head-of-line wait | Deferred. The authoritative creation Idea read still serializes later pending delivery until it settles. Failure logs a retryable warning and retains the durable pending row without seen ownership; a subsequent delivery or reconnect can retry. Same-session FIFO, per-session concurrency, bounded automatic retry and user-visible stalled status need a coordinated change. This patch does not remove the identity read, promise immediate recovery or change admission/ordering semantics. |
+
+The shared templates remain local shipped code; canonical execution does not trust
+the persisted compatibility prompt as a workflow selector. No wire schema,
+migration, approval scope or OpenSpec requirement changed in this follow-up.
+
+Developer verification: the full root suite passed 7,696 tests / 16 skipped in
+378 passing files / 3 skipped, including all 111 real-database cases on isolated
+PGlite :5435. The count changes by +5 cross-runtime/boundary cases and -2 obsolete
+sessionSeed cases. The first full run had one assertion failure because a generic
+headless-prompt test required the exact `[Chorus]` marker; it now accepts the
+historical `[Chorus ...]` entry prefixes while still requiring a Chorus body after
+the preamble. The complete rerun passed. Changed-production ESLint and diff checks
+passed, as did root TypeScript (`--noEmit --incremental false`).
+`npm pack --dry-run --ignore-scripts --json` confirmed both new shared
+modules are included without building, publishing or modifying package metadata.

@@ -70,7 +70,6 @@ import type {
 } from "@/components/agent-presence";
 import type {
   SessionActivityEvent,
-  SessionView,
   TranscriptEvent as TranscriptEventBase,
 } from "@/services/daemon-session.service";
 
@@ -110,15 +109,9 @@ export interface ChatFocusTarget {
   // for an unknown-host pin and `cwd` is null for an unknown-path pin (same
   // sentinels the connection projection / liveness rule use).
   pin?: { host: string; cwd: string | null };
-  // Focus a SPECIFIC conversation, present ONLY for `openChatForSession` (e.g. the
-  // conversational create-idea entry landing the user on the session it just
-  // dispatched). `DaemonChat` selects this session and subscribes its transcript
-  // instead of clearing the selection.
+  // Focus the exact conversation selected through an activity indicator.
+  // DaemonChat resolves its detail even when the first list page omits it.
   sessionUuid?: string;
-  // The dispatch response's SessionView, so a session created moments ago — not yet
-  // in the fetched session list — is seeded into the list and selectable immediately
-  // (same optimistic path as `handleSessionStarted`).
-  sessionSeed?: SessionView;
 }
 
 // Map of connectionUuid → that connection's current displayable executions
@@ -200,13 +193,6 @@ export interface AgentPresenceValue {
   // Activity remains actionable when its connection projection has not arrived:
   // in that case this deliberately falls back to agent-only focus.
   openChatForActiveSession: (session: ActiveIdeaSession) => void;
-  // Open the daemon-chat modal focused on a SPECIFIC conversation (one-shot, same
-  // consume-and-clear contract as `openChatForAgent`). Used after dispatching a new
-  // ad-hoc session (e.g. the conversational create-idea entry) to land the user on
-  // that session's live transcript. Takes the dispatch response's full `SessionView`
-  // (not just a uuid) so `DaemonChat` can seed a session the list has not fetched
-  // yet and select it immediately.
-  openChatForSession: (session: SessionView) => void;
   // Consume the one-shot focus target (called by `DaemonChat` after it focuses).
   clearChatFocusTarget: () => void;
   // On-demand re-poll of the connection list (same fetch the 15s loop runs).
@@ -694,19 +680,6 @@ function AgentPresenceProviderInner({ children }: { children: ReactNode }) {
     [connections],
   );
 
-  // Open the chat focused on a specific conversation. Carries the full SessionView
-  // so `DaemonChat` can seed a freshly-created session (returned by the ad-hoc
-  // dispatch but not yet in the fetched list) and select it immediately. Same
-  // seed-then-open ordering and one-shot consumption as `openChatForAgent`.
-  const openChatForSession = useCallback((session: SessionView) => {
-    setFocusTarget({
-      agentUuid: session.agentUuid,
-      sessionUuid: session.uuid,
-      sessionSeed: session,
-    });
-    setModalOpen(true);
-  }, []);
-
   // Consume the one-shot focus target (called by `DaemonChat` after focusing) so a
   // later manual modal open is not re-hijacked by a stale focus.
   const clearChatFocusTarget = useCallback(() => {
@@ -729,7 +702,6 @@ function AgentPresenceProviderInner({ children }: { children: ReactNode }) {
       focusTarget,
       openChatForAgent,
       openChatForActiveSession,
-      openChatForSession,
       clearChatFocusTarget,
       refreshConnections: fetchConnections,
     }),
@@ -747,7 +719,6 @@ function AgentPresenceProviderInner({ children }: { children: ReactNode }) {
       focusTarget,
       openChatForAgent,
       openChatForActiveSession,
-      openChatForSession,
       clearChatFocusTarget,
       fetchConnections,
     ],

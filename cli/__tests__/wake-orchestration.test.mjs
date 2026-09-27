@@ -487,7 +487,8 @@ describe("HEADLESS_PREAMBLE (daemon headless interaction guard)", () => {
       expect(p).toContain("AskUserQuestion");
       expect(p.toLowerCase()).toContain("end the turn");
       // the per-action body still follows the preamble (e.g. the [Chorus] marker)
-      expect(p.slice(HEADLESS_PREAMBLE.length)).toContain("[Chorus]");
+      // Shared operation templates retain their historical [Chorus ...] prefixes.
+      expect(p.slice(HEADLESS_PREAMBLE.length)).toMatch(/^\s*\[Chorus(?:\]| )/);
     }
   });
 

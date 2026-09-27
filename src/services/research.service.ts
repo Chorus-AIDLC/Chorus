@@ -1,3 +1,5 @@
+import { composeResearchInstruction } from "../../cli/operation-prompts.mjs";
+export { composeResearchInstruction } from "../../cli/operation-prompts.mjs";
 import { dedicatedOperationWrites } from "@/services/daemon-operation";
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
@@ -6,7 +8,7 @@ import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
 import { createPendingTurn, resolveOrCreateSession, publishTranscriptEvent, STALE_THRESHOLD_MS } from "@/services/daemon-session.service";
 import { deliverTurnPing } from "@/services/daemon-instruction.service";
-import { getResearchEligibility, lockResearchProject, RESEARCH_INSTRUCTION_PREFIX, type ResearchReason } from "@/services/research-eligibility.service";
+import { getResearchEligibility, lockResearchProject, type ResearchReason } from "@/services/research-eligibility.service";
 
 export type ResearchErrorCode = ResearchReason | "unauthorized" | "assignment_required" |
   "permission_denied" | "agent_offline" | "origin_conflict" | "target_changed" | "unknown";
@@ -29,17 +31,6 @@ async function retryTurnConflict<T>(operation: () => Promise<T>): Promise<T> {
       await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
     }
   }
-}
-
-export function composeResearchInstruction(ideaUuid: string): string {
-  return [
-    `${RESEARCH_INSTRUCTION_PREFIX} Explicit, one-time research request for ideaUuid: ${ideaUuid}.`,
-    "This is the existing Idea's root conversation. Before research and again before saving, re-read the Idea, ALL related proposals/tasks and execution history including theme descendants. If development has begun, report that the stage changed and STOP without research or edits.",
-    "Invoke the shared research skill for ONE bounded pass (approximately 2–5 minutes, at most 5 deeply read sources). Reuse existing evidence. An explicit user instruction to skip research takes precedence. Tools unavailable, empty results, or exhausted budget: record the limitation and stop.",
-    "Attach useful sources through existing references and obtain real UUIDs. Read the latest Idea content immediately before saving and MERGE concise findings, source citations using ref:UUID, implications, unknowns, and the stopping reason; preserve user text and existing evidence.",
-    "Preserve all elaboration rounds, questions, answers and resolved state. Do not create or claim an Idea, start elaboration, submit or modify a Proposal, change task status, or start development. If findings affect an approved proposal, only record the impact and revision needs in the Idea.",
-    "Report the findings and END this turn. This menu invocation does not resume the Idea or Proposal workflow. A later explicit Research request may run another bounded pass.",
-  ].join("\n");
 }
 
 export async function requestResearch(params: {

@@ -182,7 +182,6 @@ function setPresence(over: Partial<AgentPresenceValue>) {
     focusTarget: null,
     openChatForAgent: vi.fn(),
     openChatForActiveSession: vi.fn(),
-    openChatForSession: vi.fn(),
     clearChatFocusTarget: vi.fn(),
     refreshConnections: vi.fn(),
     ...over,

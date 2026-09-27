@@ -94,12 +94,12 @@ const onlineConn = {
   cwd: "/project",
   effectiveStatus: "online" as const,
 };
-const mockOpenChatForSession = vi.fn();
+const mockSetModalOpen = vi.fn();
 
 function setPresence(online: boolean) {
   mockPresence.mockReturnValue({
     connections: online ? [onlineConn] : [{ ...onlineConn, effectiveStatus: "offline" }],
-    openChatForSession: mockOpenChatForSession,
+    setModalOpen: mockSetModalOpen,
     refreshConnections: vi.fn(),
   });
 }
@@ -144,7 +144,7 @@ describe("NewIdeaDialog — mode gating", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onCreated).toHaveBeenCalledExactlyOnceWith("static-idea");
     expect(mockSuccess).not.toHaveBeenCalled();
-    expect(mockOpenChatForSession).not.toHaveBeenCalled();
+    expect(mockSetModalOpen).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("real entry decompose=%s prevents duplicate requests, preserves retry text and submits without chat", async (decompose) => {
@@ -171,7 +171,7 @@ describe("NewIdeaDialog — mode gating", () => {
     await act(async () => respond({ ok: false, status: 500, json: async () => ({ error: "Try again after reconnecting" }) }));
     expect(await screen.findByText("Try again after reconnecting")).toBeTruthy();
     expect((text as HTMLTextAreaElement).value).toBe("Keep this description for retry");
-    expect(mockOpenChatForSession).not.toHaveBeenCalled();
+    expect(mockSetModalOpen).not.toHaveBeenCalled();
     mockAuthFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
       success: true, data: { session: { uuid: "new-session", sessionId: "new-idea", directIdeaUuid: "new-idea" } },
     }) });
@@ -180,7 +180,7 @@ describe("NewIdeaDialog — mode gating", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(mockAuthFetch.mock.calls.filter(([url]) => url === "/api/ideas/conversational")).toHaveLength(2);
     expect(mockSuccess).toHaveBeenCalledExactlyOnceWith("Idea request submitted.");
-    expect(mockOpenChatForSession).not.toHaveBeenCalled();
+    expect(mockSetModalOpen).not.toHaveBeenCalled();
     expect(onCreated).not.toHaveBeenCalled();
   });
 
@@ -366,7 +366,7 @@ describe("NewIdeaDialog — mode gating", () => {
     const session = { uuid: "s-1", agentUuid: "agent-1" };
     entryProps.mock.calls[0][0].onStarted(session);
     expect(onOpenChange).toHaveBeenCalledWith(false);
-    expect(mockOpenChatForSession).not.toHaveBeenCalled();
+    expect(mockSetModalOpen).not.toHaveBeenCalled();
     expect(mockSuccess).toHaveBeenCalledExactlyOnceWith("Idea request submitted.");
     expect(onCreated).not.toHaveBeenCalled();
   });

@@ -169,20 +169,20 @@ describe("typed operation prompts", () => {
       const prompt = buildPrompt(n);
       expect(prompt).toContain(descriptionText);
       expect(prompt).not.toContain("COMPATIBILITY SNAPSHOT ONLY");
-      expect(prompt).toContain("Do not create or claim it again");
+      expect(prompt).toContain("Do not create or claim this already-created Idea");
       expect(prompt).toContain("shared research skill");
       expect(prompt).toContain(researchFirst ? "explicitly requested lightweight research" : "Research is optional");
-      expect(prompt).toContain("explicit user skip instruction takes precedence");
-      expect(prompt).toContain("END the turn");
-      expect(prompt).toContain(mode === "decompose" ? "ONE single-select question per child" : "start elaboration now");
-      if (mode === "decompose") expect(prompt).toContain("Do NOT create children yet");
+      expect(prompt).toContain("explicit request to skip research in the user's instructions takes precedence");
+      expect(prompt).toContain("End the turn");
+      expect(prompt).toContain(mode === "decompose" ? "ONE elaboration question PER proposed child" : "start elaboration on the idea");
+      if (mode === "decompose") expect(prompt).toContain("Do NOT create any child ideas yet");
     });
   it("Research has its own bounded stop-only workflow without compatibility text", () => {
     const prompt = buildPrompt(notification(research));
-    expect(prompt).toContain("research-only mode");
+    expect(prompt).toContain("Explicit, one-time research request");
     expect(prompt).toContain("Before research and again before saving");
     expect(prompt).toContain("at most 5 deeply read sources");
-    expect(prompt).toContain("do not resume the Idea or Proposal workflow");
+    expect(prompt).toContain("does not resume the Idea or Proposal workflow");
     expect(prompt).not.toContain("No prefix necessary");
   });
 });
