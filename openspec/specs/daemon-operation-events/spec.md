@@ -1,8 +1,13 @@
 # daemon-operation-events Specification
 
 ## Purpose
-TBD - created by archiving change add-daemon-operation-events. Update Purpose after archive.
+
+Define how daemon-driven Idea creation and bounded Research are persisted,
+delivered, executed and displayed as explicit operations, while preserving legacy
+client compatibility and manual access to conversation history.
+
 ## Requirements
+
 ### Requirement: Operation requests SHALL persist explicit versioned semantics
 The server SHALL persist `idea_creation_requested` and `research_requested` turns with a validated version-1 operationPayload and a server-composed compatibility prompt snapshot. Creation payload SHALL carry kind, ideaUuid, projectUuid, mode, researchFirst and descriptionText; Research SHALL carry kind and ideaUuid. Identity SHALL agree with the authorized session and Idea. The server SHALL preserve transactionality, attribution, origin and cwd boundaries.
 

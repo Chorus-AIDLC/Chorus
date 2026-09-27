@@ -4,14 +4,43 @@ Date: 2026-09-27. Idea: `761b9e5d-7bbf-46e2-aff2-7ec1d3ac027c`.
 Approved proposal: `4a917a0b-9fe8-4a29-ad0b-e685fca2da5d`.
 Local branch: `feat/daemon-operation-events`, base `ecc31bfe`.
 
-This is an interim verification record, not a feature completion report.
+This is the final verification record for the completed local implementation.
 T1 (server), T2 (CLI), and T3 (UI) passed independent task review and admin
 verification. T4 also passed independent review and admin verification (Round1 PASS
 `1470bb5e-82b5-4954-bce3-bee726a81b32`). All four tasks are done. Browser evidence is recorded
 below. Pencil synchronization was explicitly waived by the human at 08:18 UTC in
 Idea comment `e072b3a2-15df-4f98-9dd3-595eadc1c49d` (“不用管pen文件，继续推进”).
-The final aggregate code-review gateway has not run.
+Final independent aggregate review Round 1 passed with zero blockers or notes:
+Idea comment `e82b474e-8dd1-48a4-9472-6c954d100091`.
+The [Chorus completion report](https://chorus.yfeichen.people.amazon.dev/projects/db88309c-6397-4b0c-b7db-0f947add2b2b/documents/dc384de1-ca67-47d0-a337-b05b644b4ec5)
+records the completed delivery and remaining publication boundary.
 No push, PR merge, release, or production deployment was performed.
+
+## Final independent aggregate verification
+
+The reviewer tested the entire root suite: 378 files passed / 3 skipped,
+7,693 tests passed / 16 skipped, including all 111 real-database cases.
+The separate OpenClaw suite passed 202 tests in 13 files; one live-stack file
+containing three tests remained skipped. These totals supersede the narrower
+selected runs below; overlapping runs must not be added together.
+
+Root and OpenClaw TypeScript passed. ESLint passed for all 22 changed production
+files with no errors and the unchanged `_rawData` warning. The complete feature
+diff passed whitespace checks. All six cumulative specifications passed strict
+validation, and all eight materialized Chorus Documents matched their local
+sources, including the final descriptive Purpose paragraph.
+
+The root command was:
+
+```sh
+env -u REDIS_URL -u REDIS_HOST -u CHORUS_AGENT_PROFILE -u CHORUS_E2E_BASE_URL \
+  RESEARCH_DATABASE_URL='postgresql://postgres:postgres@localhost:5435/postgres?sslmode=disable' \
+  pnpm test --reporter=dot
+```
+
+This review reused the independently reviewed browser evidence below. It did not
+launch an LLM or run a production build. Historical compatibility uses contract
+adapters, not installed historical binaries.
 
 ## Server and CLI
 
@@ -260,7 +289,7 @@ These observations are not counted as passing assertions or hidden by test total
 `openspec validate add-daemon-operation-events --strict` passed on the final
 unarchived change.
 
-## Remaining gate and resumption
+## Resolved design gate and completion
 
 Approved T3 criterion `cda528e7-5165-4684-81cd-e32910422bbd`, technical design §5,
 and `CLAUDE.md` require updating `docs/design.pen` through Pencil. Repeated
@@ -270,8 +299,8 @@ through the filesystem, at the time of that gate. The later 08:18 UTC human inst
 
 The human waiver resolves the design-file gate. T3 has since passed independent
 review and admin verification; T4's compatibility/recovery implementation and
-checks are complete. T4 independent review/admin verification is now complete. Aggregate code review,
-the completion report remain next. OpenSpec archive completed successfully at
+checks are complete. T4 independent review/admin verification and final aggregate
+code review are complete. OpenSpec archive completed successfully at
 `openspec/changes/archive/2026-09-27-add-daemon-operation-events/`; all six
 cumulative specs were mirrored to their materialized Chorus Documents and passed
 the supported `verify-document-roundtrip.sh` byte check.
