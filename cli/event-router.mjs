@@ -8,6 +8,8 @@
 // action, resolve the root-idea key and enqueue the wake. Never throws into the
 // SSE loop.
 
+import { OPERATION_ACTIONS, validateOperation } from "./operation.mjs";
+
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
 // Map a Notification.action to its DaemonSessionTurn trigger category — the daemon-side
@@ -70,6 +72,9 @@ export class EventRouter {
     // dispatch time (before any async work) so concurrent dispatches for the
     // same uuid collapse to one wake.
     this.seen = opts.seen ?? new Set();
+    this.validatingOperations = new Set();
+    this.pendingDispatchCount = 0;
+    this.pendingDispatch = Promise.resolve();
   }
 
   /**
@@ -150,9 +155,9 @@ export class EventRouter {
     // (`notificationUuid` vs `turn:{uuid}`) — the double-execution bug — and would fan the
     // wake out to EVERY connection of the agent rather than the session's origin. So the
     // notification path explicitly defers `human_instruction` to the turn-keyed paths.
-    if (n.action === "human_instruction") {
+    if (n.action === "human_instruction" || OPERATION_ACTIONS.has(n.action)) {
       this.logger.info(
-        `[Chorus] human_instruction ${notificationUuid} is delivered via deliver_turn / pending-turn backfill — not the notification path; ignoring here`
+        `[Chorus] ${n.action} ${notificationUuid} is delivered via deliver_turn / pending-turn backfill — not the notification path; ignoring here`
       );
       return;
     }
@@ -293,6 +298,20 @@ export class EventRouter {
    *           trigger?: string, promptText?: string|null }} pending
    */
   dispatchPendingTurn(pending) {
+    // Creation identity reads are async. Keep subsequent turn deliveries behind
+    // them so validation cannot reorder the session's ordinary/operation FIFO.
+    if (OPERATION_ACTIONS.has(pending?.trigger) || this.pendingDispatchCount > 0) {
+      this.pendingDispatchCount++;
+      this.pendingDispatch = this.pendingDispatch
+        .then(() => this.#dispatchPendingTurnNow(pending))
+        .catch((err) => this.logger.warn(`[Chorus] pending-turn dispatch failed: ${err}`))
+        .finally(() => { this.pendingDispatchCount--; });
+      return this.pendingDispatch;
+    }
+    return this.#dispatchPendingTurnNow(pending);
+  }
+
+  #dispatchPendingTurnNow(pending) {
     const turnUuid = pending?.turnUuid;
     const sessionId = pending?.sessionId;
     if (typeof turnUuid !== "string" || !turnUuid) {
@@ -302,6 +321,9 @@ export class EventRouter {
     if (typeof sessionId !== "string" || !sessionId) {
       this.logger.warn(`[Chorus] pending-turn ${turnUuid} missing sessionId, skipping`);
       return;
+    }
+    if (OPERATION_ACTIONS.has(pending.trigger)) {
+      return this.#dispatchOperation(pending);
     }
     // A DIRECTED autonomous turn (mentioned / task_assigned / elaboration_verified /
     // start_development / yolo_requested) is delivered by the deliver_turn ping too (T2).
@@ -398,6 +420,41 @@ export class EventRouter {
       notification: n, attribution,
       ...(n.researchOnly ? { isolated: true } : {}),
     });
+  }
+
+  async #dispatchOperation(pending) {
+    const seenKey = `turn:${pending.turnUuid}`;
+    if (this.seen.has(seenKey) || this.validatingOperations.has(seenKey)) return;
+    this.validatingOperations.add(seenKey);
+    try {
+      const payload = { ...validateOperation(pending.trigger, pending.operationPayload, pending) };
+      // Pending DTOs carry the session's Idea anchor but no authoritative project.
+      // Read the Idea for creation before trusting the payload's project identity.
+      if (payload.kind === "idea_creation") {
+        const idea = await this.mcp.callTool("chorus_get_idea", { ideaUuid: pending.directIdeaUuid });
+        if (idea?.uuid !== pending.directIdeaUuid || idea?.project?.uuid !== payload.projectUuid) {
+          throw new Error("Operation protocol error: creation project does not match its Idea");
+        }
+      }
+      const n = {
+        action: pending.trigger, turnUuid: pending.turnUuid,
+        sessionId: pending.sessionId, directIdeaUuid: pending.directIdeaUuid,
+        entityType: "idea", entityUuid: pending.directIdeaUuid,
+        operationPayload: payload, promptText: pending.promptText,
+        ...(payload.kind === "idea_creation" ? { projectUuid: payload.projectUuid } : {}),
+        ...(typeof pending.runtimeCwd === "string" ? { runtimeCwd: pending.runtimeCwd } : {}),
+      };
+      const key = `idea:${pending.directIdeaUuid}`;
+      const attribution = { key, rootIdeaUuid: pending.directIdeaUuid, directIdeaUuid: pending.directIdeaUuid };
+      this.queue.enqueue(key, { notification: n, attribution, isolated: true });
+      this.seen.add(seenKey); // Only accepted, valid queue entries own dedup.
+      try { this.waker.markQueued?.(n, key, attribution); }
+      catch (err) { this.logger.warn(`[Chorus] markQueued failed for ${pending.turnUuid}: ${err}`); }
+    } catch (err) {
+      this.logger.warn(`[Chorus] operation turn ${pending.turnUuid} remains pending and retryable: ${err}`);
+    } finally {
+      this.validatingOperations.delete(seenKey);
+    }
   }
 
   /**

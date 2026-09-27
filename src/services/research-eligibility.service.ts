@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 
 export type ResearchDb = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
 
-export const RESEARCH_INSTRUCTION_PREFIX = "[Chorus Tracker Research]";
+export { RESEARCH_INSTRUCTION_PREFIX } from "@/services/daemon-operation";
 export const EXECUTED_TASK_STATUSES = ["in_progress", "to_verify", "done"];
 export type ResearchReason = "development_started" | "idea_completed" | "idea_not_found";
 export type ResearchEligibility = { eligible: true } | { eligible: false; reason: ResearchReason };

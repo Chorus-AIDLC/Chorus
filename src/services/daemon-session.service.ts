@@ -28,19 +28,17 @@
 
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { RESEARCH_INSTRUCTION_PREFIX, recheckResearchTurn, getResearchEligibility, lockResearchProject } from "@/services/research-eligibility.service";
+import { recheckResearchTurn, getResearchEligibility, lockResearchProject } from "@/services/research-eligibility.service";
 
+import {
+  isOperationTrigger, isResearchTurn, NON_RESEARCH_TURN, NON_OPERATION_TURN,
+  validateOperationPayload, type OperationPayload,
+} from "@/services/daemon-operation";
+export { isOperationTrigger, type OperationPayload } from "@/services/daemon-operation";
 // Includes the application's Prisma extensions, unlike the generated bare client.
 type SessionTransactionClient = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
-// Nullable prompts need an explicit null branch: SQL NOT LIKE excludes NULL.
-const NON_RESEARCH_TURN = {
-  OR: [
-    { promptText: null },
-    { NOT: { promptText: { startsWith: RESEARCH_INSTRUCTION_PREFIX } } },
-  ],
-};
 // Only the exact, origin-fenced wake reporter may bypass the pending-turn FSM.
-const RESEARCH_LAUNCH_ABORT = Symbol("researchLaunchAbort");
+const OPERATION_LAUNCH_ABORT = Symbol("operationLaunchAbort");
 import { eventBus } from "@/lib/event-bus";
 // Re-export the canonical DIRECT-idea primitive so the notification chokepoint and the
 // waker-session anchor resolve a session's idea anchor from ONE source (no ancestry climb).
@@ -70,6 +68,8 @@ export const TURN_TRIGGERS = [
   "yolo_requested",
   "resume",
   "human_instruction",
+  "idea_creation_requested",
+  "research_requested",
 ] as const;
 export type TurnTrigger = (typeof TURN_TRIGGERS)[number];
 
@@ -238,6 +238,9 @@ export interface TurnView {
   seq: number;
   trigger: string;
   promptText: string | null;
+  // Raw persisted JSON: malformed versions must remain visible to protocol consumers.
+  // Optional for pre-migration fixtures and older server responses.
+  operationPayload?: unknown;
   status: string; // pending | running | ended | interrupted | merged (server-only, coalesced-away)
   interruptedReason: string | null; // user | crash | shutdown | offline; set iff interrupted
   // Transcript-relay failure annotation (fix #444 follow-up): non-null when the daemon KNEW
@@ -313,6 +316,7 @@ interface DaemonSessionTurnRow {
   seq: number;
   trigger: string;
   promptText: string | null;
+  operationPayload?: unknown;
   status: string;
   interruptedReason: string | null;
   relayError: string | null;
@@ -378,6 +382,7 @@ function toTurnView(row: DaemonSessionTurnRow): TurnView {
     seq: row.seq,
     trigger: row.trigger,
     promptText: row.promptText,
+    operationPayload: row.operationPayload ?? null,
     status: row.status,
     interruptedReason: row.interruptedReason,
     relayError: row.relayError,
@@ -534,16 +539,29 @@ export async function createPendingTurn(params: {
   sessionUuid: string;
   trigger: TurnTrigger;
   promptText?: string | null;
+  operationPayload?: OperationPayload;
   executionUuid?: string | null;
 }, db: SessionTransactionClient = prisma): Promise<TurnView> {
   // The session must exist and carries the companyUuid the SSE event needs. (The
   // caller — the notification chokepoint — has just resolved/created it.)
   const session = await db.daemonSession.findUnique({
     where: { uuid: params.sessionUuid },
-    select: { uuid: true, companyUuid: true },
+    select: { uuid: true, companyUuid: true, directIdeaUuid: true },
   });
   if (!session) {
     throw new Error(`DaemonSession ${params.sessionUuid} not found`);
+  }
+
+  if (isOperationTrigger(params.trigger)) {
+    const idea = session.directIdeaUuid ? await db.idea.findFirst({
+      where: { uuid: session.directIdeaUuid, companyUuid: session.companyUuid },
+      select: { projectUuid: true },
+    }) : null;
+    validateOperationPayload(params.trigger, params.operationPayload, {
+      directIdeaUuid: session.directIdeaUuid, projectUuid: idea?.projectUuid ?? null,
+    });
+  } else if (params.operationPayload != null) {
+    throw new Error("Only dedicated turns may carry an operation payload");
   }
 
   // Monotonic per-session seq = max(existing) + 1; 1 for the first turn. Ordering by
@@ -572,6 +590,7 @@ export async function createPendingTurn(params: {
           seq,
           trigger: params.trigger,
           promptText: params.promptText ?? null,
+          ...(params.operationPayload ? { operationPayload: params.operationPayload } : {}),
           status: "pending",
           executionUuid: params.executionUuid ?? null,
         },
@@ -653,6 +672,7 @@ export async function findReusablePendingInstructionTurn(
 export type AdvanceTurnResult =
   | { ok: true; turn: TurnView }
   | { ok: false; reason: "not_found" }
+  | { ok: false; reason: "backend_session_conflict" }
   | { ok: false; reason: "invalid_transition"; from: string; to: string };
 
 // The legal forward edges for each status. Enforces strict
@@ -678,8 +698,8 @@ const NEXT_TURN_STATUS: Record<TurnStatus, readonly TurnStatus[]> = {
  * of a terminal status (`ended`/`interrupted`), or re-applying the same status is
  * rejected as `invalid_transition` and writes nothing. A turn that does not exist is
  * `not_found`.
- * The private Research launch-abort marker permits only its origin-fenced wake
- * reporter to retire an exact pending Research turn after a failed launch.
+ * The private operation launch-abort marker permits only its origin-fenced wake
+ * reporter to retire an exact pending operation (or historical Research) after a failed launch.
  *
  * On a legal transition it:
  *  - sets the new `status`, and optionally records `startedAt` (the daemon's spawn
@@ -714,25 +734,29 @@ export async function advanceTurn(
     // Daemon reports resolve a row before advancing it. Guard that observed status in the
     // write so concurrent identical terminal reports have exactly one side-effect winner.
     expectedStatus?: TurnStatus;
-    [RESEARCH_LAUNCH_ABORT]?: true;
+    [OPERATION_LAUNCH_ABORT]?: true;
+    originFence?: { companyUuid: string; agentUuid: string; originConnectionUuid: string };
+    // Operation reporters bind identity only inside the status-claim transaction.
+    backendSessionId?: string | null;
   } = {},
 ): Promise<AdvanceTurnResult> {
   const turn = await prisma.daemonSessionTurn.findUnique({
     where: { uuid: turnUuid },
-    select: { uuid: true, sessionUuid: true, status: true, promptText: true },
+    select: { uuid: true, sessionUuid: true, status: true, trigger: true, promptText: true },
   });
   if (!turn) return { ok: false, reason: "not_found" };
+  const turnSessionUuid = turn.sessionUuid;
 
   // The turn's persisted status must be a known lifecycle value to have legal edges;
   // a foreign value (should never happen) has no outgoing edges → invalid_transition.
   const current = turn.status as TurnStatus;
   const legalNext = NEXT_TURN_STATUS[current] ?? [];
-  const pendingResearchAbort = opts[RESEARCH_LAUNCH_ABORT] === true &&
+  const pendingOperationAbort = opts[OPERATION_LAUNCH_ABORT] === true &&
     current === "pending" && opts.expectedStatus === "pending" &&
-    turn.promptText?.startsWith(RESEARCH_INSTRUCTION_PREFIX) &&
+    (isResearchTurn(turn) || isOperationTrigger(turn.trigger)) &&
     status === "interrupted" &&
     (opts.interruptedReason === "crash" || opts.interruptedReason === "invalid_path" || opts.interruptedReason === "user");
-  if (!legalNext.includes(status) && !pendingResearchAbort) {
+  if (!legalNext.includes(status) && !pendingOperationAbort) {
     return { ok: false, reason: "invalid_transition", from: turn.status, to: status };
   }
 
@@ -746,6 +770,7 @@ export async function advanceTurn(
     interruptedReason?: string | null;
     relayError?: string | null;
     usage?: Prisma.InputJsonValue;
+    backendSessionId?: string;
   } = { status };
   if (opts.startedAt !== undefined) data.startedAt = opts.startedAt;
   if (opts.endedAt !== undefined) data.endedAt = opts.endedAt;
@@ -773,6 +798,41 @@ export async function advanceTurn(
     // Cast through the Prisma JSON input type — TokenUsage is a flat JSON-serializable record.
     data.usage = usageToWrite as unknown as Prisma.InputJsonValue;
   }
+  const backendToBind = opts.backendSessionId ?? null;
+  if (backendToBind) data.backendSessionId = backendToBind;
+
+  // Claim status and turn identity in ONE guarded write, then bind the immutable
+  // session anchor in the SAME transaction. A stale admission writes neither ID.
+  // A later binding/rollup failure rolls back the status claim and both identities.
+  async function claimAndBind(tx: SessionTransactionClient, expectedStatus: TurnStatus) {
+    const claimed = await tx.daemonSessionTurn.updateMany({
+      where: {
+        uuid: turnUuid, status: expectedStatus,
+        ...(opts.originFence ? { session: opts.originFence } : {}),
+        ...(backendToBind ? { OR: [{ backendSessionId: null }, { backendSessionId: backendToBind }] } : {}),
+      },
+      data,
+    });
+    if (claimed.count === 0) return null;
+    if (backendToBind) {
+      await tx.daemonSession.updateMany({
+        where: { uuid: turnSessionUuid, backendSessionId: null },
+        data: { backendSessionId: backendToBind },
+      });
+    }
+    if (usageToWrite) {
+      await tx.daemonSession.update({
+        where: { uuid: turnSessionUuid },
+        data: {
+          totalInputTokens: { increment: opts.usage?.inputTokens ?? 0 },
+          totalOutputTokens: { increment: opts.usage?.outputTokens ?? 0 },
+          totalCacheReadTokens: { increment: opts.usage?.cacheReadTokens ?? 0 },
+          totalCacheCreationTokens: { increment: opts.usage?.cacheCreationTokens ?? 0 },
+        },
+      });
+    }
+    return tx.daemonSessionTurn.findUnique({ where: { uuid: turnUuid } });
+  }
 
   // Write the turn. When usage was captured, ALSO increment the session's scalar token
   // rollup — atomically, in ONE transaction, so the turn's usage column and the session
@@ -781,7 +841,7 @@ export async function advanceTurn(
   // terminal advances on the same session accumulate correctly without a read-modify-write.
   // No usage → a plain single-row update (unchanged from before this feature).
   let updated;
-  if (status === "running" && turn.promptText?.startsWith(RESEARCH_INSTRUCTION_PREFIX)) {
+  if (status === "running" && isResearchTurn(turn)) {
     let researchCompanyUuid: string | null = null;
     // Research consumption and development acceptance share ONE project lock.
     // Never release it between checking the phase and claiming the pending turn.
@@ -804,47 +864,32 @@ export async function advanceTurn(
         });
         return null;
       }
-      const claim = await tx.daemonSessionTurn.updateMany({
-        where: { uuid: turnUuid, status: opts.expectedStatus ?? "pending" }, data,
-      });
-      return claim.count ? tx.daemonSessionTurn.findUnique({ where: { uuid: turnUuid } }) : null;
+      return claimAndBind(tx, opts.expectedStatus ?? "pending");
     });
     if (!updated) {
       const latest = researchCompanyUuid ? await publishResearchRetirement(researchCompanyUuid, turnUuid) : null;
+      if (backendToBind && latest?.status === (opts.expectedStatus ?? "pending") &&
+        latest.backendSessionId && latest.backendSessionId !== backendToBind) {
+        return { ok: false, reason: "backend_session_conflict" };
+      }
       return {
         ok: false, reason: "invalid_transition",
         from: latest?.interruptedReason === "research_stage_changed" ? "research_stage_changed" : latest?.status ?? turn.status,
         to: status,
       };
     }
-  } else if (opts.expectedStatus !== undefined) {
-    updated = await prisma.$transaction(async (tx) => {
-      const claimed = await tx.daemonSessionTurn.updateMany({
-        where: { uuid: turnUuid, status: opts.expectedStatus },
-        data,
-      });
-      if (claimed.count === 0) return null;
-
-      if (usageToWrite) {
-        await tx.daemonSession.update({
-          where: { uuid: turn.sessionUuid },
-          data: {
-            totalInputTokens: { increment: opts.usage?.inputTokens ?? 0 },
-            totalOutputTokens: { increment: opts.usage?.outputTokens ?? 0 },
-            totalCacheReadTokens: { increment: opts.usage?.cacheReadTokens ?? 0 },
-            totalCacheCreationTokens: { increment: opts.usage?.cacheCreationTokens ?? 0 },
-          },
-        });
-      }
-
-      return tx.daemonSessionTurn.findUnique({ where: { uuid: turnUuid } });
-    });
+  } else if (opts.expectedStatus !== undefined || backendToBind) {
+    updated = await prisma.$transaction((tx) => claimAndBind(tx, opts.expectedStatus ?? current));
     if (!updated) {
       const latest = await prisma.daemonSessionTurn.findUnique({
         where: { uuid: turnUuid },
-        select: { status: true },
+        select: { status: true, backendSessionId: true },
       });
       if (!latest) return { ok: false, reason: "not_found" };
+      if (backendToBind && latest.status === (opts.expectedStatus ?? current) &&
+        latest.backendSessionId && latest.backendSessionId !== backendToBind) {
+        return { ok: false, reason: "backend_session_conflict" };
+      }
       return { ok: false, reason: "invalid_transition", from: latest.status, to: status };
     }
   } else if (usageToWrite) {
@@ -1382,10 +1427,11 @@ interface StreamEntry {
  * Pagination is by MESSAGE, not turn (a single turn can carry many multi-KB messages,
  * so a turn-window's worst case is "one enormous turn"). It builds a unified message
  * stream where EVERY turn gets a positional slot at `(turn.seq, msgSeq = 0)`:
- *  - a turn with non-empty `promptText` → the slot is a synthetic RENDERED message
+ *  - a non-operation turn with non-empty `promptText` → a synthetic RENDERED message
  *    (`role: "user"`, `text: promptText`, `uuid: "synthetic:" + turnUuid`), emitted
  *    into the band's rendered `messages[]` ahead of the real `seq >= 1` messages;
- *  - a prompt-less turn whose real messages were all trimmed by the rolling window →
+ *  - a canonical operation (regardless of its compatibility prompt), or a prompt-less
+ *    turn whose real messages were all trimmed by the rolling window →
  *    the slot is a PLACEHOLDER counted for paging/cursor but NOT rendered (the band
  *    materializes with an empty `messages[]`, matching the old turn-pager which never
  *    dropped such a turn);
@@ -1489,7 +1535,10 @@ export async function getSessionDetail(
       stream.push({ turnSeq: t.seq, msgSeq: reals[i].seq, rendered: reals[i] });
     }
     const promptText = t.promptText;
-    const hasPrompt = typeof promptText === "string" && promptText.length > 0;
+    // Operations retain the same seq=0 slot and stable turn UUID, but never fabricate
+    // user input from their compatibility instruction. Real transcript rows are untouched.
+    const hasPrompt = !isOperationTrigger(t.trigger) &&
+      typeof promptText === "string" && promptText.length > 0;
     stream.push({
       turnSeq: t.seq,
       msgSeq: 0,
@@ -1965,6 +2014,7 @@ export type AdvanceTurnForWakeResult =
   | { ok: true; turn: TurnView }
   | { ok: false; reason: "not_found" }
   | { ok: false; reason: "backend_session_conflict" }
+  | { ok: false; reason: "invalid_operation_payload" }
   | { ok: false; reason: "invalid_transition"; from: string; to: string };
 
 /**
@@ -2046,6 +2096,7 @@ export async function advanceTurnForWake(params: {
   sessionId: string;
   // The HTTP boundary always negotiates this. Default preserves internal callers.
   researchMode?: "isolated" | "legacy";
+  operationProtocol?: boolean;
   turnUuid?: string | null;
   backendSessionId?: string | null;
   status: TurnStatus;
@@ -2086,9 +2137,17 @@ export async function advanceTurnForWake(params: {
   //   • → ended       : the `running` turn (the one whose subprocess just exited).
   //   • → interrupted : the `running` turn too (the one whose subprocess was stopped —
   //                     both terminal edges leave from the same state).
-  const isolateResearch = params.researchMode !== "legacy";
-  const fifoFilter = isolateResearch || session.originConnectionUuid !== params.connectionUuid
-    ? NON_RESEARCH_TURN : {};
+  const isolateOperations = params.operationProtocol === true;
+  const isolateResearch = isolateOperations || params.researchMode !== "legacy";
+  const originFence = {
+    companyUuid: params.companyUuid, agentUuid: params.agentUuid, originConnectionUuid: params.connectionUuid,
+  };
+  // Recheck origin in SQL, including settlement, if the session is repointed after
+  // the initial read. Ordinary reports from an older origin keep their existing behavior.
+  const originCompatible = { OR: [NON_OPERATION_TURN, { session: originFence }] };
+  const fifoFilter = isolateOperations || session.originConnectionUuid !== params.connectionUuid
+    ? NON_OPERATION_TURN : isolateResearch
+      ? { AND: [NON_RESEARCH_TURN, originCompatible] } : originCompatible;
   const fromStatus =
     params.status === "running"
       ? "pending"
@@ -2108,9 +2167,11 @@ export async function advanceTurnForWake(params: {
   });
   if (!turn) return { ok: false, reason: "not_found" };
 
-  const isResearch = turn.promptText?.startsWith(RESEARCH_INSTRUCTION_PREFIX) === true;
-  if (isResearch) {
-    if (isolateResearch && !params.turnUuid) return { ok: false, reason: "not_found" };
+  const isResearch = isResearchTurn(turn);
+  const isOperation = isOperationTrigger(turn.trigger);
+  const isolated = (isResearch && isolateResearch) || (isOperation && isolateOperations);
+  if (isResearch || isOperation) {
+    if (isolated && !params.turnUuid) return { ok: false, reason: "not_found" };
     const origin = await prisma.daemonSession.findFirst({
       where: { uuid: session.uuid, companyUuid: params.companyUuid, agentUuid: params.agentUuid },
       select: { originConnectionUuid: true },
@@ -2118,18 +2179,40 @@ export async function advanceTurnForWake(params: {
     if (origin?.originConnectionUuid !== params.connectionUuid) {
       return { ok: false, reason: "not_found" };
     }
-    if (isolateResearch && params.status === "running" && !((params.coalescedCount ?? 1) <= 1)) {
+    if (isolated && (params.coalescedCount ?? 1) !== 1) {
       return { ok: false, reason: "invalid_transition", from: turn.status, to: params.status };
     }
   }
 
-  const pendingResearchAbort = isResearch && !!params.turnUuid && turn.status === "pending" &&
+  // Refuse duplicate admission before backend identity or any other state can change.
+  if ((isResearch || isOperation) && params.status === "running" && turn.status !== "pending") {
+    return { ok: false, reason: "invalid_transition", from: turn.status, to: params.status };
+  }
+  if (isOperation && params.status === "running") {
+    const anchor = await prisma.daemonSession.findFirst({
+      where: { uuid: session.uuid, companyUuid: params.companyUuid, agentUuid: params.agentUuid },
+      select: { directIdeaUuid: true },
+    });
+    const idea = anchor?.directIdeaUuid ? await prisma.idea.findFirst({
+      where: { uuid: anchor.directIdeaUuid, companyUuid: params.companyUuid }, select: { projectUuid: true },
+    }) : null;
+    try {
+      validateOperationPayload(turn.trigger, turn.operationPayload, {
+        directIdeaUuid: anchor?.directIdeaUuid ?? null, projectUuid: idea?.projectUuid ?? null,
+      });
+    } catch {
+      return { ok: false, reason: "invalid_operation_payload" };
+    }
+  }
+
+  const pendingOperationAbort = (isResearch || isOperation) && !!params.turnUuid && turn.status === "pending" &&
     params.status === "interrupted" &&
     (params.interruptedReason === "crash" || params.interruptedReason === "invalid_path" || params.interruptedReason === "user") &&
-    !params.backendSessionId && !turn.backendSessionId;
+    !params.backendSessionId && !turn.backendSessionId &&
+    (params.coalescedCount ?? 1) === 1 && params.usage == null;
   // Reject pending terminal reports before any backend binding can mutate state.
   if (turn.status === "pending" &&
-    (params.status === "ended" || params.status === "interrupted") && !pendingResearchAbort) {
+    (params.status === "ended" || params.status === "interrupted") && !pendingOperationAbort) {
     return { ok: false, reason: "invalid_transition", from: turn.status, to: params.status };
   }
 
@@ -2147,7 +2230,9 @@ export async function advanceTurnForWake(params: {
     return { ok: true, turn: toTurnView(turn) };
   }
 
-  if (params.backendSessionId) {
+  if (params.backendSessionId && !isResearch && !isOperation) {
+    // Ordinary reports retain their compatibility path. Operations bind both
+    // identities inside advanceTurn's status-claim transaction below.
     // The turn is the conflict authority. First assignment and an identical repeat
     // succeed atomically; a different ID on this exact turn cannot overwrite it.
     const bound = await prisma.daemonSessionTurn.updateMany({
@@ -2216,11 +2301,13 @@ export async function advanceTurnForWake(params: {
     ...(params.relayError !== undefined ? { relayError: params.relayError } : {}),
     ...(params.usage !== undefined ? { usage: params.usage } : {}),
     expectedStatus: turn.status as TurnStatus,
-    ...(pendingResearchAbort ? { [RESEARCH_LAUNCH_ABORT]: true as const } : {}),
+    ...((isResearch || isOperation) ? { originFence, backendSessionId: params.backendSessionId } : {}),
+    ...(pendingOperationAbort ? { [OPERATION_LAUNCH_ABORT]: true as const } : {}),
   });
 
   if (!result.ok) {
     if (result.reason === "not_found") return { ok: false, reason: "not_found" };
+    if (result.reason === "backend_session_conflict") return { ok: false, reason: "backend_session_conflict" };
     if (params.turnUuid && isTerminal) {
       const latest = await prisma.daemonSessionTurn.findFirst({
         where: { uuid: params.turnUuid, sessionUuid: session.uuid },
@@ -2324,6 +2411,7 @@ export interface PendingTurnView {
   seq: number;
   trigger: string;
   promptText: string | null;
+  operationPayload?: unknown;
 }
 
 /**
@@ -2344,6 +2432,7 @@ export async function getPendingTurnsForConnection(params: {
   companyUuid: string;
   agentUuid: string;
   connectionUuid: string;
+  operationProtocol?: boolean;
 }): Promise<PendingTurnView[]> {
   const rows = await prisma.daemonSessionTurn.findMany({
     where: {
@@ -2361,13 +2450,14 @@ export async function getPendingTurnsForConnection(params: {
       seq: true,
       trigger: true,
       promptText: true,
+      operationPayload: true,
       session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } },
     },
   });
 
   const deliverable = [];
   for (const row of rows) {
-    if (row.promptText?.startsWith(RESEARCH_INSTRUCTION_PREFIX) &&
+    if (isResearchTurn(row) &&
       (!row.session.directIdeaUuid || !await recheckResearchTurn(params.companyUuid, row.session.directIdeaUuid, row.uuid))) {
       await publishResearchRetirement(params.companyUuid, row.uuid);
       continue;
@@ -2381,7 +2471,8 @@ export async function getPendingTurnsForConnection(params: {
     directIdeaUuid: r.session.directIdeaUuid,
     runtimeCwd: r.session.runtimeCwd,
     seq: r.seq,
-    trigger: r.trigger,
+    trigger: !params.operationProtocol && isOperationTrigger(r.trigger) ? "human_instruction" : r.trigger,
+    ...(params.operationProtocol ? { operationPayload: r.operationPayload ?? null } : {}),
     promptText: r.promptText,
   }));
 }

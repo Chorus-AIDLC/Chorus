@@ -245,14 +245,15 @@ export function createDaemonRestClient(opts) {
         // Coalesced-wake count (add-daemon-wake-coalescing): meaningful ONLY on the → running
         // edge, where the server settles the next (count − 1) same-session pending turns to
         // `merged`. Sent only when a real batch coalesced (> 1); a single wake (default 1)
-        // omits it so the wire — and every existing turn-advance test — stays byte-identical.
-        ...(status === "running" && typeof coalescedCount === "number" && coalescedCount > 1
+        // omits it; exact operation admission explicitly sends 1 with its turn UUID.
+        ...(status === "running" && typeof coalescedCount === "number" &&
+          (coalescedCount > 1 || (turnUuid && coalescedCount === 1))
           ? { coalescedCount }
           : {}),
       };
       const result = await post(
         "turn-advance",
-        "/api/daemon/turn-advance?researchProtocol=1",
+        "/api/daemon/turn-advance?researchProtocol=1&operationProtocol=1",
         body,
         `advanced turn for session ${sessionId} → ${status}`,
         "",
@@ -396,7 +397,7 @@ export function createDaemonRestClient(opts) {
       }
       // Declare support for isolated Research turns. Legacy clients receive the
       // same requests and acknowledge them through their existing FIFO path.
-      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&researchProtocol=1`;
+      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&researchProtocol=1&operationProtocol=1`;
       let response;
       try {
         response = await fetchImpl(endpoint, {

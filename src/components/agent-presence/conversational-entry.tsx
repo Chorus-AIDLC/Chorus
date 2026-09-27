@@ -21,9 +21,8 @@
 //              own endpoint (add-conversational-idea-root-session: the
 //              create-idea modal posts /api/ideas/conversational, which
 //              pre-creates the Idea and composes the instruction server-side).
-//              Either way the created SessionView is handed to `onStarted` so
-//              the consumer can close itself and land the user on the new
-//              conversation (`openChatForSession`).
+//              Either way the created SessionView is handed to `onStarted`;
+//              the consumer owns its success feedback and any navigation.
 //
 // Char budget: the USER text is capped at USER_TEXT_MAX_CHARS (3000) with a
 // visible counter near the limit. Idea creation validates that same user-text
@@ -35,7 +34,7 @@
 // connection list immediately (`refreshConnections`) so the picker re-syncs;
 // other failures surface the server reason inline the same way.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2, SendHorizonal, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
@@ -256,6 +255,7 @@ export function ConversationalEntry({
 
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
+  const sending = useRef(false);
   // Inline (non-toast) dispatch error — the entry usually lives in a modal where
   // an inline message beats a toast behind the overlay. Cleared on each retry.
   const [sendError, setSendError] = useState<string | null>(null);
@@ -308,7 +308,10 @@ export function ConversationalEntry({
   };
 
   const send = async () => {
-    if (sendDisabled || !selectedAgent || !selectedInstance) return;
+    if (sending.current || sendDisabled || !selectedAgent || !selectedInstance) return;
+    // Guard immediately: two click/Enter events can share the render that still
+    // has pending=false. State alone only disables the next rendered button.
+    sending.current = true;
     setPending(true);
     setSendError(null);
     try {
@@ -334,6 +337,7 @@ export function ConversationalEntry({
       clientLogger.error("Failed to dispatch conversational entry:", error);
       setSendError(t("sendError"));
     } finally {
+      sending.current = false;
       setPending(false);
     }
   };

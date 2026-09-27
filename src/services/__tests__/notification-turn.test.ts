@@ -452,6 +452,8 @@ describe("triggerForAction / NOTIFICATION_ACTION_TO_TURN_TRIGGER", () => {
       "yolo_requested",
       "resume",
       "human_instruction",
+      "idea_creation_requested",
+      "research_requested",
     ]);
     for (const trigger of Object.values(NOTIFICATION_ACTION_TO_TURN_TRIGGER)) {
       expect(allowed.has(trigger)).toBe(true);

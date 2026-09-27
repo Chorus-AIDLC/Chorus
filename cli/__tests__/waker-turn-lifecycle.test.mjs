@@ -121,7 +121,7 @@ describe("Waker turn lifecycle (子1)", () => {
     await waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
     expect(status).toBe("interrupted");
     expect(spawner.wake).not.toHaveBeenCalled();
-    expect(waker.researchRecoveryTimers.size).toBe(0);
+    expect(waker.operationRecoveryTimers.size).toBe(0);
   });
 
   it.each(["pending", "running"])("recovers an unstarted %s Research after a prolonged outage without another wake", async (serverStatus) => {
@@ -138,13 +138,13 @@ describe("Waker turn lifecycle (子1)", () => {
     try {
       const resolved = await waker.keyFor(RESEARCH_NOTIF);
       await waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
-      expect(waker.researchRecoveryTimers.size).toBe(1);
+      expect(waker.operationRecoveryTimers.size).toBe(1);
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(waker.researchRecoveryTimers.size).toBe(1);
+      expect(waker.operationRecoveryTimers.size).toBe(1);
       online = true;
       await vi.advanceTimersByTimeAsync(30_000);
       expect(status).toBe("interrupted");
-      expect(waker.researchRecoveryTimers.size).toBe(0);
+      expect(waker.operationRecoveryTimers.size).toBe(0);
       expect(spawner.wake).not.toHaveBeenCalled();
     } finally {
       waker.interruptAll();
@@ -158,7 +158,7 @@ describe("Waker turn lifecycle (子1)", () => {
     const resolved = await waker.keyFor(RESEARCH_NOTIF);
     await waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
     expect(advanceTurn).toHaveBeenCalledTimes(1);
-    expect(waker.researchRecoveryTimers.size).toBe(0);
+    expect(waker.operationRecoveryTimers.size).toBe(0);
   });
 
   it("cwd failure retires only the exact Research without an uncorrelated running report", async () => {
@@ -299,10 +299,10 @@ describe("Waker turn lifecycle (子1)", () => {
     try {
       const resolved = await waker.keyFor(RESEARCH_NOTIF);
       await waker.wake(RESEARCH_NOTIF, resolved.key, resolved);
-      expect(waker.researchRecoveryTimers.size).toBe(1);
+      expect(waker.operationRecoveryTimers.size).toBe(1);
       online = true;
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(waker.researchRecoveryTimers.size).toBe(0);
+      expect(waker.operationRecoveryTimers.size).toBe(0);
       expect(advanceTurn.mock.lastCall[0]).toMatchObject({
         turnUuid: "research-turn", status: "interrupted", interruptedReason: "crash",
       });

@@ -13,6 +13,8 @@ import {
   RefreshCw,
   AtSign,
   Flag,
+  Lightbulb,
+  Search,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { staggerItem } from "@/lib/animation";
@@ -66,6 +68,10 @@ function hashProjectColor(projectUuid: string) {
 
 function getTypeIcon(action: string) {
   switch (action) {
+    case "idea_creation_requested":
+      return { Icon: Lightbulb, color: "text-primary" };
+    case "research_requested":
+      return { Icon: Search, color: "text-primary" };
     case "task_assigned":
     case "idea_claimed":
       return { Icon: UserCheck, color: "text-primary" }; // terracotta

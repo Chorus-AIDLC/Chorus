@@ -353,7 +353,7 @@ describe("createConversationalIdeaSession", () => {
       }));
       expect(mockTx.daemonSessionTurn.create).toHaveBeenLastCalledWith({
         data: expect.objectContaining({
-          trigger: "human_instruction",
+          trigger: "idea_creation_requested",
           promptText: composeConversationalIdeaInstruction({
             ideaUuid: STUB_IDEA_UUID, projectUuid, projectName: "Chorus",
             descriptionText: validParams.descriptionText, mode, researchFirst,
@@ -468,7 +468,7 @@ describe("createConversationalIdeaSession", () => {
     // ideaUuid and the verbatim description.
     const turnData = mockTx.daemonSessionTurn.create.mock.calls[0][0].data;
     expect(turnData.seq).toBe(1);
-    expect(turnData.trigger).toBe("human_instruction");
+    expect(turnData.trigger).toBe("idea_creation_requested");
     expect(turnData.status).toBe("pending");
     expect(turnData.promptText).toContain(`ideaUuid: ${STUB_IDEA_UUID}`);
     expect(turnData.promptText).toContain(validParams.descriptionText);
@@ -506,7 +506,7 @@ describe("createConversationalIdeaSession", () => {
 
     // The first turn carries the DECOMPOSE instruction, not the elaborate one.
     const turnData = mockTx.daemonSessionTurn.create.mock.calls[0][0].data;
-    expect(turnData.trigger).toBe("human_instruction");
+    expect(turnData.trigger).toBe("idea_creation_requested");
     expect(turnData.promptText).toContain("container-decompose");
     expect(turnData.promptText).toContain("chorus_pm_create_idea");
     expect(turnData.promptText).toContain(`parentUuid=${STUB_IDEA_UUID}`);

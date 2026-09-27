@@ -48,7 +48,7 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [endpoint, init] = fetchImpl.mock.calls[0];
     // Trailing slash on the base url is normalized away.
-    expect(endpoint).toBe("https://chorus.example.com/api/daemon/turn-advance?researchProtocol=1");
+    expect(endpoint).toBe("https://chorus.example.com/api/daemon/turn-advance?researchProtocol=1&operationProtocol=1");
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe("Bearer cho_secret");
     expect(init.headers["Content-Type"]).toBe("application/json");
@@ -305,7 +305,7 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(result.data).toEqual({ turns });
     const [endpoint, init] = fetchImpl.mock.calls[0];
     // No explicit method on a GET; connectionUuid is URL-encoded.
-    expect(endpoint).toBe("https://chorus.example.com/api/daemon/pending-turns?connectionUuid=conn%2F1&researchProtocol=1");
+    expect(endpoint).toBe("https://chorus.example.com/api/daemon/pending-turns?connectionUuid=conn%2F1&researchProtocol=1&operationProtocol=1");
     expect(init.method).toBeUndefined();
     expect(init.headers.Authorization).toBe("Bearer cho_secret");
   });

@@ -1,3 +1,4 @@
+import { NON_OPERATION_TURN } from "@/services/daemon-operation";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Prisma mock =====
@@ -111,12 +112,7 @@ const connectionUuid = "conn-0000-0000-0000-000000000001";
 const sessionUuid = "sess-0000-0000-0000-000000000001";
 const sessionId = "idea-0000-0000-0000-000000000001"; // directIdeaUuid as session id
 const turnUuid = "turn-0000-0000-0000-000000000001";
-const nonResearchTurn = {
-  OR: [
-    { promptText: null },
-    { NOT: { promptText: { startsWith: "[Chorus Tracker Research]" } } },
-  ],
-};
+const nonResearchTurn = NON_OPERATION_TURN;
 
 function sessionRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -203,12 +199,14 @@ beforeEach(() => {
 
 // ===== Constants =====
 describe("constants", () => {
-  it("TURN_TRIGGERS covers the eight wake kinds (incl. the distinct elaboration_verified, start_development, and yolo_requested)", () => {
+  it("TURN_TRIGGERS covers the ten wake kinds (incl. the distinct elaboration_verified, start_development, and yolo_requested)", () => {
     expect([...TURN_TRIGGERS].sort()).toEqual(
       [
         "elaboration",
         "elaboration_verified",
         "human_instruction",
+        "idea_creation_requested",
+        "research_requested",
         "mentioned",
         "resume",
         "start_development",
@@ -1394,6 +1392,51 @@ describe("isSessionVisibleToCaller", () => {
 // reverses to ascending, and groups into bands. So a test just supplies candidate turns
 // + their messages and asserts the page bands + hasMore + (oldestTurnSeq, oldestMsgSeq).
 describe("getSessionDetail", () => {
+  it.each(["idea_creation_requested", "research_requested"])(
+    "%s reserves one stable seq=0 band position across pages without synthetic user input",
+    async (trigger) => {
+      mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+      mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+        turnRow({ uuid: "operation", seq: 2, trigger, promptText: "SYSTEM COMPATIBILITY INSTRUCTION" }),
+        turnRow({ uuid: "historical", seq: 1, trigger: "human_instruction", promptText: "Research this historical instruction" }),
+      ]);
+      const real = [
+        transcriptMessageRow({ uuid: "real-user", turnUuid: "operation", role: "user", text: "Real recorded input", seq: 1 }),
+        transcriptMessageRow({ uuid: "real-assistant", turnUuid: "operation", role: "assistant", text: "Real recorded reply", seq: 2 }),
+      ];
+      mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue(real);
+      const auth = { type: "user", companyUuid, actorUuid: ownerUuid };
+      const latest = await getSessionDetail(auth, sessionUuid, { limit: 2 });
+      expect(latest).toMatchObject({ hasMore: true, oldestTurnSeq: 2, oldestMsgSeq: 1 });
+      expect(latest!.turns[0].messages).toEqual(real.map((m) => ({
+        uuid: m.uuid, turnUuid: m.turnUuid, role: m.role, text: m.text, seq: m.seq,
+        createdAt: (m.createdAt as Date).toISOString(),
+      })));
+
+      const slotOpts = { limit: 1, beforeTurnSeq: 2, beforeMsgSeq: 1 };
+      const slot = await getSessionDetail(auth, sessionUuid, slotOpts);
+      expect(slot).toMatchObject({
+        hasMore: true, oldestTurnSeq: 2, oldestMsgSeq: 0,
+        turns: [{ uuid: "operation", seq: 2, trigger, messages: [] }],
+      });
+      expect(slot!.turns).toHaveLength(1);
+      // An overlapping read has the identical band UUID and cursor, even though
+      // the slot deliberately has no rendered message UUID/role to merge.
+      expect(await getSessionDetail(auth, sessionUuid, slotOpts)).toEqual(slot);
+
+      const earlier = await getSessionDetail(auth, sessionUuid, {
+        limit: 1, beforeTurnSeq: slot!.oldestTurnSeq, beforeMsgSeq: slot!.oldestMsgSeq,
+      });
+      expect(earlier).toMatchObject({
+        hasMore: false, oldestTurnSeq: 1, oldestMsgSeq: 0,
+        turns: [{ uuid: "historical", messages: [{
+          uuid: "synthetic:historical", role: "user", seq: 0, text: "Research this historical instruction",
+        }] }],
+      });
+      expect(mockPrisma.daemonTranscriptMessage.create).not.toHaveBeenCalled();
+    },
+  );
+
   it("VISIBLE session: returns { session, turns } with each turn's real messages folded ascending by seq", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
     // Candidate turns come back seq DESC (newest-first), as the real DB orders them.
@@ -2430,7 +2473,7 @@ describe("advanceTurnForWake", () => {
       status: "interrupted", interruptedReason: "crash",
     })).toMatchObject({ ok: false, reason: "invalid_transition", from: "running" });
     expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledExactlyOnceWith({
-      where: { uuid: turnUuid, status: "pending" },
+      where: { uuid: turnUuid, status: "pending", session: { companyUuid, agentUuid, originConnectionUuid: connectionUuid } },
       data: expect.objectContaining({ status: "interrupted", interruptedReason: "crash" }),
     });
     expect(mockPrisma.daemonSession.updateMany).not.toHaveBeenCalled();

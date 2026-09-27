@@ -17,7 +17,7 @@ class ResizeObserverStub {
 import { NotificationPopup } from "@/components/notification-popup";
 
 // next-intl: resolve real strings from the locale JSON so we catch missing keys.
-let currentLocale: "en" | "zh" = "en";
+let currentLocale = "en";
 vi.mock("next-intl", async () => {
   const en = (await import("../../../messages/en.json")).default as Record<
     string,
@@ -27,6 +27,11 @@ vi.mock("next-intl", async () => {
     string,
     unknown
   >;
+  const locales: Record<string, Record<string, unknown>> = {
+    en, zh,
+    ja: (await import("../../../messages/ja.json")).default,
+    ko: (await import("../../../messages/ko.json")).default,
+  };
   function resolve(messages: Record<string, unknown>, namespace: string, key: string): string {
     const fullKey = namespace ? `${namespace}.${key}` : key;
     const parts = fullKey.split(".");
@@ -42,7 +47,7 @@ vi.mock("next-intl", async () => {
   }
   return {
     useTranslations: (namespace = "") => (key: string) =>
-      resolve(currentLocale === "en" ? en : zh, namespace, key),
+      resolve(locales[currentLocale], namespace, key),
   };
 });
 
@@ -138,6 +143,22 @@ describe("NotificationPopup — report_created deep link", () => {
     pushSpy.mockReset();
     fixtureQueue.length = 0;
     currentLocale = "en";
+  });
+
+  it.each([
+    ["en", "Create Idea", "Research"], ["zh", "创建 Idea", "调研"],
+    ["ja", "Idea を作成", "リサーチ"], ["ko", "Idea 생성", "리서치"],
+  ])("%s displays canonical operation notifications with business labels", async (locale, creationLabel, researchLabel) => {
+    currentLocale = locale;
+    const notifications = [
+      { ...reportNotification(), uuid: "creation", action: "idea_creation_requested" },
+      { ...reportNotification(), uuid: "research", action: "research_requested" },
+    ];
+    fixtureQueue.push({ notifications, unreadCount: 2 }, { notifications, unreadCount: 2 });
+    render(<NotificationPopup onClose={vi.fn()} />);
+    expect(await screen.findByText(creationLabel)).toBeTruthy();
+    expect(await screen.findByText(researchLabel)).toBeTruthy();
+    expect(screen.queryByText(/notifications.types/)).toBeNull();
   });
 
   it("renders the English report_created label and navigates to the dashboard URL with panel=<ideaUuid>&tab=overview", async () => {

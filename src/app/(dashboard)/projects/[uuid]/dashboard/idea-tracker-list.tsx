@@ -26,7 +26,7 @@ interface IdeaTrackerListProps {
   // "tree" = lineage forest. This component no longer toggles it.
   viewMode: "flat" | "tree";
   onIdeaClick?: (uuid: string) => void;
-  onNewIdea?: () => void;
+  onNewIdea?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   // Reports the *live* emptiness of the list (after realtime refetches) up to
   // the parent, which owns whether the header "New Idea" button shows. The
   // parent's SSR snapshot can't see ideas created during the session, so this

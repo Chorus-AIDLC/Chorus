@@ -1,3 +1,4 @@
+import { dedicatedOperationWrites } from "@/services/daemon-operation";
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
@@ -99,6 +100,7 @@ export async function requestResearch(params: {
     throw new ResearchError(target.availability !== "ready" ? "agent_offline" : "origin_conflict");
   }
   const instruction = composeResearchInstruction(ideaUuid);
+  const dedicated = dedicatedOperationWrites();
   const result = await retryTurnConflict(() => prisma.$transaction(async (tx) => {
     await lockResearchProject(tx, companyUuid, idea.projectUuid);
     await tx.$queryRaw`SELECT uuid FROM "Idea" WHERE uuid = ${ideaUuid} AND "companyUuid" = ${companyUuid} FOR UPDATE`;
@@ -137,7 +139,10 @@ export async function requestResearch(params: {
     }
     // Research writers serialize; the existing unique seq constraint fences other wakes.
     await tx.$queryRaw`SELECT uuid FROM "DaemonSession" WHERE uuid = ${session.uuid} FOR UPDATE`;
-    const turn = await createPendingTurn({ sessionUuid: session.uuid, trigger: "human_instruction", promptText: instruction }, tx);
+    const turn = await createPendingTurn({
+      sessionUuid: session.uuid, trigger: dedicated ? "research_requested" : "human_instruction", promptText: instruction,
+      ...(dedicated ? { operationPayload: { version: 1 as const, kind: "research" as const, ideaUuid } } : {}),
+    }, tx);
     if (params.selection) {
       // Research's explicit selection is NOT a lifecycle assignment. Preserve status,
       // elaboration and content, and emit no assigned activity/initialization wake.
@@ -151,12 +156,12 @@ export async function requestResearch(params: {
         runtimeCwd: session.runtimeCwd,
       } });
     }
-    // Persist the human_instruction notification in the same transaction. The generic
+    // Persist the operation's audit notification in the same transaction. The generic
     // notification writer uses global prisma, so cannot see this uncommitted turn.
     const notification = await tx.notification.create({ data: {
       companyUuid, projectUuid: idea.projectUuid, projectName: "", recipientType: "agent", recipientUuid: agentUuid,
-      entityType: "idea", entityUuid: ideaUuid, entityTitle: idea.title, action: "human_instruction",
-      message: "Human instruction", actorType: "user", actorUuid, actorName: "", instructionText: instruction,
+      entityType: "idea", entityUuid: ideaUuid, entityTitle: idea.title, action: dedicated ? "research_requested" : "human_instruction",
+      message: "Research requested", actorType: "user", actorUuid, actorName: "", instructionText: instruction,
     } });
     return { session, turn, notification };
   }));

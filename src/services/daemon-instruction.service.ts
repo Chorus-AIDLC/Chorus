@@ -35,6 +35,7 @@
 const instructionLogger = logger.child({ module: "daemon-instruction.service" });
 
 import { randomUUID } from "crypto";
+import { dedicatedOperationWrites, validateOperationPayload } from "@/services/daemon-operation";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { eventBus } from "@/lib/event-bus";
@@ -681,7 +682,7 @@ export interface ConversationalIdeaView {
 
 /**
  * Conversational-idea dispatch: PRE-CREATE the Idea and its root daemon session, then
- * send the first `human_instruction` turn — in ONE transaction (add-conversational-
+ * send the first dedicated operation turn — in ONE transaction (add-conversational-
  * idea-root-session). The pivotal property: the session is born IDEA-ANCHORED
  * (`sessionId = directIdeaUuid = ideaUuid`), so every subsequent idea-anchored wake
  * (elaboration answers, Verify Elaborate, proposal approval, task dispatch) resolves to
@@ -705,7 +706,7 @@ export interface ConversationalIdeaView {
  *     title, VERBATIM description as content, `agent_instance` assignee, status
  *     `elaborating` — assignment-equals-claim), the DaemonSession (sessionId =
  *     directIdeaUuid = ideaUuid, origin = the chosen connection, write-once written
- *     once correctly), and the first `human_instruction` turn (seq 1, promptText =
+ *     once correctly), and the first operation turn (seq 1, promptText =
  *     the composed instruction — canonical copy). All-or-nothing: a mid-transaction
  *     failure persists nothing (no orphan idea).
  *
@@ -835,6 +836,12 @@ export async function createConversationalIdeaSession(
     researchFirst: params.researchFirst,
   });
 
+  const operationPayload = validateOperationPayload("idea_creation_requested", {
+    version: 1, kind: "idea_creation", ideaUuid, projectUuid: project.uuid,
+    mode, researchFirst: params.researchFirst ?? false, descriptionText,
+  }, { directIdeaUuid: ideaUuid, projectUuid: project.uuid });
+  const dedicated = dedicatedOperationWrites();
+
   // (5) All-or-nothing: idea + idea-anchored session + first turn in one transaction.
   const { ideaRow, sessionRow, turnRow } = await prisma.$transaction(async (tx) => {
     const ideaRow = await tx.idea.create({
@@ -893,7 +900,8 @@ export async function createConversationalIdeaSession(
       data: {
         sessionUuid: sessionRow.uuid,
         seq: 1,
-        trigger: "human_instruction",
+        trigger: dedicated ? "idea_creation_requested" : "human_instruction",
+        ...(dedicated ? { operationPayload } : {}),
         promptText: instructionText,
         status: "pending",
       },
@@ -928,6 +936,7 @@ export async function createConversationalIdeaSession(
     seq: turnRow.seq,
     trigger: turnRow.trigger,
     promptText: turnRow.promptText,
+    operationPayload: turnRow.operationPayload ?? null,
     status: turnRow.status,
     interruptedReason: turnRow.interruptedReason,
     relayError: turnRow.relayError,
