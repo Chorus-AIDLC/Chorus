@@ -5,6 +5,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { IdeaActionsMenu } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/idea-actions-menu";
+import { ResearchAction } from "@/components/research-action";
 
 const mocks = vi.hoisted(() => ({
   eligibility: vi.fn(), dispatch: vi.fn(), openSession: vi.fn(),
@@ -103,6 +104,26 @@ describe("Tracker Research action", () => {
     expect(onStarted).toHaveBeenCalledOnce();
     expect(mocks.success).toHaveBeenCalled();
   });
+  it("blocks only submission and allows another explicit request immediately after acceptance", async () => {
+    let accept!: (result: unknown) => void;
+    mocks.dispatch.mockImplementationOnce(() => new Promise((resolve) => { accept = resolve; }));
+    render(<ResearchAction ideaUuid="idea" projectUuid="project" assignee={{ uuid: "agent", type: "agent" }}
+      refreshKey="stable" onStarted={vi.fn()} renderAction={(action) =>
+        <button disabled={!!action.disabledReason} onClick={action.onSelect}>{action.label}</button>} />);
+    const user = userEvent.setup();
+    const button = screen.getByRole("button", { name: "Research" }) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    await user.click(button);
+    expect(button.disabled).toBe(true);
+    await user.click(button);
+    expect(mocks.dispatch).toHaveBeenCalledTimes(1);
+    await act(async () => accept({ success: true, session: { uuid: "session", sessionId: "idea" } }));
+    expect(button.disabled).toBe(false);
+    expect(mocks.success).toHaveBeenCalledWith("Research queued. Each request runs in turn in the idea conversation.");
+    await user.click(button);
+    expect(mocks.dispatch).toHaveBeenCalledTimes(2);
+    expect(button.disabled).toBe(false);
+  });
   it("opens a research-only picker for an agentless idea and preserves state until confirmation", async () => {
     setup({ assignee: null });
     const { user, research } = await openMenu();
@@ -141,7 +162,7 @@ describe("Tracker Research action", () => {
     expect(mocks.reassign).not.toHaveBeenCalled();
     expect(mocks.openSession).toHaveBeenCalledOnce();
   });
-  it.each(["development_started", "already_running"])("disables %s with an accessible explanation", async (reason) => {
+  it.each(["development_started", "idea_completed"])("disables %s with an accessible explanation", async (reason) => {
     mocks.eligibility.mockResolvedValue({ eligible: false, reason });
     setup();
     const { user, research } = await openMenu();

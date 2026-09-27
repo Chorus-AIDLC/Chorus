@@ -796,7 +796,7 @@ export async function advanceTurn(
         select: { projectUuid: true },
       });
       if (idea) await lockResearchProject(tx, anchor.companyUuid, idea.projectUuid);
-      const eligibility = await getResearchEligibility(anchor.companyUuid, anchor.directIdeaUuid, tx, { stageOnly: true });
+      const eligibility = await getResearchEligibility(anchor.companyUuid, anchor.directIdeaUuid, tx);
       if (!eligibility.eligible) {
         await tx.daemonSessionTurn.updateMany({
           where: { uuid: turnUuid, status: "pending" },

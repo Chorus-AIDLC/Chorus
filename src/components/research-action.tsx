@@ -48,8 +48,7 @@ export function ResearchAction({ ideaUuid, projectUuid, assignee, disabledReason
       }).catch(() => { if (current) setReason("unknown"); });
     };
     refresh();
-    // Completion of a research turn need not change the Idea. Refresh on focus
-    // and periodically so a later explicit request becomes available.
+    // Keep the development boundary fresh even while the menu is open.
     window.addEventListener("focus", refresh);
     const timer = setInterval(refresh, 15_000);
     return () => { current = false; clearInterval(timer); window.removeEventListener("focus", refresh); };
@@ -64,7 +63,7 @@ export function ResearchAction({ ideaUuid, projectUuid, assignee, disabledReason
         ? await researchIdeaAction(ideaUuid, temporary, selection.current)
         : await researchIdeaAction(ideaUuid);
       if (result.success) {
-        setReason("already_running");
+        setReason(undefined);
         toast.success(t("dispatched"));
         presence?.openChatForSession(result.session);
         selection.current = undefined;

@@ -154,23 +154,39 @@ describe.skipIf(!url)("Research real database integration", () => {
     expect(await db.notification.count({ where: { companyUuid: state.company, entityUuid: idea, action: "human_instruction" } })).toBe(1);
     expect(events.emit).toHaveBeenCalledWith(`control:${connection}`, expect.objectContaining({ turnUuid: result.turnUuid }));
   });
-  it("rejects simultaneous duplicates, including running turns, and allows a later explicit request", async () => {
-    const outcomes = await Promise.allSettled([requestResearch(params()), requestResearch(params())]);
-    expect(outcomes.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    expect(outcomes.find((r) => r.status === "rejected")).toMatchObject({ reason: { code: "already_running" } });
-    const session = await db.daemonSession.findFirstOrThrow({ where: { companyUuid: state.company, directIdeaUuid: idea } });
-    await db.daemonSessionTurn.updateMany({ where: { sessionUuid: session.uuid }, data: { status: "running" } });
-    await expect(requestResearch(params())).rejects.toMatchObject({ code: "already_running" });
-    await db.daemonSessionTurn.updateMany({ where: { sessionUuid: session.uuid }, data: { status: "ended" } });
+  it("queues distinct explicit requests on the same root while Research is pending or running", async () => {
+    const results = await Promise.all([requestResearch(params()), requestResearch(params())]);
+    expect(results[0].sessionUuid).toBe(results[1].sessionUuid);
+    expect(results[0].turnUuid).not.toBe(results[1].turnUuid);
+    const sessionUuid = results[0].sessionUuid;
+    const turns = await db.daemonSessionTurn.findMany({ where: { sessionUuid }, orderBy: { seq: "asc" } });
+    expect(turns.map((turn) => [turn.seq, turn.status])).toEqual([[1, "pending"], [2, "pending"]]);
+    expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: true });
+    await db.daemonSessionTurn.update({ where: { uuid: turns[0].uuid }, data: { status: "running" } });
     const next = await requestResearch(params());
-    expect(next.sessionUuid).toBe(session.uuid);
-    expect(await db.daemonSessionTurn.count({ where: { sessionUuid: session.uuid } })).toBe(2);
+    expect(next.sessionUuid).toBe(sessionUuid);
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: next.turnUuid } })).toMatchObject({ seq: 3, status: "pending" });
+    expect(await db.notification.count({ where: { companyUuid: state.company, entityUuid: idea, action: "human_instruction" } })).toBe(3);
+    expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: true });
   });
   it("accepted development blocks dispatch before any task transition", async () => {
     await proposalTask();
     await startDevelopment(params());
     await expect(requestResearch(params())).rejects.toMatchObject({ code: "development_started" });
     expect(await db.daemonSession.count({ where: { companyUuid: state.company, directIdeaUuid: idea } })).toBe(0);
+  });
+  it("admits and settles each queued Research turn separately without consuming its neighbor", async () => {
+    const first = await requestResearch(params());
+    const second = await requestResearch(params());
+    const base = { companyUuid: state.company, agentUuid: agent, connectionUuid: connection, sessionId: idea };
+    expect(await advanceTurnForWake({ ...base, turnUuid: first.turnUuid, status: "running" })).toMatchObject({ ok: true });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: second.turnUuid } })).toMatchObject({ status: "pending" });
+    expect(await advanceTurnForWake({ ...base, turnUuid: first.turnUuid, status: "ended" })).toMatchObject({ ok: true });
+    expect(await advanceTurnForWake({ ...base, turnUuid: second.turnUuid, status: "running" })).toMatchObject({ ok: true });
+    expect(await advanceTurnForWake({ ...base, turnUuid: second.turnUuid, status: "ended" })).toMatchObject({ ok: true });
+    expect(await advanceTurnForWake({ ...base, turnUuid: first.turnUuid, status: "running" })).toMatchObject({ ok: false });
+    const turns = await db.daemonSessionTurn.findMany({ where: { sessionUuid: first.sessionUuid }, orderBy: { seq: "asc" } });
+    expect(turns.map((turn) => [turn.uuid, turn.status])).toEqual([[first.turnUuid, "ended"], [second.turnUuid, "ended"]]);
   });
   it("serializes Research/development and rechecks pending delivery when development wins later", async () => {
     const result = await requestResearch(params());

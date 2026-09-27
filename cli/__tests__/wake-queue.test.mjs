@@ -47,11 +47,12 @@ describe("WakeQueue coalescing", () => {
     q.enqueue("idea", { n: 1 });
     q.enqueue("idea", { n: 2 });
     q.enqueue("idea", { n: "research", isolated: true });
+    q.enqueue("idea", { n: "research-again", isolated: true });
     q.enqueue("idea", { n: 3 });
     q.enqueue("idea", { n: 4 });
     gate.release();
     await flushMicrotasks(80);
-    expect(batches).toEqual([[0], [1, 2], ["research"], [3, 4]]);
+    expect(batches).toEqual([[0], [1, 2], ["research"], ["research-again"], [3, 4]]);
   });
 
   it("coalesces same-key items that pile up during a running batch into ONE runBatch with all items", async () => {

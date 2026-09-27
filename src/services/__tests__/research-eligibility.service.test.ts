@@ -88,13 +88,6 @@ describe("Research eligibility", () => {
     else db.daemonSessionTurn.findFirst.mockResolvedValueOnce({ uuid: "development" });
     expect(await getResearchEligibility("company", "idea")).toEqual({ eligible: false, reason: "development_started" });
   });
-  it.each(["pending", "running"])("rejects duplicate %s research across agents", async () => {
-    db.daemonSessionTurn.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ uuid: "research" });
-    expect(await getResearchEligibility("company", "idea")).toEqual({ eligible: false, reason: "already_running" });
-    const where = db.daemonSessionTurn.findFirst.mock.calls[1][0].where;
-    expect(where.status.in).toEqual(["pending", "running"]);
-    expect(where.session).toEqual({ companyUuid: "company", directIdeaUuid: "idea" });
-  });
   it("does not disclose another tenant's idea", async () => {
     db.idea.findFirst.mockResolvedValue(null);
     expect(await getResearchEligibility("foreign", "idea")).toEqual({ eligible: false, reason: "idea_not_found" });

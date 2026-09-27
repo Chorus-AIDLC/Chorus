@@ -4,7 +4,7 @@ export type ResearchDb = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" 
 
 export const RESEARCH_INSTRUCTION_PREFIX = "[Chorus Tracker Research]";
 export const EXECUTED_TASK_STATUSES = ["in_progress", "to_verify", "done"];
-export type ResearchReason = "development_started" | "idea_completed" | "already_running" | "idea_not_found";
+export type ResearchReason = "development_started" | "idea_completed" | "idea_not_found";
 export type ResearchEligibility = { eligible: true } | { eligible: false; reason: ResearchReason };
 
 /**
@@ -30,7 +30,6 @@ export async function getResearchEligibility(
   companyUuid: string,
   ideaUuid: string,
   db: ResearchDb = prisma,
-  options: { ignoreTurnUuid?: string; stageOnly?: boolean } = {},
 ): Promise<ResearchEligibility> {
   const idea = await db.idea.findFirst({ where: { companyUuid, uuid: ideaUuid } });
   if (!idea) return { eligible: false, reason: "idea_not_found" };
@@ -103,18 +102,6 @@ export async function getResearchEligibility(
   if (developmentTurn || activities.some((a) => a.targetType === "idea" || provesTaskExecution(a.action, a.value))) {
     return { eligible: false, reason: "development_started" };
   }
-  if (!options.stageOnly) {
-    const pending = await db.daemonSessionTurn.findFirst({
-      where: {
-        session: { companyUuid, directIdeaUuid: ideaUuid },
-        trigger: "human_instruction", status: { in: ["pending", "running"] },
-        promptText: { startsWith: RESEARCH_INSTRUCTION_PREFIX },
-        ...(options.ignoreTurnUuid ? { uuid: { not: options.ignoreTurnUuid } } : {}),
-      },
-      select: { uuid: true },
-    });
-    if (pending) return { eligible: false, reason: "already_running" };
-  }
   return { eligible: true };
 }
 
@@ -123,7 +110,7 @@ export async function recheckResearchTurn(companyUuid: string, ideaUuid: string,
   return prisma.$transaction(async (tx) => {
     const idea = await tx.idea.findFirst({ where: { companyUuid, uuid: ideaUuid }, select: { projectUuid: true } });
     if (idea) await lockResearchProject(tx, companyUuid, idea.projectUuid);
-    const result = await getResearchEligibility(companyUuid, ideaUuid, tx, { stageOnly: true });
+    const result = await getResearchEligibility(companyUuid, ideaUuid, tx);
     if (result.eligible) return true;
     await tx.daemonSessionTurn.updateMany({
       where: { uuid: turnUuid, status: "pending", session: { companyUuid, directIdeaUuid: ideaUuid } },

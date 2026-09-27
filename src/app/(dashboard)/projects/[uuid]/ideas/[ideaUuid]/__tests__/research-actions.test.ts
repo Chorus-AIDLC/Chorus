@@ -43,7 +43,7 @@ describe("Research server actions", () => {
     });
     expect(mocks.request.mock.calls[0][0].temporaryCwd).toEqual({ host: "host", cwd: "/project" });
   });
-  it.each(["development_started", "idea_completed", "already_running", "permission_denied", "origin_conflict", "agent_offline"] as const)(
+  it.each(["development_started", "idea_completed", "permission_denied", "origin_conflict", "agent_offline"] as const)(
     "returns precise %s failures without claiming success", async (code) => {
       mocks.request.mockRejectedValue(new ResearchError(code));
       expect(await researchIdeaAction("idea")).toEqual({ success: false, errorCode: code });

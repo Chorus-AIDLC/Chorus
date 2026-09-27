@@ -95,10 +95,10 @@ The Idea Tracker action menu SHALL include Research in both desktop and mobile r
 
 #### Scenario: Yolo still planning
 - **WHEN** yolo has only performed clarification or planning and no development start or task execution exists
-- **THEN** the yolo request alone does not permanently mark development as started; running-session busy handling remains applicable
+- **THEN** the yolo request alone does not permanently mark development as started; an explicit Research request may queue on the same conversation
 
 ### Requirement: Tracker Research SHALL dispatch without changing lifecycle
-The server SHALL authorize and dispatch a focused Research instruction through the existing idea-root session and human_instruction path, preserving instance and cwd routing. It SHALL use current eligibility at dispatch and check again before execution if the stage changed. Repeated clicks during an outstanding request SHALL NOT create duplicate research turns. Stage changes SHALL be ordered consistently with dispatch; stale UI SHALL NOT bypass server checks.
+The server SHALL authorize and dispatch a focused Research instruction through the existing idea-root session and human_instruction path, preserving instance and cwd routing. It SHALL use current eligibility at dispatch and check again before execution if the stage changed. Each explicit submission SHALL create a distinct bounded Research turn, even when earlier Research turns are pending or running. The client SHALL prevent repeat clicks only while its submission is in flight. Accepted requests SHALL be described as queued, not running or completed; the existing conversation turn records SHALL show their execution states. Research turns SHALL execute separately and serially on the existing root conversation, without coalescing. Stage changes SHALL be ordered consistently with dispatch; stale UI SHALL NOT bypass server checks.
 
 #### Scenario: Existing answers preserved
 - **WHEN** Research finishes on an Idea with answered or pending elaboration rounds
@@ -112,9 +112,14 @@ The server SHALL authorize and dispatch a focused Research instruction through t
 - **WHEN** Research is requested without an Agent assignment or with an offline target
 - **THEN** the UI uses an explicit existing Agent selection flow or provides the appropriate actionable availability error, rather than silently dispatching to a different instance or creating an unrelated Idea
 
-#### Scenario: Repeat and concurrent start
-- **WHEN** repeated clicks or a concurrent development start occur
-- **THEN** the service prevents duplicate outstanding research dispatches and rejects research whose development boundary has already been crossed; a newly requested bounded run is allowed after completion only while still pre-development
+#### Scenario: Repeat while Research is outstanding
+- **WHEN** the user submits another Research request while an earlier one is queued or running
+- **THEN** the service creates another distinct turn on the same root conversation and the button remains available after submission
+- **AND** the daemon runs these turns separately in sequence, retaining each turn's pending, running and terminal state
+
+#### Scenario: Concurrent development start
+- **WHEN** Research submission races with a development start
+- **THEN** the service rejects research whose development boundary has already been crossed, and retires pending research before execution if development starts after submission
 
 #### Scenario: Menu acceptance and design artifact
 - **WHEN** the Tracker action is delivered
