@@ -252,7 +252,7 @@ export function createDaemonRestClient(opts) {
       };
       const result = await post(
         "turn-advance",
-        "/api/daemon/turn-advance",
+        "/api/daemon/turn-advance?researchProtocol=1",
         body,
         `advanced turn for session ${sessionId} → ${status}`,
         "",
@@ -394,8 +394,8 @@ export function createDaemonRestClient(opts) {
         // No connectionUuid yet: nothing to read against. A normal early state — skip.
         return { ok: false, status: null, skipped: true };
       }
-      // Opt in only with exact Research admission + isolated queue support. The
-      // server withholds Research from older clients that cannot acknowledge it.
+      // Declare support for isolated Research turns. Legacy clients receive the
+      // same requests and acknowledge them through their existing FIFO path.
       const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&researchProtocol=1`;
       let response;
       try {

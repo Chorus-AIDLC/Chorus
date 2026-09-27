@@ -45,7 +45,7 @@ beforeEach(() => {
 });
 
 describe("GET /api/daemon/pending-turns", () => {
-  it.each(["", "&researchProtocol=0", "&researchProtocol=2"])("withholds Research from legacy/unsupported clients (%s), including repeated reads", async (query) => {
+  it.each(["", "&researchProtocol=0", "&researchProtocol=1", "&researchProtocol=2"])("delivers Research to both legacy and upgraded clients (%s)", async (query) => {
     const research = { ...pendingTurns[0], turnUuid: "research", promptText: "[Chorus Tracker Research]\nRead evidence" };
     const autonomous = { ...pendingTurns[0], turnUuid: "autonomous", promptText: null };
     const persisted = [research, ...pendingTurns, autonomous];
@@ -53,11 +53,9 @@ describe("GET /api/daemon/pending-turns", () => {
     for (let read = 0; read < 2; read++) {
       const res = await GET(getRequest(`?connectionUuid=${connectionUuid}${query}`), emptyCtx);
       expect(res.status).toBe(200);
-      expect((await res.json()).data.turns).toEqual([...pendingTurns, autonomous]);
+      expect((await res.json()).data.turns).toEqual([research, ...pendingTurns, autonomous]);
     }
-    // The pending Research remains available once the daemon upgrades.
-    const supported = await GET(getRequest(`?connectionUuid=${connectionUuid}&researchProtocol=1`), emptyCtx);
-    expect((await supported.json()).data.turns).toEqual([research, ...pendingTurns, autonomous]);
+
   });
 
   it("protocol opt-in does not bypass connection ownership", async () => {

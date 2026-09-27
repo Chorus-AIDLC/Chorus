@@ -48,7 +48,7 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [endpoint, init] = fetchImpl.mock.calls[0];
     // Trailing slash on the base url is normalized away.
-    expect(endpoint).toBe("https://chorus.example.com/api/daemon/turn-advance");
+    expect(endpoint).toBe("https://chorus.example.com/api/daemon/turn-advance?researchProtocol=1");
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe("Bearer cho_secret");
     expect(init.headers["Content-Type"]).toBe("application/json");

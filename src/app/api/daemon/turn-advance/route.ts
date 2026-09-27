@@ -137,6 +137,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     agentUuid: auth.actorUuid,
     connectionUuid,
     sessionId,
+    researchMode: request.nextUrl.searchParams.get("researchProtocol") === "1" ? "isolated" : "legacy",
     turnUuid: turnUuid ?? undefined,
     backendSessionId: backendSessionId ?? undefined,
     status,

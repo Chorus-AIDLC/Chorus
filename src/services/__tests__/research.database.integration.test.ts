@@ -9,9 +9,10 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
+import { NextRequest } from "next/server";
 import { PrismaClient } from "../../generated/prisma/client";
 
-const state = vi.hoisted(() => ({ db: null as unknown, actor: "", company: "" }));
+const state = vi.hoisted(() => ({ db: null as unknown, actor: "", company: "", agent: "" }));
 vi.mock("@/lib/prisma", () => ({ get prisma() { return state.db; } }));
 const events = vi.hoisted(() => ({ emit: vi.fn(), emitChange: vi.fn() }));
 vi.mock("@/lib/event-bus", () => ({
@@ -19,6 +20,9 @@ vi.mock("@/lib/event-bus", () => ({
 }));
 vi.mock("@/lib/auth-server", () => ({
   getServerAuthContext: async () => ({ type: "user", companyUuid: state.company, actorUuid: state.actor }),
+}));
+vi.mock("@/lib/auth", () => ({
+  getAuthContext: async () => ({ type: "agent", companyUuid: state.company, actorUuid: state.agent, permissions: [] }),
 }));
 
 const url = process.env.RESEARCH_DATABASE_URL;
@@ -59,6 +63,7 @@ describe.skipIf(!url)("Research real database integration", () => {
     state.actor = randomUUID();
     project = (await db.project.create({ data: { companyUuid: state.company, name: "Research integration" } })).uuid;
     agent = (await db.agent.create({ data: { companyUuid: state.company, name: "Research test agent", ownerUuid: state.actor, roles: ["pm"] } })).uuid;
+    state.agent = agent;
     instance = (await db.agentInstance.create({ data: { companyUuid: state.company, agentUuid: agent, host: "research-test", cwd: "/tmp/research-test" } })).uuid;
     connection = (await db.daemonConnection.create({ data: {
       companyUuid: state.company, agentUuid: agent, agentInstanceUuid: instance,
@@ -174,6 +179,40 @@ describe.skipIf(!url)("Research real database integration", () => {
     await startDevelopment(params());
     await expect(requestResearch(params())).rejects.toMatchObject({ code: "development_started" });
     expect(await db.daemonSession.count({ where: { companyUuid: state.company, directIdeaUuid: idea } })).toBe(0);
+  });
+  it.each(["", "?researchProtocol=1"])("delivers and settles real HTTP Research requests with client mode '%s'", async (query) => {
+    const { GET } = await import("../../app/api/daemon/pending-turns/route");
+    const { POST } = await import("../../app/api/daemon/turn-advance/route");
+    const ctx = { params: Promise.resolve({}) };
+    const first = await requestResearch(params());
+    const second = await requestResearch(params());
+    const read = async () => {
+      const response = await GET(new NextRequest(`http://localhost/api/daemon/pending-turns?connectionUuid=${connection}${query ? "&researchProtocol=1" : ""}`), ctx);
+      expect(response.status).toBe(200);
+      const turns = (await response.json()).data.turns as { sessionId: string; turnUuid: string }[];
+      return turns.filter((turn) => turn.sessionId === idea);
+    };
+    const advance = (body: Record<string, unknown>) => POST(new NextRequest(`http://localhost/api/daemon/turn-advance${query}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connectionUuid: connection, sessionId: idea, ...body }),
+    }), ctx);
+    expect((await read()).map((turn) => turn.turnUuid))
+      .toEqual([first.turnUuid, second.turnUuid]);
+    if (!query) {
+      // Legacy CLI has no exact pending identity; it may coalesce both ordinary
+      // human_instruction requests, then acknowledge the running batch by FIFO.
+      expect((await advance({ status: "running", coalescedCount: 2 })).status).toBe(200);
+      expect((await advance({ status: "ended" })).status).toBe(200);
+    } else {
+      expect((await advance({ status: "running" })).status).toBe(404);
+      for (const turnUuid of [first.turnUuid, second.turnUuid]) {
+        expect((await advance({ status: "running", turnUuid })).status).toBe(200);
+        expect((await advance({ status: "ended", turnUuid })).status).toBe(200);
+      }
+    }
+    expect(await read()).toEqual([]);
+    const turns = await db.daemonSessionTurn.findMany({ where: { sessionUuid: first.sessionUuid }, orderBy: { seq: "asc" } });
+    expect(turns.map((turn) => turn.status)).toEqual(query ? ["ended", "ended"] : ["ended", "merged"]);
   });
   it("admits and settles each queued Research turn separately without consuming its neighbor", async () => {
     const first = await requestResearch(params());

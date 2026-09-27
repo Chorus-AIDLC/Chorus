@@ -2488,7 +2488,7 @@ describe("advanceTurnForWake", () => {
     // Session resolved under the agent + company + business-key fence.
     expect(mockPrisma.daemonSession.findFirst).toHaveBeenCalledWith({
       where: { agentUuid, companyUuid, sessionId },
-      select: { uuid: true },
+      select: { uuid: true, originConnectionUuid: true },
     });
     // Execution row resolved for the weak link.
     expect(mockPrisma.daemonExecution.findFirst).toHaveBeenCalledWith({
@@ -2563,7 +2563,7 @@ describe("advanceTurnForWake", () => {
     expect(res).toMatchObject({ ok: true });
     expect(mockPrisma.daemonSession.findFirst).toHaveBeenCalledWith({
       where: { agentUuid, companyUuid, sessionId },
-      select: { uuid: true },
+      select: { uuid: true, originConnectionUuid: true },
     });
     expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
       where: {

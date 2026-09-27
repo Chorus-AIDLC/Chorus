@@ -2044,6 +2044,8 @@ export async function advanceTurnForWake(params: {
   agentUuid: string;
   connectionUuid: string;
   sessionId: string;
+  // The HTTP boundary always negotiates this. Default preserves internal callers.
+  researchMode?: "isolated" | "legacy";
   turnUuid?: string | null;
   backendSessionId?: string | null;
   status: TurnStatus;
@@ -2072,17 +2074,21 @@ export async function advanceTurnForWake(params: {
       companyUuid: params.companyUuid,
       sessionId: params.sessionId,
     },
-    select: { uuid: true },
+    select: { uuid: true, originConnectionUuid: true },
   });
   if (!session) return { ok: false, reason: "not_found" }; // non-disclosure 404
 
   // New daemons correlate terminal reports to the exact turn UUID returned by their
   // →running report. Older daemons omit it and retain status-based FIFO resolution:
-  // Research is excluded from every FIFO lookup; it always requires exact identity.
+  // Isolated mode excludes Research from FIFO; legacy mode retains ordinary FIFO
+  // and coalescing so older clients can acknowledge the turns they actually execute.
   //   • → running     : the OLDEST still-`pending` turn (the next queued wake to start).
   //   • → ended       : the `running` turn (the one whose subprocess just exited).
   //   • → interrupted : the `running` turn too (the one whose subprocess was stopped —
   //                     both terminal edges leave from the same state).
+  const isolateResearch = params.researchMode !== "legacy";
+  const fifoFilter = isolateResearch || session.originConnectionUuid !== params.connectionUuid
+    ? NON_RESEARCH_TURN : {};
   const fromStatus =
     params.status === "running"
       ? "pending"
@@ -2095,7 +2101,7 @@ export async function advanceTurnForWake(params: {
       : {
           sessionUuid: session.uuid,
           ...(fromStatus ? { status: fromStatus } : {}),
-          ...NON_RESEARCH_TURN,
+          ...fifoFilter,
         },
     // Oldest-first so a `→running` advance picks up the next queued turn in FIFO order.
     orderBy: { seq: "asc" },
@@ -2104,7 +2110,7 @@ export async function advanceTurnForWake(params: {
 
   const isResearch = turn.promptText?.startsWith(RESEARCH_INSTRUCTION_PREFIX) === true;
   if (isResearch) {
-    if (!params.turnUuid) return { ok: false, reason: "not_found" };
+    if (isolateResearch && !params.turnUuid) return { ok: false, reason: "not_found" };
     const origin = await prisma.daemonSession.findFirst({
       where: { uuid: session.uuid, companyUuid: params.companyUuid, agentUuid: params.agentUuid },
       select: { originConnectionUuid: true },
@@ -2112,12 +2118,12 @@ export async function advanceTurnForWake(params: {
     if (origin?.originConnectionUuid !== params.connectionUuid) {
       return { ok: false, reason: "not_found" };
     }
-    if (params.status === "running" && !((params.coalescedCount ?? 1) <= 1)) {
+    if (isolateResearch && params.status === "running" && !((params.coalescedCount ?? 1) <= 1)) {
       return { ok: false, reason: "invalid_transition", from: turn.status, to: params.status };
     }
   }
 
-  const pendingResearchAbort = isResearch && turn.status === "pending" &&
+  const pendingResearchAbort = isResearch && !!params.turnUuid && turn.status === "pending" &&
     params.status === "interrupted" &&
     (params.interruptedReason === "crash" || params.interruptedReason === "invalid_path" || params.interruptedReason === "user") &&
     !params.backendSessionId && !turn.backendSessionId;
@@ -2241,7 +2247,8 @@ export async function advanceTurnForWake(params: {
   // The daemon merges the wakes that piled up during the previous turn into ONE batch and
   // reports how many it coalesced (`coalescedCount = N`). We have JUST advanced the OLDEST
   // pending turn (seq `turn.seq`) to `running`; the remaining N−1 turns of that same batch
-  // are the NEXT N−1 non-Research pending turns of this session by ascending seq. Settle them to
+  // are the NEXT N−1 pending turns allowed by this client mode (isolated mode skips
+  // Research; legacy mode includes it) by ascending seq. Settle them to
   // the terminal `merged` status so they do not linger `pending` and re-dispatch as duplicate
   // wakes on reconnect (`getPendingTurnsForConnection` filters `status = "pending"`).
   //
@@ -2259,14 +2266,14 @@ export async function advanceTurnForWake(params: {
         sessionUuid: session.uuid,
         status: "pending",
         seq: { gt: turn.seq },
-        ...NON_RESEARCH_TURN,
+        ...fifoFilter,
       },
       orderBy: { seq: "asc" },
       take: coalescedCount - 1,
     });
     if (superseded.length > 0) {
       await prisma.daemonSessionTurn.updateMany({
-        where: { uuid: { in: superseded.map((t) => t.uuid) }, status: "pending", ...NON_RESEARCH_TURN },
+        where: { uuid: { in: superseded.map((t) => t.uuid) }, status: "pending", ...fifoFilter },
         data: { status: MERGED_TURN_STATUS },
       });
       // ── Live convergence (daemon-merged-turn-transcript) ───────────────────────────────
