@@ -3,8 +3,9 @@
 // channel (子3 — daemon-interrupt-resume, Tech Design "Killer contract"). When an
 // authorized interrupt is verified, the daemon must STOP a running headless-Claude
 // subprocess — first gracefully (SIGINT, so the model can flush in-progress work),
-// then forcefully if it does not exit within a configurable window. Plain ESM, ZERO
-// new npm deps (CLAUDE.md pitfall #9) and Bash-3.2-safe (no shell touched).
+// then forcefully if it does not exit within a configurable window. Plain ESM,
+// zero new npm deps. Codex's Windows protocol path uses fixed, noninteractive
+// PowerShell/CIM queries to retain process identities across graceful root exit.
 //
 // Why a process TREE, not just the direct child:
 //   • POSIX: Claude may itself spawn children. Linux does NOT cascade a signal to a
@@ -29,6 +30,7 @@
 
 import { spawn as nodeSpawn } from "node:child_process";
 import { getProcessStopHook } from "./process-stop-hooks.mjs";
+import { WindowsProcessTree } from "./windows-process-tree.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 const protocolStops = new WeakMap();
@@ -117,11 +119,20 @@ export async function killProcessTree(child, opts = {}) {
   if (hook) {
     const existing = protocolStops.get(child);
     const deadline = existing?.deadline ?? Date.now() + sigintTimeoutMs;
+    const protocolDeadline = existing?.protocolDeadline ??
+      (isWin ? deadline - Math.min(2500, Math.max(0, sigintTimeoutMs / 4)) : deadline);
+    const windowsTree = isWin && typeof child.pid === "number"
+      ? existing?.windowsTree ?? new WindowsProcessTree(child, {
+        deadline, spawnImpl, snapshotImpl: opts.windowsSnapshotImpl,
+      }) : null;
     // Invoke synchronously even during an existing normal cleanup: cancellation
     // must latch before any pending setup/turn-start continuation can execute.
     let work;
     try {
-      work = hook({ deadline, reason: opts.reason ?? "interrupt" });
+      work = hook({
+        deadline, protocolDeadline, reason: opts.reason ?? "interrupt",
+        beforeClose: windowsTree ? () => windowsTree.capture() : undefined,
+      });
     } catch {
       work = Promise.reject(new Error("Protocol stop failed"));
     }
@@ -133,7 +144,15 @@ export async function killProcessTree(child, opts = {}) {
     const promise = (async () => {
       const graceful = await attempt;
       if (!graceful) logger.warn("[Chorus] protocol stop failed or exceeded its cleanup deadline");
-      const exited = graceful && await waitForChildExit(child, Math.max(0, deadline - Date.now()), opts, logger);
+      const exited = graceful && await waitForChildExit(child, Math.max(0, protocolDeadline - Date.now()), opts, logger);
+      if (windowsTree) {
+        let cleanup = { cleanupFailed: true, escalated: false };
+        const settled = await withinDeadline(windowsTree.cleanup().then(result => { cleanup = result; }), deadline);
+        const cleanupFailed = !settled || cleanup.cleanupFailed;
+        if (cleanupFailed) logger.warn("[Chorus] Windows process-tree cleanup could not be verified within its deadline.");
+        return { signaled: false, killed: !cleanupFailed, escalated: windowsTree.escalated,
+          ...(cleanupFailed ? { cleanupFailed: true } : {}) };
+      }
       // A leader exit does not prove its process group is gone.
       let treeRemains = !exited;
       if (exited && typeof child.pid === "number") {
@@ -141,7 +160,7 @@ export async function killProcessTree(child, opts = {}) {
         else if (!isWin) {
           try { killImpl(-child.pid, 0); treeRemains = true; }
           catch (err) { treeRemains = err?.code !== "ESRCH"; }
-        } else treeRemains = true; // best-effort taskkill also covers descendants
+        }
       }
       const forced = treeRemains
         ? await killProcessTree(child, { ...opts, skipStopHook: true, sigintTimeoutMs: 0, forceOnly: true, cleanupDeadline: deadline })
@@ -149,7 +168,7 @@ export async function killProcessTree(child, opts = {}) {
       return { signaled: false, killed: true, escalated: Boolean(treeRemains),
         ...(forced?.cleanupFailed ? { cleanupFailed: true } : {}) };
     })();
-    protocolStops.set(child, { deadline, promise });
+    protocolStops.set(child, { deadline, protocolDeadline, promise, windowsTree });
     // Retain the completed operation while this child is reachable. A spawner's
     // final cleanup can arrive just after escalation; it must reuse that deadline
     // and result instead of starting a second stop. Weak keys require no disposal.

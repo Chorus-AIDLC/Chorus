@@ -279,27 +279,31 @@ export class CodexSpawner {
         }
         if (adapter?.accept(message)) progress();
       });
-      unregister = registerProcessStopHook(child, ({ deadline, reason }) => {
+      unregister = registerProcessStopHook(child, ({ deadline, protocolDeadline = deadline, reason, beforeClose }) => {
         stopDeadline = Math.min(stopDeadline ?? Infinity, deadline);
         if (reason !== "cleanup") cancelled = true;
-        if (reason === "cleanup") { client.close(); return; }
+        if (reason === "cleanup") {
+          return (async () => { try { await beforeClose?.(); } finally { client.close(); } })();
+        }
         if (stopWork) return stopWork;
         stopWork = (async () => {
           try {
             const turnId = adapter?.turnId ?? adapter?.observedTurnId;
             if (turnId && !adapter.outcome && !client.closed) {
               await client.request("turn/interrupt", { threadId, turnId }, {
-                timeoutMs: Math.max(1, deadline - Date.now()),
+                timeoutMs: Math.max(1, protocolDeadline - Date.now()),
               });
               let timer;
               try {
                 await Promise.race([
                   adapter.completion, client.failure,
-                  new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, deadline - Date.now())); }),
+                  new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, protocolDeadline - Date.now())); }),
                 ]);
               } finally { clearTimeout(timer); }
             }
-          } finally { client.close(); }
+          } finally {
+            try { await beforeClose?.(); } finally { client.close(); }
+          }
         })();
         return stopWork;
       });

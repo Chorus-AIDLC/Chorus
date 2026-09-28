@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -411,13 +412,23 @@ describe("App Server lifecycle", () => {
     const child = appServerChild();
     child.pid = 456789;
     const tk = new EventEmitter();
+    let descendantsRemain = true;
+    const root = { pid: child.pid, parentPid: 1, startedAt: "2026-09-28T10:00:00Z" };
+    const descendant = { pid: 456790, parentPid: child.pid, startedAt: "2026-09-28T10:00:01Z" };
     const logger = { ...silent, warn: vi.fn(), error: vi.fn() };
     const spawner = makeSpawner(child, {
-      platform: "win32", logger, killOptions: { spawnImpl: () => {
+      platform: "win32", logger, killOptions: {
+        windowsSnapshotImpl: async () => [
+          ...(child.exitCode === null ? [root] : []),
+          ...(descendantsRemain ? [descendant] : []),
+        ],
+        spawnImpl: (command, args) => {
+        expect(command).toBe("taskkill");
+        expect(args[1]).toBe("456790");
         queueMicrotask(() => {
           if (mode === "error") tk.emit("error", new Error("PRIVATE-TASKKILL-SECRET"));
           if (mode === "nonzero") tk.emit("exit", 1);
-          if (mode === "success") tk.emit("exit", 0);
+          if (mode === "success") { descendantsRemain = false; tk.emit("exit", 0); }
         });
         return tk;
       } },
@@ -429,6 +440,24 @@ describe("App Server lifecycle", () => {
     tk.emit("close", mode === "success" ? 0 : 1);
     expect(tk.listenerCount("error")).toBe(0);
     expect(tk.listenerCount("exit")).toBe(0);
+  });
+
+  it("normal Windows exit succeeds through the actual CIM query/parser without targeting the absent root", async () => {
+    const child = appServerChild(); child.pid = 456789;
+    const root = { pid: child.pid, parentPid: 1, startedAt: "2026-09-28T10:00:00Z" };
+    const spawnImpl = vi.fn((command, args) => {
+      expect(command).toBe("powershell.exe");
+      expect(args).toContain("-NonInteractive");
+      const query = new EventEmitter(); query.stdout = new PassThrough();
+      queueMicrotask(() => {
+        query.stdout.write(JSON.stringify(child.exitCode === null ? [root] : []));
+        query.emit("exit", 0); query.emit("close", 0);
+      });
+      return query;
+    });
+    const spawner = makeSpawner(child, { platform: "win32", killOptions: { spawnImpl } });
+    expect((await wake(spawner)).exitCode).toBe(0);
+    expect(spawnImpl).toHaveBeenCalledTimes(2);
   });
 
   it("persists raw usage exactly once per observation without double normalization", async () => {

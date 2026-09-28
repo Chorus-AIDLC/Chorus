@@ -523,6 +523,12 @@ keep their behavior; running turns are never steered or preempted by new message
 Authorized interruption first sends `turn/interrupt` when a turn ID is known.
 Startup cancellation closes the transport; bounded process-tree cleanup follows
 both paths. Normal completion closes the server after the matching terminal event.
+On Windows, Codex cleanup requires Windows PowerShell (`Get-CimInstance`) and
+`taskkill`. It snapshots process identities before close and verifies surviving
+descendants afterward; an already-gone root does not itself cause a failure.
+Creation-time checks avoid known PID reuse. If queries or termination cannot be
+verified within the existing deadline, cleanup fails visibly. Windows coverage
+is currently through injected platform tests; Linux is the live-verified platform.
 Native approval/elicitation requests receive a negative response where the
 protocol supports one; requests without a safe negative response fail the wake.
 No terminal prompt is opened. Failed, interrupted, or missing terminal outcomes

@@ -271,11 +271,18 @@ describe("process-associated protocol stop", () => {
     const { EventEmitter } = await import("node:events");
     vi.useFakeTimers();
     try {
-      const child = { ...fakeChild(123), exitCode: 0 };
+      const child = { ...fakeChild(123), exitCode: null };
       const taskkill = new EventEmitter();
       const spawnImpl = vi.fn(() => taskkill);
-      registerProcessStopHook(child, () => new Promise(resolve => setTimeout(resolve, 70)));
-      const pending = killProcessTree(child, { platform: "win32", sigintTimeoutMs: 100, spawnImpl, logger: silent });
+      const root = { pid: 123, parentPid: 1, startedAt: "2026-09-28T10:00:00Z" };
+      const descendant = { pid: 124, parentPid: 123, startedAt: "2026-09-28T10:00:01Z" };
+      registerProcessStopHook(child, async ({ beforeClose }) => {
+        await new Promise(resolve => setTimeout(resolve, 70));
+        await beforeClose();
+        child.exitCode = 0;
+      });
+      const pending = killProcessTree(child, { platform: "win32", sigintTimeoutMs: 100, spawnImpl, logger: silent,
+        windowsSnapshotImpl: async () => child.exitCode === null ? [root, descendant] : [descendant] });
       await vi.advanceTimersByTimeAsync(70);
       expect(spawnImpl).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(30);
@@ -283,6 +290,37 @@ describe("process-associated protocol stop", () => {
       expect(vi.getTimerCount()).toBe(0);
       taskkill.emit("close", 1);
       expect(taskkill.listenerCount("error")).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("reserves Windows cleanup time when a live root ignores graceful close", async () => {
+    const { registerProcessStopHook } = await import("../process-stop-hooks.mjs");
+    const { EventEmitter } = await import("node:events");
+    vi.useFakeTimers();
+    try {
+      const child = { ...fakeChild(123), exitCode: null };
+      const root = { pid: 123, parentPid: 1, startedAt: "2026-09-28T10:00:00Z" };
+      let current = [root];
+      let taskkillAt;
+      registerProcessStopHook(child, async ({ deadline, protocolDeadline, beforeClose }) => {
+        expect(protocolDeadline).toBe(deadline - 25);
+        await beforeClose();
+      });
+      const pending = killProcessTree(child, {
+        platform: "win32", sigintTimeoutMs: 100, logger: silent,
+        windowsSnapshotImpl: async () => current,
+        spawnImpl: () => {
+          taskkillAt = Date.now();
+          const tk = new EventEmitter();
+          queueMicrotask(() => { current = []; child.exitCode = 1; tk.emit("exit", 0); tk.emit("close", 0); });
+          return tk;
+        },
+      });
+      const startedAt = Date.now();
+      await vi.advanceTimersByTimeAsync(75);
+      expect(await pending).toMatchObject({ killed: true, escalated: true });
+      expect(taskkillAt - startedAt).toBe(75);
+      expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
   });
 

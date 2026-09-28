@@ -9,11 +9,11 @@
       "anchor": "new-smoke",
       "result": {
         "sessionId": "new-smoke",
-        "backendSessionId": "01a0e784-9d96-7e63-a629-c0c765f6af51",
+        "backendSessionId": "01a0e798-23b3-7dc3-970e-0d5c2ce9d780",
         "exitCode": 0,
         "isNew": true
       },
-      "mappedThread": "01a0e784-9d96-7e63-a629-c0c765f6af51",
+      "mappedThread": "01a0e798-23b3-7dc3-970e-0d5c2ce9d780",
       "requests": [
         "initialize",
         "initialized",
@@ -53,7 +53,7 @@
           "status": "failed"
         }
       ],
-      "reply": "I’ll make one read-only Chorus check-in and confirm whether Chorus skill context is present.\n\nCHORUS_SPAWNER_NEW_928 — Check-in did not succeed: the single call was blocked because approval is required but policy is “never.” Chorus skill context was supplied in the session.",
+      "reply": "I’ll make one read-only Chorus check-in and check the skill context already supplied in this session.\nCHORUS_SPAWNER_NEW_928 — Check-in did not succeed. Chorus skill context was supplied.\n\nThe single check-in attempt was blocked because the tool requires approval and the approval policy is “never.”",
       "diagnostics": [
         {
           "level": "info",
@@ -68,11 +68,11 @@
       "anchor": "new-smoke",
       "result": {
         "sessionId": "new-smoke",
-        "backendSessionId": "01a0e784-9d96-7e63-a629-c0c765f6af51",
+        "backendSessionId": "01a0e798-23b3-7dc3-970e-0d5c2ce9d780",
         "exitCode": 0,
         "isNew": false
       },
-      "mappedThread": "01a0e784-9d96-7e63-a629-c0c765f6af51",
+      "mappedThread": "01a0e798-23b3-7dc3-970e-0d5c2ce9d780",
       "requests": [
         "initialize",
         "initialized",
@@ -174,11 +174,11 @@
       "anchor": "interrupt-smoke",
       "result": {
         "sessionId": "interrupt-smoke",
-        "backendSessionId": "01a0e785-2656-7023-a7e1-f73d76c2b126",
+        "backendSessionId": "01a0e798-a90b-7fc0-88f0-2d144a8f1d9a",
         "exitCode": 130,
         "isNew": true
       },
-      "mappedThread": "01a0e785-2656-7023-a7e1-f73d76c2b126",
+      "mappedThread": "01a0e798-a90b-7fc0-88f0-2d144a8f1d9a",
       "requests": [
         "initialize",
         "initialized",
@@ -214,11 +214,11 @@
       "anchor": "interrupt-smoke",
       "result": {
         "sessionId": "interrupt-smoke",
-        "backendSessionId": "01a0e785-2656-7023-a7e1-f73d76c2b126",
+        "backendSessionId": "01a0e798-a90b-7fc0-88f0-2d144a8f1d9a",
         "exitCode": 0,
         "isNew": false
       },
-      "mappedThread": "01a0e785-2656-7023-a7e1-f73d76c2b126",
+      "mappedThread": "01a0e798-a90b-7fc0-88f0-2d144a8f1d9a",
       "requests": [
         "initialize",
         "initialized",
@@ -267,11 +267,11 @@
       "anchor": "new-smoke",
       "result": {
         "sessionId": "new-smoke",
-        "backendSessionId": "01a0e784-ac0b-7001-bd9b-2c8d166673f2",
+        "backendSessionId": "01a0e798-324a-7502-a0de-19beecb13192",
         "exitCode": 0,
         "isNew": true
       },
-      "mappedThread": "01a0e784-ac0b-7001-bd9b-2c8d166673f2",
+      "mappedThread": "01a0e798-324a-7502-a0de-19beecb13192",
       "requests": [
         "initialize",
         "initialized",
@@ -281,8 +281,8 @@
       "methods": [
         "configWarning",
         "remoteControl/status/changed",
-        "mcpServer/startupStatus/updated",
         "thread/started",
+        "mcpServer/startupStatus/updated",
         "thread/status/changed",
         "turn/started",
         "hook/started",
@@ -311,7 +311,7 @@
           "status": "completed"
         }
       ],
-      "reply": "I’ll make one read-only Chorus check-in and check the skill context already supplied in this session.\nCHORUS_SPAWNER_NEW_928 — Check-in succeeded (exactly one call). Chorus skill context was supplied.",
+      "reply": "I’ll make the single read-only Chorus check-in and confirm the skill context already supplied in this session.\nCHORUS_SPAWNER_NEW_928 — Check-in succeeded (exactly one call). Chorus skill context was supplied in the session.",
       "diagnostics": [
         {
           "level": "info",

@@ -4,6 +4,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
 import { CodexSpawner } from "../codex-spawner.mjs";
 import { Waker } from "../waker.mjs";
 import { createControlHandler } from "../control-handler.mjs";
@@ -23,7 +24,7 @@ function store() {
   dirs.push(dir);
   return { dir, sessions: join(dir, "sessions.json"), usage: join(dir, "usage.json") };
 }
-function harness(files, { handler, autoComplete = true, total = 100, threadId = THREAD } = {}) {
+function harness(files, { handler, autoComplete = true, total = 100, threadId = THREAD, processId, spawnerOptions = {} } = {}) {
   const turns = [], uploads = [], interrupts = [];
   const child = appServerChild({ threadId, autoComplete, handler(req, c) {
     if (handler?.(req, c) === true) return true;
@@ -38,6 +39,7 @@ function harness(files, { handler, autoComplete = true, total = 100, threadId = 
     c.send({ method: "turn/completed", params: { threadId, turn: { id: "turn-1", status: "completed", items: [item] } } });
     return true;
   } });
+  if (processId) child.pid = processId;
   const spawner = new CodexSpawner({
     codexPath: "/fake/codex", spawnImpl: () => child, creds, logger: silent,
     hasChorusMcpServerFn: () => true, cleanupTimeoutMs: 100, stdioGraceMs: 20,
@@ -45,6 +47,7 @@ function harness(files, { handler, autoComplete = true, total = 100, threadId = 
     setThreadIdFn: (a, t) => setThreadId(a, t, { path: files.sessions }),
     getUsageSnapshotFn: (a, t) => getCodexUsageSnapshot(a, t, { path: files.usage }),
     setUsageSnapshotFn: (a, t, u) => setCodexUsageSnapshot(a, t, u, { path: files.usage }),
+    ...spawnerOptions,
   });
   const hooks = createTranscriptUploadHooks({
     ...creds, logger: silent, batchDelayMs: 0,
@@ -75,6 +78,37 @@ function harness(files, { handler, autoComplete = true, total = 100, threadId = 
 }
 
 describe("Codex App Server daemon lifecycle acceptance", () => {
+  it.each(["already-gone", "descendant", "gone-race", "surviving-failure"])("Windows %s cleanup preserves the correct Waker outcome", async mode => {
+    let descendantAlive = mode !== "already-gone";
+    const root = { pid: 100, parentPid: 1, startedAt: "2026-09-28T10:00:00Z" };
+    const descendant = { pid: 101, parentPid: 100, startedAt: "2026-09-28T10:00:01Z" };
+    const targets = [];
+    const h = harness(store(), { processId: 100, spawnerOptions: {
+      platform: "win32", cleanupTimeoutMs: 100,
+      killOptions: {
+        windowsSnapshotImpl: async () => [
+          ...(h.child.exitCode === null ? [root] : []),
+          ...(descendantAlive ? [descendant] : []),
+        ],
+        spawnImpl: (cmd, args) => {
+          targets.push({ cmd, pid: args[1], rootExit: h.child.exitCode });
+          const tk = new EventEmitter();
+          queueMicrotask(() => {
+            if (mode !== "surviving-failure") descendantAlive = false;
+            const code = mode === "descendant" ? 0 : 128;
+            tk.emit("exit", code); tk.emit("close", code);
+          });
+          return tk;
+        },
+      },
+    } });
+    await h.wake();
+    expect(h.turns.map(t => t.status)).toEqual(["running", mode === "surviving-failure" ? "interrupted" : "ended"]);
+    if (mode === "already-gone") expect(targets).toEqual([]);
+    else expect(targets).toEqual([{ cmd: "taskkill", pid: "101", rootExit: 0 }]);
+    expect(h.interrupts).toHaveLength(mode === "surviving-failure" ? 1 : 0);
+  });
+
   it("persists a first wake, deduplicates transcript, and resumes after daemon reconstruction with usage delta", async () => {
     const files = store();
     const first = harness(files);

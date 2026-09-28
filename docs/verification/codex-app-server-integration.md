@@ -14,12 +14,13 @@ env -u CHORUS_AGENT_PROFILE pnpm exec vitest run cli/__tests__
 openspec validate switch-codex-daemon-to-app-server --strict
 ```
 
-Result: **97 test files, 2370 tests passed**; strict OpenSpec validation passed.
+Result after aggregate-review fixes: **98 test files, 2403 tests passed**;
+strict OpenSpec validation and archive passed.
 The test environment deliberately removes the daemon's injected agent profile:
 three existing foreground tests require “no profile configured.” This does not
 remove the profile from production children or from the real CLI smoke.
 
-The seven tests in `cli/__tests__/codex-daemon-lifecycle.test.mjs` cross the actual
+The tests in `cli/__tests__/codex-daemon-lifecycle.test.mjs` cross the actual
 Waker, control handler, Codex spawner, RPC client, event adapter, session/usage
 files, transcript upload hooks, and terminal reporter. Only the child stdio and
 HTTP boundary are synthetic. They establish:
@@ -41,10 +42,43 @@ resume, configured model conversion, multi-agent environment isolation, and
 missing executables. Existing Claude/Kiro/Pi/dsh/foreground tests all passed.
 POSIX group kill, Windows shim and taskkill behavior have injected-platform
 contract coverage, including asynchronous taskkill errors, nonzero exits and
-timeout within the original cleanup deadline. Failed taskkill cannot certify a
-successful Codex wake. Session-map I/O regressions verify the approved
+timeout within the original cleanup deadline. Taskkill's exit code alone cannot
+certify cleanup: subsequent process-identity observations decide whether the
+owned processes remain. Session-map I/O regressions verify the approved
 warning-and-continue behavior. T2 also exercised a real Linux descendant process group:
 cleanup completed in 66 ms with no live descendants.
+
+Aggregate review added eleven setup-identity regressions: a versioned
+`thread/started` notification received before the setup response is persisted
+once and retained across interruption, including fallback/resume and failed
+map writes. A reconstructed spawner resumes that ID; contradictory setup
+responses fail without replacing it.
+
+Windows cleanup now takes a noninteractive PowerShell/CIM snapshot **before**
+closing stdin, retaining PID plus creation-time identities and parent links.
+After root exit it identifies surviving captured descendants, rechecks identities
+before targeting `taskkill`, and verifies the result with another snapshot.
+An absent root with no remaining descendants succeeds without taskkill.
+PID reuse and unrelated processes are excluded. A nonzero taskkill result can
+succeed only when the subsequent identity snapshot proves the owned targets
+have disappeared; query failure, uncertain initial ownership, residual processes
+or deadline expiry fail verification.
+
+Sixteen helper tests, four Windows Waker integration cases and a production
+CIM-query/parser-to-spawner regression cover these paths.
+The shared stop deadline reserves up to 2.5 seconds (one quarter of the configured
+window) for Windows termination checks; it never adds a second timeout window.
+System-query output is bounded to 4 MiB and contains only IDs/creation timestamps.
+The helper requires Windows PowerShell with `Get-CimInstance` and `taskkill`.
+It tracks descendants visible before close and those reachable from captured
+parent identities; it does not establish Job Object confinement. This remains
+injected Windows contract coverage, **not live Windows certification**.
+
+Microsoft documents the identity fields in
+[Win32_Process](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-process)
+and the local query in
+[Get-CimInstance for PowerShell 5.1](https://learn.microsoft.com/en-us/powershell/module/cimcmdlets/get-ciminstance?view=powershell-5.1).
+Both sources are attached to fix task `a8e3467f-be2e-47bd-bc45-fe95e7f40be7`.
 
 ## Real installed CLI smoke
 
