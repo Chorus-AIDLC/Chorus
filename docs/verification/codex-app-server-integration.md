@@ -134,3 +134,44 @@ verification. The real CLI smoke covers the production spawner and protocol;
 the broader Waker/control/reporting boundary is exercised deterministically by
 the automated cross-layer suite. Deployment and any PR push/merge remain outside
 this local execution.
+
+
+## PR #580 review follow-up: silent turns and restricted MCP (2026-09-28)
+
+Task `38bd6777-4e9c-49f2-8736-6bcdc05c695e` removes the turn inactivity
+watchdog. Independent review reproduced a real quiet `sleep 45` command being
+killed with the former injected 20-second threshold. Production spawner regression
+tests now advance one hour without any notifications, then verify normal completion,
+manual `turn/interrupt` (exit 130), stdout EOF (failure), and process exit without
+terminal (failure). Initialize, thread setup, and turn-start response deadlines
+remain bounded. The handshake version is read from the installed `package.json`.
+
+Restricted MCP was compared on Linux using codex-cli 0.157.1. Admin Claude's
+independent legacy test used `codex exec --json --sandbox read-only
+--skip-git-repo-check`, the same user Codex config and credential environment,
+and an empty temporary cwd. Its `chorus/chorus_checkin` tool event failed with
+`MCP tool call requires approval, but approval policy is never` (Idea comment
+`21b5ec2c-5275-4d9e-b85e-c81d1622325e`). This is evidence for the fresh exec
+case, not a claim that legacy resume or every MCP tool was tested.
+
+The follow-up harness ran the production `CodexSpawner` with a temporary cwd,
+in-memory session mapping, and `permissionMode: chorus`. For the approved pair
+only, its spawn wrapper appended the literal App Server CLI override
+`-c 'mcp_servers.chorus.tools.chorus_checkin.approval_mode="approve"'`.
+This isolates the Codex configuration rule without editing the user's config;
+it is not a supported daemon `args` override. Each pair ran a fresh thread and
+then resumed the same thread. The prompt requested exactly one MCP check-in and
+prohibited mutations, shell commands, and CLI substitutes. Assertions inspect
+`item/completed` → `mcpToolCall`, rather than interpreting exit zero as MCP success.
+
+| Configuration | Fresh thread | Same-thread resume |
+| --- | --- | --- |
+| Existing config, no `chorus_checkin` allow rule | MCP failed, approval denied | MCP failed, approval denied |
+| Check-in `approval_mode = "approve"` override | MCP completed | MCP completed |
+
+All four turns exited zero with no spawner errors. Every setup retained
+`approvalPolicy: never` and `sandbox: read-only`; every turn retained
+`{type: readOnly, networkAccess: false}`. Structured results are committed in
+[codex-restricted-mcp-0.157.1.json](codex-restricted-mcp-0.157.1.json).
+The result establishes a tested per-tool option, not blanket access to Chorus
+mutation tools. No local sandbox permissions or persistent operator config changed.

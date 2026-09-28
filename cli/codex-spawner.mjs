@@ -17,6 +17,7 @@ import {
 } from "./codex-usage-map.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
+const CLIENT_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 /**
  * Check whether the user's Codex config declares the Chorus MCP server.
@@ -150,7 +151,6 @@ export class CodexSpawner {
     this.hasChorusMcpServerFn = opts.hasChorusMcpServerFn ?? hasChorusMcpServer;
     this.mcpConfigChecked = false;
     this.rpcLimits = opts.rpcLimits;
-    this.inactivityTimeoutMs = opts.inactivityTimeoutMs ?? 600_000;
     this.cleanupTimeoutMs = opts.cleanupTimeoutMs ?? 10_000;
     this.stdioGraceMs = opts.stdioGraceMs ?? 2_000;
     this.maxBufferedBytes = opts.maxBufferedBytes;
@@ -170,7 +170,6 @@ export class CodexSpawner {
     let rawSettled;
     let rawDone = false;
     let rawCode = null;
-    let inactivityTimer;
     let wakeFault = null;
     const fault = (code) => new CodexAppServerError(code, `Codex App Server: ${code}`);
     // Diagnostic text is fixed, never provider errors, callbacks, paths or values.
@@ -179,13 +178,6 @@ export class CodexSpawner {
     const ensureRunning = () => {
       if (cancelled) throw fault("CANCELLED");
       if (client?.closed) throw client.error;
-    };
-    let rejectInactivity;
-    const inactive = new Promise((_, reject) => { rejectInactivity = reject; });
-    inactive.catch(() => {});
-    const progress = () => {
-      clearTimeout(inactivityTimer);
-      inactivityTimer = setTimeout(() => rejectInactivity(fault("INACTIVITY_TIMEOUT")), this.inactivityTimeoutMs);
     };
     try {
       try { threadId = anchor ? this.getThreadIdFn(anchor) : null; }
@@ -277,7 +269,7 @@ export class CodexSpawner {
             && (activeSetup.method !== "thread/start" || id !== previousThreadId)
             && (!activeSetup.observedId || id === activeSetup.observedId)) captureThread(id);
         }
-        if (adapter?.accept(message)) progress();
+        adapter?.accept(message);
       });
       unregister = registerProcessStopHook(child, ({ deadline, protocolDeadline = deadline, reason, beforeClose }) => {
         stopDeadline = Math.min(stopDeadline ?? Infinity, deadline);
@@ -310,7 +302,7 @@ export class CodexSpawner {
       try { onChild?.(child); } catch { log("warn", "[Chorus] Codex onChild callback failed"); }
       ensureRunning();
       await client.request("initialize", {
-        clientInfo: { name: "chorus", version: "0.20.0" }, capabilities: { experimentalApi: false },
+        clientInfo: { name: "chorus", version: CLIENT_VERSION }, capabilities: { experimentalApi: false },
       });
       ensureRunning();
       await client.notify("initialized");
@@ -348,7 +340,6 @@ export class CodexSpawner {
         adapter.notice(notice);
       }
       ensureRunning();
-      progress();
       const started = await client.request("turn/start", {
         threadId, cwd, approvalPolicy: "never",
         sandboxPolicy: fullAccess ? { type: "dangerFullAccess" } : { type: "readOnly", networkAccess: false },
@@ -362,14 +353,12 @@ export class CodexSpawner {
           throw error;
         }),
         rawSettled.then(() => { if (!adapter.outcome) throw fault("MISSING_TERMINAL"); }),
-        inactive,
       ]);
     } catch (error) {
       wakeFault = error;
       const code = error instanceof CodexAppServerError ? error.code : "SETUP_OR_STORE_ERROR";
       log("error", `[Chorus] Codex App Server wake failed (${code}); check Codex 0.157.1+ installation, login, model/config and local session storage. Unsupported args must use model or permitted -c settings.`);
     } finally {
-      clearTimeout(inactivityTimer);
       try { adapter?.finish(); } catch {
         wakeFault ??= fault("USAGE_STORE_ERROR");
         log("error", "[Chorus] Codex usage persistence failed; check local session storage.");

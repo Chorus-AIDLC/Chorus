@@ -1,0 +1,142 @@
+{
+  "codexVersion": "0.157.1",
+  "platform": "linux",
+  "runs": [
+    {
+      "approved": false,
+      "resumed": false,
+      "tools": [
+        {
+          "server": "chorus",
+          "tool": "chorus_checkin",
+          "status": "failed",
+          "approvalDenied": true
+        }
+      ],
+      "policies": [
+        {
+          "method": "thread/start",
+          "approvalPolicy": "never",
+          "sandbox": "read-only"
+        },
+        {
+          "method": "turn/start",
+          "approvalPolicy": "never",
+          "sandboxPolicy": {
+            "type": "readOnly",
+            "networkAccess": false
+          }
+        }
+      ],
+      "errors": [],
+      "result": {
+        "sessionId": "baseline-smoke",
+        "backendSessionId": "01a0e7d4-110f-77b1-a044-9d159e73ce8b",
+        "exitCode": 0,
+        "isNew": true
+      }
+    },
+    {
+      "approved": false,
+      "resumed": true,
+      "tools": [
+        {
+          "server": "chorus",
+          "tool": "chorus_checkin",
+          "status": "failed",
+          "approvalDenied": true
+        }
+      ],
+      "policies": [
+        {
+          "method": "thread/resume",
+          "approvalPolicy": "never",
+          "sandbox": "read-only"
+        },
+        {
+          "method": "turn/start",
+          "approvalPolicy": "never",
+          "sandboxPolicy": {
+            "type": "readOnly",
+            "networkAccess": false
+          }
+        }
+      ],
+      "errors": [],
+      "result": {
+        "sessionId": "baseline-smoke",
+        "backendSessionId": "01a0e7d4-110f-77b1-a044-9d159e73ce8b",
+        "exitCode": 0,
+        "isNew": false
+      }
+    },
+    {
+      "approved": true,
+      "resumed": false,
+      "tools": [
+        {
+          "server": "chorus",
+          "tool": "chorus_checkin",
+          "status": "completed",
+          "approvalDenied": false
+        }
+      ],
+      "policies": [
+        {
+          "method": "thread/start",
+          "approvalPolicy": "never",
+          "sandbox": "read-only"
+        },
+        {
+          "method": "turn/start",
+          "approvalPolicy": "never",
+          "sandboxPolicy": {
+            "type": "readOnly",
+            "networkAccess": false
+          }
+        }
+      ],
+      "errors": [],
+      "result": {
+        "sessionId": "approved-smoke",
+        "backendSessionId": "01a0e7d4-698b-7032-a6f0-a785bd2b52fd",
+        "exitCode": 0,
+        "isNew": true
+      }
+    },
+    {
+      "approved": true,
+      "resumed": true,
+      "tools": [
+        {
+          "server": "chorus",
+          "tool": "chorus_checkin",
+          "status": "completed",
+          "approvalDenied": false
+        }
+      ],
+      "policies": [
+        {
+          "method": "thread/resume",
+          "approvalPolicy": "never",
+          "sandbox": "read-only"
+        },
+        {
+          "method": "turn/start",
+          "approvalPolicy": "never",
+          "sandboxPolicy": {
+            "type": "readOnly",
+            "networkAccess": false
+          }
+        }
+      ],
+      "errors": [],
+      "result": {
+        "sessionId": "approved-smoke",
+        "backendSessionId": "01a0e7d4-698b-7032-a6f0-a785bd2b52fd",
+        "exitCode": 0,
+        "isNew": false
+      }
+    }
+  ]
+}

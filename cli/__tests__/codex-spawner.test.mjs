@@ -28,7 +28,7 @@ function makeSpawner(child = appServerChild(), opts = {}) {
     logger: silent, env: { PATH: "/bin" }, platform: "linux", permissionMode: "yolo",
     getThreadIdFn: () => null, setThreadIdFn: vi.fn(), getUsageSnapshotFn: () => null,
     setUsageSnapshotFn: vi.fn(), hasChorusMcpServerFn: () => true,
-    cleanupTimeoutMs: 40, stdioGraceMs: 5, inactivityTimeoutMs: 100,
+    cleanupTimeoutMs: 40, stdioGraceMs: 5,
     rpcLimits: { initializeTimeoutMs: 50, threadSetupTimeoutMs: 50, turnStartTimeoutMs: 50 },
     ...opts,
   });
@@ -483,28 +483,46 @@ describe("App Server lifecycle", () => {
     expect(onChild).toHaveBeenCalledTimes(mode === "incompatible" ? 1 : 0);
   });
 
-  it("startup timeout is bounded", async () => {
-    const child = appServerChild({ handler: () => true });
-    expect((await wake(makeSpawner(child, { rpcLimits: { initializeTimeoutMs: 5 } }))).exitCode).toBeNull();
+  it.each([
+    ["initialize", "initializeTimeoutMs"],
+    ["thread/start", "threadSetupTimeoutMs"],
+    ["turn/start", "turnStartTimeoutMs"],
+  ])("%s response timeout remains bounded", async (method, limit) => {
+    const child = appServerChild({ handler: (req) => req.method === method });
+    expect((await wake(makeSpawner(child, { rpcLimits: { [limit]: 5 } }))).exitCode).toBeNull();
   });
 
-  it("unrelated chatter cannot keep a stalled turn alive", async () => {
-    const child = appServerChild({ autoComplete: false });
-    const timer = setInterval(() => child.send({ method: "unrelated", params: {} }), 2);
-    try { expect((await wake(makeSpawner(child, { inactivityTimeoutMs: 15 }))).exitCode).toBeNull(); }
-    finally { clearInterval(timer); }
+  it("initialize uses the installed package version", async () => {
+    const child = appServerChild();
+    await wake(makeSpawner(child));
+    expect(child.requests[0].params.clientInfo.version).toBe(
+      JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version,
+    );
   });
 
-  it("relevant progress permits a turn longer than the inactivity window", async () => {
+  it.each(["complete", "interrupt", "EOF", "exit"])("silent long turn remains running until %s", async (ending) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const child = appServerChild({ autoComplete: false });
-    const running = wake(makeSpawner(child, { inactivityTimeoutMs: 25 }));
-    await until(() => methods(child).includes("turn/start"));
-    for (let i = 0; i < 5; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 8));
-      child.send({ method: "item/agentMessage/delta", params: { threadId: TID, turnId: "turn-1", itemId: "a", delta: "x" } });
+    let settled = false;
+    const running = wake(makeSpawner(child)).then(result => { settled = true; return result; });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(methods(child)).toContain("turn/start");
+      // No notification, command output, or heartbeat arrives for an hour.
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      expect(settled).toBe(false);
+      let stopped;
+      if (ending === "complete") child.terminal();
+      if (ending === "interrupt") stopped = killProcessTree(child, { sigintTimeoutMs: 100 });
+      if (ending === "EOF") child.stdout.end();
+      if (ending === "exit") child.exit(0);
+      await vi.advanceTimersByTimeAsync(200);
+      await stopped;
+      expect((await running).exitCode).toBe(ending === "complete" ? 0 : ending === "interrupt" ? 130 : null);
+      if (ending === "interrupt") expect(methods(child)).toContain("turn/interrupt");
+    } finally {
+      vi.useRealTimers();
     }
-    child.terminal();
-    expect((await running).exitCode).toBe(0);
   });
 
   it.each(["item/commandExecution/requestApproval", "unknown/request", "item/tool/requestUserInput"])("headless server request %s is denied/failed and never prompts", async (method) => {

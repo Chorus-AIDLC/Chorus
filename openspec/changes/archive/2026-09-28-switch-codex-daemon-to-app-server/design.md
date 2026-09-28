@@ -24,7 +24,7 @@ A shared persistent server/pool is excluded because it changes ownership, creden
 
 Add `cli/codex-app-server-client.mjs` with monotonically unique request IDs, pending-response correlation, server-request handling and notifications, UTF-8 chunk-safe JSONL decoding, serialized writes/backpressure, and rejection of pending calls on EOF/error/close. A response to a server request echoes its original ID; notifications carry no ID. Unknown notifications are ignored; malformed protocol frames fail the wake with a bounded diagnostic.
 
-Initial internal, injectable limits: initialize 30s; thread setup 60s; turn-start response 60s; semantic inactivity 10min; frame limit 32MiB; stderr tail 8KiB; normal stdin-close cleanup 10s. These are proposed defaults, not promised model latency. Requests/timers/listeners are released at settlement. Inactivity resets on relevant thread/turn progress, not arbitrary transport chatter. No total duration cap applies to a progressing turn. Never retry `turn/start` inside the client after an uncertain response. Bound buffering and stop on overflow instead of retaining unlimited model output.
+Initial internal, injectable limits: initialize 30s; thread setup 60s; turn-start response 60s; frame limit 32MiB; stderr tail 8KiB; normal stdin-close cleanup 10s. These are proposed defaults, not promised model latency. Requests/timers/listeners are released at settlement. There is no turn inactivity watchdog or total duration cap: a quiet tool may legitimately run indefinitely, and an actually stuck turn is cleared by authorized user interruption. RPC response deadlines bound protocol setup only; cancellation and cleanup deadlines begin after an explicit stop or terminal/failure outcome. Never retry `turn/start` inside the client after an uncertain response. Bound buffering and stop on overflow instead of retaining unlimited model output.
 
 RPC success does not mean turn success. Correlate all events with the selected thread and active turn; buffer only the bounded race between turn notification and turn-start response. Terminal events for other or historical turns cannot settle this wake.
 
@@ -103,3 +103,7 @@ No remaining product decisions. Engineering gates: exact supported protocol/vers
 ## Task DAG
 
 T1 RPC client/CLI contract → T2 lifecycle/session/cancellation and T3 transcript/usage adapter → T4 integrated verification/documentation. T2 and T3 share the contracts above and may proceed in parallel after T1. T4 requires both, including real execution of the combined path. Chorus task drafts own task state; local `tasks.md` maps to those drafts.
+
+## PR review correction (2026-09-28)
+
+Follow-up task `38bd6777-4e9c-49f2-8736-6bcdc05c695e` replaces the originally proposed 10-minute semantic inactivity rule with no running-turn watchdog, following the existing owner decision in PR #569 and the independent silent-command reproduction in PR #580 review. The matching archived delta and cumulative specs are amended together; the change is not archived a second time. Initialize identifies the actual installed package version. Restricted MCP acceptance depends on Codex tool approval configuration as well as sandbox policy; integration evidence documents each tested combination without expanding local permissions.

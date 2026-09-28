@@ -84,9 +84,10 @@ streams/processes; each removes itself on that emitter's `close`. They protect
 against write callbacks scheduling a later `EPIPE` error event and retain no
 client state. The process `exit` event alone does **not** close the client:
 T2/shared settlement drains trailing stdout for its bounded grace period, then
-closes the transport and performs process-tree cleanup. T2 owns the 10-minute
-semantic inactivity deadline, bounded early-turn event buffering, and the shared
-10-second cleanup/interrupt deadline. There is no total turn-duration cap.
+closes the transport and performs process-tree cleanup. Running turns have no
+inactivity watchdog or total-duration limit; silence alone does not establish
+failure. T2 owns bounded early-turn event buffering and the shared 10-second
+cleanup/interrupt deadline.
 
 For active cancellation, T2 sends `turn/interrupt` and waits for the matching
 terminal event within its shared stop deadline before calling `close`.

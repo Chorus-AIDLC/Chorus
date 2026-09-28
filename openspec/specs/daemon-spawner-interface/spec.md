@@ -90,7 +90,7 @@ Every spawner SHALL observe process termination through the shared settlement mo
 
 The raw process result and the spawner's classified wake result SHALL remain distinct. Backends without an authoritative protocol outcome SHALL preserve their existing exit-code and post-exit behavior. A protocol-backed Codex spawner SHALL combine the raw result, matching terminal turn state and bounded cleanup outcome: an exit code of zero without a matching successful turn MUST NOT become a successful wake, and a failed/interrupted turn MUST NOT be converted into success by a clean process exit. The final wake SHALL still settle exactly once after bounded cleanup, retaining required session identity and reporting.
 
-The shared drain grace period SHALL bound only already-exited process IO; it SHALL NOT impose a total wake-duration limit. Backend protocol startup/inactivity limits remain separately specified.
+The shared drain grace period SHALL bound only already-exited process IO; it SHALL NOT impose a total wake-duration limit. Backend RPC response limits remain separately specified; the Codex backend SHALL NOT impose a running-turn inactivity limit.
 
 #### Scenario: Close arrives first
 - **WHEN** a spawned agent emits close with an exit code

@@ -66,7 +66,7 @@ Because Codex generates its own `thread_id` rather than accepting a client-suppl
 
 
 ### Requirement: Permission mode maps to a Codex sandbox posture, defaulting to YOLO
-The daemon SHALL map its resolved permission mode to App Server configuration on both thread/start and thread/resume and relevant turn overrides: yolo SHALL use the supported full-access sandbox posture and noninteractive approval policy; chorus SHALL use the supported read-only sandbox posture and noninteractive approval policy. An unconfigured daemon SHALL retain its existing yolo default. The implementation MUST verify exact field names against the supported CLI schema and MUST NOT let stored thread policy or custom args override the daemon's resolved posture. Read-only refers to Codex sandbox semantics, including read-only commands permitted by that sandbox.
+The daemon SHALL map its resolved permission mode to App Server configuration on both thread/start and thread/resume and relevant turn overrides: yolo SHALL use the supported full-access sandbox posture and noninteractive approval policy; chorus SHALL use the supported read-only sandbox posture and noninteractive approval policy. An unconfigured daemon SHALL retain its existing yolo default. The implementation MUST verify exact field names against the supported CLI schema and MUST NOT let stored thread policy or custom args override the daemon's resolved posture. Read-only refers to Codex sandbox semantics, including read-only commands permitted by that sandbox. MCP availability also depends on operator-configured per-tool approval rules; read-only sandbox posture alone SHALL NOT be documented as guaranteeing every Chorus MCP tool is permitted. The daemon MUST NOT broaden sandbox access or automatically grant native approval requests to make a tool succeed.
 
 #### Scenario: Default codex wake runs with full-autonomy sandbox bypass
 - **WHEN** the daemon wakes codex without a permission override
@@ -102,17 +102,21 @@ The codex daemon backend SHALL exclusively spawn codex app-server --listen stdio
 - **WHEN** the turn fails or is interrupted even though the child later exits zero
 - **THEN** the wake MUST retain the failed/interrupted outcome
 
-#### Scenario: RPC fault or stalled progress
-- **WHEN** handshake, turn submission or semantic inactivity reaches its finite limit, or protocol input is malformed/oversized, or IO fails
+#### Scenario: RPC response deadline or protocol fault
+- **WHEN** handshake, thread setup or turn submission reaches its finite response limit, or protocol input is malformed/oversized, or IO fails
 - **THEN** pending RPCs MUST be rejected, the wake MUST fail visibly and perform bounded cleanup without repeating turn/start
 
 #### Scenario: Unrelated notifications and duplicate terminal events
 - **WHEN** notifications target another thread/turn or repeat a terminal event
 - **THEN** they MUST NOT complete or duplicate this wake's transcript, usage or terminal reporting
 
-#### Scenario: Healthy long-running turn
-- **WHEN** a turn continues producing relevant progress beyond the inactivity duration
-- **THEN** it MUST remain running with the inactivity timer refreshed and no fixed total-duration cutoff
+#### Scenario: Silent long-running turn
+- **WHEN** a submitted turn is still running, including while a command emits no output or notifications
+- **THEN** it MUST remain running without an inactivity watchdog or total-duration cutoff until terminal outcome, process/transport failure, or authorized cancellation
+
+#### Scenario: Interrupt a silent turn
+- **WHEN** the user interrupts a running turn that has emitted no recent progress
+- **THEN** the daemon MUST still send turn/interrupt when its ID is known and retain bounded cancellation cleanup
 
 ### Requirement: Native human requests never block a headless Codex wake
 Known native approval/input requests SHALL receive a supported negative/cancel response with a visible diagnostic. If no safe schema-valid response exists, the adapter SHALL interrupt/fail and clean up. Unknown server requests SHALL receive a method-not-supported response and MUST NOT create unbounded waiting. Human decisions SHALL continue through existing Chorus comments/elaboration, with no new bridge UI and no auto-approval.

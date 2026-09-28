@@ -533,15 +533,35 @@ Native approval/elicitation requests receive a negative response where the
 protocol supports one; requests without a safe negative response fail the wake.
 No terminal prompt is opened. Failed, interrupted, or missing terminal outcomes
 are never reported as a successful turn just because the process exits zero.
-The restricted mode remains read-only with approvals disabled: Codex can reject
-MCP calls that require approval under this policy. The verified YOLO-mode smoke
-successfully ran Chorus check-in with the same installed plugin/config.
+The restricted mode remains read-only with interactive approvals disabled. On
+Codex 0.157.1, a Chorus MCP tool that requires approval is rejected under this
+policy; this was also observed for `chorus_checkin` with the previous `exec`
+backend. A successful turn exit alone does not mean its MCP calls succeeded.
+
+Operators can explicitly allow a selected tool in their Codex configuration
+(`~/.codex/config.toml`, or the agent's `CODEX_HOME/config.toml`):
+
+```toml
+[mcp_servers.chorus.tools.chorus_checkin]
+approval_mode = "approve"
+```
+
+The exact override was verified with real new and resumed App Server threads:
+`chorus_checkin` completed while `approvalPolicy: never`, `sandbox: read-only`
+and the turn's `networkAccess: false` remained in effect. Without that tool
+allowance, both calls were denied. Other Chorus tools need their own operator
+choice and verification; this does not automatically allow comments or task
+updates. Put these rules in Codex configuration, not daemon `args` (which protect
+`mcp_servers` overrides). The daemon itself never approves native requests.
+The verified YOLO-mode smoke also successfully ran Chorus check-in.
 
 Diagnostics report fixed failure classifications without provider payloads,
 prompts, credentials, or raw stderr. For startup/protocol failures check the CLI
 version, login, model/config, and local session-map permissions. Defaults bound
-initialization to 30 seconds, thread/turn RPC setup to 60 seconds, semantic
-inactivity to 10 minutes, and cleanup to 10 seconds. Missing Chorus MCP config
+initialization to 30 seconds, thread/turn RPC setup responses to 60 seconds,
+and cleanup to 10 seconds. A running turn has no inactivity watchdog or total
+duration limit: quiet commands can keep running without emitting events. Use the
+UI interrupt control to stop a genuinely stuck turn. Missing Chorus MCP config
 retains warning-and-run behavior; install the Chorus plugin/config in every
 custom Codex home for check-in and skill context.
 Explicit `CLOSED` diagnostics are informational; transport failures remain
