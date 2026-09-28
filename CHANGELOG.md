@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.19.1] - 2026-09-28
+
+### Added
+- **Lightweight Research**: Added optional, focused research to Idea and Proposal workflows across all seven skill surfaces, with a Tracker action available before development starts. (#577)
+- **Inline evidence citations**: Markdown now renders `ref:UUID` citations as interactive references to attached evidence. (#576)
+
+### Changed
+- **Daemon operations**: Idea creation and Research now use dedicated events and structured payloads, with distinct conversation labels, serialized execution, and compatibility for older clients. (#578)
+
+### Fixed
+- **Project creation**: Prevented duplicate submissions and added safe recovery when project creation or working-directory setup times out. (#575)
+
+### Plugin
+- **Versions**: Upgraded all six plugins and four npm packages to `0.19.1`.
+
+---
+
 ## [0.19.0] - 2026-09-23
 
 ### Added
