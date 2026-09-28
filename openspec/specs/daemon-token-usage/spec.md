@@ -134,7 +134,7 @@ The conversation view header SHALL show a running total across the conversation 
 
 ### Requirement: The daemon SHALL capture per-turn usage from the Codex `turn.completed` stream event and normalize it to the shared TokenUsage contract
 
-The daemon SHALL extract per-turn token usage from the Codex `codex exec --json` stream's `turn.completed` event, whose `usage` object carries the authoritative per-turn counts. It SHALL normalize that usage into the same `TokenUsage` shape used by every backend, with `source` set to the Codex backend identifier (`"codex"`, matching the daemon's Codex client type). The capture SHALL be discriminated from the Claude Code capture purely by the stream event's top-level type (`turn.completed` vs `result`), requiring no backend flag on the capture path, and SHALL NOT alter the Claude Code capture. A stream that yields no parseable `turn.completed` usage SHALL produce a null/absent usage for that turn without failing the turn. This SHALL be the only production change; the TokenUsage contract, the `turn-advance` wire object, the persistence, the SSE projection, and the UI SHALL be reused unchanged.
+The daemon SHALL adapt App Server thread/tokenUsage/updated cumulative totals into one internal turn.completed usage envelope for the active turn, subtracting a trustworthy same-thread pre-turn or persisted baseline before existing exclusive-input/cache normalization. It SHALL NOT sum snapshots, count reasoning output twice, or treat the latest individual model-request usage as the whole turn. On resumed history without a baseline it SHALL seed the baseline and omit that turn's usage. Regressing/invalid counters SHALL omit affected usage and re-seed instead of counting historical totals. A fresh replacement thread SHALL use a fresh baseline. Missing fields SHALL remain null, source SHALL remain codex, and existing model-null behavior SHALL remain. Capture, wire, persistence, SSE and UI contracts SHALL remain unchanged, and no usage-bearing event SHALL be delivered more than once per turn. Valid observed terminal totals SHALL be persisted on failure/interruption as well as success so later turns do not re-count them.
 
 #### Scenario: A completed Codex turn populates the shared shape
 
@@ -143,7 +143,7 @@ The daemon SHALL extract per-turn token usage from the Codex `codex exec --json`
 - **AND** `cacheReadTokens` from `cached_input_tokens`
 - **AND** `cacheCreationTokens` from `cache_write_input_tokens`
 - **AND** `source` MUST be the Codex backend identifier
-- **AND** `model` MUST be null because the Codex stream carries no model id on any event
+- **AND** `model` MUST be null to preserve the existing reporting contract in this migration
 
 #### Scenario: Output tokens are taken from output_tokens alone (reasoning is already inside it)
 
@@ -170,4 +170,20 @@ The daemon SHALL extract per-turn token usage from the Codex `codex exec --json`
 - **WHEN** a Codex turn completes with a captured usage and the daemon advances the turn to its terminal status
 - **THEN** the usage MUST ride the existing `turn-advance` terminal edge as the same nested `usage` object used by Claude Code
 - **AND** it MUST be persisted, projected on the read views, and pushed over the existing SSE channel with no new wire field, schema column, endpoint, or SSE channel
+
+#### Scenario: Repeated cumulative snapshots are counted once
+- **WHEN** a resumed turn receives cumulative snapshots 110, 120 and duplicate 120 against baseline 100
+- **THEN** the pre-normalization delta MUST be 20, never 250 or 350, and the final normalized usage MUST be delivered once
+
+#### Scenario: Legacy thread lacks baseline
+- **WHEN** a resumed exec-era thread has no trustworthy pre-turn total
+- **THEN** the adapter MUST persist the observed total for the next wake and omit this turn's usage
+
+#### Scenario: Interrupted totals seed future resumes
+- **WHEN** a turn is interrupted after valid cumulative usage was observed
+- **THEN** that thread's stored baseline MUST advance to the observed total and subsequent resume MUST NOT count those tokens again
+
+#### Scenario: Changed thread or regressing totals
+- **WHEN** fallback establishes a new thread or cumulative totals regress
+- **THEN** the adapter MUST avoid subtracting an unrelated baseline; fresh-thread counts use zero while uncertain regressed counts are omitted and re-seeded
 
