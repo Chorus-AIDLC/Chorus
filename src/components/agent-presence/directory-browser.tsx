@@ -87,56 +87,82 @@ interface DirectoryBrowserProps {
 
 function abortableDelay(signal: AbortSignal, delay: number) {
   return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, delay);
-    signal.addEventListener("abort", () => {
-      clearTimeout(timer);
+    if (signal.aborted) {
       reject(new DOMException("Aborted", "AbortError"));
-    }, { once: true });
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delay);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function throwIfAborted(signal: AbortSignal) {
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
 }
 
 async function requestDirectory(
   payload: Record<string, unknown>,
   signal: AbortSignal,
 ) {
-  const response = await fetch("/api/daemon-directory-requests", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    signal,
-  });
-  const body = await response.json();
-  if (!response.ok || !body.success) {
-    throw new Error(body.error?.code ?? "INTERNAL_ERROR");
-  }
-  let request = body.data.request;
-  while (request.status === "pending") {
-    await abortableDelay(signal, 300);
-    const poll = await fetch(
-      `/api/daemon-directory-requests/${encodeURIComponent(request.uuid)}`,
-      { signal },
-    );
-    const pollBody = await poll.json();
-    if (!poll.ok || !pollBody.success) {
-      throw new Error(pollBody.error?.code ?? "INTERNAL_ERROR");
+  throwIfAborted(signal);
+  try {
+    const response = await fetch("/api/daemon-directory-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    throwIfAborted(signal);
+    const body = await response.json();
+    throwIfAborted(signal);
+    if (!response.ok || !body.success) {
+      throw new Error(body.error?.code ?? "INTERNAL_ERROR");
     }
-    request = pollBody.data.request;
+    let request = body.data.request;
+    while (request.status === "pending") {
+      await abortableDelay(signal, 300);
+      throwIfAborted(signal);
+      const poll = await fetch(
+        `/api/daemon-directory-requests/${encodeURIComponent(request.uuid)}`,
+        { signal },
+      );
+      throwIfAborted(signal);
+      const pollBody = await poll.json();
+      throwIfAborted(signal);
+      if (!poll.ok || !pollBody.success) {
+        throw new Error(pollBody.error?.code ?? "INTERNAL_ERROR");
+      }
+      request = pollBody.data.request;
+    }
+    if (request.status !== "success") {
+      throw new Error(request.errorCode ?? "INTERNAL_ERROR");
+    }
+    return request;
+  } catch (error) {
+    throwIfAborted(signal);
+    throw error;
   }
-  if (request.status !== "success") {
-    throw new Error(request.errorCode ?? "INTERNAL_ERROR");
-  }
-  return request;
 }
 
 export async function validateDirectorySelection(
   selection: DirectorySelection,
+  signal: AbortSignal = new AbortController().signal,
 ): Promise<ValidatedDirectory> {
   const request = await requestDirectory({
     operation: "validate",
     agentUuid: selection.agentUuid,
     targetConnectionUuid: selection.connectionUuid,
     cwd: selection.cwd,
-  }, new AbortController().signal);
+  }, signal);
+  throwIfAborted(signal);
   return {
     ...selection,
     cwd: typeof request.result?.normalizedPath === "string"

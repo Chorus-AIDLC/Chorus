@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.19.0"
+  version: "0.19.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -91,6 +91,10 @@ for resource, actions in need:
 - `--project <uuid>` -- optional; use an existing project instead of creating a new one
 
 ---
+
+## Research routing
+
+During planning, follow the Idea and Proposal routes to `/skill:research` ([shared rules](../research/SKILL.md)): Idea before formal clarification once focused, Proposal after reusing evidence and only for new gaps or an explicit request. Carry findings and the request context across wakes and brainstorm; do not restart the same investigation on resume. Preserve the existing yolo decision/review gates. A Tracker Research action is research-only even inside a yolo-associated conversation: use the Idea research-only branch, save/report, and return without advancing to elaboration, proposal submission, or development. A yolo request alone does not prove development started; use actual execution facts.
 
 ## Workflow
 

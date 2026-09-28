@@ -144,7 +144,11 @@ export class WakeQueue {
     }
     // Coalesce: take everything pending for this key right now as one batch.
     // Items that arrive after this splice accumulate for the NEXT batch.
-    const items = queue.splice(0);
+    // An isolated instruction (Research) keeps the same serial lane but cannot
+    // merge with lifecycle wakes before or after it.
+    const boundary = queue.findIndex((item) => item?.isolated === true);
+    const count = boundary === 0 ? 1 : boundary > 0 ? boundary : queue.length;
+    const items = queue.splice(0, count);
     this.running.add(key);
     this.activeCount++;
 

@@ -12,6 +12,20 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      research-postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout code
@@ -34,11 +48,21 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: Initialize isolated Research test database
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5435/postgres?sslmode=disable
+        run: pnpm exec prisma db push
+
       - name: Run tests with coverage
+        env:
+          RESEARCH_DATABASE_URL: postgresql://postgres:postgres@localhost:5435/postgres?sslmode=disable
         run: pnpm test:coverage -- --reporter=json --outputFile=coverage/test-results.json
 
       - name: Run coordinated package-contract tests
         run: pnpm test:release-contract
+
+      - name: Verify Research skill distribution across seven hosts
+        run: node --test plugins/chorus/tests/research-distribution.test.mjs
 
       - name: Run plugin shell tests (Bash 3.2-compat syntax smoke + spec-mode resolver + skill/harness string blacklist + sub-agent session naming)
         # Note: the runner's bash is 5.x, so test-syntax.sh is a compatibility

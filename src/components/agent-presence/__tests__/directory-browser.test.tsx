@@ -6,7 +6,10 @@ vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
 }));
 
-import { DirectoryBrowser } from "@/components/agent-presence/directory-browser";
+import {
+  DirectoryBrowser,
+  validateDirectorySelection,
+} from "@/components/agent-presence/directory-browser";
 
 const instance = {
   connectionUuid: "connection-1",
@@ -55,6 +58,145 @@ async function loadRoot(fetchMock: ReturnType<typeof vi.fn>, roots = ["/work"]) 
       .toBe(`${roots[0]}/`);
   });
 }
+
+describe("validateDirectorySelection", () => {
+  const selection = {
+    agentUuid: "agent-1",
+    connectionUuid: "connection-1",
+    host: "build-host",
+    cwd: "/workspace",
+  };
+  const pending = () => Promise.resolve({
+    ok: true,
+    json: async () => ({
+      success: true,
+      data: { request: { uuid: "pending-1", status: "pending" } },
+    }),
+  });
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("forwards the same signal to POST and polling and cleans up completed delays", async () => {
+    const controller = new AbortController();
+    const addListener = vi.spyOn(controller.signal, "addEventListener");
+    const removeListener = vi.spyOn(controller.signal, "removeEventListener");
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(pending)
+      .mockImplementationOnce(() => success({ normalizedPath: "/normalized" }, "validation-1"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const validation = validateDirectorySelection(selection, controller.signal);
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(validation).resolves.toEqual({
+      ...selection, cwd: "/normalized", validationRequestUuid: "validation-1",
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/daemon-directory-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operation: "validate",
+        agentUuid: selection.agentUuid,
+        targetConnectionUuid: selection.connectionUuid,
+        cwd: selection.cwd,
+      }),
+      signal: controller.signal,
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2, "/api/daemon-directory-requests/pending-1", { signal: controller.signal },
+    );
+    expect(removeListener).toHaveBeenCalledWith("abort", addListener.mock.calls[0][1]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("remains compatible with callers that omit a signal", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => success({}, "validation-1")));
+    await expect(validateDirectorySelection(selection)).resolves.toEqual({
+      ...selection, validationRequestUuid: "validation-1",
+    });
+  });
+
+  it("rejects an already aborted signal before POST", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    controller.abort("closed");
+    await expect(validateDirectorySelection(selection, controller.signal))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cancels a polling delay immediately and removes its listener and timer", async () => {
+    const controller = new AbortController();
+    const addListener = vi.spyOn(controller.signal, "addEventListener");
+    const removeListener = vi.spyOn(controller.signal, "removeEventListener");
+    const fetchMock = vi.fn(pending);
+    vi.stubGlobal("fetch", fetchMock);
+    const validation = validateDirectorySelection(selection, controller.signal);
+    const rejection = expect(validation).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(1);
+
+    controller.abort();
+    await rejection;
+    expect(removeListener).toHaveBeenCalledWith("abort", addListener.mock.calls[0][1]);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["POST", "resolve"], ["POST", "reject"],
+    ["poll", "resolve"], ["poll", "reject"],
+  ])("rejects a late %s %s as AbortError", async (phase, outcome) => {
+    const controller = new AbortController();
+    const deferred = deferredResponse();
+    const fetchMock = vi.fn();
+    if (phase === "poll") fetchMock.mockImplementationOnce(pending);
+    fetchMock.mockReturnValueOnce(deferred.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const validation = validateDirectorySelection(selection, controller.signal);
+    const rejection = expect(validation).rejects.toMatchObject({ name: "AbortError" });
+    if (phase === "poll") await vi.advanceTimersByTimeAsync(300);
+    controller.abort("closed");
+
+    if (outcome === "resolve") {
+      deferred.resolve(await success({ normalizedPath: "/late" }));
+    } else {
+      deferred.reject(new Error("late network failure"));
+    }
+    await rejection;
+    expect(fetchMock).toHaveBeenCalledTimes(phase === "poll" ? 2 : 1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["resolve", "reject"])("checks cancellation after a late response body %s", async (outcome) => {
+    const controller = new AbortController();
+    let resolve!: (value: unknown) => void;
+    let reject!: (error: Error) => void;
+    const body = new Promise((done, fail) => { resolve = done; reject = fail; });
+    const json = vi.fn(() => body);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json });
+    vi.stubGlobal("fetch", fetchMock);
+    const validation = validateDirectorySelection(selection, controller.signal);
+    const rejection = expect(validation).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(json).toHaveBeenCalled();
+    controller.abort();
+    if (outcome === "resolve") {
+      resolve(await (await pending()).json());
+    } else {
+      reject(new Error("invalid response body"));
+    }
+    await rejection;
+    expect(vi.getTimerCount()).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("DirectoryBrowser", () => {
   beforeEach(() => {

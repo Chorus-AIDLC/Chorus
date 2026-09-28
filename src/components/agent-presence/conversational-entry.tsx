@@ -21,22 +21,20 @@
 //              own endpoint (add-conversational-idea-root-session: the
 //              create-idea modal posts /api/ideas/conversational, which
 //              pre-creates the Idea and composes the instruction server-side).
-//              Either way the created SessionView is handed to `onStarted` so
-//              the consumer can close itself and land the user on the new
-//              conversation (`openChatForSession`).
+//              Either way the created SessionView is handed to `onStarted`;
+//              the consumer owns its success feedback and any navigation.
 //
 // Char budget: the USER text is capped at USER_TEXT_MAX_CHARS (3000) with a
-// visible counter near the limit, reserving template headroom under the server's
-// MAX_INSTRUCTION_CHARS (4000) so a composed instruction never 400s on length —
-// wherever the template is applied (client `buildInstruction` or a custom
-// dispatch's server-side composition).
+// visible counter near the limit. Idea creation validates that same user-text
+// budget separately from its server-generated template. Default ad-hoc dispatch
+// still has a 4000-character total budget, including any client-built template.
 //
 // Errors are never silent: a 409 (the picked connection went offline between the
 // presence poll and the send) renders an inline retryable error AND re-polls the
 // connection list immediately (`refreshConnections`) so the picker re-syncs;
 // other failures surface the server reason inline the same way.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2, SendHorizonal, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
@@ -64,13 +62,9 @@ import {
   extractInstructionError,
 } from "./send-instruction-box";
 import type { ConnectionView } from "./types";
+import { CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS } from "@/lib/conversational-idea";
 
-// Client cap on the USER's free text. The composed instruction = template + user
-// text and must stay under the server's MAX_INSTRUCTION_CHARS (4000); capping the
-// user share at 3000 leaves ~1000 chars of template headroom (the create-idea
-// template uses ~500). Consumers with a heavier template should keep it inside
-// that headroom rather than raising this cap.
-export const USER_TEXT_MAX_CHARS = 3000;
+export const USER_TEXT_MAX_CHARS = CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS;
 
 // Show the live character counter once the user is within this many chars of the
 // cap (a counter from char 0 is noise; near the limit it is the affordance).
@@ -115,7 +109,7 @@ export interface ConversationalEntryProps {
   // absent). Defaults to the shared DaemonConnectCta guidance.
   offlineFallback?: ReactNode;
   // Called with the created session after a successful dispatch — the consumer
-  // typically closes itself and calls `openChatForSession(session)`.
+  // decides whether to close the form, show feedback or select it within an open chat.
   onStarted: (session: SessionView) => void;
   // Preselect this agent when it has an online connection (e.g. a future
   // idea-detail entry point that already knows the assignee).
@@ -261,6 +255,7 @@ export function ConversationalEntry({
 
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
+  const sending = useRef(false);
   // Inline (non-toast) dispatch error — the entry usually lives in a modal where
   // an inline message beats a toast behind the overlay. Cleared on each retry.
   const [sendError, setSendError] = useState<string | null>(null);
@@ -313,7 +308,10 @@ export function ConversationalEntry({
   };
 
   const send = async () => {
-    if (sendDisabled || !selectedAgent || !selectedInstance) return;
+    if (sending.current || sendDisabled || !selectedAgent || !selectedInstance) return;
+    // Guard immediately: two click/Enter events can share the render that still
+    // has pending=false. State alone only disables the next rendered button.
+    sending.current = true;
     setPending(true);
     setSendError(null);
     try {
@@ -339,6 +337,7 @@ export function ConversationalEntry({
       clientLogger.error("Failed to dispatch conversational entry:", error);
       setSendError(t("sendError"));
     } finally {
+      sending.current = false;
       setPending(false);
     }
   };

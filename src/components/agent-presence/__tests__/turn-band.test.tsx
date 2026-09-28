@@ -12,14 +12,21 @@
 import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
+let currentLocale = "en";
 vi.mock("next-intl", async () => {
   const en = (await import("../../../../messages/en.json")).default as Record<
     string,
     unknown
   >;
+  const locales: Record<string, Record<string, unknown>> = {
+    en,
+    zh: (await import("../../../../messages/zh.json")).default,
+    ja: (await import("../../../../messages/ja.json")).default,
+    ko: (await import("../../../../messages/ko.json")).default,
+  };
   function resolve(namespace: string, key: string): string {
     const fullKey = namespace ? `${namespace}.${key}` : key;
-    let node: unknown = en;
+    let node: unknown = locales[currentLocale];
     for (const p of fullKey.split(".")) {
       if (node && typeof node === "object" && p in (node as Record<string, unknown>)) {
         node = (node as Record<string, unknown>)[p];
@@ -73,6 +80,7 @@ function renderBand(t: TurnWithMessagesView) {
 }
 
 beforeEach(() => {
+  currentLocale = "en";
   // jsdom lacks ResizeObserver; Radix Popover content uses it when opened (the badge tests).
   if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
     (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
@@ -470,5 +478,43 @@ describe("TurnBand — per-turn token usage badge (daemon-token-usage)", () => {
     );
     // Headline is in+out = 0, but the turn DID consume cache → badge shows (tooltip has cache).
     expect(screen.getByText("0 tok")).toBeTruthy();
+  });
+});
+
+const operationLabels = [
+  ["en", "Create Idea", "Research", "Queued", "Running", "Ended", "Interrupted", "Merged"],
+  ["zh", "创建 Idea", "调研"],
+  ["ja", "Idea を作成", "リサーチ"],
+  ["ko", "Idea 생성", "리서치"],
+];
+describe("canonical operation bands", () => {
+  it.each(operationLabels)("%s labels preserve real messages and hide compatibility prompts", (locale, creationLabel, researchLabel) => {
+    currentLocale = locale;
+    for (const [trigger, label] of [["idea_creation_requested", creationLabel], ["research_requested", researchLabel]]) {
+      for (const status of ["pending", "running", "ended", "interrupted", "merged"] as const) {
+        const { unmount } = renderBand(turn({ trigger, status, promptText: "SECRET COMPATIBILITY INSTRUCTION", messages: [
+          { uuid: "real-user", turnUuid: "t1", seq: 1, role: "user", text: "Real human text", createdAt: "2026-07-04T03:00:00.000Z" },
+          { uuid: "real-assistant", turnUuid: "t1", seq: 2, role: "assistant", text: "Real assistant text", createdAt: "2026-07-04T03:00:00.000Z" },
+        ] }));
+        expect(screen.getByText(label)).toBeTruthy();
+        expect(screen.queryByText("SECRET COMPATIBILITY INSTRUCTION")).toBeNull();
+        expect(screen.getByText("Real human text")).toBeTruthy();
+        expect(screen.getByText("Real assistant text")).toBeTruthy();
+        if (locale === "en") expect(screen.getByText({ pending: "Queued", running: "Running", ended: "Ended", interrupted: "Interrupted", merged: "Merged" }[status])).toBeTruthy();
+        unmount();
+      }
+    }
+  });
+
+  it("hides operation compatibility instructions in the expanded legacy-coalesced history", () => {
+    render(<TurnBand turn={turn()} agentName="Alpha" linkedExecution={null} mergedEvents={[
+      { turn: turn({ uuid: "creation", seq: 2, trigger: "idea_creation_requested", status: "merged", promptText: "CREATION SYSTEM PROMPT" }), linkedExecution: null },
+      { turn: turn({ uuid: "research", seq: 3, trigger: "research_requested", status: "merged", promptText: "RESEARCH SYSTEM PROMPT" }), linkedExecution: null },
+    ]} />);
+    fireEvent.click(screen.getByRole("button", { name: /merged.*events/i }));
+    expect(screen.getByText("Create Idea")).toBeTruthy();
+    expect(screen.getByText("Research")).toBeTruthy();
+    expect(screen.queryByText("CREATION SYSTEM PROMPT")).toBeNull();
+    expect(screen.queryByText("RESEARCH SYSTEM PROMPT")).toBeNull();
   });
 });

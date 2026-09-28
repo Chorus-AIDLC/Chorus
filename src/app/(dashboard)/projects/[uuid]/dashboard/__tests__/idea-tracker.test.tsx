@@ -19,6 +19,7 @@ import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
+import userEvent from "@testing-library/user-event";
 import { IdeaTracker } from "../idea-tracker";
 import type { IdeaCardItem } from "../idea-card";
 import type { TrackerGroupsResult, TrackerIdeaItem } from "@/services/idea.service";
@@ -52,7 +53,19 @@ vi.mock("../idea-lineage-tree", () => ({
   ),
 }));
 vi.mock("../panels/idea-detail-panel", () => ({ IdeaDetailPanel: () => null }));
-vi.mock("../new-idea-dialog", () => ({ NewIdeaDialog: () => null }));
+vi.mock("../new-idea-dialog", async () => {
+  const { Dialog, DialogContent, DialogTitle } = await import("@/components/ui/dialog");
+  return {
+    NewIdeaDialog: ({ open, onOpenChange, onCloseAutoFocus }: {
+      open: boolean; onOpenChange: (open: boolean) => void; onCloseAutoFocus: (event: Event) => void;
+    }) => <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
+        <DialogTitle>Creation submission</DialogTitle>
+        <button onClick={() => onOpenChange(false)}>Finish submission</button>
+      </DialogContent>
+    </Dialog>,
+  };
+});
 
 vi.mock("next-intl", async () => {
   const en = (await import("../../../../../../../messages/en.json")).default as Record<
@@ -122,6 +135,25 @@ beforeEach(() => {
 });
 
 describe("IdeaTracker — emptiness tracks the live list (regression #1)", () => {
+  it.each(["header", "empty", "replaced-empty"])("restores keyboard focus to the %s creation trigger", async (source) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      json: async () => ({ success: true, data: flatTracker }),
+    }));
+    render(<IdeaTracker {...baseProps} initialTrackerData={source === "header" ? flatTracker : emptyTracker} />);
+    const user = userEvent.setup();
+    const opener = screen.getByRole("button", { name: "New Idea" });
+    await user.click(opener);
+    const submit = screen.getByRole("button", { name: "Finish submission" });
+    if (source === "replaced-empty") {
+      await act(async () => { await realtimeCallbacks.get("idea")?.(); });
+    }
+    submit.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "New Idea" })));
+    if (source !== "replaced-empty") expect(document.activeElement).toBe(opener);
+  });
+
   it("reveals the header New Idea button after the first idea arrives via realtime refresh", async () => {
     // Empty project: header New Idea is hidden, the list shows its own CTA.
     const fetchMock = vi.fn().mockResolvedValue({

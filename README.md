@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.19.1](https://chorus-ai.dev/blog/chorus-v0.19.1-release/)** — Lightweight Research checks factual gaps during Idea and Proposal preparation. Inline evidence citations put sources next to claims, and Tracker can request more research before development starts.
+
 **[v0.19.0](https://chorus-ai.dev/blog/chorus-v0.19.0-release/)** — Cloudflare-inspired reviewer rules: clearer scope, complete blocker evidence, and stable finding IDs across rounds. Task reviews now check code quality beyond acceptance criteria.
 
 **[v0.18.0](https://chorus-ai.dev/blog/chorus-v0.18.0-release/)** — Built-in `spec-lite` adds a lightweight, Git-native local spec workflow alongside OpenSpec. Live session anchors let daemon agents return replies to the initiating agent's existing Idea session.
@@ -45,16 +47,6 @@ The labels under each stage are the **permissions** an actor needs there — gra
 **[v0.17.2](https://chorus-ai.dev/blog/chorus-v0.17.2-release/)** — Pi is now a published, wakeable Chorus agent, and `chorus agents run` switches local agent profiles with one command.
 
 **[v0.17.0–0.17.1](https://github.com/Chorus-AIDLC/Chorus/releases/tag/v0.17.1)** — One CLI now installs and refreshes Chorus across your coding agents. Live daemon activity is visible directly on Ideas in Tracker, Graph, and detail views.
-
-**[v0.16.4](https://chorus-ai.dev/blog/chorus-v0.16.4-release/)** — DeepSeek Harness (dsh) is the sixth way to connect: the `@chorus-aidlc/chorus-dsh` bundle drops Chorus's skills, persona, and MCP config into any dsh profile. Interactive for now; daemon wake comes later.
-
-**[v0.16.1](https://chorus-ai.dev/blog/chorus-v0.16.1-release/)** — One `chorus daemon` now serves many independent agents at once — each with its own key, working directories, backend, and permissions via an `agents[]` array — and agents can hand work to each other by @-mention, with each wake landing in that agent's own project directory.
-
-**[v0.16.0](https://chorus-ai.dev/blog/chorus-v0.16.0-release/)** — A `docs` skill that points agents at the live docs site ([doc.chorus-ai.dev](https://doc.chorus-ai.dev)), so they answer from the current docs instead of reciting from memory.
-
-**[v0.15.0](https://chorus-ai.dev/blog/chorus-v0.15.0-release/)** — Project-level Agent working directories: each user can bind every Agent in a project to a host and cwd, browse only daemon-approved roots, and use the same target across assignment, wake, resume, and later turns without moving active sessions. Codex now persists its resumable backend thread ID separately and drops obsolete Chorus session-management steps.
-
-**[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI is the fourth way to connect (Kiro CLI v2): a one-command Kiro plugin via `chorus agents add` and a `--agent kiro` daemon backend, plus daemon fixes.
 
 > Full changelog: [CHANGELOG.md](CHANGELOG.md)
 
@@ -65,7 +57,7 @@ The labels under each stage are the **permissions** an actor needs there — gra
 Two commands. No database, no Docker, no config files.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.19.0
+npm install -g @chorus-aidlc/chorus@0.19.1
 chorus
 ```
 

@@ -162,6 +162,13 @@ export class ChorusEventRouter {
       return;
     }
 
+    // Dedicated operations execute only via origin-scoped turn delivery. Their
+    // audit notifications must never wake another instance or duplicate execution.
+    if (notification.action === "idea_creation_requested" || notification.action === "research_requested") {
+      this.logger.info(`${notification.action} delivered via pending turns; ignoring notification`);
+      return;
+    }
+
     // Resolve the wake attribution ONCE per notification (daemon parity). The lineage
     // resolver returns { rootIdeaUuid, directIdeaUuid } via the root-idea REST endpoint;
     // both null when there's no idea ancestor or no resolver is wired. The entity

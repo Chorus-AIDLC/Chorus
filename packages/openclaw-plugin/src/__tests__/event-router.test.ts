@@ -56,6 +56,19 @@ describe("ChorusEventRouter.dispatch", () => {
     expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('"count_update" ignored'));
   });
 
+  it.each(["idea_creation_requested", "research_requested"])("ignores turn-delivered %s before lineage/wake", async (action) => {
+    const mcpClient = makeMcpClient({
+      chorus_get_notifications: { notifications: [makeNotification({ action })] },
+    });
+    const lineage = { resolve: vi.fn() };
+    const router = new ChorusEventRouter({ mcpClient: mcpClient as never, lineage: lineage as never, wake, logger });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    expect(wake).not.toHaveBeenCalled();
+    expect(lineage.resolve).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("delivered via pending turns"));
+  });
+
   it("drops connection_registered SILENTLY (no wake, never logged as ignored)", () => {
     const { router } = build({});
     // Defense-in-depth: even if the listener fork were bypassed, the router must

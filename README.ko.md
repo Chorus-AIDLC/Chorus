@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.19.1](https://chorus-ai.dev/blog/chorus-v0.19.1-release/)** — 가벼운 Research로 Idea 구체화와 Proposal 설계 단계에서 핵심 사실을 확인할 수 있습니다. 인라인 근거 인용으로 주장과 출처를 연결하고, 개발 시작 전에는 Tracker에서 추가 조사를 요청할 수 있습니다.
+
 **[v0.19.0](https://chorus-ai.dev/blog/chorus-v0.19.0-release/)** — Cloudflare를 참고해 리뷰 범위를 명확히 하고, 문제의 근거를 온전히 남기며, 고정 ID로 재검토까지 추적합니다. 태스크 리뷰는 인수 기준 외의 코드 품질도 기본으로 검사합니다.
 
 **[v0.18.0](https://chorus-ai.dev/blog/chorus-v0.18.0-release/)** — OpenSpec을 보완하는 가볍고 Git 친화적인 로컬 Spec 관리 방식으로 `spec-lite`를 내장했습니다. live session anchor를 통해 데몬 에이전트의 응답이 작업을 시작한 에이전트의 기존 Idea 세션으로 돌아갑니다.
@@ -45,16 +47,6 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 **[v0.17.2](https://chorus-ai.dev/blog/chorus-v0.17.2-release/)** — Pi를 정식 패키지와 데몬 웨이크로 사용할 수 있으며, `chorus agents run`으로 로컬 에이전트 프로파일을 빠르게 전환할 수 있습니다.
 
 **[v0.17.0–0.17.1](https://github.com/Chorus-AIDLC/Chorus/releases/tag/v0.17.1)** — 하나의 CLI로 여러 코딩 에이전트에 Chorus를 설치하고 업데이트할 수 있습니다. 이제 Tracker, Graph, Idea 상세 화면에서 데몬 활동도 실시간으로 확인할 수 있습니다.
-
-**[v0.16.4](https://chorus-ai.dev/blog/chorus-v0.16.4-release/)** — DeepSeek Harness(dsh)가 여섯 번째 연결 방식으로 추가됩니다: `@chorus-aidlc/chorus-dsh` 번들이 Chorus의 스킬·페르소나·MCP 설정을 임의의 dsh 프로파일에 추가합니다. 현재는 대화식 사용만, 데몬 웨이크는 추후 지원.
-
-**[v0.16.1](https://chorus-ai.dev/blog/chorus-v0.16.1-release/)** — 이제 하나의 `chorus daemon`이 서로 독립적인 여러 에이전트를 동시에 서비스합니다. 각 에이전트는 `agents[]` 배열로 자신의 키·작업 디렉터리·백엔드·권한을 가집니다. 에이전트끼리 @멘션으로 작업을 넘길 수 있고, 각 웨이크는 해당 에이전트 자신의 프로젝트 디렉터리에 도착합니다.
-
-**[v0.16.0](https://chorus-ai.dev/blog/chorus-v0.16.0-release/)** — 에이전트를 문서 사이트([doc.chorus-ai.dev](https://doc.chorus-ai.dev))로 안내하는 `docs` 스킬을 추가해, 기억에 의존하지 않고 현재 문서를 읽고 답하도록 했습니다.
-
-**[v0.15.0](https://chorus-ai.dev/blog/chorus-v0.15.0-release/)** — 프로젝트별 Agent 작업 디렉터리: 각 사용자가 프로젝트의 Agent마다 호스트와 cwd를 지정하고, 데몬이 허용한 루트만 탐색할 수 있습니다. 배정, 웨이크, 재개, 후속 턴에서 같은 실행 위치를 사용하며 진행 중인 세션은 이동하지 않습니다. Codex는 재개 가능한 백엔드 thread ID를 별도로 저장하고, 더 이상 필요하지 않은 Chorus session 관리 단계를 제거했습니다.
-
-**[v0.14.1](https://chorus-ai.dev/blog/chorus-v0.14.1-release/)** — Amazon Kiro CLI가 네 번째 연결 방식이 되었습니다(Kiro CLI v2): `chorus agents add` 명령 한 줄로 설치하는 Kiro 플러그인과 `--agent kiro` 데몬 백엔드, 여기에 몇 가지 데몬 수정.
 
 > 전체 변경 이력: [CHANGELOG.md](CHANGELOG.md)
 
@@ -65,7 +57,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 두 개의 명령이면 됩니다. 데이터베이스도, Docker도, 설정 파일도 필요 없습니다.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.19.0
+npm install -g @chorus-aidlc/chorus@0.19.1
 chorus
 ```
 

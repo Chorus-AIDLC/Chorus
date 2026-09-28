@@ -15,7 +15,7 @@
 // tool, no new permission bit — visibility is enforced by the service's owner/self +
 // company scope. Typed errors → status: unowned agent / foreign or absent connection /
 // foreign project → 404 (non-disclosure); offline or instance-less connection → 409;
-// empty / over-length composed text → 400.
+// empty / over-length user description → 400.
 
 import { NextRequest } from "next/server";
 import { z } from "zod";
@@ -32,8 +32,8 @@ import {
   ProjectCwdTargetUnavailableError,
 } from "@/services/daemon-instruction.service";
 
-// Request body schema. `descriptionText` length is validated in the service (the
-// COMPOSED instruction is checked against the single MAX_INSTRUCTION_CHARS constant);
+// Request body schema. `descriptionText` length is validated in the service against
+// the shared user-description budget, before the server adds its template;
 // here the identifier fields are only required to be present.
 const bodySchema = z.object({
   projectUuid: z.string().min(1),
@@ -45,6 +45,9 @@ const bodySchema = z.object({
   // instruction template. Optional + defaulting false so the existing conversational
   // path is unchanged. Rides the SAME human_instruction wake — no new action type.
   decompose: z.boolean().optional(),
+  // True requests research for this initialization; false/omitted allow automatic
+  // judgment. This is independent of container decomposition.
+  researchFirst: z.boolean().optional(),
 });
 
 // POST /api/ideas/conversational — pre-create idea + root session + first instruction.
@@ -93,7 +96,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     if (err instanceof ProjectCwdTargetUnavailableError) {
       return errors.conflict(err.message);
     }
-    // Empty description / over-length composed instruction → 400. Nothing was created.
+    // Empty / over-length user description → 400. Nothing was created.
     if (err instanceof InstructionTextError) {
       return errors.badRequest(err.message);
     }

@@ -4,7 +4,7 @@ description: Optional divergent-then-convergent dialogue for fuzzy ideas. Invoke
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.19.0"
+  version: "0.19.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -22,6 +22,10 @@ This skill is a **producer** of one elaboration round; the **scheduler** decisio
 Only as a sub-step of the idea skill, only after the user has explicitly opted in via `AskUserQuestion`. Never run standalone, never run without user opt-in. The expected entry point is the idea skill's "Step 4.5: Brainstorm Mode (Optional Prelude)" — see the idea skill for the surrounding flow.
 
 ---
+
+## Research boundary
+
+Reuse the calling Idea's findings and follow `/chorus:research` ([shared rules](../research/SKILL.md)); switching into brainstorm does not grant a second investigation. If the goal needed focusing first, after the user selects a direction and before synthesis, apply the caller's optional research decision once with that focus. Return any findings alongside the synthesized round for the Idea caller to persist. Research does not choose the user's direction, remove the opt-in/selection gate, write files/comments, or resolve elaboration.
 
 ## Hard rules
 

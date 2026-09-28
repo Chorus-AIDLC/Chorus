@@ -2,7 +2,7 @@
 
 Chorus is a work collaboration platform for AI Agents, enabling multiple Agents (PM, Developer, Admin) and humans to collaborate on the same platform through the **AI-DLC (AI Development Life Cycle)** workflow.
 
-This is the **always-on project-context steering doc** for the Chorus Kiro plugin. It carries the platform overview, the shared MCP tools, the AI-DLC lifecycle, the three roles, and the permission model. For a stage-specific workflow, invoke the matching skill (`/chorus-idea`, `/chorus-proposal`, `/chorus-develop`, `/chorus-yolo`, `/chorus-orchestrate`, `/chorus-review`, `/chorus-quick-dev`, `/chorus-brainstorm`, `/chorus-openspec-aware`).
+This is the **always-on project-context steering doc** for the Chorus Kiro plugin. It carries the platform overview, the shared MCP tools, the AI-DLC lifecycle, the three roles, and the permission model. For a stage-specific workflow, invoke the matching skill (`/chorus-idea`, `/chorus-proposal`, `/chorus-develop`, `/chorus-yolo`, `/chorus-orchestrate`, `/chorus-review`, `/chorus-quick-dev`, `/chorus-brainstorm`, `/chorus-research`, `/chorus-openspec-aware`).
 
 > **Why this is steering, not a skill.** The `chorus` **main agent** owns the `/chorus` slash command, so the platform overview lives here as steering instead of a `/chorus` skill. Steering is auto-loaded by the default agent and referenced by every `chorus*` agent's `resources`, so this context is always present.
 
@@ -150,6 +150,20 @@ A **report** is a short idea-completion summary persisted as a `type="report"` D
 A **reference** is a first-class external-evidence link (`docs` / `repo` / `issue_pr` / `paper_blog`) attached to an idea / proposal / task via `chorus_add_reference`, or inline at creation via the `references[]` param on `chorus_pm_create_idea` / `chorus_pm_create_proposal` / `chorus_create_tasks`. References read back inline through the `chorus_get_*` tools.
 
 **Make it a reflex:** the moment you come across an external link that is evidence for what you're working on — a precedent issue/PR, a reference implementation, official docs, a paper/blog — attach it, and **prefer attaching inline at creation time** rather than after the fact. See `/chorus-idea` (Step 4.4) for the type-selection criteria and a worked example.
+
+#### Cite evidence in Markdown
+
+Use the **reference record's UUID** to link evidence directly from any Idea, Proposal, Task, Document body or comment:
+
+```markdown
+This conclusion is supported by [1](ref:550e8400-e29b-41d4-a716-446655440000).
+```
+
+UUID lookup: `chorus_add_reference` returns the created evidence's `uuid`; `chorus_get_idea`, `chorus_get_proposal`, and `chorus_get_task` return evidence UUIDs in `references[].uuid`. An entity's top-level `uuid` identifies the entity, not its evidence. Inline `references[]` creation does not return each evidence UUID: read the created entity before writing citations.
+
+Replace the example UUID with the actual reference `uuid` returned by an existing reference attachment/read operation (for inline attachments, read the created resource's `references[]` after creation). Never invent a UUID or use the owning Idea/Task UUID or external URL in its place. Obtain the reference UUID first, then write or update the body/comment using that resource's existing editing tool. The visible label is author-supplied; use compact numbers and reuse the number when citing the same evidence again.
+
+Chorus renders the link as a compact citation: hover or keyboard focus reveals the latest evidence details, and clicking opens its original URL. Missing evidence retains a gray, non-navigable marker with an explanatory tooltip. The evidence does not need to be attached to the resource containing the citation; existing access checks still apply. Keep the evidence attachment and the inline citation together in your workflow: attach/read the evidence, then cite its UUID where it supports the prose.
 
 ### Proposals
 
@@ -396,6 +410,7 @@ The `chorus` main agent owns `/chorus` and pre-loads all skills below. For stage
 | **Orchestration** | `/chorus-orchestrate` | Coordinate OTHER agents & humans across the lifecycle — delegate ideas (`chorus_pm_assign_idea`) & tasks, fan a theme out to child ideas, run independent reviewers, and gatekeep the proposal/verify gates |
 | **Quick Dev** | `/chorus-quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
 | **Ideation** | `/chorus-idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
+| **Research** | `/chorus-research` | Optional bounded factual checks shared by Idea and Proposal; explicit Tracker Research saves findings to the Idea and returns without advancing lifecycle |
 | **Planning** | `/chorus-proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
 | **Development** | `/chorus-develop` | Claim Tasks, report work, session & subagent management |
 | **Review** | `/chorus-review` | Approve/reject Proposals, verify Tasks, project governance |

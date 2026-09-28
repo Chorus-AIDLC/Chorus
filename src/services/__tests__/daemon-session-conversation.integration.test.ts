@@ -77,18 +77,27 @@ function makeStore() {
 type Store = ReturnType<typeof makeStore>;
 
 // Match a row against a Prisma `where` clause. Supports scalar equality, the
-// `{ not: ... }` / `{ in: [...] }` operators, and the nested relation filters the code
+// OR/NOT, `{ not: ... }` / `{ in: [...] }` / `{ startsWith: ... }`, and the relation filters the code
 // uses (turn.session.*, transcriptMessage.turn.sessionUuid, turn.session{agentUuid,...}).
-function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: Row): boolean {
+// null represents SQL UNKNOWN, so NOT startsWith does not admit a nullable prompt.
+function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: Row): boolean | null {
+  let unknown = false;
   for (const [key, cond] of Object.entries(where ?? {})) {
     if (cond === undefined) continue;
     if (key === "OR") {
-      if (
-        !Array.isArray(cond) ||
-        !cond.some((branch) => matchWhere(store, model, row, branch as Row))
-      ) {
-        return false;
+      if (!Array.isArray(cond)) return false;
+      const matches = cond.map((branch) => matchWhere(store, model, row, branch as Row));
+      if (!matches.includes(true)) {
+        if (!matches.includes(null)) return false;
+        unknown = true;
       }
+      continue;
+    }
+    if (key === "NOT") {
+      const branches = Array.isArray(cond) ? cond : [cond];
+      const matches = branches.map((branch) => matchWhere(store, model, row, branch as Row));
+      if (matches.includes(true)) return false;
+      if (matches.includes(null)) unknown = true;
       continue;
     }
 
@@ -121,12 +130,20 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
         if (!Array.isArray(c.in) || !(c.in as unknown[]).includes(val)) return false;
         continue;
       }
+      if ("startsWith" in c) {
+        if (val == null) {
+          unknown = true;
+        } else if (typeof val !== "string" || typeof c.startsWith !== "string" || !val.startsWith(c.startsWith)) {
+          return false;
+        }
+        continue;
+      }
       // Unknown operator object — treat as no match to surface a gap loudly.
       return false;
     }
     if (val !== cond) return false;
   }
-  return true;
+  return unknown ? null : true;
 }
 
 // Apply a Prisma `orderBy` (single object or array) to a list. Supports scalar fields

@@ -4,8 +4,8 @@
 // the static form as the default and adds a "Describe to an agent" tab whose
 // availability follows the presence spine:
 //   - ≥1 online daemon → tab enabled; switching shows the ConversationalEntry
-//     pane; a successful dispatch closes the dialog + calls openChatForSession
-//     and NEVER onCreated (no Idea exists at dispatch time),
+//     pane; a successful dispatch closes the dialog + acknowledges submission
+//     and NEVER navigates or changes the current conversation,
 //   - 0 online → tab visible but disabled, with the startup CTA hint inline,
 //   - derive-child mode (parentUuid) → no tabs at all (form only).
 //
@@ -14,7 +14,7 @@
 // test the DIALOG's gating, template threading, and handoff wiring.
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("next-intl", async () => {
@@ -50,6 +50,8 @@ vi.mock("next-intl", async () => {
 });
 
 const mockPresence = vi.fn();
+const mockSuccess = vi.fn();
+vi.mock("sonner", () => ({ toast: { success: (...args: unknown[]) => mockSuccess(...args) } }));
 vi.mock("@/contexts/agent-presence-context", () => ({
   useAgentPresenceOptional: () => mockPresence(),
 }));
@@ -61,16 +63,15 @@ vi.mock("@/contexts/agent-presence-context", () => ({
 // dialog uses keeps the seam honest). DaemonConnectCta renders its marker so
 // the offline hint is assertable without pulling the real CTA tree.
 const entryProps = vi.fn();
+let useRealEntry = false;
 vi.mock("@/components/agent-presence", async () => {
-  const { ConversationalDispatchError } = await import(
+  const { ConversationalDispatchError, ConversationalEntry } = await import(
     "@/components/agent-presence/conversational-entry"
   );
   return {
-    ConversationalEntry: (props: {
-      dispatch: (args: unknown) => Promise<unknown>;
-      onStarted: (s: unknown) => void;
-    }) => {
+    ConversationalEntry: (props: React.ComponentProps<typeof ConversationalEntry>) => {
       entryProps(props);
+      if (useRealEntry) return <ConversationalEntry {...props} />;
       return <div>conversational-entry-pane</div>;
     },
     ConversationalDispatchError,
@@ -88,14 +89,18 @@ import { NewIdeaDialog } from "../new-idea-dialog";
 const onlineConn = {
   uuid: "c1",
   agentUuid: "agent-1",
+  agentName: "Alpha",
+  host: "host",
+  cwd: "/project",
   effectiveStatus: "online" as const,
 };
-const mockOpenChatForSession = vi.fn();
+const mockSetModalOpen = vi.fn();
 
 function setPresence(online: boolean) {
   mockPresence.mockReturnValue({
     connections: online ? [onlineConn] : [{ ...onlineConn, effectiveStatus: "offline" }],
-    openChatForSession: mockOpenChatForSession,
+    setModalOpen: mockSetModalOpen,
+    refreshConnections: vi.fn(),
   });
 }
 
@@ -117,6 +122,7 @@ function renderDialog(over: Partial<Parameters<typeof NewIdeaDialog>[0]> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useRealEntry = false;
   mockAuthFetch.mockResolvedValue({
     ok: true,
     json: async () => ({ success: true, data: { agents: [] } }),
@@ -124,6 +130,60 @@ beforeEach(() => {
 });
 
 describe("NewIdeaDialog — mode gating", () => {
+  it("keeps static creation on its existing endpoint and onCreated path without a dispatch toast", async () => {
+    setPresence(true);
+    const fetchMock = vi.fn().mockResolvedValue({ json: async () => ({ success: true, data: { uuid: "static-idea" } }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const { onOpenChange, onCreated } = renderDialog();
+    await user.type(screen.getByLabelText("Title"), "Static Idea");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    expect(fetchMock).toHaveBeenCalledWith("/api/projects/proj-1/ideas", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ title: "Static Idea" }),
+    }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onCreated).toHaveBeenCalledExactlyOnceWith("static-idea");
+    expect(mockSuccess).not.toHaveBeenCalled();
+    expect(mockSetModalOpen).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("real entry decompose=%s prevents duplicate requests, preserves retry text and submits without chat", async (decompose) => {
+    useRealEntry = true;
+    setPresence(true);
+    const user = userEvent.setup();
+    const { onOpenChange, onCreated } = renderDialog();
+    await user.click(screen.getByRole("tab", { name: "Describe to an agent" }));
+    if (decompose) await user.click(screen.getByRole("checkbox", { name: "Help me break this into child ideas" }));
+    await user.click(screen.getByRole("checkbox", { name: "Research before clarifying" }));
+    const text = screen.getByPlaceholderText(/Describe what you want/);
+    fireEvent.change(text, { target: { value: "Keep this description for retry" } });
+    let respond!: (response: unknown) => void;
+    mockAuthFetch.mockImplementationOnce(() => new Promise((resolve) => { respond = resolve; }));
+    const send = screen.getByRole("button", { name: /Send to agent/ });
+    // Same browser event batch: disabled state has not rerendered between clicks.
+    act(() => {
+      (send as HTMLButtonElement).click();
+      (send as HTMLButtonElement).click();
+    });
+    expect(mockAuthFetch.mock.calls.filter(([url]) => url === "/api/ideas/conversational")).toHaveLength(1);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(mockSuccess).not.toHaveBeenCalled();
+    await act(async () => respond({ ok: false, status: 500, json: async () => ({ error: "Try again after reconnecting" }) }));
+    expect(await screen.findByText("Try again after reconnecting")).toBeTruthy();
+    expect((text as HTMLTextAreaElement).value).toBe("Keep this description for retry");
+    expect(mockSetModalOpen).not.toHaveBeenCalled();
+    mockAuthFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+      success: true, data: { session: { uuid: "new-session", sessionId: "new-idea", directIdeaUuid: "new-idea" } },
+    }) });
+    send.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(mockAuthFetch.mock.calls.filter(([url]) => url === "/api/ideas/conversational")).toHaveLength(2);
+    expect(mockSuccess).toHaveBeenCalledExactlyOnceWith("Idea request submitted.");
+    expect(mockSetModalOpen).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
   it("defaults to the static form with an enabled conversational tab when a daemon is online", () => {
     setPresence(true);
     renderDialog();
@@ -171,6 +231,7 @@ describe("NewIdeaDialog — mode gating", () => {
       agentUuid: "agent-1",
       connectionUuid: "c1",
       descriptionText: "my idea",
+      researchFirst: false,
     });
   });
 
@@ -206,6 +267,7 @@ describe("NewIdeaDialog — mode gating", () => {
       agentUuid: "agent-1",
       connectionUuid: "c1",
       descriptionText: "big feature to split",
+      researchFirst: false,
       decompose: true,
     });
   });
@@ -242,15 +304,70 @@ describe("NewIdeaDialog — mode gating", () => {
     ).rejects.toMatchObject({ name: "ConversationalDispatchError" });
   });
 
-  it("successful dispatch closes the dialog and opens the chat on the session — never onCreated", async () => {
+  it("research is conversational-only, keyboard accessible, and combines with decomposition", async () => {
+    setPresence(true);
+    const user = userEvent.setup();
+    const { rerender, onOpenChange } = renderDialog();
+    expect(screen.queryByRole("checkbox", { name: "Research before clarifying" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Describe to an agent" }));
+    const checkbox = screen.getByRole("checkbox", { name: "Research before clarifying" });
+    expect(checkbox.getAttribute("aria-checked")).toBe("false");
+    expect(document.getElementById(checkbox.getAttribute("aria-describedby")!)?.textContent)
+      .toBe("When unchecked, the agent may still research as needed.");
+    checkbox.focus();
+    await user.keyboard(" ");
+    await user.click(screen.getByLabelText("Help me break this into child ideas"));
+    mockAuthFetch.mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ success: true, data: { session: { uuid: "s-research" } } }),
+    });
+    await act(async () => {
+      await entryProps.mock.lastCall![0].dispatch({ agentUuid: "a", connectionUuid: "c", userText: "原文" });
+    });
+    const [, init] = mockAuthFetch.mock.calls.find(([url]) => url === "/api/ideas/conversational")!;
+    expect(JSON.parse(init.body)).toMatchObject({ researchFirst: true, decompose: true, descriptionText: "原文" });
+    rerender(<NewIdeaDialog open projectUuid="proj-1" parentUuid="parent" onOpenChange={onOpenChange} />);
+    expect(screen.queryByRole("checkbox", { name: "Research before clarifying" })).toBeNull();
+  });
+
+  it("retains research after failure, disables it during dispatch, resets on reopen and project change", async () => {
+    setPresence(true);
+    const user = userEvent.setup();
+    const { rerender, onOpenChange } = renderDialog();
+    await user.click(screen.getByRole("tab", { name: "Describe to an agent" }));
+    await user.click(screen.getByRole("checkbox", { name: "Research before clarifying" }));
+    let reject!: (reason: Error) => void;
+    mockAuthFetch.mockReturnValue(new Promise((_, rejectPromise) => { reject = rejectPromise; }));
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = entryProps.mock.lastCall![0].dispatch({ agentUuid: "a", connectionUuid: "c", userText: "x" });
+    });
+    expect((screen.getByRole("checkbox", { name: "Research before clarifying" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      reject(new Error("network"));
+      await expect(pending).rejects.toThrow("network");
+    });
+    expect(screen.getByRole("checkbox", { name: "Research before clarifying" }).getAttribute("aria-checked")).toBe("true");
+    mockAuthFetch.mockResolvedValue({ ok: true, json: async () => ({ data: { agents: [] } }) });
+    rerender(<NewIdeaDialog open={false} projectUuid="proj-1" onOpenChange={onOpenChange} />);
+    rerender(<NewIdeaDialog open projectUuid="proj-1" onOpenChange={onOpenChange} />);
+    expect(screen.getByRole("checkbox", { name: "Research before clarifying" }).getAttribute("aria-checked")).toBe("false");
+    await user.click(screen.getByRole("checkbox", { name: "Research before clarifying" }));
+    rerender(<NewIdeaDialog open projectUuid="proj-2" onOpenChange={onOpenChange} />);
+    expect(screen.getByRole("checkbox", { name: "Research before clarifying" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it.each([false, true])("successful dispatch (decompose=%s) closes with feedback and leaves chat/navigation untouched", async (decompose) => {
     setPresence(true);
     const user = userEvent.setup();
     const { onOpenChange, onCreated } = renderDialog();
     await user.click(screen.getByRole("tab", { name: "Describe to an agent" }));
+    if (decompose) await user.click(screen.getByRole("checkbox", { name: "Help me break this into child ideas" }));
     const session = { uuid: "s-1", agentUuid: "agent-1" };
     entryProps.mock.calls[0][0].onStarted(session);
     expect(onOpenChange).toHaveBeenCalledWith(false);
-    expect(mockOpenChatForSession).toHaveBeenCalledWith(session);
+    expect(mockSetModalOpen).not.toHaveBeenCalled();
+    expect(mockSuccess).toHaveBeenCalledExactlyOnceWith("Idea request submitted.");
     expect(onCreated).not.toHaveBeenCalled();
   });
 

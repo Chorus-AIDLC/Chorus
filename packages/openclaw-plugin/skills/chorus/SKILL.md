@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.19.0"
+  version: "0.19.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -137,6 +137,20 @@ A **report** is a short idea-completion summary persisted as a `type="report"` D
 A **reference** is a first-class external-evidence link (`docs` / `repo` / `issue_pr` / `paper_blog`) attached to an idea / proposal / task via `chorus_add_reference`, or inline at creation via the `references[]` param on `chorus_pm_create_idea` / `chorus_pm_create_proposal` / `chorus_create_tasks`. References read back inline through the `chorus_get_*` tools. (Bare tool names per the namespace note above — prepend `chorus__` when invoking.)
 
 **Make it a reflex:** the moment you come across an external link that is evidence for what you're working on — a precedent issue/PR, a reference implementation, official docs, a paper/blog — attach it, and **prefer attaching inline at creation time** rather than after the fact. See `/idea` (Step 4.4) for the type-selection criteria and a worked example.
+
+#### Cite evidence in Markdown
+
+Use the **reference record's UUID** to link evidence directly from any Idea, Proposal, Task, Document body or comment:
+
+```markdown
+This conclusion is supported by [1](ref:550e8400-e29b-41d4-a716-446655440000).
+```
+
+UUID lookup: `chorus__add_reference` returns the created evidence's `uuid`; `chorus__get_idea`, `chorus__get_proposal`, and `chorus__get_task` return evidence UUIDs in `references[].uuid`. An entity's top-level `uuid` identifies the entity, not its evidence. Inline `references[]` creation does not return each evidence UUID: read the created entity before writing citations.
+
+Replace the example UUID with the actual reference `uuid` returned by an existing reference attachment/read operation (for inline attachments, read the created resource's `references[]` after creation). Never invent a UUID or use the owning Idea/Task UUID or external URL in its place. Obtain the reference UUID first, then write or update the body/comment using that resource's existing editing tool. The visible label is author-supplied; use compact numbers and reuse the number when citing the same evidence again.
+
+Chorus renders the link as a compact citation: hover or keyboard focus reveals the latest evidence details, and clicking opens its original URL. Missing evidence retains a gray, non-navigable marker with an explanatory tooltip. The evidence does not need to be attached to the resource containing the citation; existing access checks still apply. Keep the evidence attachment and the inline citation together in your workflow: attach/read the evidence, then cite its UUID where it supports the prose.
 
 ### Proposals
 
@@ -454,6 +468,7 @@ This is the core overview skill. For stage-specific workflows, use:
 | **Orchestration** | `/orchestrate` | Coordinate OTHER agents & humans across the lifecycle — delegate ideas (`chorus_pm_assign_idea`) & tasks, fan a theme out to child ideas, run independent reviewers, and gatekeep the proposal/verify gates |
 | **Quick Dev** | `/quick-dev` | Skip Idea→Proposal, create tasks directly, execute, and verify |
 | **Ideation** | `/idea` | Claim Ideas, run elaboration rounds, prepare for proposal |
+| **Research** | `/research` | Optional bounded factual checks shared by Idea and Proposal; explicit Tracker Research saves findings to the Idea and returns without advancing lifecycle |
 | **Planning** | `/proposal` | Create Proposals with document & task drafts, manage dependency DAG, submit for review |
 | **Development** | `/develop` | Claim Tasks, report work, manual session & sub-agent management |
 | **Review** | `/review` | Approve/reject Proposals, verify Tasks, project governance |

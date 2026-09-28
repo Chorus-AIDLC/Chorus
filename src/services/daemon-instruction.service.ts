@@ -1,3 +1,5 @@
+import { composeConversationalIdeaInstruction } from "../../cli/operation-prompts.mjs";
+export { composeConversationalIdeaInstruction } from "../../cli/operation-prompts.mjs";
 // src/services/daemon-instruction.service.ts
 // UI → daemon instruction injection — the SEND side (子2 — daemon-instruction-injection).
 //
@@ -35,6 +37,7 @@
 const instructionLogger = logger.child({ module: "daemon-instruction.service" });
 
 import { randomUUID } from "crypto";
+import { dedicatedOperationWrites, validateOperationPayload } from "@/services/daemon-operation";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { eventBus } from "@/lib/event-bus";
@@ -58,6 +61,7 @@ import {
   isConnectionLive,
 } from "@/services/daemon-execution.service";
 import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
+import { CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS } from "@/lib/conversational-idea";
 
 // ===== Constants =====
 
@@ -157,11 +161,11 @@ export type InstructionTextErrorReason = "empty" | "too_long";
 export class InstructionTextError extends Error {
   readonly code = "invalid_instruction_text";
   readonly reason: InstructionTextErrorReason;
-  constructor(reason: InstructionTextErrorReason) {
+  constructor(reason: InstructionTextErrorReason, maxChars = MAX_INSTRUCTION_CHARS) {
     super(
       reason === "empty"
         ? "Instruction text must not be empty."
-        : `Instruction text exceeds the maximum of ${MAX_INSTRUCTION_CHARS} characters.`,
+        : `Instruction text exceeds the maximum of ${maxChars} characters.`,
     );
     this.name = "InstructionTextError";
     this.reason = reason;
@@ -208,13 +212,16 @@ export interface SessionTargetView extends SessionView {
  * trimmed, canonical text on success; throws `InstructionTextError` otherwise. Called
  * before any mutation so a bad instruction never creates a turn.
  */
-export function validateInstructionText(instructionText: string): string {
+export function validateInstructionText(
+  instructionText: string,
+  maxChars = MAX_INSTRUCTION_CHARS,
+): string {
   const trimmed = (instructionText ?? "").trim();
   if (trimmed.length === 0) {
     throw new InstructionTextError("empty");
   }
-  if (trimmed.length > MAX_INSTRUCTION_CHARS) {
-    throw new InstructionTextError("too_long");
+  if (trimmed.length > maxChars) {
+    throw new InstructionTextError("too_long", maxChars);
   }
   return trimmed;
 }
@@ -577,74 +584,6 @@ export function derivePlaceholderTitle(description: string): string {
  */
 export type ConversationalIdeaMode = "elaborate" | "decompose";
 
-/**
- * Compose the conversational-idea wake instruction (template v2 — the REVIEWED CONTRACT
- * between the conversational create-idea entry and the woken daemon agent, superseding
- * the client-side create→claim template of add-conversational-idea-entry).
- *
- * The idea is PRE-CREATED and already instance-assigned + elaborating, so both templates
- * direct EDIT (never create, never claim — a claim would fail on the existing assignee).
- *  - `elaborate` (default): edit → immediate start-elaboration → panel guidance → end turn.
- *  - `decompose`: edit the CONTAINER → keep isContainer → one lightweight scope-clarifying
- *    elaboration → propose candidate CHILDREN as a structured elaboration round (one
- *    single-select question per child, ≤15/round, never a multi-select) → end turn → on the
- *    confirm re-wake create each accepted child via chorus_pm_create_idea with
- *    parentUuid=<container>, children starting `open`, no auto-elaboration; the container's
- *    own status stays `elaborated`. The confirm re-wake rides the EXISTING
- *    `elaboration_answered` wake — no new wake/notification action is introduced.
- *
- * English (agent-facing, matching cli/prompts.mjs precedent); the user's description
- * passes through VERBATIM under the delimiter. Exported for unit tests: the template's
- * wording is code, and any change is a review-visible diff.
- */
-export function composeConversationalIdeaInstruction(params: {
-  ideaUuid: string;
-  projectUuid: string;
-  projectName?: string | null;
-  descriptionText: string;
-  mode?: ConversationalIdeaMode;
-}): string {
-  // Name is display sugar; the uuid is the machine anchor and is always present.
-  const projectLabel = params.projectName?.trim()
-    ? `"${params.projectName.trim()}" (projectUuid: ${params.projectUuid})`
-    : `projectUuid: ${params.projectUuid}`;
-
-  if (params.mode === "decompose") {
-    return [
-      `[Chorus container-decompose entry] A new CONTAINER idea has been PRE-CREATED for project ${projectLabel} from the user's description below, and it is already assigned to you (status: elaborating, isContainer: true).`,
-      `  ideaUuid: ${params.ideaUuid}`,
-      ``,
-      `This conversation IS that container idea's root session. The user wants help DECOMPOSING it into child ideas. Do the following, in order:`,
-      `1. Edit the container via chorus_edit_idea: derive a concise title from the description and polish the content (keep the user's meaning). The current title is a placeholder.`,
-      `2. Ensure it stays a container: it was pre-created with isContainer=true — do NOT clear that flag (a container groups its child ideas and MUST NOT get a proposal of its own).`,
-      `3. Run ONE lightweight elaboration round (chorus_pm_start_elaboration) to clarify the decomposition scope/dimension — how to slice the work into children. Keep it short; you may self-answer in headless or ask the user, then continue.`,
-      `4. Propose the candidate child ideas AS A STRUCTURED ELABORATION ROUND (chorus_pm_start_elaboration) for the user to review/edit/confirm — use ONE elaboration question PER proposed child (the child's title as the question text, a short rationale as its description), single-select. Elaboration questions are single-select and a round is capped at 15 questions, so propose at most 15 candidates per round and NEVER a single multi-select question; if you need more children, propose them across additional rounds. Do NOT create any child ideas yet — this round is the preview the user accepts/edits/declines per child.`,
-      `5. End the turn. The user's answers in the idea's elaboration panel will wake this same conversation (the existing elaboration-answered wake).`,
-      `6. On that re-wake, create each ACCEPTED child via chorus_pm_create_idea with parentUuid=${params.ideaUuid}. Each child starts in the "open" state — do NOT auto-elaborate them. The container's OWN status stays "elaborated"; creating children does not advance or alter it.`,
-      ``,
-      `Reference reflex: whenever an external link is evidence for this work (a precedent issue/PR, a reference implementation, official docs, a paper/blog), attach it via references — prefer the inline references[] param at creation time over a post-hoc chorus_add_reference.`,
-      ``,
-      `--- User's idea description ---`,
-      params.descriptionText,
-    ].join("\n");
-  }
-
-  return [
-    `[Chorus conversational idea entry] A new idea has been PRE-CREATED for project ${projectLabel} from the user's description below, and it is already assigned to you (status: elaborating).`,
-    `  ideaUuid: ${params.ideaUuid}`,
-    ``,
-    `This conversation IS that idea's root session — its elaboration and lifecycle wakes will continue here. Do the following, in order:`,
-    `1. Edit the idea via chorus_edit_idea: derive a concise title from the description and polish the content (keep the user's meaning; you may restructure). The current title is a placeholder.`,
-    `2. Immediately start elaboration on the idea (chorus_pm_start_elaboration), following the idea skill — do NOT wait for another wake. Post a short summary of your questions in this conversation and direct the user to answer in the idea's elaboration panel.`,
-    `3. End the turn. The user's panel answers will wake this same conversation.`,
-    ``,
-    `Reference reflex: whenever an external link is evidence for this idea (a precedent issue/PR, a reference implementation, official docs, a paper/blog), attach it via references — prefer the inline references[] param at creation time over a post-hoc chorus_add_reference.`,
-    ``,
-    `--- User's idea description ---`,
-    params.descriptionText,
-  ].join("\n");
-}
-
 /** The compact idea projection a conversational dispatch returns to the frontend. */
 export interface ConversationalIdeaView {
   uuid: string;
@@ -657,7 +596,7 @@ export interface ConversationalIdeaView {
 
 /**
  * Conversational-idea dispatch: PRE-CREATE the Idea and its root daemon session, then
- * send the first `human_instruction` turn — in ONE transaction (add-conversational-
+ * send the first dedicated operation turn — in ONE transaction (add-conversational-
  * idea-root-session). The pivotal property: the session is born IDEA-ANCHORED
  * (`sessionId = directIdeaUuid = ideaUuid`), so every subsequent idea-anchored wake
  * (elaboration answers, Verify Elaborate, proposal approval, task dispatch) resolves to
@@ -674,14 +613,14 @@ export interface ConversationalIdeaView {
  *  3. The connection's durable `agentInstanceUuid` must resolve — the idea's instance
  *     pin must point at a real place → `ConnectionInstanceMissingError` (route → 409).
  *  4. SERVER generates the ideaUuid, composes the instruction around it, and validates
- *     the COMPOSED text (`validateInstructionText`) → `InstructionTextError` (route →
+ *     the user's description against its shared UI limit → `InstructionTextError` (route →
  *     400). Generating the uuid before the transaction is what lets the instruction
  *     embed it while keeping all writes atomic.
  *  5. ONE `prisma.$transaction`: create the Idea (createdBy = caller, placeholder
  *     title, VERBATIM description as content, `agent_instance` assignee, status
  *     `elaborating` — assignment-equals-claim), the DaemonSession (sessionId =
  *     directIdeaUuid = ideaUuid, origin = the chosen connection, write-once written
- *     once correctly), and the first `human_instruction` turn (seq 1, promptText =
+ *     once correctly), and the first operation turn (seq 1, promptText =
  *     the composed instruction — canonical copy). All-or-nothing: a mid-transaction
  *     failure persists nothing (no orphan idea).
  *
@@ -715,8 +654,9 @@ export async function createConversationalIdeaSession(
     // `elaborate` (default) is the original single-idea contract; `decompose`
     // (add-container-idea-ui Block 3) pre-creates the idea with isContainer=true and
     // dispatches the decompose instruction so the agent proposes child ideas as an
-    // elaboration round. Optional so existing callers (byte-identical) stay unchanged.
+    // elaboration round. Optional so existing callers keep their mode.
     mode?: ConversationalIdeaMode;
+    researchFirst?: boolean;
   },
 ): Promise<{ idea: ConversationalIdeaView; session: SessionView; turn: TurnView }> {
   const mode: ConversationalIdeaMode = params.mode ?? "elaborate";
@@ -792,23 +732,29 @@ export async function createConversationalIdeaSession(
   }
 
   // (4) Server-generated ideaUuid FIRST, so the composed instruction can embed it while
-  // the idea write stays inside the transaction. Reject empty descriptions before
-  // composing (the template alone would otherwise pass the non-empty check), then
-  // validate the COMPOSED length against the single MAX_INSTRUCTION_CHARS cap.
-  const descriptionText = params.descriptionText?.trim() ?? "";
-  if (descriptionText.length === 0) {
-    throw new InstructionTextError("empty");
-  }
-  const ideaUuid = randomUUID();
-  const instructionText = validateInstructionText(
-    composeConversationalIdeaInstruction({
-      ideaUuid,
-      projectUuid: project.uuid,
-      projectName: project.name,
-      descriptionText,
-      mode,
-    }),
+  // the idea write stays inside the transaction. Validate the USER description
+  // against the same budget shown in the UI before adding the trusted server
+  // template. Generated research/decomposition instructions do not consume the
+  // user's budget; ordinary human instructions retain their separate 4000 cap.
+  const descriptionText = validateInstructionText(
+    params.descriptionText,
+    CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS,
   );
+  const ideaUuid = randomUUID();
+  const instructionText = composeConversationalIdeaInstruction({
+    ideaUuid,
+    projectUuid: project.uuid,
+    projectName: project.name,
+    descriptionText,
+    mode,
+    researchFirst: params.researchFirst,
+  });
+
+  const operationPayload = validateOperationPayload("idea_creation_requested", {
+    version: 1, kind: "idea_creation", ideaUuid, projectUuid: project.uuid,
+    mode, researchFirst: params.researchFirst ?? false, descriptionText,
+  }, { directIdeaUuid: ideaUuid, projectUuid: project.uuid });
+  const dedicated = dedicatedOperationWrites();
 
   // (5) All-or-nothing: idea + idea-anchored session + first turn in one transaction.
   const { ideaRow, sessionRow, turnRow } = await prisma.$transaction(async (tx) => {
@@ -868,7 +814,8 @@ export async function createConversationalIdeaSession(
       data: {
         sessionUuid: sessionRow.uuid,
         seq: 1,
-        trigger: "human_instruction",
+        trigger: dedicated ? "idea_creation_requested" : "human_instruction",
+        ...(dedicated ? { operationPayload } : {}),
         promptText: instructionText,
         status: "pending",
       },
@@ -903,6 +850,7 @@ export async function createConversationalIdeaSession(
     seq: turnRow.seq,
     trigger: turnRow.trigger,
     promptText: turnRow.promptText,
+    operationPayload: turnRow.operationPayload ?? null,
     status: turnRow.status,
     interruptedReason: turnRow.interruptedReason,
     relayError: turnRow.relayError,

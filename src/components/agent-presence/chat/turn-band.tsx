@@ -31,10 +31,12 @@ import {
   GitMerge,
   HelpCircle,
   ListChecks,
+  Lightbulb,
   Loader2,
   PenLine,
   Rocket,
   RotateCw,
+  Search,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -69,8 +71,17 @@ const TRIGGER_META: Record<string, { icon: LucideIcon; labelKey: string }> = {
   start_development: { icon: Rocket, labelKey: "triggerStartDevelopment" },
   yolo_requested: { icon: Zap, labelKey: "triggerYoloRequested" },
   human_instruction: { icon: PenLine, labelKey: "triggerInstruction" },
+  idea_creation_requested: { icon: Lightbulb, labelKey: "triggerIdeaCreation" },
+  research_requested: { icon: Search, labelKey: "triggerResearch" },
   resume: { icon: RotateCw, labelKey: "triggerResume" },
 };
+
+// Compatibility instructions are execution context, not human-authored messages.
+function displayPrompt(turn: TurnWithMessagesView): string {
+  return turn.trigger === "idea_creation_requested" || turn.trigger === "research_requested"
+    ? ""
+    : turn.promptText ?? "";
+}
 
 export function TurnBand({
   turn,
@@ -148,12 +159,12 @@ export function TurnBand({
   // without a reply" (the user can simply re-ask in the reply box below). Autonomous turns
   // (no promptText) legitimately may produce only tool calls, so they keep the neutral
   // placeholder.
-  const promptText = turn.promptText?.trim() ?? "";
+  const promptText = displayPrompt(turn);
   const isEmptyTerminalInstruction =
     terminal &&
     turn.trigger === "human_instruction" &&
     visibleMessages.length === 0 &&
-    promptText.length > 0;
+    promptText.trim().length > 0;
 
   // fix #444 follow-up — the daemon reported that THIS turn's transcript upload finally
   // failed: the agent DID reply, but it never reached Chorus (a Docker-proxy 502, a
@@ -233,12 +244,11 @@ export function TurnBand({
           )}
         </div>
 
-        {/* The human-instruction prompt text (the canonical instruction body) reads
-            as the first thing in the band when present — it's what the human said
-            to start this turn. Autonomous triggers carry no promptText. */}
-        {turn.promptText && turn.promptText.trim().length > 0 && (
+        {/* Ordinary/historical prompts stay visible. Canonical operations use the
+            business label above; their compatibility instructions are not user input. */}
+        {promptText.trim().length > 0 && (
           <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-[#FCFBF8] dark:bg-[#1e1d1b] px-3 py-2 text-[13px] leading-relaxed text-muted-foreground">
-            {turn.promptText}
+            {promptText}
           </p>
         )}
 
@@ -349,7 +359,7 @@ function MergedEventRow({
   const linkLabel =
     linkedExecution?.entityType === "idea" ? t("openIdea") : t("openTask");
 
-  const prompt = turn.promptText?.trim() ?? "";
+  const prompt = displayPrompt(turn).trim();
 
   return (
     <div className="flex min-w-0 flex-col gap-1 border-l border-border pl-3">

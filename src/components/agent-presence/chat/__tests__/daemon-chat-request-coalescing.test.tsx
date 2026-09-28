@@ -8,7 +8,6 @@ const mockClearChatFocusTarget = vi.fn();
 let currentFocusTarget: {
   agentUuid: string;
   sessionUuid: string;
-  sessionSeed: typeof sessionSeed;
 } | null;
 
 vi.mock("next-intl", () => ({
@@ -119,7 +118,6 @@ describe("DaemonChat agent-index request coalescing", () => {
     currentFocusTarget = {
       agentUuid: "agent-1",
       sessionUuid: "session-1",
-      sessionSeed,
     };
     mockClearChatFocusTarget.mockImplementation(() => {
       currentFocusTarget = null;

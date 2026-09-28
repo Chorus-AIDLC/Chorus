@@ -137,6 +137,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     agentUuid: auth.actorUuid,
     connectionUuid,
     sessionId,
+    operationProtocol: request.nextUrl.searchParams.get("operationProtocol") === "1",
+    researchMode: request.nextUrl.searchParams.get("researchProtocol") === "1" ? "isolated" : "legacy",
     turnUuid: turnUuid ?? undefined,
     backendSessionId: backendSessionId ?? undefined,
     status,
@@ -163,6 +165,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   if (!result.ok) {
+    if (result.reason === "invalid_operation_payload") {
+      return errors.conflict("Invalid or unsupported operation payload; turn remains pending");
+    }
     if (result.reason === "backend_session_conflict") {
       return errors.conflict("Backend session ID conflicts with the persisted value");
     }

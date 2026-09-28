@@ -18,6 +18,7 @@ const expectedSkills = [
   "proposal-chorus",
   "proposal-reviewer-chorus",
   "quick-dev-chorus",
+  "research-chorus",
   "review-chorus",
   "spec-lite-chorus",
   "task-reviewer-chorus",

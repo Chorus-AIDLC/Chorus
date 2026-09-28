@@ -1095,7 +1095,6 @@ export default function ProjectsPage() {
         groupUuid={createProjectTarget?.groupUuid ?? null}
         groupName={createProjectTarget?.groupName ?? ""}
         onCreated={() => {
-          setCreateProjectTarget(null);
           fetchData();
         }}
       />

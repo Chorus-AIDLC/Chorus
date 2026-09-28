@@ -47,7 +47,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     companyUuid: auth.companyUuid,
     agentUuid: auth.actorUuid,
     connectionUuid,
+    operationProtocol: request.nextUrl.searchParams.get("operationProtocol") === "1",
   });
 
+  // Capability projection preserves the UUID of the persisted operation for every generation.
   return success({ turns });
 });

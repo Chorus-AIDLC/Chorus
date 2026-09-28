@@ -23,6 +23,7 @@ if (!home) throw new Error("CHORUS_DSH_SMOKE_HOME is required");
 const profileDir = join(home, "profiles/web");
 const expectedSkills = [
   "brainstorm-chorus",
+  "research-chorus",
   "chorus",
   "code-reviewer-chorus",
   "develop-chorus",

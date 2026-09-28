@@ -36,8 +36,8 @@ const sessionId = "idea-0000-0000-0000-000000000001";
 const agentAuth = { type: "agent", companyUuid, actorUuid: agentUuid, permissions: [] };
 const emptyCtx = { params: Promise.resolve({}) };
 
-function postRequest(body: unknown): NextRequest {
-  return new NextRequest(new URL("http://localhost:3000/api/daemon/turn-advance"), {
+function postRequest(body: unknown, query = ""): NextRequest {
+  return new NextRequest(new URL(`http://localhost:3000/api/daemon/turn-advance${query}`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -67,6 +67,14 @@ beforeEach(() => {
 });
 
 describe("POST /api/daemon/turn-advance", () => {
+  it.each([["", "legacy"], ["?researchProtocol=0", "legacy"], ["?researchProtocol=1", "isolated"], ["?researchProtocol=2", "legacy"]])(
+    "negotiates %s as %s without changing the report body",
+    async (query, researchMode) => {
+      const res = await POST(postRequest(runningBody, query), emptyCtx);
+      expect(res.status).toBe(200);
+      expect(mockAdvanceTurnForWake).toHaveBeenCalledWith(expect.objectContaining({ researchMode }));
+    },
+  );
   it("401 + no advance when unauthenticated", async () => {
     mockGetAuthContext.mockResolvedValue(null);
     const res = await POST(postRequest(runningBody), emptyCtx);

@@ -8,6 +8,10 @@
 // ping) rather than composed-service spies.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { buildOperationPrompt, validateOperation } from "../../../cli/operation.mjs";
+import { CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS } from "@/lib/conversational-idea";
+import { validateOperationPayload } from "@/services/daemon-operation";
+import { composeResearchInstruction } from "@/services/research.service";
 
 // ===== Prisma mock (global client + the $transaction tx client) =====
 const mockTx = vi.hoisted(() => ({
@@ -201,6 +205,74 @@ describe("composeConversationalIdeaInstruction", () => {
     descriptionText: "The user's exact words\nacross lines — 保留原文。",
   };
 
+  it.each(["elaborate", "decompose"] as const)("keeps CLI and server %s workflows identical for both Research choices", (mode) => {
+    for (const researchFirst of [false, true]) {
+      const payload = {
+        version: 1, kind: "idea_creation", ideaUuid: STUB_IDEA_UUID, projectUuid,
+        mode, researchFirst, descriptionText: base.descriptionText,
+      };
+      expect(buildOperationPrompt({
+        action: "idea_creation_requested", operationPayload: payload,
+        sessionId: STUB_IDEA_UUID, directIdeaUuid: STUB_IDEA_UUID, projectUuid,
+      })).toBe(composeConversationalIdeaInstruction({ ...payload }));
+    }
+  });
+
+  it("keeps Research instructions identical, including the legacy isolation prefix", () => {
+    const prompt = buildOperationPrompt({
+      action: "research_requested",
+      operationPayload: { version: 1, kind: "research", ideaUuid: STUB_IDEA_UUID },
+      sessionId: STUB_IDEA_UUID, directIdeaUuid: STUB_IDEA_UUID,
+    });
+    expect(prompt).toBe(composeResearchInstruction(STUB_IDEA_UUID));
+    expect(prompt.startsWith("[Chorus Tracker Research]")).toBe(true);
+  });
+
+  it.each(["elaborate", "decompose"] as const)("shares the advertised description boundary across server and CLI in %s", async (mode) => {
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid, name: null });
+    for (const researchFirst of [false, true]) {
+      const descriptionText = "界".repeat(CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS);
+      await createConversationalIdeaSession(userAuth, { ...validParams, descriptionText, mode, researchFirst });
+      const stored = mockTx.daemonSessionTurn.create.mock.lastCall![0].data;
+      const anchor = { sessionId: STUB_IDEA_UUID, directIdeaUuid: STUB_IDEA_UUID, projectUuid };
+      expect(validateOperationPayload(stored.trigger, stored.operationPayload, anchor)).toEqual(stored.operationPayload);
+      expect(validateOperation(stored.trigger, stored.operationPayload, anchor)).toEqual(stored.operationPayload);
+      expect(buildOperationPrompt({ action: stored.trigger, operationPayload: stored.operationPayload, ...anchor })).toBe(stored.promptText);
+      const tooLong = { ...stored.operationPayload, descriptionText: `${descriptionText}界` };
+      expect(() => validateOperationPayload(stored.trigger, tooLong, anchor)).toThrow();
+      expect(() => validateOperation(stored.trigger, tooLong, anchor)).toThrow();
+      await expect(createConversationalIdeaSession(userAuth, {
+        ...validParams, mode, researchFirst, descriptionText: tooLong.descriptionText,
+      })).rejects.toThrow(InstructionTextError);
+    }
+  });
+
+  it.each(["elaborate", "decompose"] as const)("composes bounded research before formal questions in %s", (mode) => {
+    for (const researchFirst of [undefined, false, true]) {
+      const text = composeConversationalIdeaInstruction({ ...base, mode, researchFirst });
+      expect(text).toContain(researchFirst ? "explicitly requested lightweight research" : "automatic judgment");
+      expect(text).toContain("skip research in the user's instructions takes precedence");
+      expect(text).toContain("at most 5 deeply read");
+      expect(text).toContain("tools are unavailable");
+      expect(text).toContain("not on every later wake");
+      expect(text).toContain("ref:UUID");
+      expect(text.indexOf("shared research skill")).toBeLessThan(text.indexOf("chorus_pm_start_elaboration"));
+      expect(text.endsWith(base.descriptionText)).toBe(true);
+    }
+  });
+
+  it.each(["elaborate", "decompose"] as const)("bounds a long project label without truncating the description in %s", (mode) => {
+    const projectName = "项目".repeat(50_000);
+    const descriptionText = "x".repeat(3000);
+    for (const researchFirst of [undefined, false, true]) {
+      const text = composeConversationalIdeaInstruction({ ...base, projectName, descriptionText, mode, researchFirst });
+      expect(text).toContain(`"${projectName.slice(0, 199)}…" (projectUuid: ${projectUuid})`);
+      expect(text).not.toContain(projectName);
+      expect(text.endsWith(`--- User's idea description ---\n${descriptionText}`)).toBe(true);
+      expect(text.length).toBeLessThan(8000);
+    }
+  });
+
   it("embeds the ideaUuid, project identity, and the description verbatim", () => {
     const text = composeConversationalIdeaInstruction(base);
     expect(text).toContain(`ideaUuid: ${STUB_IDEA_UUID}`);
@@ -297,6 +369,46 @@ describe("composeConversationalIdeaInstruction", () => {
 
 // ===== createConversationalIdeaSession — happy path =====
 describe("createConversationalIdeaSession", () => {
+  it.each(["elaborate", "decompose"] as const)("accepts the full advertised 3000-character description in %s with every Research setting", async (mode) => {
+    const descriptionText = "调研".repeat(1500);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid, name: "研究项目".repeat(50) });
+    for (const researchFirst of [undefined, false, true]) {
+      await createConversationalIdeaSession(userAuth, {
+        ...validParams, mode, researchFirst, descriptionText: ` \n${descriptionText}\n `,
+      });
+      expect(mockTx.idea.create).toHaveBeenLastCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ content: descriptionText, isContainer: mode === "decompose" }),
+      }));
+      const prompt = mockTx.daemonSessionTurn.create.mock.lastCall![0].data.promptText as string;
+      expect(prompt).toContain(STUB_IDEA_UUID);
+      expect(prompt).toContain(researchFirst ? "explicitly requested lightweight research" : "automatic judgment");
+      expect(prompt.endsWith(`--- User's idea description ---\n${descriptionText}`)).toBe(true);
+      // The generated wrapper must not consume any of the advertised input budget.
+      expect(prompt.length).toBeGreaterThan(MAX_INSTRUCTION_CHARS);
+    }
+  });
+
+  it.each(["elaborate", "decompose"] as const)("persists the composed research intent for %s without altering description or mode", async (mode) => {
+    for (const researchFirst of [undefined, false, true]) {
+      await createConversationalIdeaSession(userAuth, { ...validParams, mode, researchFirst });
+      expect(mockTx.idea.create).toHaveBeenLastCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          content: validParams.descriptionText,
+          isContainer: mode === "decompose",
+        }),
+      }));
+      expect(mockTx.daemonSessionTurn.create).toHaveBeenLastCalledWith({
+        data: expect.objectContaining({
+          trigger: "idea_creation_requested",
+          promptText: composeConversationalIdeaInstruction({
+            ideaUuid: STUB_IDEA_UUID, projectUuid, projectName: "Chorus",
+            descriptionText: validParams.descriptionText, mode, researchFirst,
+          }),
+        }),
+      });
+    }
+  });
+
   it("uses the project-fixed target and snapshots it on the Idea and root session", async () => {
     mockResolveProjectAgentCwdTarget.mockResolvedValue({
       actorUserUuid: ownerUuid,
@@ -402,7 +514,7 @@ describe("createConversationalIdeaSession", () => {
     // ideaUuid and the verbatim description.
     const turnData = mockTx.daemonSessionTurn.create.mock.calls[0][0].data;
     expect(turnData.seq).toBe(1);
-    expect(turnData.trigger).toBe("human_instruction");
+    expect(turnData.trigger).toBe("idea_creation_requested");
     expect(turnData.status).toBe("pending");
     expect(turnData.promptText).toContain(`ideaUuid: ${STUB_IDEA_UUID}`);
     expect(turnData.promptText).toContain(validParams.descriptionText);
@@ -440,7 +552,7 @@ describe("createConversationalIdeaSession", () => {
 
     // The first turn carries the DECOMPOSE instruction, not the elaborate one.
     const turnData = mockTx.daemonSessionTurn.create.mock.calls[0][0].data;
-    expect(turnData.trigger).toBe("human_instruction");
+    expect(turnData.trigger).toBe("idea_creation_requested");
     expect(turnData.promptText).toContain("container-decompose");
     expect(turnData.promptText).toContain("chorus_pm_create_idea");
     expect(turnData.promptText).toContain(`parentUuid=${STUB_IDEA_UUID}`);
@@ -546,16 +658,18 @@ describe("createConversationalIdeaSession gates", () => {
     await expectNoMutation();
   });
 
-  it("over-length COMPOSED instruction → InstructionTextError(too_long), nothing persisted", async () => {
-    // The description alone fits, but template overhead pushes the composed text over.
-    const nearCap = "z".repeat(MAX_INSTRUCTION_CHARS - 10);
-    await expect(
-      createConversationalIdeaSession(userAuth, {
-        ...validParams,
-        descriptionText: nearCap,
-      }),
-    ).rejects.toBeInstanceOf(InstructionTextError);
-    await expectNoMutation();
+  it.each(["elaborate", "decompose"] as const)("rejects 3001-character descriptions in %s before persistence with every Research setting", async (mode) => {
+    for (const researchFirst of [undefined, false, true]) {
+      await expect(
+        createConversationalIdeaSession(userAuth, {
+          ...validParams, mode, researchFirst, descriptionText: "z".repeat(3001),
+        }),
+      ).rejects.toMatchObject({
+        name: "InstructionTextError", reason: "too_long",
+        message: "Instruction text exceeds the maximum of 3000 characters.",
+      });
+      await expectNoMutation();
+    }
   });
 
   it("mid-transaction failure propagates and persists nothing after it", async () => {
