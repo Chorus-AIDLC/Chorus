@@ -233,7 +233,10 @@ export class CodexSpawner {
       rawSettled = awaitChildSettled(child, { logger: this.logger, label: "codex", stdioGraceMs: this.stdioGraceMs })
         .then((code) => { rawDone = true; rawCode = code; return code; });
       client = new CodexAppServerClient(child, {
-        limits: this.rpcLimits, onDiagnostic: (text) => log("warn", `[Chorus] ${text}`),
+        limits: this.rpcLimits,
+        // CLOSED is emitted only by our explicit close(), including normal
+        // completion. Keep real transport faults visible at warning severity.
+        onDiagnostic: (text) => log(text === "Codex App Server: CLOSED" ? "info" : "warn", `[Chorus] ${text}`),
       });
       // Subscribe before setup, but don't feed setup/history snapshots to T3.
       unsubscribe = client.subscribe((message) => {

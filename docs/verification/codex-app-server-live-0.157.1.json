@@ -9,11 +9,11 @@
       "anchor": "new-smoke",
       "result": {
         "sessionId": "new-smoke",
-        "backendSessionId": "01a0e779-65b5-77d1-b2f5-253af2921bcf",
+        "backendSessionId": "01a0e784-9d96-7e63-a629-c0c765f6af51",
         "exitCode": 0,
         "isNew": true
       },
-      "mappedThread": "01a0e779-65b5-77d1-b2f5-253af2921bcf",
+      "mappedThread": "01a0e784-9d96-7e63-a629-c0c765f6af51",
       "requests": [
         "initialize",
         "initialized",
@@ -53,19 +53,26 @@
           "status": "failed"
         }
       ],
-      "reply": "I’ll make one read-only Chorus check-in and confirm whether Chorus skill context is present.\nCHORUS_SPAWNER_NEW_928 — Check-in did not succeed: approval required, but policy is “never.” Chorus skill context was supplied.",
-      "warnings": []
+      "reply": "I’ll make one read-only Chorus check-in and confirm whether Chorus skill context is present.\n\nCHORUS_SPAWNER_NEW_928 — Check-in did not succeed: the single call was blocked because approval is required but policy is “never.” Chorus skill context was supplied in the session.",
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
     },
     {
       "permissionMode": "chorus",
       "anchor": "new-smoke",
       "result": {
         "sessionId": "new-smoke",
-        "backendSessionId": "01a0e779-65b5-77d1-b2f5-253af2921bcf",
+        "backendSessionId": "01a0e784-9d96-7e63-a629-c0c765f6af51",
         "exitCode": 0,
         "isNew": false
       },
-      "mappedThread": "01a0e779-65b5-77d1-b2f5-253af2921bcf",
+      "mappedThread": "01a0e784-9d96-7e63-a629-c0c765f6af51",
       "requests": [
         "initialize",
         "initialized",
@@ -100,7 +107,14 @@
       ],
       "tools": [],
       "reply": "CHORUS_SPAWNER_NEW_928",
-      "warnings": []
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
     },
     {
       "permissionMode": "chorus",
@@ -146,18 +160,25 @@
       ],
       "tools": [],
       "reply": "CHORUS_APP_SERVER_CONTINUITY_928",
-      "warnings": []
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
     },
     {
       "permissionMode": "chorus",
       "anchor": "interrupt-smoke",
       "result": {
         "sessionId": "interrupt-smoke",
-        "backendSessionId": "01a0e779-f213-7aa3-bfff-74eda5137a9d",
+        "backendSessionId": "01a0e785-2656-7023-a7e1-f73d76c2b126",
         "exitCode": 130,
         "isNew": true
       },
-      "mappedThread": "01a0e779-f213-7aa3-bfff-74eda5137a9d",
+      "mappedThread": "01a0e785-2656-7023-a7e1-f73d76c2b126",
       "requests": [
         "initialize",
         "initialized",
@@ -179,18 +200,25 @@
       "hooks": [],
       "tools": [],
       "reply": "",
-      "warnings": []
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
     },
     {
       "permissionMode": "chorus",
       "anchor": "interrupt-smoke",
       "result": {
         "sessionId": "interrupt-smoke",
-        "backendSessionId": "01a0e779-f213-7aa3-bfff-74eda5137a9d",
+        "backendSessionId": "01a0e785-2656-7023-a7e1-f73d76c2b126",
         "exitCode": 0,
         "isNew": false
       },
-      "mappedThread": "01a0e779-f213-7aa3-bfff-74eda5137a9d",
+      "mappedThread": "01a0e785-2656-7023-a7e1-f73d76c2b126",
       "requests": [
         "initialize",
         "initialized",
@@ -225,18 +253,25 @@
       ],
       "tools": [],
       "reply": "CHORUS_FIRST_INTERRUPT_928",
-      "warnings": []
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
     },
     {
       "permissionMode": "yolo",
       "anchor": "new-smoke",
       "result": {
         "sessionId": "new-smoke",
-        "backendSessionId": "01a0e77a-704a-74f1-a9c0-d849b6dee486",
+        "backendSessionId": "01a0e784-ac0b-7001-bd9b-2c8d166673f2",
         "exitCode": 0,
         "isNew": true
       },
-      "mappedThread": "01a0e77a-704a-74f1-a9c0-d849b6dee486",
+      "mappedThread": "01a0e784-ac0b-7001-bd9b-2c8d166673f2",
       "requests": [
         "initialize",
         "initialized",
@@ -246,8 +281,8 @@
       "methods": [
         "configWarning",
         "remoteControl/status/changed",
-        "thread/started",
         "mcpServer/startupStatus/updated",
+        "thread/started",
         "thread/status/changed",
         "turn/started",
         "hook/started",
@@ -276,8 +311,15 @@
           "status": "completed"
         }
       ],
-      "reply": "I’ll make one read-only Chorus check-in and check the supplied session context.\nCHORUS_SPAWNER_NEW_928 — Check-in succeeded (exactly one call). Chorus skill context was supplied in the session.",
-      "warnings": []
+      "reply": "I’ll make one read-only Chorus check-in and check the skill context already supplied in this session.\nCHORUS_SPAWNER_NEW_928 — Check-in succeeded (exactly one call). Chorus skill context was supplied.",
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
     }
   ]
 }

@@ -14,7 +14,7 @@ env -u CHORUS_AGENT_PROFILE pnpm exec vitest run cli/__tests__
 openspec validate switch-codex-daemon-to-app-server --strict
 ```
 
-Result: **97 test files, 2368 tests passed**; strict OpenSpec validation passed.
+Result: **97 test files, 2370 tests passed**; strict OpenSpec validation passed.
 The test environment deliberately removes the daemon's injected agent profile:
 three existing foreground tests require “no profile configured.” This does not
 remove the profile from production children or from the real CLI smoke.
@@ -80,6 +80,13 @@ rejected that MCP item as requiring approval under policy `never`; the turn
 itself completed normally. With the same installation and YOLO permission mode,
 check-in completed. This records the permission boundary rather than claiming
 every MCP tool is executable in restricted mode.
+
+The smoke captures `{level, message}` for every logger call and asserts no
+warning/error records on configured successful wakes. Explicit transport
+`CLOSED` is an informational lifecycle diagnostic; actual transport failures
+remain warnings. Two spawner regressions run repeated configured/unconfigured
+wakes and assert respectively zero warnings or exactly one missing-MCP warning,
+with no error records. Evidence is filtered by recorded severity, not wording.
 
 Every completed real wake emitted one `hook/completed` event with status
 `completed`. Therefore no replacement startup/check-in injection was needed.

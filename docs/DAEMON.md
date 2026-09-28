@@ -538,6 +538,8 @@ initialization to 30 seconds, thread/turn RPC setup to 60 seconds, semantic
 inactivity to 10 minutes, and cleanup to 10 seconds. Missing Chorus MCP config
 retains warning-and-run behavior; install the Chorus plugin/config in every
 custom Codex home for check-in and skill context.
+Explicit `CLOSED` diagnostics are informational; transport failures remain
+warnings. A missing-MCP warning appears once per spawner instance.
 
 Protocol details and verification evidence are in
 [the protocol contract](verification/codex-app-server-protocol.md) and

@@ -63,6 +63,24 @@ describe("hasChorusMcpServer", () => {
     expect(hasChorusMcpServer({ readFile: () => '[mcp_servers.other]\nurl = "x"\n' })).toBe(false);
     expect(hasChorusMcpServer({ readFile: () => { throw new Error("missing"); } })).toBe(false);
   });
+
+  it.each([true, false])("configured=%s: repeated successful wakes have only the expected missing-config warning", async configured => {
+    const records = [];
+    const logger = Object.fromEntries(["info", "warn", "error"].map(level => [level, message => records.push({ level, message })]));
+    const probe = vi.fn(() => configured);
+    const spawner = makeSpawner(undefined, { logger, hasChorusMcpServerFn: probe, spawnImpl: () => appServerChild() });
+    expect((await wake(spawner)).exitCode).toBe(0);
+    expect((await wake(spawner)).exitCode).toBe(0);
+    expect(probe).toHaveBeenCalledTimes(1);
+    const warnings = records.filter(r => r.level === "warn");
+    expect(warnings).toHaveLength(configured ? 0 : 1);
+    if (!configured) expect(warnings[0].message).toContain("no [mcp_servers.chorus]");
+    expect(records.filter(r => r.level === "error")).toEqual([]);
+    expect(records.filter(r => r.message.endsWith("App Server: CLOSED"))).toEqual([
+      { level: "info", message: "[Chorus] Codex App Server: CLOSED" },
+      { level: "info", message: "[Chorus] Codex App Server: CLOSED" },
+    ]);
+  });
 });
 
 describe("App Server lifecycle", () => {
