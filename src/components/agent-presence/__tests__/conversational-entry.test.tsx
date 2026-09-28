@@ -20,7 +20,7 @@
 //   - IME guard: a composing Enter never dispatches.
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { act, render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // next-intl: resolve real en strings so a missing key surfaces as its dotted path.
@@ -350,6 +350,27 @@ describe("ConversationalEntry — selection", () => {
 });
 
 describe("ConversationalEntry — dispatch", () => {
+  it("guards synchronous ad-hoc clicks while preserving its transport and onStarted callback", async () => {
+    setPresence([conn({ uuid: "c1" })]);
+    let respond!: (response: unknown) => void;
+    mockAuthFetch.mockImplementationOnce(() => new Promise((resolve) => { respond = resolve; }));
+    const onStarted = vi.fn();
+    render(<ConversationalEntry buildInstruction={(text) => `ADHOC: ${text}`} onStarted={onStarted} />);
+    fireEvent.change(screen.getByPlaceholderText(/Describe what you want/), { target: { value: "hello" } });
+    const send = screen.getByRole("button", { name: /Send to agent/ }) as HTMLButtonElement;
+    act(() => { send.click(); send.click(); });
+    expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+    expect(mockAuthFetch.mock.calls[0][0]).toBe("/api/daemon-sessions/ad-hoc");
+    expect(JSON.parse(mockAuthFetch.mock.calls[0][1].body)).toEqual({
+      agentUuid: "agent-1", connectionUuid: "c1", instructionText: "ADHOC: hello",
+    });
+    expect(onStarted).not.toHaveBeenCalled();
+    await act(async () => respond({ ok: true, status: 200, json: async () => ({
+      success: true, data: { session: createdSession },
+    }) }));
+    expect(onStarted).toHaveBeenCalledExactlyOnceWith(createdSession);
+  });
+
   it("sends exactly one ad-hoc POST with the consumer-composed instruction and hands the SessionView to onStarted", async () => {
     setPresence([conn({ uuid: "c1" })]);
     respondOk();

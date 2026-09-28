@@ -111,6 +111,9 @@ const turnLogger = logger.child({ module: "notification-turn" });
 // created (the daemon would not wake on it either). Exhaustive + explicit so a
 // reviewer sees exactly which actions map where — no implicit fallthrough.
 export const NOTIFICATION_ACTION_TO_TURN_TRIGGER: Record<string, TurnTrigger> = {
+  // Operation producers already persist the turn in their own transaction.
+  idea_creation_requested: "idea_creation_requested",
+  research_requested: "research_requested",
   // @mention — the explicit "I need you" signal.
   mentioned: "mentioned",
   // Elaboration round opened / answered on an idea.
@@ -788,6 +791,9 @@ export async function createTurnAndResolveTarget(
   // (1) Not a wake-triggering action → no turn (and the daemon would not wake either).
   const trigger = triggerForAction(ctx.action);
   if (!trigger) return empty;
+  // These audit notifications are never a second execution source. Live delivery
+  // and reconnect both fetch the producer's one persisted turn.
+  if (trigger === "idea_creation_requested" || trigger === "research_requested") return empty;
 
   // (2) Only agents can be daemons; a human recipient never owns a daemon session.
   if (ctx.recipientType !== "agent") return empty;

@@ -26,6 +26,20 @@ const TASK_NOTIF = {
   actorName: "Alice",
 };
 
+function payloadForAction(action) {
+  if (action === "human_instruction") return { instructionText: "please continue" };
+  if (action === "idea_creation_requested" || action === "research_requested") {
+    return {
+      sessionId: "idea-1", directIdeaUuid: "idea-1",
+      operationPayload: action === "idea_creation_requested"
+        ? { version: 1, kind: "idea_creation", ideaUuid: "idea-1", projectUuid: "proj-1",
+          mode: "elaborate", researchFirst: false, descriptionText: "Product idea" }
+        : { version: 1, kind: "research", ideaUuid: "idea-1" },
+    };
+  }
+  return {};
+}
+
 describe("buildPrompt", () => {
   it("task_assigned prompt contains the task + project UUIDs and the claim tool", () => {
     const p = buildPrompt(TASK_NOTIF);
@@ -60,10 +74,7 @@ describe("buildPrompt", () => {
 
   it("appends orchestrator guidance to every non-null wake body", () => {
     for (const action of WAKE_ACTIONS) {
-      const extra =
-        action === "human_instruction"
-          ? { instructionText: "please continue" }
-          : {};
+      const extra = payloadForAction(action);
       const p = buildPrompt({
         ...TASK_NOTIF,
         action,
@@ -178,7 +189,7 @@ describe("buildPrompt", () => {
       // human_instruction is a wake action only when it carries a free-text body — its
       // actionable payload IS the instruction, so supply one for the coverage check
       // (an empty-body human_instruction legitimately returns null; see its own test).
-      const extra = action === "human_instruction" ? { instructionText: "please rebase onto main" } : {};
+      const extra = payloadForAction(action);
       const p = buildPrompt({ ...TASK_NOTIF, action, ...extra });
       expect(p, `WAKE_ACTIONS has "${action}" but buildPrompt returns null for it`).not.toBeNull();
     }
@@ -468,7 +479,7 @@ describe("HEADLESS_PREAMBLE (daemon headless interaction guard)", () => {
 
   it("every WAKE_ACTIONS prompt is prefixed with the preamble while preserving the per-action body + @mention guidance", () => {
     for (const action of WAKE_ACTIONS) {
-      const extra = action === "human_instruction" ? { instructionText: "please rebase onto main" } : {};
+      const extra = payloadForAction(action);
       const p = buildPrompt({ ...TASK_NOTIF, action, ...extra });
       expect(p, `WAKE_ACTIONS "${action}" must produce a prompt`).not.toBeNull();
       // preamble first, original body after it
@@ -476,7 +487,8 @@ describe("HEADLESS_PREAMBLE (daemon headless interaction guard)", () => {
       expect(p).toContain("AskUserQuestion");
       expect(p.toLowerCase()).toContain("end the turn");
       // the per-action body still follows the preamble (e.g. the [Chorus] marker)
-      expect(p.slice(HEADLESS_PREAMBLE.length)).toContain("[Chorus]");
+      // Shared operation templates retain their historical [Chorus ...] prefixes.
+      expect(p.slice(HEADLESS_PREAMBLE.length)).toMatch(/^\s*\[Chorus(?:\]| )/);
     }
   });
 

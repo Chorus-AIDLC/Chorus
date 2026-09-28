@@ -8,8 +8,8 @@
 // placeholder title, instance-assigned, elaborating) and its root daemon session
 // anchored to the idea from birth (sessionId = directIdeaUuid = ideaUuid) — the
 // server composes the wake instruction (the template needs the ideaUuid, which
-// only the server knows pre-creation). The UI hands off to the daemon chat
-// focused on the new idea-anchored session.
+// only the server knows pre-creation). Submission stays on the current page;
+// the idea-anchored session remains available through manual conversation controls.
 //
 // Mode rules (elaboration q3=b + q6=b):
 //   - "form" is ALWAYS the default; the switch is an explicit tab.
@@ -23,6 +23,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -88,7 +89,7 @@ export function NewIdeaDialog({
   // Conversational container-decompose intent (add-container-idea-ui Block 3): when
   // checked, the dispatch flags the pre-created idea as a container and asks the woken
   // agent to propose child ideas as an elaboration round. Rides the existing
-  // conversational wake — no new action type.
+  // conversational creation operation.
   const [decompose, setDecompose] = useState(false);
   const [researchFirst, setResearchFirst] = useState(false);
   const [isDispatching, setIsDispatching] = useState(false);
@@ -257,11 +258,8 @@ export function NewIdeaDialog({
   // Conversational pane: the reusable entry with a consumer-owned dispatch that
   // POSTs the RAW description to /api/ideas/conversational — the server
   // pre-creates the Idea and composes the instruction (no client template). On
-  // success: close this dialog and land the user in the daemon chat on the new
-  // idea-anchored session (it already carries directIdeaUuid, so the chat list
-  // presents it as the idea's conversation). `onCreated` is deliberately NOT
-  // called — the idea list refreshes via the SSE change event, and calling it
-  // would navigate away from the chat handoff.
+  // success: close this dialog and acknowledge submission. The idea list refreshes
+  // via SSE. `onCreated` is deliberately not called because it would navigate away.
   const conversationalDispatch = async (args: {
     agentUuid: string;
     connectionUuid: string;
@@ -356,9 +354,9 @@ export function NewIdeaDialog({
       <ConversationalEntry
         projectUuid={projectUuid}
         dispatch={conversationalDispatch}
-        onStarted={(session) => {
+        onStarted={() => {
           onOpenChange(false);
-          presence?.openChatForSession(session);
+          toast.success(t("newIdea.submitted"));
         }}
       />
     </div>

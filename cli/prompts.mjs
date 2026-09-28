@@ -13,6 +13,8 @@
 // is deliberately no --append-system-prompt; see claude-spawner.mjs). The preamble
 // also names the CHORUS_DAEMON_HEADLESS=1 env signal the spawner sets.
 
+import { buildOperationPrompt } from "./operation.mjs";
+
 /**
  * @typedef {Object} NotificationDetail
  * @property {string} uuid
@@ -463,6 +465,9 @@ function buildPromptBody(n) {
         `chorus_get_idea / chorus_get_comments) if you need context.${actorHint}`
       );
     }
+    case "idea_creation_requested":
+    case "research_requested":
+      return buildOperationPrompt(n);
     default:
       return null;
   }
@@ -523,4 +528,6 @@ export const WAKE_ACTIONS = new Set([
   // when the body is empty/missing (nothing to act on) — so this action is a wake
   // action only when it actually carries instruction text.
   "human_instruction",
+  "idea_creation_requested",
+  "research_requested",
 ]);

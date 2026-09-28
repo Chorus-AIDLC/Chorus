@@ -57,6 +57,34 @@ function msg(
 }
 
 describe("applyTranscriptEvent", () => {
+  it.each(["idea_creation_requested", "research_requested"])(
+    "merges %s placeholder pages and repeated live events by turn/message UUID",
+    (trigger) => {
+      const operation = turn({ uuid: "t1", trigger, seq: 2, promptText: "compatibility system prompt" });
+      const realUser = msg({ uuid: "real-user", role: "user", text: "actual input" });
+      const realReply = msg({ uuid: "real-reply", seq: 2, text: "actual reply" });
+      const page = [turn({ ...operation, messages: [realUser] })];
+      // Fetching the seq=0 position yields an empty band, including on overlap.
+      let next = mergeTurnPage(page, [operation]);
+      next = mergeTurnPage(next, [operation]);
+      next = applyTranscriptEvent(next, { trigger: "turn_created", turn: operation, messages: [] });
+      for (let repeat = 0; repeat < 2; repeat++) {
+        next = applyTranscriptEvent(next, {
+          trigger: "transcript_appended", turn: { ...operation, status: "running" },
+          messages: [realUser, realReply],
+        });
+      }
+      next = applyTranscriptEvent(next, {
+        trigger: "turn_status_changed", turn: { uuid: operation.uuid, status: "interrupted", interruptedReason: "offline" },
+        messages: [],
+      });
+      expect(next).toHaveLength(1);
+      expect(next[0]).toMatchObject({ uuid: "t1", trigger, status: "interrupted", interruptedReason: "offline" });
+      expect(next[0].messages).toEqual([realUser, realReply]);
+      expect(page[0].messages).toEqual([realUser]);
+    },
+  );
+
   it("turn_created appends a new band", () => {
     const prev = [turn({ uuid: "t1", seq: 1 })];
     const next = applyTranscriptEvent(prev, {

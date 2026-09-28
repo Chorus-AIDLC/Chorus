@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { BarChart3, GitFork, List, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePanelUrl } from "@/hooks/use-panel-url";
@@ -57,6 +57,22 @@ export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initial
     adaptiveDefault(hasLineageInGroups(initialTrackerData?.groups)),
   );
   const [showNewIdeaDialog, setShowNewIdeaDialog] = useState(false);
+  const newIdeaTrigger = useRef<HTMLButtonElement | null>(null);
+  const headerNewIdeaTrigger = useRef<HTMLButtonElement | null>(null);
+  const openNewIdea = (event: MouseEvent<HTMLButtonElement>) => {
+    newIdeaTrigger.current = event.currentTarget;
+    setShowNewIdeaDialog(true);
+  };
+  const restoreNewIdeaFocus = (event: Event) => {
+    event.preventDefault();
+    // The empty-state CTA may disappear when SSE adds the first Idea. In that
+    // case the header's equivalent action is the logical return target.
+    const trigger = newIdeaTrigger.current?.isConnected
+      ? newIdeaTrigger.current
+      : headerNewIdeaTrigger.current;
+    trigger?.focus();
+    newIdeaTrigger.current = null;
+  };
 
   // Apply the stored per-project override after hydration. This runs only on
   // the client (post-mount), so it can safely touch localStorage without
@@ -126,7 +142,8 @@ export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initial
             always stays mounted and reachable, even at zero ideas. */}
         {view !== "stats" && !isEmpty && (
           <Button
-            onClick={() => setShowNewIdeaDialog(true)}
+            ref={headerNewIdeaTrigger}
+            onClick={openNewIdea}
             size="sm"
             className="gap-1.5 rounded-md bg-primary px-3.5 py-2 text-white hover:bg-[#B56A42]"
           >
@@ -144,7 +161,7 @@ export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initial
           initialData={initialTrackerData}
           viewMode={view === "lineage" ? "tree" : "flat"}
           onIdeaClick={openPanel}
-          onNewIdea={() => setShowNewIdeaDialog(true)}
+          onNewIdea={openNewIdea}
           onEmptyChange={setIsEmpty}
         />
       )}
@@ -152,6 +169,7 @@ export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initial
       <NewIdeaDialog
         open={showNewIdeaDialog}
         onOpenChange={setShowNewIdeaDialog}
+        onCloseAutoFocus={restoreNewIdeaFocus}
         projectUuid={projectUuid}
         projectName={projectName}
         onCreated={(uuid) => openPanel(uuid)}

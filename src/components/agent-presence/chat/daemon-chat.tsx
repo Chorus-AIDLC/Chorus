@@ -1010,29 +1010,13 @@ export function DaemonChat() {
     [fetchAgentIndex],
   );
 
-  // Consume a one-shot chat focus target: pin the left rail to the focused agent,
-  // then either land on that agent's conversation list / composer (agent-only
-  // target, seeded by `openChatForAgent` — e.g. the comment mention badge's "Open
-  // conversation" action; per the q3 contract, focusing the agent is sufficient and
-  // precise past-session auto-selection is intentionally not done) or — when the
-  // target carries a session (seeded by `openChatForSession`, e.g. the
-  // conversational create-idea entry right after dispatching) — select THAT
-  // conversation and slide its live transcript into view. The session path routes
-  // through `handleSessionStarted` with the target's seeded SessionView, so a
-  // session created moments ago (not yet in the fetched list) is prepended and
-  // selectable immediately, and selection drives `setOpenSession` as usual. The
-  // target is consumed (cleared) so a later manual modal open is not re-hijacked.
+  // Consume one-shot focus from a manual agent or activity entry. Activity focus
+  // selects its exact conversation (including mobile); agent focus opens the list.
+  // Clear the target so later manual opens are not redirected to stale history.
   useEffect(() => {
     if (!focusTarget) return;
     setPickedAgentUuid(focusTarget.agentUuid);
-    if (focusTarget.sessionSeed) {
-      focusedSessionUuidRef.current = null;
-      focusedSessionNeedsInjectionRef.current = null;
-      handleSessionStarted(focusTarget.sessionSeed);
-      // The seeded conversation must also open on the MOBILE breakpoint, where a
-      // selection only shows once the drill-down is open.
-      setMobileDetailOpen(true);
-    } else if (focusTarget.sessionUuid) {
+    if (focusTarget.sessionUuid) {
       // Session focus without a seed — select it immediately. If it is outside
       // the current first page, the detail read above resolves it by UUID and
       // injects that one row without unbounding the paginated list.
@@ -1050,7 +1034,7 @@ export function DaemonChat() {
       setSelectedSessionUuid(null);
     }
     clearChatFocusTarget();
-  }, [focusTarget, clearChatFocusTarget, handleSessionStarted, sessions]);
+  }, [focusTarget, clearChatFocusTarget, sessions]);
 
   // ===== States =====
   // The chat body's card + list-loading flag, derived by the pure `deriveChatBodyState`

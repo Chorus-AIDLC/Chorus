@@ -125,6 +125,9 @@ describe.skipIf(!url)("Research real database integration", () => {
       );
       const saved = await db.idea.findUniqueOrThrow({ where: { uuid: result.idea.uuid } });
       const turn = await db.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: result.turn.uuid } });
+      expect(turn.trigger).toBe("idea_creation_requested");
+      expect(turn.operationPayload).toEqual({ version: 1, kind: "idea_creation", ideaUuid: saved.uuid,
+        projectUuid: project, mode, researchFirst: researchFirst ?? false, descriptionText });
       expect(saved.content).toBe(descriptionText);
       expect(saved.isContainer).toBe(mode === "decompose");
       expect(turn.promptText).toContain(researchFirst ? "explicitly requested lightweight research" : "automatic judgment");
@@ -147,7 +150,7 @@ describe.skipIf(!url)("Research real database integration", () => {
       expect(await counts()).toEqual(before);
     }
   });
-  it("server action dispatches human_instruction to the existing Idea root and preserves state", async () => {
+  it("server action dispatches research_requested to the existing Idea root and preserves state", async () => {
     await proposalTask();
     const before = await db.idea.findUnique({ where: { uuid: idea } });
     const result = await researchIdeaAction(idea);
@@ -155,8 +158,8 @@ describe.skipIf(!url)("Research real database integration", () => {
     if (!result.success) throw new Error(result.errorCode);
     expect(result.session).toMatchObject({ sessionId: idea, directIdeaUuid: idea, originConnectionUuid: connection });
     expect(await db.idea.findUnique({ where: { uuid: idea } })).toEqual(before);
-    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: result.turnUuid } })).toMatchObject({ trigger: "human_instruction", status: "pending" });
-    expect(await db.notification.count({ where: { companyUuid: state.company, entityUuid: idea, action: "human_instruction" } })).toBe(1);
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: result.turnUuid } })).toMatchObject({ trigger: "research_requested", status: "pending" });
+    expect(await db.notification.count({ where: { companyUuid: state.company, entityUuid: idea, action: "research_requested" } })).toBe(1);
     expect(events.emit).toHaveBeenCalledWith(`control:${connection}`, expect.objectContaining({ turnUuid: result.turnUuid }));
   });
   it("queues distinct explicit requests on the same root while Research is pending or running", async () => {
@@ -171,7 +174,7 @@ describe.skipIf(!url)("Research real database integration", () => {
     const next = await requestResearch(params());
     expect(next.sessionUuid).toBe(sessionUuid);
     expect(await db.daemonSessionTurn.findUnique({ where: { uuid: next.turnUuid } })).toMatchObject({ seq: 3, status: "pending" });
-    expect(await db.notification.count({ where: { companyUuid: state.company, entityUuid: idea, action: "human_instruction" } })).toBe(3);
+    expect(await db.notification.count({ where: { companyUuid: state.company, entityUuid: idea, action: "research_requested" } })).toBe(3);
     expect(await getResearchEligibility(state.company, idea)).toEqual({ eligible: true });
   });
   it("accepted development blocks dispatch before any task transition", async () => {
@@ -180,14 +183,14 @@ describe.skipIf(!url)("Research real database integration", () => {
     await expect(requestResearch(params())).rejects.toMatchObject({ code: "development_started" });
     expect(await db.daemonSession.count({ where: { companyUuid: state.company, directIdeaUuid: idea } })).toBe(0);
   });
-  it.each(["", "?researchProtocol=1"])("delivers and settles real HTTP Research requests with client mode '%s'", async (query) => {
+  it.each(["", "?researchProtocol=1", "?operationProtocol=1", "?operationProtocol=1&researchProtocol=1"])("delivers and settles real HTTP Research requests with client mode '%s'", async (query) => {
     const { GET } = await import("../../app/api/daemon/pending-turns/route");
     const { POST } = await import("../../app/api/daemon/turn-advance/route");
     const ctx = { params: Promise.resolve({}) };
     const first = await requestResearch(params());
     const second = await requestResearch(params());
     const read = async () => {
-      const response = await GET(new NextRequest(`http://localhost/api/daemon/pending-turns?connectionUuid=${connection}${query ? "&researchProtocol=1" : ""}`), ctx);
+      const response = await GET(new NextRequest(`http://localhost/api/daemon/pending-turns?connectionUuid=${connection}${query.replace("?", "&")}`), ctx);
       expect(response.status).toBe(200);
       const turns = (await response.json()).data.turns as { sessionId: string; turnUuid: string }[];
       return turns.filter((turn) => turn.sessionId === idea);
@@ -714,8 +717,8 @@ describe.skipIf(!url)("Research real database integration", () => {
     expect(await db.elaborationRound.findUnique({ where: { uuid: round.uuid }, include: { questions: true } })).toEqual(round);
     expect(await db.activity.count({ where: { companyUuid: state.company, targetUuid: idea } })).toBe(0);
     const session = await db.daemonSession.findFirstOrThrow({ where: { companyUuid: state.company, directIdeaUuid: idea } });
-    expect((await db.daemonSessionTurn.findMany({ where: { sessionUuid: session.uuid } })).map((turn) => turn.trigger)).toEqual(["human_instruction"]);
-    expect((await db.notification.findMany({ where: { companyUuid: state.company, entityUuid: idea } })).map((n) => n.action)).toEqual(["human_instruction"]);
+    expect((await db.daemonSessionTurn.findMany({ where: { sessionUuid: session.uuid } })).map((turn) => turn.trigger)).toEqual(["research_requested"]);
+    expect((await db.notification.findMany({ where: { companyUuid: state.company, entityUuid: idea } })).map((n) => n.action)).toEqual(["research_requested"]);
   });
   it("explicitly pins a bare agent's chosen instance while keeping an open Idea open", async () => {
     await db.idea.update({ where: { uuid: idea }, data: { status: "open", assigneeType: "agent", assigneeUuid: agent } });
@@ -820,4 +823,353 @@ describe.skipIf(!url)("Research real database integration", () => {
     } });
     await expect(requestResearch(params())).rejects.toMatchObject({ code: "origin_conflict" });
   });
+  // Dedicated operations use the same root/UUID through every protocol generation.
+  const wakeBase = () => ({ companyUuid: state.company, agentUuid: agent, connectionUuid: connection, sessionId: idea });
+  async function addCreationTurn(sessionUuid: string, seq: number) {
+    return db.daemonSessionTurn.create({ data: {
+      sessionUuid, seq, trigger: "idea_creation_requested", promptText: "Compatibility creation snapshot",
+      operationPayload: { version: 1, kind: "idea_creation", ideaUuid: idea, projectUuid: project,
+        mode: "elaborate", researchFirst: false, descriptionText: "User description" },
+    } });
+  }
+  it.each(["", "researchProtocol=1", "operationProtocol=1", "operationProtocol=1&researchProtocol=1", "operationProtocol=99"])(
+    "projects identical persisted UUIDs and fences mixed FIFO for '%s'", async (query) => {
+      const { GET } = await import("../../app/api/daemon/pending-turns/route");
+      const { POST } = await import("../../app/api/daemon/turn-advance/route");
+      const ctx = { params: Promise.resolve({}) };
+      const research = await requestResearch(params());
+      const creation = await addCreationTurn(research.sessionUuid, 2);
+      const ordinary = await db.daemonSessionTurn.create({ data: {
+        sessionUuid: research.sessionUuid, seq: 3, trigger: "mentioned", promptText: null,
+      } });
+      const historical = await db.daemonSessionTurn.create({ data: {
+        sessionUuid: research.sessionUuid, seq: 4, trigger: "human_instruction",
+        promptText: "[Chorus Tracker Research] historical",
+      } });
+      const nullPrompt = await db.daemonSessionTurn.create({ data: {
+        sessionUuid: research.sessionUuid, seq: 5, trigger: "human_instruction", promptText: null,
+      } });
+      const read = await GET(new NextRequest(`http://localhost/api/daemon/pending-turns?connectionUuid=${connection}&${query}`), ctx);
+      expect(read.status).toBe(200);
+      const rows = (await read.json()).data.turns.filter((row: { sessionId: string }) => row.sessionId === idea);
+      const canonical = new URLSearchParams(query).get("operationProtocol") === "1";
+      expect(rows.map((row: { turnUuid: string }) => row.turnUuid))
+        .toEqual([research.turnUuid, creation.uuid, ordinary.uuid, historical.uuid, nullPrompt.uuid]);
+      expect(rows[0]).toMatchObject({ trigger: canonical ? "research_requested" : "human_instruction",
+        sessionUuid: research.sessionUuid, directIdeaUuid: idea, runtimeCwd: research.session.runtimeCwd, seq: 1 });
+      expect(rows[1].trigger).toBe(canonical ? "idea_creation_requested" : "human_instruction");
+      if (canonical) expect(rows[0].operationPayload).toEqual({ version: 1, kind: "research", ideaUuid: idea });
+      else expect(rows[0]).not.toHaveProperty("operationPayload");
+      const response = await POST(new NextRequest(`http://localhost/api/daemon/turn-advance?${query}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...wakeBase(), status: "running", coalescedCount: 5 }),
+      }), ctx);
+      expect(response.status).toBe(200);
+      const stored = await db.daemonSessionTurn.findMany({ where: { sessionUuid: research.sessionUuid }, orderBy: { seq: "asc" } });
+      expect(stored.map((row) => row.status)).toEqual(canonical
+        ? ["pending", "pending", "running", "pending", "merged"]
+        : query === "researchProtocol=1"
+          ? ["pending", "running", "merged", "pending", "merged"]
+          : ["running", "merged", "merged", "merged", "merged"]);
+      expect(stored[0].trigger).toBe("research_requested");
+      expect(stored[1].trigger).toBe("idea_creation_requested");
+      expect(stored[4].operationPayload).toBeNull();
+    },
+  );
+  it.each(["read", "admission"])("retires prefixless canonical Research at %s after descendant execution, preserving other turns", async (boundary) => {
+    const research = await requestResearch(params());
+    await db.daemonSessionTurn.update({ where: { uuid: research.turnUuid }, data: { promptText: null } });
+    const creation = await addCreationTurn(research.sessionUuid, 2);
+    const ordinary = await db.daemonSessionTurn.create({ data: {
+      sessionUuid: research.sessionUuid, seq: 3, trigger: "human_instruction", promptText: "ordinary",
+    } });
+    await db.idea.update({ where: { uuid: idea }, data: { isContainer: true } });
+    const child = await db.idea.create({ data: {
+      companyUuid: state.company, projectUuid: project, parentUuid: idea, title: "Child", createdByUuid: state.actor,
+    } });
+    const task = await proposalTask("open", child.uuid);
+    await updateTask(task.uuid, { status: "in_progress" });
+    if (boundary === "read") {
+      const rows = await getPendingTurnsForConnection({ ...wakeBase(), operationProtocol: true });
+      expect(rows.some((row) => row.turnUuid === research.turnUuid)).toBe(false);
+    } else {
+      expect(await advanceTurnForWake({ ...wakeBase(), operationProtocol: true, turnUuid: research.turnUuid, status: "running" }))
+        .toMatchObject({ ok: false, reason: "invalid_transition", from: "research_stage_changed" });
+    }
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: research.turnUuid } }))
+      .toMatchObject({ status: "interrupted", interruptedReason: "research_stage_changed" });
+    expect(await db.daemonSessionTurn.count({ where: { uuid: { in: [creation.uuid, ordinary.uuid] }, status: "pending" } })).toBe(2);
+  });
+  it("admits prefixless Research and creation exactly once; terminal retries preserve per-turn backend and usage", async () => {
+    const research = await requestResearch(params());
+    await db.daemonSessionTurn.update({ where: { uuid: research.turnUuid }, data: { promptText: "No research prefix" } });
+    const creation = await addCreationTurn(research.sessionUuid, 2);
+    for (const turnUuid of [research.turnUuid, creation.uuid]) {
+      const base = { ...wakeBase(), operationProtocol: true, turnUuid };
+      const admitted = await Promise.all([0, 1].map(() => advanceTurnForWake({ ...base, status: "running" })));
+      expect(admitted.filter((result) => result.ok)).toHaveLength(1);
+      expect(await advanceTurnForWake({ ...base, status: "running", backendSessionId: "must-not-bind" }))
+        .toMatchObject({ ok: false, reason: "invalid_transition" });
+      expect(await db.daemonSessionTurn.findUnique({ where: { uuid: turnUuid } })).toMatchObject({ backendSessionId: null });
+      const terminal = { ...base, status: "ended" as const, backendSessionId: `backend-${turnUuid}`,
+        usage: { inputTokens: 11, outputTokens: 7, cacheCreationTokens: 0, cacheReadTokens: 2, model: "test", source: "test" } };
+      const ended = await Promise.all([advanceTurnForWake(terminal), advanceTurnForWake(terminal)]);
+      expect(ended.every((result) => result.ok)).toBe(true);
+      expect(await advanceTurnForWake({ ...terminal, backendSessionId: "other" }))
+        .toEqual({ ok: false, reason: "backend_session_conflict" });
+      expect(await db.daemonSessionTurn.findUnique({ where: { uuid: turnUuid } }))
+        .toMatchObject({ backendSessionId: terminal.backendSessionId, usage: terminal.usage });
+    }
+    expect(await db.daemonSession.findUnique({ where: { uuid: research.sessionUuid } }))
+      .toMatchObject({ totalInputTokens: 22, totalOutputTokens: 14, totalCacheReadTokens: 4 });
+  });
+  it.each(["legacy", "research", "operation"])("creation reports retain origin/company/agent/session fences in %s mode", async (mode) => {
+    const research = await requestResearch(params());
+    const creation = await addCreationTurn(research.sessionUuid, 2);
+    const base = { ...wakeBase(), researchMode: mode === "legacy" ? "legacy" as const : "isolated" as const,
+      operationProtocol: mode === "operation", turnUuid: creation.uuid };
+    const before = await db.daemonSessionTurn.findUnique({ where: { uuid: creation.uuid } });
+    for (const fence of ["companyUuid", "agentUuid", "connectionUuid", "sessionId"]) {
+      for (const status of ["running", "ended", "interrupted"] as const) {
+        expect(await advanceTurnForWake({ ...base, [fence]: randomUUID(), status, interruptedReason: "crash" }))
+          .toEqual({ ok: false, reason: "not_found" });
+      }
+    }
+    expect(await advanceTurnForWake({ ...base, turnUuid: undefined, connectionUuid: randomUUID(), status: "running", coalescedCount: 9 }))
+      .toEqual({ ok: false, reason: "not_found" });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: creation.uuid } })).toEqual(before);
+  });
+  it.each(["crash", "invalid_path", "user"])("creation permits only exact origin-fenced pending launch abort (%s)", async (interruptedReason) => {
+    const research = await requestResearch(params());
+    const creation = await addCreationTurn(research.sessionUuid, 2);
+    const base = { ...wakeBase(), operationProtocol: true, turnUuid: creation.uuid, status: "interrupted" as const, interruptedReason };
+    for (const override of [{ interruptedReason: "shutdown" }, { status: "ended" as const }, { backendSessionId: "bad" }]) {
+      expect(await advanceTurnForWake({ ...base, ...override })).toMatchObject({ ok: false, reason: "invalid_transition" });
+    }
+    expect(await advanceTurn(creation.uuid, "interrupted", { expectedStatus: "pending", interruptedReason }))
+      .toMatchObject({ ok: false, reason: "invalid_transition" });
+    expect(await advanceTurnForWake(base)).toMatchObject({ ok: true });
+    expect(await advanceTurnForWake(base)).toMatchObject({ ok: true });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: creation.uuid } }))
+      .toMatchObject({ status: "interrupted", interruptedReason, startedAt: null, backendSessionId: null });
+  });
+  it("rejects invalid persisted payloads with visible HTTP 409 and no backend mutation; retries can recover", async () => {
+    const { POST } = await import("../../app/api/daemon/turn-advance/route");
+    const research = await requestResearch(params());
+    const creation = await addCreationTurn(research.sessionUuid, 2);
+    const good = creation.operationPayload as Record<string, unknown>;
+    const invalid = [null, { ...good, version: 2 }, { ...good, kind: "research" },
+      { ...good, ideaUuid: randomUUID() }, { ...good, projectUuid: randomUUID() },
+      { ...good, mode: "yolo" }, { ...good, researchFirst: "true" },
+      { ...good, descriptionText: "x".repeat(3001) }, { ...good, companyUuid: state.company }];
+    for (const payload of invalid) {
+      await db.$executeRaw`UPDATE "DaemonSessionTurn" SET "operationPayload" = ${JSON.stringify(payload)}::jsonb WHERE uuid = ${creation.uuid}`;
+      const response = await POST(new NextRequest("http://localhost/api/daemon/turn-advance?operationProtocol=1", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...wakeBase(), turnUuid: creation.uuid, status: "running", backendSessionId: "must-not-bind" }),
+      }), { params: Promise.resolve({}) });
+      expect(response.status).toBe(409);
+      expect((await response.json()).error.message).toContain("operation payload");
+      expect(await db.daemonSessionTurn.findUnique({ where: { uuid: creation.uuid } }))
+        .toMatchObject({ status: "pending", backendSessionId: null });
+    }
+    await db.$executeRaw`UPDATE "DaemonSessionTurn" SET "operationPayload" = ${JSON.stringify(good)}::jsonb WHERE uuid = ${creation.uuid}`;
+    expect(await advanceTurnForWake({ ...wakeBase(), operationProtocol: true, turnUuid: creation.uuid, status: "running" })).toMatchObject({ ok: true });
+  });
+  it("service payload validation rejects contradictory writes and leaves no partial creation", async () => {
+    const { createPendingTurn } = await import("../daemon-session.service");
+    const research = await requestResearch(params());
+    for (const payload of [undefined, { version: 2, kind: "research", ideaUuid: idea },
+      { version: 1, kind: "research", ideaUuid: randomUUID() }, { version: 1, kind: "research", ideaUuid: idea, connectionUuid: connection }]) {
+      await expect(createPendingTurn({ sessionUuid: research.sessionUuid, trigger: "research_requested", operationPayload: payload as never }))
+        .rejects.toThrow();
+    }
+    expect(await db.daemonSessionTurn.count({ where: { sessionUuid: research.sessionUuid } })).toBe(1);
+    const count = await db.idea.count({ where: { companyUuid: state.company } });
+    for (const override of [{ mode: "yolo" }, { researchFirst: "true" }]) {
+      await expect(createConversationalIdeaSession({ type: "user", companyUuid: state.company, actorUuid: state.actor }, {
+        projectUuid: project, agentUuid: agent, connectionUuid: connection, descriptionText: "valid", ...override,
+      } as never)).rejects.toThrow();
+    }
+    expect(await db.idea.count({ where: { companyUuid: state.company } })).toBe(count);
+  });
+  it("rollback disables new dedicated writes but keeps canonical rows readable and confirmable", async () => {
+    const original = process.env.CHORUS_DEDICATED_OPERATION_WRITES;
+    const research = await requestResearch(params());
+    const canonical = await addCreationTurn(research.sessionUuid, 2);
+    try {
+      process.env.CHORUS_DEDICATED_OPERATION_WRITES = "false";
+      const oldResearch = await requestResearch(params());
+      const oldCreation = await createConversationalIdeaSession({ type: "user", companyUuid: state.company, actorUuid: state.actor }, {
+        projectUuid: project, agentUuid: agent, connectionUuid: connection, descriptionText: "rollback description", mode: "decompose", researchFirst: true,
+      });
+      for (const uuid of [oldResearch.turnUuid, oldCreation.turn.uuid]) {
+        expect(await db.daemonSessionTurn.findUnique({ where: { uuid } })).toMatchObject({ trigger: "human_instruction", operationPayload: null });
+      }
+      const rows = await getPendingTurnsForConnection({ ...wakeBase(), operationProtocol: true });
+      expect(rows.find((row) => row.turnUuid === canonical.uuid)?.trigger).toBe("idea_creation_requested");
+      expect(rows.find((row) => row.turnUuid === research.turnUuid)?.trigger).toBe("research_requested");
+      for (const turnUuid of [research.turnUuid, canonical.uuid]) {
+        expect(await advanceTurnForWake({ ...wakeBase(), operationProtocol: true, turnUuid, status: "running" })).toMatchObject({ ok: true });
+        expect(await advanceTurnForWake({ ...wakeBase(), operationProtocol: true, turnUuid, status: "ended" })).toMatchObject({ ok: true });
+      }
+    } finally {
+      if (original === undefined) delete process.env.CHORUS_DEDICATED_OPERATION_WRITES;
+      else process.env.CHORUS_DEDICATED_OPERATION_WRITES = original;
+    }
+  });
+  it.each(["idea_creation_requested", "research_requested"])("audit action %s cannot create another turn or delivery ping", async (action) => {
+    const { createTurnAndResolveTarget } = await import("../notification-turn");
+    const research = await requestResearch(params());
+    const before = await db.daemonSessionTurn.count({ where: { sessionUuid: research.sessionUuid } });
+    events.emit.mockClear();
+    expect(await createTurnAndResolveTarget({ companyUuid: state.company, recipientType: "agent", recipientUuid: agent,
+      entityType: "idea", entityUuid: idea, action, instructionText: "same snapshot" })).toMatchObject({ turn: null });
+    expect(await db.daemonSessionTurn.count({ where: { sessionUuid: research.sessionUuid } })).toBe(before);
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+  it("rechecks origin when legacy coalescing races a session repoint", async () => {
+    const research = await requestResearch(params());
+    await db.daemonSessionTurn.update({ where: { uuid: research.turnUuid }, data: { seq: 2 } });
+    const ordinary = await db.daemonSessionTurn.create({ data: {
+      sessionUuid: research.sessionUuid, seq: 1, trigger: "mentioned", promptText: null,
+    } });
+    const creation = await addCreationTurn(research.sessionUuid, 3);
+    const other = await db.daemonConnection.create({ data: {
+      companyUuid: state.company, agentUuid: agent, clientType: "claude_code", host: "repoint", cwd: "/other", status: "online",
+    } });
+    let repointed = false;
+    state.db = db.$extends({ query: { daemonSessionTurn: {
+      async findMany({ args, query }) {
+        if (args.where?.seq && !repointed) {
+          repointed = true;
+          await db.daemonSession.update({ where: { uuid: research.sessionUuid }, data: { originConnectionUuid: other.uuid } });
+        }
+        return query(args);
+      },
+    } } });
+    try {
+      expect(await advanceTurnForWake({ ...wakeBase(), researchMode: "legacy", status: "running", coalescedCount: 3 }))
+        .toMatchObject({ ok: true, turn: { uuid: ordinary.uuid } });
+      expect(repointed).toBe(true);
+      expect(await db.daemonSessionTurn.count({ where: { uuid: { in: [research.turnUuid, creation.uuid] }, status: "pending" } })).toBe(2);
+    } finally {
+      state.db = db;
+      await db.daemonSession.update({ where: { uuid: research.sessionUuid }, data: { originConnectionUuid: connection } });
+      await db.daemonConnection.delete({ where: { uuid: other.uuid } });
+    }
+  });
+  it("canonical creation and autonomous text never gain Research semantics from a prefix", async () => {
+    const research = await requestResearch(params());
+    const creation = await addCreationTurn(research.sessionUuid, 2);
+    await db.daemonSessionTurn.update({ where: { uuid: creation.uuid }, data: { promptText: "[Chorus Tracker Research] looks like research" } });
+    const autonomous = await db.daemonSessionTurn.create({ data: {
+      sessionUuid: research.sessionUuid, seq: 3, trigger: "mentioned", promptText: "[Chorus Tracker Research] quoted context",
+    } });
+    await development();
+    const rows = await getPendingTurnsForConnection({ ...wakeBase(), operationProtocol: true });
+    expect(rows.filter((row) => row.sessionId === idea).map((row) => row.turnUuid)).toEqual([creation.uuid, autonomous.uuid]);
+    expect(await advanceTurnForWake({ ...wakeBase(), operationProtocol: true, turnUuid: creation.uuid, status: "running" }))
+      .toMatchObject({ ok: true });
+  });
+  it.each(["elaborate", "decompose"] as const)("rolls back %s Idea and session when the first operation turn cannot persist", async (mode) => {
+    const counts = async () => [await db.idea.count({ where: { companyUuid: state.company } }),
+      await db.daemonSession.count({ where: { companyUuid: state.company } })];
+    const before = await counts();
+    state.db = db.$extends({ query: { daemonSessionTurn: {
+      create() { throw new Error("Injected operation write failure"); },
+    } } });
+    try {
+      await expect(createConversationalIdeaSession({ type: "user", companyUuid: state.company, actorUuid: state.actor }, {
+        projectUuid: project, agentUuid: agent, connectionUuid: connection, mode, descriptionText: "atomic creation",
+      })).rejects.toThrow("Injected operation write failure");
+      expect(await counts()).toEqual(before);
+      expect(events.emit).not.toHaveBeenCalled();
+    } finally {
+      state.db = db;
+    }
+  });
+  it.each([
+    ["creation", "snapshot"], ["research", "snapshot"], ["historical", "snapshot"],
+    ["creation", "claim"], ["research", "claim"], ["historical", "claim"],
+  ])("B1: rejected %s admission from stale %s cannot bind either backend; winner settles usage once", async (kind, interleaving) => {
+    const research = await requestResearch(params());
+    const turnUuid = kind === "creation" ? (await addCreationTurn(research.sessionUuid, 2)).uuid : research.turnUuid;
+    if (kind === "historical") {
+      await db.daemonSessionTurn.update({ where: { uuid: turnUuid }, data: { trigger: "human_instruction" } });
+    }
+    const base = { ...wakeBase(), operationProtocol: true, turnUuid };
+    let intercepted = false;
+    let winner: Awaited<ReturnType<typeof advanceTurnForWake>> | undefined;
+    state.db = db.$extends({ query: { daemonSessionTurn: {
+      async findFirst({ args, query }) {
+        const snapshot = await query(args);
+        if (interleaving === "snapshot" && !intercepted && args.where?.uuid === turnUuid) {
+          intercepted = true;
+          winner = await advanceTurnForWake({ ...base, status: "running" });
+        }
+        return snapshot;
+      },
+      async findUnique({ args, query }) {
+        const snapshot = await query(args);
+        if (interleaving === "claim" && !intercepted && args.where?.uuid === turnUuid && args.select?.trigger) {
+          intercepted = true;
+          winner = await advanceTurnForWake({ ...base, status: "running" });
+        }
+        return snapshot;
+      },
+    } } });
+    events.emit.mockClear();
+    try {
+      const loser = await advanceTurnForWake({ ...base, status: "running", backendSessionId: "losing-process" });
+      expect(intercepted).toBe(true);
+      expect(winner).toMatchObject({ ok: true });
+      expect(loser).toMatchObject({ ok: false, reason: "invalid_transition" });
+      expect(await db.daemonSessionTurn.findUnique({ where: { uuid: turnUuid } }))
+        .toMatchObject({ status: "running", backendSessionId: null, usage: null });
+      expect(await db.daemonSession.findUnique({ where: { uuid: research.sessionUuid } }))
+        .toMatchObject({ backendSessionId: null, totalInputTokens: 0, totalOutputTokens: 0 });
+      const usage = { inputTokens: 13, outputTokens: 7, cacheReadTokens: 3, cacheCreationTokens: 2, model: "B1", source: "test" };
+      const terminal = { ...base, status: "ended" as const, backendSessionId: "winning-process", usage };
+      const settled = await Promise.all([advanceTurnForWake(terminal), advanceTurnForWake(terminal)]);
+      expect(settled.every((result) => result.ok)).toBe(true);
+      expect(await advanceTurnForWake(terminal)).toMatchObject({ ok: true });
+      expect(await db.daemonSessionTurn.findUnique({ where: { uuid: turnUuid } }))
+        .toMatchObject({ status: "ended", backendSessionId: "winning-process", usage });
+      expect(await db.daemonSession.findUnique({ where: { uuid: research.sessionUuid } }))
+        .toMatchObject({ backendSessionId: "winning-process", totalInputTokens: 13, totalOutputTokens: 7,
+          totalCacheReadTokens: 3, totalCacheCreationTokens: 2 });
+      expect(events.emit.mock.calls.filter(([name, event]) => name === `transcript:${research.sessionUuid}` &&
+        event.trigger === "turn_status_changed" && event.turn.uuid === turnUuid)).toHaveLength(2);
+    } finally {
+      state.db = db;
+    }
+  });
+  it.each(["creation", "research"])("B1: %s admission rolls back its status and BOTH backends after session binding writes", async (kind) => {
+    const research = await requestResearch(params());
+    const turnUuid = kind === "creation" ? (await addCreationTurn(research.sessionUuid, 2)).uuid : research.turnUuid;
+    const base = { ...wakeBase(), operationProtocol: true, turnUuid, status: "running" as const, backendSessionId: "winning-process" };
+    state.db = db.$extends({ query: { daemonSession: {
+      async updateMany({ args, query }) {
+        if (args.data.backendSessionId) {
+          await query(args);
+          throw new Error("B1 injected session binding failure");
+        }
+        return query(args);
+      },
+    } } });
+    events.emit.mockClear();
+    try {
+      await expect(advanceTurnForWake(base)).rejects.toThrow("B1 injected session binding failure");
+      expect(await db.daemonSessionTurn.findUnique({ where: { uuid: turnUuid } }))
+        .toMatchObject({ status: "pending", backendSessionId: null, startedAt: null });
+      expect(await db.daemonSession.findUnique({ where: { uuid: research.sessionUuid } }))
+        .toMatchObject({ backendSessionId: null });
+      expect(events.emit).not.toHaveBeenCalled();
+    } finally {
+      state.db = db;
+    }
+    expect(await advanceTurnForWake(base)).toMatchObject({ ok: true, turn: { status: "running", backendSessionId: "winning-process" } });
+  });
+
 });

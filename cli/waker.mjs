@@ -19,6 +19,7 @@
 // wake. A failure is logged and swallowed — it must never crash the daemon
 // (no-silent-errors: visible log, no throw).
 
+import { OPERATION_ACTIONS, isExactOperation, validateOperation } from "./operation.mjs";
 import { buildBatchPrompt } from "./prompts.mjs";
 import { writeMcpConfig } from "./mcp-config.mjs";
 import { isNewSession, SESSION_CONFLICT_FAILURE } from "./claude-spawner.mjs";
@@ -110,7 +111,7 @@ export class Waker {
     this.deterministicConflictGuards = new Set();
     // Retry exact launch-abort reports after a network outage. These timers carry
     // delivery cleanup only; the existing server turn remains the lifecycle authority.
-    this.researchRecoveryTimers = new Set();
+    this.operationRecoveryTimers = new Set();
     // Daemon graceful-shutdown flag (fix-daemon-exit-orphan-running-turn). Set once
     // by interruptAll() and never cleared — a shutting-down Waker is on its way out.
     // The wake exit path reads it to report the TURN as interrupted(shutdown), and to
@@ -191,8 +192,8 @@ export class Waker {
    */
   interruptAll() {
     this.shuttingDown = true;
-    for (const timer of this.researchRecoveryTimers) clearTimeout(timer);
-    this.researchRecoveryTimers.clear();
+    for (const timer of this.operationRecoveryTimers) clearTimeout(timer);
+    this.operationRecoveryTimers.clear();
     for (const [key, entry] of this.executions) {
       if (entry.status !== "running" || !entry.child) continue;
       try {
@@ -371,10 +372,27 @@ export class Waker {
    */
   async wakeBatch(notifications, key, attribution) {
     let cfg;
-    let researchTurnUuid = null;
+    let operationTurnUuid = null;
     const receivedList = Array.isArray(notifications) ? notifications : [];
+    // Defense in depth for callers bypassing the router: malformed operations
+    // never clear a conflict guard, request admission or settle a pending turn.
+    try {
+      for (const n of receivedList.filter((n) => OPERATION_ACTIONS.has(n?.action))) {
+        validateOperation(n.action, n.operationPayload, {
+          sessionId: n.sessionId, directIdeaUuid: attribution?.directIdeaUuid,
+          projectUuid: n.projectUuid,
+        });
+        if (n.entityUuid !== n.directIdeaUuid || n.entityType !== "idea" ||
+            n.directIdeaUuid !== attribution?.directIdeaUuid) {
+          throw new Error("Operation protocol error: execution identity mismatch");
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`[Chorus] operation remains pending and retryable: ${err}`);
+      return;
+    }
     const hasFreshHumanInstruction = receivedList.some(
-      (n) => n?.action === "human_instruction",
+      (n) => n?.action === "human_instruction" || OPERATION_ACTIONS.has(n?.action),
     );
     if (hasFreshHumanInstruction && this.deterministicConflictGuards.delete(key)) {
       this.logger.info(
@@ -443,10 +461,8 @@ export class Waker {
     const startMs = Date.now();
     const target = entity ? `${entity.entityType}:${entity.entityUuid}` : key;
     const sessionId = directIdeaUuid ?? first?.entityUuid ?? null;
-    const research = list.filter((n) =>
-      n?.action === "human_instruction" &&
-      n.instructionText?.startsWith("[Chorus Tracker Research]"));
-    const researchRequestUuid = batchSize === 1 && research.length ? first.turnUuid : null;
+    const operations = list.filter(isExactOperation);
+    const operationRequestUuid = batchSize === 1 && operations.length ? first.turnUuid : null;
     const requestedRuntimeCwd =
       typeof first?.runtimeCwd === "string" && first.runtimeCwd
         ? first.runtimeCwd
@@ -457,8 +473,8 @@ export class Waker {
     const arrivalAction =
       batchSize > 1 ? `coalesced batch of ${batchSize}` : first?.action;
     try {
-      if (research.length && (!researchRequestUuid || !sessionId || batchSize !== 1)) {
-        this.logger.warn(`[Chorus] Research requires an isolated, exact pending turn — skipping ${key}`);
+      if (operations.length && (!operationRequestUuid || !sessionId || batchSize !== 1)) {
+        this.logger.warn(`[Chorus] Operation requires an isolated, exact pending turn — skipping ${key}`);
         return;
       }
       const prompt = buildBatchPrompt(list);
@@ -489,7 +505,7 @@ export class Waker {
           status: "running",
           startedAt: new Date().toISOString(),
           child: null,
-          ...(researchRequestUuid ? { researchTurnUuid: researchRequestUuid } : {}),
+          ...(operationRequestUuid ? { operationTurnUuid: operationRequestUuid } : {}),
         });
         this.#emitExecutionChange();
       }
@@ -541,34 +557,34 @@ export class Waker {
       // The server's atomic pending->running edge rechecks Research eligibility
       // under the same lock as development acceptance. Await admission BEFORE any
       // backend can spawn; an offline/rejected/missing reporter must fail closed.
-      if (research.length) {
+      if (operations.length) {
         if (execKey && this.interrupting.has(execKey)) {
-          await this.#retireUnstartedResearch({
-            sessionId, turnUuid: researchRequestUuid, status: "interrupted",
+          await this.#retireUnstartedOperation({
+            sessionId, turnUuid: operationRequestUuid, status: "interrupted",
             interruptedReason: "user",
           });
           return;
         }
         const admission = await this.advanceTurn({
-          sessionId, turnUuid: first.turnUuid, status: "running",
+          sessionId, turnUuid: first.turnUuid, status: "running", coalescedCount: 1,
           entityType: entity?.entityType ?? null,
           entityUuid: entity?.entityUuid ?? null,
         });
         if (!admission?.ok || admission.data?.turnUuid !== first.turnUuid) {
-          this.logger.warn(`[Chorus] Research admission rejected or unavailable for ${key} — no subprocess started`);
+          this.logger.warn(`[Chorus] Operation admission rejected or unavailable for ${key} — no subprocess started`);
           // A conflict may belong to an already-running consumer; never abort it.
           // Otherwise the response may have been lost AFTER admission committed.
           // Retire this exact unstarted request whether it is pending or running.
           if ((execKey && this.interrupting.has(execKey)) || ![404, 409].includes(admission?.status)) {
-            await this.#retireUnstartedResearch({
-              sessionId, turnUuid: researchRequestUuid, status: "interrupted",
+            await this.#retireUnstartedOperation({
+              sessionId, turnUuid: operationRequestUuid, status: "interrupted",
               interruptedReason: execKey && this.interrupting.has(execKey) ? "user" : "crash",
-              transcriptRelayError: "Research launch admission unavailable; no subprocess started",
+              transcriptRelayError: "Operation launch admission unavailable; no subprocess started",
             });
           }
           return;
         }
-        researchTurnUuid = first.turnUuid;
+        operationTurnUuid = first.turnUuid;
       }
 
       cfg = this.writeMcpConfigFn(this.creds);
@@ -584,8 +600,8 @@ export class Waker {
       // a spawn that never started (onChild never fired) does not attempt an illegal
       // pending→ended transition. There is no separate turn registry — the turn is
       // identified server-side by `sessionId`, which the waker already has here.
-      let turnAdvancedToRunning = researchTurnUuid !== null;
-      let runningTurnUuidPromise = Promise.resolve(researchTurnUuid);
+      let turnAdvancedToRunning = operationTurnUuid !== null;
+      let runningTurnUuidPromise = Promise.resolve(operationTurnUuid);
       let childStarted = false;
 
       // Track the session id the stream reports so the transcript hook can use
@@ -596,15 +612,15 @@ export class Waker {
         childStarted = true;
         const entry = execKey ? this.executions.get(execKey) : null;
         if (entry && entry.status === "running") entry.child = child;
-        if (researchTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) {
+        if (operationTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) {
           // Some backends await binary discovery before onChild. A stop during
           // that interval must still terminate the child as soon as it exists.
           try {
             Promise.resolve(this.killer(child, {
               sigintTimeoutMs: this.sigintTimeoutMs, logger: this.logger,
-            })).catch((err) => this.logger.warn(`[Chorus] cancelled Research child kill failed: ${err}`));
+            })).catch((err) => this.logger.warn(`[Chorus] cancelled operation child kill failed: ${err}`));
           } catch (err) {
-            this.logger.warn(`[Chorus] cancelled Research child kill failed: ${err}`);
+            this.logger.warn(`[Chorus] cancelled operation child kill failed: ${err}`);
           }
         }
         if (sessionId && !turnAdvancedToRunning) {
@@ -650,11 +666,11 @@ export class Waker {
         onChild,
         onMessage,
       };
-      if (researchTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) {
-        await this.#retireUnstartedResearch({
-          sessionId, turnUuid: researchTurnUuid, status: "interrupted",
+      if (operationTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) {
+        await this.#retireUnstartedOperation({
+          sessionId, turnUuid: operationTurnUuid, status: "interrupted",
           interruptedReason: execKey && this.interrupting.has(execKey) ? "user" : "shutdown",
-          transcriptRelayError: "Research cancelled before subprocess launch",
+          transcriptRelayError: "Operation cancelled before subprocess launch",
         });
         return;
       }
@@ -666,7 +682,7 @@ export class Waker {
       // child for interrupt handling; onChild's gate keeps pending→running exactly once.
       if (
         isNew &&
-        !(researchTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) &&
+        !(operationTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) &&
         result?.failureClassification === SESSION_CONFLICT_FAILURE
       ) {
         this.logger.warn(
@@ -681,11 +697,11 @@ export class Waker {
         }
       }
 
-      if (researchTurnUuid && !childStarted) {
-        await this.#retireUnstartedResearch({
-          sessionId, turnUuid: researchTurnUuid, status: "interrupted",
+      if (operationTurnUuid && !childStarted) {
+        await this.#retireUnstartedOperation({
+          sessionId, turnUuid: operationTurnUuid, status: "interrupted",
           interruptedReason: execKey && this.interrupting.has(execKey) ? "user" : "crash",
-          transcriptRelayError: "Research subprocess did not start",
+          transcriptRelayError: "Operation subprocess did not start",
         });
         return;
       }
@@ -825,11 +841,11 @@ export class Waker {
       }
     } catch (err) {
       this.logger.warn(`[Chorus] wake failed for ${key}: ${err}`);
-      if (researchRequestUuid && sessionId) {
+      if (operationRequestUuid && sessionId) {
         // Admission succeeded but setup/spawn threw: retire this exact turn so a
-        // failed launch cannot leave an indefinitely running Research request.
-        await this.#retireUnstartedResearch({
-          sessionId, turnUuid: researchRequestUuid, status: "interrupted",
+        // failed launch cannot leave an indefinitely running operation.
+        await this.#retireUnstartedOperation({
+          sessionId, turnUuid: operationRequestUuid, status: "interrupted",
           interruptedReason: execKey && this.interrupting.has(execKey) ? "user"
             : requestedRuntimeCwd && typeof err?.code === "string" ? "invalid_path" : "crash",
           transcriptRelayError: String(err?.message ?? err).slice(0, 500),
@@ -873,23 +889,23 @@ export class Waker {
     }
   }
 
-  async #retireUnstartedResearch(report) {
+  async #retireUnstartedOperation(report) {
     try {
       const result = await this.advanceTurn(report);
       // Terminal retries are idempotent. A 404/409 means this exact row is gone
       // or already settled differently; no other turn is selected or changed.
       if (result?.ok || [404, 409].includes(result?.status)) return;
     } catch (err) {
-      this.logger.warn(`[Chorus] Research launch cleanup failed for ${report.turnUuid}: ${err}`);
+      this.logger.warn(`[Chorus] Operation launch cleanup failed for ${report.turnUuid}: ${err}`);
     }
     if (this.shuttingDown) return; // offline reconcile / pending backfill owns restart
-    this.logger.warn(`[Chorus] Research launch cleanup deferred for ${report.turnUuid}; retrying in 30s`);
+    this.logger.warn(`[Chorus] Operation launch cleanup deferred for ${report.turnUuid}; retrying in 30s`);
     const timer = setTimeout(() => {
-      this.researchRecoveryTimers.delete(timer);
-      void this.#retireUnstartedResearch(report);
+      this.operationRecoveryTimers.delete(timer);
+      void this.#retireUnstartedOperation(report);
     }, 30_000);
     timer.unref?.();
-    this.researchRecoveryTimers.add(timer);
+    this.operationRecoveryTimers.add(timer);
   }
 
   /**

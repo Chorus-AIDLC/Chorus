@@ -719,8 +719,9 @@ model DaemonSessionTurn {
   // immutable first-wake compatibility anchor.
   backendSessionId  String?
   seq               Int // monotonic per session
-  trigger           String // task_assigned | mentioned | elaboration | elaboration_verified | start_development | yolo_requested | resume | human_instruction
-  promptText        String? // free-text body for human_instruction; null otherwise (canonical source)
+  trigger           String // task_assigned | mentioned | elaboration | elaboration_verified | start_development | yolo_requested | resume | human_instruction | idea_creation_requested | research_requested
+  promptText        String? // human instruction body or server-composed operation compatibility snapshot
+  operationPayload  Json? // versioned dedicated operation; historical rows remain null
   status            String                    @default("pending") // pending | running | ended | interrupted
   // Discriminator for the `interrupted` status: `user` = user-requested interrupt,
   // `crash` = subprocess exited dirty, `shutdown` = daemon graceful shutdown killed

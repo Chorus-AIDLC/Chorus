@@ -7,7 +7,6 @@ import type { StageAction } from "@/components/stage-action";
 import type { StartDevelopmentAssignee } from "@/lib/start-development";
 import { assigneeOwningAgentUuid } from "@/lib/start-development";
 import { researchEligibilityAction, researchIdeaAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/research-actions";
-import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
 import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
 import { ResearchAgentPicker } from "@/components/research-agent-picker";
@@ -23,7 +22,6 @@ export function ResearchAction({ ideaUuid, projectUuid, assignee, disabledReason
   onCloseAutoFocus?: (event: Event) => void;
 }) {
   const t = useTranslations("research");
-  const presence = useAgentPresenceOptional();
   const [reason, setReason] = useState<string | undefined>("loading");
   const [busy, setBusy] = useState(false);
   const sending = useRef(false);
@@ -65,7 +63,6 @@ export function ResearchAction({ ideaUuid, projectUuid, assignee, disabledReason
       if (result.success) {
         setReason(undefined);
         toast.success(t("dispatched"));
-        presence?.openChatForSession(result.session);
         selection.current = undefined;
         onStarted();
       } else {

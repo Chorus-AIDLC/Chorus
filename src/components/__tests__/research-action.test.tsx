@@ -17,7 +17,7 @@ vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/research-actions", (
   researchEligibilityAction: mocks.eligibility, researchIdeaAction: mocks.dispatch,
 }));
 vi.mock("@/contexts/agent-presence-context", () => ({
-  useAgentPresenceOptional: () => ({ openChatForSession: mocks.openSession }),
+  useAgentPresenceOptional: () => ({ setModalOpen: mocks.openSession }),
 }));
 vi.mock("sonner", () => ({ toast: { success: mocks.success, error: mocks.error, info: mocks.info } }));
 vi.mock("@/hooks/use-pin-then-wake", () => ({
@@ -95,14 +95,14 @@ describe("Tracker Research action", () => {
     const { research } = await openMenu();
     await waitFor(() => expect(research.getAttribute("aria-disabled")).toBe("false"));
   });
-  it("dispatches once and focuses the returned root conversation", async () => {
+  it("dispatches once with queued feedback and refreshes without changing the conversation", async () => {
     const { onStarted } = setup();
     const { user, research } = await openMenu();
     await user.click(research);
     await waitFor(() => expect(mocks.dispatch).toHaveBeenCalledExactlyOnceWith("idea"));
-    expect(mocks.openSession).toHaveBeenCalledWith({ uuid: "session", sessionId: "idea" });
+    expect(mocks.openSession).not.toHaveBeenCalled();
     expect(onStarted).toHaveBeenCalledOnce();
-    expect(mocks.success).toHaveBeenCalled();
+    expect(mocks.success).toHaveBeenCalledWith("Research request queued.");
   });
   it("blocks only submission and allows another explicit request immediately after acceptance", async () => {
     let accept!: (result: unknown) => void;
@@ -113,16 +113,37 @@ describe("Tracker Research action", () => {
     const user = userEvent.setup();
     const button = screen.getByRole("button", { name: "Research" }) as HTMLButtonElement;
     await waitFor(() => expect(button.disabled).toBe(false));
-    await user.click(button);
+    act(() => { button.click(); button.click(); });
     expect(button.disabled).toBe(true);
     await user.click(button);
     expect(mocks.dispatch).toHaveBeenCalledTimes(1);
     await act(async () => accept({ success: true, session: { uuid: "session", sessionId: "idea" } }));
     expect(button.disabled).toBe(false);
-    expect(mocks.success).toHaveBeenCalledWith("Research request submitted to the idea conversation.");
+    expect(mocks.success).toHaveBeenCalledWith("Research request queued.");
     await user.click(button);
     expect(mocks.dispatch).toHaveBeenCalledTimes(2);
     expect(button.disabled).toBe(false);
+    expect(mocks.openSession).not.toHaveBeenCalled();
+  });
+  it("keeps failed Research retryable on the same idea without changing chat", async () => {
+    mocks.dispatch.mockRejectedValueOnce(new Error("network unavailable"));
+    const onStarted = vi.fn();
+    render(<ResearchAction ideaUuid="idea" projectUuid="project" assignee={{ uuid: "agent", type: "agent" }}
+      refreshKey="stable" onStarted={onStarted} renderAction={(action) =>
+        <button disabled={!!action.disabledReason} onClick={action.onSelect}>{action.label}</button>} />);
+    const user = userEvent.setup();
+    const button = screen.getByRole("button", { name: "Research" }) as HTMLButtonElement;
+    await waitFor(() => expect(button.disabled).toBe(false));
+    await user.click(button);
+    await waitFor(() => expect(mocks.error).toHaveBeenCalledOnce());
+    expect(button.disabled).toBe(false);
+    expect(mocks.success).not.toHaveBeenCalled();
+    expect(onStarted).not.toHaveBeenCalled();
+    await user.click(button);
+    expect(mocks.dispatch.mock.calls).toEqual([["idea"], ["idea"]]);
+    expect(mocks.success).toHaveBeenCalledExactlyOnceWith("Research request queued.");
+    expect(onStarted).toHaveBeenCalledOnce();
+    expect(mocks.openSession).not.toHaveBeenCalled();
   });
   it("opens a research-only picker for an agentless idea and preserves state until confirmation", async () => {
     setup({ assignee: null });
@@ -160,7 +181,7 @@ describe("Tracker Research action", () => {
     expect(mocks.dispatch).toHaveBeenCalledTimes(2);
     expect(mocks.dispatch).toHaveBeenLastCalledWith("idea", undefined, { agentUuid: "agent", instanceUuid: "instance" });
     expect(mocks.reassign).not.toHaveBeenCalled();
-    expect(mocks.openSession).toHaveBeenCalledOnce();
+    expect(mocks.openSession).not.toHaveBeenCalled();
   });
   it.each(["development_started", "idea_completed"])("disables %s with an accessible explanation", async (reason) => {
     mocks.eligibility.mockResolvedValue({ eligible: false, reason });

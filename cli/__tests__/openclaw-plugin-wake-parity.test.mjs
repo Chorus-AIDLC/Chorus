@@ -7,7 +7,7 @@
 // practice (the plugin fell 3 wake actions behind the daemon, which this idea fixed).
 //
 // This guard makes the mirror ENFORCED, not merely documented: it asserts the plugin's
-// handled-action set is a SUPERSET of the daemon's wake-action set, minus the two actions the
+// handled-action set is a SUPERSET of the daemon's wake-action set, minus the explicitly named actions the
 // plugin routes OFF the notification switch by design. It lives in cli/__tests__/ because the
 // root vitest.config.ts `include` covers `cli/**/__tests__/**/*.test.mjs` but its `exclude`
 // lists `packages` — so a guard here runs in the main CI and can read BOTH sources.
@@ -40,9 +40,9 @@ const PLUGIN_ROUTER = path.resolve(
 //     never as a persisted notification.
 //   - human_instruction → delivered via the `deliver_turn` / pending-turn sweep (daemon-client.ts),
 //     not the notification wake path.
-// Both are the deferred degraded-parity follow-up; excluding them keeps this guard focused on
-// the notification-router coverage invariant.
-const CONTROL_OR_TURN_DELIVERED = new Set(["resource_resumed", "human_instruction"]);
+//   - idea_creation_requested / research_requested → canonical operations; audit notifications
+//     never execute independently of the origin-scoped turn. No wildcard exclusions.
+const CONTROL_OR_TURN_DELIVERED = new Set(["resource_resumed", "human_instruction", "idea_creation_requested", "research_requested"]);
 
 /** Parse the plugin router's handled notification actions from its `case "<action>":` labels. */
 function parsePluginHandledActions(source) {
@@ -72,6 +72,17 @@ describe("OpenClaw plugin ↔ daemon wake-action parity (lockstep guard)", () =>
   it("covers the three stage-advance actions this change added", () => {
     for (const a of ["elaboration_verified", "start_development", "yolo_requested"]) {
       expect(pluginHandled.has(a), `plugin router should handle "${a}"`).toBe(true);
+    }
+  });
+
+  it("excludes only the four named control/turn actions and still detects every missing wake", () => {
+    expect([...CONTROL_OR_TURN_DELIVERED].sort()).toEqual([
+      "human_instruction", "idea_creation_requested", "research_requested", "resource_resumed",
+    ]);
+    for (const action of [...WAKE_ACTIONS].filter((a) => !CONTROL_OR_TURN_DELIVERED.has(a))) {
+      const mutated = parsePluginHandledActions(source.replaceAll(`case "${action}":`, ""));
+      expect([...WAKE_ACTIONS].filter((a) => !CONTROL_OR_TURN_DELIVERED.has(a) && !mutated.has(a)))
+        .toContain(action);
     }
   });
 

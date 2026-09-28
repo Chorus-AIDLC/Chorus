@@ -269,23 +269,23 @@ export function createControlHandler(deps) {
         }
       }
       if (!entry || entry.status !== "running" || !entry.child) {
-        if (entry?.status === "running" && entry.researchTurnUuid) {
+        if (entry?.status === "running" && entry.operationTurnUuid) {
           // Admission can be committed while its response is still in flight.
           // Cancel locally before reporting, so even a lost response cannot launch.
           waker.markInterrupting?.(killEntityType, killEntityUuid);
           try {
             Promise.resolve(advanceTurn?.({
               sessionId: entry.directIdeaUuid ?? killEntityUuid,
-              turnUuid: entry.researchTurnUuid,
+              turnUuid: entry.operationTurnUuid,
               status: "interrupted",
               interruptedReason: "user",
               entityType: killEntityType,
               entityUuid: killEntityUuid,
             })).catch((err) => {
-              logger.warn(`[Chorus] control: Research cancellation report rejected for ${killKey}: ${err}`);
+              logger.warn(`[Chorus] control: Operation cancellation report rejected for ${killKey}: ${err}`);
             });
           } catch (err) {
-            logger.warn(`[Chorus] control: Research cancellation report failed for ${killKey}: ${err}`);
+            logger.warn(`[Chorus] control: Operation cancellation report failed for ${killKey}: ${err}`);
           }
           return;
         }
