@@ -1,0 +1,283 @@
+{
+  "codexVersion": "0.157.1",
+  "platform": "linux",
+  "nodeVersion": "22.22.0",
+  "verifiedDate": "2026-09-28",
+  "runs": [
+    {
+      "permissionMode": "chorus",
+      "anchor": "new-smoke",
+      "result": {
+        "sessionId": "new-smoke",
+        "backendSessionId": "01a0e779-65b5-77d1-b2f5-253af2921bcf",
+        "exitCode": 0,
+        "isNew": true
+      },
+      "mappedThread": "01a0e779-65b5-77d1-b2f5-253af2921bcf",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/start",
+        "turn/start"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "thread/started",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "thread/tokenUsage/updated",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ],
+      "hooks": [
+        {
+          "status": "completed",
+          "keys": [
+            "threadId",
+            "turnId",
+            "run"
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "server": "chorus",
+          "tool": "chorus_checkin",
+          "status": "failed"
+        }
+      ],
+      "reply": "I’ll make one read-only Chorus check-in and confirm whether Chorus skill context is present.\nCHORUS_SPAWNER_NEW_928 — Check-in did not succeed: approval required, but policy is “never.” Chorus skill context was supplied.",
+      "warnings": []
+    },
+    {
+      "permissionMode": "chorus",
+      "anchor": "new-smoke",
+      "result": {
+        "sessionId": "new-smoke",
+        "backendSessionId": "01a0e779-65b5-77d1-b2f5-253af2921bcf",
+        "exitCode": 0,
+        "isNew": false
+      },
+      "mappedThread": "01a0e779-65b5-77d1-b2f5-253af2921bcf",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "turn/start"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "thread/tokenUsage/updated",
+        "thread/goal/cleared",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ],
+      "hooks": [
+        {
+          "status": "completed",
+          "keys": [
+            "threadId",
+            "turnId",
+            "run"
+          ]
+        }
+      ],
+      "tools": [],
+      "reply": "CHORUS_SPAWNER_NEW_928",
+      "warnings": []
+    },
+    {
+      "permissionMode": "chorus",
+      "anchor": "legacy-smoke",
+      "result": {
+        "sessionId": "legacy-smoke",
+        "backendSessionId": "01a0e75e-5b47-7281-81c9-9b0be1c6a6f6",
+        "exitCode": 0,
+        "isNew": false
+      },
+      "mappedThread": "01a0e75e-5b47-7281-81c9-9b0be1c6a6f6",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "turn/start"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "thread/tokenUsage/updated",
+        "thread/goal/cleared",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ],
+      "hooks": [
+        {
+          "status": "completed",
+          "keys": [
+            "threadId",
+            "turnId",
+            "run"
+          ]
+        }
+      ],
+      "tools": [],
+      "reply": "CHORUS_APP_SERVER_CONTINUITY_928",
+      "warnings": []
+    },
+    {
+      "permissionMode": "chorus",
+      "anchor": "interrupt-smoke",
+      "result": {
+        "sessionId": "interrupt-smoke",
+        "backendSessionId": "01a0e779-f213-7aa3-bfff-74eda5137a9d",
+        "exitCode": 130,
+        "isNew": true
+      },
+      "mappedThread": "01a0e779-f213-7aa3-bfff-74eda5137a9d",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/start",
+        "turn/start",
+        "turn/interrupt"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "thread/started",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "turn/started",
+        "item/started",
+        "item/completed",
+        "turn/completed"
+      ],
+      "hooks": [],
+      "tools": [],
+      "reply": "",
+      "warnings": []
+    },
+    {
+      "permissionMode": "chorus",
+      "anchor": "interrupt-smoke",
+      "result": {
+        "sessionId": "interrupt-smoke",
+        "backendSessionId": "01a0e779-f213-7aa3-bfff-74eda5137a9d",
+        "exitCode": 0,
+        "isNew": false
+      },
+      "mappedThread": "01a0e779-f213-7aa3-bfff-74eda5137a9d",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "turn/start"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "thread/goal/cleared",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "thread/tokenUsage/updated",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ],
+      "hooks": [
+        {
+          "status": "completed",
+          "keys": [
+            "threadId",
+            "turnId",
+            "run"
+          ]
+        }
+      ],
+      "tools": [],
+      "reply": "CHORUS_FIRST_INTERRUPT_928",
+      "warnings": []
+    },
+    {
+      "permissionMode": "yolo",
+      "anchor": "new-smoke",
+      "result": {
+        "sessionId": "new-smoke",
+        "backendSessionId": "01a0e77a-704a-74f1-a9c0-d849b6dee486",
+        "exitCode": 0,
+        "isNew": true
+      },
+      "mappedThread": "01a0e77a-704a-74f1-a9c0-d849b6dee486",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/start",
+        "turn/start"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "thread/started",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "thread/tokenUsage/updated",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ],
+      "hooks": [
+        {
+          "status": "completed",
+          "keys": [
+            "threadId",
+            "turnId",
+            "run"
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "server": "chorus",
+          "tool": "chorus_checkin",
+          "status": "completed"
+        }
+      ],
+      "reply": "I’ll make one read-only Chorus check-in and check the supplied session context.\nCHORUS_SPAWNER_NEW_928 — Check-in succeeded (exactly one call). Chorus skill context was supplied in the session.",
+      "warnings": []
+    }
+  ]
+}

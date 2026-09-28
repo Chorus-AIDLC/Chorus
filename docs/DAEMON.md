@@ -147,7 +147,7 @@ forms and known short aliases/attached forms. Examples:
 | Backend | Protected controls (scope/examples) |
 |---|---|
 | Claude | `-p/--print`, output/input format, session/resume/continue (`-r`, `-c`), MCP config, permissions/allowed tools, settings, system prompt, worktree (`-w`), remote/background modes |
-| Codex | JSON/output (`-o`, `--experimental-json`), sandbox (`-s`, `--yolo`), approvals (`-a`, `--not-so-yolo`), cwd (`-C`), profile (`-p`), remote/session controls; `-c`/`--config` keys rooted at `mcp_servers`, `sandbox*`, `approval_policy`, `approvals_reviewer`, `cwd`, `permissions`, `developer_instructions`, `model_instructions_file`, `experimental_instructions_file`, `base_instructions` |
+| Codex | App Server transport (`--listen`, code-mode host), JSON/output (`-o`, `--experimental-json`), sandbox (`-s`, `--yolo`), approvals (`-a`, `--not-so-yolo`), cwd (`-C`), profile (`-p`), remote/session controls; `-c`/`--config` keys rooted at `listen`, `code_mode_host*`, `mcp_servers`, `sandbox*`, `approval_policy`, `approvals_reviewer`, `cwd`, `permissions`, `developer_instructions`, `model_instructions_file`, `experimental_instructions_file`, `base_instructions` |
 | Kiro | non-interactive/engine/UI mode, agent, trust (`-a`), resume (`-r`), session operations/output (`-l`, `-d`, `-f`) |
 | Pi | `-p/--print`, mode, session/resume/continue (`-r`, `-c`), session directory, system prompt, export, model inspection (`--list-models`, with or without a search filter) |
 | dsh | SDK profile, patch overlays, config dumps, session/cwd/protocol/prompt controls |
@@ -158,6 +158,11 @@ are help/version and known inspection exits that bypass the wake prompt (includi
 Pi `--list-models`; equals forms are also guarded). Explicit foreground inspection
 remains allowed. Codex config keys may use simple dotted/quoted TOML keys;
 ambiguous keys are rejected rather than bypassing protection.
+
+The Codex **daemon** has a narrower runtime contract: only model selection and
+permitted `-c` / `--config` overrides translate to App Server. Other persistent
+options fail before spawning with a fixed diagnostic that omits option values.
+The foreground argument planner retains the pass-through behavior described below.
 
 **Option/value boundaries.** Known backend options have separate arity metadata
 in `cli/agent-cli-config.mjs`: zero-value flags (for example Pi `--verbose`,
@@ -480,11 +485,63 @@ How each agent's Chorus key reaches its woken subprocess differs by backend:
 - **Kiro** — automatic per-agent via env: the installed `mcp.json` references
   `${CHORUS_URL}` / `${env:CHORUS_API_KEY}`, which the daemon exports per wake, so each
   Kiro agent authenticates with its own key.
-- **Codex** — **user-managed.** Codex reads its Chorus MCP server (URL + key) from its
-  own `~/.codex/config.toml` and does not read the key from the environment. A single
-  Codex agent (or several sharing one key) works out of the box. To run **two Codex
-  agents with different keys** in one daemon, give each its own config directory via a
-  per-agent `CODEX_HOME` (the daemon does not auto-inject a per-agent Codex key).
+- **Codex** — the MCP entry is **user-managed**, while the daemon exports each
+  agent's `CHORUS_URL`, `CHORUS_API_KEY`, and agent profile into its child environment.
+  Configure `[mcp_servers.chorus]` in `~/.codex/config.toml` (or the agent's
+  `CODEX_HOME/config.toml`) with the Chorus URL and
+  `bearer_token_env_var = "CHORUS_API_KEY"`. The key is delivered through the
+  environment, never the App Server command line. Distinct config/plugin sets or
+  Chorus URLs can use separate per-agent `CODEX_HOME` directories.
+
+### Codex daemon: App Server migration
+
+Every Codex daemon wake now launches one isolated
+`codex app-server --listen stdio://` process. The minimum verified CLI baseline
+is **codex-cli 0.157.1**. Earlier versions are unverified; a CLI that lacks the
+required protocol fails the wake. There is no `codex exec` fallback or backend
+selection toggle. Explicit foreground commands such as
+`chorus agents run --type codex -- exec ...` and `... -- resume ...` retain their
+existing behavior.
+
+The daemon initializes the connection, resumes the stored Codex thread (including
+threads created by the previous `exec` backend), and starts one turn with the
+current cwd and permission policy. Model options become App Server config
+overrides; permitted `-c` settings such as `model_reasoning_effort` remain usable.
+Options such as `--oss`, image arguments, or unknown future switches are not
+silently discarded: use an equivalent supported config setting or an explicit
+foreground command. Daemon-owned transport and permission controls remain protected.
+
+A definitive “no rollout found” response permits one new thread, retaining the
+original Chorus wake context. A continuity notice is uploaded to the conversation
+and logged once. Other resume failures stop the wake and preserve the mapping.
+New thread IDs are stored before the first turn, so an interrupted first turn can
+be resumed. A session-map read failure starts fresh with a warning; a write
+failure keeps the current thread running and warns that future continuity may
+be reduced. Existing Chorus message queues and comment/elaboration interactions
+keep their behavior; running turns are never steered or preempted by new messages.
+
+Authorized interruption first sends `turn/interrupt` when a turn ID is known.
+Startup cancellation closes the transport; bounded process-tree cleanup follows
+both paths. Normal completion closes the server after the matching terminal event.
+Native approval/elicitation requests receive a negative response where the
+protocol supports one; requests without a safe negative response fail the wake.
+No terminal prompt is opened. Failed, interrupted, or missing terminal outcomes
+are never reported as a successful turn just because the process exits zero.
+The restricted mode remains read-only with approvals disabled: Codex can reject
+MCP calls that require approval under this policy. The verified YOLO-mode smoke
+successfully ran Chorus check-in with the same installed plugin/config.
+
+Diagnostics report fixed failure classifications without provider payloads,
+prompts, credentials, or raw stderr. For startup/protocol failures check the CLI
+version, login, model/config, and local session-map permissions. Defaults bound
+initialization to 30 seconds, thread/turn RPC setup to 60 seconds, semantic
+inactivity to 10 minutes, and cleanup to 10 seconds. Missing Chorus MCP config
+retains warning-and-run behavior; install the Chorus plugin/config in every
+custom Codex home for check-in and skill context.
+
+Protocol details and verification evidence are in
+[the protocol contract](verification/codex-app-server-protocol.md) and
+[the integration record](verification/codex-app-server-integration.md).
 
 ---
 
