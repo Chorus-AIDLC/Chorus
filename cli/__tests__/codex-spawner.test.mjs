@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexSpawner, buildCodexArgs, resolveCodexPath, hasChorusMcpServer } from "../codex-spawner.mjs";
@@ -12,6 +12,13 @@ import { appServerChild } from "./fixtures/codex-app-server-child.mjs";
 
 const ANCHOR = "11111111-1111-4111-8111-111111111111";
 const TID = "thread-1";
+const THREAD_STARTED = JSON.parse(readFileSync(
+  new URL("./fixtures/codex-app-server/schema-examples-0.157.1.json", import.meta.url), "utf8",
+)).examples.find((example) => example.method === "thread/started").message;
+const SETUP_TID = THREAD_STARTED.params.thread.id;
+const threadStarted = (id) => ({
+  ...THREAD_STARTED, params: { thread: { ...THREAD_STARTED.params.thread, id, sessionId: id } },
+});
 const silent = { info() {}, warn() {}, error() {} };
 const methods = (child) => child.requests.map((r) => r.method).filter(Boolean);
 function makeSpawner(child = appServerChild(), opts = {}) {
@@ -80,6 +87,130 @@ describe("hasChorusMcpServer", () => {
       { level: "info", message: "[Chorus] Codex App Server: CLOSED" },
       { level: "info", message: "[Chorus] Codex App Server: CLOSED" },
     ]);
+  });
+});
+
+describe("early setup identity", () => {
+  it.each(["fresh", "fallback", "resume"])("retains the versioned notification ID across pending %s setup interruption and spawner reconstruction", async (mode) => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-early-setup-"));
+    const path = join(dir, "map.json");
+    try {
+      if (mode !== "fresh") setThreadId(ANCHOR, mode === "resume" ? SETUP_TID : "old-thread", { path });
+      const setThreadIdFn = vi.fn((anchor, id) => setThreadId(anchor, id, { path }));
+      const stores = { getThreadIdFn: (anchor) => getThreadId(anchor, { path }), setThreadIdFn };
+      let pendingSetup;
+      const child = appServerChild({ handler(req, c) {
+        if (req.method === "thread/resume" && mode === "fallback") {
+          c.send({ id: req.id, error: { code: -32600, message: "no rollout found for thread id old-thread" } });
+          return true;
+        }
+        if (req.method === (mode === "resume" ? "thread/resume" : "thread/start")) {
+          pendingSetup = req;
+          if (mode === "fallback") c.send(threadStarted("old-thread"));
+          c.send(THREAD_STARTED);
+          return true; // No setup response before cancellation.
+        }
+      } });
+      const running = wake(makeSpawner(child, stores));
+      await until(() => pendingSetup);
+      expect(getThreadId(ANCHOR, { path })).toBe(SETUP_TID);
+      await killProcessTree(child, { sigintTimeoutMs: 30 });
+      expect(await running).toEqual({
+        sessionId: ANCHOR, backendSessionId: SETUP_TID, exitCode: 130, isNew: mode !== "resume",
+      });
+      expect(methods(child)).not.toContain("turn/start");
+      expect(setThreadIdFn).toHaveBeenCalledTimes(mode === "resume" ? 0 : 1);
+
+      const next = appServerChild({ threadId: SETUP_TID });
+      expect(await wake(makeSpawner(next, stores))).toMatchObject({ backendSessionId: SETUP_TID, isNew: false, exitCode: 0 });
+      expect(next.requests.find((req) => req.method === "thread/resume").params.threadId).toBe(SETUP_TID);
+      expect(methods(next)).not.toContain("thread/start");
+      expect(getThreadId(ANCHOR, { path })).toBe(SETUP_TID);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it.each(["fresh", "fallback", "write-failure"])("persists duplicate notifications and the setup response once for %s", async (mode) => {
+    const logger = { ...silent, warn: vi.fn(), error: vi.fn() };
+    const setThreadIdFn = vi.fn(() => { if (mode === "write-failure") throw new Error("PRIVATE-STORE-SECRET"); });
+    const child = appServerChild({ threadId: SETUP_TID, handler(req, c) {
+      if (req.method === "thread/resume") {
+        c.send(threadStarted("unrelated-thread"));
+        c.send({ id: req.id, error: { code: -32600, message: "no rollout found for thread id old-thread" } });
+        return true;
+      }
+      if (req.method === "thread/start") {
+        if (mode === "fallback") c.send(threadStarted("old-thread"));
+        c.send(THREAD_STARTED);
+        c.send(THREAD_STARTED);
+        c.send(threadStarted("unrelated-thread"));
+        expect(setThreadIdFn).toHaveBeenCalledExactlyOnceWith(ANCHOR, SETUP_TID);
+        c.reply(req, { thread: THREAD_STARTED.params.thread });
+        return true;
+      }
+    } });
+    expect(await wake(makeSpawner(child, {
+      logger, setThreadIdFn, getThreadIdFn: () => mode === "fallback" ? "old-thread" : null,
+    }))).toMatchObject({ backendSessionId: SETUP_TID, isNew: true, exitCode: 0 });
+    expect(setThreadIdFn).toHaveBeenCalledExactlyOnceWith(ANCHOR, SETUP_TID);
+    if (mode === "write-failure") {
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("future wake continuity"));
+      expect(JSON.stringify([logger.warn.mock.calls, logger.error.mock.calls])).not.toContain("PRIVATE-STORE-SECRET");
+    }
+  });
+
+  it.each([false, true])("ignores out-of-phase, malformed and wrong-thread notifications (resume=%s)", async (resumed) => {
+    const child = appServerChild({ threadId: SETUP_TID, handler(req, c) {
+      if (req.method === "initialize" || req.method === "turn/start") c.send(threadStarted("out-of-phase"));
+      if (req.method === (resumed ? "thread/resume" : "thread/start")) {
+        c.send({ method: "unrelated", params: THREAD_STARTED.params });
+        c.send({ method: "thread/started", params: { threadId: "wrong-shape" } });
+        for (const id of ["", " ", null, 42]) c.send(threadStarted(id));
+        if (resumed) c.send(threadStarted("wrong-resume-thread"));
+        c.send(THREAD_STARTED);
+      }
+    } });
+    const spawner = makeSpawner(child, { getThreadIdFn: () => resumed ? SETUP_TID : null });
+    expect(await wake(spawner)).toMatchObject({ backendSessionId: SETUP_TID, isNew: !resumed, exitCode: 0 });
+    expect(spawner.setThreadIdFn).toHaveBeenCalledTimes(resumed ? 0 : 1);
+    if (!resumed) expect(spawner.setThreadIdFn).toHaveBeenCalledWith(ANCHOR, SETUP_TID);
+  });
+
+  it("rejects a response that contradicts the observed ID without replacing the mapping or starting a turn", async () => {
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "thread/start") {
+        c.send(THREAD_STARTED);
+        c.reply(req, { thread: { id: "contradictory-response" } });
+        return true;
+      }
+    } });
+    const spawner = makeSpawner(child);
+    expect(await wake(spawner)).toMatchObject({ backendSessionId: SETUP_TID, exitCode: null });
+    expect(spawner.setThreadIdFn).toHaveBeenCalledExactlyOnceWith(ANCHOR, SETUP_TID);
+    expect(methods(child)).not.toContain("turn/start");
+  });
+
+  it("rejects a mismatched resume response even without an early notification", async () => {
+    const child = appServerChild({ threadId: "wrong-response-thread" });
+    const spawner = makeSpawner(child, { getThreadIdFn: () => SETUP_TID });
+    expect(await wake(spawner)).toMatchObject({ backendSessionId: SETUP_TID, exitCode: null });
+    expect(spawner.setThreadIdFn).not.toHaveBeenCalled();
+    expect(methods(child)).not.toContain("turn/start");
+  });
+
+  it("retains an observed ID when its map write fails and setup is interrupted", async () => {
+    let notified = false;
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "thread/start") {
+        c.send(THREAD_STARTED); notified = true; return true;
+      }
+    } });
+    const setThreadIdFn = vi.fn(() => { throw new Error("private IO error"); });
+    const running = wake(makeSpawner(child, { setThreadIdFn }));
+    await until(() => notified);
+    await killProcessTree(child, { sigintTimeoutMs: 30 });
+    expect(await running).toMatchObject({ backendSessionId: SETUP_TID, exitCode: 130 });
+    expect(setThreadIdFn).toHaveBeenCalledExactlyOnceWith(ANCHOR, SETUP_TID);
+    expect(methods(child)).not.toContain("turn/start");
   });
 });
 

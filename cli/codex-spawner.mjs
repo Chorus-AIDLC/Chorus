@@ -196,6 +196,33 @@ export class CodexSpawner {
       isNew = !threadId;
       const previousThreadId = threadId;
       const previousUsage = threadId ? this.getUsageSnapshotFn(anchor, threadId) : null;
+      let activeSetup = null;
+      const captureThread = (id) => {
+        activeSetup.observedId = id;
+        isNew = activeSetup.method === "thread/start";
+        // Latch before best-effort IO so duplicate notifications/responses never
+        // retry a failed write or lose the in-memory identity on interruption.
+        if (threadId === id) return;
+        threadId = id;
+        if (anchor) {
+          try { this.setThreadIdFn(anchor, id); }
+          catch {
+            log("warn", "[Chorus] Codex session mapping could not be saved; continuing this thread, but future wake continuity may be reduced.");
+          }
+        }
+      };
+      const establishThread = async (method, params) => {
+        activeSetup = { method, expectedId: params.threadId, observedId: null };
+        try {
+          const established = await client.request(method, params);
+          const id = established?.thread?.id;
+          if (typeof id !== "string" || !id.trim()) throw fault("INVALID_THREAD_ID");
+          if (activeSetup.expectedId && id !== activeSetup.expectedId) throw fault("MISMATCHED_THREAD_ID");
+          if (activeSetup.observedId && activeSetup.observedId !== id) throw fault("MISMATCHED_THREAD_ID");
+          // Keep a response already received even if cancellation won this await.
+          captureThread(id);
+        } finally { activeSetup = null; }
+      };
       const codexPath = this.codexPath ?? this.resolveCodexPathFn({ env: this.env, platform: this.platform });
       if (!codexPath) throw fault("EXECUTABLE_MISSING");
       if (!this.mcpConfigChecked) {
@@ -240,6 +267,16 @@ export class CodexSpawner {
       });
       // Subscribe before setup, but don't feed setup/history snapshots to T3.
       unsubscribe = client.subscribe((message) => {
+        if (activeSetup && !cancelled && message.method === "thread/started" && !Object.hasOwn(message, "id")) {
+          const id = message.params?.thread?.id;
+          // This process has only one setup request at a time. A fresh start's
+          // first ID is authoritative; resume must match its requested ID, and
+          // fallback must not accept a late notification for the old thread.
+          if (typeof id === "string" && id.trim()
+            && (!activeSetup.expectedId || id === activeSetup.expectedId)
+            && (activeSetup.method !== "thread/start" || id !== previousThreadId)
+            && (!activeSetup.observedId || id === activeSetup.observedId)) captureThread(id);
+        }
         if (adapter?.accept(message)) progress();
       });
       unregister = registerProcessStopHook(child, ({ deadline, reason }) => {
@@ -276,29 +313,17 @@ export class CodexSpawner {
       ensureRunning();
       const fullAccess = this.permissionMode === "yolo";
       const setup = { cwd, approvalPolicy: "never", sandbox: fullAccess ? "danger-full-access" : "read-only" };
-      let established;
       let fallback = false;
       if (threadId) {
         try {
-          established = await client.request("thread/resume", { ...setup, threadId, excludeTurns: true });
+          await establishThread("thread/resume", { ...setup, threadId, excludeTurns: true });
         } catch (error) {
           ensureRunning();
           if (!isHistoryUnavailableError(error, threadId)) throw error;
           fallback = true;
-          established = await client.request("thread/start", setup);
+          await establishThread("thread/start", setup);
         }
-      } else established = await client.request("thread/start", setup);
-      const establishedId = established?.thread?.id;
-      if (typeof establishedId !== "string" || !establishedId.trim()) throw fault("INVALID_THREAD_ID");
-      threadId = establishedId;
-      isNew = !previousThreadId || fallback;
-      // Capture a real setup response even if a stop arrived at this await boundary.
-      if (anchor && threadId !== previousThreadId) {
-        try { this.setThreadIdFn(anchor, threadId); }
-        catch {
-          log("warn", "[Chorus] Codex session mapping could not be saved; continuing this thread, but future wake continuity may be reduced.");
-        }
-      }
+      } else await establishThread("thread/start", setup);
       ensureRunning();
       adapter = new CodexAppServerEvents({
         threadId, isNew, previousUsage: threadId === previousThreadId ? previousUsage : null,
