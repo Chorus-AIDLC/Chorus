@@ -9,9 +9,9 @@ import { assigneeOwningAgentUuid } from "@/lib/start-development";
 import { researchEligibilityAction, researchIdeaAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/research-actions";
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
 import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
-import { ResearchAgentPicker } from "@/components/research-agent-picker";
+import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 
-export function ResearchAction({ ideaUuid, projectUuid, assignee, disabledReason, refreshKey, onStarted, renderAction, onCloseAutoFocus }: {
+export function ResearchAction({ ideaUuid, assignee, disabledReason, refreshKey, onStarted, renderAction, onCloseAutoFocus }: {
   ideaUuid: string;
   projectUuid: string;
   assignee: StartDevelopmentAssignee | null | undefined;
@@ -22,11 +22,16 @@ export function ResearchAction({ ideaUuid, projectUuid, assignee, disabledReason
   onCloseAutoFocus?: (event: Event) => void;
 }) {
   const t = useTranslations("research");
+  const presence = useAgentPresenceOptional();
+  const owningAgentUuid = assigneeOwningAgentUuid(assignee);
+  // Match YOLO's agent-level presence gate; exact origin/cwd checks stay server-side.
+  const agentOnline = owningAgentUuid !== null && (presence?.connections ?? []).some(
+    (connection) => connection.agentUuid === owningAgentUuid && connection.effectiveStatus === "online",
+  );
   const [reason, setReason] = useState<string | undefined>("loading");
   const [busy, setBusy] = useState(false);
   const sending = useRef(false);
   const [revision, setRevision] = useState(0);
-  const [choosingAgent, setChoosingAgent] = useState(false);
   const selection = useRef<{ agentUuid: string; instanceUuid?: string } | undefined>(undefined);
   // Reuse the picker flow while deferring assignment to the atomic Research dispatch.
   // Generic assignIdea, including its "no wake" variant, advances open -> elaborating.
@@ -50,7 +55,12 @@ export function ResearchAction({ ideaUuid, projectUuid, assignee, disabledReason
     window.addEventListener("focus", refresh);
     const timer = setInterval(refresh, 15_000);
     return () => { current = false; clearInterval(timer); window.removeEventListener("focus", refresh); };
-  }, [ideaUuid, assignee?.uuid, refreshKey, revision]);
+  }, [ideaUuid, assignee?.uuid, owningAgentUuid, refreshKey, revision]);
+
+  const actionReason = disabledReason || (busy || isResolving ? t("dispatching")
+    : !owningAgentUuid ? t("assignmentHint")
+    : !agentOnline ? t("offlineHint")
+    : reason ? t(reason) : undefined);
 
   const runWake = async (temporary?: { agentUuid: string; validationRequestUuid: string }, allowPicker = true) => {
     if (sending.current) return;
@@ -73,7 +83,6 @@ export function ResearchAction({ ideaUuid, projectUuid, assignee, disabledReason
           void start({ ideaUuid, wake: (target) => runWake(target, false) });
         } else {
           toast.error(t(result.errorCode));
-          if (result.errorCode === "assignment_required" && !assigneeOwningAgentUuid(assignee)) setChoosingAgent(true);
         }
         setRevision((value) => value + 1);
       }
@@ -85,16 +94,14 @@ export function ResearchAction({ ideaUuid, projectUuid, assignee, disabledReason
     }
   };
   const onSelect = () => {
-    if (disabledReason || reason || sending.current || isResolving) return;
+    if (actionReason || sending.current) return;
     selection.current = undefined;
-    if (!assigneeOwningAgentUuid(assignee)) {
-      setChoosingAgent(true);
-    } else void runWake();
+    void runWake();
   };
   return <>
     {renderAction({
-      label: t("button"), busy: busy || isResolving || choosingAgent,
-      disabledReason: disabledReason || (busy || isResolving || choosingAgent ? t("dispatching") : reason ? t(reason) : undefined),
+      label: t("button"), busy: busy || isResolving,
+      disabledReason: actionReason,
       onSelect,
     })}
     <WakeCwdPickerDialog
@@ -102,14 +109,5 @@ export function ResearchAction({ ideaUuid, projectUuid, assignee, disabledReason
       agentName="" instances={pickerState?.instances ?? []} agentUuid={pickerState?.agentUuid}
       onConfirm={confirmPick} onTemporaryConfirm={confirmTemporary} onCancel={cancelPick}
     />
-    {choosingAgent && <ResearchAgentPicker
-      projectUuid={projectUuid} onCloseAutoFocus={onCloseAutoFocus}
-      onCancel={() => setChoosingAgent(false)}
-      onConfirm={(target) => {
-        selection.current = target;
-        setChoosingAgent(false);
-        void runWake(undefined, false);
-      }}
-    />}
   </>;
 }
