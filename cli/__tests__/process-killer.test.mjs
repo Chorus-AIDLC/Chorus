@@ -303,11 +303,12 @@ describe("process-associated protocol stop", () => {
       let current = [root];
       let taskkillAt;
       registerProcessStopHook(child, async ({ deadline, protocolDeadline, beforeClose }) => {
-        expect(protocolDeadline).toBe(deadline - 25);
+        expect(protocolDeadline).toBe(deadline - 12);
+        expect(Number.isSafeInteger(protocolDeadline)).toBe(true);
         await beforeClose();
       });
       const pending = killProcessTree(child, {
-        platform: "win32", sigintTimeoutMs: 100, logger: silent,
+        platform: "win32", sigintTimeoutMs: 50, logger: silent,
         windowsSnapshotImpl: async () => current,
         spawnImpl: () => {
           taskkillAt = Date.now();
@@ -317,9 +318,9 @@ describe("process-associated protocol stop", () => {
         },
       });
       const startedAt = Date.now();
-      await vi.advanceTimersByTimeAsync(75);
+      await vi.advanceTimersByTimeAsync(38);
       expect(await pending).toMatchObject({ killed: true, escalated: true });
-      expect(taskkillAt - startedAt).toBe(75);
+      expect(taskkillAt - startedAt).toBe(38);
       expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
   });

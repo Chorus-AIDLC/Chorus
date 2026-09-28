@@ -120,7 +120,7 @@ export async function killProcessTree(child, opts = {}) {
     const existing = protocolStops.get(child);
     const deadline = existing?.deadline ?? Date.now() + sigintTimeoutMs;
     const protocolDeadline = existing?.protocolDeadline ??
-      (isWin ? deadline - Math.min(2500, Math.max(0, sigintTimeoutMs / 4)) : deadline);
+      (isWin ? deadline - Math.min(2500, Math.floor(Math.max(0, sigintTimeoutMs) / 4)) : deadline);
     const windowsTree = isWin && typeof child.pid === "number"
       ? existing?.windowsTree ?? new WindowsProcessTree(child, {
         deadline, spawnImpl, snapshotImpl: opts.windowsSnapshotImpl,
