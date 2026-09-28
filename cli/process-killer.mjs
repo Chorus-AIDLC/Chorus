@@ -3,8 +3,9 @@
 // channel (子3 — daemon-interrupt-resume, Tech Design "Killer contract"). When an
 // authorized interrupt is verified, the daemon must STOP a running headless-Claude
 // subprocess — first gracefully (SIGINT, so the model can flush in-progress work),
-// then forcefully if it does not exit within a configurable window. Plain ESM, ZERO
-// new npm deps (CLAUDE.md pitfall #9) and Bash-3.2-safe (no shell touched).
+// then forcefully if it does not exit within a configurable window. Plain ESM,
+// zero new npm deps. Codex's Windows protocol path uses fixed, noninteractive
+// PowerShell/CIM queries to retain process identities across graceful root exit.
 //
 // Why a process TREE, not just the direct child:
 //   • POSIX: Claude may itself spawn children. Linux does NOT cascade a signal to a
@@ -28,8 +29,24 @@
 // (every signal/spawn is try/caught), and LOGS visibly (memory: no-silent-errors).
 
 import { spawn as nodeSpawn } from "node:child_process";
+import { getProcessStopHook } from "./process-stop-hooks.mjs";
+import { WindowsProcessTree } from "./windows-process-tree.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
+const protocolStops = new WeakMap();
+
+/** Bound even an uncooperative hook; consume late rejection and clear the timer. */
+async function withinDeadline(work, deadline) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve(work).then(() => true, () => false),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(false), Math.max(0, deadline - Date.now())); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Default escalation window before a forceful kill (Tech Design / spec: 10s). */
 export const DEFAULT_SIGINT_TIMEOUT_MS = 10_000;
@@ -98,6 +115,66 @@ export async function killProcessTree(child, opts = {}) {
   const sigintTimeoutMs = opts.sigintTimeoutMs ?? DEFAULT_SIGINT_TIMEOUT_MS;
   const isWin = platform === "win32";
 
+  const hook = !opts.skipStopHook && getProcessStopHook(child);
+  if (hook) {
+    const existing = protocolStops.get(child);
+    const deadline = existing?.deadline ?? Date.now() + sigintTimeoutMs;
+    const protocolDeadline = existing?.protocolDeadline ??
+      (isWin ? deadline - Math.min(2500, Math.floor(Math.max(0, sigintTimeoutMs) / 4)) : deadline);
+    const windowsTree = isWin && typeof child.pid === "number"
+      ? existing?.windowsTree ?? new WindowsProcessTree(child, {
+        deadline, spawnImpl, snapshotImpl: opts.windowsSnapshotImpl,
+      }) : null;
+    // Invoke synchronously even during an existing normal cleanup: cancellation
+    // must latch before any pending setup/turn-start continuation can execute.
+    let work;
+    try {
+      work = hook({
+        deadline, protocolDeadline, reason: opts.reason ?? "interrupt",
+        beforeClose: windowsTree ? () => windowsTree.capture() : undefined,
+      });
+    } catch {
+      work = Promise.reject(new Error("Protocol stop failed"));
+    }
+    const attempt = withinDeadline(work, deadline);
+    if (existing) {
+      await attempt;
+      return existing.promise;
+    }
+    const promise = (async () => {
+      const graceful = await attempt;
+      if (!graceful) logger.warn("[Chorus] protocol stop failed or exceeded its cleanup deadline");
+      const exited = graceful && await waitForChildExit(child, Math.max(0, protocolDeadline - Date.now()), opts, logger);
+      if (windowsTree) {
+        let cleanup = { cleanupFailed: true, escalated: false };
+        const settled = await withinDeadline(windowsTree.cleanup().then(result => { cleanup = result; }), deadline);
+        const cleanupFailed = !settled || cleanup.cleanupFailed;
+        if (cleanupFailed) logger.warn("[Chorus] Windows process-tree cleanup could not be verified within its deadline.");
+        return { signaled: false, killed: !cleanupFailed, escalated: windowsTree.escalated,
+          ...(cleanupFailed ? { cleanupFailed: true } : {}) };
+      }
+      // A leader exit does not prove its process group is gone.
+      let treeRemains = !exited;
+      if (exited && typeof child.pid === "number") {
+        if (opts.hasTree) treeRemains = safeBool(opts.hasTree, logger);
+        else if (!isWin) {
+          try { killImpl(-child.pid, 0); treeRemains = true; }
+          catch (err) { treeRemains = err?.code !== "ESRCH"; }
+        }
+      }
+      const forced = treeRemains
+        ? await killProcessTree(child, { ...opts, skipStopHook: true, sigintTimeoutMs: 0, forceOnly: true, cleanupDeadline: deadline })
+        : null;
+      return { signaled: false, killed: true, escalated: Boolean(treeRemains),
+        ...(forced?.cleanupFailed ? { cleanupFailed: true } : {}) };
+    })();
+    protocolStops.set(child, { deadline, protocolDeadline, promise, windowsTree });
+    // Retain the completed operation while this child is reachable. A spawner's
+    // final cleanup can arrive just after escalation; it must reuse that deadline
+    // and result instead of starting a second stop. Weak keys require no disposal.
+    return await promise;
+  }
+
   if (!child || typeof child.pid !== "number") {
     // No live process to target — log and no-op (never throw into the wake path).
     logger.warn("[Chorus] killProcessTree: no child pid to target; ignoring");
@@ -106,8 +183,10 @@ export async function killProcessTree(child, opts = {}) {
   const pid = child.pid;
 
   // --- Stage 1: graceful SIGINT ---
-  let signaled;
-  if (isWin) {
+  let signaled = false;
+  if (opts.forceOnly) {
+    // The protocol path already spent its one shared graceful deadline.
+  } else if (isWin) {
     // Windows: deliver SIGINT to the direct child only (best-effort). Node maps
     // SIGINT to a console-stop on Windows; it cannot reach a tree there.
     try {
@@ -123,13 +202,14 @@ export async function killProcessTree(child, opts = {}) {
   }
 
   // --- Wait for graceful exit within the window ---
-  const exitedGracefully = await waitForChildExit(child, sigintTimeoutMs, opts, logger);
+  const exitedGracefully = !opts.forceOnly && await waitForChildExit(child, sigintTimeoutMs, opts, logger);
   if (exitedGracefully) {
     logger.info(`[Chorus] interrupt: pid ${pid} exited gracefully within ${sigintTimeoutMs}ms`);
     return { signaled, killed: true, escalated: false };
   }
 
   // --- Stage 2: forceful tree kill ---
+  let cleanupFailed = false;
   if (isWin) {
     // taskkill /PID <pid> /T /F — /T ends the tree (child processes), /F forces it.
     try {
@@ -137,17 +217,59 @@ export async function killProcessTree(child, opts = {}) {
         stdio: "ignore",
         windowsHide: true,
       });
-      // taskkill failures are logged, never thrown.
-      tk?.on?.("error", (err) => logger.warn(`[Chorus] taskkill spawn error: ${err}`));
+      // Protocol cleanup certifies settlement, unlike legacy fire-and-forget
+      // escalation. Use only the time remaining in the original stop budget.
+      if (opts.forceOnly) {
+        cleanupFailed = !await waitForTaskkill(tk, opts.cleanupDeadline ?? Date.now(), logger);
+      } else {
+        tk?.on?.("error", (err) => logger.warn(`[Chorus] taskkill spawn error: ${err}`));
+      }
       logger.info(`[Chorus] interrupt: escalated — taskkill /PID ${pid} /T /F (windows)`);
     } catch (err) {
-      logger.warn(`[Chorus] taskkill escalation failed for pid ${pid}: ${err}`);
+      cleanupFailed = true;
+      logger.warn(opts.forceOnly
+        ? "[Chorus] Codex process-tree cleanup could not start taskkill."
+        : `[Chorus] taskkill escalation failed for pid ${pid}: ${err}`);
     }
   } else {
-    signalGroup(pid, "SIGKILL", killImpl, logger);
+    const delivered = signalGroup(pid, "SIGKILL", killImpl, logger);
+    if (!delivered && opts.forceOnly) {
+      try { killImpl(-pid, 0); cleanupFailed = true; }
+      catch (err) { cleanupFailed = err?.code !== "ESRCH"; }
+    }
     logger.info(`[Chorus] interrupt: escalated — SIGKILL to process group -${pid} (posix)`);
   }
-  return { signaled, killed: true, escalated: true };
+  return { signaled, killed: true, escalated: true,
+    ...(opts.forceOnly && cleanupFailed ? { cleanupFailed: true } : {}) };
+}
+
+/** Bounded Windows termination acknowledgement; never includes tool output. */
+function waitForTaskkill(child, deadline, logger) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = ok => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child?.removeListener?.("exit", onExit);
+      // Keep the payload-blind error guard until close: spawn errors can arrive
+      // after the deadline. It retains no provider/stdio data.
+      if (!ok) logger.warn("[Chorus] Codex process-tree cleanup taskkill failed or exceeded its deadline.");
+      resolve(ok);
+    };
+    const onExit = (code, signal) => finish(code === 0 && !signal);
+    const onError = () => finish(false);
+    const onClose = code => {
+      finish(code === 0);
+      child?.removeListener?.("error", onError);
+    };
+    const timer = setTimeout(() => finish(false), Math.max(0, deadline - Date.now()));
+    child?.once?.("exit", onExit);
+    child?.once?.("close", onClose);
+    child?.on?.("error", onError);
+    if (!child?.once) finish(false);
+    else if (child.exitCode !== null && child.exitCode !== undefined) finish(child.exitCode === 0);
+  });
 }
 
 /**
@@ -170,7 +292,7 @@ async function waitForChildExit(child, ms, opts, logger) {
   const hasExited =
     typeof opts.hasExited === "function"
       ? safeBool(opts.hasExited, logger)
-      : child.exitCode !== null && child.exitCode !== undefined;
+      : (child.exitCode !== null && child.exitCode !== undefined) || Boolean(child.signalCode);
   if (hasExited) return true;
 
   return await new Promise((resolve) => {
@@ -179,14 +301,17 @@ async function waitForChildExit(child, ms, opts, logger) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      child.removeListener?.("exit", onExit);
+      child.removeListener?.("close", onExit);
       resolve(value);
     };
+    const onExit = () => finish(true);
     const timer = setTimeout(() => finish(false), ms);
     // unref so a pending timer never keeps the daemon process alive on shutdown.
     timer?.unref?.();
     try {
-      child.once?.("exit", () => finish(true));
-      child.once?.("close", () => finish(true));
+      child.once?.("exit", onExit);
+      child.once?.("close", onExit);
     } catch (err) {
       logger.warn(`[Chorus] failed to attach exit listener: ${err}`);
       finish(false);

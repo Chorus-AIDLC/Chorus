@@ -53,6 +53,24 @@ Configured args SHALL NOT override known backend controls for protocol, output, 
 - **WHEN** env overrides an ordinary inherited variable
 - **THEN** only the selected child sees the override, with case-insensitive replacement on Windows and existing managed identity/headless sanitation preserved.
 
+Codex daemon configuration SHALL additionally protect App Server transport and remote-host selection, including --listen in separated/equals forms and code-mode-host controls. Supported model and permitted -c/--config options SHALL retain their effective meaning through documented App Server argv/config/RPC translation for both fresh and resumed wakes. Unsupported exec-only options SHALL fail clearly without displaying values or silently dropping the option. Foreground launch behavior SHALL remain unchanged.
+
+#### Scenario: App Server transport override is rejected
+- **WHEN** persistent Codex args try to replace stdio transport or select another execution host
+- **THEN** validation MUST fail before spawn with an actionable value-free diagnostic
+
+#### Scenario: Existing model and reasoning settings are preserved
+- **WHEN** a fresh or resumed daemon wake uses supported per-agent model or reasoning configuration
+- **THEN** its App Server configuration MUST apply equivalent settings with literal values and existing precedence
+
+#### Scenario: Unsupported old option is explicit
+- **WHEN** a configured exec-only option has no supported App Server equivalent
+- **THEN** the wake MUST fail with a remediation hint instead of silently ignoring it or returning to exec
+
+#### Scenario: Foreground option insertion remains compatible
+- **WHEN** chorus agents run launches an existing supported foreground Codex command
+- **THEN** its recognized-subcommand insertion and explicit-argument precedence MUST retain existing behavior
+
 ### Requirement: Deliver through all existing launch paths
 All wakeable backends (Claude Code, Codex, Kiro, Pi, dsh) SHALL receive the selected config for fresh and resumed daemon wakes. All supported foreground types SHALL receive it under their effective selected type. Offline SHALL remain non-wakeable. Configured options SHALL be inserted without displacing positional or protocol sentinels.
 

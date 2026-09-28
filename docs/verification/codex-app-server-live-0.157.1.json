@@ -1,0 +1,325 @@
+{
+  "codexVersion": "0.157.1",
+  "platform": "linux",
+  "nodeVersion": "22.22.0",
+  "verifiedDate": "2026-09-28",
+  "runs": [
+    {
+      "permissionMode": "chorus",
+      "anchor": "new-smoke",
+      "result": {
+        "sessionId": "new-smoke",
+        "backendSessionId": "01a0e798-23b3-7dc3-970e-0d5c2ce9d780",
+        "exitCode": 0,
+        "isNew": true
+      },
+      "mappedThread": "01a0e798-23b3-7dc3-970e-0d5c2ce9d780",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/start",
+        "turn/start"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "thread/started",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "thread/tokenUsage/updated",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ],
+      "hooks": [
+        {
+          "status": "completed",
+          "keys": [
+            "threadId",
+            "turnId",
+            "run"
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "server": "chorus",
+          "tool": "chorus_checkin",
+          "status": "failed"
+        }
+      ],
+      "reply": "I’ll make one read-only Chorus check-in and check the skill context already supplied in this session.\nCHORUS_SPAWNER_NEW_928 — Check-in did not succeed. Chorus skill context was supplied.\n\nThe single check-in attempt was blocked because the tool requires approval and the approval policy is “never.”",
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "permissionMode": "chorus",
+      "anchor": "new-smoke",
+      "result": {
+        "sessionId": "new-smoke",
+        "backendSessionId": "01a0e798-23b3-7dc3-970e-0d5c2ce9d780",
+        "exitCode": 0,
+        "isNew": false
+      },
+      "mappedThread": "01a0e798-23b3-7dc3-970e-0d5c2ce9d780",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "turn/start"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "thread/tokenUsage/updated",
+        "thread/goal/cleared",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ],
+      "hooks": [
+        {
+          "status": "completed",
+          "keys": [
+            "threadId",
+            "turnId",
+            "run"
+          ]
+        }
+      ],
+      "tools": [],
+      "reply": "CHORUS_SPAWNER_NEW_928",
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "permissionMode": "chorus",
+      "anchor": "legacy-smoke",
+      "result": {
+        "sessionId": "legacy-smoke",
+        "backendSessionId": "01a0e75e-5b47-7281-81c9-9b0be1c6a6f6",
+        "exitCode": 0,
+        "isNew": false
+      },
+      "mappedThread": "01a0e75e-5b47-7281-81c9-9b0be1c6a6f6",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "turn/start"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "thread/tokenUsage/updated",
+        "thread/goal/cleared",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ],
+      "hooks": [
+        {
+          "status": "completed",
+          "keys": [
+            "threadId",
+            "turnId",
+            "run"
+          ]
+        }
+      ],
+      "tools": [],
+      "reply": "CHORUS_APP_SERVER_CONTINUITY_928",
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "permissionMode": "chorus",
+      "anchor": "interrupt-smoke",
+      "result": {
+        "sessionId": "interrupt-smoke",
+        "backendSessionId": "01a0e798-a90b-7fc0-88f0-2d144a8f1d9a",
+        "exitCode": 130,
+        "isNew": true
+      },
+      "mappedThread": "01a0e798-a90b-7fc0-88f0-2d144a8f1d9a",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/start",
+        "turn/start",
+        "turn/interrupt"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "thread/started",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "turn/started",
+        "item/started",
+        "item/completed",
+        "turn/completed"
+      ],
+      "hooks": [],
+      "tools": [],
+      "reply": "",
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "permissionMode": "chorus",
+      "anchor": "interrupt-smoke",
+      "result": {
+        "sessionId": "interrupt-smoke",
+        "backendSessionId": "01a0e798-a90b-7fc0-88f0-2d144a8f1d9a",
+        "exitCode": 0,
+        "isNew": false
+      },
+      "mappedThread": "01a0e798-a90b-7fc0-88f0-2d144a8f1d9a",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/resume",
+        "turn/start"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "thread/goal/cleared",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "thread/tokenUsage/updated",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ],
+      "hooks": [
+        {
+          "status": "completed",
+          "keys": [
+            "threadId",
+            "turnId",
+            "run"
+          ]
+        }
+      ],
+      "tools": [],
+      "reply": "CHORUS_FIRST_INTERRUPT_928",
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "permissionMode": "yolo",
+      "anchor": "new-smoke",
+      "result": {
+        "sessionId": "new-smoke",
+        "backendSessionId": "01a0e798-324a-7502-a0de-19beecb13192",
+        "exitCode": 0,
+        "isNew": true
+      },
+      "mappedThread": "01a0e798-324a-7502-a0de-19beecb13192",
+      "requests": [
+        "initialize",
+        "initialized",
+        "thread/start",
+        "turn/start"
+      ],
+      "methods": [
+        "configWarning",
+        "remoteControl/status/changed",
+        "thread/started",
+        "mcpServer/startupStatus/updated",
+        "thread/status/changed",
+        "turn/started",
+        "hook/started",
+        "hook/completed",
+        "item/started",
+        "item/completed",
+        "item/agentMessage/delta",
+        "thread/tokenUsage/updated",
+        "account/rateLimits/updated",
+        "turn/completed"
+      ],
+      "hooks": [
+        {
+          "status": "completed",
+          "keys": [
+            "threadId",
+            "turnId",
+            "run"
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "server": "chorus",
+          "tool": "chorus_checkin",
+          "status": "completed"
+        }
+      ],
+      "reply": "I’ll make the single read-only Chorus check-in and confirm the skill context already supplied in this session.\nCHORUS_SPAWNER_NEW_928 — Check-in succeeded (exactly one call). Chorus skill context was supplied in the session.",
+      "diagnostics": [
+        {
+          "level": "info",
+          "message": "[Chorus] Codex App Server: CLOSED"
+        }
+      ],
+      "warnings": [],
+      "errors": []
+    }
+  ]
+}

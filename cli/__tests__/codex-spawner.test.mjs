@@ -1,128 +1,40 @@
-// cli/__tests__/codex-spawner.test.mjs
-// Covers daemon-codex-backend spec: headless `codex exec --json` wake (prompt on
-// stdin), buildArgs for new vs resume + sandbox flag, thread-id capture from the
-// `thread.started` event + persistence, daemon-key-via-env, cross-platform exec
-// resolution, and never-throw-into-the-wake-path failure handling.
-//
-// Verified against codex-cli 0.142.3: a real `codex exec --json` first line is
-// `{"type":"thread.started","thread_id":"<uuid>"}` and the prompt is read from
-// stdin ("Reading prompt from stdin...").
 import { describe, it, expect, vi } from "vitest";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import {
-  CodexSpawner,
-  buildCodexArgs,
-  sandboxFlags,
-  resolveCodexPath,
-  extractThreadId,
-  hasChorusMcpServer,
-} from "../codex-spawner.mjs";
+import { PassThrough } from "node:stream";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CodexSpawner, buildCodexArgs, resolveCodexPath, hasChorusMcpServer } from "../codex-spawner.mjs";
+import { killProcessTree } from "../process-killer.mjs";
+import { getProcessStopHook } from "../process-stop-hooks.mjs";
+import { getThreadId, setThreadId } from "../codex-session-map.mjs";
+import { appServerChild } from "./fixtures/codex-app-server-child.mjs";
 
 const ANCHOR = "11111111-1111-4111-8111-111111111111";
-const TID = "019f091a-844e-7b43-8c31-6b04ffa38149";
-
-/** A fake child process: stdin captures writes; stdout/stderr are emitters. */
-function makeFakeChild() {
-  const child = new EventEmitter();
-  const stdinChunks = [];
-  const stdin = new EventEmitter();
-  stdin.writes = stdinChunks;
-  stdin.write = (c) => stdinChunks.push(String(c));
-  stdin.end = vi.fn();
-  child.stdin = stdin;
-  child.stdout = new EventEmitter();
-  child.stdout.setEncoding = () => {};
-  child.stderr = new EventEmitter();
-  child.stderr.setEncoding = () => {};
-  child.pid = 4242;
-  return child;
+const TID = "thread-1";
+const THREAD_STARTED = JSON.parse(readFileSync(
+  new URL("./fixtures/codex-app-server/schema-examples-0.157.1.json", import.meta.url), "utf8",
+)).examples.find((example) => example.method === "thread/started").message;
+const SETUP_TID = THREAD_STARTED.params.thread.id;
+const threadStarted = (id) => ({
+  ...THREAD_STARTED, params: { thread: { ...THREAD_STARTED.params.thread, id, sessionId: id } },
+});
+const silent = { info() {}, warn() {}, error() {} };
+const methods = (child) => child.requests.map((r) => r.method).filter(Boolean);
+function makeSpawner(child = appServerChild(), opts = {}) {
+  return new CodexSpawner({
+    codexPath: "/fake/codex", spawnImpl: vi.fn(() => child),
+    logger: silent, env: { PATH: "/bin" }, platform: "linux", permissionMode: "yolo",
+    getThreadIdFn: () => null, setThreadIdFn: vi.fn(), getUsageSnapshotFn: () => null,
+    setUsageSnapshotFn: vi.fn(), hasChorusMcpServerFn: () => true,
+    cleanupTimeoutMs: 40, stdioGraceMs: 5,
+    rpcLimits: { initializeTimeoutMs: 50, threadSetupTimeoutMs: 50, turnStartTimeoutMs: 50 },
+    ...opts,
+  });
 }
-
-describe("sandboxFlags — permission mode mapping (subcommand-aware)", () => {
-  it("yolo → --dangerously-bypass-approvals-and-sandbox (valid on both exec and resume)", () => {
-    expect(sandboxFlags("yolo")).toEqual(["--dangerously-bypass-approvals-and-sandbox"]);
-    expect(sandboxFlags("yolo", { resume: true })).toEqual(["--dangerously-bypass-approvals-and-sandbox"]);
-  });
-  it("chorus on NEW (exec) → --sandbox read-only", () => {
-    expect(sandboxFlags("chorus")).toEqual(["--sandbox", "read-only"]);
-  });
-  it("chorus on RESUME → -c sandbox_mode=read-only (codex exec resume has NO --sandbox flag)", () => {
-    // Verified against codex 0.142.3: `codex exec resume --sandbox` errors (exit 2);
-    // the read-only posture must go through the `-c` config override there.
-    expect(sandboxFlags("chorus", { resume: true })).toEqual(["-c", 'sandbox_mode="read-only"']);
-  });
-  it("defaults unknown/undefined to the restricted read-only posture (per subcommand)", () => {
-    expect(sandboxFlags(undefined)).toEqual(["--sandbox", "read-only"]);
-    expect(sandboxFlags(undefined, { resume: true })).toEqual(["-c", 'sandbox_mode="read-only"']);
-  });
-});
-
-describe("buildCodexArgs — new vs resume", () => {
-  it("new run: exec --json + sandbox + skip-git-repo-check, no resume, no prompt in argv", () => {
-    const args = buildCodexArgs({ isNew: true, permissionMode: "yolo" });
-    expect(args).toEqual(["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]);
-    expect(args).not.toContain("resume");
-  });
-
-  it("resume run (yolo): exec resume <thread_id> --json + bypass flag", () => {
-    const args = buildCodexArgs({ isNew: false, threadId: TID, permissionMode: "yolo" });
-    expect(args).toEqual([
-      "exec",
-      "resume",
-      TID,
-      "--json",
-      "--dangerously-bypass-approvals-and-sandbox",
-      "--skip-git-repo-check",
-    ]);
-  });
-
-  it("resume run (chorus): exec resume <thread_id> --json -c sandbox_mode=read-only (NO --sandbox)", () => {
-    const args = buildCodexArgs({ isNew: false, threadId: TID, permissionMode: "chorus" });
-    expect(args).toEqual([
-      "exec",
-      "resume",
-      TID,
-      "--json",
-      "-c",
-      'sandbox_mode="read-only"',
-      "--skip-git-repo-check",
-    ]);
-    // the bug this regression-guards: `--sandbox` is rejected by `codex exec resume`.
-    expect(args).not.toContain("--sandbox");
-  });
-
-  it("chorus mode keeps read-only on new (--sandbox) and resume (-c sandbox_mode)", () => {
-    expect(buildCodexArgs({ isNew: true, permissionMode: "chorus" })).toEqual([
-      "exec",
-      "--json",
-      "--sandbox",
-      "read-only",
-      "--skip-git-repo-check",
-    ]);
-    expect(buildCodexArgs({ isNew: false, threadId: TID, permissionMode: "chorus" })).toContain('sandbox_mode="read-only"');
-  });
-
-  it("never contains the prompt (prompt is stdin-only)", () => {
-    const args = buildCodexArgs({ isNew: true, permissionMode: "yolo" });
-    expect(args.join(" ")).not.toContain("PROMPT");
-  });
-});
-
-describe("extractThreadId — capture from the thread.started event", () => {
-  it("reads thread_id from a thread.started event", () => {
-    expect(extractThreadId({ type: "thread.started", thread_id: TID })).toBe(TID);
-  });
-  it("falls back to session_meta.payload.id (on-disk rollout shape)", () => {
-    expect(extractThreadId({ type: "session_meta", payload: { id: TID } })).toBe(TID);
-  });
-  it("returns null for unrelated events", () => {
-    expect(extractThreadId({ type: "turn.completed" })).toBeNull();
-    expect(extractThreadId({ type: "item.completed", item: {} })).toBeNull();
-    expect(extractThreadId({ type: "thread.started", thread_id: "  " })).toBeNull();
-    expect(extractThreadId({ type: "session_meta", payload: { id: "" } })).toBeNull();
-    expect(extractThreadId(null)).toBeNull();
-  });
-});
+const wake = (spawner, extra = {}) => spawner.wake({ prompt: "private prompt", sessionId: ANCHOR, ...extra });
+async function until(fn) { await vi.waitFor(() => expect(fn()).toBeTruthy(), { timeout: 1000, interval: 1 }); }
 
 describe("resolveCodexPath", () => {
   const isFile = (set) => (p) => set.has(p);
@@ -159,336 +71,531 @@ describe("hasChorusMcpServer", () => {
     expect(hasChorusMcpServer({ readFile: () => '[mcp_servers.other]\nurl = "x"\n' })).toBe(false);
     expect(hasChorusMcpServer({ readFile: () => { throw new Error("missing"); } })).toBe(false);
   });
+
+  it.each([true, false])("configured=%s: repeated successful wakes have only the expected missing-config warning", async configured => {
+    const records = [];
+    const logger = Object.fromEntries(["info", "warn", "error"].map(level => [level, message => records.push({ level, message })]));
+    const probe = vi.fn(() => configured);
+    const spawner = makeSpawner(undefined, { logger, hasChorusMcpServerFn: probe, spawnImpl: () => appServerChild() });
+    expect((await wake(spawner)).exitCode).toBe(0);
+    expect((await wake(spawner)).exitCode).toBe(0);
+    expect(probe).toHaveBeenCalledTimes(1);
+    const warnings = records.filter(r => r.level === "warn");
+    expect(warnings).toHaveLength(configured ? 0 : 1);
+    if (!configured) expect(warnings[0].message).toContain("no [mcp_servers.chorus]");
+    expect(records.filter(r => r.level === "error")).toEqual([]);
+    expect(records.filter(r => r.message.endsWith("App Server: CLOSED"))).toEqual([
+      { level: "info", message: "[Chorus] Codex App Server: CLOSED" },
+      { level: "info", message: "[Chorus] Codex App Server: CLOSED" },
+    ]);
+  });
 });
 
-describe("CodexSpawner.wake — spawn orchestration", () => {
-  const creds = { url: "https://chorus.test", apiKey: "cho_secret" };
-
-  /** Build a spawner whose spawnImpl returns our fake child + records the call. */
-  function makeSpawner({
-    child,
-    permissionMode = "yolo",
-    getThreadId,
-    setThreadId,
-    getUsageSnapshot,
-    setUsageSnapshot,
-    codexPath = "/usr/bin/codex",
-    creds: credsOverride = creds,
-  } = {}) {
-    const calls = {};
-    const spawnImpl = vi.fn((command, argv, opts) => {
-      calls.command = command;
-      calls.argv = argv;
-      calls.opts = opts;
-      return child;
-    });
-    const spawner = new CodexSpawner({
-      codexPath,
-      spawnImpl,
-      permissionMode,
-      creds: credsOverride,
-      platform: "linux",
-      logger: { info() {}, warn() {}, error() {} },
-      getThreadIdFn: getThreadId ?? (() => null),
-      setThreadIdFn: setThreadId ?? (() => {}),
-      getUsageSnapshotFn: getUsageSnapshot ?? (() => null),
-      setUsageSnapshotFn: setUsageSnapshot ?? (() => {}),
-      hasChorusMcpServerFn: () => true,
-    });
-    return { spawner, spawnImpl, calls };
-  }
-
-  it("new wake: spawns codex with the resolved Chorus pair in env, never argv", async () => {
-    const child = makeFakeChild();
-    const { spawner, calls } = makeSpawner({ child });
-    const onChild = vi.fn();
-    const p = spawner.wake({ prompt: "do the thing", sessionId: ANCHOR, isNew: true, onChild });
-    // stream a thread.started then exit 0
-    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
-    child.emit("close", 0);
-    const result = await p;
-
-    expect(calls.argv.slice(0, 2)).toEqual(["exec", "--json"]);
-    expect(calls.argv).not.toContain("resume");
-    // prompt only on stdin, never argv
-    expect(child.stdin.writes.join("")).toBe("do the thing");
-    expect(calls.argv.join(" ")).not.toContain("do the thing");
-    // daemon connection pair exported via env, headless flag set, key absent from argv
-    expect(calls.opts.env.CHORUS_URL).toBe("https://chorus.test");
-    expect(calls.opts.env.CHORUS_API_KEY).toBe("cho_secret");
-    expect(calls.opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
-    // No identity on these creds → no profile exported (the wrapper falls back to url+key).
-    expect(calls.opts.env.CHORUS_AGENT_PROFILE).toBeUndefined();
-    expect(calls.argv.join(" ")).not.toContain("cho_secret");
-    // detached process group on POSIX (for interrupt parity)
-    expect(calls.opts.detached).toBe(true);
-    // onChild fired exactly once with the live child
-    expect(onChild).toHaveBeenCalledTimes(1);
-    expect(onChild).toHaveBeenCalledWith(child);
-    // returns the captured thread id as the session id
-    expect(result.exitCode).toBe(0);
-    expect(result.sessionId).toBe(ANCHOR);
-    expect(result.backendSessionId).toBe(TID);
-  });
-
-  it("exports the agent identity as CHORUS_AGENT_PROFILE (uuid) when creds carry it", async () => {
-    const child = makeFakeChild();
-    const { spawner, calls } = makeSpawner({
-      child,
-      creds: { url: "https://chorus.test", apiKey: "cho_secret", agentUuid: "u-codex", agentName: "Codex" },
-    });
-    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
-    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
-    child.emit("close", 0);
-    await p;
-    // The woken session gets its identity; the uuid is preferred over the name.
-    expect(calls.opts.env.CHORUS_AGENT_PROFILE).toBe("u-codex");
-    // …and never leaked into argv.
-    expect(calls.argv.join(" ")).not.toContain("u-codex");
-  });
-
-  it("overwrites stale inherited Chorus connection values", async () => {
-    const child = makeFakeChild();
-    const { spawner, calls } = makeSpawner({ child });
-    const previousUrl = process.env.CHORUS_URL;
-    const previousKey = process.env.CHORUS_API_KEY;
-    process.env.CHORUS_URL = "https://stale.test";
-    process.env.CHORUS_API_KEY = "cho_stale";
+describe("early setup identity", () => {
+  it.each(["fresh", "fallback", "resume"])("retains the versioned notification ID across pending %s setup interruption and spawner reconstruction", async (mode) => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-early-setup-"));
+    const path = join(dir, "map.json");
     try {
-      const p = spawner.wake({ prompt: "x", sessionId: ANCHOR });
-      child.emit("close", 0);
-      await p;
-      expect(calls.opts.env.CHORUS_URL).toBe("https://chorus.test");
-      expect(calls.opts.env.CHORUS_API_KEY).toBe("cho_secret");
-    } finally {
-      if (previousUrl === undefined) delete process.env.CHORUS_URL;
-      else process.env.CHORUS_URL = previousUrl;
-      if (previousKey === undefined) delete process.env.CHORUS_API_KEY;
-      else process.env.CHORUS_API_KEY = previousKey;
+      if (mode !== "fresh") setThreadId(ANCHOR, mode === "resume" ? SETUP_TID : "old-thread", { path });
+      const setThreadIdFn = vi.fn((anchor, id) => setThreadId(anchor, id, { path }));
+      const stores = { getThreadIdFn: (anchor) => getThreadId(anchor, { path }), setThreadIdFn };
+      let pendingSetup;
+      const child = appServerChild({ handler(req, c) {
+        if (req.method === "thread/resume" && mode === "fallback") {
+          c.send({ id: req.id, error: { code: -32600, message: "no rollout found for thread id old-thread" } });
+          return true;
+        }
+        if (req.method === (mode === "resume" ? "thread/resume" : "thread/start")) {
+          pendingSetup = req;
+          if (mode === "fallback") c.send(threadStarted("old-thread"));
+          c.send(THREAD_STARTED);
+          return true; // No setup response before cancellation.
+        }
+      } });
+      const running = wake(makeSpawner(child, stores));
+      await until(() => pendingSetup);
+      expect(getThreadId(ANCHOR, { path })).toBe(SETUP_TID);
+      await killProcessTree(child, { sigintTimeoutMs: 30 });
+      expect(await running).toEqual({
+        sessionId: ANCHOR, backendSessionId: SETUP_TID, exitCode: 130, isNew: mode !== "resume",
+      });
+      expect(methods(child)).not.toContain("turn/start");
+      expect(setThreadIdFn).toHaveBeenCalledTimes(mode === "resume" ? 0 : 1);
+
+      const next = appServerChild({ threadId: SETUP_TID });
+      expect(await wake(makeSpawner(next, stores))).toMatchObject({ backendSessionId: SETUP_TID, isNew: false, exitCode: 0 });
+      expect(next.requests.find((req) => req.method === "thread/resume").params.threadId).toBe(SETUP_TID);
+      expect(methods(next)).not.toContain("thread/start");
+      expect(getThreadId(ANCHOR, { path })).toBe(SETUP_TID);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it.each(["fresh", "fallback", "write-failure"])("persists duplicate notifications and the setup response once for %s", async (mode) => {
+    const logger = { ...silent, warn: vi.fn(), error: vi.fn() };
+    const setThreadIdFn = vi.fn(() => { if (mode === "write-failure") throw new Error("PRIVATE-STORE-SECRET"); });
+    const child = appServerChild({ threadId: SETUP_TID, handler(req, c) {
+      if (req.method === "thread/resume") {
+        c.send(threadStarted("unrelated-thread"));
+        c.send({ id: req.id, error: { code: -32600, message: "no rollout found for thread id old-thread" } });
+        return true;
+      }
+      if (req.method === "thread/start") {
+        if (mode === "fallback") c.send(threadStarted("old-thread"));
+        c.send(THREAD_STARTED);
+        c.send(THREAD_STARTED);
+        c.send(threadStarted("unrelated-thread"));
+        expect(setThreadIdFn).toHaveBeenCalledExactlyOnceWith(ANCHOR, SETUP_TID);
+        c.reply(req, { thread: THREAD_STARTED.params.thread });
+        return true;
+      }
+    } });
+    expect(await wake(makeSpawner(child, {
+      logger, setThreadIdFn, getThreadIdFn: () => mode === "fallback" ? "old-thread" : null,
+    }))).toMatchObject({ backendSessionId: SETUP_TID, isNew: true, exitCode: 0 });
+    expect(setThreadIdFn).toHaveBeenCalledExactlyOnceWith(ANCHOR, SETUP_TID);
+    if (mode === "write-failure") {
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("future wake continuity"));
+      expect(JSON.stringify([logger.warn.mock.calls, logger.error.mock.calls])).not.toContain("PRIVATE-STORE-SECRET");
     }
   });
 
-  it("logs a missing Chorus MCP entry once and still completes later wakes", async () => {
-    const first = makeFakeChild();
-    const second = makeFakeChild();
-    const children = [first, second];
-    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const spawner = new CodexSpawner({
-      codexPath: "/usr/bin/codex",
-      platform: "linux",
-      creds: { url: "https://chorus.test", apiKey: "cho_secret" },
-      logger,
-      hasChorusMcpServerFn: () => false,
-      getThreadIdFn: () => null,
-      setThreadIdFn: () => {},
-      getUsageSnapshotFn: () => null,
-      setUsageSnapshotFn: () => {},
-      spawnImpl: () => children.shift(),
+  it.each([false, true])("ignores out-of-phase, malformed and wrong-thread notifications (resume=%s)", async (resumed) => {
+    const child = appServerChild({ threadId: SETUP_TID, handler(req, c) {
+      if (req.method === "initialize" || req.method === "turn/start") c.send(threadStarted("out-of-phase"));
+      if (req.method === (resumed ? "thread/resume" : "thread/start")) {
+        c.send({ method: "unrelated", params: THREAD_STARTED.params });
+        c.send({ method: "thread/started", params: { threadId: "wrong-shape" } });
+        for (const id of ["", " ", null, 42]) c.send(threadStarted(id));
+        if (resumed) c.send(threadStarted("wrong-resume-thread"));
+        c.send(THREAD_STARTED);
+      }
+    } });
+    const spawner = makeSpawner(child, { getThreadIdFn: () => resumed ? SETUP_TID : null });
+    expect(await wake(spawner)).toMatchObject({ backendSessionId: SETUP_TID, isNew: !resumed, exitCode: 0 });
+    expect(spawner.setThreadIdFn).toHaveBeenCalledTimes(resumed ? 0 : 1);
+    if (!resumed) expect(spawner.setThreadIdFn).toHaveBeenCalledWith(ANCHOR, SETUP_TID);
+  });
+
+  it("rejects a response that contradicts the observed ID without replacing the mapping or starting a turn", async () => {
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "thread/start") {
+        c.send(THREAD_STARTED);
+        c.reply(req, { thread: { id: "contradictory-response" } });
+        return true;
+      }
+    } });
+    const spawner = makeSpawner(child);
+    expect(await wake(spawner)).toMatchObject({ backendSessionId: SETUP_TID, exitCode: null });
+    expect(spawner.setThreadIdFn).toHaveBeenCalledExactlyOnceWith(ANCHOR, SETUP_TID);
+    expect(methods(child)).not.toContain("turn/start");
+  });
+
+  it("rejects a mismatched resume response even without an early notification", async () => {
+    const child = appServerChild({ threadId: "wrong-response-thread" });
+    const spawner = makeSpawner(child, { getThreadIdFn: () => SETUP_TID });
+    expect(await wake(spawner)).toMatchObject({ backendSessionId: SETUP_TID, exitCode: null });
+    expect(spawner.setThreadIdFn).not.toHaveBeenCalled();
+    expect(methods(child)).not.toContain("turn/start");
+  });
+
+  it("retains an observed ID when its map write fails and setup is interrupted", async () => {
+    let notified = false;
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "thread/start") {
+        c.send(THREAD_STARTED); notified = true; return true;
+      }
+    } });
+    const setThreadIdFn = vi.fn(() => { throw new Error("private IO error"); });
+    const running = wake(makeSpawner(child, { setThreadIdFn }));
+    await until(() => notified);
+    await killProcessTree(child, { sigintTimeoutMs: 30 });
+    expect(await running).toMatchObject({ backendSessionId: SETUP_TID, exitCode: 130 });
+    expect(setThreadIdFn).toHaveBeenCalledExactlyOnceWith(ANCHOR, SETUP_TID);
+    expect(methods(child)).not.toContain("turn/start");
+  });
+});
+
+describe("App Server lifecycle", () => {
+  it.each([false, true])("fresh/resume=%s keeps identity, cwd, credentials, policy and ordered RPC", async (resumed) => {
+    const child = appServerChild();
+    const spawner = makeSpawner(child, { getThreadIdFn: () => resumed ? TID : null,
+      cliConfig: { args: ["-mliteral model", "-c", "model_reasoning_effort=high"], env: { CODEX_HOME: "/isolated" } },
+      creds: { url: "https://chorus.test", apiKey: "secret", agentUuid: "agent-1" },
     });
-
-    const wake1 = spawner.wake({ prompt: "first", sessionId: "first" });
-    first.emit("close", 0);
-    await wake1;
-    const wake2 = spawner.wake({ prompt: "second", sessionId: "second" });
-    second.emit("close", 0);
-    await wake2;
-
-    expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect(logger.warn.mock.calls[0][0]).toContain("no [mcp_servers.chorus] entry");
+    const onChild = vi.fn((c) => expect(getProcessStopHook(c)).toBeTypeOf("function"));
+    const result = await wake(spawner, { cwd: "/tmp/项目 space", isNew: true, onChild });
+    expect(result).toEqual({ sessionId: ANCHOR, backendSessionId: TID, isNew: !resumed, exitCode: 0 });
+    expect(onChild).toHaveBeenCalledExactlyOnceWith(child);
+    expect(getProcessStopHook(child)).toBeUndefined();
+    const [, argv, opts] = spawner.spawnImpl.mock.calls[0];
+    expect(argv).toEqual(["app-server", "--listen", "stdio://", "-c", 'model="literal model"', "-c", "model_reasoning_effort=high"]);
+    expect(JSON.stringify(argv)).not.toMatch(/private prompt|secret/);
+    expect(opts).toMatchObject({ cwd: "/tmp/项目 space", detached: true, shell: false, env: {
+      CODEX_HOME: "/isolated", CHORUS_URL: "https://chorus.test", CHORUS_API_KEY: "secret", CHORUS_AGENT_PROFILE: "agent-1", CHORUS_DAEMON_HEADLESS: "1",
+    } });
+    expect(methods(child)).toEqual(["initialize", "initialized", resumed ? "thread/resume" : "thread/start", "turn/start"]);
+    expect(child.requests[2].params).toMatchObject({ cwd: opts.cwd, sandbox: "danger-full-access", approvalPolicy: "never" });
+    expect(child.requests[3].params).toMatchObject({ sandboxPolicy: { type: "dangerFullAccess" }, input: [{ type: "text", text: "private prompt", text_elements: [] }] });
+    expect(spawner.setThreadIdFn).toHaveBeenCalledTimes(resumed ? 0 : 1);
   });
 
-  it("persists anchor→thread_id immediately when a new run emits thread.started", async () => {
-    const child = makeFakeChild();
-    const setThreadId = vi.fn();
-    const { spawner } = makeSpawner({ child, setThreadId });
-    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
-    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
-    expect(setThreadId).toHaveBeenCalledWith(ANCHOR, TID);
-    child.emit("close", 0);
-    await p;
-    expect(setThreadId).toHaveBeenCalledTimes(1);
+  it.each([false, true])("restricted new/resume=%s overrides historical permissions", async (resumed) => {
+    const child = appServerChild();
+    await wake(makeSpawner(child, { permissionMode: "chorus", getThreadIdFn: () => resumed ? TID : null }));
+    expect(child.requests[2].params).toMatchObject({ sandbox: "read-only", approvalPolicy: "never" });
+    expect(child.requests[3].params.sandboxPolicy).toEqual({ type: "readOnly", networkAccess: false });
   });
 
-  it("retains the mapping when a new run establishes a thread then exits non-zero", async () => {
-    const child = makeFakeChild();
-    const setThreadId = vi.fn();
-    const { spawner } = makeSpawner({ child, setThreadId });
-    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
-    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
-    child.emit("close", 1);
-    await p;
-    expect(setThreadId).toHaveBeenCalledTimes(1);
-    expect(setThreadId).toHaveBeenCalledWith(ANCHOR, TID);
+  it("persists the authoritative setup response before turn/start", async () => {
+    let saved = false;
+    const child = appServerChild({ handler: (req) => { if (req.method === "turn/start") expect(saved).toBe(true); } });
+    await wake(makeSpawner(child, { setThreadIdFn: () => { saved = true; } }));
   });
 
-  it("persists exactly once when duplicate compatible identifier events arrive", async () => {
-    const child = makeFakeChild();
-    const setThreadId = vi.fn();
-    const { spawner } = makeSpawner({ child, setThreadId });
-    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR });
-    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
-    child.stdout.emit("data", JSON.stringify({ type: "session_meta", payload: { id: TID } }) + "\n");
-    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
-    child.emit("close", 0);
-    await p;
-    expect(setThreadId).toHaveBeenCalledTimes(1);
-    expect(setThreadId).toHaveBeenCalledWith(ANCHOR, TID);
+  it("uses only the exact verified history error, starts once, and emits one notice", async () => {
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "thread/resume") {
+        c.send({ id: req.id, error: { code: -32600, message: "no rollout found for thread id old-thread" } }); return true;
+      }
+    } });
+    const messages = [];
+    const spawner = makeSpawner(child, { getThreadIdFn: () => "old-thread" });
+    expect(await wake(spawner, { onMessage: (m) => messages.push(m) })).toMatchObject({ isNew: true, backendSessionId: TID, exitCode: 0 });
+    expect(methods(child)).toEqual(["initialize", "initialized", "thread/resume", "thread/start", "turn/start"]);
+    expect(messages.filter((m) => m.item?.text.includes("Previous Codex history"))).toHaveLength(1);
+    expect(spawner.setThreadIdFn).toHaveBeenCalledExactlyOnceWith(ANCHOR, TID);
   });
 
-  it("persists a compatible session_meta identifier before child close", async () => {
-    const child = makeFakeChild();
-    const setThreadId = vi.fn();
-    const { spawner } = makeSpawner({ child, setThreadId });
-    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR });
-    child.stdout.emit("data", JSON.stringify({ type: "session_meta", payload: { id: TID } }) + "\n");
-    expect(setThreadId).toHaveBeenCalledWith(ANCHOR, TID);
-    child.emit("close", 0);
-    await p;
+  it.each(["no rollout found for thread id other", "authentication secret", "incompatible history", "thread not found: old-thread"])("does not fallback for an uncertain resume error: %s", async (message) => {
+    const logger = { ...silent, error: vi.fn() };
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "thread/resume") { c.send({ id: req.id, error: { code: -32600, message } }); return true; }
+    } });
+    const spawner = makeSpawner(child, { logger, getThreadIdFn: () => "old-thread" });
+    expect(await wake(spawner)).toMatchObject({ backendSessionId: "old-thread", isNew: false, exitCode: null });
+    expect(methods(child)).not.toContain("thread/start");
+    expect(spawner.setThreadIdFn).not.toHaveBeenCalled();
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain(message);
   });
 
-  it("does not persist when a new process fails before emitting a valid thread id", async () => {
-    const child = makeFakeChild();
-    const setThreadId = vi.fn();
-    const { spawner } = makeSpawner({ child, setThreadId });
-    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR });
-    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: " " }) + "\n");
-    child.stdout.emit("data", JSON.stringify({ type: "turn.failed", thread_id: ANCHOR }) + "\n");
-    child.emit("close", 1);
-    await p;
-    expect(setThreadId).not.toHaveBeenCalled();
+  it("preserves the old mapping when fresh fallback also fails", async () => {
+    const child = appServerChild({ handler(req, c) {
+      if (req.method.startsWith("thread/")) {
+        c.send({ id: req.id, error: { code: -32600, message: req.method === "thread/resume" ? "no rollout found for thread id old-thread" : "private failure" } }); return true;
+      }
+    } });
+    const spawner = makeSpawner(child, { getThreadIdFn: () => "old-thread" });
+    expect(await wake(spawner)).toMatchObject({ backendSessionId: "old-thread", exitCode: null, isNew: false });
+    expect(spawner.setThreadIdFn).not.toHaveBeenCalled();
+    expect(methods(child).filter((m) => m === "thread/start")).toHaveLength(1);
+  });
+
+  it.each(["completed", "failed", "interrupted"])("classifies matched terminal %s independently of raw zero exit", async (status) => {
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "turn/start") { c.reply(req, { turn: { id: "turn-1" } }); c.terminal(status); return true; }
+    } });
+    expect((await wake(makeSpawner(child))).exitCode).toBe(status === "completed" ? 0 : 1);
+  });
+
+  it("zero process exit without terminal is failure", async () => {
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "turn/start") { c.reply(req, { turn: { id: "turn-1" } }); setImmediate(() => c.exit()); return true; }
+    } });
+    expect((await wake(makeSpawner(child))).exitCode).toBeNull();
+  });
+
+  it.each([false, true])("protocol corruption cannot become success before/after terminal (terminal first=%s)", async (terminalFirst) => {
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "turn/start") {
+        c.reply(req, { turn: { id: "turn-1" } });
+        if (terminalFirst) c.terminal();
+        c.stdout.write("private malformed content\n"); return true;
+      }
+    } });
+    expect((await wake(makeSpawner(child))).exitCode).toBeNull();
+  });
+
+  it("setup cancellation is registered before onChild and prevents all RPC startup", async () => {
+    const child = appServerChild();
+    let stopped;
+    const result = await wake(makeSpawner(child), { onChild: (c) => { stopped = killProcessTree(c, { sigintTimeoutMs: 40 }); } });
+    await stopped;
+    expect(result.exitCode).toBe(130);
+    expect(methods(child)).toEqual([]);
+  });
+
+  it.each(["initialize", "thread/start"])("stop during pending %s never submits turn/start", async (method) => {
+    const child = appServerChild({ handler: (req) => req.method === method });
+    const spawner = makeSpawner(child);
+    const running = wake(spawner);
+    await until(() => methods(child).includes(method));
+    await killProcessTree(child, { sigintTimeoutMs: 30 });
+    expect((await running).exitCode).toBe(130);
+    expect(methods(child)).not.toContain("turn/start");
+  });
+
+  it("first interrupted turn persists its ID and fresh spawners resume it repeatedly", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-t2-"));
+    const path = join(dir, "map.json");
+    try {
+      for (let i = 0; i < 3; i++) {
+        const child = appServerChild({ autoComplete: false });
+        const spawner = makeSpawner(child, { getThreadIdFn: (a) => getThreadId(a, { path }), setThreadIdFn: (a, t) => setThreadId(a, t, { path }) });
+        const running = wake(spawner);
+        await until(() => methods(child).includes("turn/start"));
+        await killProcessTree(child, { sigintTimeoutMs: 40 });
+        expect((await running).exitCode).toBe(130);
+        expect(getThreadId(ANCHOR, { path })).toBe(TID);
+        expect(methods(child)[2]).toBe(i ? "thread/resume" : "thread/start");
+        expect(methods(child).filter((m) => m === "turn/interrupt")).toHaveLength(1);
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("uses observed turn ID to interrupt before the turn/start response arrives", async () => {
+    let start;
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "turn/start") {
+        start = req;
+        c.send({ method: "turn/started", params: { threadId: TID, turn: { id: "turn-1" } } }); return true;
+      }
+      if (req.method === "turn/interrupt") {
+        c.reply(req, {}); c.terminal("interrupted"); c.reply(start, { turn: { id: "turn-1" } }); return true;
+      }
+    } });
+    const running = wake(makeSpawner(child));
+    await until(() => start);
+    await killProcessTree(child, { sigintTimeoutMs: 40 });
+    expect((await running).exitCode).toBe(130);
+    expect(child.requests.find((r) => r.method === "turn/interrupt").params).toEqual({ threadId: TID, turnId: "turn-1" });
+  });
+
+  it("completion racing user interrupt still returns a nonzero wake", async () => {
+    let stopped;
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "turn/start") {
+        c.reply(req, { turn: { id: "turn-1" } }); c.terminal();
+        stopped = killProcessTree(c, { sigintTimeoutMs: 40 }); return true;
+      }
+    } });
+    expect((await wake(makeSpawner(child))).exitCode).toBe(130);
+    await stopped;
+  });
+
+  it.each(["getThreadIdFn", "setThreadIdFn"])("degrades %s IO failure and keeps the current turn with fixed diagnostics", async (store) => {
+    const logger = { ...silent, error: vi.fn(), warn: vi.fn() };
+    const child = appServerChild();
+    const spawner = makeSpawner(child, { logger, [store]: () => { throw new Error("PRIVATE-STORE-SECRET"); } });
+    expect(await wake(spawner)).toMatchObject({ exitCode: 0, backendSessionId: TID, isNew: true });
+    expect(methods(child)).toContain("thread/start");
+    expect(methods(child).filter(m => m === "turn/start")).toHaveLength(1);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(store === "getThreadIdFn" ? "could not be read" : "future wake continuity"));
+    expect(JSON.stringify([logger.error.mock.calls, logger.warn.mock.calls])).not.toContain("PRIVATE-STORE-SECRET");
+  });
+
+  it.each(["getUsageSnapshotFn", "setUsageSnapshotFn"])("contains %s IO failure with fixed diagnostics", async (store) => {
+    const logger = { ...silent, error: vi.fn(), warn: vi.fn() };
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "turn/start") {
+        c.reply(req, { turn: { id: "turn-1" } });
+        c.send({ method: "thread/tokenUsage/updated", params: { threadId: TID, turnId: "turn-1", tokenUsage: { total: { inputTokens: 10 } } } });
+        c.terminal(); return true;
+      }
+    } });
+    const spawner = makeSpawner(child, { logger, ...(store === "getUsageSnapshotFn" ? { getThreadIdFn: () => TID } : {}), [store]: () => { throw new Error("PRIVATE-STORE-SECRET"); } });
+    expect((await wake(spawner)).exitCode).toBeNull();
+    expect(JSON.stringify([logger.error.mock.calls, logger.warn.mock.calls])).not.toContain("PRIVATE-STORE-SECRET");
+    if (store !== "setUsageSnapshotFn") expect(methods(child)).not.toContain("turn/start");
+  });
+
+  it.each(["error", "nonzero", "timeout", "success"])("requires bounded Windows taskkill settlement: %s", async mode => {
+    const child = appServerChild();
+    child.pid = 456789;
+    const tk = new EventEmitter();
+    let descendantsRemain = true;
+    const root = { pid: child.pid, parentPid: 1, startedAt: "2026-09-28T10:00:00Z" };
+    const descendant = { pid: 456790, parentPid: child.pid, startedAt: "2026-09-28T10:00:01Z" };
+    const logger = { ...silent, warn: vi.fn(), error: vi.fn() };
+    const spawner = makeSpawner(child, {
+      platform: "win32", logger, killOptions: {
+        windowsSnapshotImpl: async () => [
+          ...(child.exitCode === null ? [root] : []),
+          ...(descendantsRemain ? [descendant] : []),
+        ],
+        spawnImpl: (command, args) => {
+        expect(command).toBe("taskkill");
+        expect(args[1]).toBe("456790");
+        queueMicrotask(() => {
+          if (mode === "error") tk.emit("error", new Error("PRIVATE-TASKKILL-SECRET"));
+          if (mode === "nonzero") tk.emit("exit", 1);
+          if (mode === "success") { descendantsRemain = false; tk.emit("exit", 0); }
+        });
+        return tk;
+      } },
+    });
+    expect((await wake(spawner)).exitCode).toBe(mode === "success" ? 0 : null);
+    expect(JSON.stringify([logger.warn.mock.calls, logger.error.mock.calls])).not.toContain("PRIVATE-TASKKILL-SECRET");
+    // An OS error may arrive after timeout/exit, before the stream close.
+    expect(() => tk.emit("error", new Error("late"))).not.toThrow();
+    tk.emit("close", mode === "success" ? 0 : 1);
+    expect(tk.listenerCount("error")).toBe(0);
+    expect(tk.listenerCount("exit")).toBe(0);
+  });
+
+  it("normal Windows exit succeeds through the actual CIM query/parser without targeting the absent root", async () => {
+    const child = appServerChild(); child.pid = 456789;
+    const root = { pid: child.pid, parentPid: 1, startedAt: "2026-09-28T10:00:00Z" };
+    const spawnImpl = vi.fn((command, args) => {
+      expect(command).toBe("powershell.exe");
+      expect(args).toContain("-NonInteractive");
+      const query = new EventEmitter(); query.stdout = new PassThrough();
+      queueMicrotask(() => {
+        query.stdout.write(JSON.stringify(child.exitCode === null ? [root] : []));
+        query.emit("exit", 0); query.emit("close", 0);
+      });
+      return query;
+    });
+    const spawner = makeSpawner(child, { platform: "win32", killOptions: { spawnImpl } });
+    expect((await wake(spawner)).exitCode).toBe(0);
+    expect(spawnImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists raw usage exactly once per observation without double normalization", async () => {
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "turn/start") {
+        c.reply(req, { turn: { id: "turn-1" } });
+        c.send({ method: "thread/tokenUsage/updated", params: { threadId: TID, turnId: "turn-1", tokenUsage: { total: { inputTokens: 100, cachedInputTokens: 40, outputTokens: 7 } } } });
+        c.terminal(); return true;
+      }
+    } });
+    const messages = [];
+    const spawner = makeSpawner(child);
+    expect((await wake(spawner, { onMessage: (m) => messages.push(m) })).exitCode).toBe(0);
+    expect(spawner.setUsageSnapshotFn).toHaveBeenCalledExactlyOnceWith(ANCHOR, TID, { input_tokens: 100, cached_input_tokens: 40, output_tokens: 7 });
+    expect(messages.find((m) => m.type === "turn.completed").usage.input_tokens).toBe(60);
+  });
+
+  it.each(["missing", "spawn", "incompatible"])("fails safely for %s CLI", async (mode) => {
+    const child = appServerChild({ handler: (req, c) => { if (req.method === "initialize") { c.exit(2); return true; } } });
+    const spawner = makeSpawner(child, mode === "missing" ? { codexPath: null, resolveCodexPathFn: () => null } : mode === "spawn" ? { spawnImpl: () => { throw new Error("secret path"); } } : {});
+    const onChild = vi.fn();
+    expect((await wake(spawner, { onChild })).exitCode).toBeNull();
+    expect(onChild).toHaveBeenCalledTimes(mode === "incompatible" ? 1 : 0);
   });
 
   it.each([
-    "/workspaces/项目 alpha",
-    "/workspaces/space only",
-  ])("resume wake: a known anchor ignores the shared new-session probe under cwd %s", async (cwd) => {
-    const child = makeFakeChild();
-    const { spawner, calls } = makeSpawner({ child, getThreadId: () => TID });
-    // pass isNew:true (the shared Claude probe missed) but the map has a thread
-    // id → Codex must resume independently and pass the cwd through verbatim.
-    const p = spawner.wake({ prompt: "again", sessionId: ANCHOR, isNew: true, cwd });
-    child.emit("close", 0);
-    const result = await p;
-    expect(spawner.sessionDecision).toEqual({ probeIsAuthoritative: false });
-    expect(calls.argv.slice(0, 3)).toEqual(["exec", "resume", TID]);
-    expect(calls.opts.cwd).toBe(cwd);
-    expect(result).toMatchObject({ backendSessionId: TID, isNew: false });
+    ["initialize", "initializeTimeoutMs"],
+    ["thread/start", "threadSetupTimeoutMs"],
+    ["turn/start", "turnStartTimeoutMs"],
+  ])("%s response timeout remains bounded", async (method, limit) => {
+    const child = appServerChild({ handler: (req) => req.method === method });
+    expect((await wake(makeSpawner(child, { rpcLimits: { [limit]: 5 } }))).exitCode).toBeNull();
   });
 
-  it("forwards each parsed event to onMessage", async () => {
-    const child = makeFakeChild();
-    const { spawner } = makeSpawner({ child });
-    const onMessage = vi.fn();
-    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true, onMessage });
-    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
-    child.stdout.emit("data", JSON.stringify({ type: "turn.completed" }) + "\n");
-    child.emit("close", 0);
-    await p;
-    expect(onMessage).toHaveBeenCalledTimes(2);
+  it("initialize uses the installed package version", async () => {
+    const child = appServerChild();
+    await wake(makeSpawner(child));
+    expect(child.requests[0].params.clientInfo.version).toBe(
+      JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version,
+    );
   });
 
-  it("normalizes a resumed cumulative usage snapshot against the persisted baseline", async () => {
-    const child = makeFakeChild();
-    const baseline = {
-      input_tokens: 13566,
-      cached_input_tokens: 0,
-      cache_write_input_tokens: 13564,
-      output_tokens: 5,
-      reasoning_output_tokens: 0,
-    };
-    const setUsageSnapshot = vi.fn();
-    const { spawner } = makeSpawner({
-      child,
-      getThreadId: () => TID,
-      getUsageSnapshot: () => baseline,
-      setUsageSnapshot,
+  it.each(["complete", "interrupt", "EOF", "exit"])("silent long turn remains running until %s", async (ending) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const child = appServerChild({ autoComplete: false });
+    let settled = false;
+    const running = wake(makeSpawner(child)).then(result => { settled = true; return result; });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(methods(child)).toContain("turn/start");
+      // No notification, command output, or heartbeat arrives for an hour.
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      expect(settled).toBe(false);
+      let stopped;
+      if (ending === "complete") child.terminal();
+      if (ending === "interrupt") stopped = killProcessTree(child, { sigintTimeoutMs: 100 });
+      if (ending === "EOF") child.stdout.end();
+      if (ending === "exit") child.exit(0);
+      await vi.advanceTimersByTimeAsync(200);
+      await stopped;
+      expect((await running).exitCode).toBe(ending === "complete" ? 0 : ending === "interrupt" ? 130 : null);
+      if (ending === "interrupt") expect(methods(child)).toContain("turn/interrupt");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["item/commandExecution/requestApproval", "unknown/request", "item/tool/requestUserInput"])("headless server request %s is denied/failed and never prompts", async (method) => {
+    const child = appServerChild({ handler(req, c) {
+      if (req.method === "turn/start") {
+        c.reply(req, { turn: { id: "turn-1" } }); c.send({ id: "server-1", method, params: {} }); return true;
+      }
+      if (req.id === "server-1") { if (method.includes("requestApproval")) c.terminal("failed"); return true; }
+    } });
+    expect((await wake(makeSpawner(child))).exitCode).not.toBe(0);
+    const response = child.requests.find((r) => r.id === "server-1");
+    if (method.includes("requestApproval")) expect(response.result).toEqual({ decision: "cancel" });
+    else expect(response.error).toBeDefined();
+  });
+
+  it("real ChildProcess drains inherited pipes and requests bounded descendant cleanup", async () => {
+    const program = `
+      const {spawn}=require('node:child_process');
+      require('node:readline').createInterface({input:process.stdin}).on('line', line=>{
+        const r=JSON.parse(line); const send=x=>process.stdout.write(JSON.stringify(x)+'\\n');
+        if(r.method==='initialize')send({id:r.id,result:{}});
+        if(r.method==='thread/start')send({id:r.id,result:{thread:{id:'thread-1'}}});
+        if(r.method==='turn/start'){
+          send({id:r.id,result:{turn:{id:'turn-1'}}});
+          send({method:'turn/completed',params:{threadId:'thread-1',turn:{id:'turn-1',status:'completed'}}});
+          spawn(process.execPath,['-e','setTimeout(()=>{},200)'],{stdio:['ignore',1,2]});
+          process.exit(0);
+        }
+      });`;
+    const killImpl = vi.fn();
+    const spawner = makeSpawner(undefined, { killOptions: { killImpl }, cleanupTimeoutMs: 250, stdioGraceMs: 15,
+      rpcLimits: { initializeTimeoutMs: 2000 },
+      spawnImpl: (_command, _args, opts) => spawn(process.execPath, ["-e", program], opts),
     });
-    const onMessage = vi.fn();
-    const cumulative = {
-      input_tokens: 31551,
-      cached_input_tokens: 13564,
-      cache_write_input_tokens: 17983,
-      output_tokens: 10,
-      reasoning_output_tokens: 0,
-    };
-    const p = spawner.wake({ prompt: "again", sessionId: ANCHOR, onMessage });
-    child.stdout.emit("data", JSON.stringify({ type: "turn.completed", usage: cumulative }) + "\n");
-    child.emit("close", 0);
-    await p;
+    const startedAt = Date.now();
+    expect((await wake(spawner, { cwd: process.cwd() })).exitCode).toBe(0);
+    expect(Date.now() - startedAt).toBeLessThan(2000);
+    expect(killImpl).toHaveBeenCalledWith(expect.any(Number), "SIGKILL");
+  });
+});
 
-    expect(onMessage).toHaveBeenCalledWith({
-      type: "turn.completed",
-      usage: {
-        input_tokens: 2,
-        cached_input_tokens: 13564,
-        cache_write_input_tokens: 4419,
-        output_tokens: 5,
-        reasoning_output_tokens: 0,
-      },
-    });
-    expect(setUsageSnapshot).toHaveBeenCalledWith(ANCHOR, TID, cumulative);
+describe("bounded stop and cleanup failures", () => {
+  it("interrupt acknowledgement without terminal/exit uses only the original deadline", async () => {
+    const child = appServerChild({ autoComplete: false, closeOnEnd: false, handler: (req, c) => {
+      if (req.method === "turn/interrupt") { c.reply(req, {}); return true; }
+    } });
+    child.pid = 987654;
+    const killImpl = vi.fn();
+    const spawner = makeSpawner(child, { cleanupTimeoutMs: 5000, killOptions: { killImpl } });
+    const running = wake(spawner);
+    await until(() => methods(child).includes("turn/start"));
+    const start = Date.now();
+    await killProcessTree(child, { sigintTimeoutMs: 20, killImpl });
+    expect((await running).exitCode).toBe(130);
+    expect(Date.now() - start).toBeLessThan(250);
+    expect(killImpl.mock.calls).toEqual([[-987654, "SIGKILL"]]);
+    child.exit();
   });
 
-  it("seeds a missing baseline for an existing thread without publishing historical totals", async () => {
-    const child = makeFakeChild();
-    const setUsageSnapshot = vi.fn();
-    const { spawner } = makeSpawner({
-      child,
-      getThreadId: () => TID,
-      getUsageSnapshot: () => null,
-      setUsageSnapshot,
-    });
-    const onMessage = vi.fn();
-    const cumulative = { input_tokens: 500000, output_tokens: 4000 };
-    const p = spawner.wake({ prompt: "upgrade turn", sessionId: ANCHOR, onMessage });
-    child.stdout.emit("data", JSON.stringify({ type: "turn.completed", usage: cumulative }) + "\n");
-    child.emit("close", 0);
-    await p;
-
-    expect(onMessage).toHaveBeenCalledWith({ type: "turn.completed", usage: null });
-    expect(setUsageSnapshot).toHaveBeenCalledWith(ANCHOR, TID, cumulative);
+  it("successful terminal cannot hide failed descendant cleanup", async () => {
+    const child = appServerChild(); child.pid = 987655;
+    const logger = { ...silent, error: vi.fn() };
+    const spawner = makeSpawner(child, { logger, killOptions: { killImpl: () => { throw Object.assign(new Error("permission denied"), { code: "EPERM" }); } } });
+    expect((await wake(spawner)).exitCode).toBeNull();
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("process-tree cleanup failed"));
   });
 
-  it("never throws and returns exitCode:null when the codex executable is unresolved", async () => {
-    const child = makeFakeChild();
-    const { spawner, spawnImpl } = makeSpawner({ child, codexPath: null });
-    // codexPath null AND resolver finds nothing → no spawn, no throw
-    spawner.resolveCodexPathFn = () => null;
-    const result = await spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
-    expect(spawnImpl).not.toHaveBeenCalled();
-    expect(result.exitCode).toBeNull();
-  });
-
-  it("never throws when spawn itself throws (returns exitCode:null)", async () => {
-    const spawner = new CodexSpawner({
-      codexPath: "/usr/bin/codex",
-      spawnImpl: () => {
-        throw new Error("EACCES");
-      },
-      permissionMode: "yolo",
-      creds,
-      platform: "linux",
-      logger: { info() {}, warn() {}, error() {} },
-      getThreadIdFn: () => null,
-      setThreadIdFn: () => {},
-    });
-    const result = await spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
-    expect(result.exitCode).toBeNull();
-  });
-
-  it("tolerates a thrown onChild without escaping the wake path", async () => {
-    const child = makeFakeChild();
-    const { spawner } = makeSpawner({ child });
-    const p = spawner.wake({
-      prompt: "x",
-      sessionId: ANCHOR,
-      isNew: true,
-      onChild: () => {
-        throw new Error("boom");
-      },
-    });
-    child.emit("close", 0);
-    const result = await p;
-    expect(result.exitCode).toBe(0);
+  it.each(["--oss", "--unknown=PRIVATE"])("unsupported %s fails visibly before spawn", async (arg) => {
+    const logger = { ...silent, error: vi.fn() };
+    const spawner = makeSpawner(undefined, { logger, cliConfig: { args: [arg] } });
+    expect((await wake(spawner)).exitCode).toBeNull();
+    expect(spawner.spawnImpl).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("UNSUPPORTED_DAEMON_ARGS"));
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain("PRIVATE");
   });
 });

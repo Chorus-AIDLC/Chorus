@@ -1,8 +1,15 @@
-# daemon-codex-backend Specification
+## REMOVED Requirements
 
-## Purpose
-TBD - created by archiving change add-daemon-codex-backend. Update Purpose after archive.
-## Requirements
+### Requirement: Headless Codex wake over `codex exec --json`
+**Reason**: Replaced by stdio App Server.
+**Migration**: Preserve anchors and use thread/start or thread/resume, then turn/start.
+
+### Requirement: Codex interrupt via detached process-group kill
+**Reason**: App Server supports protocol cancellation before bounded tree cleanup.
+**Migration**: Register a protocol stop hook and retain the shared process-tree fallback.
+
+## MODIFIED Requirements
+
 ### Requirement: Codex session anchoring via a persisted idea→thread-id map
 
 Because Codex generates its own `thread_id` rather than accepting a client-supplied session id, the daemon SHALL capture the generated `thread_id` from authoritative App Server setup responses or notifications and SHALL persist a mapping from the Chorus session anchor (the direct idea uuid, or the entity uuid for an ad-hoc session) to that `thread_id` in a daemon-local store. For a fresh run, the daemon SHALL persist the mapping immediately after the first valid generated thread identifier is observed, without waiting for the turn or process to exit successfully. Repeated identifier events within the same wake SHALL result in exactly one persistence call. On a subsequent wake for the same anchor, the daemon SHALL resume the existing Codex session via `thread/resume` with that thread id; when no mapping exists for the anchor, it SHALL start a fresh `thread/start` request. The new-vs-resume decision for the Codex backend SHALL be made from this map (not from the Claude on-disk transcript probe), and lifecycle logs SHALL NOT report a contradictory Claude-probe decision as the Codex command state. The persistence SHALL be best-effort: a read failure SHALL degrade to starting a fresh session with a visible log; a write failure SHALL keep the established thread for the current wake and log reduced future continuity, never throwing into the wake path.
@@ -57,6 +64,7 @@ Because Codex generates its own `thread_id` rather than accepting a client-suppl
 - **WHEN** definitive history failure is followed by a failed thread/start
 - **THEN** the daemon MUST preserve the old map entry and settle the wake as failed without another fallback
 
+
 ### Requirement: Permission mode maps to a Codex sandbox posture, defaulting to YOLO
 The daemon SHALL map its resolved permission mode to App Server configuration on both thread/start and thread/resume and relevant turn overrides: yolo SHALL use the supported full-access sandbox posture and noninteractive approval policy; chorus SHALL use the supported read-only sandbox posture and noninteractive approval policy. An unconfigured daemon SHALL retain its existing yolo default. The implementation MUST verify exact field names against the supported CLI schema and MUST NOT let stored thread policy or custom args override the daemon's resolved posture. Read-only refers to Codex sandbox semantics, including read-only commands permitted by that sandbox. MCP availability also depends on operator-configured per-tool approval rules; read-only sandbox posture alone SHALL NOT be documented as guaranteeing every Chorus MCP tool is permitted. The daemon MUST NOT broaden sandbox access or automatically grant native approval requests to make a tool succeed.
 
@@ -72,43 +80,8 @@ The daemon SHALL map its resolved permission mode to App Server configuration on
 - **WHEN** a persisted thread has a different historical permission policy
 - **THEN** the resumed wake MUST apply the daemon's current resolved posture
 
-### Requirement: Codex MCP comes from the user config with the daemon key via env
 
-The daemon SHALL NOT synthesize a Codex MCP configuration. It SHALL rely on the user's existing `~/.codex/config.toml` to declare the Chorus MCP server (`[mcp_servers.chorus]`). To make the woken Codex authenticate as the daemon's own agent and allow startup hooks to inspect the same resolved connection context, the spawner SHALL export both the daemon's resolved Chorus URL as `CHORUS_URL` and its resolved API key as `CHORUS_API_KEY` into the child process environment. The API key SHALL be passed through the environment and SHALL NOT appear in process arguments or logs. When the complete context is present and Chorus is reachable, the SessionStart hook SHALL complete check-in without emitting a not-configured warning. When configuration is genuinely incomplete or check-in fails, the existing generic warning SHALL remain visible. Equivalent Chorus configuration warnings SHALL appear at most once during one headless startup, while an independent later startup SHALL be able to emit its own warning. When the user's config declares no Chorus MCP server, the woken Codex SHALL still run (without Chorus tools), and the daemon SHALL log this rather than fail.
-
-#### Scenario: Complete daemon connection context reaches the Codex child
-
-- **WHEN** the daemon has resolved a Chorus URL and API key and wakes the Codex backend
-- **THEN** the spawned Codex receives the resolved values as `CHORUS_URL` and `CHORUS_API_KEY`
-- **AND** the API key does not appear in process arguments or logs
-
-#### Scenario: Configured and reachable Chorus does not produce a false warning
-
-- **WHEN** a Codex headless child receives the complete daemon connection context and Chorus check-in succeeds
-- **THEN** the SessionStart hook MUST NOT report that the Chorus environment is unconfigured
-- **AND** Chorus MCP remains available through the user's Codex configuration
-
-#### Scenario: Genuine missing configuration retains the generic warning
-
-- **WHEN** the SessionStart hook runs without a complete Chorus URL and API key pair
-- **THEN** it emits the existing generic not-configured warning
-- **AND** it exits without attempting an authenticated check-in
-
-#### Scenario: Genuine connection failure retains the generic warning
-
-- **WHEN** the SessionStart hook receives complete configuration but Chorus check-in fails
-- **THEN** it emits the existing generic connection-failure warning
-
-#### Scenario: Equivalent startup warning is emitted once
-
-- **WHEN** the same Chorus configuration warning is triggered more than once during one Codex headless startup
-- **THEN** the user-visible warning appears at most once
-- **AND** an independent later startup can emit the warning again if the failure still exists
-
-#### Scenario: No Chorus MCP configured still runs
-
-- **WHEN** the user's Codex config declares no Chorus MCP server
-- **THEN** the wake still spawns and completes, the woken Codex simply lacks Chorus tools, and the daemon logs the absence instead of crashing
+## ADDED Requirements
 
 ### Requirement: Codex wakes use a bounded stdio App Server lifecycle
 The codex daemon backend SHALL exclusively spawn codex app-server --listen stdio://, resolve its executable/shim through existing platform rules and CHORUS_CODEX_PATH, pass the wake prompt only through stdin RPC, and preserve CHORUS_DAEMON_HEADLESS=1 and existing agent configuration/environment isolation. It MUST complete initialize/initialized before thread setup and turn/start, keep stdin open during execution, and settle exactly once after terminal outcome and bounded cleanup. It SHALL use Node built-ins/existing dependencies. It SHALL NOT select exec as a fallback, open a remote listener, or reuse a child across wakes.
@@ -185,4 +158,3 @@ The spawner SHALL register a protocol-stop capability before exposing its child 
 #### Scenario: Descendant retains output pipes
 - **WHEN** the leader exits but a descendant retains pipes or remains running
 - **THEN** the wake MUST use bounded exit draining and tree cleanup rather than wait indefinitely for close
-
