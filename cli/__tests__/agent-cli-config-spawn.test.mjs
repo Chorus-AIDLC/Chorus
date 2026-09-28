@@ -1,3 +1,4 @@
+import { appServerChild } from "./fixtures/codex-app-server-child.mjs";
 import { safeSpawnError, redactedSetupError } from "../launch-diagnostics.mjs";
 import { validateAgentCliConfig } from "../agent-cli-config.mjs";
 import { EventEmitter } from "node:events";
@@ -19,6 +20,7 @@ const silent = { info() {}, warn() {}, error() {} };
 const wake = { sessionId: UUID, prompt: "private wake prompt", isNew: true, cwd: "/work" };
 function fakeSpawn(type) {
   return vi.fn(() => {
+    if (type === "codex") return appServerChild();
     const child = new EventEmitter();
     child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.stdin = new EventEmitter();
     child.stdout.setEncoding = child.stderr.setEncoding = () => {};
@@ -45,7 +47,7 @@ function backendOpts(type, overrides = {}) {
   return {
     env: { PATH: "/base", CLAUDECODE: "nested" }, platform: "linux", logger: silent, creds,
     [`${type === "claude-code" ? "claude" : type}Path`]: `/fake/${type}`,
-    spawnImpl: fakeSpawn(type), getThreadIdFn: () => null, getUsageSnapshotFn: () => null,
+    spawnImpl: fakeSpawn(type), getThreadIdFn: () => null, setThreadIdFn: () => {}, getUsageSnapshotFn: () => null, setUsageSnapshotFn: () => {},
     getSessionIdFn: () => null, snapshotSessionsFn: () => new Set(), reconstructTranscript: null,
     hasChorusMcpServerFn: () => true, prepareManagedConfigFn: async () => ({ home: "/managed" }),
     timeoutMs: 100, shutdownTimeoutMs: 100, ...overrides,
@@ -55,7 +57,7 @@ const types = ["claude-code", "codex", "kiro", "pi", "dsh"];
 describe("actual daemon spawn customization", () => {
   for (const type of types) {
     it.each([false, true])(`${type} fresh/resumed=%s literal argv/env and fixed controls`, async (resumed) => {
-      const args = ["--custom=space $HOME ; & `literal`", "--other=literal"];
+      const args = type === "codex" ? ["-c", 'model="space $HOME ; & `literal`"', "-c", 'model_reasoning_effort="high"'] : ["--custom=space $HOME ; & `literal`", "--other=literal"];
       const config = { args, env: { TOKEN: "${TOKEN} literal", PATH: "/profile", DSH_PROVIDER: "provider-x", DSH_MODEL: "model-x" } };
       const prepare = vi.fn(async () => ({ home: "/managed" }));
       const opts = backendOpts(type, { cliConfig: config, getThreadIdFn: () => resumed ? "thread-1" : null, getSessionIdFn: () => resumed ? "session-1" : null, prepareManagedConfigFn: prepare });
@@ -64,13 +66,13 @@ describe("actual daemon spawn customization", () => {
       expect(result.exitCode).toBe(0);
       const [command, argv, options] = opts.spawnImpl.mock.calls[0];
       expect(command).toBe(`/fake/${type}`);
-      const sentinel = type === "pi" || type === "codex";
+      const sentinel = type === "pi";
       expect(argv.slice(sentinel ? -args.length - 1 : -args.length, sentinel ? -1 : undefined)).toEqual(args);
       expect(argv).not.toContain(wake.prompt);
       expect(options).toMatchObject({ shell: false, cwd: "/work", env: { TOKEN: "${TOKEN} literal", PATH: "/profile", CHORUS_DAEMON_HEADLESS: "1", CHORUS_AGENT_PROFILE: UUID } });
       expect(opts.env).toEqual({ PATH: "/base", CLAUDECODE: "nested" });
       if (type === "claude-code") { expect(options.env.CLAUDECODE).toBeUndefined(); expect(argv).toContain(resumed ? "--resume" : "--session-id"); }
-      if (type === "codex") { expect(argv.at(-1)).toBe("-"); expect(argv.slice(0, resumed ? 3 : 1)).toEqual(resumed ? ["exec", "resume", "thread-1"] : ["exec"]); expect(argv).toContain("--json"); }
+      if (type === "codex") { expect(argv.slice(0, 3)).toEqual(["app-server", "--listen", "stdio://"]); expect(opts.spawnImpl.mock.results[0].value.requests[2].method).toBe(resumed ? "thread/resume" : "thread/start"); }
       if (type === "kiro") expect(argv.slice(0, 2)).toEqual(["chat", "--no-interactive"]);
       if (type === "pi") expect(argv.at(-1)).toBe("-p");
       if (type === "dsh") {
@@ -86,7 +88,7 @@ describe("actual daemon spawn customization", () => {
       expect(a.spawnImpl.mock.calls).toEqual(b.spawnImpl.mock.calls);
     });
     it(`${type} native Windows spawn preserves metacharacters literally`, async () => {
-      const args = ["--custom=a b & %VAR% ! ^ | < > ( )"]; const opts = backendOpts(type, {
+      const args = type === "codex" ? ["-c", 'model="a b & %VAR% ! ^ | < > ( )"'] : ["--custom=a b & %VAR% ! ^ | < > ( )"]; const opts = backendOpts(type, {
         platform: "win32", [`${type === "claude-code" ? "claude" : type}Path`]: "C:\\bin\\agent.exe",
         cliConfig: { args, env: { TOKEN: "${TOKEN} & %TOKEN%" } },
       });
@@ -114,7 +116,8 @@ describe("actual daemon spawn customization", () => {
       expect(() => selectSpawner(type, { ...opts, cliConfig: { args: ["--"] } })).toThrow();
       expect(() => selectSpawner(type, { ...opts, cliConfig: { env: { chorus_url: "secret" } } })).toThrow();
       const shim = selectSpawner(type, { ...opts, platform: "win32", [`${type === "claude-code" ? "claude" : type}Path`]: "C:\\bin\\agent.cmd", cliConfig: { args: ["--custom=%SECRET%&echo"] } });
-      await expect(shim.wake(wake)).rejects.toThrow(/native executable/);
+      if (type === "codex") expect((await shim.wake(wake)).exitCode).toBeNull();
+      else await expect(shim.wake(wake)).rejects.toThrow(/native executable/);
       expect(opts.spawnImpl).not.toHaveBeenCalled();
     });
   }
@@ -246,7 +249,7 @@ describe("actual foreground launches", () => {
   });
   it.each([
     ["claude-code", ["--plugin-dir", "--model"]],
-    ["codex", ["--enable", "--model"]],
+    ["codex", ["-c", 'features.test_literal="--model"']],
     ["kiro", ["--wrap", "--model"]],
     ["pi", ["-e", "--model"]],
     ["dsh", ["--custom=--model"]],
@@ -257,7 +260,7 @@ describe("actual foreground launches", () => {
       const daemon = backendOpts(type, { cliConfig: { args } });
       await selectSpawner(type, daemon).wake(wake);
       const argv = daemon.spawnImpl.mock.calls[0][1];
-      const sentinel = ["pi", "codex"].includes(type);
+      const sentinel = type === "pi";
       expect(argv.slice(-args.length - Number(sentinel), sentinel ? -1 : undefined)).toEqual(args);
     }
     const foreground = launchOpts({ agents: [{ agentType: type, args }] });
@@ -403,7 +406,7 @@ describe("safe launch diagnostics", () => {
           output = stderr.write.mock.calls.flat().join(" ");
         } else {
           const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-          await selectSpawner(type, backendOpts(type, { spawnImpl, logger, cliConfig, creds: privateCreds })).wake(wake);
+          await selectSpawner(type, backendOpts(type, { spawnImpl, logger, cliConfig: type === "codex" ? { ...cliConfig, args: ["--model", secrets[1]] } : cliConfig, creds: privateCreds })).wake(wake);
           output = logger.error.mock.calls.flat().join(" ");
         }
         expect(spawnImpl).toHaveBeenCalledTimes(1);

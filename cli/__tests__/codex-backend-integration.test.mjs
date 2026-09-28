@@ -1,25 +1,13 @@
-// cli/__tests__/codex-backend-integration.test.mjs
-// Integration checkpoint for add-daemon-codex-backend (task 4): proves the Codex
-// backend works through the REAL daemon wiring (tasks 1–3 together) and that the
-// claude-code default does not regress.
-//
-//   1. Interrupt parity — the real CodexSpawner spawns a detached process group,
-//      so the EXISTING killProcessTree (no new killer) group-signals its tree.
-//   2. Default backend unchanged — buildDaemon with no agentType injects a
-//      ClaudeSpawner.
-//   3. Codex backend end-to-end — buildDaemon with agentType:"codex" injects a
-//      CodexSpawner; driving its wake() through a fake spawn yields the expected
-//      `codex exec --json` (new) and `codex exec resume <id>` (known anchor) argv,
-//      prompt on stdin, daemon URL/key in the child env (never argv).
+// Basic synthetic daemon wiring; T4 owns live CLI/Waker acceptance.
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
-import { EventEmitter } from "node:events";
+import { appServerChild } from "./fixtures/codex-app-server-child.mjs";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildDaemon } from "../daemon.mjs";
 import { ClaudeSpawner } from "../claude-spawner.mjs";
 import { CodexSpawner } from "../codex-spawner.mjs";
-import { getThreadId, setThreadId } from "../codex-session-map.mjs";
+
 import {
   codexUsageMapPath,
   getCodexUsageSnapshot,
@@ -58,238 +46,51 @@ afterAll(() => {
   rmSync(USAGE_DIR, { recursive: true, force: true });
 });
 
-// Real codex-cli 0.145.0 turn.completed usage frame (verified live + against
-// ../codex/codex-rs/exec/src/exec_events.rs Usage struct).
-const CODEX_TURN_COMPLETED_FULL = {
-  type: "turn.completed",
-  usage: {
-    input_tokens: 13497,
-    cached_input_tokens: 4096,
-    cache_write_input_tokens: 512,
-    output_tokens: 5,
-    reasoning_output_tokens: 2000,
-  },
+const CODEX_USAGE = {
+  method: "thread/tokenUsage/updated",
+  params: { threadId: TID, turnId: "turn-1", tokenUsage: { total: {
+    inputTokens: 13497, cachedInputTokens: 4096, cacheWriteInputTokens: 512,
+    outputTokens: 5, reasoningOutputTokens: 2000,
+  } } },
 };
 
-function makeFakeChild(pid = 9100) {
-  const child = new EventEmitter();
-  const stdin = new EventEmitter();
-  stdin.writes = [];
-  stdin.write = (c) => stdin.writes.push(String(c));
-  stdin.end = vi.fn();
-  child.stdin = stdin;
-  child.stdout = new EventEmitter();
-  child.stdout.setEncoding = () => {};
-  child.stderr = new EventEmitter();
-  child.stderr.setEncoding = () => {};
-  child.pid = pid;
-  return child;
-}
-
-describe("interrupt parity — CodexSpawner detached group is reaped by the existing killProcessTree", () => {
-  it("CodexSpawner spawns detached on POSIX (process-group leader)", async () => {
-    const child = makeFakeChild();
-    let spawnOpts;
-    const spawner = new CodexSpawner({
-      codexPath: "/usr/bin/codex",
-      platform: "linux",
-      permissionMode: "yolo",
-      creds: CREDS,
-      logger: silent,
-      getThreadIdFn: () => null,
-      setThreadIdFn: () => {},
-      getUsageSnapshotFn: () => null,
-      setUsageSnapshotFn: () => {},
-      spawnImpl: (_c, _a, opts) => {
-        spawnOpts = opts;
-        return child;
-      },
-    });
-    const p = spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
-    child.emit("close", 0);
-    await p;
-    expect(spawnOpts.detached).toBe(true);
+describe("daemon-selected Codex App Server wiring", () => {
+  it("keeps Claude as the default backend", () => {
+    expect(buildDaemon(CREDS, { logger: silent }).spawner).toBeInstanceOf(ClaudeSpawner);
   });
 
-  it("killProcessTree group-signals the Codex child's pid (negative pid) — same killer, no new code", async () => {
-    const child = makeFakeChild(4321);
-    const killImpl = vi.fn();
-    const res = await killProcessTree(child, {
-      platform: "linux",
-      logger: silent,
-      killImpl,
-      sigintTimeoutMs: 20,
-      waitForExit: vi.fn(async () => true),
-    });
-    expect(killImpl).toHaveBeenCalledWith(-4321, "SIGINT");
-    expect(res).toMatchObject({ signaled: true, killed: true });
-  });
-});
-
-describe("buildDaemon spawner selection (end-to-end wiring)", () => {
-  it("default (no agentType) injects a ClaudeSpawner — claude-code unchanged", () => {
-    const daemon = buildDaemon(CREDS, { logger: silent, permissionMode: "yolo" });
-    expect(daemon.spawner).toBeInstanceOf(ClaudeSpawner);
-  });
-
-  it("agentType 'codex' injects a CodexSpawner carrying creds + permissionMode", () => {
-    const daemon = buildDaemon(CREDS, { logger: silent, permissionMode: "yolo", agentType: "codex" });
-    expect(daemon.spawner).toBeInstanceOf(CodexSpawner);
-    expect(daemon.spawner.permissionMode).toBe("yolo");
-    expect(daemon.spawner.creds).toEqual(CREDS);
-  });
-});
-
-describe("codex backend end-to-end argv (via the daemon-selected spawner)", () => {
-  /** Build a daemon, grab its CodexSpawner, and drive wake() with a fake spawn. */
-  function codexSpawnerWithFakeSpawn({ getThreadId } = {}) {
+  it.each([false, true])("new/resumed=%s executes RPC with daemon identity and current policy", async (resumed) => {
     const daemon = buildDaemon(CREDS, { logger: silent, permissionMode: "yolo", agentType: "codex" });
     const spawner = daemon.spawner;
-    // Inject test seams onto the real selected spawner.
-    spawner.codexPath = "/usr/bin/codex";
-    spawner.platform = "linux";
-    spawner.getThreadIdFn = getThreadId ?? (() => null);
-    spawner.setThreadIdFn = vi.fn();
-    const calls = {};
-    spawner.spawnImpl = (command, argv, opts) => {
-      calls.command = command;
-      calls.argv = argv;
-      calls.opts = opts;
-      return makeFakeChild();
-    };
-    return { spawner, calls };
-  }
-
-  it("NEW anchor → prompt on stdin, daemon connection pair in env not argv", async () => {
-    const { spawner, calls } = codexSpawnerWithFakeSpawn({ getThreadId: () => null });
-    const child = makeFakeChild();
-    spawner.spawnImpl = (command, argv, opts) => {
-      calls.command = command;
-      calls.argv = argv;
-      calls.opts = opts;
-      return child;
-    };
-    const p = spawner.wake({ prompt: "wake up codex", sessionId: ANCHOR, isNew: true });
-    child.stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
-    child.emit("close", 0);
-    await p;
-
-    expect(calls.command).toBe("/usr/bin/codex");
-    expect(calls.argv.slice(0, 2)).toEqual(["exec", "--json"]);
-    expect(calls.argv).toContain("--dangerously-bypass-approvals-and-sandbox");
-    expect(calls.argv).not.toContain("resume");
-    expect(child.stdin.writes.join("")).toBe("wake up codex");
-    expect(calls.argv.join(" ")).not.toContain("wake up codex");
-    expect(calls.opts.env.CHORUS_URL).toBe("https://chorus.test");
-    expect(calls.opts.env.CHORUS_API_KEY).toBe("cho_daemonkey");
-    expect(calls.opts.env.CHORUS_DAEMON_HEADLESS).toBe("1");
-    expect(calls.argv.join(" ")).not.toContain("cho_daemonkey");
+    expect(spawner).toBeInstanceOf(CodexSpawner);
+    const child = appServerChild({ threadId: TID });
+    Object.assign(spawner, {
+      codexPath: "/fake/codex", platform: "linux", getThreadIdFn: () => resumed ? TID : null,
+      setThreadIdFn: vi.fn(), getUsageSnapshotFn: () => null, setUsageSnapshotFn: () => {},
+      hasChorusMcpServerFn: () => true, spawnImpl: vi.fn(() => child),
+    });
+    const result = await spawner.wake({ prompt: "private prompt", sessionId: ANCHOR, isNew: true });
+    expect(result).toMatchObject({ isNew: !resumed, backendSessionId: TID, exitCode: 0 });
+    const [command, argv, opts] = spawner.spawnImpl.mock.calls[0];
+    expect(command).toBe("/fake/codex");
+    expect(argv).toEqual(["app-server", "--listen", "stdio://"]);
+    expect(opts).toMatchObject({ detached: true, env: { CHORUS_URL: CREDS.url, CHORUS_API_KEY: CREDS.apiKey, CHORUS_DAEMON_HEADLESS: "1" } });
+    expect(child.requests[2].method).toBe(resumed ? "thread/resume" : "thread/start");
+    expect(child.requests[3].params.input[0].text).toBe("private prompt");
   });
 
-  it("KNOWN anchor (map hit) → `codex exec resume <thread_id> --json`", async () => {
-    const { spawner, calls } = codexSpawnerWithFakeSpawn({ getThreadId: () => TID });
-    const child = makeFakeChild();
-    spawner.spawnImpl = (command, argv, opts) => {
-      calls.argv = argv;
-      calls.opts = opts;
-      return child;
-    };
-    const p = spawner.wake({ prompt: "continue", sessionId: ANCHOR, isNew: true });
-    child.emit("close", 0);
-    await p;
-    expect(calls.argv.slice(0, 4)).toEqual(["exec", "resume", TID, "--json"]);
-  });
-
-  it("resumes an interrupted first turn from persisted state in a fresh spawner", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "chorus-codex-interrupt-"));
-    const path = join(dir, "codex-sessions.json");
-    const usagePath = join(dir, "codex-usage.json");
-    const children = [];
-    const calls = [];
-    const makeSpawner = () =>
-      new CodexSpawner({
-        codexPath: "/usr/bin/codex",
-        platform: "linux",
-        permissionMode: "yolo",
-        creds: CREDS,
-        logger: silent,
-        getThreadIdFn: (anchor) => getThreadId(anchor, { path, logger: silent }),
-        setThreadIdFn: (anchor, threadId) => setThreadId(anchor, threadId, { path, logger: silent }),
-        // Isolated usage map — the default would write ~/.chorus/codex-usage.json.
-        getUsageSnapshotFn: (anchor, threadId) =>
-          getCodexUsageSnapshot(anchor, threadId, { path: usagePath, logger: silent }),
-        setUsageSnapshotFn: (anchor, threadId, usage) =>
-          setCodexUsageSnapshot(anchor, threadId, usage, { path: usagePath, logger: silent }),
-        spawnImpl: (_command, argv) => {
-          calls.push(argv);
-          const child = makeFakeChild();
-          children.push(child);
-          return child;
-        },
-      });
-
-    try {
-      const first = makeSpawner().wake({ prompt: "first", sessionId: ANCHOR });
-      children[0].stdout.emit("data", JSON.stringify({ type: "thread.started", thread_id: TID }) + "\n");
-      children[0].emit("close", 130);
-      await first;
-
-      const resumed = makeSpawner().wake({ prompt: "resume after restart", sessionId: ANCHOR });
-      children[1].emit("close", 0);
-      await resumed;
-
-      expect(calls[0].slice(0, 2)).toEqual(["exec", "--json"]);
-      expect(calls[1].slice(0, 4)).toEqual(["exec", "resume", TID, "--json"]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps resuming the same known thread after an interrupted resumed wake", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "chorus-codex-reinterrupt-"));
-    const path = join(dir, "codex-sessions.json");
-    const usagePath = join(dir, "codex-usage.json");
-    setThreadId(ANCHOR, TID, { path, logger: silent });
-    const calls = [];
-    const children = [];
-    const makeSpawner = () =>
-      new CodexSpawner({
-        codexPath: "/usr/bin/codex",
-        platform: "linux",
-        permissionMode: "yolo",
-        creds: CREDS,
-        logger: silent,
-        getThreadIdFn: (anchor) => getThreadId(anchor, { path, logger: silent }),
-        setThreadIdFn: (anchor, threadId) => setThreadId(anchor, threadId, { path, logger: silent }),
-        // Isolated usage map — the default would write ~/.chorus/codex-usage.json.
-        getUsageSnapshotFn: (anchor, threadId) =>
-          getCodexUsageSnapshot(anchor, threadId, { path: usagePath, logger: silent }),
-        setUsageSnapshotFn: (anchor, threadId, usage) =>
-          setCodexUsageSnapshot(anchor, threadId, usage, { path: usagePath, logger: silent }),
-        spawnImpl: (_command, argv) => {
-          calls.push(argv);
-          const child = makeFakeChild();
-          children.push(child);
-          return child;
-        },
-      });
-
-    try {
-      const interruptedResume = makeSpawner().wake({ prompt: "continue", sessionId: ANCHOR });
-      children[0].emit("close", 130);
-      await interruptedResume;
-
-      const resumedAgain = makeSpawner().wake({ prompt: "continue again", sessionId: ANCHOR });
-      children[1].emit("close", 0);
-      await resumedAgain;
-
-      expect(calls).toHaveLength(2);
-      expect(calls[0].slice(0, 4)).toEqual(["exec", "resume", TID, "--json"]);
-      expect(calls[1].slice(0, 4)).toEqual(["exec", "resume", TID, "--json"]);
-      expect(getThreadId(ANCHOR, { path, logger: silent })).toBe(TID);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it("shared killer invokes the spawner protocol hook for active turns", async () => {
+    const child = appServerChild({ threadId: TID, autoComplete: false });
+    const spawner = new CodexSpawner({
+      codexPath: "/fake/codex", spawnImpl: () => child, logger: silent,
+      getThreadIdFn: () => null, setThreadIdFn: () => {}, getUsageSnapshotFn: () => null,
+      setUsageSnapshotFn: () => {}, hasChorusMcpServerFn: () => true,
+    });
+    const running = spawner.wake({ prompt: "x", sessionId: ANCHOR });
+    await vi.waitFor(() => expect(child.requests.some((r) => r.method === "turn/start")).toBe(true));
+    await killProcessTree(child, { sigintTimeoutMs: 50 });
+    expect((await running).exitCode).toBe(130);
+    expect(child.requests.filter((r) => r.method === "turn/interrupt")).toHaveLength(1);
   });
 });
 
@@ -321,7 +122,13 @@ describe("codex token usage end-to-end (daemon-token-usage): real CodexSpawner �
    * pointed at an ISOLATED usage file so the developer's real map stays untouched.
    */
   function makeCodexWaker({ streamFrames, exitCode = 0, batchDelayMs = 0 } = {}) {
-    const child = makeFakeChild();
+    const child = appServerChild({ threadId: TID, handler(req, c) {
+      if (req.method !== "turn/start") return;
+      c.reply(req, { turn: { id: "turn-1" } });
+      for (const frame of streamFrames) c.send(frame);
+      if (!streamFrames.some((f) => f.method === "turn/completed")) c.exit(exitCode);
+      return true;
+    } });
     const spawner = new CodexSpawner({
       codexPath: "/usr/bin/codex",
       platform: "linux",
@@ -334,19 +141,7 @@ describe("codex token usage end-to-end (daemon-token-usage): real CodexSpawner �
         getCodexUsageSnapshot(anchor, threadId, { path: USAGE_PATH, logger: silent }),
       setUsageSnapshotFn: (anchor, threadId, usage) =>
         setCodexUsageSnapshot(anchor, threadId, usage, { path: USAGE_PATH, logger: silent }),
-      // Emit the stream frames + close AFTER the spawner has attached its stdout/close
-      // listeners. spawnImpl returns synchronously and the listeners are wired right after;
-      // queueMicrotask defers the emission just past that synchronous wiring so `close`
-      // is observed (emitting eagerly here would fire into the void → wake never resolves).
-      spawnImpl: () => {
-        queueMicrotask(() => {
-          for (const frame of streamFrames) {
-            child.stdout.emit("data", JSON.stringify(frame) + "\n");
-          }
-          child.emit("close", exitCode);
-        });
-        return child;
-      },
+      spawnImpl: () => child,
     });
     const hooks = createTranscriptUploadHooks({
       url: CREDS.url,
@@ -376,10 +171,11 @@ describe("codex token usage end-to-end (daemon-token-usage): real CodexSpawner �
   it("a Codex wake emitting turn.completed produces a terminal turn-advance carrying usage {source:'codex'} with the mapped fields", async () => {
     const { waker, advanceCalls } = makeCodexWaker({
       streamFrames: [
-        { type: "thread.started", thread_id: TID },
-        { type: "turn.started" },
-        { type: "item.completed", item: { id: "i0", type: "agent_message", text: "done" } },
-        CODEX_TURN_COMPLETED_FULL,
+
+
+        { method: "item/completed", params: { threadId: TID, turnId: "turn-1", item: { id: "i0", type: "agentMessage", text: "done" } } },
+        CODEX_USAGE,
+        { method: "turn/completed", params: { threadId: TID, turn: { id: "turn-1", status: "completed" } } },
       ],
     });
     const resolved = await waker.keyFor(NOTIF);
@@ -401,11 +197,12 @@ describe("codex token usage end-to-end (daemon-token-usage): real CodexSpawner �
     expect(running).not.toHaveProperty("usage");
   });
 
-  it("a Codex wake with NO turn.completed advances ended with usage absent (no fabricated zeros)", async () => {
+  it("a Codex wake with no usage advances with usage absent (no fabricated zeros)", async () => {
     const { waker, advanceCalls } = makeCodexWaker({
       streamFrames: [
-        { type: "thread.started", thread_id: TID },
-        { type: "item.completed", item: { id: "i0", type: "agent_message", text: "hi" } },
+
+        { method: "item/completed", params: { threadId: TID, turnId: "turn-1", item: { id: "i0", type: "agentMessage", text: "hi" } } },
+        { method: "turn/completed", params: { threadId: TID, turn: { id: "turn-1", status: "completed" } } },
       ],
     });
     const resolved = await waker.keyFor(NOTIF);

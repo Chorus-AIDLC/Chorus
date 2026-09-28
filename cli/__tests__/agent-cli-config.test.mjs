@@ -194,3 +194,25 @@ describe("explicit recognizable singleton precedence", () => {
     expect(() => validate({ args: ["-mx", "resume"] }, "codex")).toThrow(/positional/);
   });
 });
+
+describe("Codex App Server daemon translation", () => {
+  it.each(["--listen", "--listen=private", "--code-mode-host", "--code-mode-host=private", "--code-mode-host-url=private", "-c", "--config=code_mode_host_url=private"])("protects transport and execution host: %s", (flag) => {
+    const args = flag === "-c" ? [flag, "listen=private"] : flag === "--listen" || flag === "--code-mode-host" ? [flag, "private"] : [flag];
+    expect(() => validate({ args }, "codex")).toThrow(/managed|conflicts/);
+    try { validate({ args }, "codex"); } catch (e) { expect(e.message).not.toContain("private"); }
+  });
+
+  it("translates literal model forms and preserves config ordering", async () => {
+    const { codexAppServerArgs } = await import("../agent-cli-config.mjs");
+    expect(codexAppServerArgs(["-m", "one", "--model=two", "-mthree", "-m=four", "--config", "model_reasoning_effort=high", "-cmodel=five"]))
+      .toEqual(["-c", 'model="one"', "-c", 'model="two"', "-c", 'model="three"', "-c", 'model="four"', "--config", "model_reasoning_effort=high", "-cmodel=five"]);
+  });
+
+  it.each([["--oss"], ["--search"], ["--image", "private"], ["--enable", "private"], ["--unverified=private"]].map((args) => [args]))("unsupported daemon flags fail without values: %j", async (args) => {
+    const { codexAppServerArgs } = await import("../agent-cli-config.mjs");
+    const validated = validate({ args }, "codex");
+    expect(() => codexAppServerArgs(validated.args)).toThrow(/unsupported by Codex App Server/);
+    try { codexAppServerArgs(validated.args); } catch (e) { expect(e.message).not.toContain("private"); }
+    // Foreground still uses the existing literal parser, not this translation.
+  });
+});

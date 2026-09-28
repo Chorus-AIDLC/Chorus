@@ -10,7 +10,7 @@ const PROTECTED = {
     short: "prcwv",
   },
   codex: {
-    long: "json experimental-json output-schema output-last-message color sandbox ask-for-approval full-auto approve-for-me not-so-yolo yolo dangerously-bypass-approvals-and-sandbox dangerously-bypass-hook-trust cd add-dir skip-git-repo-check ephemeral last all session resume fork profile remote remote-auth-token-env thread-source ignore-user-config ignore-rules",
+    long: "listen code-mode-host code-mode-host-url json experimental-json output-schema output-last-message color sandbox ask-for-approval full-auto approve-for-me not-so-yolo yolo dangerously-bypass-approvals-and-sandbox dangerously-bypass-hook-trust cd add-dir skip-git-repo-check ephemeral last all session resume fork profile remote remote-auth-token-env thread-source ignore-user-config ignore-rules",
     short: "soaCp",
   },
   kiro: {
@@ -180,7 +180,7 @@ export function validateAgentCliConfig(config = {}, type, label = "agent") {
     if (backend === "codex") {
       const c = codexConfigAt(args, i);
       if (c) {
-        if (!c.valid || /^(mcp_servers|sandbox[^.]*|approval_policy|approvals_reviewer|cwd|permissions|developer_instructions|model_instructions_file|experimental_instructions_file|base_instructions)(\.|$)/.test(c.key))
+        if (!c.valid || /^(listen|code_mode_host[^.]*|mcp_servers|sandbox[^.]*|approval_policy|approvals_reviewer|cwd|permissions|developer_instructions|model_instructions_file|experimental_instructions_file|base_instructions)(\.|$)/.test(c.key))
           invalid(label, `args[${i}]`, "has an invalid or managed Codex config key");
       }
     }
@@ -188,6 +188,32 @@ export function validateAgentCliConfig(config = {}, type, label = "agent") {
     i += (option?.size ?? 1) - 1;
   }
   return { args: [...args], env: { ...env } };
+}
+
+// Daemon-only translation. Foreground retains its literal argument planner.
+// App Server accepts global -c overrides, but not exec's model switch.
+export function codexAppServerArgs(args, label = "agent") {
+  const translated = [];
+  for (let i = 0; i < args.length;) {
+    const config = codexConfigAt(args, i);
+    if (config) {
+      translated.push(...args.slice(i, i + config.size));
+      i += config.size;
+      continue;
+    }
+    const option = optionAt("codex", args, i);
+    if (option?.flag === "--model" && !option.missing) {
+      const token = args[i];
+      const value = option.size === 2 ? args[i + 1]
+        : token.startsWith("--model=") ? token.slice(8)
+        : token.slice(2).replace(/^=/, "");
+      translated.push("-c", `model=${JSON.stringify(value)}`);
+      i += option.size;
+      continue;
+    }
+    invalid(label, `args[${i}]`, "is unsupported by Codex App Server; use model or permitted -c/--config settings, or explicit foreground passthrough");
+  }
+  return translated;
 }
 
 // Windows child environments are case-insensitive, unlike an ordinary JS object

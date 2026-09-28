@@ -209,3 +209,114 @@ describe("killProcessTree — guards & defaults", () => {
     expect(DEFAULT_SIGINT_TIMEOUT_MS).toBe(10_000);
   });
 });
+
+describe("process-associated protocol stop", () => {
+  it("registry disposal is idempotent and cannot erase a replacement", async () => {
+    const { registerProcessStopHook, getProcessStopHook } = await import("../process-stop-hooks.mjs");
+    const child = fakeChild();
+    const first = registerProcessStopHook(child, () => {});
+    const secondHook = () => {};
+    const second = registerProcessStopHook(child, secondHook);
+    first(); first();
+    expect(getProcessStopHook(child)).toBe(secondHook);
+    expect(JSON.stringify(child)).toBe('{"pid":1000}');
+    second(); second();
+    expect(getProcessStopHook(child)).toBeUndefined();
+  });
+
+  it("protocol and exit wait share one deadline and do not send SIGINT", async () => {
+    const { registerProcessStopHook } = await import("../process-stop-hooks.mjs");
+    vi.useFakeTimers();
+    try {
+      const child = fakeChild(123);
+      const killImpl = vi.fn();
+      const waitForExit = vi.fn(async (ms) => { expect(ms).toBe(30); return true; });
+      registerProcessStopHook(child, () => new Promise((resolve) => setTimeout(resolve, 70)));
+      const stopped = killProcessTree(child, { sigintTimeoutMs: 100, killImpl, waitForExit, hasTree: () => false });
+      await vi.advanceTimersByTimeAsync(70);
+      expect(await stopped).toEqual({ signaled: false, killed: true, escalated: false });
+      expect(killImpl).not.toHaveBeenCalled();
+      expect(waitForExit).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(["reject", "hang", "throw"])("%s hook cannot prevent forced cleanup", async (mode) => {
+    const { registerProcessStopHook } = await import("../process-stop-hooks.mjs");
+    vi.useFakeTimers();
+    try {
+      const child = fakeChild(321);
+      const killImpl = vi.fn();
+      registerProcessStopHook(child, () => {
+        if (mode === "throw") throw new Error("no");
+        return mode === "reject" ? Promise.reject(new Error("no")) : new Promise(() => {});
+      });
+      const stopped = killProcessTree(child, { sigintTimeoutMs: 100, killImpl });
+      await vi.advanceTimersByTimeAsync(100);
+      expect((await stopped).escalated).toBe(true);
+      expect(killImpl.mock.calls).toEqual([[-321, "SIGKILL"]]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("still reaps remaining descendants after the leader exited", async () => {
+    const { registerProcessStopHook } = await import("../process-stop-hooks.mjs");
+    const child = { ...fakeChild(123), exitCode: 0 };
+    const killImpl = vi.fn();
+    registerProcessStopHook(child, () => {});
+    expect((await killProcessTree(child, { killImpl })).escalated).toBe(true);
+    expect(killImpl.mock.calls).toEqual([[-123, 0], [-123, "SIGKILL"]]);
+  });
+
+  it("Windows taskkill uses only the original protocol deadline remainder", async () => {
+    const { registerProcessStopHook } = await import("../process-stop-hooks.mjs");
+    const { EventEmitter } = await import("node:events");
+    vi.useFakeTimers();
+    try {
+      const child = { ...fakeChild(123), exitCode: 0 };
+      const taskkill = new EventEmitter();
+      const spawnImpl = vi.fn(() => taskkill);
+      registerProcessStopHook(child, () => new Promise(resolve => setTimeout(resolve, 70)));
+      const pending = killProcessTree(child, { platform: "win32", sigintTimeoutMs: 100, spawnImpl, logger: silent });
+      await vi.advanceTimersByTimeAsync(70);
+      expect(spawnImpl).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(30);
+      expect(await pending).toMatchObject({ cleanupFailed: true, escalated: true });
+      expect(vi.getTimerCount()).toBe(0);
+      taskkill.emit("close", 1);
+      expect(taskkill.listenerCount("error")).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("concurrent cleanup and interrupt invoke the latch immediately but share escalation", async () => {
+    const { registerProcessStopHook } = await import("../process-stop-hooks.mjs");
+    vi.useFakeTimers();
+    try {
+      const child = fakeChild(456);
+      const seen = [];
+      const killImpl = vi.fn();
+      registerProcessStopHook(child, (context) => { seen.push(context); return new Promise(() => {}); });
+      const first = killProcessTree(child, { killImpl, sigintTimeoutMs: 100, reason: "cleanup" });
+      await vi.advanceTimersByTimeAsync(60);
+      const second = killProcessTree(child, { killImpl, sigintTimeoutMs: 100 });
+      expect(seen.map((s) => s.reason)).toEqual(["cleanup", "interrupt"]);
+      expect(seen[0].deadline).toBe(seen[1].deadline);
+      await vi.advanceTimersByTimeAsync(40);
+      expect(await first).toEqual(await second);
+      expect(killImpl.mock.calls).toEqual([[-456, "SIGKILL"]]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("removes raw exit listeners after timeout and recognizes signal termination", async () => {
+    const { EventEmitter } = await import("node:events");
+    const child = new EventEmitter(); child.pid = 123; child.signalCode = "SIGINT";
+    expect((await killProcessTree(child, { killImpl: vi.fn() })).escalated).toBe(false);
+    child.signalCode = null;
+    vi.useFakeTimers();
+    try {
+      const pending = killProcessTree(child, { killImpl: vi.fn(), sigintTimeoutMs: 10 });
+      await vi.advanceTimersByTimeAsync(10);
+      await pending;
+      expect(child.listenerCount("exit")).toBe(0);
+      expect(child.listenerCount("close")).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+});
