@@ -24,6 +24,8 @@ import {
   ClaudeControlChannel,
 } from "../claude-spawner.mjs";
 import { writeMcpConfig, buildMcpConfig } from "../mcp-config.mjs";
+import { getProcessStopHook } from "../process-stop-hooks.mjs";
+import { killProcessTree } from "../process-killer.mjs";
 
 // A canonical lowercase UUID — the daemon passes a Chorus idea uuid as session id.
 const SID = "11111111-1111-4111-8111-111111111111";
@@ -911,7 +913,10 @@ describe("ClaudeSpawner stream-json control frames", () => {
       emitFrames(child, [{ type: "control_request", request_id: "late", request: { subtype: "can_use_tool", tool_name: "Write", input: {} } }])
     ).not.toThrow();
     expect(child.stdin.writes).toHaveLength(1); // nothing written to a dead child
-    expect(log.warn.some((m) => /stdin is closed; dropped/.test(m))).toBe(true);
+    // ONE coherent line — never "denied" followed by "dropped deny"
+    expect(log.warn).toEqual([
+      "[Chorus] tool Write permission request arrived after claude stdin closed (--chorus-only permission mode); no deny sent",
+    ]);
     child.emit("close", 0);
     expect((await promise).exitCode).toBe(0);
   });
@@ -1048,5 +1053,233 @@ describe("ClaudeSpawner replays pinned stream-json fixtures", () => {
     expect(forwarded.map((f) => f.type)).toEqual(["system", "assistant", "result"]);
     expect(log.warn.some((m) => /unsupported claude control request subtype elicitation/.test(m))).toBe(true);
     expect(result.exitCode).toBe(0);
+  });
+});
+
+// ── protocol interrupt through the process stop hook (design D4) ─────────────────
+
+describe("ClaudeSpawner protocol stop hook (interrupt)", () => {
+  const PID = 4242;
+  const INTERRUPT = { type: "control_request", request_id: "chorus-interrupt-1", request: { subtype: "interrupt" } };
+
+  /**
+   * A wake on a fake POSIX child with a pid, plus a killImpl for the REAL
+   * killProcessTree: `(-pid, 0)` probes the group (ESRCH once the child exited),
+   * SIGKILL records the time and ends the child.
+   */
+  function startStoppableWake({ logger = silent, exitOnStdinEnd = true } = {}) {
+    const woke = startWake({ logger });
+    const { child } = woke;
+    child.pid = PID;
+    child.exitCode = null;
+    const order = [];
+    const exitChild = (code, signal = null) => {
+      if (child.exitCode !== null || child.signalCode) return;
+      if (signal) child.signalCode = signal;
+      else child.exitCode = code;
+      child.emit("exit", signal ? null : code, signal);
+      child.emit("close", signal ? null : code, signal);
+    };
+    child.stdin.end = vi.fn(() => {
+      order.push("stdin.end");
+      // The real CLI drains its Stop hooks and exits once stdin closes after a result.
+      if (exitOnStdinEnd && child.resultEmitted) queueMicrotask(() => exitChild(1));
+    });
+    const signals = [];
+    const killImpl = vi.fn((pid, signal) => {
+      signals.push({ pid, signal, at: Date.now() });
+      if (signal === 0) {
+        if (child.exitCode !== null || child.signalCode) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        return;
+      }
+      if (signal === "SIGKILL") exitChild(null, "SIGKILL");
+    });
+    const emitResult = () => {
+      child.resultEmitted = true;
+      emitFrames(child, [{ type: "result", subtype: "error_during_execution", is_error: true, session_id: SID }]);
+    };
+    return { ...woke, order, signals, killImpl, exitChild, emitResult };
+  }
+
+  it("registers the stop hook on spawn and unregisters it when the wake settles", async () => {
+    const { child, promise, exitChild } = startStoppableWake();
+    expect(typeof getProcessStopHook(child)).toBe("function");
+    exitChild(0);
+    await promise;
+    expect(getProcessStopHook(child)).toBeUndefined();
+  });
+
+  it("the hook is registered before onChild hands the child to the caller", async () => {
+    const child = makeFakeChild();
+    let hookAtOnChild;
+    const spawner = new ClaudeSpawner({ claudePath: "/usr/bin/claude", spawnImpl: () => child, logger: silent, platform: "linux" });
+    const p = spawner.wake({ prompt: "x", sessionId: SID, isNew: true, onChild: (c) => { hookAtOnChild = getProcessStopHook(c); } });
+    expect(typeof hookAtOnChild).toBe("function");
+    child.emit("close", 0);
+    await p;
+  });
+
+  it("interrupt → result → exit: one interrupt frame, stdin closed, no escalation (real killProcessTree)", async () => {
+    const { child, promise, signals, killImpl, emitResult } = startStoppableWake();
+    const kill = killProcessTree(child, { platform: "linux", sigintTimeoutMs: 5_000, killImpl, logger: silent });
+    expect(stdinFrames(child)[1]).toEqual(INTERRUPT);
+    // the live CLI acks, then ends the turn with an error result
+    emitFrames(child, [{ type: "control_response", response: { subtype: "success", request_id: "chorus-interrupt-1", response: { still_queued: [] } } }]);
+    expect(child.stdin.end).not.toHaveBeenCalled();
+    emitResult();
+    const outcome = await kill;
+    expect(outcome).toEqual({ signaled: false, killed: true, escalated: false });
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    expect(stdinFrames(child)).toHaveLength(2); // prompt + ONE interrupt
+    expect(signals.map((s) => s.signal)).toEqual([0]); // group probe only: no SIGINT, no SIGKILL
+    expect((await promise).exitCode).toBe(1);
+  });
+
+  it.each([
+    ["ignores the interrupt", false],
+    ["acks the interrupt before the turn starts, then emits no result", true],
+  ])("a child that %s is force-cleaned within the same resolved deadline", async (_label, ack) => {
+    const { child, promise, order, signals, killImpl } = startStoppableWake();
+    const sigintTimeoutMs = 60;
+    const start = Date.now();
+    const kill = killProcessTree(child, { platform: "linux", sigintTimeoutMs, killImpl, logger: silent });
+    expect(stdinFrames(child)[1]).toEqual(INTERRUPT);
+    if (ack) {
+      emitFrames(child, [{ type: "control_response", response: { subtype: "success", request_id: "chorus-interrupt-1", response: { still_queued: [] } } }]);
+      await new Promise((r) => setTimeout(r, 5));
+      // a success ack alone never ends the wait early
+      expect(child.stdin.end).not.toHaveBeenCalled();
+    }
+    const outcome = await kill;
+    expect(outcome).toMatchObject({ killed: true, escalated: true });
+    const sigkill = signals.find((s) => s.signal === "SIGKILL");
+    expect(sigkill).toMatchObject({ pid: -PID });
+    // waited the killer's protocol deadline (Linux: == deadline), then forced — no extra window
+    expect(sigkill.at - start).toBeGreaterThanOrEqual(sigintTimeoutMs - 2);
+    expect(sigkill.at - start).toBeLessThan(sigintTimeoutMs + 40);
+    expect(signals.some((s) => s.signal === "SIGINT")).toBe(false);
+    // stdin closed by the hook before the forced cleanup
+    expect(order).toEqual(["stdin.end"]);
+    expect(stdinFrames(child)).toHaveLength(2);
+    expect((await promise).exitCode).toBe(null);
+  });
+
+  it("an error control_response for the interrupt ends the wait early", async () => {
+    const { log, logger } = recordingLogger();
+    const { child, exitChild, promise } = startStoppableWake({ logger });
+    const hook = getProcessStopHook(child);
+    const stop = hook({ deadline: Date.now() + 60_000, protocolDeadline: Date.now() + 60_000, reason: "interrupt" });
+    // an unrelated response is ignored
+    emitFrames(child, [{ type: "control_response", response: { subtype: "error", request_id: "other", error: "x" } }]);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(child.stdin.end).not.toHaveBeenCalled();
+    emitFrames(child, [{ type: "control_response", response: { subtype: "error", request_id: "chorus-interrupt-1", error: "not running" } }]);
+    await stop;
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    expect(log.warn.some((m) => /rejected interrupt chorus-interrupt-1: not running/.test(m))).toBe(true);
+    exitChild(1);
+    await promise;
+  });
+
+  it("child exit ends the interrupt wait early", async () => {
+    const { child, exitChild, promise } = startStoppableWake();
+    const beforeClose = vi.fn(async () => {});
+    const stop = getProcessStopHook(child)({ deadline: Date.now() + 60_000, protocolDeadline: Date.now() + 60_000, reason: "interrupt", beforeClose });
+    exitChild(130);
+    await stop;
+    expect(beforeClose).toHaveBeenCalledTimes(1);
+    await promise;
+  });
+
+  it("after a result: no interrupt is written, but beforeClose is still awaited before the hook resolves", async () => {
+    const { child, promise, order, emitResult, exitChild } = startStoppableWake({ exitOnStdinEnd: false });
+    emitResult();
+    expect(child.stdin.end).toHaveBeenCalledTimes(1); // the result closed stdin
+    let release;
+    const beforeClose = vi.fn(() => new Promise((r) => { release = () => { order.push("beforeClose"); r(); }; }));
+    let resolved = false;
+    const stop = getProcessStopHook(child)({ deadline: Date.now() + 60_000, protocolDeadline: Date.now() + 60_000, reason: "interrupt", beforeClose })
+      .then(() => { resolved = true; });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(beforeClose).toHaveBeenCalledTimes(1);
+    expect(resolved).toBe(false); // still awaiting beforeClose
+    release();
+    await stop;
+    expect(stdinFrames(child)).toHaveLength(1); // prompt only — no interrupt
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["stdin.end", "beforeClose"]);
+    exitChild(0);
+    await promise;
+  });
+
+  it("after the child already exited (stdin closed): no interrupt, beforeClose still awaited", async () => {
+    const { child, promise } = startStoppableWake();
+    // 'exit' without 'close' yet: the wake has not settled, so the hook is still registered
+    child.exitCode = 0;
+    child.emit("exit", 0, null);
+    const hook = getProcessStopHook(child);
+    expect(typeof hook).toBe("function");
+    const beforeClose = vi.fn(async () => {});
+    await hook({ deadline: Date.now() + 1_000, protocolDeadline: Date.now() + 1_000, reason: "interrupt", beforeClose });
+    expect(beforeClose).toHaveBeenCalledTimes(1);
+    expect(stdinFrames(child)).toHaveLength(1); // prompt only
+    child.emit("close", 0);
+    await promise;
+  });
+
+  it("interrupt path: beforeClose resolves BEFORE stdin.end(), even when the result arrives during the stop", async () => {
+    const { child, promise, order, emitResult } = startStoppableWake();
+    let release;
+    const beforeClose = vi.fn(() => new Promise((r) => { release = () => { order.push("beforeClose"); r(); }; }));
+    const stop = getProcessStopHook(child)({ deadline: Date.now() + 60_000, protocolDeadline: Date.now() + 60_000, reason: "interrupt", beforeClose });
+    expect(stdinFrames(child)[1]).toEqual(INTERRUPT);
+    emitResult();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(beforeClose).toHaveBeenCalledTimes(1);
+    expect(child.stdin.end).not.toHaveBeenCalled(); // the result did not close stdin under an active stop
+    release();
+    await stop;
+    expect(order).toEqual(["beforeClose", "stdin.end"]);
+    expect((await promise).exitCode).toBe(1);
+  });
+
+  it("a rejecting beforeClose is logged and stdin is still closed", async () => {
+    const { log, logger } = recordingLogger();
+    const { child, promise, emitResult } = startStoppableWake({ logger });
+    const beforeClose = vi.fn(async () => { throw new Error("capture failed"); });
+    const stop = getProcessStopHook(child)({ deadline: Date.now() + 60_000, protocolDeadline: Date.now() + 60_000, reason: "interrupt", beforeClose });
+    emitResult();
+    await expect(stop).resolves.toBeUndefined();
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    expect(log.warn.some((m) => /beforeClose failed .*capture failed/.test(m))).toBe(true);
+    await promise;
+  });
+
+  it("repeated invocations share one in-flight stop and write one interrupt", async () => {
+    const { child, promise, emitResult, killImpl } = startStoppableWake();
+    const hook = getProcessStopHook(child);
+    const opts = { deadline: Date.now() + 60_000, protocolDeadline: Date.now() + 60_000, reason: "interrupt" };
+    const a = hook(opts);
+    const b = hook(opts);
+    expect(b).toBe(a);
+    // and through the killer: a second killProcessTree reuses the same stop
+    const k1 = killProcessTree(child, { platform: "linux", sigintTimeoutMs: 5_000, killImpl, logger: silent });
+    const k2 = killProcessTree(child, { platform: "linux", sigintTimeoutMs: 5_000, killImpl, logger: silent });
+    expect(stdinFrames(child).filter((f) => f.type === "control_request")).toHaveLength(1);
+    emitResult();
+    await Promise.all([a, k1, k2]);
+    expect(await k2).toEqual(await k1);
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    await promise;
+  });
+
+  it("a control_request without request_id is warned and not answered", async () => {
+    const { log, logger } = recordingLogger();
+    const { child, promise } = startWake({ logger });
+    emitFrames(child, [{ type: "control_request", request: { subtype: "can_use_tool", tool_name: "Bash", input: {} } }]);
+    expect(child.stdin.writes).toHaveLength(1);
+    expect(log.warn).toEqual(["[Chorus] claude control request can_use_tool has no request_id; not answered"]);
+    child.emit("close", 0);
+    await promise;
   });
 });

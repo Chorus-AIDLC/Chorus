@@ -18,6 +18,9 @@
 //     never forwards them to `onMessage`. `--permission-prompt-tool stdio` routes
 //     every non-allowlisted tool request to us as `control_request{can_use_tool}`,
 //     which we deny explicitly.
+//   • interrupt is `control_request{subtype:"interrupt"}`: the CLI acks it and
+//     ends the turn with `result:error_during_execution`. The spawner sends it from
+//     a process stop hook, so the shared killer's deadline bounds it (no SIGINT).
 //   • every output line carries `session_id`.
 //   • `--session-id <uuid>` sets the session id for a fresh run, and
 //     `--resume <uuid>` continues it. So we GENERATE the session id client-side
@@ -44,6 +47,7 @@ import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { win32 as pathWin32, posix as pathPosix, join as pathJoin } from "node:path";
 import { awaitChildSettled } from "./child-exit.mjs";
+import { registerProcessStopHook } from "./process-stop-hooks.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -281,7 +285,16 @@ export class ClaudeControlChannel {
     this.resultSeen = false;
     /** True once we called end() (or the child is gone and stdin is unusable). */
     this.stdinClosed = false;
+    /** True once the child exited or errored (no further protocol progress possible). */
+    this.exited = false;
   }
+
+  /** In-flight protocol stop (shared by repeated stop-hook invocations). */
+  #stopWork = null;
+  /** Per-channel interrupt request counter → `chorus-interrupt-<n>`. */
+  #interruptSeq = 0;
+  /** Resolver for the pending interrupt wait: `{ requestId, resolve }` or null. */
+  #interruptWait = null;
 
   /** @returns {boolean} whether stdin can still take a write. */
   get writable() {
@@ -330,6 +343,68 @@ export class ClaudeControlChannel {
     this.stdinClosed = true;
   }
 
+  /** The child exited or errored: stdin is unusable and a pending interrupt wait ends. */
+  markExited() {
+    this.exited = true;
+    this.markStdinUnusable();
+    this.#endInterruptWait();
+  }
+
+  #endInterruptWait() {
+    const wait = this.#interruptWait;
+    this.#interruptWait = null;
+    wait?.resolve();
+  }
+
+  /**
+   * Protocol stop (design D4), invoked by the process killer through the
+   * registered stop hook. Repeated calls share one promise.
+   *  1. Unless a result was already seen or stdin is already closed, write ONE
+   *     `interrupt` control_request and wait for the first of: a result frame, an
+   *     error control_response for that request id, child exit, or the killer's
+   *     `protocolDeadline`. The deadline is the killer's own (derived from the
+   *     existing sigintTimeoutMs); no other duration exists here (#569).
+   *  2. On EVERY path, including a skipped step 1: await `beforeClose` (the
+   *     killer's Windows tree-identity capture, which needs the root alive and
+   *     stdin open). A failure is logged and never skips step 3.
+   *  3. Close stdin if it is still open.
+   * @param {{ protocolDeadline: number, beforeClose?: () => unknown }} o
+   * @returns {Promise<void>}
+   */
+  stop({ protocolDeadline, beforeClose }) {
+    if (this.#stopWork) return this.#stopWork;
+    this.#stopWork = (async () => {
+      try {
+        if (!this.resultSeen && !this.stdinClosed) {
+          const requestId = `chorus-interrupt-${++this.#interruptSeq}`;
+          const outcome = new Promise((resolve) => { this.#interruptWait = { requestId, resolve }; });
+          if (this.write({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } }, "interrupt request")) {
+            this.logger.info(`[Chorus] interrupt: sent claude control_request ${requestId}`);
+            let timer;
+            try {
+              await Promise.race([
+                outcome,
+                // The killer-supplied protocol deadline — not a new timeout.
+                new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, protocolDeadline - Date.now())); }),
+              ]);
+            } finally {
+              clearTimeout(timer);
+            }
+          }
+          this.#interruptWait = null;
+        }
+      } finally {
+        try {
+          await beforeClose?.();
+        } catch (err) {
+          this.logger.warn(`[Chorus] claude stop: beforeClose failed (continuing to close stdin): ${err}`);
+        }
+        this.closeStdin();
+      }
+    })();
+    return this.#stopWork;
+  }
+
   /**
    * Observe one stdout frame. Returns true when the frame is protocol plumbing the
    * spawner consumed (so it must NOT be forwarded to `onMessage`). A `result`
@@ -342,25 +417,51 @@ export class ClaudeControlChannel {
     if (type === "result") {
       if (!this.resultSeen) {
         this.resultSeen = true;
-        this.closeStdin();
+        // During a protocol stop the stop hook owns the close: it must await the
+        // killer's beforeClose (Windows tree capture) BEFORE stdin closes.
+        if (!this.#stopWork) this.closeStdin();
+        this.#endInterruptWait();
       }
       return false;
     }
     if (!CONTROL_FRAME_TYPES.has(type)) return false;
     if (type === "control_request") this.#answerControlRequest(frame);
-    // control_response: nothing of ours is pending yet (the protocol interrupt will
-    // correlate its request_id here). control_cancel_request: nothing pending on our
-    // side to cancel. Both are consumed so the transcript stream is unchanged.
+    else if (type === "control_response") this.#observeControlResponse(frame);
+    // control_cancel_request: nothing pending on our side to cancel. All control
+    // frames are consumed so the transcript stream is unchanged.
     return true;
+  }
+
+  /** Correlate a control_response with the pending interrupt; others are ignored. */
+  #observeControlResponse(frame) {
+    const wait = this.#interruptWait;
+    const response = frame.response;
+    if (!wait || response?.request_id !== wait.requestId) return;
+    if (response.subtype === "error") {
+      this.logger.warn(`[Chorus] claude rejected interrupt ${wait.requestId}: ${String(response.error)}`);
+      this.#endInterruptWait();
+    }
+    // A success ack keeps waiting: the interrupted turn still ends with a result
+    // (or, if it landed before the turn started, the killer's deadline decides).
   }
 
   #answerControlRequest(frame) {
     const requestId = frame.request_id;
     const subtype = frame.request?.subtype;
+    if (typeof requestId !== "string" || !requestId) {
+      // Nothing to correlate an answer with; surface it instead of replying blind.
+      this.logger.warn(`[Chorus] claude control request ${String(subtype)} has no request_id; not answered`);
+      return;
+    }
     if (subtype === "can_use_tool") {
       // Log the tool NAME only — the tool input can carry secrets.
       const toolName = typeof frame.request.tool_name === "string" ? frame.request.tool_name : "<unknown>";
       const why = this.permissionMode === "yolo" ? "unexpected permission prompt in yolo mode" : "--chorus-only permission mode";
+      if (!this.writable) {
+        // One coherent line: the deny could not be delivered (child finishing/gone).
+        this.logger.warn(`[Chorus] tool ${toolName} permission request arrived after claude stdin closed (${why}); no deny sent`);
+        return;
+      }
       this.logger.warn(`[Chorus] denied tool ${toolName} (${why})`);
       this.write(
         {
@@ -369,6 +470,10 @@ export class ClaudeControlChannel {
         },
         `permission deny for ${toolName}`
       );
+      return;
+    }
+    if (!this.writable) {
+      this.logger.warn(`[Chorus] unsupported claude control request subtype ${String(subtype)} arrived after claude stdin closed; not answered`);
       return;
     }
     this.logger.warn(`[Chorus] unsupported claude control request subtype ${String(subtype)}; answered with an error`);
@@ -561,6 +666,14 @@ export class ClaudeSpawner {
         return;
       }
 
+      const channel = new ClaudeControlChannel({ stdin: child.stdin, logger: this.logger, permissionMode: this.permissionMode });
+      // Protocol interrupt (design D4): the shared killer calls this instead of
+      // SIGINT and then force-cleans within the same deadline if the child remains.
+      // Registered before onChild so an interrupt can never see an unhooked child.
+      const unregisterStopHook = registerProcessStopHook(child, ({ deadline, protocolDeadline = deadline, beforeClose }) =>
+        channel.stop({ protocolDeadline, beforeClose })
+      );
+
       // Hand the live child to the caller (子3) so the waker can register the handle
       // for the interrupt path before this promise resolves. Never let a throwing
       // callback escape into the spawn path.
@@ -572,7 +685,6 @@ export class ClaudeSpawner {
         }
       }
 
-      const channel = new ClaudeControlChannel({ stdin: child.stdin, logger: this.logger, permissionMode: this.permissionMode });
       let stdoutBuf = "";
       let stderrBuf = "";
       let sessionConflictSeen = false;
@@ -610,7 +722,8 @@ export class ClaudeSpawner {
       child.on("error", (error) => {
         // e.g. ENOENT if the resolved path vanished — log, don't throw.
         this.logger.error(`[Chorus] claude process error: ${safeSpawnError(error)}`);
-        channel.markStdinUnusable();
+        channel.markExited();
+        unregisterStopHook();
         // backendSessionId is the `--resume` anchor (`id`), NOT observedSessionId:
         // a fork-on-resume claude can emit a new stream session_id, but the daemon
         // resumes and files the transcript under `id`, so `id` is the resumable value.
@@ -620,10 +733,11 @@ export class ClaudeSpawner {
       // Settle on process exit, not only on stdio close: a detached descendant can
       // inherit the pipes and keep `close` from ever firing (see cli/child-exit.mjs).
       // A dead child's stdin must never be written again (late control answers).
-      child.on?.("exit", () => channel.markStdinUnusable());
+      child.on?.("exit", () => channel.markExited());
 
       awaitChildSettled(child, { logger: this.logger, label: "claude" }).then((code) => {
-        channel.markStdinUnusable();
+        channel.markExited();
+        unregisterStopHook();
         if (code !== 0) {
           this.logger.warn(`[Chorus] claude exited with code ${code}`);
         }
