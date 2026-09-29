@@ -229,7 +229,7 @@ const withoutDisallowFlag = {
 // Keep evidence compact: the full tool list is only needed for scenario 5.
 for (const [name, s] of Object.entries(scenarios)) {
   s.askUserQuestionInTools = s.initTools ? s.initTools.includes("AskUserQuestion") : null;
-  if (name !== "yoloNoAskUserQuestion") s.initToolCount = s.initTools?.length ?? null, delete s.initTools;
+  if (name !== "yoloNoAskUserQuestion") { s.initToolCount = s.initTools?.length ?? null; delete s.initTools; }
 }
 
 const checks = {
