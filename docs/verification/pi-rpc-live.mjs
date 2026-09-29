@@ -13,6 +13,10 @@
 // woken pi never talks to a Chorus server (the chorus-pi SessionStart check then
 // reports whatever the extension does offline). The evidence contains no secrets
 // and no absolute paths.
+//
+// Note: pi stores sessions under ~/.pi/agent/sessions (or $PI_CODING_AGENT_DIR);
+// the script's cleanup deletes only the session dirs of its own throwaway cwd
+// (names containing `chorus-pi-rpc-`).
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
