@@ -526,6 +526,35 @@ model tokens). Evidence:
 interrupt and process-tree cleanup are covered by injected platform tests only,
 not a live Windows run (the same limitation as the Codex backend).
 
+### Pi daemon: RPC transport
+
+Each Pi wake launches one `pi --mode rpc --session-id <idea-uuid>` process, which
+exits once the run is settled; processes are never reused across wakes. The
+prompt is sent as an RPC command and stdin stays open until pi reports the run is
+fully settled (after any automatic retry or compaction). There is no fallback to
+the old `--mode json -p` path, and sessions created by it resume unchanged.
+
+- **Minimum version.** Pi **0.85.0** or newer. The daemon checks `pi --version`
+  once per executable; with an older pi it skips the wake and logs the upgrade
+  command.
+- **Interrupt.** An authorized interrupt from the UI is sent as a protocol
+  `abort`, so the run (including a running tool) ends cleanly and the session can
+  be resumed. If the process is still running when the existing `sigintTimeoutMs`
+  window ends, the daemon force-stops its process tree as before. No new timeout
+  is involved.
+- **Extension dialogs are cancelled.** A blocking extension dialog (select,
+  confirm, input, editor) is answered with "cancelled" immediately, and the daemon
+  logs `[Chorus] cancelled pi extension <method> dialog (headless daemon)`.
+- **Lost history is visible.** If pi cannot restore an idea's earlier session, the
+  wake continues in a new session, the daemon logs a warning, and the conversation
+  shows a notice.
+
+Verified live on Linux with Pi **0.85.1**:
+`node docs/verification/pi-rpc-live.mjs [--with-chorus]` (it uses real model
+tokens). Evidence: [0.85.1](verification/pi-rpc-live-0.85.1.json). macOS and
+Windows are covered by injected platform tests; a live run on each is a separate
+human verification task.
+
 ### Codex daemon: App Server migration
 
 Every Codex daemon wake now launches one isolated
