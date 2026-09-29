@@ -24,7 +24,7 @@ import {
   ClaudeControlChannel,
 } from "../claude-spawner.mjs";
 import { writeMcpConfig, buildMcpConfig } from "../mcp-config.mjs";
-import { getProcessStopHook } from "../process-stop-hooks.mjs";
+import { getProcessStopHook, registerProcessStopHook as registerProcessStopHookForTest } from "../process-stop-hooks.mjs";
 import { killProcessTree } from "../process-killer.mjs";
 
 // A canonical lowercase UUID — the daemon passes a Chorus idea uuid as session id.
@@ -1140,7 +1140,7 @@ describe("ClaudeSpawner protocol stop hook (interrupt)", () => {
     ["acks the interrupt before the turn starts, then emits no result", true],
   ])("a child that %s is force-cleaned within the same resolved deadline", async (_label, ack) => {
     const { child, promise, order, signals, killImpl } = startStoppableWake();
-    const sigintTimeoutMs = 60;
+    const sigintTimeoutMs = 300;
     const start = Date.now();
     const kill = killProcessTree(child, { platform: "linux", sigintTimeoutMs, killImpl, logger: silent });
     expect(stdinFrames(child)[1]).toEqual(INTERRUPT);
@@ -1154,9 +1154,11 @@ describe("ClaudeSpawner protocol stop hook (interrupt)", () => {
     expect(outcome).toMatchObject({ killed: true, escalated: true });
     const sigkill = signals.find((s) => s.signal === "SIGKILL");
     expect(sigkill).toMatchObject({ pid: -PID });
-    // waited the killer's protocol deadline (Linux: == deadline), then forced — no extra window
+    // waited the killer's protocol deadline (Linux: == deadline), then forced — no extra
+    // window. The upper bound is a full extra window of slack (loaded CI runners), yet
+    // still fails if a second deadline/grace period were stacked on the first.
     expect(sigkill.at - start).toBeGreaterThanOrEqual(sigintTimeoutMs - 2);
-    expect(sigkill.at - start).toBeLessThan(sigintTimeoutMs + 40);
+    expect(sigkill.at - start).toBeLessThan(2 * sigintTimeoutMs);
     expect(signals.some((s) => s.signal === "SIGINT")).toBe(false);
     // stdin closed by the hook before the forced cleanup
     expect(order).toEqual(["stdin.end"]);
@@ -1271,6 +1273,59 @@ describe("ClaudeSpawner protocol stop hook (interrupt)", () => {
     expect(await k2).toEqual(await k1);
     expect(child.stdin.end).toHaveBeenCalledTimes(1);
     await promise;
+  });
+
+  it("a stop issued from inside onChild (before the prompt) delivers NO prompt and NO interrupt; no turn runs (real killProcessTree, code-review B1)", async () => {
+    // Mirrors waker.mjs's cancel-before-spawn branch: an interrupt/shutdown that
+    // landed before the child existed calls the killer synchronously from onChild,
+    // i.e. before wake() reaches the prompt write.
+    const child = makeFakeChild();
+    child.pid = PID;
+    child.exitCode = null;
+    const order = [];
+    const exitChild = (code, signal = null) => {
+      if (child.exitCode !== null || child.signalCode) return;
+      if (signal) child.signalCode = signal;
+      else child.exitCode = code;
+      child.emit("exit", signal ? null : code, signal);
+      child.emit("close", signal ? null : code, signal);
+    };
+    child.stdin.write = (c) => { order.push("write"); child.stdin.writes.push(String(c)); };
+    // The real CLI reads EOF with no input and exits without starting a turn.
+    child.stdin.end = vi.fn(() => { order.push("stdin.end"); queueMicrotask(() => exitChild(1)); });
+    const signals = [];
+    const killImpl = vi.fn((pid, signal) => {
+      signals.push({ pid, signal });
+      if (signal === 0) {
+        if (child.exitCode !== null || child.signalCode) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+        return;
+      }
+      if (signal === "SIGKILL") exitChild(null, "SIGKILL");
+    });
+    let release;
+    const beforeClose = vi.fn(() => new Promise((r) => { release = () => { order.push("beforeClose"); r(); }; }));
+    let kill;
+    const spawner = new ClaudeSpawner({ claudePath: "/usr/bin/claude", spawnImpl: () => child, logger: silent, platform: "linux" });
+    const promise = spawner.wake({
+      prompt: "PROMPT", sessionId: SID, isNew: true,
+      onChild: (c) => {
+        // the real killer calls the stop hook synchronously; wrap it to inject beforeClose
+        const hook = getProcessStopHook(c);
+        registerProcessStopHookForTest(c, (o) => hook({ ...o, beforeClose }));
+        kill = killProcessTree(c, { platform: "linux", sigintTimeoutMs: 5_000, killImpl, logger: silent });
+      },
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(child.stdin.writes).toEqual([]); // no user frame, no interrupt
+    expect(beforeClose).toHaveBeenCalledTimes(1);
+    expect(child.stdin.end).not.toHaveBeenCalled(); // beforeClose is awaited first
+    release();
+    const outcome = await kill;
+    expect(outcome).toEqual({ signaled: false, killed: true, escalated: false });
+    expect(order).toEqual(["beforeClose", "stdin.end"]);
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    expect(signals.some((s) => s.signal === "SIGINT" || s.signal === "SIGKILL")).toBe(false);
+    expect((await promise).exitCode).toBe(1);
   });
 
   it("a control_request without request_id is warned and not answered", async () => {

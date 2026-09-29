@@ -89,6 +89,8 @@ On spawn the spawner calls `registerProcessStopHook(child, hook)` and unregister
 
 If the interrupt lands before the turn starts, the CLI may still run the queued user frame after acknowledging. The hook then waits until `protocolDeadline`, the killer finds the process alive, and force cleanup runs. The whole stop stays inside the existing single deadline.
 
+If the stop starts before the daemon has written the prompt (the waker's cancel-before-spawn branch calls the killer from inside `onChild`), the prompt is never written and no interrupt is sent. The hook awaits `beforeClose` and closes stdin; the CLI reads EOF with no input and exits without running a turn.
+
 Windows: with a hook registered, the killer uses the Codex-verified `WindowsProcessTree` path instead of plain `taskkill /T /F`. It still has the same limit: it is injected-contract verified on Linux and not live-verified on Windows.
 
 ### D5. Fixtures and version pinning

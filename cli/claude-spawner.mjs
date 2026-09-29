@@ -287,6 +287,8 @@ export class ClaudeControlChannel {
     this.stdinClosed = false;
     /** True once the child exited or errored (no further protocol progress possible). */
     this.exited = false;
+    /** True once the user prompt frame was written (a turn may be running). */
+    this.promptSent = false;
   }
 
   /** In-flight protocol stop (shared by repeated stop-hook invocations). */
@@ -325,6 +327,28 @@ export class ClaudeControlChannel {
     }
   }
 
+  /**
+   * Write the wake's single user prompt frame, unless a protocol stop has already
+   * started (code-review B1). The waker's cancel-before-spawn branch calls the
+   * killer from inside `onChild`, i.e. BEFORE `wake()` reaches this write; sending
+   * the prompt after that would make the CLI run the whole cancelled turn (model
+   * calls, Chorus MCP side effects) until the forced deadline. Chosen fix (a):
+   * `#stopWork` is latched synchronously by `stop()`, so this check sees it, and
+   * with no prompt sent `stop()` skips the interrupt and goes straight to
+   * beforeClose → close stdin; the CLI then reads EOF with no input and exits
+   * without starting a turn. (Writing the frame before `onChild` was rejected:
+   * it would deliver the prompt a cancelled wake must never deliver.)
+   * @param {object} frame @returns {boolean} whether the prompt was written.
+   */
+  sendPrompt(frame) {
+    if (this.#stopWork) {
+      this.logger.info("[Chorus] claude stop started before the prompt was written; prompt not delivered");
+      return false;
+    }
+    this.promptSent = this.write(frame, "prompt");
+    return this.promptSent;
+  }
+
   /** Close stdin once; idempotent and never throws. */
   closeStdin() {
     if (this.stdinClosed) return;
@@ -359,7 +383,8 @@ export class ClaudeControlChannel {
   /**
    * Protocol stop (design D4), invoked by the process killer through the
    * registered stop hook. Repeated calls share one promise.
-   *  1. Unless a result was already seen or stdin is already closed, write ONE
+   *  1. Unless the prompt was never written (nothing to interrupt — see
+   *     sendPrompt), a result was already seen, or stdin is already closed, write ONE
    *     `interrupt` control_request and wait for the first of: a result frame, an
    *     error control_response for that request id, child exit, or the killer's
    *     `protocolDeadline`. The deadline is the killer's own (derived from the
@@ -375,7 +400,7 @@ export class ClaudeControlChannel {
     if (this.#stopWork) return this.#stopWork;
     this.#stopWork = (async () => {
       try {
-        if (!this.resultSeen && !this.stdinClosed) {
+        if (this.promptSent && !this.resultSeen && !this.stdinClosed) {
           const requestId = `chorus-interrupt-${++this.#interruptSeq}`;
           const outcome = new Promise((resolve) => { this.#interruptWait = { requestId, resolve }; });
           if (this.write({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } }, "interrupt request")) {
@@ -763,8 +788,9 @@ export class ClaudeSpawner {
       // Feed the prompt as ONE stream-json user frame and keep stdin OPEN: control
       // frames flow over it until the first `result` frame, when handleFrame()
       // closes it and the CLI exits. No result before exit → the raw exit code
-      // settles the wake (never a synthetic success).
-      channel.write(buildUserFrame(prompt), "prompt");
+      // settles the wake (never a synthetic success). Skipped when a stop already
+      // started (e.g. from inside onChild above) — see ClaudeControlChannel.sendPrompt.
+      channel.sendPrompt(buildUserFrame(prompt));
     });
   }
 }

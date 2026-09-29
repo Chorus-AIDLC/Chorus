@@ -53,7 +53,11 @@ function fakeClaude({ honorInterrupt = true, completeTurn = false } = {}) {
     });
     return true;
   };
-  stdin.end = vi.fn(() => { if (resultSent) queueMicrotask(() => child.exit(completeTurn ? 0 : 1)); });
+  stdin.end = vi.fn(() => {
+    if (resultSent) queueMicrotask(() => child.exit(completeTurn ? 0 : 1));
+    // EOF with no user frame: the CLI has nothing to run and exits without a turn.
+    else if (!child.frames.some((f) => f.type === "user")) queueMicrotask(() => child.exit(1));
+  });
   child.stdin = stdin;
   child.stdout = new EventEmitter();
   child.stdout.setEncoding = () => {};
@@ -79,11 +83,13 @@ function stubProcessKill() {
 }
 afterEach(() => { killSpy?.mockRestore(); killSpy = null; children.clear(); });
 
-function harness({ childOptions, transcripts = new Set(), sigintTimeoutMs = 2_000 } = {}) {
+function harness({ childOptions, transcripts = new Set(), sigintTimeoutMs = 2_000, onSpawn } = {}) {
   const turns = [], interrupts = [], spawned = [];
+  let waker;
   const spawner = new ClaudeSpawner({
     claudePath: "/fake/claude", logger: silent, platform: "linux", creds,
     spawnImpl: (_cmd, argv) => {
+      onSpawn?.(waker);
       const child = fakeClaude(childOptions);
       spawned.push({ argv, child });
       // Claude writes the transcript as soon as the session starts.
@@ -92,12 +98,13 @@ function harness({ childOptions, transcripts = new Set(), sigintTimeoutMs = 2_00
       return child;
     },
   });
-  const waker = new Waker({
+  waker = new Waker({
     creds, spawner, logger: silent, cwd: "/nonexistent/chorus-claude-lifecycle", sigintTimeoutMs,
     lineage: { resolve: async () => ({ rootIdeaUuid: IDEA, directIdeaUuid: IDEA }) },
     writeMcpConfigFn: () => ({ path: "/unused.json", cleanup() {} }),
     isNewSessionFn: (sessionId) => !transcripts.has(sessionId),
-    advanceTurn: async (p) => { turns.push(p); },
+    validateRuntimeCwd: async (cwd) => ({ normalizedPath: cwd }),
+    advanceTurn: async (p) => { turns.push(p); return { ok: true, data: { turnUuid: p.turnUuid } }; },
     reportInterrupt: async (...args) => { interrupts.push(args); },
   });
   const control = createControlHandler({ waker, getConnectionUuid: () => "connection", sigintTimeoutMs, logger: silent });
@@ -108,7 +115,18 @@ function harness({ childOptions, transcripts = new Set(), sigintTimeoutMs = 2_00
     const resolved = await waker.keyFor(notification);
     return waker.wake(notification, resolved.key, resolved);
   }
-  return { waker, control, wake, turns, interrupts, spawned, transcripts };
+  // A canonical research operation: its admitted turn arms the waker's
+  // cancel-before-spawn branch (onChild kills a child whose stop already landed).
+  async function wakeResearch() {
+    const notification = {
+      uuid: "research-notification", action: "research_requested", entityType: "idea", entityUuid: IDEA,
+      turnUuid: "research-turn", sessionId: IDEA, directIdeaUuid: IDEA, runtimeCwd: "/work",
+      promptText: "", operationPayload: { version: 1, kind: "research", ideaUuid: IDEA },
+    };
+    const attribution = { rootIdeaUuid: IDEA, directIdeaUuid: IDEA, key: `idea:${IDEA}` };
+    return waker.wake(notification, attribution.key, attribution);
+  }
+  return { waker, control, wake, wakeResearch, turns, interrupts, spawned, transcripts };
 }
 
 describe("Claude stream-json daemon lifecycle: protocol interrupt", () => {
@@ -143,19 +161,38 @@ describe("Claude stream-json daemon lifecycle: protocol interrupt", () => {
 
   it("a child ignoring the interrupt is force-cleaned within the deadline and still reports interrupted(user)", async () => {
     const signals = stubProcessKill();
-    const h = harness({ childOptions: { honorInterrupt: false }, sigintTimeoutMs: 60 });
+    const sigintTimeoutMs = 300;
+    const h = harness({ childOptions: { honorInterrupt: false }, sigintTimeoutMs });
     const running = h.wake();
     await vi.waitFor(() => expect(h.spawned[0]?.child.frames.some((f) => f.type === "user")).toBe(true));
     const start = Date.now();
     h.control({ type: "control", command: "interrupt", targetConnectionUuid: "connection", entityType: "idea", entityUuid: IDEA });
     await running;
     const { child } = h.spawned[0];
-    expect(Date.now() - start).toBeLessThan(60 + 100);
+    // One full extra window of slack for loaded CI runners; still fails if the forced
+    // cleanup waited a second window (or fell back to the 10 s default).
+    expect(Date.now() - start).toBeLessThan(2 * sigintTimeoutMs);
     expect(child.frames[1]).toEqual(INTERRUPT);
     expect(signals).toEqual(expect.arrayContaining([{ pid: -child.pid, signal: "SIGKILL" }]));
     expect(signals.some((s) => s.signal === "SIGINT")).toBe(false);
     expect(h.turns[1]).toMatchObject({ status: "interrupted", interruptedReason: "user" });
     expect(h.interrupts).toEqual([["task", "task", "user"]]);
+  });
+
+  it.each([
+    ["user interrupt", (w) => w.markInterrupting("idea", IDEA), "user"],
+    ["daemon shutdown", (w) => w.interruptAll(), "shutdown"],
+  ])("a %s landing while the child spawns (waker onChild cancel branch) never delivers the prompt (code-review B1)", async (_label, stop, reason) => {
+    const signals = stubProcessKill();
+    // The stop lands after the waker's pre-launch check but before onChild, so the
+    // waker's onChild calls the real killProcessTree before the spawner writes the prompt.
+    const h = harness({ onSpawn: stop });
+    await h.wakeResearch();
+    const { child } = h.spawned[0];
+    expect(child.frames).toEqual([]); // no user frame, and nothing to interrupt
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    expect(signals.some((s) => s.signal === "SIGINT" || s.signal === "SIGKILL")).toBe(false);
+    expect(h.turns.at(-1)).toMatchObject({ turnUuid: "research-turn", status: "interrupted", interruptedReason: reason });
   });
 
   it("daemon shutdown (interruptAll) stops the wake over the protocol and reports interrupted(shutdown)", async () => {
