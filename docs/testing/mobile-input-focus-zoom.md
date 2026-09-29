@@ -118,28 +118,26 @@ and zero pending instances.
 - No login form was submitted and no application records were created by this
   deployment smoke check. These are desktop checks, not physical-device proof.
 
-## Pending acceptance
+## Human acceptance on 2026-09-29
 
-- A source inventory and representative application/component checks have
-  been completed. Every production route has not been manually exercised;
-  coverage of the remaining consumers is established by their shared component
-  and style contracts, not by claiming screenshots for routes never visited.
-- iPhone Chrome **physical-device** evidence is pending. This Linux environment
-  supplies desktop browser automation, not an attached iPhone. No focus-zoom,
-  keyboard or pinch-zoom result from desktop emulation is reported as a device
-  result. Record device model, iOS/Chrome version, routes, portrait/landscape,
-  focus/type/switch/refocus, and manual pinch zoom before acceptance.
-- Representative real Android Chrome and iPhone Safari route checks remain
-  pending. Desktop engine emulation is supplementary only.
-- `docs/design.pen` synchronization was explicitly waived by the requester on
-  2026-09-29 (Chorus comment `63b406f3-8eef-4bb4-a286-557144027621`):
-  “不用管pen文件，继续推进，用脚本部署，然后开pr到develop”. No pen file
-  was modified. This instruction authorizes deployment and a PR to `develop`;
-  it does not claim physical-device tests have passed.
+At 16:21 UTC the requester confirmed “我验证通过了，继续chorus的流程，
+@Admin Claude review一下，没问题就merge吧” in Chorus idea comment
+`df01ec16-4ae5-43ac-9e58-98dc475423bd`. This is the human acceptance evidence
+for proceeding past the previously pending mobile verification gate. Admin
+Claude is the designated independent reviewer; merge is authorized only after
+review passes.
 
-The task must remain incomplete until its required acceptance evidence is
-available. Do not archive the OpenSpec change or issue a completion report
-claiming the fix is verified.
+The requester did not provide device models, OS/browser versions, route-level
+results, or separate Android/Safari results. We record the overall acceptance
+as stated, without inventing these details or claiming that the agent performed
+physical-device tests. Desktop browser checks remain supplementary evidence.
+The source inventory covers all production inputs; representative mounted and
+application routes were exercised, rather than every route manually.
+
+`docs/design.pen` synchronization was explicitly waived by the requester at
+14:01 UTC (comment `63b406f3-8eef-4bb4-a286-557144027621`). No pen file was
+modified. Task/admin verification and the aggregate code review still precede
+OpenSpec archival and the final Idea completion report.
 
 ## Source audit method and exclusions
 
