@@ -4,6 +4,9 @@
 // parse with CRLF + session_id extraction, fire-and-forget failure handling.
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join as pathJoin } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ClaudeSpawner,
   resolveClaudePath,
@@ -15,6 +18,10 @@ import {
   transcriptPath,
   isNewSession,
   SESSION_CONFLICT_FAILURE,
+  CONTROL_FRAME_TYPES,
+  CHORUS_TOOL_DENY_MESSAGE,
+  UNSUPPORTED_CONTROL_ERROR,
+  ClaudeControlChannel,
 } from "../claude-spawner.mjs";
 import { writeMcpConfig, buildMcpConfig } from "../mcp-config.mjs";
 
@@ -39,11 +46,23 @@ function makeFakeChild() {
 
 const silent = { info() {}, warn() {}, error() {} };
 
+/** The prompt carried by the single stream-json user frame written to stdin. */
+function stdinPrompt(child) {
+  expect(child.stdin.writes).toHaveLength(1);
+  const line = child.stdin.writes[0];
+  expect(line.endsWith("\n")).toBe(true);
+  const frame = JSON.parse(line);
+  expect(frame).toEqual({ type: "user", message: { role: "user", content: expect.any(String) }, parent_tool_use_id: null });
+  return frame.message.content;
+}
+
 describe("buildArgs", () => {
   it("uses --session-id for a new session, never puts prompt in argv", () => {
     const args = buildArgs({ sessionId: "sid-1", isNew: true, mcpConfigPath: "/tmp/m.json" });
     expect(args).toEqual([
       "-p",
+      "--input-format",
+      "stream-json",
       "--output-format",
       "stream-json",
       "--verbose",
@@ -51,11 +70,17 @@ describe("buildArgs", () => {
       "sid-1",
       "--mcp-config",
       "/tmp/m.json",
-      // default permission mode: allow only Chorus MCP tools through
+      "--disallowedTools",
+      "AskUserQuestion",
+      // default permission mode: allow only Chorus MCP tools through and route
+      // every other permission prompt to the spawner over the control protocol
       "--allowedTools",
       "mcp__chorus__*",
+      "--permission-prompt-tool",
+      "stdio",
     ]);
-    expect(args.join(" ")).not.toMatch(/prompt/i);
+    // the only "prompt" in argv is the permission-prompt-tool flag name
+    expect(args.filter((a) => /prompt/i.test(a))).toEqual(["--permission-prompt-tool"]);
   });
 
   it("uses --resume for an existing session", () => {
@@ -77,6 +102,45 @@ describe("buildArgs", () => {
     const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: "yolo" });
     expect(args).toContain("--dangerously-skip-permissions");
     expect(args).not.toContain("--allowedTools");
+    expect(args).not.toContain("--permission-prompt-tool");
+  });
+
+  it("yolo resume: full argv, AskUserQuestion still disallowed", () => {
+    expect(buildArgs({ sessionId: "sid-3", isNew: false, mcpConfigPath: "/m.json", permissionMode: "yolo" })).toEqual([
+      "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+      "--resume", "sid-3",
+      "--mcp-config", "/m.json",
+      "--disallowedTools", "AskUserQuestion",
+      "--dangerously-skip-permissions",
+    ]);
+  });
+
+  it("chorus resume without mcp config: full argv", () => {
+    expect(buildArgs({ sessionId: "sid-4", isNew: false })).toEqual([
+      "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+      "--resume", "sid-4",
+      "--disallowedTools", "AskUserQuestion",
+      "--allowedTools", "mcp__chorus__*", "--permission-prompt-tool", "stdio",
+    ]);
+  });
+
+  it("wake() appends operator cliConfig.args after every fixed flag (both modes)", async () => {
+    for (const permissionMode of ["chorus", "yolo"]) {
+      const child = makeFakeChild();
+      const spawnImpl = vi.fn(() => child);
+      const spawner = new ClaudeSpawner({
+        claudePath: "/usr/bin/claude", spawnImpl, logger: silent, permissionMode,
+        cliConfig: { args: ["--model", "haiku"] },
+      });
+      const p = spawner.wake({ prompt: "x", sessionId: SID, isNew: true, mcpConfigPath: "/m.json" });
+      child.emit("close", 0);
+      await p;
+      const argv = spawnImpl.mock.calls[0][1];
+      expect(argv).toEqual([
+        ...buildArgs({ sessionId: SID, isNew: true, mcpConfigPath: "/m.json", permissionMode }),
+        "--model", "haiku",
+      ]);
+    }
   });
 });
 
@@ -232,8 +296,9 @@ describe("ClaudeSpawner.wake", () => {
     const longPrompt = "X".repeat(50_000); // would blow the Windows cmdline if argv
     const p = spawner.wake({ prompt: longPrompt, sessionId: SID, isNew: true, mcpConfigPath: "/tmp/m.json" });
 
-    // Emit a stream-json line carrying a session_id, then close cleanly.
+    // Emit a stream-json line carrying a session_id, the turn's result, then close.
     child.stdout.emit("data", `{"type":"system","session_id":"${SID}"}\n`);
+    child.stdout.emit("data", `{"type":"result","subtype":"success","session_id":"${SID}"}\n`);
     child.emit("close", 0);
 
     const result = await p;
@@ -245,9 +310,9 @@ describe("ClaudeSpawner.wake", () => {
     expect(args).toContain("--session-id");
     expect(args.join(" ")).not.toContain("X".repeat(50_000));
     expect(opts.shell).toBe(false);
-    // prompt arrived via stdin
-    expect(child.stdin.writes.join("")).toBe(longPrompt);
-    expect(child.stdin.end).toHaveBeenCalled();
+    // prompt arrived via stdin as one stream-json user frame
+    expect(stdinPrompt(child)).toBe(longPrompt);
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
   });
 
   it("exports CHORUS_AGENT_PROFILE=<agentUuid> into the woken child env (identity, uuid preferred, never argv)", async () => {
@@ -524,6 +589,7 @@ describe("ClaudeSpawner.wake — detached spawn + onChild (子3)", () => {
     const p = spawner.wake({ prompt: "PROMPT", sessionId: SID, isNew: true, mcpConfigPath: "/m.json", onMessage });
     // stream-json still parses line by line, prompt still goes over stdin.
     child.stdout.emit("data", `{"type":"system","session_id":"${SID}"}\n`);
+    child.stdout.emit("data", `{"type":"result","subtype":"success","session_id":"${SID}"}\n`);
     child.emit("close", 0);
     const result = await p;
 
@@ -532,7 +598,7 @@ describe("ClaudeSpawner.wake — detached spawn + onChild (子3)", () => {
     expect(opts.stdio).toEqual(["pipe", "pipe", "pipe"]); // IO unchanged
     expect(opts.shell).toBe(false);
     // No IO regression:
-    expect(child.stdin.writes.join("")).toBe("PROMPT"); // prompt over stdin
+    expect(stdinPrompt(child)).toBe("PROMPT"); // prompt over stdin
     expect(child.stdin.end).toHaveBeenCalled();
     expect(onMessage).toHaveBeenCalledWith({ type: "system", session_id: SID }); // NDJSON parsed
     expect(result).toEqual({ sessionId: SID, backendSessionId: SID, exitCode: 0, isNew: true });
@@ -680,7 +746,7 @@ describe("ClaudeSpawner Windows .cmd integration", () => {
     const [command, argv] = spawnImpl.mock.calls[0];
     expect(command).toBe("C:\\npm\\claude.cmd"); // unchanged on a POSIX test host
     expect(argv).toContain("--session-id");
-    expect(child.stdin.writes.join("")).toBe("hi");
+    expect(stdinPrompt(child)).toBe("hi");
   });
 });
 
@@ -700,5 +766,287 @@ describe("ClaudeSpawner stdin EPIPE resilience", () => {
     const result = await p;
     expect(result.exitCode).toBe(1); // resolved cleanly, no throw
     expect(warns.join("")).toMatch(/stdin error/i);
+  });
+});
+
+// ── stream-json transport (switch-claude-daemon-to-stream-json D2/D3/D5) ──────────
+
+/** Emit frames on the fake child's stdout as NDJSON lines. */
+function emitFrames(child, frames) {
+  for (const f of frames) child.stdout.emit("data", `${JSON.stringify(f)}\n`);
+}
+
+/** Parsed stdin frames written by the spawner. */
+function stdinFrames(child) {
+  return child.stdin.writes.map((l) => JSON.parse(l));
+}
+
+function recordingLogger() {
+  const log = { info: [], warn: [], error: [] };
+  return {
+    log,
+    logger: { info: (m) => log.info.push(m), warn: (m) => log.warn.push(m), error: (m) => log.error.push(m) },
+  };
+}
+
+function startWake({ permissionMode = "chorus", logger = silent, prompt = "PROMPT" } = {}) {
+  const child = makeFakeChild();
+  const onMessage = vi.fn();
+  const spawner = new ClaudeSpawner({ claudePath: "/usr/bin/claude", spawnImpl: () => child, logger, permissionMode, platform: "linux" });
+  const promise = spawner.wake({ prompt, sessionId: SID, isNew: true, onMessage });
+  return { child, onMessage, promise };
+}
+
+describe("ClaudeSpawner stream-json turn completion", () => {
+  it("writes one user frame and keeps stdin open until the first result (success)", async () => {
+    const { child, promise } = startWake();
+    expect(stdinPrompt(child)).toBe("PROMPT");
+    emitFrames(child, [
+      { type: "system", subtype: "init", session_id: SID },
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "hi" }] }, session_id: SID },
+    ]);
+    expect(child.stdin.end).not.toHaveBeenCalled();
+    emitFrames(child, [{ type: "result", subtype: "success", session_id: SID }]);
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    // a second result never closes stdin twice
+    emitFrames(child, [{ type: "result", subtype: "success", session_id: SID }]);
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    child.emit("close", 0);
+    expect(await promise).toEqual({ sessionId: SID, backendSessionId: SID, exitCode: 0, isNew: true });
+  });
+
+  it("closes stdin on an error result too and reports the raw exit code", async () => {
+    const { child, promise } = startWake();
+    emitFrames(child, [{ type: "result", subtype: "error_during_execution", is_error: true, session_id: SID }]);
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    child.emit("close", 1);
+    expect((await promise).exitCode).toBe(1);
+  });
+
+  it("an exit with no result is NOT success: raw exit code, stdin never ended by a result", async () => {
+    const { child, promise } = startWake();
+    emitFrames(child, [{ type: "system", subtype: "init", session_id: SID }]);
+    child.emit("exit", 3);
+    child.emit("close", 3);
+    const result = await promise;
+    expect(result.exitCode).toBe(3);
+    expect(child.stdin.end).not.toHaveBeenCalled();
+  });
+});
+
+describe("ClaudeSpawner stream-json control frames", () => {
+  it("never forwards control_* frames; forwards every other frame unchanged", async () => {
+    const { child, onMessage, promise } = startWake();
+    const assistant1 = { type: "assistant", message: { content: [{ type: "text", text: "a" }] }, session_id: SID };
+    const assistant2 = { type: "assistant", message: { content: [{ type: "text", text: "b" }] }, session_id: SID };
+    const unknownType = { type: "stream_event", event: { type: "ping" }, session_id: SID };
+    const result = { type: "result", subtype: "success", session_id: SID };
+    emitFrames(child, [
+      assistant1,
+      { type: "control_request", request_id: "r1", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: "ls" } } },
+      { type: "control_response", response: { subtype: "success", request_id: "x", response: {} } },
+      { type: "control_cancel_request", request_id: "r1" },
+      assistant2,
+      unknownType,
+      result,
+    ]);
+    child.emit("close", 0);
+    await promise;
+    expect(onMessage.mock.calls.map((c) => c[0])).toEqual([assistant1, assistant2, unknownType, result]);
+    expect([...CONTROL_FRAME_TYPES].sort()).toEqual(["control_cancel_request", "control_request", "control_response"]);
+  });
+
+  it.each(["chorus", "yolo"])("denies can_use_tool (%s mode) with the request id and Chorus message; warn names the tool only", async (permissionMode) => {
+    const { log, logger } = recordingLogger();
+    const { child, promise } = startWake({ permissionMode, logger });
+    const secret = "curl -H 'Authorization: Bearer cho_SECRET' https://x";
+    emitFrames(child, [{ type: "control_request", request_id: "req-42", request: { subtype: "can_use_tool", tool_name: "Bash", input: { command: secret } } }]);
+    const frames = stdinFrames(child);
+    expect(frames).toHaveLength(2);
+    expect(frames[1]).toEqual({
+      type: "control_response",
+      response: { subtype: "success", request_id: "req-42", response: { behavior: "deny", message: CHORUS_TOOL_DENY_MESSAGE } },
+    });
+    expect(CHORUS_TOOL_DENY_MESSAGE).toMatch(/--chorus-only/);
+    expect(CHORUS_TOOL_DENY_MESSAGE).toMatch(/Chorus comment/);
+    const denyWarns = log.warn.filter((m) => m.includes("denied tool"));
+    expect(denyWarns).toHaveLength(1);
+    expect(denyWarns[0]).toMatch(/denied tool Bash \(/);
+    expect(log.warn.join("\n")).not.toContain("cho_SECRET");
+    expect(log.warn.join("\n")).not.toContain("curl");
+    expect(child.stdin.end).not.toHaveBeenCalled(); // a control answer never closes stdin
+    child.emit("close", 0);
+    await promise;
+  });
+
+  it("answers an unknown control_request subtype with an error response and a warn", async () => {
+    const { log, logger } = recordingLogger();
+    const { child, promise } = startWake({ logger });
+    emitFrames(child, [{ type: "control_request", request_id: "req-7", request: { subtype: "mystery" } }]);
+    expect(stdinFrames(child)[1]).toEqual({
+      type: "control_response",
+      response: { subtype: "error", request_id: "req-7", error: UNSUPPORTED_CONTROL_ERROR },
+    });
+    expect(log.warn.some((m) => /unsupported claude control request subtype mystery/.test(m))).toBe(true);
+    child.emit("close", 0);
+    await promise;
+  });
+
+  it("control_response / control_cancel_request are consumed without any stdin write", async () => {
+    const { child, promise } = startWake();
+    emitFrames(child, [
+      { type: "control_response", response: { subtype: "success", request_id: "nope", response: {} } },
+      { type: "control_cancel_request", request_id: "nope" },
+    ]);
+    expect(child.stdin.writes).toHaveLength(1); // only the prompt
+    child.emit("close", 0);
+    await promise;
+  });
+
+  it("a control request after the child exited does not throw and is logged", async () => {
+    const { log, logger } = recordingLogger();
+    const { child, promise } = startWake({ logger });
+    child.emit("exit", 0);
+    expect(() =>
+      emitFrames(child, [{ type: "control_request", request_id: "late", request: { subtype: "can_use_tool", tool_name: "Write", input: {} } }])
+    ).not.toThrow();
+    expect(child.stdin.writes).toHaveLength(1); // nothing written to a dead child
+    expect(log.warn.some((m) => /stdin is closed; dropped/.test(m))).toBe(true);
+    child.emit("close", 0);
+    expect((await promise).exitCode).toBe(0);
+  });
+
+  it("a synchronously throwing stdin write (destroyed stream) is logged, never thrown", async () => {
+    const { log, logger } = recordingLogger();
+    const { child, promise } = startWake({ logger });
+    child.stdin.write = () => {
+      throw Object.assign(new Error("Cannot call write after a stream was destroyed"), { code: "ERR_STREAM_DESTROYED" });
+    };
+    expect(() =>
+      emitFrames(child, [{ type: "control_request", request_id: "r", request: { subtype: "can_use_tool", tool_name: "Edit", input: {} } }])
+    ).not.toThrow();
+    expect(log.warn.some((m) => /failed writing permission deny for Edit/.test(m))).toBe(true);
+    child.emit("close", 1);
+    expect((await promise).exitCode).toBe(1);
+  });
+
+  it("after an async stdin error (EPIPE) no further writes are attempted", () => {
+    const { log, logger } = recordingLogger();
+    const stdin = new EventEmitter();
+    stdin.write = vi.fn();
+    stdin.end = vi.fn();
+    const channel = new ClaudeControlChannel({ stdin, logger, permissionMode: "chorus" });
+    channel.markStdinUnusable();
+    expect(channel.write({ type: "x" }, "probe")).toBe(false);
+    expect(stdin.write).not.toHaveBeenCalled();
+    channel.closeStdin();
+    expect(stdin.end).not.toHaveBeenCalled();
+    expect(log.warn.some((m) => /dropped probe/.test(m))).toBe(true);
+  });
+});
+
+describe("ClaudeSpawner replays pinned stream-json fixtures", () => {
+  const dir = pathJoin(dirname(fileURLToPath(import.meta.url)), "fixtures", "claude-stream-json");
+  const load = (name) => JSON.parse(readFileSync(pathJoin(dir, name), "utf8"));
+  const fixtures = readdirSync(dir).filter((f) => f.endsWith(".json")).sort();
+
+  it("every fixture declares its provenance (three live 2.1.283 captures + one synthetic)", () => {
+    expect(fixtures).toEqual([
+      "can-use-tool-2.1.283.json",
+      "interrupted-turn-2.1.283.json",
+      "normal-turn-2.1.283.json",
+      "unknown-control-request-synthetic.json",
+    ]);
+    for (const name of fixtures) {
+      const fx = load(name);
+      if (name.includes("synthetic")) expect(fx.provenance).toBe("synthetic");
+      else {
+        expect(fx.provenance).toBe("live-capture");
+        expect(fx.cliVersion).toBe("2.1.283");
+      }
+      // no secrets or home paths leaked into a fixture
+      const raw = readFileSync(pathJoin(dir, name), "utf8");
+      expect(raw).not.toMatch(/cho_[A-Za-z0-9]/);
+      expect(raw).not.toMatch(/\/home\/|\/Users\//);
+    }
+  });
+
+  /**
+   * Replay a fixture's stdout frames through a fake child and return what the
+   * spawner forwarded, wrote and resolved with.
+   */
+  async function replay(fx, permissionMode = "chorus") {
+    const recordedPrompt = fx.transcript.find((t) => t.direction === "stdin" && t.frame.type === "user")?.frame.message.content ?? "synthetic prompt";
+    const { log, logger } = recordingLogger();
+    const { child, onMessage, promise } = startWake({ permissionMode, logger, prompt: recordedPrompt });
+    const stdout = fx.transcript.filter((t) => t.direction === "stdout").map((t) => t.frame);
+    const endCalledBeforeResult = [];
+    for (const frame of stdout) {
+      if (frame.type === "result") endCalledBeforeResult.push(child.stdin.end.mock.calls.length);
+      emitFrames(child, [frame]);
+    }
+    child.emit("exit", fx.exitCode);
+    child.emit("close", fx.exitCode);
+    const result = await promise;
+    return { child, stdout, forwarded: onMessage.mock.calls.map((c) => c[0]), result, log, recordedPrompt, endCalledBeforeResult };
+  }
+
+  it("normal turn: one user frame, all frames forwarded, stdin closed at the result, exit 0", async () => {
+    const fx = load("normal-turn-2.1.283.json");
+    const { child, stdout, forwarded, result, recordedPrompt, endCalledBeforeResult } = await replay(fx);
+    expect(stdinFrames(child)).toEqual(fx.transcript.filter((t) => t.direction === "stdin").map((t) => t.frame));
+    expect(stdinPrompt(child)).toBe(recordedPrompt);
+    expect(forwarded).toEqual(stdout);
+    expect(endCalledBeforeResult).toEqual([0]);
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("interrupted turn: interrupt ack is consumed, error result closes stdin, raw exit 1", async () => {
+    const fx = load("interrupted-turn-2.1.283.json");
+    const { child, stdout, forwarded, result, endCalledBeforeResult } = await replay(fx);
+    expect(stdout.some((f) => f.type === "control_response" && f.response.request_id === "chorus-interrupt-1")).toBe(true);
+    expect(forwarded).toEqual(stdout.filter((f) => !CONTROL_FRAME_TYPES.has(f.type)));
+    expect(forwarded.at(-1)).toMatchObject({ type: "result", subtype: "error_during_execution" });
+    // the protocol interrupt write itself belongs to the stop hook; here only the prompt is written
+    expect(child.stdin.writes).toHaveLength(1);
+    expect(endCalledBeforeResult).toEqual([0]);
+    expect(child.stdin.end).toHaveBeenCalledTimes(1);
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("can_use_tool: the recorded request id is denied with the Chorus message; request not forwarded", async () => {
+    const fx = load("can-use-tool-2.1.283.json");
+    const recordedRequest = fx.transcript.find((t) => t.frame.type === "control_request").frame;
+    const recordedAnswer = fx.transcript.find((t) => t.direction === "stdin" && t.frame.type === "control_response").frame;
+    const { child, stdout, forwarded, result, log } = await replay(fx);
+    const written = stdinFrames(child);
+    expect(written).toHaveLength(2);
+    // same wire shape the live CLI accepted, with the daemon's own message
+    expect(written[1]).toEqual({
+      ...recordedAnswer,
+      response: { ...recordedAnswer.response, response: { behavior: "deny", message: CHORUS_TOOL_DENY_MESSAGE } },
+    });
+    expect(written[1].response.request_id).toBe(recordedRequest.request_id);
+    expect(forwarded).toEqual(stdout.filter((f) => !CONTROL_FRAME_TYPES.has(f.type)));
+    // the live deny surfaced to the model as an error tool_result and in permission_denials
+    expect(forwarded.some((f) => f.type === "user" && f.message.content.some((b) => b.type === "tool_result" && b.is_error))).toBe(true);
+    expect(forwarded.at(-1).permission_denials).toEqual([expect.objectContaining({ tool_name: "Bash" })]);
+    expect(log.warn.filter((m) => m.includes("denied tool"))).toEqual([expect.stringMatching(/denied tool Bash \(--chorus-only permission mode\)/)]);
+    expect(log.warn.join("\n")).not.toContain(recordedRequest.request.input.command);
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("synthetic unknown control request: error response, neither control frame forwarded", async () => {
+    const fx = load("unknown-control-request-synthetic.json");
+    const { child, stdout, forwarded, result, log } = await replay(fx);
+    expect(stdinFrames(child)[1]).toEqual({
+      type: "control_response",
+      response: { subtype: "error", request_id: "synthetic-req-1", error: UNSUPPORTED_CONTROL_ERROR },
+    });
+    expect(forwarded).toEqual(stdout.filter((f) => !CONTROL_FRAME_TYPES.has(f.type)));
+    expect(forwarded.map((f) => f.type)).toEqual(["system", "assistant", "result"]);
+    expect(log.warn.some((m) => /unsupported claude control request subtype elicitation/.test(m))).toBe(true);
+    expect(result.exitCode).toBe(0);
   });
 });

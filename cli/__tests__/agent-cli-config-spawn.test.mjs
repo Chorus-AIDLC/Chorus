@@ -25,6 +25,12 @@ function fakeSpawn(type) {
     child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.stdin = new EventEmitter();
     child.stdout.setEncoding = child.stderr.setEncoding = () => {};
     child.stdin.write = vi.fn((text) => {
+      if (type === "claude-code") {
+        // stream-json: stdin stays open until the turn's result frame; the
+        // spawner then calls end(), which closes the fake child below.
+        if (JSON.parse(text).type === "user") queueMicrotask(() => child.stdout.emit("data", JSON.stringify({ type: "result", subtype: "success" }) + "\n"));
+        return true;
+      }
       if (type !== "dsh") return true;
       const req = JSON.parse(text);
       const send = (data) => child.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", ...data }) + "\n");
