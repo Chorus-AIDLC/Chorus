@@ -493,6 +493,39 @@ How each agent's Chorus key reaches its woken subprocess differs by backend:
   environment, never the App Server command line. Distinct config/plugin sets or
   Chorus URLs can use separate per-agent `CODEX_HOME` directories.
 
+### Claude Code daemon: stream-json transport
+
+Each Claude Code wake still launches one `claude -p` process, which exits when
+its turn ends; processes are never reused across wakes. The daemon talks to it
+with the bidirectional stream-json protocol (`--input-format stream-json
+--output-format stream-json`): the prompt is sent as one message, and stdin stays
+open until the turn's result so the daemon can answer control requests. There is
+no plain-text fallback or switch. Session resume (`claude --resume <idea-uuid>`)
+and existing sessions are unaffected.
+
+- **Interrupt.** An authorized interrupt from the UI is sent to Claude as a
+  protocol interrupt, so the turn ends cleanly and can be resumed. If the process
+  is still running when the existing `sigintTimeoutMs` window ends, the daemon
+  force-stops its process tree as before. No new timeout is involved.
+- **`--chorus-only` denials are visible.** Any tool outside the Chorus MCP tools
+  is refused explicitly. The agent is told to use Chorus tools or ask in a Chorus
+  comment. The daemon logs `[Chorus] denied tool <name> (--chorus-only permission
+  mode)`, with the tool name only and never its input. YOLO mode is unchanged.
+- **`AskUserQuestion` is disabled** in every daemon wake
+  (`--disallowedTools AskUserQuestion`), because no one is at the terminal to
+  answer. Ask through a Chorus comment or elaboration instead. Interactive Claude
+  sessions are not affected.
+
+Verified live on Linux with Claude Code **2.1.283** and **2.1.284**. The wire
+protocol is documented only at the Agent SDK level ("streaming input mode"), not
+as a CLI contract, so re-check after a Claude Code upgrade:
+`node docs/verification/claude-stream-json-live.mjs --model haiku` (it uses real
+model tokens). Evidence:
+[2.1.284](verification/claude-stream-json-live-2.1.284.json),
+[2.1.283](verification/claude-stream-json-live-2.1.283.json). On Windows the
+interrupt and process-tree cleanup are covered by injected platform tests only,
+not a live Windows run (the same limitation as the Codex backend).
+
 ### Codex daemon: App Server migration
 
 Every Codex daemon wake now launches one isolated
