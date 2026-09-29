@@ -125,7 +125,7 @@ export function ManageProjectGroupDialog({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full rounded-lg border border-[#E5E2DC] dark:border-[#2a2a2e] px-3 py-2.5 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+              className="mobile-input-text w-full rounded-lg border border-[#E5E2DC] dark:border-[#2a2a2e] px-3 py-2.5 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
               placeholder={t("descriptionPlaceholder")}
             />
           </div>
