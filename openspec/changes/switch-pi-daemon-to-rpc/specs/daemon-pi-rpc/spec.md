@@ -48,13 +48,13 @@ For an `extension_ui_request` whose method is `select`, `confirm`, `input` or `e
 - **THEN** nothing is written to stdin
 
 ### Requirement: Interrupt SHALL use a protocol stop hook inside the existing graceful deadline
-The spawner SHALL register a process stop hook for each spawned child and unregister it when the wake settles. When invoked, the hook SHALL, if the prompt was sent, `agent_settled` has not been seen and stdin is open, send one `abort` command and wait until `agent_settled`, the abort response, child exit, or the protocol deadline supplied by the killer, whichever comes first. If the stop starts before the prompt was sent, the prompt SHALL never be sent. On every path the hook SHALL then await the killer-supplied `beforeClose` callback when present (logging and continuing if it fails) and close stdin. Repeated invocations SHALL share the in-flight stop. The hook SHALL NOT add any timeout beyond the supplied deadline, and the existing forced process-tree cleanup SHALL apply when the process remains. User-interrupt, shutdown and resume reporting semantics SHALL be unchanged.
+The spawner SHALL register a process stop hook for each spawned child and unregister it when the wake settles. When invoked, the hook SHALL, if the prompt was sent, `agent_settled` has not been seen and stdin is open, send one `abort` command and wait until `agent_settled`, the abort response, child exit, or the protocol deadline supplied by the killer, whichever comes first. If the stop starts before the prompt was sent, the prompt SHALL never be sent. On every path the hook SHALL then await the killer-supplied `beforeClose` callback when present (logging and continuing if it fails) and close stdin. Repeated invocations SHALL share the in-flight stop. The hook SHALL NOT add any timeout beyond the supplied deadline, and the existing forced process-tree cleanup SHALL apply when the process remains. Because pi exits 0 on stdin EOF, a wake whose stop started before `agent_settled` SHALL settle with exit code 130 when the raw exit code is 0, so user-interrupt, shutdown and resume reporting semantics are unchanged (the turn is recorded as interrupted, not ended); a stop after `agent_settled` SHALL keep the raw exit code.
 
 #### Scenario: User interrupt aborts over the protocol
 - **GIVEN** a running Pi wake
 - **WHEN** an authorized interrupt reaches the daemon
 - **THEN** the child receives an `abort` command, emits `agent_settled`, stdin is closed and the process exits
-- **AND** the turn is reported as interrupted by the user and no forced kill is issued
+- **AND** the wake settles with exit code 130, the turn is reported as interrupted by the user and no forced kill is issued
 
 #### Scenario: Unresponsive child falls back to forced cleanup
 - **GIVEN** a running child that ignores `abort`

@@ -2,7 +2,7 @@
   "piVersion": "0.85.1",
   "platform": "linux",
   "withChorus": true,
-  "recordedAt": "2026-09-29T06:20:05.918Z",
+  "recordedAt": "2026-09-29T07:05:00.513Z",
   "script": "docs/verification/pi-rpc-live.mjs",
   "checks": {
     "newSessionExit0": true,
@@ -16,7 +16,7 @@
     "legacyJsonSessionResumed": true,
     "interruptSentAbort": true,
     "interruptNoEscalation": true,
-    "interruptCleanExit": true,
+    "interruptReportedAsCancelled": true,
     "interruptNoLeftoverSleep": true,
     "dialogCancelledWithWarning": true,
     "dialogRunCompleted": true,
@@ -28,11 +28,11 @@
   },
   "runs": {
     "newSession": {
-      "sessionId": "984f3be6-789f-4cd3-bdf1-32cfeac8aaaf",
-      "seconds": 3.9,
+      "sessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
+      "seconds": 4.2,
       "result": {
-        "sessionId": "984f3be6-789f-4cd3-bdf1-32cfeac8aaaf",
-        "backendSessionId": "984f3be6-789f-4cd3-bdf1-32cfeac8aaaf",
+        "sessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
+        "backendSessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
         "exitCode": 0,
         "isNew": true
       },
@@ -60,15 +60,15 @@
       ],
       "killResult": null,
       "logs": [
-        "warn [Chorus] pi stderr: Warning: No project session found with id '984f3be6-789f-4cd3-bdf1-32cfeac8aaaf'; creating a new session with that id."
+        "warn [Chorus] pi stderr: Warning: No project session found with id 'c944d192-6e8e-4c01-87b6-adc94bb52473'; creating a new session with that id."
       ]
     },
     "resume": {
-      "sessionId": "984f3be6-789f-4cd3-bdf1-32cfeac8aaaf",
-      "seconds": 4,
+      "sessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
+      "seconds": 4.6,
       "result": {
-        "sessionId": "984f3be6-789f-4cd3-bdf1-32cfeac8aaaf",
-        "backendSessionId": "984f3be6-789f-4cd3-bdf1-32cfeac8aaaf",
+        "sessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
+        "backendSessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
         "exitCode": 0,
         "isNew": false
       },
@@ -89,6 +89,7 @@
         "message_update",
         "message_update",
         "message_update",
+        "message_update",
         "message_end:assistant",
         "turn_end",
         "agent_end",
@@ -98,11 +99,11 @@
       "logs": []
     },
     "legacyResume": {
-      "sessionId": "911bc653-aff0-4687-a0c8-4c5507a16f45",
-      "seconds": 3.6,
+      "sessionId": "579b46ba-571d-490f-a9be-6dd4717d20a5",
+      "seconds": 4,
       "result": {
-        "sessionId": "911bc653-aff0-4687-a0c8-4c5507a16f45",
-        "backendSessionId": "911bc653-aff0-4687-a0c8-4c5507a16f45",
+        "sessionId": "579b46ba-571d-490f-a9be-6dd4717d20a5",
+        "backendSessionId": "579b46ba-571d-490f-a9be-6dd4717d20a5",
         "exitCode": 0,
         "isNew": false
       },
@@ -124,7 +125,6 @@
         "message_update",
         "message_update",
         "message_update",
-        "message_update",
         "message_end:assistant",
         "turn_end",
         "agent_end",
@@ -134,12 +134,12 @@
       "logs": []
     },
     "interrupt": {
-      "sessionId": "d86cae6a-acc6-4b36-8a60-91c7c5dd8914",
-      "seconds": 5.6,
+      "sessionId": "77cd06e0-1f13-468b-b163-5331ba92cf61",
+      "seconds": 5.9,
       "result": {
-        "sessionId": "d86cae6a-acc6-4b36-8a60-91c7c5dd8914",
-        "backendSessionId": "d86cae6a-acc6-4b36-8a60-91c7c5dd8914",
-        "exitCode": 0,
+        "sessionId": "77cd06e0-1f13-468b-b163-5331ba92cf61",
+        "backendSessionId": "77cd06e0-1f13-468b-b163-5331ba92cf61",
+        "exitCode": 130,
         "isNew": true
       },
       "texts": [],
@@ -151,7 +151,6 @@
         "message_start",
         "message_end:custom:chorus",
         "message_start",
-        "message_update",
         "message_update",
         "message_update",
         "message_update",
@@ -183,16 +182,17 @@
         "escalated": false
       },
       "logs": [
-        "warn [Chorus] pi stderr: Warning: No project session found with id 'd86cae6a-acc6-4b36-8a60-91c7c5dd8914'; creating a new session with that id.",
-        "info [Chorus] interrupt: sent pi abort"
+        "warn [Chorus] pi stderr: Warning: No project session found with id '77cd06e0-1f13-468b-b163-5331ba92cf61'; creating a new session with that id.",
+        "info [Chorus] interrupt: sent pi abort",
+        "warn [Chorus] pi exited with code 130"
       ]
     },
     "dialog": {
-      "sessionId": "225f3ed9-bc38-4637-8500-740650751fc2",
-      "seconds": 4,
+      "sessionId": "5bcc8129-aefd-4e8f-9f52-afbd118ce288",
+      "seconds": 3.7,
       "result": {
-        "sessionId": "225f3ed9-bc38-4637-8500-740650751fc2",
-        "backendSessionId": "225f3ed9-bc38-4637-8500-740650751fc2",
+        "sessionId": "5bcc8129-aefd-4e8f-9f52-afbd118ce288",
+        "backendSessionId": "5bcc8129-aefd-4e8f-9f52-afbd118ce288",
         "exitCode": 0,
         "isNew": true
       },
@@ -212,7 +212,6 @@
         "message_update",
         "message_update",
         "message_update",
-        "message_update",
         "message_end:assistant",
         "turn_end",
         "agent_end",
@@ -220,16 +219,16 @@
       ],
       "killResult": null,
       "logs": [
-        "warn [Chorus] pi stderr: Warning: No project session found with id '225f3ed9-bc38-4637-8500-740650751fc2'; creating a new session with that id.",
+        "warn [Chorus] pi stderr: Warning: No project session found with id '5bcc8129-aefd-4e8f-9f52-afbd118ce288'; creating a new session with that id.",
         "warn [Chorus] cancelled pi extension confirm dialog (headless daemon)"
       ]
     },
     "handled": {
-      "sessionId": "0521df3b-7ec4-4b19-b006-a80706a70f61",
-      "seconds": 1.2,
+      "sessionId": "13bbeb83-a3b8-46c5-8f2a-5fb08099b3ec",
+      "seconds": 1.4,
       "result": {
-        "sessionId": "0521df3b-7ec4-4b19-b006-a80706a70f61",
-        "backendSessionId": "0521df3b-7ec4-4b19-b006-a80706a70f61",
+        "sessionId": "13bbeb83-a3b8-46c5-8f2a-5fb08099b3ec",
+        "backendSessionId": "13bbeb83-a3b8-46c5-8f2a-5fb08099b3ec",
         "exitCode": 0,
         "isNew": true
       },
@@ -237,16 +236,16 @@
       "types": [],
       "killResult": null,
       "logs": [
-        "warn [Chorus] pi stderr: Warning: No project session found with id '0521df3b-7ec4-4b19-b006-a80706a70f61'; creating a new session with that id.",
+        "warn [Chorus] pi stderr: Warning: No project session found with id '13bbeb83-a3b8-46c5-8f2a-5fb08099b3ec'; creating a new session with that id.",
         "info [Chorus] pi handled the prompt without an agent run"
       ]
     },
     "corruptSeed": {
-      "sessionId": "40b2b85e-5dce-4575-a69d-c508108c2b5b",
-      "seconds": 3.3,
+      "sessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
+      "seconds": 3.5,
       "result": {
-        "sessionId": "40b2b85e-5dce-4575-a69d-c508108c2b5b",
-        "backendSessionId": "40b2b85e-5dce-4575-a69d-c508108c2b5b",
+        "sessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
+        "backendSessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
         "exitCode": 0,
         "isNew": true
       },
@@ -273,15 +272,15 @@
       ],
       "killResult": null,
       "logs": [
-        "warn [Chorus] pi stderr: Warning: No project session found with id '40b2b85e-5dce-4575-a69d-c508108c2b5b'; creating a new session with that id."
+        "warn [Chorus] pi stderr: Warning: No project session found with id '4dae6230-a388-427c-879c-c52dfafa079f'; creating a new session with that id."
       ]
     },
     "corrupt": {
-      "sessionId": "40b2b85e-5dce-4575-a69d-c508108c2b5b",
+      "sessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
       "seconds": 3.8,
       "result": {
-        "sessionId": "40b2b85e-5dce-4575-a69d-c508108c2b5b",
-        "backendSessionId": "40b2b85e-5dce-4575-a69d-c508108c2b5b",
+        "sessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
+        "backendSessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
         "exitCode": 0,
         "isNew": true
       },
@@ -310,8 +309,8 @@
       ],
       "killResult": null,
       "logs": [
-        "warn [Chorus] pi stderr: Warning: No project session found with id '40b2b85e-5dce-4575-a69d-c508108c2b5b'; creating a new session with that id.",
-        "warn [Chorus] Previous Pi history could not be restored; continuing in a new Pi session with Chorus context. Session: 40b2b85e-5dce-4575-a69d-c508108c2b5b."
+        "warn [Chorus] pi stderr: Warning: No project session found with id '4dae6230-a388-427c-879c-c52dfafa079f'; creating a new session with that id.",
+        "warn [Chorus] Previous Pi history could not be restored; continuing in a new Pi session with Chorus context. Session: 4dae6230-a388-427c-879c-c52dfafa079f."
       ]
     }
   }

@@ -126,7 +126,7 @@ try {
   await new Promise((r) => setTimeout(r, 300));
   checks.interruptSentAbort = runs.interrupt.logs.some((l) => l.includes("sent pi abort"));
   checks.interruptNoEscalation = runs.interrupt.killResult?.escalated === false && runs.interrupt.killResult?.killed === true;
-  checks.interruptCleanExit = runs.interrupt.result.exitCode === 0;
+  checks.interruptReportedAsCancelled = runs.interrupt.result.exitCode === 130;
   checks.interruptNoLeftoverSleep = !leftover("^sleep 60");
 
   runs.dialog = await wake("Reply with exactly: DIALOG-OK", { args: ["--extension", extensionPath] });

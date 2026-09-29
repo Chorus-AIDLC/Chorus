@@ -197,6 +197,8 @@ export class PiRpcChannel {
     this.settled = false;
     /** True when the prompt was rejected or could not be delivered (D6). */
     this.failed = false;
+    /** True when a protocol stop cut the wake short (before or during the run). */
+    this.cancelled = false;
   }
 
   /** In-flight protocol stop (shared by repeated stop-hook invocations). */
@@ -305,6 +307,9 @@ export class PiRpcChannel {
    */
   stop({ protocolDeadline, beforeClose }) {
     if (this.#stopWork) return this.#stopWork;
+    // pi exits 0 on the EOF that ends a stop, so remember that this wake was cut
+    // short: a run that had not settled (or never started) is not a clean finish.
+    this.cancelled = !this.settled && !this.stdinClosed;
     this.#stopWork = (async () => {
       try {
         if (this.promptSent && !this.settled && !this.stdinClosed) {
@@ -375,6 +380,8 @@ export class PiRpcChannel {
       case ID_PROMPT:
         if (ok) {
           // Accepted is not done: check whether a run actually started (design D2 step 5).
+          // A very short run can settle before this response is read; nothing to check then.
+          if (this.settled) return;
           this.write({ id: ID_IDLE_CHECK, type: "get_state" }, "get_state (idle check)");
           return;
         }
@@ -656,9 +663,11 @@ export class PiSpawner {
       awaitChildSettled(child, { logger: this.logger, label: "pi" }).then((raw) => {
         channel.markExited();
         unregisterStopHook();
-        // pi RPC exits 0 on stdin EOF, so a rejected/undelivered prompt must not
-        // read as success (design D6). A non-zero raw code is always kept.
-        const code = raw === 0 && channel.failed ? 1 : raw;
+        // pi RPC exits 0 on stdin EOF, so neither a cancelled wake (130, like the Codex
+        // backend) nor a rejected/undelivered prompt (1) may read as a clean finish
+        // (design D6) — the waker records a clean exit as an `ended` turn. A non-zero
+        // raw code is always kept.
+        const code = raw !== 0 ? raw : channel.cancelled ? 130 : channel.failed ? 1 : 0;
         if (code !== 0) {
           this.logger.warn(`[Chorus] pi exited with code ${code}`);
         }

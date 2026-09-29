@@ -545,6 +545,9 @@ the old `--mode json -p` path, and sessions created by it resume unchanged.
 - **Extension dialogs are cancelled.** A blocking extension dialog (select,
   confirm, input, editor) is answered with "cancelled" immediately, and the daemon
   logs `[Chorus] cancelled pi extension <method> dialog (headless daemon)`.
+- **Finding the process.** Pi sets its process title to `pi`, which overwrites
+  its command line on Linux, so `pgrep -f 'pi --mode rpc'` finds nothing. Use
+  `pgrep -x pi -P <daemon-pid>` instead.
 - **Lost history is visible.** If pi cannot restore an idea's earlier session, the
   wake continues in a new session, the daemon logs a warning, and the conversation
   shows a notice.

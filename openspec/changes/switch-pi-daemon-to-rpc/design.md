@@ -48,7 +48,7 @@ After spawn the spawner writes, one JSON object per line (`JSON.stringify(obj) +
 
 1. `{"id":"chorus-state-1","type":"get_state"}`.
 2. On its `response`: record `messageCount`, `sessionFile` and `sessionId` (D5), then — unless a stop has started — write `{"id":"chorus-prompt-1","type":"prompt","message":<prompt>}`. If the `get_state` response is `success:false` or lacks `data`, log a warning, treat continuity as unknown (`isNew` falls back to the input value) and still send the prompt.
-3. On the prompt `response`: `success:false` → log the error text, mark the wake failed (D6) and close stdin. `success:true` → write `{"id":"chorus-state-2","type":"get_state"}` (the idle check below).
+3. On the prompt `response`: `success:false` → log the error text, mark the wake failed (D6) and close stdin. `success:true` → write `{"id":"chorus-state-2","type":"get_state"}` (the idle check below), unless `agent_settled` already arrived.
 4. On the first `agent_settled` after the prompt was sent: close stdin (unless a stop owns the close, D4). Pi then disposes and exits.
 5. Idle check. Pi accepts some prompts without starting an agent run: a leading `/` handled as an extension command, or an extension `input` handler returning `handled` (`agent-session.js` `prompt()` calls `preflightResult(true)` and returns). No `agent_start` / `agent_settled` follows, so step 4 would never fire. For a prompt that starts a run, `preflightResult(true)` is followed synchronously by `_runAgentPrompt`, which sets `_isAgentRunActive` (`isStreaming`) before pi can read our next stdin line. So when the `chorus-state-2` response reports `isStreaming: false` and neither `agent_start` nor `agent_settled` has been seen, the prompt was handled without a run: log `info("[Chorus] pi handled the prompt without an agent run")` and close stdin. The wake settles with the raw exit code, which matches JSON print mode (`await session.prompt()` returned and pi exited 0). If the check reports `isStreaming: true`, or `agent_start` was already seen, nothing changes and step 4 closes stdin. A failed or unusable `chorus-state-2` response is logged and ignored (step 4 still applies).
 
@@ -88,7 +88,13 @@ A directory listing error is logged and treated as "no evidence of lost history"
 
 ### D6. Exit code
 
-Pi RPC exits 0 on stdin EOF. To keep "early failure is not success", a rejected `prompt` (D2 step 3) or a `get_state`/prompt write that fails because stdin is gone settles with `exitCode: 1` when the raw exit code is 0; a non-zero raw code is always kept. Otherwise the raw exit code is reported, which matches JSON mode (a model error inside a run exited 0 there too).
+Pi RPC exits 0 on stdin EOF, and the waker records a clean exit as an `ended` turn. So when the raw exit code is 0:
+- a wake cut short by a protocol stop (the stop started before `agent_settled`, including before the prompt was sent) settles with **130**, the same code the Codex backend reports for a cancel, so the turn is recorded as `interrupted(user)` / `interrupted(shutdown)` as before;
+- a rejected `prompt` (D2 step 3) or a prompt write that fails because stdin is gone settles with **1**.
+
+A non-zero raw code is always kept. Otherwise the raw exit code is reported, which matches JSON mode (a model error inside a run exited 0 there too). A stop that arrives after `agent_settled` keeps exit 0: the run had finished.
+
+(Found in the live daemon wake matrix: without the 130 mapping an interrupted Pi turn was recorded as `ended`, although the execution row said `interrupted(user)`.)
 
 ### D7. Version gate
 

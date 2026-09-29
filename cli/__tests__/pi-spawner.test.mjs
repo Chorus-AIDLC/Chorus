@@ -398,6 +398,18 @@ describe("PiSpawner.wake — RPC completion", () => {
     expect((await p).exitCode).toBe(0);
   });
 
+  it("skips the idle check when the run already settled before the prompt response was read", async () => {
+    const { child, logger, p } = await startWake();
+    child.frame(stateResponse("chorus-state-1", { messageCount: 0 }));
+    child.frame({ type: "agent_start" });
+    child.frame({ type: "agent_settled" });
+    child.frame(promptOk);
+    expect(child.stdin.commands().map((c) => c.id)).toEqual(["chorus-state-1", "chorus-prompt-1"]);
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("dropped"));
+    child.emit("close", 0);
+    expect((await p).exitCode).toBe(0);
+  });
+
   it("idle check isStreaming:false after agent_start leaves completion to agent_settled", async () => {
     const { child, p } = await startWake();
     child.frame(stateResponse("chorus-state-1", { messageCount: 0 }));
@@ -650,7 +662,8 @@ describe("PiSpawner — protocol stop hook", () => {
     expect(order).toEqual(["beforeClose", "end"]);
     expect(beforeClose).toHaveBeenCalledTimes(1);
     child.emit("close", 0);
-    expect((await p).exitCode).toBe(0);
+    // pi exits 0 on EOF; a cancelled run must not read as a clean finish (→ `ended` turn).
+    expect((await p).exitCode).toBe(130);
   });
 
   it("the abort response also ends the wait", async () => {
@@ -704,10 +717,10 @@ describe("PiSpawner — protocol stop hook", () => {
     expect(beforeClose).toHaveBeenCalledTimes(1);
     expect(child.stdin.end).toHaveBeenCalledTimes(1);
     child.emit("close", 0);
-    expect((await p).exitCode).toBe(0);
+    expect((await p).exitCode).toBe(130);
   });
 
-  it("stop from inside onChild (cancel before spawn) sends no prompt and is not a failure", async () => {
+  it("stop from inside onChild (cancel before spawn) sends no prompt and reports a cancel, not a failure", async () => {
     const child = makeFakeChild();
     const { spawner } = makeSpawner({ child });
     let stop;
@@ -720,7 +733,7 @@ describe("PiSpawner — protocol stop hook", () => {
     await stop;
     expect(child.stdin.commands().some((c) => c.type === "prompt")).toBe(false);
     child.emit("close", 0);
-    expect((await p).exitCode).toBe(0);
+    expect((await p).exitCode).toBe(130);
   });
 
   it("stop after agent_settled skips the abort but still awaits beforeClose", async () => {
@@ -731,7 +744,17 @@ describe("PiSpawner — protocol stop hook", () => {
     expect(child.stdin.commands().some((c) => c.type === "abort")).toBe(false);
     expect(beforeClose).toHaveBeenCalledTimes(1);
     child.emit("close", 0);
-    await p;
+    // The run finished before the stop: still a clean exit.
+    expect((await p).exitCode).toBe(0);
+  });
+
+  it("a non-zero raw exit wins over the cancel mapping", async () => {
+    const { child, p, hook } = await startRunning();
+    const stop = hook({ deadline: Date.now() + 5000, protocolDeadline: Date.now() + 5000 });
+    child.emit("exit", 2);
+    await stop;
+    child.emit("close", 2);
+    expect((await p).exitCode).toBe(2);
   });
 
   it("a failing beforeClose is logged and stdin still closes", async () => {
@@ -812,7 +835,7 @@ describe("PiSpawner — recorded fixtures (pi 0.85.1)", () => {
     const { result, cmds, endedAfter } = await replay("abort-running-tool", { stop: true });
     expect(cmds.filter((c) => c.type === "abort")).toEqual([{ id: "chorus-abort-1", type: "abort" }]);
     expect(endedAfter).toBe("stop");
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(130);
   });
 
   it("handled without a run: the idle check closes stdin", async () => {
