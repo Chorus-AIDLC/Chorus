@@ -1,10 +1,10 @@
 # Research action availability verification
 
-Idea: `940b328e-1d43-4a43-8a41-21be5f1212f5`  
-Proposal: `26509a17-eb29-444f-81fe-5719b400b2f7`  
-Task: `8ad6203a-fc72-4492-9a46-aa4cd237c883`  
-Branch: `fix/research-action-availability`  
-Base: `81172effdaa1bf7f5645d02249f2ab458c691784`
+- Idea: `940b328e-1d43-4a43-8a41-21be5f1212f5`
+- Proposal: `26509a17-eb29-444f-81fe-5719b400b2f7`
+- Task: `8ad6203a-fc72-4492-9a46-aa4cd237c883`
+- Branch: `fix/research-action-availability`
+- Base: `81172effdaa1bf7f5645d02249f2ab458c691784`
 
 ## Implemented behavior
 
