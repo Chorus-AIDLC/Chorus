@@ -31,6 +31,16 @@ function fakeSpawn(type) {
         if (JSON.parse(text).type === "user") queueMicrotask(() => child.stdout.emit("data", JSON.stringify({ type: "result", subtype: "success" }) + "\n"));
         return true;
       }
+      if (type === "pi") {
+        // pi RPC: answer get_state / prompt, then settle; the spawner then calls end().
+        const cmd = JSON.parse(text);
+        const out = (data) => child.stdout.emit("data", JSON.stringify(data) + "\n");
+        queueMicrotask(() => {
+          if (cmd.type === "get_state") out({ id: cmd.id, type: "response", command: "get_state", success: true, data: { messageCount: 0, isStreaming: cmd.id !== "chorus-state-1" } });
+          if (cmd.type === "prompt") { out({ id: cmd.id, type: "response", command: "prompt", success: true }); out({ type: "agent_start" }); out({ type: "agent_settled" }); }
+        });
+        return true;
+      }
       if (type !== "dsh") return true;
       const req = JSON.parse(text);
       const send = (data) => child.stdout.emit("data", JSON.stringify({ jsonrpc: "2.0", ...data }) + "\n");
@@ -55,7 +65,7 @@ function backendOpts(type, overrides = {}) {
     [`${type === "claude-code" ? "claude" : type}Path`]: `/fake/${type}`,
     spawnImpl: fakeSpawn(type), getThreadIdFn: () => null, setThreadIdFn: () => {}, getUsageSnapshotFn: () => null, setUsageSnapshotFn: () => {},
     getSessionIdFn: () => null, snapshotSessionsFn: () => new Set(), reconstructTranscript: null,
-    hasChorusMcpServerFn: () => true, prepareManagedConfigFn: async () => ({ home: "/managed" }),
+    hasChorusMcpServerFn: () => true, prepareManagedConfigFn: async () => ({ home: "/managed" }), versionProbeFn: async () => "0.85.1\n",
     timeoutMs: 100, shutdownTimeoutMs: 100, ...overrides,
   };
 }
@@ -72,15 +82,14 @@ describe("actual daemon spawn customization", () => {
       expect(result.exitCode).toBe(0);
       const [command, argv, options] = opts.spawnImpl.mock.calls[0];
       expect(command).toBe(`/fake/${type}`);
-      const sentinel = type === "pi";
-      expect(argv.slice(sentinel ? -args.length - 1 : -args.length, sentinel ? -1 : undefined)).toEqual(args);
+      expect(argv.slice(-args.length)).toEqual(args);
       expect(argv).not.toContain(wake.prompt);
       expect(options).toMatchObject({ shell: false, cwd: "/work", env: { TOKEN: "${TOKEN} literal", PATH: "/profile", CHORUS_DAEMON_HEADLESS: "1", CHORUS_AGENT_PROFILE: UUID } });
       expect(opts.env).toEqual({ PATH: "/base", CLAUDECODE: "nested" });
       if (type === "claude-code") { expect(options.env.CLAUDECODE).toBeUndefined(); expect(argv).toContain(resumed ? "--resume" : "--session-id"); }
       if (type === "codex") { expect(argv.slice(0, 3)).toEqual(["app-server", "--listen", "stdio://"]); expect(opts.spawnImpl.mock.results[0].value.requests[2].method).toBe(resumed ? "thread/resume" : "thread/start"); }
       if (type === "kiro") expect(argv.slice(0, 2)).toEqual(["chat", "--no-interactive"]);
-      if (type === "pi") expect(argv.at(-1)).toBe("-p");
+      if (type === "pi") { expect(argv.slice(0, 2)).toEqual(["--mode", "rpc"]); expect(argv).not.toContain("-p"); }
       if (type === "dsh") {
         expect(argv.slice(0, 2)).toEqual(["--profile", "sdk"]);
         expect(prepare.mock.calls[0][0].env).toMatchObject(config.env);
@@ -266,8 +275,7 @@ describe("actual foreground launches", () => {
       const daemon = backendOpts(type, { cliConfig: { args } });
       await selectSpawner(type, daemon).wake(wake);
       const argv = daemon.spawnImpl.mock.calls[0][1];
-      const sentinel = type === "pi";
-      expect(argv.slice(-args.length - Number(sentinel), sentinel ? -1 : undefined)).toEqual(args);
+      expect(argv.slice(-args.length)).toEqual(args);
     }
     const foreground = launchOpts({ agents: [{ agentType: type, args }] });
     expect(await runAgentLaunch(["--", "--model", "new"], foreground)).toBe(0);
@@ -306,7 +314,7 @@ describe("actual foreground launches", () => {
     const args = ["--model", "chosen", "--thinking", "high"];
     const daemon = backendOpts("pi", { cliConfig: { args } });
     await selectSpawner("pi", daemon).wake(wake);
-    expect(daemon.spawnImpl.mock.calls[0][1].slice(-5)).toEqual([...args, "-p"]);
+    expect(daemon.spawnImpl.mock.calls[0][1].slice(-4)).toEqual(args);
     const foreground = launchOpts({ agents: [{ agentType: "pi", args }] });
     expect(await runAgentLaunch(["--", "--list-models", "explicit-filter"], foreground)).toBe(0);
     expect(foreground.spawnImpl.mock.calls[0][1]).toEqual([...args, "--list-models", "explicit-filter"]);

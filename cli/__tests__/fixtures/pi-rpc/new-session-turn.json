@@ -1,0 +1,252 @@
+{
+  "provenance": "live",
+  "piVersion": "0.85.1",
+  "capturedAt": "2026-09-29",
+  "description": "New --session-id anchor: get_state (messageCount 0) -> prompt -> events -> agent_settled; stdin closed after agent_settled, exit 0.",
+  "writes": [
+    {
+      "id": "chorus-state-1",
+      "type": "get_state"
+    },
+    {
+      "id": "chorus-prompt-1",
+      "type": "prompt",
+      "message": "Reply with exactly: PONG1"
+    }
+  ],
+  "frames": [
+    {
+      "type": "extension_ui_request",
+      "id": "872ea49e-b7a9-4c2f-88f2-16dcc722445f",
+      "method": "notify",
+      "message": "Chorus connected at https://chorus.example (redacted)",
+      "notifyType": "info"
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "e4a2871f-5879-4a91-ab57-9c896872c920",
+      "method": "setStatus",
+      "statusKey": "mcp",
+      "statusText": "\u001b[38;5;109m🔌 MCP: 1 server enabled\u001b[39m"
+    },
+    {
+      "id": "chorus-state-1",
+      "type": "response",
+      "command": "get_state",
+      "success": true,
+      "data": {
+        "isStreaming": false,
+        "isCompacting": false,
+        "sessionFile": "/home/user/.pi/agent/sessions/--tmp-pirpc--/2026-09-29T06-01-46-679Z_d46d65af-cbd4-4b9b-9df4-e5ce4175e0c4.jsonl",
+        "sessionId": "d46d65af-cbd4-4b9b-9df4-e5ce4175e0c4",
+        "messageCount": 0,
+        "pendingMessageCount": 0
+      }
+    },
+    {
+      "id": "chorus-prompt-1",
+      "type": "response",
+      "command": "prompt",
+      "success": true
+    },
+    {
+      "type": "agent_start"
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Reply with exactly: PONG1"
+          }
+        ],
+        "timestamp": 1790661707397
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Reply with exactly: PONG1"
+          }
+        ],
+        "timestamp": 1790661707397
+      }
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "custom",
+        "customType": "chorus",
+        "content": "<chorus-pi SessionStart context (redacted)>",
+        "display": false,
+        "timestamp": 1790661707397
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "custom",
+        "customType": "chorus",
+        "content": "<chorus-pi SessionStart context (redacted)>",
+        "display": false,
+        "timestamp": 1790661707397
+      }
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "pending",
+        "timestamp": 1790661707436
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "PONG1"
+          }
+        ],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 4,
+          "output": 6,
+          "cacheRead": 8246,
+          "cacheWrite": 2326,
+          "totalTokens": 10582,
+          "cost": {
+            "input": 0.00004,
+            "output": 0.00030000000000000003,
+            "cacheRead": 0.0020615,
+            "cacheWrite": 0.029075,
+            "total": 0.0314765
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1790661707436,
+        "rawStopReason": "end_turn"
+      }
+    },
+    {
+      "type": "turn_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "PONG1"
+          }
+        ],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 4,
+          "output": 6,
+          "cacheRead": 8246,
+          "cacheWrite": 2326,
+          "totalTokens": 10582,
+          "cost": {
+            "input": 0.00004,
+            "output": 0.00030000000000000003,
+            "cacheRead": 0.0020615,
+            "cacheWrite": 0.029075,
+            "total": 0.0314765
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1790661707436,
+        "rawStopReason": "end_turn"
+      },
+      "toolResults": []
+    },
+    {
+      "type": "agent_end",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Reply with exactly: PONG1"
+            }
+          ],
+          "timestamp": 1790661707397
+        },
+        {
+          "role": "custom",
+          "customType": "chorus",
+          "content": "<chorus-pi SessionStart context (redacted)>",
+          "display": false,
+          "timestamp": 1790661707397
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "PONG1"
+            }
+          ],
+          "api": "bedrock-converse-stream",
+          "provider": "amazon-bedrock",
+          "model": "global.anthropic.claude-fable-5-1",
+          "usage": {
+            "input": 4,
+            "output": 6,
+            "cacheRead": 8246,
+            "cacheWrite": 2326,
+            "totalTokens": 10582,
+            "cost": {
+              "input": 0.00004,
+              "output": 0.00030000000000000003,
+              "cacheRead": 0.0020615,
+              "cacheWrite": 0.029075,
+              "total": 0.0314765
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1790661707436,
+          "rawStopReason": "end_turn"
+        }
+      ],
+      "willRetry": false
+    },
+    {
+      "type": "agent_settled"
+    }
+  ],
+  "exitCode": 0
+}
