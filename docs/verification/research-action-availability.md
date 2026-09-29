@@ -111,6 +111,22 @@ with the same no-open-document condition. No encrypted file was read or modified
 through filesystem tools.
 
 The waiver settles the design-file portion of AC7; its browser/theme checks
-passed as recorded above. Formal task review, admin verification, aggregate code
-review, OpenSpec archive and the Idea completion report are the remaining steps.
-No branch was pushed or merged.
+passed as recorded above. Independent task review
+`e892005e-bf52-4b47-b45e-b5855397d131` passed all seven criteria; the task is
+admin-verified `done`. Aggregate code review
+`b7192ab5-a30e-4661-868a-1b1d4888b0d6` passed in round 1 with no blockers or
+notes. Both reviewers independently reran the 151 focused tests, TypeScript
+and scoped lint and inspected the saved browser evidence. The final gateway
+also confirmed `git diff --check 81172eff..e53ab196` is clean.
+
+OpenSpec archived successfully as
+`openspec/changes/archive/2026-09-29-align-research-action-availability/`.
+The cumulative `openspec/specs/research-action-availability/spec.md` passed strict
+validation and was mirrored to Chorus Document
+`dae3dcb7-cbef-463a-bcda-e2b9cd310bc2` v2. The supported round-trip verifier
+confirmed exact bytes. The updated PRD and design mirrors also passed exact-byte
+round-trip checks.
+
+Completion report: `a6efed8f-b11b-4536-9cb8-7021da162346` (proposal
+`26509a17-eb29-444f-81fe-5719b400b2f7`). Delivery is complete in the local branch;
+no branch was pushed, merged or deployed.
