@@ -73,7 +73,7 @@ The spawner handles stdout frames with `type` `control_request`, `control_respon
 | `control_response` | any | correlate with the pending interrupt `request_id` (D4); otherwise ignore |
 | `control_cancel_request` | any | ignore (debug-level; nothing pending on our side) |
 
-The deny message tells the model the tool is blocked by the daemon's `--chorus-only` policy and that it should use Chorus MCP tools or ask the human through a Chorus comment. The warn line contains only the tool name and never the tool input, which could hold secrets. Visibility in turn events is already provided by the forwarded stream: the denied call surfaces as the `tool_result` inside a forwarded `user` frame, and it is listed in `result.permission_denials`. Both reach `onMessage` and the transcript unchanged, so this change adds no new turn-event type.
+The deny message tells the model the tool is blocked by the daemon's `--chorus-only` policy and that it should use Chorus MCP tools or ask the human through a Chorus comment. The warn line contains only the tool name and never the tool input, which could hold secrets. The denied call also reaches `onMessage` unchanged, as the `tool_result` inside a forwarded `user` frame and in `result.permission_denials`. The uploaded conversation transcript, however, drops tool-result blocks (existing upload-hooks behavior, confirmed in task 3), so the **daemon warn log is the visible record of the denial**. This change adds no new turn-event type.
 
 ### D4. Protocol interrupt through the stop hook
 

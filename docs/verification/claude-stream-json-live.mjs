@@ -141,13 +141,13 @@ const word = `PELICAN${Math.floor(Math.random() * 9000 + 1000)}`;
 const anchor = randomUUID();
 scenarios.newSession = await wake({
   sessionId: anchor,
-  prompt: `Remember this code word: ${word}. Reply with exactly: OK`,
+  prompt: `For this conversation, the project tag is ${word}. Reply with exactly: OK`,
 });
 
 // 2. Resume the same anchor; context must be retained.
 scenarios.resume = await wake({
   sessionId: anchor,
-  prompt: "What code word did I ask you to remember? Reply with only the word.",
+  prompt: "What project tag did I mention earlier in this conversation? Reply with only the tag.",
 });
 scenarios.resume.recalledWord = scenarios.resume.result?.text?.includes(word) ?? false;
 
@@ -171,7 +171,7 @@ let interruptSentAfterMs = null;
 const t0 = Date.now();
 scenarios.interrupt = await wake({
   sessionId: interruptAnchor,
-  prompt: `The code word is ${word}. Now, directly in your reply (no tools, no files), write a complete, heavily commented Python module implementing a red-black tree with insert, delete, search, in-order iteration and a full unittest suite. Make it long and thorough.`,
+  prompt: `Reminder: the project tag is ${word}. Now, directly in your reply (no tools, no files), write a complete, heavily commented Python module implementing a red-black tree with insert, delete, search, in-order iteration and a full unittest suite. Make it long and thorough.`,
   onSpawn: (child) => {
     let fired = false;
     child.stdout.on("data", (c) => {
@@ -189,7 +189,7 @@ scenarios.interrupt.interruptSentAfterMs = interruptSentAfterMs;
 scenarios.interrupt.killProcessTree = killResult;
 scenarios.interruptResume = await wake({
   sessionId: interruptAnchor,
-  prompt: "Stop that. What code word did I give you? Reply with only the word.",
+  prompt: "Never mind that task. What project tag did I mention earlier in this conversation? Reply with only the tag.",
 });
 scenarios.interruptResume.recalledWord = scenarios.interruptResume.result?.text?.includes(word) ?? false;
 
@@ -247,6 +247,7 @@ const checks = {
   interruptViaProtocolNoEscalation: scenarios.interrupt.stdinWrites.some((w) => w.subtype === "interrupt") && killResult?.escalated === false && killResult?.signaled === false,
   interruptEndedTurn: scenarios.interrupt.result?.subtype === "error_during_execution",
   interruptResumeWorks: scenarios.interruptResume.wakeResult.exitCode === 0 && scenarios.interruptResume.isNewProbe === false,
+  interruptResumeRetainedContext: scenarios.interruptResume.recalledWord === true,
   yoloAskUserQuestionAbsent: !scenarios.yoloNoAskUserQuestion.askUserQuestionInTools && scenarios.yoloNoAskUserQuestion.bashInTools &&
     scenarios.yoloNoAskUserQuestion.wakeResult.exitCode === 0,
   chorusOnlyAskUserQuestionAbsent: Object.entries(scenarios).filter(([n]) => n !== "yoloNoAskUserQuestion").every(([, s]) => s.askUserQuestionInTools === false),

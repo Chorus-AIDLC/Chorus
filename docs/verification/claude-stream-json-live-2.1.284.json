@@ -2,7 +2,7 @@
   "claudeVersion": "2.1.284",
   "platform": "linux",
   "model": "haiku",
-  "recordedAt": "2026-09-29T02:19:09.496Z",
+  "recordedAt": "2026-09-29T02:24:31.218Z",
   "script": "docs/verification/claude-stream-json-live.mjs",
   "checks": {
     "newSessionExit0": true,
@@ -18,6 +18,7 @@
     "interruptViaProtocolNoEscalation": true,
     "interruptEndedTurn": true,
     "interruptResumeWorks": true,
+    "interruptResumeRetainedContext": true,
     "yoloAskUserQuestionAbsent": true,
     "chorusOnlyAskUserQuestionAbsent": true
   },
@@ -48,7 +49,7 @@
         "stream-json",
         "--verbose",
         "--session-id",
-        "a920f866-4889-41f2-a4e8-c9c45809ef0e",
+        "f3a6a0f9-f646-4097-9b7a-a3d6e46cca9c",
         "--disallowedTools",
         "AskUserQuestion",
         "--allowedTools",
@@ -101,7 +102,7 @@
         "stream-json",
         "--verbose",
         "--resume",
-        "a920f866-4889-41f2-a4e8-c9c45809ef0e",
+        "f3a6a0f9-f646-4097-9b7a-a3d6e46cca9c",
         "--disallowedTools",
         "AskUserQuestion",
         "--allowedTools",
@@ -131,7 +132,7 @@
       "result": {
         "subtype": "success",
         "isError": false,
-        "text": "PELICAN4409",
+        "text": "PELICAN1419",
         "permissionDenials": []
       },
       "warnings": [],
@@ -155,7 +156,7 @@
         "stream-json",
         "--verbose",
         "--session-id",
-        "b5e56d6c-c01c-4227-9fda-90ddcc2938af",
+        "73de607a-cde8-410c-878b-2d41cc497c36",
         "--disallowedTools",
         "AskUserQuestion",
         "--allowedTools",
@@ -179,7 +180,7 @@
           "type": "control_request",
           "subtype": "can_use_tool",
           "toolName": "Bash",
-          "requestId": "4ab8123d-5b39-4b14-b28e-3e66cbadca2c"
+          "requestId": "22f5adff-f1f5-4d6d-91cc-9db657d17a8f"
         }
       ],
       "stdinWrites": [
@@ -191,7 +192,7 @@
           "type": "control_response",
           "subtype": "success",
           "behavior": "deny",
-          "requestId": "4ab8123d-5b39-4b14-b28e-3e66cbadca2c"
+          "requestId": "22f5adff-f1f5-4d6d-91cc-9db657d17a8f"
         }
       ],
       "stdinClosedAtResult": true,
@@ -231,7 +232,7 @@
         "stream-json",
         "--verbose",
         "--session-id",
-        "342c66d1-0a82-4c85-b45e-ac84dfbe9a7c",
+        "10da6bde-6ec9-4161-b3d3-67fb14c560c7",
         "--disallowedTools",
         "AskUserQuestion",
         "--allowedTools",
@@ -245,7 +246,6 @@
       "forwardedTypes": [
         "system:init",
         "system:thinking_tokens",
-        "assistant",
         "user",
         "result:error_during_execution"
       ],
@@ -282,7 +282,7 @@
       "infos": [
         "[Chorus] interrupt: sent claude control_request chorus-interrupt-1"
       ],
-      "interruptSentAfterMs": 2767,
+      "interruptSentAfterMs": 2918,
       "killProcessTree": {
         "signaled": false,
         "killed": true,
@@ -306,7 +306,7 @@
         "stream-json",
         "--verbose",
         "--resume",
-        "342c66d1-0a82-4c85-b45e-ac84dfbe9a7c",
+        "10da6bde-6ec9-4161-b3d3-67fb14c560c7",
         "--disallowedTools",
         "AskUserQuestion",
         "--allowedTools",
@@ -336,7 +336,7 @@
       "result": {
         "subtype": "success",
         "isError": false,
-        "text": "PELICAN4409",
+        "text": "PELICAN1419",
         "permissionDenials": []
       },
       "warnings": [],
@@ -360,7 +360,7 @@
         "stream-json",
         "--verbose",
         "--session-id",
-        "74f6ba5f-1de6-4572-8196-c69139eb5f04",
+        "4693e8fb-473f-4efd-a00d-425a5cd91d4b",
         "--disallowedTools",
         "AskUserQuestion",
         "--dangerously-skip-permissions",
