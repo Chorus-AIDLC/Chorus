@@ -10,6 +10,7 @@ import { IdeaActionsMenu } from "../panels/idea-actions-menu";
 
 const mocks = vi.hoisted(() => ({
   start: vi.fn(), yolo: vi.fn(), reassign: vi.fn(), success: vi.fn(), error: vi.fn(),
+  research: vi.fn(), researchEligibility: vi.fn(),
   connections: [{ agentUuid: "agent-1", effectiveStatus: "online" }],
 }));
 vi.mock("@/contexts/agent-presence-context", () => ({ useAgentPresenceOptional: () => ({ connections: mocks.connections }) }));
@@ -17,6 +18,9 @@ vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/stage-advance-action
   startDevelopmentAction: mocks.start, yoloRequestedAction: mocks.yolo,
 }));
 vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions", () => ({ reassignIdeaInstanceNoWakeAction: mocks.reassign }));
+vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/research-actions", () => ({
+  researchIdeaAction: mocks.research, researchEligibilityAction: mocks.researchEligibility,
+}));
 vi.mock("sonner", () => ({ toast: { success: mocks.success, error: mocks.error } }));
 
 const callbacks = { onVerify: vi.fn(), onDerive: vi.fn(), onSetParent: vi.fn(), onMove: vi.fn(), onEdit: vi.fn(), onDelete: vi.fn(), onStarted: vi.fn() };
@@ -63,6 +67,8 @@ beforeEach(() => {
   mocks.start.mockResolvedValue({ success: true });
   mocks.yolo.mockResolvedValue({ success: true });
   mocks.reassign.mockResolvedValue({ success: true });
+  mocks.research.mockResolvedValue({ success: true });
+  mocks.researchEligibility.mockResolvedValue({ eligible: true });
   preview();
   mockViewport(false);
   window.history.replaceState(null, "", "/projects/project-1/dashboard?panel=old&tab=tasks&search=noise#hash");
@@ -75,6 +81,82 @@ beforeEach(() => {
 async function open(user: ReturnType<typeof userEvent.setup>) { await user.click(screen.getByRole("button", { name: "Actions" })); }
 
 describe("Tracker Actions — real Radix interactions", () => {
+  describe.each([false, true])("Research cwd retry, mobile=%s", (mobile) => {
+    it.each(["pick", "auto_pin"])("captures the %s selection and dispatches atomically without lifecycle assignment", async (outcome) => {
+      mockViewport(mobile);
+      preview(outcome);
+      mocks.research.mockResolvedValueOnce({ success: false, errorCode: "assignment_required" });
+      const retry = deferred<{ success: boolean }>();
+      mocks.research.mockReturnValueOnce(retry.promise);
+      const user = userEvent.setup();
+      render(<Harness />);
+      await open(user);
+      await user.click(screen.getByRole(mobile ? "button" : "menuitem", { name: "Research" }));
+      if (outcome === "pick") {
+        const picker = await screen.findByRole("dialog");
+        expect(picker.contains(document.activeElement)).toBe(true);
+        expect(mocks.research).toHaveBeenCalledExactlyOnceWith("idea-1");
+        await user.click(screen.getByRole("button", { name: en.wakeCwdPicker.confirm }));
+      }
+      await waitFor(() => expect(mocks.research).toHaveBeenCalledTimes(2));
+      expect(mocks.research).toHaveBeenLastCalledWith("idea-1", undefined, { agentUuid: "agent-1", instanceUuid: "i1" });
+      expect(mocks.reassign).not.toHaveBeenCalled();
+      expect(mocks.success).not.toHaveBeenCalled();
+      await open(user);
+      const research = screen.getByRole(mobile ? "button" : "menuitem", { name: "Research" });
+      expect(research.getAttribute("aria-disabled")).toBe("true");
+      await user.click(research);
+      act(() => research.focus());
+      await user.keyboard("{Enter} ");
+      expect(mocks.research).toHaveBeenCalledTimes(2);
+      await act(async () => retry.resolve({ success: true }));
+      expect(mocks.success).toHaveBeenCalledExactlyOnceWith(en.research.dispatched);
+      expect(callbacks.onStarted).toHaveBeenCalledOnce();
+      await user.click(screen.getByRole(mobile ? "button" : "menuitem", { name: "Research" }));
+      expect(mocks.research).toHaveBeenLastCalledWith("idea-1");
+      expect(mocks.research).toHaveBeenCalledTimes(3);
+    });
+    it("cancels cwd selection without dispatch and allows a fresh request", async () => {
+      mockViewport(mobile);
+      preview("pick");
+      mocks.research.mockResolvedValueOnce({ success: false, errorCode: "assignment_required" });
+      const user = userEvent.setup();
+      render(<Harness />);
+      await open(user);
+      await user.click(screen.getByRole(mobile ? "button" : "menuitem", { name: "Research" }));
+      await screen.findByRole("dialog");
+      await user.click(screen.getByRole("button", { name: en.wakeCwdPicker.cancel }));
+      expect(mocks.research).toHaveBeenCalledExactlyOnceWith("idea-1");
+      expect(mocks.reassign).not.toHaveBeenCalled();
+      expect(mocks.success).not.toHaveBeenCalled();
+      await open(user);
+      await user.click(screen.getByRole(mobile ? "button" : "menuitem", { name: "Research" }));
+      expect(mocks.research).toHaveBeenCalledTimes(2);
+      expect(mocks.research).toHaveBeenLastCalledWith("idea-1");
+    });
+    it("surfaces a rejected cwd retry without reopening the picker or claiming success", async () => {
+      mockViewport(mobile);
+      preview("pick");
+      mocks.research.mockResolvedValueOnce({ success: false, errorCode: "assignment_required" })
+        .mockResolvedValueOnce({ success: false, errorCode: "target_changed" });
+      const user = userEvent.setup();
+      render(<Harness />);
+      await open(user);
+      await user.click(screen.getByRole(mobile ? "button" : "menuitem", { name: "Research" }));
+      await screen.findByRole("dialog");
+      await user.click(screen.getByRole("button", { name: en.wakeCwdPicker.confirm }));
+      await waitFor(() => expect(mocks.error).toHaveBeenCalledWith(en.research.target_changed));
+      expect(mocks.research).toHaveBeenCalledTimes(2);
+      expect(mocks.reassign).not.toHaveBeenCalled();
+      expect(mocks.success).not.toHaveBeenCalled();
+      expect(callbacks.onStarted).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      await open(user);
+      await user.click(screen.getByRole(mobile ? "button" : "menuitem", { name: "Research" }));
+      expect(mocks.research).toHaveBeenLastCalledWith("idea-1");
+      expect(mocks.research).toHaveBeenCalledTimes(3);
+    });
+  });
   it("uses a touch-sized bottom sheet on mobile with visible disabled reasons and safe-area padding", async () => {
     mockViewport(true);
     const user = userEvent.setup();
@@ -193,6 +275,7 @@ describe("Tracker Actions — real Radix interactions", () => {
     mocks.connections = [{ agentUuid: "agent-1", effectiveStatus: "online" }];
     view.rerender(<Harness />);
     expect(screen.getByRole("menuitem", { name: "Yolo" }).getAttribute("aria-disabled")).toBe("false");
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Research" }).getAttribute("aria-disabled")).toBe("false"));
   });
 
   it("copies canonical absolute link and exact UUID only after clipboard resolves", async () => {
