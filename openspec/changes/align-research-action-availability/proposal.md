@@ -18,9 +18,11 @@ the unassigned-agent chooser.
   selection for an already assigned agent when dispatch needs disambiguation.
 - Preserve stage eligibility, submission protection, queued feedback, retries,
   and server checks for actual origin/instance/cwd availability.
-- Update `docs/design.pen` through Pencil to reflect the Research disabled states
-  and verify desktop/mobile explanations in both light and dark themes, as required
-  by `CLAUDE.md`. Unavailable design or theme verification remains incomplete.
+- Verify desktop/mobile explanations in both light and dark themes. The human
+  explicitly waived this delivery's `docs/design.pen` synchronization on
+  2026-09-29: “不用管pencil，推进到完成” (Idea comment
+  `c24d81e7-78ed-4bec-960e-e517bea482f1`). This supersedes the repository's
+  design-file obligation for this delivery only; theme verification still applies.
 
 ## Capabilities
 

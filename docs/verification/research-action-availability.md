@@ -95,11 +95,14 @@ it does not claim production deployment or execution by a live daemon.
 Live presence transitions and successful dispatch/error paths are covered by
 the focused automated tests.
 
-## Remaining delivery requirement
+## Design waiver and review status
 
 `CLAUDE.md:215` requires updating `docs/design.pen` for every user-facing change
 through Pencil. This obligation was added to the proposal after the independent
-Round 1 review; Round 2 passed. It has not been waived for this change.
+Round 1 review; Round 2 passed. On 2026-09-29, the human explicitly waived it for
+this delivery: “不用管pencil，推进到完成” (Idea comment
+`c24d81e7-78ed-4bec-960e-e517bea482f1`, author
+`aa0b0ed8-23c9-4046-9bf5-b0b99bcbde88`).
 
 Pencil `get_app_state` failed with “Failed to access file undefined. A file needs
 to be open in the editor to perform this action.” An explicit-file
@@ -107,8 +110,7 @@ to be open in the editor to perform this action.” An explicit-file
 with the same no-open-document condition. No encrypted file was read or modified
 through filesystem tools.
 
-The task remains `in_progress`, with the design synchronization criterion
-incomplete. Formal task review, admin verification, aggregate code review,
-OpenSpec archive and the Idea completion report remain pending. A human must
-restore Pencil access or explicitly waive this delivery's design-file update
-before that criterion can be settled. No branch was pushed or merged.
+The waiver settles the design-file portion of AC7; its browser/theme checks
+passed as recorded above. Formal task review, admin verification, aggregate code
+review, OpenSpec archive and the Idea completion report are the remaining steps.
+No branch was pushed or merged.

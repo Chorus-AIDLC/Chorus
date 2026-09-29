@@ -46,11 +46,11 @@ any connection of the owning agent with effectiveStatus === "online".
 - Run focused ResearchAction and IdeaActionsMenu tests, existing server-action
   and research eligibility/service regressions, scoped lint and TypeScript.
 - Use the project's supported browser workflow to verify desktop/mobile disabled
-  states in both light and dark themes. Update `docs/design.pen` through Pencil
-  for the corresponding offline and assignment-required states, and inspect the
-  result through Pencil. These are mandatory repository delivery obligations.
-  If tools remain unavailable, record the limitation and leave the corresponding
-  acceptance criterion incomplete; do not claim verification or silently waive it.
+  states in both light and dark themes. These checks passed in the 16-case local
+  browser matrix. The human explicitly waived Pencil/design-file synchronization
+  for this delivery on 2026-09-29 (Idea comment
+  `c24d81e7-78ed-4bec-960e-e517bea482f1`: “不用管pencil，推进到完成”).
+  Record the waiver as the design portion of AC7; do not claim a Pencil update.
 
 ## Delivery
 
@@ -64,6 +64,5 @@ outside the present YOLO authorization.
 
 At proposal revision 2, Pencil get_app_state and execute with the explicit
 worktree file path both returned "A file needs to be open in the editor to
-perform this action." Implementation and browser checks can proceed after
-proposal approval, but delivery remains pending until the artifact can be
-updated or the human explicitly changes this delivery requirement.
+perform this action." The subsequent human waiver above resolves that delivery
+blocker. Independent task and aggregate code reviews still apply before completion.
