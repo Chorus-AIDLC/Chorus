@@ -13,7 +13,6 @@ import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 
 export function ResearchAction({ ideaUuid, assignee, disabledReason, refreshKey, onStarted, renderAction, onCloseAutoFocus }: {
   ideaUuid: string;
-  projectUuid: string;
   assignee: StartDevelopmentAssignee | null | undefined;
   disabledReason?: string;
   refreshKey: string;

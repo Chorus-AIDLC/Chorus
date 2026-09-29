@@ -166,7 +166,7 @@ export function IdeaActionsMenu(props: IdeaActionsMenuProps) {
   // These owners deliberately wrap the menu, NOT its content. Radix unmounts
   // content on selection; confirmation/picker state must survive that unmount.
   return (
-    <ResearchAction ideaUuid={props.ideaUuid} projectUuid={props.projectUuid} assignee={props.assignee}
+    <ResearchAction ideaUuid={props.ideaUuid} assignee={props.assignee}
       disabledReason={busyReason}
       onCloseAutoFocus={props.onCloseAutoFocus}
       refreshKey={JSON.stringify([props.proposals, props.tasks])}

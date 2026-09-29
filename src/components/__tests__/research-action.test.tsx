@@ -172,7 +172,7 @@ describe("Tracker Research action", () => {
   });
   it("shares the rendered reason with the handler, including external and resolving gates", async () => {
     let action!: StageAction;
-    const tree = (disabledReason?: string) => <ResearchAction ideaUuid="idea" projectUuid="project"
+    const tree = (disabledReason?: string) => <ResearchAction ideaUuid="idea"
       assignee={{ type: "agent", uuid: "agent" }} refreshKey="stable" disabledReason={disabledReason}
       onStarted={vi.fn()} renderAction={(value) => { action = value; return null; }} />;
     const view = render(tree("External block"));
@@ -219,7 +219,7 @@ describe("Tracker Research action", () => {
   it("blocks only submission and allows another explicit request immediately after acceptance", async () => {
     let accept!: (result: unknown) => void;
     mocks.dispatch.mockImplementationOnce(() => new Promise((resolve) => { accept = resolve; }));
-    const tree = <ResearchAction ideaUuid="idea" projectUuid="project" assignee={{ uuid: "agent", type: "agent" }}
+    const tree = <ResearchAction ideaUuid="idea" assignee={{ uuid: "agent", type: "agent" }}
       refreshKey="stable" onStarted={vi.fn()} renderAction={(action) =>
         <button disabled={!!action.disabledReason} onClick={action.onSelect}>{action.label}</button>} />;
     const view = render(tree);
@@ -246,7 +246,7 @@ describe("Tracker Research action", () => {
   it("keeps failed Research retryable on the same idea without changing chat", async () => {
     mocks.dispatch.mockRejectedValueOnce(new Error("network unavailable"));
     const onStarted = vi.fn();
-    render(<ResearchAction ideaUuid="idea" projectUuid="project" assignee={{ uuid: "agent", type: "agent" }}
+    render(<ResearchAction ideaUuid="idea" assignee={{ uuid: "agent", type: "agent" }}
       refreshKey="stable" onStarted={onStarted} renderAction={(action) =>
         <button disabled={!!action.disabledReason} onClick={action.onSelect}>{action.label}</button>} />);
     const user = userEvent.setup();
