@@ -1,0 +1,425 @@
+{
+  "claudeVersion": "2.1.284",
+  "platform": "linux",
+  "model": "haiku",
+  "recordedAt": "2026-09-29T02:24:31.218Z",
+  "script": "docs/verification/claude-stream-json-live.mjs",
+  "checks": {
+    "newSessionExit0": true,
+    "newSessionResultForwarded": true,
+    "newSessionStdinClosedAfterResult": true,
+    "resumeUsedResumeFlag": true,
+    "resumeRetainedContext": true,
+    "chorusOnlyCanUseToolDenied": true,
+    "chorusOnlyVisibleWarnWithoutCommand": true,
+    "chorusOnlyNoSideEffect": true,
+    "chorusOnlyPermissionPromptToolStdio": true,
+    "controlFramesNotForwarded": true,
+    "interruptViaProtocolNoEscalation": true,
+    "interruptEndedTurn": true,
+    "interruptResumeWorks": true,
+    "interruptResumeRetainedContext": true,
+    "yoloAskUserQuestionAbsent": true,
+    "chorusOnlyAskUserQuestionAbsent": true
+  },
+  "controlWithoutDisallowedToolsFlag": {
+    "chorusOnly": {
+      "exitCode": 0,
+      "askUserQuestionInTools": true
+    },
+    "yolo": {
+      "exitCode": 0,
+      "askUserQuestionInTools": false
+    }
+  },
+  "allPassed": true,
+  "scenarios": {
+    "newSession": {
+      "isNewProbe": true,
+      "wakeResult": {
+        "exitCode": 0,
+        "isNew": true,
+        "backendSessionIdIsAnchor": true
+      },
+      "argv": [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--session-id",
+        "f3a6a0f9-f646-4097-9b7a-a3d6e46cca9c",
+        "--disallowedTools",
+        "AskUserQuestion",
+        "--allowedTools",
+        "mcp__chorus__*",
+        "--permission-prompt-tool",
+        "stdio",
+        "--model",
+        "haiku"
+      ],
+      "initPermissionMode": "default",
+      "forwardedTypes": [
+        "system:init",
+        "system:thinking_tokens",
+        "assistant",
+        "result:success"
+      ],
+      "controlFramesForwarded": 0,
+      "controlFramesSeenOnStdout": [],
+      "stdinWrites": [
+        {
+          "type": "user",
+          "contentIsPrompt": true
+        }
+      ],
+      "stdinClosedAtResult": true,
+      "stdinEnded": true,
+      "result": {
+        "subtype": "success",
+        "isError": false,
+        "text": "OK",
+        "permissionDenials": []
+      },
+      "warnings": [],
+      "infos": [],
+      "askUserQuestionInTools": false,
+      "initToolCount": 26
+    },
+    "resume": {
+      "isNewProbe": false,
+      "wakeResult": {
+        "exitCode": 0,
+        "isNew": false,
+        "backendSessionIdIsAnchor": true
+      },
+      "argv": [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--resume",
+        "f3a6a0f9-f646-4097-9b7a-a3d6e46cca9c",
+        "--disallowedTools",
+        "AskUserQuestion",
+        "--allowedTools",
+        "mcp__chorus__*",
+        "--permission-prompt-tool",
+        "stdio",
+        "--model",
+        "haiku"
+      ],
+      "initPermissionMode": "default",
+      "forwardedTypes": [
+        "system:init",
+        "system:thinking_tokens",
+        "assistant",
+        "result:success"
+      ],
+      "controlFramesForwarded": 0,
+      "controlFramesSeenOnStdout": [],
+      "stdinWrites": [
+        {
+          "type": "user",
+          "contentIsPrompt": true
+        }
+      ],
+      "stdinClosedAtResult": true,
+      "stdinEnded": true,
+      "result": {
+        "subtype": "success",
+        "isError": false,
+        "text": "PELICAN1419",
+        "permissionDenials": []
+      },
+      "warnings": [],
+      "infos": [],
+      "recalledWord": true,
+      "askUserQuestionInTools": false,
+      "initToolCount": 26
+    },
+    "chorusOnlyDenial": {
+      "isNewProbe": true,
+      "wakeResult": {
+        "exitCode": 0,
+        "isNew": true,
+        "backendSessionIdIsAnchor": true
+      },
+      "argv": [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--session-id",
+        "73de607a-cde8-410c-878b-2d41cc497c36",
+        "--disallowedTools",
+        "AskUserQuestion",
+        "--allowedTools",
+        "mcp__chorus__*",
+        "--permission-prompt-tool",
+        "stdio",
+        "--model",
+        "haiku"
+      ],
+      "initPermissionMode": "default",
+      "forwardedTypes": [
+        "system:init",
+        "system:thinking_tokens",
+        "assistant",
+        "user",
+        "result:success"
+      ],
+      "controlFramesForwarded": 0,
+      "controlFramesSeenOnStdout": [
+        {
+          "type": "control_request",
+          "subtype": "can_use_tool",
+          "toolName": "Bash",
+          "requestId": "22f5adff-f1f5-4d6d-91cc-9db657d17a8f"
+        }
+      ],
+      "stdinWrites": [
+        {
+          "type": "user",
+          "contentIsPrompt": true
+        },
+        {
+          "type": "control_response",
+          "subtype": "success",
+          "behavior": "deny",
+          "requestId": "22f5adff-f1f5-4d6d-91cc-9db657d17a8f"
+        }
+      ],
+      "stdinClosedAtResult": true,
+      "stdinEnded": true,
+      "result": {
+        "subtype": "success",
+        "isError": false,
+        "text": "DENIED",
+        "permissionDenials": [
+          {
+            "toolName": "Bash"
+          }
+        ]
+      },
+      "warnings": [
+        "[Chorus] denied tool Bash (--chorus-only permission mode)"
+      ],
+      "infos": [],
+      "markerCreated": false,
+      "permissionPromptToolStdioInArgv": true,
+      "denyWarnHasNoCommandText": true,
+      "askUserQuestionInTools": false,
+      "initToolCount": 26
+    },
+    "interrupt": {
+      "isNewProbe": true,
+      "wakeResult": {
+        "exitCode": 1,
+        "isNew": true,
+        "backendSessionIdIsAnchor": true
+      },
+      "argv": [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--session-id",
+        "10da6bde-6ec9-4161-b3d3-67fb14c560c7",
+        "--disallowedTools",
+        "AskUserQuestion",
+        "--allowedTools",
+        "mcp__chorus__*",
+        "--permission-prompt-tool",
+        "stdio",
+        "--model",
+        "haiku"
+      ],
+      "initPermissionMode": "default",
+      "forwardedTypes": [
+        "system:init",
+        "system:thinking_tokens",
+        "user",
+        "result:error_during_execution"
+      ],
+      "controlFramesForwarded": 0,
+      "controlFramesSeenOnStdout": [
+        {
+          "type": "control_response",
+          "subtype": "success",
+          "requestId": "chorus-interrupt-1"
+        }
+      ],
+      "stdinWrites": [
+        {
+          "type": "user",
+          "contentIsPrompt": true
+        },
+        {
+          "type": "control_request",
+          "subtype": "interrupt",
+          "requestId": "chorus-interrupt-1"
+        }
+      ],
+      "stdinClosedAtResult": false,
+      "stdinEnded": true,
+      "result": {
+        "subtype": "error_during_execution",
+        "isError": true,
+        "text": null,
+        "permissionDenials": []
+      },
+      "warnings": [
+        "[Chorus] claude exited with code 1"
+      ],
+      "infos": [
+        "[Chorus] interrupt: sent claude control_request chorus-interrupt-1"
+      ],
+      "interruptSentAfterMs": 2918,
+      "killProcessTree": {
+        "signaled": false,
+        "killed": true,
+        "escalated": false
+      },
+      "askUserQuestionInTools": false,
+      "initToolCount": 26
+    },
+    "interruptResume": {
+      "isNewProbe": false,
+      "wakeResult": {
+        "exitCode": 0,
+        "isNew": false,
+        "backendSessionIdIsAnchor": true
+      },
+      "argv": [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--resume",
+        "10da6bde-6ec9-4161-b3d3-67fb14c560c7",
+        "--disallowedTools",
+        "AskUserQuestion",
+        "--allowedTools",
+        "mcp__chorus__*",
+        "--permission-prompt-tool",
+        "stdio",
+        "--model",
+        "haiku"
+      ],
+      "initPermissionMode": "default",
+      "forwardedTypes": [
+        "system:init",
+        "system:thinking_tokens",
+        "assistant",
+        "result:success"
+      ],
+      "controlFramesForwarded": 0,
+      "controlFramesSeenOnStdout": [],
+      "stdinWrites": [
+        {
+          "type": "user",
+          "contentIsPrompt": true
+        }
+      ],
+      "stdinClosedAtResult": true,
+      "stdinEnded": true,
+      "result": {
+        "subtype": "success",
+        "isError": false,
+        "text": "PELICAN1419",
+        "permissionDenials": []
+      },
+      "warnings": [],
+      "infos": [],
+      "recalledWord": true,
+      "askUserQuestionInTools": false,
+      "initToolCount": 26
+    },
+    "yoloNoAskUserQuestion": {
+      "isNewProbe": true,
+      "wakeResult": {
+        "exitCode": 0,
+        "isNew": true,
+        "backendSessionIdIsAnchor": true
+      },
+      "argv": [
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--session-id",
+        "4693e8fb-473f-4efd-a00d-425a5cd91d4b",
+        "--disallowedTools",
+        "AskUserQuestion",
+        "--dangerously-skip-permissions",
+        "--model",
+        "haiku"
+      ],
+      "initTools": [
+        "Task",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "ListAgents",
+        "NotebookEdit",
+        "Read",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskStop",
+        "TaskUpdate",
+        "ToolSearch",
+        "WebFetch",
+        "Workflow",
+        "Write"
+      ],
+      "initPermissionMode": "bypassPermissions",
+      "forwardedTypes": [
+        "system:init",
+        "system:thinking_tokens",
+        "assistant",
+        "result:success"
+      ],
+      "controlFramesForwarded": 0,
+      "controlFramesSeenOnStdout": [],
+      "stdinWrites": [
+        {
+          "type": "user",
+          "contentIsPrompt": true
+        }
+      ],
+      "stdinClosedAtResult": true,
+      "stdinEnded": true,
+      "result": {
+        "subtype": "success",
+        "isError": false,
+        "text": "OK",
+        "permissionDenials": []
+      },
+      "warnings": [],
+      "infos": [],
+      "askUserQuestionInTools": false,
+      "bashInTools": true
+    }
+  }
+}

@@ -3,9 +3,25 @@
 // engineering point of the daemon: parsing stream-json is plain JS and
 // platform-neutral; the real work is spawning, and it is all Windows.
 //
-// Verified against Claude Code CLI 2.1.251:
-//   • `-p/--print` + `--output-format stream-json` emits NDJSON (one JSON object
-//     per line); every line carries `session_id`.
+// Verified against Claude Code CLI 2.1.283 (stream-json transport; frames pinned
+// by cli/__tests__/fixtures/claude-stream-json/). Earlier facts first verified on
+// 2.1.251 still hold:
+//   • `-p/--print` + `--input-format stream-json --output-format stream-json`
+//     is the bidirectional NDJSON protocol the Agent SDK's "Streaming Input Mode"
+//     runs on. It is documented only at the SDK level, so the exact frames the
+//     daemon relies on are pinned by live-captured fixtures. The prompt goes in as
+//     ONE `{"type":"user",...}` frame; stdin stays open for control frames and is
+//     closed after the turn's first `result` frame, after which the CLI drains its
+//     Stop hooks and exits (one process per wake, never reused).
+//   • stdout frames of type `control_request` / `control_response` /
+//     `control_cancel_request` are protocol plumbing: the spawner answers them and
+//     never forwards them to `onMessage`. `--permission-prompt-tool stdio` routes
+//     every non-allowlisted tool request to us as `control_request{can_use_tool}`,
+//     which we deny explicitly.
+//   • interrupt is `control_request{subtype:"interrupt"}`: the CLI acks it and
+//     ends the turn with `result:error_during_execution`. The spawner sends it from
+//     a process stop hook, so the shared killer's deadline bounds it (no SIGINT).
+//   • every output line carries `session_id`.
 //   • `--session-id <uuid>` sets the session id for a fresh run, and
 //     `--resume <uuid>` continues it. So we GENERATE the session id client-side
 //     and pass it in, rather than scraping it from the init event — the id is
@@ -18,9 +34,11 @@
 //
 // HEADLESS SIGNAL (add-daemon-headless-interaction-guard): wake() spawns the child
 // with CHORUS_DAEMON_HEADLESS=1 merged over the inherited env — a machine-checkable
-// marker that this is a daemon-woken, no-human-at-the-terminal run. buildArgs is
-// deliberately NOT changed (no --append-system-prompt): the headless behavior rule is
-// carried per-turn by the wake-prompt preamble in prompts.mjs, not at the system level.
+// marker that this is a daemon-woken, no-human-at-the-terminal run. buildArgs adds
+// no --append-system-prompt: the headless behavior rule is carried per-turn by the
+// wake-prompt preamble in prompts.mjs, not at the system level. It does block
+// AskUserQuestion at the tool layer (`--disallowedTools AskUserQuestion`), since no
+// human can answer it in a daemon wake.
 
 import { spawn } from "node:child_process";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
@@ -29,6 +47,7 @@ import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { win32 as pathWin32, posix as pathPosix, join as pathJoin } from "node:path";
 import { awaitChildSettled } from "./child-exit.mjs";
+import { registerProcessStopHook } from "./process-stop-hooks.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -195,22 +214,299 @@ export const CHORUS_MCP_SERVER_NAME = "chorus";
  */
 
 /**
- * Build the argv for a headless run. Prompt is NEVER here — it goes over stdin.
+ * Build the argv for a headless run. Prompt is NEVER here — it goes over stdin as
+ * a stream-json user frame.
+ *
+ * `--disallowedTools` is variadic, so it is emitted BEFORE the permission flags
+ * (never last) and operator `cliConfig.args` are appended after this whole list by
+ * the caller — nothing can be swallowed as an extra tool name.
+ * `--permission-prompt-tool stdio` (chorus mode) makes the CLI ask us, over the
+ * control protocol, about every tool outside the allowlist; the spawner denies it
+ * explicitly and visibly instead of the CLI denying it silently.
  * @param {{ sessionId: string, isNew: boolean, mcpConfigPath?: string, permissionMode?: PermissionMode }} o
  * @returns {string[]}
  */
 export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "chorus" }) {
-  const args = ["-p", "--output-format", "stream-json", "--verbose"];
+  const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
   if (isNew) args.push("--session-id", sessionId);
   else args.push("--resume", sessionId);
   if (mcpConfigPath) args.push("--mcp-config", mcpConfigPath);
+  // Headless wakes have no human to answer AskUserQuestion — block it at the tool
+  // layer in every mode (daemon-headless-interaction-guard).
+  args.push("--disallowedTools", "AskUserQuestion");
   if (permissionMode === "yolo") {
     args.push("--dangerously-skip-permissions");
   } else {
-    // Default: allow only this daemon's Chorus MCP tools through, nothing else.
-    args.push("--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`);
+    // Default: allow only this daemon's Chorus MCP tools through, and route every
+    // other tool's permission request to the spawner (which denies it explicitly).
+    args.push("--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`, "--permission-prompt-tool", "stdio");
   }
   return args;
+}
+
+/** stdout frame types the spawner consumes itself and never forwards to `onMessage`. */
+export const CONTROL_FRAME_TYPES = new Set(["control_request", "control_response", "control_cancel_request"]);
+
+/**
+ * Model-facing message for a denied `can_use_tool` request. It reaches the model
+ * as the tool_result of the blocked call (and is listed in result.permission_denials).
+ */
+export const CHORUS_TOOL_DENY_MESSAGE =
+  "This tool is blocked by the Chorus daemon's --chorus-only permission policy: this headless " +
+  "wake may only use Chorus MCP tools (mcp__chorus__*). Use the Chorus MCP tools to do the work, " +
+  "or ask the human for what you need in a Chorus comment.";
+
+/** Error text for any control request subtype the daemon does not implement. */
+export const UNSUPPORTED_CONTROL_ERROR = "unsupported by Chorus daemon";
+
+/**
+ * The one stream-json user frame that carries the wake prompt.
+ * @param {string} prompt
+ */
+export function buildUserFrame(prompt) {
+  return { type: "user", message: { role: "user", content: prompt }, parent_tool_use_id: null };
+}
+
+/**
+ * Per-wake stdin side of the stream-json protocol: safe NDJSON writes, the one
+ * stdin close, and answers to incoming control frames. Kept as its own unit so the
+ * protocol interrupt (stop hook) can build on the same write/close/result state.
+ */
+export class ClaudeControlChannel {
+  /**
+   * @param {{ stdin: any, logger: {info(m:string):void,warn(m:string):void,error(m:string):void},
+   *           permissionMode: PermissionMode }} o
+   */
+  constructor({ stdin, logger, permissionMode }) {
+    this.stdin = stdin ?? null;
+    this.logger = logger;
+    this.permissionMode = permissionMode;
+    /** True once the first `result` frame was observed. */
+    this.resultSeen = false;
+    /** True once we called end() (or the child is gone and stdin is unusable). */
+    this.stdinClosed = false;
+    /** True once the child exited or errored (no further protocol progress possible). */
+    this.exited = false;
+    /** True once the user prompt frame was written (a turn may be running). */
+    this.promptSent = false;
+  }
+
+  /** In-flight protocol stop (shared by repeated stop-hook invocations). */
+  #stopWork = null;
+  /** Per-channel interrupt request counter → `chorus-interrupt-<n>`. */
+  #interruptSeq = 0;
+  /** Resolver for the pending interrupt wait: `{ requestId, resolve }` or null. */
+  #interruptWait = null;
+
+  /** @returns {boolean} whether stdin can still take a write. */
+  get writable() {
+    const s = this.stdin;
+    if (this.stdinClosed || !s || typeof s.write !== "function") return false;
+    if (s.destroyed || s.writableEnded || s.writable === false) return false;
+    return true;
+  }
+
+  /**
+   * Write one NDJSON frame. Never throws: a closed/destroyed stdin or a synchronous
+   * write error is logged and reported as `false` (async EPIPE is caught by the
+   * stdin 'error' listener the spawner installs).
+   * @param {object} frame @param {string} what  Log label.
+   * @returns {boolean}
+   */
+  write(frame, what) {
+    if (!this.writable) {
+      this.logger.warn(`[Chorus] claude stdin is closed; dropped ${what}`);
+      return false;
+    }
+    try {
+      this.stdin.write(`${JSON.stringify(frame)}\n`);
+      return true;
+    } catch (err) {
+      this.logger.warn(`[Chorus] failed writing ${what} to claude stdin: ${err}`);
+      return false;
+    }
+  }
+
+  /**
+   * Write the wake's single user prompt frame, unless a protocol stop has already
+   * started (code-review B1). The waker's cancel-before-spawn branch calls the
+   * killer from inside `onChild`, i.e. BEFORE `wake()` reaches this write; sending
+   * the prompt after that would make the CLI run the whole cancelled turn (model
+   * calls, Chorus MCP side effects) until the forced deadline. Chosen fix (a):
+   * `#stopWork` is latched synchronously by `stop()`, so this check sees it, and
+   * with no prompt sent `stop()` skips the interrupt and goes straight to
+   * beforeClose → close stdin; the CLI then reads EOF with no input and exits
+   * without starting a turn. (Writing the frame before `onChild` was rejected:
+   * it would deliver the prompt a cancelled wake must never deliver.)
+   * @param {object} frame @returns {boolean} whether the prompt was written.
+   */
+  sendPrompt(frame) {
+    if (this.#stopWork) {
+      this.logger.info("[Chorus] claude stop started before the prompt was written; prompt not delivered");
+      return false;
+    }
+    this.promptSent = this.write(frame, "prompt");
+    return this.promptSent;
+  }
+
+  /** Close stdin once; idempotent and never throws. */
+  closeStdin() {
+    if (this.stdinClosed) return;
+    this.stdinClosed = true;
+    const s = this.stdin;
+    if (!s || typeof s.end !== "function" || s.destroyed || s.writableEnded) return;
+    try {
+      s.end();
+    } catch (err) {
+      this.logger.warn(`[Chorus] failed closing claude stdin: ${err}`);
+    }
+  }
+
+  /** The child is gone or its stdin errored (EPIPE): no further writes may be attempted. */
+  markStdinUnusable() {
+    this.stdinClosed = true;
+  }
+
+  /** The child exited or errored: stdin is unusable and a pending interrupt wait ends. */
+  markExited() {
+    this.exited = true;
+    this.markStdinUnusable();
+    this.#endInterruptWait();
+  }
+
+  #endInterruptWait() {
+    const wait = this.#interruptWait;
+    this.#interruptWait = null;
+    wait?.resolve();
+  }
+
+  /**
+   * Protocol stop (design D4), invoked by the process killer through the
+   * registered stop hook. Repeated calls share one promise.
+   *  1. Unless the prompt was never written (nothing to interrupt — see
+   *     sendPrompt), a result was already seen, or stdin is already closed, write ONE
+   *     `interrupt` control_request and wait for the first of: a result frame, an
+   *     error control_response for that request id, child exit, or the killer's
+   *     `protocolDeadline`. The deadline is the killer's own (derived from the
+   *     existing sigintTimeoutMs); no other duration exists here (#569).
+   *  2. On EVERY path, including a skipped step 1: await `beforeClose` (the
+   *     killer's Windows tree-identity capture, which needs the root alive and
+   *     stdin open). A failure is logged and never skips step 3.
+   *  3. Close stdin if it is still open.
+   * @param {{ protocolDeadline: number, beforeClose?: () => unknown }} o
+   * @returns {Promise<void>}
+   */
+  stop({ protocolDeadline, beforeClose }) {
+    if (this.#stopWork) return this.#stopWork;
+    this.#stopWork = (async () => {
+      try {
+        if (this.promptSent && !this.resultSeen && !this.stdinClosed) {
+          const requestId = `chorus-interrupt-${++this.#interruptSeq}`;
+          const outcome = new Promise((resolve) => { this.#interruptWait = { requestId, resolve }; });
+          if (this.write({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } }, "interrupt request")) {
+            this.logger.info(`[Chorus] interrupt: sent claude control_request ${requestId}`);
+            let timer;
+            try {
+              await Promise.race([
+                outcome,
+                // The killer-supplied protocol deadline — not a new timeout.
+                new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, protocolDeadline - Date.now())); }),
+              ]);
+            } finally {
+              clearTimeout(timer);
+            }
+          }
+          this.#interruptWait = null;
+        }
+      } finally {
+        try {
+          await beforeClose?.();
+        } catch (err) {
+          this.logger.warn(`[Chorus] claude stop: beforeClose failed (continuing to close stdin): ${err}`);
+        }
+        this.closeStdin();
+      }
+    })();
+    return this.#stopWork;
+  }
+
+  /**
+   * Observe one stdout frame. Returns true when the frame is protocol plumbing the
+   * spawner consumed (so it must NOT be forwarded to `onMessage`). A `result`
+   * frame is forwarded, and closes stdin the first time one is seen.
+   * @param {any} frame
+   * @returns {boolean} consumed
+   */
+  handleFrame(frame) {
+    const type = frame && typeof frame === "object" ? frame.type : undefined;
+    if (type === "result") {
+      if (!this.resultSeen) {
+        this.resultSeen = true;
+        // During a protocol stop the stop hook owns the close: it must await the
+        // killer's beforeClose (Windows tree capture) BEFORE stdin closes.
+        if (!this.#stopWork) this.closeStdin();
+        this.#endInterruptWait();
+      }
+      return false;
+    }
+    if (!CONTROL_FRAME_TYPES.has(type)) return false;
+    if (type === "control_request") this.#answerControlRequest(frame);
+    else if (type === "control_response") this.#observeControlResponse(frame);
+    // control_cancel_request: nothing pending on our side to cancel. All control
+    // frames are consumed so the transcript stream is unchanged.
+    return true;
+  }
+
+  /** Correlate a control_response with the pending interrupt; others are ignored. */
+  #observeControlResponse(frame) {
+    const wait = this.#interruptWait;
+    const response = frame.response;
+    if (!wait || response?.request_id !== wait.requestId) return;
+    if (response.subtype === "error") {
+      this.logger.warn(`[Chorus] claude rejected interrupt ${wait.requestId}: ${String(response.error)}`);
+      this.#endInterruptWait();
+    }
+    // A success ack keeps waiting: the interrupted turn still ends with a result
+    // (or, if it landed before the turn started, the killer's deadline decides).
+  }
+
+  #answerControlRequest(frame) {
+    const requestId = frame.request_id;
+    const subtype = frame.request?.subtype;
+    if (typeof requestId !== "string" || !requestId) {
+      // Nothing to correlate an answer with; surface it instead of replying blind.
+      this.logger.warn(`[Chorus] claude control request ${String(subtype)} has no request_id; not answered`);
+      return;
+    }
+    if (subtype === "can_use_tool") {
+      // Log the tool NAME only — the tool input can carry secrets.
+      const toolName = typeof frame.request.tool_name === "string" ? frame.request.tool_name : "<unknown>";
+      const why = this.permissionMode === "yolo" ? "unexpected permission prompt in yolo mode" : "--chorus-only permission mode";
+      if (!this.writable) {
+        // One coherent line: the deny could not be delivered (child finishing/gone).
+        this.logger.warn(`[Chorus] tool ${toolName} permission request arrived after claude stdin closed (${why}); no deny sent`);
+        return;
+      }
+      this.logger.warn(`[Chorus] denied tool ${toolName} (${why})`);
+      this.write(
+        {
+          type: "control_response",
+          response: { subtype: "success", request_id: requestId, response: { behavior: "deny", message: CHORUS_TOOL_DENY_MESSAGE } },
+        },
+        `permission deny for ${toolName}`
+      );
+      return;
+    }
+    if (!this.writable) {
+      this.logger.warn(`[Chorus] unsupported claude control request subtype ${String(subtype)} arrived after claude stdin closed; not answered`);
+      return;
+    }
+    this.logger.warn(`[Chorus] unsupported claude control request subtype ${String(subtype)}; answered with an error`);
+    this.write(
+      { type: "control_response", response: { subtype: "error", request_id: requestId, error: UNSUPPORTED_CONTROL_ERROR } },
+      `control error response (${String(subtype)})`
+    );
+  }
 }
 
 /**
@@ -299,7 +595,7 @@ export class ClaudeSpawner {
 
   /**
    * Spawn a headless Claude run. Resolves when the subprocess exits. The prompt
-   * is written to stdin (never argv) — this is what keeps long prompts off the
+   * is written to stdin as one stream-json user frame (never argv) — this is what keeps long prompts off the
    * Windows command line and out of shell escaping/injection.
    *
    * The session id is supplied by the caller (the daemon passes the dispatched
@@ -395,6 +691,14 @@ export class ClaudeSpawner {
         return;
       }
 
+      const channel = new ClaudeControlChannel({ stdin: child.stdin, logger: this.logger, permissionMode: this.permissionMode });
+      // Protocol interrupt (design D4): the shared killer calls this instead of
+      // SIGINT and then force-cleans within the same deadline if the child remains.
+      // Registered before onChild so an interrupt can never see an unhooked child.
+      const unregisterStopHook = registerProcessStopHook(child, ({ deadline, protocolDeadline = deadline, beforeClose }) =>
+        channel.stop({ protocolDeadline, beforeClose })
+      );
+
       // Hand the live child to the caller (子3) so the waker can register the handle
       // for the interrupt path before this promise resolves. Never let a throwing
       // callback escape into the spawn path.
@@ -418,6 +722,7 @@ export class ClaudeSpawner {
           String(chunk),
           (obj) => {
             if (obj && typeof obj.session_id === "string") observedSessionId = obj.session_id;
+            if (channel.handleFrame(obj)) return; // control plumbing — never forwarded
             if (onMessage) {
               try {
                 onMessage(obj);
@@ -442,6 +747,8 @@ export class ClaudeSpawner {
       child.on("error", (error) => {
         // e.g. ENOENT if the resolved path vanished — log, don't throw.
         this.logger.error(`[Chorus] claude process error: ${safeSpawnError(error)}`);
+        channel.markExited();
+        unregisterStopHook();
         // backendSessionId is the `--resume` anchor (`id`), NOT observedSessionId:
         // a fork-on-resume claude can emit a new stream session_id, but the daemon
         // resumes and files the transcript under `id`, so `id` is the resumable value.
@@ -450,7 +757,12 @@ export class ClaudeSpawner {
 
       // Settle on process exit, not only on stdio close: a detached descendant can
       // inherit the pipes and keep `close` from ever firing (see cli/child-exit.mjs).
+      // A dead child's stdin must never be written again (late control answers).
+      child.on?.("exit", () => channel.markExited());
+
       awaitChildSettled(child, { logger: this.logger, label: "claude" }).then((code) => {
+        channel.markExited();
+        unregisterStopHook();
         if (code !== 0) {
           this.logger.warn(`[Chorus] claude exited with code ${code}`);
         }
@@ -470,15 +782,15 @@ export class ClaudeSpawner {
       // daemon". The try/catch below only catches a synchronous throw.
       child.stdin?.on?.("error", (err) => {
         this.logger.warn(`[Chorus] claude stdin error (ignored): ${err}`);
+        channel.markStdinUnusable();
       });
 
-      // Feed the prompt over stdin, then close it so the model runs.
-      try {
-        child.stdin?.write(prompt);
-        child.stdin?.end();
-      } catch (err) {
-        this.logger.warn(`[Chorus] failed writing prompt to claude stdin: ${err}`);
-      }
+      // Feed the prompt as ONE stream-json user frame and keep stdin OPEN: control
+      // frames flow over it until the first `result` frame, when handleFrame()
+      // closes it and the CLI exits. No result before exit → the raw exit code
+      // settles the wake (never a synthetic success). Skipped when a stop already
+      // started (e.g. from inside onChild above) — see ClaudeControlChannel.sendPrompt.
+      channel.sendPrompt(buildUserFrame(prompt));
     });
   }
 }

@@ -1,0 +1,231 @@
+{
+  "provenance": "live-capture",
+  "cliVersion": "2.1.283",
+  "capturedAt": "2026-09-29",
+  "platform": "linux",
+  "description": "Interrupted turn: after the first assistant frame the client writes control_request{subtype:interrupt}; the CLI acks with control_response success, emits the '[Request interrupted by user]' user frame and result:error_during_execution; stdin closed after the result, process exits 1.",
+  "command": "claude -p --input-format stream-json --output-format stream-json --verbose --model haiku --no-session-persistence --disallowedTools AskUserQuestion",
+  "sanitization": "Sanitized: system hook_started/hook_response frames (local plugin hook output) and system thinking_tokens progress frames removed; the system init frame is trimmed to type, subtype, cwd, session_id, model, permissionMode, apiKeySource, claude_code_version, output_style, uuid, fast_mode_state (tool, MCP-server, plugin, skill and path inventories dropped); assistant thinking text/signature redacted. All other frames and their order are verbatim.",
+  "exitCode": 1,
+  "transcript": [
+    {
+      "direction": "stdin",
+      "frame": {
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Write a 600-word essay about rivers."
+        },
+        "parent_tool_use_id": null
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "system",
+        "subtype": "init",
+        "cwd": "/tmp/claude-sj-probe",
+        "session_id": "be1c6435-0b06-426d-b492-fe2606143c9a",
+        "model": "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "permissionMode": "default",
+        "apiKeySource": "none",
+        "claude_code_version": "2.1.283",
+        "output_style": "default",
+        "uuid": "7957c316-8cb2-460d-afd9-5e1ad2bcd1ef",
+        "fast_mode_state": "off"
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "assistant",
+        "message": {
+          "model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+          "id": "msg_bdrk_usb7fd4xtwkpm4w6zigrnzt5u2lckhf3zkskixngzfqah4zowwaa",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "<redacted>",
+              "signature": "<redacted>"
+            }
+          ],
+          "container": null,
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": {
+            "input_tokens": 10,
+            "cache_creation_input_tokens": 7807,
+            "cache_read_input_tokens": 17482,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 7807,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "service_tier": "standard"
+          },
+          "context_management": null
+        },
+        "parent_tool_use_id": null,
+        "session_id": "be1c6435-0b06-426d-b492-fe2606143c9a",
+        "uuid": "95fd04b5-dbff-43fa-9895-40100615b5c6",
+        "timestamp": "2026-09-29T01:56:39.153Z",
+        "request_id": "3c870a1f-14f1-4fd2-b5c4-ff43ec559ebf"
+      }
+    },
+    {
+      "direction": "stdin",
+      "frame": {
+        "type": "control_request",
+        "request_id": "chorus-interrupt-1",
+        "request": {
+          "subtype": "interrupt"
+        }
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "control_response",
+        "response": {
+          "subtype": "success",
+          "request_id": "chorus-interrupt-1",
+          "response": {
+            "still_queued": []
+          }
+        }
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "assistant",
+        "message": {
+          "model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+          "id": "msg_bdrk_usb7fd4xtwkpm4w6zigrnzt5u2lckhf3zkskixngzfqah4zowwaa",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "# Rivers: The Lifeblood of Earth\n\nRivers have"
+            }
+          ],
+          "container": null,
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": {
+            "input_tokens": 10,
+            "cache_creation_input_tokens": 7807,
+            "cache_read_input_tokens": 17482,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 7807,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "service_tier": "standard"
+          },
+          "context_management": null
+        },
+        "parent_tool_use_id": null,
+        "session_id": "be1c6435-0b06-426d-b492-fe2606143c9a",
+        "uuid": "a1c61e90-a7e1-4286-9008-8bb3a2852b8a",
+        "timestamp": "2026-09-29T01:56:39.165Z",
+        "request_id": "3c870a1f-14f1-4fd2-b5c4-ff43ec559ebf",
+        "aborted": true
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "[Request interrupted by user]"
+            }
+          ]
+        },
+        "parent_tool_use_id": null,
+        "session_id": "be1c6435-0b06-426d-b492-fe2606143c9a",
+        "uuid": "e7938e6a-0863-45ad-91b5-84e112963f8e",
+        "timestamp": "2026-09-29T01:56:39.190Z"
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "duration_api_ms": 0,
+        "stop_reason": null,
+        "session_id": "be1c6435-0b06-426d-b492-fe2606143c9a",
+        "total_cost_usd": 0,
+        "usage": {
+          "output_tokens_details": {
+            "thinking_tokens": 0
+          },
+          "input_tokens": 0,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 0,
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "",
+          "iterations": [],
+          "speed": "standard"
+        },
+        "modelUsage": {},
+        "permission_denials": [],
+        "terminal_reason": "aborted_streaming",
+        "fast_mode_state": "off",
+        "fast_mode_disabled_reason": "not_first_party",
+        "subagent_stats": {
+          "spawned": 0,
+          "requested": {
+            "background": 0,
+            "foreground": 0,
+            "unset": 0
+          },
+          "started_in_background": 0,
+          "max_depth": 0,
+          "spawned_by_subagents": 0,
+          "completed": 0,
+          "failed": 0,
+          "killed": {
+            "parent": 0,
+            "user": 0,
+            "system": 0
+          },
+          "refused": {
+            "depth_limit": 0,
+            "concurrency_limit": 0,
+            "budget": 0
+          },
+          "by_type": {}
+        },
+        "is_error": true,
+        "num_turns": 2,
+        "subtype": "error_during_execution",
+        "errors": [
+          "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"
+        ],
+        "type": "result",
+        "duration_ms": 4119,
+        "uuid": "026e9983-d913-4761-bc8f-5ccd0d039c20",
+        "queued_turn_count": 0,
+        "result_index": 0
+      }
+    }
+  ]
+}
