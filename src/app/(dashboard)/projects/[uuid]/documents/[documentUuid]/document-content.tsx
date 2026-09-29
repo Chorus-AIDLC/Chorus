@@ -84,7 +84,7 @@ export function DocumentContent({ documentUuid, projectUuid, initialContent }: D
         <textarea
           value={editContent}
           onChange={(e) => setEditContent(e.target.value)}
-          className="h-full w-full resize-none rounded-lg border border-border p-4 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+          className="mobile-input-text h-full w-full resize-none rounded-lg border border-border p-4 font-mono text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
           placeholder={t("documents.documentContent")}
         />
       ) : (

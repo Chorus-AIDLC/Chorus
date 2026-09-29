@@ -529,7 +529,7 @@ export function DirectoryBrowser({
               <select
                 aria-label={t("browseRoot")}
                 value={selectedRoot}
-                className="h-11 min-w-0 rounded-md border border-input bg-background px-3 font-mono text-xs sm:h-9"
+                className="mobile-input-text h-11 min-w-0 rounded-md border border-input bg-background px-3 font-mono text-xs sm:h-9"
                 onChange={(event) => {
                   cancelValidation();
                   clearCandidates();

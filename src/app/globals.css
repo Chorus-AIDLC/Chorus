@@ -1,5 +1,27 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+
+/*
+ * Small editable text can trigger iOS focus zoom. Keep the rule on the actual
+ * control (including Tiptap text descendants), before focus and across phone
+ * rotation. A named class survives cn()/tailwind-merge consumer text overrides.
+ * Only this mobile font declaration is important; desktop typography and user
+ * pinch zoom remain native. Larger input variants can set --mobile-input-font-size.
+ */
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+  input.mobile-input-text:not(
+    [type="checkbox"], [type="radio"], [type="range"], [type="file"],
+    [type="hidden"], [type="button"], [type="submit"], [type="reset"],
+    [type="color"], [type="image"]
+  ),
+  textarea.mobile-input-text,
+  select.mobile-input-text,
+  .mobile-input-text[contenteditable="true"],
+  .mobile-input-text[contenteditable="true"] * {
+    font-size: max(16px, 1rem, var(--mobile-input-font-size, 1rem)) !important;
+  }
+}
+
 /* Inline code: orange bold highlight */
 :not(pre) > code {
   background: none;
