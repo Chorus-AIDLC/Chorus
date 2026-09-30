@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { runUpgradeCommand, runUpgradeInstall, sanitizeUpgradeOutput, upgradeFailure } from "../upgrade-process.mjs";
 
 describe("upgrade diagnostics", () => {
+  it("redacts JSON-escaped known passwords and escaped labeled values", () => {
+    const password = 'pass"word\\example';
+    expect(sanitizeUpgradeOutput(JSON.stringify({ value: password }), { env: { CUSTOM_PASSWORD: password } }))
+      .toBe('{"value":"[redacted]"}');
+    expect(sanitizeUpgradeOutput(JSON.stringify({ password }), { env: {} }))
+      .toBe('{"password":[redacted]}');
+  });
   it("retains useful causes/status while redacting tokens, headers, URL credentials and environment secrets", () => {
     const result = runUpgradeCommand("npm", [], {
       env: { PRIVATE_TOKEN: "env-secret", CUSTOM_PASSWORD: "with/slash" },
@@ -44,6 +51,28 @@ describe("upgrade diagnostics", () => {
 });
 
 describe("npm installation lifecycle", () => {
+  it("protects every live line of multiline credentials and escaped forms", async () => {
+    const secret = "private-first-line\n  private-second-line  ";
+    const password = 'pass"word\\example';
+    const lines = [];
+    const result = await runUpgradeInstall("node", ["-e", `
+      process.stdout.write(process.env.PRIVATE_SECRET + "\\n");
+      process.stderr.write(JSON.stringify({ value: process.env.CUSTOM_PASSWORD }) + "\\n");
+      setTimeout(() => process.exit(7), 30);
+    `], {
+      resolveBinary: () => process.execPath,
+      env: { PRIVATE_SECRET: secret, CUSTOM_PASSWORD: password },
+      onOutput: (line) => lines.push(line),
+    });
+    expect(result.code).toBe(7);
+    expect(lines).toHaveLength(3);
+    const displayed = lines.join("\n");
+    for (const fragment of ["private-first-line", "private-second-line", "pass", "word", "example"]) {
+      expect(displayed).not.toContain(fragment);
+      expect(JSON.stringify(result)).not.toContain(fragment);
+    }
+    expect(displayed).toContain("[redacted]");
+  });
   it("streams sanitized lines before completion without an installation deadline", async () => {
     const lines = [];
     let complete = false;

@@ -12,13 +12,25 @@ export function sanitizeUpgradeOutput(value, { env = process.env, secrets = [] }
   const values = [...secrets, ...Object.entries(env)
     .filter(([key]) => /key|token|secret|password|credential|auth/i.test(key))
     .map(([, v]) => v)].filter((v) => typeof v === "string" && v.length > 0);
-  for (const secret of values.sort((a, b) => b.length - a.length)) {
-    for (const form of new Set([secret, encodeURIComponent(secret)])) text = text.split(form).join("[redacted]");
+  // Streaming emits complete lines before the next line arrives. Protect each
+  // nonempty line of multiline credentials, including whitespace-normalized
+  // output, as well as whole-value JSON/URL representations in diagnostics.
+  const forms = new Set();
+  for (const value of values) {
+    for (const part of [value, ...value.split(/\r?\n/)]) {
+      for (const secret of [part, part.trim()]) {
+        if (!secret) continue;
+        forms.add(secret);
+        forms.add(JSON.stringify(secret).slice(1, -1));
+        forms.add(encodeURIComponent(secret));
+      }
+    }
   }
+  for (const form of [...forms].sort((a, b) => b.length - a.length)) text = text.split(form).join("[redacted]");
   return text
     .replace(/\b(?:cho_|npm_|gh[pousr]_|sk-)[A-Za-z0-9_-]+/g, "[redacted]")
     .replace(/\b(authorization["']?\s*[:=]\s*["']?)(?:bearer\s+|basic\s+)?[^"'\s,;]+/gi, "$1[redacted]")
-    .replace(/((?:["']?[\w.-]*(?:token|password|secret|api[_-]?key|_auth)[\w.-]*["']?)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1[redacted]")
+    .replace(/((?:["']?[\w.-]*(?:token|password|secret|api[_-]?key|_auth)[\w.-]*["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/gi, "$1[redacted]")
     .replace(/https?:\/\/[^\s"'<>]+/gi, (url) => {
       try {
         const parsed = new URL(url);
