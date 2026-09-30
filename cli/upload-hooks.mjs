@@ -409,7 +409,7 @@ function stripSystemReminders(s) {
  *    does NOT echo the user prompt (the chat UI renders that from the turn's
  *    promptText), and `reasoning` / `command_execution` / lifecycle envelopes are
  *    not conversation text — all dropped.
- *  - pi (@earendil-works/pi-coding-agent) `pi --mode json`: AgentSessionEvents whose
+ *  - pi (@earendil-works/pi-coding-agent) `pi --mode rpc`: AgentSessionEvents (same as `--mode json`) whose
  *    authoritative final text is a `message_end` carrying a full AgentMessage
  *    (`{ role, content }`). We keep ONLY the assistant message: pi UNCONDITIONALLY
  *    re-emits the wake prompt as a `message_end` with role "user" (agent-loop.ts),
@@ -449,7 +449,7 @@ export function extractTranscriptText(obj) {
     return { role: "assistant", text: itemText };
   }
 
-  // ── pi `pi --mode json` dialect ──
+  // ── pi `pi --mode rpc` event dialect ──
   // pi's authoritative final text of each step is a `message_end` carrying a full
   // AgentMessage `{ role, content }`. Keep ONLY the assistant message: pi re-emits the
   // wake prompt as a role:"user" message_end (already stored as the turn's promptText),

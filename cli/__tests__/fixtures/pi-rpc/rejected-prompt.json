@@ -1,0 +1,15 @@
+{
+  "provenance": "synthetic",
+  "piVersion": "0.85.1",
+  "capturedAt": "2026-09-29",
+  "description": "Synthetic: pi rejects the prompt before acceptance (e.g. no API key for the provider). Shape follows rpc-mode.js error(id, 'prompt', message); no agent events follow, and pi exits 0 when stdin closes.",
+  "writes": [
+    { "id": "chorus-state-1", "type": "get_state" },
+    { "id": "chorus-prompt-1", "type": "prompt", "message": "Reply with exactly: OK" }
+  ],
+  "frames": [
+    { "id": "chorus-state-1", "type": "response", "command": "get_state", "success": true, "data": { "isStreaming": false, "isCompacting": false, "sessionFile": "/home/user/.pi/agent/sessions/--tmp-pirpc--/2026-09-29T06-10-00-000Z_5b0f1e0c-8f8e-4c55-9f67-0d6d1e0c9a11.jsonl", "sessionId": "5b0f1e0c-8f8e-4c55-9f67-0d6d1e0c9a11", "messageCount": 0, "pendingMessageCount": 0 } },
+    { "id": "chorus-prompt-1", "type": "response", "command": "prompt", "success": false, "error": "No API key found for amazon-bedrock." }
+  ],
+  "exitCode": 0
+}

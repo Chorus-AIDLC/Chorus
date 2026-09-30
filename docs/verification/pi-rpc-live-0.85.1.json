@@ -1,0 +1,317 @@
+{
+  "piVersion": "0.85.1",
+  "platform": "linux",
+  "withChorus": true,
+  "recordedAt": "2026-09-29T07:05:00.513Z",
+  "script": "docs/verification/pi-rpc-live.mjs",
+  "checks": {
+    "newSessionExit0": true,
+    "newSessionIsNew": true,
+    "newSessionReplyExtracted": true,
+    "protocolFramesNotForwarded": true,
+    "settledForwardedLast": true,
+    "resumeIsNewFalse": true,
+    "resumeRetainedContext": true,
+    "legacyJsonSessionCreated": true,
+    "legacyJsonSessionResumed": true,
+    "interruptSentAbort": true,
+    "interruptNoEscalation": true,
+    "interruptReportedAsCancelled": true,
+    "interruptNoLeftoverSleep": true,
+    "dialogCancelledWithWarning": true,
+    "dialogRunCompleted": true,
+    "handledWithoutRunSettled": true,
+    "lostHistoryWarned": true,
+    "lostHistoryNoticeInTranscript": true,
+    "lostHistoryIsNew": true,
+    "chorusSessionStartContext": true
+  },
+  "runs": {
+    "newSession": {
+      "sessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
+      "seconds": 4.2,
+      "result": {
+        "sessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
+        "backendSessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
+        "exitCode": 0,
+        "isNew": true
+      },
+      "texts": [
+        "LIVE-ALPHA"
+      ],
+      "types": [
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end:user",
+        "message_start",
+        "message_end:custom:chorus",
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end:assistant",
+        "turn_end",
+        "agent_end",
+        "agent_settled"
+      ],
+      "killResult": null,
+      "logs": [
+        "warn [Chorus] pi stderr: Warning: No project session found with id 'c944d192-6e8e-4c01-87b6-adc94bb52473'; creating a new session with that id."
+      ]
+    },
+    "resume": {
+      "sessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
+      "seconds": 4.6,
+      "result": {
+        "sessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
+        "backendSessionId": "c944d192-6e8e-4c01-87b6-adc94bb52473",
+        "exitCode": 0,
+        "isNew": false
+      },
+      "texts": [
+        "LIVE-ALPHA"
+      ],
+      "types": [
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end:user",
+        "message_start",
+        "message_end:custom:chorus",
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end:assistant",
+        "turn_end",
+        "agent_end",
+        "agent_settled"
+      ],
+      "killResult": null,
+      "logs": []
+    },
+    "legacyResume": {
+      "sessionId": "579b46ba-571d-490f-a9be-6dd4717d20a5",
+      "seconds": 4,
+      "result": {
+        "sessionId": "579b46ba-571d-490f-a9be-6dd4717d20a5",
+        "backendSessionId": "579b46ba-571d-490f-a9be-6dd4717d20a5",
+        "exitCode": 0,
+        "isNew": false
+      },
+      "texts": [
+        "LEGACY-JSON"
+      ],
+      "types": [
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end:user",
+        "message_start",
+        "message_end:custom:chorus",
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end:assistant",
+        "turn_end",
+        "agent_end",
+        "agent_settled"
+      ],
+      "killResult": null,
+      "logs": []
+    },
+    "interrupt": {
+      "sessionId": "77cd06e0-1f13-468b-b163-5331ba92cf61",
+      "seconds": 5.9,
+      "result": {
+        "sessionId": "77cd06e0-1f13-468b-b163-5331ba92cf61",
+        "backendSessionId": "77cd06e0-1f13-468b-b163-5331ba92cf61",
+        "exitCode": 130,
+        "isNew": true
+      },
+      "texts": [],
+      "types": [
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end:user",
+        "message_start",
+        "message_end:custom:chorus",
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end:assistant",
+        "tool_execution_start",
+        "tool_execution_update",
+        "tool_execution_end",
+        "message_start",
+        "message_end:toolResult",
+        "turn_end",
+        "turn_start",
+        "message_start",
+        "message_end:assistant",
+        "turn_end",
+        "agent_end",
+        "agent_settled"
+      ],
+      "killResult": {
+        "signaled": false,
+        "killed": true,
+        "escalated": false
+      },
+      "logs": [
+        "warn [Chorus] pi stderr: Warning: No project session found with id '77cd06e0-1f13-468b-b163-5331ba92cf61'; creating a new session with that id.",
+        "info [Chorus] interrupt: sent pi abort",
+        "warn [Chorus] pi exited with code 130"
+      ]
+    },
+    "dialog": {
+      "sessionId": "5bcc8129-aefd-4e8f-9f52-afbd118ce288",
+      "seconds": 3.7,
+      "result": {
+        "sessionId": "5bcc8129-aefd-4e8f-9f52-afbd118ce288",
+        "backendSessionId": "5bcc8129-aefd-4e8f-9f52-afbd118ce288",
+        "exitCode": 0,
+        "isNew": true
+      },
+      "texts": [
+        "DIALOG-OK"
+      ],
+      "types": [
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end:user",
+        "message_start",
+        "message_end:custom:chorus",
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end:assistant",
+        "turn_end",
+        "agent_end",
+        "agent_settled"
+      ],
+      "killResult": null,
+      "logs": [
+        "warn [Chorus] pi stderr: Warning: No project session found with id '5bcc8129-aefd-4e8f-9f52-afbd118ce288'; creating a new session with that id.",
+        "warn [Chorus] cancelled pi extension confirm dialog (headless daemon)"
+      ]
+    },
+    "handled": {
+      "sessionId": "13bbeb83-a3b8-46c5-8f2a-5fb08099b3ec",
+      "seconds": 1.4,
+      "result": {
+        "sessionId": "13bbeb83-a3b8-46c5-8f2a-5fb08099b3ec",
+        "backendSessionId": "13bbeb83-a3b8-46c5-8f2a-5fb08099b3ec",
+        "exitCode": 0,
+        "isNew": true
+      },
+      "texts": [],
+      "types": [],
+      "killResult": null,
+      "logs": [
+        "warn [Chorus] pi stderr: Warning: No project session found with id '13bbeb83-a3b8-46c5-8f2a-5fb08099b3ec'; creating a new session with that id.",
+        "info [Chorus] pi handled the prompt without an agent run"
+      ]
+    },
+    "corruptSeed": {
+      "sessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
+      "seconds": 3.5,
+      "result": {
+        "sessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
+        "backendSessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
+        "exitCode": 0,
+        "isNew": true
+      },
+      "texts": [
+        "SEED"
+      ],
+      "types": [
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end:user",
+        "message_start",
+        "message_end:custom:chorus",
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end:assistant",
+        "turn_end",
+        "agent_end",
+        "agent_settled"
+      ],
+      "killResult": null,
+      "logs": [
+        "warn [Chorus] pi stderr: Warning: No project session found with id '4dae6230-a388-427c-879c-c52dfafa079f'; creating a new session with that id."
+      ]
+    },
+    "corrupt": {
+      "sessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
+      "seconds": 3.8,
+      "result": {
+        "sessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
+        "backendSessionId": "4dae6230-a388-427c-879c-c52dfafa079f",
+        "exitCode": 0,
+        "isNew": true
+      },
+      "texts": [
+        "Previous Pi history could not be restored; continuing in a new Pi session with Chorus context.",
+        "FRESH"
+      ],
+      "types": [
+        "message_end:assistant",
+        "agent_start",
+        "turn_start",
+        "message_start",
+        "message_end:user",
+        "message_start",
+        "message_end:custom:chorus",
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end:assistant",
+        "turn_end",
+        "agent_end",
+        "agent_settled"
+      ],
+      "killResult": null,
+      "logs": [
+        "warn [Chorus] pi stderr: Warning: No project session found with id '4dae6230-a388-427c-879c-c52dfafa079f'; creating a new session with that id.",
+        "warn [Chorus] Previous Pi history could not be restored; continuing in a new Pi session with Chorus context. Session: 4dae6230-a388-427c-879c-c52dfafa079f."
+      ]
+    }
+  }
+}

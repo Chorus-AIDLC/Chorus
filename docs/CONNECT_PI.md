@@ -161,7 +161,11 @@ chorus daemon --agent pi
 ```
 
 Notes:
-- The daemon resolves the `pi` executable from PATH (override with `CHORUS_PI_PATH`) and runs it headless (`pi --mode json -p`), exporting `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` into the woken session.
+- The daemon resolves the `pi` executable from PATH (override with `CHORUS_PI_PATH`) and runs one headless `pi --mode rpc` process per wake, exporting `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` into the woken session.
+- Daemon wakes need **pi 0.85.0 or newer** (verified with 0.85.1). With an older pi the daemon skips the wake and logs the upgrade command: `npm install -g @earendil-works/pi-coding-agent@latest`.
+- Each idea keeps one pi session (`--session-id <idea-uuid>`), including sessions started before the RPC switch. If pi cannot restore a session's history, the wake continues in a fresh session and the conversation shows a notice saying so.
+- Interrupting a wake from the Chorus UI aborts pi's current run cleanly, including a running tool.
+- Nobody is at the terminal during a daemon wake, so any extension dialog (select / confirm / input / editor) is cancelled right away and the daemon logs `cancelled pi extension <method> dialog`. Ask the human through a Chorus comment or elaboration instead.
 - pi has **no permission system**, so no sandbox/skip-permissions flag is involved — `chorus` and `yolo` daemon modes run pi identically.
 - A woken pi reaches Chorus MCP tools only through this package's extension / `pi-mcp-adapter`, so keep chorus-pi installed in the environment the daemon wakes (the npm install above makes that reliable).
 
