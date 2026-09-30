@@ -1,0 +1,345 @@
+{
+  "provenance": "live-capture",
+  "cliVersion": "2.1.283",
+  "capturedAt": "2026-09-29",
+  "platform": "linux",
+  "description": "Chorus-only permission mode: the model calls Bash (touch under /tmp); the CLI emits control_request{subtype:can_use_tool}; the client answers deny; the deny message surfaces as an is_error tool_result user frame and in result.permission_denials.",
+  "command": "claude -p --input-format stream-json --output-format stream-json --verbose --model haiku --no-session-persistence --disallowedTools AskUserQuestion --allowedTools mcp__chorus__* --permission-prompt-tool stdio",
+  "sanitization": "Sanitized: system hook_started/hook_response frames (local plugin hook output) and system thinking_tokens progress frames removed; the system init frame is trimmed to type, subtype, cwd, session_id, model, permissionMode, apiKeySource, claude_code_version, output_style, uuid, fast_mode_state (tool, MCP-server, plugin, skill and path inventories dropped); assistant thinking text/signature redacted. All other frames and their order are verbatim.",
+  "exitCode": 0,
+  "transcript": [
+    {
+      "direction": "stdin",
+      "frame": {
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Use the Bash tool to run: touch /tmp/claude-sj-probe/x.txt . If it is denied, just reply denied."
+        },
+        "parent_tool_use_id": null
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "system",
+        "subtype": "init",
+        "cwd": "/tmp/claude-sj-probe",
+        "session_id": "95294fc0-fd6e-45ba-b645-da6db565b544",
+        "model": "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "permissionMode": "default",
+        "apiKeySource": "none",
+        "claude_code_version": "2.1.283",
+        "output_style": "default",
+        "uuid": "31e6df7f-47d0-4f63-94a5-d0addfcfa672",
+        "fast_mode_state": "off"
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "assistant",
+        "message": {
+          "model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+          "id": "msg_bdrk_wq3cjrckcuzap6wzwcv3vydkgyyyx74ymrt4bt2dlfyjascypo7q",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "<redacted>",
+              "signature": "<redacted>"
+            }
+          ],
+          "container": null,
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": {
+            "input_tokens": 10,
+            "cache_creation_input_tokens": 7841,
+            "cache_read_input_tokens": 17482,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 7841,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "service_tier": "standard"
+          },
+          "context_management": null
+        },
+        "parent_tool_use_id": null,
+        "session_id": "95294fc0-fd6e-45ba-b645-da6db565b544",
+        "uuid": "e5c2067d-7dab-42cd-8fec-e5253927475b",
+        "timestamp": "2026-09-29T01:56:43.720Z",
+        "request_id": "a181eab2-02b7-48a4-8387-d210a121389b"
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "assistant",
+        "message": {
+          "model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+          "id": "msg_bdrk_wq3cjrckcuzap6wzwcv3vydkgyyyx74ymrt4bt2dlfyjascypo7q",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_bdrk_01Fe5nWZQB71HBv3x1T7ffbL",
+              "name": "Bash",
+              "input": {
+                "command": "touch /tmp/claude-sj-probe/x.txt",
+                "description": "Create an empty file at /tmp/claude-sj-probe/x.txt"
+              }
+            }
+          ],
+          "container": null,
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": {
+            "input_tokens": 10,
+            "cache_creation_input_tokens": 7841,
+            "cache_read_input_tokens": 17482,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 7841,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 1,
+            "service_tier": "standard"
+          },
+          "context_management": null
+        },
+        "parent_tool_use_id": null,
+        "session_id": "95294fc0-fd6e-45ba-b645-da6db565b544",
+        "uuid": "3588c8fb-0dc4-4473-b33c-6d516ba99d17",
+        "timestamp": "2026-09-29T01:56:43.849Z",
+        "request_id": "a181eab2-02b7-48a4-8387-d210a121389b"
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "control_request",
+        "request_id": "8f33b608-a36a-4d48-a9f6-6bf2a5288ca0",
+        "request": {
+          "subtype": "can_use_tool",
+          "tool_name": "Bash",
+          "display_name": "Bash",
+          "input": {
+            "command": "touch /tmp/claude-sj-probe/x.txt",
+            "description": "Create an empty file at /tmp/claude-sj-probe/x.txt"
+          },
+          "description": "Create an empty file at /tmp/claude-sj-probe/x.txt",
+          "permission_suggestions": [
+            {
+              "type": "addRules",
+              "rules": [
+                {
+                  "toolName": "Bash",
+                  "ruleContent": "touch /tmp/claude-sj-probe/x.txt"
+                }
+              ],
+              "behavior": "allow",
+              "destination": "localSettings"
+            },
+            {
+              "type": "addDirectories",
+              "directories": [
+                "/tmp/claude-sj-probe"
+              ],
+              "destination": "session"
+            },
+            {
+              "type": "setMode",
+              "mode": "acceptEdits",
+              "destination": "session"
+            }
+          ],
+          "blocked_path": "/tmp/claude-sj-probe/x.txt",
+          "tool_use_id": "toolu_bdrk_01Fe5nWZQB71HBv3x1T7ffbL"
+        }
+      }
+    },
+    {
+      "direction": "stdin",
+      "frame": {
+        "type": "control_response",
+        "response": {
+          "subtype": "success",
+          "request_id": "8f33b608-a36a-4d48-a9f6-6bf2a5288ca0",
+          "response": {
+            "behavior": "deny",
+            "message": "Tool blocked by the Chorus daemon --chorus-only policy."
+          }
+        }
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "content": "Tool blocked by the Chorus daemon --chorus-only policy.",
+              "is_error": true,
+              "tool_use_id": "toolu_bdrk_01Fe5nWZQB71HBv3x1T7ffbL"
+            }
+          ]
+        },
+        "parent_tool_use_id": null,
+        "session_id": "95294fc0-fd6e-45ba-b645-da6db565b544",
+        "uuid": "0d79b05a-55a3-4884-a192-dadb250ce60e",
+        "timestamp": "2026-09-29T01:56:43.880Z",
+        "tool_use_result": "Error: Tool blocked by the Chorus daemon --chorus-only policy.",
+        "tool_result_meta": [
+          {
+            "id": "toolu_bdrk_01Fe5nWZQB71HBv3x1T7ffbL",
+            "non_execution_kind": "permission-rule"
+          }
+        ]
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "type": "assistant",
+        "message": {
+          "model": "anthropic.claude-haiku-4-5-20251001-v1:0",
+          "id": "msg_bdrk_rmqauj7avstm44cxffpbkin6knxe2dgz2iu4xg2dcpyljlmvhbsq",
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Denied — the Chorus daemon has a `--chorus-only` policy active that blocks the Bash tool."
+            }
+          ],
+          "container": null,
+          "stop_reason": null,
+          "stop_sequence": null,
+          "stop_details": null,
+          "usage": {
+            "input_tokens": 7,
+            "cache_creation_input_tokens": 756,
+            "cache_read_input_tokens": 25323,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 756,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "output_tokens": 2,
+            "service_tier": "standard"
+          },
+          "context_management": null
+        },
+        "parent_tool_use_id": null,
+        "session_id": "95294fc0-fd6e-45ba-b645-da6db565b544",
+        "uuid": "305182e9-428f-4d33-95a5-4af179a15eac",
+        "timestamp": "2026-09-29T01:56:44.930Z",
+        "request_id": "c434ddf4-73d8-4b76-afec-8f2f7a5db544"
+      }
+    },
+    {
+      "direction": "stdout",
+      "frame": {
+        "duration_api_ms": 2885,
+        "stop_reason": "end_turn",
+        "session_id": "95294fc0-fd6e-45ba-b645-da6db565b544",
+        "total_cost_usd": 0.01612375,
+        "usage": {
+          "input_tokens": 17,
+          "cache_creation_input_tokens": 8597,
+          "cache_read_input_tokens": 42805,
+          "output_tokens": 216,
+          "output_tokens_details": {
+            "thinking_tokens": 87
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 8597
+          },
+          "inference_geo": "",
+          "iterations": [],
+          "speed": "standard"
+        },
+        "modelUsage": {
+          "jp.anthropic.claude-haiku-4-5-20251001-v1:0": {
+            "inputTokens": 17,
+            "outputTokens": 216,
+            "cacheReadInputTokens": 42805,
+            "cacheCreationInputTokens": 8597,
+            "webSearchRequests": 0,
+            "costUSD": 0.01612375,
+            "contextWindow": 200000,
+            "maxOutputTokens": 32000,
+            "thinkingTokens": 87,
+            "canonicalModel": "claude-haiku-4-5",
+            "provider": "bedrock",
+            "costBasis": "list"
+          }
+        },
+        "permission_denials": [
+          {
+            "tool_name": "Bash",
+            "tool_use_id": "toolu_bdrk_01Fe5nWZQB71HBv3x1T7ffbL",
+            "tool_input": {
+              "command": "touch /tmp/claude-sj-probe/x.txt",
+              "description": "Create an empty file at /tmp/claude-sj-probe/x.txt"
+            }
+          }
+        ],
+        "terminal_reason": "completed",
+        "fast_mode_state": "off",
+        "fast_mode_disabled_reason": "not_first_party",
+        "subagent_stats": {
+          "spawned": 0,
+          "requested": {
+            "background": 0,
+            "foreground": 0,
+            "unset": 0
+          },
+          "started_in_background": 0,
+          "max_depth": 0,
+          "spawned_by_subagents": 0,
+          "completed": 0,
+          "failed": 0,
+          "killed": {
+            "parent": 0,
+            "user": 0,
+            "system": 0
+          },
+          "refused": {
+            "depth_limit": 0,
+            "concurrency_limit": 0,
+            "budget": 0
+          },
+          "by_type": {}
+        },
+        "is_error": false,
+        "num_turns": 2,
+        "subtype": "success",
+        "api_error_status": null,
+        "result": "Denied — the Chorus daemon has a `--chorus-only` policy active that blocks the Bash tool.",
+        "ttft_ms": 1764,
+        "type": "result",
+        "duration_ms": 2984,
+        "uuid": "06654f63-da97-446d-bcfe-eb37bde769da",
+        "ttft_stream_ms": 931,
+        "time_to_request_ms": 86,
+        "first_content_frame_ms": 931,
+        "queued_turn_count": 0,
+        "result_index": 0
+      }
+    }
+  ]
+}

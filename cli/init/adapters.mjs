@@ -64,8 +64,8 @@ function readJsonSafe(path) {
  * @param {{ home?: string, readJson?: (p: string) => any }} [deps]
  * @returns {{ marketplaceRegistered: boolean, pluginInstalled: boolean, version?: string }}
  */
-export function readClaudeInstallState({ home = homedir(), readJson = readJsonSafe } = {}) {
-  const pluginsDir = join(home, ".claude", "plugins");
+export function readClaudeInstallState({ env = process.env, home = env.HOME || env.USERPROFILE || homedir(), readJson = readJsonSafe } = {}) {
+  const pluginsDir = join(env.CLAUDE_CONFIG_DIR || join(home, ".claude"), "plugins");
   const installed = readJson(join(pluginsDir, "installed_plugins.json"));
   const markets = readJson(join(pluginsDir, "known_marketplaces.json"));
 

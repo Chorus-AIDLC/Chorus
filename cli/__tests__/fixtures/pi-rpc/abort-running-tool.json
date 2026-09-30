@@ -1,0 +1,485 @@
+{
+  "provenance": "live",
+  "piVersion": "0.85.1",
+  "capturedAt": "2026-09-29",
+  "description": "abort sent 1.5 s into a running bash 'sleep 60' tool: tool aborted, agent_settled, then the abort response.",
+  "writes": [
+    {
+      "id": "chorus-state-1",
+      "type": "get_state"
+    },
+    {
+      "id": "chorus-prompt-1",
+      "type": "prompt",
+      "message": "Run the bash command: sleep 60 && echo done. Do not do anything else."
+    },
+    {
+      "id": "chorus-abort-1",
+      "type": "abort"
+    }
+  ],
+  "frames": [
+    {
+      "type": "extension_ui_request",
+      "id": "b8b994db-34a3-4b4f-8258-76383e7fbdf0",
+      "method": "notify",
+      "message": "Chorus connected at https://chorus.example (redacted)",
+      "notifyType": "info"
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "dd59460c-7bac-4a00-baa4-05002601a347",
+      "method": "setStatus",
+      "statusKey": "mcp",
+      "statusText": "\u001b[38;5;109m🔌 MCP: 1 server enabled\u001b[39m"
+    },
+    {
+      "id": "chorus-state-1",
+      "type": "response",
+      "command": "get_state",
+      "success": true,
+      "data": {
+        "isStreaming": false,
+        "isCompacting": false,
+        "sessionFile": "/home/user/.pi/agent/sessions/--tmp-pirpc--/2026-09-29T06-01-53-818Z_f79bf7af-03db-4d22-b370-d41faa70fcd7.jsonl",
+        "sessionId": "f79bf7af-03db-4d22-b370-d41faa70fcd7",
+        "messageCount": 0,
+        "pendingMessageCount": 0
+      }
+    },
+    {
+      "id": "chorus-prompt-1",
+      "type": "response",
+      "command": "prompt",
+      "success": true
+    },
+    {
+      "type": "agent_start"
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Run the bash command: sleep 60 && echo done. Do not do anything else."
+          }
+        ],
+        "timestamp": 1790661714757
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Run the bash command: sleep 60 && echo done. Do not do anything else."
+          }
+        ],
+        "timestamp": 1790661714757
+      }
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "custom",
+        "customType": "chorus",
+        "content": "<chorus-pi SessionStart context (redacted)>",
+        "display": false,
+        "timestamp": 1790661714757
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "custom",
+        "customType": "chorus",
+        "content": "<chorus-pi SessionStart context (redacted)>",
+        "display": false,
+        "timestamp": 1790661714757
+      }
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "pending",
+        "timestamp": 1790661714795
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "tooluse_dzhhgyG4UmsC5vJODiPey6",
+            "name": "bash",
+            "arguments": {
+              "command": "sleep 60 && echo done",
+              "timeout": 120
+            }
+          }
+        ],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 4,
+          "output": 78,
+          "cacheRead": 8246,
+          "cacheWrite": 2340,
+          "totalTokens": 10668,
+          "cost": {
+            "input": 0.00004,
+            "output": 0.0039000000000000003,
+            "cacheRead": 0.0020615,
+            "cacheWrite": 0.02925,
+            "total": 0.035251500000000005
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1790661714795,
+        "rawStopReason": "tool_use"
+      }
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "tooluse_dzhhgyG4UmsC5vJODiPey6",
+      "toolName": "bash",
+      "args": {
+        "command": "sleep 60 && echo done",
+        "timeout": 120
+      }
+    },
+    {
+      "type": "tool_execution_update",
+      "toolCallId": "tooluse_dzhhgyG4UmsC5vJODiPey6",
+      "toolName": "bash",
+      "args": {
+        "command": "sleep 60 && echo done",
+        "timeout": 120
+      },
+      "partialResult": {
+        "content": []
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "tooluse_dzhhgyG4UmsC5vJODiPey6",
+      "toolName": "bash",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Command aborted"
+          }
+        ],
+        "details": {}
+      },
+      "isError": true
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "toolResult",
+        "toolCallId": "tooluse_dzhhgyG4UmsC5vJODiPey6",
+        "toolName": "bash",
+        "content": [
+          {
+            "type": "text",
+            "text": "Command aborted"
+          }
+        ],
+        "details": {},
+        "isError": true,
+        "timestamp": 1790661719632
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "toolResult",
+        "toolCallId": "tooluse_dzhhgyG4UmsC5vJODiPey6",
+        "toolName": "bash",
+        "content": [
+          {
+            "type": "text",
+            "text": "Command aborted"
+          }
+        ],
+        "details": {},
+        "isError": true,
+        "timestamp": 1790661719632
+      }
+    },
+    {
+      "type": "turn_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "tooluse_dzhhgyG4UmsC5vJODiPey6",
+            "name": "bash",
+            "arguments": {
+              "command": "sleep 60 && echo done",
+              "timeout": 120
+            }
+          }
+        ],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 4,
+          "output": 78,
+          "cacheRead": 8246,
+          "cacheWrite": 2340,
+          "totalTokens": 10668,
+          "cost": {
+            "input": 0.00004,
+            "output": 0.0039000000000000003,
+            "cacheRead": 0.0020615,
+            "cacheWrite": 0.02925,
+            "total": 0.035251500000000005
+          }
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1790661714795,
+        "rawStopReason": "tool_use"
+      },
+      "toolResults": [
+        {
+          "role": "toolResult",
+          "toolCallId": "tooluse_dzhhgyG4UmsC5vJODiPey6",
+          "toolName": "bash",
+          "content": [
+            {
+              "type": "text",
+              "text": "Command aborted"
+            }
+          ],
+          "details": {},
+          "isError": true,
+          "timestamp": 1790661719632
+        }
+      ]
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "error",
+        "errorMessage": "This operation was aborted",
+        "timestamp": 1790661719632
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "error",
+        "errorMessage": "This operation was aborted",
+        "timestamp": 1790661719632
+      }
+    },
+    {
+      "type": "turn_end",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "error",
+        "errorMessage": "This operation was aborted",
+        "timestamp": 1790661719632
+      },
+      "toolResults": []
+    },
+    {
+      "type": "agent_end",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Run the bash command: sleep 60 && echo done. Do not do anything else."
+            }
+          ],
+          "timestamp": 1790661714757
+        },
+        {
+          "role": "custom",
+          "customType": "chorus",
+          "content": "<chorus-pi SessionStart context (redacted)>",
+          "display": false,
+          "timestamp": 1790661714757
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "tooluse_dzhhgyG4UmsC5vJODiPey6",
+              "name": "bash",
+              "arguments": {
+                "command": "sleep 60 && echo done",
+                "timeout": 120
+              }
+            }
+          ],
+          "api": "bedrock-converse-stream",
+          "provider": "amazon-bedrock",
+          "model": "global.anthropic.claude-fable-5-1",
+          "usage": {
+            "input": 4,
+            "output": 78,
+            "cacheRead": 8246,
+            "cacheWrite": 2340,
+            "totalTokens": 10668,
+            "cost": {
+              "input": 0.00004,
+              "output": 0.0039000000000000003,
+              "cacheRead": 0.0020615,
+              "cacheWrite": 0.02925,
+              "total": 0.035251500000000005
+            }
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1790661714795,
+          "rawStopReason": "tool_use"
+        },
+        {
+          "role": "toolResult",
+          "toolCallId": "tooluse_dzhhgyG4UmsC5vJODiPey6",
+          "toolName": "bash",
+          "content": [
+            {
+              "type": "text",
+              "text": "Command aborted"
+            }
+          ],
+          "details": {},
+          "isError": true,
+          "timestamp": 1790661719632
+        },
+        {
+          "role": "assistant",
+          "content": [],
+          "api": "bedrock-converse-stream",
+          "provider": "amazon-bedrock",
+          "model": "global.anthropic.claude-fable-5-1",
+          "usage": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 0,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          },
+          "stopReason": "error",
+          "errorMessage": "This operation was aborted",
+          "timestamp": 1790661719632
+        }
+      ],
+      "willRetry": false
+    },
+    {
+      "type": "agent_settled"
+    },
+    {
+      "id": "chorus-abort-1",
+      "type": "response",
+      "command": "abort",
+      "success": true
+    }
+  ],
+  "exitCode": 0
+}

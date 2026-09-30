@@ -314,6 +314,14 @@ describe("DirectoryBrowser", () => {
     fetchMock.mockImplementationOnce(() =>
       success({ items: [{ name: "repo", path: "/work/repo" }], nextCursor: null }),
     );
+    // The boundary below is exact (250 ms debounce), so stop the fake clock from
+    // also following wall-clock time: under the suite's `shouldAdvanceTime`, a real
+    // stall of ~20 ms (CI load) jumps the clock past 249 ms and the query fires
+    // "early". loadRoot is settled and nothing is pending, so re-installing pure
+    // fake timers here drops no timer; waitFor (which needs a moving clock) is not
+    // used after this point.
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useFakeTimers();
 
     fireEvent.change(screen.getByRole("combobox", { name: "pathPrefix" }), {
       target: { value: "/work/r" },
@@ -321,8 +329,10 @@ describe("DirectoryBrowser", () => {
     await act(() => vi.advanceTimersByTimeAsync(249));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(0));
 
-    await waitFor(() => expect(screen.getByRole("option").textContent).toContain("/work/repo"));
+    expect(screen.getByRole("option").textContent).toContain("/work/repo");
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
       operation: "list",
       prefix: "/work/r",

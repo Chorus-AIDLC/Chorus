@@ -1,0 +1,439 @@
+{
+  "source": "Synthetic examples, NOT live model output. Validated with Python jsonschema against codex-cli 0.157.1 generate-json-schema output on 2026-09-28. schema paths are relative to /tmp/chorus-codex-schema-01571. All IDs, model and text are synthetic.",
+  "examples": [
+    {
+      "schema": "v2/ThreadStartParams.json",
+      "kind": "request",
+      "method": "thread/start",
+      "message": {
+        "method": "thread/start",
+        "params": {
+          "cwd": "/sanitized/workspace",
+          "approvalPolicy": "never",
+          "sandbox": "read-only",
+          "model": "fixture-model",
+          "config": {
+            "model_reasoning_effort": "medium"
+          }
+        },
+        "id": "fixture-id"
+      }
+    },
+    {
+      "schema": "v2/ThreadResumeParams.json",
+      "kind": "request",
+      "method": "thread/resume",
+      "message": {
+        "method": "thread/resume",
+        "params": {
+          "cwd": "/sanitized/workspace",
+          "approvalPolicy": "never",
+          "sandbox": "read-only",
+          "model": "fixture-model",
+          "config": {
+            "model_reasoning_effort": "medium"
+          },
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "excludeTurns": true
+        },
+        "id": "fixture-id"
+      }
+    },
+    {
+      "schema": "v2/ThreadStartResponse.json",
+      "kind": "response",
+      "method": "thread/start",
+      "message": {
+        "id": "fixture-id",
+        "result": {
+          "thread": {
+            "id": "00000000-0000-4000-8000-000000000010",
+            "sessionId": "00000000-0000-4000-8000-000000000010",
+            "cliVersion": "0.157.1",
+            "createdAt": 0,
+            "updatedAt": 0,
+            "cwd": "/sanitized/workspace",
+            "ephemeral": false,
+            "modelProvider": "openai",
+            "preview": "",
+            "projectId": null,
+            "source": "appServer",
+            "status": {
+              "type": "idle"
+            },
+            "turns": []
+          },
+          "model": "fixture-model",
+          "modelProvider": "openai",
+          "cwd": "/sanitized/workspace",
+          "approvalPolicy": "never",
+          "approvalsReviewer": "user",
+          "sandbox": {
+            "type": "readOnly",
+            "networkAccess": false
+          },
+          "reasoningEffort": "medium"
+        }
+      }
+    },
+    {
+      "schema": "v2/ThreadResumeResponse.json",
+      "kind": "response",
+      "method": "thread/resume",
+      "message": {
+        "id": "fixture-id",
+        "result": {
+          "thread": {
+            "id": "00000000-0000-4000-8000-000000000010",
+            "sessionId": "00000000-0000-4000-8000-000000000010",
+            "cliVersion": "0.157.1",
+            "createdAt": 0,
+            "updatedAt": 0,
+            "cwd": "/sanitized/workspace",
+            "ephemeral": false,
+            "modelProvider": "openai",
+            "preview": "",
+            "projectId": null,
+            "source": "appServer",
+            "status": {
+              "type": "idle"
+            },
+            "turns": []
+          },
+          "model": "fixture-model",
+          "modelProvider": "openai",
+          "cwd": "/sanitized/workspace",
+          "approvalPolicy": "never",
+          "approvalsReviewer": "user",
+          "sandbox": {
+            "type": "readOnly",
+            "networkAccess": false
+          },
+          "reasoningEffort": "medium"
+        }
+      }
+    },
+    {
+      "schema": "v2/TurnStartParams.json",
+      "kind": "request",
+      "method": "turn/start",
+      "message": {
+        "method": "turn/start",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "input": [
+            {
+              "type": "text",
+              "text": "Synthetic public fixture text",
+              "text_elements": []
+            }
+          ],
+          "cwd": "/sanitized/workspace",
+          "approvalPolicy": "never",
+          "sandboxPolicy": {
+            "type": "readOnly",
+            "networkAccess": false
+          },
+          "model": "fixture-model",
+          "effort": "medium"
+        },
+        "id": "fixture-id"
+      }
+    },
+    {
+      "schema": "v2/TurnStartResponse.json",
+      "kind": "response",
+      "method": "turn/start",
+      "message": {
+        "id": "fixture-id",
+        "result": {
+          "turn": {
+            "id": "00000000-0000-4000-8000-000000000020",
+            "items": [],
+            "status": "inProgress"
+          }
+        }
+      }
+    },
+    {
+      "schema": "v2/TurnInterruptParams.json",
+      "kind": "request",
+      "method": "turn/interrupt",
+      "message": {
+        "method": "turn/interrupt",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "turnId": "00000000-0000-4000-8000-000000000020"
+        },
+        "id": "fixture-id"
+      }
+    },
+    {
+      "schema": "v2/TurnInterruptResponse.json",
+      "kind": "response",
+      "method": "turn/interrupt",
+      "message": {
+        "id": "fixture-id",
+        "result": {}
+      }
+    },
+    {
+      "schema": "v2/ThreadStartedNotification.json",
+      "kind": "notification",
+      "method": "thread/started",
+      "message": {
+        "method": "thread/started",
+        "params": {
+          "thread": {
+            "id": "00000000-0000-4000-8000-000000000010",
+            "sessionId": "00000000-0000-4000-8000-000000000010",
+            "cliVersion": "0.157.1",
+            "createdAt": 0,
+            "updatedAt": 0,
+            "cwd": "/sanitized/workspace",
+            "ephemeral": false,
+            "modelProvider": "openai",
+            "preview": "",
+            "projectId": null,
+            "source": "appServer",
+            "status": {
+              "type": "idle"
+            },
+            "turns": []
+          }
+        }
+      }
+    },
+    {
+      "schema": "v2/TurnStartedNotification.json",
+      "kind": "notification",
+      "method": "turn/started",
+      "message": {
+        "method": "turn/started",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "turn": {
+            "id": "00000000-0000-4000-8000-000000000020",
+            "items": [],
+            "status": "inProgress"
+          }
+        }
+      }
+    },
+    {
+      "schema": "v2/AgentMessageDeltaNotification.json",
+      "kind": "notification",
+      "method": "item/agentMessage/delta",
+      "message": {
+        "method": "item/agentMessage/delta",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "turnId": "00000000-0000-4000-8000-000000000020",
+          "itemId": "item-1",
+          "delta": "你好🌏"
+        }
+      }
+    },
+    {
+      "schema": "v2/ItemCompletedNotification.json",
+      "kind": "notification",
+      "method": "item/completed",
+      "message": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "turnId": "00000000-0000-4000-8000-000000000020",
+          "completedAtMs": 0,
+          "item": {
+            "id": "item-1",
+            "type": "agentMessage",
+            "phase": "commentary",
+            "text": "Synthetic public fixture text"
+          }
+        }
+      }
+    },
+    {
+      "schema": "v2/ItemCompletedNotification.json",
+      "kind": "notification",
+      "method": "item/completed",
+      "message": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "turnId": "00000000-0000-4000-8000-000000000020",
+          "completedAtMs": 0,
+          "item": {
+            "id": "item-2",
+            "type": "agentMessage",
+            "phase": "final_answer",
+            "text": "Synthetic public fixture text"
+          }
+        }
+      }
+    },
+    {
+      "schema": "v2/ThreadTokenUsageUpdatedNotification.json",
+      "kind": "notification",
+      "method": "thread/tokenUsage/updated",
+      "message": {
+        "method": "thread/tokenUsage/updated",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "turnId": "00000000-0000-4000-8000-000000000020",
+          "tokenUsage": {
+            "total": {
+              "inputTokens": 100,
+              "cachedInputTokens": 20,
+              "cacheWriteInputTokens": 5,
+              "outputTokens": 30,
+              "reasoningOutputTokens": 10,
+              "totalTokens": 130
+            },
+            "last": {
+              "inputTokens": 100,
+              "cachedInputTokens": 20,
+              "cacheWriteInputTokens": 5,
+              "outputTokens": 30,
+              "reasoningOutputTokens": 10,
+              "totalTokens": 130
+            },
+            "modelContextWindow": 200000
+          }
+        }
+      }
+    },
+    {
+      "schema": "v2/TurnCompletedNotification.json",
+      "kind": "notification",
+      "method": "turn/completed",
+      "message": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "turn": {
+            "id": "00000000-0000-4000-8000-000000000020",
+            "items": [],
+            "status": "completed"
+          }
+        }
+      }
+    },
+    {
+      "schema": "v2/TurnCompletedNotification.json",
+      "kind": "notification",
+      "method": "turn/completed",
+      "message": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "turn": {
+            "id": "00000000-0000-4000-8000-000000000020",
+            "items": [],
+            "status": "interrupted"
+          }
+        }
+      }
+    },
+    {
+      "schema": "v2/TurnCompletedNotification.json",
+      "kind": "notification",
+      "method": "turn/completed",
+      "message": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000010",
+          "turn": {
+            "id": "00000000-0000-4000-8000-000000000020",
+            "items": [],
+            "status": "failed",
+            "error": {
+              "message": "Synthetic failure",
+              "codexErrorInfo": "unauthorized"
+            }
+          }
+        }
+      }
+    },
+    {
+      "schema": "CommandExecutionRequestApprovalResponse.json",
+      "kind": "response",
+      "method": "item/commandExecution/requestApproval",
+      "message": {
+        "id": "fixture-id",
+        "result": {
+          "decision": "cancel"
+        }
+      }
+    },
+    {
+      "schema": "FileChangeRequestApprovalResponse.json",
+      "kind": "response",
+      "method": "item/fileChange/requestApproval",
+      "message": {
+        "id": "fixture-id",
+        "result": {
+          "decision": "cancel"
+        }
+      }
+    },
+    {
+      "schema": "PermissionsRequestApprovalResponse.json",
+      "kind": "response",
+      "method": "item/permissions/requestApproval",
+      "message": {
+        "id": "fixture-id",
+        "result": {
+          "permissions": {},
+          "scope": "turn"
+        }
+      }
+    },
+    {
+      "schema": "McpServerElicitationRequestResponse.json",
+      "kind": "response",
+      "method": "mcpServer/elicitation/request",
+      "message": {
+        "id": "fixture-id",
+        "result": {
+          "action": "cancel",
+          "content": null
+        }
+      }
+    },
+    {
+      "schema": "ExecCommandApprovalResponse.json",
+      "kind": "response",
+      "method": "execCommandApproval",
+      "message": {
+        "id": "fixture-id",
+        "result": {
+          "decision": "abort"
+        }
+      }
+    },
+    {
+      "schema": "ApplyPatchApprovalResponse.json",
+      "kind": "response",
+      "method": "applyPatchApproval",
+      "message": {
+        "id": "fixture-id",
+        "result": {
+          "decision": "abort"
+        }
+      }
+    },
+    {
+      "schema": "DynamicToolCallResponse.json",
+      "kind": "response",
+      "method": "item/tool/call",
+      "message": {
+        "id": "fixture-id",
+        "result": {
+          "contentItems": [],
+          "success": false
+        }
+      }
+    }
+  ]
+}

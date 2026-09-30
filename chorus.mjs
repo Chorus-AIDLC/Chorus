@@ -24,7 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // client commands that connect OUT to a remote Chorus server. Their modules are
 // lazy-imported so the server-launch path pays no startup cost.
 
-const SUBCOMMANDS = new Set(["daemon", "login", "mcp", "agents"]);
+const SUBCOMMANDS = new Set(["daemon", "login", "mcp", "agents", "upgrade", "update"]);
 
 // Client-subcommand arg parsing + help text live in cli/client-args.mjs so they
 // are pure and unit-testable (this entry module runs side effects at import).
@@ -54,6 +54,10 @@ function pkgVersion() {
 }
 
 async function runSubcommand(name, rest) {
+  if (name === "upgrade" || name === "update") {
+    const { runUpgrade } = await import("./cli/upgrade.mjs");
+    return runUpgrade(rest);
+  }
   // `agents` and `mcp` own their arg parsing + help (they handle `--help`
   // themselves), so they are dispatched before the shared client-flag/help
   // block below. (`chorus init` was renamed to `chorus agents add` — the bare
@@ -171,6 +175,8 @@ Chorus v${pkg.version} — AI Agent & Human collaboration platform
 
 USAGE
   chorus [options]                 Start the Chorus server (default)
+  chorus upgrade [--plugins]      Upgrade npm-global CLI; optionally refresh configured plugins
+  chorus update [--plugins]       Alias for upgrade (see 'chorus upgrade --help')
   chorus agents [list|add|remove]  Manage this machine's configured agents:
                                    list (default), add (detect + install plugin + seed
                                    creds; formerly 'chorus init'), remove <name|uuid>

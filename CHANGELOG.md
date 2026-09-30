@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.20.0] - 2026-09-30
+
+### Added
+- **CLI self-upgrade**: Added `chorus upgrade` / `chorus update` for npm-global installations, with optional `--plugins` refresh for configured Claude Code, Codex, Kiro, and Pi agents. (#584)
+
+### Changed
+- **Codex daemon**: Switched wakes to isolated App Server processes, preserving thread resume and adding protocol-driven interruption and per-turn usage normalization. (#580)
+- **Claude Code daemon**: Switched to bidirectional stream-json communication, with protocol-driven interruption, explicit restricted-tool denials, and Chorus-based questions for background work. (#582)
+- **Pi daemon**: Switched wakes to native RPC mode with protocol-driven abort, automatic cancellation of blocking extension dialogs, and visible session-history recovery notices. Requires Pi 0.85.0 or newer; verified live on Linux with Pi 0.85.1. (#585)
+
+### Fixed
+- **Research actions**: Require an assigned online agent and explain unavailable actions while preserving working-directory selection and server-side checks. (#581)
+- **Mobile input**: Prevented automatic zoom when focusing inputs on mobile devices. (#583)
+
+### Plugin
+- **Versions**: Upgraded all six plugins and four coordinated npm packages to `0.20.0`.
+
+---
+
 ## [0.19.1] - 2026-09-28
 
 ### Added

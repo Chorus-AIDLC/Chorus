@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.20.0](https://chorus-ai.dev/zh/blog/chorus-v0.20.0-release/)**：daemon 后端改用 Codex App Server、Claude Code 双向 stream-json 和 Pi 原生 RPC，通过协议处理中断与执行状态。新增 `chorus upgrade`，支持 npm 全局安装的 CLI 自升级；加上 `--plugins` 可刷新已配置的 Claude Code、Codex、Kiro 和 Pi 集成。
+
 **[v0.19.1](https://chorus-ai.dev/zh/blog/chorus-v0.19.1-release/)**：新增轻量 Research，在 Idea 澄清和 Proposal 设计时查证关键事实；行内证据引用让结论直接关联来源。开发开始前，也可从 Tracker 发起补充调查。
 
 **[v0.19.0](https://chorus-ai.dev/zh/blog/chorus-v0.19.0-release/)**：借鉴 Cloudflare，明确 reviewer 职责、保留完整证据，用稳定 ID 逐轮追踪问题。任务审查默认检查验收标准之外的代码质量。
@@ -48,7 +50,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 两条命令即可，无需数据库、无需 Docker、无需配置文件。
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.19.1
+npm install -g @chorus-aidlc/chorus@0.20.0
 chorus
 ```
 
@@ -57,6 +59,21 @@ Chorus 会自动启动内嵌 PostgreSQL (PGlite)、执行数据库迁移，然�
 > 需要运行多个 agent，或部署到生产环境？可使用外部 PostgreSQL、Docker 或 AWS → **[部署与自托管](https://doc.chorus-ai.dev/zh/guides/deployment-overview/)**。
 
 想把本地机器变成领取任务的 agent 运行时，运行 `chorus daemon` → **[Daemon 运维](https://doc.chorus-ai.dev/zh/guides/daemon-operations/)** · **[远程控制](https://doc.chorus-ai.dev/zh/guides/remote-control/)**。
+
+### 升级 CLI 和插件
+
+```bash
+chorus upgrade             # 仅升级 CLI；chorus update 为同义命令
+chorus upgrade --plugins   # 同时刷新已配置 Agent 的 Chorus 插件
+```
+
+自升级支持 Linux、macOS 和 Windows 上当前使用的 **npm 全局安装**：检查 npm prefix、查询最新稳定版本、避免降级，并在安装后验证版本。源码目录、链接、npx 和其他包管理器安装请使用各自的更新方式。CLI 检查、安装或版本验证失败后，不会继续更新插件。
+
+`--plugins` 读取 `~/.chorus/daemon.json`，兼容旧版单 Agent 配置。明确指定 Claude Code、Codex、Kiro、Pi 类型的记录都会处理，不受唤醒开关影响；按每条记录的 home、配置目录和 PATH 定位宿主，共享目标只更新一次。仅刷新 Chorus 及必需的集成依赖，保留已有凭证和无关设置，不安装宿主 CLI。Kiro 模板来自记录配置的 Chorus 实例（以该实例提供的版本为准，可能落后于 npm），共享目录对应不同实例时报告冲突。Pi 会探测是否支持定向更新 Chorus 和 `pi-mcp-adapter`；旧宿主不支持时报告未完成，部分安装也不会误报全部刷新，更不会更新其他扩展。固定版本、版本范围及非 latest 标签会保留并报告未完成；需移除这些约束后才能更新到最新。
+
+命令非交互执行并逐项汇总。退出码 **0** 表示请求全部完成（配置不存在或为空也算成功）；**1** 表示失败或未全部完成，包括 offline、未知或缺少类型的记录、宿主缺失及不支持定向更新。单个插件失败不影响后续目标，已完成的变更不回滚。更新后请开启新的 Agent 会话，并在方便时重启 daemon；命令本身不会重启进程或中断现有会话。
+
+npm 安装过程不设置自动超时或强制终止，会持续显示脱敏进度直到退出；查询仍保留超时。失败会显示脱敏原因和退出状态，权限问题会提示使用 nvm 等用户级 Node 安装。配置备份使用固定的 `.chorus-upgrade.bak` 文件，下次升级时替换，避免堆积。
 
 ---
 

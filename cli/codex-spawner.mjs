@@ -1,47 +1,23 @@
-// cli/codex-spawner.mjs
-// Cross-platform headless Codex spawner — the `codex` counterpart to
-// ClaudeSpawner, satisfying the SAME backend-agnostic Spawner.wake(...) contract
-// so the daemon's wake pipeline (queue, waker, directed delivery, headless guard,
-// reporters) stays backend-neutral.
-//
-// Codex diverges structurally from Claude (verified against codex-cli 0.142.3 +
-// the ../codex source + a live `codex exec --json` run):
-//   • `codex exec --json` emits JSONL (one event per line); the prompt is read
-//     from STDIN (never argv). `codex exec resume <id> --json` continues a run.
-//   • The FIRST event is `{"type":"thread.started","thread_id":"<uuid>"}` — Codex
-//     GENERATES its own id (it does NOT accept a client `--session-id`). We capture
-//     it and persist anchor→thread_id (codex-session-map.mjs) so a later wake can
-//     `resume <thread_id>`. (serde: ThreadEvent tag="type", rename="thread.started";
-//     ThreadStartedEvent.thread_id: String — codex-rs/exec/src/exec_events.rs.)
-//   • No `--mcp-config`: Codex reads MCP servers from the user's ~/.codex/config.toml.
-//     `chorus agents add` writes [mcp_servers.chorus] with bearer_token_env_var =
-//     "CHORUS_API_KEY" — a KEYLESS reference (no literal key in config.toml), and Codex
-//     resolves that env var into `Authorization: Bearer <key>` at connect. So the
-//     CHORUS_API_KEY the daemon exports into the child env below DOES reach Codex's MCP
-//     auth (as well as the plugin's shell tooling — chorus-api.sh / SessionStart hooks);
-//     never argv. (Multi-agent: two Codex agents with different keys each need their own
-//     CODEX_HOME so their config.toml + ~/.codex/.env don't collide.)
-//   • Permission is a SANDBOX mode, not a tool allowlist.
-//
-// Reuses claude-spawner's platform-neutral helpers: parseNdjsonChunk (NDJSON
-// stream parse) and the PATH-walk shape of resolveClaudePath.
-
+// One isolated Codex App Server stdio connection per daemon wake.
 import { spawn } from "node:child_process";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
-import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
+import { validateAgentCliConfig, codexAppServerArgs, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, win32 as pathWin32, posix as pathPosix } from "node:path";
-import { parseNdjsonChunk } from "./claude-spawner.mjs";
+import { CodexAppServerClient, CodexAppServerError, isHistoryUnavailableError } from "./codex-app-server-client.mjs";
+import { CodexAppServerEvents } from "./codex-app-server-events.mjs";
+import { registerProcessStopHook } from "./process-stop-hooks.mjs";
+import { killProcessTree } from "./process-killer.mjs";
 import { awaitChildSettled } from "./child-exit.mjs";
 import { getThreadId as defaultGetThreadId, setThreadId as defaultSetThreadId } from "./codex-session-map.mjs";
 import {
   getCodexUsageSnapshot as defaultGetUsageSnapshot,
-  normalizeCodexUsageEvent,
   setCodexUsageSnapshot as defaultSetUsageSnapshot,
 } from "./codex-usage-map.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
+const CLIENT_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 /**
  * Check whether the user's Codex config declares the Chorus MCP server.
@@ -75,60 +51,9 @@ export function hasChorusMcpServer(deps = {}) {
  *   implement it; the daemon injects one based on the resolved agent type.
  */
 
-/**
- * Map the daemon's backend-agnostic permission mode to a Codex sandbox posture.
- * The expression is SUBCOMMAND-AWARE because the two surfaces differ (verified
- * against codex 0.142.3): the top-level `codex exec` accepts `--sandbox <mode>`,
- * but `codex exec resume` does NOT — passing `--sandbox` there errors with exit 2.
- *   yolo   → --dangerously-bypass-approvals-and-sandbox  (valid on BOTH exec and
- *            resume; full autonomy)
- *   chorus → exec:   --sandbox read-only
- *            resume: -c sandbox_mode="read-only"  (the `-c` config override is how
- *            `codex exec resume` accepts a sandbox mode; `sandbox_mode` is a real
- *            config key, value spelled `read-only` per protocol/src/config_types.rs,
- *            confirmed via `--strict-config`).
- * Anything other than yolo falls back to the restricted read-only posture.
- * @param {"yolo"|"chorus"|undefined} permissionMode
- * @param {{ resume?: boolean }} [opts]  resume:true selects the `codex exec resume` surface.
- * @returns {string[]}
- */
-export function sandboxFlags(permissionMode, opts = {}) {
-  if (permissionMode === "yolo") return ["--dangerously-bypass-approvals-and-sandbox"];
-  // restricted read-only posture, expressed per subcommand:
-  return opts.resume ? ["-c", 'sandbox_mode="read-only"'] : ["--sandbox", "read-only"];
-}
-
-/**
- * Build the argv for a headless codex run. Prompt is NEVER here — it goes over
- * stdin. `--skip-git-repo-check` lets a non-repo cwd still run.
- * @param {{ isNew: boolean, threadId?: string|null, permissionMode?: "yolo"|"chorus" }} o
- * @returns {string[]}
- */
-export function buildCodexArgs({ isNew, threadId, permissionMode }) {
-  if (!isNew && threadId) {
-    const sandbox = sandboxFlags(permissionMode, { resume: true });
-    return ["exec", "resume", threadId, "--json", ...sandbox, "--skip-git-repo-check"];
-  }
-  const sandbox = sandboxFlags(permissionMode);
-  return ["exec", "--json", ...sandbox, "--skip-git-repo-check"];
-}
-
-/**
- * Extract the Codex thread id from a stream event, or null. Accepts the live
- * `thread.started` shape (authoritative) and the on-disk rollout `session_meta`
- * shape as a defensive fallback.
- * @param {any} obj
- * @returns {string|null}
- */
-export function extractThreadId(obj) {
-  if (!obj || typeof obj !== "object") return null;
-  if (obj.type === "thread.started" && typeof obj.thread_id === "string") {
-    return obj.thread_id.trim() || null;
-  }
-  if (obj.type === "session_meta" && obj.payload && typeof obj.payload.id === "string") {
-    return obj.payload.id.trim() || null;
-  }
-  return null;
+/** App Server transport is daemon-owned; policy is applied by RPC. */
+export function buildCodexArgs({ args = [] } = {}) {
+  return ["app-server", "--listen", "stdio://", ...codexAppServerArgs(args)];
 }
 
 /**
@@ -217,182 +142,263 @@ export class CodexSpawner {
     this.platform = opts.platform ?? process.platform;
     this.cliConfig = validateAgentCliConfig(opts.cliConfig, "codex", opts.label);
     this.env = overlayAgentEnv(opts.env ?? process.env, this.cliConfig.env, this.platform);
-    this.getThreadIdFn = opts.getThreadIdFn ?? defaultGetThreadId;
-    this.setThreadIdFn = opts.setThreadIdFn ?? defaultSetThreadId;
-    this.getUsageSnapshotFn = opts.getUsageSnapshotFn ?? defaultGetUsageSnapshot;
-    this.setUsageSnapshotFn = opts.setUsageSnapshotFn ?? defaultSetUsageSnapshot;
+    const storeLogger = { warn: () => { throw new CodexAppServerError("STORE_IO_ERROR", "Codex local storage failed"); } };
+    this.getThreadIdFn = opts.getThreadIdFn ?? ((anchor) => defaultGetThreadId(anchor, { logger: storeLogger }));
+    this.setThreadIdFn = opts.setThreadIdFn ?? ((anchor, id) => defaultSetThreadId(anchor, id, { logger: storeLogger }));
+    this.getUsageSnapshotFn = opts.getUsageSnapshotFn ?? ((anchor, id) => defaultGetUsageSnapshot(anchor, id, { logger: storeLogger }));
+    this.setUsageSnapshotFn = opts.setUsageSnapshotFn ?? ((anchor, id, usage) => defaultSetUsageSnapshot(anchor, id, usage, { logger: storeLogger }));
     this.resolveCodexPathFn = opts.resolveCodexPathFn ?? resolveCodexPath;
     this.hasChorusMcpServerFn = opts.hasChorusMcpServerFn ?? hasChorusMcpServer;
     this.mcpConfigChecked = false;
+    this.rpcLimits = opts.rpcLimits;
+    this.cleanupTimeoutMs = opts.cleanupTimeoutMs ?? 10_000;
+    this.stdioGraceMs = opts.stdioGraceMs ?? 2_000;
+    this.maxBufferedBytes = opts.maxBufferedBytes;
+    this.killProcessTreeFn = opts.killProcessTreeFn ?? killProcessTree;
+    this.killOptions = opts.killOptions ?? {};
   }
 
-  /**
-   * Spawn a headless Codex run. Resolves when the subprocess exits. The prompt is
-   * written to stdin (never argv). `sessionId` is the Chorus anchor (direct idea
-   * uuid, or entity uuid). Codex owns its session id, so we IGNORE the passed
-   * `isNew`/`mcpConfigPath` and decide new-vs-resume from the persisted
-   * anchor→thread_id map: a recorded thread id → `resume`, otherwise a fresh run.
-   *
-   * @param {{ prompt: string, sessionId: string|null, isNew?: boolean, mcpConfigPath?: string,
-   *           cwd?: string, onMessage?: (obj: any) => void,
-   *           onChild?: (child: import("node:child_process").ChildProcess) => void }} params
-   * @returns {Promise<{ sessionId: string, backendSessionId: string|null, exitCode: number|null, isNew: boolean }>}
-   */
-  async wake({ prompt, sessionId, cwd, onMessage, onChild }) {
+  /** One real stdio child and one authoritative turn per wake. */
+  async wake({ prompt, sessionId, cwd = process.cwd(), onMessage, onChild }) {
     const anchor = typeof sessionId === "string" ? sessionId : "";
-
-    // new-vs-resume is OWNED by this backend (Codex session model), not the
-    // waker's Claude transcript probe: a recorded thread id means resume.
-    const knownThreadId = anchor ? this.getThreadIdFn(anchor) : null;
-    const isNew = !knownThreadId;
-    let previousUsage = knownThreadId
-      ? this.getUsageSnapshotFn(anchor, knownThreadId)
-      : null;
-    // Existing threads created before this baseline store was introduced cannot
-    // yield a trustworthy first delta. Seed once and omit that turn's usage
-    // instead of publishing the entire historical cumulative total.
-    let needsUsageSeed = Boolean(knownThreadId && !previousUsage);
-
-    const codexPath = this.codexPath ?? this.resolveCodexPathFn({ env: this.env, platform: this.platform });
-    if (!codexPath) {
-      // No crash — surface visibly and resolve with a failure result.
-      this.logger.error("[Chorus] cannot locate the `codex` executable on PATH; skipping wake");
-      return { sessionId: anchor, backendSessionId: knownThreadId, exitCode: null, isNew };
-    }
-
-    if (!this.mcpConfigChecked) {
-      this.mcpConfigChecked = true;
-      if (!this.hasChorusMcpServerFn({ env: this.env, platform: this.platform })) {
-        this.logger.warn(
-          "[Chorus] Codex config has no [mcp_servers.chorus] entry; wake will continue without Chorus MCP tools",
-        );
+    let threadId = null;
+    let isNew = true;
+    let child, client, adapter, unsubscribe, unregister, onProcessError;
+    let cancelled = false;
+    let stopWork;
+    let stopDeadline;
+    let rawSettled;
+    let rawDone = false;
+    let rawCode = null;
+    let wakeFault = null;
+    const fault = (code) => new CodexAppServerError(code, `Codex App Server: ${code}`);
+    // Diagnostic text is fixed, never provider errors, callbacks, paths or values.
+    const log = (level, text) => { try { this.logger[level]?.(text); } catch {} };
+    const result = (exitCode) => ({ sessionId: anchor, backendSessionId: threadId, exitCode, isNew });
+    const ensureRunning = () => {
+      if (cancelled) throw fault("CANCELLED");
+      if (client?.closed) throw client.error;
+    };
+    try {
+      try { threadId = anchor ? this.getThreadIdFn(anchor) : null; }
+      catch {
+        threadId = null;
+        log("warn", "[Chorus] Codex session mapping could not be read; starting a fresh thread with Chorus context.");
       }
-    }
-
-    assertConfiguredShimArgs(codexPath, this.cliConfig.args, this.platform);
-    const args = [...buildCodexArgs({ isNew, threadId: knownThreadId, permissionMode: this.permissionMode }), ...this.cliConfig.args,
-      ...(this.cliConfig.args.length ? ["-"] : [])];
-    const { command, argv } = resolveSpawnCommand(codexPath, args, this.platform, this.env);
-
-    // POSIX: detached process group so the interrupt path can group-kill the tree
-    // (codex exec forks child shells for tools). Windows uses taskkill /T. stdio
-    // stays piped — prompt over stdin + NDJSON stdout parse are unaffected.
-    const detached = this.platform !== "win32";
-
-    // Export the daemon's resolved connection pair for both Codex MCP auth and
-    // SessionStart hooks. Explicitly overwrite inherited values so the hook and
-    // daemon cannot disagree about which Chorus instance this wake belongs to.
-    const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
-    if (this.creds) {
-      if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
-      if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
-      // Identity profile for the woken session — its hooks/skills pass this to
-      // `chorus mcp --agent`, which resolves the key from ~/.chorus/daemon.json.
-      if (this.creds.agentUuid || this.creds.agentName)
-        childEnv.CHORUS_AGENT_PROFILE = this.creds.agentUuid || this.creds.agentName;
-    }
-
-    return new Promise((resolve) => {
-      let child;
+      isNew = !threadId;
+      const previousThreadId = threadId;
+      const previousUsage = threadId ? this.getUsageSnapshotFn(anchor, threadId) : null;
+      let activeSetup = null;
+      const captureThread = (id) => {
+        activeSetup.observedId = id;
+        isNew = activeSetup.method === "thread/start";
+        // Latch before best-effort IO so duplicate notifications/responses never
+        // retry a failed write or lose the in-memory identity on interruption.
+        if (threadId === id) return;
+        threadId = id;
+        if (anchor) {
+          try { this.setThreadIdFn(anchor, id); }
+          catch {
+            log("warn", "[Chorus] Codex session mapping could not be saved; continuing this thread, but future wake continuity may be reduced.");
+          }
+        }
+      };
+      const establishThread = async (method, params) => {
+        activeSetup = { method, expectedId: params.threadId, observedId: null };
+        try {
+          const established = await client.request(method, params);
+          const id = established?.thread?.id;
+          if (typeof id !== "string" || !id.trim()) throw fault("INVALID_THREAD_ID");
+          if (activeSetup.expectedId && id !== activeSetup.expectedId) throw fault("MISMATCHED_THREAD_ID");
+          if (activeSetup.observedId && activeSetup.observedId !== id) throw fault("MISMATCHED_THREAD_ID");
+          // Keep a response already received even if cancellation won this await.
+          captureThread(id);
+        } finally { activeSetup = null; }
+      };
+      const codexPath = this.codexPath ?? this.resolveCodexPathFn({ env: this.env, platform: this.platform });
+      if (!codexPath) throw fault("EXECUTABLE_MISSING");
+      if (!this.mcpConfigChecked) {
+        this.mcpConfigChecked = true;
+        if (!this.hasChorusMcpServerFn({ env: this.env, platform: this.platform }))
+          log("warn", "[Chorus] Codex config has no [mcp_servers.chorus] entry; wake will continue without Chorus MCP tools");
+      }
+      try { assertConfiguredShimArgs(codexPath, this.cliConfig.args, this.platform); }
+      catch {
+        log("error", "[Chorus] Codex Windows shim cannot safely carry configured arguments; configure a native executable.");
+        throw fault("UNSAFE_WINDOWS_SHIM_ARGS");
+      }
+      let args;
+      try { args = buildCodexArgs({ args: this.cliConfig.args }); }
+      catch { throw fault("UNSUPPORTED_DAEMON_ARGS"); }
+      const { command, argv } = resolveSpawnCommand(codexPath, args, this.platform, this.env);
+      const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
+      if (this.creds) {
+        if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
+        if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
+        if (this.creds.agentUuid || this.creds.agentName)
+          childEnv.CHORUS_AGENT_PROFILE = this.creds.agentUuid || this.creds.agentName;
+      }
       try {
         child = this.spawnImpl(command, argv, {
-          cwd: cwd ?? process.cwd(),
-          stdio: ["pipe", "pipe", "pipe"],
-          env: childEnv,
-          shell: false,
-          detached,
-          windowsHide: true,
+          cwd, stdio: ["pipe", "pipe", "pipe"], env: childEnv,
+          shell: false, detached: this.platform !== "win32", windowsHide: true,
         });
       } catch (error) {
-        this.logger.error(`[Chorus] failed to spawn codex: ${safeSpawnError(error)}`);
-        resolve({ sessionId: anchor, backendSessionId: knownThreadId, exitCode: null, isNew });
-        return;
+        log("error", `[Chorus] Codex startup: ${safeSpawnError(error)}`);
+        throw fault("SPAWN_FAILED");
       }
-
-      // Hand the live child to the caller (interrupt registry) before resolving.
-      // Never let a throwing callback escape into the spawn path.
-      if (onChild) {
-        try {
-          onChild(child);
-        } catch (err) {
-          this.logger.warn(`[Chorus] onChild handler threw: ${err}`);
+      onProcessError = (error) => log("error", `[Chorus] Codex process: ${safeSpawnError(error)}`);
+      child.on("error", onProcessError);
+      rawSettled = awaitChildSettled(child, { logger: this.logger, label: "codex", stdioGraceMs: this.stdioGraceMs })
+        .then((code) => { rawDone = true; rawCode = code; return code; });
+      client = new CodexAppServerClient(child, {
+        limits: this.rpcLimits,
+        // CLOSED is emitted only by our explicit close(), including normal
+        // completion. Keep real transport faults visible at warning severity.
+        onDiagnostic: (text) => log(text === "Codex App Server: CLOSED" ? "info" : "warn", `[Chorus] ${text}`),
+      });
+      // Subscribe before setup, but don't feed setup/history snapshots to T3.
+      unsubscribe = client.subscribe((message) => {
+        if (activeSetup && !cancelled && message.method === "thread/started" && !Object.hasOwn(message, "id")) {
+          const id = message.params?.thread?.id;
+          // This process has only one setup request at a time. A fresh start's
+          // first ID is authoritative; resume must match its requested ID, and
+          // fallback must not accept a late notification for the old thread.
+          if (typeof id === "string" && id.trim()
+            && (!activeSetup.expectedId || id === activeSetup.expectedId)
+            && (activeSetup.method !== "thread/start" || id !== previousThreadId)
+            && (!activeSetup.observedId || id === activeSetup.observedId)) captureThread(id);
         }
-      }
-
-      let stdoutBuf = "";
-      let observedThreadId = knownThreadId || null;
-      let threadIdPersisted = false;
-
-      child.stdout?.setEncoding?.("utf8");
-      child.stdout?.on("data", (chunk) => {
-        stdoutBuf = parseNdjsonChunk(
-          stdoutBuf,
-          String(chunk),
-          (obj) => {
-            const tid = extractThreadId(obj);
-            if (tid) {
-              observedThreadId = tid;
-              if (isNew && anchor && !threadIdPersisted) {
-                threadIdPersisted = true;
-                this.setThreadIdFn(anchor, tid);
-              }
-            }
-            let delivered = obj;
-            if (obj?.type === "turn.completed" && obj.usage) {
-              delivered = needsUsageSeed
-                ? { ...obj, usage: null }
-                : normalizeCodexUsageEvent(obj, previousUsage);
-              if (anchor && observedThreadId) {
-                this.setUsageSnapshotFn(anchor, observedThreadId, obj.usage);
-              }
-              previousUsage = obj.usage;
-              needsUsageSeed = false;
-            }
-            if (onMessage) {
+        adapter?.accept(message);
+      });
+      unregister = registerProcessStopHook(child, ({ deadline, protocolDeadline = deadline, reason, beforeClose }) => {
+        stopDeadline = Math.min(stopDeadline ?? Infinity, deadline);
+        if (reason !== "cleanup") cancelled = true;
+        if (reason === "cleanup") {
+          return (async () => { try { await beforeClose?.(); } finally { client.close(); } })();
+        }
+        if (stopWork) return stopWork;
+        stopWork = (async () => {
+          try {
+            const turnId = adapter?.turnId ?? adapter?.observedTurnId;
+            if (turnId && !adapter.outcome && !client.closed) {
+              await client.request("turn/interrupt", { threadId, turnId }, {
+                timeoutMs: Math.max(1, protocolDeadline - Date.now()),
+              });
+              let timer;
               try {
-                onMessage(delivered);
-              } catch (err) {
-                this.logger.warn(`[Chorus] onMessage handler threw: ${err}`);
-              }
+                await Promise.race([
+                  adapter.completion, client.failure,
+                  new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, protocolDeadline - Date.now())); }),
+                ]);
+              } finally { clearTimeout(timer); }
             }
-          },
-          (msg) => this.logger.warn(`[Chorus] ${msg}`)
-        );
+          } finally {
+            try { await beforeClose?.(); } finally { client.close(); }
+          }
+        })();
+        return stopWork;
       });
-
-      child.stderr?.setEncoding?.("utf8");
-      child.stderr?.on("data", (chunk) => {
-        const text = String(chunk).trim();
-        if (text) this.logger.warn(`[Chorus] codex stderr: ${text}`);
+      try { onChild?.(child); } catch { log("warn", "[Chorus] Codex onChild callback failed"); }
+      ensureRunning();
+      await client.request("initialize", {
+        clientInfo: { name: "chorus", version: CLIENT_VERSION }, capabilities: { experimentalApi: false },
       });
-
-      child.on("error", (error) => {
-        this.logger.error(`[Chorus] codex process error: ${safeSpawnError(error)}`);
-        resolve({ sessionId: anchor, backendSessionId: observedThreadId, exitCode: null, isNew });
-      });
-
-      // Settle on process exit, not only on stdio close: a detached descendant can
-      // inherit the pipes and keep `close` from ever firing (see cli/child-exit.mjs).
-      awaitChildSettled(child, { logger: this.logger, label: "codex" }).then((code) => {
-        if (code !== 0) {
-          this.logger.warn(`[Chorus] codex exited with code ${code}`);
+      ensureRunning();
+      await client.notify("initialized");
+      ensureRunning();
+      const fullAccess = this.permissionMode === "yolo";
+      const setup = { cwd, approvalPolicy: "never", sandbox: fullAccess ? "danger-full-access" : "read-only" };
+      let fallback = false;
+      if (threadId) {
+        try {
+          await establishThread("thread/resume", { ...setup, threadId, excludeTurns: true });
+        } catch (error) {
+          ensureRunning();
+          if (!isHistoryUnavailableError(error, threadId)) throw error;
+          fallback = true;
+          await establishThread("thread/start", setup);
         }
-        resolve({ sessionId: anchor, backendSessionId: observedThreadId, exitCode: code, isNew });
+      } else await establishThread("thread/start", setup);
+      ensureRunning();
+      adapter = new CodexAppServerEvents({
+        threadId, isNew, previousUsage: threadId === previousThreadId ? previousUsage : null,
+        maxBufferedBytes: this.maxBufferedBytes,
+        onMessage: (message) => {
+          try { onMessage?.(message); } catch { log("warn", "[Chorus] Codex onMessage callback failed"); }
+        },
+        onUsageSnapshot: (snapshot) => {
+          if (anchor) this.setUsageSnapshotFn(anchor, threadId, snapshot);
+        },
       });
-
-      // Guard against an ASYNC stdin error (EPIPE) so it never becomes an
-      // uncaughtException that kills the daemon.
-      child.stdin?.on?.("error", (err) => {
-        this.logger.warn(`[Chorus] codex stdin error (ignored): ${err}`);
-      });
-
-      // Feed the prompt over stdin, then close it so the model runs.
-      try {
-        child.stdin?.write(prompt);
-        child.stdin?.end();
-      } catch (err) {
-        this.logger.warn(`[Chorus] failed writing prompt to codex stdin: ${err}`);
+      if (fallback) {
+        const notice = "Previous Codex history could not be restored; continuing in a new thread with Chorus context.";
+        // Native IDs are UUIDs. Do not echo arbitrary provider-controlled strings.
+        const displayId = (id) => /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)
+          ? id : "(unavailable)";
+        log("warn", `[Chorus] ${notice} Old thread: ${displayId(previousThreadId)}; new thread: ${displayId(threadId)}.`);
+        adapter.notice(notice);
       }
-    });
+      ensureRunning();
+      const started = await client.request("turn/start", {
+        threadId, cwd, approvalPolicy: "never",
+        sandboxPolicy: fullAccess ? { type: "dangerFullAccess" } : { type: "readOnly", networkAccess: false },
+        input: [{ type: "text", text: prompt, text_elements: [] }],
+      });
+      adapter.confirmTurn(started?.turn?.id);
+      await Promise.race([
+        adapter.completion,
+        client.failure.then((error) => {
+          if (adapter.outcome && ["CLOSED", "EOF"].includes(error.code)) return;
+          throw error;
+        }),
+        rawSettled.then(() => { if (!adapter.outcome) throw fault("MISSING_TERMINAL"); }),
+      ]);
+    } catch (error) {
+      wakeFault = error;
+      const code = error instanceof CodexAppServerError ? error.code : "SETUP_OR_STORE_ERROR";
+      log("error", `[Chorus] Codex App Server wake failed (${code}); check Codex 0.157.1+ installation, login, model/config and local session storage. Unsupported args must use model or permitted -c settings.`);
+    } finally {
+      try { adapter?.finish(); } catch {
+        wakeFault ??= fault("USAGE_STORE_ERROR");
+        log("error", "[Chorus] Codex usage persistence failed; check local session storage.");
+      }
+      if (child) {
+        // Normal close never marks a user interrupt. Concurrent authorized stops
+        // still invoke the registered hook and latch cancellation synchronously.
+        const deadline = stopDeadline ?? Date.now() + this.cleanupTimeoutMs;
+        try {
+          const cleanup = await this.killProcessTreeFn(child, {
+            ...this.killOptions, platform: this.platform, logger: this.logger,
+            sigintTimeoutMs: Math.max(0, deadline - Date.now()), reason: "cleanup",
+          });
+          if (cleanup?.cleanupFailed) throw fault("CLEANUP_ERROR");
+          if (!rawDone && rawSettled) {
+            let timer;
+            try {
+              await Promise.race([rawSettled, new Promise((resolve) => {
+                timer = setTimeout(resolve, Math.max(0, deadline - Date.now()));
+              })]);
+            } finally { clearTimeout(timer); }
+          }
+        } catch {
+          wakeFault ??= fault("CLEANUP_ERROR");
+          log("error", "[Chorus] Codex process-tree cleanup failed; check process termination permissions.");
+        }
+        client?.close();
+        // Release descendant-held pipes after the bounded shared drain/cleanup.
+        for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy?.();
+      }
+      unsubscribe?.();
+      unregister?.();
+      if (onProcessError) child?.removeListener("error", onProcessError);
+    }
+    // CLOSED/EOF is expected only after a confirmed valid terminal. All other
+    // protocol faults stay failures even if completion arrived in the same chunk.
+    const transportFault = client?.error && !["CLOSED", "EOF"].includes(client.error.code);
+    if (cancelled) return result(130);
+    if (wakeFault || transportFault || !adapter?.outcome) return result(null);
+    if (adapter.outcome.status !== "completed") return result(1);
+    return result(rawDone && rawCode === 0 ? 0 : null);
   }
 }

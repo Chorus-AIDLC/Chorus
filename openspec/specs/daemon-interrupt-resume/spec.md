@@ -155,9 +155,7 @@ running) entry SHALL carry no child handle.
 
 ### Requirement: Interrupting SHALL use a two-stage stop with a configurable timeout
 
-On interrupt the daemon SHALL first attempt a graceful stop by sending `SIGINT` to the
-running subprocess, giving it the opportunity to flush in-progress work, and SHALL escalate to
-a forceful kill only if the subprocess has not exited within a configurable timeout. The
+On interrupt the daemon SHALL first attempt a graceful stop using a registered process-associated protocol stop hook, or SIGINT when no hook exists. It SHALL escalate to forceful process-tree cleanup if the process/tree remains after the configurable graceful timeout or protocol failure requires cleanup. Protocol cancellation and graceful exit MUST share one deadline rather than each adding another full timeout. The
 timeout SHALL default to 10 seconds and SHALL be resolvable through the daemon's layered
 configuration (command-line flag, then the `CHORUS_DAEMON_SIGINT_TIMEOUT` environment
 variable, then `~/.chorus/daemon.json`, then the default), consistent with the daemon's
@@ -166,13 +164,13 @@ SHALL log its actions visibly.
 
 #### Scenario: Graceful stop within the timeout
 
-- **GIVEN** a running subprocess that exits after receiving `SIGINT` before the timeout
+- **GIVEN** a running subprocess without a protocol stop hook that exits after receiving `SIGINT` before the timeout
 - **WHEN** an interrupt is processed
 - **THEN** the daemon MUST send `SIGINT`, observe the exit, and NOT escalate to a forceful kill
 
 #### Scenario: Escalation after the timeout
 
-- **GIVEN** a running subprocess that does not exit within the configured timeout after `SIGINT`
+- **GIVEN** a running subprocess without a protocol stop hook that does not exit within the configured timeout after `SIGINT`
 - **WHEN** the timeout elapses
 - **THEN** the daemon MUST escalate to a forceful kill of the subprocess
 
@@ -181,6 +179,14 @@ SHALL log its actions visibly.
 - **WHEN** the SIGINT-escalation timeout is resolved
 - **THEN** a command-line flag MUST override the environment variable, which MUST override the
   config file, which MUST override the built-in default of 10 seconds
+
+#### Scenario: Protocol stop shares the same timeout
+- **WHEN** a child has a protocol stop hook
+- **THEN** the daemon MUST attempt protocol cancellation and exit within the same resolved graceful deadline and force tree cleanup if it does not finish
+
+#### Scenario: Shutdown uses the same capability
+- **WHEN** daemon shutdown stops a protocol-capable child
+- **THEN** it MUST use the same bounded cleanup while preserving the existing shutdown reporting semantics
 
 ### Requirement: The forceful kill SHALL terminate the whole process tree cross-platform without native dependencies
 

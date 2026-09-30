@@ -1,0 +1,79 @@
+{
+  "provenance": "live",
+  "piVersion": "0.85.1",
+  "capturedAt": "2026-09-29",
+  "description": "Prompt '/chorus-noop' handled by a temporary extension command: prompt success, no agent_start; the follow-up get_state (chorus-state-2) reports isStreaming false, so stdin is closed.",
+  "writes": [
+    {
+      "id": "chorus-state-1",
+      "type": "get_state"
+    },
+    {
+      "id": "chorus-prompt-1",
+      "type": "prompt",
+      "message": "/chorus-noop"
+    },
+    {
+      "id": "chorus-state-2",
+      "type": "get_state"
+    }
+  ],
+  "frames": [
+    {
+      "type": "extension_ui_request",
+      "id": "32cd9382-e878-4b7d-9d43-45aed3fab864",
+      "method": "notify",
+      "message": "Chorus connected at https://chorus.example (redacted)",
+      "notifyType": "info"
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "a8bb13cc-94b8-4f92-b8f0-03690e5c1e7b",
+      "method": "setStatus",
+      "statusKey": "mcp",
+      "statusText": "\u001b[38;5;109m🔌 MCP: 1 server enabled\u001b[39m"
+    },
+    {
+      "id": "chorus-state-1",
+      "type": "response",
+      "command": "get_state",
+      "success": true,
+      "data": {
+        "isStreaming": false,
+        "isCompacting": false,
+        "sessionFile": "/home/user/.pi/agent/sessions/--tmp-pirpc--/2026-09-29T06-05-33-808Z_9cad5872-4e3d-4fc2-9e52-7e3d3c0a1a70.jsonl",
+        "sessionId": "9cad5872-4e3d-4fc2-9e52-7e3d3c0a1a70",
+        "messageCount": 0,
+        "pendingMessageCount": 0
+      }
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "4d3654f4-6957-48b9-87bd-8640b7be1b48",
+      "method": "notify",
+      "message": "noop handled",
+      "notifyType": "info"
+    },
+    {
+      "id": "chorus-prompt-1",
+      "type": "response",
+      "command": "prompt",
+      "success": true
+    },
+    {
+      "id": "chorus-state-2",
+      "type": "response",
+      "command": "get_state",
+      "success": true,
+      "data": {
+        "isStreaming": false,
+        "isCompacting": false,
+        "sessionFile": "/home/user/.pi/agent/sessions/--tmp-pirpc--/2026-09-29T06-05-33-808Z_9cad5872-4e3d-4fc2-9e52-7e3d3c0a1a70.jsonl",
+        "sessionId": "9cad5872-4e3d-4fc2-9e52-7e3d3c0a1a70",
+        "messageCount": 0,
+        "pendingMessageCount": 0
+      }
+    }
+  ],
+  "exitCode": 0
+}

@@ -86,43 +86,48 @@ Codex and Kiro MUST continue to decide new-versus-resume state from their backen
 
 ### Requirement: A wake SHALL settle on process exit, not only on stdio close
 
-Every spawner SHALL settle its wake as soon as the child process is known to have
-terminated. When the child's `close` event arrives first, the wake SHALL settle immediately
-with that exit code, preserving today's behaviour exactly. When the child's `exit` event
-arrives first — which happens when a detached descendant still holds the inherited stdio
-pipes — the spawner SHALL wait a short, bounded grace period for `close` so a trailing
-output chunk is still parsed, and SHALL then settle with the exit code regardless. The wake
-SHALL settle exactly once, and the settlement logic SHALL live in one shared module used by
-all spawners so they cannot drift. When the grace period expires with `close` still pending,
-the spawner SHALL log that fact once, naming the backend and the exit code, so an inherited
-pipe held by a descendant is diagnosable. The grace timer MUST NOT keep the daemon's event
-loop alive.
+Every spawner SHALL observe process termination through the shared settlement module. When close arrives first, that module SHALL return the raw process exit code immediately. When exit arrives before close because descendants retain stdio, the module SHALL drain trailing output for a short bounded grace period and then return the raw exit code without waiting indefinitely for close. It SHALL settle once, log one diagnostic naming the backend and raw exit code if the drain period expires, and use a timer that does not keep the daemon event loop alive.
 
-This grace period bounds only how long an **already-exited** process's pipes are drained. It
-is not a limit on how long an agent may run; no wake-duration limit is introduced.
+The raw process result and the spawner's classified wake result SHALL remain distinct. Backends without an authoritative protocol outcome SHALL preserve their existing exit-code and post-exit behavior. A protocol-backed Codex spawner SHALL combine the raw result, matching terminal turn state and bounded cleanup outcome: an exit code of zero without a matching successful turn MUST NOT become a successful wake, and a failed/interrupted turn MUST NOT be converted into success by a clean process exit. The final wake SHALL still settle exactly once after bounded cleanup, retaining required session identity and reporting.
+
+The shared drain grace period SHALL bound only already-exited process IO; it SHALL NOT impose a total wake-duration limit. Backend RPC response limits remain separately specified; the Codex backend SHALL NOT impose a running-turn inactivity limit.
 
 #### Scenario: Close arrives first
-
-- **WHEN** a spawned agent process emits `close` with an exit code
-- **THEN** the wake SHALL settle immediately with that exit code and no grace warning SHALL
-  be logged
+- **WHEN** a spawned agent emits close with an exit code
+- **THEN** the shared module SHALL return that raw code immediately without a grace warning
+- **AND** backends without protocol outcome classification SHALL retain their existing wake result
 
 #### Scenario: Exit arrives but a descendant holds the pipes open
-
-- **WHEN** a spawned agent process emits `exit` and `close` never arrives because a detached
-  descendant inherited its stdio
-- **THEN** the wake SHALL settle with the exit code after the bounded grace period and SHALL
-  log once that stdio stayed open
+- **WHEN** exit occurs and close never arrives because a descendant retains stdio
+- **THEN** the shared module SHALL return the raw code after the bounded grace period and log once that stdio stayed open
+- **AND** protocol-backed cleanup MUST NOT wait indefinitely for those pipes
 
 #### Scenario: Both events arrive
-
-- **WHEN** a spawned agent process emits `exit` and then `close` within the grace period
-- **THEN** the wake SHALL settle exactly once with that exit code
+- **WHEN** exit is followed by close within the grace period
+- **THEN** the shared module SHALL settle once with the raw exit code and the spawner SHALL publish one final wake result
 
 #### Scenario: Every spawner shares the settlement path
+- **WHEN** pi, claude, codex, kiro or dsh observes process termination
+- **THEN** it SHALL use the shared settlement module
+- **AND** non-Codex session-conflict classification, snapshot diffing, session identity resolution and failure behavior SHALL remain unchanged
+- **AND** Codex SHALL additionally apply its authoritative turn-outcome and cleanup classification
 
-- **WHEN** any of the pi, claude, codex, kiro or dsh spawners settles a wake
-- **THEN** it SHALL do so through the one shared settlement module, and its own post-exit
-  logic (session-conflict classification, session snapshot diffing, backend session id
-  resolution, failure paths) SHALL be unchanged
+#### Scenario: Codex exits cleanly without successful protocol completion
+- **WHEN** Codex exits zero but its active turn has no matching completed-success event
+- **THEN** shared process settlement SHALL return the raw zero code and the Codex spawner MUST classify the wake as failed
+
+### Requirement: Process-associated graceful stop capabilities preserve backend neutrality
+A spawner MAY register an optional asynchronous graceful-stop hook associated with its real ChildProcess before onChild exposes it. The shared process-tree killer SHALL invoke a registered hook within the existing graceful timeout and SHALL retain signal behavior for children without hooks. Hooks MUST NOT be serialized in execution snapshots, require agent-type branches in Waker/control-handler, or prevent forced cleanup on rejection or timeout. Registration and cleanup SHALL be idempotent and confined to that process.
+
+#### Scenario: Child supports protocol stop
+- **WHEN** an authorized stop targets a child with a registered hook
+- **THEN** the shared killer MUST attempt that hook within its deadline before forced tree cleanup if necessary
+
+#### Scenario: Legacy backend has no hook
+- **WHEN** the child has no registered hook
+- **THEN** its SIGINT and escalation behavior MUST remain unchanged
+
+#### Scenario: Hook fails or never resolves
+- **WHEN** a stop hook rejects or exceeds its deadline
+- **THEN** it MUST NOT block forced cleanup or another wake, and no hook data MUST leak into uploaded snapshots
 

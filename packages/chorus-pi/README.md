@@ -48,8 +48,8 @@ so pi joins the reversed-conversation loop like the Claude Code / Codex / Kiro b
 chorus daemon --agent pi
 ```
 
-The daemon resolves `pi` from PATH (override with `CHORUS_PI_PATH`), runs it headless
-(`pi --mode json -p`), and exports `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE`
+The daemon resolves `pi` from PATH (override with `CHORUS_PI_PATH`), runs one headless
+`pi --mode rpc` process per wake (pi 0.85.0 or newer), and exports `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE`
 into the woken session. pi has no permission system, so no sandbox flag is involved. `chorus init`
 seeds a selected pi agent as wakeable in `~/.chorus/daemon.json` and can install the boot daemon
 that wakes it. See [`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md#run-pi-as-a-wakeable-daemon-backend).

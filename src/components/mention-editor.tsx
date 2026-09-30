@@ -1097,6 +1097,7 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
       editorProps: {
         attributes: {
           class: cn(
+            "mobile-input-text",
             "min-h-[36px] max-h-[120px] overflow-y-auto px-3 py-2 text-sm outline-none",
             "prose prose-sm max-w-none [&_p]:my-0"
           ),

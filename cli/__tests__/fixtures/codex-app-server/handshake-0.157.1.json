@@ -1,0 +1,128 @@
+{
+  "source": "Real codex-cli 0.157.1 stdio handshake, Linux, 2026-09-28; empty temporary CODEX_HOME; no model turn or credentials. Paths, host, installation ID and userAgent platform sanitized; wall-clock notification timestamps removed.",
+  "transcript": [
+    {
+      "direction": "client",
+      "message": {
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "chorus_protocol_probe",
+            "version": "0.1.0"
+          },
+          "capabilities": {
+            "experimentalApi": false
+          }
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "id": 1,
+        "result": {
+          "userAgent": "chorus_protocol_probe/0.1.0 (sanitized platform) codex/0.157.1",
+          "codexHome": "/sanitized/codex-home",
+          "platformFamily": "unix",
+          "platformOs": "linux"
+        }
+      }
+    },
+    {
+      "direction": "client",
+      "message": {
+        "method": "initialized"
+      }
+    },
+    {
+      "direction": "client",
+      "message": {
+        "id": 2,
+        "method": "thread/resume",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000000",
+          "cwd": "/sanitized/codex-home",
+          "approvalPolicy": "never",
+          "sandbox": "read-only"
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "method": "configWarning",
+        "params": {
+          "summary": "Codex's Linux sandbox uses bubblewrap and needs access to create user namespaces.",
+          "details": null
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "method": "remoteControl/status/changed",
+        "params": {
+          "status": "disabled",
+          "serverName": "sanitized-host",
+          "installationId": "00000000-0000-4000-8000-000000000002",
+          "environmentId": null
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "error": {
+          "code": -32600,
+          "message": "no rollout found for thread id 00000000-0000-4000-8000-000000000000"
+        },
+        "id": 2
+      }
+    },
+    {
+      "direction": "client",
+      "message": {
+        "id": 3,
+        "method": "turn/interrupt",
+        "params": {
+          "threadId": "00000000-0000-4000-8000-000000000000",
+          "turnId": "00000000-0000-4000-8000-000000000001"
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "error": {
+          "code": -32600,
+          "message": "thread not found: 00000000-0000-4000-8000-000000000000"
+        },
+        "id": 3
+      }
+    },
+    {
+      "direction": "client",
+      "message": {
+        "id": 4,
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "chorus_protocol_probe",
+            "version": "0.1.0"
+          }
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "error": {
+          "code": -32600,
+          "message": "Already initialized"
+        },
+        "id": 4
+      }
+    }
+  ]
+}

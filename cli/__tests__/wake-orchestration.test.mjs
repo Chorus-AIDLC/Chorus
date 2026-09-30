@@ -1481,6 +1481,7 @@ describe("headless guard — end-to-end wake flow (real Waker + real ClaudeSpawn
     const spawnImpl = vi.fn(() => {
       queueMicrotask(() => {
         child.stdout.emit("data", `{"type":"system","session_id":"${DIRECT_IDEA}"}\n`);
+        child.stdout.emit("data", `{"type":"result","subtype":"success","session_id":"${DIRECT_IDEA}"}\n`);
         child.emit("close", 0);
       });
       return child;
@@ -1513,7 +1514,11 @@ describe("headless guard — end-to-end wake flow (real Waker + real ClaudeSpawn
     expect(argv).toContain("--session-id");
     expect(argv).toContain(DIRECT_IDEA);
     // the prompt that reached stdin is preamble + the task_assigned body (task 1)
-    const stdinPrompt = child.stdin.writes.join("");
+    // stream-json: exactly one user frame whose content is the prompt
+    expect(child.stdin.writes).toHaveLength(1);
+    const userFrame = JSON.parse(child.stdin.writes[0]);
+    expect(userFrame.type).toBe("user");
+    const stdinPrompt = userFrame.message.content;
     expect(stdinPrompt.startsWith(HEADLESS_PREAMBLE)).toBe(true);
     expect(stdinPrompt).toContain("AskUserQuestion"); // headless guard text
     expect(stdinPrompt).toContain("task-1"); // per-action body intact

@@ -1,0 +1,13 @@
+{
+  "provenance": "synthetic",
+  "cliVersion": null,
+  "description": "Synthetic: a control_request with a subtype the Chorus daemon does not implement, plus a control_cancel_request, interleaved in an otherwise normal turn. The CLI emits no such frames on demand, so this fixture is hand-written from the SDK-level control protocol shape (type/request_id/request.subtype). The daemon must answer the request with an error control_response and must forward neither control frame to the message consumer.",
+  "transcript": [
+    { "direction": "stdout", "frame": { "type": "system", "subtype": "init", "cwd": "/tmp/claude-sj-probe", "session_id": "00000000-0000-4000-8000-000000000001", "model": "claude-haiku-4-5", "permissionMode": "default", "claude_code_version": "synthetic" } },
+    { "direction": "stdout", "frame": { "type": "control_request", "request_id": "synthetic-req-1", "request": { "subtype": "elicitation", "mcp_server_name": "example", "message": "Pick one" } } },
+    { "direction": "stdout", "frame": { "type": "control_cancel_request", "request_id": "synthetic-req-1" } },
+    { "direction": "stdout", "frame": { "type": "assistant", "message": { "role": "assistant", "content": [{ "type": "text", "text": "done" }] }, "parent_tool_use_id": null, "session_id": "00000000-0000-4000-8000-000000000001" } },
+    { "direction": "stdout", "frame": { "type": "result", "subtype": "success", "is_error": false, "result": "done", "permission_denials": [], "session_id": "00000000-0000-4000-8000-000000000001" } }
+  ],
+  "exitCode": 0
+}

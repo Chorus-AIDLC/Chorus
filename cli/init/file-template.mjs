@@ -136,6 +136,7 @@ export function mergeChorusServer(existingText, serverObj) {
  *   backup?: (path: string) => (string|null),
  *   platform?: NodeJS.Platform,
  *   log?: (m: string) => void,
+ *   preserveExistingChorus?: boolean,
  * }} opts
  * @returns {Promise<{ skills: number, reviewerAgents: number, hookScripts: number, kiroDir: string, chorusBinAbs: string }>}
  */
@@ -146,6 +147,7 @@ export async function installFileTemplate({
   backup,
   platform = process.platform,
   log,
+  preserveExistingChorus = false,
 } = {}) {
   const assetBase = normalizeAssetBase(chorusUrl); // throws on bad/empty URL
   const doFetch = fetchImpl ?? globalThis.fetch;
@@ -216,6 +218,14 @@ export async function installFileTemplate({
   }
   serverObj.url = `${assetBase}/api/mcp`;
 
+  // Validate the destination before dropping any assets. Upgrade preserves an
+  // existing Chorus connection too; changing credentials is an agents-add action.
+  const mcpJsonPath = join(kiroDir, "settings", "mcp.json");
+  const existed = existsSync(mcpJsonPath);
+  const existingText = existed ? readFileSync(mcpJsonPath, "utf8") : "";
+  const existingServer = existingText.trim() ? JSON.parse(existingText)?.mcpServers?.chorus : undefined;
+  const merged = mergeChorusServer(existingText, preserveExistingChorus && existingServer ? existingServer : serverObj);
+
   // ---- phase 2: write to disk (every fetch already verified) ----
   for (const [dest, { text, exec }] of files) {
     mkdirSync(dirname(dest), { recursive: true });
@@ -230,12 +240,9 @@ export async function installFileTemplate({
   }
 
   // ---- merge the `chorus` MCP server into settings/mcp.json (back up first) ----
-  const mcpJsonPath = join(kiroDir, "settings", "mcp.json");
   mkdirSync(dirname(mcpJsonPath), { recursive: true });
-  const existed = existsSync(mcpJsonPath);
   if (existed && typeof backup === "function") backup(mcpJsonPath);
-  const existingText = existed ? readFileSync(mcpJsonPath, "utf8") : "";
-  writeFileSync(mcpJsonPath, mergeChorusServer(existingText, serverObj));
+  writeFileSync(mcpJsonPath, merged);
 
   log?.(`[chorus agents add] kiro: wrote .kiro/ template into ${kiroDir}`);
   return {

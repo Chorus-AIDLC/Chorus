@@ -3,7 +3,7 @@
 // its own thread id (unlike Claude, which accepts a client-supplied --session-id),
 // so to make a wake resumable across daemon restarts we record the generated id
 // keyed by the Chorus session anchor (direct idea uuid, or the entity uuid for an
-// ad-hoc session) and `codex exec resume <thread_id>` on the next wake.
+// ad-hoc session) and call App Server `thread/resume` on the next wake.
 //
 // Thin wrapper over the generic `createSessionMap` factory (shared with the Kiro
 // backend); the store is ~/.chorus/codex-sessions.json. The public API

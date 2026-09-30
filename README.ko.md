@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.20.0](https://chorus-ai.dev/blog/chorus-v0.20.0-release/)** — 데몬 백엔드를 Codex App Server, Claude Code 양방향 stream-json, Pi 네이티브 RPC로 전환해 프로토콜로 중단과 실행 상태를 처리합니다. 새 `chorus upgrade` 명령은 npm으로 전역 설치한 CLI를 업데이트하며, `--plugins`를 추가하면 설정된 Claude Code, Codex, Kiro, Pi 연동도 갱신합니다.
+
 **[v0.19.1](https://chorus-ai.dev/blog/chorus-v0.19.1-release/)** — 가벼운 Research로 Idea 구체화와 Proposal 설계 단계에서 핵심 사실을 확인할 수 있습니다. 인라인 근거 인용으로 주장과 출처를 연결하고, 개발 시작 전에는 Tracker에서 추가 조사를 요청할 수 있습니다.
 
 **[v0.19.0](https://chorus-ai.dev/blog/chorus-v0.19.0-release/)** — Cloudflare를 참고해 리뷰 범위를 명확히 하고, 문제의 근거를 온전히 남기며, 고정 ID로 재검토까지 추적합니다. 태스크 리뷰는 인수 기준 외의 코드 품질도 기본으로 검사합니다.
@@ -57,7 +59,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 두 개의 명령이면 됩니다. 데이터베이스도, Docker도, 설정 파일도 필요 없습니다.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.19.1
+npm install -g @chorus-aidlc/chorus@0.20.0
 chorus
 ```
 

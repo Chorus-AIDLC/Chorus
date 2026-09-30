@@ -1,0 +1,289 @@
+{
+  "provenance": "live",
+  "piVersion": "0.85.1",
+  "capturedAt": "2026-09-29",
+  "description": "A temporary extension calls ctx.ui.confirm in before_agent_start; the client replies cancelled:true and the run continues (the extension sees false).",
+  "writes": [
+    {
+      "id": "chorus-state-1",
+      "type": "get_state"
+    },
+    {
+      "id": "chorus-prompt-1",
+      "type": "prompt",
+      "message": "Reply with exactly: OK"
+    },
+    {
+      "type": "extension_ui_response",
+      "id": "eadf57ff-a3d5-42eb-a0a8-a348776896c0",
+      "cancelled": true
+    },
+    {
+      "id": "chorus-state-2",
+      "type": "get_state"
+    }
+  ],
+  "frames": [
+    {
+      "type": "extension_ui_request",
+      "id": "a0e5e3f8-67d8-47d0-aed0-ffa10b81b36d",
+      "method": "notify",
+      "message": "Chorus connected at https://chorus.example (redacted)",
+      "notifyType": "info"
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "357d9bd7-a092-483a-94e2-1f6202f93ebe",
+      "method": "setStatus",
+      "statusKey": "mcp",
+      "statusText": "\u001b[38;5;109m🔌 MCP: 1 server enabled\u001b[39m"
+    },
+    {
+      "id": "chorus-state-1",
+      "type": "response",
+      "command": "get_state",
+      "success": true,
+      "data": {
+        "isStreaming": false,
+        "isCompacting": false,
+        "sessionFile": "/home/user/.pi/agent/sessions/--tmp-pirpc--/2026-09-29T06-05-35-256Z_d875c740-5524-4533-a5da-4f07c01bb25f.jsonl",
+        "sessionId": "d875c740-5524-4533-a5da-4f07c01bb25f",
+        "messageCount": 0,
+        "pendingMessageCount": 0
+      }
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "eadf57ff-a3d5-42eb-a0a8-a348776896c0",
+      "method": "confirm",
+      "title": "Fixture dialog",
+      "message": "Proceed?"
+    },
+    {
+      "type": "extension_ui_request",
+      "id": "995f6e87-23c5-422a-9110-70d2041493eb",
+      "method": "notify",
+      "message": "confirm result: false",
+      "notifyType": "info"
+    },
+    {
+      "id": "chorus-prompt-1",
+      "type": "response",
+      "command": "prompt",
+      "success": true
+    },
+    {
+      "type": "agent_start"
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Reply with exactly: OK"
+          }
+        ],
+        "timestamp": 1790661935857
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Reply with exactly: OK"
+          }
+        ],
+        "timestamp": 1790661935857
+      }
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "custom",
+        "customType": "chorus",
+        "content": "<chorus-pi SessionStart context (redacted)>",
+        "display": false,
+        "timestamp": 1790661935857
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "custom",
+        "customType": "chorus",
+        "content": "<chorus-pi SessionStart context (redacted)>",
+        "display": false,
+        "timestamp": 1790661935857
+      }
+    },
+    {
+      "id": "chorus-state-2",
+      "type": "response",
+      "command": "get_state",
+      "success": true,
+      "data": {
+        "isStreaming": true,
+        "isCompacting": false,
+        "sessionFile": "/home/user/.pi/agent/sessions/--tmp-pirpc--/2026-09-29T06-05-35-256Z_d875c740-5524-4533-a5da-4f07c01bb25f.jsonl",
+        "sessionId": "d875c740-5524-4533-a5da-4f07c01bb25f",
+        "messageCount": 2,
+        "pendingMessageCount": 0
+      }
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "assistant",
+        "content": [],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 0,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "pending",
+        "timestamp": 1790661935895
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "OK"
+          }
+        ],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 4,
+          "output": 4,
+          "cacheRead": 8246,
+          "cacheWrite": 2324,
+          "totalTokens": 10578,
+          "cost": {
+            "input": 0.00004,
+            "output": 0.0002,
+            "cacheRead": 0.0020615,
+            "cacheWrite": 0.02905,
+            "total": 0.0313515
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1790661935895,
+        "rawStopReason": "end_turn"
+      }
+    },
+    {
+      "type": "turn_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "OK"
+          }
+        ],
+        "api": "bedrock-converse-stream",
+        "provider": "amazon-bedrock",
+        "model": "global.anthropic.claude-fable-5-1",
+        "usage": {
+          "input": 4,
+          "output": 4,
+          "cacheRead": 8246,
+          "cacheWrite": 2324,
+          "totalTokens": 10578,
+          "cost": {
+            "input": 0.00004,
+            "output": 0.0002,
+            "cacheRead": 0.0020615,
+            "cacheWrite": 0.02905,
+            "total": 0.0313515
+          }
+        },
+        "stopReason": "stop",
+        "timestamp": 1790661935895,
+        "rawStopReason": "end_turn"
+      },
+      "toolResults": []
+    },
+    {
+      "type": "agent_end",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Reply with exactly: OK"
+            }
+          ],
+          "timestamp": 1790661935857
+        },
+        {
+          "role": "custom",
+          "customType": "chorus",
+          "content": "<chorus-pi SessionStart context (redacted)>",
+          "display": false,
+          "timestamp": 1790661935857
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "OK"
+            }
+          ],
+          "api": "bedrock-converse-stream",
+          "provider": "amazon-bedrock",
+          "model": "global.anthropic.claude-fable-5-1",
+          "usage": {
+            "input": 4,
+            "output": 4,
+            "cacheRead": 8246,
+            "cacheWrite": 2324,
+            "totalTokens": 10578,
+            "cost": {
+              "input": 0.00004,
+              "output": 0.0002,
+              "cacheRead": 0.0020615,
+              "cacheWrite": 0.02905,
+              "total": 0.0313515
+            }
+          },
+          "stopReason": "stop",
+          "timestamp": 1790661935895,
+          "rawStopReason": "end_turn"
+        }
+      ],
+      "willRetry": false
+    },
+    {
+      "type": "agent_settled"
+    }
+  ],
+  "exitCode": 0
+}

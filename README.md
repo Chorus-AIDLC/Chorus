@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.20.0](https://chorus-ai.dev/blog/chorus-v0.20.0-release/)** — Daemon backends now use Codex App Server, bidirectional Claude Code stream-json, and native Pi RPC for protocol-based interruption and execution tracking. New `chorus upgrade` updates npm-global CLI installations; `--plugins` also refreshes configured Claude Code, Codex, Kiro, and Pi integrations.
+
 **[v0.19.1](https://chorus-ai.dev/blog/chorus-v0.19.1-release/)** — Lightweight Research checks factual gaps during Idea and Proposal preparation. Inline evidence citations put sources next to claims, and Tracker can request more research before development starts.
 
 **[v0.19.0](https://chorus-ai.dev/blog/chorus-v0.19.0-release/)** — Cloudflare-inspired reviewer rules: clearer scope, complete blocker evidence, and stable finding IDs across rounds. Task reviews now check code quality beyond acceptance criteria.
@@ -57,7 +59,7 @@ The labels under each stage are the **permissions** an actor needs there — gra
 Two commands. No database, no Docker, no config files.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.19.1
+npm install -g @chorus-aidlc/chorus@0.20.0
 chorus
 ```
 
@@ -66,6 +68,21 @@ Chorus starts with an embedded PostgreSQL (PGlite), runs migrations, and opens a
 > Running multiple agents or deploying to production? Use an external PostgreSQL, Docker, or AWS → **[Deploy & self-host](https://doc.chorus-ai.dev/guides/deployment-overview/)**.
 
 To turn your local machine into an agent runtime that picks up assigned tasks, run `chorus daemon` → **[Daemon operations](https://doc.chorus-ai.dev/guides/daemon-operations/)** · **[Remote control](https://doc.chorus-ai.dev/guides/remote-control/)**.
+
+### Upgrade the CLI and plugins
+
+```bash
+chorus upgrade             # CLI only; `chorus update` is an alias
+chorus upgrade --plugins   # Also refresh configured agents' Chorus plugins
+```
+
+Self-upgrade supports the active **npm global installation** on Linux, macOS and Windows. It checks npm's prefix, resolves the latest stable release, avoids downgrades and verifies the installed version. Source checkouts, links, npx and other package-manager installations must use their own update workflow. CLI discovery, installation or verification failure stops plugin work.
+
+`--plugins` reads `~/.chorus/daemon.json`, including legacy single-agent records. Explicit Claude Code, Codex, Kiro and Pi types are processed even with wake disabled. Each record's home, config directory and PATH are respected; shared destinations update once. Only Chorus and required integration packages are refreshed, with existing credentials and unrelated settings preserved. Host CLIs must already be installed. Kiro templates come from the record's configured Chorus instance (its served version, which may lag npm); conflicting instance URLs for one destination are reported. Pi probes for targeted updates of Chorus and `pi-mcp-adapter`; older hosts without that capability report incomplete work, including partial installs, without updating unrelated extensions. Pinned versions, ranges and non-latest tags are preserved and reported incomplete; remove those constraints to allow latest updates.
+
+The command is noninteractive and reports each target. Exit **0** means all requested work completed (missing/empty configuration is a successful no-op); exit **1** means failure or incomplete work, including offline/unknown/untyped records, missing hosts or unsupported targeted updates. Later targets still run after a plugin failure; completed changes are not rolled back. Start new agent sessions and restart the daemon when convenient to activate updates—the command does not restart processes or interrupt sessions.
+
+npm installation has no automatic deadline or forced kill; it shows sanitized progress until npm exits. Queries remain time-limited. Failures include sanitized causes and exit status; permission failures suggest a user-owned Node installation such as nvm. Existing config backups use one `.chorus-upgrade.bak` per file, replaced on the next upgrade.
 
 ---
 
