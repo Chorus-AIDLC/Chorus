@@ -135,7 +135,7 @@ export function installCodex(ctx) {
   // (agents[0]) — that covers the interactive path where the operator typed the URL at a
   // prompt (credential-seed, order 10, already wrote it there before this step runs).
   let chorusUrl = nonEmpty(ctx.flags?.url) ?? nonEmpty(env.CHORUS_URL);
-  if (!chorusUrl) {
+  if (!chorusUrl && !ctx.flags?.pluginOnly) {
     try {
       chorusUrl = nonEmpty(resolveCreds(ctx.flags ?? {}, { env }).url);
     } catch {
@@ -147,6 +147,7 @@ export function installCodex(ctx) {
   // form. Idempotent; runs on both fresh install and re-run. Never writes a secret. A missing
   // URL is a non-fatal skip (the plugin surface is still installed). Returns a note suffix.
   const ensureMcp = () => {
+    if (ctx.flags?.pluginOnly) return ""; // Upgrade preserves existing connection settings.
     if (!chorusUrl) {
       return " (skipped [mcp_servers.chorus]: no Chorus URL — pass --url or set CHORUS_URL)";
     }
@@ -648,6 +649,7 @@ export async function installKiro(ctx) {
       backup: ctx.backup,
       platform: ctx.platform,
       log: ctx.io?.log,
+      preserveExistingChorus: ctx.flags?.pluginOnly === true,
     });
     return out(
       "kiro",
