@@ -57,7 +57,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 2 つのコマンドだけです — データベースも Docker も設定ファイルも不要です。
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.19.1
+npm install -g @chorus-aidlc/chorus@0.20.0
 chorus
 ```
 

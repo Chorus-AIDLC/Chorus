@@ -57,7 +57,7 @@ The labels under each stage are the **permissions** an actor needs there — gra
 Two commands. No database, no Docker, no config files.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.19.1
+npm install -g @chorus-aidlc/chorus@0.20.0
 chorus
 ```
 
