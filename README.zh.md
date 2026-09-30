@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.20.0](https://chorus-ai.dev/zh/blog/chorus-v0.20.0-release/)**：daemon 后端改用 Codex App Server、Claude Code 双向 stream-json 和 Pi 原生 RPC，通过协议处理中断与执行状态。新增 `chorus upgrade`，支持 npm 全局安装的 CLI 自升级；加上 `--plugins` 可刷新已配置的 Claude Code、Codex、Kiro 和 Pi 集成。
+
 **[v0.19.1](https://chorus-ai.dev/zh/blog/chorus-v0.19.1-release/)**：新增轻量 Research，在 Idea 澄清和 Proposal 设计时查证关键事实；行内证据引用让结论直接关联来源。开发开始前，也可从 Tracker 发起补充调查。
 
 **[v0.19.0](https://chorus-ai.dev/zh/blog/chorus-v0.19.0-release/)**：借鉴 Cloudflare，明确 reviewer 职责、保留完整证据，用稳定 ID 逐轮追踪问题。任务审查默认检查验收标准之外的代码质量。

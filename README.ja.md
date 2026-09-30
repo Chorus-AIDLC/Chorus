@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.20.0](https://chorus-ai.dev/blog/chorus-v0.20.0-release/)** — デーモンのバックエンドを Codex App Server、Claude Code の双方向 stream-json、Pi のネイティブ RPC に移行し、プロトコルを通じて中断と実行状態を扱うようになりました。新しい `chorus upgrade` は npm でグローバルインストールした CLI を更新し、`--plugins` を付けると設定済みの Claude Code、Codex、Kiro、Pi 連携も更新できます。
+
 **[v0.19.1](https://chorus-ai.dev/blog/chorus-v0.19.1-release/)** — 軽量 Research を追加し、Idea の要件整理や Proposal の設計時に重要な事実を確認できるようになりました。インライン引用で根拠となる資料を示せるほか、開発開始前なら Tracker から追加調査を依頼できます。
 
 **[v0.19.0](https://chorus-ai.dev/blog/chorus-v0.19.0-release/)** — Cloudflare を参考にレビューの範囲を明確化し、問題の根拠を省略せず、固定 ID で再レビュー時も追跡。タスクレビューでは受け入れ基準に加え、コード品質も標準で確認します。

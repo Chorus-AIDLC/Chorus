@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.20.0](https://chorus-ai.dev/blog/chorus-v0.20.0-release/)** — Daemon backends now use Codex App Server, bidirectional Claude Code stream-json, and native Pi RPC for protocol-based interruption and execution tracking. New `chorus upgrade` updates npm-global CLI installations; `--plugins` also refreshes configured Claude Code, Codex, Kiro, and Pi integrations.
+
 **[v0.19.1](https://chorus-ai.dev/blog/chorus-v0.19.1-release/)** — Lightweight Research checks factual gaps during Idea and Proposal preparation. Inline evidence citations put sources next to claims, and Tracker can request more research before development starts.
 
 **[v0.19.0](https://chorus-ai.dev/blog/chorus-v0.19.0-release/)** — Cloudflare-inspired reviewer rules: clearer scope, complete blocker evidence, and stable finding IDs across rounds. Task reviews now check code quality beyond acceptance criteria.
