@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import { dirname, posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runUpgradeCommand } from "./upgrade-process.mjs";
+import { runUpgradeCommand, runUpgradeInstall, sanitizeUpgradeOutput, upgradeFailure } from "./upgrade-process.mjs";
 // Eagerly load every collaborator before npm can replace this package.
 import { upgradePlugins } from "./upgrade-plugins.mjs";
 
@@ -38,9 +38,10 @@ export async function upgradeCli(deps = {}) {
   const read = (path) => JSON.parse(io.readFileSync(path, "utf8"));
   const command = (args, timeoutMs = 30_000) => {
     const r = run("npm", args, { env, platform, timeoutMs });
-    if (!r.ok) throw new Error(r.reason === "timed out" ? "npm timed out" : "npm command failed");
+    if (!r.ok) throw new Error(`npm ${args[0]} ${upgradeFailure(r, { env })}`);
     return String(r.stdout).trim();
   };
+  const explain = (error) => sanitizeUpgradeOutput(error?.message, { env });
   let prefix, installed, current, latest;
   try {
     prefix = command(["prefix", "-g"]);
@@ -66,22 +67,31 @@ export async function upgradeCli(deps = {}) {
       if (meta._from && !/^@chorus-aidlc\/chorus@[\w.*~^<>= |+-]+$/.test(meta._from)) throw new Error();
     }
     current = pkg.version;
-  } catch {
-    return { complete: false, changed: false, detail: "Cannot verify this npm global installation. Use npm install -g @chorus-aidlc/chorus@latest with the intended npm prefix; source/link/other-manager installs are unsupported." };
+  } catch (error) {
+    return { complete: false, changed: false, detail: `Cannot verify this npm global installation. ${explain(error)}\nUse npm install -g @chorus-aidlc/chorus@latest with the intended npm prefix; source/link/other-manager installs are unsupported.` };
   }
   try {
     latest = JSON.parse(command(["view", `${PACKAGE}@latest`, "version", "--json"]));
     if (typeof latest !== "string" || !STABLE.test(latest)) throw new Error();
-  } catch {
-    return { complete: false, changed: false, detail: "Latest stable version discovery failed (npm registry/network/timeout or invalid version)." };
+  } catch (error) {
+    return { complete: false, changed: false, detail: `Latest stable version discovery failed (npm registry/network/timeout or invalid version). ${explain(error)}` };
   }
   if (!newer(latest, current)) {
     return { complete: true, changed: false, detail: `CLI ${current} is current${current !== latest ? ` (latest stable ${latest}; no downgrade)` : ""}.` };
   }
   try {
-    command(["install", "-g", `${PACKAGE}@${latest}`, "--prefix", prefix, "--no-audit", "--no-fund", "--yes"], 300_000);
-  } catch {
-    return { complete: false, changed: true, detail: `CLI install failed or timed out (${current} → ${latest}); inspect the npm installation before retrying.` };
+    deps.log?.(`Installing CLI ${current} → ${latest}; npm progress follows (no installation timeout).`);
+    const result = await (deps.runInstall ?? deps.run ?? runUpgradeInstall)(
+      "npm", ["install", "-g", `${PACKAGE}@${latest}`, "--prefix", prefix, "--no-audit", "--no-fund", "--yes"],
+      { env, platform, onOutput: (line) => deps.log?.(sanitizeUpgradeOutput(line, { env })) },
+    );
+    if (!result.ok) throw new Error(upgradeFailure(result, { env }));
+  } catch (error) {
+    const reason = explain(error);
+    const permission = /\bEACCES\b|\bEPERM\b|permission denied/i.test(reason)
+      ? " Permission denied: use a user-owned Node installation (for example nvm), or ask the administrator to update the system npm prefix; no automatic elevation is attempted."
+      : "";
+    return { complete: false, changed: true, detail: `CLI install failed (${current} → ${latest}): ${reason}.${permission} Inspect the npm installation before retrying.` };
   }
   try {
     const pkg = read(p.join(installed, "package.json"));
@@ -99,7 +109,7 @@ export async function runUpgrade(argv = [], deps = {}) {
     return 1;
   }
   if (argv.includes("--help") || argv.includes("-h")) { log(upgradeHelp); return 0; }
-  const cli = await upgradeCli(deps);
+  const cli = await upgradeCli({ ...deps, log });
   log(cli.detail);
   let complete = cli.complete, changed = cli.changed;
   if (complete && argv.includes("--plugins")) {

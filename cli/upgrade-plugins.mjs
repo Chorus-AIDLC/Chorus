@@ -6,7 +6,7 @@ import { resolveBinaryPath } from "./agent-launcher.mjs";
 import { readClaudeInstallState } from "./init/adapters.mjs";
 import { installClaude, installCodex, installKiro, readCodexInstallState } from "./init/install-methods.mjs";
 import { normalizeAssetBase } from "./init/file-template.mjs";
-import { runUpgradeCommand } from "./upgrade-process.mjs";
+import { runUpgradeCommand, sanitizeUpgradeOutput, upgradeFailure } from "./upgrade-process.mjs";
 
 const HOSTS = {
   claude: { binary: "claude", variable: "CLAUDE_CONFIG_DIR", dir: [".claude"] },
@@ -155,15 +155,20 @@ export async function upgradePlugins(deps = {}) {
     }
     let scratch;
     let changed = false;
+    const failures = [];
+    const safe = (text) => sanitizeUpgradeOutput(text, { env: target.env });
     try {
       // Package commands must not discover project-local plugin configuration.
       scratch = io.mkdtempSync(join(tmpdir(), "chorus-upgrade-"));
       const run = (cmd, args) => {
         if (!args.includes("--help")) changed = true;
-        return (deps.run ?? runUpgradeCommand)(cmd, args, { env: target.env, platform, cwd: scratch, timeoutMs: 120_000 });
+        const result = (deps.run ?? runUpgradeCommand)(cmd, args, { env: target.env, platform, cwd: scratch, timeoutMs: 120_000 });
+        if (!result.ok) failures.push(`${cmd} ${args.slice(0, 2).join(" ")}: ${upgradeFailure(result, { env: target.env })}`);
+        return result;
       };
       if (target.type === "pi") {
-        results.push({ target: label, ...upgradePi(target, { run, fs: io }) });
+        const result = upgradePi(target, { run, fs: io });
+        results.push({ target: label, ...result, detail: safe([result.detail, ...failures].join("\n")) });
         continue;
       }
       const state = target.type === "claude"
@@ -175,7 +180,7 @@ export async function upgradePlugins(deps = {}) {
         flags: { updateInstalled: true, pluginOnly: true, url: target.source },
         adapter: { readInstallState: () => state },
         backup: (path) => {
-          if (io.existsSync(path)) io.copyFileSync(path, `${path}.chorus-upgrade-${Date.now()}.bak`, fs.constants.COPYFILE_EXCL);
+          if (io.existsSync(path)) io.copyFileSync(path, `${path}.chorus-upgrade.bak`);
         },
         // Keep the deadline active while response bodies are consumed too.
         fetch: (url) => (deps.fetch ?? globalThis.fetch)(url, { signal: AbortSignal.timeout(30_000) }),
@@ -185,10 +190,10 @@ export async function upgradePlugins(deps = {}) {
       results.push({
         target: label, complete, changed,
         detail: complete ? (target.source ? `Refreshed Chorus templates from ${target.source}.` : "Chorus plugin refreshed.")
-          : "Plugin update failed or is unsupported; check host plugin support and retry.",
+          : safe([outcome.detail || "Plugin update failed or is unsupported.", ...failures].join("\n")),
       });
-    } catch {
-      results.push({ target: label, complete: false, changed, detail: "Plugin update failed; check host configuration and retry." });
+    } catch (error) {
+      results.push({ target: label, complete: false, changed, detail: safe(`Plugin update failed: ${error?.message || "unknown error"}\n${failures.join("\n")}`) });
     } finally {
       if (scratch) io.rmSync(scratch, { recursive: true, force: true });
     }

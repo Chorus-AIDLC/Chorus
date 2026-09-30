@@ -64,7 +64,7 @@ Synchronization SHALL update only Chorus plugins and necessary integration depen
 - **THEN** Chorus assets come from the configured instance and the source is identified in the result.
 
 ### Requirement: Observable noninteractive completion
-The command SHALL use bounded noninteractive subprocess operations, continue after individual plugin failures, and summarize success/failure/skip outcomes without exposing credentials. Exit status SHALL be nonzero for any incomplete requested target and zero for complete runs, including missing/empty configuration and deduplicated targets. Completed mutations SHALL remain in place without rollback.
+The command SHALL use noninteractive subprocess operations. Query and plugin commands SHALL retain bounded execution; npm self-install SHALL have no automatic timeout or forced kill and SHALL stream sanitized progress until exit. Failures SHALL include sanitized causes and exit status, with permission guidance for EACCES/EPERM. The command SHALL continue after individual plugin failures, and summarize success/failure/skip outcomes without exposing credentials. Exit status SHALL be nonzero for any incomplete requested target and zero for complete runs, including missing/empty configuration and deduplicated targets. Completed mutations SHALL remain in place without rollback.
 
 #### Scenario: Partial plugin failure
 - **WHEN** one plugin update fails

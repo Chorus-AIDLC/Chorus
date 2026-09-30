@@ -12,7 +12,7 @@ Add both verbs to the client router before server boot. A pure, dependency-injec
 
 Support npm global installations only. Obtain the active npm global root/prefix with bounded read-only npm commands; compare the current module package root with the canonical package location for `@chorus-aidlc/chorus`. Reject source/link/npx/other-package-manager locations and ambiguous provenance. Realpath equality alone must not mistake an npm-linked source tree for a registry installation: reject a symlinked package directory. Inability to establish ownership produces guidance and a nonzero status without installation.
 
-Read `@chorus-aidlc/chorus` latest metadata using npm's existing registry configuration. Require a valid stable version; do not downgrade if the local stable version is newer. Use argument arrays without a shell, a fixed package name, bounded process execution and the same npm prefix used for identity checks. Install the resolved latest version, then read the installed package metadata to verify the expected version. Clearly distinguish check/install/verification failures. Never claim success from a subprocess exit code alone.
+Read `@chorus-aidlc/chorus` latest metadata using npm's existing registry configuration. Require a valid stable version; do not downgrade if the local stable version is newer. Use argument arrays without a shell, a fixed package name, bounded query execution and the same npm prefix used for identity checks. Install the resolved latest version, then read the installed package metadata to verify the expected version. Clearly distinguish check/install/verification failures. Never claim success from a subprocess exit code alone.
 
 Capture/import plugin collaborators before npm replaces the running package, avoiding lazy imports from a half-replaced installation. Default mode must not read daemon configuration or invoke plugins. Already-current CLI remains a successful prerequisite for requested plugin updates.
 
@@ -44,7 +44,7 @@ Pi's existing `pi update --extensions` affects unrelated extensions and is forbi
 
 Use a consistent structured result such as `{target, action, detail, complete}` internally. Exit 0 only when all requested eligible operations completed. Missing/empty config and duplicate rows are successful no-ops; offline/unknown records, missing hosts, conflicting destinations, unsupported targeted updates and failures are visible incomplete outcomes and cause exit 1. This concretizes the human's “未全部完成时返回非零” choice. There is no rollback; completed updates remain.
 
-Do not restart the daemon, kill processes, change stored credentials or reveal secrets. Bounded subprocess timeouts prevent hanging unattended runs. Raw child diagnostics must be sanitized or summarized before display.
+Do not restart the daemon, kill processes, change stored credentials or reveal secrets. Query and plugin subprocess timeouts prevent hanging probes. Per the user-authorized post-delivery review, npm self-install uses an asynchronous runner without an automatic timeout or kill, streaming sanitized complete lines until npm exits. Child diagnostics retain sanitized stderr tails and exit codes/signals; installer details remain visible and npm permission failures explain user-owned Node/admin options. Streaming holds partial lines for redaction and discards overlong lines. Backups overwrite one .chorus-upgrade.bak per config file.
 
 ## Module Boundaries
 

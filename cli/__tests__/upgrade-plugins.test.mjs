@@ -149,6 +149,19 @@ describe("configured plugin synchronization", () => {
     expect(r.map((x) => x.complete)).toEqual([false, true]);
     expect(JSON.stringify(r)).not.toContain("cho_SECRET");
   });
+  it("reports installer context, stderr and exit status with credential redaction", async () => {
+    const f = fixture({ agents: [{ agentType: "claude" }, { agentType: "pi" }] });
+    const ok = f.run.getMockImplementation();
+    f.run.mockImplementation((cmd, args) => cmd === "claude"
+      ? { ok: false, code: 17, stderr: "EACCES registry unavailable; token=private-secret" }
+      : ok(cmd, args));
+    const results = await upgradePlugins(f);
+    expect(results[0].detail).toContain("claude plugin marketplace add failed");
+    expect(results[0].detail).toContain("exit 17");
+    expect(results[0].detail).toContain("EACCES");
+    expect(JSON.stringify(results)).not.toContain("private-secret");
+    expect(results[1].complete).toBe(true);
+  });
   it("preserves Codex connection and unrelated config while refreshing only Chorus", async () => {
     const f = fixture({ agents: [{ agentType: "codex", url: "https://different.example" }] });
     const cfg = join(f.home, ".codex", "config.toml");
@@ -160,6 +173,10 @@ describe("configured plugin synchronization", () => {
       ["plugin", "marketplace", "upgrade", "chorus-plugins"],
       ["plugin", "add", CHORUS_PLUGIN_ID, "--json"],
     ]);
+    expect((await upgradePlugins(f))[0].complete).toBe(true);
+    expect(fs.readdirSync(join(f.home, ".codex")).filter((path) => path.endsWith(".bak")))
+      .toEqual(["config.toml.chorus-upgrade.bak"]);
+    expect(fs.readFileSync(`${cfg}.chorus-upgrade.bak`, "utf8")).toBe(original);
   });
   it("refreshes Kiro assets from its instance preserving existing MCP credentials/settings", async () => {
     const f = fixture({ agents: [{ agentType: "kiro", url: "https://instance.example/api/mcp" }] });

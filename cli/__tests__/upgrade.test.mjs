@@ -42,7 +42,8 @@ describe("upgrade CLI", () => {
   it("upgrades the same prefix to a fixed version, verifies it, and isolates default mode", async () => {
     const f = fixture();
     expect(await runUpgrade([], f)).toBe(0);
-    expect(f.run).toHaveBeenCalledWith("npm", ["install", "-g", `${PACKAGE}@1.1.0`, "--prefix", f.prefix, "--no-audit", "--no-fund", "--yes"], expect.objectContaining({ timeoutMs: 300_000 }));
+    expect(f.run).toHaveBeenCalledWith("npm", ["install", "-g", `${PACKAGE}@1.1.0`, "--prefix", f.prefix, "--no-audit", "--no-fund", "--yes"], expect.objectContaining({ onOutput: expect.any(Function) }));
+    expect(f.run.mock.calls.find(([, args]) => args[0] === "install")[2]).not.toHaveProperty("timeoutMs");
     expect(f.upgradePlugins).not.toHaveBeenCalled();
     expect(f.log.mock.calls.flat().join(" ")).toContain("verified");
   });
@@ -57,6 +58,20 @@ describe("upgrade CLI", () => {
     expect(await runUpgrade(["--plugins"], f)).toBe(1);
     expect(f.upgradePlugins).not.toHaveBeenCalled();
     expect(f.log.mock.calls.flat().join(" ")).not.toContain("cho_SECRET");
+  });
+  it("explains npm permission failures with redacted details and exit status", async () => {
+    const f = fixture();
+    const query = f.run.getMockImplementation();
+    f.run.mockImplementation((cmd, args, opts) => args[0] === "install"
+      ? { ok: false, code: 243, stderr: "npm error EACCES permission denied /usr/lib/node_modules\nAuthorization: Bearer secret-value" }
+      : query(cmd, args, opts));
+    expect(await runUpgrade(["--plugins"], f)).toBe(1);
+    const output = f.log.mock.calls.flat().join("\n");
+    expect(output).toMatch(/exit 243/);
+    expect(output).toMatch(/EACCES/);
+    expect(output).toContain("nvm");
+    expect(output).not.toContain("secret-value");
+    expect(f.upgradePlugins).not.toHaveBeenCalled();
   });
   it.each(["1.2.0-beta.1", "v1.2.0", "01.2.3", {}, ["1.2.0"]])("rejects unstable/malformed latest %j", async (latest) => {
     const f = fixture({ latest });
