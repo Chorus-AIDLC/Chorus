@@ -22,14 +22,16 @@ export const PATCH = withErrorHandler(
     }
 
     const { uuid } = await context.params;
-    // Public: any company actor; private: project admin (Tech Design D2).
     await requireProjectOperation(auth, uuid, "manage_project");
-    const body = await parseBody<{ groupUuid: string | null }>(request);
+    const body = await parseBody<{ groupUuid: string | null; confirmationToken?: string }>(request);
+    if (body.groupUuid !== null && (typeof body.groupUuid !== "string" || !body.groupUuid)) return errors.validationError({ groupUuid: "A group UUID or null is required" });
 
     const result = await moveProjectToGroup(
       auth.companyUuid,
       uuid,
-      body.groupUuid
+      body.groupUuid,
+      auth,
+      body.confirmationToken,
     );
 
     if (!result) return errors.notFound("Project or group");

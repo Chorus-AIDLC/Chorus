@@ -2,6 +2,7 @@
 // Entity resolution is company-scoped; caller-supplied projectUuid is never
 // trusted as the project of an existing entity.
 import { prisma } from "@/lib/prisma";
+import { requireGroupOperation } from "@/services/project-group-access.service";
 import {
   getProjectAccess,
   levelAtLeast,
@@ -11,7 +12,8 @@ import {
   type AccessEntityType,
 } from "@/services/project-access.service";
 import type { AgentAuthContext } from "@/types/auth";
-import type { ToolProjectAccessPolicy } from "./permission-map";
+import { TOOL_PERMISSIONS, TOOL_READ_PERMISSIONS, type ManagedToolName, type ToolProjectAccessPolicy } from "./permission-map";
+import type { Permission } from "@/lib/authz/types";
 
 export interface AuthorizedResource {
   entityType: AccessEntityType;
@@ -76,6 +78,33 @@ export async function authorizeToolProjectAccess(
   auth: AgentAuthContext,
   policy: ToolProjectAccessPolicy,
 ): Promise<AuthorizedResource[]> {
+  let capability: Permission | undefined = TOOL_READ_PERMISSIONS[toolName] ??
+    TOOL_PERMISSIONS[toolName as ManagedToolName];
+  if (["chorus_get_comments", "chorus_add_comment", "chorus_search_mentionables"].includes(toolName) &&
+      isEntityType(params.targetType ?? params.entityType)) {
+    const entity = params.targetType ?? params.entityType;
+    const resource = entity === "comment" ? "document" : entity;
+    capability = `${resource}:${toolName === "chorus_add_comment" ? "write" : "read"}` as Permission;
+  }
+  if (toolName === "chorus_update_task" || toolName === "chorus_create_tasks") capability = "task:write";
+  if (toolName === "chorus_answer_elaboration") capability = "idea:write";
+  if (capability && !auth.permissions.includes(capability)) {
+    throw new ProjectAccessDeniedError(`Missing agent capability: ${capability}`);
+  }
+  if (toolName === "chorus_search" &&
+      !auth.permissions.some((permission) => permission.endsWith(":read"))) {
+    throw new ProjectAccessDeniedError("Missing agent read capability");
+  }
+  if (toolName === "chorus_admin_create_project" && typeof params.groupUuid === "string") {
+    await requireGroupOperation(auth, params.groupUuid, "create_project");
+  }
+  if (policy.scope === "group") {
+    if (typeof params.groupUuid !== "string") notFound(toolName, "project group", "");
+    await requireGroupOperation(auth, params.groupUuid,
+      params.memberAction ? "manage_members" : params.visibility !== undefined ? "change_visibility" : "manage_group",
+    );
+    return [];
+  }
   if (policy.scope !== "resource") return [];
 
   const inputs: ResourceInput[] = [];
@@ -99,11 +128,7 @@ export async function authorizeToolProjectAccess(
   }
 
   if (toolName === "chorus_admin_delete_project_group" && typeof params.groupUuid === "string") {
-    const group = await prisma.projectGroup.findFirst({
-      where: { companyUuid: auth.companyUuid, uuid: params.groupUuid },
-      select: { uuid: true },
-    });
-    if (!group) notFound(toolName, "project group", params.groupUuid);
+    await requireGroupOperation(auth, params.groupUuid, "delete_group");
     // Deliberately enumerate the full group, not the caller's accessible subset:
     // deleteProjectGroup deletes or ungroups every contained project.
     const projects = await prisma.project.findMany({

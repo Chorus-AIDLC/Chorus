@@ -332,13 +332,16 @@ describe("accessibleProjectWhere / accessibleProjectUuids", () => {
   });
 
   it("builds a company-scoped OR clause", async () => {
+    const inherited = (userUuid: string) => ({ group: { companyUuid: C, members: {
+      some: { companyUuid: C, userUuid, role: { in: ["viewer", "editor", "admin"] } },
+    } } });
     expect(await accessibleProjectWhere(user("u-nobody"))).toEqual({
       companyUuid: C,
-      OR: [{ visibility: { not: "private" } }],
+      OR: [{ visibility: { not: "private" } }, inherited("u-nobody")],
     });
     expect(await accessibleProjectWhere(user("u-editor"))).toEqual({
       companyUuid: C,
-      OR: [{ visibility: { not: "private" } }, { uuid: { in: ["priv"] } }],
+      OR: [{ visibility: { not: "private" } }, { uuid: { in: ["priv"] } }, inherited("u-editor")],
     });
   });
 });

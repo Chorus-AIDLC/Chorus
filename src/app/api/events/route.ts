@@ -16,6 +16,7 @@ import {
   filterExecutionViewsByAccess,
   membershipPrincipal,
 } from "@/services/project-access.service";
+import { getGroupAccess } from "@/services/project-group-access.service";
 import {
   parseSelfReport,
   registerConnection,
@@ -158,6 +159,8 @@ export async function GET(request: NextRequest) {
       // With nothing outstanding (the common case) delivery is synchronous.
       let gateChain: Promise<void> = Promise.resolve();
       let gateOutstanding = 0;
+      let accessRevision = 0;
+      let groupRevision = 0;
       const enqueueGate = (step: () => void | Promise<void>) => {
         gateOutstanding++;
         gateChain = gateChain
@@ -176,7 +179,11 @@ export async function GET(request: NextRequest) {
         enqueueGate(async () => {
           if (request.signal.aborted) return;
           try {
-            accessibleProjects = new Set(await accessibleProjectUuids(auth));
+            // A second revocation can land while this query is running. Never
+            // install an earlier snapshot over the synchronously revoked set.
+            const revision = accessRevision;
+            const refreshed = new Set(await accessibleProjectUuids(auth));
+            if (revision === accessRevision) accessibleProjects = refreshed;
           } catch (err) {
             sseLogger.error({ err }, "SSE accessible-project recompute failed");
             if (triggerProjectUuid) {
@@ -188,15 +195,31 @@ export async function GET(request: NextRequest) {
         });
       };
 
-      // Events without a project, or company-level project-group events, are not
-      // project-scoped: they keep the company-only filter.
+      // Group metadata has its own discovery gate, including legacy events with
+      // an empty projectUuid.
       const isProjectScoped = (event: { projectUuid?: string; entityType?: string }) =>
         !!event.projectUuid && event.entityType !== "project_group";
 
       const gateDeliver = (
-        event: { projectUuid?: string; entityType?: string },
+        event: { projectUuid?: string; entityType?: string; entityUuid?: string },
         deliver: () => void,
       ) => {
+        if (event.entityType === "project_group") {
+          enqueueGate(async () => {
+            if (!event.entityUuid || request.signal.aborted) return;
+            // getGroupAccess is deliberately fresh. A revoke queued while it is
+            // awaiting the DB invalidates that result, even though its refresh
+            // is later on this same serial chain.
+            for (let attempt = 0; attempt < 3; attempt++) {
+              const revision = `${accessRevision}:${groupRevision}`;
+              const access = await getGroupAccess(auth, event.entityUuid);
+              if (revision !== `${accessRevision}:${groupRevision}`) continue;
+              if (access.group && !request.signal.aborted) deliver();
+              return;
+            }
+          });
+          return;
+        }
         const decide = () => {
           if (isProjectScoped(event) && !accessibleProjects.has(event.projectUuid!)) return;
           deliver();
@@ -229,6 +252,7 @@ export async function GET(request: NextRequest) {
       const handler = (event: RealtimeEvent) => {
         // Filter by company (multi-tenancy)
         if (event.companyUuid !== auth.companyUuid) return;
+        if (event.entityType === "project_group") groupRevision++;
         // Optionally filter by project
         if (projectUuid && event.projectUuid !== projectUuid) return;
 
@@ -270,6 +294,10 @@ export async function GET(request: NextRequest) {
       // among the changed users.
       const accessChangedHandler = (event: ProjectAccessChangedEvent) => {
         if (!affectsSubscriber(event)) return;
+        accessRevision++;
+        // Fail closed immediately, including asynchronous delivery decisions
+        // already ahead of the refresh on the serial gate.
+        accessibleProjects.delete(event.projectUuid);
         recomputeAccess(event.projectUuid);
       };
 
@@ -282,7 +310,9 @@ export async function GET(request: NextRequest) {
       // clients have a registered connection and keep using the dedicated
       // /api/events/notifications transport for registration/control/liveness.
       const notificationHandler = (event: Record<string, unknown>) => {
-        send(`data: ${JSON.stringify(event)}\n\n`);
+        gateDeliver({ projectUuid: typeof event.projectUuid === "string" ? event.projectUuid : undefined }, () =>
+          send(`data: ${JSON.stringify(event)}\n\n`),
+        );
       };
       if (notificationChannel) {
         eventBus.on(notificationChannel, notificationHandler);
@@ -303,12 +333,17 @@ export async function GET(request: NextRequest) {
         enqueueGate(async () => {
           // Same rule as the REST execution reads (drop hidden rows, redact hidden
           // lineage anchors), judged against this stream's live accessible set.
-          const executions = await filterExecutionViewsByAccess(
-            auth,
-            event.executions ?? [],
-            accessibleProjects,
-          );
-          send(`data: ${JSON.stringify({ type: "execution", ...event, executions })}\n\n`);
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const revision = accessRevision;
+            const executions = await filterExecutionViewsByAccess(
+              auth, event.executions ?? [], accessibleProjects,
+            );
+            if (revision !== accessRevision) continue;
+            if (!request.signal.aborted) {
+              send(`data: ${JSON.stringify({ type: "execution", ...event, executions })}\n\n`);
+            }
+            return;
+          }
         });
       };
       const executionChannels = visibleConnectionUuids.map(executionEventName);

@@ -42,6 +42,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
+import { AccessImpactPreview, type AccessImpact } from "@/components/access-impact-preview";
 
 export type ProjectVisibility = "public" | "private";
 export type ProjectAccessLevel = "viewer" | "editor" | "admin";
@@ -54,6 +55,10 @@ export interface ProjectMember {
   email: string | null;
   role: ProjectMemberRole;
   createdAt: string;
+  source?: "project" | "group" | "both";
+  directRole?: ProjectMemberRole | null;
+  inheritedRole?: ProjectMemberRole | null;
+  effectiveRole?: ProjectMemberRole;
 }
 
 interface CompanyUser {
@@ -75,7 +80,7 @@ interface ApiFailure {
 
 /** Map an API failure to a localized `projectAccess.errors.*` key. */
 export function accessErrorKey(failure: ApiFailure): string {
-  if (failure.message?.startsWith(LAST_ADMIN_MESSAGE)) return "errors.lastAdmin";
+  if (failure.message?.startsWith(LAST_ADMIN_MESSAGE) || failure.message?.includes("keep at least one admin")) return "errors.lastAdmin";
   if (failure.status === 409 || failure.code === "CONFLICT") return "errors.alreadyMember";
   if (failure.message?.startsWith("User not found in this company")) return "errors.notInCompany";
   if (failure.status === 403 || failure.code === "FORBIDDEN") return "errors.forbidden";
@@ -113,6 +118,9 @@ interface ProjectAccessTabProps {
   // Called after any member mutation so the parent can re-read the caller's own
   // access level (e.g. an admin who just demoted or removed themself).
   onMembersChanged?: () => void;
+  resourceType?: "projects" | "project-groups";
+  canReadMembers?: boolean;
+  publicAllowed?: boolean;
 }
 
 export function ProjectAccessTab({
@@ -121,11 +129,18 @@ export function ProjectAccessTab({
   accessLevel,
   onVisibilityChange,
   onMembersChanged,
+  resourceType = "projects",
+  canReadMembers = true,
+  publicAllowed = true,
 }: ProjectAccessTabProps) {
   const t = useTranslations("projectAccess");
+  const tGroup = useTranslations("projectGroups");
+  const tImpact = useTranslations("accessImpact");
   const tCommon = useTranslations("common");
   const isAdmin = accessLevel === "admin";
-  const membersUrl = `/api/projects/${projectUuid}/members`;
+  const baseUrl = `/api/${resourceType}/${projectUuid}`;
+  const membersUrl = `${baseUrl}/members`;
+  const isGroup = resourceType === "project-groups";
 
   const [members, setMembers] = useState<ProjectMember[] | null>(null);
   const [membersFailed, setMembersFailed] = useState(false);
@@ -134,6 +149,10 @@ export function ProjectAccessTab({
 
   const [pendingVisibility, setPendingVisibility] = useState<ProjectVisibility | null>(null);
   const [savingVisibility, setSavingVisibility] = useState(false);
+  const [preview, setPreview] = useState<AccessImpact | null>(null);
+  const [previewVersion, setPreviewVersion] = useState(0);
+  const [visibilityError, setVisibilityError] = useState<string | null>(null);
+  const onPreviewLoaded = useCallback((value: AccessImpact | null) => setPreview(value), []);
 
   const loadMembers = useCallback(async () => {
     const result = await callApi<{ members: ProjectMember[] }>(membersUrl);
@@ -146,54 +165,68 @@ export function ProjectAccessTab({
   }, [membersUrl]);
 
   useEffect(() => {
-    void loadMembers();
-  }, [loadMembers]);
+    if (canReadMembers) void loadMembers();
+  }, [loadMembers, canReadMembers]);
 
   const memberLabel = (m: Pick<ProjectMember, "name" | "email">) =>
     m.name || m.email || t("members.unnamed");
+  const failureMessage = (failure: ApiFailure) => isGroup
+    ? tGroup(failure.message?.includes("keep at least one admin") || failure.message?.includes("last group Admin") ? "lastAdmin" : failure.status === 403 ? "accessForbidden" : "accessFailed")
+    : t(accessErrorKey(failure));
 
   const confirmVisibility = async () => {
-    if (!pendingVisibility) return;
+    if (!pendingVisibility || !preview) return;
     setSavingVisibility(true);
-    const result = await callApi(`/api/projects/${projectUuid}`, jsonInit("PATCH", {
+    setVisibilityError(null);
+    const result = await callApi(baseUrl, jsonInit("PATCH", {
       visibility: pendingVisibility,
+      confirmationToken: preview.confirmationToken,
     }));
     setSavingVisibility(false);
     if (result.ok) {
       onVisibilityChange(pendingVisibility);
-      toast.success(t("visibilityUpdated"));
+      toast.success(isGroup ? tGroup("visibilityUpdated") : t("visibilityUpdated"));
+      setPendingVisibility(null);
+      onMembersChanged?.();
     } else {
-      toast.error(t(accessErrorKey(result.failure)));
+      const error = result.failure.status === 409
+        ? tImpact("stale") : failureMessage(result.failure);
+      setVisibilityError(error);
+      toast.error(error);
+      setPreview(null);
+      setPreviewVersion((value) => value + 1);
     }
-    setPendingVisibility(null);
   };
 
   const changeRole = async (member: ProjectMember, role: ProjectMemberRole) => {
-    if (role === member.role) return;
+    const directRole = member.directRole === undefined ? member.role : member.directRole;
+    if (!directRole || role === directRole) return;
+    if (member.inheritedRole && ROLES.indexOf(role) < ROLES.indexOf(member.inheritedRole)) return;
     setMemberError(null);
     setBusyMember(member.userUuid);
     const result = await callApi(`${membersUrl}/${member.userUuid}`, jsonInit("PATCH", { role }));
     setBusyMember(null);
     if (result.ok) {
-      setMembers((prev) => prev?.map((m) => (m.userUuid === member.userUuid ? { ...m, role } : m)) ?? prev);
+      await loadMembers();
       toast.success(t("roleUpdated"));
       onMembersChanged?.();
     } else {
-      setMemberError(t(accessErrorKey(result.failure)));
+      setMemberError(failureMessage(result.failure));
     }
   };
 
   const removeMember = async (member: ProjectMember) => {
+    if (member.directRole === null || member.source === "group") return;
     setMemberError(null);
     setBusyMember(member.userUuid);
     const result = await callApi(`${membersUrl}/${member.userUuid}`, jsonInit("DELETE"));
     setBusyMember(null);
     if (result.ok) {
-      setMembers((prev) => prev?.filter((m) => m.userUuid !== member.userUuid) ?? prev);
+      await loadMembers();
       toast.success(t("memberRemoved"));
       onMembersChanged?.();
     } else {
-      setMemberError(t(accessErrorKey(result.failure)));
+      setMemberError(failureMessage(result.failure));
     }
   };
 
@@ -206,21 +239,21 @@ export function ProjectAccessTab({
       await loadMembers();
       return true;
     }
-    setMemberError(t(accessErrorKey(result.failure)));
+    setMemberError(failureMessage(result.failure));
     return false;
   };
 
   const memberUuids = useMemo(
-    () => new Set((members ?? []).map((m) => m.userUuid)),
+    () => new Set((members ?? []).filter((m) => m.directRole !== null && m.source !== "group").map((m) => m.userUuid)),
     [members],
   );
 
   return (
-    <div className="flex flex-col gap-7" data-testid="project-access-tab">
+    <div className="flex min-w-0 flex-col gap-7" data-testid={isGroup ? "group-access-tab" : "project-access-tab"}>
       {!isAdmin && (
         <p className="flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-[12px] text-muted-foreground">
           <Lock className="h-3.5 w-3.5 shrink-0" />
-          {t("readOnlyHint")}
+          {isGroup ? tGroup("accessReadOnly") : t("readOnlyHint")}
         </p>
       )}
 
@@ -230,14 +263,18 @@ export function ProjectAccessTab({
           <h3 id="project-visibility-label" className="text-[14px] font-semibold text-foreground">
             {t("visibility.title")}
           </h3>
-          <p className="text-[12px] text-muted-foreground">{t("visibility.description")}</p>
+          <p className="text-[12px] text-muted-foreground">{isGroup ? tGroup("visibilityDescription") : t("visibility.description")}</p>
         </div>
         <RadioGroup
           aria-labelledby="project-visibility-label"
           value={visibility}
           disabled={!isAdmin || savingVisibility}
           onValueChange={(value) => {
-            if (value !== visibility) setPendingVisibility(value as ProjectVisibility);
+            if (value !== visibility) {
+              setPreview(null);
+              setVisibilityError(null);
+              setPendingVisibility(value as ProjectVisibility);
+            }
           }}
           className="grid gap-2 sm:grid-cols-2"
         >
@@ -251,13 +288,13 @@ export function ProjectAccessTab({
                   : "cursor-not-allowed opacity-60"
               }`}
             >
-              <RadioGroupItem id={`project-visibility-${option}`} value={option} className="mt-0.5 cursor-pointer disabled:cursor-not-allowed" />
+              <RadioGroupItem id={`project-visibility-${option}`} value={option} disabled={option === "public" && !publicAllowed} className="mt-0.5 cursor-pointer disabled:cursor-not-allowed" />
               <span className="flex flex-col gap-1">
                 <span className="text-[13px] font-medium text-foreground">
                   {t(`visibility.${option}`)}
                 </span>
                 <span className="text-[12px] text-muted-foreground">
-                  {t(`visibility.${option}Hint`)}
+                  {isGroup ? tGroup(`${option}Hint`) : t(`visibility.${option}Hint`)}
                 </span>
               </span>
             </Label>
@@ -271,23 +308,32 @@ export function ProjectAccessTab({
           if (!open && !savingVisibility) setPendingVisibility(null);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[90svh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {t(pendingVisibility === "private" ? "confirm.toPrivateTitle" : "confirm.toPublicTitle")}
+              {isGroup ? tGroup(pendingVisibility === "private" ? "toPrivateTitle" : "toPublicTitle") : t(pendingVisibility === "private" ? "confirm.toPrivateTitle" : "confirm.toPublicTitle")}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {t(pendingVisibility === "private"
+              {isGroup ? tGroup(pendingVisibility === "private" ? "convertPrivateHint" : "convertPublicHint") : t(pendingVisibility === "private"
                 ? "confirm.toPrivateDescription"
                 : "confirm.toPublicDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {pendingVisibility && (
+            <AccessImpactPreview
+              kind={isGroup ? "group" : "project"}
+              key={previewVersion}
+              url={`${baseUrl}/access-preview?visibility=${pendingVisibility}`}
+              onLoaded={onPreviewLoaded}
+            />
+          )}
+          {visibilityError && <p role="alert" className="text-sm text-destructive">{visibilityError}</p>}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={savingVisibility}>
               {tCommon("cancel")}
             </AlertDialogCancel>
             <AlertDialogAction
-              disabled={savingVisibility}
+              disabled={savingVisibility || !preview}
               onClick={(event) => {
                 event.preventDefault();
                 void confirmVisibility();
@@ -301,10 +347,10 @@ export function ProjectAccessTab({
       </AlertDialog>
 
       {/* Members */}
-      <section className="flex flex-col gap-3">
+      {canReadMembers && <section className="flex min-w-0 flex-col gap-3">
         <div className="flex flex-col gap-1">
           <h3 className="text-[14px] font-semibold text-foreground">{t("members.title")}</h3>
-          <p className="text-[12px] text-muted-foreground">{t("members.description")}</p>
+          <p className="text-[12px] text-muted-foreground">{isGroup ? tGroup("membersDescription") : t("members.description")}</p>
         </div>
 
         {memberError && (
@@ -326,13 +372,13 @@ export function ProjectAccessTab({
             </p>
           )
         ) : (
-          <div className="rounded-lg border border-border">
-            <Table>
+          <div className="min-w-0 rounded-lg border border-border">
+            <Table className="table-fixed">
               <TableHeader>
                 <TableRow>
                   <TableHead>{t("members.name")}</TableHead>
-                  <TableHead className="w-[140px]">{t("members.role")}</TableHead>
-                  {isAdmin && <TableHead className="w-[56px] text-right"><span className="sr-only">{t("members.actions")}</span></TableHead>}
+                  <TableHead className="w-[100px] sm:w-[140px]">{t("members.role")}</TableHead>
+                  {isAdmin && <TableHead className="w-[40px] p-1 text-right"><span className="sr-only">{t("members.actions")}</span></TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -346,42 +392,55 @@ export function ProjectAccessTab({
                   members.map((member) => {
                     const label = memberLabel(member);
                     const busy = busyMember === member.userUuid;
+                    const directRole = member.directRole === undefined ? member.role : member.directRole;
+                    const inheritedOnly = member.source === "group" || directRole === null;
+                    const floor = member.inheritedRole;
+                    const effectiveRole = member.effectiveRole ?? member.role;
                     return (
                       <TableRow key={member.userUuid}>
                         <TableCell className="whitespace-normal">
                           <div className="flex min-w-0 flex-col">
-                            <span className="truncate text-[13px] font-medium text-foreground">{label}</span>
+                            <span className="break-words text-[13px] font-medium text-foreground">{label}</span>
                             {member.email && member.name && (
-                              <span className="truncate text-[12px] text-muted-foreground">{member.email}</span>
+                              <span className="break-all text-[12px] text-muted-foreground">{member.email}</span>
+                            )}
+                            {!isGroup && (
+                              <span className="break-words text-[11px] text-muted-foreground">
+                                {t(`members.source.${member.source ?? "project"}`)}
+                                {floor && ` · ${t("members.inheritedRole", { role: t(`roles.${floor}`) })}`}
+                                {directRole && ` · ${t("members.directRole", { role: t(`roles.${directRole}`) })}`}
+                              </span>
                             )}
                           </div>
                         </TableCell>
                         <TableCell>
-                          {isAdmin ? (
+                          {isAdmin && !inheritedOnly ? (
                             <Select
-                              value={member.role}
+                              value={directRole ?? member.role}
                               disabled={busy}
                               onValueChange={(role) => void changeRole(member, role as ProjectMemberRole)}
                             >
                               <SelectTrigger
                                 size="sm"
-                                className="w-[120px]"
+                                className="w-full min-w-0 px-2"
                                 aria-label={t("members.roleFor", { name: label })}
                               >
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
                                 {ROLES.map((role) => (
-                                  <SelectItem key={role} value={role}>{t(`roles.${role}`)}</SelectItem>
+                                  <SelectItem key={role} value={role} disabled={!!floor && ROLES.indexOf(role) < ROLES.indexOf(floor)}>{t(`roles.${role}`)}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
                           ) : (
-                            <Badge variant="secondary">{t(`roles.${member.role}`)}</Badge>
+                            <Badge variant="secondary">{t(`roles.${effectiveRole}`)}</Badge>
                           )}
+                          {!isGroup && <p className="mt-1 whitespace-normal text-[11px] text-muted-foreground">{t("members.effectiveRole", { role: t(`roles.${effectiveRole}`) })}</p>}
                         </TableCell>
                         {isAdmin && (
-                          <TableCell className="text-right">
+                          <TableCell className="p-1 text-right">
+                            {!inheritedOnly && (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -392,6 +451,7 @@ export function ProjectAccessTab({
                             >
                               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                             </Button>
+                            )}
                           </TableCell>
                         )}
                       </TableRow>
@@ -404,9 +464,9 @@ export function ProjectAccessTab({
         )}
 
         {isAdmin && members !== null && (
-          <AddMemberRow excludeUuids={memberUuids} onAdd={addMember} />
+          <AddMemberRow excludeUuids={memberUuids} onAdd={addMember} inheritedMembers={isGroup ? [] : members} />
         )}
-      </section>
+      </section>}
     </div>
   );
 }
@@ -414,9 +474,10 @@ export function ProjectAccessTab({
 interface AddMemberRowProps {
   excludeUuids: Set<string>;
   onAdd: (user: CompanyUser, role: ProjectMemberRole) => Promise<boolean>;
+  inheritedMembers: ProjectMember[];
 }
 
-function AddMemberRow({ excludeUuids, onAdd }: AddMemberRowProps) {
+function AddMemberRow({ excludeUuids, onAdd, inheritedMembers }: AddMemberRowProps) {
   const t = useTranslations("projectAccess");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -425,6 +486,7 @@ function AddMemberRow({ excludeUuids, onAdd }: AddMemberRowProps) {
   const [selected, setSelected] = useState<CompanyUser | null>(null);
   const [role, setRole] = useState<ProjectMemberRole>("editor");
   const [adding, setAdding] = useState(false);
+  const floor = inheritedMembers.find((m) => m.userUuid === selected?.uuid)?.inheritedRole;
 
   // Company users come from the mention search (the only company-user listing
   // exposed to non-super-admins); it only searches users for a non-empty query.
@@ -458,7 +520,7 @@ function AddMemberRow({ excludeUuids, onAdd }: AddMemberRowProps) {
   const candidates = results.filter((user) => !excludeUuids.has(user.uuid));
 
   const handleAdd = async () => {
-    if (!selected) return;
+    if (!selected || (floor && ROLES.indexOf(role) <= ROLES.indexOf(floor))) return;
     setAdding(true);
     const ok = await onAdd(selected, role);
     setAdding(false);
@@ -479,7 +541,7 @@ function AddMemberRow({ excludeUuids, onAdd }: AddMemberRowProps) {
               role="combobox"
               aria-expanded={open}
               aria-label={t("add.selectUser")}
-              className="min-w-[200px] flex-1 justify-between font-normal"
+              className="w-full min-w-0 justify-between font-normal sm:w-auto sm:flex-1"
             >
               <span className={selected ? "truncate text-foreground" : "truncate text-muted-foreground"}>
                 {selected ? selected.name : t("add.selectUser")}
@@ -487,7 +549,7 @@ function AddMemberRow({ excludeUuids, onAdd }: AddMemberRowProps) {
               <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-[300px] p-0" align="start">
+          <PopoverContent className="w-[min(300px,calc(100vw-3rem))] p-0" align="start">
             <Command shouldFilter={false}>
               <CommandInput
                 value={query}
@@ -512,6 +574,8 @@ function AddMemberRow({ excludeUuids, onAdd }: AddMemberRowProps) {
                           value={user.uuid}
                           onSelect={() => {
                             setSelected(user);
+                            const inherited = inheritedMembers.find((m) => m.userUuid === user.uuid)?.inheritedRole;
+                            setRole(inherited === "viewer" ? "editor" : inherited === "editor" ? "admin" : "editor");
                             setOpen(false);
                           }}
                         >
@@ -537,11 +601,11 @@ function AddMemberRow({ excludeUuids, onAdd }: AddMemberRowProps) {
           </SelectTrigger>
           <SelectContent>
             {ROLES.map((r) => (
-              <SelectItem key={r} value={r}>{t(`roles.${r}`)}</SelectItem>
+              <SelectItem key={r} value={r} disabled={!!floor && ROLES.indexOf(r) <= ROLES.indexOf(floor)}>{t(`roles.${r}`)}</SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Button onClick={() => void handleAdd()} disabled={!selected || adding} className="gap-1.5">
+        <Button onClick={() => void handleAdd()} disabled={!selected || adding || (!!floor && ROLES.indexOf(role) <= ROLES.indexOf(floor))} className="gap-1.5">
           {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
           {adding ? t("add.adding") : t("add.add")}
         </Button>

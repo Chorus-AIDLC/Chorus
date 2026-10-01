@@ -13,6 +13,10 @@ const { bus } = vi.hoisted(() => {
 
 const mockGetAuthContext = vi.fn();
 const mockAccessibleProjectUuids = vi.fn();
+const mockGetGroupAccess = vi.fn();
+vi.mock("@/services/project-group-access.service", () => ({
+  getGroupAccess: (...args: unknown[]) => mockGetGroupAccess(...args),
+}));
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
@@ -107,6 +111,7 @@ beforeEach(() => {
   bus.removeAllListeners();
   publicProjects = new Set([PUBLIC_P]);
   privateMembers = new Map([[PRIVATE_P, new Set([memberUuid])]]);
+  mockGetGroupAccess.mockResolvedValue({ group: { uuid: "g1" } });
   mockAccessibleProjectUuids.mockImplementation(
     async (auth: { type: string; actorUuid: string; ownerUuid?: string }) => {
       const p = principalOf(auth);
@@ -222,7 +227,7 @@ describe("GET /api/events — private project isolation", () => {
     expect(dataEvents().map((e) => e.projectUuid)).toEqual([PUBLIC_P]);
   });
 
-  it("project_group events and events without projectUuid keep the company-only filter", async () => {
+  it("discovery-checks projectless group events and preserves unscoped company events", async () => {
     const { dataEvents } = await connect(outsiderAuth);
     bus.emit("change", {
       companyUuid,
@@ -240,6 +245,74 @@ describe("GET /api/events — private project isolation", () => {
     });
     await flush();
     expect(dataEvents()).toHaveLength(2);
+    expect(mockGetGroupAccess).toHaveBeenCalledWith(outsiderAuth, "g1");
+  });
+
+  it("withholds hidden private-group metadata even with an empty projectUuid", async () => {
+    mockGetGroupAccess.mockResolvedValue({ group: null });
+    const { dataEvents } = await connect(outsiderAuth);
+    bus.emit("change", change("", { entityType: "project_group", entityUuid: "hidden-group", name: "Secret" }));
+    await flush();
+    expect(dataEvents()).toEqual([]);
+  });
+
+  it("delivers project-only group metadata after fresh discovery", async () => {
+    mockGetGroupAccess.mockResolvedValue({ group: { uuid: "g1" }, level: "viewer", explicitRole: null, canManage: false });
+    const { dataEvents } = await connect(memberAuth);
+    bus.emit("change", change("", { entityType: "project_group", entityUuid: "g1" }));
+    await flush();
+    expect(dataEvents()).toHaveLength(1);
+  });
+
+  it("rechecks discovery when group revocation races an in-flight group delivery", async () => {
+    const { dataEvents } = await connect(ownedAgentAuth);
+    let release!: () => void;
+    mockGetGroupAccess.mockImplementationOnce(() =>
+      new Promise((resolve) => { release = () => resolve({ group: { uuid: "g1" } }); }),
+    );
+    mockGetGroupAccess.mockResolvedValue({ group: null });
+    bus.emit("change", change("", { entityType: "project_group", entityUuid: "g1" }));
+    await flush();
+    privateMembers.get(PRIVATE_P)!.delete(ownerUuid);
+    bus.emit("project_access_changed", { companyUuid, projectUuid: PRIVATE_P, userUuids: [ownerUuid] });
+    bus.emit("change", change(PRIVATE_P));
+    release();
+    await flush();
+    expect(dataEvents()).toEqual([]);
+    expect(mockGetGroupAccess).toHaveBeenCalledTimes(2);
+  });
+
+  it("rechecks a racing revoke in an empty group even when no child refresh exists", async () => {
+    const { dataEvents } = await connect(ownedAgentAuth);
+    let release!: () => void;
+    mockGetGroupAccess.mockImplementationOnce(() => new Promise((resolve) => {
+      release = () => resolve({ group: { uuid: "empty-group" } });
+    }));
+    mockGetGroupAccess.mockResolvedValue({ group: null });
+    bus.emit("change", change("", { entityType: "project_group", entityUuid: "empty-group" }));
+    await flush();
+    bus.emit("change", change("", { entityType: "project_group", entityUuid: "empty-group" }));
+    release();
+    await flush();
+    expect(dataEvents()).toEqual([]);
+  });
+
+  it("fails closed on a failed group discovery and continues with later visible events", async () => {
+    const { dataEvents } = await connect(memberAuth);
+    mockGetGroupAccess.mockRejectedValueOnce(new Error("database unavailable"));
+    bus.emit("change", change("", { entityType: "project_group", entityUuid: "g1" }));
+    bus.emit("change", change(PUBLIC_P));
+    await flush();
+    expect(dataEvents().map((e) => e.projectUuid)).toEqual([PUBLIC_P]);
+  });
+
+  it("withholds delayed browser notifications after an inherited grant is revoked", async () => {
+    const { dataEvents } = await connect(memberAuth);
+    privateMembers.get(PRIVATE_P)!.delete(memberUuid);
+    bus.emit("project_access_changed", { companyUuid, projectUuid: PRIVATE_P, userUuids: [memberUuid] });
+    bus.emit(`notification:user:${memberUuid}`, { type: "new_notification", projectUuid: PRIVATE_P, entityTitle: "Secret" });
+    await flush();
+    expect(dataEvents()).toEqual([]);
   });
 
   it("keeps the ?projectUuid= client filter on top of the access gate", async () => {

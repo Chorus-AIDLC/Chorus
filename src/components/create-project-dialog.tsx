@@ -29,6 +29,8 @@ interface CreateProjectDialogProps {
   onOpenChange: (open: boolean) => void;
   groupUuid: string | null;
   groupName: string;
+  groupVisibility?: "public" | "private";
+  canCreateProject?: boolean;
   /** Refresh data only: may run for a late success after this dialog was reopened. */
   onCreated?: () => void;
 }
@@ -53,6 +55,8 @@ export function CreateProjectDialog({
   onOpenChange,
   groupUuid,
   groupName,
+  groupVisibility,
+  canCreateProject = true,
   onCreated,
 }: CreateProjectDialogProps) {
   const t = useTranslations();
@@ -60,7 +64,7 @@ export function CreateProjectDialog({
   const [phase, setPhase] = useState<Phase>("idle");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [visibility, setVisibility] = useState<ProjectVisibility>("public");
+  const [visibility, setVisibility] = useState<ProjectVisibility>(groupVisibility ?? "public");
   const [error, setError] = useState<string | null>(null);
   const [cwdError, setCwdError] = useState<{ agentUuid: string; message: string } | null>(null);
   const [cwdDrafts, setCwdDrafts] = useState<Record<string, ProjectAgentCwdDraft>>({});
@@ -71,6 +75,10 @@ export function CreateProjectDialog({
   const isPending = phase === "validating" || phase === "posting";
   const success = phase === "success";
   const dismissalBlocked = phase === "posting" || success;
+
+  useEffect(() => {
+    if (!attemptRef.current) setVisibility(groupVisibility ?? "public");
+  }, [groupUuid, groupVisibility]);
 
   useEffect(() => {
     callbacksRef.current = { onOpenChange, onCreated, router };
@@ -126,7 +134,7 @@ export function CreateProjectDialog({
   };
 
   const handleSubmit = async () => {
-    if (attemptRef.current || !mountedRef.current || !open || !title.trim()) return;
+    if (attemptRef.current || !mountedRef.current || !open || !title.trim() || !canCreateProject) return;
     // Identity and lock are installed synchronously, before the first await.
     const attempt: CreationAttempt = {
       controller: new AbortController(), phase: "validating", dismissed: false,
@@ -137,7 +145,7 @@ export function CreateProjectDialog({
       name: title.trim(),
       description: description.trim() || undefined,
       groupUuid: groupUuid || undefined,
-      visibility,
+      visibility: groupVisibility === "private" ? "private" : visibility,
     };
     setError(null);
     setCwdError(null);
@@ -205,7 +213,7 @@ export function CreateProjectDialog({
           }
           setTitle("");
           setDescription("");
-          setVisibility("public");
+          setVisibility(groupVisibility ?? "public");
           setCwdDrafts({});
           release();
           callbacksRef.current.onOpenChange(false);
@@ -331,6 +339,7 @@ export function CreateProjectDialog({
             <RadioGroup
               aria-labelledby="create-project-visibility-label"
               value={visibility}
+              disabled={isPending || !canCreateProject}
               onValueChange={(value) => setVisibility(value as ProjectVisibility)}
               className="grid gap-2 sm:grid-cols-2"
             >
@@ -343,6 +352,7 @@ export function CreateProjectDialog({
                   <RadioGroupItem
                     id={`create-project-visibility-${option}`}
                     value={option}
+                    disabled={groupVisibility === "private" && option === "public"}
                     className="mt-0.5 cursor-pointer"
                   />
                   <span className="flex flex-col gap-1">
@@ -356,6 +366,7 @@ export function CreateProjectDialog({
                 </Label>
               ))}
             </RadioGroup>
+            {groupUuid && <p className="text-xs text-muted-foreground">{t(groupVisibility === "private" ? "projectGroups.privateCreateHint" : "projectGroups.inheritCreateHint")}</p>}
           </div>
 
           <div className="border-t border-border pt-5">
@@ -379,7 +390,7 @@ export function CreateProjectDialog({
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={phase !== "idle" || !title.trim()}
+            disabled={phase !== "idle" || !title.trim() || !canCreateProject}
             className="rounded-lg bg-primary hover:bg-[#B56A42] text-white text-[13px] gap-1.5"
           >
             <AnimatePresence mode="wait">

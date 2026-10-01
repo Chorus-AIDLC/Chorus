@@ -80,6 +80,9 @@ vi.mock("@/services/project-access.service", () => ({
   membershipPrincipal: (auth: { type: string; actorUuid: string; ownerUuid?: string }) =>
     auth.type === "user" ? auth.actorUuid : auth.type === "agent" ? (auth.ownerUuid ?? null) : null,
 }));
+vi.mock("@/services/project-group-access.service", () => ({
+  getGroupAccess: vi.fn(async () => ({ group: { uuid: "group-1" } })),
+}));
 
 import { GET } from "@/app/api/events/route";
 

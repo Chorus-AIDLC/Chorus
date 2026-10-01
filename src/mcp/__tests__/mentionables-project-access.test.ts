@@ -76,6 +76,7 @@ const fixture = vi.hoisted(() => {
   const prisma = {
     project: model("project"),
     projectMember: model("projectMember"),
+    projectGroupMember: model("projectGroupMember"),
     idea: model("idea"),
     task: model("task"),
     proposal: model("proposal"),
@@ -151,7 +152,7 @@ function auth(ownerUuid?: string): AgentAuthContext {
     actorUuid: "calling-agent",
     agentName: "Calling Agent",
     ownerUuid,
-    permissions: [],
+    permissions: ["project:read", "idea:read", "task:read", "proposal:read", "document:read"],
     roles: [],
   };
 }

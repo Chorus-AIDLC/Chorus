@@ -81,10 +81,18 @@ beforeEach(() => {
   vi.clearAllMocks();
   routes = {
     [`GET /api/projects/${PROJECT}/members`]: () => ok({ members: MEMBERS }),
+    [`GET /api/projects/${PROJECT}/access-preview`]: () => ok({
+      confirmationToken: "preview-token",
+      companyAccess: "closed",
+      changes: [{ userUuid: "u-outsider", beforeRole: "editor", afterRole: "none" }],
+    }),
     [`PATCH /api/projects/${PROJECT}`]: () => ok({ visibility: "private" }),
     [`POST /api/projects/${PROJECT}/members`]: () => ok({ uuid: "m3", userUuid: "u-carol", role: "viewer" }),
     [`PATCH /api/projects/${PROJECT}/members/u-bob`]: () => ok({ uuid: "m2", userUuid: "u-bob", role: "viewer" }),
-    [`DELETE /api/projects/${PROJECT}/members/u-bob`]: () => ok({ removed: true }),
+    [`DELETE /api/projects/${PROJECT}/members/u-bob`]: () => {
+      routes[`GET /api/projects/${PROJECT}/members`] = () => ok({ members: MEMBERS.slice(0, 1) });
+      return ok({ removed: true });
+    },
     "GET /api/mentionables": () => ok([
       { type: "user", uuid: "u-alice", name: "Alice", email: "alice@x.com" },
       { type: "user", uuid: "u-carol", name: "Carol", email: "carol@x.com" },
@@ -130,7 +138,7 @@ describe("ProjectAccessTab", () => {
     renderTab();
     expect(await screen.findByText("Alice")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Public/ })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: /Private/ })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /^Private/ })).toBeEnabled();
     expect(screen.getByRole("combobox", { name: "Role for Bob" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove Bob" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Select a user" })).toBeInTheDocument();
@@ -144,7 +152,7 @@ describe("ProjectAccessTab", () => {
     expect(screen.getByText("Bob")).toBeInTheDocument();
     expect(screen.getByText("Only project admins can change visibility or manage members.")).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Public/ })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: /Private/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /^Private/ })).toBeDisabled();
     expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
@@ -157,7 +165,7 @@ describe("ProjectAccessTab", () => {
     const user = userEvent.setup();
     const { onVisibilityChange } = renderTab();
     await screen.findByText("Alice");
-    await user.click(screen.getByRole("radio", { name: /Private/ }));
+    await user.click(screen.getByRole("radio", { name: /^Private/ }));
 
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText("Make this project private?")).toBeInTheDocument();
@@ -167,7 +175,8 @@ describe("ProjectAccessTab", () => {
     await user.click(within(dialog).getByRole("button", { name: "Change visibility" }));
     await waitFor(() => expect(onVisibilityChange).toHaveBeenCalledWith("private"));
     const [[, init]] = callsTo("PATCH", `/api/projects/${PROJECT}`);
-    expect(JSON.parse(init.body)).toEqual({ visibility: "private" });
+    expect(JSON.parse(init.body)).toEqual({ visibility: "private", confirmationToken: "preview-token" });
+    expect(callsTo("GET", `/api/projects/${PROJECT}/access-preview`)).toHaveLength(1);
     expect(toastSuccess).toHaveBeenCalledWith("Project visibility updated");
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
   });
@@ -192,7 +201,7 @@ describe("ProjectAccessTab", () => {
     const user = userEvent.setup();
     const { onVisibilityChange } = renderTab();
     await screen.findByText("Alice");
-    await user.click(screen.getByRole("radio", { name: /Private/ }));
+    await user.click(screen.getByRole("radio", { name: /^Private/ }));
     await user.click(await screen.findByRole("button", { name: "Change visibility" }));
     await waitFor(() => expect(toastError).toHaveBeenCalledWith(
       "You don't have permission to manage access for this project.",
@@ -272,6 +281,172 @@ describe("ProjectAccessTab", () => {
     const lightOnly = /^(?:hover:|focus:)?(?:bg|text|border|ring)-(?:\[#[0-9a-fA-F]+\]|(?:white|black|gray|slate|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)(?:-\d+)?)$/;
     const offenders = classes.filter((c) => lightOnly.test(c));
     expect(offenders).toEqual([]);
+  });
+
+  it("publishes a private project only with the loaded confirmation token", async () => {
+    const user = userEvent.setup();
+    const { onVisibilityChange } = renderTab({ visibility: "private" });
+    await screen.findByText("Alice");
+    await user.click(screen.getByRole("radio", { name: /Public/ }));
+    await screen.findByTestId("access-impact-preview");
+    expect(callsTo("PATCH", `/api/projects/${PROJECT}`)).toHaveLength(0);
+    expect(fetchMock.mock.calls.some(([url]) => url === `/api/projects/${PROJECT}/access-preview?visibility=public`)).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Change visibility" }));
+    await waitFor(() => expect(onVisibilityChange).toHaveBeenCalledWith("public"));
+    expect(JSON.parse(callsTo("PATCH", `/api/projects/${PROJECT}`)[0][1].body)).toEqual({
+      visibility: "public", confirmationToken: "preview-token",
+    });
+  });
+
+  it("does not offer publication inside a Private group", async () => {
+    renderTab({ visibility: "private", publicAllowed: false });
+    await screen.findByText("Alice");
+    expect(screen.getByRole("radio", { name: /^Public/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /^Private/ })).toBeEnabled();
+    expect(callsTo("GET", `/api/projects/${PROJECT}/access-preview`)).toHaveLength(0);
+  });
+
+  it("keeps confirmation disabled while the preview is pending", async () => {
+    const normalFetch = fetchMock.getMockImplementation()!;
+    let resolve!: (value: Response) => void;
+    const pending = new Promise<Response>((done) => { resolve = done; });
+    fetchMock.mockImplementation((url, init) => String(url).includes("access-preview") ? pending : normalFetch(url, init));
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByText("Alice");
+    await user.click(screen.getByRole("radio", { name: /^Private/ }));
+    expect(screen.getByRole("button", { name: "Change visibility" })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading current access changes");
+    expect(callsTo("PATCH", `/api/projects/${PROJECT}`)).toHaveLength(0);
+    resolve(new Response(JSON.stringify({ success: true, data: { confirmationToken: "fresh" } })));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Change visibility" })).toBeEnabled());
+  });
+
+  it("shows preview failure and retries before enabling confirmation", async () => {
+    routes[`GET /api/projects/${PROJECT}/access-preview`] = () => ({ status: 403, body: { success: false } });
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByText("Alice");
+    await user.click(screen.getByRole("radio", { name: /^Private/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("preview could not be loaded");
+    expect(screen.getByRole("button", { name: "Change visibility" })).toBeDisabled();
+    routes[`GET /api/projects/${PROJECT}/access-preview`] = () => ok({ confirmationToken: "retry-token" });
+    await user.click(screen.getByRole("button", { name: "Retry preview" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Change visibility" })).toBeEnabled());
+    expect(callsTo("PATCH", `/api/projects/${PROJECT}`)).toHaveLength(0);
+  });
+
+  it("requires a fresh preview and a second explicit confirmation after a conflict", async () => {
+    routes[`PATCH /api/projects/${PROJECT}`] = () => {
+      routes[`GET /api/projects/${PROJECT}/access-preview`] = () => ok({ confirmationToken: "new-token" });
+      return { status: 409, body: { success: false, error: { code: "CONFLICT" } } };
+    };
+    const user = userEvent.setup();
+    const { onVisibilityChange } = renderTab({ visibility: "private" });
+    await screen.findByText("Alice");
+    await user.click(screen.getByRole("radio", { name: /Public/ }));
+    await screen.findByTestId("access-impact-preview");
+    await user.click(screen.getByRole("button", { name: "Change visibility" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Access changed");
+    await waitFor(() => expect(callsTo("GET", `/api/projects/${PROJECT}/access-preview`)).toHaveLength(2));
+    expect(callsTo("PATCH", `/api/projects/${PROJECT}`)).toHaveLength(1);
+    expect(onVisibilityChange).not.toHaveBeenCalled();
+    routes[`PATCH /api/projects/${PROJECT}`] = () => ok({});
+    await waitFor(() => expect(screen.getByRole("button", { name: "Change visibility" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Change visibility" }));
+    await waitFor(() => expect(onVisibilityChange).toHaveBeenCalledWith("public"));
+    expect(JSON.parse(callsTo("PATCH", `/api/projects/${PROJECT}`)[1][1].body).confirmationToken).toBe("new-token");
+  });
+
+  it("labels inherited-only grants and offers neither local downgrade nor removal", async () => {
+    routes[`GET /api/projects/${PROJECT}/members`] = () => ok({ members: [
+      { ...MEMBERS[0], source: "group", directRole: null, inheritedRole: "admin", effectiveRole: "admin" },
+    ] });
+    renderTab({ visibility: "private" });
+    await screen.findByText("Alice");
+    expect(screen.getByText(/Inherited from group/)).toBeInTheDocument();
+    expect(screen.getByText("Effective: Admin")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Role for Alice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Alice" })).not.toBeInTheDocument();
+  });
+
+  it("disables local roles below inheritance and preserves inherited access when removing a direct grant", async () => {
+    const row = { ...MEMBERS[1], role: "admin", source: "both", directRole: "admin", inheritedRole: "editor", effectiveRole: "admin" };
+    routes[`GET /api/projects/${PROJECT}/members`] = () => ok({ members: [row] });
+    routes[`DELETE /api/projects/${PROJECT}/members/u-bob`] = () => {
+      routes[`GET /api/projects/${PROJECT}/members`] = () => ok({ members: [{
+        ...row, source: "group", role: "editor", directRole: null, effectiveRole: "editor",
+      }] });
+      return ok({});
+    };
+    const user = userEvent.setup();
+    renderTab({ visibility: "private" });
+    await screen.findByText("Bob");
+    expect(screen.getByText(/Direct \+ inherited/)).toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: "Role for Bob" }));
+    expect(await screen.findByRole("option", { name: "Viewer" })).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Remove Bob" }));
+    expect(await screen.findByText("Effective: Editor")).toBeInTheDocument();
+    expect(screen.getByText("Bob")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Bob" })).not.toBeInTheDocument();
+  });
+
+  it("allows adding a higher local grant for an inherited group Viewer", async () => {
+    routes[`GET /api/projects/${PROJECT}/members`] = () => ok({ members: [
+      { ...MEMBERS[1], role: "viewer", source: "group", directRole: null, inheritedRole: "viewer", effectiveRole: "viewer" },
+    ] });
+    routes["GET /api/mentionables"] = () => ok([{ type: "user", uuid: "u-bob", name: "Bob" }]);
+    const user = userEvent.setup();
+    renderTab({ visibility: "private" });
+    await screen.findByText("Bob");
+    await user.click(screen.getByRole("combobox", { name: "Select a user" }));
+    await user.type(screen.getByPlaceholderText("Search by name or email..."), "Bob");
+    await user.click(await screen.findByRole("option", { name: "Bob" }));
+    await user.click(screen.getByRole("combobox", { name: "Role for new member" }));
+    expect(await screen.findByRole("option", { name: "Viewer" })).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(callsTo("POST", `/api/projects/${PROJECT}/members`)).toHaveLength(1));
+    expect(JSON.parse(callsTo("POST", `/api/projects/${PROJECT}/members`)[0][1].body)).toEqual({
+      userUuid: "u-bob", role: "editor",
+    });
+  });
+
+  it("gives a group Viewer a read-only roster", async () => {
+    routes[`GET /api/project-groups/${PROJECT}/members`] = () => ok({ members: MEMBERS });
+    renderTab({ resourceType: "project-groups", accessLevel: "viewer" });
+    await screen.findByText("Alice");
+    expect(screen.getByText("Only group Admins can change visibility or manage members.")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Public/ })).toBeDisabled();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
+  });
+
+  it("never fetches the group roster for a basic visitor", async () => {
+    renderTab({ resourceType: "project-groups", accessLevel: "viewer", canReadMembers: false });
+    expect(screen.queryByText("Members")).not.toBeInTheDocument();
+    expect(callsTo("GET", `/api/project-groups/${PROJECT}/members`)).toHaveLength(0);
+  });
+
+  it("confirms a group conversion with the child-project diff and token", async () => {
+    routes[`GET /api/project-groups/${PROJECT}/members`] = () => ok({ members: MEMBERS });
+    routes[`GET /api/project-groups/${PROJECT}/access-preview`] = () => ok({
+      confirmationToken: "group-token", companyAccess: "closed",
+      projects: [{ projectUuid: "child", name: "Public child", companyAccess: "closed", changes: [] }],
+    });
+    routes[`PATCH /api/project-groups/${PROJECT}`] = () => ok({});
+    const user = userEvent.setup();
+    renderTab({ resourceType: "project-groups" });
+    await screen.findByText("Alice");
+    await user.click(screen.getByRole("radio", { name: /^Private/ }));
+    expect(await screen.findByText("Public child")).toBeInTheDocument();
+    expect(screen.getByText(/All public projects in this group will become private/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Change visibility" }));
+    await waitFor(() => expect(callsTo("PATCH", `/api/project-groups/${PROJECT}`)).toHaveLength(1));
+    expect(JSON.parse(callsTo("PATCH", `/api/project-groups/${PROJECT}`)[0][1].body)).toEqual({
+      visibility: "private", confirmationToken: "group-token",
+    });
   });
 });
 

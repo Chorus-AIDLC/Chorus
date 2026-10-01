@@ -8,6 +8,7 @@ import {
   ProjectNotFoundError,
   resolveEntityProjectUuid,
 } from "@/services/project-access.service";
+import { GroupNotFoundError } from "@/services/project-group-access.service";
 import { getToolProjectAccessPolicy } from "./permission-map";
 import { authorizeToolProjectAccess, McpResourceNotFoundError } from "./project-access";
 import type { AgentAuthContext } from "@/types/auth";
@@ -145,6 +146,7 @@ export function enablePresence(server: McpServer, auth: AgentAuthContext): void 
       } catch (error) {
         if (error instanceof McpResourceNotFoundError ||
             error instanceof ProjectNotFoundError ||
+            error instanceof GroupNotFoundError ||
             error instanceof ProjectAccessDeniedError) {
           return { content: [{ type: "text", text: error.message }], isError: true };
         }

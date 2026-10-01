@@ -1070,7 +1070,34 @@
     "deleteKeepProjects": "{count} 件のプロジェクトを未分類へ移動",
     "deleteWithProjects": "{count} 件のプロジェクトを完全に削除",
     "confirmDelete": "グループを削除",
-    "deleting": "削除中..."
+    "deleting": "削除中...",
+    "privateBadge": "非公開グループ",
+    "privateTooltip": "グループメンバーと子プロジェクトへのアクセス権を持つ人のみがこのグループを表示できます。",
+    "viewMembers": "メンバーを表示",
+    "accessReadOnly": "公開範囲やメンバーを管理できるのはグループ管理者のみです。",
+    "visibilityDescription": "グループを表示できる人を選択します。非公開グループには非公開プロジェクトのみを含められます。",
+    "publicHint": "社内の全員がグループを表示できます。非公開プロジェクトは独自のアクセス規則を維持します。",
+    "privateHint": "明示的なメンバーと子プロジェクトにアクセスできる人のみがグループを表示できます。",
+    "convertPrivateHint": "グループ内のすべての公開プロジェクトが非公開になります。既存の権限は保持され、グループの役割がリアルタイムで継承されます。",
+    "convertPublicHint": "プロジェクトの公開範囲と権限は保持されます。グループを公開しても非公開プロジェクトは公開されません。",
+    "membersDescription": "グループの役割はすべての子プロジェクトに適用されます。プロジェクト側では追加の権限を付与できます。",
+    "initializeTitle": "グループ権限を初期化",
+    "initializeHint": "既存グループには管理者が自動設定されません。初期化するとあなたが最初のグループ管理者になりますが、すべての子プロジェクトの管理権限が必要です。すべての非公開プロジェクトを管理できない場合は、各管理者に共通の管理者へのプロジェクト Admin 権限付与を依頼してください。",
+    "initializeAction": "グループ管理者として初期化",
+    "initializing": "初期化中…",
+    "initializeFailed": "初期化に失敗しました。すべての非公開子プロジェクトの管理者に共通の管理者へのプロジェクト Admin 権限付与を依頼し、再試行してください。",
+    "loading": "グループ権限を読み込み中…",
+    "loadFailed": "グループ権限を読み込めませんでした。",
+    "saveFailed": "グループ設定を保存できませんでした。",
+    "deleteFailed": "グループを削除できませんでした。グループとプロジェクトの管理権限を確認してください。",
+    "privateCreateHint": "このグループは非公開です。新しいプロジェクトは非公開となり、グループの役割を継承します。作成者には個別の管理者権限も付与されます。",
+    "inheritCreateHint": "新しいプロジェクトはグループの公開範囲と明示的な役割を継承します。非公開プロジェクトは社内全体の公開アクセスを継承しません。",
+    "lastAdmin": "グループには少なくとも1人の管理者が必要です。",
+    "accessForbidden": "グループ権限を管理する権限がありません。",
+    "accessFailed": "グループ権限を更新できませんでした。再試行してください。",
+    "visibilityUpdated": "グループの公開範囲を更新しました",
+    "toPrivateTitle": "このグループを非公開にしますか？",
+    "toPublicTitle": "このグループを公開しますか？"
   },
   "groupDashboard": {
     "subtitle": "{count} 件のプロジェクト · 統合ダッシュボード",
@@ -1085,7 +1112,40 @@
     "newProject": "新規プロジェクト",
     "projectStats": "課題 {tasks} 件 · {completion}% 完了",
     "noProjects": "このグループにはまだプロジェクトがありません",
-    "noProjectsHint": "上の「新規プロジェクト」をクリックして追加してください"
+    "noProjectsHint": "上の「新規プロジェクト」をクリックして追加してください",
+    "activity": {
+      "created": "{entity}を作成",
+      "updated": "{entity}を更新",
+      "approved": "{entity}を承認",
+      "rejected": "{entity}を却下",
+      "claimed": "{entity}を担当",
+      "completed": "{entity}を完了",
+      "verified": "{entity}を検証",
+      "submitted": "{entity}を提出",
+      "assigned": "{entity}を割り当て",
+      "deleted": "{entity}を削除",
+      "status_changed": "{entity}の状態を更新",
+      "project_member_added": "プロジェクトメンバーを追加",
+      "project_member_role_changed": "プロジェクトメンバーの役割を変更",
+      "project_member_removed": "プロジェクトメンバーを削除",
+      "project_visibility_changed": "プロジェクトの公開範囲を変更",
+      "project_group_changed": "プロジェクトのグループを移動",
+      "group_created": "グループを作成",
+      "group_updated": "グループの設定または公開範囲を更新",
+      "group_deleted": "グループを削除",
+      "group_access_initialized": "グループ権限を初期化",
+      "group_member_removed": "グループメンバーを削除",
+      "group_member_changed": "グループメンバーの権限を変更"
+    },
+    "entities": {
+      "task": "タスク",
+      "idea": "アイデア",
+      "proposal": "提案",
+      "document": "ドキュメント",
+      "project": "プロジェクト",
+      "project_group": "グループ",
+      "entity": "項目"
+    }
   },
   "acceptanceCriteria": {
     "title": "受け入れ基準",
@@ -1928,7 +1988,15 @@
       "loadFailed": "メンバーを読み込めませんでした。",
       "remove": "{name} を削除",
       "roleFor": "{name} のロール",
-      "unnamed": "名前のないユーザー"
+      "unnamed": "名前のないユーザー",
+      "source": {
+        "project": "プロジェクトの直接権限",
+        "group": "グループから継承",
+        "both": "直接権限＋継承"
+      },
+      "directRole": "直接：{role}",
+      "inheritedRole": "継承：{role}",
+      "effectiveRole": "有効：{role}"
     },
     "roles": {
       "viewer": "閲覧者",
@@ -1964,5 +2032,30 @@
     "privateTooltip": "非公開 — プロジェクトメンバーのみがこのプロジェクトを閲覧できます",
     "viewerBanner": "このプロジェクトは閲覧のみ可能です。変更するにはプロジェクト管理者に編集者権限を依頼してください。",
     "commentsReadOnly": "閲覧者はコメントを読めますが、投稿はできません。"
+  },
+  "accessImpact": {
+    "title": "アクセス権の変更",
+    "loading": "現在のアクセス権変更を読み込み中…",
+    "loadFailed": "プレビューを読み込めませんでした。管理権限を確認して再試行してください。",
+    "retry": "プレビューを再試行",
+    "confirmationHint": "現在の変更を確認してください。保存前に権限が変更された場合は再度プレビューが必要です。",
+    "stale": "アクセス権が変更されました。更新されたプレビューを確認してください。",
+    "moveFailed": "移動に失敗しました。移動元と移動先の管理権限が必要な場合があります。再度プレビューしてください。",
+    "company": {
+      "opened": "このプロジェクトの社内アクセスが開放されます。",
+      "closed": "社内の公開アクセスが閉じられ、明示的な権限に従います。",
+      "unchanged": "社内アクセスは変更されません。"
+    },
+    "roles": {
+      "none": "アクセスなし",
+      "viewer": "閲覧者",
+      "editor": "編集者",
+      "admin": "管理者"
+    },
+    "groupCompany": {
+      "opened": "社内ユーザーはグループを表示できます。非公開の子プロジェクトは非公開のままです。",
+      "closed": "グループの表示は明示的なメンバーと子プロジェクトの利用者に制限されます。",
+      "unchanged": "グループの表示範囲は変更されません。"
+    }
   }
 }

@@ -16,6 +16,7 @@ const { mockPrisma, mockGetPreferences, mockCreateBatch } = vi.hoisted(() => ({
     agent: { findFirst: vi.fn(), findMany: vi.fn() },
     project: { findUnique: vi.fn(), findFirst: vi.fn() },
     projectMember: { findMany: vi.fn() },
+    projectGroupMember: { findMany: vi.fn() },
     comment: { findUnique: vi.fn() },
     task: { findFirst: vi.fn() },
     daemonConnection: { findMany: vi.fn() },
@@ -67,6 +68,8 @@ const OWNERS: Record<string, string | null> = {
 const MEMBERS = new Set([ACTOR, MEMBER_USER]);
 
 let visibility: "public" | "private" = "private";
+let groupUuid: string | null = null;
+const groupMembers = new Set<string>();
 let userPool: { uuid: string; name: string; email: string; avatarUrl: null }[] = [];
 
 function setupPrisma() {
@@ -74,7 +77,10 @@ function setupPrisma() {
     { uuid: MEMBER_USER, name: "Member", email: "m@x.io", avatarUrl: null },
     { uuid: OUTSIDER_USER, name: "Outsider", email: "o@x.io", avatarUrl: null },
   ];
-  mockPrisma.project.findFirst.mockImplementation(async () => ({ uuid: PROJECT, visibility }));
+  mockPrisma.project.findFirst.mockImplementation(async () => ({ uuid: PROJECT, visibility, groupUuid }));
+  mockPrisma.projectGroupMember.findMany.mockImplementation(async ({ where }: { where: { userUuid?: { in: string[] } } }) =>
+    [...groupMembers].filter((u) => !where.userUuid || where.userUuid.in.includes(u)).map((userUuid) => ({ userUuid })),
+  );
   mockPrisma.project.findUnique.mockResolvedValue({ name: "Secret Project" });
   mockPrisma.user.findFirst.mockImplementation(async ({ where }: { where: { uuid: string } }) => ({
     uuid: where.uuid,
@@ -124,6 +130,8 @@ function setupPrisma() {
 beforeEach(() => {
   vi.clearAllMocks();
   visibility = "private";
+  groupUuid = null;
+  groupMembers.clear();
   setupPrisma();
 });
 
@@ -159,6 +167,18 @@ function notifiedUuids(): string[] {
 // ===== createMentions =====
 
 describe("createMentions — private project isolation", () => {
+  it("notifies group-only users and their agents, then drops them on revocation while retaining local members", async () => {
+    groupUuid = "private-group";
+    groupMembers.add(OUTSIDER_USER);
+    await mention(["user", OUTSIDER_USER], ["agent", OUTSIDER_AGENT], ["user", MEMBER_USER]);
+    expect(mentionedUuids()).toEqual([OUTSIDER_USER, OUTSIDER_AGENT, MEMBER_USER]);
+    expect(notifiedUuids()).toEqual([OUTSIDER_USER, OUTSIDER_AGENT, MEMBER_USER]);
+    vi.clearAllMocks();
+    groupMembers.clear();
+    await mention(["user", OUTSIDER_USER], ["agent", OUTSIDER_AGENT], ["user", MEMBER_USER]);
+    expect(mentionedUuids()).toEqual([MEMBER_USER]);
+    expect(notifiedUuids()).toEqual([MEMBER_USER]);
+  });
   it("mentioning a non-member user creates no mention and no notification", async () => {
     await mention(["user", OUTSIDER_USER]);
     expect(mockPrisma.mention.createMany).not.toHaveBeenCalled();
@@ -221,6 +241,14 @@ describe("searchMentionables — entity-scoped private project filter", () => {
       ...extra,
     });
   }
+
+  it("includes inherited members in the database candidate filter before applying the limit", async () => {
+    groupUuid = "private-group";
+    groupMembers.add(OUTSIDER_USER);
+    const results = await search({ entityType: "task", entityUuid: TASK });
+    expect(results.map((r) => r.uuid)).toEqual(expect.arrayContaining([MEMBER_USER, OUTSIDER_USER, MEMBER_AGENT, OUTSIDER_AGENT]));
+    expect(results.map((r) => r.uuid)).not.toContain(ORPHAN_AGENT);
+  });
 
   it("with entity context in a private project returns only members + agents owned by members", async () => {
     const results = await search({ entityType: "task", entityUuid: TASK });

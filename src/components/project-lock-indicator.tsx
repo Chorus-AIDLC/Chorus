@@ -20,6 +20,7 @@ interface ProjectLockIndicatorProps {
   iconClassName?: string;
   className?: string;
   showLabel?: boolean;
+  kind?: "project" | "group";
 }
 
 export function ProjectLockIndicator({
@@ -27,14 +28,15 @@ export function ProjectLockIndicator({
   iconClassName = "h-3 w-3",
   className,
   showLabel = false,
+  kind = "project",
 }: ProjectLockIndicatorProps) {
   const t = useTranslations();
   if (visibility !== "private") return null;
 
-  const label = t("projectAccess.privateBadge");
+  const label = t(kind === "group" ? "projectGroups.privateBadge" : "projectAccess.privateBadge");
   const indicator = (
     <span
-      data-testid="project-lock-indicator"
+      data-testid={kind === "group" ? "group-lock-indicator" : "project-lock-indicator"}
       className={cn(
         "inline-flex shrink-0 items-center",
         !showLabel && "text-muted-foreground",
@@ -55,7 +57,7 @@ export function ProjectLockIndicator({
             </Badge>
           ) : indicator}
         </TooltipTrigger>
-        <TooltipContent>{t("projectAccess.privateTooltip")}</TooltipContent>
+        <TooltipContent>{t(kind === "group" ? "projectGroups.privateTooltip" : "projectAccess.privateTooltip")}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

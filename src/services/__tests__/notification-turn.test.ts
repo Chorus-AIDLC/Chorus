@@ -5,6 +5,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // unit test of the mapping / resolution / failure-isolation logic, with no DB.
 
 const mockListConnectionsForAgent = vi.hoisted(() => vi.fn());
+const mockCanReceive = vi.hoisted(() => vi.fn());
+vi.mock("@/services/project-access.service", () => ({ canActorAccessProject: mockCanReceive }));
 vi.mock("@/services/daemon-connection.service", () => ({
   listConnectionsForAgent: mockListConnectionsForAgent,
 }));
@@ -99,6 +101,26 @@ import {
   NOTIFICATION_ACTION_TO_TURN_TRIGGER,
   type WakeNotificationContext,
 } from "@/services/notification-turn";
+
+describe("wake access rechecks", () => {
+  it("does not create a wake after inherited access is revoked", async () => {
+    mockCanReceive.mockResolvedValue(false);
+    expect(await createTurnAndResolveTarget(ctx({ projectUuid: "private-project" }))).toMatchObject({
+      turn: null, suppressWake: true,
+    });
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+  });
+
+  it("rechecks a revoke that lands while connections and pins are being resolved", async () => {
+    mockCanReceive.mockResolvedValueOnce(true).mockResolvedValue(false);
+    expect(await createTurnAndResolveTarget(ctx({ projectUuid: "private-project" }))).toMatchObject({
+      turn: null, suppressWake: true,
+    });
+    expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
+    expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+  });
+});
 
 // ===== Helpers =====
 const companyUuid = "company-0000-0000-0000-000000000001";
@@ -219,6 +241,7 @@ function ctx(overrides: Partial<WakeNotificationContext> = {}): WakeNotification
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockCanReceive.mockResolvedValue(true);
   // Default happy path: one online connection, lineage resolves to an idea, session
   // resolves, turn created.
   mockListConnectionsForAgent.mockResolvedValue([onlineConn()]);
@@ -505,7 +528,7 @@ describe("maybeCreateTurnForWakeNotification — creates exactly one pending tur
     );
   });
 
-  it("falls back to the entity uuid as sessionId (ad-hoc) when lineage finds no idea", async () => {
+  it("retains the standalone task UUID as session provenance when lineage finds no idea", async () => {
     mockResolveDirectIdeaUuid.mockResolvedValue(null);
 
     await maybeCreateTurnForWakeNotification(ctx({ action: "task_assigned" }));

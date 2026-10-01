@@ -57,7 +57,10 @@ describe("recordVisit", () => {
     await recordVisit(companyUuid, userUuid, projectUuid);
 
     expect(mockPrisma.project.findFirst).toHaveBeenCalledWith({
-      where: { uuid: projectUuid, companyUuid, OR: [{ visibility: { not: "private" } }] },
+      where: { uuid: projectUuid, companyUuid, OR: [
+        { visibility: { not: "private" } },
+        { group: { companyUuid, members: { some: { companyUuid, userUuid, role: { in: ["viewer", "editor", "admin"] } } } } },
+      ] },
       select: { uuid: true },
     });
     expect(mockPrisma.projectVisit.upsert).toHaveBeenCalledTimes(1);

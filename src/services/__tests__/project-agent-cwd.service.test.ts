@@ -4,6 +4,7 @@ const { emit, prismaMock } = vi.hoisted(() => ({
   emit: vi.fn(),
   prismaMock: {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
     agent: { findFirst: vi.fn(), findMany: vi.fn() },
     project: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     daemonConnection: { findFirst: vi.fn(), findMany: vi.fn() },

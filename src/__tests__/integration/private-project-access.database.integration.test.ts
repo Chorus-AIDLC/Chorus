@@ -57,6 +57,7 @@ describe.skipIf(!url)("Private project access — real database end-to-end", () 
   // Modules under test (imported after mocks + db are wired).
   let projectService: typeof import("@/services/project.service");
   let memberService: typeof import("@/services/project-member.service");
+  let previewService: typeof import("@/services/project-access-preview.service");
   let searchService: typeof import("@/services/search.service");
   let groupService: typeof import("@/services/project-group.service");
   let visitService: typeof import("@/services/project-visit.service");
@@ -192,6 +193,7 @@ describe.skipIf(!url)("Private project access — real database end-to-end", () 
 
     projectService = await import("@/services/project.service");
     memberService = await import("@/services/project-member.service");
+    previewService = await import("@/services/project-access-preview.service");
     searchService = await import("@/services/search.service");
     groupService = await import("@/services/project-group.service");
     visitService = await import("@/services/project-visit.service");
@@ -934,7 +936,10 @@ describe.skipIf(!url)("Private project access — real database end-to-end", () 
 
     it("public → private by A hides it from non-members, keeps members", async () => {
       expect((await get("N")).status).toBe(200);
-      const res = await call("A", routes.project.PATCH, `/api/projects/${sw}`, { uuid: sw }, "PATCH", { visibility: "private" });
+      const preview = await previewService.getProjectVisibilityPreview(actors.A(), sw, "private");
+      const res = await call("A", routes.project.PATCH, `/api/projects/${sw}`, { uuid: sw }, "PATCH", {
+        visibility: "private", confirmationToken: preview.confirmationToken,
+      });
       expect(res.status).toBe(200);
       expect(res.json.data).toMatchObject({ visibility: "private" });
       for (const actor of ["N", "E", "agN", "agO"] as const) expect((await get(actor)).status, actor).toBe(404);
@@ -944,7 +949,10 @@ describe.skipIf(!url)("Private project access — real database end-to-end", () 
     });
 
     it("private → public by A restores access and keeps membership rows", async () => {
-      const res = await call("A", routes.project.PATCH, `/api/projects/${sw}`, { uuid: sw }, "PATCH", { visibility: "public" });
+      const preview = await previewService.getProjectVisibilityPreview(actors.A(), sw, "public");
+      const res = await call("A", routes.project.PATCH, `/api/projects/${sw}`, { uuid: sw }, "PATCH", {
+        visibility: "public", confirmationToken: preview.confirmationToken,
+      });
       expect(res.status).toBe(200);
       for (const actor of ["N", "E", "agN", "agO"] as const) expect((await get(actor)).status, actor).toBe(200);
       const rows = await db.projectMember.findMany({ where: { projectUuid: sw }, select: { userUuid: true, role: true } });

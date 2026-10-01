@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { isImeComposing } from "@/lib/ime";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 interface CreateProjectGroupDialogProps {
   open: boolean;
@@ -34,9 +35,10 @@ export function CreateProjectGroupDialog({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [visibility, setVisibility] = useState<"public" | "private">("public");
 
   const handleSubmit = () => {
-    if (!name.trim()) return;
+    if (!name.trim() || isPending) return;
     setError(null);
 
     startTransition(async () => {
@@ -47,6 +49,7 @@ export function CreateProjectGroupDialog({
           body: JSON.stringify({
             name: name.trim(),
             description: description.trim() || undefined,
+            visibility,
           }),
         });
         const data = await res.json();
@@ -54,11 +57,12 @@ export function CreateProjectGroupDialog({
         if (data.success) {
           setName("");
           setDescription("");
+          setVisibility("public");
           onOpenChange(false);
           onCreated?.();
           router.refresh();
         } else {
-          setError(data.error || t("projectGroups.createFailed"));
+          setError(t("projectGroups.createFailed"));
         }
       } catch {
         setError(t("common.genericError"));
@@ -67,9 +71,9 @@ export function CreateProjectGroupDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!isPending) onOpenChange(next); }}>
       <DialogContent
-        className="sm:max-w-[480px] gap-0 p-0 rounded-[16px]"
+        className="max-h-[90svh] overflow-y-auto sm:max-w-[480px] gap-0 p-0 rounded-[16px]"
         showCloseButton={false}
       >
         <DialogHeader className="flex flex-row items-center justify-between p-[20px_24px] border-b border-[#E5E2DC] dark:border-[#2a2a2e]">
@@ -86,7 +90,7 @@ export function CreateProjectGroupDialog({
 
         <div className="flex flex-col gap-5 p-6">
           {error && (
-            <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+            <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
               {error}
             </div>
           )}
@@ -106,6 +110,20 @@ export function CreateProjectGroupDialog({
               }}
             />
           </div>
+          <div className="space-y-2">
+            <Label id="create-group-visibility-label">{t("projectAccess.visibility.title")}</Label>
+            <RadioGroup aria-labelledby="create-group-visibility-label" value={visibility} disabled={isPending} onValueChange={(value) => setVisibility(value as "public" | "private")} className="grid gap-2 sm:grid-cols-2">
+              {(["public", "private"] as const).map((option) => (
+                <Label key={option} htmlFor={`create-group-${option}`} className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 font-normal">
+                  <RadioGroupItem id={`create-group-${option}`} value={option} />
+                  <span className="space-y-1">
+                    <span className="block text-sm font-medium">{t(`projectAccess.visibility.${option}`)}</span>
+                    <span className="block text-xs text-muted-foreground">{t(`projectGroups.${option}Hint`)}</span>
+                  </span>
+                </Label>
+              ))}
+            </RadioGroup>
+          </div>
 
           <div className="flex flex-col gap-1.5">
             <Label className="text-[13px] font-medium text-foreground">
@@ -123,6 +141,7 @@ export function CreateProjectGroupDialog({
         <div className="flex justify-end gap-3 p-[16px_24px] border-t border-[#E5E2DC] dark:border-[#2a2a2e]">
           <Button
             variant="outline"
+            disabled={isPending}
             onClick={() => onOpenChange(false)}
             className="rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] text-[13px]"
           >

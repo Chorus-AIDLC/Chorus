@@ -122,16 +122,6 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return errors.validationError({ name: "Name is required" });
   }
 
-  // Validate groupUuid belongs to the same company if provided
-  if (body.groupUuid) {
-    const group = await prisma.projectGroup.findFirst({
-      where: { uuid: body.groupUuid, companyUuid: auth.companyUuid },
-    });
-    if (!group) {
-      return errors.notFound("Project Group");
-    }
-  }
-
   const agentCwds = body.agentCwds ?? [];
   if (
     !Array.isArray(agentCwds) ||
@@ -156,9 +146,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       description: body.description?.trim() || null,
       groupUuid: body.groupUuid || null,
       agentCwds,
-      visibility: body.visibility ?? "public",
+      visibility: body.visibility,
       createdByUuid: creatorUuid,
       actor: { type: isAgent(auth) ? "agent" : "user", uuid: auth.actorUuid },
+      auth,
     });
   } catch (error) {
     if (error instanceof CwdServiceError) {
@@ -175,6 +166,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     uuid: project.uuid,
     name: project.name,
     description: project.description,
+    groupUuid: project.groupUuid,
+    visibility: project.visibility,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
   });

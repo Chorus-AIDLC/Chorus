@@ -79,6 +79,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
     name?: string;
     description?: string;
     visibility?: unknown;
+    confirmationToken?: string;
   }>(request);
 
   const updateData: { name?: string; description?: string | null } = {};
@@ -100,14 +101,14 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
 
   // 404 for actors who cannot see the project, before any other decision.
   const current = await requireProjectAccess(auth, uuid, "viewer");
-  const hasSettingsChange = Object.keys(updateData).length > 0;
   const visibilityChange =
-    body.visibility !== undefined && body.visibility !== current.visibility
+    body.visibility !== undefined &&
+      (body.visibility !== current.visibility || body.confirmationToken !== undefined)
       ? body.visibility
       : undefined;
 
   // Authorize every requested change up front so a partial update never lands.
-  if (hasSettingsChange || visibilityChange === undefined) {
+  if (visibilityChange === undefined) {
     await requireProjectOperation(auth, uuid, "manage_project");
   }
   if (visibilityChange !== undefined) {
@@ -115,8 +116,8 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
   }
 
   let project: Awaited<ReturnType<typeof updateProject>> = null;
-  if (hasSettingsChange || visibilityChange === undefined) {
-    project = await updateProject(auth.companyUuid, uuid, updateData);
+  if (visibilityChange === undefined) {
+    project = await updateProject(auth.companyUuid, uuid, updateData, auth);
     if (!project) {
       return errors.notFound("Project");
     }
@@ -124,8 +125,9 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Rout
 
   let visibility = current.visibility;
   if (visibilityChange !== undefined) {
-    const result = await setVisibility(auth, uuid, visibilityChange);
+    const result = await setVisibility(auth, uuid, visibilityChange, body.confirmationToken, updateData);
     visibility = result.visibility;
+    project = await getProject(auth.companyUuid, uuid);
   }
 
   const source = project ?? current;
@@ -158,7 +160,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Rou
   const { uuid } = await context.params;
   await requireProjectOperation(auth, uuid, "manage_project");
 
-  const deleted = await deleteProject(auth.companyUuid, uuid);
+  const deleted = await deleteProject(auth.companyUuid, uuid, auth);
   if (!deleted) {
     return errors.notFound("Project");
   }

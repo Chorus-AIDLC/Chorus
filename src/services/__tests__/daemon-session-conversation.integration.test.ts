@@ -365,6 +365,7 @@ function buildPrismaFake(store: Store) {
       findFirst: vi.fn(async (args: Row) => findFirst("projectAgentCwdPreference", args)),
     },
     notification: {
+      findFirst: vi.fn(async (args: Row) => findFirst("notification", args)),
       create: vi.fn(async (args: Row) => {
         const row: Row = {
           id: store.nextId(),
@@ -543,6 +544,9 @@ beforeEach(() => {
     store.data[k].length = 0;
   }
   vi.clearAllMocks();
+  // Pending-turn delivery now resolves the session's current idea project. The
+  // fixture's lineage anchor must exist just as it does in the real database.
+  store.data.idea.push({ uuid: IDEA, companyUuid: COMPANY, projectUuid: PROJECT });
 
   mockGetAuthContext.mockResolvedValue(agentAuth());
   // task → direct idea IDEA; default for anything else null.

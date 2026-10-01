@@ -8,10 +8,17 @@ import * as activityService from "@/services/activity.service";
 import {
   accessibleProjectWhere,
   accessibleProjectUuids,
+  computeProjectAccess,
+  levelAtLeast,
+  ProjectAccessDeniedError,
   ProjectNotFoundError,
   type ProjectVisibility,
 } from "@/services/project-access.service";
 import type { AuthContext } from "@/types/auth";
+import { ApiError } from "@/lib/api-handler";
+import { requireGroupOperation } from "@/services/project-group-access.service";
+import { lockGroups } from "@/services/project-group-mutation.service";
+import { lockProjectAccess } from "@/services/project-access-preview.service";
 
 export interface ProjectListParams {
   companyUuid: string;
@@ -30,11 +37,48 @@ export interface ProjectCreateParams {
   createdByUuid?: string | null;
   // Actor recorded on the project "created" Activity (the user, or the agent itself).
   actor?: { type: "user" | "agent"; uuid: string };
+  auth?: AuthContext;
 }
 
 // Shared by every project-creation path (Access core: creator auto-admin).
 // Must run inside the creating transaction.
 export type ProjectDbClient = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
+
+// Every creation path calls this inside its transaction before inserting.
+// Group locking serializes creation with conversion, deletion and membership.
+export async function guardProjectCreation(tx: ProjectDbClient, params: ProjectCreateParams): Promise<ProjectVisibility> {
+  let visibility = params.visibility ?? "public";
+  if (params.groupUuid) {
+    await lockGroups(tx, params.companyUuid, [params.groupUuid]);
+    const auth = params.auth ?? {
+      companyUuid: params.companyUuid, type: params.actor?.type ?? (params.createdByUuid ? "user" : "agent"),
+      actorUuid: params.actor?.uuid ?? params.createdByUuid ?? "",
+      ...(params.actor?.type === "agent" ? { ownerUuid: params.createdByUuid ?? undefined } : {}),
+    };
+    if (auth.companyUuid !== params.companyUuid) throw new ProjectNotFoundError();
+    const group = await requireGroupOperation(auth, params.groupUuid, "create_project", tx);
+    visibility = params.visibility ?? (group.visibility === "private" ? "private" : "public");
+    if (group.visibility === "private" && visibility === "public") {
+      throw new ApiError("BAD_REQUEST", "A private group cannot contain public projects", 400);
+    }
+  }
+  if (visibility === "private" && !params.createdByUuid) throw new ApiError("BAD_REQUEST", "A private project requires a creator", 400);
+  return visibility;
+}
+
+export async function lockProjectManagement(
+  tx: ProjectDbClient, companyUuid: string, projectUuid: string, auth?: AuthContext,
+): Promise<void> {
+  if (auth && auth.companyUuid !== companyUuid) throw new ProjectNotFoundError();
+  await lockProjectAccess(tx, companyUuid, projectUuid);
+  if (auth) {
+    const access = await computeProjectAccess(auth, projectUuid, tx);
+    if (!access.project) throw new ProjectNotFoundError();
+    if (!levelAtLeast(access.level, access.project.visibility === "private" ? "admin" : "editor")) {
+      throw new ProjectAccessDeniedError("Only project Admins can manage this private project");
+    }
+  }
+}
 
 export async function initProjectAccess(
   tx: ProjectDbClient,
@@ -177,17 +221,18 @@ export async function createProject({
   name,
   description,
   groupUuid,
-  visibility = "public",
+  visibility,
   createdByUuid,
   actor,
+  auth,
 }: ProjectCreateParams) {
   if (visibility === "private" && !createdByUuid) {
     // Nobody could ever access it — reject at the service layer, not just in callers.
     throw new Error("A private project requires a creator");
   }
-  const create = (client: ProjectDbClient) =>
+  const create = (client: ProjectDbClient, resolvedVisibility: ProjectVisibility) =>
     client.project.create({
-      data: { companyUuid, name, description, groupUuid: groupUuid ?? null, visibility, createdByUuid: createdByUuid ?? null },
+      data: { companyUuid, name, description, groupUuid: groupUuid ?? null, visibility: resolvedVisibility, createdByUuid: createdByUuid ?? null },
       select: {
         uuid: true,
         name: true,
@@ -200,14 +245,15 @@ export async function createProject({
     });
   // Project, creator membership and creation Activity commit together.
   let publishCreated = () => {};
-  const project = createdByUuid || actor
+  const project = createdByUuid || actor || groupUuid
     ? await prisma.$transaction(async (tx) => {
-        const created = await create(tx);
+        const resolvedVisibility = await guardProjectCreation(tx, { companyUuid, name, groupUuid, visibility, createdByUuid, actor, auth });
+        const created = await create(tx, resolvedVisibility);
         await initProjectAccess(tx, { companyUuid, projectUuid: created.uuid, createdByUuid });
-        publishCreated = await logProjectCreated(tx, { companyUuid, projectUuid: created.uuid, visibility, actor });
+        publishCreated = await logProjectCreated(tx, { companyUuid, projectUuid: created.uuid, visibility: resolvedVisibility, actor });
         return created;
       })
-    : await create(prisma);
+    : await create(prisma, visibility ?? "public");
   publishCreated();
 
   eventBus.emitChange({
@@ -222,36 +268,45 @@ export async function createProject({
 }
 
 // Update project (scoped by companyUuid for multi-tenancy defense-in-depth)
-export async function updateProject(companyUuid: string, uuid: string, data: ProjectUpdateParams) {
-  // Verify ownership atomically before updating
+export async function updateProject(companyUuid: string, uuid: string, data: ProjectUpdateParams, auth?: AuthContext) {
   const project = await prisma.project.findFirst({
     where: { uuid, companyUuid },
     select: { uuid: true },
   });
   if (!project) return null;
 
-  return prisma.project.update({
-    where: { uuid: project.uuid },
-    data,
-    select: {
-      uuid: true,
-      name: true,
-      description: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+  return prisma.$transaction(async (tx) => {
+    await lockProjectManagement(tx, companyUuid, uuid, auth);
+    return tx.project.update({
+      where: { uuid: project.uuid },
+      data,
+      select: {
+        uuid: true,
+        name: true,
+        description: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
   });
 }
 
 // Delete project (scoped by companyUuid for multi-tenancy defense-in-depth)
-export async function deleteProject(companyUuid: string, uuid: string) {
+export async function deleteProject(companyUuid: string, uuid: string, auth?: AuthContext) {
   const project = await prisma.project.findFirst({
     where: { uuid, companyUuid },
     select: { uuid: true },
   });
   if (!project) return false;
 
-  await prisma.project.delete({ where: { uuid: project.uuid } });
+  await prisma.$transaction(async (tx) => {
+    await lockProjectManagement(tx, companyUuid, uuid, auth);
+    const locked = await tx.project.findFirst({ where: { companyUuid, uuid }, select: { groupUuid: true } });
+    await tx.project.delete({ where: { uuid: project.uuid } });
+    if (locked?.groupUuid) {
+      await tx.projectGroup.update({ where: { uuid: locked.groupUuid }, data: { accessVersion: { increment: 1 } } });
+    }
+  });
 
   eventBus.emitChange({
     companyUuid,

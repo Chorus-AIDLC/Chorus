@@ -49,6 +49,26 @@ describe("updateProjectAction", () => {
     });
   });
 
+  it.each([null, { type: "user", companyUuid: "other-company", actorUuid: "other-admin" }])(
+    "allowlists settings and preserves trusted identity despite extra caller properties: %j",
+    async (untrustedAuth) => {
+      const trustedAuth = { type: "user", companyUuid: "company-1", actorUuid: "user-1" };
+      mocks.auth.mockResolvedValue(trustedAuth);
+      mocks.update.mockResolvedValue({ uuid: "project-1" });
+      const payload = {
+        name: "Updated", description: null, agentCwds: { upserts: [], clears: [] },
+        auth: untrustedAuth, companyUuid: "other-company", userUuid: "other-admin",
+        projectUuid: "other-project", visibility: "public",
+      };
+      expect((await updateProjectAction("project-1", payload)).success).toBe(true);
+      expect(mocks.update).toHaveBeenCalledWith({
+        name: "Updated", description: null, agentCwds: payload.agentCwds,
+        companyUuid: trustedAuth.companyUuid, userUuid: trustedAuth.actorUuid,
+        projectUuid: "project-1", auth: trustedAuth,
+      });
+    },
+  );
+
   it("returns the stable Agent-scoped cwd error contract", async () => {
     mocks.update.mockRejectedValue(
       new CwdServiceError("STALE_TARGET", "Fresh validation required", "agent-1"),

@@ -9,6 +9,7 @@ import {
   listProjectGroups,
   createProjectGroup,
 } from "@/services/project-group.service";
+import { isProjectVisibility, type ProjectVisibility } from "@/services/project-access.service";
 
 // GET /api/project-groups - List all groups
 export const GET = withErrorHandler(async (request: NextRequest) => {
@@ -33,7 +34,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return errors.forbidden("Only users or permitted agents can create project groups");
   }
 
-  const body = await parseBody<{ name: string; description?: string }>(request);
+  const body = await parseBody<{ name: string; description?: string; visibility?: ProjectVisibility }>(request);
+  if (body.visibility !== undefined && !isProjectVisibility(body.visibility)) return errors.validationError({ visibility: "Invalid visibility" });
   if (!body.name || body.name.trim() === "") {
     return errors.validationError({ name: "Name is required" });
   }
@@ -42,7 +44,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     companyUuid: auth.companyUuid,
     name: body.name.trim(),
     description: body.description?.trim() || null,
-  });
+    visibility: body.visibility,
+  }, auth);
 
   return success(group);
 });

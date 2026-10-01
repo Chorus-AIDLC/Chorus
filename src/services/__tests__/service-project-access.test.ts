@@ -8,7 +8,7 @@ const { mockPrisma, notifications } = vi.hoisted(() => {
   });
   return {
     mockPrisma: {
-      project: delegate(), projectMember: delegate(), projectGroup: delegate(),
+      project: delegate(), projectMember: delegate(), projectGroup: delegate(), projectGroupMember: delegate(),
       projectVisit: delegate(), idea: delegate(), task: delegate(),
       proposal: delegate(), document: delegate(), activity: delegate(),
       agent: delegate(), agentInstance: delegate(),
@@ -82,6 +82,18 @@ function matches(row: Row, where: Where = {}): boolean {
     if (key === "OR") return (filter as Where[]).some((w) => matches(row, w));
     if (key === "AND") return (Array.isArray(filter) ? filter : [filter]).every((w) => matches(row, w as Where));
     if (key === "NOT") return !matches(row, filter as Where);
+    if (key === "group") {
+      const group = db.projectGroup.find((g) => g.uuid === row.groupUuid);
+      return !!group && matches(group, filter as Where);
+    }
+    if (key === "members") {
+      const some = (filter as Where).some as Where;
+      return db.projectGroupMember.some((m) => m.groupUuid === row.uuid && matches(m, some));
+    }
+    if (key === "projects") {
+      const some = (filter as Where).some as Where;
+      return db.project.some((project) => project.groupUuid === row.uuid && matches(project, some));
+    }
     return fieldMatches(row[key], filter);
   });
 }
@@ -154,7 +166,7 @@ function addProject(n: number, visibility: string, groupUuid: string | null, com
 beforeEach(() => {
   vi.resetAllMocks();
   db = {
-    project: [], projectMember: [], projectGroup: [], projectVisit: [],
+    project: [], projectMember: [], projectGroup: [], projectGroupMember: [], projectVisit: [],
     idea: [], task: [], proposal: [], document: [], activity: [],
     agent: [], agentInstance: [],
   };
@@ -167,6 +179,7 @@ beforeEach(() => {
   db.projectGroup.push(...[GROUP, PRIVATE_GROUP, EMPTY_GROUP].map((groupUuid) => ({
     uuid: groupUuid, companyUuid: COMPANY, name: `Access ${groupUuid}`,
     description: "Access group", createdAt: now, updatedAt: now,
+    visibility: "public", createdByUuid: null, accessVersion: 0,
   })));
   db.projectMember.push(...privateProjects.map((projectUuid) => ({
     companyUuid: COMPANY, projectUuid, userUuid: "member", role: "viewer",
