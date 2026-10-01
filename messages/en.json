@@ -1212,7 +1212,7 @@
         "step1Title": "Step 1: Set environment variables",
         "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so Kiro CLI can read them on startup.",
         "step2Title": "Step 2: Run chorus agents add",
-        "step2Tip": "chorus agents add installs the Chorus skills, agents, steering, and the chorus MCP server into ~/.kiro globally, so Chorus is available in every directory. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). To install into a different directory, set KIRO_DIR before running. The first command installs the Chorus CLI globally (pinned to version 0.17.0)."
+        "step2Tip": "chorus agents add installs the Chorus skills, agents, steering, and the chorus MCP server into ~/.kiro globally, so Chorus is available in every directory. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). To install into a different directory, set KIRO_DIR before running. The first command installs the latest Chorus CLI globally."
       },
       "pi": {
         "step1Title": "Step 1: Set environment variables",
@@ -1226,7 +1226,7 @@
         "step2Title": "Step 2: Add the Chorus bundle",
         "step2Tip": "Replace {name} with the dsh profile you want to use. The -w flag is required because a dsh profile is a pnpm workspace root. dsh owns the profile package state and satisfies the bundle's peer plugins.",
         "step3Title": "Step 3: Store credentials",
-        "step3Tip": "chorus agents add validates your key and seeds CHORUS_URL and CHORUS_API_KEY into ~/.chorus/daemon.json (mode 0600), adding the Chorus bundle to the profile if needed. Pass --dsh-profile {name} to match the profile from Step 2; it reads the credentials from your environment (Step 1). The first command installs the Chorus CLI globally (pinned to version 0.17.0).",
+        "step3Tip": "chorus agents add validates your key and seeds CHORUS_URL and CHORUS_API_KEY into ~/.chorus/daemon.json (mode 0600), adding the Chorus bundle to the profile if needed. Pass --dsh-profile {name} to match the profile from Step 2; it reads the credentials from your environment (Step 1). The first command installs the latest Chorus CLI globally.",
         "step4Title": "Step 4: Launch and verify",
         "step4Desc": "Run dsh --profile {name}, then ask it to \"check in to chorus\"."
       },
@@ -1234,7 +1234,7 @@
         "step1Title": "Step 1: Set environment variables",
         "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so the plugin can read them on OpenCode startup.",
         "step2Title": "Step 2: Run chorus agents add",
-        "step2Tip": "chorus agents add idempotently adds \"opencode-chorus\" to the \"plugin\" array in ~/.config/opencode/opencode.json. It does not touch your shell rc; OpenCode installs the plugin via Bun on first launch. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). The first command installs the Chorus CLI globally (pinned to version 0.17.0).",
+        "step2Tip": "chorus agents add idempotently adds \"opencode-chorus\" to the \"plugin\" array in ~/.config/opencode/opencode.json. It does not touch your shell rc; OpenCode installs the plugin via Bun on first launch. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). The first command installs the latest Chorus CLI globally.",
         "troubleshootingTitle": "Troubleshooting",
         "issueCache": {
           "title": "Plugin not loaded",

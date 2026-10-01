@@ -82,11 +82,12 @@ describe("AgentInstallGuide dsh onboarding", () => {
     expect(screen.getByText(/dsh --profile <name>.*"check in to chorus"/i)).toBeTruthy();
     expect(screen.getByText(/dsh 0\.1\.0-rc\.7 and pnpm/i)).toBeTruthy();
     // Credentials + bundle are now provisioned by installing the CLI globally
-    // (pinned to @0.17.0) then `chorus agents add` — no npx. The retired curl bootstrap
+    // (unpinned — latest release) then `chorus agents add` — no npx. The retired curl bootstrap
     // (dsh-credentials.sh) and the removed server installer stay gone.
     expect(
-      screen.getByText(/npm install -g @chorus-aidlc\/chorus@0\.17\.0/),
+      screen.getByText(/npm install -g @chorus-aidlc\/chorus chorus agents add --agents dsh/),
     ).toBeTruthy();
+    expect(screen.queryByText(/@chorus-aidlc\/chorus@\d/)).toBeNull();
     expect(
       screen.getByText(/chorus agents add --agents dsh --dsh-profile <name>/),
     ).toBeTruthy();
@@ -102,8 +103,9 @@ describe("AgentInstallGuide dsh onboarding", () => {
     // claude-code is the default tab — no click needed.
     expect(screen.getByText("Step 2: Run chorus agents add")).toBeTruthy();
     expect(
-      screen.getByText(/npm install -g @chorus-aidlc\/chorus@0\.17\.0/),
+      screen.getByText(/npm install -g @chorus-aidlc\/chorus chorus agents add --agents claude/),
     ).toBeTruthy();
+    expect(screen.queryByText(/@chorus-aidlc\/chorus@\d/)).toBeNull();
     expect(screen.getByText(/chorus agents add --agents claude/)).toBeTruthy();
     // The retired `chorus init` command name must not appear anywhere.
     expect(screen.queryByText(/chorus init/)).toBeNull();
@@ -162,7 +164,7 @@ describe("AgentInstallGuide dsh onboarding", () => {
     ).toBeTruthy();
   });
 
-  it("uses `npm install -g @chorus-aidlc/chorus@0.17.0` + `chorus agents add` (never npx) on every agent init tab", async () => {
+  it("uses the unpinned `npm install -g @chorus-aidlc/chorus` + `chorus agents add` (never npx) on every agent init tab", async () => {
     const user = userEvent.setup();
     render(<AgentInstallGuide apiKey={null} />);
 
@@ -177,8 +179,9 @@ describe("AgentInstallGuide dsh onboarding", () => {
     for (const { tab, init } of initTabs) {
       await user.click(screen.getByRole("tab", { name: tab }));
       expect(
-        screen.getByText(/npm install -g @chorus-aidlc\/chorus@0\.17\.0/),
+        screen.getByText(/npm install -g @chorus-aidlc\/chorus chorus agents add/),
       ).toBeTruthy();
+      expect(screen.queryByText(/@chorus-aidlc\/chorus@\d/)).toBeNull();
       expect(screen.getByText(init)).toBeTruthy();
       expect(screen.queryByText(/npx @chorus-aidlc\/chorus agents add/)).toBeNull();
     }

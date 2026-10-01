@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Test public/install-codex.sh — now a DEPRECATION STUB that redirects to
 # `chorus agents add`. Verifies bash 3.2 compatibility + the stub shape:
-#   - names the replacement `npm install -g @chorus-aidlc/chorus@0.17.0` + `chorus agents add`
+#   - names the replacement `npm install -g @chorus-aidlc/chorus` + `chorus agents add`
 #   - prints a deprecation notice
 #   - run non-interactively (no TTY, e.g. curl | bash in CI) it exits non-zero
 #   - installs nothing (writes no config.toml)
@@ -99,6 +99,13 @@ fi
 grep -q 'npm install -g @chorus-aidlc/chorus' "$run_out" \
   && pass "names 'npm install -g @chorus-aidlc/chorus'" \
   || { fail "did not print the npm install guidance"; sed 's/^/         /' "$run_out"; }
+
+if grep -q '@chorus-aidlc/chorus@[0-9]' "$run_out"; then
+  fail "install command is version-pinned (expected unpinned @chorus-aidlc/chorus)"
+  sed 's/^/         /' "$run_out"
+else
+  pass "install command is unpinned (no @<version> suffix)"
+fi
 
 grep -q 'chorus agents add' "$run_out" \
   && pass "names 'chorus agents add'" \

@@ -40,7 +40,7 @@ export CHORUS_API_KEY="cho_your_api_key"
 Install the Chorus CLI, then let `chorus agents add` install the plugin for Claude Code — it runs Claude Code's own `claude plugin` commands for you (registers the marketplace, installs `chorus@chorus-plugins`) and seeds your credentials:
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.0
+npm install -g @chorus-aidlc/chorus
 chorus agents add --agents claude
 ```
 

@@ -34,7 +34,7 @@ chorus agents add --agents codex
 5. 把 `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` 写入 `~/.codex/.env`（`0600`、幂等、保留你的其它条目）。Codex 启动时会把这个 dotenv 文件加载进**自己的进程环境**，因此它的插件 hook 和模型在 shell 工具里调用 `chorus` 都能解析出你的 agent 身份，**无需手动 export**。
 6. 把原生 MCP 服务块 `[mcp_servers.chorus]` 写入 `~/.codex/config.toml`，使用 `url` + `bearer_token_env_var = "CHORUS_API_KEY"`——一个**不含密钥**的引用（`config.toml` 里不存任何 API key）。Codex 连接 MCP 时会从第 5 步的 `~/.codex/.env` 解析该环境变量，生成 `Authorization: Bearer <key>` 头。
 
-如果环境里没有 `CHORUS_URL` / `CHORUS_API_KEY`，`chorus agents add` 会在有 TTY 时交互式询问。还没安装 `chorus` CLI？先用 `npm install -g @chorus-aidlc/chorus@0.17.0` 全局安装，再运行 `chorus agents add --agents codex`。
+如果环境里没有 `CHORUS_URL` / `CHORUS_API_KEY`，`chorus agents add` 会在有 TTY 时交互式询问。还没安装 `chorus` CLI？先用 `npm install -g @chorus-aidlc/chorus` 全局安装，再运行 `chorus agents add --agents codex`。
 
 ### 哪些无需手动 export
 
@@ -61,7 +61,7 @@ Codex 会通过 MCP 调用 `chorus_checkin()`，返回你的 agent 身份、权�
 显式传入连接信息，并用 `--yes` 跳过交互提示，无需 TTY：
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.0
+npm install -g @chorus-aidlc/chorus
 chorus agents add --agents codex \
   --url https://chorus.example.com \
   --api-key cho_xxx --yes

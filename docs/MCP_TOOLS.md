@@ -171,7 +171,7 @@ The Agent-level **AgentSession** model (used for swarm-mode observability via `c
 
 Chorus ships **five first-class agent-runtime plugin surfaces** that all speak to this same `/api/mcp` endpoint, plus a runtime-agnostic standalone skill for any other MCP-capable client:
 
-All surfaces are configured with the one-command CLI — install it globally, then run `chorus agents add`: `npm install -g @chorus-aidlc/chorus@0.17.0` then `chorus agents add` (see each CONNECT guide). The legacy per-agent `curl … | bash` installers (`public/install-{codex,opencode,kiro}.sh`, `public/dsh-credentials.sh`) are retired to deprecation stubs that point to `chorus agents add`.
+All surfaces are configured with the one-command CLI — install it globally, then run `chorus agents add`: `npm install -g @chorus-aidlc/chorus` then `chorus agents add` (see each CONNECT guide). The legacy per-agent `curl … | bash` installers (`public/install-{codex,opencode,kiro}.sh`, `public/dsh-credentials.sh`) are retired to deprecation stubs that point to `chorus agents add`.
 
 1. **Claude Code** — `public/chorus-plugin/` (marketplace-installed). See [CONNECT_CLAUDE_CODE.md](./CONNECT_CLAUDE_CODE.md).
 2. **Codex** — `plugins/chorus/`, configured via `chorus agents add`. See [CONNECT_CODEX.md](./CONNECT_CODEX.md).
