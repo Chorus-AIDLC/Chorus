@@ -41,7 +41,7 @@ chorus agents add --agents opencode
 - It does **not** write to `~/.bashrc` / `~/.zshrc`. You are responsible for exporting `CHORUS_URL` and `CHORUS_API_KEY` yourself before launching `opencode`.
 - It does **not** vendor the plugin package into the repo. OpenCode fetches `opencode-chorus` from npm via Bun (cache lives at `~/.cache/opencode/packages/opencode-chorus@latest/`).
 
-> Don't have the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents opencode`.
+> Don't have the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus`, then run `chorus agents add --agents opencode`.
 
 ### Manual alternative
 

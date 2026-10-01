@@ -84,7 +84,7 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`npm install -g @chorus-aidlc/chorus@0.17.0\nchorus agents add --agents claude`}
+                code={`npm install -g @chorus-aidlc/chorus\nchorus agents add --agents claude`}
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("install.claudeCode.step2Tip")}
@@ -113,7 +113,7 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`npm install -g @chorus-aidlc/chorus@0.17.0\nchorus agents add --agents codex`}
+                code={`npm install -g @chorus-aidlc/chorus\nchorus agents add --agents codex`}
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("install.codex.step2Tip")}
@@ -143,7 +143,7 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`npm install -g @chorus-aidlc/chorus@0.17.0\nchorus agents add --agents kiro`}
+                code={`npm install -g @chorus-aidlc/chorus\nchorus agents add --agents kiro`}
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("install.kiro.step2Tip")}
@@ -218,7 +218,7 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`npm install -g @chorus-aidlc/chorus@0.17.0\nchorus agents add --agents dsh --dsh-profile <name>`}
+                code={`npm install -g @chorus-aidlc/chorus\nchorus agents add --agents dsh --dsh-profile <name>`}
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("install.dsh.step3Tip", { name: "<name>" })}
@@ -256,7 +256,7 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`npm install -g @chorus-aidlc/chorus@0.17.0\nchorus agents add --agents opencode`}
+                code={`npm install -g @chorus-aidlc/chorus\nchorus agents add --agents opencode`}
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("install.opencode.step2Tip")}

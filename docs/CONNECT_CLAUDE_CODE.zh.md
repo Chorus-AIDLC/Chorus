@@ -40,7 +40,7 @@ export CHORUS_API_KEY="cho_your_api_key"
 先全局安装 Chorus CLI，再用 `chorus agents add` 为 Claude Code 安装插件——它会替你执行 Claude Code 自己的 `claude plugin` 命令（注册 marketplace、安装 `chorus@chorus-plugins`）并写入凭据：
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.0
+npm install -g @chorus-aidlc/chorus
 chorus agents add --agents claude
 ```
 

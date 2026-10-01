@@ -1212,7 +1212,7 @@
         "step1Title": "ステップ 1：環境変数を設定",
         "step1Tip": "ヒント：Kiro CLI が起動時に読み取れるよう、~/.bashrc または ~/.zshrc に追加してください。",
         "step2Title": "ステップ 2：chorus agents add を実行",
-        "step2Tip": "chorus agents add は Chorus の skills、agents、steering、および chorus MCP サーバーを ~/.kiro にグローバルインストールし、Chorus をどのディレクトリでも利用できるようにします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。別のディレクトリにインストールするには、実行前に KIRO_DIR を設定してください。 最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。"
+        "step2Tip": "chorus agents add は Chorus の skills、agents、steering、および chorus MCP サーバーを ~/.kiro にグローバルインストールし、Chorus をどのディレクトリでも利用できるようにします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。別のディレクトリにインストールするには、実行前に KIRO_DIR を設定してください。 最初のコマンドは最新の Chorus CLI をグローバルにインストールします。"
       },
       "pi": {
         "step1Title": "ステップ 1：環境変数を設定",
@@ -1226,7 +1226,7 @@
         "step2Title": "ステップ 2：Chorus bundle を追加",
         "step2Tip": "{name} を使用する dsh profile 名に置き換えてください。dsh の profile は pnpm workspace のルートなので -w が必要です。profile の package state と peer plugin は dsh が管理します。",
         "step3Title": "ステップ 3：認証情報を書き込む",
-        "step3Tip": "chorus agents add はキーを検証し、CHORUS_URL と CHORUS_API_KEY を ~/.chorus/daemon.json（モード 0600）に書き込みます。必要に応じて Chorus bundle を profile に追加します。ステップ 2 と同じ profile を指定するには --dsh-profile {name} を渡してください。認証情報は環境変数（ステップ 1）から読み取ります。 最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。",
+        "step3Tip": "chorus agents add はキーを検証し、CHORUS_URL と CHORUS_API_KEY を ~/.chorus/daemon.json（モード 0600）に書き込みます。必要に応じて Chorus bundle を profile に追加します。ステップ 2 と同じ profile を指定するには --dsh-profile {name} を渡してください。認証情報は環境変数（ステップ 1）から読み取ります。 最初のコマンドは最新の Chorus CLI をグローバルにインストールします。",
         "step4Title": "ステップ 4：起動して確認",
         "step4Desc": "dsh --profile {name} を実行し、「check in to chorus」と依頼してください。"
       },
@@ -1234,7 +1234,7 @@
         "step1Title": "ステップ 1：環境変数を設定",
         "step1Tip": "ヒント：OpenCode 起動時にプラグインが読み取れるよう、~/.bashrc または ~/.zshrc に追加してください。",
         "step2Title": "ステップ 2：chorus agents add を実行",
-        "step2Tip": "chorus agents add は ~/.config/opencode/opencode.json の「plugin」配列に「opencode-chorus」を冪等に追加します。シェルの rc は変更しません。OpenCode は初回起動時に Bun 経由でプラグインをインストールします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。 最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。",
+        "step2Tip": "chorus agents add は ~/.config/opencode/opencode.json の「plugin」配列に「opencode-chorus」を冪等に追加します。シェルの rc は変更しません。OpenCode は初回起動時に Bun 経由でプラグインをインストールします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。 最初のコマンドは最新の Chorus CLI をグローバルにインストールします。",
         "troubleshootingTitle": "トラブルシューティング",
         "issueCache": {
           "title": "プラグインが読み込まれない",
