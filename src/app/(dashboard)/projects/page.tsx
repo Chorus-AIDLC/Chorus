@@ -197,27 +197,33 @@ function ProjectGridCard({ project }: { project: ProjectData }) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-[#E5E2DC] dark:border-[#2a2a2e] bg-card p-4 transition-colors hover:bg-secondary">
       {/* Header */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-start gap-2.5">
         <div
           className="project-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
           style={projectIconStyle(iconColor)}
         >
           {initials}
         </div>
-        <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
-          {project.name}
-        </span>
-        <ProjectLockIndicator visibility={project.visibility} />
-        {isEmpty && (
-          <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
-            {t("projects.empty")}
-          </Badge>
-        )}
-        {isComplete && (
-          <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] dark:bg-[#12291f] px-1.5 py-0 text-[10px] font-medium text-[#065F46] dark:text-[#4FD1A0]">
-            {t("projects.complete")}
-          </Badge>
-        )}
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-semibold text-foreground">
+            {project.name}
+          </span>
+          {(project.visibility === "private" || isEmpty || isComplete) && (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <ProjectLockIndicator visibility={project.visibility} showLabel />
+              {isEmpty && (
+                <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
+                  {t("projects.empty")}
+                </Badge>
+              )}
+              {isComplete && (
+                <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] dark:bg-[#12291f] px-1.5 py-0 text-[10px] font-medium text-[#065F46] dark:text-[#4FD1A0]">
+                  {t("projects.complete")}
+                </Badge>
+              )}
+            </div>
+          )}
+        </div>
         <div className="ml-auto -mr-1 shrink-0">
           <ProjectPinToggle project={project} />
         </div>
@@ -272,20 +278,24 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
           {initials}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-[13px] font-semibold text-foreground">
+          <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-2">
+            <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
               {project.name}
             </span>
-            <ProjectLockIndicator visibility={project.visibility} />
-            {isEmpty && (
-              <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
-                {t("projects.empty")}
-              </Badge>
-            )}
-            {isComplete && (
-              <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] dark:bg-[#12291f] px-1.5 py-0 text-[10px] font-medium text-[#065F46] dark:text-[#4FD1A0]">
-                {t("projects.complete")}
-              </Badge>
+            {(project.visibility === "private" || isEmpty || isComplete) && (
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                <ProjectLockIndicator visibility={project.visibility} showLabel />
+                {isEmpty && (
+                  <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
+                    {t("projects.empty")}
+                  </Badge>
+                )}
+                {isComplete && (
+                  <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] dark:bg-[#12291f] px-1.5 py-0 text-[10px] font-medium text-[#065F46] dark:text-[#4FD1A0]">
+                    {t("projects.complete")}
+                  </Badge>
+                )}
+              </div>
             )}
           </div>
           {/* Desktop: stats below name */}

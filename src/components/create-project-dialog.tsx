@@ -338,12 +338,12 @@ export function CreateProjectDialog({
                 <Label
                   key={option}
                   htmlFor={`create-project-visibility-${option}`}
-                  className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 font-normal has-[[data-state=checked]]:border-primary"
+                  className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 font-normal transition-colors hover:bg-accent has-[[data-state=checked]]:border-primary"
                 >
                   <RadioGroupItem
                     id={`create-project-visibility-${option}`}
                     value={option}
-                    className="mt-0.5"
+                    className="mt-0.5 cursor-pointer"
                   />
                   <span className="flex flex-col gap-1">
                     <span className="text-[13px] font-medium text-foreground">

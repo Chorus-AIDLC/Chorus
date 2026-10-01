@@ -245,9 +245,13 @@ export function ProjectAccessTab({
             <Label
               key={option}
               htmlFor={`project-visibility-${option}`}
-              className="flex items-start gap-3 rounded-lg border border-border bg-card p-3 font-normal has-[[data-state=checked]]:border-primary"
+              className={`flex items-start gap-3 rounded-lg border border-border bg-card p-3 font-normal transition-colors has-[[data-state=checked]]:border-primary ${
+                isAdmin && !savingVisibility
+                  ? "cursor-pointer hover:bg-accent"
+                  : "cursor-not-allowed opacity-60"
+              }`}
             >
-              <RadioGroupItem id={`project-visibility-${option}`} value={option} className="mt-0.5" />
+              <RadioGroupItem id={`project-visibility-${option}`} value={option} className="mt-0.5 cursor-pointer disabled:cursor-not-allowed" />
               <span className="flex flex-col gap-1">
                 <span className="text-[13px] font-medium text-foreground">
                   {t(`visibility.${option}`)}
