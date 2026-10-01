@@ -35,7 +35,11 @@ export function ProjectLockIndicator({
   const indicator = (
     <span
       data-testid="project-lock-indicator"
-      className={cn("inline-flex shrink-0 items-center text-muted-foreground", className)}
+      className={cn(
+        "inline-flex shrink-0 items-center",
+        !showLabel && "text-muted-foreground",
+        className,
+      )}
     >
       <Lock className={iconClassName} aria-hidden="true" />
       <span className={showLabel ? undefined : "sr-only"}>{label}</span>
@@ -46,7 +50,7 @@ export function ProjectLockIndicator({
       <Tooltip>
         <TooltipTrigger asChild>
           {showLabel ? (
-            <Badge asChild variant="outline" className="bg-muted/50">
+            <Badge asChild variant="outline" className="bg-muted/50 text-muted-foreground">
               {indicator}
             </Badge>
           ) : indicator}
