@@ -11,6 +11,7 @@ import {
 } from "@/services/comment.service";
 import { createActivity } from "@/services/activity.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess } from "@/lib/project-access-action";
 
 const VALID_TARGET_TYPES = ["idea", "proposal", "task", "document"] as const;
 type TargetType = (typeof VALID_TARGET_TYPES)[number];
@@ -49,6 +50,8 @@ export async function getCommentsAction(
   if (!VALID_TARGET_TYPES.includes(targetType)) {
     return { success: false, error: `Invalid target type: ${targetType}` };
   }
+  const denied = await denyUnlessEntityAccess(auth, targetType, targetUuid, "viewer");
+  if (denied) return denied;
 
   try {
     const result = await listComments({
@@ -97,6 +100,8 @@ export async function createCommentAction(
   if (!content.trim()) {
     return { success: false, error: "Comment content is required" };
   }
+  const denied = await denyUnlessEntityAccess(auth, targetType, targetUuid, "editor");
+  if (denied) return denied;
 
   try {
     const comment = await createComment({
@@ -144,6 +149,8 @@ export async function deleteCommentAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "comment", commentUuid, "editor");
+  if (denied) return denied;
 
   try {
     await deleteComment({

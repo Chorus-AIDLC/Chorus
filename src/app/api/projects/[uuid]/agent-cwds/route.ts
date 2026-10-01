@@ -10,6 +10,7 @@ import {
   listProjectAgentCwdPreferences,
   saveProjectAgentCwdPreference,
 } from "@/services/project-agent-cwd.service";
+import { requireProjectAccess } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -38,6 +39,7 @@ export const GET = withErrorHandler(async (request: NextRequest, context: RouteC
   const authorized = await requireUser(request);
   if ("error" in authorized) return authorized.error;
   const { uuid } = await context.params;
+  await requireProjectAccess(authorized.auth, uuid, "viewer");
   try {
     return success({
       agents: await listProjectAgentCwdPreferences(
@@ -62,6 +64,7 @@ export const PUT = withErrorHandler(async (request: NextRequest, context: RouteC
   const parsed = saveSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return errors.validationError(parsed.error.flatten());
   const { uuid } = await context.params;
+  await requireProjectAccess(authorized.auth, uuid, "editor");
   try {
     const preference = await saveProjectAgentCwdPreference({
       companyUuid: authorized.auth.companyUuid,
@@ -83,6 +86,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Rou
   const parsed = clearSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return errors.validationError(parsed.error.flatten());
   const { uuid } = await context.params;
+  await requireProjectAccess(authorized.auth, uuid, "editor");
   try {
     await clearProjectAgentCwdPreference({
       companyUuid: authorized.auth.companyUuid,

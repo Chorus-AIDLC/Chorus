@@ -12,6 +12,7 @@ import {
   updateDocument,
   deleteDocument,
 } from "@/services/document.service";
+import { requireEntityAccess } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -26,6 +27,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "document", uuid, "viewer");
     const document = await getDocument(auth.companyUuid, uuid);
 
     if (!document) {
@@ -54,6 +56,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
     }
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "document", uuid, "editor");
 
     // Get the original Document data
     const document = await getDocumentByUuid(auth.companyUuid, uuid);
@@ -100,6 +103,7 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
     }
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "document", uuid, "editor");
 
     const document = await getDocumentByUuid(auth.companyUuid, uuid);
     if (!document) {

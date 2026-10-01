@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus, controlEventName } from "@/lib/event-bus";
+import { initProjectAccess, logProjectCreated } from "@/services/project.service";
+import type { ProjectVisibility } from "@/services/project-access.service";
 import {
   listConnectionsForAgent,
   type ConnectionView,
@@ -179,7 +181,15 @@ export async function createProjectWithAgentCwds(params: {
   description: string | null;
   groupUuid: string | null;
   agentCwds: ProjectAgentCwdDraftInput[];
+  visibility?: ProjectVisibility;
+  // Creator User UUID (agents pass their owner); becomes the first admin member.
+  createdByUuid?: string | null;
+  actor?: { type: "user" | "agent"; uuid: string };
 }) {
+  const visibility = params.visibility ?? "public";
+  if (visibility === "private" && !params.createdByUuid) {
+    throw new Error("A private project requires a creator");
+  }
   const targets = await Promise.all(
     params.agentCwds.map((draft) => resolveValidatedPreference({
       companyUuid: params.companyUuid,
@@ -187,13 +197,16 @@ export async function createProjectWithAgentCwds(params: {
       ...draft,
     })),
   );
-  return prisma.$transaction(async (tx) => {
+  let publishCreated = () => {};
+  const created = await prisma.$transaction(async (tx) => {
     const project = await tx.project.create({
       data: {
         companyUuid: params.companyUuid,
         name: params.name,
         description: params.description,
         groupUuid: params.groupUuid,
+        visibility,
+        createdByUuid: params.createdByUuid ?? null,
       },
       select: {
         uuid: true,
@@ -202,6 +215,11 @@ export async function createProjectWithAgentCwds(params: {
         createdAt: true,
         updatedAt: true,
       },
+    });
+    await initProjectAccess(tx, {
+      companyUuid: params.companyUuid,
+      projectUuid: project.uuid,
+      createdByUuid: params.createdByUuid,
     });
     for (const target of targets) {
       const instance = await tx.agentInstance.upsert({
@@ -234,8 +252,16 @@ export async function createProjectWithAgentCwds(params: {
         },
       });
     }
+    publishCreated = await logProjectCreated(tx, {
+      companyUuid: params.companyUuid,
+      projectUuid: project.uuid,
+      visibility,
+      actor: params.actor,
+    });
     return project;
   });
+  publishCreated();
+  return created;
 }
 
 export async function updateProjectWithAgentCwds(params: {

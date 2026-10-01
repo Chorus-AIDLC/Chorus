@@ -1,11 +1,16 @@
 // src/mcp/tools/presence.ts
-// MCP tool handler wrapper for automatic presence event emission.
-// Wraps all registerTool handlers to detect target resources and emit presence events.
+// Central project-access gate and presence wrapper for every registered tool.
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { eventBus, type PresenceEvent } from "@/lib/event-bus";
+import {
+  ProjectAccessDeniedError,
+  ProjectNotFoundError,
+  resolveEntityProjectUuid,
+} from "@/services/project-access.service";
+import { getToolProjectAccessPolicy } from "./permission-map";
+import { authorizeToolProjectAccess, McpResourceNotFoundError } from "./project-access";
 import type { AgentAuthContext } from "@/types/auth";
-import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
 const presenceLogger = logger.child({ module: "presence" });
@@ -75,85 +80,34 @@ function detectResource(params: Record<string, unknown>, toolName: string): Dete
   return null;
 }
 
-// Resolve projectUuid from an entity UUID via DB lookup
+// Resolve projectUuid from an entity UUID via DB lookup (company-scoped)
 async function resolveProjectUuid(
+  companyUuid: string,
   entityType: PresenceEvent["entityType"],
   entityUuid: string,
   cache: Map<string, string>
 ): Promise<string | null> {
-  const cacheKey = `${entityType}:${entityUuid}`;
+  const cacheKey = `${companyUuid}:${entityType}:${entityUuid}`;
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
-  try {
-    let projectUuid: string | null = null;
-
-    switch (entityType) {
-      case "task": {
-        const task = await prisma.task.findFirst({
-          where: { uuid: entityUuid },
-          select: { project: { select: { uuid: true } } },
-        });
-        projectUuid = task?.project?.uuid ?? null;
-        break;
-      }
-      case "idea": {
-        const idea = await prisma.idea.findFirst({
-          where: { uuid: entityUuid },
-          select: { project: { select: { uuid: true } } },
-        });
-        projectUuid = idea?.project?.uuid ?? null;
-        break;
-      }
-      case "proposal": {
-        const proposal = await prisma.proposal.findFirst({
-          where: { uuid: entityUuid },
-          select: { project: { select: { uuid: true } } },
-        });
-        projectUuid = proposal?.project?.uuid ?? null;
-        break;
-      }
-      case "document": {
-        const doc = await prisma.document.findFirst({
-          where: { uuid: entityUuid },
-          select: { project: { select: { uuid: true } } },
-        });
-        projectUuid = doc?.project?.uuid ?? null;
-        break;
-      }
-    }
-
-    if (projectUuid) {
-      cache.set(cacheKey, projectUuid);
-    }
-    return projectUuid;
-  } catch (err) {
-    presenceLogger.warn({ err }, "Failed to resolve projectUuid");
-    return null;
+  const projectUuid = await resolveEntityProjectUuid(companyUuid, entityType, entityUuid);
+  if (projectUuid) {
+    cache.set(cacheKey, projectUuid);
   }
+  return projectUuid;
 }
 
-/** Fire-and-forget presence emission — never blocks the tool handler */
-async function emitPresenceAsync(
-  resource: DetectedResource,
+/** Only called with a project resolved and authorized by the central gate. */
+function emitPresence(
+  resource: DetectedResource & { projectUuid: string },
   toolName: string,
   auth: AgentAuthContext,
-  cache: Map<string, string>
-): Promise<void> {
+): void {
   try {
-    let projectUuid = resource.projectUuid;
-    if (!projectUuid) {
-      projectUuid = (await resolveProjectUuid(
-        resource.entityType,
-        resource.entityUuid,
-        cache
-      )) ?? undefined;
-    }
-
-    if (projectUuid) {
       const presenceEvent: PresenceEvent = {
         companyUuid: auth.companyUuid,
-        projectUuid,
+        projectUuid: resource.projectUuid,
         entityType: resource.entityType,
         entityUuid: resource.entityUuid,
         ...(resource.subEntityType ? {
@@ -166,32 +120,51 @@ async function emitPresenceAsync(
         timestamp: Date.now(),
       };
       eventBus.emitPresence(presenceEvent);
-    }
   } catch (err) {
     presenceLogger.warn({ err }, "Failed to emit presence event");
   }
 }
 
 /**
- * Wraps a McpServer to automatically emit presence events for all registered tools.
+ * Wraps a McpServer to authorize calls before handlers and presence emission.
  * Call this once after creating the server, before registering tools.
  * The wrapper intercepts registerTool to wrap each handler with presence emission.
  */
 export function enablePresence(server: McpServer, auth: AgentAuthContext): void {
-  // Session-scoped cache for projectUuid resolution
-  const projectUuidCache = new Map<string, string>();
-
   const originalRegisterTool = server.registerTool.bind(server);
 
   // Override registerTool to wrap handlers
   server.registerTool = function (name: string, config: unknown, handler: unknown) {
+    const policy = getToolProjectAccessPolicy(name);
     const originalHandler = handler as (params: Record<string, unknown>, extra: unknown) => Promise<unknown>;
 
     const wrappedHandler = async (params: Record<string, unknown>, extra: unknown) => {
-      // Fire and forget — emit presence without blocking the tool handler
+      let authorized;
+      try {
+        authorized = await authorizeToolProjectAccess(name, params, auth, policy);
+      } catch (error) {
+        if (error instanceof McpResourceNotFoundError ||
+            error instanceof ProjectNotFoundError ||
+            error instanceof ProjectAccessDeniedError) {
+          return { content: [{ type: "text", text: error.message }], isError: true };
+        }
+        // Unexpected authorization failures propagate through the SDK's
+        // CallToolResult error path. Never continue into the handler.
+        throw error;
+      }
+
       const resource = detectResource(params, name);
       if (resource) {
-        emitPresenceAsync(resource, name, auth, projectUuidCache);
+        const resolved = authorized.find((r) =>
+          r.entityType === resource.entityType && r.entityUuid === resource.entityUuid);
+        if (resolved) emitPresence({ ...resource, projectUuid: resolved.projectUuid }, name, auth);
+      } else {
+        // Reference edits and session-only calls resolve their parent entities.
+        const parent = authorized.find((r) => Object.values(ENTITY_UUID_FIELDS).includes(r.entityType as PresenceEvent["entityType"]));
+        if (parent) emitPresence({
+          ...parent,
+          entityType: parent.entityType as PresenceEvent["entityType"],
+        }, name, auth);
       }
 
       return originalHandler(params, extra);

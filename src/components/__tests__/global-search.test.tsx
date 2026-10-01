@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
 import * as React from "react";
 
 // Polyfill for Radix's measurement code paths inside the dialog.
@@ -128,6 +128,18 @@ describe("GlobalSearch — Enter + IME composition", () => {
         } as Response)
       )
     );
+  });
+
+  // Unmount and drain Radix focus-scope timers while fake timers + this jsdom are
+  // still live; otherwise a leftover timer can fire later and throw an uncaught
+  // "dispatchEvent … not of type 'Event'" that fails the whole run.
+  afterEach(async () => {
+    await act(async () => {
+      cleanup();
+      vi.runOnlyPendingTimers();
+    });
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("does NOT navigate on Enter while IME is composing", async () => {

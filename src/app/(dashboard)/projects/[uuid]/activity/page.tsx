@@ -1,14 +1,12 @@
 // src/app/(dashboard)/projects/[uuid]/activity/page.tsx
 // Server Component - UUID obtained from URL
 
-import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { Card } from "@/components/ui/card";
 import { Monitor, User, Settings } from "lucide-react";
-import { getServerAuthContext } from "@/lib/auth-server";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { listActivities } from "@/services/activity.service";
-import { projectExists } from "@/services/project.service";
+import { requireProjectPageAccess } from "../access-guard";
 import { prisma } from "@/lib/prisma";
 import { AnimatedEmptyState } from "@/components/animated-empty-state";
 
@@ -87,19 +85,11 @@ interface PageProps {
 }
 
 export default async function ActivityPage({ params }: PageProps) {
-  const auth = await getServerAuthContext();
-  if (!auth) {
-    redirect("/login");
-  }
-
   const { uuid: projectUuid } = await params;
   const t = await getTranslations();
 
-  // Validate project exists
-  const exists = await projectExists(auth.companyUuid, projectUuid);
-  if (!exists) {
-    redirect("/projects");
-  }
+  // Access gate: unauthenticated → /login, no project access → 404
+  const { auth } = await requireProjectPageAccess(projectUuid);
 
   // Get Activities
   const { activities: rawActivities } = await listActivities({

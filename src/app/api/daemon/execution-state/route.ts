@@ -33,6 +33,7 @@ import {
   filterValidExecutionEntities,
   type SnapshotExecution,
 } from "@/services/daemon-execution.service";
+import { filterExecutionViewsByAccess } from "@/services/project-access.service";
 
 // Request body schema. `entityType` is the wake-triggering resource kind
 // (task | idea | proposal | document | daemon_session — the ad-hoc conversation
@@ -146,6 +147,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     return errors.notFound("Connection");
   }
 
-  const executions = await getExecutionsForConnection(auth.companyUuid, connectionUuid);
+  // Connection visibility is not project access: hide rows for projects the
+  // caller can no longer see.
+  const executions = await filterExecutionViewsByAccess(
+    auth,
+    await getExecutionsForConnection(auth.companyUuid, connectionUuid),
+  );
   return success({ executions });
 });

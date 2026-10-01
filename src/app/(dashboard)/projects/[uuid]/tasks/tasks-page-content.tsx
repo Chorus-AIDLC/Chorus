@@ -1,12 +1,10 @@
 // src/app/(dashboard)/projects/[uuid]/tasks/tasks-page-content.tsx
 // Server Component — shared by both /tasks and /tasks/[taskUuid] pages
 
-import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { Clock } from "lucide-react";
-import { getServerAuthContext } from "@/lib/auth-server";
 import { listTasks } from "@/services/task.service";
-import { projectExists } from "@/services/project.service";
+import { requireProjectPageAccess, requireEntityInProject } from "../access-guard";
 import { TaskViewToggle } from "./task-view-toggle";
 
 interface TasksPageContentProps {
@@ -18,17 +16,13 @@ export async function TasksPageContent({
   projectUuid,
   initialSelectedTaskUuid,
 }: TasksPageContentProps) {
-  const auth = await getServerAuthContext();
-  if (!auth) {
-    redirect("/login");
-  }
-
   const t = await getTranslations();
 
-  // Validate project exists
-  const exists = await projectExists(auth.companyUuid, projectUuid);
-  if (!exists) {
-    redirect("/projects");
+  // Access gate: unauthenticated → /login, no project access → 404
+  const { auth } = await requireProjectPageAccess(projectUuid);
+  // A deep-linked task must belong to this project and be visible to the caller
+  if (initialSelectedTaskUuid) {
+    await requireEntityInProject(auth, "task", initialSelectedTaskUuid, projectUuid);
   }
 
   // Get all Tasks

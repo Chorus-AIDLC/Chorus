@@ -2,7 +2,6 @@
 // Server Component - UUID obtained from URL
 // Container Model: Proposal contains documentDrafts and taskDrafts
 
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import {
@@ -21,11 +20,11 @@ import { Badge } from "@/components/ui/badge";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { Separator } from "@/components/ui/separator";
 import { MarkdownContent } from "@/components/markdown-content";
-import { getServerAuthContext } from "@/lib/auth-server";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getProposal, type DocumentDraft, type TaskDraft, getMaterializedEntities } from "@/services/proposal.service";
 import { getIdea } from "@/services/idea.service";
-import { projectExists } from "@/services/project.service";
+import { filterRowsByProjectAccess } from "@/services/project-access.service";
+import { requireProjectPageAccess, requireEntityInProject } from "../../access-guard";
 import { ProposalActions } from "./proposal-actions";
 import { ProposalEditor } from "./proposal-editor";
 import { SourceIdeasCard } from "./source-ideas-card";
@@ -74,19 +73,14 @@ interface PageProps {
 }
 
 export default async function ProposalDetailPage({ params }: PageProps) {
-  const auth = await getServerAuthContext();
-  if (!auth) {
-    redirect("/login");
-  }
-
   const { uuid: projectUuid, proposalUuid } = await params;
   const t = await getTranslations();
 
-  // Validate project exists
-  const exists = await projectExists(auth.companyUuid, projectUuid);
-  if (!exists) {
-    redirect("/projects");
-  }
+  // Access gate: unauthenticated → /login, no project access → 404
+  const { auth, accessLevel } = await requireProjectPageAccess(projectUuid);
+  const canEdit = accessLevel !== "viewer";
+  // The proposal must belong to this project and be visible to the caller
+  await requireEntityInProject(auth, "proposal", proposalUuid, projectUuid);
 
   // Get Proposal details
   const proposal = await getProposal(auth.companyUuid, proposalUuid);
@@ -104,11 +98,17 @@ export default async function ProposalDetailPage({ params }: PageProps) {
   const documentDrafts = proposal.documentDrafts as DocumentDraft[] | null;
   const taskDrafts = proposal.taskDrafts as TaskDraft[] | null;
 
-  // Fetch source ideas (when inputType is "idea" and inputUuids exist)
+  // Fetch source ideas (when inputType is "idea" and inputUuids exist). Inputs
+  // may live in other projects hidden from the caller (e.g. a project made
+  // private after the proposal was created) — those are omitted.
   const sourceIdeas = proposal.inputType === "idea" && proposal.inputUuids?.length
-    ? (await Promise.all(
-        proposal.inputUuids.map((uuid: string) => getIdea(auth.companyUuid, uuid))
-      )).filter(Boolean) as Awaited<ReturnType<typeof getIdea>>[]
+    ? await filterRowsByProjectAccess(
+        auth,
+        (await Promise.all(
+          proposal.inputUuids.map((uuid: string) => getIdea(auth.companyUuid, uuid))
+        )).filter(Boolean) as NonNullable<Awaited<ReturnType<typeof getIdea>>>[],
+        (idea) => idea.project?.uuid,
+      )
     : [];
 
   // Fetch materialized entities for revoke dialog (approved only)
@@ -195,12 +195,14 @@ export default async function ProposalDetailPage({ params }: PageProps) {
             currentUserUuid={auth.actorUuid}
             commentCount={commentCount}
           />
-          <ProposalActions
-            proposalUuid={proposalUuid}
-            projectUuid={projectUuid}
-            status={proposal.status}
-            materializedEntities={materializedEntities}
-          />
+          {canEdit && (
+            <ProposalActions
+              proposalUuid={proposalUuid}
+              projectUuid={projectUuid}
+              status={proposal.status}
+              materializedEntities={materializedEntities}
+            />
+          )}
         </div>
       </div>
 

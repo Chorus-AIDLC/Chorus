@@ -36,6 +36,15 @@ const { mockNotificationService } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+// Checkin derivation fixtures are public; access behavior is exercised with the
+// real checkin + tracker + resolver in service-project-access.test.ts.
+vi.mock("@/services/project-access.service", async (importActual) => ({
+  ...await importActual<typeof import("@/services/project-access.service")>(),
+  accessibleProjectUuids: vi.fn(async () => [
+    "project-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "project-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+  ]),
+}));
 vi.mock("@/lib/event-bus", () => ({ eventBus: { emitChange: vi.fn(), emit: vi.fn() } }));
 vi.mock("@/services/notification.service", () => mockNotificationService);
 

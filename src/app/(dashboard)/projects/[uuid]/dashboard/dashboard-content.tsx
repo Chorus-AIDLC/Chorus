@@ -7,6 +7,7 @@ import { ProjectSettingsModal } from "./project-settings-modal";
 import { IdeaTracker } from "./idea-tracker";
 import { CollapsibleMarkdown } from "@/components/collapsible-markdown";
 import { ProjectCwdSummary } from "./project-cwd-summary";
+import { ProjectLockIndicator } from "@/components/project-lock-indicator";
 
 interface DashboardContentProps {
   projectUuid: string;
@@ -20,12 +21,13 @@ export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }:
   return (
     <div className="flex h-full flex-col gap-5 p-5 md:p-6">
       <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{t("ideaTracker.overview")}</p>
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
             <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight text-foreground">
               {project.name}
             </h1>
+            <ProjectLockIndicator visibility={project.visibility} showLabel />
             <ProjectCwdSummary projectUuid={projectUuid} />
           </div>
           {project.description?.trim() ? (

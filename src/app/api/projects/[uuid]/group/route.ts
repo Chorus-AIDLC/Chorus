@@ -6,6 +6,7 @@ import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
 import { moveProjectToGroup } from "@/services/project-group.service";
+import { requireProjectOperation } from "@/services/project-access.service";
 
 // PATCH /api/projects/[uuid]/group
 export const PATCH = withErrorHandler(
@@ -21,6 +22,8 @@ export const PATCH = withErrorHandler(
     }
 
     const { uuid } = await context.params;
+    // Public: any company actor; private: project admin (Tech Design D2).
+    await requireProjectOperation(auth, uuid, "manage_project");
     const body = await parseBody<{ groupUuid: string | null }>(request);
 
     const result = await moveProjectToGroup(

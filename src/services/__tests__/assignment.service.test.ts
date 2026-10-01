@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Prisma mock (used by getAvailableItems only) =====
 const mockPrisma = vi.hoisted(() => ({
+  project: { findMany: vi.fn() },
   idea: {
     findMany: vi.fn(),
   },
@@ -63,6 +64,7 @@ function makeTask(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.project.findMany.mockResolvedValue([{ uuid: projectUuid }]);
   mockFormatCreatedBy.mockResolvedValue({
     type: "user",
     uuid: userUuid,

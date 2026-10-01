@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
 import { markAcceptanceCriteria, reportCriteriaSelfCheck, resetAcceptanceCriterion, getTaskByUuid } from "@/services/task.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess } from "@/lib/project-access-action";
 
 export async function markCriteriaAction(
   taskUuid: string,
@@ -18,6 +19,8 @@ export async function markCriteriaAction(
   if (auth.type !== "user" && auth.type !== "super_admin") {
     return { success: false, error: "Only users can verify acceptance criteria" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await getTaskByUuid(auth.companyUuid, taskUuid);
@@ -54,6 +57,8 @@ export async function resetCriterionAction(
   if (auth.type !== "user" && auth.type !== "super_admin") {
     return { success: false, error: "Only users can reset acceptance criteria" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await getTaskByUuid(auth.companyUuid, taskUuid);
@@ -81,6 +86,8 @@ export async function selfCheckCriteriaAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await getTaskByUuid(auth.companyUuid, taskUuid);

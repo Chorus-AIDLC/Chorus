@@ -9,6 +9,7 @@ import { IdeaTrackerList } from "./idea-tracker-list";
 import { IdeaTrackerStats } from "./idea-tracker-stats";
 import { IdeaDetailPanel } from "./panels/idea-detail-panel";
 import { NewIdeaDialog } from "./new-idea-dialog";
+import { useCanEditProject } from "@/contexts/project-access-context";
 import {
   adaptiveDefault,
   hasLineageInGroups,
@@ -45,6 +46,8 @@ interface IdeaTrackerProps {
 
 export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initialTrackerData, initialStatsData, initialSelectedIdeaUuid }: IdeaTrackerProps) {
   const t = useTranslations("ideaTracker");
+  // Viewers (read-only members) get no create affordance — server rejects writes anyway.
+  const canEdit = useCanEditProject();
 
   // Single owner of the view selection. The initial value is the *adaptive
   // default* (lineage when the project has derivation, else the flat list) and
@@ -140,7 +143,7 @@ export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initial
             empty the list renders its own centered CTA (with a New Idea button),
             so the header button is suppressed to avoid two. The switch itself
             always stays mounted and reachable, even at zero ideas. */}
-        {view !== "stats" && !isEmpty && (
+        {canEdit && view !== "stats" && !isEmpty && (
           <Button
             ref={headerNewIdeaTrigger}
             onClick={openNewIdea}
@@ -161,7 +164,7 @@ export function IdeaTracker({ projectUuid, projectName, currentUserUuid, initial
           initialData={initialTrackerData}
           viewMode={view === "lineage" ? "tree" : "flat"}
           onIdeaClick={openPanel}
-          onNewIdea={openNewIdea}
+          onNewIdea={canEdit ? openNewIdea : undefined}
           onEmptyChange={setIsEmpty}
         />
       )}

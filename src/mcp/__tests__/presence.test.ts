@@ -119,63 +119,55 @@ describe("presence wrapper", () => {
   });
 
   describe("resolveProjectUuid", () => {
+    const companyUuid = "company-1";
+
     beforeEach(() => {
       vi.clearAllMocks();
     });
 
-    it("resolves projectUuid for a task", async () => {
-      vi.mocked(prisma.task.findFirst).mockResolvedValue({
-        project: { uuid: "proj-resolved" },
-      } as never);
+    it("resolves projectUuid for a task (company-scoped)", async () => {
+      vi.mocked(prisma.task.findFirst).mockResolvedValue({ projectUuid: "proj-resolved" } as never);
 
       const cache = new Map<string, string>();
-      const result = await resolveProjectUuid("task", "task-1", cache);
+      const result = await resolveProjectUuid(companyUuid, "task", "task-1", cache);
 
       expect(result).toBe("proj-resolved");
       expect(prisma.task.findFirst).toHaveBeenCalledWith({
-        where: { uuid: "task-1" },
-        select: { project: { select: { uuid: true } } },
+        where: { uuid: "task-1", companyUuid },
+        select: { projectUuid: true },
       });
     });
 
     it("resolves projectUuid for an idea", async () => {
-      vi.mocked(prisma.idea.findFirst).mockResolvedValue({
-        project: { uuid: "proj-idea" },
-      } as never);
+      vi.mocked(prisma.idea.findFirst).mockResolvedValue({ projectUuid: "proj-idea" } as never);
 
       const cache = new Map<string, string>();
-      const result = await resolveProjectUuid("idea", "idea-1", cache);
+      const result = await resolveProjectUuid(companyUuid, "idea", "idea-1", cache);
       expect(result).toBe("proj-idea");
     });
 
     it("resolves projectUuid for a proposal", async () => {
-      vi.mocked(prisma.proposal.findFirst).mockResolvedValue({
-        project: { uuid: "proj-prop" },
-      } as never);
+      vi.mocked(prisma.proposal.findFirst).mockResolvedValue({ projectUuid: "proj-prop" } as never);
 
       const cache = new Map<string, string>();
-      const result = await resolveProjectUuid("proposal", "prop-1", cache);
+      const result = await resolveProjectUuid(companyUuid, "proposal", "prop-1", cache);
       expect(result).toBe("proj-prop");
     });
 
     it("resolves projectUuid for a document", async () => {
-      vi.mocked(prisma.document.findFirst).mockResolvedValue({
-        project: { uuid: "proj-doc" },
-      } as never);
+      vi.mocked(prisma.document.findFirst).mockResolvedValue({ projectUuid: "proj-doc" } as never);
 
       const cache = new Map<string, string>();
-      const result = await resolveProjectUuid("document", "doc-1", cache);
+      const result = await resolveProjectUuid(companyUuid, "document", "doc-1", cache);
       expect(result).toBe("proj-doc");
     });
 
     it("caches resolved projectUuid", async () => {
-      vi.mocked(prisma.task.findFirst).mockResolvedValue({
-        project: { uuid: "proj-cached" },
-      } as never);
+      vi.mocked(prisma.task.findFirst).mockResolvedValue({ projectUuid: "proj-cached" } as never);
 
       const cache = new Map<string, string>();
-      await resolveProjectUuid("task", "task-cache", cache);
-      const result2 = await resolveProjectUuid("task", "task-cache", cache);
+      await resolveProjectUuid(companyUuid, "task", "task-cache", cache);
+      const result2 = await resolveProjectUuid(companyUuid, "task", "task-cache", cache);
 
       expect(result2).toBe("proj-cached");
       // Should only query once due to cache
@@ -186,16 +178,16 @@ describe("presence wrapper", () => {
       vi.mocked(prisma.task.findFirst).mockResolvedValue(null);
 
       const cache = new Map<string, string>();
-      const result = await resolveProjectUuid("task", "not-found", cache);
+      const result = await resolveProjectUuid(companyUuid, "task", "not-found", cache);
       expect(result).toBeNull();
     });
 
-    it("returns null on DB error", async () => {
+    it("propagates DB errors instead of treating authorization failures as absent resources", async () => {
       vi.mocked(prisma.task.findFirst).mockRejectedValue(new Error("DB error"));
 
       const cache = new Map<string, string>();
-      const result = await resolveProjectUuid("task", "error-task", cache);
-      expect(result).toBeNull();
+      await expect(resolveProjectUuid(companyUuid, "task", "error-task", cache)).rejects.toThrow("DB error");
     });
   });
+
 });

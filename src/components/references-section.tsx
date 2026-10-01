@@ -63,6 +63,7 @@ import {
   isKnownReferenceType as isKnownType,
 } from "@/components/reference-type-config";
 import { ReferenceNotes } from "@/components/reference-notes";
+import { useCanEditProject } from "@/contexts/project-access-context";
 
 interface ReferencesSectionProps {
   targetType: "proposal" | "task" | "idea";
@@ -78,11 +79,14 @@ interface ReferencesSectionProps {
 export function ReferencesSection({
   targetType,
   targetUuid,
-  canWrite,
+  canWrite: canWriteProp,
   initialReferences,
   compact = false,
 }: ReferencesSectionProps) {
   const t = useTranslations();
+  // Project Viewers never get add / edit / delete, regardless of the caller's flag.
+  const canEditProject = useCanEditProject();
+  const canWrite = canWriteProp && canEditProject;
   const router = useRouter();
 
   const [references, setReferences] = useState<ReferenceArtifactResponse[]>(

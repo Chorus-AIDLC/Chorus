@@ -35,6 +35,17 @@ const { mockPrisma, mockGetActorName, mockGetPreferences, mockCreateBatch, mockR
   }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+// Private-project isolation (project-access): identity by default so these
+// tests exercise the public-project path; the access filter itself is covered
+// in mention.service.project-access.test.ts.
+const { mockFilterRecipientsByProjectAccess } = vi.hoisted(() => ({
+  mockFilterRecipientsByProjectAccess: vi.fn(),
+}));
+vi.mock("@/services/project-access.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/project-access.service")>()),
+  filterRecipientsByProjectAccess: mockFilterRecipientsByProjectAccess,
+  privateProjectMemberUuids: vi.fn(async () => null),
+}));
 vi.mock("@/lib/uuid-resolver", () => ({ getActorName: mockGetActorName }));
 vi.mock("@/services/notification.service", () => ({
   getPreferences: (...args: unknown[]) => mockGetPreferences(...args),
@@ -66,6 +77,9 @@ const PINNED_CWD = "/work";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFilterRecipientsByProjectAccess.mockImplementation(
+    async (_companyUuid: string, _projectUuid: string, recipients: unknown[]) => recipients,
+  );
   mockGetPreferences.mockResolvedValue({ mentioned: true });
   mockGetActorName.mockResolvedValue("Test Actor");
   mockPrisma.agent.findFirst.mockResolvedValue({ uuid: AGENT_UUID });

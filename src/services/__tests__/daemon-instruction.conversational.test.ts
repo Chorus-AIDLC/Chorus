@@ -68,6 +68,13 @@ vi.mock("@/services/project-agent-cwd.service", () => ({
     mockResolveProjectAgentCwdTarget(...args),
 }));
 
+// Project access (private projects): allowed by default; the non-member test denies.
+const mockCanActorAccessProject = vi.fn();
+vi.mock("@/services/project-access.service", () => ({
+  canActorAccessProject: (...args: unknown[]) => mockCanActorAccessProject(...args),
+  filterRecipientsByProjectAccess: async (_c: string, _p: string, r: unknown[]) => r,
+}));
+
 // Deterministic server-generated ideaUuid.
 const STUB_IDEA_UUID = "idea-0000-0000-0000-00000000gen1";
 vi.mock("crypto", () => ({ randomUUID: () => STUB_IDEA_UUID }));
@@ -109,6 +116,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockPrisma.agent.count.mockResolvedValue(1);
   mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid, name: "Chorus" });
+  mockCanActorAccessProject.mockResolvedValue(true);
   mockPrisma.daemonConnection.findFirst.mockResolvedValue({
     agentInstanceUuid: instanceUuid,
   });
@@ -637,6 +645,35 @@ describe("createConversationalIdeaSession gates", () => {
     await expect(
       createConversationalIdeaSession(userAuth, validParams),
     ).rejects.toBeInstanceOf(ProjectNotVisibleError);
+    await expectNoMutation();
+  });
+
+  it("private project the caller cannot edit → ProjectNotVisibleError, nothing persisted", async () => {
+    mockCanActorAccessProject.mockResolvedValue(false);
+    await expect(
+      createConversationalIdeaSession(userAuth, validParams),
+    ).rejects.toBeInstanceOf(ProjectNotVisibleError);
+    expect(mockCanActorAccessProject).toHaveBeenCalledWith(
+      companyUuid,
+      { type: "user", uuid: ownerUuid },
+      projectUuid,
+      "editor",
+    );
+    expect(mockResolveProjectAgentCwdTarget).not.toHaveBeenCalled();
+    await expectNoMutation();
+  });
+
+  it("agent caller is access-checked as itself (owner resolved by project-access)", async () => {
+    mockCanActorAccessProject.mockResolvedValue(false);
+    await expect(
+      createConversationalIdeaSession({ type: "agent", companyUuid, actorUuid: agentUuid }, validParams),
+    ).rejects.toBeInstanceOf(ProjectNotVisibleError);
+    expect(mockCanActorAccessProject).toHaveBeenCalledWith(
+      companyUuid,
+      { type: "agent", uuid: agentUuid },
+      projectUuid,
+      "editor",
+    );
     await expectNoMutation();
   });
 

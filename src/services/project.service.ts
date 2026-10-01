@@ -4,11 +4,20 @@
 
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
+import * as activityService from "@/services/activity.service";
+import {
+  accessibleProjectWhere,
+  accessibleProjectUuids,
+  ProjectNotFoundError,
+  type ProjectVisibility,
+} from "@/services/project-access.service";
+import type { AuthContext } from "@/types/auth";
 
 export interface ProjectListParams {
   companyUuid: string;
   skip: number;
   take: number;
+  auth?: AuthContext;
 }
 
 export interface ProjectCreateParams {
@@ -16,6 +25,57 @@ export interface ProjectCreateParams {
   name: string;
   description?: string | null;
   groupUuid?: string | null;
+  visibility?: ProjectVisibility;
+  // Creator User UUID (agents pass their owner). Becomes the project's first admin member.
+  createdByUuid?: string | null;
+  // Actor recorded on the project "created" Activity (the user, or the agent itself).
+  actor?: { type: "user" | "agent"; uuid: string };
+}
+
+// Shared by every project-creation path (Access core: creator auto-admin).
+// Must run inside the creating transaction.
+export type ProjectDbClient = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
+
+export async function initProjectAccess(
+  tx: ProjectDbClient,
+  params: { companyUuid: string; projectUuid: string; createdByUuid?: string | null },
+) {
+  if (!params.createdByUuid) return;
+  await tx.projectMember.create({
+    data: {
+      companyUuid: params.companyUuid,
+      projectUuid: params.projectUuid,
+      userUuid: params.createdByUuid,
+      role: "admin",
+      addedByUuid: params.createdByUuid,
+    },
+  });
+}
+
+// Projects had no creation Activity before access control; log one so the
+// creator is auditable from now on. Written inside the creating transaction;
+// call the returned publish() after commit.
+export async function logProjectCreated(
+  tx: ProjectDbClient,
+  params: {
+    companyUuid: string;
+    projectUuid: string;
+    visibility: string;
+    actor?: { type: "user" | "agent"; uuid: string };
+  },
+): Promise<() => void> {
+  if (!params.actor) return () => {};
+  const { publish } = await activityService.createActivityInTx(tx, {
+    companyUuid: params.companyUuid,
+    projectUuid: params.projectUuid,
+    targetType: "project",
+    targetUuid: params.projectUuid,
+    actorType: params.actor.type,
+    actorUuid: params.actor.uuid,
+    action: "created",
+    value: { visibility: params.visibility },
+  });
+  return publish;
 }
 
 export interface ProjectUpdateParams {
@@ -24,10 +84,14 @@ export interface ProjectUpdateParams {
 }
 
 // List projects query
-export async function listProjects({ companyUuid, skip, take }: ProjectListParams) {
+export async function listProjects({ companyUuid, skip, take, auth }: ProjectListParams) {
+  if (auth && auth.companyUuid !== companyUuid) throw new ProjectNotFoundError();
+  const where = await accessibleProjectWhere(
+    auth ?? { type: "agent", actorUuid: "", companyUuid },
+  );
   const [projects, total] = await Promise.all([
     prisma.project.findMany({
-      where: { companyUuid },
+      where,
       skip,
       take,
       orderBy: { updatedAt: "desc" },
@@ -48,7 +112,7 @@ export async function listProjects({ companyUuid, skip, take }: ProjectListParam
         },
       },
     }),
-    prisma.project.count({ where: { companyUuid } }),
+    prisma.project.count({ where }),
   ]);
 
   return { projects, total };
@@ -108,18 +172,43 @@ export async function getProjectUuidsByGroup(companyUuid: string, groupUuid: str
 }
 
 // Create project
-export async function createProject({ companyUuid, name, description, groupUuid }: ProjectCreateParams) {
-  const project = await prisma.project.create({
-    data: { companyUuid, name, description, groupUuid: groupUuid ?? null },
-    select: {
-      uuid: true,
-      name: true,
-      description: true,
-      groupUuid: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+export async function createProject({
+  companyUuid,
+  name,
+  description,
+  groupUuid,
+  visibility = "public",
+  createdByUuid,
+  actor,
+}: ProjectCreateParams) {
+  if (visibility === "private" && !createdByUuid) {
+    // Nobody could ever access it — reject at the service layer, not just in callers.
+    throw new Error("A private project requires a creator");
+  }
+  const create = (client: ProjectDbClient) =>
+    client.project.create({
+      data: { companyUuid, name, description, groupUuid: groupUuid ?? null, visibility, createdByUuid: createdByUuid ?? null },
+      select: {
+        uuid: true,
+        name: true,
+        description: true,
+        groupUuid: true,
+        visibility: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+  // Project, creator membership and creation Activity commit together.
+  let publishCreated = () => {};
+  const project = createdByUuid || actor
+    ? await prisma.$transaction(async (tx) => {
+        const created = await create(tx);
+        await initProjectAccess(tx, { companyUuid, projectUuid: created.uuid, createdByUuid });
+        publishCreated = await logProjectCreated(tx, { companyUuid, projectUuid: created.uuid, visibility, actor });
+        return created;
+      })
+    : await create(prisma);
+  publishCreated();
 
   eventBus.emitChange({
     companyUuid,
@@ -176,12 +265,17 @@ export async function deleteProject(companyUuid: string, uuid: string) {
 }
 
 // Get company-level overview stats (for Projects list page)
-export async function getCompanyOverviewStats(companyUuid: string) {
+export async function getCompanyOverviewStats(companyUuid: string, auth?: AuthContext) {
+  if (auth && auth.companyUuid !== companyUuid) throw new ProjectNotFoundError();
+  const projectUuids = await accessibleProjectUuids(
+    auth ?? { type: "agent", actorUuid: "", companyUuid },
+  );
+  const where = { companyUuid, projectUuid: { in: projectUuids } };
   const [projectCount, taskCount, openProposalCount, ideaCount] = await Promise.all([
-    prisma.project.count({ where: { companyUuid } }),
-    prisma.task.count({ where: { companyUuid } }),
-    prisma.proposal.count({ where: { companyUuid, status: "pending" } }),
-    prisma.idea.count({ where: { companyUuid } }),
+    prisma.project.count({ where: { companyUuid, uuid: { in: projectUuids } } }),
+    prisma.task.count({ where }),
+    prisma.proposal.count({ where: { ...where, status: "pending" } }),
+    prisma.idea.count({ where }),
   ]);
 
   return {
@@ -193,8 +287,8 @@ export async function getCompanyOverviewStats(companyUuid: string) {
 }
 
 // Get project list with task completion stats (for Projects list page)
-export async function listProjectsWithStats({ companyUuid, skip, take }: ProjectListParams) {
-  const { projects, total } = await listProjects({ companyUuid, skip, take });
+export async function listProjectsWithStats({ companyUuid, skip, take, auth }: ProjectListParams) {
+  const { projects, total } = await listProjects({ companyUuid, skip, take, auth });
 
   // Batch query completed task count for each project
   const projectUuids = projects.map((p) => p.uuid);

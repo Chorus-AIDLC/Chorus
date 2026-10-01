@@ -6,11 +6,19 @@ import logger from "@/lib/logger";
 import { getResearchEligibility } from "@/services/research-eligibility.service";
 import { requestResearch, ResearchError, type ResearchErrorCode } from "@/services/research.service";
 import { resolveTemporaryRuntimeCwd } from "@/services/project-agent-cwd.service";
+import { denyUnlessEntityAccess } from "@/lib/project-access-action";
 
 export async function researchEligibilityAction(ideaUuid: string) {
   const auth = await getServerAuthContext();
   if (!auth || !["user", "super_admin"].includes(auth.type)) {
     return { eligible: false as const, reason: "unauthorized" as const };
+  }
+  // Research dispatch is an editor operation; viewers see it as ineligible.
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) {
+    return denied.error.endsWith("not found")
+      ? { eligible: false as const, reason: "idea_not_found" as const }
+      : { eligible: false as const, reason: "unauthorized" as const };
   }
   return getResearchEligibility(auth.companyUuid, ideaUuid);
 }
@@ -26,6 +34,10 @@ export async function researchIdeaAction(
   const auth = await getServerAuthContext();
   if (!auth) return { success: false, errorCode: "unauthorized" };
   if (!["user", "super_admin"].includes(auth.type)) return { success: false, errorCode: "unauthorized" };
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) {
+    return { success: false, errorCode: denied.error.endsWith("not found") ? "idea_not_found" : "permission_denied" };
+  }
   try {
     const temporaryCwd = temporary ? await resolveTemporaryRuntimeCwd({
       companyUuid: auth.companyUuid, userUuid: auth.actorUuid, ...temporary,

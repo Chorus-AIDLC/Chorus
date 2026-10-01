@@ -1892,5 +1892,77 @@
     "agentLabel": "Agent",
     "noAgents": "No eligible agents are available.",
     "requestButton": "Request research"
+  },
+  "projectAccess": {
+    "elaborationReadOnly": "You have view-only access, so you can't answer these questions.",
+    "tabs": {
+      "general": "General",
+      "access": "Access"
+    },
+    "loading": "Loading access settings...",
+    "loadFailed": "Access settings could not be loaded.",
+    "visibility": {
+      "title": "Visibility",
+      "description": "Choose who in your company can see this project.",
+      "public": "Public",
+      "publicHint": "Everyone in the company can view and edit this project.",
+      "private": "Private",
+      "privateHint": "Only listed members and their agents can access this project."
+    },
+    "confirm": {
+      "toPrivateTitle": "Make this project private?",
+      "toPrivateDescription": "Only the members listed on this project (and the agents they own) will keep access. Everyone else in the company will lose access immediately.",
+      "toPublicTitle": "Make this project public?",
+      "toPublicDescription": "Everyone in the company (and their agents) will gain access to this project and all of its ideas, documents, proposals and tasks.",
+      "confirm": "Change visibility"
+    },
+    "visibilityUpdated": "Project visibility updated",
+    "members": {
+      "title": "Members",
+      "description": "Project members and their roles.",
+      "name": "Member",
+      "role": "Role",
+      "actions": "Actions",
+      "empty": "No members yet.",
+      "loading": "Loading members...",
+      "loadFailed": "Members could not be loaded.",
+      "remove": "Remove {name}",
+      "roleFor": "Role for {name}",
+      "unnamed": "Unnamed user"
+    },
+    "roles": {
+      "viewer": "Viewer",
+      "editor": "Editor",
+      "admin": "Admin"
+    },
+    "add": {
+      "title": "Add member",
+      "selectUser": "Select a user",
+      "searchPlaceholder": "Search by name or email...",
+      "typeToSearch": "Type to search company users.",
+      "searching": "Searching...",
+      "noResults": "No matching users.",
+      "role": "Role for new member",
+      "add": "Add",
+      "adding": "Adding..."
+    },
+    "memberAdded": "Member added",
+    "memberRemoved": "Member removed",
+    "roleUpdated": "Member role updated",
+    "readOnlyHint": "Only project admins can change visibility or manage members.",
+    "settingsLockedHint": "This project is private. Only project admins can edit its settings.",
+    "deleteLockedHint": "Only project admins can delete a private project.",
+    "errors": {
+      "lastAdmin": "A project must keep at least one admin.",
+      "alreadyMember": "This user is already a member of the project.",
+      "notInCompany": "This user is not in your company.",
+      "forbidden": "You don't have permission to manage access for this project.",
+      "invalid": "The request was invalid. Please try again.",
+      "generic": "Something went wrong. Please try again."
+    },
+    "privateBadge": "Private project",
+    "privateTooltip": "Private — only project members can see this project",
+    "viewerBanner": "You have view-only access to this project. Ask a project admin for Editor access to make changes.",
+    "commentsReadOnly": "Viewers can read comments but cannot post."
   }
 }

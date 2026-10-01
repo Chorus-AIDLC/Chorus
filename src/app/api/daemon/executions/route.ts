@@ -19,6 +19,7 @@ import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext } from "@/lib/auth";
 import { getVisibleExecutions } from "@/services/daemon-execution.service";
+import { filterExecutionViewsByAccess } from "@/services/project-access.service";
 
 // GET /api/daemon/executions — aggregate read of the caller's currently active
 // (running/queued/interrupted) execution set across all visible connections,
@@ -30,6 +31,6 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     return errors.unauthorized();
   }
 
-  const executions = await getVisibleExecutions(auth);
+  const executions = await filterExecutionViewsByAccess(auth, await getVisibleExecutions(auth));
   return success({ executions });
 });

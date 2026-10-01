@@ -7,6 +7,7 @@ import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
 import { getProposalByUuid, rejectProposal } from "@/services/proposal.service";
+import { requireEntityAccess } from "@/services/project-access.service";
 import { createActivity } from "@/services/activity.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -29,6 +30,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     }
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "proposal", uuid, "editor");
 
     const proposal = await getProposalByUuid(auth.companyUuid, uuid);
     if (!proposal) {

@@ -15,6 +15,7 @@ import type {
   ElaborationRoundResponse,
 } from "@/types/elaboration";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess } from "@/lib/project-access-action";
 
 export async function getElaborationAction(
   ideaUuid: string
@@ -23,6 +24,8 @@ export async function getElaborationAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "viewer");
+  if (denied) return denied;
 
   try {
     const data = await getElaboration({
@@ -48,6 +51,8 @@ export async function submitElaborationAnswersAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) return denied;
 
   try {
     const data = await answerElaboration({
@@ -90,6 +95,8 @@ export async function verifyElaborationAction(
   if (auth.type !== "user" && auth.type !== "super_admin") {
     return { success: false, error: "Only users can verify elaboration" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) return denied;
 
   try {
     const data = await verifyElaboration({
@@ -124,6 +131,8 @@ export async function skipElaborationAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) return denied;
 
   try {
     await skipElaboration({

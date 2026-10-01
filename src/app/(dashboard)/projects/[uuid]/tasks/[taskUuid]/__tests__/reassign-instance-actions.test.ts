@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Project-access gate: allow by default (behavioural coverage lives in
+// src/app/(dashboard)/projects/__tests__/action-project-access.test.ts).
+vi.mock("@/lib/project-access-action", () => ({
+  denyUnlessProjectAccess: vi.fn(async () => null),
+  denyUnlessEntityAccess: vi.fn(async () => null),
+  denyUnlessProjectOperation: vi.fn(async () => null),
+}));
 import type { UserAuthContext, AuthContext } from "@/types/auth";
 
 const mockGetServerAuthContext = vi.hoisted(() => vi.fn());
@@ -9,6 +17,7 @@ vi.mock("@/lib/auth-server", () => ({
 const mockClaimTask = vi.hoisted(() => vi.fn());
 const mockGetTaskByUuid = vi.hoisted(() => vi.fn());
 vi.mock("@/services/task.service", () => ({
+  AssigneeAccessError: class AssigneeAccessError extends Error {},
   // Sibling actions in the same module import these; stub them so the module
   // loads without pulling in prisma transitively.
   claimTask: mockClaimTask,
@@ -270,5 +279,16 @@ describe("claimTaskToAgentAction fixed cwd", () => {
     expect(mockClaimTask).toHaveBeenCalledWith(
       expect.objectContaining({ instanceUuid: INSTANCE_UUID }),
     );
+  });
+});
+
+describe("claim actions surface the assignee-access reason", () => {
+  it("claimTaskAction returns the AssigneeAccessError message instead of the generic failure", async () => {
+    mockGetServerAuthContext.mockResolvedValue({ type: "user", companyUuid: "c", actorUuid: "u" });
+    mockGetTaskByUuid.mockResolvedValue({ uuid: "t", projectUuid: "p", status: "open" });
+    const err = Object.assign(new Error("Assignee does not have access to this project"), { name: "AssigneeAccessError" });
+    mockClaimTask.mockRejectedValue(err);
+    const { claimTaskAction } = await import("../actions");
+    expect(await claimTaskAction("t")).toEqual({ success: false, error: "Assignee does not have access to this project" });
   });
 });

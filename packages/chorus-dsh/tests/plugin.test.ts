@@ -1,6 +1,8 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Context } from "@deepseek-ai/cordis";
+import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   Config,
@@ -12,21 +14,44 @@ import {
   resolveConnectionConfig,
 } from "../src/index.js";
 
-type Handler = (...args: any[]) => any;
+type Handler = (...args: unknown[]) => unknown;
+type Execute = (exec: ToolExecution) => Promise<unknown>;
+
+// The slice of a plugin-built message these tests read back.
+interface TextMessage {
+  content: Array<{ type: string; text: string }>;
+}
+interface PreStepResult {
+  kind: string;
+  messages: TextMessage[];
+}
+
+interface FakeAgent {
+  id: string;
+  steered: TextMessage[];
+  injected: TextMessage[];
+  steer(message: TextMessage): void;
+  inject(message: TextMessage): void;
+}
+
+// FakeContext implements only the cordis surface the plugin touches.
+function asContext(ctx: FakeContext): Context {
+  return ctx as unknown as Context;
+}
 
 class FakeContext {
   readonly handlers = new Map<string, Handler[]>();
   readonly disposers: Array<() => void | Promise<void>> = [];
-  readonly calls: any[] = [];
+  readonly calls: ToolExecution[] = [];
   readonly services = new Map<string, unknown>();
   readonly logs = { info: [] as string[], warn: [] as string[], debug: [] as string[] };
-  toolResult: any = {
+  toolResult: unknown = {
     isError: false,
     value: { ok: true },
     content: [{ type: "text", text: "checked in" }],
   };
   tools = {
-    execute: vi.fn(async (exec: any) => {
+    execute: vi.fn<Execute>(async (exec) => {
       this.calls.push(exec);
       return this.toolResult;
     }),
@@ -59,20 +84,20 @@ class FakeContext {
     return dispose;
   }
 
-  emit(name: string, ...args: any[]): void {
+  emit(name: string, ...args: unknown[]): void {
     for (const handler of this.handlers.get(name) ?? []) handler(...args);
   }
 
-  async waterfall(name: string, args: any[], terminal: () => Promise<any>): Promise<any> {
+  async waterfall<T>(name: string, args: unknown[], terminal: () => Promise<T>): Promise<T> {
     const handlers = this.handlers.get(name) ?? [];
-    const run = (index: number): Promise<any> =>
+    const run = (index: number): Promise<T> =>
       index === handlers.length
         ? terminal()
-        : handlers[index](...args, () => run(index + 1));
+        : (handlers[index](...args, () => run(index + 1)) as Promise<T>);
     return run(0);
   }
 
-  async serial(name: string, ...args: any[]): Promise<void> {
+  async serial(name: string, ...args: unknown[]): Promise<void> {
     for (const handler of this.handlers.get(name) ?? []) await handler(...args);
   }
 
@@ -82,25 +107,25 @@ class FakeContext {
   }
 }
 
-function fakeAgent() {
+function fakeAgent(): FakeAgent {
   return {
     id: "agent-1",
-    steered: [] as any[],
-    injected: [] as any[],
-    steer(message: any) {
+    steered: [],
+    injected: [],
+    steer(message) {
       this.steered.push(message);
     },
-    inject(message: any) {
+    inject(message) {
       this.injected.push(message);
     },
-  } as any;
+  };
 }
 
 function config(overrides: Partial<ReturnType<typeof Config>> = {}) {
   return Config(overrides);
 }
 
-function execution(agent: any, name: string, args: Record<string, unknown>, callId = "call-1") {
+function execution(agent: FakeAgent, name: string, args: Record<string, unknown>, callId = "call-1") {
   return {
     callId,
     rootCallId: callId,
@@ -109,14 +134,14 @@ function execution(agent: any, name: string, args: Record<string, unknown>, call
     arguments: args,
     agent,
     signal: new AbortController().signal,
-  } as any;
+  };
 }
 
 const success = {
   isError: false,
   value: { ok: true },
   content: [{ type: "text", text: "ok" }],
-} as any;
+};
 
 beforeEach(() => {
   process.env.CHORUS_URL = "https://chorus.test";
@@ -208,10 +233,10 @@ describe("configuration and helpers", () => {
 describe("runtime", () => {
   it("publishes the package-local MCP wrapper path without overwriting an operator value", () => {
     const ctx = new FakeContext();
-    apply(ctx as any, config());
+    apply(asContext(ctx), config());
     expect(process.env.CHORUS_MCP_CALL).toBe(chorusMcpCallPath);
     process.env.CHORUS_MCP_CALL = "/operator/wrapper";
-    apply(new FakeContext() as any, config());
+    apply(asContext(new FakeContext()), config());
     expect(process.env.CHORUS_MCP_CALL).toBe("/operator/wrapper");
   });
 
@@ -221,30 +246,30 @@ describe("runtime", () => {
   // session. `??=` on either lets a stale/raw value survive and contradict the
   // freshly resolved `## Spec Mode` guidance.
   it("publishes both resolved spec vars, honouring a valid operator mode", () => {
-    apply(new FakeContext() as any, config());
+    apply(asContext(new FakeContext()), config());
     expect(["lite", "openspec", "off"]).toContain(process.env.CHORUS_SPEC_MODE);
     expect(["0", "1"]).toContain(process.env.CHORUS_OPENSPEC_ACTIVE);
     // A valid explicit mode survives, because the resolver maps it to itself.
     process.env.CHORUS_SPEC_MODE = "off";
-    apply(new FakeContext() as any, config());
+    apply(asContext(new FakeContext()), config());
     expect(process.env.CHORUS_SPEC_MODE).toBe("off");
     // An explicit off resolves openspec-inactive.
     expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe("0");
   });
 
   it("overwrites a stale inherited CHORUS_OPENSPEC_ACTIVE", () => {
-    apply(new FakeContext() as any, config());
+    apply(asContext(new FakeContext()), config());
     const fresh = process.env.CHORUS_OPENSPEC_ACTIVE;
     // A stale value inherited from a parent that ran in a different repo, while
     // this repo (the vitest cwd's resolution) is authoritative.
     process.env.CHORUS_OPENSPEC_ACTIVE = fresh === "1" ? "0" : "1";
-    apply(new FakeContext() as any, config());
+    apply(asContext(new FakeContext()), config());
     expect(process.env.CHORUS_OPENSPEC_ACTIVE).toBe(fresh);
   });
 
   it("normalizes an invalid CHORUS_SPEC_MODE to the resolved default", () => {
     process.env.CHORUS_SPEC_MODE = "bogus";
-    apply(new FakeContext() as any, config());
+    apply(asContext(new FakeContext()), config());
     // Never leaves the raw junk in the env for downstream readers.
     expect(process.env.CHORUS_SPEC_MODE).not.toBe("bogus");
     const resolved = resolveBundleSpecMode();
@@ -259,7 +284,7 @@ describe("runtime", () => {
     process.env.CHORUS_SPEC_MODE = "bogus";
     process.env.CHORUS_OPENSPEC_ACTIVE = "1";
     const ctx = new FakeContext();
-    apply(ctx as any, config());
+    apply(asContext(ctx), config());
     expect(ctx.handlers.size).toBe(0);
     const resolved = resolveBundleSpecMode();
     expect(process.env.CHORUS_SPEC_MODE).toBe(resolved.specMode);
@@ -271,7 +296,7 @@ describe("runtime", () => {
     process.env.CHORUS_URL = "https://chorus.example";
     process.env.CHORUS_API_KEY = "cho_test";
     const ctx = new FakeContext();
-    apply(ctx as any, config());
+    apply(asContext(ctx), config());
     expect(ctx.handlers.size).toBe(0);
     expect(ctx.disposers).toHaveLength(1);
     expect(ctx.tools.execute).not.toHaveBeenCalled();
@@ -285,15 +310,15 @@ describe("runtime", () => {
   it("injects check-in context + session-start guidance into the first step exactly once", async () => {
     const ctx = new FakeContext();
     const agent = fakeAgent();
-    apply(ctx as any, config());
+    apply(asContext(ctx), config());
     ctx.emit("agent/session-start", { agent, source: "startup" });
 
-    const first = await ctx.waterfall(
+    const first = await ctx.waterfall<PreStepResult>(
       "agent/pre-step",
       [{ agent, messages: [], turn: 1, step: 1, signal: new AbortController().signal }],
       async () => ({ kind: "enter", messages: [] }),
     );
-    const second = await ctx.waterfall(
+    const second = await ctx.waterfall<PreStepResult>(
       "agent/pre-step",
       [{ agent, messages: [], turn: 1, step: 2, signal: new AbortController().signal }],
       async () => ({ kind: "enter", messages: [] }),
@@ -326,10 +351,10 @@ describe("runtime", () => {
         throw new Error("offline");
       });
     } else {
-      ctx.tools.execute = vi.fn(() => new Promise(() => {})) as any;
+      ctx.tools.execute = vi.fn<Execute>(() => new Promise(() => {}));
     }
     const agent = fakeAgent();
-    apply(ctx as any, config({ checkinTimeoutMs: 100 }));
+    apply(asContext(ctx), config({ checkinTimeoutMs: 100 }));
     ctx.emit("agent/session-start", { agent, source: "startup" });
     const pending = ctx.waterfall(
       "agent/pre-step",
@@ -346,7 +371,7 @@ describe("runtime", () => {
   it("observes successful Chorus actions, deduplicates, and emits one combined steer", async () => {
     const ctx = new FakeContext();
     const agent = fakeAgent();
-    apply(ctx as any, config());
+    apply(asContext(ctx), config());
     ctx.emit("agent/session-start", { agent, source: "startup" });
 
     const actions = [
@@ -377,7 +402,7 @@ describe("runtime", () => {
   it("ignores failed, blocked, synthetic, and non-Chorus tool results", async () => {
     const ctx = new FakeContext();
     const agent = fakeAgent();
-    apply(ctx as any, config());
+    apply(asContext(ctx), config());
     ctx.emit("agent/session-start", { agent, source: "startup" });
 
     const cases = [
@@ -399,7 +424,7 @@ describe("runtime", () => {
   it("bounds distinct pending actions and preserves duplicate capacity", async () => {
     const ctx = new FakeContext();
     const agent = fakeAgent();
-    apply(ctx as any, config({ maxPendingActions: 1 }));
+    apply(asContext(ctx), config({ maxPendingActions: 1 }));
     ctx.emit("agent/session-start", { agent, source: "startup" });
     for (const taskUuid of ["task-1", "task-1", "task-2"]) {
       await ctx.waterfall(
@@ -418,8 +443,8 @@ describe("runtime", () => {
   it("aborts in-flight work, clears state, and waits for settlement on disposal", async () => {
     const ctx = new FakeContext();
     let settled = false;
-    ctx.tools.execute = vi.fn(
-      (exec: any) =>
+    ctx.tools.execute = vi.fn<Execute>(
+      (exec) =>
         new Promise((resolve) => {
           exec.signal.addEventListener(
             "abort",
@@ -434,9 +459,9 @@ describe("runtime", () => {
             { once: true },
           );
         }),
-    ) as any;
+    );
     const agent = fakeAgent();
-    apply(ctx as any, config());
+    apply(asContext(ctx), config());
     ctx.emit("agent/session-start", { agent, source: "startup" });
     await ctx.dispose();
     expect(settled).toBe(true);

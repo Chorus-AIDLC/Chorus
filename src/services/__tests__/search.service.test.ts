@@ -36,6 +36,12 @@ const mockPrisma = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+// Search query-shape tests use a fixed accessible set; the real resolver is
+// exercised by service-project-access.test.ts against mixed-visibility fixtures.
+vi.mock("@/services/project-access.service", async (importActual) => ({
+  ...await importActual<typeof import("@/services/project-access.service")>(),
+  accessibleProjectUuids: vi.fn(async () => ["project-1", "project-2"]),
+}));
 
 // ===== Import under test (after mocks) =====
 
@@ -72,7 +78,7 @@ describe("search.service", () => {
       });
 
       expect(mockPrisma.task.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-        where: { uuid, companyUuid: "company-1" },
+        where: { uuid, companyUuid: "company-1", projectUuid: { in: ["project-1", "project-2"] } },
       }));
       expect(result).toEqual({
         results: [{

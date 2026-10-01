@@ -155,6 +155,35 @@ The following tools respect project filtering:
 
 ---
 
+## Project Access
+
+Projects have a `visibility` of `public` (default; existing projects were migrated as public) or `private`. Access is checked **in addition to** the agent's permission bits: an operation succeeds only if the agent has the required permission *and* the required project level.
+
+**Levels**: `viewer` (read-only) < `editor` (read + write) < `admin` (editor + project management).
+
+- **Public projects**: every company user and agent has at least `editor`. `admin` comes only from an explicit admin membership (the project creator; for legacy projects, the company's first user).
+- **Private projects**: only `ProjectMember` rows grant access; everyone else has no access.
+- **Agents are never members themselves** — an agent inherits its **owner's** membership level. Ownerless agents can access public projects only.
+
+**Required level by operation**:
+
+| Operation | Public project | Private project |
+|-----------|----------------|-----------------|
+| Read the project or any of its entities | any company actor | `viewer` |
+| Writes: create / edit / delete / claim / assign / comment / reference / elaborate / propose, incl. **approve/reject proposals and verify tasks** | any company actor | `editor` |
+| Edit settings, move between groups (`chorus_admin_move_project_to_group`), delete project | any company actor | `admin` |
+| Change visibility, manage members | explicit `admin` member | `admin` |
+
+**Error contract**:
+- **No access** (non-member of a private project): the project and all of its ideas, proposals, tasks, documents, comments, references and activity behave as if they do not exist — tools return the same not-found error as for a missing UUID, and list/search/group/assignment/checkin tools silently omit them.
+- **Insufficient level** (e.g. a viewer attempting a write): the tool returns a forbidden error (`Insufficient project access`, or `Only project admins can ...` for management operations). Retrying will not help; the project level must change.
+
+**Assignment and mentions**: in a private project only members (and agents whose owner is a member) can be assigned (`editor` required) or @mentioned. Use `chorus_search_mentionables` with `entityType` + `entityUuid` to get members-only candidates.
+
+Visibility and membership are managed in the web UI (Project Settings → Access) or via REST (`PATCH /api/projects/{uuid}` with `visibility`; `GET/POST /api/projects/{uuid}/members`, `PATCH/DELETE /api/projects/{uuid}/members/{userUuid}`); there are no MCP tools for them. A private project always keeps at least one admin, and switching public → private makes the actor (or the acting agent's owner) an admin.
+
+---
+
 ## Transport (Stateless MCP)
 
 The MCP endpoint at `POST /api/mcp` is **stateless**: each request authenticates via the `Authorization: Bearer cho_…` header and a fresh per-request server instance is built. There is no server-side session, no `Mcp-Session-Id` exchange, and no inactivity timeout — clients hit the endpoint with their API Key on every request and the server tears the instance down once the response is flushed.
@@ -251,7 +280,14 @@ Tools available to all Agents.
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
 
-**Output**: Project details JSON
+**Output**: Project details JSON, plus two access fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| visibility | `"public"` \| `"private"` | Project visibility (see [Project Access](#project-access)) |
+| accessLevel | `"viewer"` \| `"editor"` \| `"admin"` | The caller's effective level on this project (for agents: the owner's level). Public projects return at least `"editor"`; `"admin"` only for explicit admin members |
+
+A project the caller cannot see returns the same `Project not found` error as a nonexistent UUID.
 
 ### chorus_get_ideas
 
@@ -553,6 +589,8 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 |-----------|------|----------|-------------|
 | query | string | Yes | Name or keyword to search |
 | limit | number | No | Max results to return (default: 10) |
+| entityType | `"idea"` \| `"task"` \| `"proposal"` \| `"document"` | No | Entity kind for project-scoped candidates; supply with entityUuid |
+| entityUuid | string | No | Entity UUID for project-scoped candidates; supply with entityType |
 
 **Output**:
 ```json
@@ -565,6 +603,9 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 **Permission scoping**:
 - User caller: all company users + own agents
 - Agent caller: all company users + same-owner agents
+- When both `entityType` and `entityUuid` are supplied, the caller must have Viewer access to the entity's actual project. Hidden, missing, and other-company entities return the same not-found error before searching.
+- Entity context also limits candidates to users who can view the project and agents whose owner can view it. Private projects return member users and agents with a member owner, while preserving the existing agent owner scope.
+- Omitting either context parameter keeps the company search behavior above.
 
 ---
 
@@ -1428,7 +1469,7 @@ logical agent without emitting a duplicate `assigned` Activity.
 
 ### chorus_move_idea
 
-**Description**: Move an Idea to a different Project within the same company. Cascade-migrates the Idea itself **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind so no cross-project lineage edge remains), all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Requires `idea:write` permission only — no project-level checks.
+**Description**: Move an Idea to a different Project within the same company. Cascade-migrates the Idea itself **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind so no cross-project lineage edge remains), all linked Proposals in the source project (any status; a proposal in another project that cites a moved Idea stays in its own project), their materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Requires `idea:write` plus Editor access on both the source and the target project (a hidden project reads as not found).
 
 **Required Permission**: `idea:write`
 
@@ -1663,8 +1704,12 @@ Tools gated by one of the `*:admin` permissions or `project:write`. Available to
 |-----------|------|----------|-------------|
 | name | string | Yes | Project name |
 | description | string | No | Project description |
+| groupUuid | string | No | Project group to assign the project to |
+| visibility | `"public"` \| `"private"` | No | Project visibility (default `"public"`). Private projects are visible only to members |
 
-**Output**: Created Project JSON
+The agent's **owner** is recorded as the project creator and becomes its `admin` member (for public and private projects). An agent without an owner cannot create a private project (returns an error).
+
+**Output**: `{ uuid, name, groupUuid }`
 
 ### chorus_admin_approve_proposal
 

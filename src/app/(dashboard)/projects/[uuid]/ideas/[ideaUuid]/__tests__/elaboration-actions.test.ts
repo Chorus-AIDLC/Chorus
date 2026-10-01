@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Project-access gate: allow by default (behavioural coverage lives in
+// src/app/(dashboard)/projects/__tests__/action-project-access.test.ts).
+vi.mock("@/lib/project-access-action", () => ({
+  denyUnlessProjectAccess: vi.fn(async () => null),
+  denyUnlessEntityAccess: vi.fn(async () => null),
+  denyUnlessProjectOperation: vi.fn(async () => null),
+}));
 import type { UserAuthContext } from "@/types/auth";
 
 const mockGetServerAuthContext = vi.hoisted(() => vi.fn());

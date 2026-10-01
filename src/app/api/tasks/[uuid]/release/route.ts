@@ -8,6 +8,7 @@ import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser, isAssignee, checkAgentPermission } from "@/lib/auth";
 import { getTaskByUuid, releaseTask } from "@/services/task.service";
 import { NotClaimedError } from "@/lib/errors";
+import { requireEntityAccess } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -22,6 +23,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "task", uuid, "editor");
 
     const task = await getTaskByUuid(auth.companyUuid, uuid);
     if (!task) {

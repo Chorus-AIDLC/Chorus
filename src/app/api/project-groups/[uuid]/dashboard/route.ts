@@ -16,7 +16,7 @@ export const GET = withErrorHandler(
     if (denied) return denied;
 
     const { uuid } = await context.params;
-    const dashboard = await getGroupDashboard(auth.companyUuid, uuid);
+    const dashboard = await getGroupDashboard(auth.companyUuid, uuid, auth);
     if (!dashboard) return errors.notFound("Project group");
 
     return success(dashboard);

@@ -3,6 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
+import { resolveEntityProjectUuid } from "@/services/project-access.service";
 import {
   getActorName,
   validateTargetExists,
@@ -239,7 +240,7 @@ export async function createComment({
   const authorName = await getActorName(comment.authorType, comment.authorUuid);
 
   // Emit SSE event for real-time comment updates (fire-and-forget)
-  resolveProjectUuid(targetType, targetUuid).then((projectUuid) => {
+  resolveProjectUuid(targetType, targetUuid, companyUuid).then((projectUuid) => {
     if (projectUuid) {
       eventBus.emitChange({
         companyUuid,
@@ -433,33 +434,15 @@ export async function resolveAgentOwners(
   });
 }
 
-// Resolve projectUuid from a comment target entity
+// Resolve projectUuid from a comment target entity (company-scoped).
+// Delegates to the shared project-access resolver.
 export async function resolveProjectUuid(
   targetType: string,
   targetUuid: string,
-  companyUuid?: string
+  companyUuid: string
 ): Promise<string | null> {
-  const companyFilter = companyUuid ? { companyUuid } : {};
-  switch (targetType) {
-    case "task": {
-      const task = await prisma.task.findFirst({ where: { uuid: targetUuid, ...companyFilter }, select: { projectUuid: true } });
-      return task?.projectUuid ?? null;
-    }
-    case "idea": {
-      const idea = await prisma.idea.findFirst({ where: { uuid: targetUuid, ...companyFilter }, select: { projectUuid: true } });
-      return idea?.projectUuid ?? null;
-    }
-    case "proposal": {
-      const proposal = await prisma.proposal.findFirst({ where: { uuid: targetUuid, ...companyFilter }, select: { projectUuid: true } });
-      return proposal?.projectUuid ?? null;
-    }
-    case "document": {
-      const doc = await prisma.document.findFirst({ where: { uuid: targetUuid, ...companyFilter }, select: { projectUuid: true } });
-      return doc?.projectUuid ?? null;
-    }
-    default:
-      return null;
-  }
+  if (!["task", "idea", "proposal", "document"].includes(targetType)) return null;
+  return resolveEntityProjectUuid(companyUuid, targetType, targetUuid);
 }
 
 // Resolve entity title from a target type and UUID
@@ -502,7 +485,7 @@ async function processCommentMentions(
   const mentions = mentionService.parseMentions(content);
   if (mentions.length === 0) return;
 
-  const projectUuid = await resolveProjectUuid(targetType, targetUuid);
+  const projectUuid = await resolveProjectUuid(targetType, targetUuid, companyUuid);
   if (!projectUuid) return;
 
   const entityTitle = await resolveEntityTitle(targetType, targetUuid);

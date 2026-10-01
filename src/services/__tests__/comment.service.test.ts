@@ -1004,60 +1004,27 @@ describe("batchCommentCounts", () => {
 
 // ===== resolveProjectUuid =====
 describe("resolveProjectUuid", () => {
-  it("should resolve projectUuid for task", async () => {
-    const projectUuid = "project-123";
-    mockPrisma.task.findFirst.mockResolvedValue({ projectUuid });
+  const companyUuid = "company-abc";
 
-    const result = await resolveProjectUuid("task", "task-123");
+  it.each([
+    ["task", "project-123"],
+    ["idea", "project-456"],
+    ["proposal", "project-789"],
+    ["document", "project-abc"],
+  ] as const)("should resolve projectUuid for %s (company-scoped)", async (targetType, projectUuid) => {
+    mockPrisma[targetType].findFirst.mockResolvedValue({ projectUuid } as never);
 
-    expect(result).toBe(projectUuid);
-    expect(mockPrisma.task.findFirst).toHaveBeenCalledWith({
-      where: { uuid: "task-123" },
-      select: { projectUuid: true },
-    });
-  });
-
-  it("should resolve projectUuid for idea", async () => {
-    const projectUuid = "project-456";
-    mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid });
-
-    const result = await resolveProjectUuid("idea", "idea-123");
+    const result = await resolveProjectUuid(targetType, `${targetType}-123`, companyUuid);
 
     expect(result).toBe(projectUuid);
-    expect(mockPrisma.idea.findFirst).toHaveBeenCalledWith({
-      where: { uuid: "idea-123" },
-      select: { projectUuid: true },
-    });
-  });
-
-  it("should resolve projectUuid for proposal", async () => {
-    const projectUuid = "project-789";
-    mockPrisma.proposal.findFirst.mockResolvedValue({ projectUuid });
-
-    const result = await resolveProjectUuid("proposal", "proposal-123");
-
-    expect(result).toBe(projectUuid);
-    expect(mockPrisma.proposal.findFirst).toHaveBeenCalledWith({
-      where: { uuid: "proposal-123" },
-      select: { projectUuid: true },
-    });
-  });
-
-  it("should resolve projectUuid for document", async () => {
-    const projectUuid = "project-abc";
-    mockPrisma.document.findFirst.mockResolvedValue({ projectUuid });
-
-    const result = await resolveProjectUuid("document", "doc-123");
-
-    expect(result).toBe(projectUuid);
-    expect(mockPrisma.document.findFirst).toHaveBeenCalledWith({
-      where: { uuid: "doc-123" },
+    expect(mockPrisma[targetType].findFirst).toHaveBeenCalledWith({
+      where: { uuid: `${targetType}-123`, companyUuid },
       select: { projectUuid: true },
     });
   });
 
   it("should return null for unknown target type", async () => {
-    const result = await resolveProjectUuid("unknown", "unknown-123");
+    const result = await resolveProjectUuid("unknown", "unknown-123", companyUuid);
 
     expect(result).toBeNull();
   });
@@ -1065,35 +1032,9 @@ describe("resolveProjectUuid", () => {
   it("should return null when entity not found", async () => {
     mockPrisma.task.findFirst.mockResolvedValue(null);
 
-    const result = await resolveProjectUuid("task", "nonexistent");
+    const result = await resolveProjectUuid("task", "nonexistent", companyUuid);
 
     expect(result).toBeNull();
-  });
-
-  it("should pass companyUuid filter when provided", async () => {
-    const projectUuid = "project-scoped";
-    mockPrisma.task.findFirst.mockResolvedValue({ projectUuid });
-
-    const result = await resolveProjectUuid("task", "task-123", "company-abc");
-
-    expect(result).toBe(projectUuid);
-    expect(mockPrisma.task.findFirst).toHaveBeenCalledWith({
-      where: { uuid: "task-123", companyUuid: "company-abc" },
-      select: { projectUuid: true },
-    });
-  });
-
-  it("should not include companyUuid filter when not provided", async () => {
-    const projectUuid = "project-unscoped";
-    mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid });
-
-    const result = await resolveProjectUuid("idea", "idea-123");
-
-    expect(result).toBe(projectUuid);
-    expect(mockPrisma.idea.findFirst).toHaveBeenCalledWith({
-      where: { uuid: "idea-123" },
-      select: { projectUuid: true },
-    });
   });
 });
 

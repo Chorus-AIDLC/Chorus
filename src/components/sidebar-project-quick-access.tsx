@@ -29,6 +29,7 @@ import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { Pin, MoreHorizontal, ChevronDown, ChevronRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ProjectLockIndicator } from "@/components/project-lock-indicator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -110,8 +111,11 @@ function QuickAccessRow({
           {initials}
         </span>
         <span className="flex min-w-0 flex-col">
-          <span className={`truncate text-foreground ${nameSize}`}>
-            {project.name}
+          <span className="flex min-w-0 items-center gap-1">
+            <span className={`truncate text-foreground ${nameSize}`}>
+              {project.name}
+            </span>
+            <ProjectLockIndicator visibility={project.visibility} />
           </span>
           {project.groupName && (
             <span className="truncate text-[11px] text-muted-foreground">

@@ -97,6 +97,7 @@ import {
   syncLatestComments,
   type CommentPageResult,
 } from "@/components/unified-comments";
+import { ProjectAccessProvider } from "@/contexts/project-access-context";
 
 // ===== Helpers =====
 function makeComment(
@@ -583,5 +584,34 @@ describe("UnifiedComments comment actions", () => {
     expect(screen.getByRole("alertdialog")).toBeTruthy();
     expect(screen.getByText("c1")).toBeTruthy();
     expect(onCountChange).toHaveBeenLastCalledWith(4);
+  });
+});
+
+// ===== Viewer (read-only) mode via ProjectAccessProvider =====
+describe("UnifiedComments — project access level", () => {
+  it("editor (default, no provider) sees the composer and comment actions", async () => {
+    mockInitialComments([c3]);
+    render(<UnifiedComments targetType="idea" targetUuid="idea-1" currentUserUuid="user-1" />);
+    await waitFor(() => expect(screen.getByText("c3")).toBeTruthy());
+
+    expect(screen.getByLabelText("comment editor")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "comments.actionsLabel:Dev" })).toBeTruthy();
+    expect(screen.queryByTestId("comments-read-only")).toBeNull();
+  });
+
+  it("viewer gets no composer, no actions menu, and a read-only hint", async () => {
+    mockInitialComments([c3]);
+    render(
+      <ProjectAccessProvider accessLevel="viewer">
+        <UnifiedComments targetType="idea" targetUuid="idea-1" currentUserUuid="user-1" />
+      </ProjectAccessProvider>,
+    );
+    await waitFor(() => expect(screen.getByText("c3")).toBeTruthy());
+
+    expect(screen.queryByLabelText("comment editor")).toBeNull();
+    expect(screen.queryByRole("button", { name: "comments.actionsLabel:Dev" })).toBeNull();
+    expect(screen.getByTestId("comments-read-only").textContent).toBe(
+      "projectAccess.commentsReadOnly",
+    );
   });
 });

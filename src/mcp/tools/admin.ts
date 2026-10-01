@@ -31,14 +31,21 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         name: z.string().describe("Project name"),
         description: z.string().optional().describe("Project description"),
         groupUuid: z.string().optional().describe("Optional project group UUID to assign this project to. Use chorus_get_project_groups to list available groups."),
+        visibility: z.enum(["public", "private"]).optional().describe("Project visibility (default: public). Private projects are visible only to members; your owner becomes the project admin."),
       }),
     },
-    async ({ name, description, groupUuid }) => {
+    async ({ name, description, groupUuid, visibility }) => {
+      if (visibility === "private" && !auth.ownerUuid) {
+        return { content: [{ type: "text", text: "An agent without an owner cannot create a private project" }], isError: true };
+      }
       const project = await projectService.createProject({
         companyUuid: auth.companyUuid,
         name,
         description: description || null,
         groupUuid: groupUuid || null,
+        visibility: visibility ?? "public",
+        createdByUuid: auth.ownerUuid ?? null,
+        actor: { type: "agent", uuid: auth.actorUuid },
       });
 
       return {

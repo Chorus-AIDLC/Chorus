@@ -13,6 +13,7 @@ import { formatDateTime } from "@/lib/format-date";
 import type { IdeaResponse } from "@/services/idea.service";
 import { AssignIdeaModal } from "@/app/(dashboard)/projects/[uuid]/ideas/assign-idea-modal";
 import { AssigneeSection } from "./assignee-section";
+import { useCanEditProject } from "@/contexts/project-access-context";
 
 interface BasicViewProps {
   idea: IdeaResponse;
@@ -25,6 +26,7 @@ export function BasicView({ idea, projectUuid, currentUserUuid, onRefresh }: Bas
   const t = useTranslations("ideaTracker");
   const tCommon = useTranslations("common");
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const canEdit = useCanEditProject();
 
   return (
     <motion.div variants={fadeIn} initial="initial" animate="animate">
@@ -70,17 +72,21 @@ export function BasicView({ idea, projectUuid, currentUserUuid, onRefresh }: Bas
         </div>
       </div>
 
-      {/* Assign / Reassign Action */}
-      <Separator className="my-5 bg-secondary" />
-      <div>
-        <Button
-          className="bg-primary hover:bg-[#B56A42] text-white w-full"
-          onClick={() => setShowAssignModal(true)}
-        >
-          <UserPlus className="mr-2 h-4 w-4" />
-          {idea.assignee ? t("actions.reassign") : t("actions.assign")}
-        </Button>
-      </div>
+      {/* Assign / Reassign Action (hidden for read-only Viewers) */}
+      {canEdit && (
+        <>
+          <Separator className="my-5 bg-secondary" />
+          <div>
+            <Button
+              className="bg-primary hover:bg-[#B56A42] text-white w-full"
+              onClick={() => setShowAssignModal(true)}
+            >
+              <UserPlus className="mr-2 h-4 w-4" />
+              {idea.assignee ? t("actions.reassign") : t("actions.assign")}
+            </Button>
+          </div>
+        </>
+      )}
 
       {showAssignModal && (
         <AssignIdeaModal

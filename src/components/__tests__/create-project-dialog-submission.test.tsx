@@ -190,8 +190,26 @@ describe("CreateProjectDialog submission exclusion", () => {
         name: "New project",
         description: "Description",
         groupUuid: "group-1",
+        visibility: "public",
         agentCwds: [{ agentUuid: "agent-1", validationRequestUuid: "validation-1" }],
       }),
+    });
+  });
+
+  it("defaults visibility to public and posts the chosen private visibility", async () => {
+    const { button } = setup();
+    const publicOption = screen.getByRole("radio", { name: /projectAccess\.visibility\.public/ });
+    const privateOption = screen.getByRole("radio", { name: /projectAccess\.visibility\.private/ });
+    expect(publicOption).toBeChecked();
+    expect(privateOption).not.toBeChecked();
+    expect(screen.getByText("projectAccess.visibility.privateHint")).toBeInTheDocument();
+
+    fireEvent.click(privateOption);
+    expect(privateOption).toBeChecked();
+    await act(async () => fireEvent.click(button));
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toMatchObject({
+      name: "New project",
+      visibility: "private",
     });
   });
 
@@ -690,6 +708,7 @@ describe("CreateProjectDialog dismissal and lifetime", () => {
     await act(async () => fireEvent.keyDown(title(), { key: "Enter" }));
     expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toEqual({
       name: "Same name",
+      visibility: "public",
       agentCwds: [{ agentUuid: "agent-1", validationRequestUuid: "validation-1" }],
     });
     await act(async () => vi.advanceTimersByTime(600));

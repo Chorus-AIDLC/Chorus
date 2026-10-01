@@ -51,11 +51,15 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
   agentError?: { agentUuid: string; message: string } | null;
   initialDrafts?: Record<string, ProjectAgentCwdDraft>;
   onDraftsChange?: (drafts: Record<string, ProjectAgentCwdDraft>) => void;
+  // Read-only: hide Configure / Replace / Clear (e.g. a non-admin on a private
+  // project, or while the caller's access is unknown). The list stays visible.
+  disabled?: boolean;
 }>(function ProjectAgentCwdSettings({
   projectUuid,
   agentError,
   initialDrafts,
   onDraftsChange,
+  disabled = false,
 }, ref) {
   const t = useTranslations();
   const [items, setItems] = useState<AgentCwdItem[]>([]);
@@ -232,6 +236,7 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
                 )}
                 </div>
               </div>
+              {!disabled && (
               <div className="flex shrink-0 gap-1">
                 <Button
                   type="button"
@@ -263,8 +268,9 @@ export const ProjectAgentCwdSettings = forwardRef<ProjectAgentCwdSettingsHandle,
                   </Button>
                 )}
               </div>
+              )}
             </div>
-            {editingAgent === item.agent.uuid && (
+            {!disabled && editingAgent === item.agent.uuid && (
               <div className="mt-4 border-t border-border pt-4">
                 <DirectoryBrowser
                   agentUuid={item.agent.uuid}

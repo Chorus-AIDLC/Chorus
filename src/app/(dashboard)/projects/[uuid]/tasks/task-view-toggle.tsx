@@ -13,6 +13,7 @@ import { ProposalFilter } from "@/components/proposal-filter";
 import { KanbanBoard } from "./kanban-board";
 import { DagView } from "./dag-view";
 import { TaskDetailPanel } from "./task-detail-panel";
+import { useCanEditProject } from "@/contexts/project-access-context";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { isAgentAssignee } from "@/lib/assignee-identity";
 import { motion } from "framer-motion";
@@ -82,6 +83,7 @@ const priorityColors: Record<string, string> = {
 
 export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, initialSelectedTaskUuid }: TaskViewToggleProps) {
   const t = useTranslations();
+  const canEdit = useCanEditProject();
   const isMobile = useIsMobile();
   const searchParams = useSearchParams();
   const [view, setView] = useState<"kanban" | "dag" | "list">("kanban");
@@ -184,16 +186,18 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
             {t("tasks.dagView")}
           </Button>
         </div>
-        <Button
-          className="bg-primary hover:bg-[#B56A42] text-white"
-          onClick={() => {
-            closePanel();
-            setShowCreatePanel(true);
-          }}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          {t("tasks.newTask")}
-        </Button>
+        {canEdit && (
+          <Button
+            className="bg-primary hover:bg-[#B56A42] text-white"
+            onClick={() => {
+              closePanel();
+              setShowCreatePanel(true);
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            {t("tasks.newTask")}
+          </Button>
+        )}
       </div>
 
       {/* View Content */}

@@ -1892,5 +1892,77 @@
     "agentLabel": "エージェント",
     "noAgents": "利用可能なエージェントがありません。",
     "requestButton": "リサーチを依頼"
+  },
+  "projectAccess": {
+    "elaborationReadOnly": "閲覧のみの権限のため、これらの質問には回答できません。",
+    "tabs": {
+      "general": "一般",
+      "access": "アクセス"
+    },
+    "loading": "アクセス設定を読み込み中...",
+    "loadFailed": "アクセス設定を読み込めませんでした。",
+    "visibility": {
+      "title": "公開範囲",
+      "description": "社内でこのプロジェクトを閲覧できる人を選択します。",
+      "public": "公開",
+      "publicHint": "社内の全員がこのプロジェクトを閲覧・編集できます。",
+      "private": "非公開",
+      "privateHint": "一覧に登録されたメンバーとそのエージェントのみがこのプロジェクトにアクセスできます。"
+    },
+    "confirm": {
+      "toPrivateTitle": "このプロジェクトを非公開にしますか？",
+      "toPrivateDescription": "このプロジェクトに登録されたメンバー（および所有するエージェント）のみがアクセス権を保持します。社内のその他の人は直ちにアクセスできなくなります。",
+      "toPublicTitle": "このプロジェクトを公開しますか？",
+      "toPublicDescription": "社内の全員（およびそのエージェント）が、このプロジェクトとそのすべてのアイデア、ドキュメント、提案、タスクにアクセスできるようになります。",
+      "confirm": "公開範囲を変更"
+    },
+    "visibilityUpdated": "プロジェクトの公開範囲を更新しました",
+    "members": {
+      "title": "メンバー",
+      "description": "プロジェクトのメンバーとそのロールです。",
+      "name": "メンバー",
+      "role": "ロール",
+      "actions": "操作",
+      "empty": "まだメンバーがいません。",
+      "loading": "メンバーを読み込み中...",
+      "loadFailed": "メンバーを読み込めませんでした。",
+      "remove": "{name} を削除",
+      "roleFor": "{name} のロール",
+      "unnamed": "名前のないユーザー"
+    },
+    "roles": {
+      "viewer": "閲覧者",
+      "editor": "編集者",
+      "admin": "管理者"
+    },
+    "add": {
+      "title": "メンバーを追加",
+      "selectUser": "ユーザーを選択",
+      "searchPlaceholder": "名前またはメールで検索...",
+      "typeToSearch": "入力して社内ユーザーを検索します。",
+      "searching": "検索中...",
+      "noResults": "一致するユーザーがいません。",
+      "role": "新しいメンバーのロール",
+      "add": "追加",
+      "adding": "追加中..."
+    },
+    "memberAdded": "メンバーを追加しました",
+    "memberRemoved": "メンバーを削除しました",
+    "roleUpdated": "メンバーのロールを更新しました",
+    "readOnlyHint": "公開範囲の変更やメンバー管理はプロジェクト管理者のみが行えます。",
+    "settingsLockedHint": "このプロジェクトは非公開です。設定を編集できるのはプロジェクト管理者のみです。",
+    "deleteLockedHint": "非公開プロジェクトを削除できるのはプロジェクト管理者のみです。",
+    "errors": {
+      "lastAdmin": "プロジェクトには少なくとも 1 人の管理者が必要です。",
+      "alreadyMember": "このユーザーはすでにプロジェクトのメンバーです。",
+      "notInCompany": "このユーザーは社内に存在しません。",
+      "forbidden": "このプロジェクトのアクセスを管理する権限がありません。",
+      "invalid": "リクエストが無効です。もう一度お試しください。",
+      "generic": "問題が発生しました。もう一度お試しください。"
+    },
+    "privateBadge": "非公開プロジェクト",
+    "privateTooltip": "非公開 — プロジェクトメンバーのみがこのプロジェクトを閲覧できます",
+    "viewerBanner": "このプロジェクトは閲覧のみ可能です。変更するにはプロジェクト管理者に編集者権限を依頼してください。",
+    "commentsReadOnly": "閲覧者はコメントを読めますが、投稿はできません。"
   }
 }

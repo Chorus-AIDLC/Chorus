@@ -196,8 +196,9 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         }
 
         // Check if ideas are already used by other proposals (informational only, not blocking)
+        // Caller-scoped: proposals in projects the caller cannot see are excluded.
         const availabilityCheck = await proposalService.checkIdeasAvailability(
-          auth.companyUuid,
+          auth,
           inputUuids
         );
         reusedWarning = !availabilityCheck.available
@@ -1200,7 +1201,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:write",
     "chorus_move_idea",
     {
-      description: "Move an Idea to another project, cascading its full lineage subtree (all descendant Ideas) plus every moved Idea's Proposals/Documents/Tasks/Activities. The moved root detaches from any parent left behind. Returns the updated Idea + `moved: { ideas, proposals, documents, tasks, activities }` counts.",
+      description: "Move an Idea to another project, cascading its full lineage subtree (all descendant Ideas) plus every moved Idea's Proposals in the source project (with their Documents/Tasks/Activities); proposals in other projects that cite a moved Idea stay put. The moved root detaches from any parent left behind. Returns the updated Idea + `moved: { ideas, proposals, documents, tasks, activities }` counts.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
         targetProjectUuid: z.string().describe("Target Project UUID"),
