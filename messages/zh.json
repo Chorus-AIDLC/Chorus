@@ -1212,7 +1212,7 @@
         "step1Title": "第 1 步：设置环境变量",
         "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc，Kiro CLI 会在启动时读取这两个变量。",
         "step2Title": "第 2 步：运行 chorus agents add",
-        "step2Tip": "chorus agents add 会把 Chorus 的 skills、agents、steering 以及 chorus MCP 服务器全局安装到 ~/.kiro，使 Chorus 在任意目录下均可用。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。若想安装到其他目录，运行前先设置 KIRO_DIR。 上面第一条命令会全局安装 Chorus CLI（锁定 0.17.0 版本）。"
+        "step2Tip": "chorus agents add 会把 Chorus 的 skills、agents、steering 以及 chorus MCP 服务器全局安装到 ~/.kiro，使 Chorus 在任意目录下均可用。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。若想安装到其他目录，运行前先设置 KIRO_DIR。 上面第一条命令会全局安装最新版本的 Chorus CLI。"
       },
       "pi": {
         "step1Title": "第 1 步：设置环境变量",
@@ -1226,7 +1226,7 @@
         "step2Title": "第 2 步：添加 Chorus bundle",
         "step2Tip": "将 {name} 替换为要使用的 dsh profile。必须带 -w，因为 dsh 的 profile 是一个 pnpm workspace 根。profile 包状态由 dsh 管理，并由 dsh 满足 bundle 的 peer 插件。",
         "step3Title": "第 3 步：写入凭证",
-        "step3Tip": "chorus agents add 会校验你的 key，并把 CHORUS_URL 和 CHORUS_API_KEY 写入 ~/.chorus/daemon.json（权限 0600），如有需要还会把 Chorus bundle 加入该 profile。用 --dsh-profile {name} 指定与第 2 步一致的 profile；它会从环境变量（第 1 步）读取凭证。 上面第一条命令会全局安装 Chorus CLI（锁定 0.17.0 版本）。",
+        "step3Tip": "chorus agents add 会校验你的 key，并把 CHORUS_URL 和 CHORUS_API_KEY 写入 ~/.chorus/daemon.json（权限 0600），如有需要还会把 Chorus bundle 加入该 profile。用 --dsh-profile {name} 指定与第 2 步一致的 profile；它会从环境变量（第 1 步）读取凭证。 上面第一条命令会全局安装最新版本的 Chorus CLI。",
         "step4Title": "第 4 步：启动并验证",
         "step4Desc": "运行 dsh --profile {name}，然后让它执行 \"check in to chorus\"。"
       },
@@ -1234,7 +1234,7 @@
         "step1Title": "第 1 步：设置环境变量",
         "step1Tip": "提示：将这些添加到 ~/.bashrc 或 ~/.zshrc，插件会在 OpenCode 启动时读取这两个变量。",
         "step2Title": "第 2 步：运行 chorus agents add",
-        "step2Tip": "chorus agents add 会幂等地把 \"opencode-chorus\" 加入 ~/.config/opencode/opencode.json 的 \"plugin\" 数组，不会修改你的 shell rc；OpenCode 首次启动时 Bun 会自动安装该插件。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。 上面第一条命令会全局安装 Chorus CLI（锁定 0.17.0 版本）。",
+        "step2Tip": "chorus agents add 会幂等地把 \"opencode-chorus\" 加入 ~/.config/opencode/opencode.json 的 \"plugin\" 数组，不会修改你的 shell rc；OpenCode 首次启动时 Bun 会自动安装该插件。它会从环境变量（第 1 步）读取 CHORUS_URL 和 CHORUS_API_KEY。 上面第一条命令会全局安装最新版本的 Chorus CLI。",
         "troubleshootingTitle": "故障排除",
         "issueCache": {
           "title": "插件未加载",

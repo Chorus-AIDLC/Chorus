@@ -45,7 +45,7 @@ chorus agents add --agents dsh --dsh-profile <name>
 `~/.chorus/daemon.json` (mode 0600), and adds the `@chorus-aidlc/chorus-dsh`
 bundle to the profile if it is not already present. It reads the values from the
 shell environment above and prompts for anything missing on a TTY. Don't have
-the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus@0.17.0`,
+the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus`,
 then run `chorus agents add --agents dsh --dsh-profile <name>`.
 
 For a `dsh` agent, `chorus agents add` ALSO writes `CHORUS_URL`, `CHORUS_API_KEY`,
