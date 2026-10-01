@@ -15,6 +15,10 @@ import {
   type OrchestratorAttribution,
   type WakerSessionAnchor,
 } from "@/services/orchestrator.service";
+import {
+  filterRecipientsByProjectAccess,
+  ProjectAccessDeniedError,
+} from "@/services/project-access.service";
 
 // ===== Type Definitions =====
 
@@ -326,6 +330,43 @@ function formatNotification(
   };
 }
 
+// ===== Project-access choke point =====
+
+/**
+ * Drop notifications whose recipient cannot see the notification's project (private
+ * project access, Tech Design D4 "Notifications" / "Daemon wakes"). This is the single
+ * choke point every project-scoped notification passes through (listener fan-out,
+ * mentions), and since daemon wakes are born from notifications it also prevents waking
+ * an outsider. Notifications with no `projectUuid` (owner-scoped human instructions) are
+ * left untouched. Input order is preserved; one batched access query per project.
+ */
+export async function filterNotificationsByProjectAccess(
+  notifications: NotificationCreateParams[]
+): Promise<NotificationCreateParams[]> {
+  const groups = new Map<string, NotificationCreateParams[]>();
+  for (const params of notifications) {
+    if (!params.projectUuid) continue;
+    const key = `${params.companyUuid}\u0000${params.projectUuid}`;
+    const group = groups.get(key);
+    if (group) group.push(params);
+    else groups.set(key, [params]);
+  }
+  if (groups.size === 0) return notifications;
+
+  const allowed = new Set<NotificationCreateParams>();
+  for (const group of groups.values()) {
+    const { companyUuid, projectUuid } = group[0];
+    const recipients = group.map((params) => ({
+      type: params.recipientType,
+      uuid: params.recipientUuid,
+      params,
+    }));
+    const kept = await filterRecipientsByProjectAccess(companyUuid, projectUuid, recipients);
+    for (const r of kept) allowed.add(r.params);
+  }
+  return notifications.filter((params) => !params.projectUuid || allowed.has(params));
+}
+
 // ===== Service Methods =====
 
 /**
@@ -343,6 +384,14 @@ function formatNotification(
 export async function createReturningTurn(
   params: NotificationCreateParams
 ): Promise<{ notification: NotificationResponse; turn: TurnView | null }> {
+  // Project-scoped notifications must target someone who can see the project; an
+  // owner-scoped notification (empty projectUuid) is not project-gated.
+  if (params.projectUuid) {
+    const [allowed] = await filterNotificationsByProjectAccess([params]);
+    if (!allowed) {
+      throw new ProjectAccessDeniedError("Notification recipient cannot access this project");
+    }
+  }
   const notification = await prisma.notification.create({
     data: {
       companyUuid: params.companyUuid,
@@ -443,8 +492,12 @@ export async function create(
  * Bulk create notifications (one per recipient) and emit per-recipient events
  */
 export async function createBatch(
-  notifications: NotificationCreateParams[]
+  requested: NotificationCreateParams[]
 ): Promise<NotificationResponse[]> {
+  // Silently drop recipients without access to the notification's project (no row, no
+  // SSE event, no wake turn). Fan-out callers treat a dropped recipient as a no-op.
+  const notifications = await filterNotificationsByProjectAccess(requested);
+  if (notifications.length === 0) return [];
   // Create all notifications
   const created = await Promise.all(
     notifications.map((params) =>

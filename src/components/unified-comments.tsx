@@ -38,6 +38,7 @@ import {
 } from "@/components/mention-renderer";
 import { MentionBadge } from "@/components/agent-presence";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
+import { useCanEditProject } from "@/contexts/project-access-context";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { getAgentColor } from "@/lib/agent-color";
 import { formatDateTime } from "@/lib/format-date";
@@ -265,6 +266,9 @@ export function UnifiedComments({
   compact = false,
 }: UnifiedCommentsProps) {
   const t = useTranslations();
+  // Project Viewers are read-only: no composer, no reply/delete actions.
+  // Defaults to editable outside a ProjectAccessProvider.
+  const canComment = useCanEditProject();
   const [comment, setComment] = useState("");
   // Comments are held NEWEST-FIRST and rendered top-down (no reverse). Scrolling
   // down loads OLDER pages, appended to the end of this array.
@@ -445,7 +449,8 @@ export function UnifiedComments({
   return (
     <PresenceIndicator entityType={targetType} entityUuid={targetUuid} subEntityType="comment">
     <div className="flex flex-col gap-0">
-      {/* Input at top */}
+      {/* Input at top (hidden for read-only Viewers) */}
+      {canComment ? (
       <div className={`flex items-center ${gap} pb-3 border-b border-[#F0EDE8] dark:border-[#26241f]`}>
         <Avatar className={`${compact ? "h-6 w-6" : "h-7 w-7"} shrink-0`}>
           <AvatarFallback className="bg-border text-muted-foreground">
@@ -481,6 +486,14 @@ export function UnifiedComments({
           )}
         </Button>
       </div>
+      ) : (
+        <p
+          data-testid="comments-read-only"
+          className="pb-3 text-xs text-muted-foreground border-b border-[#F0EDE8] dark:border-[#26241f]"
+        >
+          {t("projectAccess.commentsReadOnly")}
+        </p>
+      )}
 
       {/* Comments List */}
       {isLoading ? (
@@ -518,6 +531,7 @@ export function UnifiedComments({
               gap={gap}
               t={t}
               currentUserUuid={currentUserUuid}
+              canComment={canComment}
               onReply={handleReply}
               onDelete={handleDelete}
             />
@@ -731,6 +745,7 @@ function CommentItem({
   gap,
   t,
   currentUserUuid,
+  canComment = true,
   onReply,
   onDelete,
 }: {
@@ -740,6 +755,8 @@ function CommentItem({
   gap: string;
   t: TranslateFn;
   currentUserUuid?: string;
+  /** False for project Viewers — hides the reply/delete actions menu. */
+  canComment?: boolean;
   onReply: (author: ReplyMentionTarget) => void;
   onDelete: (commentUuid: string) => Promise<boolean>;
 }) {
@@ -794,6 +811,7 @@ function CommentItem({
               {formatRelativeTime(c.createdAt, t)}
             </span>
           </div>
+          {canComment && (
           <CommentActions
             author={{
               type: isAgent ? "agent" : "user",
@@ -811,6 +829,7 @@ function CommentItem({
             }
             onDelete={() => onDelete(c.uuid)}
           />
+          )}
         </div>
 
         {/* Delegation line */}

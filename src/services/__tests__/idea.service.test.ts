@@ -69,9 +69,16 @@ vi.mock("@/services/mention.service", () => ({
 vi.mock("@/services/activity.service", () => ({
   createActivity: mockCreateActivity,
 }));
+// Assignee project-access check (add-private-project-access). Default: allowed;
+// the access matrix itself is covered in task-assignment-access.test.ts.
+const mockCanActorAccessProject = vi.hoisted(() => vi.fn().mockResolvedValue(true));
+vi.mock("@/services/project-access.service", () => ({
+  canActorAccessProject: mockCanActorAccessProject,
+}));
 
 import { createIdea, claimIdea, assignIdea, releaseIdea, moveIdea, moveIdeaPreview, deleteIdea, updateIdea, listIdeas, getIdea } from "@/services/idea.service";
 import { AlreadyClaimedError } from "@/lib/errors";
+import { AssigneeAccessError } from "@/services/task.service";
 
 // ===== Test Data =====
 
@@ -110,6 +117,7 @@ function makeIdeaRecord(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockCanActorAccessProject.mockResolvedValue(true);
 });
 
 describe("createIdea", () => {
@@ -168,6 +176,29 @@ describe("createIdea", () => {
 });
 
 describe("claimIdea", () => {
+  it("rejects with a 403 AssigneeAccessError when the assignee lacks project access", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord({ status: "open", assigneeUuid: null }));
+    mockCanActorAccessProject.mockResolvedValue(false);
+
+    const err = await claimIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: ACTOR_UUID,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(AssigneeAccessError);
+    expect(err.message).toBe("Assignee does not have access to this project");
+    expect(err.status).toBe(403);
+    expect(mockCanActorAccessProject).toHaveBeenCalledWith(
+      COMPANY_UUID,
+      { type: "agent", uuid: ACTOR_UUID },
+      PROJECT_UUID,
+      "editor",
+    );
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
+  });
+
   it("should transition open idea to elaborating and set assignee", async () => {
     const existing = makeIdeaRecord({ status: "open", assigneeUuid: null });
     const claimed = makeIdeaRecord({
@@ -367,6 +398,52 @@ describe("claimIdea", () => {
 });
 
 describe("assignIdea", () => {
+  it("rejects with a 403 AssigneeAccessError when the assignee lacks project access", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord({ status: "open", assigneeUuid: null }));
+    mockCanActorAccessProject.mockResolvedValue(false);
+
+    await expect(
+      assignIdea({
+        ideaUuid: IDEA_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "user",
+        assigneeUuid: "outsider",
+        assignedByType: "user",
+        assignedByUuid: "admin-uuid",
+      }),
+    ).rejects.toBeInstanceOf(AssigneeAccessError);
+    expect(mockCanActorAccessProject).toHaveBeenCalledWith(
+      COMPANY_UUID,
+      { type: "user", uuid: "outsider" },
+      PROJECT_UUID,
+      "editor",
+    );
+    expect(mockPrisma.idea.update).not.toHaveBeenCalled();
+  });
+
+  it("checks a pinned instance's access via the agent that owns the instance", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeIdeaRecord({ status: "elaborating", assigneeUuid: "x" }));
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: "inst-1", agentUuid: "agent-of-inst" });
+    mockPrisma.idea.update.mockResolvedValue(
+      makeIdeaRecord({ status: "elaborating", assigneeType: "agent_instance", assigneeUuid: "inst-1" }),
+    );
+
+    await assignIdea({
+      ideaUuid: IDEA_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: "agent-of-inst",
+      instanceUuid: "inst-1",
+    });
+
+    expect(mockCanActorAccessProject).toHaveBeenCalledWith(
+      COMPANY_UUID,
+      { type: "agent", uuid: "agent-of-inst" },
+      PROJECT_UUID,
+      "editor",
+    );
+  });
+
   it("should transition open idea to elaborating and set assignee", async () => {
     const existing = makeIdeaRecord({ status: "open", assigneeUuid: null });
     const assigned = makeIdeaRecord({
@@ -807,6 +884,68 @@ describe("moveIdea", () => {
     mockPrisma.task.updateMany.mockResolvedValue({ count: opts.taskCount ?? tasks.length });
     mockPrisma.activity.updateMany.mockResolvedValue({ count: opts.activityCount ?? 0 });
   }
+
+  it("rejects the move when the current assignee cannot access the target project", async () => {
+    const idea = makeIdeaRecord({ assigneeType: "agent", assigneeUuid: "agent-outsider" });
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Private Target" });
+    mockCanActorAccessProject.mockResolvedValueOnce(false);
+
+    await expect(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user"))
+      .rejects.toThrow("Assignee does not have access to this project");
+    expect(mockCanActorAccessProject).toHaveBeenCalledWith(
+      COMPANY_UUID, { type: "agent", uuid: "agent-outsider" }, TARGET_PROJECT_UUID, "editor",
+    );
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects the move when a descendant idea's assignee cannot access the target", async () => {
+    const idea = makeIdeaRecord({ assigneeType: null, assigneeUuid: null });
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Private Target" });
+    mockPrisma.idea.findMany
+      .mockResolvedValueOnce([{ uuid: "child-1", assigneeType: "user", assigneeUuid: "u-outsider" }]) // BFS frontier
+      .mockResolvedValueOnce([]);                                                                 // BFS next hop
+    mockCanActorAccessProject.mockResolvedValueOnce(false);
+
+    await expect(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user"))
+      .rejects.toThrow("Assignee does not have access to this project");
+    expect(mockCanActorAccessProject).toHaveBeenCalledWith(
+      COMPANY_UUID, { type: "user", uuid: "u-outsider" }, TARGET_PROJECT_UUID, "editor",
+    );
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rolls the move back when a linked task's assignee cannot access the target", async () => {
+    const idea = makeIdeaRecord({ assigneeType: null, assigneeUuid: null });
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Private Target" });
+    setupCascadeMocks({
+      proposals: [{ uuid: PROPOSAL_A }],
+      tasks: [{ uuid: TASK_UUID, assigneeType: "agent", assigneeUuid: "agent-outsider" } as { uuid: string }],
+    });
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma));
+    mockCanActorAccessProject.mockResolvedValueOnce(false);
+
+    await expect(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user"))
+      .rejects.toThrow("Assignee does not have access to this project");
+    expect(mockPrisma.task.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      select: { uuid: true, assigneeType: true, assigneeUuid: true },
+    }));
+    // Thrown inside $transaction → the move is rolled back (no task rows moved).
+    expect(mockPrisma.task.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("skips the assignee check for an unassigned idea", async () => {
+    const idea = makeIdeaRecord({ assigneeType: null, assigneeUuid: null });
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Target" });
+    setupCascadeMocks({});
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma));
+
+    await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user");
+    expect(mockCanActorAccessProject).not.toHaveBeenCalled();
+  });
 
   it("cascades Idea + approved Proposal + Document + Task + Activity in one transaction", async () => {
     const idea = makeIdeaRecord();

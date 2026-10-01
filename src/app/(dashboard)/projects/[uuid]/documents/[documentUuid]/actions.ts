@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getServerAuthContext } from "@/lib/auth-server";
 import { updateDocument, getDocumentByUuid } from "@/services/document.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess } from "@/lib/project-access-action";
 
 export async function updateDocumentAction(
   documentUuid: string,
@@ -14,6 +15,8 @@ export async function updateDocumentAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "document", documentUuid, "editor");
+  if (denied) return denied;
 
   try {
     // Validate document exists and belongs to this company

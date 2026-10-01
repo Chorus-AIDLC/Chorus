@@ -12,12 +12,15 @@ import {
 import { createActivity } from "@/services/activity.service";
 import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess, denyUnlessProjectAccess } from "@/lib/project-access-action";
 
 export async function claimIdeaAction(ideaUuid: string) {
   const auth = await getServerAuthContext();
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) return denied;
 
   try {
     // Validate idea exists and belongs to this company
@@ -52,7 +55,7 @@ export async function claimIdeaAction(ideaUuid: string) {
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "Failed to claim idea");
-    return { success: false, error: "Failed to claim idea" };
+    return { success: false, error: error instanceof Error && error.name === "AssigneeAccessError" ? error.message : "Failed to claim idea" };
   }
 }
 
@@ -73,6 +76,8 @@ export async function claimIdeaToAgentAction(
   if (!auth || auth.type !== "user") {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) return denied;
 
   try {
     const idea = await getIdeaByUuid(auth.companyUuid, ideaUuid);
@@ -132,7 +137,7 @@ export async function claimIdeaToAgentAction(
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "Failed to claim idea to agent");
-    return { success: false, error: "Failed to claim idea" };
+    return { success: false, error: error instanceof Error && error.name === "AssigneeAccessError" ? error.message : "Failed to claim idea" };
   }
 }
 
@@ -156,6 +161,8 @@ export async function reassignIdeaInstanceNoWakeAction(
   if (!auth || auth.type !== "user") {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) return denied;
 
   try {
     const idea = await getIdeaByUuid(auth.companyUuid, ideaUuid);
@@ -186,7 +193,7 @@ export async function reassignIdeaInstanceNoWakeAction(
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "Failed to reassign idea instance (no wake)");
-    return { success: false, error: "Failed to reassign idea" };
+    return { success: false, error: error instanceof Error && error.name === "AssigneeAccessError" ? error.message : "Failed to reassign idea" };
   }
 }
 
@@ -196,6 +203,8 @@ export async function claimIdeaToUserAction(ideaUuid: string, userUuid: string) 
   if (!auth || auth.type !== "user") {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) return denied;
 
   try {
     const idea = await getIdeaByUuid(auth.companyUuid, ideaUuid);
@@ -218,7 +227,7 @@ export async function claimIdeaToUserAction(ideaUuid: string, userUuid: string) 
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "Failed to claim idea to user");
-    return { success: false, error: "Failed to claim idea" };
+    return { success: false, error: error instanceof Error && error.name === "AssigneeAccessError" ? error.message : "Failed to claim idea" };
   }
 }
 
@@ -228,6 +237,8 @@ export async function releaseIdeaAction(ideaUuid: string) {
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) return denied;
 
   try {
     const idea = await getIdeaByUuid(auth.companyUuid, ideaUuid);
@@ -283,6 +294,9 @@ export async function getAgentInstancesAction(
 }> {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
+    return { instances: [], resolvedTarget: null };
+  }
+  if (projectUuid && (await denyUnlessProjectAccess(auth, projectUuid, "viewer"))) {
     return { instances: [], resolvedTarget: null };
   }
 

@@ -9,6 +9,7 @@
 import { prisma } from "@/lib/prisma";
 import type { AuthContext } from "@/types/auth";
 import { buildAssigneeMatch } from "@/lib/uuid-resolver";
+import { accessibleProjectUuids } from "@/services/project-access.service";
 import {
   computeDerivedStatus,
   getIdeasWithDerivedStatus,
@@ -32,7 +33,7 @@ export interface IdeaTrackerProject {
 }
 
 export interface BuildIdeaTrackerOptions {
-  /** Restrict to specific project UUIDs. Empty/undefined = all projects. */
+  /** Restrict to specific project UUIDs. Undefined = all accessible; [] = none. */
   projectUuids?: string[];
   /** Cap total ideas returned across projects. Default: Number.POSITIVE_INFINITY. */
   maxIdeas?: number;
@@ -63,6 +64,15 @@ export interface BuildTaskTrackerOptions {
   projectUuids?: string[];
 }
 
+async function trackerProjectUuids(auth: AuthContext, projectUuids?: string[]) {
+  const accessible = await accessibleProjectUuids(auth);
+  const headerProjects = (auth as AuthContext & { projectUuids?: string[] }).projectUuids;
+  return accessible.filter((uuid) =>
+    (projectUuids === undefined || projectUuids.includes(uuid)) &&
+    (headerProjects === undefined || headerProjects.includes(uuid)),
+  );
+}
+
 // ===== Idea tracker =====
 
 /**
@@ -90,10 +100,9 @@ export async function buildIdeaTracker(
   options: BuildIdeaTrackerOptions = {},
 ): Promise<Record<string, IdeaTrackerProject>> {
   const maxIdeas = options.maxIdeas ?? Number.POSITIVE_INFINITY;
-  const projectFilter =
-    options.projectUuids && options.projectUuids.length > 0
-      ? { projectUuid: { in: options.projectUuids } }
-      : {};
+  const projectFilter = {
+    projectUuid: { in: await trackerProjectUuids(auth, options.projectUuids) },
+  };
 
   // Q1: Ideas assigned to the agent OR to the agent's owner. The assignee match
   // routes through buildAssigneeMatch so an `agent_instance` assignment (whose
@@ -178,6 +187,7 @@ export async function buildIdeaTracker(
     const tasks = await prisma.task.findMany({
       where: {
         companyUuid: auth.companyUuid,
+        projectUuid: { in: projectUuids },
         proposalUuid: { in: approvedProposalUuids },
       },
       select: { proposalUuid: true, status: true },
@@ -353,10 +363,9 @@ export async function buildTaskTracker(
   auth: AuthContext,
   options: BuildTaskTrackerOptions = {},
 ): Promise<Record<string, TaskTrackerProject>> {
-  const projectFilter =
-    options.projectUuids && options.projectUuids.length > 0
-      ? { projectUuid: { in: options.projectUuids } }
-      : {};
+  const projectFilter = {
+    projectUuid: { in: await trackerProjectUuids(auth, options.projectUuids) },
+  };
 
   // Route the assignee match through buildAssigneeMatch so `agent_instance`
   // task assignments resolve to the agent and are not dropped from the tracker.

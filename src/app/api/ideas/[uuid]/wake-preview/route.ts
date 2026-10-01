@@ -18,6 +18,7 @@ import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext } from "@/lib/auth";
 import { previewIdeaWakeTarget } from "@/services/wake-preview.service";
+import { requireEntityAccess } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -35,6 +36,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     }
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "idea", uuid, "viewer");
 
     const preview = await previewIdeaWakeTarget(auth.companyUuid, uuid, auth.actorUuid);
     // null → the idea does not exist in this company (or a foreign-company idea) → 404.

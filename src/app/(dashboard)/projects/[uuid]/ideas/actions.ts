@@ -6,6 +6,7 @@ import { listIdeas, createIdea, updateIdea, deleteIdea } from "@/services/idea.s
 import { checkIdeasAvailability } from "@/services/proposal.service";
 import { batchCommentCounts } from "@/services/comment.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess, denyUnlessProjectAccess } from "@/lib/project-access-action";
 
 interface Attachment {
   type: string;
@@ -27,6 +28,8 @@ export async function createIdeaAction(input: CreateIdeaInput) {
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, input.projectUuid, "editor");
+  if (denied) return denied;
 
   try {
     const idea = await createIdea({
@@ -60,6 +63,8 @@ export async function updateIdeaAction(input: UpdateIdeaInput) {
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", input.ideaUuid, "editor");
+  if (denied) return denied;
 
   try {
     const idea = await updateIdea(
@@ -86,6 +91,8 @@ export async function deleteIdeaAction(ideaUuid: string, projectUuid: string) {
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) return denied;
 
   try {
     await deleteIdea(ideaUuid);
@@ -106,6 +113,8 @@ export async function fetchIdeasAction(projectUuid: string) {
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, projectUuid, "viewer");
+  if (denied) return denied;
 
   try {
     const { ideas: allIdeas } = await listIdeas({
@@ -119,7 +128,7 @@ export async function fetchIdeasAction(projectUuid: string) {
 
     const [availabilityCheck, commentCounts] = await Promise.all([
       allIdeaUuids.length > 0
-        ? checkIdeasAvailability(auth.companyUuid, allIdeaUuids)
+        ? checkIdeasAvailability(auth, allIdeaUuids)
         : Promise.resolve({ usedIdeas: [] as { uuid: string; proposalUuid: string }[] }),
       allIdeaUuids.length > 0
         ? batchCommentCounts(auth.companyUuid, "idea", allIdeaUuids)

@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import * as notificationService from "./notification.service";
 import type { NotificationCreateParams } from "./notification.service";
 import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
+import { filterRecipientsByProjectAccess } from "./project-access.service";
 import logger from "@/lib/logger";
 
 const nlLogger = logger.child({ module: "notification-listener" });
@@ -154,9 +155,10 @@ async function resolveActorName(
   return "Unknown";
 }
 
-async function resolveProjectName(projectUuid: string): Promise<string> {
-  const project = await prisma.project.findUnique({
-    where: { uuid: projectUuid },
+async function resolveProjectName(companyUuid: string, projectUuid: string): Promise<string> {
+  // Company-scoped: never resolve another tenant's project name.
+  const project = await prisma.project.findFirst({
+    where: { uuid: projectUuid, companyUuid },
     select: { name: true },
   });
   return project?.name ?? "Unknown Project";
@@ -587,17 +589,27 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
     const [entityTitle, actorName, projectName] = await Promise.all([
       resolveEntityTitle(event.targetType, event.targetUuid),
       resolveActorName(event.actorType, event.actorUuid),
-      resolveProjectName(event.projectUuid),
+      resolveProjectName(event.companyUuid, event.projectUuid),
     ]);
 
     // Resolve recipients (pass notificationType so switch cases match)
-    const recipients = await resolveRecipients(
+    const resolvedRecipients = await resolveRecipients(
       notificationType,
       event.targetType,
       event.targetUuid,
       event.companyUuid,
       event.actorType,
       event.actorUuid
+    );
+
+    // Private project access (Tech Design D4): drop recipients who cannot see the
+    // event's project — users by membership, agents via their owner. Covers every
+    // notification type including the comment fan-out, and therefore every daemon
+    // wake born from these notifications. Order is preserved.
+    const recipients = await filterRecipientsByProjectAccess(
+      event.companyUuid,
+      event.projectUuid,
+      resolvedRecipients
     );
 
     if (recipients.length === 0) return;

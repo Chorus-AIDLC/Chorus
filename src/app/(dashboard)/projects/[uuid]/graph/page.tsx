@@ -5,9 +5,7 @@
 // presence available when the next task wires the highlight in.
 
 import { Suspense } from "react";
-import { redirect } from "next/navigation";
-import { getServerAuthContext } from "@/lib/auth-server";
-import { projectExists } from "@/services/project.service";
+import { requireProjectPageAccess } from "../access-guard";
 import { ResourceGraph } from "./resource-graph";
 
 interface PageProps {
@@ -15,18 +13,10 @@ interface PageProps {
 }
 
 export default async function GraphPage({ params }: PageProps) {
-  const auth = await getServerAuthContext();
-  if (!auth) {
-    redirect("/login");
-  }
-
   const { uuid: projectUuid } = await params;
 
-  // Validate project exists within the caller's company.
-  const exists = await projectExists(auth.companyUuid, projectUuid);
-  if (!exists) {
-    redirect("/projects");
-  }
+  // Access gate: unauthenticated → /login, no project access → 404
+  const { auth } = await requireProjectPageAccess(projectUuid);
 
   // ResourceGraph reads useSearchParams() (via usePanelUrl) so node clicks
   // can open side panels by syncing the URL. Next 15 requires a Suspense

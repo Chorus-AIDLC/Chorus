@@ -42,6 +42,7 @@ import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { eventBus } from "@/lib/event-bus";
 import * as notificationService from "@/services/notification.service";
+import { canActorAccessProject, resolveEntityProjectUuid } from "@/services/project-access.service";
 import { dispatchControl } from "@/services/daemon-control.service";
 import {
   resolveOrCreateSession,
@@ -285,6 +286,9 @@ async function createInstructionTurn(params: {
   sessionUuid: string;
   sessionId: string;
   directIdeaUuid: string | null;
+  // The idea's project for idea-anchored sessions ("" for ad-hoc) — passed through so
+  // the notification chokepoint applies its project-access recipient filter.
+  projectUuid?: string;
   instructionText: string;
 }): Promise<TurnView> {
   const { auth, agentUuid, sessionUuid, sessionId, directIdeaUuid, instructionText } = params;
@@ -297,9 +301,10 @@ async function createInstructionTurn(params: {
   // the same window can never make us return the wrong turn's uuid.
   const { turn } = await notificationService.createReturningTurn({
     companyUuid: auth.companyUuid,
-    // Owner-scoped instruction: not tied to a project board. The chokepoint does not read
-    // projectUuid/projectName, and the instruction is not surfaced in the Activity stream.
-    projectUuid: "",
+    // Idea-anchored: the idea's project, so the chokepoint's project-access filter applies.
+    // Ad-hoc: "" (owner-scoped, not tied to a project board). The instruction is not
+    // surfaced in the Activity stream.
+    projectUuid: params.projectUuid ?? "",
     projectName: "",
     recipientType: "agent",
     recipientUuid: agentUuid,
@@ -383,6 +388,26 @@ export function deliverTurnPing(params: {
  * Returns `{ turn }`. Throws the typed errors above (mapped by the route). A query/write
  * failure propagates (no silent swallow).
  */
+// Private-project isolation for idea-anchored sessions: the session belongs to its idea's
+// CURRENT project. Both the caller and the session's agent (via its owner) must be able to
+// edit it, else the session is treated as not visible (404 non-disclosure, same as an
+// unowned session). Returns the project uuid ("" for ad-hoc sessions, which are
+// owner-scoped and unaffected) so the notification chokepoint can filter recipients too.
+async function assertIdeaSessionProjectAccess(
+  auth: { type: string; companyUuid: string; actorUuid: string },
+  session: { agentUuid: string; directIdeaUuid: string | null },
+): Promise<string> {
+  if (!session.directIdeaUuid) return "";
+  const ideaProjectUuid = await resolveEntityProjectUuid(auth.companyUuid, "idea", session.directIdeaUuid);
+  if (!ideaProjectUuid) throw new SessionNotVisibleError();
+  const [callerOk, agentOk] = await Promise.all([
+    canActorAccessProject(auth.companyUuid, { type: auth.type, uuid: auth.actorUuid }, ideaProjectUuid, "editor"),
+    canActorAccessProject(auth.companyUuid, { type: "agent", uuid: session.agentUuid }, ideaProjectUuid, "editor"),
+  ]);
+  if (!callerOk || !agentOk) throw new SessionNotVisibleError();
+  return ideaProjectUuid;
+}
+
 export async function sendInstruction(
   auth: { type: string; companyUuid: string; actorUuid: string },
   params: { sessionUuid: string; instructionText: string },
@@ -396,6 +421,9 @@ export async function sendInstruction(
     throw new SessionNotVisibleError();
   }
 
+  // (2b) Private-project isolation for idea-anchored sessions.
+  const projectUuid = await assertIdeaSessionProjectAccess(auth, session);
+
   // (3) Re-check the origin is online (read-only/409 when offline). Reuses 子1's single
   // staleness verdict; never re-routes to another connection.
   await assertContinuable(auth.companyUuid, params.sessionUuid);
@@ -407,6 +435,7 @@ export async function sendInstruction(
     sessionUuid: params.sessionUuid,
     sessionId: session.sessionId,
     directIdeaUuid: session.directIdeaUuid,
+    projectUuid,
     instructionText,
   });
 
@@ -514,7 +543,8 @@ export async function createAdHocSessionWithInstruction(
 
 /**
  * The project addressed by a conversational-idea dispatch is not visible to the caller
- * (does not exist or lives in another company) — a non-disclosure verdict the route maps
+ * (does not exist, lives in another company, or is a private project the caller cannot
+ * edit — Tech Design D4 "Daemon wakes") — a non-disclosure verdict the route maps
  * to 404, mirroring the connection/session non-disclosure errors above.
  */
 export class ProjectNotVisibleError extends Error {
@@ -608,8 +638,9 @@ export interface ConversationalIdeaView {
  *     collapse to ONE `ConnectionNotVisibleError` (route → 404 non-disclosure);
  *     `isConnectionLive` → `ConnectionOfflineError` (route → 409). Same posture as
  *     `createAdHocSessionWithInstruction`.
- *  2. Project visibility (company-scoped; also supplies the template's project name) →
- *     `ProjectNotVisibleError` (route → 404).
+ *  2. Project visibility (company-scoped; also supplies the template's project name) and
+ *     project access (the caller — an agent via its owner — needs at least `editor`
+ *     to create an idea there) → `ProjectNotVisibleError` (route → 404).
  *  3. The connection's durable `agentInstanceUuid` must resolve — the idea's instance
  *     pin must point at a real place → `ConnectionInstanceMissingError` (route → 409).
  *  4. SERVER generates the ideaUuid, composes the instruction around it, and validates
@@ -671,6 +702,17 @@ export async function createConversationalIdeaSession(
     select: { uuid: true, name: true },
   });
   if (!project) {
+    throw new ProjectNotVisibleError();
+  }
+  // Private project access: a project the caller cannot edit is "not visible" here —
+  // same non-disclosure verdict, nothing created, no wake dispatched.
+  const canEdit = await canActorAccessProject(
+    auth.companyUuid,
+    { type: auth.type, uuid: auth.actorUuid },
+    project.uuid,
+    "editor",
+  );
+  if (!canEdit) {
     throw new ProjectNotVisibleError();
   }
 
@@ -949,6 +991,8 @@ export async function repointSessionOriginAndSend(
   if (!session) {
     throw new SessionNotVisibleError();
   }
+  // (2b) Private-project isolation for idea-anchored sessions (before any write).
+  const projectUuid = await assertIdeaSessionProjectAccess(auth, session);
 
   // (3) The CURRENT origin must be OFFLINE — re-point is only for a read-only session. A live
   // origin has no dead-end to route around, so refuse (409) rather than orphan a running run.
@@ -995,6 +1039,7 @@ export async function repointSessionOriginAndSend(
     sessionUuid: params.sessionUuid,
     sessionId: session.sessionId,
     directIdeaUuid: session.directIdeaUuid,
+    projectUuid,
     instructionText,
   });
 

@@ -18,6 +18,7 @@ import { ManageProjectGroupDialog } from "@/components/manage-project-group-dial
 import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { getProjectInitials, getProjectIconColor, projectIconStyle } from "@/lib/project-colors";
 import { formatDateTime } from "@/lib/format-date";
+import { ProjectLockIndicator } from "@/components/project-lock-indicator";
 
 // ── Types ──────────────────────────────────────────────────────
 interface GroupDashboardData {
@@ -37,6 +38,7 @@ interface GroupDashboardData {
   projects: {
     uuid: string;
     name: string;
+    visibility?: string;
     taskCount: number;
     completionRate: number;
   }[];
@@ -273,8 +275,9 @@ export default function ProjectGroupDashboardPage() {
                           {initials}
                         </div>
                         <div>
-                          <p className="text-[13px] font-semibold text-foreground">
-                            {project.name}
+                          <p className="flex items-center gap-1.5 text-[13px] font-semibold text-foreground">
+                            <span>{project.name}</span>
+                            <ProjectLockIndicator visibility={project.visibility} />
                           </p>
                           <p className="text-[11px] text-[#9A9A9A]">
                             {t("groupDashboard.projectStats", {

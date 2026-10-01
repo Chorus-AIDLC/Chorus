@@ -271,4 +271,31 @@ describe("dashboard IdeaDetailPanel — Verify Elaborate menu action", () => {
     await user.click(screen.getByRole("button", { name: "Actions" }));
     expect(screen.getByRole("menuitem", { name: "Verify Elaborate" }).getAttribute("aria-disabled")).toBe("false");
   });
+
+  it("viewer: the make-theme switch is disabled (no toggling)", async () => {
+    const { ProjectAccessProvider } = await import("@/contexts/project-access-context");
+    getIdeaActionMock.mockResolvedValue(ideaResponse({ status: "open" }));
+    render(
+      <ProjectAccessProvider accessLevel="viewer">
+        <IdeaDetailPanel ideaUuid={IDEA_UUID} projectUuid={PROJECT_UUID} currentUserUuid={USER_UUID} onClose={vi.fn()} />
+      </ProjectAccessProvider>,
+    );
+    const toggle = await waitFor(() => {
+      const el = document.getElementById("container-toggle");
+      if (!el) throw new Error("switch not rendered yet");
+      return el;
+    });
+    expect(toggle.hasAttribute("disabled") || toggle.getAttribute("data-disabled") !== null).toBe(true);
+  });
+
+  it("editor: the make-theme switch is enabled", async () => {
+    getIdeaActionMock.mockResolvedValue(ideaResponse({ status: "open" }));
+    renderPanel();
+    const toggle = await waitFor(() => {
+      const el = document.getElementById("container-toggle");
+      if (!el) throw new Error("switch not rendered yet");
+      return el;
+    });
+    expect(toggle.hasAttribute("disabled")).toBe(false);
+  });
 });

@@ -1,10 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
-import { Settings, Loader2 } from "lucide-react";
+import { Settings, Loader2, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,6 +34,16 @@ import {
   ProjectAgentCwdSettings,
   type ProjectAgentCwdSettingsHandle,
 } from "@/components/project-agent-cwd-settings";
+import {
+  ProjectAccessTab,
+  type ProjectAccessLevel,
+  type ProjectVisibility,
+} from "./project-access-tab";
+
+interface ProjectAccessInfo {
+  visibility: ProjectVisibility;
+  accessLevel: ProjectAccessLevel;
+}
 
 interface ProjectSettingsModalProps {
   projectUuid: string;
@@ -55,6 +66,52 @@ export function ProjectSettingsModal({
   const [deleting, setDeleting] = useState(false);
   const cwdSettingsRef = useRef<ProjectAgentCwdSettingsHandle>(null);
   const [cwdError, setCwdError] = useState<{ agentUuid: string; message: string } | null>(null);
+  const [access, setAccess] = useState<ProjectAccessInfo | null>(null);
+  const [accessFailed, setAccessFailed] = useState(false);
+
+  // The caller's effective access level and the project's visibility drive
+  // which settings are editable (private projects: admin only). Re-fetched after
+  // member changes in the Access tab (an admin may have demoted themself).
+  const [accessReload, setAccessReload] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectUuid}`);
+        const body = await res.json();
+        if (cancelled) return;
+        if (res.ok && body?.success) {
+          setAccess({ visibility: body.data.visibility, accessLevel: body.data.accessLevel });
+          setAccessFailed(false);
+        } else {
+          setAccess(null);
+          setAccessFailed(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setAccess(null);
+          setAccessFailed(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, projectUuid, accessReload]);
+
+  // Public projects: every company member manages settings. Private: admins only.
+  const lockedByAccess = access?.visibility === "private" && access.accessLevel !== "admin";
+  // Also disabled while access is still loading, so a non-admin on a private
+  // project never briefly sees enabled controls (the hint shows only once known).
+  // Fail closed: also disabled while access is loading or could not be read
+  // (the hint shows only once access is known; a load error is shown instead).
+  const settingsLocked = lockedByAccess || !access;
+
+  const handleVisibilityChange = (visibility: ProjectVisibility) => {
+    setAccess((prev) => (prev ? { ...prev, visibility } : prev));
+    router.refresh();
+  };
   const handleSave = async () => {
     setSaving(true);
     setCwdError(null);
@@ -115,8 +172,33 @@ export function ProjectSettingsModal({
 
         <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
-        <div className="min-h-0 overflow-y-auto">
+        <Tabs defaultValue="general" className="min-h-0 flex-1 gap-0">
+        <div className="px-5 pt-4 sm:px-7">
+          <TabsList>
+            <TabsTrigger value="general">{t("projectAccess.tabs.general")}</TabsTrigger>
+            <TabsTrigger value="access">{t("projectAccess.tabs.access")}</TabsTrigger>
+          </TabsList>
+        </div>
+        <TabsContent value="general" className="min-h-0 overflow-y-auto">
         <div className="flex flex-col gap-7 p-5 sm:p-7">
+          {lockedByAccess && (
+            <p
+              data-testid="settings-locked-hint"
+              className="flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-[12px] text-muted-foreground"
+            >
+              <Lock className="h-3.5 w-3.5 shrink-0" />
+              {t("projectAccess.settingsLockedHint")}
+            </p>
+          )}
+          {accessFailed && (
+            <p
+              data-testid="settings-access-failed"
+              role="alert"
+              className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12px] text-destructive"
+            >
+              {t("projectAccess.loadFailed")}
+            </p>
+          )}
           {/* Basic Information */}
           <div className="flex flex-col gap-5">
             <h3 className="text-[14px] font-semibold text-foreground">
@@ -130,6 +212,7 @@ export function ProjectSettingsModal({
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                disabled={settingsLocked}
                 className="h-11 rounded-[10px] border-[#E5E2DC] dark:border-[#2a2a2e] text-[14px] text-foreground focus-visible:ring-primary"
               />
             </div>
@@ -141,6 +224,7 @@ export function ProjectSettingsModal({
               <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
+                disabled={settingsLocked}
                 rows={3}
                 className="resize-none rounded-[10px] border-[#E5E2DC] dark:border-[#2a2a2e] text-[14px] text-foreground focus-visible:ring-primary"
               />
@@ -151,6 +235,7 @@ export function ProjectSettingsModal({
           <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
           <ProjectAgentCwdSettings
+            disabled={settingsLocked}
             ref={cwdSettingsRef}
             projectUuid={projectUuid}
             agentError={cwdError}
@@ -158,7 +243,7 @@ export function ProjectSettingsModal({
 
           <Button
             onClick={handleSave}
-            disabled={saving || !name.trim()}
+            disabled={saving || settingsLocked || !name.trim()}
             className="w-fit rounded-[10px] bg-primary px-6 text-[13px] font-semibold text-white hover:bg-[#B56A42]"
           >
             {saving ? (
@@ -188,12 +273,18 @@ export function ProjectSettingsModal({
                   <span className="text-[12px] text-muted-foreground">
                     {t("projectSettings.deleteDescription")}
                   </span>
+                  {lockedByAccess && (
+                    <span className="text-[12px] text-muted-foreground">
+                      {t("projectAccess.deleteLockedHint")}
+                    </span>
+                  )}
                 </div>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button
                       variant="destructive"
                       size="sm"
+                      disabled={settingsLocked}
                       className="ml-4 shrink-0 rounded-lg bg-[#C4574C] px-[18px] text-[12px] font-medium hover:bg-[#B3463B]"
                     >
                       {t("common.delete")}
@@ -235,7 +326,28 @@ export function ProjectSettingsModal({
             </div>
           </div>
         </div>
-        </div>
+        </TabsContent>
+        <TabsContent value="access" className="min-h-0 overflow-y-auto">
+          <div className="p-5 sm:p-7">
+            {access ? (
+              <ProjectAccessTab
+                projectUuid={projectUuid}
+                visibility={access.visibility}
+                accessLevel={access.accessLevel}
+                onVisibilityChange={handleVisibilityChange}
+                onMembersChanged={() => setAccessReload((n) => n + 1)}
+              />
+            ) : accessFailed ? (
+              <p className="text-[12px] text-destructive">{t("projectAccess.loadFailed")}</p>
+            ) : (
+              <p className="flex items-center gap-2 text-[12px] text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {t("projectAccess.loading")}
+              </p>
+            )}
+          </div>
+        </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );

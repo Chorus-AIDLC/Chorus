@@ -487,7 +487,7 @@ describe("getGroupDashboard", () => {
     const project2 = makeProject({ uuid: "proj-2", name: "Project 2" });
 
     mockPrisma.projectGroup.findFirst.mockResolvedValue(group);
-    mockPrisma.project.findMany.mockResolvedValue([project1, project2]);
+    mockPrisma.project.findMany.mockResolvedValue([project1, { ...project2, visibility: "private" }]);
 
     // Task stats
     mockPrisma.task.count
@@ -535,6 +535,8 @@ describe("getGroupDashboard", () => {
     expect(result!.stats.activeProposals).toBe(3);
     expect(result!.projects).toHaveLength(2);
     expect(result!.projects[0].completionRate).toBe(60);
+    // visibility is carried on each project row (drives the lock indicator)
+    expect(result!.projects.map((p) => p.visibility)).toEqual(["public", "private"]);
     expect(result!.recentActivity).toHaveLength(1);
   });
 

@@ -8,6 +8,8 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
+import { accessibleProjectUuids } from "@/services/project-access.service";
+import type { AuthContext } from "@/types/auth";
 import { createDocumentFromProposal } from "./document.service";
 import { createTasksFromProposal } from "./task.service";
 import {
@@ -403,16 +405,21 @@ export async function validateProposal(
   };
 }
 
-// Check if Ideas are already used by other Proposals
+// Check if Ideas are already used by other Proposals.
+// Only proposals in projects the CALLER can see are considered: a proposal in a
+// hidden private project must never surface its uuid or title (private-project
+// isolation), even when it references a visible idea.
 export async function checkIdeasAvailability(
-  companyUuid: string,
+  auth: AuthContext,
   ideaUuids: string[]
 ): Promise<{ available: boolean; usedIdeas: { uuid: string; proposalUuid: string; proposalTitle: string }[] }> {
-  // Find all proposals that use any of the given ideas
+  const visibleProjectUuids = await accessibleProjectUuids(auth);
+  // Find visible proposals that use any of the given ideas
   const proposals = await prisma.proposal.findMany({
     where: {
-      companyUuid,
+      companyUuid: auth.companyUuid,
       inputType: "idea",
+      projectUuid: { in: visibleProjectUuids },
     },
     select: {
       uuid: true,

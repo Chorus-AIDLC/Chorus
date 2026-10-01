@@ -37,6 +37,8 @@ import { clientLogger } from "@/lib/logger-client";
 export interface QuickAccessProjectRef {
   uuid: string;
   name: string;
+  /** "public" | "private"; absent is treated as public. */
+  visibility?: string;
   groupUuid: string | null;
   groupName: string | null;
 }

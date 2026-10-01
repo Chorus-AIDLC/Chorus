@@ -1,10 +1,9 @@
 // src/app/(dashboard)/projects/[uuid]/proposals/new/page.tsx
 // Server Component - Create New Proposal
 
-import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
-import { getServerAuthContext } from "@/lib/auth-server";
-import { projectExists } from "@/services/project.service";
+import { redirect } from "next/navigation";
+import { requireProjectPageAccess } from "../../access-guard";
 import { listIdeas } from "@/services/idea.service";
 import { CreateProposalForm } from "./create-proposal-form";
 
@@ -14,20 +13,14 @@ interface PageProps {
 }
 
 export default async function NewProposalPage({ params, searchParams }: PageProps) {
-  const auth = await getServerAuthContext();
-  if (!auth) {
-    redirect("/login");
-  }
-
   const { uuid: projectUuid } = await params;
   const { ideaUuid } = await searchParams;
   const t = await getTranslations();
 
-  // Validate project exists
-  const exists = await projectExists(auth.companyUuid, projectUuid);
-  if (!exists) {
-    redirect("/projects");
-  }
+  // Access gate: unauthenticated → /login, no project access → 404
+  const { auth, accessLevel } = await requireProjectPageAccess(projectUuid);
+  // Viewers cannot create proposals (the server rejects it too) — send them back.
+  if (accessLevel === "viewer") redirect(`/projects/${projectUuid}/proposals`);
 
   // Get user's claimed Ideas (only assignees can create Proposals)
   const { ideas } = await listIdeas({

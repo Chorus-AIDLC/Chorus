@@ -11,8 +11,25 @@ import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, checkAgentPermission } from "@/lib/auth";
 import * as referenceArtifactService from "@/services/reference-artifact.service";
+import { requireEntityAccess, ProjectNotFoundError, type AccessEntityType } from "@/services/project-access.service";
+import type { AuthContext } from "@/types/auth";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
+
+// Look up the reference (company-scoped) and require `min` on its target's
+// project. Returns a 404 response when the reference is missing OR its target
+// is hidden from the caller (indistinguishable), null when access is granted.
+async function requireReferenceAccess(auth: AuthContext, uuid: string, min: "viewer" | "editor") {
+  const reference = await referenceArtifactService.getReference(auth.companyUuid, uuid);
+  if (!reference) return { denied: errors.notFound("Reference"), reference: null };
+  try {
+    await requireEntityAccess(auth, reference.targetType as AccessEntityType, reference.targetUuid, min);
+  } catch (e) {
+    if (e instanceof ProjectNotFoundError) return { denied: errors.notFound("Reference"), reference: null };
+    throw e;
+  }
+  return { denied: null, reference };
+}
 
 // GET /api/references/[uuid] — reference detail
 export const GET = withErrorHandler<{ uuid: string }>(
@@ -25,14 +42,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
-    const reference = await referenceArtifactService.getReference(
-      auth.companyUuid,
-      uuid
-    );
-
-    if (!reference) {
-      return errors.notFound("Reference");
-    }
+    const { denied: accessDenied, reference } = await requireReferenceAccess(auth, uuid, "viewer");
+    if (accessDenied) return accessDenied;
 
     return success(reference);
   }
@@ -49,6 +60,8 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
+    const { denied: accessDenied } = await requireReferenceAccess(auth, uuid, "editor");
+    if (accessDenied) return accessDenied;
 
     const body = await parseBody<{
       type?: string;
@@ -93,6 +106,8 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
+    const { denied: accessDenied } = await requireReferenceAccess(auth, uuid, "editor");
+    if (accessDenied) return accessDenied;
 
     try {
       await referenceArtifactService.deleteReference(auth.companyUuid, uuid);

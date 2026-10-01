@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
 import { success, paginated, errors } from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
-import { projectExists } from "@/services/project.service";
+import { requireProjectAccess, requireEntityAccess, ProjectNotFoundError } from "@/services/project-access.service";
 import { listIdeas, createIdea } from "@/services/idea.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -28,10 +28,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const url = new URL(request.url);
     const statusFilter = url.searchParams.get("status") || undefined;
 
-    // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
-      return errors.notFound("Project");
-    }
+    // Project access (404 when not visible, 403 below required level)
+    await requireProjectAccess(auth, projectUuid, "viewer");
 
     const { ideas, total } = await listIdeas({
       companyUuid: auth.companyUuid,
@@ -64,10 +62,8 @@ export const POST = withErrorHandler<{ uuid: string }>(
 
     const { uuid: projectUuid } = await context.params;
 
-    // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
-      return errors.notFound("Project");
-    }
+    // Project access (404 when not visible, 403 below required level)
+    await requireProjectAccess(auth, projectUuid, "editor");
 
     const body = await parseBody<{
       title: string;
@@ -80,6 +76,17 @@ export const POST = withErrorHandler<{ uuid: string }>(
     // Validate required fields
     if (!body.title || body.title.trim() === "") {
       return errors.validationError({ title: "Title is required" });
+    }
+
+    // A hidden private parent must be indistinguishable from a missing one
+    // (the service would otherwise answer "must be in the same project").
+    if (body.parentUuid) {
+      try {
+        await requireEntityAccess(auth, "idea", body.parentUuid, "viewer");
+      } catch (error) {
+        if (error instanceof ProjectNotFoundError) return errors.badRequest("Parent idea not found");
+        throw error;
+      }
     }
 
     try {

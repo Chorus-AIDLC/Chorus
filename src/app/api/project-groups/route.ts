@@ -17,7 +17,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const denied = checkAgentPermission(auth, "project:read");
   if (denied) return denied;
 
-  const result = await listProjectGroups(auth.companyUuid);
+  const result = await listProjectGroups(auth.companyUuid, auth);
   return success(result);
 });
 

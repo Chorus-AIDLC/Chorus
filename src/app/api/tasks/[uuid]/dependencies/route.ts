@@ -10,6 +10,7 @@ import {
   addTaskDependency,
   getTaskDependencies,
 } from "@/services/task.service";
+import { requireEntityAccess, ProjectNotFoundError } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -24,6 +25,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "task", uuid, "editor");
 
     // Validate task exists
     const task = await getTaskByUuid(auth.companyUuid, uuid);
@@ -34,6 +36,16 @@ export const POST = withErrorHandler<{ uuid: string }>(
     const body = await parseBody<{ dependsOnUuid: string }>(request);
     if (!body.dependsOnUuid) {
       return errors.validationError({ dependsOnUuid: "dependsOnUuid is required" });
+    }
+    // The dependency target must also be writable by the caller. A hidden target
+    // gets the same 400 as a non-existent one (no existence leak).
+    try {
+      await requireEntityAccess(auth, "task", body.dependsOnUuid, "editor");
+    } catch (e) {
+      if (e instanceof ProjectNotFoundError) {
+        return errors.badRequest("Dependency task not found");
+      }
+      throw e;
     }
 
     try {
@@ -63,6 +75,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "task", uuid, "viewer");
 
     const task = await getTaskByUuid(auth.companyUuid, uuid);
     if (!task) {

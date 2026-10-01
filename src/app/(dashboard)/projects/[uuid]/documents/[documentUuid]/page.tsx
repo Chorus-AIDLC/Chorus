@@ -1,16 +1,14 @@
 // src/app/(dashboard)/projects/[uuid]/documents/[documentUuid]/page.tsx
 // Server Component - UUID obtained from URL
 
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ClipboardList, FileEdit, Palette, BookOpen, FileText, ChevronRight, type LucideIcon } from "lucide-react";
-import { getServerAuthContext } from "@/lib/auth-server";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { getDocument } from "@/services/document.service";
-import { projectExists } from "@/services/project.service";
+import { requireProjectPageAccess, requireEntityInProject } from "../../access-guard";
 import { DocumentActions } from "./document-actions";
 import { DocumentContent } from "./document-content";
 import { DocumentComments } from "./document-comments";
@@ -29,19 +27,14 @@ interface PageProps {
 }
 
 export default async function DocumentDetailPage({ params }: PageProps) {
-  const auth = await getServerAuthContext();
-  if (!auth) {
-    redirect("/login");
-  }
-
   const { uuid: projectUuid, documentUuid } = await params;
   const t = await getTranslations();
 
-  // Validate project exists
-  const exists = await projectExists(auth.companyUuid, projectUuid);
-  if (!exists) {
-    redirect("/projects");
-  }
+  // Access gate: unauthenticated → /login, no project access → 404
+  const { auth, accessLevel } = await requireProjectPageAccess(projectUuid);
+  const canEdit = accessLevel !== "viewer";
+  // The document must belong to this project and be visible to the caller
+  await requireEntityInProject(auth, "document", documentUuid, projectUuid);
 
   // Get Document details
   const document = await getDocument(auth.companyUuid, documentUuid);
@@ -92,7 +85,7 @@ export default async function DocumentDetailPage({ params }: PageProps) {
           documentUuid={documentUuid}
           projectUuid={projectUuid}
           documentTitle={document.title}
-          canDelete={auth.type === "user" || auth.type === "super_admin"}
+          canDelete={canEdit && (auth.type === "user" || auth.type === "super_admin")}
           exportDoc={{
             title: document.title,
             content: document.content ?? "",

@@ -3,6 +3,8 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
+import type { AuthContext } from "@/types/auth";
+import { accessibleProjectUuids, ProjectNotFoundError } from "@/services/project-access.service";
 
 // ===== Type Definitions =====
 
@@ -16,6 +18,8 @@ export interface SearchParams {
   scopeUuid?: string;  // project group UUID or project UUID
   entityTypes?: EntityType[];
   limit?: number;
+  auth?: AuthContext;
+  projectUuids?: string[];
 }
 
 export interface SearchResult {
@@ -600,8 +604,10 @@ export async function search(params: SearchParams): Promise<SearchResponse> {
     scopeUuid,
     entityTypes,
     limit = 20,
+    auth,
   } = params;
 
+  if (auth && auth.companyUuid !== companyUuid) throw new ProjectNotFoundError();
   // Validate scope requirements
   if ((scope === "group" || scope === "project") && !scopeUuid) {
     throw new Error(`scopeUuid is required for scope "${scope}"`);
@@ -609,16 +615,31 @@ export async function search(params: SearchParams): Promise<SearchResponse> {
 
   // Determine which entity types to search
   const allTypes: EntityType[] = ["task", "idea", "proposal", "document", "project", "project_group"];
-  const typesToSearch = entityTypes && entityTypes.length > 0 ? entityTypes : allTypes;
+  const typesToSearch = (entityTypes && entityTypes.length > 0 ? entityTypes : allTypes)
+    .filter((type) => scope !== "project" || type !== "project_group");
 
-  // Resolve project UUIDs based on scope
-  let projectUuids: string[] | null = null;
+  // Visibility, caller filters, header defaults and scope are independent
+  // constraints. An explicit empty list must never widen to company-wide search.
+  const headerProjects = (auth as (AuthContext & { projectUuids?: string[] }) | undefined)?.projectUuids;
+  let projectUuids = (await accessibleProjectUuids(
+    auth ?? { type: "agent", actorUuid: "", companyUuid },
+  )).filter((uuid) =>
+    (params.projectUuids === undefined || params.projectUuids.includes(uuid)) &&
+    (headerProjects === undefined || headerProjects.includes(uuid)),
+  );
   let groupUuid: string | null = null;
 
+  if (projectUuids.length === 0 &&
+      (params.projectUuids !== undefined || headerProjects !== undefined)) {
+    return { results: [], counts: emptyCounts() };
+  }
+
   if (scope === "project" && scopeUuid) {
-    projectUuids = [scopeUuid];
+    projectUuids = projectUuids.filter((uuid) => uuid === scopeUuid);
+    if (projectUuids.length === 0) return { results: [], counts: emptyCounts() };
   } else if (scope === "group" && scopeUuid) {
-    projectUuids = await resolveGroupProjects(companyUuid, scopeUuid);
+    const groupProjects = await resolveGroupProjects(companyUuid, scopeUuid);
+    projectUuids = projectUuids.filter((uuid) => groupProjects.includes(uuid));
     groupUuid = scopeUuid;
   }
 

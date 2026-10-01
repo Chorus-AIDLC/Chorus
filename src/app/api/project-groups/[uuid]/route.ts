@@ -10,6 +10,8 @@ import {
   updateProjectGroup,
   deleteProjectGroup,
 } from "@/services/project-group.service";
+import { requireProjectOperation } from "@/services/project-access.service";
+import { prisma } from "@/lib/prisma";
 
 // GET /api/project-groups/[uuid]
 export const GET = withErrorHandler(
@@ -20,7 +22,7 @@ export const GET = withErrorHandler(
     if (denied) return denied;
 
     const { uuid } = await context.params;
-    const group = await getProjectGroup(auth.companyUuid, uuid);
+    const group = await getProjectGroup(auth.companyUuid, uuid, auth);
     if (!group) return errors.notFound("Project group");
 
     return success(group);
@@ -70,6 +72,19 @@ export const DELETE = withErrorHandler(
 
     const { uuid } = await context.params;
     const shouldDeleteProjects = request.nextUrl.searchParams.get("deleteProjects") === "true";
+
+    // Deleting a group ungroups (or deletes) EVERY project in it, including ones
+    // the caller cannot see. Check manage_project on the full, unfiltered set
+    // before any write: private projects need admin (hidden ones 404), public
+    // projects stay open to every company member. All-or-nothing.
+    const groupProjects = await prisma.project.findMany({
+      where: { companyUuid: auth.companyUuid, groupUuid: uuid },
+      select: { uuid: true },
+    });
+    for (const project of groupProjects) {
+      await requireProjectOperation(auth, project.uuid, "manage_project");
+    }
+
     const deleted = await deleteProjectGroup(auth.companyUuid, uuid, shouldDeleteProjects);
 
     if (!deleted) return errors.notFound("Project group");

@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { isImeComposing } from "@/lib/ime";
 import {
   ProjectAgentCwdSettings,
@@ -32,6 +33,7 @@ interface CreateProjectDialogProps {
   onCreated?: () => void;
 }
 
+type ProjectVisibility = "public" | "private";
 type Phase = "idle" | "validating" | "posting" | "unconfirmed" | "confirmed" | "success";
 interface CreationAttempt {
   controller: AbortController;
@@ -58,6 +60,7 @@ export function CreateProjectDialog({
   const [phase, setPhase] = useState<Phase>("idle");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [visibility, setVisibility] = useState<ProjectVisibility>("public");
   const [error, setError] = useState<string | null>(null);
   const [cwdError, setCwdError] = useState<{ agentUuid: string; message: string } | null>(null);
   const [cwdDrafts, setCwdDrafts] = useState<Record<string, ProjectAgentCwdDraft>>({});
@@ -134,6 +137,7 @@ export function CreateProjectDialog({
       name: title.trim(),
       description: description.trim() || undefined,
       groupUuid: groupUuid || undefined,
+      visibility,
     };
     setError(null);
     setCwdError(null);
@@ -201,6 +205,7 @@ export function CreateProjectDialog({
           }
           setTitle("");
           setDescription("");
+          setVisibility("public");
           setCwdDrafts({});
           release();
           callbacksRef.current.onOpenChange(false);
@@ -317,6 +322,40 @@ export function CreateProjectDialog({
               placeholder={t("projectGroups.projectDescriptionPlaceholder")}
               className="min-h-[80px] rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e]"
             />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label id="create-project-visibility-label" className="text-[13px] font-medium text-foreground">
+              {t("projectAccess.visibility.title")}
+            </Label>
+            <RadioGroup
+              aria-labelledby="create-project-visibility-label"
+              value={visibility}
+              onValueChange={(value) => setVisibility(value as ProjectVisibility)}
+              className="grid gap-2 sm:grid-cols-2"
+            >
+              {(["public", "private"] as const).map((option) => (
+                <Label
+                  key={option}
+                  htmlFor={`create-project-visibility-${option}`}
+                  className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-3 font-normal transition-colors hover:bg-accent has-[[data-state=checked]]:border-primary"
+                >
+                  <RadioGroupItem
+                    id={`create-project-visibility-${option}`}
+                    value={option}
+                    className="mt-0.5 cursor-pointer"
+                  />
+                  <span className="flex flex-col gap-1">
+                    <span className="text-[13px] font-medium text-foreground">
+                      {t(`projectAccess.visibility.${option}`)}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {t(`projectAccess.visibility.${option}Hint`)}
+                    </span>
+                  </span>
+                </Label>
+              ))}
+            </RadioGroup>
           </div>
 
           <div className="border-t border-border pt-5">

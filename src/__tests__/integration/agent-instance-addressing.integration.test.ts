@@ -394,6 +394,28 @@ describe("AgentInstance addressing — pin → inherit → degrade → re-pin li
     expect(await trackerHasIdea(s.agentX, s.ideaUuid)).toBe(true);
   });
 
+  it("an instance-pinned assignment follows the owner's private membership after access is revoked", async () => {
+    const s = seedAgentInstanceScenario();
+    await assignIdea({
+      ideaUuid: s.ideaUuid, companyUuid: s.companyUuid,
+      assigneeType: "agent", assigneeUuid: s.agentX, instanceUuid: s.instanceA,
+    });
+    agentInstanceStore.projects.find(p => p.uuid === s.projectUuid)!.visibility = "private";
+    agentInstanceStore.projectMembers.push({
+      uuid: "viewer-member", companyUuid: s.companyUuid, projectUuid: s.projectUuid,
+      userUuid: s.ownerUuid, role: "viewer",
+    });
+    expect(await trackerHasIdea(s.agentX, s.ideaUuid)).toBe(true);
+
+    agentInstanceStore.projectMembers = [];
+    expect(await trackerHasIdea(s.agentX, s.ideaUuid)).toBe(false);
+    // The assignment itself remains pinned; losing access only hides it.
+    expect(agentInstanceStore.ideas.find(i => i.uuid === s.ideaUuid)?.assigneeUuid).toBe(s.instanceA);
+
+    agentInstanceStore.projects.find(p => p.uuid === s.projectUuid)!.visibility = "public";
+    expect(await trackerHasIdea(s.agentX, s.ideaUuid)).toBe(true);
+  });
+
   it("AC#3: an elaboration_verified wake on the A-pinned idea targets instance A", async () => {
     const s = seedAgentInstanceScenario();
     // claimIdea (not assign) to exercise the claim path's instance pin too.

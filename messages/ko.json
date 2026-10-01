@@ -1892,5 +1892,77 @@
     "agentLabel": "에이전트",
     "noAgents": "사용 가능한 에이전트가 없습니다.",
     "requestButton": "리서치 요청"
+  },
+  "projectAccess": {
+    "elaborationReadOnly": "보기 전용 권한이 있어 이 질문에 답할 수 없습니다.",
+    "tabs": {
+      "general": "일반",
+      "access": "액세스"
+    },
+    "loading": "액세스 설정을 불러오는 중...",
+    "loadFailed": "액세스 설정을 불러올 수 없습니다.",
+    "visibility": {
+      "title": "공개 범위",
+      "description": "회사 내에서 이 프로젝트를 볼 수 있는 사람을 선택하세요.",
+      "public": "공개",
+      "publicHint": "회사의 모든 구성원이 이 프로젝트를 보고 편집할 수 있습니다.",
+      "private": "비공개",
+      "privateHint": "목록에 있는 멤버와 해당 에이전트만 이 프로젝트에 액세스할 수 있습니다."
+    },
+    "confirm": {
+      "toPrivateTitle": "이 프로젝트를 비공개로 전환할까요?",
+      "toPrivateDescription": "이 프로젝트에 등록된 멤버(및 그들이 소유한 에이전트)만 액세스 권한을 유지합니다. 회사의 다른 모든 사람은 즉시 액세스 권한을 잃습니다.",
+      "toPublicTitle": "이 프로젝트를 공개로 전환할까요?",
+      "toPublicDescription": "회사의 모든 구성원(및 그들의 에이전트)이 이 프로젝트와 모든 아이디어, 문서, 제안, 작업에 액세스할 수 있게 됩니다.",
+      "confirm": "공개 범위 변경"
+    },
+    "visibilityUpdated": "프로젝트 공개 범위가 업데이트되었습니다",
+    "members": {
+      "title": "멤버",
+      "description": "프로젝트 멤버와 역할입니다.",
+      "name": "멤버",
+      "role": "역할",
+      "actions": "작업",
+      "empty": "아직 멤버가 없습니다.",
+      "loading": "멤버를 불러오는 중...",
+      "loadFailed": "멤버를 불러올 수 없습니다.",
+      "remove": "{name} 제거",
+      "roleFor": "{name}의 역할",
+      "unnamed": "이름 없는 사용자"
+    },
+    "roles": {
+      "viewer": "뷰어",
+      "editor": "편집자",
+      "admin": "관리자"
+    },
+    "add": {
+      "title": "멤버 추가",
+      "selectUser": "사용자 선택",
+      "searchPlaceholder": "이름 또는 이메일로 검색...",
+      "typeToSearch": "회사 사용자를 검색하려면 입력하세요.",
+      "searching": "검색 중...",
+      "noResults": "일치하는 사용자가 없습니다.",
+      "role": "새 멤버의 역할",
+      "add": "추가",
+      "adding": "추가 중..."
+    },
+    "memberAdded": "멤버가 추가되었습니다",
+    "memberRemoved": "멤버가 제거되었습니다",
+    "roleUpdated": "멤버 역할이 업데이트되었습니다",
+    "readOnlyHint": "프로젝트 관리자만 공개 범위를 변경하거나 멤버를 관리할 수 있습니다.",
+    "settingsLockedHint": "비공개 프로젝트입니다. 프로젝트 관리자만 설정을 편집할 수 있습니다.",
+    "deleteLockedHint": "프로젝트 관리자만 비공개 프로젝트를 삭제할 수 있습니다.",
+    "errors": {
+      "lastAdmin": "프로젝트에는 관리자가 최소 한 명 있어야 합니다.",
+      "alreadyMember": "이 사용자는 이미 프로젝트 멤버입니다.",
+      "notInCompany": "이 사용자는 회사에 속해 있지 않습니다.",
+      "forbidden": "이 프로젝트의 액세스를 관리할 권한이 없습니다.",
+      "invalid": "잘못된 요청입니다. 다시 시도하세요.",
+      "generic": "문제가 발생했습니다. 다시 시도하세요."
+    },
+    "privateBadge": "비공개 프로젝트",
+    "privateTooltip": "비공개 — 프로젝트 멤버만 이 프로젝트를 볼 수 있습니다",
+    "viewerBanner": "이 프로젝트에 대한 보기 전용 권한이 있습니다. 변경하려면 프로젝트 관리자에게 편집자 권한을 요청하세요.",
+    "commentsReadOnly": "뷰어는 댓글을 읽을 수 있지만 작성할 수는 없습니다."
   }
 }

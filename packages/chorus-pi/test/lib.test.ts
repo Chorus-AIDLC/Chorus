@@ -22,6 +22,23 @@ import {
   type ExecSync,
 } from "../lib/lib.js";
 
+// Shapes of the subagent tool-call inputs these tests build. The helpers under
+// test take `unknown`; these only describe what the tests read back.
+interface SubagentItem {
+  agent: string;
+  task: string;
+}
+interface SubagentCall {
+  agent?: string;
+  task?: string;
+  async?: boolean;
+  clarify?: boolean;
+  tasks?: SubagentItem[];
+  chain?: SubagentItem[];
+}
+type ParallelCall = SubagentCall & { tasks: SubagentItem[] };
+type ChainCall = SubagentCall & { chain: SubagentItem[] };
+
 // ─── isReviewerAgent ────────────────────────────────────────────────────────
 test("isReviewerAgent: matches the three reviewer names", () => {
   expect(isReviewerAgent("chorus-proposal-reviewer")).toBe(true);
@@ -88,13 +105,13 @@ test("subagentTaskItems: chain mode yields one holder per step", () => {
 });
 
 test("subagentTaskItems: setTask mutates the ORIGINAL input in place (single)", () => {
-  const input: any = { agent: "worker", task: "orig" };
+  const input: SubagentCall = { agent: "worker", task: "orig" };
   subagentTaskItems(input)[0].setTask("orig + injected");
   expect(input.task).toBe("orig + injected");
 });
 
 test("subagentTaskItems: setTask mutates the ORIGINAL input in place (parallel)", () => {
-  const input: any = { tasks: [{ agent: "worker", task: "t0" }, { agent: "worker", task: "t1" }] };
+  const input: ParallelCall = { tasks: [{ agent: "worker", task: "t0" }, { agent: "worker", task: "t1" }] };
   const items = subagentTaskItems(input);
   items[1].setTask("t1!");
   expect(input.tasks[1].task).toBe("t1!");
@@ -125,13 +142,13 @@ test("subagentTaskItems: tasks[] takes precedence over a stray top-level task", 
 // `async` is a RUN-level parameter: only the top-level field decides the mode, so
 // the pin must be written on the root object (an item-level async is read by none).
 test("forceSubagentCallAsync: writes the run-level flag (single mode)", () => {
-  const input: any = { agent: "chorus-task-reviewer", task: "review it", async: false };
+  const input: SubagentCall = { agent: "chorus-task-reviewer", task: "review it", async: false };
   expect(forceSubagentCallAsync(input)).toBe(true); // caller had asked for foreground
   expect(input.async).toBe(true);
 });
 
 test("forceSubagentCallAsync: pins the ROOT flag for parallel and chain, never item-level", () => {
-  const parallel: any = {
+  const parallel: ParallelCall = {
     async: false,
     tasks: [
       { agent: "chorus-task-reviewer", task: "a" },
@@ -142,7 +159,7 @@ test("forceSubagentCallAsync: pins the ROOT flag for parallel and chain, never i
   expect(parallel.async).toBe(true); // the field the mode is derived from
   expect("async" in parallel.tasks[0]).toBe(false); // inert item-level write avoided
 
-  const chain: any = { async: false, chain: [{ agent: "chorus-proposal-reviewer", task: "c" }] };
+  const chain: ChainCall = { async: false, chain: [{ agent: "chorus-proposal-reviewer", task: "c" }] };
   forceSubagentCallAsync(chain);
   expect(chain.async).toBe(true);
   expect("async" in chain.chain[0]).toBe(false);
@@ -155,7 +172,7 @@ test("forceSubagentCallAsync: REMOVES a ROOT clarify (any defined value is rejec
   // rewrite. Assigned `false` the pin would turn a `clarify: true` call into a
   // hard pre-dispatch rejection.
   for (const clarify of [true, false]) {
-    const input: any = { agent: "chorus-task-reviewer", task: "review it", clarify };
+    const input: SubagentCall = { agent: "chorus-task-reviewer", task: "review it", clarify };
     forceSubagentCallAsync(input);
     expect(input.async).toBe(true);
     expect("clarify" in input).toBe(false);
@@ -163,19 +180,19 @@ test("forceSubagentCallAsync: REMOVES a ROOT clarify (any defined value is rejec
   }
 
   // Same for a composite call: the property is gone, not falsified.
-  const composite: any = { clarify: true, tasks: [{ agent: "chorus-task-reviewer", task: "review it" }] };
+  const composite: ParallelCall = { clarify: true, tasks: [{ agent: "chorus-task-reviewer", task: "review it" }] };
   forceSubagentCallAsync(composite);
   expect(composite.async).toBe(true);
   expect("clarify" in composite).toBe(false);
 });
 
 test("forceSubagentCallAsync: no gratuitous clarify key, and reports an override only when there was one", () => {
-  const omitted: any = { agent: "chorus-task-reviewer", task: "review it" };
+  const omitted: SubagentCall = { agent: "chorus-task-reviewer", task: "review it" };
   expect(forceSubagentCallAsync(omitted)).toBe(false); // nothing to override
   expect(omitted.async).toBe(true);
   expect("clarify" in omitted).toBe(false);
 
-  const alreadyAsync: any = { agent: "chorus-task-reviewer", task: "review it", async: true };
+  const alreadyAsync: SubagentCall = { agent: "chorus-task-reviewer", task: "review it", async: true };
   expect(forceSubagentCallAsync(alreadyAsync)).toBe(false);
   expect(alreadyAsync.async).toBe(true);
 });
@@ -209,7 +226,7 @@ test.skipIf(!upstreamNormalizerPath)(
     ];
 
     for (const [name, call] of calls) {
-      const input = { ...call } as any;
+      const input: Record<string, unknown> = { ...call };
       // Unpinned, a `clarify` call is rejected before launch — the failure mode
       // this test pins down. `false` is rejected exactly like `true`.
       if ("clarify" in call) {

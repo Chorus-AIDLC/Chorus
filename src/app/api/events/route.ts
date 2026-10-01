@@ -3,7 +3,19 @@
 // Auth via cookie (EventSource automatically sends cookies)
 
 import { getAuthContext } from "@/lib/auth";
-import { eventBus, type RealtimeEvent, type PresenceEvent } from "@/lib/event-bus";
+import {
+  eventBus,
+  type RealtimeEvent,
+  type PresenceEvent,
+  type ProjectAccessChangedEvent,
+} from "@/lib/event-bus";
+import logger from "@/lib/logger";
+import {
+  accessibleProjectUuids,
+  resolveEntityProjectUuid,
+  filterExecutionViewsByAccess,
+  membershipPrincipal,
+} from "@/services/project-access.service";
 import {
   parseSelfReport,
   registerConnection,
@@ -32,6 +44,8 @@ import {
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
+
+const sseLogger = logger.child({ module: "sse-events" });
 
 export async function GET(request: NextRequest) {
   const auth = await getAuthContext(request);
@@ -82,6 +96,32 @@ export async function GET(request: NextRequest) {
       ? transcriptEventName(requestedSessionUuid)
       : null;
 
+  // Private-project isolation: the set of projects this subscriber may see
+  // (public + private-member; agents resolve via their owner inside the service).
+  // Resolved before the stream opens so a query failure is a 500, never mid-stream.
+  // Kept fresh by the `project_access_changed` listener below.
+  const principal = membershipPrincipal(auth);
+  const affectsSubscriber = (event: ProjectAccessChangedEvent) => {
+    if (event.companyUuid !== auth.companyUuid) return false;
+    const userUuids = Array.isArray(event.userUuids) ? event.userUuids : [];
+    return userUuids.length === 0 || (!!principal && userUuids.includes(principal));
+  };
+  // An access change that lands WHILE the initial set is being computed would be
+  // missed (the stream's listener isn't attached yet). Record it and recompute
+  // once the stream starts.
+  const missedAccessChanges = new Set<string>();
+  const connectWindowHandler = (event: ProjectAccessChangedEvent) => {
+    if (affectsSubscriber(event)) missedAccessChanges.add(event.projectUuid);
+  };
+  eventBus.on("project_access_changed", connectWindowHandler);
+  let accessibleProjects: Set<string>;
+  try {
+    accessibleProjects = new Set(await accessibleProjectUuids(auth));
+  } catch (err) {
+    eventBus.off("project_access_changed", connectWindowHandler);
+    throw err;
+  }
+
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
@@ -108,6 +148,83 @@ export async function GET(request: NextRequest) {
         );
       }
 
+      // ----- Project-access gate for change/presence events -----
+      // Every recompute of `accessibleProjects` and every delivery decision made
+      // while a recompute is outstanding run on ONE serial promise chain. So:
+      //   - an event that arrives while a recompute is in flight is decided against
+      //     the NEW set once it resolves (never against the stale one), and
+      //   - event order is preserved: while anything is queued on the chain, new
+      //     events queue behind it instead of jumping ahead synchronously.
+      // With nothing outstanding (the common case) delivery is synchronous.
+      let gateChain: Promise<void> = Promise.resolve();
+      let gateOutstanding = 0;
+      const enqueueGate = (step: () => void | Promise<void>) => {
+        gateOutstanding++;
+        gateChain = gateChain
+          .then(step)
+          .catch((err) => {
+            sseLogger.error({ err }, "SSE project-access gate step failed");
+          })
+          .finally(() => {
+            gateOutstanding--;
+          });
+      };
+
+      // Recompute the accessible set. On failure, fail closed for the project that
+      // triggered it (drop it from the set) and keep the rest of the previous set.
+      const recomputeAccess = (triggerProjectUuid: string | undefined) => {
+        enqueueGate(async () => {
+          if (request.signal.aborted) return;
+          try {
+            accessibleProjects = new Set(await accessibleProjectUuids(auth));
+          } catch (err) {
+            sseLogger.error({ err }, "SSE accessible-project recompute failed");
+            if (triggerProjectUuid) {
+              const next = new Set(accessibleProjects);
+              next.delete(triggerProjectUuid);
+              accessibleProjects = next;
+            }
+          }
+        });
+      };
+
+      // Events without a project, or company-level project-group events, are not
+      // project-scoped: they keep the company-only filter.
+      const isProjectScoped = (event: { projectUuid?: string; entityType?: string }) =>
+        !!event.projectUuid && event.entityType !== "project_group";
+
+      const gateDeliver = (
+        event: { projectUuid?: string; entityType?: string },
+        deliver: () => void,
+      ) => {
+        const decide = () => {
+          if (isProjectScoped(event) && !accessibleProjects.has(event.projectUuid!)) return;
+          deliver();
+        };
+        if (gateOutstanding === 0) decide();
+        else enqueueGate(decide);
+      };
+
+      // Session activity and execution rows reference an idea / project, not a
+      // RealtimeEvent projectUuid. Resolve the idea's CURRENT project per decision
+      // (ideas can move between projects, so no connection-lifetime cache) and
+      // check it against the live accessible set. Ad-hoc sessions (no idea) keep
+      // their existing owner/company scoping; an idea that no longer resolves is
+      // hidden (fail closed).
+      const canSeeIdea = async (
+        ideaUuid: string | null | undefined,
+        memo?: Map<string, Promise<string | null>>,
+      ): Promise<boolean> => {
+        if (!ideaUuid) return true;
+        let pending = memo?.get(ideaUuid);
+        if (!pending) {
+          pending = resolveEntityProjectUuid(auth.companyUuid, "idea", ideaUuid);
+          memo?.set(ideaUuid, pending);
+        }
+        const ideaProjectUuid = await pending;
+        return !!ideaProjectUuid && accessibleProjects.has(ideaProjectUuid);
+      };
+
       // Subscribe to change events
       const handler = (event: RealtimeEvent) => {
         // Filter by company (multi-tenancy)
@@ -115,7 +232,20 @@ export async function GET(request: NextRequest) {
         // Optionally filter by project
         if (projectUuid && event.projectUuid !== projectUuid) return;
 
-        send(`data: ${JSON.stringify(event)}\n\n`);
+        // A project created after connect is not in the set yet (creation emits no
+        // project_access_changed). Recompute once, then decide against the new set:
+        // a public project or one we were made a member of is delivered; a private
+        // project we cannot see is still dropped.
+        if (
+          event.entityType === "project" &&
+          event.action === "created" &&
+          event.projectUuid &&
+          !accessibleProjects.has(event.projectUuid)
+        ) {
+          recomputeAccess(undefined);
+        }
+
+        gateDeliver(event, () => send(`data: ${JSON.stringify(event)}\n\n`));
       };
 
       eventBus.on("change", handler);
@@ -127,10 +257,26 @@ export async function GET(request: NextRequest) {
         // Filter by project
         if (projectUuid && event.projectUuid !== projectUuid) return;
 
-        send(`data: ${JSON.stringify({ type: "presence", ...event })}\n\n`);
+        gateDeliver(event, () =>
+          send(`data: ${JSON.stringify({ type: "presence", ...event })}\n\n`),
+        );
       };
 
       eventBus.on("presence", presenceHandler);
+
+      // Refresh the accessible set when a project's visibility or membership
+      // changes. Empty userUuids = visibility flip (may affect everyone); otherwise
+      // only recompute when our membership principal (user, or agent's owner) is
+      // among the changed users.
+      const accessChangedHandler = (event: ProjectAccessChangedEvent) => {
+        if (!affectsSubscriber(event)) return;
+        recomputeAccess(event.projectUuid);
+      };
+
+      eventBus.on("project_access_changed", accessChangedHandler);
+      eventBus.off("project_access_changed", connectWindowHandler);
+      // Catch up on any access change that raced the initial computation.
+      for (const missed of missedAccessChanges) recomputeAccess(missed);
 
       // Browser notifications share this company-wide dashboard stream. Daemon
       // clients have a registered connection and keep using the dedicated
@@ -151,7 +297,19 @@ export async function GET(request: NextRequest) {
       // the client re-renders without a follow-up read round-trip.
       const executionHandler = (event: ExecutionEvent) => {
         if (event.companyUuid !== auth.companyUuid) return;
-        send(`data: ${JSON.stringify({ type: "execution", ...event })}\n\n`);
+        // Connection ownership is not project access: drop execution rows (and
+        // their titles) for projects the caller can no longer see. Decided on the
+        // serial gate so it uses the current set and keeps event order.
+        enqueueGate(async () => {
+          // Same rule as the REST execution reads (drop hidden rows, redact hidden
+          // lineage anchors), judged against this stream's live accessible set.
+          const executions = await filterExecutionViewsByAccess(
+            auth,
+            event.executions ?? [],
+            accessibleProjects,
+          );
+          send(`data: ${JSON.stringify({ type: "execution", ...event, executions })}\n\n`);
+        });
       };
       const executionChannels = visibleConnectionUuids.map(executionEventName);
       for (const channel of executionChannels) {
@@ -184,11 +342,16 @@ export async function GET(request: NextRequest) {
       const sessionActivityHandler = (event: PublishedSessionActivityEvent) => {
         const projected = projectActivity(event);
         if (!projected) return;
-        if (activityBootstrapping) {
-          bufferedActivityEvents.push(projected);
-          return;
-        }
-        send(`data: ${JSON.stringify(projected)}\n\n`);
+        // Idea-anchored sessions are project data: hide them from callers who
+        // cannot see the idea's project (ids alone reveal a private session).
+        enqueueGate(async () => {
+          if (!(await canSeeIdea(projected.directIdeaUuid).catch(() => false))) return;
+          if (activityBootstrapping) {
+            bufferedActivityEvents.push(projected);
+            return;
+          }
+          send(`data: ${JSON.stringify(projected)}\n\n`);
+        });
       };
       eventBus.on(SESSION_ACTIVITY_EVENT_NAME, sessionActivityHandler);
 
@@ -221,6 +384,7 @@ export async function GET(request: NextRequest) {
       request.signal.addEventListener("abort", () => {
         eventBus.off("change", handler);
         eventBus.off("presence", presenceHandler);
+        eventBus.off("project_access_changed", accessChangedHandler);
         if (notificationChannel) {
           eventBus.off(notificationChannel, notificationHandler);
         }
@@ -264,13 +428,32 @@ export async function GET(request: NextRequest) {
       const runningActivities =
         await listVisibleRunningSessionActivities(auth);
       if (request.signal.aborted) return;
-      for (const event of runningActivities) {
-        send(`data: ${JSON.stringify(event)}\n\n`);
-      }
-      activityBootstrapping = false;
-      for (const event of bufferedActivityEvents) {
-        send(`data: ${JSON.stringify(event)}\n\n`);
-      }
+      // Replay on the gate, AFTER any live events already queued during the
+      // snapshot query (they were buffered), with the same project filter.
+      enqueueGate(async () => {
+        if (request.signal.aborted) return;
+        try {
+          const memo = new Map<string, Promise<string | null>>();
+          for (const event of runningActivities) {
+            // A failed lookup hides that row (fail closed) instead of aborting the replay.
+            if (await canSeeIdea(event.directIdeaUuid, memo).catch(() => false)) {
+              send(`data: ${JSON.stringify(event)}\n\n`);
+            }
+          }
+        } finally {
+          // Always leave bootstrap mode, so live activity is never stuck in the buffer.
+          activityBootstrapping = false;
+          // Buffered events were judged when they arrived; access may have changed
+          // since (e.g. removal during the snapshot query). Re-check each against
+          // the CURRENT set at send time; a failed lookup hides that event.
+          const flushMemo = new Map<string, Promise<string | null>>();
+          for (const event of bufferedActivityEvents) {
+            if (await canSeeIdea(event.directIdeaUuid, flushMemo).catch(() => false)) {
+              send(`data: ${JSON.stringify(event)}\n\n`);
+            }
+          }
+        }
+      });
     },
   });
 

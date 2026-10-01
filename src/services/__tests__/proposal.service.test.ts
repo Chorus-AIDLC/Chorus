@@ -73,6 +73,11 @@ vi.mock("@/generated/prisma/client", () => ({
   },
 }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
+const mockAccessibleProjectUuids = vi.hoisted(() => vi.fn(async () => ["proj-visible"]));
+vi.mock("@/services/project-access.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/project-access.service")>()),
+  accessibleProjectUuids: mockAccessibleProjectUuids,
+}));
 vi.mock("@/lib/uuid-resolver", () => ({
   formatCreatedBy: mockFormatCreatedBy,
   formatReview: mockFormatReview,
@@ -1887,17 +1892,34 @@ describe("updateProposalContent", () => {
 
 // ===== checkIdeasAvailability =====
 describe("checkIdeasAvailability", () => {
+  const AVAIL_AUTH = { type: "user" as const, companyUuid: COMPANY_UUID, actorUuid: "caller" };
+
+  it("only considers proposals in projects the caller can see (no private title leak)", async () => {
+    const { checkIdeasAvailability } = await import("@/services/proposal.service");
+    mockAccessibleProjectUuids.mockResolvedValueOnce(["proj-public"]);
+    mockPrisma.proposal.findMany.mockResolvedValue([]);
+
+    const result = await checkIdeasAvailability(AVAIL_AUTH, ["idea-shared"]);
+
+    expect(mockAccessibleProjectUuids).toHaveBeenCalledWith(AVAIL_AUTH);
+    // Hidden projects are excluded IN THE QUERY, so their proposals are never read.
+    expect(mockPrisma.proposal.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ projectUuid: { in: ["proj-public"] } }),
+    }));
+    expect(result).toEqual({ available: true, usedIdeas: [] });
+  });
+
   it("should return available=true when no ideas are used", async () => {
     const { checkIdeasAvailability } = await import("@/services/proposal.service");
 
     mockPrisma.proposal.findMany.mockResolvedValue([]);
 
-    const result = await checkIdeasAvailability(COMPANY_UUID, ["idea-1", "idea-2"]);
+    const result = await checkIdeasAvailability(AVAIL_AUTH, ["idea-1", "idea-2"]);
 
     expect(result.available).toBe(true);
     expect(result.usedIdeas).toHaveLength(0);
     expect(mockPrisma.proposal.findMany).toHaveBeenCalledWith({
-      where: { companyUuid: COMPANY_UUID, inputType: "idea" },
+      where: { companyUuid: COMPANY_UUID, inputType: "idea", projectUuid: { in: ["proj-visible"] } },
       select: { uuid: true, title: true, inputUuids: true },
     });
   });
@@ -1918,7 +1940,7 @@ describe("checkIdeasAvailability", () => {
       },
     ]);
 
-    const result = await checkIdeasAvailability(COMPANY_UUID, ["idea-1", "idea-2"]);
+    const result = await checkIdeasAvailability(AVAIL_AUTH, ["idea-1", "idea-2"]);
 
     expect(result.available).toBe(false);
     expect(result.usedIdeas).toHaveLength(2);
@@ -1939,7 +1961,7 @@ describe("checkIdeasAvailability", () => {
       },
     ]);
 
-    const result = await checkIdeasAvailability(COMPANY_UUID, ["idea-1", "idea-2", "idea-3"]);
+    const result = await checkIdeasAvailability(AVAIL_AUTH, ["idea-1", "idea-2", "idea-3"]);
 
     expect(result.available).toBe(false);
     expect(result.usedIdeas).toHaveLength(1);

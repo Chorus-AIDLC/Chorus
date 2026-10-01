@@ -18,6 +18,15 @@ export interface RealtimeEvent {
   actorUuid?: string;
 }
 
+// Emitted when a project's visibility or membership changes, so SSE subscribers
+// can recompute their accessible-project set.
+export interface ProjectAccessChangedEvent {
+  companyUuid: string;
+  projectUuid: string;
+  /** Users whose access changed (added/removed/role changed); empty for visibility flips (everyone may be affected) */
+  userUuids: string[];
+}
+
 export interface PresenceEvent {
   companyUuid: string;
   projectUuid: string;
@@ -212,6 +221,10 @@ class ChorusEventBus extends EventEmitter {
 
   emitChange(event: RealtimeEvent) {
     this.emit("change", event);
+  }
+
+  emitProjectAccessChanged(event: ProjectAccessChangedEvent) {
+    this.emit("project_access_changed", event);
   }
 
   async disconnect(): Promise<void> {

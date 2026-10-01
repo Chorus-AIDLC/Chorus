@@ -9,12 +9,29 @@ import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, checkAgentPermission } from "@/lib/auth";
 import { getIdeaByUuid, moveIdeaPreview } from "@/services/idea.service";
+import type { AuthContext } from "@/types/auth";
+import { requireEntityAccess, requireProjectAccess, ProjectNotFoundError } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
 // Same RFC4122-ish UUID shape Prisma emits — keeps the 400 path purely
 // client-side without round-tripping to the DB for an obviously-bad query.
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Target-project access: a hidden target reads exactly like a missing one.
+async function requireTargetProject(
+  auth: AuthContext,
+  targetProjectUuid: string,
+  min: "viewer" | "editor",
+) {
+  try {
+    await requireProjectAccess(auth, targetProjectUuid, min);
+  } catch (e) {
+    if (e instanceof ProjectNotFoundError) return errors.notFound("Target project");
+    throw e;
+  }
+  return null;
+}
 
 // GET /api/ideas/[uuid]/move/preview?targetProjectUuid=<uuid>
 export const GET = withErrorHandler<{ uuid: string }>(
@@ -39,6 +56,9 @@ export const GET = withErrorHandler<{ uuid: string }>(
       return errors.badRequest("targetProjectUuid must be a valid UUID");
     }
 
+    // Viewer on the idea's project (hidden → same 404 as missing).
+    await requireEntityAccess(auth, "idea", ideaUuid, "viewer");
+
     // Cross-tenant scoped lookup — getIdeaByUuid filters on companyUuid so a
     // foreign idea (or a non-existent uuid) collapses to 404 here, never leaks.
     const idea = await getIdeaByUuid(auth.companyUuid, ideaUuid);
@@ -51,6 +71,9 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (idea.projectUuid === targetProjectUuid) {
       return errors.badRequest("Idea is already in the target project");
     }
+
+    const targetDenied = await requireTargetProject(auth, targetProjectUuid, "viewer");
+    if (targetDenied) return targetDenied;
 
     const result = await moveIdeaPreview(auth.companyUuid, ideaUuid, targetProjectUuid);
     return success({ moved: result.moved });

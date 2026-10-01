@@ -1,19 +1,11 @@
-import { redirect } from "next/navigation";
-import { getServerAuthContext } from "@/lib/auth-server";
-import { getProject, getProjectStats } from "@/services/project.service";
+import { getProjectStats } from "@/services/project.service";
 import { getTrackerGroups } from "@/services/idea.service";
 import { listActivitiesWithActorNames } from "@/services/activity.service";
+import { requireProjectPageAccess } from "../access-guard";
 
 export async function getDashboardData(projectUuid: string) {
-  const auth = await getServerAuthContext();
-  if (!auth) {
-    redirect("/login");
-  }
-
-  const project = await getProject(auth.companyUuid, projectUuid);
-  if (!project) {
-    redirect("/projects");
-  }
+  // Access gate: unauthenticated → /login, no project access → 404
+  const { auth, project, accessLevel } = await requireProjectPageAccess(projectUuid);
 
   const trackerData = await getTrackerGroups(auth.companyUuid, projectUuid);
   const stats = await getProjectStats(auth.companyUuid, projectUuid);
@@ -26,6 +18,7 @@ export async function getDashboardData(projectUuid: string) {
 
   return {
     project,
+    accessLevel,
     trackerData,
     stats,
     activities,

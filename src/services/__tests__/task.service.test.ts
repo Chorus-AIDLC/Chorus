@@ -103,6 +103,13 @@ const mockActivityService = vi.hoisted(() => ({
 }));
 vi.mock("@/services/activity.service", () => mockActivityService);
 
+// Assignee project-access check (add-private-project-access). Default: allowed;
+// the access matrix itself is covered in task-assignment-access.test.ts.
+const mockProjectAccess = vi.hoisted(() => ({
+  canActorAccessProject: vi.fn().mockResolvedValue(true),
+}));
+vi.mock("@/services/project-access.service", () => mockProjectAccess);
+
 // ===== Import under test (after mocks) =====
 
 import {
@@ -118,6 +125,7 @@ import {
   checkAcceptanceCriteriaGate,
   createAcceptanceCriteria,
   replaceAcceptanceCriteria,
+  AssigneeAccessError,
 } from "@/services/task.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 
@@ -486,6 +494,69 @@ describe("createTask", () => {
 // ---------- claimTask ----------
 
 describe("claimTask", () => {
+  beforeEach(() => {
+    mockPrisma.task.findFirst.mockResolvedValue({ projectUuid: PROJECT_UUID });
+    mockProjectAccess.canActorAccessProject.mockResolvedValue(true);
+  });
+
+  it("checks the assignee (not the caller) has editor access to the task's project", async () => {
+    mockPrisma.task.update.mockResolvedValue({
+      ...rawTask({ status: "assigned", assigneeType: "agent", assigneeUuid: "a1" }),
+      project: { uuid: PROJECT_UUID, name: "Test Project" },
+    });
+
+    await claimTask({
+      taskUuid: TASK_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "agent",
+      assigneeUuid: "a1",
+      assignedByType: "user",
+      assignedByUuid: "user-123",
+    });
+
+    expect(mockPrisma.task.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { uuid: TASK_UUID, companyUuid: COMPANY_UUID } }),
+    );
+    expect(mockProjectAccess.canActorAccessProject).toHaveBeenCalledWith(
+      COMPANY_UUID,
+      { type: "agent", uuid: "a1" },
+      PROJECT_UUID,
+      "editor",
+    );
+  });
+
+  it("rejects with AssigneeAccessError when the assignee lacks project access", async () => {
+    mockProjectAccess.canActorAccessProject.mockResolvedValue(false);
+
+    const err = await claimTask({
+      taskUuid: TASK_UUID,
+      companyUuid: COMPANY_UUID,
+      assigneeType: "user",
+      assigneeUuid: "outsider",
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(AssigneeAccessError);
+    expect(err.message).toBe("Assignee does not have access to this project");
+    expect(err.status).toBe(403);
+    expect(err.code).toBe("FORBIDDEN");
+    expect(mockPrisma.task.update).not.toHaveBeenCalled();
+  });
+
+  it("throws AlreadyClaimedError when the task is not in the company", async () => {
+    mockPrisma.task.findFirst.mockResolvedValue(null);
+
+    await expect(
+      claimTask({
+        taskUuid: TASK_UUID,
+        companyUuid: COMPANY_UUID,
+        assigneeType: "agent",
+        assigneeUuid: "a1",
+      }),
+    ).rejects.toThrow(AlreadyClaimedError);
+    expect(mockProjectAccess.canActorAccessProject).not.toHaveBeenCalled();
+    expect(mockPrisma.task.update).not.toHaveBeenCalled();
+  });
+
   it("claims an open task (sets status to assigned)", async () => {
     const claimed = {
       ...rawTask({ status: "assigned", assigneeType: "agent", assigneeUuid: "a1" }),
@@ -687,7 +758,7 @@ describe("claimTask", () => {
   const INSTANCE_UUID = "00000000-0000-0000-0000-0000000000aa";
 
   it("persists an instance override as the task row's own agent_instance assignment", async () => {
-    mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: INSTANCE_UUID });
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ uuid: INSTANCE_UUID, agentUuid: "a1" });
     const claimed = {
       ...rawTask({
         status: "assigned",

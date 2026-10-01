@@ -17,6 +17,7 @@ import {
 import type { AgentAuthContext } from "@/types/auth";
 import * as projectService from "@/services/project.service";
 import { projectExists } from "@/services/project.service";
+import { getProjectAccess } from "@/services/project-access.service";
 import * as ideaService from "@/services/idea.service";
 import * as documentService from "@/services/document.service";
 import * as taskService from "@/services/task.service";
@@ -127,8 +128,12 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (!project) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
       }
+      const { project: accessProject, level } = await getProjectAccess(auth, projectUuid);
+      if (!accessProject || level === "none") {
+        return { content: [{ type: "text", text: "Project not found" }], isError: true };
+      }
       return {
-        content: [{ type: "text", text: JSON.stringify(project, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify({ ...project, visibility: accessProject.visibility, accessLevel: level }, null, 2) }],
       };
     }
   );
@@ -147,6 +152,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       const skip = (page - 1) * pageSize;
       const { projects, total } = await projectService.listProjects({
         companyUuid: auth.companyUuid,
+        auth,
         skip,
         take: pageSize,
       });
@@ -159,7 +165,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
             total,
             page,
             pageSize,
-            ["uuid", "name", "status", "groupUuid", "_count", "createdAt", "updatedAt"],
+            ["uuid", "name", "status", "visibility", "groupUuid", "_count", "createdAt", "updatedAt"],
           ),
         }],
       };
@@ -458,7 +464,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         });
 
         // Resolve projectUuid from the target entity
-        const projectUuid = await commentService.resolveProjectUuid(targetType, targetUuid);
+        const projectUuid = await commentService.resolveProjectUuid(targetType, targetUuid, auth.companyUuid);
         if (projectUuid) {
           await activityService.createActivity({
             companyUuid: auth.companyUuid,
@@ -549,7 +555,9 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         auth.companyUuid,
         projectUuid,
         true,
-        false
+        false,
+        undefined,
+        auth
       );
 
       return {
@@ -590,7 +598,8 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         projectUuid,
         false,
         true,
-        proposalUuids
+        proposalUuids,
+        auth
       );
 
       return {
@@ -912,7 +921,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     }),
     async ({ page = 1, pageSize = 20 }) => {
-      const result = await projectGroupService.listProjectGroups(auth.companyUuid);
+      const result = await projectGroupService.listProjectGroups(auth.companyUuid, auth);
       const skip = (page - 1) * pageSize;
       return {
         content: [{
@@ -942,7 +951,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     },
     async ({ groupUuid }) => {
-      const group = await projectGroupService.getProjectGroup(auth.companyUuid, groupUuid);
+      const group = await projectGroupService.getProjectGroup(auth.companyUuid, groupUuid, auth);
       if (!group) {
         return { content: [{ type: "text", text: "Project group not found" }], isError: true };
       }
@@ -962,7 +971,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     }),
     async ({ groupUuid }) => {
-      const dashboard = await projectGroupService.getGroupDashboard(auth.companyUuid, groupUuid);
+      const dashboard = await projectGroupService.getGroupDashboard(auth.companyUuid, groupUuid, auth);
       if (!dashboard) {
         return { content: [{ type: "text", text: "Project group not found" }], isError: true };
       }
@@ -976,13 +985,15 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_search_mentionables",
     collectionToolConfig({
-      description: "Search for users and agents that can be @mentioned. Returns name, type, and UUID. Use the UUID to write mentions as @[Name](type:uuid) in comment/description text. For results of type \"agent\" the entry also carries `online` (boolean: true iff the agent currently has a live daemon connection) and `activeCount` (number of tasks/resources its daemon is running or has queued; 0 when offline). User results do not carry these fields.",
+      description: "Search for users and agents that can be @mentioned. Supply both entityType and entityUuid to restrict candidates to actors who can view that entity's project; the caller also needs viewer access. Returns name, type, and UUID. Use the UUID to write mentions as @[Name](type:uuid) in comment/description text. For results of type \"agent\" the entry also carries `online` (boolean: true iff the agent currently has a live daemon connection) and `activeCount` (number of tasks/resources its daemon is running or has queued; 0 when offline). User results do not carry these fields.",
       inputSchema: z.object({
         query: z.string().describe("Name or keyword to search"),
         limit: z.number().int().positive().max(100).optional().default(10).describe("Max results to return (default 10, maximum 100)"),
+        entityType: z.enum(["idea", "task", "proposal", "document"]).optional().describe("Entity kind for project-scoped candidates; supply with entityUuid"),
+        entityUuid: z.string().min(1).optional().describe("Entity UUID for project-scoped candidates; supply with entityType"),
       }),
     }),
-    async ({ query, limit }) => {
+    async ({ query, limit, entityType, entityUuid }) => {
       const results = await mentionService.searchMentionables({
         companyUuid: auth.companyUuid,
         query,
@@ -990,6 +1001,8 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         actorUuid: auth.actorUuid,
         ownerUuid: auth.ownerUuid,
         limit,
+        entityType,
+        entityUuid,
       });
       return {
         content: [{
@@ -1022,6 +1035,8 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     async ({ query, scope, scopeUuid, entityTypes }) => {
       const result = await searchService.search({
         companyUuid: auth.companyUuid,
+        auth,
+        projectUuids: auth.projectUuids,
         query,
         scope,
         scopeUuid,

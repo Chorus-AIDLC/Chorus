@@ -34,7 +34,12 @@ import { registerDeveloperTools } from "@/mcp/tools/developer";
 import { registerAdminTools } from "@/mcp/tools/admin";
 import { registerPublicTools } from "@/mcp/tools/public";
 import { registerSessionTools } from "@/mcp/tools/session";
-import { TOOL_PERMISSIONS } from "@/mcp/tools/permission-map";
+import {
+  TOOL_PERMISSIONS,
+  TOOL_PROJECT_ACCESS_OVERRIDES,
+  getToolProjectAccessPolicy,
+} from "@/mcp/tools/permission-map";
+import { enablePresence } from "@/mcp/tools/presence";
 import {
   assertCollectionToolsInventoried,
   enforceToolClassification,
@@ -151,6 +156,35 @@ describe("collection tool inventory", () => {
       "MCP collection tools missing from COLLECTION_TOOL_INVENTORY: chorus_synthetic_collection",
     );
     expect(registerTool).not.toHaveBeenCalled();
+  });
+});
+
+describe("project access tool inventory", () => {
+  it("explicitly classifies every production tool, including company and filtered exceptions", () => {
+    const names = registeredTools().map(({ name }) => name).sort();
+    const classified = [...new Set([
+      ...Object.keys(TOOL_PERMISSIONS),
+      ...Object.keys(TOOL_PROJECT_ACCESS_OVERRIDES),
+    ])].sort();
+    expect(names).toEqual(classified);
+    for (const name of names) expect(getToolProjectAccessPolicy(name)).toBeDefined();
+  });
+
+  it("rejects unclassified tools on the production wrapper registration path", () => {
+    const registerTool = vi.fn();
+    const server = { registerTool };
+    enablePresence(server as never, makeAuth([...ROLE_PRESETS.admin_agent]));
+    expect(() => server.registerTool("chorus_unknown_write", {}, vi.fn())).toThrow(
+      "MCP tool missing explicit project access classification: chorus_unknown_write",
+    );
+    expect(registerTool).not.toHaveBeenCalled();
+  });
+
+  it("keeps governance at editor and project management visibility-dependent", () => {
+    expect(getToolProjectAccessPolicy("chorus_admin_verify_task")).toEqual({ scope: "resource", required: "editor" });
+    expect(getToolProjectAccessPolicy("chorus_admin_approve_proposal")).toEqual({ scope: "resource", required: "editor" });
+    expect(getToolProjectAccessPolicy("chorus_admin_move_project_to_group")).toEqual({ scope: "resource", required: "manage_project" });
+    expect(getToolProjectAccessPolicy("chorus_admin_delete_project_group")).toEqual({ scope: "resource", required: "manage_project" });
   });
 });
 

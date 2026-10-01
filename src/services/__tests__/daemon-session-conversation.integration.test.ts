@@ -405,6 +405,13 @@ const hoisted = vi.hoisted(() => {
 const store = hoisted.store;
 const prismaFake = hoisted.prismaFake;
 vi.mock("@/lib/prisma", () => ({ prisma: hoisted.prismaFake }));
+// Private project access is not under test here: let every recipient through the
+// notification choke point / listener filter (the in-memory fake has no Project rows).
+vi.mock("@/services/project-access.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/project-access.service")>()),
+  filterRecipientsByProjectAccess: async <T,>(_c: string, _p: string, r: T[]) => r,
+  canActorAccessProject: async () => true,
+}));
 
 // Silence the logger; the real event bus is used (in-process EventEmitter, Redis off).
 const mockLogger = vi.hoisted(() => {

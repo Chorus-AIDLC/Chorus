@@ -38,7 +38,8 @@ export interface ChorusConnection {
  */
 export function parseChorusServerFromMcpJson(rawJson: string): ChorusConnection {
   if (!rawJson) return { url: "", apiKey: "" };
-  let obj: any;
+  // Untrusted JSON: every leaf is `unknown` and narrowed with typeof below.
+  let obj: { mcpServers?: { chorus?: { url?: unknown; headers?: { Authorization?: unknown } } } } | null;
   try {
     obj = JSON.parse(rawJson);
   } catch {

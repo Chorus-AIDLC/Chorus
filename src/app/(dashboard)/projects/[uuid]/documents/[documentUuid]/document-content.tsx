@@ -7,6 +7,7 @@ import { MarkdownContent } from "@/components/markdown-content";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { updateDocumentAction } from "./actions";
+import { useCanEditProject } from "@/contexts/project-access-context";
 
 interface DocumentContentProps {
   documentUuid: string;
@@ -16,6 +17,7 @@ interface DocumentContentProps {
 
 export function DocumentContent({ documentUuid, projectUuid, initialContent }: DocumentContentProps) {
   const t = useTranslations();
+  const canEdit = useCanEditProject();
   const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(initialContent);
@@ -58,7 +60,7 @@ export function DocumentContent({ documentUuid, projectUuid, initialContent }: D
               {isPending ? t("common.processing") : t("documents.saveChanges")}
             </Button>
           </div>
-        ) : (
+        ) : canEdit && (
           <Button
             onClick={() => setIsEditing(true)}
             className="bg-primary hover:bg-[#B56A42] text-white"
