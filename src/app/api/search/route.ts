@@ -72,6 +72,7 @@ export const GET = withErrorHandler(
     const result = await search({
       query: q.trim(),
       companyUuid: auth.companyUuid,
+      auth,
       scope,
       scopeUuid,
       entityTypes,

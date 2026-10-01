@@ -1,16 +1,14 @@
 // src/app/(dashboard)/projects/[uuid]/documents/page.tsx
 // Server Component - UUID obtained from URL
 
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { FilePlus } from "lucide-react";
-import { getServerAuthContext } from "@/lib/auth-server";
 import { listDocuments } from "@/services/document.service";
-import { projectExists } from "@/services/project.service";
+import { requireProjectPageAccess } from "../access-guard";
 import { CreateDocumentDialog } from "./create-document-dialog";
 import { AnimatedEmptyState } from "@/components/animated-empty-state";
 import { DocumentGrid } from "./document-grid";
@@ -22,20 +20,12 @@ interface PageProps {
 }
 
 export default async function DocumentsPage({ params, searchParams }: PageProps) {
-  const auth = await getServerAuthContext();
-  if (!auth) {
-    redirect("/login");
-  }
-
   const { uuid: projectUuid } = await params;
   const { type: filter = "all" } = await searchParams;
   const t = await getTranslations();
 
-  // Validate project exists
-  const exists = await projectExists(auth.companyUuid, projectUuid);
-  if (!exists) {
-    redirect("/projects");
-  }
+  // Access gate: unauthenticated → /login, no project access → 404
+  const { auth } = await requireProjectPageAccess(projectUuid);
 
   // Get all Documents
   const { documents: allDocuments } = await listDocuments({

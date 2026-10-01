@@ -6,6 +6,7 @@ const mockPrisma = vi.hoisted(() => ({
     findFirst: vi.fn(),
     findMany: vi.fn(),
   },
+  projectMember: { findMany: vi.fn() },
   projectGroup: {
     findMany: vi.fn(),
   },
@@ -44,6 +45,7 @@ function stubQuickAccessQueries(pinnedVisits: unknown[], recentVisits: unknown[]
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.projectMember.findMany.mockResolvedValue([]);
 });
 
 // ===== recordVisit =====
@@ -55,7 +57,7 @@ describe("recordVisit", () => {
     await recordVisit(companyUuid, userUuid, projectUuid);
 
     expect(mockPrisma.project.findFirst).toHaveBeenCalledWith({
-      where: { uuid: projectUuid, companyUuid },
+      where: { uuid: projectUuid, companyUuid, OR: [{ visibility: { not: "private" } }] },
       select: { uuid: true },
     });
     expect(mockPrisma.projectVisit.upsert).toHaveBeenCalledTimes(1);
@@ -201,19 +203,19 @@ describe("getSidebarQuickAccess", () => {
       [{ projectUuid: recentU }]
     );
     mockPrisma.project.findMany.mockResolvedValue([
-      { uuid: pinnedU, name: "Pinned Project", groupUuid: "group-1" },
-      { uuid: recentU, name: "Recent Project", groupUuid: null },
+      { uuid: pinnedU, name: "Pinned Project", visibility: "private", groupUuid: "group-1" },
+      { uuid: recentU, name: "Recent Project", visibility: "public", groupUuid: null },
     ]);
     mockPrisma.projectGroup.findMany.mockResolvedValue([{ uuid: "group-1", name: "Alpha Group" }]);
 
     const result = await getSidebarQuickAccess(companyUuid, userUuid);
 
     expect(result.pinned).toEqual([
-      { uuid: pinnedU, name: "Pinned Project", groupUuid: "group-1", groupName: "Alpha Group" },
+      { uuid: pinnedU, name: "Pinned Project", visibility: "private", groupUuid: "group-1", groupName: "Alpha Group" },
     ]);
     // ungrouped project → groupName null
     expect(result.recent).toEqual([
-      { uuid: recentU, name: "Recent Project", groupUuid: null, groupName: null },
+      { uuid: recentU, name: "Recent Project", visibility: "public", groupUuid: null, groupName: null },
     ]);
     // dedupe: pinned uuid must not be in recent
     const recentUuids = result.recent.map((r) => r.uuid);
@@ -278,7 +280,8 @@ describe("getSidebarQuickAccess", () => {
     const result = await getSidebarQuickAccess(companyUuid, userUuid);
 
     expect(result.pinned).toEqual([
-      { uuid: "live-pinned", name: "Live Pinned", groupUuid: null, groupName: null },
+      // visibility absent on the row → defaults to "public"
+      { uuid: "live-pinned", name: "Live Pinned", visibility: "public", groupUuid: null, groupName: null },
     ]);
     expect(result.pinned.map((p) => p.uuid)).not.toContain("gone-pinned");
     expect(result.recent).toEqual([]);
@@ -295,7 +298,7 @@ describe("getSidebarQuickAccess", () => {
     const result = await getSidebarQuickAccess(companyUuid, userUuid);
 
     expect(result.recent).toEqual([
-      { uuid: "proj-1", name: "Project One", groupUuid: "dangling-group", groupName: null },
+      { uuid: "proj-1", name: "Project One", visibility: "public", groupUuid: "dangling-group", groupName: null },
     ]);
   });
 

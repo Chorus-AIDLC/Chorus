@@ -5,6 +5,7 @@
 import { prisma } from "@/lib/prisma";
 import type { AuthContext } from "@/types/auth";
 import { formatCreatedBy } from "@/lib/uuid-resolver";
+import { accessibleProjectUuids, ProjectNotFoundError } from "@/services/project-access.service";
 import {
   buildIdeaTracker,
   buildTaskTracker,
@@ -130,7 +131,13 @@ export async function getAvailableItems(
   canClaimIdeas: boolean,
   canClaimTasks: boolean,
   proposalUuids?: string[],
+  auth?: AuthContext,
 ): Promise<AvailableItemsResponse> {
+  if (auth && auth.companyUuid !== companyUuid) throw new ProjectNotFoundError();
+  const projectUuids = await accessibleProjectUuids(
+    auth ?? { type: "agent", actorUuid: "", companyUuid },
+  );
+  if (!projectUuids.includes(projectUuid)) return { ideas: [], tasks: [] };
   const baseWhere = { projectUuid, companyUuid, status: "open" };
   const taskWhere = {
     ...baseWhere,

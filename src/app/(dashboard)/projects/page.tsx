@@ -43,6 +43,7 @@ import { CreateProjectGroupDialog } from "@/components/create-project-group-dial
 import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { getProjectInitials, getProjectIconColor, projectIconStyle } from "@/lib/project-colors";
 import { useProjectQuickAccess } from "@/contexts/project-quick-access-context";
+import { ProjectLockIndicator } from "@/components/project-lock-indicator";
 import { readExpandedGroups, writeExpandedGroups } from "./group-expansion-preference";
 
 // Types
@@ -51,6 +52,7 @@ interface ProjectData {
   name: string;
   description: string | null;
   groupUuid: string | null;
+  visibility?: string;
   createdAt: string;
   updatedAt: string;
   counts: {
@@ -205,6 +207,7 @@ function ProjectGridCard({ project }: { project: ProjectData }) {
         <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
           {project.name}
         </span>
+        <ProjectLockIndicator visibility={project.visibility} />
         {isEmpty && (
           <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
             {t("projects.empty")}
@@ -273,6 +276,7 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
             <span className="truncate text-[13px] font-semibold text-foreground">
               {project.name}
             </span>
+            <ProjectLockIndicator visibility={project.visibility} />
             {isEmpty && (
               <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
                 {t("projects.empty")}

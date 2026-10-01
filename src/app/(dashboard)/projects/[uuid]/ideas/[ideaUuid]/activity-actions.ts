@@ -4,12 +4,16 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { listActivitiesWithActorNames, type ActivityResponse } from "@/services/activity.service";
 import { getIdeaByUuid } from "@/services/idea.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess } from "@/lib/project-access-action";
 
 export async function getIdeaActivitiesAction(
   ideaUuid: string
 ): Promise<{ activities: ActivityResponse[]; total: number }> {
   const auth = await getServerAuthContext();
   if (!auth) {
+    return { activities: [], total: 0 };
+  }
+  if (await denyUnlessEntityAccess(auth, "idea", ideaUuid, "viewer")) {
     return { activities: [], total: 0 };
   }
 

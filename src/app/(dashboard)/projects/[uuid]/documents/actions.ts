@@ -8,8 +8,8 @@ import {
   getDocumentByUuidUnscoped,
 } from "@/services/document.service";
 import { createActivity } from "@/services/activity.service";
-import { projectExists } from "@/services/project.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess, denyUnlessProjectAccess } from "@/lib/project-access-action";
 
 export async function createDocumentAction(input: {
   projectUuid: string;
@@ -21,12 +21,10 @@ export async function createDocumentAction(input: {
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, input.projectUuid, "editor");
+  if (denied) return denied;
 
   try {
-    if (!(await projectExists(auth.companyUuid, input.projectUuid))) {
-      return { success: false, error: "Project not found" };
-    }
-
     const doc = await createDocument({
       companyUuid: auth.companyUuid,
       projectUuid: input.projectUuid,
@@ -67,6 +65,11 @@ export async function deleteDocumentAction(
   const auth = await getServerAuthContext();
   if (!auth) {
     return { success: false, error: "unauthorized" };
+  }
+  // Keep the button's lowercase error codes (not_found → dedicated toast).
+  const denied = await denyUnlessEntityAccess(auth, "document", documentUuid, "editor");
+  if (denied) {
+    return { success: false, error: denied.error.endsWith("not found") ? "not_found" : "forbidden" };
   }
 
   try {

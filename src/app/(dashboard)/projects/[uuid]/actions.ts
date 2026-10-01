@@ -11,12 +11,18 @@ import {
 import { revalidatePath } from "next/cache";
 import { getActiveSessionsForProject, type TaskSessionInfo } from "@/services/session.service";
 import logger from "@/lib/logger";
+import {
+  denyUnlessProjectAccess,
+  denyUnlessProjectOperation,
+} from "@/lib/project-access-action";
 
 export async function deleteProjectAction(projectUuid: string) {
   const auth = await getServerAuthContext();
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectOperation(auth, projectUuid, "manage_project");
+  if (denied) return denied;
 
   try {
     const deleted = await deleteProject(auth.companyUuid, projectUuid);
@@ -45,6 +51,16 @@ export async function updateProjectAction(
   const auth = await getServerAuthContext();
   if (!auth) {
     return { success: false, error: { code: "UNAUTHORIZED", message: "Unauthorized" } };
+  }
+  const denied = await denyUnlessProjectOperation(auth, projectUuid, "manage_project");
+  if (denied) {
+    return {
+      success: false,
+      error: {
+        code: denied.error.endsWith("not found") ? "NOT_FOUND" : "FORBIDDEN",
+        message: denied.error,
+      },
+    };
   }
 
   try {
@@ -84,6 +100,8 @@ export async function getProjectActiveSessionsAction(projectUuid: string): Promi
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, projectUuid, "viewer");
+  if (denied) return denied;
 
   try {
     const sessions = await getActiveSessionsForProject(auth.companyUuid, projectUuid);

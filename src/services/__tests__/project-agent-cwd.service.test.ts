@@ -22,8 +22,13 @@ const { emit, prismaMock } = vi.hoisted(() => ({
       deleteMany: vi.fn(),
     },
     agentInstance: { findFirst: vi.fn(), upsert: vi.fn() },
+    projectMember: { create: vi.fn() },
   },
 }));
+
+const mockPublish = vi.hoisted(() => vi.fn());
+const mockCreateActivityInTx = vi.hoisted(() => vi.fn(async () => ({ activity: { uuid: "act-1" }, publish: mockPublish })));
+vi.mock("@/services/activity.service", () => ({ createActivityInTx: mockCreateActivityInTx }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 vi.mock("@/lib/event-bus", () => ({
@@ -98,6 +103,53 @@ describe("project-agent cwd request service", () => {
         cwd: "/workspace",
       }),
     });
+  });
+
+  it("records visibility, creator admin membership and a created Activity", async () => {
+    prismaMock.project.create.mockResolvedValue({
+      uuid: "project-new",
+      name: "New",
+      description: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    await createProjectWithAgentCwds({
+      companyUuid: "company-1",
+      userUuid: "user-1",
+      name: "New",
+      description: null,
+      groupUuid: null,
+      agentCwds: [],
+      visibility: "private",
+      createdByUuid: "user-1",
+      actor: { type: "user", uuid: "user-1" },
+    });
+
+    expect(prismaMock.project.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ visibility: "private", createdByUuid: "user-1" }),
+    }));
+    expect(prismaMock.projectMember.create).toHaveBeenCalledWith({
+      data: { companyUuid: "company-1", projectUuid: "project-new", userUuid: "user-1", role: "admin", addedByUuid: "user-1" },
+    });
+    expect(mockPublish).toHaveBeenCalledTimes(1);
+    expect(mockCreateActivityInTx).toHaveBeenCalledWith(prismaMock, expect.objectContaining({
+      projectUuid: "project-new", targetType: "project", action: "created", actorType: "user", actorUuid: "user-1",
+      value: { visibility: "private" },
+    }));
+  });
+
+  it("rejects a private project without a creator", async () => {
+    await expect(createProjectWithAgentCwds({
+      companyUuid: "company-1",
+      userUuid: "user-1",
+      name: "Orphan",
+      description: null,
+      groupUuid: null,
+      agentCwds: [],
+      visibility: "private",
+    })).rejects.toThrow("A private project requires a creator");
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
   });
 
   it("attributes create validation failures to the affected Agent", async () => {

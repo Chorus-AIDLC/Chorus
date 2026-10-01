@@ -371,6 +371,15 @@ const hoisted = vi.hoisted(() => {
   return { store: s, prismaFake: buildPrismaFake(s) };
 });
 const store = hoisted.store;
+// Private-project isolation: allow by default (denials covered in
+// daemon-instruction.project-access.test.ts).
+vi.mock("@/services/project-access.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/project-access.service")>()),
+  canActorAccessProject: vi.fn(async () => true),
+  resolveEntityProjectUuid: vi.fn(async () => "proj-1"),
+  filterRecipientsByProjectAccess: vi.fn(async (_c: string, _p: string, r: unknown[]) => r),
+}));
+
 vi.mock("@/lib/prisma", () => ({ prisma: hoisted.prismaFake }));
 
 // Silence the logger; the real event bus is used (in-process EventEmitter, Redis off).

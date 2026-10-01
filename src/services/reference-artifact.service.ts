@@ -8,6 +8,7 @@
 // download, or snapshot of the referenced content (q5: URL + notes capture only).
 
 import { prisma } from "@/lib/prisma";
+import { resolveEntityProjectUuid } from "@/services/project-access.service";
 import { formatCreatedBy } from "@/lib/uuid-resolver";
 import { eventBus, type RealtimeEvent } from "@/lib/event-bus";
 import * as activityService from "@/services/activity.service";
@@ -175,49 +176,22 @@ function assertValidUrl(url: string): void {
 }
 
 // Resolve + validate that an idea/proposal/task target exists in the company,
-// returning its projectUuid for SSE fan-out. Mirrors the target-resolution
-// switch in comment.service.resolveProjectUuid, but scoped to the supported
-// target types. Throws "… not found" when the targetType is unsupported or the
-// target does not resolve within the company.
+// returning its projectUuid for SSE fan-out. Delegates to the shared
+// project-access resolver, scoped to the supported target types. Throws when
+// the targetType is unsupported or the target does not resolve within the company.
 async function resolveTargetProjectUuid(
   companyUuid: string,
   targetType: string,
   targetUuid: string
 ): Promise<string> {
-  switch (targetType) {
-    case "proposal": {
-      const proposal = await prisma.proposal.findFirst({
-        where: { uuid: targetUuid, companyUuid },
-        select: { projectUuid: true },
-      });
-      if (!proposal) {
-        throw new Error(`Target proposal with UUID ${targetUuid} not found`);
-      }
-      return proposal.projectUuid;
-    }
-    case "task": {
-      const task = await prisma.task.findFirst({
-        where: { uuid: targetUuid, companyUuid },
-        select: { projectUuid: true },
-      });
-      if (!task) {
-        throw new Error(`Target task with UUID ${targetUuid} not found`);
-      }
-      return task.projectUuid;
-    }
-    case "idea": {
-      const idea = await prisma.idea.findFirst({
-        where: { uuid: targetUuid, companyUuid },
-        select: { projectUuid: true },
-      });
-      if (!idea) {
-        throw new Error(`Target idea with UUID ${targetUuid} not found`);
-      }
-      return idea.projectUuid;
-    }
-    default:
-      throw new Error(`Unsupported reference targetType: ${targetType}`);
+  if (!["proposal", "task", "idea"].includes(targetType)) {
+    throw new Error(`Unsupported reference targetType: ${targetType}`);
   }
+  const projectUuid = await resolveEntityProjectUuid(companyUuid, targetType, targetUuid);
+  if (!projectUuid) {
+    throw new Error(`Target ${targetType} with UUID ${targetUuid} not found`);
+  }
+  return projectUuid;
 }
 
 // ===== Service Methods =====

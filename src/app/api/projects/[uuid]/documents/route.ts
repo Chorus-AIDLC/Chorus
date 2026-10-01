@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
 import { success, paginated, errors } from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
-import { projectExists } from "@/services/project.service";
+import { requireProjectAccess } from "@/services/project-access.service";
 import { listDocuments, createDocument } from "@/services/document.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -28,10 +28,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const url = new URL(request.url);
     const typeFilter = url.searchParams.get("type") || undefined;
 
-    // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
-      return errors.notFound("Project");
-    }
+    // Project access (404 when not visible, 403 below required level)
+    await requireProjectAccess(auth, projectUuid, "viewer");
 
     const { documents, total } = await listDocuments({
       companyUuid: auth.companyUuid,
@@ -64,10 +62,8 @@ export const POST = withErrorHandler<{ uuid: string }>(
 
     const { uuid: projectUuid } = await context.params;
 
-    // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
-      return errors.notFound("Project");
-    }
+    // Project access (404 when not visible, 403 below required level)
+    await requireProjectAccess(auth, projectUuid, "editor");
 
     const body = await parseBody<{
       type: string;

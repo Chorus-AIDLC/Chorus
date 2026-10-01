@@ -1,5 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
+import type { AuthContext } from "@/types/auth";
+import { accessibleProjectWhere, ProjectNotFoundError } from "@/services/project-access.service";
+
+async function groupProjectWhere(companyUuid: string, auth?: AuthContext) {
+  if (auth && auth.companyUuid !== companyUuid) throw new ProjectNotFoundError();
+  return accessibleProjectWhere(auth ?? { type: "agent", actorUuid: "", companyUuid });
+}
 
 // ============================================================
 // Interfaces
@@ -52,6 +59,7 @@ export interface GroupDashboardResponse {
   projects: {
     uuid: string;
     name: string;
+    visibility: string;
     taskCount: number;
     completionRate: number;
   }[];
@@ -172,15 +180,17 @@ export async function deleteProjectGroup(
 
 export async function getProjectGroup(
   companyUuid: string,
-  groupUuid: string
+  groupUuid: string,
+  auth?: AuthContext,
 ): Promise<ProjectGroupDetailResponse | null> {
+  const projectWhere = await groupProjectWhere(companyUuid, auth);
   const group = await prisma.projectGroup.findFirst({
     where: { uuid: groupUuid, companyUuid },
   });
   if (!group) return null;
 
   const projects = await prisma.project.findMany({
-    where: { groupUuid, companyUuid },
+    where: { ...projectWhere, groupUuid },
     select: { uuid: true, name: true, description: true },
     orderBy: { updatedAt: "desc" },
   });
@@ -197,8 +207,10 @@ export async function getProjectGroup(
 }
 
 export async function listProjectGroups(
-  companyUuid: string
+  companyUuid: string,
+  auth?: AuthContext,
 ): Promise<{ groups: ProjectGroupResponse[]; total: number; ungroupedCount: number }> {
+  const projectWhere = await groupProjectWhere(companyUuid, auth);
   const groups = await prisma.projectGroup.findMany({
     where: { companyUuid },
     orderBy: { createdAt: "asc" },
@@ -210,7 +222,7 @@ export async function listProjectGroups(
     groupUuids.length > 0
       ? await prisma.project.groupBy({
           by: ["groupUuid"],
-          where: { companyUuid, groupUuid: { in: groupUuids } },
+          where: { ...projectWhere, groupUuid: { in: groupUuids } },
           _count: { _all: true },
         })
       : [];
@@ -230,7 +242,7 @@ export async function listProjectGroups(
 
   // Count ungrouped projects
   const ungroupedCount = await prisma.project.count({
-    where: { companyUuid, groupUuid: null },
+    where: { ...projectWhere, groupUuid: null },
   });
 
   return { groups: result, total: groups.length, ungroupedCount };
@@ -285,8 +297,10 @@ export async function moveProjectToGroup(
 
 export async function getGroupDashboard(
   companyUuid: string,
-  groupUuid: string
+  groupUuid: string,
+  auth?: AuthContext,
 ): Promise<GroupDashboardResponse | null> {
+  const projectWhere = await groupProjectWhere(companyUuid, auth);
   const group = await prisma.projectGroup.findFirst({
     where: { uuid: groupUuid, companyUuid },
   });
@@ -294,8 +308,8 @@ export async function getGroupDashboard(
 
   // Get all projects in this group
   const projects = await prisma.project.findMany({
-    where: { groupUuid, companyUuid },
-    select: { uuid: true, name: true },
+    where: { ...projectWhere, groupUuid },
+    select: { uuid: true, name: true, visibility: true },
   });
 
   const projectUuids = projects.map((p) => p.uuid);
@@ -374,6 +388,7 @@ export async function getGroupDashboard(
     return {
       uuid: p.uuid,
       name: p.name,
+      visibility: p.visibility ?? "public",
       taskCount: tc,
       completionRate: tc > 0 ? Math.round((dc / tc) * 100) : 0,
     };

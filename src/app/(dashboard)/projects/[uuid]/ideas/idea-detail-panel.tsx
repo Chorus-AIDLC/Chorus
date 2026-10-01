@@ -51,6 +51,7 @@ import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker
 import { FixedCwdAnchor } from "@/components/agent-presence/fixed-cwd-anchor";
 import { reassignIdeaInstanceNoWakeAction } from "./[ideaUuid]/actions";
 import { useRealtimeEntityTypeEvent, useRealtimeEntityEvent } from "@/contexts/realtime-context";
+import { useCanEditProject } from "@/contexts/project-access-context";
 import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
 import { motion } from "framer-motion";
@@ -166,6 +167,8 @@ export function IdeaDetailPanel({
 }: IdeaDetailPanelProps) {
   const t = useTranslations();
   const router = useRouter();
+  // Project Viewers are read-only: no move / edit / footer actions.
+  const canMutate = useCanEditProject();
   const [activities, setActivities] = useState<ActivityResponse[]>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState(true);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -291,7 +294,7 @@ export function IdeaDetailPanel({
     // the shared helper, not uuid alone. A user-facing panel: an agent_instance
     // assignment (instance uuid) is correctly never "mine" here.
     isAssignedToActor(idea.assignee ?? null, { type: "user", uuid: currentUserUuid });
-  const canEdit = idea.status !== "elaborated";
+  const canEdit = canMutate && idea.status !== "elaborated";
 
   useEffect(() => {
     async function loadActivities() {
@@ -448,7 +451,7 @@ export function IdeaDetailPanel({
           </div>
 
           <div className="flex items-center gap-2 ml-4">
-            {!isEditing && (
+            {canMutate && !isEditing && (
               <Button
                 variant="outline"
                 size="icon"
@@ -690,7 +693,7 @@ export function IdeaDetailPanel({
                   )}
                 </Button>
               </>
-            ) : (
+            ) : !canMutate ? null : (
               <>
                 {/* Icon-only (Option C — declutter the action row): the (re)assign
                     label rides a shadcn Tooltip (+ aria-label for a11y) so the

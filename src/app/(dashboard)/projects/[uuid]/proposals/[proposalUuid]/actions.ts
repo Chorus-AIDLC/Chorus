@@ -21,12 +21,15 @@ import {
 } from "@/services/proposal.service";
 import { createActivity } from "@/services/activity.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess, denyUnlessProposalInputsAccess } from "@/lib/project-access-action";
 
 export async function approveProposalAction(proposalUuid: string, reviewNote?: string) {
   const auth = await getServerAuthContext();
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     // Validate proposal exists and belongs to this company
@@ -68,6 +71,8 @@ export async function submitProposalAction(proposalUuid: string) {
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     // Validate proposal exists and belongs to this company
@@ -80,6 +85,11 @@ export async function submitProposalAction(proposalUuid: string) {
     if (proposal.status !== "draft") {
       return { success: false, error: "Proposal is not in draft status" };
     }
+
+    // Submission re-validates stored inputs; one that became hidden since
+    // creation blocks submission like a missing input.
+    const hiddenInput = await denyUnlessProposalInputsAccess(auth, proposalUuid);
+    if (hiddenInput) return hiddenInput;
 
     await submitProposal(proposalUuid, auth.companyUuid);
 
@@ -98,6 +108,8 @@ export async function rejectProposalAction(proposalUuid: string, reviewNote?: st
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     // Validate proposal exists and belongs to this company
@@ -139,6 +151,8 @@ export async function closeProposalAction(proposalUuid: string, reviewNote: stri
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
@@ -167,6 +181,8 @@ export async function revokeProposalAction(proposalUuid: string, reviewNote?: st
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
@@ -210,6 +226,8 @@ export async function deleteProposalAction(proposalUuid: string, projectUuid: st
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
@@ -234,6 +252,9 @@ export async function deleteProposalAction(proposalUuid: string, projectUuid: st
 export async function getProposalDraftsAction(proposalUuid: string) {
   const auth = await getServerAuthContext();
   if (!auth) {
+    return { status: null, documentDrafts: [], taskDrafts: [] };
+  }
+  if (await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "viewer")) {
     return { status: null, documentDrafts: [], taskDrafts: [] };
   }
 
@@ -265,6 +286,8 @@ export async function addDocumentDraftAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
@@ -299,6 +322,8 @@ export async function addTaskDraftAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
@@ -327,6 +352,8 @@ export async function updateDocumentDraftAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
@@ -362,6 +389,8 @@ export async function updateTaskDraftAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
@@ -386,6 +415,8 @@ export async function removeDocumentDraftAction(proposalUuid: string, draftUuid:
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);
@@ -410,6 +441,8 @@ export async function removeTaskDraftAction(proposalUuid: string, draftUuid: str
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "editor");
+  if (denied) return denied;
 
   try {
     const proposal = await getProposalByUuid(auth.companyUuid, proposalUuid);

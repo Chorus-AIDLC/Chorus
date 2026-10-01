@@ -68,6 +68,19 @@ vi.mock("@/services/daemon-session.service", () => ({
   reconcileOrphanTurns: (...args: unknown[]) => mockReconcileOrphanTurns(...args),
 }));
 
+// Private-project isolation gate: the route resolves the caller's accessible
+// project set at connect. Default to a set containing the projects these tests
+// emit for (project-access behaviour is covered in route.project-access.test.ts).
+const mockAccessibleProjectUuids = vi.fn();
+vi.mock("@/services/project-access.service", () => ({
+  accessibleProjectUuids: (...args: unknown[]) => mockAccessibleProjectUuids(...args),
+  // Session/execution rows resolve their idea's project; default: the accessible one.
+  resolveEntityProjectUuid: async () => "proj-1",
+  filterExecutionViewsByAccess: async (_a: unknown, rows: unknown[]) => rows,
+  membershipPrincipal: (auth: { type: string; actorUuid: string; ownerUuid?: string }) =>
+    auth.type === "user" ? auth.actorUuid : auth.type === "agent" ? (auth.ownerUuid ?? null) : null,
+}));
+
 import { GET } from "@/app/api/events/route";
 
 // ===== Helpers =====
@@ -116,7 +129,8 @@ async function startStream(res: Response) {
  * Microtask-only (no setTimeout) so it works under vi.useFakeTimers().
  */
 async function flush() {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
+  // Session/execution delivery is gated on async project resolution (serial gate).
+  for (let i = 0; i < 25; i++) await Promise.resolve();
 }
 
 beforeEach(() => {
@@ -133,6 +147,7 @@ beforeEach(() => {
   mockIsSessionVisibleToCaller.mockResolvedValue(true);
   mockListVisibleRunningSessionActivities.mockResolvedValue([]);
   mockReconcileOrphanTurns.mockResolvedValue(0);
+  mockAccessibleProjectUuids.mockResolvedValue(["proj-1"]);
 });
 
 afterEach(() => {

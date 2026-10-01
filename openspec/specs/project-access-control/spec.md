@@ -1,0 +1,139 @@
+# project-access-control Specification
+
+## Purpose
+TBD - created by archiving change add-private-project-access. Update Purpose after archive.
+
+## Requirements
+
+### Requirement: Project visibility
+Every Project SHALL have a `visibility` of `public` or `private`. New projects SHALL default to `public` unless the creator selects `private`. Existing projects SHALL be migrated as `public`. A public project SHALL grant every user in its Company (and every agent of that Company) at least the `editor` level, preserving pre-change content read/write behaviour. On a public project every company actor SHALL also keep the ability to edit project settings, move it between groups and delete it, as before. Switching a project's visibility and managing its members SHALL require an explicit `admin` membership on public and private projects alike.
+
+#### Scenario: Existing projects remain public
+- **WHEN** the migration runs on a database with existing projects
+- **THEN** every existing project has `visibility = "public"` and every company user can still read and modify its ideas, proposals, tasks and documents
+
+#### Scenario: Legacy project creator backfill
+- **WHEN** the migration runs for an existing project in a company whose earliest-created user is F
+- **THEN** the project's `createdByUuid = F` and F is an `admin` member of it
+
+#### Scenario: Non-admin can still manage a public project's settings
+- **WHEN** a company user who is not an `admin` member edits the name of a public project
+- **THEN** the change succeeds as before
+
+#### Scenario: Non-admin cannot make a public project private
+- **WHEN** a company user who is not an `admin` member switches a public project to private, or adds a member to it
+- **THEN** the request is rejected with 403 and the project and its members are unchanged
+
+#### Scenario: Create a private project
+- **WHEN** a user creates a project with `visibility = "private"`
+- **THEN** the project is stored as private and the creator is recorded as `createdByUuid` and as an `admin` member
+
+### Requirement: Project membership levels
+A private project SHALL control access through `ProjectMember` rows, each binding one same-company User to exactly one role: `viewer`, `editor`, or `admin`. `viewer` MUST permit read-only access to the project and all its entities. `editor` MUST additionally permit creating, updating, deleting, claiming, commenting on, referencing, elaborating, proposing, approving and verifying entities within the project. `admin` MUST additionally permit editing project settings, changing visibility, managing members, moving the project between groups and deleting the project; on a private project these operations MUST be rejected for `viewer` and `editor`.
+
+#### Scenario: Viewer cannot write
+- **WHEN** a viewer of a private project attempts to create a task in it
+- **THEN** the request is rejected with 403 and no task is created
+
+#### Scenario: Editor can approve and verify
+- **WHEN** an editor of a private project approves a pending proposal or verifies a task in it
+- **THEN** the action succeeds
+
+#### Scenario: Editor cannot manage members
+- **WHEN** an editor of a private project attempts to add a member
+- **THEN** the request is rejected with 403
+
+#### Scenario: Member must belong to the same company
+- **WHEN** an admin attempts to add a user from a different company as a member
+- **THEN** the request is rejected and no membership is created
+
+### Requirement: Project creator becomes admin
+Every project creation path (REST, server action, MCP) SHALL record the creator, make them an `admin` member, and log a project `created` Activity. When an agent creates a project, the agent's owner SHALL be recorded as creator and admin.
+
+#### Scenario: Agent creates a project
+- **WHEN** an agent whose owner is user U creates a project via MCP
+- **THEN** `createdByUuid = U` and U is an `admin` member of the project
+
+### Requirement: Last admin guard
+A private project MUST always retain at least one `admin` member. Removing or demoting the last admin SHALL be rejected.
+
+#### Scenario: Remove last admin
+- **WHEN** the only admin of a private project tries to remove themselves or change their role to editor
+- **THEN** the request is rejected with 400 and the membership is unchanged
+
+### Requirement: Visibility switching
+Only an actor with `admin` level on the project SHALL change its visibility. Switching `public` → `private` MUST, in the same transaction, ensure the acting user (or the acting agent's owner) is an `admin` member; all other users without membership SHALL lose access. Switching `private` → `public` SHALL retain existing membership rows. An agent without an owner MUST NOT switch a project to private. Every visibility or membership change SHALL be recorded in the Activity stream.
+
+#### Scenario: Switch to private
+- **WHEN** user U, the only admin member of a public project, switches it to private
+- **THEN** U remains its only member (admin) and other company users receive 404 on the project
+
+#### Scenario: Switch back to public keeps members
+- **WHEN** an admin switches a private project with members A (admin) and B (viewer) back to public
+- **THEN** every company user has full access and the A/B rows are preserved for a later switch to private
+
+### Requirement: Agent access inherits from owner
+An agent SHALL NOT be a project member itself. On a private project an agent's level SHALL equal its owner's membership level, or `none` if it has no owner or the owner is not a member. The agent's company-wide permission bits SHALL continue to apply, so an operation succeeds only if both the bit and the project level allow it.
+
+#### Scenario: Agent of a viewer
+- **WHEN** an agent with `task:write` whose owner is a viewer of a private project calls a tool that updates a task in that project
+- **THEN** the call is rejected as forbidden
+
+#### Scenario: Agent of a non-member
+- **WHEN** an agent whose owner is not a member calls `chorus_get_task` for a task in a private project
+- **THEN** the call returns the same not-found error as for a nonexistent task
+
+### Requirement: Non-members cannot discover private projects
+For an actor with level `none`, a private project and all of its ideas, proposals, tasks, documents, comments, references and activity SHALL be indistinguishable from nonexistent: direct REST access and dashboard pages MUST return 404, MCP tools MUST return the not-found error, and the project MUST be omitted from project lists, project group listings and counts, group dashboards, overview stats, sidebar quick access, search results (text and exact-UUID), assignment trackers, checkin `activeProjects` and available-item listings.
+
+#### Scenario: Direct URL as non-member
+- **WHEN** a non-member opens `/projects/<private-uuid>/tasks`
+- **THEN** a 404 page is shown
+
+#### Scenario: Exact UUID search
+- **WHEN** a non-member calls `chorus_search` with the UUID of a task in a private project
+- **THEN** no result is returned
+
+#### Scenario: Group counts
+- **WHEN** a project group contains two public projects and one private project the caller is not a member of
+- **THEN** the group shows a project count of 2 and its dashboard aggregates only the two public projects
+
+### Requirement: Realtime and notification isolation
+SSE `change` and `presence` events for a private project SHALL be delivered only to subscribers with at least `viewer` access, and a subscriber's accessible set SHALL be refreshed when project access changes. Notifications about entities in a private project SHALL NOT be created for recipients without access.
+
+#### Scenario: SSE after removal
+- **WHEN** user B is removed from a private project while B has an open SSE connection
+- **THEN** B stops receiving change events for that project
+
+#### Scenario: Notification recipient lost access
+- **WHEN** a task in a private project is updated and its creator is no longer a member
+- **THEN** no notification is created for the former creator
+
+### Requirement: Mentions and assignment restricted to members
+In a private project, only users with access and agents whose owner has access SHALL be @mentionable or assignable. Mentionable search scoped to an entity in a private project MUST return only such users and agents. Assigning an idea or task to an actor without `editor` access MUST be rejected.
+
+#### Scenario: Mention a non-member
+- **WHEN** a comment in a private project @mentions a company user who is not a member
+- **THEN** no mention or notification is created for that user
+
+#### Scenario: Assign task to agent of a viewer
+- **WHEN** a PM assigns a task in a private project to an agent whose owner is only a viewer
+- **THEN** the assignment is rejected
+
+### Requirement: Access management UI
+The Project Settings modal SHALL provide an Access section where admins change visibility (with a confirmation step for public → private) and list, add, change the role of, and remove members; non-admins SHALL see it read-only. The Create Project dialog SHALL offer the visibility choice. Private projects SHALL show a lock indicator wherever projects are listed. Viewers SHALL NOT be offered primary create/edit actions on project pages. All strings SHALL be localized (en, zh) and render correctly in light and dark themes.
+
+#### Scenario: Admin adds a member
+- **WHEN** an admin opens Project Settings → Access, picks a company user and the Editor role, and confirms
+- **THEN** the user appears in the member table as Editor and can now open the project
+
+#### Scenario: Viewer sees read-only project
+- **WHEN** a viewer opens the private project's tasks page
+- **THEN** the tasks are listed and the create-task action is not offered
+
+### Requirement: MCP access fields
+`chorus_get_project` SHALL include the project's `visibility` and the caller's `accessLevel`. `chorus_admin_create_project` SHALL accept an optional `visibility` parameter (default `public`).
+
+#### Scenario: Agent reads its access level
+- **WHEN** an agent whose owner is an editor calls `chorus_get_project` on a private project
+- **THEN** the response contains `visibility: "private"` and `accessLevel: "editor"`

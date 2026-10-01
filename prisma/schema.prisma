@@ -166,6 +166,10 @@ model Project {
   name        String
   description String?
   groupUuid   String? // nullable FK → ProjectGroup.uuid
+  // Access control: "public" (every company member) | "private" (ProjectMember rows only)
+  visibility    String   @default("public")
+  // Creator User UUID (agent-created → agent's owner). Legacy rows backfilled to the company's first user.
+  createdByUuid String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -175,9 +179,28 @@ model Project {
   proposals           Proposal[]
   activities          Activity[]
   agentCwdPreferences ProjectAgentCwdPreference[]
+  members             ProjectMember[]
 
   @@index([companyUuid])
   @@index([groupUuid])
+  @@index([companyUuid, visibility])
+}
+
+// Project membership (users only — agents inherit their owner's membership)
+model ProjectMember {
+  id          Int      @id @default(autoincrement())
+  uuid        String   @unique @default(uuid())
+  companyUuid String
+  projectUuid String
+  project     Project  @relation(fields: [projectUuid], references: [uuid], onDelete: Cascade)
+  userUuid    String
+  role        String // viewer | editor | admin
+  addedByUuid String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectUuid, userUuid])
+  @@index([companyUuid, userUuid])
 }
 
 // Idea (raw human input)

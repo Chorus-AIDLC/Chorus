@@ -145,6 +145,15 @@ export interface ProjectRow {
   uuid: string;
   companyUuid: string;
   name: string;
+  visibility?: "public" | "private";
+}
+
+export interface ProjectMemberRow {
+  uuid: string;
+  companyUuid: string;
+  projectUuid: string;
+  userUuid: string;
+  role: "viewer" | "editor" | "admin";
 }
 
 export interface DaemonSessionRow {
@@ -261,6 +270,7 @@ export interface AgentInstanceStore {
   proposals: ProposalRow[];
   tasks: TaskRow[];
   projects: ProjectRow[];
+  projectMembers: ProjectMemberRow[];
   daemonSessions: DaemonSessionRow[];
   daemonSessionTurns: DaemonSessionTurnRow[];
   activities: ActivityRow[];
@@ -278,6 +288,7 @@ export const agentInstanceStore: AgentInstanceStore = {
   proposals: [],
   tasks: [],
   projects: [],
+  projectMembers: [],
   daemonSessions: [],
   daemonSessionTurns: [],
   activities: [],
@@ -295,6 +306,7 @@ export function resetAgentInstanceStore() {
   agentInstanceStore.proposals = [];
   agentInstanceStore.tasks = [];
   agentInstanceStore.projects = [];
+  agentInstanceStore.projectMembers = [];
   agentInstanceStore.daemonSessions = [];
   agentInstanceStore.daemonSessionTurns = [];
   agentInstanceStore.activities = [];
@@ -635,6 +647,10 @@ export function buildMockPrisma() {
     project: makeModel<ProjectRow & Record<string, unknown>>(
       () => agentInstanceStore.projects as (ProjectRow & Record<string, unknown>)[],
     ),
+    projectMember: makeModel<ProjectMemberRow & Record<string, unknown>>(
+      () => agentInstanceStore.projectMembers as (ProjectMemberRow & Record<string, unknown>)[],
+      { compoundKeys: { projectUuid_userUuid: ["projectUuid", "userUuid"] } },
+    ),
     daemonSession: makeModel<DaemonSessionRow & Record<string, unknown>>(
       () => agentInstanceStore.daemonSessions as (DaemonSessionRow & Record<string, unknown>)[],
       {
@@ -801,7 +817,7 @@ export interface AgentInstanceScenario {
 export function seedAgentInstanceScenario(): AgentInstanceScenario {
   const now = new Date();
 
-  agentInstanceStore.projects.push({ uuid: PROJECT, companyUuid: COMPANY, name: "AI Instance Project" });
+  agentInstanceStore.projects.push({ uuid: PROJECT, companyUuid: COMPANY, name: "AI Instance Project", visibility: "public" });
 
   // The owner user — createdByUuid on the idea resolves through formatCreatedBy.
   agentInstanceStore.users.push({ uuid: OWNER, companyUuid: COMPANY, name: "Owner User", email: "owner@example.com" });

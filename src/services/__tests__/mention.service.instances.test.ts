@@ -29,6 +29,17 @@ const {
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+// Private-project isolation (project-access): identity by default so these
+// tests exercise the public-project path; the access filter itself is covered
+// in mention.service.project-access.test.ts.
+const { mockFilterRecipientsByProjectAccess } = vi.hoisted(() => ({
+  mockFilterRecipientsByProjectAccess: vi.fn(),
+}));
+vi.mock("@/services/project-access.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/project-access.service")>()),
+  filterRecipientsByProjectAccess: mockFilterRecipientsByProjectAccess,
+  privateProjectMemberUuids: vi.fn(async () => null),
+}));
 vi.mock("@/lib/uuid-resolver", () => ({ getActorName: mockGetActorName }));
 vi.mock("@/services/notification.service", () => ({
   getPreferences: (...args: unknown[]) => mockGetPreferences(...args),
@@ -74,6 +85,9 @@ function connView(over: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFilterRecipientsByProjectAccess.mockImplementation(
+    async (_companyUuid: string, _projectUuid: string, recipients: unknown[]) => recipients,
+  );
   mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
   mockPrisma.daemonExecution.groupBy.mockResolvedValue([]);
   mockListConnectionsForAgent.mockResolvedValue([]);

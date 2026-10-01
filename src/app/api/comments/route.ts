@@ -8,6 +8,7 @@ import { success, paginated, errors } from "@/lib/api-response";
 import { getAuthContext, isUser } from "@/lib/auth";
 import * as commentService from "@/services/comment.service";
 import type { TargetType } from "@/lib/uuid-resolver";
+import { requireEntityAccess, type AccessEntityType } from "@/services/project-access.service";
 
 const validTargetTypes = ["idea", "proposal", "task", "document"];
 
@@ -33,6 +34,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       targetType: "Invalid target type",
     });
   }
+
+  // Viewer on the target's project (hidden → same 404 as a missing target).
+  await requireEntityAccess(auth, query.targetType as AccessEntityType, query.targetUuid, "viewer");
 
   // Cursor mode: opt-in when `cursor` and/or `limit` is present. Returns a
   // newest-first page plus continuation metadata for the comment component's
@@ -92,6 +96,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       content: "Content is required",
     });
   }
+
+  // Editor on the target's project (hidden → same 404 as a missing target).
+  await requireEntityAccess(auth, body.targetType as AccessEntityType, body.targetUuid, "editor");
 
   try {
     const comment = await commentService.createComment({

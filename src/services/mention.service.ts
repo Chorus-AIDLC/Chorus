@@ -3,6 +3,7 @@
 // Content format: @[DisplayName](user:uuid) or @[DisplayName](agent:uuid)
 
 import { prisma } from "@/lib/prisma";
+import * as projectAccess from "@/services/project-access.service";
 import {
   getActorName,
   resolveAssigneeAgentUuid,
@@ -184,36 +185,7 @@ async function resolveEntityProjectUuid(
   entityType: LineageEntityType,
   entityUuid: string,
 ): Promise<string | null> {
-  if (entityType === "idea") {
-    return (
-      await prisma.idea.findFirst({
-        where: { uuid: entityUuid, companyUuid },
-        select: { projectUuid: true },
-      })
-    )?.projectUuid ?? null;
-  }
-  if (entityType === "task") {
-    return (
-      await prisma.task.findFirst({
-        where: { uuid: entityUuid, companyUuid },
-        select: { projectUuid: true },
-      })
-    )?.projectUuid ?? null;
-  }
-  if (entityType === "proposal") {
-    return (
-      await prisma.proposal.findFirst({
-        where: { uuid: entityUuid, companyUuid },
-        select: { projectUuid: true },
-      })
-    )?.projectUuid ?? null;
-  }
-  return (
-    await prisma.document.findFirst({
-      where: { uuid: entityUuid, companyUuid },
-      select: { projectUuid: true },
-    })
-  )?.projectUuid ?? null;
+  return projectAccess.resolveEntityProjectUuid(companyUuid, entityType, entityUuid);
 }
 
 async function resolveMentionTarget(params: {
@@ -402,15 +374,27 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
   if (filteredMentions.length === 0) return;
 
   // Validate that mentioned targets exist in this company
-  const validMentions: MentionRef[] = [];
+  const existingMentions: MentionRef[] = [];
 
   for (const mention of filteredMentions) {
     const exists = await validateMentionTarget(companyUuid, mention.type, mention.uuid);
     if (exists) {
-      validMentions.push(mention);
+      existingMentions.push(mention);
     }
   }
 
+  if (existingMentions.length === 0) return;
+
+  // Private-project isolation: drop targets without viewer access to the
+  // entity's project (users must be members; agents need a member owner). Like
+  // a non-existent target, an outsider is silently skipped — no Mention row, no
+  // notification — while the rest of the content's mentions still go through.
+  // One batched check for all targets (public projects pass every user/agent).
+  const validMentions = await filterMentionTargetsByProjectAccess(
+    companyUuid,
+    projectUuid,
+    existingMentions,
+  );
   if (validMentions.length === 0) return;
 
   // Batch create Mention records
@@ -816,6 +800,8 @@ async function enrichProjectFixedCwds(params: {
   results: Mentionable[];
   entityType: LineageEntityType;
   entityUuid: string;
+  // Pre-resolved project of the entity (undefined → resolve here).
+  projectUuid?: string | null;
 }): Promise<void> {
   const agentResults = params.results.filter(
     (result): result is Mentionable & { type: "agent" } => result.type === "agent",
@@ -824,11 +810,14 @@ async function enrichProjectFixedCwds(params: {
   const actorUserUuid =
     params.actorType === "user" ? params.actorUuid : params.ownerUuid;
   if (!actorUserUuid) return;
-  const projectUuid = await resolveEntityProjectUuid(
-    params.companyUuid,
-    params.entityType,
-    params.entityUuid,
-  );
+  const projectUuid =
+    params.projectUuid !== undefined
+      ? params.projectUuid
+      : await resolveEntityProjectUuid(
+          params.companyUuid,
+          params.entityType,
+          params.entityUuid,
+        );
   if (!projectUuid) return;
 
   const preferences = await prisma.projectAgentCwdPreference.findMany({
@@ -862,6 +851,9 @@ async function enrichProjectFixedCwds(params: {
  * Permission scoping:
  * - User caller: all company users + own agents (agents with ownerUuid = actorUuid)
  * - Agent caller: all company users + same-owner agents (agents with same ownerUuid)
+ * - With entity context (entityType + entityUuid): additionally restricted to
+ *   actors with viewer access to the entity's project — in a private project,
+ *   member users and agents whose owner is a member. Public projects unchanged.
  */
 export async function searchMentionables(params: SearchMentionablesParams): Promise<Mentionable[]> {
   const { companyUuid, query, actorType, actorUuid, ownerUuid, limit = 10, withInstances = false, entityType, entityUuid } = params;
@@ -871,7 +863,24 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
   const hasEntityContext = !!entityType && !!entityUuid;
 
   const effectiveLimit = Math.min(limit, 50);
-  const results: Mentionable[] = [];
+  let results: Mentionable[] = [];
+
+  // Private-project isolation: with entity context, candidates are restricted to
+  // actors that can view the entity's project (member users + agents whose owner
+  // is a member). Resolved once; null (unresolvable entity) → no restriction.
+  const entityProjectUuid = hasEntityContext
+    ? await resolveEntityProjectUuid(companyUuid, entityType!, entityUuid!)
+    : null;
+  const restrictToEntityProject = async (pool: Mentionable[]): Promise<Mentionable[]> =>
+    entityProjectUuid
+      ? filterMentionTargetsByProjectAccess(companyUuid, entityProjectUuid, pool)
+      : pool;
+  // For a private project, scope the candidate QUERIES to members before `take`,
+  // so non-members can never crowd real members out of the capped result set.
+  // restrictToEntityProject stays as the backstop.
+  const memberUuids = entityProjectUuid
+    ? await projectAccess.privateProjectMemberUuids(companyUuid, entityProjectUuid)
+    : null;
 
   // Determine the owner UUID for agent scoping (computed once, reused below)
   let agentOwnerUuid: string | undefined;
@@ -885,7 +894,7 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
   // Design decision: We surface recently created agents first for quick access.
   // Human users are not shown in the empty-query case to keep the UX focused on AI agents.
   if (!query) {
-    if (agentOwnerUuid) {
+    if (agentOwnerUuid && (!memberUuids || memberUuids.includes(agentOwnerUuid))) {
       const agents = await prisma.agent.findMany({
         where: {
           companyUuid,
@@ -913,6 +922,8 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
       }
     }
 
+    results = await restrictToEntityProject(results);
+
     // enrich → sort (online-first) → slice. Enrich the full agent candidate pool,
     // then order online agents to the front, then trim to the display cap (≤5).
     await enrichAgentLiveness(companyUuid, results);
@@ -933,6 +944,7 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
         results: sliced,
         entityType: entityType!,
         entityUuid: entityUuid!,
+        projectUuid: entityProjectUuid,
       });
     }
     return sliced;
@@ -941,6 +953,7 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
   const users = await prisma.user.findMany({
     where: {
       companyUuid,
+      ...(memberUuids ? { uuid: { in: memberUuids } } : {}),
       OR: [
         { name: { contains: query, mode: "insensitive" } },
         { email: { contains: query, mode: "insensitive" } },
@@ -970,15 +983,19 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
   const agentWhere: {
     companyUuid: string;
     name: { contains: string; mode: "insensitive" };
-    ownerUuid?: string;
+    ownerUuid?: string | { in: string[] };
   } = {
     companyUuid,
     name: { contains: query, mode: "insensitive" as const },
   };
 
-  // Scope agents: user sees own agents, agent sees same-owner agents
+  // Scope agents: user sees own agents, agent sees same-owner agents.
+  // In a private project the owner must also be a member.
   if (agentOwnerUuid) {
-    agentWhere.ownerUuid = agentOwnerUuid;
+    agentWhere.ownerUuid =
+      memberUuids && !memberUuids.includes(agentOwnerUuid) ? { in: [] } : agentOwnerUuid;
+  } else if (memberUuids) {
+    agentWhere.ownerUuid = { in: memberUuids };
   }
 
   const agents = await prisma.agent.findMany({
@@ -1003,6 +1020,8 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
     });
   }
 
+  results = await restrictToEntityProject(results);
+
   // enrich → sort → slice. Enrich the FULL candidate pool (so liveness is known for
   // every agent), order online agents to the front, THEN trim to the display limit —
   // this is what keeps online agents from being sliced out by a flood of users.
@@ -1024,6 +1043,7 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
       results: sliced,
       entityType: entityType!,
       entityUuid: entityUuid!,
+      projectUuid: entityProjectUuid,
     });
   }
   return sliced;
@@ -1087,6 +1107,21 @@ async function validateMentionTarget(
     });
     return !!agent;
   }
+}
+
+/**
+ * Keep only the mention targets that can view `projectUuid` (batched via
+ * project-access: one project read, one agent-owner read, one membership read).
+ * Public projects keep every target; private projects keep member users and
+ * agents whose owner is a member.
+ */
+async function filterMentionTargetsByProjectAccess<T extends { type: string; uuid: string }>(
+  companyUuid: string,
+  projectUuid: string,
+  targets: T[],
+): Promise<T[]> {
+  if (targets.length === 0) return targets;
+  return projectAccess.filterRecipientsByProjectAccess(companyUuid, projectUuid, targets);
 }
 
 /**

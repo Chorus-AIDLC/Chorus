@@ -25,8 +25,16 @@ const mockPrisma = vi.hoisted(() => ({
   document: {
     count: vi.fn(),
   },
+  projectMember: {
+    create: vi.fn(),
+  },
+  $transaction: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+
+const mockPublish = vi.hoisted(() => vi.fn());
+const mockCreateActivityInTx = vi.hoisted(() => vi.fn());
+vi.mock("@/services/activity.service", () => ({ createActivityInTx: mockCreateActivityInTx }));
 
 import {
   listProjects,
@@ -150,6 +158,68 @@ describe("createProject", () => {
         }),
       })
     );
+  });
+
+  it("defaults to public with no creator and logs nothing without an actor", async () => {
+    mockPrisma.project.create.mockResolvedValue(makeProject());
+
+    await createProject({ companyUuid, name: "Legacy" });
+
+    expect(mockPrisma.project.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ visibility: "public", createdByUuid: null }),
+    }));
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.projectMember.create).not.toHaveBeenCalled();
+    expect(mockCreateActivityInTx).not.toHaveBeenCalled();
+  });
+
+  it("records the creator as admin and its created Activity in one transaction, publishing after commit", async () => {
+    mockPrisma.$transaction.mockImplementation((cb: (tx: typeof mockPrisma) => unknown) => cb(mockPrisma));
+    mockCreateActivityInTx.mockResolvedValue({ activity: { uuid: "act-1" }, publish: mockPublish });
+    mockPrisma.project.create.mockResolvedValue(makeProject());
+
+    await createProject({
+      companyUuid,
+      name: "Private",
+      visibility: "private",
+      createdByUuid: "owner-user",
+      actor: { type: "agent", uuid: "agent-1" },
+    });
+
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.project.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ visibility: "private", createdByUuid: "owner-user" }),
+    }));
+    expect(mockPrisma.projectMember.create).toHaveBeenCalledWith({
+      data: { companyUuid, projectUuid, userUuid: "owner-user", role: "admin", addedByUuid: "owner-user" },
+    });
+    expect(mockCreateActivityInTx).toHaveBeenCalledWith(mockPrisma, {
+      companyUuid,
+      projectUuid,
+      targetType: "project",
+      targetUuid: projectUuid,
+      actorType: "agent",
+      actorUuid: "agent-1",
+      action: "created",
+      value: { visibility: "private" },
+    });
+    expect(mockPublish).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not publish the created Activity if the transaction fails", async () => {
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof mockPrisma) => unknown) => cb(mockPrisma));
+    mockPrisma.project.create.mockResolvedValue(makeProject());
+    mockCreateActivityInTx.mockRejectedValue(new Error("activity insert failed"));
+
+    await expect(createProject({ companyUuid, name: "X", createdByUuid: "u", actor: { type: "user", uuid: "u" } }))
+      .rejects.toThrow("activity insert failed");
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it("rejects a private project without a creator (it would be unreachable)", async () => {
+    await expect(createProject({ companyUuid, name: "Orphan", visibility: "private" }))
+      .rejects.toThrow("A private project requires a creator");
+    expect(mockPrisma.project.create).not.toHaveBeenCalled();
   });
 
   it("should pass groupUuid when provided", async () => {
@@ -302,6 +372,9 @@ describe("getProjectUuidsByGroup", () => {
 // ===== getCompanyOverviewStats =====
 describe("getCompanyOverviewStats", () => {
   it("should return aggregated company stats", async () => {
+    mockPrisma.project.findMany.mockResolvedValue([
+      { uuid: projectUuid }, { uuid: "project-2" }, { uuid: "project-3" },
+    ]);
     mockPrisma.project.count.mockResolvedValue(3);
     mockPrisma.task.count.mockResolvedValue(25);
     mockPrisma.proposal.count.mockResolvedValue(2);

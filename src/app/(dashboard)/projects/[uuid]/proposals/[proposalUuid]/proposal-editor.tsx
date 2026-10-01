@@ -54,6 +54,7 @@ import {
 } from "./actions";
 import { TaskDraftDetailPanel } from "./task-draft-detail-panel";
 import { clientLogger } from "@/lib/logger-client";
+import { useCanEditProject } from "@/contexts/project-access-context";
 
 interface DocumentDraft {
   uuid: string;
@@ -239,7 +240,9 @@ export function ProposalEditor({
   const [dagError, setDagError] = useState<string | null>(null);
 
   // Only allow editing for draft proposals
-  const canEdit = status === "draft";
+  // Viewers never get draft-editing affordances (UX only — server enforces).
+  const canEditProject = useCanEditProject();
+  const canEdit = canEditProject && status === "draft";
 
   // SSE listener: component-level refresh (T2)
   useRealtimeEntityEvent("proposal", proposalUuid, async (event) => {

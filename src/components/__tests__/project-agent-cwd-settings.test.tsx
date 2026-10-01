@@ -103,6 +103,14 @@ describe("ProjectAgentCwdSettings", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("disabled (read-only): lists agents but hides Configure / Replace / Clear", async () => {
+    render(<ProjectAgentCwdSettings projectUuid="project-1" disabled />);
+    await screen.findByText("Agent One");
+    expect(screen.queryByLabelText("projectSettings.agentCwds.clear")).toBeNull();
+    expect(screen.queryByLabelText("projectSettings.agentCwds.replace")).toBeNull();
+    expect(screen.queryByLabelText("projectSettings.agentCwds.configure")).toBeNull();
+  });
+
   it("records an explicit clear and renders an Agent-scoped error", async () => {
     const ref = createRef<ProjectAgentCwdSettingsHandle>();
     render(

@@ -97,6 +97,20 @@ vi.mock("@/services/project.service", () => ({
   projectExists: (...args: unknown[]) => mockProjectExists(...args),
 }));
 
+vi.mock("@/services/project-access.service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/project-access.service")>();
+  return {
+    ...actual,
+    // Project-access gate backed by the legacy existence mock: missing → 404.
+    requireProjectAccess: async (auth: { companyUuid: string }, projectUuid: string) => {
+      if (!(await mockProjectExists(auth.companyUuid, projectUuid))) {
+        throw new actual.ProjectNotFoundError("project");
+      }
+      return { uuid: projectUuid, companyUuid: auth.companyUuid, visibility: "public", accessLevel: "editor" };
+    },
+  };
+});
+
 vi.mock("@/services/activity.service", () => ({
   createActivity: (...args: unknown[]) => mockCreateActivity(...args),
 }));

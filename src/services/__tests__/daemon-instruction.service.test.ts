@@ -21,6 +21,15 @@ const mockPrisma = vi.hoisted(() => ({
     count: vi.fn(),
   },
 }));
+// Private-project isolation: allow by default (denials covered in
+// daemon-instruction.project-access.test.ts).
+vi.mock("@/services/project-access.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/project-access.service")>()),
+  canActorAccessProject: vi.fn(async () => true),
+  resolveEntityProjectUuid: vi.fn(async () => "proj-1"),
+  filterRecipientsByProjectAccess: vi.fn(async (_c: string, _p: string, r: unknown[]) => r),
+}));
+
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 // ===== Composed-service mocks (子1 + execution) =====
@@ -105,6 +114,7 @@ import {
 // The mocked SessionReadOnlyError class (defined in the vi.mock factory above), imported
 // so the offline-origin test can construct + assert against the same class the SUT sees.
 import { SessionReadOnlyError } from "@/services/daemon-session.service";
+import * as projectAccess from "@/services/project-access.service";
 
 // ===== Helpers =====
 const companyUuid = "company-0000-0000-0000-000000000001";
@@ -287,6 +297,33 @@ describe("sendInstruction", () => {
     expect(turn.status).toBe("pending");
   });
 
+  it("idea-anchored session: passes the idea's project so the chokepoint's access filter applies", async () => {
+    await sendInstruction(userAuth, { sessionUuid, instructionText: "go" });
+    expect(mockNotificationCreate.mock.calls[0][0].projectUuid).toBe("proj-1");
+    expect(vi.mocked(projectAccess.resolveEntityProjectUuid)).toHaveBeenCalledWith(companyUuid, "idea", ideaUuid);
+  });
+
+  it.each([
+    ["the caller", [false, true]],
+    ["the session's agent (via its owner)", [true, false]],
+  ])("idea-anchored session in a project %s cannot edit → not visible, no turn, no ping", async (_who, [caller, agent]) => {
+    vi.mocked(projectAccess.canActorAccessProject)
+      .mockResolvedValueOnce(caller as boolean)
+      .mockResolvedValueOnce(agent as boolean);
+    await expect(sendInstruction(userAuth, { sessionUuid, instructionText: "go" }))
+      .rejects.toBeInstanceOf(SessionNotVisibleError);
+    expect(mockNotificationCreate).not.toHaveBeenCalled();
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+    expect(mockAssertContinuable).not.toHaveBeenCalled();
+  });
+
+  it("idea-anchored session whose idea no longer resolves → not visible", async () => {
+    vi.mocked(projectAccess.resolveEntityProjectUuid).mockResolvedValueOnce(null);
+    await expect(sendInstruction(userAuth, { sessionUuid, instructionText: "go" }))
+      .rejects.toBeInstanceOf(SessionNotVisibleError);
+    expect(mockNotificationCreate).not.toHaveBeenCalled();
+  });
+
   it("ad-hoc session (directIdeaUuid=null): aligns on a NON-lineage entityType + entityUuid:sessionId", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValue({
       agentUuid,
@@ -298,6 +335,9 @@ describe("sendInstruction", () => {
     const arg = mockNotificationCreate.mock.calls[0][0];
     expect(arg.entityType).toBe(AD_HOC_ENTITY_TYPE);
     expect(arg.entityUuid).toBe(adHocSessionId);
+    // Ad-hoc sessions are owner-scoped: no project lookup, empty projectUuid.
+    expect(arg.projectUuid).toBe("");
+    expect(vi.mocked(projectAccess.canActorAccessProject)).not.toHaveBeenCalled();
   });
 
   it("validates text BEFORE any lookup/turn — empty → InstructionTextError, no session lookup, no create", async () => {
@@ -977,5 +1017,16 @@ describe("getVisibleSessionsPageWithOrigin", () => {
     const out = await getVisibleSessionsPageWithOrigin(agentAuth, agentUuid);
     expect(out.sessions).toHaveLength(1);
     expect(mockPrisma.agent.count).not.toHaveBeenCalled(); // self-ownership is a uuid compare
+  });
+});
+
+describe("repointSessionOriginAndSend — private-project isolation", () => {
+  it("refuses (not visible) before re-pointing when the caller cannot edit the idea's project", async () => {
+    vi.mocked(projectAccess.canActorAccessProject).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await expect(
+      repointSessionOriginAndSend(userAuth, { sessionUuid, connectionUuid: "conn-new", instructionText: "go" }),
+    ).rejects.toBeInstanceOf(SessionNotVisibleError);
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+    expect(mockNotificationCreate).not.toHaveBeenCalled();
   });
 });

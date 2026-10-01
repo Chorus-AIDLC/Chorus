@@ -7,6 +7,7 @@ import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isAgent } from "@/lib/auth";
 import * as mentionService from "@/services/mention.service";
 import type { LineageEntityType } from "@/services/lineage.service";
+import { requireEntityAccess } from "@/services/project-access.service";
 
 // The entity kinds the mention search accepts as comment context (pin-cwd-before-wake,
 // Part 2a). Any other value is ignored (treated as "no entity context").
@@ -36,6 +37,12 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     ? (query.entityType as LineageEntityType)
     : undefined;
   const entityUuid = query.entityUuid || undefined;
+
+  // With an entity context, the caller must be able to view that entity
+  // (hidden → same 404 as a missing entity). Without one, the search is unchanged.
+  if (entityType && entityUuid) {
+    await requireEntityAccess(auth, entityType, entityUuid, "viewer");
+  }
 
   const results = await mentionService.searchMentionables({
     companyUuid: auth.companyUuid,

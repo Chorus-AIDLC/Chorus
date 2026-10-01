@@ -1892,5 +1892,77 @@
     "agentLabel": "Agent",
     "noAgents": "没有可用的 Agent。",
     "requestButton": "请求调研"
+  },
+  "projectAccess": {
+    "elaborationReadOnly": "你只有查看权限，无法回答这些问题。",
+    "tabs": {
+      "general": "常规",
+      "access": "访问权限"
+    },
+    "loading": "正在加载访问设置...",
+    "loadFailed": "无法加载访问设置。",
+    "visibility": {
+      "title": "可见性",
+      "description": "选择公司内哪些人可以查看此项目。",
+      "public": "公开",
+      "publicHint": "公司内所有人都可以查看和编辑此项目。",
+      "private": "私有",
+      "privateHint": "只有列出的成员及其 Agent 可以访问此项目。"
+    },
+    "confirm": {
+      "toPrivateTitle": "将此项目设为私有？",
+      "toPrivateDescription": "只有此项目列出的成员（及其拥有的 Agent）会保留访问权限，公司内的其他人将立即失去访问权限。",
+      "toPublicTitle": "将此项目设为公开？",
+      "toPublicDescription": "公司内所有人（及其 Agent）都将获得此项目及其全部想法、文档、提案和任务的访问权限。",
+      "confirm": "更改可见性"
+    },
+    "visibilityUpdated": "项目可见性已更新",
+    "members": {
+      "title": "成员",
+      "description": "项目成员及其角色。",
+      "name": "成员",
+      "role": "角色",
+      "actions": "操作",
+      "empty": "暂无成员。",
+      "loading": "正在加载成员...",
+      "loadFailed": "无法加载成员。",
+      "remove": "移除 {name}",
+      "roleFor": "{name} 的角色",
+      "unnamed": "未命名用户"
+    },
+    "roles": {
+      "viewer": "查看者",
+      "editor": "编辑者",
+      "admin": "管理员"
+    },
+    "add": {
+      "title": "添加成员",
+      "selectUser": "选择用户",
+      "searchPlaceholder": "按姓名或邮箱搜索...",
+      "typeToSearch": "输入关键词搜索公司用户。",
+      "searching": "搜索中...",
+      "noResults": "没有匹配的用户。",
+      "role": "新成员的角色",
+      "add": "添加",
+      "adding": "添加中..."
+    },
+    "memberAdded": "成员已添加",
+    "memberRemoved": "成员已移除",
+    "roleUpdated": "成员角色已更新",
+    "readOnlyHint": "只有项目管理员可以更改可见性或管理成员。",
+    "settingsLockedHint": "此项目为私有项目，只有项目管理员可以编辑其设置。",
+    "deleteLockedHint": "只有项目管理员可以删除私有项目。",
+    "errors": {
+      "lastAdmin": "项目必须至少保留一名管理员。",
+      "alreadyMember": "该用户已经是此项目的成员。",
+      "notInCompany": "该用户不在你的公司中。",
+      "forbidden": "你没有管理此项目访问权限的权限。",
+      "invalid": "请求无效，请重试。",
+      "generic": "出现错误，请重试。"
+    },
+    "privateBadge": "私有项目",
+    "privateTooltip": "私有项目 — 仅项目成员可见",
+    "viewerBanner": "你对此项目只有查看权限。如需修改，请联系项目管理员授予编辑者权限。",
+    "commentsReadOnly": "查看者只能阅读评论，无法发表评论。"
   }
 }

@@ -7,7 +7,7 @@ import { eventBus } from "@/lib/event-bus";
 import { getActorName } from "@/lib/uuid-resolver";
 import { lockResearchProject } from "@/services/research-eligibility.service";
 
-export type TargetType = "idea" | "task" | "proposal" | "document";
+export type TargetType = "idea" | "task" | "proposal" | "document" | "project";
 
 export interface ActivityListParams {
   companyUuid: string;
@@ -114,8 +114,9 @@ export async function listActivitiesWithActorNames(
   return { activities, total };
 }
 
-// Create Activity
-export async function createActivity({
+type ActivityDb = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
+
+function buildActivityWrite({
   companyUuid,
   projectUuid,
   targetType,
@@ -127,7 +128,7 @@ export async function createActivity({
   sessionUuid,
   sessionName,
 }: ActivityCreateParams) {
-  const write = {
+  return {
     data: {
       companyUuid,
       projectUuid,
@@ -141,27 +142,44 @@ export async function createActivity({
       sessionName: sessionName || undefined,
     },
   };
+}
+
+function publishActivity(params: ActivityCreateParams, uuid: string) {
+  eventBus.emit("activity", {
+    companyUuid: params.companyUuid,
+    projectUuid: params.projectUuid,
+    targetType: params.targetType,
+    targetUuid: params.targetUuid,
+    actorType: params.actorType,
+    actorUuid: params.actorUuid,
+    action: params.action,
+    value: params.value,
+    sessionUuid: params.sessionUuid,
+    sessionName: params.sessionName,
+    uuid,
+  });
+}
+
+// Create Activity
+export async function createActivity(params: ActivityCreateParams) {
+  const write = buildActivityWrite(params);
   // Publish after commit: downstream notification listeners use global Prisma.
-  const activity = action === "start_development"
+  const activity = params.action === "start_development"
     ? await prisma.$transaction(async (tx) => {
-        await lockResearchProject(tx, companyUuid, projectUuid);
+        await lockResearchProject(tx, params.companyUuid, params.projectUuid);
         return tx.activity.create(write);
       })
     : await prisma.activity.create(write);
 
-  eventBus.emit("activity", {
-    companyUuid,
-    projectUuid,
-    targetType,
-    targetUuid,
-    actorType,
-    actorUuid,
-    action,
-    value,
-    sessionUuid,
-    sessionName,
-    uuid: activity.uuid,
-  });
+  publishActivity(params, activity.uuid);
 
   return activity;
+}
+
+// Create an Activity inside the caller's transaction, so the audited change and
+// its audit row commit (or roll back) together. Call publish() AFTER the
+// transaction commits — listeners read through the global client.
+export async function createActivityInTx(tx: ActivityDb, params: ActivityCreateParams) {
+  const activity = await tx.activity.create(buildActivityWrite(params));
+  return { activity, publish: () => publishActivity(params, activity.uuid) };
 }

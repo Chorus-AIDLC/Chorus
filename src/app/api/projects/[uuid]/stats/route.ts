@@ -5,7 +5,8 @@ import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, checkAgentPermission } from "@/lib/auth";
-import { getProject, getProjectStats } from "@/services/project.service";
+import { getProjectStats } from "@/services/project.service";
+import { requireProjectAccess } from "@/services/project-access.service";
 import { listActivitiesWithActorNames } from "@/services/activity.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -22,10 +23,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
 
     const { uuid: projectUuid } = await context.params;
 
-    const project = await getProject(auth.companyUuid, projectUuid);
-    if (!project) {
-      return errors.notFound("Project");
-    }
+    await requireProjectAccess(auth, projectUuid, "viewer");
 
     const [stats, { activities }] = await Promise.all([
       getProjectStats(auth.companyUuid, projectUuid),

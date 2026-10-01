@@ -12,6 +12,7 @@ import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
 import * as documentService from "@/services/document.service";
 import * as proposalService from "@/services/proposal.service";
+import { assertAssigneeProjectAccess } from "@/services/task.service";
 import logger from "@/lib/logger";
 
 // ===== Derived Status =====
@@ -206,19 +207,24 @@ async function resolveAssigneeFields(
   assigneeType: string,
   assigneeUuid: string,
   instanceUuid?: string | null,
-): Promise<{ assigneeType: string; assigneeUuid: string }> {
+): Promise<{ assigneeType: string; assigneeUuid: string; accessActor: { type: string; uuid: string } }> {
   if (!instanceUuid) {
-    return { assigneeType, assigneeUuid };
+    return { assigneeType, assigneeUuid, accessActor: { type: assigneeType, uuid: assigneeUuid } };
   }
   const instance = await prisma.agentInstance.findFirst({
     where: { uuid: instanceUuid, companyUuid },
-    select: { uuid: true },
+    select: { uuid: true, agentUuid: true },
   });
   if (!instance) {
     // Company-scoped: a non-existent OR foreign-company instance is rejected.
     throw new Error("Agent instance not found");
   }
-  return { assigneeType: "agent_instance", assigneeUuid: instance.uuid };
+  // Project access for a pinned instance is decided by the agent it belongs to.
+  return {
+    assigneeType: "agent_instance",
+    assigneeUuid: instance.uuid,
+    accessActor: { type: "agent", uuid: instance.agentUuid },
+  };
 }
 
 function normalizeAssignmentProvenance(
@@ -678,24 +684,33 @@ export async function getDescendantUuids(
   uuid: string,
   companyUuid: string,
 ): Promise<string[]> {
-  const descendants = new Set<string>();
+  return (await getDescendants(uuid, companyUuid)).map((d) => d.uuid);
+}
+
+// Same BFS, also returning each descendant's assignee (used by moveIdea so the
+// subtree's assignees can be access-checked without an extra query).
+async function getDescendants(
+  uuid: string,
+  companyUuid: string,
+): Promise<{ uuid: string; assigneeType?: string | null; assigneeUuid?: string | null }[]> {
+  const descendants = new Map<string, { uuid: string; assigneeType?: string | null; assigneeUuid?: string | null }>();
   let frontier = [uuid];
   while (frontier.length > 0) {
     const children = (await prisma.idea.findMany({
       where: { companyUuid, parentUuid: { in: frontier } },
-      select: { uuid: true },
+      select: { uuid: true, assigneeType: true, assigneeUuid: true },
     })) ?? [];
     const next: string[] = [];
     for (const child of children) {
       if (child.uuid === uuid) continue; // defensive: skip self
       if (!descendants.has(child.uuid)) {
-        descendants.add(child.uuid);
+        descendants.set(child.uuid, child);
         next.push(child.uuid);
       }
     }
     frontier = next;
   }
-  return [...descendants];
+  return [...descendants.values()];
 }
 
 /**
@@ -816,6 +831,12 @@ export async function claimIdea({
   // (validates company ownership and may promote to assigneeType="agent_instance").
   const resolved = await resolveAssigneeFields(companyUuid, assigneeType, assigneeUuid, instanceUuid);
   const provenance = normalizeAssignmentProvenance(assignedByType, assignedByUuid);
+  // The assignee must have editor access to the idea's project (private project isolation).
+  await assertAssigneeProjectAccess(
+    companyUuid,
+    resolved.accessActor,
+    existing.projectUuid,
+  );
 
   const idea = await prisma.idea.update({
     where: { uuid: ideaUuid },
@@ -865,6 +886,12 @@ export async function assignIdea({
   // the caller's `assigneeType`/`assigneeUuid` are persisted as-is when no pin.
   const resolved = await resolveAssigneeFields(companyUuid, assigneeType, assigneeUuid, instanceUuid);
   const provenance = normalizeAssignmentProvenance(assignedByType, assignedByUuid);
+  // The assignee must have editor access to the idea's project (private project isolation).
+  await assertAssigneeProjectAccess(
+    companyUuid,
+    resolved.accessActor,
+    existing.projectUuid,
+  );
 
   const idea = await prisma.idea.update({
     where: { uuid: ideaUuid },
@@ -1016,6 +1043,22 @@ export async function deleteIdea(uuid: string) {
 //
 // Every where clause carries `companyUuid` so a same-uuid row in another
 // company cannot be touched (cross-company isolation scenario).
+// Check every distinct assignee in `rows` against the target project.
+async function assertAssigneesCanAccess(
+  companyUuid: string,
+  rows: { assigneeType?: string | null; assigneeUuid?: string | null }[],
+  projectUuid: string,
+): Promise<void> {
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (!r.assigneeType || !r.assigneeUuid) continue;
+    const key = `${r.assigneeType}:${r.assigneeUuid}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await assertAssigneeProjectAccess(companyUuid, { type: r.assigneeType, uuid: r.assigneeUuid }, projectUuid);
+  }
+}
+
 export async function moveIdea(
   companyUuid: string,
   ideaUuid: string,
@@ -1041,6 +1084,16 @@ export async function moveIdea(
     throw new ApiError("BAD_REQUEST", "Idea is already in the target project", 400);
   }
 
+  // The current assignee keeps the idea after a move, so they must have editor
+  // access to the target project (private project isolation).
+  if (idea.assigneeType && idea.assigneeUuid) {
+    await assertAssigneeProjectAccess(
+      companyUuid,
+      { type: idea.assigneeType, uuid: idea.assigneeUuid },
+      targetProjectUuid,
+    );
+  }
+
   const fromProjectUuid = idea.projectUuid;
 
   // Lineage: the move carries the whole subtree. Resolve the moved root's
@@ -1054,8 +1107,12 @@ export async function moveIdea(
   // updateMany, would be left behind with a now-cross-project parentUuid.
   // Tightening this means resolving descendants inside the transaction; tracked
   // as a follow-up, not fixed here to keep the change scoped.
-  const descendantUuids = await getDescendantUuids(ideaUuid, companyUuid);
+  const descendants = await getDescendants(ideaUuid, companyUuid);
+  const descendantUuids = descendants.map((d) => d.uuid);
   const movedIdeaUuids = [ideaUuid, ...descendantUuids];
+
+  // Descendant ideas carry their assignees along too (root checked above).
+  await assertAssigneesCanAccess(companyUuid, descendants, targetProjectUuid);
 
   // Transaction: cascade-update the moved Idea subtree + their linked Proposals
   // + those Proposals' Documents/Tasks + the Activity stream that targets any of
@@ -1067,9 +1124,14 @@ export async function moveIdea(
     // idea to cover the whole subtree. No status filter (D1) — every status
     // follows the idea. This is the only call that touches the JSON column;
     // subsequent steps reuse the resulting uuid list to walk the PK index.
+    // Scoped to the source project: only proposals that live alongside the idea
+    // follow it. A proposal in another project that cites the idea stays put —
+    // the mover may not even be able to see that project (private), and must
+    // not be able to drag its proposal/documents/tasks out of it.
     const proposals = await tx.proposal.findMany({
       where: {
         companyUuid,
+        projectUuid: fromProjectUuid,
         inputType: "idea",
         OR: movedIdeaUuids.map((u) => ({ inputUuids: { array_contains: [u] } })),
       },
@@ -1112,11 +1174,14 @@ export async function moveIdea(
         }),
         tx.task.findMany({
           where: { companyUuid, proposalUuid: { in: proposalUuids } },
-          select: { uuid: true },
+          select: { uuid: true, assigneeType: true, assigneeUuid: true },
         }),
       ]);
       documentUuids = documentRows.map((d) => d.uuid);
       taskUuids = taskRows.map((t) => t.uuid);
+      // Moved tasks keep their assignees: each must be able to edit the target
+      // project. Throwing here rolls the whole move back.
+      await assertAssigneesCanAccess(companyUuid, taskRows, targetProjectUuid);
 
       // Proposals — walk the uuid PK from step 1's result instead of rescanning
       // the JSON inputUuids column. `array_overlaps` cannot use a btree index
@@ -1239,9 +1304,11 @@ export async function moveIdeaPreview(
   // The single JSON-column scan is the proposal.findMany; everything downstream
   // walks primary-key indexes. proposalUuids.length doubles as the proposal
   // count, removing the redundant prisma.proposal.count call.
+  // Same source-project scope as moveIdea (proposals elsewhere don't move).
   const proposals = await prisma.proposal.findMany({
     where: {
       companyUuid,
+      projectUuid: idea.projectUuid,
       inputType: "idea",
       OR: movedIdeaUuids.map((u) => ({ inputUuids: { array_contains: [u] } })),
     },

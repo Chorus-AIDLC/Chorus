@@ -21,6 +21,26 @@
 // session_shutdown handler, which clears it (mirroring real session end).
 
 import { test, expect } from "bun:test";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+// Shapes of the subagent tool-call inputs these tests build and read back.
+interface SubagentItem {
+  agent: string;
+  task: string;
+}
+interface SubagentInput {
+  agent?: string;
+  task?: string;
+  async?: boolean;
+  clarify?: boolean;
+  tasks?: SubagentItem[];
+  chain?: SubagentItem[];
+}
+type ParallelInput = SubagentInput & { tasks: SubagentItem[] };
+type ChainInput = SubagentInput & { chain: SubagentItem[] };
+
+// The fetch mocks only read the JSON-RPC request body (always a string here).
+type FetchInit = { body?: string } | undefined;
 
 // Set the connection env BEFORE importing the extension — the module reads
 // process.env.CHORUS_URL / CHORUS_API_KEY at load time into frozen consts.
@@ -42,7 +62,7 @@ function resetFetch(closeResult?: () => string): void {
   closeSessionResult = closeResult ?? (() => "{}");
 }
 
-const defaultFetchMock = async (_url: any, init: any) => {
+const defaultFetchMock = async (_url: unknown, init: FetchInit) => {
   const body = init?.body ? JSON.parse(init.body) : {};
   if (body.method === "initialize") {
     return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
@@ -77,17 +97,17 @@ const defaultFetchMock = async (_url: any, init: any) => {
 };
 
 function installDefaultFetch(): void {
-  globalThis.fetch = defaultFetchMock as any;
+  globalThis.fetch = defaultFetchMock as unknown as typeof fetch;
 }
 installDefaultFetch();
 
 // ─── fake pi + load extension ───────────────────────────────────────────────
-const handlers: Record<string, (event: any, ctx: any) => Promise<unknown>> = {};
+const handlers: Record<string, (event: unknown, ctx: unknown) => Promise<unknown>> = {};
 const notifyMessages: { msg: string; level: string }[] = [];
 const userMessages: string[] = [];
 const eventBus: Record<string, (data: unknown) => void> = {};
-const pi: any = {
-  on: (ev: string, fn: (event: any, ctx: any) => Promise<unknown>) => {
+const pi = {
+  on: (ev: string, fn: (event: unknown, ctx: unknown) => Promise<unknown>) => {
     handlers[ev] = fn;
   },
   events: {
@@ -110,7 +130,7 @@ const ctx = {
 };
 
 const ext = await import("../extensions/chorus.ts");
-ext.default(pi);
+ext.default(pi as unknown as ExtensionAPI);
 
 async function resetState(): Promise<void> {
   notifyMessages.length = 0;
@@ -123,7 +143,7 @@ async function resetState(): Promise<void> {
 // ─── worker dispatch: session created + task injected + closed ──────────────
 test("worker subagent: session created on tool_call, task injected, closed on tool_result", async () => {
   await resetState();
-  const input: any = { agent: "worker", task: "build the thing" };
+  const input: SubagentInput = { agent: "worker", task: "build the thing" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-1", input }, ctx);
 
   // A session was created and the worker's task was mutated in place with the workflow.
@@ -150,7 +170,7 @@ test("worker subagent: session created on tool_call, task injected, closed on to
 // ─── parallel dispatch: one session per worker task, all closed ─────────────
 test("parallel subagent: a session per worker task, all closed on tool_result", async () => {
   await resetState();
-  const input: any = {
+  const input: ParallelInput = {
     tasks: [
       { agent: "worker", task: "task A" },
       { agent: "worker", task: "task B" },
@@ -170,7 +190,7 @@ test("non-worker agents (scout, planner, reviewer, chorus-*-reviewer) do NOT cre
   await resetState();
   for (const agent of ["scout", "planner", "reviewer", "chorus-proposal-reviewer", "chorus-task-reviewer"]) {
     toolCalls = [];
-    const input: any = { agent, task: "review or explore" };
+    const input: SubagentInput = { agent, task: "review or explore" };
     await handlers["tool_call"]({ toolName: "subagent", toolCallId: `tc-${agent}`, input }, ctx);
     expect(toolCalls).not.toContain("chorus_create_session");
     // The task must NOT be mutated for a non-worker.
@@ -178,7 +198,7 @@ test("non-worker agents (scout, planner, reviewer, chorus-*-reviewer) do NOT cre
   }
   // A real worker DOES create one.
   toolCalls = [];
-  const wi: any = { agent: "worker", task: "build" };
+  const wi: SubagentInput = { agent: "worker", task: "build" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-w", input: wi }, ctx);
   expect(toolCalls).toContain("chorus_create_session");
 });
@@ -186,7 +206,7 @@ test("non-worker agents (scout, planner, reviewer, chorus-*-reviewer) do NOT cre
 // ─── mixed parallel: only worker tasks get a session ────────────────────────
 test("mixed parallel: only worker tasks get a session (reviewer skipped)", async () => {
   await resetState();
-  const input: any = {
+  const input: ParallelInput = {
     tasks: [
       { agent: "worker", task: "impl" },
       { agent: "chorus-task-reviewer", task: "review" },
@@ -203,7 +223,7 @@ test("mixed parallel: only worker tasks get a session (reviewer skipped)", async
 // ─── reviewers are pinned to the background path (they need ambient mcp) ────
 test("reviewer subagent: an explicit async:false is rewritten to true, no session created", async () => {
   await resetState();
-  const input: any = { agent: "chorus-task-reviewer", task: "review the task", async: false };
+  const input: SubagentInput = { agent: "chorus-task-reviewer", task: "review the task", async: false };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-rev-fg", input }, ctx);
   // Foreground (in-process) children have no ambient extensions → no `mcp`, so
   // the reviewer could never post its VERDICT. Pin it to the background path.
@@ -215,7 +235,7 @@ test("reviewer subagent: an explicit async:false is rewritten to true, no sessio
 
 test("reviewer subagent: an omitted async flag is pinned to true and clarify is removed", async () => {
   await resetState();
-  const input: any = { agent: "chorus-proposal-reviewer", task: "review the proposal", clarify: true };
+  const input: SubagentInput = { agent: "chorus-proposal-reviewer", task: "review the proposal", clarify: true };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-rev-om", input }, ctx);
   expect(input.async).toBe(true);
   // clarify:true would defeat async, and ANY defined clarify (false included) is
@@ -225,7 +245,7 @@ test("reviewer subagent: an omitted async flag is pinned to true and clarify is 
 
 test("reviewer subagent: an incoming clarify:false is deleted too (any defined clarify is rejected)", async () => {
   await resetState();
-  const input: any = { agent: "chorus-task-reviewer", task: "review the task", clarify: false };
+  const input: SubagentInput = { agent: "chorus-task-reviewer", task: "review the task", clarify: false };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-rev-clar-false", input }, ctx);
   expect(input.async).toBe(true);
   // The public normalizer rejects `clarify !== undefined`, so `false` must not
@@ -238,7 +258,7 @@ test("reviewer pinning sets the RUN-level async flag on a composite call", async
   // One call has ONE mode, derived from the top-level `async`, so pinning a
   // reviewer inside a composite pins the whole call. An item-level `async`
   // would be inert: it is not a parameter of the composite schemas.
-  const input: any = {
+  const input: ParallelInput = {
     async: false,
     tasks: [
       { agent: "chorus-code-reviewer", task: "review" },
@@ -254,7 +274,7 @@ test("reviewer pinning sets the RUN-level async flag on a composite call", async
 
 test("reviewer pinning also covers chain launches", async () => {
   await resetState();
-  const input: any = { async: false, chain: [{ agent: "chorus-task-reviewer", task: "review" }] };
+  const input: ChainInput = { async: false, chain: [{ agent: "chorus-task-reviewer", task: "review" }] };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-chain-rev", input }, ctx);
   expect(input.async).toBe(true);
   expect(input.chain[0].task).toBe("review"); // reviewer task text untouched
@@ -267,7 +287,7 @@ test("worker pinning sets the RUN-level async flag (workers need chorus_* too)",
   // report / self-check AC / submit_for_verify). A foreground child has none of
   // them, and it has no `tools` allowlist, so the loss is silent rather than a
   // failed run — worse, not better.
-  const input: any = { agent: "chorus-worker", task: "impl", async: false };
+  const input: SubagentInput = { agent: "chorus-worker", task: "impl", async: false };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-w-pin", input }, ctx);
   expect(input.async).toBe(true);
   // The worker's own session path is unaffected by the pin.
@@ -277,7 +297,7 @@ test("worker pinning sets the RUN-level async flag (workers need chorus_* too)",
 
 test("a composite with no Chorus agent keeps the caller's async flag", async () => {
   await resetState();
-  const input: any = {
+  const input: ParallelInput = {
     async: false,
     tasks: [
       { agent: "scout", task: "explore" },
@@ -291,7 +311,7 @@ test("a composite with no Chorus agent keeps the caller's async flag", async () 
 
 test("pinning an explicit async:false notifies once (no silent mode change)", async () => {
   await resetState();
-  const input: any = { agent: "chorus-task-reviewer", task: "review", async: false };
+  const input: SubagentInput = { agent: "chorus-task-reviewer", task: "review", async: false };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-notify", input }, ctx);
   expect(input.async).toBe(true);
   expect(notifyMessages.some((n) => /pinned to the background/i.test(n.msg))).toBe(true);
@@ -299,7 +319,7 @@ test("pinning an explicit async:false notifies once (no silent mode change)", as
 
 test("no notification when the caller did not ask for foreground", async () => {
   await resetState();
-  const input: any = { agent: "chorus-task-reviewer", task: "review" };
+  const input: SubagentInput = { agent: "chorus-task-reviewer", task: "review" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-notify-silent", input }, ctx);
   expect(input.async).toBe(true);
   expect(notifyMessages.some((n) => /pinned to the background/i.test(n.msg))).toBe(false);
@@ -307,7 +327,7 @@ test("no notification when the caller did not ask for foreground", async () => {
 
 test("no notification (and no pin) for a composite with no Chorus agent", async () => {
   await resetState();
-  const input: any = { async: false, tasks: [{ agent: "scout", task: "explore" }] };
+  const input: ParallelInput = { async: false, tasks: [{ agent: "scout", task: "explore" }] };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-notify-none", input }, ctx);
   expect(input.async).toBe(false);
   expect(notifyMessages.some((n) => /pinned to the background/i.test(n.msg))).toBe(false);
@@ -319,7 +339,7 @@ test("failed close is retained and retried on session_shutdown", async () => {
   const closeUuids: string[] = [];
   try {
     // create ok; close FAILS (JSON-RPC error → mcpCall rejects).
-    (globalThis as any).fetch = (async (_url: any, init: any) => {
+    globalThis.fetch = (async (_url: unknown, init: FetchInit) => {
       const body = init?.body ? JSON.parse(init.body) : {};
       if (body.method === "initialize") {
         return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
@@ -344,9 +364,9 @@ test("failed close is retained and retried on session_shutdown", async () => {
         ) as unknown as Response;
       }
       return new Response("", { status: 200 }) as unknown as Response;
-    }) as any;
+    }) as unknown as typeof fetch;
 
-    const input: any = { agent: "worker", task: "work" };
+    const input: SubagentInput = { agent: "worker", task: "work" };
     await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-fail", input }, ctx);
     expect(toolCalls.filter((t) => t === "chorus_create_session").length).toBe(1);
 
@@ -357,7 +377,7 @@ test("failed close is retained and retried on session_shutdown", async () => {
     expect(notifyMessages.some((n) => n.level === "info" && /^Chorus: closed session/i.test(n.msg))).toBe(false);
 
     // Switch close to success, then session_shutdown must retry the retained session.
-    (globalThis as any).fetch = (async (_url: any, init: any) => {
+    globalThis.fetch = (async (_url: unknown, init: FetchInit) => {
       const body = init?.body ? JSON.parse(init.body) : {};
       if (body.method === "initialize") {
         return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
@@ -375,7 +395,7 @@ test("failed close is retained and retried on session_shutdown", async () => {
         ) as unknown as Response;
       }
       return new Response("", { status: 200 }) as unknown as Response;
-    }) as any;
+    }) as unknown as typeof fetch;
 
     const before = toolCalls.filter((t) => t === "chorus_close_session").length;
     await handlers["session_shutdown"]({}, ctx);
@@ -390,7 +410,7 @@ test("failed close is retained and retried on session_shutdown", async () => {
 // ─── tool_execution_end fallback close when tool_result never fired ─────────
 test("tool_execution_end closes the worker session if tool_result did not fire", async () => {
   await resetState();
-  const input: any = { agent: "worker", task: "work" };
+  const input: SubagentInput = { agent: "worker", task: "work" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-onlyend", input }, ctx);
   expect(toolCalls.filter((t) => t === "chorus_create_session").length).toBe(1);
   // Skip tool_result; only tool_execution_end fires.
@@ -401,7 +421,7 @@ test("tool_execution_end closes the worker session if tool_result did not fire",
 // ─── subagent error still closes the created session (no leak) ──────────────
 test("subagent tool error still closes the worker session", async () => {
   await resetState();
-  const input: any = { agent: "worker", task: "work" };
+  const input: SubagentInput = { agent: "worker", task: "work" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-err", input }, ctx);
   // tool_result with isError:true — sessions were created at start, must still close.
   await handlers["tool_result"]({ toolName: "subagent", toolCallId: "tc-err", isError: true, input, content: [] }, ctx);
@@ -446,7 +466,7 @@ test("no nudge for a non-trigger chorus tool", async () => {
 
 test("async subagent: session deferred on tool_result and closed on async-complete", async () => {
   await resetState();
-  const input: any = { agent: "worker", task: "do async work" };
+  const input: SubagentInput = { agent: "worker", task: "do async work" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-a1", input }, ctx);
   // tool_result carries details.asyncId → session NOT closed, moved to runIdToSid.
   await handlers["tool_result"](
@@ -462,7 +482,7 @@ test("async subagent: session deferred on tool_result and closed on async-comple
 
 test("async subagent: process-terminal also closes the deferred session", async () => {
   await resetState();
-  const input: any = { agent: "worker", task: "do async work" };
+  const input: SubagentInput = { agent: "worker", task: "do async work" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-a2", input }, ctx);
   await handlers["tool_result"](
     { toolName: "subagent", toolCallId: "tc-a2", isError: false, input, details: { asyncId: "RUN-B" }, content: [] },
@@ -475,7 +495,7 @@ test("async subagent: process-terminal also closes the deferred session", async 
 
 test("async subagent: duplicate events close only once", async () => {
   await resetState();
-  const input: any = { agent: "worker", task: "do async work" };
+  const input: SubagentInput = { agent: "worker", task: "do async work" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-a3", input }, ctx);
   await handlers["tool_result"](
     { toolName: "subagent", toolCallId: "tc-a3", isError: false, input, details: { asyncId: "RUN-C" }, content: [] },
@@ -489,7 +509,7 @@ test("async subagent: duplicate events close only once", async () => {
 
 test("manual session marker in task suppresses double injection", async () => {
   await resetState();
-  const input: any = { agent: "worker", task: "--- Chorus session (managed by main agent) ---\nSession UUID: 00000000-0000-0000-0000-000000000000\ndo work" };
+  const input: SubagentInput = { agent: "worker", task: "--- Chorus session (managed by main agent) ---\nSession UUID: 00000000-0000-0000-0000-000000000000\ndo work" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-mk", input }, ctx);
   expect(toolCalls.filter((t) => t === "chorus_create_session").length).toBe(0);
   expect(input.task).toContain("managed by main agent");
@@ -497,7 +517,7 @@ test("manual session marker in task suppresses double injection", async () => {
 
 test("process-terminal closes via the {id} shape (runId absent)", async () => {
   await resetState();
-  const input: any = { agent: "worker", task: "do async work" };
+  const input: SubagentInput = { agent: "worker", task: "do async work" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-id", input }, ctx);
   await handlers["tool_result"](
     { toolName: "subagent", toolCallId: "tc-id", isError: false, input, details: { asyncId: "RUN-ID" }, content: [] },
@@ -510,7 +530,7 @@ test("process-terminal closes via the {id} shape (runId absent)", async () => {
 
 test("async-complete ignores id-only payloads (runId must be present)", async () => {
   await resetState();
-  const input: any = { agent: "worker", task: "do async work" };
+  const input: SubagentInput = { agent: "worker", task: "do async work" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-idonly", input }, ctx);
   await handlers["tool_result"](
     { toolName: "subagent", toolCallId: "tc-idonly", isError: false, input, details: { asyncId: "RUN-IO" }, content: [] },
@@ -552,7 +572,7 @@ test("parallel async: marker on one task suppresses only that session", async ()
 test("async close failure is re-added and the shutdown sweep retries it", async () => {
   await resetState();
   const closeUuids: string[] = [];
-  (globalThis as any).fetch = (async (url: any, init: any) => {
+  globalThis.fetch = (async (_url: unknown, init: FetchInit) => {
     const body = init?.body ? JSON.parse(init.body) : {};
     if (body.method === "initialize") {
       return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
@@ -577,8 +597,8 @@ test("async close failure is re-added and the shutdown sweep retries it", async 
       ) as unknown as Response;
     }
     return new Response("", { status: 200 }) as unknown as Response;
-  }) as any;
-  const input: any = { agent: "worker", task: "do async work" };
+  }) as unknown as typeof fetch;
+  const input: SubagentInput = { agent: "worker", task: "do async work" };
   await handlers["tool_call"]({ toolName: "subagent", toolCallId: "tc-pfail", input }, ctx);
   await handlers["tool_result"](
     { toolName: "subagent", toolCallId: "tc-pfail", isError: false, input, details: { asyncId: "RUN-FAIL" }, content: [] },

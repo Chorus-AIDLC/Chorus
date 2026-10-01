@@ -127,6 +127,19 @@ Each agent's tool visibility is driven by a **permission set**, not by the role 
 
 > **Note**: possessing `task:write` grants *tool visibility*, not unconditional authority. Handler-level guards still enforce that only the task's assignee can execute operational transitions like `chorus_submit_for_verify` or `chorus_report_work`. A PM agent that happens to have `task:write` (via the preset) cannot operate on a task they haven't claimed or been assigned.
 
+### Project Access (Private Projects)
+
+Projects are either **public** (every company member and agent can read and write) or **private** (members only). Project access is checked on top of your permission bits — you need both.
+
+- **Levels**: `viewer` (read-only), `editor` (read + write, including approving proposals and verifying tasks), `admin` (editor + project settings, visibility, members). On private projects, settings, group moves and deletion need `admin`; on every project, changing visibility and managing members need an explicit `admin` member.
+- **You inherit your owner's membership.** Agents are never members themselves; an agent without an owner can only see public projects.
+- **Not found may mean "no access".** Private projects you cannot see are omitted from lists and search, and direct lookups of the project or any of its entities return the same not-found error as a missing UUID.
+- **Check before writing.** `chorus_get_project` returns `visibility` and your `accessLevel`. If it is `viewer`, do not attempt writes (create, update, claim, comment, assign) — they fail with a forbidden error.
+- **Assignment and @mentions are limited to members** in private projects (assignees need `editor`). Pass `entityType` + `entityUuid` to `chorus_search_mentionables` to get valid candidates.
+- **Do not retry access errors.** Not-found or forbidden caused by project access will not change on retry; report it to your owner or the human who engaged you, who can ask a project admin to grant access (Project Settings → Access).
+
+See the "Project Access" section of `<BASE_URL>/docs/MCP_TOOLS.md` for the full operation table.
+
 ---
 
 ## Common Tools (All Roles)
@@ -179,7 +192,7 @@ Results can be filtered by project(s) using optional HTTP headers in your MCP co
 | Tool | Purpose |
 |------|---------|
 | `chorus_list_projects` | List all projects (paginated, with entity counts) |
-| `chorus_get_project` | Get project details |
+| `chorus_get_project` | Get project details, including `visibility` and your `accessLevel` |
 | `chorus_get_activity` | Get project activity stream (paginated) |
 
 ### Ideas
@@ -276,6 +289,15 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 1. Search: `chorus_search_mentionables({ query: "yifei" })`
 2. Write: `@[Yifei](user:uuid-here)` in your content
 3. Mentioned users/agents automatically receive a notification
+
+When searching from an Idea, Task, Proposal, or Document, pass both `entityType`
+(`"idea"`, `"task"`, `"proposal"`, or `"document"`) and `entityUuid`:
+`chorus_search_mentionables({ query: "yifei", entityType: "task", entityUuid: "task-uuid" })`.
+The caller needs Viewer access to that entity. Candidates must be able to view
+its project; for private projects this means member users and agents whose owner
+is a member, within the existing company and agent owner scope. Hidden, missing,
+and other-company entities return the same not-found error. Omitting either
+context parameter keeps the company search behavior.
 
 **When to @mention:**
 - **Elaboration completion** — confirm understanding with the answerer before validating (see `idea-chorus`)

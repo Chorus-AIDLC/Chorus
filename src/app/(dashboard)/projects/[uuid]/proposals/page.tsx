@@ -1,15 +1,13 @@
 // src/app/(dashboard)/projects/[uuid]/proposals/page.tsx
 // Server Component - Proposal Kanban Board
 
-import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getServerAuthContext } from "@/lib/auth-server";
 import { listProposals } from "@/services/proposal.service";
-import { projectExists } from "@/services/project.service";
+import { requireProjectPageAccess } from "../access-guard";
 import { ProposalKanban } from "./proposal-kanban";
 
 interface PageProps {
@@ -17,18 +15,12 @@ interface PageProps {
 }
 
 export default async function ProposalsPage({ params }: PageProps) {
-  const auth = await getServerAuthContext();
-  if (!auth) {
-    redirect("/login");
-  }
-
   const { uuid: projectUuid } = await params;
   const t = await getTranslations();
 
-  const exists = await projectExists(auth.companyUuid, projectUuid);
-  if (!exists) {
-    redirect("/projects");
-  }
+  // Access gate: unauthenticated → /login, no project access → 404
+  const { auth, accessLevel } = await requireProjectPageAccess(projectUuid);
+  const canEdit = accessLevel !== "viewer";
 
   const { proposals } = await listProposals({
     companyUuid: auth.companyUuid,
@@ -55,12 +47,14 @@ export default async function ProposalsPage({ params }: PageProps) {
               {pendingCount} {t("proposals.pendingReview")}
             </Badge>
           )}
-          <Button asChild className="bg-primary hover:bg-[#B56A42] text-white">
-            <Link href={`/projects/${projectUuid}/proposals/new`}>
-              <Plus className="mr-2 h-4 w-4" />
-              {t("proposals.createProposal")}
-            </Link>
-          </Button>
+          {canEdit && (
+            <Button asChild className="bg-primary hover:bg-[#B56A42] text-white">
+              <Link href={`/projects/${projectUuid}/proposals/new`}>
+                <Plus className="mr-2 h-4 w-4" />
+                {t("proposals.createProposal")}
+              </Link>
+            </Button>
+          )}
         </div>
       </div>
 

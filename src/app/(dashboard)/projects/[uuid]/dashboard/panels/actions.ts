@@ -17,12 +17,15 @@ import { listProjectGroups } from "@/services/project-group.service";
 import { getElaboration } from "@/services/elaboration.service";
 import type { ElaborationResponse } from "@/types/elaboration";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess, denyUnlessProjectAccess } from "@/lib/project-access-action";
 
 export async function getIdeaAction(ideaUuid: string) {
   const auth = await getServerAuthContext();
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "viewer");
+  if (denied) return denied;
 
   const idea = await getIdeaWithDerivedStatus(auth.companyUuid, ideaUuid);
   if (!idea) {
@@ -37,6 +40,8 @@ export async function getTaskAction(taskUuid: string) {
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "viewer");
+  if (denied) return denied;
 
   const task = await getTask(auth.companyUuid, taskUuid);
   if (!task) {
@@ -51,6 +56,11 @@ export async function moveIdeaAction(ideaUuid: string, targetProjectUuid: string
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  // Editor on both the source (via the idea) and the destination project.
+  const denied =
+    (await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor")) ??
+    (await denyUnlessProjectAccess(auth, targetProjectUuid, "editor"));
+  if (denied) return denied;
 
   try {
     const result = await moveIdea(
@@ -77,6 +87,10 @@ export async function moveIdeaPreviewAction(ideaUuid: string, targetProjectUuid:
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied =
+    (await denyUnlessEntityAccess(auth, "idea", ideaUuid, "viewer")) ??
+    (await denyUnlessProjectAccess(auth, targetProjectUuid, "viewer"));
+  if (denied) return denied;
 
   try {
     // Same-project guard mirrors REST so the dialog can't render counts
@@ -105,6 +119,8 @@ export async function getProposalsForIdeaAction(
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, projectUuid, "viewer");
+  if (denied) return denied;
 
   const proposals = await getProposalsByIdeaUuid(
     auth.companyUuid,
@@ -123,6 +139,8 @@ export async function getTasksForProposalAction(
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, projectUuid, "viewer");
+  if (denied) return denied;
 
   const { tasks } = await listTasks({
     companyUuid: auth.companyUuid,
@@ -147,6 +165,8 @@ export async function getReportsForIdeaAction(
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, projectUuid, "viewer");
+  if (denied) return denied;
 
   const proposals = await getProposalsByIdeaUuid(
     auth.companyUuid,
@@ -179,8 +199,8 @@ export async function getProjectsAndGroupsAction() {
   }
 
   const [{ projects }, { groups }] = await Promise.all([
-    listProjects({ companyUuid: auth.companyUuid, skip: 0, take: 100 }),
-    listProjectGroups(auth.companyUuid),
+    listProjects({ companyUuid: auth.companyUuid, auth, skip: 0, take: 100 }),
+    listProjectGroups(auth.companyUuid, auth),
   ]);
 
   return { success: true as const, data: { projects, groups } };
@@ -194,6 +214,12 @@ export async function setIdeaParentAction(ideaUuid: string, parentUuid: string |
   const auth = await getServerAuthContext();
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
+  }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) return denied;
+  // A hidden private parent must look exactly like a missing one.
+  if (parentUuid && (await denyUnlessEntityAccess(auth, "idea", parentUuid, "viewer"))) {
+    return { success: false as const, error: "Parent idea not found" };
   }
   try {
     const updated = await setIdeaParent(ideaUuid, parentUuid, auth.companyUuid, {
@@ -214,6 +240,8 @@ export async function getProjectIdeasForPickerAction(projectUuid: string) {
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, projectUuid, "viewer");
+  if (denied) return denied;
   const PICKER_LIMIT = 200;
   const { ideas, total } = await listIdeas({
     companyUuid: auth.companyUuid,
@@ -238,6 +266,8 @@ export async function getElaborationAction(
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "viewer");
+  if (denied) return denied;
 
   try {
     const data = await getElaboration({

@@ -73,7 +73,11 @@ vi.mock("@/services/activity.service", () => ({
 vi.mock("@/services/project.service", () => ({ projectExists: vi.fn() }));
 vi.mock("@/services/proposal.service", () => ({}));
 vi.mock("@/services/document.service", () => ({}));
-vi.mock("@/services/task.service", () => ({}));
+vi.mock("@/services/task.service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/task.service")>();
+  // moveIdea now checks each retained assignee's destination access.
+  return { assertAssigneeProjectAccess: actual.assertAssigneeProjectAccess };
+});
 vi.mock("@/services/elaboration.service", () => ({}));
 vi.mock("@/services/agent.service", () => ({ getAgentByUuid: vi.fn() }));
 
@@ -146,7 +150,7 @@ describe("MCP chorus_move_idea — integration with shared cascade-move fixture"
       targetProjectUuid: fixture.toProjectUuid,
     });
 
-    expect(result.isError).toBeFalsy();
+    expect(result.isError, JSON.stringify(result)).toBeFalsy();
     expect(result.content).toHaveLength(1);
     expect(result.content[0].type).toBe("text");
 

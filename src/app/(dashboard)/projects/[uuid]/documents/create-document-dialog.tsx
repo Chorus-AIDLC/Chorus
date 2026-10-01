@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { createDocumentAction } from "./actions";
+import { useCanEditProject } from "@/contexts/project-access-context";
 
 interface CreateDocumentDialogProps {
   projectUuid: string;
@@ -31,6 +32,7 @@ interface CreateDocumentDialogProps {
 
 export function CreateDocumentDialog({ projectUuid, trigger }: CreateDocumentDialogProps) {
   const t = useTranslations();
+  const canEdit = useCanEditProject();
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -96,6 +98,9 @@ export function CreateDocumentDialog({ projectUuid, trigger }: CreateDocumentDia
       setError(result.error || t("documents.createFailed"));
     }
   };
+
+  // Viewers cannot create documents — render no trigger at all.
+  if (!canEdit) return null;
 
   return (
     <Dialog
