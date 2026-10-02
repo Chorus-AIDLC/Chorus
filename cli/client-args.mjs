@@ -39,7 +39,7 @@ export const KNOWN_AGENTS = new Set(["claude-code", "codex", "kiro", "dsh"]);
  * @returns {{
  *   url?: string, apiKey?: string, yolo?: boolean, sigintTimeout?: string,
  *   agent?: string, chorusOnly?: boolean, verbose?: boolean, detach?: boolean,
- *   cwd?: string[], force?: boolean, yes?: boolean, help?: boolean,
+ *   cwd?: string[], force?: boolean, yes?: boolean, noLinger?: boolean, help?: boolean,
  * }}
  */
 export function parseClientFlags(argv) {
@@ -70,6 +70,7 @@ export function parseClientFlags(argv) {
     else if (a === "--force") out.force = true;
     else if (a === "--yes" || a === "-y") out.yes = true;
     else if (a === "--add") out.add = true;
+    else if (a === "--no-linger") out.noLinger = true;
     else if (a === "--help" || a === "-h") out.help = true;
   }
   return out;
@@ -151,6 +152,9 @@ OPTIONS
                            backend defaults to claude-code unless --agent/CHORUS_AGENT
                            is set or one is already stored. A non-TTY install behaves
                            as if --yes were passed.
+  --no-linger              Linux install: do NOT enable systemd lingering (by
+                           default install runs 'loginctl enable-linger' so the
+                           --user service survives logout and starts at boot)
   --verbose                More detailed per-wake logging
   --sigint-timeout <ms>    Grace window after SIGINT before a forceful kill
                            (env: CHORUS_DAEMON_SIGINT_TIMEOUT; default 10000)
@@ -175,8 +179,12 @@ SERVICE (install)
   claude-code default), then checks that backend's CLI is on PATH. Pass -y/--yes or
   run non-TTY to skip all prompts (credentials are still validated). The served
   cwds AND the chosen agent live in daemon.json — the unit captures only
-  --chorus-only, NOT --cwd or --agent. On macOS/Windows install prints a correct
-  template you install manually.
+  --chorus-only, NOT --cwd or --agent. A --user service only keeps running after
+  you log out (and starts at boot) with systemd lingering, so install enables it
+  ('loginctl enable-linger <user>'); if that is refused it warns and prints the
+  sudo command, and the install still succeeds. Pass --no-linger to skip it.
+  'chorus daemon status' warns when lingering is off; uninstall leaves it on.
+  On macOS/Windows install prints a correct template you install manually.
 
 EXAMPLES
   chorus daemon                        # Foreground, default yolo (TTY confirms once)

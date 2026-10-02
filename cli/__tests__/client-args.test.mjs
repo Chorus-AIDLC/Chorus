@@ -44,6 +44,8 @@ describe("parseClientFlags — new daemon flags", () => {
 
   it("parses boolean --chorus-only / --verbose / -d / --detach / --force", () => {
     expect(parseClientFlags(["--chorus-only"]).chorusOnly).toBe(true);
+    expect(parseClientFlags(["install", "--no-linger"]).noLinger).toBe(true);
+    expect(parseClientFlags(["install"]).noLinger).toBeUndefined();
     expect(parseClientFlags(["--verbose"]).verbose).toBe(true);
     expect(parseClientFlags(["-d"]).detach).toBe(true);
     expect(parseClientFlags(["--detach"]).detach).toBe(true);
