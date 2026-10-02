@@ -1,7 +1,9 @@
 # Daemon wake error acceptance
 
-Idea: `edec3036-1133-4c2f-abc4-a231779c587b`  
-Approved proposal: `6438a0d2-8163-4008-87eb-80792bde2395`  
+Idea: `edec3036-1133-4c2f-abc4-a231779c587b`
+
+Approved proposal: `6438a0d2-8163-4008-87eb-80792bde2395`
+
 OpenSpec change: `show-daemon-wake-errors`
 
 ## Converged repository checks
