@@ -91,6 +91,21 @@ The Project Settings modal SHALL provide an Access section where admins change v
 - **WHEN** an Admin previews a project visibility change
 - **THEN** confirmation displays affected-user counts by access or permission effect rather than individual identities, and still submits the current server confirmation token
 
+### Requirement: Realtime and notification isolation
+SSE `change` and `presence` events for a private project SHALL be delivered only to subscribers with at least `viewer` access, and a subscriber's accessible set SHALL be refreshed when project access changes. Notifications about entities in a private project SHALL NOT be created for recipients without access.
+
+#### Scenario: SSE after removal
+- **WHEN** user B is removed from a private project while B has an open SSE connection
+- **THEN** B stops receiving change events for that project
+
+#### Scenario: Notification recipient lost access
+- **WHEN** a task in a private project is updated and its creator is no longer a member
+- **THEN** no notification is created for the former creator
+
+#### Scenario: Failed heartbeat cannot restore an old access snapshot
+- **WHEN** a subscriber loses automatic Admin while a pre-revocation project snapshot is outstanding and its first-user heartbeat lookup fails
+- **THEN** the project gate closes and invalidates pending snapshots and asynchronous decisions, queued private payloads remain blocked after the old query resolves, and a successful heartbeat restores only freshly authorized access without company-wide broadcasts
+
 ## ADDED Requirements
 
 ### Requirement: Automatic project Admin without backfill

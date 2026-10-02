@@ -182,6 +182,16 @@ export async function GET(request: NextRequest) {
       let gateOutstanding = 0;
       let accessRevision = 0;
       let groupRevision = 0;
+      let projectAccessClosed = false;
+      const closeProjectAccess = () => {
+        firstUserRefreshFailed = true;
+        projectAccessClosed = true;
+        // Invalidate snapshots and async delivery decisions already in flight.
+        accessRevision++;
+        groupRevision++;
+        accessibleProjects.clear();
+        invalidateImplicitGroupAdminCache(auth);
+      };
       const enqueueGate = (step: () => void | Promise<void>) => {
         gateOutstanding++;
         gateChain = gateChain
@@ -211,8 +221,10 @@ export async function GET(request: NextRequest) {
         enqueueGate(async () => {
           try {
             while (!request.signal.aborted) {
+              if (projectAccessClosed) return;
               const revision = accessRevision;
               const refreshed = new Set(await accessibleProjectUuids(auth));
+              if (projectAccessClosed || request.signal.aborted) return;
               if (revision !== accessRevision) continue;
               accessibleProjects = refreshed;
               return;
@@ -220,7 +232,7 @@ export async function GET(request: NextRequest) {
           } catch (err) {
             firstUserRefreshFailed = true;
             sseLogger.error({ err }, "SSE accessible-project recompute failed");
-            if (!triggerProjectUuid) accessibleProjects.clear();
+            if (!triggerProjectUuid) closeProjectAccess();
             for (const uuid of refreshProjects) accessibleProjects.delete(uuid);
           } finally {
             refreshProjects.clear();
@@ -266,7 +278,7 @@ export async function GET(request: NextRequest) {
           return;
         }
         const decide = () => {
-          if (isProjectScoped(event) && !accessibleProjects.has(event.projectUuid!)) return;
+          if (isProjectScoped(event) && (projectAccessClosed || !accessibleProjects.has(event.projectUuid!))) return;
           deliver();
         };
         if (gateOutstanding === 0) decide();
@@ -284,13 +296,14 @@ export async function GET(request: NextRequest) {
         memo?: Map<string, Promise<string | null>>,
       ): Promise<boolean> => {
         if (!ideaUuid) return true;
+        if (projectAccessClosed) return false;
         let pending = memo?.get(ideaUuid);
         if (!pending) {
           pending = resolveEntityProjectUuid(auth.companyUuid, "idea", ideaUuid);
           memo?.set(ideaUuid, pending);
         }
         const ideaProjectUuid = await pending;
-        return !!ideaProjectUuid && accessibleProjects.has(ideaProjectUuid);
+        return !projectAccessClosed && !!ideaProjectUuid && accessibleProjects.has(ideaProjectUuid);
       };
 
       // Subscribe to change events
@@ -465,6 +478,7 @@ export async function GET(request: NextRequest) {
         void firstCompanyUser(auth.companyUuid).then((current) => {
           if (request.signal.aborted || (current === firstUser && !firstUserRefreshFailed)) return;
           firstUserRefreshFailed = false;
+          projectAccessClosed = false;
           firstUser = current;
           invalidateImplicitGroupAdminCache(auth);
           accessibleProjects.clear();
@@ -489,15 +503,12 @@ export async function GET(request: NextRequest) {
                 return;
               }
             } catch (err) {
-              firstUserRefreshFailed = true;
-              accessibleProjects.clear();
+              closeProjectAccess();
               sseLogger.error({ err }, "SSE automatic Admin group refresh failed");
             }
           });
         }).catch((err) => {
-          firstUserRefreshFailed = true;
-          accessibleProjects.clear();
-          invalidateImplicitGroupAdminCache(auth);
+          closeProjectAccess();
           sseLogger.error({ err }, "SSE automatic Admin refresh failed");
         });
         // Liveness safety net: bump lastSeenAt. Fire-and-forget — the service

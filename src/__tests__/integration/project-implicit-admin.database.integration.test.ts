@@ -745,6 +745,153 @@ describe.skipIf(!url)("lazy implicit project Admin — real PostgreSQL acceptanc
     }
   });
 
+  it("failed heartbeat cannot reinstall an outstanding real-SQL snapshot after first-user deletion, and recovers with fresh authority", async () => {
+    const unowned = await project();
+    const oldAuth = actor();
+    const nextAuth = actor("next");
+    const streams: Awaited<ReturnType<typeof openStream>>[] = [];
+    const listenerCounts = () => new Map(eventBus.eventNames()
+      .map((channel) => [channel, eventBus.listenerCount(channel)]));
+    const listenersBefore = listenerCounts();
+    const originalAccess = access.accessibleProjectUuids;
+    const completedReads: { auth: AuthContext; uuids: string[] }[] = [];
+    let oldReads = 0;
+    let heldSnapshot: string[] | undefined;
+    let releaseSnapshot!: () => void;
+    const snapshotRelease = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
+    const refresh = vi.spyOn(access, "accessibleProjectUuids").mockImplementation(async (auth) => {
+      const hold = auth === oldAuth && ++oldReads === 2;
+      // Execute the production authorization SQL completely before delaying
+      // ONLY delivery of its second result to the route.
+      const uuids = await originalAccess(auth);
+      completedReads.push({ auth, uuids });
+      if (hold) {
+        heldSnapshot = uuids;
+        await snapshotRelease;
+      }
+      return uuids;
+    });
+    const lookup = vi.spyOn(db.user, "findFirst");
+    const invalidation = vi.spyOn(implicit, "invalidateImplicitGroupAdminCache");
+    const publication = vi.spyOn(eventBus, "emit");
+    const accessPublication = vi.spyOn(eventBus, "emitProjectAccessChanged");
+    try {
+      const old = await openStream(oldAuth); streams.push(old);
+      emitTask(unowned.uuid, "private-before-failed-heartbeat");
+      await eventually(() => old.events().some((event) => event.entityUuid === "private-before-failed-heartbeat"));
+
+      const publicProject = await project("public");
+      const announcePublicProject = () => eventBus.emitChange({
+        companyUuid, projectUuid: publicProject.uuid, entityType: "project",
+        entityUuid: publicProject.uuid, action: "created",
+      });
+      announcePublicProject();
+      await eventually(() => heldSnapshot !== undefined);
+      expect(heldSnapshot?.slice().sort()).toEqual([unowned.uuid, publicProject.uuid].sort());
+      expect(oldReads).toBe(2);
+      const next = await openStream(nextAuth); streams.push(next);
+
+      await db.agent.update({ where: { uuid: ids.ownedAgent }, data: { ownerUuid: null } });
+      await db.user.delete({ where: { uuid: ids.first } });
+      await withoutWrites(async () => {
+        expect((await access.computeProjectAccess(actor(), unowned.uuid)).level).toBe("none");
+        expect((await access.computeProjectAccess(actor("next"), unowned.uuid)).level).toBe("admin");
+
+        const invalidationsBefore = invalidation.mock.calls.length;
+        const failureCall = lookup.mock.calls.length;
+        const lookupError = new Error("injected heartbeat-only first-user lookup unavailable");
+        lookup.mockRejectedValueOnce(lookupError);
+        const publicationsBeforeFailure = publication.mock.calls.length;
+        old.heartbeat();
+        // The held access SQL has already completed, so this one-shot failure
+        // can only be consumed by the actual heartbeat's uncached first-user read.
+        await eventually(() => invalidation.mock.calls.length > invalidationsBefore);
+        expect(lookup.mock.calls.length).toBe(failureCall + 1);
+        expect(lookup.mock.calls[failureCall]).toEqual([{
+          where: { companyUuid }, orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: { uuid: true },
+        }]);
+        await expect(lookup.mock.results[failureCall].value).rejects.toBe(lookupError);
+        expect(publication.mock.calls.length).toBe(publicationsBeforeFailure);
+
+        emitTask(unowned.uuid, "private-change-during-closure");
+        eventBus.emit("presence", {
+          companyUuid, projectUuid: unowned.uuid, entityType: "task",
+          entityUuid: "private-presence-during-closure", agentUuid: ids.ownerlessAgent,
+          agentName: token, action: "view", timestamp: Date.now(),
+        });
+        // A stale notification publication must also pass the route's gate.
+        eventBus.emit(`notification:user:${ids.first}`, {
+          type: "notification", companyUuid, projectUuid: unowned.uuid,
+          entityUuid: "private-notification-during-closure", message: token,
+        });
+        const markQueue = (recipientUuid: string, marker: string) => eventBus.emit(
+          `notification:user:${recipientUuid}`, { type: "notification_read", marker },
+        );
+        markQueue(ids.first, "failed-heartbeat-queue-drained");
+        expect(old.events().some((event) => event.marker === "failed-heartbeat-queue-drained")).toBe(false);
+        releaseSnapshot();
+        await eventually(() => old.events().some((event) => event.marker === "failed-heartbeat-queue-drained"));
+        expect(old.events().filter((event) => event.projectUuid === unowned.uuid))
+          .toEqual([expect.objectContaining({ entityUuid: "private-before-failed-heartbeat" })]);
+        expect(old.events().some((event) => event.projectUuid === publicProject.uuid)).toBe(false);
+        expect(oldReads).toBe(2);
+
+        // A new refresh trigger while closed must not start more access SQL or
+        // let even public project payloads through before successful recovery.
+        announcePublicProject();
+        emitTask(publicProject.uuid, "public-during-closure");
+        markQueue(ids.first, "closed-refresh-queue-drained");
+        await eventually(() => old.events().some((event) => event.marker === "closed-refresh-queue-drained"));
+        expect(oldReads).toBe(2);
+        expect(old.events().some((event) => event.projectUuid === publicProject.uuid)).toBe(false);
+
+        const publicationsBeforeRecovery = publication.mock.calls.length;
+        old.heartbeat();
+        next.heartbeat();
+        await eventually(() => completedReads.filter((read) => read.auth === oldAuth).length === 3
+          && completedReads.filter((read) => read.auth === nextAuth).length === 2);
+        await Promise.all(refresh.mock.results.map((result) => result.value));
+        markQueue(ids.first, "old-recovery-queue-drained");
+        markQueue(ids.next, "next-recovery-queue-drained");
+        await eventually(() => old.events().some((event) => event.marker === "old-recovery-queue-drained")
+          && next.events().some((event) => event.marker === "next-recovery-queue-drained"));
+        expect(publication.mock.calls.slice(publicationsBeforeRecovery)).toEqual([
+          [`notification:user:${ids.first}`, { type: "notification_read", marker: "old-recovery-queue-drained" }],
+          [`notification:user:${ids.next}`, { type: "notification_read", marker: "next-recovery-queue-drained" }],
+        ]);
+        expect(accessPublication).not.toHaveBeenCalled();
+        expect(completedReads.filter((read) => read.auth === oldAuth).at(-1)?.uuids)
+          .toEqual([publicProject.uuid]);
+        expect(completedReads.filter((read) => read.auth === nextAuth).at(-1)?.uuids.slice().sort())
+          .toEqual([unowned.uuid, publicProject.uuid].sort());
+
+        emitTask(publicProject.uuid, "public-after-recovery");
+        emitTask(unowned.uuid, "private-after-recovery");
+        await eventually(() => old.events().some((event) => event.entityUuid === "public-after-recovery")
+          && next.events().some((event) => event.entityUuid === "private-after-recovery"));
+        expect(old.events().filter((event) => event.projectUuid === unowned.uuid))
+          .toEqual([expect.objectContaining({ entityUuid: "private-before-failed-heartbeat" })]);
+        expect(next.events().some((event) => event.entityUuid === "public-after-recovery")).toBe(true);
+        expect(oldReads).toBe(3);
+        expect(await db.projectMember.count({ where: { companyUuid } })).toBe(0);
+      });
+    } finally {
+      releaseSnapshot();
+      try {
+        await Promise.all(streams.map((stream) => stream.close()));
+        await Promise.allSettled(refresh.mock.results.map((result) => result.value));
+        expect(listenerCounts()).toEqual(listenersBefore);
+      } finally {
+        refresh.mockRestore();
+        lookup.mockRestore();
+        invalidation.mockRestore();
+        publication.mockRestore();
+        accessPublication.mockRestore();
+      }
+    }
+  });
+
   it.each(["remove", "demote"] as const)("keeps the last explicit local Admin %s guard at 400 despite lazy fallback eligibility", async (mutation) => {
     const unowned = await project();
     const admin = await db.projectMember.create({ data: {

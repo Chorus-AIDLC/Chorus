@@ -135,6 +135,10 @@ SSE `change` and `presence` events for a private project SHALL be delivered only
 - **WHEN** a task in a private project is updated and its creator is no longer a member
 - **THEN** no notification is created for the former creator
 
+#### Scenario: Failed heartbeat cannot restore an old access snapshot
+- **WHEN** a subscriber loses automatic Admin while a pre-revocation project snapshot is outstanding and its first-user heartbeat lookup fails
+- **THEN** the project gate closes and invalidates pending snapshots and asynchronous decisions, queued private payloads remain blocked after the old query resolves, and a successful heartbeat restores only freshly authorized access without company-wide broadcasts
+
 ### Requirement: Mentions and assignment restricted to members
 In a private project, only users with access and agents whose owner has access SHALL be @mentionable or assignable. Mentionable search scoped to an entity in a private project MUST return only such users and agents. Assigning an idea or task to an actor without `editor` access MUST be rejected.
 
