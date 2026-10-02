@@ -48,6 +48,7 @@ function defaultIO() {
     writeFileSync,
     spawnSync,
     userInfo,
+    getuid: typeof process.getuid === "function" ? () => process.getuid() : undefined,
     env: process.env,
     platform: process.platform,
     home: homedir(),
@@ -358,17 +359,73 @@ export function currentUserName(io = defaultIO()) {
   return null;
 }
 
-/** Run `loginctl <args>`, capturing output. Never throws. */
-function loginctl(args, io) {
+/**
+ * The numeric uid for SetUserLinger — `os.userInfo().uid` first, then
+ * `process.getuid()`. Never throws.
+ * @param {object} [io]
+ * @returns {number | null}
+ */
+export function currentUserId(io = defaultIO()) {
   try {
-    const r = io.spawnSync("loginctl", args, { encoding: "utf8" });
+    const uid = typeof io.userInfo === "function" ? io.userInfo()?.uid : undefined;
+    if (Number.isInteger(uid) && uid >= 0) return uid;
+  } catch {
+    // fall through to getuid
+  }
+  try {
+    const uid = typeof io.getuid === "function" ? io.getuid() : undefined;
+    if (Number.isInteger(uid) && uid >= 0) return uid;
+  } catch {
+    // no uid available
+  }
+  return null;
+}
+
+/** Upper bound for any logind call — an install must never hang on it. */
+export const LINGER_CALL_TIMEOUT_MS = 10_000;
+
+/** Run a logind CLI (`loginctl` / `busctl`) with a bounded wait. Never throws. */
+function logindCall(cmd, args, io) {
+  try {
+    const r = io.spawnSync(cmd, args, { encoding: "utf8", timeout: LINGER_CALL_TIMEOUT_MS });
     if (r?.error) {
+      // ENOENT (missing binary) or ETIMEDOUT (the spawn timeout fired)
       return { status: null, stdout: r?.stdout ?? "", stderr: String(r.error.message ?? r.error) };
+    }
+    if (r?.signal) {
+      return { status: null, stdout: r?.stdout ?? "", stderr: `${cmd} killed by ${r.signal}` };
     }
     return { status: r?.status ?? null, stdout: r?.stdout ?? "", stderr: r?.stderr ?? "" };
   } catch (err) {
     return { status: null, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * Enable lingering via logind's D-Bus API with interactive authorization
+ * FORBIDDEN. `loginctl enable-linger` hard-codes `SetUserLinger(uid, true,
+ * interactive=true)` (and `--no-ask-password` only clears the message header,
+ * not that argument), so under a polkit policy that needs auth it can wait on
+ * an auth agent and block the install. Calling the method directly with
+ * interactive=false and `--allow-interactive-authorization=no` makes polkit
+ * answer immediately (allowed or "Access denied").
+ */
+function setUserLinger(uid, io) {
+  const busTimeoutSec = Math.max(1, Math.floor(LINGER_CALL_TIMEOUT_MS / 2000));
+  return logindCall("busctl", [
+    "--system",
+    "--allow-interactive-authorization=no",
+    `--timeout=${busTimeoutSec}s`,
+    "call",
+    "org.freedesktop.login1",
+    "/org/freedesktop/login1",
+    "org.freedesktop.login1.Manager",
+    "SetUserLinger",
+    "ubb",
+    String(uid),
+    "true",
+    "false",
+  ], io);
 }
 
 /** The copy-pasteable manual fix for a user whose lingering we could not enable. */
@@ -390,7 +447,7 @@ function lingerFix(user) {
 export function lingerStatus(io = defaultIO()) {
   const user = currentUserName(io);
   if (!user) return { state: "unknown", user: null, error: "could not determine the current user name" };
-  const r = loginctl(["show-user", user, "-p", "Linger", "--value"], io);
+  const r = logindCall("loginctl", ["show-user", user, "-p", "Linger", "--value"], io);
   if (r.status !== 0) {
     return { state: "unknown", user, error: `loginctl show-user failed: ${r.stderr.trim() || `exit ${r.status}`}` };
   }
@@ -415,15 +472,20 @@ export function ensureLinger(io = defaultIO()) {
   if (!status.user) {
     return { result: "unavailable", user: null, error: status.error ?? "unknown linger state", fix: lingerFix(null) };
   }
-  // An "unknown" state still tries enable-linger: some systemd versions fail
+  // An "unknown" state still tries to enable: some systemd versions fail
   // `show-user` for a user with no session and no lingering (e.g. a sudo -u or
-  // cron install) even though enabling works. If loginctl itself is missing the
+  // cron install) even though enabling works. If logind itself is missing the
   // enable fails the same way and we report it as unavailable.
   // Most distros' polkit policy lets a user enable lingering for themselves
-  // without sudo; when it doesn't, fall back to the warning + manual command.
-  const r = loginctl(["enable-linger", status.user], io);
+  // without auth; when it doesn't, polkit denies at once (never prompts) and we
+  // fall back to the warning + manual command.
+  const uid = currentUserId(io);
+  if (uid === null) {
+    return { result: "unavailable", user: status.user, error: "could not determine the current uid", fix: lingerFix(status.user) };
+  }
+  const r = setUserLinger(uid, io);
   if (r.status === 0) return { result: "enabled", user: status.user };
-  const enableError = `loginctl enable-linger failed: ${r.stderr.trim() || `exit ${r.status}`}`;
+  const enableError = `SetUserLinger failed: ${r.stderr.trim() || `exit ${r.status}`}`;
   return {
     result: status.state === "unknown" ? "unavailable" : "failed",
     user: status.user,
@@ -500,7 +562,7 @@ export function installService(spec, io = defaultIO()) {
       // A --user service only survives logout (and starts at boot) with lingering
       // on. Fail-soft: a linger failure is reported, never an install failure.
       const linger = spec.noLinger ? { result: "skipped" } : ensureLinger(io);
-      if (linger.result === "enabled") steps.push(`loginctl enable-linger ${linger.user}`);
+      if (linger.result === "enabled") steps.push(`enabled lingering for ${linger.user} (logind SetUserLinger)`);
       return { platform: "linux", installed: true, unitPath, unitText, steps, linger };
     } catch (err) {
       return { platform: "linux", installed: false, unitPath, unitText, steps, error: err instanceof Error ? err.message : String(err) };

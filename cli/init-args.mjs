@@ -116,8 +116,9 @@ OPTIONS
                            (default: No).
   --no-linger              Linux: do NOT enable systemd lingering for the daemon
                            service. By default installing (or re-running with the
-                           service already installed) runs 'loginctl enable-linger'
-                           so the daemon survives logout and starts at boot.
+                           service already installed) enables lingering, without
+                           any auth prompt, so the daemon survives logout and
+                           starts at boot.
   -y, --yes                Accept confirmation prompts, including refreshing
                            installed plugins to latest (implied when non-TTY).
   -h, --help               Show this help message.

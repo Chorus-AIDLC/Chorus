@@ -21,9 +21,11 @@
 //                         "already configured" and does not rewrite.
 //   - ensure_linger      : on Linux the systemd --user service only survives logout
 //                         (and starts at boot) with lingering on — installService
-//                         ensures it on a fresh install, and the already-installed
-//                         re-run ensures it too (idempotent, unit untouched), so a
-//                         re-run repairs an existing Linger=no host. --no-linger opts out.
+//                         ensures it on a fresh install, and any re-run that finds
+//                         the systemd unit already installed ensures it too — even
+//                         when auto-start is declined / not requested (idempotent,
+//                         unit untouched) — so a re-run repairs an existing Linger=no
+//                         host. --no-linger opts out.
 //
 // All collaborators are injected (matching credential-seed.mjs) so the step
 // unit-tests with fakes; production uses the real daemon-service / install-config
@@ -170,6 +172,19 @@ export async function setupDaemon(ctx) {
     log("[chorus agents add] start the daemon yourself: `chorus daemon` (foreground) or `chorus daemon -d` (background).");
   };
 
+  // Repair lingering on an ALREADY-installed systemd unit (decision: ensure_linger).
+  // Runs on every path that leaves the unit alone — including a declined / not
+  // requested auto-start — because the unit is already there and only lingering
+  // is missing. Never installs or rewrites anything. Returns a SKIPPED-detail note.
+  const repairInstalledLinger = (sup = detect(serviceIo)) => {
+    if (flags.noLinger === true || sup.kind !== "systemd" || !sup.installed) return "";
+    const linger = ensureLinger(serviceIo);
+    logLinger(linger);
+    return linger.result === "enabled" ? "; enabled lingering"
+      : linger.result === "already" ? ""
+      : "; lingering NOT enabled — see warning";
+  };
+
   // 2. Capability gate (decision: linux_and_mac). Only offer auto-start where a real
   //    boot service exists; unsupported platforms write the config + print manual steps.
   const capability = capabilityOf(serviceIo);
@@ -183,7 +198,8 @@ export async function setupDaemon(ctx) {
   if (nonInteractive) {
     if (flags.daemonAutostart !== true) {
       manual();
-      return out(SKIPPED, "daemon.json written; pass --daemon-autostart to install the boot service");
+      const note = repairInstalledLinger();
+      return out(SKIPPED, `daemon.json written; pass --daemon-autostart to install the boot service${note}`);
     }
   } else {
     const answer = typeof io.ask === "function"
@@ -191,7 +207,8 @@ export async function setupDaemon(ctx) {
       : "";
     if (!/^y(es)?$/i.test(answer)) {
       manual();
-      return out(SKIPPED, "declined auto-start; daemon.json written — start with 'chorus daemon'");
+      const note = repairInstalledLinger();
+      return out(SKIPPED, `declined auto-start; daemon.json written — start with 'chorus daemon'${note}`);
     }
   }
 
@@ -203,15 +220,8 @@ export async function setupDaemon(ctx) {
   if ((sup.kind === "systemd" || sup.kind === "launchd") && sup.installed) {
     // The unit is left alone, but an existing install may predate the linger
     // guarantee — ensure it now so a re-run fixes "daemon dies at SSH logout".
-    if (sup.kind === "systemd" && flags.noLinger !== true) {
-      const linger = ensureLinger(serviceIo);
-      logLinger(linger);
-      const note = linger.result === "enabled" ? "; enabled lingering"
-        : linger.result === "already" ? ""
-        : "; lingering NOT enabled — see warning";
-      return out(SKIPPED, `daemon already configured for auto-start (${sup.kind}) — left unchanged${note}`);
-    }
-    return out(SKIPPED, `daemon already configured for auto-start (${sup.kind}) — left unchanged`);
+    const note = repairInstalledLinger(sup);
+    return out(SKIPPED, `daemon already configured for auto-start (${sup.kind}) — left unchanged${note}`);
   }
 
   // 5. Credential validate-or-abort gate — reached only when actually installing.

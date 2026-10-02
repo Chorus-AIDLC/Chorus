@@ -722,10 +722,15 @@ allows enabling it for yourself without `sudo`). If that is refused — or
 `loginctl` / logind is unavailable — the install still succeeds, but prints a
 prominent warning that the daemon will stop at logout plus the exact
 `sudo loginctl enable-linger <you>` command to run. Pass `--no-linger` to skip this
-step. `chorus agents add` does the same when it installs the service, and when
-the service is **already** installed it still checks lingering (leaving the unit
-untouched) — so re-running `chorus daemon install` or `chorus agents add` fixes
-an existing host. `chorus daemon status` shows `linger: yes`, or warns with the
+step. `chorus agents add` does the same when it installs the service, and whenever
+it finds the systemd service **already** installed it still checks lingering —
+even if you answer N to the auto-start prompt or run non-interactively without
+`--daemon-autostart` — leaving the unit untouched. So re-running
+`chorus daemon install` or `chorus agents add` fixes an existing host. The
+enable call is made with interactive authorization disabled and a bounded wait
+(logind `SetUserLinger` with `interactive=false`, rather than `loginctl
+enable-linger`, which always allows a polkit prompt), so an install never hangs
+on an authentication dialog; a denial falls straight through to the warning. `chorus daemon status` shows `linger: yes`, or warns with the
 fix command when lingering is off. `chorus daemon uninstall` deliberately leaves
 lingering enabled, since other user services may rely on it (turn it off yourself
 with `loginctl disable-linger` if you want).

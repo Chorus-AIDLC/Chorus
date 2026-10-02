@@ -153,7 +153,7 @@ OPTIONS
                            is set or one is already stored. A non-TTY install behaves
                            as if --yes were passed.
   --no-linger              Linux install: do NOT enable systemd lingering (by
-                           default install runs 'loginctl enable-linger' so the
+                           default install enables it, non-interactively, so the
                            --user service survives logout and starts at boot)
   --verbose                More detailed per-wake logging
   --sigint-timeout <ms>    Grace window after SIGINT before a forceful kill
@@ -181,8 +181,9 @@ SERVICE (install)
   cwds AND the chosen agent live in daemon.json — the unit captures only
   --chorus-only, NOT --cwd or --agent. A --user service only keeps running after
   you log out (and starts at boot) with systemd lingering, so install enables it
-  ('loginctl enable-linger <user>'); if that is refused it warns and prints the
-  sudo command, and the install still succeeds. Pass --no-linger to skip it.
+  (logind SetUserLinger with interactive auth disabled — it never waits on a
+  password prompt); if that is refused it warns and prints the
+  'sudo loginctl enable-linger <user>' command, and the install still succeeds. Pass --no-linger to skip it.
   'chorus daemon status' warns when lingering is off; uninstall leaves it on.
   On macOS/Windows install prints a correct template you install manually.
 

@@ -243,8 +243,57 @@ describe("systemd lingering (ensure_linger)", () => {
     expect(c.ensureLinger).not.toHaveBeenCalled();
   });
 
-  it("declined auto-start never touches lingering", async () => {
-    const c = ctx({ flags: {} }); // non-interactive, no --daemon-autostart
+  it("declined / not-requested auto-start with NO installed unit never touches lingering", async () => {
+    const c = ctx({ flags: {} }); // non-interactive, no --daemon-autostart, kind:none
+    await setupDaemon(c);
+    expect(c.ensureLinger).not.toHaveBeenCalled();
+  });
+
+  const installedSystemd = () => vi.fn(() => ({ kind: "systemd", installed: true, active: true, unitPath: "/u" }));
+
+  it("non-TTY without --daemon-autostart still repairs lingering on an installed unit (SKIPPED, no install)", async () => {
+    const serviceIo = { platform: "linux" };
+    const c = ctx({
+      flags: {},
+      serviceIo,
+      detectSupervisor: installedSystemd(),
+      ensureLinger: vi.fn(() => ({ result: "enabled", user: "u" })),
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(SKIPPED);
+    expect(r.detail).toMatch(/--daemon-autostart.*; enabled lingering/);
+    expect(c.ensureLinger).toHaveBeenCalledWith(serviceIo);
+    expect(c.installService).not.toHaveBeenCalled();
+    expect(c.resolveInstallCredentials).not.toHaveBeenCalled();
+  });
+
+  it("TTY answer N still repairs lingering on an installed unit (SKIPPED, no install)", async () => {
+    const c = ctx({
+      io: { log: vi.fn(), isTTY: true, ask: vi.fn(async () => "n") },
+      detectSupervisor: installedSystemd(),
+      ensureLinger: vi.fn(() => ({ result: "failed", user: "u", error: "denied", fix: "sudo loginctl enable-linger u" })),
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(SKIPPED);
+    expect(r.detail).toMatch(/declined auto-start.*lingering NOT enabled/);
+    expect(c.ensureLinger).toHaveBeenCalledOnce();
+    expect(c.installService).not.toHaveBeenCalled();
+    expect(logText(c)).toContain("sudo loginctl enable-linger u");
+  });
+
+  it("declined auto-start with --no-linger does not repair", async () => {
+    const c = ctx({ flags: { noLinger: true }, detectSupervisor: installedSystemd() });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(SKIPPED);
+    expect(c.ensureLinger).not.toHaveBeenCalled();
+  });
+
+  it("declined auto-start on an installed launchd agent does not repair", async () => {
+    const c = ctx({
+      flags: {},
+      autostartCapability: vi.fn(() => "launchd"),
+      detectSupervisor: vi.fn(() => ({ kind: "launchd", installed: true, active: true, label: "com.chorus.daemon", plistPath: "/p.plist" })),
+    });
     await setupDaemon(c);
     expect(c.ensureLinger).not.toHaveBeenCalled();
   });

@@ -24,7 +24,7 @@ describe("chorus init → daemon-setup → installService (integration, linux)",
       // unit not yet installed → detectSupervisor returns kind:none → not idempotent-skip
       existsSync: () => false,
       unlinkSync: () => {},
-      userInfo: () => ({ username: "u" }),
+      userInfo: () => ({ username: "u", uid: 1000 }),
       spawnSync: (cmd, args) => {
         spawnCalls.push([cmd, ...(args ?? [])]);
         // A fresh host: lingering is off, and the user may enable it (polkit).
@@ -71,8 +71,13 @@ describe("chorus init → daemon-setup → installService (integration, linux)",
 
     // 2b. Lingering was ensured AFTER enable --now so the service survives logout.
     const enableIdx = spawnCalls.findIndex((c) => c[0] === "systemctl" && c.includes("enable"));
-    const lingerIdx = spawnCalls.findIndex((c) => c[0] === "loginctl" && c[1] === "enable-linger");
-    expect(spawnCalls[lingerIdx]).toEqual(["loginctl", "enable-linger", "u"]);
+    const lingerIdx = spawnCalls.findIndex((c) => c[0] === "busctl" && c.includes("SetUserLinger"));
+    // non-interactive: interactive auth forbidden + interactive=false argument
+    expect(spawnCalls[lingerIdx]).toEqual([
+      "busctl", "--system", "--allow-interactive-authorization=no", "--timeout=5s", "call",
+      "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+      "SetUserLinger", "ubb", "1000", "true", "false",
+    ]);
     expect(lingerIdx).toBeGreaterThan(enableIdx);
 
     // 3. Selection path: daemon-setup persisted NOTHING top-level. Per-agent creds +

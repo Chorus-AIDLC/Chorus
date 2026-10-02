@@ -22,7 +22,16 @@ import {
   lingerStatus,
   ensureLinger,
   lingerMessages,
+  currentUserId,
+  LINGER_CALL_TIMEOUT_MS,
 } from "../daemon-service.mjs";
+
+/** The exact non-interactive SetUserLinger argv (uid 1000) the helper must spawn. */
+const SET_LINGER_ARGV = [
+  "busctl", "--system", "--allow-interactive-authorization=no", "--timeout=5s", "call",
+  "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+  "SetUserLinger", "ubb", "1000", "true", "false",
+];
 
 const BASE = {
   nodePath: "/usr/bin/node",
@@ -466,8 +475,9 @@ describe("systemd lingering", () => {
    * A linux io whose loginctl answers are scripted per sub-command; every other
    * command (systemctl) succeeds. Records every spawn as [cmd, ...args].
    */
-  function lingerIO({ show = { status: 0, stdout: "no\n", stderr: "" }, enable = { status: 0, stdout: "", stderr: "" }, user = "ubuntu", ...over } = {}) {
+  function lingerIO({ show = { status: 0, stdout: "no\n", stderr: "" }, enable = { status: 0, stdout: "", stderr: "" }, user = "ubuntu", uid = 1000, ...over } = {}) {
     const calls = [];
+    const optsSeen = [];
     const io = {
       platform: "linux",
       home: "/home/u",
@@ -475,19 +485,25 @@ describe("systemd lingering", () => {
       writeFileSync: vi.fn(),
       existsSync: vi.fn(() => true),
       unlinkSync: vi.fn(),
-      userInfo: () => ({ username: user }),
+      userInfo: () => ({ username: user, uid }),
       env: {},
       spawnSync: vi.fn((cmd, args, opts) => {
         calls.push([cmd, ...args]);
         // never through a shell — argv only
         expect(opts?.shell).toBeFalsy();
+        if (cmd === "loginctl" || cmd === "busctl") optsSeen.push(opts);
         if (cmd === "loginctl" && args[0] === "show-user") return typeof show === "function" ? show() : show;
-        if (cmd === "loginctl" && args[0] === "enable-linger") return typeof enable === "function" ? enable() : enable;
+        if (cmd === "busctl" && args.includes("SetUserLinger")) return typeof enable === "function" ? enable() : enable;
         return { status: 0, stdout: "", stderr: "" };
       }),
       ...over,
     };
-    return { io, calls, loginctlCalls: () => calls.filter((c) => c[0] === "loginctl") };
+    return {
+      io,
+      calls,
+      optsSeen,
+      loginctlCalls: () => calls.filter((c) => c[0] === "loginctl" || c[0] === "busctl"),
+    };
   }
 
   describe("currentUserName", () => {
@@ -501,6 +517,14 @@ describe("systemd lingering", () => {
     });
     it("returns null when nothing resolves", () => {
       expect(currentUserName({ env: {} })).toBe(null);
+    });
+  });
+
+  describe("currentUserId", () => {
+    it("prefers os.userInfo().uid, then getuid, else null", () => {
+      expect(currentUserId({ userInfo: () => ({ uid: 1001 }), getuid: () => 5 })).toBe(1001);
+      expect(currentUserId({ userInfo: () => { throw new Error("x"); }, getuid: () => 5 })).toBe(5);
+      expect(currentUserId({})).toBe(null);
     });
   });
 
@@ -546,29 +570,64 @@ describe("systemd lingering", () => {
   });
 
   describe("ensureLinger", () => {
-    it("already: no enable-linger call when lingering is on", () => {
-      const { io, loginctlCalls } = lingerIO({ show: { status: 0, stdout: "yes", stderr: "" } });
+    it("already: no SetUserLinger call when lingering is on", () => {
+      const { io, calls } = lingerIO({ show: { status: 0, stdout: "yes", stderr: "" } });
       expect(ensureLinger(io)).toEqual({ result: "already", user: "ubuntu" });
-      expect(loginctlCalls().some((c) => c[1] === "enable-linger")).toBe(false);
+      expect(calls.some((c) => c[0] === "busctl")).toBe(false);
     });
-    it("enabled: runs enable-linger <user> when off", () => {
-      const { io, loginctlCalls } = lingerIO();
+    it("enabled: calls SetUserLinger(uid, true, interactive=false) with interactive auth forbidden", () => {
+      const { io, calls } = lingerIO();
       expect(ensureLinger(io)).toEqual({ result: "enabled", user: "ubuntu" });
-      expect(loginctlCalls()).toContainEqual(["loginctl", "enable-linger", "ubuntu"]);
+      expect(calls).toContainEqual(SET_LINGER_ARGV);
+      // never the interactive loginctl enable path (B1)
+      expect(calls.some((c) => c[0] === "loginctl" && c[1] === "enable-linger")).toBe(false);
     });
-    it("failed: enable-linger refused (polkit) carries the sudo fix", () => {
-      const { io } = lingerIO({ enable: { status: 1, stdout: "", stderr: "Access denied" } });
+    it("every logind spawn carries a finite timeout", () => {
+      const { io, optsSeen } = lingerIO();
+      ensureLinger(io);
+      expect(optsSeen.length).toBe(2);
+      for (const o of optsSeen) {
+        expect(Number.isFinite(o.timeout)).toBe(true);
+        expect(o.timeout).toBe(LINGER_CALL_TIMEOUT_MS);
+      }
+    });
+    it("a spawn timeout (ETIMEDOUT) falls back to the sudo fix instead of hanging", () => {
+      const timedOut = { status: null, signal: "SIGTERM", error: Object.assign(new Error("spawnSync busctl ETIMEDOUT"), { code: "ETIMEDOUT" }), stdout: "", stderr: "" };
+      const { io } = lingerIO({ enable: timedOut });
+      const r = ensureLinger(io);
+      expect(r).toMatchObject({ result: "failed", fix: "sudo loginctl enable-linger ubuntu" });
+      expect(r.error).toMatch(/ETIMEDOUT/);
+    });
+    it("a signal-killed call without error is reported as a failure", () => {
+      const { io } = lingerIO({ enable: { status: null, signal: "SIGKILL", stdout: "", stderr: "" } });
+      const r = ensureLinger(io);
+      expect(r.result).toBe("failed");
+      expect(r.error).toMatch(/SIGKILL/);
+    });
+    it("uses the uid from os.userInfo, falling back to getuid", () => {
+      const { io, calls } = lingerIO({ userInfo: () => ({ username: "ubuntu" }), getuid: () => 1234 });
+      ensureLinger(io);
+      expect(calls.find((c) => c[0] === "busctl")).toContain("1234");
+    });
+    it("unavailable without a uid: no SetUserLinger call", () => {
+      const { io, calls } = lingerIO({ userInfo: () => ({ username: "ubuntu" }) });
+      const r = ensureLinger(io);
+      expect(r).toMatchObject({ result: "unavailable", fix: "sudo loginctl enable-linger ubuntu" });
+      expect(calls.some((c) => c[0] === "busctl")).toBe(false);
+    });
+    it("failed: SetUserLinger denied (polkit, non-interactive) carries the sudo fix", () => {
+      const { io } = lingerIO({ enable: { status: 1, stdout: "", stderr: "Call failed: Access denied" } });
       const r = ensureLinger(io);
       expect(r).toMatchObject({ result: "failed", user: "ubuntu", fix: "sudo loginctl enable-linger ubuntu" });
       expect(r.error).toMatch(/Access denied/);
     });
-    it("unknown state still attempts enable-linger and can succeed", () => {
-      const { io, loginctlCalls } = lingerIO({ show: { status: 1, stdout: "", stderr: "No such user" } });
+    it("unknown state still attempts SetUserLinger and can succeed", () => {
+      const { io, calls } = lingerIO({ show: { status: 1, stdout: "", stderr: "No such user" } });
       expect(ensureLinger(io)).toEqual({ result: "enabled", user: "ubuntu" });
-      expect(loginctlCalls()).toContainEqual(["loginctl", "enable-linger", "ubuntu"]);
+      expect(calls).toContainEqual(SET_LINGER_ARGV);
     });
-    it("unavailable: loginctl missing carries the sudo fix", () => {
-      const missing = { status: null, error: new Error("spawn loginctl ENOENT"), stdout: "", stderr: "" };
+    it("unavailable: loginctl/busctl missing carries the sudo fix", () => {
+      const missing = { status: null, error: new Error("spawn ENOENT"), stdout: "", stderr: "" };
       const { io } = lingerIO({ show: missing, enable: missing });
       const r = ensureLinger(io);
       expect(r).toMatchObject({ result: "unavailable", user: "ubuntu", fix: "sudo loginctl enable-linger ubuntu" });
@@ -610,10 +669,11 @@ describe("systemd lingering", () => {
       const r = installService({ ...BASE }, io);
       expect(r.installed).toBe(true);
       expect(r.linger).toEqual({ result: "enabled", user: "ubuntu" });
-      expect(r.steps).toContain("loginctl enable-linger ubuntu");
+      expect(r.steps).toContain("enabled lingering for ubuntu (logind SetUserLinger)");
       // linger runs only after the unit is enabled
       const enableIdx = calls.findIndex((c) => c[0] === "systemctl" && c.includes("enable"));
       const lingerIdx = calls.findIndex((c) => c[0] === "loginctl");
+      expect(calls).toContainEqual(SET_LINGER_ARGV);
       expect(lingerIdx).toBeGreaterThan(enableIdx);
     });
     it("noLinger skips every loginctl call", () => {
@@ -637,20 +697,19 @@ describe("systemd lingering", () => {
       const r = installService({ ...BASE }, io);
       expect(r.installed).toBe(false);
       expect(r.linger).toBeUndefined();
-      expect(io.spawnSync.mock.calls.some((c) => c[0] === "loginctl")).toBe(false);
       expect(loginctlCalls()).toEqual([]);
     });
     it("darwin and other platforms never call loginctl", () => {
       for (const platform of ["darwin", "win32"]) {
         const { io } = lingerIO({ platform, readFileSync: vi.fn(() => "") });
         installService({ ...BASE }, io);
-        expect(io.spawnSync.mock.calls.some((c) => c[0] === "loginctl")).toBe(false);
+        expect(io.spawnSync.mock.calls.some((c) => c[0] === "loginctl" || c[0] === "busctl")).toBe(false);
       }
     });
     it("uninstall never disables lingering", () => {
       const { io } = lingerIO();
       uninstallService(io);
-      expect(io.spawnSync.mock.calls.some((c) => c[0] === "loginctl")).toBe(false);
+      expect(io.spawnSync.mock.calls.some((c) => c[0] === "loginctl" || c[0] === "busctl")).toBe(false);
     });
   });
 });
