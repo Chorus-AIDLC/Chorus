@@ -92,7 +92,10 @@ function makeComposedWaker(streams) {
     writeMcpConfigFn: vi.fn(() => ({ path: "/tmp/m.json", cleanup: vi.fn() })),
     isNewSessionFn: vi.fn(() => true),
     reportInterrupt: vi.fn(async () => {}),
-    advanceTurn: vi.fn(async (payload) => advanceCalls.push(payload)),
+    advanceTurn: vi.fn(async (payload) => {
+      advanceCalls.push(payload);
+      return { ok: true, data: { turnUuid: `turn-${advanceCalls.length}` } };
+    }),
   });
   return { waker, transcriptPosts, advanceCalls };
 }

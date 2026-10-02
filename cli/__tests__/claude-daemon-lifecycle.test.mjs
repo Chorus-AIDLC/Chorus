@@ -104,7 +104,7 @@ function harness({ childOptions, transcripts = new Set(), sigintTimeoutMs = 2_00
     writeMcpConfigFn: () => ({ path: "/unused.json", cleanup() {} }),
     isNewSessionFn: (sessionId) => !transcripts.has(sessionId),
     validateRuntimeCwd: async (cwd) => ({ normalizedPath: cwd }),
-    advanceTurn: async (p) => { turns.push(p); return { ok: true, data: { turnUuid: p.turnUuid } }; },
+    advanceTurn: async (p) => { turns.push(p); return { ok: true, data: { turnUuid: p.turnUuid ?? "ordinary-turn" } }; },
     reportInterrupt: async (...args) => { interrupts.push(args); },
   });
   const control = createControlHandler({ waker, getConnectionUuid: () => "connection", sigintTimeoutMs, logger: silent });

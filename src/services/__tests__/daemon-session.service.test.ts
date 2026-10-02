@@ -157,6 +157,7 @@ function turnRow(overrides: Partial<Record<string, unknown>> = {}) {
     status: "pending",
     interruptedReason: null,
     relayError: null,
+    wakeError: null,
     usage: null,
     executionUuid: null,
     startedAt: null,
@@ -737,6 +738,54 @@ describe("advanceTurn", () => {
   });
 
   // ===== Per-turn token usage (daemon-token-usage) =====
+  const failureDiagnostic = {
+    kind: "execution" as const, source: "claude" as const,
+    message: "Model unavailable", details: "Provider rejected the request",
+    exitCode: 1, signal: null,
+  };
+
+  it.each(["crash", "invalid_path"])("persists wakeError separately from relayError for %s", async (reason) => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue(turnRow({ status: "running" }));
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({
+      status: "interrupted", interruptedReason: reason,
+      wakeError: failureDiagnostic, relayError: "upload failed",
+    }));
+    mockPrisma.daemonSession.findUnique.mockResolvedValue(sessionRow());
+
+    const result = await advanceTurn(turnUuid, "interrupted", {
+      interruptedReason: reason, wakeError: failureDiagnostic, relayError: "upload failed",
+    });
+    expect(mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data).toMatchObject({
+      wakeError: failureDiagnostic, relayError: "upload failed",
+    });
+    expect(result).toMatchObject({ ok: true, turn: { wakeError: failureDiagnostic } });
+    expect(mockEventBus.emit.mock.calls[0][1].turn.wakeError).toEqual(failureDiagnostic);
+  });
+
+  it.each([
+    ["pending", "running", null], ["running", "ended", "crash"],
+    ["running", "interrupted", "user"], ["running", "interrupted", "shutdown"],
+    ["running", "interrupted", "offline"],
+  ])("ignores stray wakeError on %s → %s (%s)", async (from, to, reason) => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue(turnRow({ status: from }));
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({ status: to }));
+    mockPrisma.daemonSession.findUnique.mockResolvedValue(sessionRow());
+    await advanceTurn(turnUuid, to as "running" | "ended" | "interrupted", {
+      interruptedReason: reason, wakeError: failureDiagnostic,
+    });
+    expect(mockPrisma.daemonSessionTurn.update.mock.calls[0][0].data).not.toHaveProperty("wakeError");
+  });
+
+  it("projects malformed saved wakeError to null", async () => {
+    mockPrisma.daemonSessionTurn.findUnique.mockResolvedValue(turnRow({ status: "running" }));
+    mockPrisma.daemonSessionTurn.update.mockResolvedValue(turnRow({
+      status: "interrupted", interruptedReason: "crash", wakeError: { message: "incomplete" },
+    }));
+    mockPrisma.daemonSession.findUnique.mockResolvedValue(sessionRow());
+    const result = await advanceTurn(turnUuid, "interrupted", { interruptedReason: "crash" });
+    expect(result).toMatchObject({ ok: true, turn: { wakeError: null } });
+  });
+
   const sampleUsage = {
     inputTokens: 10,
     outputTokens: 214,
@@ -1259,6 +1308,19 @@ describe("listVisibleRunningSessionActivities", () => {
 
 // ===== getSessionTurns (visibility fence + 404 non-disclosure) =====
 describe("getSessionTurns", () => {
+  it("returns saved startup diagnostics through the ordinary turn read", async () => {
+    const wakeError = {
+      kind: "startup", source: "kiro", message: "Executable missing",
+      details: null, exitCode: null, signal: null,
+    };
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ status: "interrupted", interruptedReason: "crash", wakeError }),
+    ]);
+    const result = await getSessionTurns({ type: "user", companyUuid, actorUuid: ownerUuid }, sessionUuid);
+    expect(result?.[0].wakeError).toEqual(wakeError);
+  });
+
   it("USER caller: resolves the session under owner-scope, returns ordered turns", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
@@ -1406,6 +1468,22 @@ describe("isSessionVisibleToCaller", () => {
 // reverses to ascending, and groups into bands. So a test just supplies candidate turns
 // + their messages and asserts the page bands + hasMore + (oldestTurnSeq, oldestMsgSeq).
 describe("getSessionDetail", () => {
+  it("retains a startup diagnostic on a message-less band through paginated rereads", async () => {
+    const wakeError = {
+      kind: "startup", source: "codex", message: "Executable missing",
+      details: "Check local installation", exitCode: null, signal: null,
+    };
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(sessionRow());
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      turnRow({ status: "interrupted", interruptedReason: "crash", wakeError }),
+    ]);
+    mockPrisma.daemonTranscriptMessage.findMany.mockResolvedValue([]);
+    const auth = { type: "user", companyUuid, actorUuid: ownerUuid };
+    const result = await getSessionDetail(auth, sessionUuid, { limit: 1 });
+    expect(result?.turns[0]).toMatchObject({ wakeError, messages: [] });
+    expect(await getSessionDetail(auth, sessionUuid, { limit: 1 })).toEqual(result);
+  });
+
   it.each(["idea_creation_requested", "research_requested"])(
     "%s reserves one stable seq=0 band position across pages without synthetic user input",
     async (trigger) => {
@@ -2472,6 +2550,26 @@ describe("resolveControlSessionId", () => {
 
 // ===== advanceTurnForWake (daemon → server, by session business key) =====
 describe("advanceTurnForWake", () => {
+  it("returns the original error on a correlated replay without overwriting or emitting again", async () => {
+    const original = {
+      kind: "startup" as const, source: "kiro" as const,
+      message: "Executable missing", details: null, exitCode: null, signal: null,
+    };
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ uuid: sessionUuid });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue(turnRow({
+      status: "interrupted", interruptedReason: "crash", wakeError: original,
+    }));
+    const result = await advanceTurnForWake({
+      companyUuid, agentUuid, connectionUuid, sessionId, turnUuid,
+      status: "interrupted", interruptedReason: "crash",
+      wakeError: { ...original, message: "different retry text" },
+    });
+    expect(result).toMatchObject({ ok: true, turn: { wakeError: original } });
+    expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
+  });
+
   it("does not retire a Research claim that races its pending launch-abort CAS", async () => {
     const pending = turnRow({
       trigger: "human_instruction", promptText: "[Chorus Tracker Research] Research only",

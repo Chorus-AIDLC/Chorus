@@ -24,6 +24,7 @@ import { buildBatchPrompt } from "./prompts.mjs";
 import { writeMcpConfig } from "./mcp-config.mjs";
 import { isNewSession, SESSION_CONFLICT_FAILURE } from "./claude-spawner.mjs";
 import { killProcessTree, DEFAULT_SIGINT_TIMEOUT_MS } from "./process-killer.mjs";
+import { createWakeError } from "./wake-error.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -32,7 +33,7 @@ export class Waker {
    * @param {{
    *   creds: { url: string, apiKey: string },
    *   lineage: { resolve: (event: any) => Promise<{ rootIdeaUuid: string|null, directIdeaUuid: string|null }> },
-   *   spawner: { wake: (params: any) => Promise<{ sessionId: string, backendSessionId?: string|null, exitCode: number|null, isNew: boolean, failureClassification?: string }> },
+   *   spawner: { wakeErrorSource?: string, env?: object, creds?: {apiKey:string}, wake: (params: any) => Promise<{ sessionId: string, backendSessionId?: string|null, exitCode: number|null, isNew: boolean, failureClassification?: string, wakeError?: ReturnType<typeof import("./wake-error.mjs").createWakeError>|null }> },
    *   cwd?: string,  The connection/session-bound working directory this Waker serves; resolveCwd() is the single source the probe + spawn + resume use. `undefined` ⇒ the process default cwd (HARD-1 / single-path).
    *   validateRuntimeCwd?: (cwd: string) => Promise<{normalizedPath?: string}>,
    *   hooks?: import("./upload-hooks.mjs").UploadHooks,
@@ -43,7 +44,7 @@ export class Waker {
    *     Injectable interrupt reporter (子3). Called when a wake's subprocess exits in
    *     an interrupted (user) or crashed (non-zero, no interrupt flag) state. Defaults
    *     to a no-op that logs — the daemon wires the REST reporter (interrupt-reporter.mjs).
-   *   advanceTurn?: (params: { sessionId: string, backendSessionId?: string|null, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown", transcriptRelayError?: string|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<void>,
+   *   advanceTurn?: (params: { sessionId: string, turnUuid?: string|null, backendSessionId?: string|null, status: "running"|"ended"|"interrupted", entityType?: string|null, entityUuid?: string|null, interruptedReason?: "user"|"crash"|"shutdown"|"invalid_path", transcriptRelayError?: string|null, wakeError?: ReturnType<typeof import("./wake-error.mjs").createWakeError>|null, usage?: import("./upload-hooks.mjs").TokenUsage|null }) => Promise<import("./daemon-rest-client.mjs").DaemonRestResult|undefined>,
    *     Injectable turn-lifecycle reporter (子1 — daemon-session-conversation). Called
    *     on spawn (→ running) and on subprocess exit (→ ended on a clean exit, or
    *     → interrupted with the classified reason otherwise) to advance the server-side
@@ -472,6 +473,31 @@ export class Waker {
     // though it is not turn-backed for settlement).
     const arrivalAction =
       batchSize > 1 ? `coalesced batch of ${batchSize}` : first?.action;
+    // Keep admission across setup/spawn exceptions. Once requested, never resolve
+    // another FIFO running edge for the same attempted wake.
+    let turnAdvancedToRunning = false;
+    let runningTurnUuidPromise = Promise.resolve(null);
+    let childStarted = false;
+    let validatingRuntimeCwd = false;
+    let sessionStartAttempted = false;
+    const admitOrdinaryTurn = () => {
+      if (sessionId && !turnAdvancedToRunning) {
+        turnAdvancedToRunning = true;
+        runningTurnUuidPromise = this.#advanceTurn(
+          sessionId, "running", entity, null, null, null, null, coalescedCount,
+        );
+      }
+      return runningTurnUuidPromise;
+    };
+    const flushSession = async () => {
+      if (!sessionId || !sessionStartAttempted) return {};
+      try {
+        return await this.hooks?.onSessionEnd?.({ sessionId }) ?? {};
+      } catch (err) {
+        this.logger.warn(`[Chorus] onSessionEnd flush failed for ${key}: ${err}`);
+        return {};
+      }
+    };
     try {
       if (operations.length && (!operationRequestUuid || !sessionId || batchSize !== 1)) {
         this.logger.warn(`[Chorus] Operation requires an isolated, exact pending turn — skipping ${key}`);
@@ -525,6 +551,7 @@ export class Waker {
       // multi-path daemon's other Wakers (other cwds) never bleed in.
       let cwd = this.resolveCwd(requestedRuntimeCwd);
       if (requestedRuntimeCwd) {
+        validatingRuntimeCwd = true;
         if (!this.validateRuntimeCwd) {
           throw new Error("Directed runtime cwd cannot be validated by this daemon");
         }
@@ -533,6 +560,7 @@ export class Waker {
           throw new Error("Directed runtime cwd validation returned no normalized path");
         }
         cwd = validation.normalizedPath;
+        validatingRuntimeCwd = false;
       }
       const isNew = sessionId ? this.isNewSessionFn(sessionId, cwd) : true;
 
@@ -578,17 +606,23 @@ export class Waker {
           if ((execKey && this.interrupting.has(execKey)) || ![404, 409].includes(admission?.status)) {
             await this.#retireUnstartedOperation({
               sessionId, turnUuid: operationRequestUuid, status: "interrupted",
-              interruptedReason: execKey && this.interrupting.has(execKey) ? "user" : "crash",
-              transcriptRelayError: "Operation launch admission unavailable; no subprocess started",
+              interruptedReason: execKey && this.interrupting.has(execKey) ? "user"
+                : this.shuttingDown ? "shutdown" : "crash",
+              ...(!this.shuttingDown && !(execKey && this.interrupting.has(execKey))
+                ? { wakeError: this.#setupWakeError("Operation launch admission unavailable; no subprocess started") }
+                : {}),
             });
           }
           return;
         }
         operationTurnUuid = first.turnUuid;
+        turnAdvancedToRunning = true;
+        runningTurnUuidPromise = Promise.resolve(operationTurnUuid);
       }
 
       cfg = this.writeMcpConfigFn(this.creds);
 
+      sessionStartAttempted = true;
       await this.hooks?.onSessionStart?.({ rootIdeaKey: key, sessionId: sessionId ?? "", isNew });
 
       // Turn lifecycle (子1): the server created a `pending` turn for this wake at the
@@ -596,13 +630,8 @@ export class Waker {
       // anchors the Claude session on (`sessionId` = directIdeaUuid, or the entity uuid
       // for an ad-hoc session). Advance it pending→running the moment the subprocess
       // spawns (in onChild — guaranteed to fire only on a successful spawn), and
-      // running→ended after it exits. `turnAdvancedToRunning` gates the ended report so
-      // a spawn that never started (onChild never fired) does not attempt an illegal
-      // pending→ended transition. There is no separate turn registry — the turn is
-      // identified server-side by `sessionId`, which the waker already has here.
-      let turnAdvancedToRunning = operationTurnUuid !== null;
-      let runningTurnUuidPromise = Promise.resolve(operationTurnUuid);
-      let childStarted = false;
+      // running→ended after it exits. A failed startup requests the same admission
+      // after wake() returns, then settles only the UUID returned by that edge.
 
       // Track the session id the stream reports so the transcript hook can use
       // it even before spawner.wake() returns. (Do NOT reference the awaited
@@ -623,24 +652,8 @@ export class Waker {
             this.logger.warn(`[Chorus] cancelled operation child kill failed: ${err}`);
           }
         }
-        if (sessionId && !turnAdvancedToRunning) {
-          turnAdvancedToRunning = true;
-          // Fire-and-forget; #advanceTurn swallows + logs its own failures so a
-          // turn-report error never crashes the spawn callback (no-silent-errors).
-          // The coalescedCount rides this → running edge so the server settles the
-          // (count − 1) same-session pending turns coalesced into this one (a single
-          // wake reports 1, which the client omits from the wire).
-          runningTurnUuidPromise = this.#advanceTurn(
-            sessionId,
-            "running",
-            entity,
-            null,
-            null,
-            null,
-            null,
-            coalescedCount,
-          );
-        }
+        // Runs alongside the child; the terminal path awaits the correlation.
+        admitOrdinaryTurn();
       };
       const onMessage = (message) => {
         if (message && typeof message.session_id === "string") observedSessionId = message.session_id;
@@ -670,7 +683,6 @@ export class Waker {
         await this.#retireUnstartedOperation({
           sessionId, turnUuid: operationTurnUuid, status: "interrupted",
           interruptedReason: execKey && this.interrupting.has(execKey) ? "user" : "shutdown",
-          transcriptRelayError: "Operation cancelled before subprocess launch",
         });
         return;
       }
@@ -682,7 +694,7 @@ export class Waker {
       // child for interrupt handling; onChild's gate keeps pending→running exactly once.
       if (
         isNew &&
-        !(operationTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) &&
+        !this.shuttingDown && !(execKey && this.interrupting.has(execKey)) &&
         result?.failureClassification === SESSION_CONFLICT_FAILURE
       ) {
         this.logger.warn(
@@ -697,14 +709,9 @@ export class Waker {
         }
       }
 
-      if (operationTurnUuid && !childStarted) {
-        await this.#retireUnstartedOperation({
-          sessionId, turnUuid: operationTurnUuid, status: "interrupted",
-          interruptedReason: execKey && this.interrupting.has(execKey) ? "user" : "crash",
-          transcriptRelayError: "Operation subprocess did not start",
-        });
-        return;
-      }
+      if (!childStarted && !operationTurnUuid) await admitOrdinaryTurn();
+      const wakeError = result?.wakeError ?? (!childStarted
+        ? this.#setupWakeError("Backend subprocess did not start") : null);
 
       if (result && !probeIsAuthoritative) {
         this.logger.info(
@@ -721,8 +728,9 @@ export class Waker {
         );
       }
 
-      // Outcome classification for the exit reports below. Read the flags ONCE so the
-      // turn report and the execution report can never disagree on the outcome:
+      // Outcome classification for the exit reports below. A structured failure
+      // remains a failure with raw exit zero. Cancellation flags are read after
+      // flushing/admission so the turn and execution reports share the outcome:
       //   • clean exit (code 0)              → turn ended            (unchanged)
       //   • interrupting flag (user)         → turn interrupted(user)
       //   • shuttingDown (daemon SIGINT/TERM) → turn interrupted(shutdown)
@@ -730,8 +738,7 @@ export class Waker {
       // User-interrupt outranks shutdown: the flag was set by an explicit authorized
       // interrupt before the shutdown began, and its execution-row semantics (sticky,
       // resumable) must be preserved.
-      const wasInterrupting = entity && execKey ? this.interrupting.has(execKey) : false;
-      const cleanExit = result && result.exitCode === 0;
+      const cleanExit = childStarted && result && result.exitCode === 0 && !wakeError;
 
       // Transcript flush-on-exit (fix #444): the subprocess has exited, but the transcript
       // hook batches user/assistant text on a short debounce — the LAST batch may still be
@@ -747,35 +754,42 @@ export class Waker {
       // can say "reply couldn't be uploaded (reason)" rather than the misleading "no reply
       // received" (fix #444 follow-up). Guarded — a hook failure never crashes the exit path
       // and simply leaves the annotation absent.
-      let transcriptRelayError = null;
       // The turn's authoritative per-turn token usage (daemon-token-usage), captured from
       // the Claude Code `result` frame by the transcript hook and returned alongside
       // relayError from the SAME onSessionEnd call. Forwarded onto the terminal turn-advance
       // below so the server persists it. Null when the run emitted no result frame.
-      let turnUsage = null;
-      if (sessionId) {
-        try {
-          const outcome = await this.hooks?.onSessionEnd?.({ sessionId });
-          transcriptRelayError = outcome?.relayError ?? null;
-          turnUsage = outcome?.usage ?? null;
-        } catch (err) {
-          this.logger.warn(`[Chorus] onSessionEnd flush failed for ${key}: ${err}`);
-        }
+      const flushOutcome = await flushSession();
+      const transcriptRelayError = flushOutcome.relayError ?? null;
+      const turnUsage = flushOutcome.usage ?? null;
+      const runningTurnUuid = await runningTurnUuidPromise;
+      // Cancellation may arrive during the transcript flush or admission response.
+      const wasInterrupting = entity && execKey ? this.interrupting.has(execKey) : false;
+
+      if (operationTurnUuid && !childStarted) {
+        const reason = wasInterrupting ? "user" : this.shuttingDown ? "shutdown" : "crash";
+        await this.#retireUnstartedOperation({
+          sessionId, turnUuid: operationTurnUuid, status: "interrupted",
+          interruptedReason: reason,
+          ...(reason === "crash" && wakeError ? { wakeError } : {}),
+          ...(transcriptRelayError ? { transcriptRelayError } : {}),
+          ...(turnUsage ? { usage: turnUsage } : {}),
+        });
+        return;
       }
 
       // Turn lifecycle: the subprocess has exited — advance the server turn from
       // `running` to its OUTCOME-AWARE terminal state (fix-daemon-exit-orphan-running-
       // turn): `ended` on a clean exit, `interrupted` with the classified reason
       // otherwise — mirroring what the execution row records, so the conversation
-      // history says WHY a turn stopped. Only when it actually reached `running` (a
-      // never-spawned wake left the turn `pending`; a pending→<terminal> skip is
-      // rejected server-side as invalid_transition). Swallow-safe; never throws.
+      // history says WHY a turn stopped. Never send an uncorrelated terminal
+      // report: a failed admission might leave a different turn running.
       if (sessionId && turnAdvancedToRunning) {
         // Correlate the terminal report to the exact row resolved by →running. Awaiting
         // here does not delay child spawn: the request started in onChild and ran in
         // parallel with the subprocess.
-        const runningTurnUuid = await runningTurnUuidPromise;
-        if (cleanExit) {
+        if (!runningTurnUuid) {
+          this.logger.warn(`[Chorus] terminal report skipped for session ${sessionId}: running admission returned no turn UUID`);
+        } else if (cleanExit) {
           // A clean exit with a KNOWN relay drop is the exact #444 signature: the reply
           // ran but its transcript never landed. Annotate the (still-clean) `ended` turn.
           // `turnUsage` rides the same terminal advance (daemon-token-usage).
@@ -802,6 +816,7 @@ export class Waker {
             result?.backendSessionId,
             1,
             runningTurnUuid,
+            wakeError,
           );
         }
       }
@@ -841,28 +856,36 @@ export class Waker {
       }
     } catch (err) {
       this.logger.warn(`[Chorus] wake failed for ${key}: ${err}`);
+      const runningTurnUuid = operationRequestUuid ? null : await admitOrdinaryTurn();
+      const flushOutcome = await flushSession();
+      const reason = execKey && this.interrupting.has(execKey) ? "user"
+        : this.shuttingDown ? "shutdown" : validatingRuntimeCwd ? "invalid_path" : "crash";
+      const wakeError = ["crash", "invalid_path"].includes(reason) ? this.#setupWakeError(err) : null;
       if (operationRequestUuid && sessionId) {
-        // Admission succeeded but setup/spawn threw: retire this exact turn so a
-        // failed launch cannot leave an indefinitely running operation.
+        // Setup/admission/spawn threw: preserve the operation's existing exact
+        // launch-abort path, including pre-admission cwd failures.
         await this.#retireUnstartedOperation({
           sessionId, turnUuid: operationRequestUuid, status: "interrupted",
-          interruptedReason: execKey && this.interrupting.has(execKey) ? "user"
-            : requestedRuntimeCwd && typeof err?.code === "string" ? "invalid_path" : "crash",
-          transcriptRelayError: String(err?.message ?? err).slice(0, 500),
+          interruptedReason: reason,
+          ...(wakeError ? { wakeError } : {}),
+          ...(flushOutcome.relayError ? { transcriptRelayError: flushOutcome.relayError } : {}),
+          ...(flushOutcome.usage ? { usage: flushOutcome.usage } : {}),
         });
-      } else if (sessionId && requestedRuntimeCwd && typeof err?.code === "string") {
-        const invalidPathTurnUuid = await this.#advanceTurn(sessionId, "running", entity);
+      } else if (sessionId && runningTurnUuid) {
         await this.#advanceTurn(
           sessionId,
           "interrupted",
           entity,
-          "invalid_path",
-          `${err.code}: ${err.message ?? "Runtime cwd validation failed"}`,
-          null,
+          reason,
+          flushOutcome.relayError,
+          flushOutcome.usage,
           null,
           1,
-          invalidPathTurnUuid,
+          runningTurnUuid,
+          wakeError,
         );
+      } else if (sessionId) {
+        this.logger.warn(`[Chorus] terminal report skipped for session ${sessionId}: running admission returned no turn UUID`);
       }
     } finally {
       // Wake finished (cleanly or not): EVERY resource this batch touched leaves the active
@@ -887,6 +910,15 @@ export class Waker {
         // best-effort
       }
     }
+  }
+
+  #setupWakeError(error) {
+    // Additive spawner metadata is available before binary discovery/child creation.
+    // Older injected spawners may omit it; do not invent a backend for their errors.
+    if (!this.spawner.wakeErrorSource) return null;
+    return createWakeError({
+      source: this.spawner.wakeErrorSource, kind: "startup", message: error,
+    }, { env: this.spawner.env, creds: this.spawner.creds ?? this.creds, secrets: [this.creds?.apiKey] });
   }
 
   async #retireUnstartedOperation(report) {
@@ -939,7 +971,7 @@ export class Waker {
    * when set (a clean relay leaves it null so the field stays absent from the payload).
    * @param {string} sessionId @param {"running"|"ended"|"interrupted"} status
    * @param {{ entityType: string, entityUuid: string }|null} entity
-   * @param {"user"|"crash"|"shutdown"|null} [interruptedReason]
+   * @param {"user"|"crash"|"shutdown"|"invalid_path"|null} [interruptedReason]
    * @param {string|null} [transcriptRelayError]
    * @param {import("./upload-hooks.mjs").TokenUsage|null} [usage]  Per-turn token usage
    *   (daemon-token-usage); forwarded only on a terminal edge, mirroring transcriptRelayError.
@@ -948,9 +980,10 @@ export class Waker {
    *   (add-daemon-wake-coalescing); forwarded only on the → running edge and only when > 1,
    *   so a single wake (default 1) leaves the field absent — byte-identical to before.
    * @param {string|null} [turnUuid] Exact server turn correlation returned by → running.
+   * @param {ReturnType<typeof createWakeError>|null} [wakeError] Independent failure diagnostic.
    * @returns {Promise<string|null>} The resolved turn UUID on → running, else null.
    */
-  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null, backendSessionId = null, coalescedCount = 1, turnUuid = null) {
+  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null, backendSessionId = null, coalescedCount = 1, turnUuid = null, wakeError = null) {
     try {
       const outcome = await this.advanceTurn({
         sessionId,
@@ -959,12 +992,15 @@ export class Waker {
         entityType: entity?.entityType ?? null,
         entityUuid: entity?.entityUuid ?? null,
         ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
+        ...(status === "interrupted" && ["crash", "invalid_path"].includes(interruptedReason) && wakeError
+          ? { wakeError } : {}),
         ...(transcriptRelayError ? { transcriptRelayError } : {}),
         ...(usage ? { usage } : {}),
         ...(backendSessionId ? { backendSessionId } : {}),
         ...(status === "running" && coalescedCount > 1 ? { coalescedCount } : {}),
       });
-      return typeof outcome?.data?.turnUuid === "string" ? outcome.data.turnUuid : null;
+      return outcome?.ok && typeof outcome.data?.turnUuid === "string" && outcome.data.turnUuid
+        ? outcome.data.turnUuid : null;
     } catch (err) {
       this.logger.warn(
         `[Chorus] advanceTurn failed for session ${sessionId} → ${status}: ${err}`

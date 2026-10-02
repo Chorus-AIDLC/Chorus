@@ -352,6 +352,7 @@ describe("ClaudeSpawner.wake", () => {
       spawnImpl,
       logger: silent,
       creds: { url: "https://chorus.test", apiKey: "cho_secret" },
+      env: {},
     });
     const p = spawner.wake({ prompt: "hi", sessionId: SID, isNew: true, mcpConfigPath: "/tmp/m.json" });
     child.stdout.emit("data", `{"type":"system","session_id":"${SID}"}\n`);
@@ -452,6 +453,10 @@ describe("ClaudeSpawner.wake", () => {
       exitCode: 1,
       isNew: true,
       failureClassification: SESSION_CONFLICT_FAILURE,
+      wakeError: expect.objectContaining({
+        source: "claude", kind: "execution", exitCode: 1,
+        message: expect.stringContaining("is already in use"),
+      }),
     });
   });
 

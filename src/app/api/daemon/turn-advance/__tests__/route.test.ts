@@ -67,6 +67,42 @@ beforeEach(() => {
 });
 
 describe("POST /api/daemon/turn-advance", () => {
+  const diagnostic = {
+    kind: "startup", source: "codex", message: "Executable missing",
+  };
+
+  it("validates and sanitizes the optional wakeError independently of transcriptRelayError", async () => {
+    const response = await POST(postRequest({
+      connectionUuid, sessionId, status: "interrupted", interruptedReason: "crash",
+      wakeError: { ...diagnostic, details: "Authorization: Bearer provider-secret", exitCode: 0 },
+      transcriptRelayError: "upload failed",
+    }), emptyCtx);
+    expect(response.status).toBe(200);
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledWith(expect.objectContaining({
+      wakeError: {
+        ...diagnostic, details: "Authorization: Bearer [redacted]", exitCode: 0, signal: null,
+      },
+      relayError: "upload failed",
+    }));
+  });
+
+  it.each([
+    { ...diagnostic, message: "" }, { ...diagnostic, source: "unsupported" },
+    { ...diagnostic, kind: "tool" }, { ...diagnostic, exitCode: "1" },
+    { ...diagnostic, exitCode: 1.5 }, { ...diagnostic, extra: "unexpected" },
+    { ...diagnostic, details: "x".repeat(8001) },
+    { ...diagnostic, message: "x".repeat(501) },
+    { ...diagnostic, signal: "x".repeat(51) },
+    { ...diagnostic, message: " ".repeat(500) + "failure" },
+    { ...diagnostic, signal: " ".repeat(50) + "SIGKILL" },
+    { ...diagnostic, message: "failure" + " ".repeat(500) },
+    { ...diagnostic, signal: "SIGKILL" + " ".repeat(50) },
+  ])("rejects malformed wakeError without invoking the service", async (wakeError) => {
+    const response = await POST(postRequest({ ...runningBody, wakeError }), emptyCtx);
+    expect(response.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+
   it.each([["", "legacy"], ["?researchProtocol=0", "legacy"], ["?researchProtocol=1", "isolated"], ["?researchProtocol=2", "legacy"]])(
     "negotiates %s as %s without changing the report body",
     async (query, researchMode) => {

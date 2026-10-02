@@ -9,6 +9,7 @@ import { statSync } from "node:fs";
 import { win32 as pathWin32, posix as pathPosix } from "node:path";
 import { prepareManagedDshConfig } from "./dsh-managed-config.mjs";
 import { awaitChildSettled } from "./child-exit.mjs";
+import { createWakeErrorCollector, WAKE_ERROR_STDERR_LIMIT } from "./wake-error.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 export const DEFAULT_DSH_TIMEOUT_MS = 30 * 60 * 1000;
@@ -134,6 +135,8 @@ function withTimeout(promise, timeoutMs, message) {
 
 export class DshSpawner {
   constructor(opts = {}) {
+    /** Backend source for generic reporting of exceptions before child launch. */
+    this.wakeErrorSource = "dsh";
     this.sessionDecision = { probeIsAuthoritative: false };
     this.dshPath = opts.dshPath ?? null;
     this.spawnImpl = opts.spawnImpl ?? spawn;
@@ -152,22 +155,35 @@ export class DshSpawner {
       positiveInt(this.env.CHORUS_DSH_SHUTDOWN_TIMEOUT_MS, DEFAULT_DSH_SHUTDOWN_TIMEOUT_MS);
   }
 
-  async wake({ prompt, sessionId: anchor, cwd, onMessage, onChild }) {
+  async wake(params) {
+    const diagnostics = createWakeErrorCollector({ source: this.wakeErrorSource, env: this.env, creds: this.creds });
+    try {
+      return await this.#wake(params, diagnostics);
+    } catch (error) {
+      diagnostics.fail(error, "startup");
+      return { sessionId: params.sessionId || "", backendSessionId: null, exitCode: null,
+        isNew: true, wakeError: diagnostics.build() };
+    }
+  }
+
+  async #wake({ prompt, sessionId: anchor, cwd, onMessage, onChild }, diagnostics) {
     const dshPath = this.dshPath ?? this.resolveDshPathFn({ env: this.env, platform: this.platform });
     let dshHome = resolveDshHome(this.env, this.platform);
     let patchPath = null;
-    const result = (backendSessionId, exitCode) => ({
+    const result = (backendSessionId, exitCode, wakeError) => ({
       sessionId: backendSessionId || anchor || "",
       backendSessionId: backendSessionId || null,
       exitCode,
       isNew: true,
+      ...(wakeError ? { wakeError } : {}),
     });
 
     if (!dshPath) {
       this.logger.error(
         "[Chorus] cannot locate the `dsh` CLI; install DeepSeek Harness (dsh) or set CHORUS_DSH_PATH",
       );
-      return result(null, null);
+      return result(null, null, diagnostics.build({ kind: "startup",
+        message: "Cannot locate dsh CLI; install DeepSeek Harness or set CHORUS_DSH_PATH" }));
     }
     assertConfiguredShimArgs(dshPath, this.cliConfig.args, this.platform);
     if (!dshHome) {
@@ -184,7 +200,7 @@ export class DshSpawner {
       } catch (error) {
         const detail = redactedSetupError(error);
         this.logger.error(`[Chorus] cannot prepare managed dsh profile: ${detail}`);
-        return result(null, null);
+        return result(null, null, diagnostics.build({ kind: "startup", message: detail }));
       }
     } else {
       this.logger.info("[Chorus] using existing DSH_HOME profile, skipping managed preparation");
@@ -235,9 +251,11 @@ export class DshSpawner {
       });
     } catch (error) {
       this.logger.error(`[Chorus] failed to start dsh runtime: ${safeSpawnError(error)}`);
-      return result(dshSessionId, null);
+      return result(dshSessionId, null, diagnostics.build({ kind: "startup",
+        message: `Cannot spawn dsh runtime: ${safeSpawnError(error)}` }));
     }
 
+    diagnostics.observeChild(child);
     try {
       onChild?.(child);
     } catch (error) {
@@ -246,7 +264,7 @@ export class DshSpawner {
 
     child.stdout?.setEncoding?.("utf8");
     child.stderr?.setEncoding?.("utf8");
-    child.stdin?.on?.("error", () => {});
+    child.stdin?.on?.("error", () => fail("Dsh prompt/control delivery failed: stdin closed", "protocol"));
 
     const closed = deferred();
     const failed = deferred();
@@ -273,10 +291,11 @@ export class DshSpawner {
       cacheReadTokens: null,
     };
 
-    const fail = (message) => {
+    const fail = (message, kind = "protocol") => {
       if (protocolDone) return;
       protocolDone = true;
       const error = message instanceof Error ? message : new Error(String(message));
+      diagnostics.fail(error, kind);
       for (const waiter of pending.values()) waiter.reject(error);
       pending.clear();
       idle.reject(error);
@@ -367,7 +386,9 @@ export class DshSpawner {
       }
     });
     child.stderr?.on?.("data", (chunk) => {
-      stderrBuffer += String(chunk);
+      diagnostics.appendStderr(chunk);
+      // The logger's partial-line carry must also stay bounded for no-newline output.
+      stderrBuffer = (stderrBuffer + String(chunk)).slice(-WAKE_ERROR_STDERR_LIMIT);
       for (;;) {
         const newline = stderrBuffer.indexOf("\n");
         if (newline < 0) break;
@@ -376,14 +397,14 @@ export class DshSpawner {
         if (line) this.logger.warn(`[dsh] ${line}`);
       }
     });
-    child.on?.("error", (error) => fail(`dsh runtime process error: ${safeSpawnError(error)}`));
+    child.on?.("error", (error) => fail(`dsh runtime process error: ${safeSpawnError(error)}`, "startup"));
     // Settle on process exit, not only on stdio close: a detached descendant can
     // inherit the pipes and keep `close` from ever firing (see cli/child-exit.mjs).
     awaitChildSettled(child, { logger: this.logger, label: "dsh" }).then((code) => {
       closeSeen = true;
       exitCode = code;
       if (stderrBuffer.trim()) this.logger.warn(`[dsh] ${stderrBuffer.trim()}`);
-      if (!protocolDone) fail(`dsh runtime exited before protocol completion (code ${code})`);
+      if (!protocolDone) fail(`dsh runtime exited before protocol completion (code ${code})`, "execution");
       closed.resolve(code);
     });
 
@@ -414,6 +435,7 @@ export class DshSpawner {
       }
     };
 
+    let phase = "protocol";
     try {
       const initialize = await withTimeout(
         Promise.race([
@@ -444,6 +466,7 @@ export class DshSpawner {
       messageId = promptResult.messageId;
       processNotifications();
 
+      phase = "execution";
       await withTimeout(
         Promise.race([idle.promise, failed.promise]),
         this.timeoutMs,
@@ -455,6 +478,7 @@ export class DshSpawner {
         usage: { ...usage, model, source: "dsh" },
       });
 
+      phase = "protocol";
       await withTimeout(
         Promise.race([request("shutdown"), failed.promise]),
         this.shutdownTimeoutMs,
@@ -463,12 +487,14 @@ export class DshSpawner {
       protocolDone = true;
       child.stdin?.end?.();
       await withTimeout(closed.promise, this.shutdownTimeoutMs, "dsh runtime did not exit after shutdown");
-      return result(dshSessionId, exitCode);
+      return result(dshSessionId, exitCode, exitCode === 0 ? undefined : diagnostics.build({ exitCode }));
     } catch (error) {
       this.logger.error(`[Chorus] dsh wake failed: ${errorText(error)}`);
       protocolDone = true;
+      diagnostics.fail(error, phase);
       await stopRuntime();
-      return result(dshSessionId, typeof exitCode === "number" && exitCode !== 0 ? exitCode : null);
+      return result(dshSessionId, typeof exitCode === "number" && exitCode !== 0 ? exitCode : null,
+        diagnostics.build({ exitCode }));
     }
   }
 }

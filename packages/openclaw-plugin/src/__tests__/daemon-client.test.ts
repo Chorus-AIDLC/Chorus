@@ -21,7 +21,9 @@ async function flush() {
 
 /** A rest-client fake recording every call; reads are configurable. */
 function makeRestClient(over: Partial<DaemonRestClient> = {}) {
-  const turnAdvance = vi.fn(async () => ({ ok: true, status: 200 }));
+  const turnAdvance = vi.fn(async ({ status }: { status: string }) => ({
+    ok: true, status: 200, ...(status === "running" ? { data: { turnUuid: "turn-default" } } : {}),
+  }));
   const transcript = vi.fn(async () => ({ ok: true, status: 200 }));
   const executionState = vi.fn(async () => ({ ok: true, status: 200 }));
   const reportInterrupt = vi.fn(async () => ({ ok: true, status: 200 }));
@@ -159,6 +161,7 @@ describe("runWake — lifecycle reporting", () => {
     });
     expect(rest.turnAdvance).toHaveBeenNthCalledWith(2, {
       sessionId: "idea-9",
+      turnUuid: "turn-default",
       status: "ended",
       entityType: "task",
       entityUuid: "task-3",
@@ -238,11 +241,14 @@ describe("runWake — lifecycle reporting", () => {
     expect(rest.turnAdvance).toHaveBeenNthCalledWith(1, expect.objectContaining({ sessionId: "task-3", status: "running" }));
   });
 
-  it("DROPS the wake (no reports) when the host run-context is unavailable", async () => {
+  it("settles its exact turn when the host run-context is unavailable", async () => {
     const rest = makeRestClient();
     const { client, logger } = build({ rest, runContext: null });
     await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3" });
-    expect(rest.turnAdvance).not.toHaveBeenCalled();
+    expect(rest.turnAdvance).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      turnUuid: "turn-default", status: "interrupted", interruptedReason: "crash",
+      wakeError: expect.objectContaining({ source: "openclaw", kind: "startup" }),
+    }));
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("no resolvable session/agent runtime"));
   });
 });
@@ -284,6 +290,81 @@ describe("runWake — streaming transcript", () => {
 // ---------------------------------------------------------------------------
 
 describe("runWake — interrupt (user) vs crash + controller lifecycle", () => {
+  it("prefers the authoritative terminal meta.error over a generic final error payload", async () => {
+    const rest = makeRestClient();
+    const runEmbeddedAgent = vi.fn(async () => ({
+      meta: { error: { kind: "context_overflow", message: "Context window exceeded" } },
+      payloads: [{ isError: true, text: "Generic failed reply" }],
+    }));
+    const { client } = build({ rest, runContext: makeRunContext({ runEmbeddedAgent }) });
+    await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3" });
+    expect(rest.turnAdvance).toHaveBeenLastCalledWith(expect.objectContaining({
+      interruptedReason: "crash",
+      wakeError: expect.objectContaining({ message: "Context window exceeded" }),
+    }));
+  });
+
+  it("classifies a final error payload as a crash even when the run resolves", async () => {
+    const rest = makeRestClient();
+    const runEmbeddedAgent = vi.fn(async () => ({
+      meta: {}, payloads: [{ isError: true, text: "Provider request rejected" }],
+    }));
+    const { client } = build({ rest, runContext: makeRunContext({ runEmbeddedAgent }) });
+    await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3" });
+    expect(rest.turnAdvance).toHaveBeenLastCalledWith(expect.objectContaining({
+      turnUuid: "turn-default", status: "interrupted", interruptedReason: "crash",
+      wakeError: expect.objectContaining({ source: "openclaw", message: "Provider request rejected" }),
+    }));
+  });
+
+  it("a user-aborted resolved error payload carries no crash diagnostic", async () => {
+    const rest = makeRestClient();
+    const runEmbeddedAgent = vi.fn(async () => ({
+      meta: { aborted: true }, payloads: [{ isError: true, text: "Abort error" }],
+    }));
+    const { client } = build({ rest, runContext: makeRunContext({ runEmbeddedAgent }) });
+    await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3" });
+    expect(rest.turnAdvance).toHaveBeenLastCalledWith(expect.objectContaining({
+      turnUuid: "turn-default", status: "interrupted", interruptedReason: "user",
+    }));
+    expect(rest.turnAdvance.mock.calls.at(-1)?.[0]).not.toHaveProperty("wakeError");
+  });
+
+  it.each([false, true])("skips an uncorrelated terminal report (failed admission=%s)", async (failed) => {
+    const turnAdvance = vi.fn(async () => ({ ok: !failed, status: failed ? 403 : 200 }));
+    const rest = makeRestClient({ turnAdvance });
+    const runEmbeddedAgent = vi.fn(async () => { throw new Error("boom"); });
+    const { client, logger } = build({ rest, runContext: makeRunContext({ runEmbeddedAgent }) });
+    await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3" });
+    expect(turnAdvance).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("no admitted turn UUID"));
+  });
+
+  it("a session-setup rejection admits and fails the requested exact turn without invoking the agent", async () => {
+    const rest = makeRestClient();
+    const runEmbeddedAgent = vi.fn();
+    const getSessionEntry = vi.fn(() => { throw new Error("Session path unavailable"); });
+    const { client } = build({ rest, runContext: makeRunContext({ runEmbeddedAgent, getSessionEntry }) });
+    await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3", turnUuid: "requested" });
+    expect(runEmbeddedAgent).not.toHaveBeenCalled();
+    expect(rest.turnAdvance).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      status: "running", turnUuid: "requested",
+    }));
+    expect(rest.turnAdvance).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: "interrupted", turnUuid: "turn-default", interruptedReason: "crash",
+      wakeError: expect.objectContaining({ kind: "startup", message: "Session path unavailable" }),
+    }));
+  });
+
+  it("a failed startup admission does not send a terminal report", async () => {
+    const turnAdvance = vi.fn(async () => ({ ok: false, status: 403 }));
+    const rest = makeRestClient({ turnAdvance });
+    const { client } = build({ rest, runContext: null });
+    await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3", turnUuid: "requested" });
+    expect(turnAdvance).toHaveBeenCalledTimes(1);
+    expect(rest.reportInterrupt).not.toHaveBeenCalled();
+  });
+
   it("an authorized interrupt aborts the in-flight run and reports reason=user", async () => {
     const rest = makeRestClient();
     let resolveRun!: (v: unknown) => void;
@@ -307,6 +388,10 @@ describe("runWake — interrupt (user) vs crash + controller lifecycle", () => {
     await runP;
 
     expect(rest.reportInterrupt).toHaveBeenCalledWith({ entityType: "task", entityUuid: "task-3", reason: "user" });
+    expect(rest.turnAdvance).toHaveBeenLastCalledWith(expect.objectContaining({
+      turnUuid: "turn-default", status: "interrupted", interruptedReason: "user",
+    }));
+    expect(rest.turnAdvance.mock.calls.at(-1)?.[0]).not.toHaveProperty("wakeError");
     // Controller deregistered after the run settled.
     expect(client.controlHooks.isEntityRunning("task", "task-3")).toBe(false);
     void resolveRun; // referenced to satisfy noUnusedLocals
@@ -322,8 +407,11 @@ describe("runWake — interrupt (user) vs crash + controller lifecycle", () => {
     await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3", directIdeaUuid: "idea-9" });
 
     expect(rest.reportInterrupt).toHaveBeenCalledWith({ entityType: "task", entityUuid: "task-3", reason: "crash" });
-    // Still advances the turn to ended despite the crash.
-    expect(rest.turnAdvance).toHaveBeenCalledWith(expect.objectContaining({ status: "ended" }));
+    expect(rest.turnAdvance).toHaveBeenLastCalledWith(expect.objectContaining({
+      turnUuid: "turn-default", status: "interrupted", interruptedReason: "crash",
+      wakeError: { kind: "execution", source: "openclaw", message: "boom",
+        details: "boom", exitCode: null, signal: null },
+    }));
   });
 
   it("a clean completion reports NO interrupt", async () => {

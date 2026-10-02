@@ -48,6 +48,7 @@ import { homedir } from "node:os";
 import { win32 as pathWin32, posix as pathPosix, join as pathJoin } from "node:path";
 import { awaitChildSettled } from "./child-exit.mjs";
 import { registerProcessStopHook } from "./process-stop-hooks.mjs";
+import { createWakeErrorCollector, wakeErrorText } from "./wake-error.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -297,6 +298,8 @@ export class ClaudeControlChannel {
   #interruptSeq = 0;
   /** Resolver for the pending interrupt wait: `{ requestId, resolve }` or null. */
   #interruptWait = null;
+
+  get stopping() { return this.#stopWork !== null; }
 
   /** @returns {boolean} whether stdin can still take a write. */
   get writable() {
@@ -576,6 +579,8 @@ export function parseNdjsonChunk(buffer, chunk, onObject, onWarn = () => {}) {
 export class ClaudeSpawner {
   /** @param {ClaudeSpawnerOptions} [opts] */
   constructor(opts = {}) {
+    /** Backend source for generic reporting of exceptions before child launch. */
+    this.wakeErrorSource = "claude";
     this.sessionDecision = {
       probeIsAuthoritative: true,
       takeoverCommand: "claude --resume",
@@ -620,7 +625,21 @@ export class ClaudeSpawner {
    *   id — mirrors codex-spawner's shape. `null` on the pre-spawn failure paths (no
    *   turn ran, nothing to resume).
    */
-  async wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage, onChild }) {
+  async wake(params) {
+    const diagnostics = createWakeErrorCollector({ source: this.wakeErrorSource, env: this.env, creds: this.creds });
+    try {
+      return await this.#wake(params, diagnostics);
+    } catch (error) {
+      diagnostics.fail(error, "startup");
+      return {
+        sessionId: typeof params.sessionId === "string" ? params.sessionId : "",
+        backendSessionId: null, exitCode: null, isNew: Boolean(params.isNew),
+        wakeError: diagnostics.build(),
+      };
+    }
+  }
+
+  async #wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage, onChild }, diagnostics) {
     const id = sessionId;
 
     // Pre-validate the session id BEFORE locating claude or spawning: a malformed
@@ -629,14 +648,16 @@ export class ClaudeSpawner {
       this.logger.error(
         `[Chorus] refusing to spawn: session id is not a valid lowercase UUID: ${id}`
       );
-      return { sessionId: typeof id === "string" ? id : "", backendSessionId: null, exitCode: null, isNew: Boolean(isNew) };
+      return { sessionId: typeof id === "string" ? id : "", backendSessionId: null, exitCode: null, isNew: Boolean(isNew),
+        wakeError: diagnostics.build({ kind: "startup", message: "Claude session id is not a valid lowercase UUID" }) };
     }
 
     const claudePath = this.claudePath ?? resolveClaudePath({ env: this.env, platform: this.platform });
     if (!claudePath) {
       // No crash — surface visibly and resolve with a failure result.
       this.logger.error("[Chorus] cannot locate the `claude` executable on PATH; skipping wake");
-      return { sessionId: id, backendSessionId: null, exitCode: null, isNew };
+      return { sessionId: id, backendSessionId: null, exitCode: null, isNew,
+        wakeError: diagnostics.build({ kind: "startup", message: "Cannot locate claude executable; check installation and PATH" }) };
     }
 
     assertConfiguredShimArgs(claudePath, this.cliConfig.args, this.platform);
@@ -687,11 +708,13 @@ export class ClaudeSpawner {
         });
       } catch (error) {
         this.logger.error(`[Chorus] failed to spawn claude: ${safeSpawnError(error)}`);
-        resolve({ sessionId: id, backendSessionId: null, exitCode: null, isNew });
+        resolve({ sessionId: id, backendSessionId: null, exitCode: null, isNew,
+          wakeError: diagnostics.build({ kind: "startup", message: `Cannot spawn claude: ${safeSpawnError(error)}` }) });
         return;
       }
 
       const channel = new ClaudeControlChannel({ stdin: child.stdin, logger: this.logger, permissionMode: this.permissionMode });
+      diagnostics.observeChild(child);
       // Protocol interrupt (design D4): the shared killer calls this instead of
       // SIGINT and then force-cleans within the same deadline if the child remains.
       // Registered before onChild so an interrupt can never see an unhooked child.
@@ -714,6 +737,8 @@ export class ClaudeSpawner {
       let stderrBuf = "";
       let sessionConflictSeen = false;
       let observedSessionId = id;
+      let terminalSeen = false;
+      let terminalFailed = false;
 
       child.stdout?.setEncoding?.("utf8");
       child.stdout?.on("data", (chunk) => {
@@ -722,6 +747,15 @@ export class ClaudeSpawner {
           String(chunk),
           (obj) => {
             if (obj && typeof obj.session_id === "string") observedSessionId = obj.session_id;
+            if (obj?.type === "result" && !terminalSeen) {
+              terminalSeen = true;
+              terminalFailed = obj.is_error === true || (typeof obj.subtype === "string" && obj.subtype.startsWith("error"));
+              if (terminalFailed) {
+                const textOptions = { env: this.env, creds: this.creds };
+                diagnostics.fail(wakeErrorText(obj.errors, textOptions) || wakeErrorText(obj.result, textOptions)
+                  || `Claude reported a failed result (${obj.subtype || "failure"})`);
+              }
+            }
             if (channel.handleFrame(obj)) return; // control plumbing — never forwarded
             if (onMessage) {
               try {
@@ -738,6 +772,7 @@ export class ClaudeSpawner {
       child.stderr?.setEncoding?.("utf8");
       child.stderr?.on("data", (chunk) => {
         const rawText = String(chunk);
+        diagnostics.appendStderr(rawText);
         stderrBuf = (stderrBuf + rawText).slice(-STDERR_BUFFER_LIMIT);
         if (SESSION_CONFLICT_RE.test(stderrBuf)) sessionConflictSeen = true;
         const text = rawText.trim();
@@ -752,7 +787,8 @@ export class ClaudeSpawner {
         // backendSessionId is the `--resume` anchor (`id`), NOT observedSessionId:
         // a fork-on-resume claude can emit a new stream session_id, but the daemon
         // resumes and files the transcript under `id`, so `id` is the resumable value.
-        resolve({ sessionId: observedSessionId, backendSessionId: id, exitCode: null, isNew });
+        resolve({ sessionId: observedSessionId, backendSessionId: id, exitCode: null, isNew,
+          wakeError: diagnostics.build({ kind: "startup", message: `Claude process error: ${safeSpawnError(error)}` }) });
       });
 
       // Settle on process exit, not only on stdio close: a detached descendant can
@@ -768,7 +804,9 @@ export class ClaudeSpawner {
         }
         // backendSessionId is the `--resume` anchor (`id`), NOT observedSessionId (see
         // the process-error handler above for why the anchor is the resumable value).
-        const result = { sessionId: observedSessionId, backendSessionId: id, exitCode: code, isNew };
+        const result = { sessionId: observedSessionId, backendSessionId: id,
+          exitCode: code === 0 && (terminalFailed || diagnostics.hasFailure) ? 1 : code, isNew };
+        if (result.exitCode !== 0) result.wakeError = diagnostics.build({ exitCode: code });
         if (code !== null && code !== 0 && sessionConflictSeen) {
           result.failureClassification = SESSION_CONFLICT_FAILURE;
         }
@@ -782,6 +820,7 @@ export class ClaudeSpawner {
       // daemon". The try/catch below only catches a synchronous throw.
       child.stdin?.on?.("error", (err) => {
         this.logger.warn(`[Chorus] claude stdin error (ignored): ${err}`);
+        if (!channel.resultSeen && !channel.exited && !channel.stopping) diagnostics.fail("Claude prompt/control delivery failed: stdin closed", "protocol");
         channel.markStdinUnusable();
       });
 
@@ -790,7 +829,10 @@ export class ClaudeSpawner {
       // closes it and the CLI exits. No result before exit → the raw exit code
       // settles the wake (never a synthetic success). Skipped when a stop already
       // started (e.g. from inside onChild above) — see ClaudeControlChannel.sendPrompt.
-      channel.sendPrompt(buildUserFrame(prompt));
+      if (!channel.sendPrompt(buildUserFrame(prompt)) && !channel.stopping) {
+        diagnostics.fail("Claude prompt could not be delivered over stdin", "protocol");
+        channel.closeStdin();
+      }
     });
   }
 }

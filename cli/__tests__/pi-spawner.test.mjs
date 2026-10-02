@@ -73,7 +73,7 @@ function makeSpawner({ child, piPath = "/usr/bin/pi", creds, logger = QUIET, ver
   const versionProbeFn = vi.fn(async () => versionOut);
   const spawner = new PiSpawner({
     piPath, spawnImpl, creds, platform: "linux", logger, versionProbeFn,
-    readdirImpl: () => [], ...rest,
+    env: {}, readdirImpl: () => [], ...rest,
   });
   return { spawner, spawnImpl, calls, spawned, versionProbeFn };
 }

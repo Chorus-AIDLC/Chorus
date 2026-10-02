@@ -44,7 +44,7 @@ function spawnerThatSpawns(exitCode = 0) {
 }
 
 // A spawner that NEVER calls onChild (e.g. a spawn that failed before the child
-// materialized) — the turn must stay pending and ended must NOT be attempted.
+// materialized) — the failed attempt must admit and interrupt its exact turn.
 function spawnerThatNeverSpawns() {
   return {
     wake: vi.fn(async ({ sessionId }) => ({ sessionId, exitCode: null, isNew: true })),
@@ -52,7 +52,7 @@ function spawnerThatNeverSpawns() {
 }
 
 function makeWaker(overrides = {}) {
-  const advanceTurn = overrides.advanceTurn ?? vi.fn(async () => {});
+  const advanceTurn = overrides.advanceTurn ?? vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
   const waker = new Waker({
     creds: { url: "https://c", apiKey: "cho_x" },
     lineage:
@@ -64,7 +64,7 @@ function makeWaker(overrides = {}) {
     logger: overrides.logger ?? silent,
     writeMcpConfigFn: vi.fn(() => ({ path: "/tmp/m.json", cleanup: vi.fn() })),
     isNewSessionFn: vi.fn(() => true),
-    reportInterrupt: vi.fn(async () => {}),
+    reportInterrupt: vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } })),
     validateRuntimeCwd: overrides.validateRuntimeCwd,
     killer: overrides.killer,
     advanceTurn,
@@ -265,7 +265,7 @@ describe("Waker turn lifecycle (子1)", () => {
   it("kills a child that appears after cancellation during backend setup", async () => {
     let release;
     const child = { pid: 42 };
-    const killer = vi.fn(async () => {});
+    const killer = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "research-turn" } }));
     const spawner = { wake: vi.fn(async ({ onChild, sessionId }) => {
       await new Promise((resolve) => { release = resolve; });
@@ -337,6 +337,7 @@ describe("Waker turn lifecycle (子1)", () => {
     expect(advanceTurn.mock.calls[1][0]).toEqual({
       sessionId: DIRECT_IDEA,
       status: "ended",
+      turnUuid: "ordinary-turn",
       entityType: "task",
       entityUuid: "task-1",
     });
@@ -428,13 +429,14 @@ describe("Waker turn lifecycle (子1)", () => {
     expect(last).not.toHaveProperty("interruptedReason");
   });
 
-  it("does NOT attempt ended when the subprocess never spawned (turn stays pending; no illegal pending→ended)", async () => {
+  it("admits and interrupts the exact failed attempt when the subprocess never spawned", async () => {
     const { waker, advanceTurn } = makeWaker({ spawner: spawnerThatNeverSpawns() });
     const resolved = await waker.keyFor(TASK_NOTIF);
     await waker.wake(TASK_NOTIF, resolved.key, resolved);
 
-    // onChild never fired → no running, and therefore no ended either.
-    expect(advanceTurn).not.toHaveBeenCalled();
+    // No pending→terminal shortcut and no uncorrelated terminal edge.
+    expect(advanceTurn.mock.calls.map(([p]) => [p.status, p.turnUuid]))
+      .toEqual([["running", undefined], ["interrupted", "ordinary-turn"]]);
   });
 
   it("reuses the existing executions map / onChild — the running entry still gets its child handle", async () => {
@@ -477,6 +479,7 @@ describe("Waker turn lifecycle (子1)", () => {
     const order = [];
     const advanceTurn = vi.fn(async ({ status }) => {
       order.push(`advance:${status}`);
+      return { ok: true, data: { turnUuid: "ordinary-turn" } };
     });
     const hooks = {
       onSessionEnd: vi.fn(async ({ sessionId }) => {
@@ -496,6 +499,7 @@ describe("Waker turn lifecycle (子1)", () => {
     const order = [];
     const advanceTurn = vi.fn(async ({ status }) => {
       order.push(`advance:${status}`);
+      return { ok: true, data: { turnUuid: "ordinary-turn" } };
     });
     const hooks = { onSessionEnd: vi.fn(async () => order.push("flush")) };
     const { waker } = makeWaker({ advanceTurn, hooks, spawner: spawnerThatSpawns(2) });
@@ -513,6 +517,7 @@ describe("Waker turn lifecycle (子1)", () => {
     const order = [];
     const advanceTurn = vi.fn(async ({ status, interruptedReason }) => {
       order.push(`advance:${status}${interruptedReason ? `(${interruptedReason})` : ""}`);
+      return { ok: true, data: { turnUuid: "ordinary-turn" } };
     });
     const hooks = { onSessionEnd: vi.fn(async () => order.push("flush")) };
     const { waker } = makeWaker({ advanceTurn, hooks, spawner: spawnerThatSpawns(130) });
@@ -526,7 +531,7 @@ describe("Waker turn lifecycle (子1)", () => {
 
   it("a throwing onSessionEnd never crashes the wake and still advances the turn (fix #444)", async () => {
     const warns = [];
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const hooks = {
       onSessionEnd: vi.fn(async () => {
         throw new Error("flush boom");
@@ -547,7 +552,7 @@ describe("Waker turn lifecycle (子1)", () => {
   it("threads onSessionEnd's relayError onto the ended turn-advance (fix #444 follow-up)", async () => {
     // A clean exit whose transcript upload finally failed: the reply ran but never landed.
     // The waker must forward the KNOWN relay error onto the (still-clean) ended advance.
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const hooks = {
       onSessionEnd: vi.fn(async () => ({ relayError: "transcript upload returned 502" })),
     };
@@ -560,7 +565,7 @@ describe("Waker turn lifecycle (子1)", () => {
   });
 
   it("threads relayError onto the interrupted edge too (a dirty exit can still lose transcript)", async () => {
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const hooks = {
       onSessionEnd: vi.fn(async () => ({ relayError: "transcript upload returned 502" })),
     };
@@ -573,7 +578,7 @@ describe("Waker turn lifecycle (子1)", () => {
   });
 
   it("omits transcriptRelayError from the turn-advance when the relay succeeded (null)", async () => {
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const hooks = { onSessionEnd: vi.fn(async () => ({ relayError: null })) };
     const { waker } = makeWaker({ advanceTurn, hooks });
     const resolved = await waker.keyFor(TASK_NOTIF);
@@ -595,7 +600,7 @@ describe("Waker turn lifecycle (子1)", () => {
       model: "claude-haiku-4-5",
       source: "claude_code",
     };
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const hooks = { onSessionEnd: vi.fn(async () => ({ relayError: null, usage })) };
     const { waker } = makeWaker({ advanceTurn, hooks });
     const resolved = await waker.keyFor(TASK_NOTIF);
@@ -606,7 +611,7 @@ describe("Waker turn lifecycle (子1)", () => {
   });
 
   it("threads the spawner backendSessionId onto the terminal turn-advance only", async () => {
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const spawner = spawnerThatSpawns(0);
     spawner.wake = vi.fn(async ({ sessionId, onChild }) => {
       onChild?.({ pid: 42 });
@@ -632,7 +637,7 @@ describe("Waker turn lifecycle (子1)", () => {
       model: null,
       source: "claude_code",
     };
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const hooks = { onSessionEnd: vi.fn(async () => ({ relayError: null, usage })) };
     const { waker } = makeWaker({ advanceTurn, hooks, spawner: spawnerThatSpawns(2) });
     const resolved = await waker.keyFor(TASK_NOTIF);
@@ -643,7 +648,7 @@ describe("Waker turn lifecycle (子1)", () => {
   });
 
   it("omits usage from the turn-advance when the run reported none (null)", async () => {
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const hooks = { onSessionEnd: vi.fn(async () => ({ relayError: null, usage: null })) };
     const { waker } = makeWaker({ advanceTurn, hooks });
     const resolved = await waker.keyFor(TASK_NOTIF);
@@ -657,7 +662,7 @@ describe("Waker turn lifecycle (子1)", () => {
   });
 
   it("tolerates a legacy onSessionEnd that returns undefined (no relay error surfaced)", async () => {
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const hooks = { onSessionEnd: vi.fn(async () => undefined) };
     const { waker } = makeWaker({ advanceTurn, hooks });
     const resolved = await waker.keyFor(TASK_NOTIF);
@@ -667,16 +672,16 @@ describe("Waker turn lifecycle (子1)", () => {
     expect(endedCall).not.toHaveProperty("transcriptRelayError");
   });
 
-  it("does not attempt a transcript flush when the subprocess never spawned (no sessionId turn ran)", async () => {
-    // A never-spawned wake leaves the turn pending; onSessionEnd is keyed on sessionId,
-    // which is still resolved, so the flush is harmlessly a no-op batch. Assert it does
-    // not throw and no terminal advance happens.
-    const hooks = { onSessionEnd: vi.fn(async () => {}) };
+  it("flushes the attempted session and settles its admitted no-child failure", async () => {
+    // The session hook was started before backend discovery; flush it before
+    // settling the exact failed attempt even when no child materialized.
+    const hooks = { onSessionEnd: vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } })) };
     const { waker, advanceTurn } = makeWaker({ spawner: spawnerThatNeverSpawns(), hooks });
     const resolved = await waker.keyFor(TASK_NOTIF);
     await waker.wake(TASK_NOTIF, resolved.key, resolved);
-    // No running turn ⇒ no ended; the flush still runs (best-effort) but advances nothing.
-    expect(advanceTurn).not.toHaveBeenCalled();
+    expect(hooks.onSessionEnd).toHaveBeenCalledWith({ sessionId: DIRECT_IDEA });
+    expect(advanceTurn.mock.calls.map(([p]) => [p.status, p.turnUuid]))
+      .toEqual([["running", undefined], ["interrupted", "ordinary-turn"]]);
   });
 
   it("defaults to a no-op-with-log reporter when none is injected (existing Wakers keep working)", async () => {
