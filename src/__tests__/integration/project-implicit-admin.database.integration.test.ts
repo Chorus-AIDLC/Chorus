@@ -120,7 +120,17 @@ describe.skipIf(!url)("lazy implicit project Admin — real PostgreSQL acceptanc
   async function openStream(auth: AuthContext) {
     state.auth = auth;
     const abort = new AbortController();
-    const response = await eventsRoute.GET(new NextRequest("http://localhost/api/events", { signal: abort.signal }));
+    // Invoke the actual route's heartbeat without replacing PostgreSQL timers.
+    const originalInterval = globalThis.setInterval;
+    let heartbeat = () => {};
+    const timerSpy = vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+      if (delay === 30_000 && typeof callback === "function") heartbeat = () => callback(...args);
+      return originalInterval(callback, delay, ...args);
+    });
+    let response: Response;
+    try {
+      response = await eventsRoute.GET(new NextRequest("http://localhost/api/events", { signal: abort.signal }));
+    } finally { timerSpy.mockRestore(); }
     expect(response.status).toBe(200);
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
@@ -135,6 +145,7 @@ describe.skipIf(!url)("lazy implicit project Admin — real PostgreSQL acceptanc
       } catch { /* Cancelled during cleanup. */ }
     })();
     return {
+      heartbeat,
       events: () => chunks.join("").split("\n\n").filter((chunk) => chunk.startsWith("data: "))
         .map((chunk) => JSON.parse(chunk.slice(6)) as Record<string, unknown>),
       async close() { abort.abort(); await reader.cancel(); await pump; },
@@ -599,9 +610,11 @@ describe.skipIf(!url)("lazy implicit project Admin — real PostgreSQL acceptanc
     }
   });
 
-  it("first-user deletion publication transfers private project SSE delivery without materializing fallback", async () => {
+  it("first-user deletion heartbeat transfers private project SSE delivery without writes or broadcasts", async () => {
     const unowned = await project();
     const streams: Awaited<ReturnType<typeof openStream>>[] = [];
+    const refresh = vi.spyOn(access, "accessibleProjectUuids");
+    const publication = vi.spyOn(eventBus, "emitProjectAccessChanged");
     try {
       const old = await openStream(actor()); streams.push(old);
       const next = await openStream(actor("next")); streams.push(next);
@@ -611,7 +624,11 @@ describe.skipIf(!url)("lazy implicit project Admin — real PostgreSQL acceptanc
       await db.agent.update({ where: { uuid: ids.ownedAgent }, data: { ownerUuid: null } });
       await db.user.delete({ where: { uuid: ids.first } });
       await withoutWrites(async () => {
-        await implicit.publishImplicitGroupAdminChange(companyUuid);
+        for (const stream of streams) stream.heartbeat();
+        await eventually(() => refresh.mock.calls.length >= 4);
+        await Promise.all(refresh.mock.results.map((result) => result.value));
+        for (let i = 0; i < 25; i++) await Promise.resolve();
+        expect(publication).not.toHaveBeenCalled();
         emitTask(unowned.uuid, "after-first-delete");
         await eventually(() => next.events().some((event) => event.entityUuid === "after-first-delete"));
         expect(old.events().some((event) => event.entityUuid === "after-first-delete")).toBe(false);
@@ -619,6 +636,7 @@ describe.skipIf(!url)("lazy implicit project Admin — real PostgreSQL acceptanc
       });
     } finally {
       await Promise.all(streams.map((stream) => stream.close()));
+      refresh.mockRestore(); publication.mockRestore();
     }
   });
 

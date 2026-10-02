@@ -89,7 +89,17 @@ describe.skipIf(!url)("lazy implicit group Admin — real PostgreSQL acceptance"
   async function openStream(auth: AuthContext) {
     state.auth = auth;
     const abort = new AbortController();
-    const response = await eventsRoute.GET(new NextRequest("http://localhost/api/events", { signal: abort.signal }));
+    // Invoke the actual route's heartbeat without replacing PostgreSQL timers.
+    const originalInterval = globalThis.setInterval;
+    let heartbeat = () => {};
+    const timerSpy = vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+      if (delay === 30_000 && typeof callback === "function") heartbeat = () => callback(...args);
+      return originalInterval(callback, delay, ...args);
+    });
+    let response: Response;
+    try {
+      response = await eventsRoute.GET(new NextRequest("http://localhost/api/events", { signal: abort.signal }));
+    } finally { timerSpy.mockRestore(); }
     expect(response.status).toBe(200);
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
@@ -104,6 +114,7 @@ describe.skipIf(!url)("lazy implicit group Admin — real PostgreSQL acceptance"
       } catch { /* Stream cancelled during cleanup. */ }
     })();
     return {
+      heartbeat,
       events: () => chunks.join("").split("\n\n").filter((chunk) => chunk.startsWith("data: "))
         .map((chunk) => JSON.parse(chunk.slice(6)) as Record<string, unknown>),
       async close() { abort.abort(); await reader.cancel(); await pump; },
@@ -352,7 +363,7 @@ describe.skipIf(!url)("lazy implicit group Admin — real PostgreSQL acceptance"
     });
   });
 
-  it("publishes first-user deletion to real SSE gates, transferring children and empty-group discovery", async () => {
+  it("refreshes each real SSE gate on first-user deletion without global broadcasts", async () => {
     const group = await legacyGroup();
     const project = await child(group.uuid);
     const sibling = await child(group.uuid);
@@ -382,19 +393,13 @@ describe.skipIf(!url)("lazy implicit group Admin — real PostgreSQL acceptance"
       eventBus.on("project_access_changed", onAccess);
       eventBus.on("change", onGroup);
       await readWithoutWrites(async () => {
-        await implicit.publishImplicitGroupAdminChange(companyUuid);
+        for (const stream of streams) stream.heartbeat();
         await eventually(() => next.events().filter((event) => event.entityType === "project_group").length === 2);
         await eventually(() => old.events().filter((event) => event.entityType === "project_group").length === 2);
-        expect(accessEvents).toEqual(expect.arrayContaining([
-          { companyUuid, projectUuid: project.uuid, userUuids: [] },
-          { companyUuid, projectUuid: sibling.uuid, userUuids: [] },
-        ]));
-        expect(accessEvents).toHaveLength(2);
-        expect(groupEvents).toEqual(expect.arrayContaining([
-          { companyUuid, projectUuid: "", entityType: "project_group", entityUuid: group.uuid, action: "updated" },
-          { companyUuid, projectUuid: "", entityType: "project_group", entityUuid: empty.uuid, action: "updated" },
-        ]));
-        expect(groupEvents).toHaveLength(2);
+        expect(accessEvents).toEqual([]);
+        expect(groupEvents).toEqual([]);
+        expect(next.events().filter((event) => event.entityType === "project_group").map((event) => event.entityUuid).sort()).toEqual([group.uuid, empty.uuid].sort());
+        expect(old.events().filter((event) => event.entityType === "project_group").map((event) => event.entityUuid).sort()).toEqual([group.uuid, empty.uuid].sort());
         // Group refreshes drain after their child access recomputes.
         eventBus.emitChange({ companyUuid, projectUuid: project.uuid, entityType: "task", entityUuid: "after-transfer", action: "updated" });
         eventBus.emitChange({ companyUuid, projectUuid: sibling.uuid, entityType: "task", entityUuid: "sibling-transfer", action: "updated" });
