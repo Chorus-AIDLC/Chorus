@@ -9,15 +9,15 @@ access across visibility and grouping changes.
 ## Requirements
 
 ### Requirement: Project visibility
-Every Project SHALL have a `visibility` of `public` or `private`. New ungrouped projects SHALL default to `public` unless the creator selects `private`. Grouped projects SHALL default to group visibility; Private groups MUST reject explicit Public children. Existing projects SHALL be migrated as `public`. A public project SHALL grant every user in its Company (and every agent of that Company) at least the `editor` level, preserving pre-change content read/write behaviour. On a public project every company actor SHALL also keep the ability to edit project settings, move it between groups and delete it, as before. Switching a project's visibility and managing its members SHALL require an effective `admin` role from explicit group or project membership on public and private projects alike.
+Every Project SHALL have a `visibility` of `public` or `private`. New ungrouped projects SHALL default to `public` unless the creator selects `private`. Grouped projects SHALL default to group visibility; Private groups MUST reject explicit Public children. Existing projects SHALL be migrated as `public`. A public project SHALL grant every user in its Company (and every agent of that Company) at least the `editor` level, preserving pre-change content read/write behaviour. On a public project every company actor SHALL also keep the ability to edit project settings, move it between groups and delete it, as before. Switching a project's visibility and managing its members SHALL require an effective `admin` role from explicit membership or the no-Admin automatic fallback on public and private projects alike.
 
 #### Scenario: Existing projects remain public
 - **WHEN** the original project-access migration (not this group upgrade) runs on a database with existing projects
 - **THEN** every existing project has `visibility = "public"` and every company user can still read and modify its ideas, proposals, tasks and documents
 
-#### Scenario: Legacy project creator backfill
-- **WHEN** the original project-access migration (not this group upgrade) runs for an existing project in a company whose earliest-created user is F
-- **THEN** the project's `createdByUuid = F` and F is an `admin` member of it
+#### Scenario: Applied project migration history
+- **WHEN** the original applied migration is retained during this correction
+- **THEN** its schema and checksum remain unchanged and existing stored creator/Admin grants are preserved; no new data backfill is added
 
 #### Scenario: Non-admin can still manage a public project's settings
 - **WHEN** a company user who is not an `admin` member edits the name of a public project
@@ -32,7 +32,7 @@ Every Project SHALL have a `visibility` of `public` or `private`. New ungrouped 
 - **THEN** the project is stored as private and the creator is recorded as `createdByUuid` and as an `admin` member
 
 ### Requirement: Project membership levels
-A private project SHALL control access through the maximum of its explicit same-company `ProjectMember` and `ProjectGroupMember` roles (`viewer`, `editor`, `admin`). Group inheritance is live and is a role floor; project grants may add or raise access, never reduce inherited access. Public group implicit company access MUST NOT be inherited into a private project. `viewer` MUST permit read-only access to the project and all its entities. `editor` MUST additionally permit creating, updating, deleting, claiming, commenting on, referencing, elaborating, proposing, approving and verifying entities within the project. `admin` MUST additionally permit editing project settings, changing visibility, managing members, moving the project between groups and deleting the project; on a private project these operations MUST be rejected for `viewer` and `editor`.
+A private project SHALL control access through the maximum of its same-company explicit or automatic project and group roles (`viewer`, `editor`, `admin`). Group inheritance is live and is a role floor; project grants may add or raise access, never reduce inherited access. Public group implicit company access MUST NOT be inherited into a private project. `viewer` MUST permit read-only access to the project and all its entities. `editor` MUST additionally permit creating, updating, deleting, claiming, commenting on, referencing, elaborating, proposing, approving and verifying entities within the project. `admin` MUST additionally permit editing project settings, changing visibility, managing members, moving the project between groups and deleting the project; on a private project these operations MUST be rejected for `viewer` and `editor`.
 
 #### Scenario: Viewer cannot write
 - **WHEN** a viewer of a private project attempts to create a task in it
@@ -49,6 +49,21 @@ A private project SHALL control access through the maximum of its explicit same-
 #### Scenario: Member must belong to the same company
 - **WHEN** an admin attempts to add a user from a different company as a member
 - **THEN** the request is rejected and no membership is created
+
+### Requirement: Automatic project Admin without backfill
+Projects without an explicit local Admin and without a live same-company group SHALL compute their company's earliest user (createdAt then id ascending) as automatic Admin during authorization, without updating creator metadata or memberships. A live group already supplies its explicit or automatic group Admin and SHALL suppress this separate project fallback. Missing or foreign-company historical group references SHALL be treated as absent for the fallback; authorization MUST remain company-scoped. Explicit Admin presence SHALL suppress fallback and first-user changes SHALL be reflected on fresh requests. Member presentation, list filters, recipients, preview fingerprints and live access refreshes SHALL agree. Ownerless agents MUST NOT inherit the fallback. Reading MUST NOT write database rows.
+
+#### Scenario: Unmanaged project
+- **WHEN** a project has no local Admin or live same-company group
+- **THEN** the company's earliest user has automatic Admin authority and roster presentation labels it without creating a membership
+
+#### Scenario: Existing inherited Admin
+- **WHEN** a project's live group has an explicit Admin who is not the company's first user
+- **THEN** that configured group Admin inherits project Admin and the first user receives no separate automatic project Admin
+
+#### Scenario: Historical orphan group
+- **WHEN** a project references a missing or foreign-company group and has no local Admin
+- **THEN** its own company's earliest user receives the fallback consistently in direct and list access while foreign-company users receive no access
 
 ### Requirement: Project creator becomes admin
 Every project creation path (REST, server action, MCP) SHALL record the creator, make them an `admin` member, and log a project `created` Activity. When an agent creates a project, the agent's owner SHALL be recorded as creator and admin.
@@ -128,7 +143,7 @@ In a private project, only users with access and agents whose owner has access S
 - **THEN** the assignment is rejected
 
 ### Requirement: Access management UI
-The Project Settings modal SHALL provide an Access section where admins change visibility (with current access-impact count summaries and confirmation for both directions) and list, add, change the role of, and remove members; non-admins SHALL see it read-only. The member table SHALL show inherited and local grant provenance and effective roles; inherited grants MUST NOT be presented as removable or downgradable project memberships. The Create Project dialog SHALL offer the visibility choice. Private projects SHALL show a lock indicator wherever projects are listed. Viewers SHALL NOT be offered primary create/edit actions on project pages. All strings SHALL be localized (en, zh) and render correctly in light and dark themes.
+The Project Settings modal SHALL provide an Access section where admins change visibility (with current access-impact count summaries and confirmation for both directions) and list, add, change the role of, and remove members; non-admins SHALL see it read-only. The member table SHALL show inherited and local grant provenance and effective roles; inherited and automatic grants MUST NOT be presented as removable or downgradable project memberships; automatic Admin SHALL be labeled. The Create Project dialog SHALL offer the visibility choice. Private projects SHALL show a lock indicator wherever projects are listed. Viewers SHALL NOT be offered primary create/edit actions on project pages. All strings SHALL be localized (en, zh) and render correctly in light and dark themes.
 
 #### Scenario: Admin adds a member
 - **WHEN** an admin opens Project Settings → Access, picks a company user and the Editor role, and confirms

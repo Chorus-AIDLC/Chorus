@@ -4,9 +4,11 @@ import { ApiError } from "@/lib/api-handler";
 import type { AuthContext } from "@/types/auth";
 import {
   computeProjectAccess, isProjectVisibility, levelAtLeast, membershipPrincipal,
-  ProjectAccessDeniedError, ProjectNotFoundError, resolveInheritedAccessLevel,
-  type ProjectAccessClient, type ProjectVisibility, type ProjectMemberRole,
+  ProjectAccessDeniedError, ProjectNotFoundError, requiredLevelForOperation, resolveInheritedAccessLevel,
+  type ProjectAccessClient, type ProjectAccessLevel, type ProjectVisibility, type ProjectMemberRole,
+  type ProjectOperation,
 } from "@/services/project-access.service";
+import { implicitGroupAdmin, implicitProjectAdmin } from "@/services/project-group-implicit-admin.service";
 
 export interface AccessRoleChange {
   userUuid: string;
@@ -25,10 +27,30 @@ export interface AccessImpactSummary {
   affectedProjectCount: number;
 }
 
+export interface AccessPermissionChange {
+  userUuid: string;
+  increased: boolean;
+}
+
+// Role diffs already account for changing access levels. A retained role can
+// still gain or lose management authority when the project's visibility changes.
+export function retainedProjectPermissionChanges(
+  userUuid: string, beforeRole: ProjectAccessLevel, afterRole: ProjectAccessLevel,
+  beforeVisibility: string, afterVisibility: string,
+): AccessPermissionChange[] {
+  if (beforeRole !== afterRole || beforeVisibility === afterVisibility) return [];
+  const operations: ProjectOperation[] = ["manage_project", "change_visibility", "manage_members"];
+  return operations.flatMap((operation) => {
+    const before = levelAtLeast(beforeRole, requiredLevelForOperation(operation, beforeVisibility));
+    const after = levelAtLeast(afterRole, requiredLevelForOperation(operation, afterVisibility));
+    return before === after ? [] : [{ userUuid, increased: after }];
+  });
+}
+
 /** Count people once per impact type, even when several resources change. */
 export function summarizeAccessChanges(
   changes: AccessRoleChange[], affectedProjectCount = 0,
-  permissionChanges: Array<{ userUuid: string; increased: boolean }> = [],
+  permissionChanges: AccessPermissionChange[] = [],
 ): AccessImpactSummary {
   const affected = new Set<string>();
   const gained = new Set<string>();
@@ -135,12 +157,22 @@ export async function getProjectVisibilityPreview(
   });
   const localRoles = new Map(direct.map((r) => [r.userUuid, r.role]));
   const groupRoles = new Map(inherited.map((r) => [r.userUuid, r.role]));
+  const [implicitAdminUuid, projectImplicitAdminUuid] = await Promise.all([
+    group ? implicitGroupAdmin(auth.companyUuid, group.uuid, client, auth) : null,
+    implicitProjectAdmin(auth.companyUuid, projectUuid, client, auth),
+  ]);
+  if (implicitAdminUuid) groupRoles.set(implicitAdminUuid, "admin");
+  if (projectImplicitAdminUuid) localRoles.set(projectImplicitAdminUuid, "admin");
   const changes: AccessRoleChange[] = [];
+  const permissionChanges: AccessPermissionChange[] = [];
   for (const user of users) {
     const local = localRoles.get(user.uuid) ?? null;
     const groupRole = groupRoles.get(user.uuid) ?? null;
     const beforeRole = resolveInheritedAccessLevel(project.visibility, local, groupRole);
     const afterRole = resolveInheritedAccessLevel(visibility, local, groupRole);
+    permissionChanges.push(...retainedProjectPermissionChanges(
+      user.uuid, beforeRole, afterRole, project.visibility, visibility,
+    ));
     if (beforeRole !== afterRole) changes.push({
       userUuid: user.uuid, name: user.name ?? null, email: user.email ?? null, beforeRole, afterRole,
     });
@@ -149,13 +181,14 @@ export async function getProjectVisibilityPreview(
     projectUuid, name: project.name, fromVisibility: project.visibility, visibility,
     companyAccess: project.visibility === visibility ? "unchanged" : visibility === "public" ? "opened" : "closed",
     changes,
-    summary: summarizeAccessChanges(changes, project.visibility !== visibility ? 1 : 0),
+    summary: summarizeAccessChanges(changes, project.visibility !== visibility ? 1 : 0, permissionChanges),
     confirmationToken: accessConfirmationToken({
       operation: "project_visibility", companyUuid: auth.companyUuid,
       principal: membershipPrincipal(auth), actorType: auth.type, actorUuid: auth.actorUuid,
       project: { uuid: project.uuid, visibility: project.visibility, groupUuid: project.groupUuid },
       // Display identities do not affect access or invalidate a confirmation.
-      visibility, group, direct, inherited, users: users.map(({ uuid }) => ({ uuid })),
+      visibility, group, direct, inherited, implicitAdminUuid, projectImplicitAdminUuid,
+      users: users.map(({ uuid }) => ({ uuid })),
     }),
   };
 }

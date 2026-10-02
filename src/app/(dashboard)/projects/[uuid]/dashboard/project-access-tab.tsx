@@ -59,6 +59,8 @@ export interface ProjectMember {
   directRole?: ProjectMemberRole | null;
   inheritedRole?: ProjectMemberRole | null;
   effectiveRole?: ProjectMemberRole;
+  implicit?: boolean;
+  automaticAdmin?: boolean;
 }
 
 interface CompanyUser {
@@ -199,6 +201,7 @@ export function ProjectAccessTab({
   };
 
   const changeRole = async (member: ProjectMember, role: ProjectMemberRole) => {
+    if ((member.implicit || member.automaticAdmin) && (isGroup || !member.inheritedRole) && role !== "admin") return;
     const directRole = member.directRole === undefined ? member.role : member.directRole;
     if (!directRole || role === directRole) return;
     if (member.inheritedRole && ROLES.indexOf(role) < ROLES.indexOf(member.inheritedRole)) return;
@@ -216,6 +219,7 @@ export function ProjectAccessTab({
   };
 
   const removeMember = async (member: ProjectMember) => {
+    if ((member.implicit || member.automaticAdmin) && (isGroup || !member.inheritedRole)) return;
     if (member.directRole === null || member.source === "group") return;
     setMemberError(null);
     setBusyMember(member.userUuid);
@@ -246,6 +250,10 @@ export function ProjectAccessTab({
   const memberUuids = useMemo(
     () => new Set((members ?? []).filter((m) => m.directRole !== null && m.source !== "group").map((m) => m.userUuid)),
     [members],
+  );
+  const automaticAdminUuids = useMemo(
+    () => new Set((members ?? []).filter((m) => (m.implicit || m.automaticAdmin) && (isGroup || !m.inheritedRole)).map((m) => m.userUuid)),
+    [isGroup, members],
   );
 
   return (
@@ -394,7 +402,8 @@ export function ProjectAccessTab({
                     const busy = busyMember === member.userUuid;
                     const directRole = member.directRole === undefined ? member.role : member.directRole;
                     const inheritedOnly = member.source === "group" || directRole === null;
-                    const floor = member.inheritedRole;
+                    const automaticAdmin = member.implicit || member.automaticAdmin;
+                    const floor = member.inheritedRole ?? (automaticAdmin ? "admin" : undefined);
                     const effectiveRole = member.effectiveRole ?? member.role;
                     return (
                       <TableRow key={member.userUuid}>
@@ -404,10 +413,11 @@ export function ProjectAccessTab({
                             {member.email && member.name && (
                               <span className="break-all text-[12px] text-muted-foreground">{member.email}</span>
                             )}
-                            {!isGroup && (
+                            {automaticAdmin && <span className="text-[11px] text-muted-foreground">{t("members.automaticAdmin")}</span>}
+                            {!isGroup && (member.inheritedRole || !automaticAdmin || directRole) && (
                               <span className="break-words text-[11px] text-muted-foreground">
                                 {t(`members.source.${member.source ?? "project"}`)}
-                                {floor && ` · ${t("members.inheritedRole", { role: t(`roles.${floor}`) })}`}
+                                {member.inheritedRole && ` · ${t("members.inheritedRole", { role: t(`roles.${member.inheritedRole}`) })}`}
                                 {directRole && ` · ${t("members.directRole", { role: t(`roles.${directRole}`) })}`}
                               </span>
                             )}
@@ -436,11 +446,11 @@ export function ProjectAccessTab({
                           ) : (
                             <Badge variant="secondary">{t(`roles.${effectiveRole}`)}</Badge>
                           )}
-                          {!isGroup && <p className="mt-1 whitespace-normal text-[11px] text-muted-foreground">{t("members.effectiveRole", { role: t(`roles.${effectiveRole}`) })}</p>}
+                          {(!isGroup || (automaticAdmin && !inheritedOnly)) && <p className="mt-1 whitespace-normal text-[11px] text-muted-foreground">{t("members.effectiveRole", { role: t(`roles.${effectiveRole}`) })}</p>}
                         </TableCell>
                         {isAdmin && (
                           <TableCell className="p-1 text-right">
-                            {!inheritedOnly && (
+                            {!inheritedOnly && !(automaticAdmin && (isGroup || !member.inheritedRole)) && (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -464,7 +474,7 @@ export function ProjectAccessTab({
         )}
 
         {isAdmin && members !== null && (
-          <AddMemberRow excludeUuids={memberUuids} onAdd={addMember} inheritedMembers={isGroup ? [] : members} />
+          <AddMemberRow excludeUuids={memberUuids} onAdd={addMember} inheritedMembers={isGroup ? [] : members} automaticAdminUuids={automaticAdminUuids} />
         )}
       </section>}
     </div>
@@ -475,9 +485,10 @@ interface AddMemberRowProps {
   excludeUuids: Set<string>;
   onAdd: (user: CompanyUser, role: ProjectMemberRole) => Promise<boolean>;
   inheritedMembers: ProjectMember[];
+  automaticAdminUuids: Set<string>;
 }
 
-function AddMemberRow({ excludeUuids, onAdd, inheritedMembers }: AddMemberRowProps) {
+function AddMemberRow({ excludeUuids, onAdd, inheritedMembers, automaticAdminUuids }: AddMemberRowProps) {
   const t = useTranslations("projectAccess");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -487,6 +498,7 @@ function AddMemberRow({ excludeUuids, onAdd, inheritedMembers }: AddMemberRowPro
   const [role, setRole] = useState<ProjectMemberRole>("editor");
   const [adding, setAdding] = useState(false);
   const floor = inheritedMembers.find((m) => m.userUuid === selected?.uuid)?.inheritedRole;
+  const automaticAdmin = !!selected && automaticAdminUuids.has(selected.uuid);
 
   // Company users come from the mention search (the only company-user listing
   // exposed to non-super-admins); it only searches users for a non-empty query.
@@ -520,7 +532,7 @@ function AddMemberRow({ excludeUuids, onAdd, inheritedMembers }: AddMemberRowPro
   const candidates = results.filter((user) => !excludeUuids.has(user.uuid));
 
   const handleAdd = async () => {
-    if (!selected || (floor && ROLES.indexOf(role) <= ROLES.indexOf(floor))) return;
+    if (!selected || (automaticAdmin && role !== "admin") || (floor && ROLES.indexOf(role) <= ROLES.indexOf(floor))) return;
     setAdding(true);
     const ok = await onAdd(selected, role);
     setAdding(false);
@@ -575,7 +587,7 @@ function AddMemberRow({ excludeUuids, onAdd, inheritedMembers }: AddMemberRowPro
                           onSelect={() => {
                             setSelected(user);
                             const inherited = inheritedMembers.find((m) => m.userUuid === user.uuid)?.inheritedRole;
-                            setRole(inherited === "viewer" ? "editor" : inherited === "editor" ? "admin" : "editor");
+                            setRole(automaticAdminUuids.has(user.uuid) ? "admin" : inherited === "viewer" ? "editor" : inherited === "editor" ? "admin" : "editor");
                             setOpen(false);
                           }}
                         >
@@ -601,11 +613,11 @@ function AddMemberRow({ excludeUuids, onAdd, inheritedMembers }: AddMemberRowPro
           </SelectTrigger>
           <SelectContent>
             {ROLES.map((r) => (
-              <SelectItem key={r} value={r} disabled={!!floor && ROLES.indexOf(r) <= ROLES.indexOf(floor)}>{t(`roles.${r}`)}</SelectItem>
+              <SelectItem key={r} value={r} disabled={(automaticAdmin && r !== "admin") || (!!floor && ROLES.indexOf(r) <= ROLES.indexOf(floor))}>{t(`roles.${r}`)}</SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Button onClick={() => void handleAdd()} disabled={!selected || adding || (!!floor && ROLES.indexOf(role) <= ROLES.indexOf(floor))} className="gap-1.5">
+        <Button onClick={() => void handleAdd()} disabled={!selected || adding || (automaticAdmin && role !== "admin") || (!!floor && ROLES.indexOf(role) <= ROLES.indexOf(floor))} className="gap-1.5">
           {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
           {adding ? t("add.adding") : t("add.add")}
         </Button>

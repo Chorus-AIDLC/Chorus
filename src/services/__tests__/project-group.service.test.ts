@@ -10,6 +10,8 @@ import { addGroupMember, updateGroupMember, removeGroupMember, listGroupMembers 
 import { computeProjectAccess } from "@/services/project-access.service";
 import { createProject, updateProject, deleteProject } from "@/services/project.service";
 import { createProjectWithAgentCwds, updateProjectWithAgentCwds } from "@/services/project-agent-cwd.service";
+import { firstCompanyUser, invalidateImplicitGroupAdminCache } from "@/services/project-group-implicit-admin.service";
+import type { ProjectAccessClient } from "@/services/project-access.service";
 
 beforeEach(() => { vi.clearAllMocks(); fixture.reset(); });
 const state = () => structuredClone(fixture.state);
@@ -121,7 +123,7 @@ describe("creator and automatic legacy administration", () => {
   });
   it("ownerless agents can create public groups but cannot create private groups", async () => {
     const agent = { type: "agent" as const, companyUuid: "c", actorUuid: "agent" };
-    expect(await createProjectGroup({ companyUuid: "c", name: "public" }, agent)).toMatchObject({ accessInitialized: false });
+    expect(await createProjectGroup({ companyUuid: "c", name: "public" }, agent)).toMatchObject({ accessInitialized: true });
     await expect(createProjectGroup({ companyUuid: "c", name: "private", visibility: "private" }, agent)).rejects.toMatchObject({ status: 400 });
   });
   it("creator membership failure rolls back the group and emits nothing", async () => {
@@ -133,7 +135,7 @@ describe("creator and automatic legacy administration", () => {
     group("g", "public", false); project(); localMember("p", "local", "admin");
     const before = state();
     expect(await updateProjectGroup({ companyUuid: "c", groupUuid: "g", name: "renamed" }, auth("local")))
-      .toMatchObject({ name: "renamed", accessInitialized: false, accessLevel: "editor" });
+      .toMatchObject({ name: "renamed", accessInitialized: true, accessLevel: "editor" });
     expect(fixture.state.projectGroupMember).toEqual(before.projectGroupMember);
     expect(fixture.state.projectMember).toEqual(before.projectMember);
     expect(fixture.state.project).toEqual(before.project);
@@ -144,6 +146,99 @@ describe("creator and automatic legacy administration", () => {
     const preview = await getGroupVisibilityPreview(auth(), "g", "private");
     expect(await updateProjectGroup({ companyUuid: "c", groupUuid: "g", visibility: "private", confirmationToken: preview.confirmationToken }, auth()))
       .toMatchObject({ visibility: "private", accessLevel: "admin" });
+  });
+
+  it("resolves the first user by createdAt then id without writing an Admin grant", async () => {
+    group("g", "private", false); project();
+    fixture.state.user.reverse();
+    const before = state();
+    expect(await getGroupAccess(auth(), "g")).toMatchObject({
+      level: "admin", explicitRole: "admin", accessInitialized: true, canManage: true, canCreateProject: true,
+    });
+    expect((await computeProjectAccess(auth(), "p")).level).toBe("admin");
+    expect((await listProjectGroups("c", auth())).groups).toEqual([
+      expect.objectContaining({ uuid: "g", accessLevel: "admin", projectCount: 1, accessInitialized: true }),
+    ]);
+    expect(await getProjectGroup("c", "g", auth())).toMatchObject({ accessLevel: "admin", projects: [{ uuid: "p" }] });
+    expect(state()).toEqual(before); expect(fixture.writes).toEqual([]);
+    fixture.state.user.find((row) => row.uuid === "editor")!.createdAt = new Date("2024-01-01T00:00:00Z");
+    expect((await getGroupAccess(auth("editor"), "g")).level).toBe("admin");
+    expect((await getGroupAccess(auth(), "g")).level).toBe("none");
+  });
+
+  it("raises a stored Viewer only in effective access and dynamically yields to an explicit Admin", async () => {
+    group("g", "private", false); project(); groupMember("g", "admin", "viewer");
+    const before = state();
+    expect((await getGroupAccess(auth(), "g")).level).toBe("admin");
+    expect((await computeProjectAccess(auth(), "p")).level).toBe("admin");
+    expect(state()).toEqual(before); expect(fixture.writes).toEqual([]);
+    groupMember("g", "local", "admin");
+    expect((await getGroupAccess(auth(), "g")).level).toBe("viewer");
+    expect((await computeProjectAccess(auth(), "p")).level).toBe("viewer");
+    expect((await getGroupAccess(auth("local"), "g")).level).toBe("admin");
+    fixture.state.projectGroupMember = fixture.state.projectGroupMember.filter((row) => row.userUuid !== "local");
+    expect((await getGroupAccess(auth(), "g")).level).toBe("admin");
+    expect(fixture.state.projectGroupMember[0].role).toBe("viewer"); expect(fixture.writes).toEqual([]);
+  });
+
+  it("owner-backed agents inherit lazy Admin; ownerless and foreign actors do not", async () => {
+    group("g", "private", false); project();
+    const agent = { type: "agent" as const, companyUuid: "c", actorUuid: "agent", ownerUuid: "admin" };
+    expect((await getGroupAccess(agent, "g")).level).toBe("admin");
+    expect((await computeProjectAccess(agent, "p")).level).toBe("admin");
+    expect((await getGroupAccess({ ...agent, ownerUuid: undefined }, "g")).group).toBeNull();
+    expect((await computeProjectAccess({ ...agent, ownerUuid: undefined }, "p")).project).toBeNull();
+    expect((await getGroupAccess({ ...auth(), companyUuid: "foreign" }, "g")).group).toBeNull();
+    expect((await getGroupAccess(auth(), "missing")).group).toBeNull();
+    fixture.state.user = [];
+    expect((await getGroupAccess(auth(), "g")).group).toBeNull();
+    expect(fixture.writes).toEqual([]);
+  });
+
+  it("does not initialize an ownerless public group when its company has no users", async () => {
+    fixture.state.user = [];
+    const agent = { type: "agent" as const, companyUuid: "c", actorUuid: "agent" };
+    expect(await createProjectGroup({ companyUuid: "c", name: "empty" }, agent)).toMatchObject({ accessInitialized: false });
+  });
+
+  it("reselects the next user after deletion and rejects the old preview token", async () => {
+    group("g", "public", false); project("p", "g", "public"); localMember("p", "local", "admin");
+    const token = (await getGroupVisibilityPreview(auth(), "g", "private")).confirmationToken;
+    fixture.state.user = fixture.state.user.filter((row) => row.uuid !== "admin");
+    expect((await getGroupAccess(auth("editor"), "g")).level).toBe("admin");
+    expect((await computeProjectAccess(auth("editor"), "p")).level).toBe("admin");
+    const before = state();
+    await expect(updateProjectGroup({
+      companyUuid: "c", groupUuid: "g", visibility: "private", confirmationToken: token,
+    }, auth("editor"))).rejects.toMatchObject({ status: 409 });
+    expect(state()).toEqual(before); expect(fixture.writes).toEqual([]);
+  });
+
+  it("caches first-user reads within a request, invalidates explicitly, and reads fresh through transaction clients", async () => {
+    const request = auth();
+    expect(await firstCompanyUser("c", fixture.prisma as unknown as ProjectAccessClient, request)).toBe("admin");
+    expect(await firstCompanyUser("c", fixture.prisma as unknown as ProjectAccessClient, request)).toBe("admin");
+    expect(fixture.prisma.user.findFirst).toHaveBeenCalledTimes(1);
+    fixture.state.user = fixture.state.user.filter((row) => row.uuid !== "admin");
+    const transaction = { ...fixture.prisma } as unknown as ProjectAccessClient;
+    expect(await firstCompanyUser("c", transaction, request)).toBe("editor");
+    expect(await firstCompanyUser("c", fixture.prisma as unknown as ProjectAccessClient, request)).toBe("admin");
+    invalidateImplicitGroupAdminCache(request);
+    expect(await firstCompanyUser("c", fixture.prisma as unknown as ProjectAccessClient, request)).toBe("editor");
+    expect(fixture.prisma.user.findFirst).toHaveBeenCalledTimes(3);
+    expect(fixture.writes).toEqual([]);
+  });
+
+  it("materializes lazy Admin only on an authorized detach", async () => {
+    group("g", "private", false); project(); localMember("p", "admin", "viewer");
+    const before = state();
+    const preview = await getProjectGroupMovePreview(auth(), "p", null);
+    expect(state()).toEqual(before); expect(fixture.writes).toEqual([]);
+    await moveProjectToGroup("c", "p", null, auth(), preview.confirmationToken);
+    expect(fixture.state.projectGroupMember).toEqual([]);
+    expect(fixture.state.projectMember).toContainEqual(expect.objectContaining({ projectUuid: "p", userUuid: "admin", role: "admin" }));
+    expect(fixture.state.project[0].groupUuid).toBeNull();
+    expect((await computeProjectAccess(auth(), "p")).level).toBe("admin");
   });
 
 });
@@ -348,12 +443,12 @@ describe("protected moves and retained grants", () => {
     expect(fixture.locks.map((l) => `${l.table}:${l.uuid}`)).toEqual(["group:a", "group:z", "project:p"]);
   });
   it("public role expansion requires source-project Admin and its fresh confirmation", async () => {
-    group("source", "public", false); group("target", "public"); project("p", "source", "public");
+    group("source", "public"); group("target", "public"); project("p", "source", "public"); groupMember("target", "editor", "admin");
     await expect(getProjectGroupMovePreview(auth("outside"), "p", "target")).rejects.toMatchObject({ status: 403 });
     await expect(moveProjectToGroup("c", "p", "target", auth("outside"), "0".repeat(64))).rejects.toMatchObject({ status: 403 });
     localMember("p", "local", "admin");
     const preview = await getProjectGroupMovePreview(auth("local"), "p", "target");
-    expect(preview.changes).toContainEqual(expect.objectContaining({ userUuid: "admin", beforeRole: "editor", afterRole: "admin" }));
+    expect(preview.changes).toContainEqual(expect.objectContaining({ userUuid: "editor", beforeRole: "editor", afterRole: "admin" }));
     await expect(moveProjectToGroup("c", "p", "target", auth("local"))).rejects.toMatchObject({ status: 409 });
     expect(fixture.writes).toEqual([]);
     await moveProjectToGroup("c", "p", "target", auth("local"), preview.confirmationToken);
@@ -365,7 +460,7 @@ describe("protected moves and retained grants", () => {
     expect(fixture.writes).toEqual([]);
   });
   it("source Admin also needs target Admin even for a public target", async () => {
-    group(); group("target", "public", false); project();
+    group(); group("target", "public", false); groupMember("target", "local", "admin"); project();
     await expect(getProjectGroupMovePreview(auth(), "p", "target")).rejects.toMatchObject({ status: 403 });
   });
   it("moving a public project into private group is confirmed and atomically privatized", async () => {
@@ -498,7 +593,7 @@ describe("project lifecycle rechecks under group and project locks", () => {
     } else expect(fixture.state.project[0].name).toBe("updated");
   });
   it.each(paths)("%s rechecks ungrouped local Admin changes under the project lock", async (path) => {
-    project("p", null); localMember("p", "admin", "admin");
+    project("p", null); localMember("p", "admin", "admin"); localMember("p", "local", "admin");
     fixture.onLock = () => { fixture.state.projectMember[0].role = "editor"; };
     await expect(mutate(path)).rejects.toMatchObject({ status: 403 });
     expect(fixture.locks.map((l) => `${l.table}:${l.uuid}`)).toEqual(["project:p"]);

@@ -1991,6 +1991,7 @@
       },
       "directRole": "직접: {role}",
       "inheritedRole": "상속: {role}",
+      "automaticAdmin": "자동 관리자",
       "effectiveRole": "유효: {role}"
     },
     "roles": {

@@ -15,13 +15,16 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn<(args: Prisma.ProjectFindManyArgs) => Promise<Project[]>>(),
   },
   projectMember: {
+    findFirst: vi.fn<(args: Prisma.ProjectMemberFindFirstArgs) => Promise<ProjectMember | null>>(),
     findUnique: vi.fn<(args: Prisma.ProjectMemberFindUniqueArgs) => Promise<ProjectMember | null>>(),
     findMany: vi.fn<(args: Prisma.ProjectMemberFindManyArgs) => Promise<ProjectMember[]>>(),
   },
   projectGroupMember: {
     findFirst: vi.fn<(args: Prisma.ProjectGroupMemberFindFirstArgs) => Promise<ProjectGroupMember | null>>(),
     findMany: vi.fn<(args: Prisma.ProjectGroupMemberFindManyArgs) => Promise<ProjectGroupMember[]>>(),
+    count: vi.fn(),
   },
+  user: { findFirst: vi.fn() },
   projectGroup: {
     findFirst: vi.fn<(args: Prisma.ProjectGroupFindFirstArgs) => Promise<ProjectGroup | null>>(),
   },
@@ -141,6 +144,9 @@ beforeEach(() => {
   db.locals = [];
   db.inherited = [];
   db.agents = [agentRow()];
+  mockPrisma.user.findFirst.mockResolvedValue(null);
+  mockPrisma.projectGroupMember.count.mockImplementation(async ({ where }) =>
+    db.inherited.filter((row) => matchesScalars(row, where)).length);
 
   mockPrisma.project.findFirst.mockImplementation(async ({ where }) =>
     db.projects.find((row) => matchesScalars(row, where)) ?? null);
@@ -148,10 +154,12 @@ beforeEach(() => {
   mockPrisma.projectMember.findUnique.mockImplementation(async ({ where }) => {
     const key = where.projectUuid_userUuid;
     if (!key) throw new Error("Expected the project/user unique membership key");
-    return db.locals.find((row) => matchesScalars(row, key)) ?? null;
+    return db.locals.find((row) => matchesScalars(row, key) && matchesScalars(row, { companyUuid: where.companyUuid })) ?? null;
   });
   mockPrisma.projectMember.findMany.mockImplementation(async ({ where }) =>
     db.locals.filter((row) => matchesScalars(row, where)));
+  mockPrisma.projectMember.findFirst.mockImplementation(async ({ where }) =>
+    db.locals.find((row) => matchesScalars(row, where)) ?? null);
   mockPrisma.projectGroupMember.findFirst.mockImplementation(async ({ where }) =>
     db.inherited.find((row) => matchesScalars(row, where)) ?? null);
   mockPrisma.projectGroupMember.findMany.mockImplementation(async ({ where }) =>
@@ -221,7 +229,7 @@ describe.each(["public", "private"] as const)("private child in a %s group", (vi
         where: { uuid: PROJECT, companyUuid: COMPANY },
       });
       expect(mockPrisma.projectMember.findUnique).toHaveBeenCalledWith({
-        where: { projectUuid_userUuid: { projectUuid: PROJECT, userUuid: USER } },
+        where: { companyUuid: COMPANY, projectUuid_userUuid: { projectUuid: PROJECT, userUuid: USER } },
         select: { role: true },
       });
       expect(mockPrisma.projectGroupMember.findFirst).toHaveBeenCalledWith({
@@ -292,12 +300,12 @@ describe("live inheritance and request caching", () => {
     expect(results[0]).toEqual(results[1]);
     expect(mockPrisma.project.findFirst).toHaveBeenCalledTimes(1);
     expect(mockPrisma.projectMember.findUnique).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.projectGroupMember.findFirst).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.projectGroupMember.findFirst).toHaveBeenCalledTimes(2);
 
     db.inherited = [];
     invalidateProjectAccessCache(auth, PROJECT);
     expect(await getProjectAccess(auth, PROJECT)).toEqual({ project: null, level: "none" });
-    expect(mockPrisma.projectGroupMember.findFirst).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.projectGroupMember.findFirst).toHaveBeenCalledTimes(4);
   });
 
   it("does not reuse a request cache for direct transaction-compatible computation", async () => {
@@ -314,7 +322,7 @@ describe("live inheritance and request caching", () => {
     mockPrisma.projectGroupMember.findFirst.mockRejectedValueOnce(new Error("temporary lookup failure"));
     await expect(getProjectAccess(auth, PROJECT)).rejects.toThrow("temporary lookup failure");
     expect((await getProjectAccess(auth, PROJECT)).level).toBe("viewer");
-    expect(mockPrisma.projectGroupMember.findFirst).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.projectGroupMember.findFirst).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -326,7 +334,7 @@ describe("principal, transaction and company boundaries", () => {
       if (groupRole) db.inherited = [inheritedRow(groupRole)];
       expect((await computeProjectAccess(agentAuth(USER), PROJECT)).level).toBe(privateLevel);
       expect(mockPrisma.projectMember.findUnique).toHaveBeenCalledWith(expect.objectContaining({
-        where: { projectUuid_userUuid: { projectUuid: PROJECT, userUuid: USER } },
+        where: { companyUuid: COMPANY, projectUuid_userUuid: { projectUuid: PROJECT, userUuid: USER } },
       }));
       expect(mockPrisma.projectGroupMember.findFirst).toHaveBeenCalledWith(expect.objectContaining({
         where: { companyUuid: COMPANY, groupUuid: GROUP, userUuid: USER },
@@ -381,8 +389,10 @@ describe("principal, transaction and company boundaries", () => {
     const transactionProject = projectRow({ description: "Transaction snapshot" });
     const client = {
       project: { findFirst: vi.fn().mockResolvedValue(transactionProject) },
-      projectMember: { findUnique: vi.fn().mockResolvedValue(localRow("viewer")) },
+      projectMember: { findUnique: vi.fn().mockResolvedValue(localRow("viewer")), findFirst: vi.fn().mockResolvedValue(null) },
       projectGroupMember: { findFirst: vi.fn().mockResolvedValue(inheritedRow("editor")) },
+      projectGroup: { findFirst: vi.fn().mockResolvedValue(groupRow()) },
+      user: { findFirst: vi.fn().mockResolvedValue(null) },
     };
     vi.clearAllMocks();
 
@@ -521,7 +531,7 @@ describe("effective recipient and private member union", () => {
         uuid: { in: [AGENT, uuid(41), uuid(42), uuid(43)] },
       },
     }));
-    expect(mockPrisma.project.findFirst).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.project.findFirst).toHaveBeenCalledTimes(2);
     expect(mockPrisma.projectMember.findMany).toHaveBeenCalledTimes(1);
     expect(mockPrisma.projectGroupMember.findMany).toHaveBeenCalledTimes(1);
     expect(mockPrisma.agent.findMany).toHaveBeenCalledTimes(1);

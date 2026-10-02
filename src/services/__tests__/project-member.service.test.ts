@@ -94,6 +94,9 @@ function makeTx(working: { visibility: string; members: Row[] }, release: { fn?:
       findMany: vi.fn(async () => [...state.users].sort().map((uuid) => ({ uuid }))),
     },
     projectMember: {
+      findFirst: vi.fn(async ({ where }: { where: { projectUuid: string; companyUuid: string; role: string } }) =>
+        working.members.find((m) => m.projectUuid === where.projectUuid
+          && m.companyUuid === where.companyUuid && m.role === where.role) ?? null),
       findMany: vi.fn(async () => [...working.members].sort((a, b) => a.userUuid.localeCompare(b.userUuid))
         .map((m) => ({ userUuid: m.userUuid, role: m.role }))),
       findUnique: vi.fn(async ({ where }: { where: { projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
@@ -131,8 +134,10 @@ function makeTx(working: { visibility: string; members: Row[] }, release: { fn?:
 
 const lastTx: { tx?: ReturnType<typeof makeTx> } = {};
 const mockPrisma = vi.hoisted(() => ({
-  projectMember: { findMany: vi.fn() },
-  user: { findMany: vi.fn() },
+  project: { findFirst: vi.fn() },
+  projectGroup: { findFirst: vi.fn() },
+  projectMember: { findMany: vi.fn(), findFirst: vi.fn() },
+  user: { findMany: vi.fn(), findFirst: vi.fn() },
   $transaction: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -175,6 +180,14 @@ beforeEach(() => {
 
   mockAccess.requireProjectOperation.mockResolvedValue({ uuid: P, accessLevel: "admin" });
   mockAccess.requireProjectAccess.mockResolvedValue({ uuid: P, accessLevel: "viewer" });
+  mockPrisma.project.findFirst.mockImplementation(async () => ({
+    uuid: P, companyUuid: C, groupUuid: state.groupUuid, visibility: state.visibility,
+  }));
+  mockPrisma.projectGroup.findFirst.mockImplementation(async () => state.groupUuid ? { uuid: state.groupUuid } : null);
+  mockPrisma.projectMember.findFirst.mockImplementation(async ({ where }: { where: { role: string } }) =>
+    state.members.find((m) => m.role === where.role) ?? null);
+  mockPrisma.user.findFirst.mockImplementation(async ({ where }: { where: { uuid?: string } }) =>
+    where.uuid && state.users.has(where.uuid) ? { uuid: where.uuid } : null);
   mockCreateActivityInTx.mockImplementation(async () => {
     if (state.failActivity) throw new Error("simulated activity insert failure");
     return { activity: { uuid: "act-1" }, publish: mockPublish };

@@ -41,14 +41,20 @@ Object.assign(mockPrisma, {
     }),
   },
   projectMember: {
+    findFirst: vi.fn(async ({ where }: { where: { companyUuid: string; projectUuid: string; role: string } }) =>
+      db.members.find((m) => m.companyUuid === where.companyUuid && m.projectUuid === where.projectUuid && m.role === where.role) ?? null),
     findUnique: vi.fn(
-      async ({ where }: { where: { projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
+      async ({ where }: { where: { companyUuid: string; projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
         const k = where.projectUuid_userUuid;
-        const m = db.members.find((x) => x.projectUuid === k.projectUuid && x.userUuid === k.userUuid);
+        const m = db.members.find((x) => x.companyUuid === where.companyUuid && x.projectUuid === k.projectUuid && x.userUuid === k.userUuid);
         return m ? { role: m.role } : null;
       },
     ),
   },
+  // The matrix's actors are not the earliest company user; lazy Admin behavior
+  // has separate real-PostgreSQL acceptance coverage.
+  user: { findFirst: vi.fn(async ({ where }: { where: { companyUuid: string } }) =>
+    where.companyUuid === "company-1" ? { uuid: "u-first" } : null) },
   idea: entityFinder("idea"),
   task: entityFinder("task"),
   proposal: entityFinder("proposal"),

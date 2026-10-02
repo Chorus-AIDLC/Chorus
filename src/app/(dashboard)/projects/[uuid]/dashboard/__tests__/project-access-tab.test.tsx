@@ -419,6 +419,147 @@ describe("ProjectAccessTab", () => {
     expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
   });
 
+  it("labels an automatic group Admin and offers no synthetic role or removal controls", async () => {
+    routes[`GET /api/project-groups/${PROJECT}/members`] = () => ok({ members: [{
+      ...MEMBERS[0], uuid: "implicit:group:alice", directRole: null, effectiveRole: "admin",
+      implicit: true, automaticAdmin: true,
+    }] });
+    renderTab({ resourceType: "project-groups" });
+    await screen.findByText("Alice");
+    expect(screen.getByText("Automatic admin")).toBeInTheDocument();
+    expect(screen.getByText("Admin")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Role for Alice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Alice" })).not.toBeInTheDocument();
+  });
+
+  it("lets the automatic group Admin explicitly retain their synthetic grant via the add-member picker", async () => {
+    routes[`GET /api/project-groups/${PROJECT}/members`] = () => ok({ members: [{
+      ...MEMBERS[0], uuid: "implicit:group:alice", directRole: null, effectiveRole: "admin", implicit: true,
+    }] });
+    routes[`POST /api/project-groups/${PROJECT}/members`] = () => {
+      routes[`GET /api/project-groups/${PROJECT}/members`] = () => ok({ members: [MEMBERS[0]] });
+      return ok({ uuid: "m1", userUuid: "u-alice", role: "admin" });
+    };
+    const user = userEvent.setup();
+    renderTab({ resourceType: "project-groups" });
+    await screen.findByText("Alice");
+    await user.click(screen.getByRole("combobox", { name: "Select a user" }));
+    await user.type(screen.getByPlaceholderText("Search by name or email..."), "Alice");
+    await user.click(await screen.findByRole("option", { name: /Alice/ }));
+    expect(screen.getByRole("combobox", { name: "Role for new member" })).toHaveTextContent("Admin");
+    await user.click(screen.getByRole("combobox", { name: "Role for new member" }));
+    expect(await screen.findByRole("option", { name: "Viewer" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: "Editor" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: "Admin" })).not.toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(callsTo("POST", `/api/project-groups/${PROJECT}/members`)).toHaveLength(1));
+    expect(JSON.parse(callsTo("POST", `/api/project-groups/${PROJECT}/members`)[0][1].body)).toEqual({
+      userUuid: "u-alice", role: "admin",
+    });
+    await waitFor(() => expect(screen.queryByText("Automatic admin")).not.toBeInTheDocument());
+    expect(screen.getByRole("combobox", { name: "Role for Alice" })).toBeInTheDocument();
+  });
+
+  it.each(["viewer", "editor"])("can explicitly promote an automatic group Admin's stored %s role while blocking demotion and removal", async (directRole) => {
+    routes[`GET /api/project-groups/${PROJECT}/members`] = () => ok({ members: [{
+      ...MEMBERS[0], directRole, effectiveRole: "admin", implicit: true,
+    }] });
+    routes[`PATCH /api/project-groups/${PROJECT}/members/u-alice`] = () => {
+      routes[`GET /api/project-groups/${PROJECT}/members`] = () => ok({ members: [MEMBERS[0]] });
+      return ok({ role: "admin" });
+    };
+    const user = userEvent.setup();
+    renderTab({ resourceType: "project-groups" });
+    await screen.findByText("Alice");
+    expect(screen.getByText("Automatic admin")).toBeInTheDocument();
+    expect(screen.getByText("Effective: Admin")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Role for Alice" })).toHaveTextContent(directRole === "viewer" ? "Viewer" : "Editor");
+    expect(screen.queryByRole("button", { name: "Remove Alice" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: "Role for Alice" }));
+    expect(await screen.findByRole("option", { name: "Viewer" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: "Editor" })).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("option", { name: "Admin" }));
+    await waitFor(() => expect(callsTo("PATCH", `/api/project-groups/${PROJECT}/members/u-alice`)).toHaveLength(1));
+    expect(JSON.parse(callsTo("PATCH", `/api/project-groups/${PROJECT}/members/u-alice`)[0][1].body)).toEqual({ role: "admin" });
+    await waitFor(() => expect(screen.queryByText("Automatic admin")).not.toBeInTheDocument());
+  });
+
+  it("labels an automatic inherited project Admin while allowing removal of their independent direct grant", async () => {
+    routes[`GET /api/projects/${PROJECT}/members`] = () => ok({ members: [{
+      ...MEMBERS[0], source: "both", directRole: "viewer", inheritedRole: "admin",
+      effectiveRole: "admin", implicit: true,
+    }] });
+    routes[`DELETE /api/projects/${PROJECT}/members/u-alice`] = () => ok({});
+    const user = userEvent.setup();
+    renderTab({ visibility: "private" });
+    await screen.findByText("Alice");
+    expect(screen.getByText("Automatic admin")).toBeInTheDocument();
+    expect(screen.getByText("Effective: Admin")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove Alice" }));
+    await waitFor(() => expect(callsTo("DELETE", `/api/projects/${PROJECT}/members/u-alice`)).toHaveLength(1));
+  });
+
+  it("presents a synthetic automatic project Admin as read-only with effective Admin controls for the caller", async () => {
+    routes[`GET /api/projects/${PROJECT}/members`] = () => ok({ members: [{
+      ...MEMBERS[0], uuid: "implicit:project:alice", source: "project", directRole: null,
+      inheritedRole: null, effectiveRole: "admin", implicit: true,
+    }] });
+    renderTab({ visibility: "private" });
+    await screen.findByText("Alice");
+    expect(screen.getByText("Automatic admin")).toBeInTheDocument();
+    expect(screen.getByText("Effective: Admin")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Public/ })).toBeEnabled();
+    expect(screen.queryByText(/Inherited from group|Direct project grant/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Role for Alice" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Alice" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Select a user" })).toBeInTheDocument();
+  });
+
+  it("lets a synthetic automatic project Admin explicitly add their own Admin grant", async () => {
+    routes[`GET /api/projects/${PROJECT}/members`] = () => ok({ members: [{
+      ...MEMBERS[0], source: "project", directRole: null, inheritedRole: null, implicit: true,
+    }] });
+    const user = userEvent.setup();
+    renderTab({ visibility: "private" });
+    await screen.findByText("Alice");
+    await user.click(screen.getByRole("combobox", { name: "Select a user" }));
+    await user.type(screen.getByPlaceholderText("Search by name or email..."), "Alice");
+    await user.click(await screen.findByRole("option", { name: /Alice/ }));
+    expect(screen.getByRole("combobox", { name: "Role for new member" })).toHaveTextContent("Admin");
+    await user.click(screen.getByRole("combobox", { name: "Role for new member" }));
+    expect(await screen.findByRole("option", { name: "Viewer" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: "Editor" })).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(callsTo("POST", `/api/projects/${PROJECT}/members`)).toHaveLength(1));
+    expect(JSON.parse(callsTo("POST", `/api/projects/${PROJECT}/members`)[0][1].body)).toEqual({
+      userUuid: "u-alice", role: "admin",
+    });
+  });
+
+  it.each(["viewer", "editor"])("shows effective automatic project Admin over a stored %s and permits only promotion", async (directRole) => {
+    routes[`GET /api/projects/${PROJECT}/members`] = () => ok({ members: [{
+      ...MEMBERS[0], source: "project", directRole, inheritedRole: null,
+      effectiveRole: "admin", automaticAdmin: true,
+    }] });
+    routes[`PATCH /api/projects/${PROJECT}/members/u-alice`] = () => ok({ role: "admin" });
+    const user = userEvent.setup();
+    renderTab({ visibility: "private" });
+    await screen.findByText("Alice");
+    expect(screen.getByText("Automatic admin")).toBeInTheDocument();
+    expect(screen.getByText("Effective: Admin")).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`Direct: ${directRole === "viewer" ? "Viewer" : "Editor"}`))).toBeInTheDocument();
+    expect(screen.queryByText(/Inherited: Admin/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Alice" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("combobox", { name: "Role for Alice" }));
+    expect(await screen.findByRole("option", { name: "Viewer" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: "Editor" })).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("option", { name: "Admin" }));
+    await waitFor(() => expect(callsTo("PATCH", `/api/projects/${PROJECT}/members/u-alice`)).toHaveLength(1));
+    expect(JSON.parse(callsTo("PATCH", `/api/projects/${PROJECT}/members/u-alice`)[0][1].body)).toEqual({ role: "admin" });
+  });
+
   it("never fetches the group roster for a basic visitor", async () => {
     renderTab({ resourceType: "project-groups", accessLevel: "viewer", canReadMembers: false });
     expect(screen.queryByText("Members")).not.toBeInTheDocument();

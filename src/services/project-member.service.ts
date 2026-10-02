@@ -1,6 +1,6 @@
 // src/services/project-member.service.ts
 // Project membership & visibility management (Tech Design D3).
-// All mutations require an explicit project admin (requireProjectOperation), on
+// All mutations require a project admin (requireProjectOperation), on
 // public and private projects alike, so nobody can promote themselves and then
 // lock a public project down.
 //
@@ -33,6 +33,7 @@ import {
 } from "@/services/project-access.service";
 import type { AuthContext } from "@/types/auth";
 import { lockProjectAccess, getProjectVisibilityPreview, assertAccessConfirmation } from "@/services/project-access-preview.service";
+import { implicitGroupAdmin, implicitProjectAdmin } from "@/services/project-group-implicit-admin.service";
 
 export class LastAdminError extends ApiError {
   constructor() {
@@ -52,6 +53,8 @@ export interface ProjectMemberResponse {
   directRole?: ProjectMemberRole | null;
   inheritedRole?: ProjectMemberRole | null;
   effectiveRole?: ProjectMemberRole;
+  implicit?: boolean;
+  automaticAdmin?: boolean;
 }
 
 type MemberDbClient = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
@@ -87,10 +90,17 @@ async function assertAdminRemains(tx: MemberDbClient, projectUuid: string): Prom
   const admins = await tx.projectMember.count({ where: { projectUuid, role: "admin" } });
   if (admins > 0) return;
   const project = await tx.project.findFirst({ where: { uuid: projectUuid }, select: { companyUuid: true, groupUuid: true } });
-  const inheritedAdmins = project?.groupUuid ? await tx.projectGroupMember.count({
-    where: { companyUuid: project.companyUuid, groupUuid: project.groupUuid, role: "admin" },
+  const group = project?.groupUuid ? await tx.projectGroup.findFirst({
+    where: { companyUuid: project.companyUuid, uuid: project.groupUuid }, select: { uuid: true },
+  }) : null;
+  const inheritedAdmins = group && project ? await tx.projectGroupMember.count({
+    where: { companyUuid: project.companyUuid, groupUuid: group.uuid, role: "admin" },
   }) : 0;
-  if (!inheritedAdmins) throw new LastAdminError();
+  if (inheritedAdmins) return;
+  if (group && project && await implicitGroupAdmin(project.companyUuid, group.uuid, tx)) return;
+  // Do not count a project fallback that would appear only after this explicit
+  // Admin was removed: the last explicit local Admin must remain protected.
+  throw new LastAdminError();
 }
 
 interface LockedMutation<T> {
@@ -148,13 +158,18 @@ async function mutateUnderLock<T>(
 // Any actor who can see the project can see its member list.
 export async function listMembers(auth: AuthContext, projectUuid: string): Promise<ProjectMemberResponse[]> {
   const project = await requireProjectAccess(auth, projectUuid, "viewer");
-  const members = await prisma.projectMember.findMany({
-    where: { projectUuid, companyUuid: auth.companyUuid },
-    orderBy: { createdAt: "asc" },
-    select: { uuid: true, userUuid: true, role: true, createdAt: true },
-  });
+  const [members, automaticProjectAdmin] = await Promise.all([
+    prisma.projectMember.findMany({
+      where: { projectUuid, companyUuid: auth.companyUuid },
+      orderBy: { createdAt: "asc" },
+      select: { uuid: true, userUuid: true, role: true, createdAt: true },
+    }),
+    implicitProjectAdmin(auth.companyUuid, projectUuid),
+  ]);
   const users = await prisma.user.findMany({
-    where: { companyUuid: auth.companyUuid, uuid: { in: members.map((m) => m.userUuid) } },
+    where: { companyUuid: auth.companyUuid, uuid: { in: [...new Set([
+      ...members.map((m) => m.userUuid), ...(automaticProjectAdmin ? [automaticProjectAdmin] : []),
+    ])] } },
     select: { uuid: true, name: true, email: true },
   });
   const byUuid = new Map(users.map((u) => [u.uuid, u]));
@@ -163,14 +178,41 @@ export async function listMembers(auth: AuthContext, projectUuid: string): Promi
     userUuid: m.userUuid,
     name: byUuid.get(m.userUuid)?.name ?? null,
     email: byUuid.get(m.userUuid)?.email ?? null,
-    role: (isProjectMemberRole(m.role) ? m.role : "viewer") as ProjectMemberRole,
+    role: m.userUuid === automaticProjectAdmin ? "admin" : isProjectMemberRole(m.role) ? m.role : "viewer",
     createdAt: m.createdAt.toISOString(),
+    ...(m.userUuid === automaticProjectAdmin ? {
+      source: "project" as const, directRole: isProjectMemberRole(m.role) ? m.role : "viewer" as const,
+      inheritedRole: null, effectiveRole: "admin" as const, implicit: true, automaticAdmin: true,
+    } : {}),
   }));
+  if (automaticProjectAdmin && !members.some((m) => m.userUuid === automaticProjectAdmin)) {
+    directRows.unshift({
+      uuid: `implicit:${projectUuid}:${automaticProjectAdmin}`, userUuid: automaticProjectAdmin,
+      name: byUuid.get(automaticProjectAdmin)?.name ?? null, email: byUuid.get(automaticProjectAdmin)?.email ?? null,
+      role: "admin", createdAt: project.createdAt.toISOString(), source: "project",
+      directRole: null, inheritedRole: null, effectiveRole: "admin", implicit: true, automaticAdmin: true,
+    });
+  }
   if (!project.groupUuid) return directRows;
-  const inherited = await prisma.projectGroupMember.findMany({
-    where: { companyUuid: auth.companyUuid, groupUuid: project.groupUuid },
-    select: { uuid: true, userUuid: true, role: true, createdAt: true },
+  const group = await prisma.projectGroup.findFirst({
+    where: { companyUuid: auth.companyUuid, uuid: project.groupUuid }, select: { uuid: true },
   });
+  if (!group) return directRows;
+  const [inherited, automaticAdmin] = await Promise.all([
+    prisma.projectGroupMember.findMany({
+      where: { companyUuid: auth.companyUuid, groupUuid: project.groupUuid },
+      select: { uuid: true, userUuid: true, role: true, createdAt: true },
+    }),
+    implicitGroupAdmin(auth.companyUuid, project.groupUuid),
+  ]);
+  if (automaticAdmin) {
+    const existing = inherited.find((m) => m.userUuid === automaticAdmin);
+    if (existing) existing.role = "admin";
+    else inherited.unshift({
+      uuid: `implicit:${project.groupUuid}:${automaticAdmin}`, userUuid: automaticAdmin,
+      role: "admin", createdAt: project.createdAt,
+    });
+  }
   const extraUsers = await prisma.user.findMany({
     where: { companyUuid: auth.companyUuid, uuid: { in: inherited.map((m) => m.userUuid) } },
     select: { uuid: true, name: true, email: true },
@@ -189,11 +231,14 @@ export async function listMembers(auth: AuthContext, projectUuid: string): Promi
   }
   return [...byMember.values()].map((row) => {
     const groupRow = inheritedByUser.get(row.userUuid);
-    const direct = directRows.find((r) => r.userUuid === row.userUuid)?.role ?? null;
+    const directRow = directRows.find((r) => r.userUuid === row.userUuid);
+    const direct = directRow?.directRole === undefined ? directRow?.role ?? null : directRow.directRole;
     const inheritedRole = isProjectMemberRole(groupRow?.role) ? groupRow.role : null;
-    const effectiveRole = resolveInheritedAccessLevel(project.visibility, direct, inheritedRole) as ProjectMemberRole;
+    const effectiveRole = row.userUuid === automaticProjectAdmin
+      ? "admin" : resolveInheritedAccessLevel(project.visibility, direct, inheritedRole) as ProjectMemberRole;
     return { ...row, role: effectiveRole, source: direct && inheritedRole ? "both" : inheritedRole ? "group" : "project",
-      directRole: direct, inheritedRole, effectiveRole };
+      directRole: direct, inheritedRole, effectiveRole,
+      ...(row.userUuid === automaticAdmin ? { implicit: true, automaticAdmin: true } : {}) };
   });
 }
 
@@ -206,6 +251,10 @@ export async function addMember(
   if (!isProjectMemberRole(role)) throw badRequest(`Invalid role: ${role}`);
 
   return mutateUnderLock(auth, projectUuid, "manage_members", async (tx) => {
+    const automaticAdmin = await implicitProjectAdmin(auth.companyUuid, projectUuid, tx);
+    if (automaticAdmin === userUuid && role !== "admin") {
+      throw badRequest("Cannot remove or demote the automatic project Admin");
+    }
     const user = await tx.user.findFirst({
       where: { uuid: userUuid, companyUuid: auth.companyUuid },
       select: { uuid: true },
@@ -231,7 +280,7 @@ export async function addMember(
     return {
       result: member,
       activity: { action: "project_member_added", value: { userUuid, role } },
-      changedUserUuids: [userUuid],
+      changedUserUuids: [...new Set([userUuid, ...(automaticAdmin && role === "admin" ? [automaticAdmin] : [])])],
     };
   });
 }
@@ -245,6 +294,10 @@ export async function updateMemberRole(
   if (!isProjectMemberRole(role)) throw badRequest(`Invalid role: ${role}`);
 
   return mutateUnderLock(auth, projectUuid, "manage_members", async (tx) => {
+    const automaticAdmin = await implicitProjectAdmin(auth.companyUuid, projectUuid, tx);
+    if (automaticAdmin === userUuid && role !== "admin") {
+      throw badRequest("Cannot remove or demote the automatic project Admin");
+    }
     const member = await tx.projectMember.findUnique({
       where: { projectUuid_userUuid: { projectUuid, userUuid } },
       select: { uuid: true, role: true },
@@ -264,13 +317,16 @@ export async function updateMemberRole(
         action: "project_member_role_changed",
         value: { userUuid, fromRole: member.role, toRole: role },
       },
-      changedUserUuids: [userUuid],
+      changedUserUuids: [...new Set([userUuid, ...(automaticAdmin && role === "admin" ? [automaticAdmin] : [])])],
     };
   });
 }
 
 export async function removeMember(auth: AuthContext, projectUuid: string, userUuid: string) {
   return mutateUnderLock(auth, projectUuid, "manage_members", async (tx) => {
+    if (await implicitProjectAdmin(auth.companyUuid, projectUuid, tx) === userUuid) {
+      throw badRequest("Cannot remove or demote the automatic project Admin");
+    }
     const member = await tx.projectMember.findUnique({
       where: { projectUuid_userUuid: { projectUuid, userUuid } },
       select: { uuid: true, role: true },
@@ -313,7 +369,8 @@ export async function setVisibility(
     }
     await tx.project.update({ where: { uuid: projectUuid }, data: { ...settings, visibility } });
     const current = await tx.project.findFirst({ where: { uuid: projectUuid, companyUuid: auth.companyUuid }, select: { groupUuid: true } });
-    if (visibility === "private" && principal && !current?.groupUuid) {
+    if (visibility === "private" && principal && !current?.groupUuid
+      && !await implicitProjectAdmin(auth.companyUuid, projectUuid, tx)) {
       // Actor is already an admin (checked under lock); upsert is a safety net
       // so a private project can never be left without an admin.
       await tx.projectMember.upsert({

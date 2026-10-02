@@ -1991,6 +1991,7 @@
       },
       "directRole": "Direct: {role}",
       "inheritedRole": "Inherited: {role}",
+      "automaticAdmin": "Automatic admin",
       "effectiveRole": "Effective: {role}"
     },
     "roles": {

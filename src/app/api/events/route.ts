@@ -18,6 +18,9 @@ import {
 } from "@/services/project-access.service";
 import { accessibleGroupUuids, getGroupAccess } from "@/services/project-group-access.service";
 import {
+  firstCompanyUser, invalidateImplicitGroupAdminCache, publishImplicitGroupAdminChange,
+} from "@/services/project-group-implicit-admin.service";
+import {
   parseSelfReport,
   registerConnection,
   isConnectionConflict,
@@ -102,6 +105,8 @@ export async function GET(request: NextRequest) {
   // Resolved before the stream opens so a query failure is a 500, never mid-stream.
   // Kept fresh by the `project_access_changed` listener below.
   const principal = membershipPrincipal(auth);
+  let firstUser = await firstCompanyUser(auth.companyUuid);
+  let firstUserRefreshFailed = false;
   const affectsSubscriber = (event: ProjectAccessChangedEvent) => {
     if (event.companyUuid !== auth.companyUuid) return false;
     const userUuids = Array.isArray(event.userUuids) ? event.userUuids : [];
@@ -195,6 +200,7 @@ export async function GET(request: NextRequest) {
       let refreshScheduled = false;
       const refreshProjects = new Set<string>();
       const recomputeAccess = (triggerProjectUuid: string | undefined) => {
+        invalidateImplicitGroupAdminCache(auth);
         accessRevision++;
         if (triggerProjectUuid) {
           accessibleProjects.delete(triggerProjectUuid);
@@ -238,6 +244,7 @@ export async function GET(request: NextRequest) {
             // is later on this same serial chain.
             for (let attempt = 0; attempt < 3; attempt++) {
               const revision = `${accessRevision}:${groupRevision}`;
+              invalidateImplicitGroupAdminCache(auth);
               const access = await getGroupAccess(auth, event.entityUuid);
               if (revision !== `${accessRevision}:${groupRevision}`) continue;
               if (request.signal.aborted) return;
@@ -453,6 +460,19 @@ export async function GET(request: NextRequest) {
       // Heartbeat every 30s to keep connection alive
       const heartbeat = setInterval(() => {
         send(": heartbeat\n\n");
+        void firstCompanyUser(auth.companyUuid).then(async (current) => {
+          if (request.signal.aborted || (current === firstUser && !firstUserRefreshFailed)) return;
+          firstUserRefreshFailed = false;
+          firstUser = current;
+          invalidateImplicitGroupAdminCache(auth);
+          recomputeAccess(undefined);
+          await publishImplicitGroupAdminChange(auth.companyUuid);
+        }).catch((err) => {
+          firstUserRefreshFailed = true;
+          accessibleProjects.clear();
+          invalidateImplicitGroupAdminCache(auth);
+          sseLogger.error({ err }, "SSE automatic Admin refresh failed");
+        });
         // Liveness safety net: bump lastSeenAt. Fire-and-forget — the service
         // swallows + logs its own errors and never throws.
         if (conn) void touchConnection(auth.companyUuid, conn);

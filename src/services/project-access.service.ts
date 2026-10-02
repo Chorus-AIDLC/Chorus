@@ -5,13 +5,14 @@
 //
 // Levels (ordered): none < viewer < editor < admin
 //   public project : explicit member role, floored at editor (everyone keeps full content r/w)
-//   private project: explicit member role, else none
+//   private project: local/group role or no-Admin fallback, else none
 //   agents         : inherit their owner's membership; ownerless agents only see public projects
 
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api-handler";
 import type { AuthContext } from "@/types/auth";
 import type { Prisma, Project } from "@/generated/prisma/client";
+import { firstCompanyUser, implicitGroupAdmin, implicitProjectAdmin, implicitProjectAdminUuids, invalidateImplicitGroupAdminCache } from "@/services/project-group-implicit-admin.service";
 export type ProjectAccessClient = Pick<typeof prisma, "project" | "projectMember" | "projectGroupMember" | "projectGroup" | "user">;
 
 export type ProjectVisibility = "public" | "private";
@@ -82,8 +83,8 @@ export function resolveAccessLevel(visibility: string, memberRole: string | null
   return levelAtLeast(role, "editor") ? role : "editor";
 }
 
-// Only explicit group grants enter this calculation. A public group's implicit
-// company-wide editor baseline must never expose its private children.
+// Only actual grants or the no-Admin fallback enter this calculation. A public
+// group's company-wide editor baseline never exposes its private children.
 export function resolveInheritedAccessLevel(
   visibility: string,
   localRole: string | null,
@@ -116,6 +117,7 @@ function cacheFor(auth: object): Map<string, Promise<AccessResult>> {
 
 // Call after a membership/visibility mutation so later checks in the same request see it.
 export function invalidateProjectAccessCache(auth: object, projectUuid?: string): void {
+  invalidateImplicitGroupAdminCache(auth);
   const m = accessCache.get(auth);
   if (!m) return;
   if (projectUuid) m.delete(projectUuid);
@@ -138,7 +140,7 @@ export async function computeProjectAccess(
   let memberRole: string | null = null;
   if (principal) {
     const member = await client.projectMember.findUnique({
-      where: { projectUuid_userUuid: { projectUuid, userUuid: principal } },
+      where: { companyUuid: auth.companyUuid, projectUuid_userUuid: { projectUuid, userUuid: principal } },
       select: { role: true },
     });
     memberRole = member?.role ?? null;
@@ -150,7 +152,12 @@ export async function computeProjectAccess(
         select: { role: true },
       })
     : null;
-  const level = resolveInheritedAccessLevel(project.visibility, memberRole, groupMember?.role ?? null);
+  const automaticAdmin = project.groupUuid && principal
+    ? await implicitGroupAdmin(auth.companyUuid, project.groupUuid, client, auth) : null;
+  const groupRole = principal && principal === automaticAdmin ? "admin" : groupMember?.role ?? null;
+  const automaticProjectAdmin = principal && groupRole !== "admin" && memberRole !== "admin"
+    ? await implicitProjectAdmin(auth.companyUuid, projectUuid, client, auth) : null;
+  const level = resolveInheritedAccessLevel(project.visibility, principal && principal === automaticProjectAdmin ? "admin" : memberRole, groupRole);
   return { project: level === "none" ? null : project, level };
 }
 
@@ -179,8 +186,8 @@ export async function requireProjectAccess(
 // Required level per management operation, by visibility (Tech Design D2).
 export function requiredLevelForOperation(op: ProjectOperation, visibility: string): ProjectMemberRole {
   if (op === "manage_project") return visibility === "private" ? "admin" : "editor";
-  // change_visibility / manage_members: explicit admin on every project. On public
-  // projects non-members are floored at editor, so only admin rows pass.
+  // change_visibility / manage_members require effective Admin, including the
+  // no-Admin fallback. The public company editor floor alone never passes.
   return "admin";
 }
 
@@ -262,13 +269,19 @@ async function memberProjectUuids(companyUuid: string, principal: string | null)
 export async function accessibleProjectWhere(auth: AuthContext): Promise<Prisma.ProjectWhereInput> {
   const principal = membershipPrincipal(auth);
   const memberOf = await memberProjectUuids(auth.companyUuid, principal);
+  const automaticAdmin = principal !== null && principal === await firstCompanyUser(auth.companyUuid, prisma, auth);
+  const automaticProjects = automaticAdmin ? await implicitProjectAdminUuids(auth.companyUuid) : [];
   return {
     companyUuid: auth.companyUuid,
     OR: [
       { visibility: { not: "private" } },
       ...(memberOf.length > 0 ? [{ uuid: { in: memberOf } }] : []),
+      ...(automaticProjects.length > 0 ? [{ uuid: { in: automaticProjects } }] : []),
       ...(principal ? [{ group: { companyUuid: auth.companyUuid, members: {
         some: { companyUuid: auth.companyUuid, userUuid: principal, role: { in: [...PROJECT_MEMBER_ROLES] } },
+      } } }] : []),
+      ...(automaticAdmin ? [{ group: { companyUuid: auth.companyUuid, members: {
+        none: { companyUuid: auth.companyUuid, role: "admin" },
       } } }] : []),
     ],
   };
@@ -402,11 +415,13 @@ export async function filterRecipientsByProjectAccess<T extends { type: string; 
   }
   const members = principals.size
     ? await prisma.projectMember.findMany({
-        where: { projectUuid, userUuid: { in: [...principals] } },
+        where: { companyUuid, projectUuid, userUuid: { in: [...principals] } },
         select: { userUuid: true },
       })
     : [];
   const memberSet = new Set(members.map((m) => m.userUuid));
+  const automaticProjectAdmin = await implicitProjectAdmin(companyUuid, projectUuid);
+  if (automaticProjectAdmin && principals.has(automaticProjectAdmin)) memberSet.add(automaticProjectAdmin);
   if (project.groupUuid && principals.size) {
     const inherited = await prisma.projectGroupMember.findMany({
       where: { companyUuid, groupUuid: project.groupUuid, userUuid: { in: [...principals] },
@@ -414,6 +429,8 @@ export async function filterRecipientsByProjectAccess<T extends { type: string; 
       select: { userUuid: true },
     });
     for (const member of inherited) memberSet.add(member.userUuid);
+    const automaticAdmin = await implicitGroupAdmin(companyUuid, project.groupUuid);
+    if (automaticAdmin && principals.has(automaticAdmin)) memberSet.add(automaticAdmin);
   }
 
   return recipients.filter((r) => {
@@ -444,7 +461,10 @@ export async function privateProjectMemberUuids(companyUuid: string, projectUuid
     where: { companyUuid, groupUuid: project.groupUuid, role: { in: [...PROJECT_MEMBER_ROLES] } },
     select: { userUuid: true },
   }) : [];
-  return [...new Set([...rows, ...inherited].map((r) => r.userUuid))];
+  const automaticAdmin = project.groupUuid ? await implicitGroupAdmin(companyUuid, project.groupUuid) : null;
+  const automaticProjectAdmin = await implicitProjectAdmin(companyUuid, projectUuid);
+  return [...new Set([...rows, ...inherited].map((r) => r.userUuid)
+    .concat(automaticAdmin ? [automaticAdmin] : [], automaticProjectAdmin ? [automaticProjectAdmin] : []))];
 }
 
 // A proposal's stored inputs (ideas / documents) may live in other projects and

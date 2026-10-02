@@ -108,11 +108,17 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
       if (!group || !matchWhere(store, "projectGroup", group, cond as Row)) return false;
       continue;
     }
-    if (key === "members" && model === "projectGroup") {
-      const some = (cond as Row).some as Row;
-      if (!store.data.projectGroupMember.some((member) =>
-        member.groupUuid === row.uuid && matchWhere(store, "projectGroupMember", member, some),
-      )) return false;
+    if (key === "members" && (model === "project" || model === "projectGroup")) {
+      const memberModel = model === "project" ? "projectMember" : "projectGroupMember";
+      const foreignKey = model === "project" ? "projectUuid" : "groupUuid";
+      const members = store.data[memberModel].filter((member) => member[foreignKey] === row.uuid);
+      for (const [operator, predicate] of Object.entries(cond as Row)) {
+        const matches = (member: Row) => matchWhere(store, memberModel, member, predicate as Row);
+        if (operator === "some" && !members.some(matches)) return false;
+        if (operator === "none" && members.some(matches)) return false;
+        if (operator === "every" && !members.every(matches)) return false;
+        if (!["some", "none", "every"].includes(operator)) return false;
+      }
       continue;
     }
 
@@ -364,7 +370,12 @@ function buildPrismaFake(store: Store) {
     },
     projectMember: {
       findUnique: vi.fn(async (args: Row) => findFirst("projectMember", args)),
+      findFirst: vi.fn(async (args: Row) => findFirst("projectMember", args)),
       findMany: vi.fn(async (args: Row) => findMany("projectMember", args)),
+    },
+    projectGroup: {
+      findFirst: vi.fn(async (args: Row) => findFirst("projectGroup", args)),
+      findMany: vi.fn(async (args: Row) => findMany("projectGroup", args)),
     },
     projectGroupMember: {
       findFirst: vi.fn(async (args: Row) => findFirst("projectGroupMember", args)),
@@ -589,7 +600,10 @@ beforeEach(() => {
 
   // The actor-name resolver (formatTaskResponse → getActorName), the mention-target
   // validator (validateMentionTarget), and project-name lookup read these rows.
-  store.data.user.push({ id: store.nextId(), uuid: USER, companyUuid: COMPANY, name: "Alice", email: "a@x.com" });
+  store.data.user.push({
+    id: store.nextId(), uuid: USER, companyUuid: COMPANY, name: "Alice", email: "a@x.com",
+    createdAt: new Date("2026-06-22T00:00:00.000Z"),
+  });
   store.data.agent.push({
     id: store.nextId(), uuid: AGENT, companyUuid: COMPANY, name: "Daemon Agent", ownerUuid: USER,
     roles: ["developer"], permissions: [],

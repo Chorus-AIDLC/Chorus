@@ -4,6 +4,7 @@ import { ApiError } from "@/lib/api-handler";
 import type { AuthContext } from "@/types/auth";
 import type { Prisma } from "@/generated/prisma/client";
 import { invalidateProjectAccessCache, levelAtLeast, membershipPrincipal, resolveInheritedAccessLevel } from "@/services/project-access.service";
+import { implicitGroupAdmin } from "@/services/project-group-implicit-admin.service";
 
 export type GroupDbClient = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
 
@@ -55,15 +56,19 @@ export function publishGroupAccess(auth: AuthContext, groupUuid: string, project
 }
 
 export async function materializeGroupGrants(tx: GroupDbClient, auth: AuthContext, groupUuid: string, projectUuid: string) {
-  const [direct, inherited] = await Promise.all([
+  const [direct, inherited, automaticAdmin] = await Promise.all([
     tx.projectMember.findMany({ where: { companyUuid: auth.companyUuid, projectUuid } }),
     tx.projectGroupMember.findMany({ where: { companyUuid: auth.companyUuid, groupUuid } }),
+    implicitGroupAdmin(auth.companyUuid, groupUuid, tx),
   ]);
   const roles = new Map(direct.map((r) => [r.userUuid, r.role]));
   for (const member of inherited) {
     const role = resolveInheritedAccessLevel("private", roles.get(member.userUuid) ?? null, member.role);
     if (role !== "none") roles.set(member.userUuid, role);
   }
+  // Called only by authorized detach/delete transactions: preserve the lazy
+  // group grant as a direct project grant when inheritance is being removed.
+  if (automaticAdmin) roles.set(automaticAdmin, "admin");
   if (![...roles.values()].some((r) => r === "admin")) {
     throw new ApiError("BAD_REQUEST", "Detaching must retain a project Admin", 400);
   }

@@ -32,7 +32,7 @@ const fixture = vi.hoisted(() => {
   });
   return {
     groups, projects, groupMembers, members,
-    prisma: { project: model(projects), projectGroup: model(groups), projectMember: model(members), projectGroupMember: model(groupMembers) },
+    prisma: { user: { findFirst: vi.fn(async () => null) }, project: model(projects), projectGroup: model(groups), projectMember: model(members), projectGroupMember: model(groupMembers) },
   };
 });
 vi.mock("@/lib/prisma", () => ({ prisma: fixture.prisma }));

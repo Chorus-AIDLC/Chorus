@@ -74,6 +74,7 @@ function makeStore() {
     daemonExecution: [] as Row[],
     notification: [] as Row[],
     agent: [] as Row[],
+    user: [] as Row[],
     project: [] as Row[],
     projectMember: [] as Row[],
     projectGroup: [] as Row[],
@@ -387,13 +388,17 @@ function buildPrismaFake(store: Store) {
       findFirst: vi.fn(async (args: Row) => findFirst("project", args)),
       findMany: vi.fn(async (args: Row) => findMany("project", args)),
     },
+    user: { findFirst: vi.fn(async (args: Row) => findFirst("user", args)) },
+    projectGroup: { findFirst: vi.fn(async (args: Row) => findFirst("projectGroup", args)) },
     projectMember: {
+      findFirst: vi.fn(async (args: Row) => findFirst("projectMember", args)),
       findUnique: vi.fn(async (args: Row) => findFirst("projectMember", args)),
       findMany: vi.fn(async (args: Row) => findMany("projectMember", args)),
     },
     projectGroupMember: {
       findFirst: vi.fn(async (args: Row) => findFirst("projectGroupMember", args)),
       findMany: vi.fn(async (args: Row) => findMany("projectGroupMember", args)),
+      count: vi.fn(async (args: Row) => count("projectGroupMember", args)),
     },
     comment: {
       findFirst: vi.fn(async (args: Row) => findFirst("comment", args)),

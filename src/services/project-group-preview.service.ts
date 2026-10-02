@@ -7,7 +7,11 @@ import {
   type ProjectAccessClient, type ProjectVisibility,
 } from "@/services/project-access.service";
 import { GroupNotFoundError, requireGroupOperation } from "@/services/project-group-access.service";
-import { accessConfirmationToken, roleRaises, summarizeAccessChanges, type AccessImpactSummary, type AccessRoleChange } from "@/services/project-access-preview.service";
+import { implicitGroupAdmin, implicitProjectAdmin } from "@/services/project-group-implicit-admin.service";
+import {
+  accessConfirmationToken, retainedProjectPermissionChanges, roleRaises, summarizeAccessChanges,
+  type AccessImpactSummary, type AccessPermissionChange, type AccessRoleChange,
+} from "@/services/project-access-preview.service";
 
 export interface GroupProjectAccessImpact {
   projectUuid: string;
@@ -53,14 +57,20 @@ export async function getGroupVisibilityPreview(
     select: { projectUuid: true, userUuid: true, role: true }, orderBy: [{ projectUuid: "asc" }, { userUuid: "asc" }],
   });
   const groupRoles = new Map(inherited.map((m) => [m.userUuid, m.role]));
+  const implicitAdminUuid = await implicitGroupAdmin(auth.companyUuid, groupUuid, client, auth);
+  if (implicitAdminUuid) groupRoles.set(implicitAdminUuid, "admin");
   const beforeChildAccess = new Set<string>();
   const afterChildAccess = new Set<string>();
+  const permissionChanges: AccessPermissionChange[] = [];
   const impacts = projects.map((p) => {
     const after = visibility === "private" ? "private" : p.visibility;
     const local = new Map(direct.filter((m) => m.projectUuid === p.uuid).map((m) => [m.userUuid, m.role]));
     const changes = users.flatMap((u) => {
       const beforeRole = resolveInheritedAccessLevel(p.visibility, local.get(u.uuid) ?? null, groupRoles.get(u.uuid) ?? null);
       const afterRole = resolveInheritedAccessLevel(after, local.get(u.uuid) ?? null, groupRoles.get(u.uuid) ?? null);
+      permissionChanges.push(...retainedProjectPermissionChanges(
+        u.uuid, beforeRole, afterRole, p.visibility, after,
+      ));
       if (beforeRole !== "none") beforeChildAccess.add(u.uuid);
       if (afterRole !== "none") afterChildAccess.add(u.uuid);
       return beforeRole === afterRole ? [] : [{
@@ -91,13 +101,13 @@ export async function getGroupVisibilityPreview(
     summary: summarizeAccessChanges(
       [...groupChanges, ...impacts.flatMap((project) => project.changes)],
       impacts.filter((project) => project.fromVisibility !== project.visibility || project.changes.length > 0).length,
-      settingsChanges,
+      [...settingsChanges, ...permissionChanges],
     ),
     confirmationToken: accessConfirmationToken({
       operation: "group_visibility", companyUuid: auth.companyUuid,
       principal: membershipPrincipal(auth), actorType: auth.type, actorUuid: auth.actorUuid,
       group: { uuid: group.uuid, visibility: group.visibility, accessVersion: group.accessVersion },
-      visibility, projects, direct, inherited, users: users.map(({ uuid }) => ({ uuid })),
+      visibility, projects, direct, inherited, implicitAdminUuid, users: users.map(({ uuid }) => ({ uuid })),
     }),
   };
 }
@@ -136,12 +146,26 @@ export async function getProjectGroupMovePreview(
   const local = new Map(direct.map((m) => [m.userUuid, m.role]));
   const beforeGroup = new Map(inherited.filter((m) => m.groupUuid === source?.uuid).map((m) => [m.userUuid, m.role]));
   const afterGroup = new Map(inherited.filter((m) => m.groupUuid === target?.uuid).map((m) => [m.userUuid, m.role]));
+  const [sourceImplicitAdminUuid, targetImplicitAdminUuid, projectImplicitAdminUuid] = await Promise.all([
+    source ? implicitGroupAdmin(auth.companyUuid, source.uuid, client, auth) : null,
+    target ? implicitGroupAdmin(auth.companyUuid, target.uuid, client, auth) : null,
+    implicitProjectAdmin(auth.companyUuid, projectUuid, client, auth),
+  ]);
+  if (sourceImplicitAdminUuid) beforeGroup.set(sourceImplicitAdminUuid, "admin");
+  if (targetImplicitAdminUuid) afterGroup.set(targetImplicitAdminUuid, "admin");
   const afterVisibility = target?.visibility === "private" ? "private" : project.visibility;
+  const permissionChanges: AccessPermissionChange[] = [];
   const changes = users.flatMap((u) => {
-    const beforeRole = resolveInheritedAccessLevel(project.visibility, local.get(u.uuid) ?? null, beforeGroup.get(u.uuid) ?? null);
-    // Detach snapshots the explicit maximum; a public floor is never saved.
+    const beforeLocal = u.uuid === projectImplicitAdminUuid ? "admin" : local.get(u.uuid) ?? null;
+    const beforeRole = resolveInheritedAccessLevel(project.visibility, beforeLocal, beforeGroup.get(u.uuid) ?? null);
+    // Detach snapshots group grants. A project fallback remains computed only
+    // when ungrouped; a live destination group supplies its own Admin instead.
     const retained = !target && source ? resolveInheritedAccessLevel("private", local.get(u.uuid) ?? null, beforeGroup.get(u.uuid) ?? null) : local.get(u.uuid) ?? null;
-    const afterRole = resolveInheritedAccessLevel(afterVisibility, retained, afterGroup.get(u.uuid) ?? null);
+    const afterLocal = !target && u.uuid === projectImplicitAdminUuid ? "admin" : retained;
+    const afterRole = resolveInheritedAccessLevel(afterVisibility, afterLocal, afterGroup.get(u.uuid) ?? null);
+    permissionChanges.push(...retainedProjectPermissionChanges(
+      u.uuid, beforeRole, afterRole, project.visibility, afterVisibility,
+    ));
     return beforeRole === afterRole ? [] : [{
       userUuid: u.uuid,
       ...(includeIdentities ? { name: u.name ?? null, email: u.email ?? null } : {}),
@@ -155,7 +179,7 @@ export async function getProjectGroupMovePreview(
     projectUuid, name: project.name, sourceGroupUuid: project.groupUuid, groupUuid,
     fromVisibility: project.visibility, visibility: afterVisibility,
     companyAccess: companyAccess(project.visibility, afterVisibility), changes,
-    summary: summarizeAccessChanges(changes, project.groupUuid !== groupUuid || project.visibility !== afterVisibility ? 1 : 0),
+    summary: summarizeAccessChanges(changes, project.groupUuid !== groupUuid || project.visibility !== afterVisibility ? 1 : 0, permissionChanges),
     requiresConfirmation: changes.length > 0 || project.visibility !== afterVisibility || (privateBoundary && project.groupUuid !== groupUuid),
     confirmationToken: accessConfirmationToken({
       operation: "project_group_move", companyUuid: auth.companyUuid,
@@ -163,7 +187,8 @@ export async function getProjectGroupMovePreview(
       project: { uuid: project.uuid, name: project.name, visibility: project.visibility, groupUuid: project.groupUuid },
       source: source ? { uuid: source.uuid, visibility: source.visibility, accessVersion: source.accessVersion } : null,
       target: target ? { uuid: target.uuid, visibility: target.visibility, accessVersion: target.accessVersion } : null,
-      groupUuid, direct, inherited, users: users.map(({ uuid }) => ({ uuid })),
+      groupUuid, direct, inherited, sourceImplicitAdminUuid, targetImplicitAdminUuid, projectImplicitAdminUuid,
+      users: users.map(({ uuid }) => ({ uuid })),
     }),
   };
 }

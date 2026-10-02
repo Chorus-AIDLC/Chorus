@@ -13,6 +13,7 @@ vi.mock("@/lib/auth", async () => ({
 }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    user: { findFirst: vi.fn(async () => null) },
     project: { findMany: (...args: unknown[]) => mockFindProjects(...args), count: (...args: unknown[]) => mockCountProjects(...args) },
     projectMember: { findMany: (...args: unknown[]) => mockFindMemberships(...args) },
   },

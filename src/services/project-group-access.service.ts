@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api-handler";
 import type { Prisma, ProjectGroup } from "@/generated/prisma/client";
 import type { AuthContext } from "@/types/auth";
+import { firstCompanyUser, implicitGroupAdmin } from "@/services/project-group-implicit-admin.service";
 import {
   isProjectMemberRole, levelAtLeast, membershipPrincipal, ProjectAccessDeniedError,
   type ProjectAccessClient, type ProjectAccessLevel, type ProjectMemberRole,
@@ -15,13 +16,14 @@ export interface GroupAccessResult {
   canManage: boolean;
   canCreateProject: boolean;
   accessInitialized: boolean;
+  implicitAdmin: boolean;
 }
 
 export class GroupNotFoundError extends ApiError {
   constructor() { super("NOT_FOUND", "Project group not found", 404); }
 }
 
-export function groupAccessPresentation(group: ProjectGroup, explicitRole: ProjectMemberRole | null, accessInitialized: boolean): GroupAccessResult {
+export function groupAccessPresentation(group: ProjectGroup, explicitRole: ProjectMemberRole | null, accessInitialized: boolean, implicitAdmin = false): GroupAccessResult {
   const publicEditing = group.visibility === "public";
   return {
     group,
@@ -30,6 +32,7 @@ export function groupAccessPresentation(group: ProjectGroup, explicitRole: Proje
     canManage: publicEditing || explicitRole === "admin",
     canCreateProject: publicEditing || (explicitRole !== null && levelAtLeast(explicitRole, "editor")),
     accessInitialized,
+    implicitAdmin,
   };
 }
 
@@ -37,10 +40,12 @@ export function groupAccessPresentation(group: ProjectGroup, explicitRole: Proje
 // authority over the group or inheriting a public group's implicit editor floor.
 export async function accessibleGroupWhere(auth: AuthContext): Promise<Prisma.ProjectGroupWhereInput> {
   const principal = membershipPrincipal(auth);
+  const automaticAdmin = principal !== null && principal === await firstCompanyUser(auth.companyUuid, prisma, auth);
   return {
     companyUuid: auth.companyUuid,
     OR: [
       { visibility: "public" },
+      ...(automaticAdmin ? [{ members: { none: { companyUuid: auth.companyUuid, role: "admin" } } }] : []),
       ...(principal ? [
         { members: { some: { companyUuid: auth.companyUuid, userUuid: principal, role: { in: ["viewer", "editor", "admin"] } } } },
         { projects: { some: { companyUuid: auth.companyUuid, OR: [
@@ -67,15 +72,17 @@ export async function getGroupAccess(
 ): Promise<GroupAccessResult> {
   const group = await client.projectGroup.findFirst({ where: { uuid: groupUuid, companyUuid: auth.companyUuid } });
   const hidden: GroupAccessResult = {
-    group: null, level: "none", explicitRole: null, canManage: false, canCreateProject: false, accessInitialized: false,
+    group: null, level: "none", explicitRole: null, canManage: false, canCreateProject: false, accessInitialized: false, implicitAdmin: false,
   };
   if (!group) return hidden;
   const principal = membershipPrincipal(auth);
   const member = principal ? await client.projectGroupMember.findFirst({
     where: { companyUuid: auth.companyUuid, groupUuid, userUuid: principal }, select: { role: true },
   }) : null;
-  const explicitRole = isProjectMemberRole(member?.role) ? member.role : null;
-  const accessInitialized = await client.projectGroupMember.count({
+  const automaticAdmin = await implicitGroupAdmin(auth.companyUuid, groupUuid, client, auth);
+  const isAutomatic = principal !== null && principal === automaticAdmin;
+  const explicitRole = isAutomatic ? "admin" : isProjectMemberRole(member?.role) ? member.role : null;
+  const accessInitialized = automaticAdmin !== null || await client.projectGroupMember.count({
     where: { companyUuid: auth.companyUuid, groupUuid, role: "admin" },
   }) > 0;
   if (group.visibility === "private" && !explicitRole) {
@@ -87,7 +94,7 @@ export async function getGroupAccess(
     });
     if (!child) return hidden;
   }
-  return groupAccessPresentation(group, explicitRole, accessInitialized);
+  return groupAccessPresentation(group, explicitRole, accessInitialized, isAutomatic);
 }
 
 export async function requireGroupOperation(
@@ -95,6 +102,7 @@ export async function requireGroupOperation(
 ): Promise<ProjectGroup & {
   accessLevel: ProjectMemberRole; explicitRole: ProjectMemberRole | null;
   canManage: boolean; canCreateProject: boolean; accessInitialized: boolean;
+  implicitAdmin: boolean;
 }> {
   const access = await getGroupAccess(auth, groupUuid, client);
   if (!access.group) throw new GroupNotFoundError();
@@ -107,5 +115,6 @@ export async function requireGroupOperation(
     ...access.group, accessLevel: access.level as ProjectMemberRole,
     explicitRole: access.explicitRole, canManage: access.canManage,
     canCreateProject: access.canCreateProject, accessInitialized: access.accessInitialized,
+    implicitAdmin: access.implicitAdmin,
   };
 }

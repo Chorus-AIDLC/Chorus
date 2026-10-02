@@ -7,6 +7,7 @@ import { accessibleGroupWhere, getGroupAccess, groupAccessPresentation, requireG
 import { assertAccessConfirmation } from "@/services/project-access-preview.service";
 import { getGroupVisibilityPreview, getProjectGroupMovePreview } from "@/services/project-group-preview.service";
 import { auditGroup, groupAuth, lockGroups, lockProjects, materializeGroupGrants, publishGroupAccess } from "@/services/project-group-mutation.service";
+import { firstCompanyUser } from "@/services/project-group-implicit-admin.service";
 export { getGroupVisibilityPreview, getProjectGroupMovePreview } from "@/services/project-group-preview.service";
 
 async function groupProjectWhere(companyUuid: string, auth?: AuthContext) {
@@ -47,6 +48,7 @@ export interface ProjectGroupResponse {
   canManage: boolean;
   canCreateProject: boolean;
   accessInitialized: boolean;
+  implicitAdmin: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -70,6 +72,7 @@ export interface GroupDashboardResponse {
     canManage: boolean;
     canCreateProject: boolean;
     accessInitialized: boolean;
+    implicitAdmin: boolean;
   };
   stats: {
     projectCount: number;
@@ -109,6 +112,7 @@ function accessFields(access: GroupAccessResult) {
     visibility: access.group!.visibility, accessLevel: access.level, explicitRole: access.explicitRole,
     canManage: access.canManage, canCreateProject: access.canCreateProject,
     accessInitialized: access.accessInitialized,
+    implicitAdmin: access.implicitAdmin,
   };
 }
 
@@ -134,10 +138,10 @@ export async function createProjectGroup(params: ProjectGroupCreateParams, auth?
     return created;
   });
   eventBus.emitChange({ companyUuid: params.companyUuid, projectUuid: "", entityType: "project_group", entityUuid: group.uuid, action: "created", actorUuid: actor.actorUuid });
+  const access = await getGroupAccess(actor, group.uuid);
   return {
     uuid: group.uuid, name: group.name, description: group.description, projectCount: 0,
-    visibility, accessLevel: principal ? "admin" : "editor", explicitRole: principal ? "admin" : null, canManage: true, canCreateProject: true,
-    accessInitialized: !!principal, createdAt: group.createdAt.toISOString(), updatedAt: group.updatedAt.toISOString(),
+    ...accessFields(access), createdAt: group.createdAt.toISOString(), updatedAt: group.updatedAt.toISOString(),
   };
 }
 
@@ -260,6 +264,7 @@ export async function listProjectGroups(
   );
 
   const principal = auth ? membershipPrincipal(auth) : null;
+  const firstUser = await firstCompanyUser(companyUuid, prisma, auth);
   const members = groupUuids.length ? await prisma.projectGroupMember.findMany({
     where: { companyUuid, groupUuid: { in: groupUuids }, OR: [
       { role: "admin" }, ...(principal ? [{ userUuid: principal }] : []),
@@ -267,9 +272,11 @@ export async function listProjectGroups(
   }) : [];
   const result: ProjectGroupResponse[] = groups.flatMap((g) => {
     const role = members.find((m) => m.groupUuid === g.uuid && m.userUuid === principal)?.role;
-    const explicitRole = isProjectMemberRole(role) ? role : null;
+    const hasAdmin = members.some((m) => m.groupUuid === g.uuid && m.role === "admin");
+    const isAutomatic = !hasAdmin && principal !== null && principal === firstUser;
+    const explicitRole = isAutomatic ? "admin" : isProjectMemberRole(role) ? role : null;
     if (g.visibility === "private" && !explicitRole && !countMap.get(g.uuid)) return [];
-    const presentation = groupAccessPresentation(g, explicitRole, members.some((m) => m.groupUuid === g.uuid && m.role === "admin"));
+    const presentation = groupAccessPresentation(g, explicitRole, hasAdmin || firstUser !== null, isAutomatic);
     return [{
     uuid: g.uuid,
     name: g.name,

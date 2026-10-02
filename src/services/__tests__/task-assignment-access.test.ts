@@ -33,8 +33,10 @@ let currentProject = PRIVATE;
 let inherited: Record<string, string> = {};
 
 const mockPrisma = vi.hoisted(() => ({
+  user: { findFirst: vi.fn(async () => null) },
+  projectGroup: { findFirst: vi.fn(async () => ({ uuid: "group-private", companyUuid: "company-1" })) },
   project: { findFirst: vi.fn() },
-  projectMember: { findUnique: vi.fn() },
+  projectMember: { findUnique: vi.fn(), findFirst: vi.fn() },
   projectGroupMember: { findFirst: vi.fn() },
   agent: { findFirst: vi.fn() },
   agentInstance: { findFirst: vi.fn() },
@@ -94,16 +96,23 @@ beforeEach(() => {
   vi.clearAllMocks();
   currentProject = PRIVATE;
   inherited = {};
-  mockPrisma.projectGroupMember.findFirst.mockImplementation(async ({ where }: { where: { userUuid: string } }) => {
-    const role = inherited[where.userUuid];
-    return role ? { role } : null;
+  mockPrisma.projectMember.findFirst.mockImplementation(async ({ where }: { where: { companyUuid: string; projectUuid: string; role: string } }) => {
+    if (where.companyUuid !== COMPANY) return null;
+    const entry = Object.entries(members[where.projectUuid] ?? {}).find(([, role]) => role === where.role);
+    return entry ? { userUuid: entry[0], role: entry[1] } : null;
+  });
+  mockPrisma.projectGroupMember.findFirst.mockImplementation(async ({ where }: { where: { userUuid?: string; role?: string } }) => {
+    const entry = Object.entries(inherited).find(([userUuid, role]) =>
+      (where.userUuid === undefined || where.userUuid === userUuid) && (where.role === undefined || where.role === role));
+    return entry ? { userUuid: entry[0], role: entry[1] } : null;
   });
   mockPrisma.project.findFirst.mockImplementation(async ({ where }: { where: { uuid: string; companyUuid: string } }) => {
     const p = projects[where.uuid];
     return p && p.companyUuid === where.companyUuid ? p : null;
   });
   mockPrisma.projectMember.findUnique.mockImplementation(
-    async ({ where }: { where: { projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
+    async ({ where }: { where: { companyUuid: string; projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
+      if (where.companyUuid !== COMPANY) return null;
       const { projectUuid, userUuid } = where.projectUuid_userUuid;
       const role = members[projectUuid]?.[userUuid];
       return role ? { role } : null;

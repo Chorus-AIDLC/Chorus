@@ -1001,13 +1001,18 @@ describe.skipIf(!url)("Private project access — real database end-to-end", () 
     });
 
     it("last-admin guard: removing or demoting the only admin A → 400, membership unchanged", async () => {
-      const del = await call("A", routes.member.DELETE, `/api/projects/${priv.uuid}/members/${U.A}`,
-        { uuid: priv.uuid, userUuid: U.A }, "DELETE");
+      // An ungrouped project has no inherited Admin to keep it administrable.
+      const guarded = await projectService.createProject({
+        companyUuid, name: `${token} sole local Admin`, visibility: "private",
+        createdByUuid: U.A, actor: { type: "user", uuid: U.A },
+      });
+      const del = await call("A", routes.member.DELETE, `/api/projects/${guarded.uuid}/members/${U.A}`,
+        { uuid: guarded.uuid, userUuid: U.A }, "DELETE");
       expect(del.status).toBe(400);
-      const demote = await call("A", routes.member.PATCH, `/api/projects/${priv.uuid}/members/${U.A}`,
-        { uuid: priv.uuid, userUuid: U.A }, "PATCH", { role: "editor" });
+      const demote = await call("A", routes.member.PATCH, `/api/projects/${guarded.uuid}/members/${U.A}`,
+        { uuid: guarded.uuid, userUuid: U.A }, "PATCH", { role: "editor" });
       expect(demote.status).toBe(400);
-      expect(await db.projectMember.findFirst({ where: { projectUuid: priv.uuid, userUuid: U.A } }))
+      expect(await db.projectMember.findFirst({ where: { projectUuid: guarded.uuid, userUuid: U.A } }))
         .toMatchObject({ role: "admin" });
     });
   });

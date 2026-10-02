@@ -29,6 +29,7 @@ const mockPrisma = vi.hoisted(() => {
     },
   });
   return {
+    user: { findFirst: vi.fn(async () => null) },
     project: {
       findFirst: async ({ where }: { where: { uuid: string; companyUuid: string } }) => {
         const p = db.projects.find((x) => x.uuid === where.uuid && x.companyUuid === where.companyUuid);
@@ -36,13 +37,16 @@ const mockPrisma = vi.hoisted(() => {
       },
     },
     projectMember: {
+      findFirst: vi.fn(async ({ where }: { where: { companyUuid: string; projectUuid: string; role: string } }) =>
+        db.members.find((member) => member.companyUuid === where.companyUuid &&
+          member.projectUuid === where.projectUuid && member.role === where.role) ?? null),
       findUnique: async ({
         where,
       }: {
-        where: { projectUuid_userUuid: { projectUuid: string; userUuid: string } };
+        where: { companyUuid: string; projectUuid_userUuid: { projectUuid: string; userUuid: string } };
       }) => {
         const k = where.projectUuid_userUuid;
-        const m = db.members.find((x) => x.projectUuid === k.projectUuid && x.userUuid === k.userUuid);
+        const m = db.members.find((x) => x.companyUuid === where.companyUuid && x.projectUuid === k.projectUuid && x.userUuid === k.userUuid);
         return m ? { role: m.role } : null;
       },
     },
@@ -154,9 +158,11 @@ vi.mock("@/services/project.service", () => ({
 }));
 vi.mock("@/services/activity.service", () => ({ createActivity: svc.createActivity }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/logger", () => ({
-  default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
-}));
+vi.mock("@/lib/logger", () => {
+  const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), child: vi.fn() };
+  logger.child.mockReturnValue(logger);
+  return { default: logger };
+});
 
 import { forceMoveTaskToColumnAction } from "../[uuid]/tasks/actions";
 import { createIdeaAction, updateIdeaAction } from "../[uuid]/ideas/actions";

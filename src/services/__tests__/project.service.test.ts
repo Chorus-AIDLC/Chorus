@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Prisma mock =====
 const mockPrisma = vi.hoisted(() => ({
+  user: { findFirst: vi.fn(async () => null) },
   project: {
     findMany: vi.fn(),
     findFirst: vi.fn(),

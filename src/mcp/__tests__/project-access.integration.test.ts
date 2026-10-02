@@ -28,11 +28,12 @@ const fixture = vi.hoisted(() => {
       (rows[name] ?? []).filter((row) => matches(row, where)).length),
   });
   const prisma = {
+    user: model("user"),
     project: model("project"),
     projectMember: {
       ...model("projectMember"),
-      findUnique: vi.fn(async ({ where }: { where: { projectUuid_userUuid: Row } }) =>
-        (rows.projectMember ?? []).find((row) => matches(row, where.projectUuid_userUuid)) ?? null),
+      findUnique: vi.fn(async ({ where }: { where: { companyUuid: string; projectUuid_userUuid: Row } }) =>
+        (rows.projectMember ?? []).find((row) => row.companyUuid === where.companyUuid && matches(row, where.projectUuid_userUuid)) ?? null),
     },
     idea: model("idea"),
     task: model("task"),
@@ -622,7 +623,7 @@ describe("MCP central project access", () => {
       async ({ name, inputType, principal }) => {
         const proposal = setProposalInputs(inputType, [`${inputType}-public`, `${inputType}-private`]);
         if (principal === "revoked") {
-          fixture.rows.projectMember.push({ projectUuid: "private", userUuid: "revoked", role: "viewer" });
+          fixture.rows.projectMember.push({ companyUuid: "company", projectUuid: "private", userUuid: "revoked", role: "viewer" });
           expect((await getProjectAccess(auth("revoked"), "private")).level).toBe("viewer");
           fixture.rows.projectMember = fixture.rows.projectMember.filter((member) => member.userUuid !== "revoked");
         }

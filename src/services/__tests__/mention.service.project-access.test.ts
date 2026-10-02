@@ -15,8 +15,9 @@ const { mockPrisma, mockGetPreferences, mockCreateBatch } = vi.hoisted(() => ({
     user: { findFirst: vi.fn(), findMany: vi.fn() },
     agent: { findFirst: vi.fn(), findMany: vi.fn() },
     project: { findUnique: vi.fn(), findFirst: vi.fn() },
-    projectMember: { findMany: vi.fn() },
-    projectGroupMember: { findMany: vi.fn() },
+    projectMember: { findFirst: vi.fn(), findMany: vi.fn() },
+    projectGroup: { findFirst: vi.fn() },
+    projectGroupMember: { findFirst: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     comment: { findUnique: vi.fn() },
     task: { findFirst: vi.fn() },
     daemonConnection: { findMany: vi.fn() },
@@ -77,21 +78,53 @@ function setupPrisma() {
     { uuid: MEMBER_USER, name: "Member", email: "m@x.io", avatarUrl: null },
     { uuid: OUTSIDER_USER, name: "Outsider", email: "o@x.io", avatarUrl: null },
   ];
-  mockPrisma.project.findFirst.mockImplementation(async () => ({ uuid: PROJECT, visibility, groupUuid }));
-  mockPrisma.projectGroupMember.findMany.mockImplementation(async ({ where }: { where: { userUuid?: { in: string[] } } }) =>
-    [...groupMembers].filter((u) => !where.userUuid || where.userUuid.in.includes(u)).map((userUuid) => ({ userUuid })),
+  mockPrisma.project.findFirst.mockImplementation(
+    async ({ where }: { where: { companyUuid: string; uuid: string } }) =>
+      where.companyUuid === COMPANY && where.uuid === PROJECT
+        ? { uuid: PROJECT, companyUuid: COMPANY, visibility, groupUuid } : null,
+  );
+  // Explicit Admin rows suppress the fallback, keeping outsider/revocation cases
+  // about actual grants. Group fixtures represent a live group in this company.
+  mockPrisma.projectGroup.findFirst.mockImplementation(
+    async ({ where }: { where: { companyUuid: string; uuid: string } }) =>
+      groupUuid && where.companyUuid === COMPANY && where.uuid === groupUuid ? { uuid: groupUuid } : null,
+  );
+  const inheritedMembers = () => groupUuid
+    ? [{ userUuid: ACTOR, role: "admin" }, ...[...groupMembers].map((userUuid) => ({ userUuid, role: "viewer" }))]
+    : [];
+  type GroupMemberWhere = { companyUuid: string; groupUuid: string; userUuid?: string | { in: string[] }; role?: string | { in: string[] } };
+  const matchingGroupMembers = (where: GroupMemberWhere) =>
+    where.companyUuid === COMPANY && where.groupUuid === groupUuid
+      ? inheritedMembers().filter((member) =>
+          (!where.userUuid || (typeof where.userUuid === "string"
+            ? member.userUuid === where.userUuid : where.userUuid.in.includes(member.userUuid)))
+          && (!where.role || (typeof where.role === "string"
+            ? member.role === where.role : where.role.in.includes(member.role))))
+      : [];
+  mockPrisma.projectGroupMember.findFirst.mockImplementation(
+    async ({ where }: { where: GroupMemberWhere }) => matchingGroupMembers(where)[0] ?? null,
+  );
+  mockPrisma.projectGroupMember.count.mockImplementation(
+    async ({ where }: { where: GroupMemberWhere }) => matchingGroupMembers(where).length,
+  );
+  mockPrisma.projectGroupMember.findMany.mockImplementation(
+    async ({ where }: { where: GroupMemberWhere }) => matchingGroupMembers(where),
   );
   mockPrisma.project.findUnique.mockResolvedValue({ name: "Secret Project" });
-  mockPrisma.user.findFirst.mockImplementation(async ({ where }: { where: { uuid: string } }) => ({
-    uuid: where.uuid,
-  }));
-  mockPrisma.agent.findFirst.mockImplementation(async ({ where }: { where: { uuid: string } }) => ({
-    uuid: where.uuid,
-  }));
+  mockPrisma.user.findFirst.mockImplementation(
+    async ({ where }: { where: { companyUuid: string; uuid?: string } }) =>
+      where.companyUuid === COMPANY && (!where.uuid || [ACTOR, MEMBER_USER, OUTSIDER_USER].includes(where.uuid))
+        ? { uuid: where.uuid ?? ACTOR } : null,
+  );
+  mockPrisma.agent.findFirst.mockImplementation(
+    async ({ where }: { where: { companyUuid: string; uuid: string } }) =>
+      where.companyUuid === COMPANY && Object.hasOwn(OWNERS, where.uuid) ? { uuid: where.uuid } : null,
+  );
   // agent.findMany serves both the mentionable search (name filter) and the
   // access filter's owner lookup (uuid IN).
   mockPrisma.agent.findMany.mockImplementation(
-    async ({ where, take }: { where: { uuid?: { in: string[] }; ownerUuid?: string | { in: string[] } }; take?: number }) => {
+    async ({ where, take }: { where: { companyUuid: string; uuid?: { in: string[] }; ownerUuid?: string | { in: string[] } }; take?: number }) => {
+      if (where.companyUuid !== COMPANY) return [];
       if (where.uuid?.in) {
         return where.uuid.in.map((uuid) => ({ uuid, ownerUuid: OWNERS[uuid] ?? null }));
       }
@@ -105,21 +138,31 @@ function setupPrisma() {
         .map((uuid) => ({ uuid, name: `agent-${uuid.slice(0, 2)}`, roles: [] }));
     },
   );
-  // Serves both the private-project member list (projectUuid only) and the
+  mockPrisma.projectMember.findFirst.mockImplementation(
+    async ({ where }: { where: { companyUuid: string; projectUuid: string; role: string } }) =>
+      where.companyUuid === COMPANY && where.projectUuid === PROJECT && where.role === "admin"
+        ? { userUuid: ACTOR, role: "admin" } : null,
+  );
+  // Serves both the company-scoped private-project member list and the
   // access filter's batched membership check (userUuid IN).
   mockPrisma.projectMember.findMany.mockImplementation(
-    async ({ where }: { where: { userUuid?: { in: string[] } } }) =>
-      (where.userUuid ? where.userUuid.in.filter((u) => MEMBERS.has(u)) : [...MEMBERS]).map((userUuid) => ({ userUuid })),
+    async ({ where }: { where: { companyUuid: string; projectUuid: string; userUuid?: { in: string[] } } }) =>
+      where.companyUuid === COMPANY && where.projectUuid === PROJECT
+        ? (where.userUuid ? where.userUuid.in.filter((u) => MEMBERS.has(u)) : [...MEMBERS]).map((userUuid) => ({ userUuid }))
+        : [],
   );
   // Honors `uuid IN` scoping and `take`, so a non-member flood can be modelled.
   mockPrisma.user.findMany.mockImplementation(
-    async ({ where, take }: { where: { uuid?: { in: string[] } }; take?: number }) =>
-      userPool
+    async ({ where, take }: { where: { companyUuid: string; uuid?: { in: string[] } }; take?: number }) =>
+      (where.companyUuid === COMPANY ? userPool : [])
         .filter((u) => !where.uuid || where.uuid.in.includes(u.uuid))
         .slice(0, take ?? Infinity),
   );
   mockPrisma.comment.findUnique.mockResolvedValue({ targetType: "task", targetUuid: TASK });
-  mockPrisma.task.findFirst.mockResolvedValue({ projectUuid: PROJECT });
+  mockPrisma.task.findFirst.mockImplementation(
+    async ({ where }: { where: { companyUuid: string; uuid: string } }) =>
+      where.companyUuid === COMPANY && where.uuid === TASK ? { projectUuid: PROJECT } : null,
+  );
   mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
   mockPrisma.daemonExecution.groupBy.mockResolvedValue([]);
   mockPrisma.projectAgentCwdPreference.findMany.mockResolvedValue([]);
@@ -207,16 +250,31 @@ describe("createMentions — private project isolation", () => {
     expect(notifiedUuids()).toEqual([MEMBER_USER, MEMBER_AGENT]);
   });
 
-  it("batches the access check: one project, one agent-owner and one membership query", async () => {
+  it("batches recipient grants and resolves the project Admin with company-scoped queries", async () => {
     await mention(
       ["user", MEMBER_USER],
       ["user", OUTSIDER_USER],
       ["agent", MEMBER_AGENT],
       ["agent", OUTSIDER_AGENT],
     );
-    expect(mockPrisma.project.findFirst).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.project.findFirst).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.project.findFirst).toHaveBeenNthCalledWith(1, {
+      where: { uuid: PROJECT, companyUuid: COMPANY },
+      select: { visibility: true, groupUuid: true },
+    });
+    expect(mockPrisma.project.findFirst).toHaveBeenNthCalledWith(2, {
+      where: { companyUuid: COMPANY, uuid: PROJECT },
+      select: { uuid: true, groupUuid: true },
+    });
+    expect(mockPrisma.projectMember.findFirst).toHaveBeenCalledExactlyOnceWith({
+      where: { companyUuid: COMPANY, projectUuid: PROJECT, role: "admin" },
+      select: { userUuid: true },
+    });
     expect(mockPrisma.agent.findMany).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.projectMember.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.projectMember.findMany).toHaveBeenCalledExactlyOnceWith({
+      where: { companyUuid: COMPANY, projectUuid: PROJECT, userUuid: { in: [MEMBER_USER, OUTSIDER_USER] } },
+      select: { userUuid: true },
+    });
   });
 
   it("public project: non-members are still mentioned (unchanged)", async () => {
@@ -255,7 +313,7 @@ describe("searchMentionables — entity-scoped private project filter", () => {
     expect(results.map((r) => r.uuid).sort()).toEqual([MEMBER_AGENT, MEMBER_USER].sort());
     // Candidate queries are scoped to members in the database (before `take`).
     expect(mockPrisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ uuid: { in: expect.arrayContaining([MEMBER_USER]) } }),
+      where: expect.objectContaining({ companyUuid: COMPANY, uuid: { in: expect.arrayContaining([MEMBER_USER]) } }),
     }));
   });
 

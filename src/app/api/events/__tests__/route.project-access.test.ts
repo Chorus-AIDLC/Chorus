@@ -8,8 +8,18 @@ const { bus } = vi.hoisted(() => {
   const { EventEmitter } = require("events") as typeof import("events");
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);
-  return { bus: emitter };
+  return { bus: Object.assign(emitter, {
+    emitChange: (event: unknown) => emitter.emit("change", event),
+    emitProjectAccessChanged: (event: unknown) => emitter.emit("project_access_changed", event),
+  }) };
 });
+const mockPrisma = vi.hoisted(() => ({
+  user: { findFirst: vi.fn(async () => null as { uuid: string } | null) },
+  projectGroup: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => [] as { uuid: string }[]) },
+  projectGroupMember: { findFirst: vi.fn(async () => null), count: vi.fn(async () => 0) },
+  project: { findMany: vi.fn(async () => [] as { uuid: string }[]) },
+}));
+vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 const mockGetAuthContext = vi.fn();
 const mockAccessibleProjectUuids = vi.fn();
@@ -111,6 +121,9 @@ function principalOf(auth: { type: string; actorUuid: string; ownerUuid?: string
 beforeEach(() => {
   vi.clearAllMocks();
   bus.removeAllListeners();
+  mockPrisma.user.findFirst.mockResolvedValue(null);
+  mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+  mockPrisma.project.findMany.mockResolvedValue([]);
   publicProjects = new Set([PUBLIC_P]);
   privateMembers = new Map([[PRIVATE_P, new Set([memberUuid])]]);
   mockAccessibleGroupUuids.mockResolvedValue([]);

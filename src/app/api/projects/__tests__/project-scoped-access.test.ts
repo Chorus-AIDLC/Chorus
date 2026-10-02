@@ -26,12 +26,19 @@ vi.mock("@/lib/prisma", () => ({
       }),
     },
     projectMember: {
-      findUnique: vi.fn(async ({ where }: { where: { projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
+      findFirst: vi.fn(async ({ where }: { where: { companyUuid: string; projectUuid: string; role: string } }) =>
+        db.projects.some((p) => p.uuid === where.projectUuid && p.companyUuid === where.companyUuid)
+          ? db.members.find((m) => m.projectUuid === where.projectUuid && m.role === where.role) ?? null : null),
+      findUnique: vi.fn(async ({ where }: { where: { companyUuid: string; projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
         const k = where.projectUuid_userUuid;
-        const m = db.members.find((x) => x.projectUuid === k.projectUuid && x.userUuid === k.userUuid);
+        const m = db.projects.some((p) => p.uuid === k.projectUuid && p.companyUuid === where.companyUuid)
+          ? db.members.find((x) => x.projectUuid === k.projectUuid && x.userUuid === k.userUuid) : null;
         return m ? { role: m.role } : null;
       }),
     },
+    // Keep the explicit-role matrix separate from the earliest company user.
+    user: { findFirst: vi.fn(async ({ where }: { where: { companyUuid: string } }) =>
+      where.companyUuid === "company-1" ? { uuid: "u-first" } : null) },
     proposal: {
       findFirst: vi.fn(async ({ where }: { where: { uuid: string; companyUuid: string } }) => {
         const p = db.proposals.find((x) => x.uuid === where.uuid && x.companyUuid === where.companyUuid);

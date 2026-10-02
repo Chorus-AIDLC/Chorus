@@ -42,6 +42,9 @@ const mockPrisma = vi.hoisted(() => ({}) as Record<string, unknown>);
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 Object.assign(mockPrisma, {
+  user: { findFirst: vi.fn(async () => null) },
+  projectGroup: { findFirst: vi.fn(async () => null) },
+  projectGroupMember: { findFirst: vi.fn(async () => null), count: vi.fn(async () => 0) },
   project: {
     findFirst: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
       const p = db.projects.find((x) => matchesWhere(x, where));
@@ -52,22 +55,25 @@ Object.assign(mockPrisma, {
     ),
   },
   projectMember: {
-    findUnique: vi.fn(async ({ where }: { where: { projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
+    findFirst: vi.fn(async ({ where }: { where: Partial<M> }) =>
+      db.members.find((member) => Object.entries(where).every(([field, value]) => member[field as keyof M] === value)) ?? null),
+    findUnique: vi.fn(async ({ where }: { where: { companyUuid: string; projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
       const k = where.projectUuid_userUuid;
-      const m = db.members.find((x) => x.projectUuid === k.projectUuid && x.userUuid === k.userUuid);
+      const m = db.members.find((x) => x.companyUuid === where.companyUuid && x.projectUuid === k.projectUuid && x.userUuid === k.userUuid);
       return m ? { role: m.role } : null;
     }),
     findMany: vi.fn(async ({ where }: { where: { companyUuid?: string; projectUuid?: string; userUuid?: string | { in: string[] } } }) => {
+      const scoped = db.members.filter((member) => where.companyUuid === undefined || member.companyUuid === where.companyUuid);
       if (where.userUuid === undefined) {
-        return db.members.filter((x) => x.projectUuid === where.projectUuid && x.companyUuid === where.companyUuid)
+        return scoped.filter((x) => x.projectUuid === where.projectUuid)
           .map((m) => ({ userUuid: m.userUuid }));
       }
       if (typeof where.userUuid === "object") {
         const inSet = where.userUuid.in;
-        return db.members.filter((x) => x.projectUuid === where.projectUuid && inSet.includes(x.userUuid))
+        return scoped.filter((x) => x.projectUuid === where.projectUuid && inSet.includes(x.userUuid))
           .map((m) => ({ userUuid: m.userUuid }));
       }
-      return db.members.filter((x) => x.companyUuid === where.companyUuid && x.userUuid === where.userUuid)
+      return scoped.filter((x) => x.userUuid === where.userUuid)
         .map((m) => ({ projectUuid: m.projectUuid }));
     }),
   },
@@ -202,15 +208,15 @@ describe("getProjectAccess — D2 level table", () => {
     await getProjectAccess(auth, "priv");
     await getProjectAccess(auth, "priv");
     const findFirst = (mockPrisma.project as { findFirst: ReturnType<typeof vi.fn> }).findFirst;
-    expect(findFirst).toHaveBeenCalledTimes(1);
+    expect(findFirst).toHaveBeenCalledTimes(2);
 
     invalidateProjectAccessCache(auth, "priv");
     await getProjectAccess(auth, "priv");
-    expect(findFirst).toHaveBeenCalledTimes(2);
+    expect(findFirst).toHaveBeenCalledTimes(4);
 
     invalidateProjectAccessCache(auth);
     await getProjectAccess(auth, "priv");
-    expect(findFirst).toHaveBeenCalledTimes(3);
+    expect(findFirst).toHaveBeenCalledTimes(6);
   });
 });
 

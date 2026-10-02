@@ -458,7 +458,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     "project:write",
     "chorus_admin_update_project_group",
     {
-      description: "Update group settings or manage one explicit member. Legacy groups automatically have their company's first user as Admin. Set preview=true with visibility to obtain an impact summary and confirmationToken, then confirm the same change. Access administration requires your owner's explicit group Admin role.",
+      description: "Update group settings or manage one explicit member. Groups without an explicit Admin compute their company's first user as automatic Admin without storing a grant. Set preview=true with visibility to obtain an impact summary and confirmationToken, then confirm the same change. Access administration requires your owner's explicit or automatic group Admin role.",
       inputSchema: z.object({
         groupUuid: z.string().describe("Project Group UUID"),
         name: z.string().optional().describe("New group name"),

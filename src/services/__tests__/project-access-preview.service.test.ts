@@ -114,6 +114,89 @@ describe("compact impact summaries", () => {
       increasedPermissionsCount: 0, decreasedPermissionsCount: 1, affectedProjectCount: 1,
     });
   });
+
+  it.each(["local", "inherited", "both"])(
+    "counts retained %s Editor management permission changes in both directions without role diffs",
+    async (grant) => {
+      fixture.state.user = fixture.state.user.filter((user) => ["admin", "editor"].includes(user.uuid));
+      if (grant !== "inherited") localMember("p", "editor", "editor");
+      if (grant !== "local") groupMember("source", "editor", "editor");
+      const closed = await getProjectVisibilityPreview(auth(), "p", "private");
+      expect(closed.changes).toEqual([]);
+      expect(closed.summary).toEqual({
+        affectedUserCount: 1, gainedAccessCount: 0, lostAccessCount: 0,
+        increasedPermissionsCount: 0, decreasedPermissionsCount: 1, affectedProjectCount: 1,
+      });
+      fixture.state.project[0].visibility = "private";
+      const opened = await getProjectVisibilityPreview(auth(), "p", "public");
+      expect(opened.changes).toEqual([]);
+      expect(opened.summary).toEqual({
+        affectedUserCount: 1, gainedAccessCount: 0, lostAccessCount: 0,
+        increasedPermissionsCount: 1, decreasedPermissionsCount: 0, affectedProjectCount: 1,
+      });
+    },
+  );
+
+  it.each(["local", "inherited"])(
+    "deduplicates retained %s Editor management losses across group child closure",
+    async (grant) => {
+      fixture.state.user = fixture.state.user.filter((user) => ["admin", "editor"].includes(user.uuid));
+      project("q", "source", "public");
+      if (grant === "local") {
+        localMember("p", "editor", "editor");
+        localMember("q", "editor", "editor");
+      } else groupMember("source", "editor", "editor");
+      const closed = await getGroupVisibilityPreview(auth(), "source", "private");
+      expect(closed.projects.map((impact) => impact.changes)).toEqual([[], []]);
+      expect(closed.summary).toEqual({
+        affectedUserCount: 1, gainedAccessCount: 0, lostAccessCount: 0,
+        increasedPermissionsCount: 0, decreasedPermissionsCount: 1, affectedProjectCount: 2,
+      });
+      fixture.state.projectGroup.find((row) => row.uuid === "source")!.visibility = "private";
+      for (const row of fixture.state.project) row.visibility = "private";
+      const opened = await getGroupVisibilityPreview(auth(), "source", "public");
+      // Reopening the group restores settings editing, leaving children private.
+      expect(opened.projects.map((impact) => impact.visibility)).toEqual(["private", "private"]);
+      expect(opened.summary).toEqual({
+        affectedUserCount: 1, gainedAccessCount: 0, lostAccessCount: 0,
+        increasedPermissionsCount: 1, decreasedPermissionsCount: 0, affectedProjectCount: 0,
+      });
+    },
+  );
+
+  it.each(["local", "inherited"])(
+    "counts retained %s Editor management loss when moving a public project into a private group",
+    async (grant) => {
+      fixture.state.user = fixture.state.user.filter((user) => ["admin", "editor"].includes(user.uuid));
+      fixture.state.projectGroup.find((row) => row.uuid === "target")!.visibility = "private";
+      if (grant === "local") localMember("p", "editor", "editor");
+      else {
+        groupMember("source", "editor", "editor");
+        groupMember("target", "editor", "editor");
+      }
+      const preview = await getProjectGroupMovePreview(auth(), "p", "target");
+      expect(preview.changes).toEqual([]);
+      expect(preview.visibility).toBe("private");
+      expect(preview.requiresConfirmation).toBe(true);
+      expect(preview.summary).toEqual({
+        affectedUserCount: 1, gainedAccessCount: 0, lostAccessCount: 0,
+        increasedPermissionsCount: 0, decreasedPermissionsCount: 1, affectedProjectCount: 1,
+      });
+    },
+  );
+
+  it("does not count an unchanged Admin twice when a Viewer gains public Editor access", async () => {
+    fixture.state.user = fixture.state.user.filter((user) => ["admin", "viewer"].includes(user.uuid));
+    fixture.state.project[0].visibility = "private";
+    const opened = await getProjectVisibilityPreview(auth(), "p", "public");
+    expect(opened.changes).toEqual([expect.objectContaining({
+      userUuid: "viewer", beforeRole: "viewer", afterRole: "editor",
+    })]);
+    expect(opened.summary).toEqual({
+      affectedUserCount: 1, gainedAccessCount: 0, lostAccessCount: 0,
+      increasedPermissionsCount: 1, decreasedPermissionsCount: 0, affectedProjectCount: 1,
+    });
+  });
 });
 
 describe.each(previews)("$name preview identities", ({ get }) => {
@@ -213,8 +296,113 @@ describe("preview authorization and confirmation inputs", () => {
       visibility: "private", group: g, direct: [],
       inherited: fixture.state.projectGroupMember.filter((member) => member.groupUuid === "source")
         .sort((a, b) => a.userUuid.localeCompare(b.userUuid)),
+      implicitAdminUuid: null,
+      projectImplicitAdminUuid: null,
       users: fixture.state.user.filter((user) => user.companyUuid === "c")
         .sort((a, b) => a.uuid.localeCompare(b.uuid)).map(({ uuid }) => ({ uuid })),
     }));
+  });
+});
+
+describe("lazy project Admin previews without a local Admin", () => {
+  const orphanGroups = [
+    { name: "ungrouped", groupUuid: null },
+    { name: "missing group", groupUuid: "missing" },
+    { name: "foreign group", groupUuid: "foreign-group" },
+  ];
+
+  function orphanProject(groupUuid: string | null) {
+    fixture.state.project[0].groupUuid = groupUuid;
+    if (groupUuid === "foreign-group") {
+      group(groupUuid, "private", false);
+      fixture.state.projectGroup.find((row) => row.uuid === groupUuid)!.companyUuid = "other";
+    }
+  }
+
+  it.each(orphanGroups)(
+    "retains the first User's Admin and counts retained Editor permissions for $name projects in both visibility directions",
+    async ({ groupUuid }) => {
+      orphanProject(groupUuid);
+      localMember("p", "admin", "viewer");
+      localMember("p", "editor", "editor");
+      const members = structuredClone(fixture.state.projectMember);
+      const closed = await getProjectVisibilityPreview(auth(), "p", "private");
+      expect(closed.changes.map((change) => change.userUuid)).toEqual(["local", "outside", "viewer"]);
+      expect(closed.summary).toEqual({
+        affectedUserCount: 4, gainedAccessCount: 0, lostAccessCount: 3,
+        increasedPermissionsCount: 0, decreasedPermissionsCount: 1, affectedProjectCount: 1,
+      });
+      fixture.state.project[0].visibility = "private";
+      const opened = await getProjectVisibilityPreview(auth(), "p", "public");
+      expect(opened.changes.map((change) => change.userUuid)).toEqual(["local", "outside", "viewer"]);
+      expect(opened.summary).toEqual({
+        affectedUserCount: 4, gainedAccessCount: 3, lostAccessCount: 0,
+        increasedPermissionsCount: 1, decreasedPermissionsCount: 0, affectedProjectCount: 1,
+      });
+      expect(fixture.state.projectMember).toEqual(members);
+      expect(fixture.writes).toEqual([]);
+    },
+  );
+
+  it.each(orphanGroups)(
+    "suppresses the $name project fallback when moving into a group with another explicit Admin",
+    async ({ groupUuid }) => {
+      orphanProject(groupUuid);
+      fixture.state.projectGroupMember = fixture.state.projectGroupMember.filter((member) => member.groupUuid !== "target");
+      groupMember("target", "editor", "admin");
+      localMember("p", "admin", "viewer");
+      const preview = await getProjectGroupMovePreview(auth(), "p", "target");
+      expect(preview.changes).toEqual([
+        expect.objectContaining({ userUuid: "admin", beforeRole: "admin", afterRole: "editor" }),
+        expect.objectContaining({ userUuid: "editor", beforeRole: "editor", afterRole: "admin" }),
+      ]);
+      expect(preview.summary).toEqual({
+        affectedUserCount: 2, gainedAccessCount: 0, lostAccessCount: 0,
+        increasedPermissionsCount: 1, decreasedPermissionsCount: 1, affectedProjectCount: 1,
+      });
+      expect(preview.requiresConfirmation).toBe(true);
+      expect(fixture.writes).toEqual([]);
+    },
+  );
+
+  it.each(orphanGroups)(
+    "retains the computed project Admin when detaching a private $name project without local Admin grants",
+    async ({ groupUuid }) => {
+      orphanProject(groupUuid);
+      fixture.state.project[0].visibility = "private";
+      const preview = await getProjectGroupMovePreview(auth(), "p", null);
+      expect(preview.changes).toEqual([]);
+      expect(preview.summary).toEqual({
+        affectedUserCount: 0, gainedAccessCount: 0, lostAccessCount: 0,
+        increasedPermissionsCount: 0, decreasedPermissionsCount: 0,
+        affectedProjectCount: groupUuid === null ? 0 : 1,
+      });
+      expect(fixture.state.projectMember).toEqual([]);
+      expect(fixture.writes).toEqual([]);
+    },
+  );
+
+  it("replaces an ungrouped project's fallback with the destination group's fallback without a role change", async () => {
+    orphanProject(null);
+    fixture.state.projectGroupMember = fixture.state.projectGroupMember.filter((member) => member.groupUuid !== "target");
+    const preview = await getProjectGroupMovePreview(auth(), "p", "target");
+    expect(preview.changes).toEqual([]);
+    expect(preview.summary).toEqual({
+      affectedUserCount: 0, gainedAccessCount: 0, lostAccessCount: 0,
+      increasedPermissionsCount: 0, decreasedPermissionsCount: 0, affectedProjectCount: 1,
+    });
+    expect(fixture.writes).toEqual([]);
+  });
+
+  it("retains a non-first source group Admin when detaching without inventing a project fallback", async () => {
+    fixture.state.projectGroupMember = fixture.state.projectGroupMember.filter((member) => member.groupUuid !== "source");
+    groupMember("source", "editor", "admin");
+    const preview = await getProjectGroupMovePreview(auth("editor"), "p", null);
+    expect(preview.changes).toEqual([]);
+    expect(preview.summary).toEqual({
+      affectedUserCount: 0, gainedAccessCount: 0, lostAccessCount: 0,
+      increasedPermissionsCount: 0, decreasedPermissionsCount: 0, affectedProjectCount: 1,
+    });
+    expect(fixture.writes).toEqual([]);
   });
 });

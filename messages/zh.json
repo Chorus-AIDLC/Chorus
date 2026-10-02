@@ -1991,6 +1991,7 @@
       },
       "directRole": "直接：{role}",
       "inheritedRole": "继承：{role}",
+      "automaticAdmin": "自动管理员",
       "effectiveRole": "有效：{role}"
     },
     "roles": {

@@ -1,11 +1,19 @@
 ## ADDED Requirements
 
 ### Requirement: Explicit group memberships
-Groups SHALL have Public/Private visibility and same-company user roles Viewer/Editor/Admin. Agents SHALL inherit their owner's effective role and remain constrained by capability bits. New groups SHALL have their creator as Admin and initialized groups MUST retain an Admin. Existing projects, local memberships and group assignments MUST NOT be rewritten during upgrade; legacy groups without creator records SHALL automatically receive their company's first user as Admin (earliest createdAt, then lowest id), matching the legacy project rule. Existing grants SHALL be preserved, and companies without users SHALL be skipped. Manual claiming or initialization MUST NOT be required or offered.
+Groups SHALL have Public/Private visibility and same-company user roles Viewer/Editor/Admin. Agents SHALL inherit their owner's effective role and remain constrained by capability bits. New groups SHALL have their creator as explicit Admin and explicit final Admin removal MUST remain protected. When a group has no explicit Admin, authorization SHALL compute the company's first user (createdAt ascending, then id ascending) as automatic Admin without writing any group or membership data. This rule SHALL cover both existing groups and ownerless Agent-created public groups, independent of creator metadata. Explicit Admin presence SHALL suppress automatic authorization, and companies without users SHALL have no automatic Admin. Existing projects, creators, local memberships, group memberships and assignments MUST NOT be rewritten for this fallback. Manual claiming or initialization MUST NOT be required or offered.
 
-#### Scenario: Automatic legacy Admin
-- **WHEN** a company has historical groups without creator records and multiple registered users
-- **THEN** the earliest user becomes Admin of every such group without interacting with the UI; existing group and project grants are retained
+#### Scenario: Automatic Admin without writes
+- **WHEN** a company has groups without an explicit Admin and multiple registered users
+- **THEN** the earliest user has Admin authority without interacting with the UI or changing database rows; members label the computed role as automatic
+
+#### Scenario: Explicit Admin suppresses fallback
+- **WHEN** an explicit Admin is added to a group governed by automatic Admin
+- **THEN** the first user loses automatic authorization immediately unless an independent grant remains, and child access and confirmation tokens are refreshed
+
+#### Scenario: First user changes
+- **WHEN** the company's earliest user no longer exists
+- **THEN** a fresh request selects the next user by createdAt/id and old previews cannot confirm using the previous automatic Admin
 
 #### Scenario: No claim by the current visitor
 - **WHEN** another company user edits or views an existing group
@@ -16,7 +24,7 @@ Groups SHALL have Public/Private visibility and same-company user roles Viewer/E
 - **THEN** at least one Admin remains and rejected operations commit no membership or audit mutation
 
 ### Requirement: Live inherited role floor
-Private projects SHALL resolve effective role as the greater of explicit group membership and local project membership. Public groups' implicit company-wide editor baseline MUST NOT grant access to private child projects. Group Admin SHALL always be Admin in every child project, independent of group visibility; project mutations MUST NOT reduce this inherited layer.
+Private projects SHALL resolve effective role as the greater of explicit or automatic group membership and local project membership. Public groups' implicit company-wide editor baseline MUST NOT grant access to private child projects. Group Admin SHALL always be Admin in every child project, independent of group visibility; project mutations MUST NOT reduce this inherited layer.
 
 #### Scenario: Project grant raises a group role
 - **WHEN** a group Viewer has a local project Editor grant
@@ -31,11 +39,11 @@ Private projects SHALL resolve effective role as the greater of explicit group m
 - **THEN** inherited access is removed immediately and that project's independent Viewer access remains
 
 #### Scenario: Public group does not expose private children
-- **WHEN** a company user has no explicit group or private-project membership
+- **WHEN** a company user has neither explicit/automatic group authority nor private-project membership
 - **THEN** the public group is visible but its private projects are not
 
 ### Requirement: Project-only group discovery
-A user with access to a child project but no explicit private-group membership SHALL discover group basic information and grouping. Group project lists, counts, dashboards, search and activity SHALL expose only accessible children. Such discovery MUST NOT permit group creation of projects, roster reading or group administration.
+A user with access to a child project but no explicit or automatic private-group authority SHALL discover group basic information and grouping. Group project lists, counts, dashboards, search and activity SHALL expose only accessible children. Such discovery MUST NOT permit group creation of projects, roster reading or group administration.
 
 #### Scenario: Project-only visitor
 - **WHEN** a project-only Viewer opens a private group with two projects but access to only one
@@ -83,7 +91,7 @@ REST, MCP, pages, actions, text/exact-UUID search, lists, aggregates, SSE, notif
 - **THEN** subsequent group/project events and notifications are withheld and direct reads return not-found
 
 ### Requirement: Group access presentation
-Group creation/settings SHALL provide visibility and member controls gated by explicit authority, private badges and previews. Project access UI SHALL distinguish inherited and additional roles and MUST NOT present inherited grants as removable. Visibility impact confirmation SHALL display distinct affected-user counts by gained/lost access and increased/decreased permissions, plus affected-project counts, instead of individual identities or per-child change lists. Counts SHALL include group discovery changes for empty groups, deduplicate each person per effect across children, and retain fresh server confirmation. Controls SHALL be localized and usable at mobile widths in light and dark themes.
+Group creation/settings SHALL provide visibility and member controls gated by explicit or automatic authority, private badges and previews. Project access UI SHALL distinguish inherited and additional roles and MUST NOT present inherited grants as removable. Visibility impact confirmation SHALL display distinct affected-user counts by gained/lost access and increased/decreased permissions, plus affected-project counts, instead of individual identities or per-child change lists. Counts SHALL include group discovery changes for empty groups, deduplicate each person per effect across children, and retain fresh server confirmation. Controls SHALL be localized and usable at mobile widths in light and dark themes.
 
 #### Scenario: Inherited member row
 - **WHEN** project Admin reviews a group-inherited Admin

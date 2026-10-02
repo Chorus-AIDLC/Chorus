@@ -8,6 +8,7 @@ const fixture = vi.hoisted(() => ({
   explicitRole: null as string | null,
   localRole: null as string | null,
   prisma: {
+    user: { findFirst: vi.fn(async () => null) },
     projectGroup: { findFirst: vi.fn() },
     projectGroupMember: { findFirst: vi.fn(), count: vi.fn() },
     projectMember: { findUnique: vi.fn() },

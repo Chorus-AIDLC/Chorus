@@ -39,7 +39,13 @@ const fixture = vi.hoisted(() => {
         ? { uuid: "private-project", companyUuid: "company", visibility: "private", groupUuid: "private-group" } : null) },
     agent: { findFirst: vi.fn(async ({ where }: { where: { uuid: string; companyUuid: string } }) =>
       where.companyUuid === "company" && where.uuid === "agent" ? { ownerUuid: state.ownerUuid } : null) },
-    projectMember: { findUnique: vi.fn(async () => state.localRole ? { role: state.localRole } : null) },
+    projectMember: {
+      findUnique: vi.fn(async ({ where }: { where: { companyUuid: string } }) =>
+        where.companyUuid === "company" && state.localRole ? { role: state.localRole } : null),
+      findFirst: vi.fn(async () => state.localRole === "admin" ? { userUuid: state.ownerUuid, role: "admin" } : null),
+    },
+    projectGroup: { findFirst: vi.fn(async () => ({ uuid: "private-group", companyUuid: "company" })) },
+    user: { findFirst: vi.fn(async () => null) },
     projectGroupMember: { findFirst: vi.fn() },
     notification: { findFirst: vi.fn(async ({ where }: { where: { companyUuid: string; recipientUuid: string; entityUuid: string } }) =>
       where.companyUuid === "company" && where.recipientUuid === "agent"
@@ -74,8 +80,9 @@ beforeEach(() => {
   fixture.bus.removeAllListeners();
   fixture.turns.length = 3;
   Object.assign(fixture.state, { groupRole: "editor", localRole: null, ownerUuid: "owner", taskExists: true, notifications: [] });
-  fixture.prisma.projectGroupMember.findFirst.mockImplementation(async () =>
-    fixture.state.groupRole ? { role: fixture.state.groupRole } : null);
+  fixture.prisma.projectGroupMember.findFirst.mockImplementation(async ({ where }: { where: { role?: string } }) =>
+    fixture.state.groupRole && (!where.role || where.role === fixture.state.groupRole)
+      ? { role: fixture.state.groupRole } : null);
 });
 const pending = () => getPendingTurnsForConnection({ companyUuid: "company", agentUuid: "agent", connectionUuid: "connection" });
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -168,7 +175,7 @@ describe.each(["task-turn", "comment-turn"])("%s standalone project provenance",
       release();
       await flush();
       expect(live.text()).not.toContain(turnUuid);
-      expect(fixture.prisma.projectGroupMember.findFirst).toHaveBeenCalledTimes(2);
+      expect(fixture.prisma.projectGroupMember.findFirst).toHaveBeenCalledTimes(4);
     } finally { live.abort.abort(); }
   });
 });

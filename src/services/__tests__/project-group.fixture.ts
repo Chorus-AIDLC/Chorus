@@ -15,7 +15,9 @@ export const fixture = {
   reset() {
     this.state = empty(); this.locks = []; this.writes = []; this.events = [];
     this.inTransaction = false; this.onLock = null; this.failWrite = null; this.sequence = 0;
-    for (const uuid of ["admin", "editor", "viewer", "local", "outside"]) this.state.user.push({ uuid, companyUuid: "c", name: uuid, email: `${uuid}@test.local` });
+    for (const [index, uuid] of ["admin", "editor", "viewer", "local", "outside"].entries()) {
+      this.state.user.push({ id: index + 1, uuid, companyUuid: "c", name: uuid, email: `${uuid}@test.local`, createdAt: new Date("2025-01-01T00:00:00Z") });
+    }
   },
 };
 
@@ -24,16 +26,19 @@ function matches(table: Table, row: Row, where: Row = {}): boolean {
     if (expected === undefined) return true;
     if (key === "AND") return (Array.isArray(expected) ? expected : [expected]).every((w: Row) => matches(table, row, w));
     if (key === "OR") return expected.some((w: Row) => matches(table, row, w));
-    if (key === "NOT") return !matches(table, row, expected);
+    if (key === "NOT") return (Array.isArray(expected) ? expected : [expected]).every((w: Row) => !matches(table, row, w));
     if (key === "groupUuid_userUuid" || key === "projectUuid_userUuid") return matches(table, row, expected);
     if (key === "members") {
       const memberTable = table === "project" ? "projectMember" : "projectGroupMember";
       const link = table === "project" ? "projectUuid" : "groupUuid";
-      return fixture.state[memberTable].some((m) => m[link] === row.uuid && matches(memberTable, m, expected.some));
+      return matchesRelation(memberTable, fixture.state[memberTable].filter((m) => m[link] === row.uuid), expected);
     }
-    if (key === "projects") return fixture.state.project.some((p) => p.groupUuid === row.uuid && matches("project", p, expected.some));
+    if (key === "projects") return matchesRelation("project", fixture.state.project.filter((p) => p.groupUuid === row.uuid), expected);
     if (key === "group") {
       const group = fixture.state.projectGroup.find((g) => g.uuid === row.groupUuid);
+      if (expected === null) return !group;
+      if ("is" in expected) return expected.is === null ? !group : !!group && matches("projectGroup", group, expected.is);
+      if ("isNot" in expected) return expected.isNot === null ? !!group : !group || !matches("projectGroup", group, expected.isNot);
       return !!group && matches("projectGroup", group, expected);
     }
     if (expected !== null && typeof expected === "object") {
@@ -42,6 +47,26 @@ function matches(table: Table, row: Row, where: Row = {}): boolean {
       if ("gte" in expected) return row[key] >= expected.gte;
     }
     return row[key] === expected;
+  });
+}
+function matchesRelation(table: Table, related: Row[], filter: Row): boolean {
+  return Object.entries(filter).every(([operator, where]) => {
+    if (operator === "some") return related.some((row) => matches(table, row, where));
+    if (operator === "none") return !related.some((row) => matches(table, row, where));
+    if (operator === "every") return related.every((row) => matches(table, row, where));
+    throw new Error(`Unsupported relation filter: ${operator}`);
+  });
+}
+function ordered(rows: Row[], orderBy?: Row | Row[]): Row[] {
+  const orders = (Array.isArray(orderBy) ? orderBy : [orderBy]).filter(Boolean) as Row[];
+  return [...rows].sort((a, b) => {
+    for (const order of orders) {
+      for (const [key, direction] of Object.entries(order)) {
+        const comparison = a[key] < b[key] ? -1 : a[key] > b[key] ? 1 : 0;
+        if (comparison) return comparison * (direction === "desc" ? -1 : 1);
+      }
+    }
+    return 0;
   });
 }
 function write(table: Table, data: Row) {
@@ -55,15 +80,11 @@ function update(row: Row, data: Row) {
 for (const table of tables) {
   const rows = (where?: Row) => fixture.state[table].filter((r) => matches(table, r, where));
   fixture.prisma[table] = {
-    findFirst: vi.fn(async ({ where }: Row = {}) => structuredClone(rows(where)[0] ?? null)),
+    findFirst: vi.fn(async ({ where, orderBy }: Row = {}) => structuredClone(ordered(rows(where), orderBy)[0] ?? null)),
     findUnique: vi.fn(async ({ where }: Row) => structuredClone(rows(where)[0] ?? null)),
     findMany: vi.fn(async ({ where, orderBy, take }: Row = {}) => {
-      let found = structuredClone(rows(where));
-      for (const order of (Array.isArray(orderBy) ? orderBy : [orderBy]).filter(Boolean).reverse()) {
-        const [key, direction] = Object.entries(order)[0];
-        found.sort((a, b) => (a[key] < b[key] ? -1 : a[key] > b[key] ? 1 : 0) * (direction === "desc" ? -1 : 1));
-      }
-      if (take) found = found.slice(0, take);
+      let found = structuredClone(ordered(rows(where), orderBy));
+      if (take !== undefined) found = found.slice(0, take);
       return found;
     }),
     count: vi.fn(async ({ where }: Row) => rows(where).length),

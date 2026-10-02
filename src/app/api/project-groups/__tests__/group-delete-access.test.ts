@@ -110,7 +110,8 @@ describe("real group REST handlers with locked services", () => {
     expect(fixture.writes).toEqual([]); expect(fixture.events).toEqual([]);
   });
   it("rejects baseline Editor public moves that would expand inherited Admin", async () => {
-    group("g", "public", false); group("target", "public"); project("p", "g", "public"); requestAuth.actor = auth("outside");
+    group("g", "public", false); groupMember("g", "local", "admin"); group("target", "public");
+    project("p", "g", "public"); requestAuth.actor = auth("outside");
     expect((await invoke(movePreview, "GET", undefined, "?groupUuid=target", "p")).status).toBe(403);
     expect((await invoke(move, "PATCH", { groupUuid: "target", confirmationToken: "0".repeat(64) }, "", "p")).status).toBe(403);
     expect(fixture.writes).toEqual([]);
