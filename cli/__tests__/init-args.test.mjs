@@ -5,6 +5,15 @@ import { describe, it, expect } from "vitest";
 import { parseInitFlags, initHelpText } from "../init-args.mjs";
 
 describe("parseInitFlags", () => {
+  it("parses --no-linger (and leaves it unset by default)", () => {
+    expect(parseInitFlags(["--no-linger"]).noLinger).toBe(true);
+    expect(parseInitFlags([]).noLinger).toBeUndefined();
+  });
+
+  it("documents --no-linger in the help text", () => {
+    expect(initHelpText("0.0.0")).toMatch(/--no-linger/);
+  });
+
   it("parses --agents CSV (space + = forms) into a normalized id array", () => {
     expect(parseInitFlags(["--agents", "claude,codex"]).agents).toEqual(["claude", "codex"]);
     expect(parseInitFlags(["--agents=kiro,dsh"]).agents).toEqual(["kiro", "dsh"]);

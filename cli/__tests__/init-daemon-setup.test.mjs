@@ -17,6 +17,8 @@ function ctx(over = {}) {
     autostartCapability: vi.fn(() => "systemd"),
     detectSupervisor: vi.fn(() => ({ kind: "none" })),
     installService: vi.fn(() => ({ platform: "linux", installed: true, unitPath: "/u", unitText: "Type=simple", steps: ["wrote /u", "systemctl --user enable --now chorus-daemon.service"] })),
+    // Never reach the REAL loginctl from a unit test (it would change the host).
+    ensureLinger: vi.fn(() => ({ result: "already", user: "u" })),
     resolveServicePaths: vi.fn(() => ({ nodePath: "/node", scriptPath: "/x/chorus.mjs", path: "/bin" })),
     resolveInstallCredentials: vi.fn(async () => ({ ok: true, creds: { url: "u", apiKey: "cho_k" }, identity: { uuid: "a", name: "Bot" } })),
     resolveInstallCwds: vi.fn(async () => ({ cwds: ["/a"] })),
@@ -149,6 +151,102 @@ describe("idempotency (report_skip_repair)", () => {
     const r = await setupDaemon(c);
     expect(r.action).toBe(SKIPPED);
     expect(c.installService).not.toHaveBeenCalled();
+  });
+});
+
+describe("systemd lingering (ensure_linger)", () => {
+  const logText = (c) => c.io.log.mock.calls.flat().join("\n");
+
+  it("fresh install forwards noLinger:false and logs the enabled note", async () => {
+    const c = ctx({
+      flags: { daemonAutostart: true },
+      installService: vi.fn(() => ({ platform: "linux", installed: true, unitPath: "/u", unitText: "", steps: ["wrote /u", "loginctl enable-linger u"], linger: { result: "enabled", user: "u" } })),
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(INSTALLED);
+    expect(c.installService.mock.calls[0][0].noLinger).toBe(false);
+    expect(logText(c)).toMatch(/\[chorus agents add\] enabled systemd lingering for u/);
+  });
+
+  it("fresh install with --no-linger forwards noLinger:true", async () => {
+    const c = ctx({ flags: { daemonAutostart: true, noLinger: true } });
+    await setupDaemon(c);
+    expect(c.installService.mock.calls[0][0].noLinger).toBe(true);
+  });
+
+  it("a linger failure keeps the outcome INSTALLED and logs the sudo fix", async () => {
+    const c = ctx({
+      flags: { daemonAutostart: true },
+      installService: vi.fn(() => ({ platform: "linux", installed: true, unitPath: "/u", unitText: "", steps: ["wrote /u"], linger: { result: "failed", user: "u", error: "Access denied", fix: "sudo loginctl enable-linger u" } })),
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(INSTALLED);
+    expect(logText(c)).toContain("sudo loginctl enable-linger u");
+  });
+
+  it("already-installed systemd: ensures lingering, stays SKIPPED, never reinstalls", async () => {
+    const serviceIo = { platform: "linux" };
+    const c = ctx({
+      flags: { daemonAutostart: true },
+      serviceIo,
+      detectSupervisor: vi.fn(() => ({ kind: "systemd", installed: true, active: true, unitPath: "/u" })),
+      ensureLinger: vi.fn(() => ({ result: "enabled", user: "u" })),
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(SKIPPED);
+    expect(r.detail).toMatch(/already configured.*enabled lingering/);
+    expect(c.ensureLinger).toHaveBeenCalledWith(serviceIo);
+    expect(c.installService).not.toHaveBeenCalled();
+    expect(logText(c)).toMatch(/enabled systemd lingering/);
+  });
+
+  it("already-installed systemd with lingering already on: plain SKIPPED detail", async () => {
+    const c = ctx({
+      flags: { daemonAutostart: true },
+      detectSupervisor: vi.fn(() => ({ kind: "systemd", installed: true, active: true, unitPath: "/u" })),
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(SKIPPED);
+    expect(r.detail).toBe("daemon already configured for auto-start (systemd) — left unchanged");
+    expect(c.ensureLinger).toHaveBeenCalledOnce();
+  });
+
+  it("already-installed systemd where lingering fails: SKIPPED with a warning", async () => {
+    const c = ctx({
+      flags: { daemonAutostart: true },
+      detectSupervisor: vi.fn(() => ({ kind: "systemd", installed: true, active: true, unitPath: "/u" })),
+      ensureLinger: vi.fn(() => ({ result: "failed", user: "u", error: "Access denied", fix: "sudo loginctl enable-linger u" })),
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(SKIPPED);
+    expect(r.detail).toMatch(/lingering NOT enabled/);
+    expect(logText(c)).toContain("sudo loginctl enable-linger u");
+  });
+
+  it("already-installed systemd with --no-linger: no linger call", async () => {
+    const c = ctx({
+      flags: { daemonAutostart: true, noLinger: true },
+      detectSupervisor: vi.fn(() => ({ kind: "systemd", installed: true, active: true, unitPath: "/u" })),
+    });
+    const r = await setupDaemon(c);
+    expect(r.action).toBe(SKIPPED);
+    expect(c.ensureLinger).not.toHaveBeenCalled();
+  });
+
+  it("already-installed launchd never ensures lingering", async () => {
+    const c = ctx({
+      flags: { daemonAutostart: true },
+      autostartCapability: vi.fn(() => "launchd"),
+      detectSupervisor: vi.fn(() => ({ kind: "launchd", installed: true, active: true, label: "com.chorus.daemon", plistPath: "/p.plist" })),
+    });
+    await setupDaemon(c);
+    expect(c.ensureLinger).not.toHaveBeenCalled();
+  });
+
+  it("declined auto-start never touches lingering", async () => {
+    const c = ctx({ flags: {} }); // non-interactive, no --daemon-autostart
+    await setupDaemon(c);
+    expect(c.ensureLinger).not.toHaveBeenCalled();
   });
 });
 

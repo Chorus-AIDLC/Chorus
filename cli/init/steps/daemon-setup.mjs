@@ -19,6 +19,11 @@
 //                         at every boot) via the shared installService.
 //   - report_skip_repair : a re-run where the service is already installed reports
 //                         "already configured" and does not rewrite.
+//   - ensure_linger      : on Linux the systemd --user service only survives logout
+//                         (and starts at boot) with lingering on — installService
+//                         ensures it on a fresh install, and the already-installed
+//                         re-run ensures it too (idempotent, unit untouched), so a
+//                         re-run repairs an existing Linger=no host. --no-linger opts out.
 //
 // All collaborators are injected (matching credential-seed.mjs) so the step
 // unit-tests with fakes; production uses the real daemon-service / install-config
@@ -30,7 +35,9 @@ import { loginFilePath } from "../../credentials.mjs";
 import {
   autostartCapability as defaultAutostartCapability,
   detectSupervisor as defaultDetectSupervisor,
+  ensureLinger as defaultEnsureLinger,
   installService as defaultInstallService,
+  lingerMessages,
   resolveServicePaths as defaultResolveServicePaths,
 } from "../../daemon-service.mjs";
 import {
@@ -49,7 +56,8 @@ const out = (action, detail) => ({ stepId: STEP_ID, action, detail });
  * The daemon-setup step body.
  * @param {import("../contracts.mjs").StepContext & {
  *   autostartCapability?: Function, detectSupervisor?: Function,
- *   installService?: Function, resolveServicePaths?: Function, serviceIo?: object,
+ *   installService?: Function, ensureLinger?: Function,
+ *   resolveServicePaths?: Function, serviceIo?: object,
  *   resolveInstallCredentials?: Function, resolveInstallCwds?: Function,
  *   resolveInstallAgent?: Function,
  *   writeConfig?: Function, readJson?: Function, loginPath?: string,
@@ -68,6 +76,7 @@ export async function setupDaemon(ctx) {
   const capabilityOf = ctx.autostartCapability ?? defaultAutostartCapability;
   const detect = ctx.detectSupervisor ?? defaultDetectSupervisor;
   const install = ctx.installService ?? defaultInstallService;
+  const ensureLinger = ctx.ensureLinger ?? defaultEnsureLinger;
   const servicePaths = ctx.resolveServicePaths ?? defaultResolveServicePaths;
   const serviceIo = ctx.serviceIo; // undefined ⇒ daemon-service uses its real defaultIO
   const resolveCreds = ctx.resolveInstallCredentials ?? defaultResolveInstallCredentials;
@@ -151,6 +160,11 @@ export async function setupDaemon(ctx) {
     return out(SKIPPED, "no agent enabled for daemon waking — agents[] persisted; boot service not installed");
   }
 
+  // Linger outcome → log lines (warnings included; this step has a single log sink).
+  const logLinger = (outcome) => {
+    for (const m of lingerMessages(outcome)) log(`[chorus agents add] ${m.text}`);
+  };
+
   const manual = () => {
     log("[chorus agents add] daemon config written to ~/.chorus/daemon.json.");
     log("[chorus agents add] start the daemon yourself: `chorus daemon` (foreground) or `chorus daemon -d` (background).");
@@ -187,6 +201,16 @@ export async function setupDaemon(ctx) {
   //    missing/absent service falls through to install (which repairs the drift).
   const sup = detect(serviceIo);
   if ((sup.kind === "systemd" || sup.kind === "launchd") && sup.installed) {
+    // The unit is left alone, but an existing install may predate the linger
+    // guarantee — ensure it now so a re-run fixes "daemon dies at SSH logout".
+    if (sup.kind === "systemd" && flags.noLinger !== true) {
+      const linger = ensureLinger(serviceIo);
+      logLinger(linger);
+      const note = linger.result === "enabled" ? "; enabled lingering"
+        : linger.result === "already" ? ""
+        : "; lingering NOT enabled — see warning";
+      return out(SKIPPED, `daemon already configured for auto-start (${sup.kind}) — left unchanged${note}`);
+    }
     return out(SKIPPED, `daemon already configured for auto-start (${sup.kind}) — left unchanged`);
   }
 
@@ -227,11 +251,13 @@ export async function setupDaemon(ctx) {
     cwds: cwdList,
     chorusOnly: flags.chorusOnly === true,
     workingDir: ctx.processCwd ?? process.cwd(),
+    noLinger: flags.noLinger === true,
   };
   const r = install(spec, serviceIo);
   if (r && r.installed) {
     log("[chorus agents add] daemon installed & enabled — it will auto-start on boot.");
     for (const s of r.steps ?? []) log(`[chorus agents add]   ${s}`);
+    logLinger(r.linger);
     return out(INSTALLED, `boot service installed (${r.platform}); manage with 'chorus daemon status|stop|restart|logs'`);
   }
   return out(FAILED, `service install failed: ${r?.error ?? "unknown error"}`);

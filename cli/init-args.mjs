@@ -21,7 +21,7 @@
  *
  * @param {string[]} argv
  * @returns {{ agents?: string[], all?: boolean, yes?: boolean, url?: string,
- *   apiKey?: string, dshProfile?: string, daemonAutostart?: boolean,
+ *   apiKey?: string, dshProfile?: string, daemonAutostart?: boolean, noLinger?: boolean,
  *   daemonWake?: string[], daemonWakeAll?: boolean, help?: boolean }}
  */
 export function parseInitFlags(argv) {
@@ -37,6 +37,7 @@ export function parseInitFlags(argv) {
     else if (a === "--all") out.all = true;
     else if (a === "--yes" || a === "-y") out.yes = true;
     else if (a === "--daemon-autostart") out.daemonAutostart = true;
+    else if (a === "--no-linger") out.noLinger = true;
     else if (a === "--daemon-wake-all") out.daemonWakeAll = true;
     else if (a === "--daemon-wake") daemonWakeTokens.push(argv[i + 1] ?? "");
     else if (a.startsWith("--daemon-wake=")) daemonWakeTokens.push(a.slice("--daemon-wake=".length));
@@ -113,6 +114,10 @@ OPTIONS
                            auto-start is unsupported (e.g. Windows). In an
                            interactive TTY run the daemon-setup step prompts instead
                            (default: No).
+  --no-linger              Linux: do NOT enable systemd lingering for the daemon
+                           service. By default installing (or re-running with the
+                           service already installed) runs 'loginctl enable-linger'
+                           so the daemon survives logout and starts at boot.
   -y, --yes                Accept confirmation prompts, including refreshing
                            installed plugins to latest (implied when non-TTY).
   -h, --help               Show this help message.

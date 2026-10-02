@@ -41,7 +41,11 @@ export function lingerStatus(io = defaultIO()): { state: "yes"|"no"|"unknown", u
  *   - state "yes"                       → { result: "already", user }
  *   - state "no"  + enable-linger rc 0  → { result: "enabled", user }
  *   - state "no"  + enable-linger fails → { result: "failed", user, error, fix }
- *   - state "unknown"                   → { result: "unavailable", user, error, fix }
+ *   - state "unknown" (user resolved)   → still tries enable-linger: rc 0 → "enabled",
+ *                                         else { result: "unavailable", user, error, fix }
+ *   - no resolvable user                → { result: "unavailable", user: null, error, fix }
+ * (proposal-review N1: some systemd versions fail `show-user` for a user with no
+ * session and no lingering even though `enable-linger` succeeds.)
  * `fix` is the copy-pasteable `sudo loginctl enable-linger <user>` command.
  */
 export function ensureLinger(io = defaultIO()): LingerOutcome
@@ -56,6 +60,8 @@ export function lingerMessages(outcome): Array<{ level, text }>
   `systemctlUser` / `launchctl` wrapper shape, including surfacing `r.error`.
 - On `enable-linger` success there is no follow-up `show-user` call: a 0 exit means
   logind accepted the request. This keeps the step to at most two process spawns.
+- `show-user` output is accepted both as the bare `--value` form (`yes`) and as
+  `Linger=yes` (proposal-review N4).
 
 ## `installService(spec, io)` change
 

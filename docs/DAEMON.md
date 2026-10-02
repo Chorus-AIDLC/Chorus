@@ -712,6 +712,24 @@ source of truth stays in one place. After install, the lifecycle subcommands
 `restart` / `logs` drive `systemctl` / `journalctl`, so a supervised daemon is
 never misreported as "not running".
 
+**Lingering (survive logout, start at boot).** A `systemd --user` service lives
+inside your per-user manager, and without *lingering* systemd-logind stops that
+manager — and the daemon with it — a few seconds after your last session (e.g.
+SSH) closes, and does not start it at boot until you log in again. So after the
+unit is enabled, `install` checks `loginctl show-user <you> -p Linger` and, when it
+is `no`, runs `loginctl enable-linger <you>` for you (most distros' polkit policy
+allows enabling it for yourself without `sudo`). If that is refused — or
+`loginctl` / logind is unavailable — the install still succeeds, but prints a
+prominent warning that the daemon will stop at logout plus the exact
+`sudo loginctl enable-linger <you>` command to run. Pass `--no-linger` to skip this
+step. `chorus agents add` does the same when it installs the service, and when
+the service is **already** installed it still checks lingering (leaving the unit
+untouched) — so re-running `chorus daemon install` or `chorus agents add` fixes
+an existing host. `chorus daemon status` shows `linger: yes`, or warns with the
+fix command when lingering is off. `chorus daemon uninstall` deliberately leaves
+lingering enabled, since other user services may rely on it (turn it off yourself
+with `loginctl disable-linger` if you want).
+
 On a terminal, `install` prompts interactively for the agent backend (Claude Code
 / Codex / Kiro — Enter accepts the Claude Code default) unless you pass `--agent`
 (or export `CHORUS_AGENT`, or already have one stored), then checks the selected
@@ -795,8 +813,9 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-To keep the service running after you log out:
-`loginctl enable-linger "$USER"`. Stop/disable with
+A hand-written `--user` unit only keeps running after you log out (and starts
+at boot) with lingering: `loginctl enable-linger "$USER"` (`chorus daemon install`
+does this for you). Stop/disable with
 `systemctl --user disable --now chorus-daemon`. Logs: `journalctl --user -u chorus-daemon`.
 
 **Boot auto-start checklist (learned the hard way).** A systemd unit runs with a

@@ -24,8 +24,11 @@ describe("chorus init → daemon-setup → installService (integration, linux)",
       // unit not yet installed → detectSupervisor returns kind:none → not idempotent-skip
       existsSync: () => false,
       unlinkSync: () => {},
+      userInfo: () => ({ username: "u" }),
       spawnSync: (cmd, args) => {
         spawnCalls.push([cmd, ...(args ?? [])]);
+        // A fresh host: lingering is off, and the user may enable it (polkit).
+        if (cmd === "loginctl" && args?.[0] === "show-user") return { status: 0, stdout: "no\n", stderr: "" };
         // systemctl --version (capability probe) and all install verbs succeed.
         return { status: 0, stdout: "systemd 255", stderr: "" };
       },
@@ -65,6 +68,12 @@ describe("chorus init → daemon-setup → installService (integration, linux)",
     // 2. enable --now ran (start now + at boot).
     expect(spawnCalls).toContainEqual(["systemctl", "--user", "daemon-reload"]);
     expect(spawnCalls).toContainEqual(["systemctl", "--user", "enable", "--now", "chorus-daemon.service"]);
+
+    // 2b. Lingering was ensured AFTER enable --now so the service survives logout.
+    const enableIdx = spawnCalls.findIndex((c) => c[0] === "systemctl" && c.includes("enable"));
+    const lingerIdx = spawnCalls.findIndex((c) => c[0] === "loginctl" && c[1] === "enable-linger");
+    expect(spawnCalls[lingerIdx]).toEqual(["loginctl", "enable-linger", "u"]);
+    expect(lingerIdx).toBeGreaterThan(enableIdx);
 
     // 3. Selection path: daemon-setup persisted NOTHING top-level. Per-agent creds +
     //    cwds + agentType are written by credential-seed into agents[] (not run here);
