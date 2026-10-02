@@ -44,7 +44,7 @@ A private project SHALL control access through the maximum of its same-company e
 - **THEN** the request is rejected and no membership is created
 
 ### Requirement: Last admin guard
-A private project MUST always retain at least one effective `admin`, including a live group Admin. Removing or demoting the final effective Admin SHALL be rejected. Grouped projects may remove their last local Admin when an inherited group Admin remains; detaching SHALL materialize effective grants before removing the group reference.
+A private project MUST always retain at least one effective `admin`, including a live group Admin. Removing or demoting the final effective Admin SHALL be rejected. Grouped projects may remove their last local Admin when an inherited group Admin remains; detaching from a live same-company group SHALL materialize effective inherited grants before removing the group reference. Repairing an absent/foreign source SHALL preserve local grants and automatic project Admin without materializing a nonexistent group grant.
 
 #### Scenario: Remove last admin
 - **WHEN** the only admin of a private project tries to remove themselves or change their role to editor
@@ -107,3 +107,7 @@ Projects without an explicit local Admin and without a live same-company group S
 #### Scenario: Historical orphan group
 - **WHEN** a project references a missing or foreign-company group and has no local Admin
 - **THEN** its own company's earliest user receives the fallback consistently in direct and list access while foreign-company users receive no access
+
+#### Scenario: Detach an orphan with automatic project Admin
+- **WHEN** the automatic project Admin confirms detachment from a missing or foreign-company source group
+- **THEN** the locked mutation clears the stale group reference, preserves private visibility and every local membership, and keeps project Admin automatic without inserting a membership or changing any foreign group

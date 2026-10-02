@@ -87,7 +87,7 @@ describe.skipIf(!url)("lazy implicit project Admin — real PostgreSQL acceptanc
       createdByUuid: null, accessVersion: 0,
     } });
   }
-  async function snapshot() {
+  async function snapshot(companyUuids = [companyUuid, foreignCompanyUuid, emptyCompanyUuid]) {
     const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
     const sql = tenantTables.map((table) => `
       SELECT '${table.replaceAll("'", "''")}' AS name,
@@ -96,9 +96,9 @@ describe.skipIf(!url)("lazy implicit project Admin — real PostgreSQL acceptanc
     `).join(" UNION ALL ");
     const companies = await pool.query(
       'SELECT * FROM "Company" WHERE uuid = ANY($1::text[]) ORDER BY uuid',
-      [[companyUuid, foreignCompanyUuid, emptyCompanyUuid]],
+      [companyUuids],
     );
-    const tables = await pool.query(sql, [[companyUuid, foreignCompanyUuid, emptyCompanyUuid]]);
+    const tables = await pool.query(sql, [companyUuids]);
     return { companies: companies.rows, tables: tables.rows };
   }
   async function withoutWrites(read: () => Promise<void>) {
@@ -420,6 +420,111 @@ describe.skipIf(!url)("lazy implicit project Admin — real PostgreSQL acceptanc
       expect((await search.search({ companyUuid, auth: actor(), query: token, entityTypes: ["project"] }))
         .results.map((row) => row.uuid).sort()).toEqual(wanted);
       expect(await implicit.implicitProjectAdminUuids(companyUuid)).toEqual(expect.arrayContaining(wanted));
+    });
+  });
+
+  it.each([
+    { source: "missing", grants: "none" },
+    { source: "foreign", grants: "none" },
+    { source: "missing", grants: "viewer/editor" },
+    { source: "foreign", grants: "viewer/editor" },
+  ])("confirmed detach repairs a $source reference with $grants local grants while project Admin stays lazy", async ({ source, grants }) => {
+    const foreignGroup = await group(foreignCompanyUuid);
+    const foreignProject = await project("private", foreignGroup.uuid, foreignCompanyUuid);
+    await db.projectGroupMember.create({ data: {
+      companyUuid: foreignCompanyUuid, groupUuid: foreignGroup.uuid, userUuid: ids.foreign,
+      role: "admin", addedByUuid: ids.foreign,
+    } });
+    // Existing foreign audit data must survive the repair byte-for-byte too.
+    await db.comment.create({ data: {
+      companyUuid: foreignCompanyUuid, targetType: "project_group", targetUuid: foreignGroup.uuid,
+      authorType: "user", authorUuid: ids.foreign,
+      content: JSON.stringify({ action: "group_updated", name: foreignGroup.name }),
+    } });
+    await db.activity.create({ data: {
+      companyUuid: foreignCompanyUuid, projectUuid: foreignProject.uuid,
+      targetType: "project_group", targetUuid: foreignGroup.uuid,
+      actorType: "user", actorUuid: ids.foreign, action: "group_updated",
+      value: { name: foreignGroup.name },
+    } });
+    const sourceGroupUuid = source === "missing" ? randomUUID() : foreignGroup.uuid;
+    const orphan = await project("private", sourceGroupUuid);
+    if (grants === "viewer/editor") {
+      await db.project.update({ where: { uuid: orphan.uuid }, data: { createdByUuid: ids.later } });
+      await db.projectMember.create({ data: {
+        companyUuid, projectUuid: orphan.uuid, userUuid: ids.first, role: "viewer", addedByUuid: ids.later,
+      } });
+      await db.projectMember.create({ data: {
+        companyUuid, projectUuid: orphan.uuid, userUuid: ids.next, role: "editor", addedByUuid: ids.later,
+      } });
+    }
+    const projectBefore = await db.project.findUniqueOrThrow({ where: { uuid: orphan.uuid } });
+    const grantsBefore = await db.projectMember.findMany({ where: { companyUuid }, orderBy: { id: "asc" } });
+    const foreignBefore = await snapshot([foreignCompanyUuid]);
+    let preview!: Awaited<ReturnType<typeof movePreviews.getProjectGroupMovePreview>>;
+    await withoutWrites(async () => {
+      expect(await implicit.implicitProjectAdmin(companyUuid, orphan.uuid, accessClient)).toBe(ids.first);
+      expect((await access.computeProjectAccess(actor(), orphan.uuid)).level).toBe("admin");
+      preview = await movePreviews.getProjectGroupMovePreview(actor(), orphan.uuid, null);
+      expect(preview).toMatchObject({
+        projectUuid: orphan.uuid, sourceGroupUuid, groupUuid: null,
+        fromVisibility: "private", visibility: "private", companyAccess: "unchanged",
+        changes: [], requiresConfirmation: true,
+        summary: {
+          affectedUserCount: 0, gainedAccessCount: 0, lostAccessCount: 0,
+          increasedPermissionsCount: 0, decreasedPermissionsCount: 0, affectedProjectCount: 1,
+        },
+      });
+      expect(preview.confirmationToken).toMatch(/^[a-f0-9]{64}$/);
+      // A valid Admin token supplies neither another user's authority nor an
+      // implicit confirmation; rejected repairs must leave no project audit.
+      await expect(movePreviews.getProjectGroupMovePreview(actor("next"), orphan.uuid, null))
+        .rejects.toMatchObject({ status: grants === "none" ? 404 : 403 });
+      await expect(groups.moveProjectToGroup(companyUuid, orphan.uuid, null, actor("next"), preview.confirmationToken))
+        .rejects.toMatchObject({ status: grants === "none" ? 404 : 403 });
+      await expect(groups.moveProjectToGroup(companyUuid, orphan.uuid, null, foreignActor(), preview.confirmationToken))
+        .rejects.toMatchObject({ status: 403 });
+      await expect(groups.moveProjectToGroup(companyUuid, orphan.uuid, null, actor()))
+        .rejects.toMatchObject({ status: 409 });
+      await expect(groups.moveProjectToGroup(companyUuid, orphan.uuid, null, actor(), "0".repeat(64)))
+        .rejects.toMatchObject({ status: 409 });
+      expect(await db.activity.findMany({ where: { companyUuid } })).toEqual([]);
+      expect(await db.comment.findMany({ where: { companyUuid } })).toEqual([]);
+    });
+
+    expect(await groups.moveProjectToGroup(companyUuid, orphan.uuid, null, actor(), preview.confirmationToken))
+      .toEqual({ uuid: orphan.uuid, name: orphan.name, groupUuid: null, visibility: "private" });
+    await withoutWrites(async () => {
+      expect(await db.project.findUniqueOrThrow({ where: { uuid: orphan.uuid } })).toEqual({
+        ...projectBefore, groupUuid: null, updatedAt: expect.any(Date),
+      });
+      expect(await implicit.implicitProjectAdmin(companyUuid, orphan.uuid, accessClient)).toBe(ids.first);
+      expect((await access.computeProjectAccess(actor(), orphan.uuid)).level).toBe("admin");
+      expect((await access.computeProjectAccess(agent(), orphan.uuid)).level).toBe("admin");
+      expect((await access.computeProjectAccess(actor("next"), orphan.uuid)).level)
+        .toBe(grants === "none" ? "none" : "editor");
+      expect((await access.computeProjectAccess(foreignActor(), orphan.uuid)).project).toBeNull();
+      expect((await members.listMembers(actor(), orphan.uuid)).find((row) => row.userUuid === ids.first))
+        .toMatchObject({
+          role: "admin", directRole: grants === "none" ? null : "viewer",
+          inheritedRole: null, implicit: true, automaticAdmin: true,
+        });
+      expect(await db.projectMember.findMany({ where: { companyUuid }, orderBy: { id: "asc" } }))
+        .toEqual(grantsBefore);
+      expect(await db.projectGroup.findMany({ where: { companyUuid } })).toEqual([]);
+      expect(await db.projectGroupMember.findMany({ where: { companyUuid } })).toEqual([]);
+      expect(await snapshot([foreignCompanyUuid])).toEqual(foreignBefore);
+      if (source === "missing") {
+        expect(await db.projectGroup.findUnique({ where: { uuid: sourceGroupUuid } })).toBeNull();
+      }
+      expect(await db.comment.findMany({ where: { companyUuid } })).toEqual([]);
+      expect(await db.activity.findMany({ where: { companyUuid } })).toEqual([
+        expect.objectContaining({
+          companyUuid, projectUuid: orphan.uuid, targetType: "project", targetUuid: orphan.uuid,
+          actorType: "user", actorUuid: ids.first, action: "project_group_changed",
+          value: { groupUuid: null, visibility: "private" },
+        }),
+      ]);
     });
   });
 

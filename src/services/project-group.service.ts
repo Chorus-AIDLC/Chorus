@@ -317,7 +317,14 @@ export async function moveProjectToGroup(
     const preview = await getProjectGroupMovePreview(actor, projectUuid, targetGroupUuid, tx);
     if (preview.requiresConfirmation || confirmationToken !== undefined) assertAccessConfirmation(preview.confirmationToken, confirmationToken);
     if (locked.groupUuid === targetGroupUuid) return locked;
-    if (!targetGroupUuid && locked.groupUuid) await materializeGroupGrants(tx, actor, locked.groupUuid, projectUuid);
+    if (!targetGroupUuid && locked.groupUuid) {
+      const source = await tx.projectGroup.findFirst({
+        where: { companyUuid, uuid: locked.groupUuid }, select: { uuid: true },
+      });
+      // A stale/foreign reference has no inherited grants to snapshot. Removing
+      // it keeps local rows and the automatic project Admin lazy and unchanged.
+      if (source) await materializeGroupGrants(tx, actor, source.uuid, projectUuid);
+    }
     const updated = await tx.project.update({ where: { uuid: projectUuid }, data: { groupUuid: targetGroupUuid, visibility: preview.visibility } });
     for (const uuid of [...new Set([locked.groupUuid, targetGroupUuid].filter((u): u is string => !!u))]) {
       // Legacy assignments may reference a missing or another company's group.
