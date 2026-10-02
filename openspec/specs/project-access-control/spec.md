@@ -128,7 +128,7 @@ In a private project, only users with access and agents whose owner has access S
 - **THEN** the assignment is rejected
 
 ### Requirement: Access management UI
-The Project Settings modal SHALL provide an Access section where admins change visibility (with current access-impact previews and confirmation for both directions) and list, add, change the role of, and remove members; non-admins SHALL see it read-only. The member table SHALL show inherited and local grant provenance and effective roles; inherited grants MUST NOT be presented as removable or downgradable project memberships. The Create Project dialog SHALL offer the visibility choice. Private projects SHALL show a lock indicator wherever projects are listed. Viewers SHALL NOT be offered primary create/edit actions on project pages. All strings SHALL be localized (en, zh) and render correctly in light and dark themes.
+The Project Settings modal SHALL provide an Access section where admins change visibility (with current access-impact count summaries and confirmation for both directions) and list, add, change the role of, and remove members; non-admins SHALL see it read-only. The member table SHALL show inherited and local grant provenance and effective roles; inherited grants MUST NOT be presented as removable or downgradable project memberships. The Create Project dialog SHALL offer the visibility choice. Private projects SHALL show a lock indicator wherever projects are listed. Viewers SHALL NOT be offered primary create/edit actions on project pages. All strings SHALL be localized (en, zh) and render correctly in light and dark themes.
 
 #### Scenario: Admin adds a member
 - **WHEN** an admin opens Project Settings → Access, picks a company user and the Editor role, and confirms
@@ -137,6 +137,10 @@ The Project Settings modal SHALL provide an Access section where admins change v
 #### Scenario: Viewer sees read-only project
 - **WHEN** a viewer opens the private project's tasks page
 - **THEN** the tasks are listed and the create-task action is not offered
+
+#### Scenario: Compact project visibility impact
+- **WHEN** an Admin previews a project visibility change
+- **THEN** confirmation displays affected-user counts by access or permission effect rather than individual identities, and still submits the current server confirmation token
 
 ### Requirement: MCP access fields
 `chorus_get_project` SHALL include the project's `visibility` and the caller's `accessLevel`. `chorus_admin_create_project` SHALL accept an optional `visibility` parameter (default `public`).

@@ -1081,11 +1081,6 @@
     "convertPrivateHint": "그룹의 모든 공개 프로젝트가 비공개로 전환됩니다. 기존 프로젝트 권한은 유지되고 그룹 역할은 실시간으로 상속됩니다.",
     "convertPublicHint": "프로젝트의 공개 범위와 권한은 유지됩니다. 그룹을 공개해도 비공개 프로젝트는 공개되지 않습니다.",
     "membersDescription": "그룹 역할은 모든 하위 프로젝트에 실시간으로 적용됩니다. 프로젝트 권한은 그룹 역할보다 높은 권한을 추가할 수 있습니다.",
-    "initializeTitle": "그룹 권한 초기화",
-    "initializeHint": "기존 그룹에는 관리자가 자동으로 지정되지 않습니다. 초기화하면 첫 그룹 관리자가 되며 모든 하위 프로젝트를 관리할 권한이 필요합니다. 모든 비공개 프로젝트를 관리할 수 없다면 각 관리자에게 공통 관리자에 대한 프로젝트 Admin 권한 부여를 요청하세요.",
-    "initializeAction": "그룹 관리자로 초기화",
-    "initializing": "초기화 중…",
-    "initializeFailed": "초기화하지 못했습니다. 모든 비공개 하위 프로젝트 관리자에게 공통 관리자의 프로젝트 Admin 권한을 요청한 후 다시 시도하세요.",
     "loading": "그룹 권한 로딩 중…",
     "loadFailed": "그룹 권한을 불러오지 못했습니다.",
     "saveFailed": "그룹 설정을 저장하지 못했습니다.",
@@ -2035,6 +2030,23 @@
   },
   "accessImpact": {
     "title": "접근 권한 변경",
+    "affectedUsers": "{count, plural, other {사용자 #명이 영향을 받습니다.}}",
+    "noAffectedUsers": "영향을 받는 사용자가 없습니다.",
+    "overlapHint": "각 변경 유형의 사용자 수는 중복을 제외합니다. 한 사용자가 여러 변경 유형에 포함될 수 있습니다.",
+    "project": {
+      "gainedAccess": "{count, plural, other {사용자 #명이 이 프로젝트의 접근 권한을 얻습니다.}}",
+      "lostAccess": "{count, plural, other {사용자 #명이 이 프로젝트의 접근 권한을 잃습니다.}}",
+      "increasedPermissions": "{count, plural, other {사용자 #명의 권한이 높아집니다.}}",
+      "decreasedPermissions": "{count, plural, other {사용자 #명의 권한이 낮아집니다.}}",
+      "affectedProjects": "{count, plural, other {프로젝트 #개가 영향을 받습니다.}}"
+    },
+    "group": {
+      "gainedAccess": "{count, plural, other {사용자 #명이 그룹 또는 하위 프로젝트의 접근 권한을 얻습니다.}}",
+      "lostAccess": "{count, plural, other {사용자 #명이 그룹 또는 하위 프로젝트의 접근 권한을 잃습니다.}}",
+      "increasedPermissions": "{count, plural, other {사용자 #명의 그룹 또는 하위 프로젝트 권한이 높아집니다.}}",
+      "decreasedPermissions": "{count, plural, other {사용자 #명의 그룹 또는 하위 프로젝트 권한이 낮아집니다.}}",
+      "affectedProjects": "{count, plural, other {하위 프로젝트 #개가 영향을 받습니다.}}"
+    },
     "loading": "현재 접근 권한 변경 로딩 중…",
     "loadFailed": "권한 미리보기를 불러오지 못했습니다. 관리 권한을 확인한 후 다시 시도하세요.",
     "retry": "미리보기 다시 시도",

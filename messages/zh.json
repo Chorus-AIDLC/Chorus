@@ -1081,11 +1081,6 @@
     "convertPrivateHint": "此组所有公开项目将转为私有。现有项目授权保留，组角色实时继承。",
     "convertPublicHint": "项目保留当前可见性和授权。公开组不会公开私有项目。",
     "membersDescription": "组角色实时应用于每个子项目。项目授权可在组角色之上增加权限。",
-    "initializeTitle": "初始化组权限",
-    "initializeHint": "旧组没有自动分配管理员。初始化会将你设为首位组管理员，且要求你有权管理每个子项目。如果你不能管理所有私有项目，请先让各项目管理员授予一位共同管理员项目 Admin 权限。",
-    "initializeAction": "以组管理员身份初始化",
-    "initializing": "正在初始化…",
-    "initializeFailed": "初始化失败。请让所有私有子项目的管理员先授予一位共同管理员项目 Admin 权限，然后重试。",
     "loading": "正在加载组权限…",
     "loadFailed": "无法加载组权限。",
     "saveFailed": "无法保存组设置。",
@@ -2035,6 +2030,23 @@
   },
   "accessImpact": {
     "title": "访问权限变化",
+    "affectedUsers": "{count, plural, other {# 位用户受影响。}}",
+    "noAffectedUsers": "没有用户受影响。",
+    "overlapHint": "每类变化中的用户均已去重，同一用户可能涉及多类变化。",
+    "project": {
+      "gainedAccess": "{count, plural, other {# 位用户将获得此项目的访问权限。}}",
+      "lostAccess": "{count, plural, other {# 位用户将失去此项目的访问权限。}}",
+      "increasedPermissions": "{count, plural, other {# 位用户的权限将提升。}}",
+      "decreasedPermissions": "{count, plural, other {# 位用户的权限将降低。}}",
+      "affectedProjects": "{count, plural, other {# 个项目受影响。}}"
+    },
+    "group": {
+      "gainedAccess": "{count, plural, other {# 位用户将获得此组或某个子项目的访问权限。}}",
+      "lostAccess": "{count, plural, other {# 位用户将失去此组或某个子项目的访问权限。}}",
+      "increasedPermissions": "{count, plural, other {# 位用户在此组或某个子项目中的权限将提升。}}",
+      "decreasedPermissions": "{count, plural, other {# 位用户在此组或某个子项目中的权限将降低。}}",
+      "affectedProjects": "{count, plural, other {# 个子项目受影响。}}"
+    },
     "loading": "正在加载当前权限变化…",
     "loadFailed": "无法加载权限预览。请检查管理权限后重试。",
     "retry": "重试预览",

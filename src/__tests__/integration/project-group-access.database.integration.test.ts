@@ -372,29 +372,19 @@ describe.skipIf(!url)("Project group access — real PostgreSQL acceptance", () 
     expect((await grantGroup(winner, group.uuid, removed, "admin")).status).toBe(200);
   });
 
-  it("initializes legacy access only after the acting principal can manage every existing child", async () => {
+  it("rejects manual claims from every actor without changing legacy projects or grants", async () => {
     const legacy = await db.projectGroup.create({ data: { companyUuid, name: token } });
-    const first = await createProject("A", legacy.uuid, "private");
-    const second = await createProject("N", legacy.uuid, "private");
-    const initialize = () => invoke<Entity, { uuid: string }>(actor("A"), routes.group.PATCH,
-      `/api/project-groups/${legacy.uuid}`, { uuid: legacy.uuid }, "PATCH", { initializeAccess: true });
+    await createProject("A", legacy.uuid, "private");
+    await createProject("N", legacy.uuid, "private");
     const before = await db.project.findMany({ where: { groupUuid: legacy.uuid }, orderBy: { uuid: "asc" } });
-    expect([403, 404]).toContain((await initialize()).status);
+    const grants = await db.projectMember.findMany({ where: { projectUuid: { in: before.map((p) => p.uuid) } }, orderBy: { uuid: "asc" } });
+    for (const auth of [actor("A"), actor("N"), agent("A")]) {
+      expect((await invoke<Entity, { uuid: string }>(auth, routes.group.PATCH,
+        `/api/project-groups/${legacy.uuid}`, { uuid: legacy.uuid }, "PATCH", { initializeAccess: true })).status).toBe(422);
+    }
     expect(await db.projectGroupMember.count({ where: { groupUuid: legacy.uuid } })).toBe(0);
     expect(await db.project.findMany({ where: { groupUuid: legacy.uuid }, orderBy: { uuid: "asc" } })).toEqual(before);
-    expect((await invoke<Member, { uuid: string }>(actor("N"), routes.projectMembers.POST,
-      `/api/projects/${second.uuid}/members`, { uuid: second.uuid }, "POST",
-      { userUuid: ids.A, role: "admin" })).status).toBe(200);
-    const grants = await db.projectMember.findMany({
-      where: { projectUuid: { in: [first.uuid, second.uuid] } }, orderBy: { uuid: "asc" },
-    });
-    expect((await initialize()).status).toBe(200);
-    expect(await db.projectGroupMember.findMany({ where: { groupUuid: legacy.uuid } }))
-      .toEqual([expect.objectContaining({ userUuid: ids.A, role: "admin" })]);
-    expect(await db.projectMember.findMany({
-      where: { projectUuid: { in: [first.uuid, second.uuid] } }, orderBy: { uuid: "asc" },
-    })).toEqual(grants);
-    expect((await getProject("A", second.uuid)).data.accessLevel).toBe("admin");
+    expect(await db.projectMember.findMany({ where: { projectUuid: { in: before.map((p) => p.uuid) } }, orderBy: { uuid: "asc" } })).toEqual(grants);
   });
 
   it("rejects missing/stale publication with accompanying settings and retains both grant layers after confirmation", async () => {

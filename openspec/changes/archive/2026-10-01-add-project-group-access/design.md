@@ -10,7 +10,7 @@ Add `ProjectGroup.visibility` default public, nullable `createdByUuid`, an `acce
 
 An authorized project Admin can repair a historical missing/foreign-company group reference by confirming a move or detach. Preserve local grants and private visibility; only actual groups in the actor's company receive version updates and protected group audits. Destination authorization and locked confirmation remain unchanged.
 
-New group creation records the user's identity (agent→owner) and a group Admin atomically. Ownerless agents cannot create private groups or bootstrap access administration. Existing groups have no automatically assigned membership: this avoids granting access to existing private projects. A `initializeAccess` action on an existing public group requires management authorization on every contained project and creates the acting principal as first group Admin in a locked transaction. If no single actor has that authority, project admins must first arrange a suitable common administrator using existing member management. Initialized groups cannot lose their last Admin.
+New group creation records the user's identity (agent→owner) and a group Admin atomically. Ownerless agents cannot create private groups. Per human correction `482b8da8-27ed-47a3-b316-ba0690b38ab6` (2026-10-02), every historical group without a creator record automatically receives its company's first user as Admin, using the same earliest-createdAt/lowest-id rule as existing projects. The additive `20261002025900_backfill_legacy_group_admin` migration leaves the deployed group migration unchanged, retains existing Admins and other grants, promotes an existing first-user grant when needed, and records the first user as creator while bumping accessVersion. Groups with a recorded creator retain their current creator and grants; companies without users are skipped. The data backfill is idempotent. UI and MCP no longer offer manual initialization; REST rejects retired initialization requests without mutation. Groups cannot lose their last Admin. The first-user inherited Admin access is explicitly authorized by this human correction, replacing the earlier manual common-Admin design.
 
 ### D2: Shared access contracts
 
@@ -40,13 +40,13 @@ REST contracts:
 
 - POST `/api/project-groups`: existing fields plus visibility; creator Admin.
 - GET `/api/project-groups/:uuid`: discovery-filtered data plus visibility/accessLevel/canManage/canCreateProject/accessInitialized.
-- PATCH same: existing settings; initializeAccess; visibility with confirmationToken.
+- PATCH same: existing settings; visibility with confirmationToken; retired initializeAccess requests return validation errors without writes.
 - GET `/api/project-groups/:uuid/access-preview?visibility=...`: preview.
 - GET/POST `/api/project-groups/:uuid/members`; PATCH/DELETE `/members/:userUuid`: explicit group roles and Admin-gated mutations. Member list requires explicit membership; project-only discovery does not expose the group roster.
 - GET `/api/projects/:uuid/group/preview?groupUuid=...` and PATCH `/group`: protected move and matching confirmationToken.
 - DELETE group: Admin and per-project management checks; retaining private projects materializes max-role memberships before ungrouping atomically; deleting projects uses existing cascade semantics.
 
-Existing MCP group create/update/delete/move tools gain the necessary visibility/initializeAccess/preview/confirmation parameters or preview mode. They invoke the same services and require existing capability bits. Extend MCP group-get/list/dashboard/search gates; no hand-coded alternate permission resolver.
+Existing MCP group create/update/delete/move tools gain the necessary visibility/preview/confirmation parameters or preview mode. They invoke the same services and require existing capability bits. Extend MCP group-get/list/dashboard/search gates; no hand-coded alternate permission resolver.
 
 Public collaboration tools preserve participation by developer agents: comments require the target resource's read capability and project Editor access, and elaboration answers require idea:read and project Editor. They do not require the target's write capability. Hidden resources and Viewer writes remain denied before handler execution or presence.
 
@@ -68,13 +68,13 @@ Replace project-only membership enumerations in notifications, mentions, assignm
 
 ### D6: UI and validation
 
-Group create/manage UI uses existing shadcn dialogs and controls. Add access/member controls and preview/confirmation, with read-only treatment of basic-only visitors. Authorized impact previews display same-company user names/emails with a UUID fallback. Inherited member rows have source labels and no remove/downgrade controls; project local grants can only add effective privileges. Group and private project lock badges wrap without overflow at 320/390px, and every locale receives matching strings. Creation and move dialogs derive permitted choices from server data.
+Group create/manage UI uses existing shadcn dialogs and controls. Add access/member controls and preview/confirmation, with read-only treatment of basic-only visitors. Per the same human correction, impact previews display concise counts: distinct affected people, gained/lost access, increased/decreased permissions and affected projects. Each person is deduplicated per effect across group and child resources; categories can overlap and their counts are not additive. Group summaries include basic group discovery/editing changes, including empty groups and retained project-only discovery. No individual name, email, UUID, or per-child list is rendered. Existing authorized API diffs remain for compatibility; the new summary is presentation-only and does not weaken locked permission or confirmation checks. Inherited member rows have source labels and no remove/downgrade controls; project local grants can only add effective privileges. Group and private project lock badges wrap without overflow at 320/390px, and every locale receives matching strings. Creation and move dialogs derive permitted choices from server data.
 
 Unit/service/API/MCP coverage accompanies each owning task. Final real-DB integration tests run with PostgreSQL, exercise actual service queries and route/tool behavior, and include competing last-admin changes, membership versus movement/conversion, stale previews, group-only inherited roles, project-only grants, Public→Private rollback and retained configurations. Run TypeScript, lint, appropriate package contracts, and the full relevant test suite. Browser acceptance covers Admin/Editor/Viewer/project-only/outsider in light and dark at mobile and desktop.
 
 ## Risks and scope
 
-The main risks are implicit Public editor access being inherited into private projects, private group metadata leaked by projectless events/search, and stale authorization during concurrent mutations. Explicit grant-only inheritance, shared queries and locked confirmations address these. Upgrade preserves raw existing project configuration; legacy group access initialization is explicit. This feature does not add a company-admin role, invite workflow, per-agent memberships, or arbitrary project deny overrides.
+The main risks are implicit Public editor access being inherited into private projects, private group metadata leaked by projectless events/search, and stale authorization during concurrent mutations. Explicit grant-only inheritance, shared queries and locked confirmations address these. Upgrade preserves raw existing project configuration; legacy group Admin assignment is automatic using the authorized first-user rule. This feature does not add a company-admin role, invite workflow, per-agent memberships, or arbitrary project deny overrides.
 
 ## Approved implementation exception
 

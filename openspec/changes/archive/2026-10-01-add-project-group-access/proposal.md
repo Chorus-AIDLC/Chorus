@@ -9,7 +9,7 @@ Project access already supports Public/Private and Viewer/Editor/Admin, but grou
 - Permit project-only members to discover the private group's basic information and only the projects, activities and aggregates they can access. They receive no group management authority.
 - Enforce that private groups contain only private projects. Public→Private converts all public projects atomically after an access-impact preview and confirmation. Private→Public retains project visibility and both grant layers.
 - Provide group member/visibility management, inherited membership provenance, group lock badges and creation/move restrictions in mobile and both themes.
-- Preserve existing project visibility, grouping and membership rows. Existing groups remain public; legacy group administration is initialized explicitly, only by an actor authorized to administer every private project in that group.
+- Preserve existing project visibility, grouping and membership rows. Existing groups remain public; historical groups automatically assign their company's first user as Admin, matching existing projects, with no manual claim step. Visibility confirmation shows compact unique-person impact counts rather than individual change lists (human correction482b8da8-27ed-47a3-b316-ba0690b38ab6).
 - Preserve effective private memberships on ungrouping or deleting a group while retaining projects; check source/target administration and confirm access changes on boundary moves.
 
 ## Capabilities

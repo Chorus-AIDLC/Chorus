@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AgentAuthContext } from "@/types/auth";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { ZodType } from "zod";
 
 const fixture = vi.hoisted(() => ({
   explicitRole: null as string | null,
@@ -35,10 +36,11 @@ type Handler = (params: Record<string, unknown>) => Promise<CallToolResult>;
 function register(permissions: AgentAuthContext["permissions"] = ["project:read", "project:write"], ownerUuid: string | null = "owner") {
   const auth: AgentAuthContext = { type: "agent", companyUuid: "company", actorUuid: "agent", ownerUuid: ownerUuid ?? undefined, roles: [], permissions, agentName: "A" };
   const handlers: Record<string, Handler> = {};
-  const server = { registerTool: (name: string, _meta: unknown, handler: Handler) => { handlers[name] = handler; } } as unknown as McpServer;
+  const schemas: Record<string, ZodType> = {};
+  const server = { registerTool: (name: string, meta: { inputSchema: ZodType }, handler: Handler) => { handlers[name] = handler; schemas[name] = meta.inputSchema; } } as unknown as McpServer;
   enablePresence(server, auth);
   registerAdminTools(server, auth);
-  return { handlers, auth };
+  return { handlers, auth, schemas };
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -76,10 +78,11 @@ describe("existing MCP group administration contracts", () => {
     expect(fixture.groups.updateProjectGroup).toHaveBeenCalledWith(expect.objectContaining({ auth, visibility: "public", confirmationToken: "visibility-token" }));
   });
 
-  it("passes explicit initialization to the guarded shared service", async () => {
-    const { handlers, auth } = register();
-    await handlers.chorus_admin_update_project_group({ groupUuid: "group", initializeAccess: true });
-    expect(fixture.groups.updateProjectGroup).toHaveBeenCalledWith(expect.objectContaining({ auth, initializeAccess: true }));
+  it("rejects the retired manual initialization parameter at the tool schema", () => {
+    const { schemas } = register();
+    expect(schemas.chorus_admin_update_project_group.safeParse({ groupUuid: "group", initializeAccess: true }).success).toBe(false);
+    expect(schemas.chorus_admin_update_project_group.safeParse({ groupUuid: "group", name: "Renamed" }).success).toBe(true);
+    expect(fixture.groups.updateProjectGroup).not.toHaveBeenCalled();
   });
 
   it("previews a move separately and forwards the authenticated confirmation", async () => {

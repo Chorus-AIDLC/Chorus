@@ -11,13 +11,12 @@ vi.mock("@/lib/auth-client", () => ({ authFetch }));
 vi.mock("@/hooks/use-progress-router", () => ({ useRouter: () => ({ refresh, push }) }));
 vi.mock("next-intl", async () => {
   const en = (await import("../../../messages/en.json")).default;
+  const { createTranslator } = await vi.importActual<typeof import("next-intl")>("next-intl");
   const cache = new Map();
   return { useTranslations: (namespace = "") => {
-    if (!cache.has(namespace)) cache.set(namespace, (key: string, values: Record<string, string> = {}) => {
-      let value: unknown = en;
-      for (const part of (namespace ? `${namespace}.${key}` : key).split(".")) value = (value as Record<string, unknown>)?.[part];
-      return typeof value === "string" ? value.replace(/\{(\w+)\}/g, (_, name) => values[name] ?? `{${name}}`) : key;
-    });
+    if (!cache.has(namespace)) cache.set(namespace, createTranslator({
+      locale: "en", messages: en, namespace: namespace ? namespace as keyof typeof en : undefined,
+    }));
     return cache.get(namespace);
   } };
 });
@@ -69,7 +68,7 @@ describe("group access dialogs", () => {
   });
 
   it("shows a group Viewer only the roster and read-only access", async () => {
-    authFetch.mockResolvedValue(ok({ ...group, visibility: "private", accessLevel: "viewer", explicitRole: "viewer", canManage: false }));
+    authFetch.mockResolvedValue(ok({ ...group, visibility: "private", accessLevel: "viewer", explicitRole: "viewer", canManage: false, accessInitialized: false }));
     fetchMock.mockResolvedValue(ok({ members: [{ uuid: "m", userUuid: "u", name: "Alice", role: "admin", createdAt: "now" }] }));
     manage();
     expect(await screen.findByText("Alice")).toBeInTheDocument();
@@ -80,7 +79,7 @@ describe("group access dialogs", () => {
   });
 
   it("keeps Public-group explicit Viewer membership separate from the editor baseline", async () => {
-    authFetch.mockResolvedValue(ok({ ...group, explicitRole: "viewer" }));
+    authFetch.mockResolvedValue(ok({ ...group, explicitRole: "viewer", accessInitialized: false }));
     fetchMock.mockResolvedValue(ok({ members: [{ uuid: "m", userUuid: "u", name: "Alice", role: "admin", createdAt: "now" }] }));
     manage();
     await screen.findByText("Alice");
@@ -90,32 +89,66 @@ describe("group access dialogs", () => {
     expect(screen.queryByRole("button", { name: "Remove Alice" })).not.toBeInTheDocument();
   });
 
-  it("requires explicit initialization and explains how to arrange a common Admin", async () => {
-    authFetch.mockImplementation(async (_url, init) => {
-      if (init?.method === "PATCH") return new Response(JSON.stringify({ success: false }), { status: 403 });
-      return ok({ ...group, accessInitialized: false });
-    });
+  it.each([false, true, undefined])("keeps a group without an explicit Admin read-only without a claim action (accessInitialized=%s)", async (accessInitialized) => {
+    authFetch.mockResolvedValue(ok({ ...group, accessInitialized }));
     const user = userEvent.setup();
     manage();
-    expect(await screen.findByText(/Legacy groups have no automatic Admin/)).toHaveTextContent("common administrator");
+    expect(await screen.findByTestId("group-access-tab")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^Private/ })).toBeDisabled();
+    expect(screen.queryByText("Members")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Initialize|claim/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete this group" })).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Initialize as group Admin" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("grant a common administrator project Admin access");
-    expect(authFetch.mock.calls.filter(([, init]) => init?.method === "PATCH")[0][1].body).toBe(JSON.stringify({ initializeAccess: true }));
+    await user.click(screen.getByRole("radio", { name: /^Private/ }));
+    expect(authFetch.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("loads Admin controls after successful explicit initialization", async () => {
-    let initialized = false;
-    authFetch.mockImplementation(async (_url, init) => {
-      if (init?.method === "PATCH") initialized = true;
-      return ok({ ...group, accessInitialized: initialized, accessLevel: initialized ? "admin" : "editor", explicitRole: initialized ? "admin" : null });
+  it.each([false, true, undefined])("automatically loads Admin controls from the explicit role (accessInitialized=%s)", async (accessInitialized) => {
+    authFetch.mockResolvedValue(ok({ ...group, accessInitialized, accessLevel: "admin", explicitRole: "admin" }));
+    manage();
+    await waitFor(() => expect(screen.getByRole("radio", { name: /^Private/ })).toBeEnabled());
+    expect(await screen.findByRole("button", { name: "Delete this group" })).toBeEnabled();
+    expect(await screen.findByRole("combobox", { name: "Select a user" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Initialize|claim/i })).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/project-groups/group/members", undefined);
+    expect(authFetch.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(0);
+  });
+
+  it("confirms group visibility with aggregate counts and the original preview token", async () => {
+    authFetch.mockResolvedValue(ok({ ...group, accessLevel: "admin", explicitRole: "admin" }));
+    fetchMock.mockImplementation(async (url, init) => {
+      if (url.endsWith("/members")) return ok({ members: [] });
+      if (init?.method === "PATCH") return ok({ ...group, visibility: "private" });
+      return ok({
+        confirmationToken: "group-summary-token", companyAccess: "closed",
+        summary: {
+          affectedUserCount: 2, gainedAccessCount: 0, lostAccessCount: 2,
+          increasedPermissionsCount: 0, decreasedPermissionsCount: 0, affectedProjectCount: 1,
+        },
+        projects: [{
+          projectUuid: "private-child-uuid", name: "Private Child Name", companyAccess: "closed",
+          changes: [{ userUuid: "private-user-uuid", name: "Private Person", email: "private@example.com", beforeRole: "editor", afterRole: "none" }],
+        }],
+      });
     });
     const user = userEvent.setup();
     manage();
-    await user.click(await screen.findByRole("button", { name: "Initialize as group Admin" }));
-    await waitFor(() => expect(screen.getByRole("radio", { name: /^Private/ })).toBeEnabled());
-    expect(await screen.findByRole("button", { name: "Delete this group" })).toBeEnabled();
-    expect(fetchMock).toHaveBeenCalledWith("/api/project-groups/group/members", undefined);
+    await user.click(await screen.findByRole("radio", { name: /^Private/ }));
+    const impact = await screen.findByTestId("access-impact-preview");
+    expect(impact).toHaveTextContent("2 users affected.");
+    expect(impact).toHaveTextContent("2 users lose access to the group or a child project.");
+    expect(impact).toHaveTextContent("1 child project affected.");
+    for (const value of ["private-child-uuid", "Private Child Name", "private-user-uuid", "Private Person", "private@example.com"]) {
+      expect(impact.innerHTML).not.toContain(value);
+    }
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Change visibility" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/project-groups/group", expect.objectContaining({
+      method: "PATCH", body: JSON.stringify({ visibility: "private", confirmationToken: "group-summary-token" }),
+    })));
   });
 
   it("saves description edits through the labeled shadcn textarea", async () => {

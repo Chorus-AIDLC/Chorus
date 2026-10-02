@@ -4,7 +4,7 @@ import type { AuthContext } from "@/types/auth";
 
 vi.mock("@/lib/prisma", async () => ({ prisma: (await import("./project-group.fixture")).fixture.prisma }));
 
-import { accessConfirmationToken, getProjectVisibilityPreview } from "@/services/project-access-preview.service";
+import { accessConfirmationToken, getProjectVisibilityPreview, summarizeAccessChanges } from "@/services/project-access-preview.service";
 import { getGroupVisibilityPreview, getProjectGroupMovePreview } from "@/services/project-group-preview.service";
 
 const previews = [
@@ -32,6 +32,88 @@ beforeEach(() => {
       .sort((a, b) => a.uuid.localeCompare(b.uuid))
       .map((user) => Object.fromEntries(Object.keys(select).filter((key) => select[key]).map((key) => [key, user[key]]))),
   );
+});
+
+describe("compact impact summaries", () => {
+  it("deduplicates users across resources and counts each kind of effect", () => {
+    expect(summarizeAccessChanges([
+      { userUuid: "loss", beforeRole: "editor", afterRole: "none" },
+      { userUuid: "loss", beforeRole: "viewer", afterRole: "none" },
+      { userUuid: "gain", beforeRole: "none", afterRole: "viewer" },
+      { userUuid: "raise", beforeRole: "viewer", afterRole: "admin" },
+      { userUuid: "lower", beforeRole: "admin", afterRole: "editor" },
+      { userUuid: "lower", beforeRole: "editor", afterRole: "none" },
+      { userUuid: "same", beforeRole: "admin", afterRole: "admin" },
+    ], 3)).toEqual({
+      affectedUserCount: 4, gainedAccessCount: 1, lostAccessCount: 2,
+      increasedPermissionsCount: 1, decreasedPermissionsCount: 1, affectedProjectCount: 3,
+    });
+  });
+
+  it("counts group discovery loss even when the group has no child projects", async () => {
+    fixture.state.project = [];
+    const impact = await getGroupVisibilityPreview(auth(), "source", "private");
+    expect(impact.projects).toEqual([]);
+    expect(impact.summary).toEqual({
+      affectedUserCount: 4, gainedAccessCount: 0, lostAccessCount: 3,
+      increasedPermissionsCount: 0, decreasedPermissionsCount: 1, affectedProjectCount: 0,
+    });
+  });
+
+  it("deduplicates a user's group and child losses and retains project-only discovery", async () => {
+    project("q", "source", "public");
+    localMember("p", "local", "viewer");
+    const impact = await getGroupVisibilityPreview(auth(), "source", "private");
+    expect(impact.summary).toEqual({
+      affectedUserCount: 4, gainedAccessCount: 0, lostAccessCount: 3,
+      increasedPermissionsCount: 0, decreasedPermissionsCount: 2, affectedProjectCount: 2,
+    });
+    // local loses q but retains p and basic group visibility, so also loses
+    // the public editing baseline rather than being reported as hidden entirely.
+    expect(impact.projects[0].changes).toContainEqual(expect.objectContaining({
+      userUuid: "local", beforeRole: "editor", afterRole: "viewer",
+    }));
+  });
+
+  it("counts company access opening while private child projects remain private", async () => {
+    fixture.state.projectGroup.find((group) => group.uuid === "source")!.visibility = "private";
+    fixture.state.project[0].visibility = "private";
+    const impact = await getGroupVisibilityPreview(auth(), "source", "public");
+    expect(impact.summary).toEqual({
+      affectedUserCount: 4, gainedAccessCount: 3, lostAccessCount: 0,
+      increasedPermissionsCount: 1, decreasedPermissionsCount: 0, affectedProjectCount: 0,
+    });
+    expect(impact.projects[0].visibility).toBe("private");
+  });
+
+  it("counts settings permission changes for an Editor whose role is unchanged", async () => {
+    groupMember("source", "editor", "editor");
+    fixture.state.project = [];
+    const closed = await getGroupVisibilityPreview(auth(), "source", "private");
+    expect(closed.summary).toEqual({
+      affectedUserCount: 4, gainedAccessCount: 0, lostAccessCount: 2,
+      increasedPermissionsCount: 0, decreasedPermissionsCount: 2, affectedProjectCount: 0,
+    });
+    fixture.state.projectGroup.find((group) => group.uuid === "source")!.visibility = "private";
+    const opened = await getGroupVisibilityPreview(auth(), "source", "public");
+    expect(opened.summary).toEqual({
+      affectedUserCount: 4, gainedAccessCount: 2, lostAccessCount: 0,
+      increasedPermissionsCount: 2, decreasedPermissionsCount: 0, affectedProjectCount: 0,
+    });
+  });
+
+  it("returns a zero summary for no-op previews and one affected project for conversion", async () => {
+    const same = await getProjectVisibilityPreview(auth(), "p", "public");
+    expect(same.summary).toEqual({
+      affectedUserCount: 0, gainedAccessCount: 0, lostAccessCount: 0,
+      increasedPermissionsCount: 0, decreasedPermissionsCount: 0, affectedProjectCount: 0,
+    });
+    const convert = await getProjectVisibilityPreview(auth(), "p", "private");
+    expect(convert.summary).toEqual({
+      affectedUserCount: 4, gainedAccessCount: 0, lostAccessCount: 3,
+      increasedPermissionsCount: 0, decreasedPermissionsCount: 1, affectedProjectCount: 1,
+    });
+  });
 });
 
 describe.each(previews)("$name preview identities", ({ get }) => {

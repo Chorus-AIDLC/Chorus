@@ -32,7 +32,6 @@ export interface ProjectGroupUpdateParams {
   name?: string;
   description?: string | null;
   visibility?: ProjectVisibility;
-  initializeAccess?: boolean;
   confirmationToken?: string;
   auth?: AuthContext;
 }
@@ -153,21 +152,7 @@ export async function updateProjectGroup(params: ProjectGroupUpdateParams, auth?
     const projects = await tx.project.findMany({ where: { companyUuid: params.companyUuid, groupUuid: params.groupUuid }, select: { uuid: true }, orderBy: { uuid: "asc" } });
     const projectUuids = projects.map((p) => p.uuid);
     await lockProjects(tx, params.companyUuid, projectUuids);
-    if (params.initializeAccess) {
-      if (current.accessInitialized) throw new ApiError("CONFLICT", "Group access is already initialized", 409);
-      const principal = membershipPrincipal(actor);
-      if (!principal) throw new ApiError("BAD_REQUEST", "Access initialization requires an owner", 400);
-      if (!await tx.user.findFirst({ where: { companyUuid: params.companyUuid, uuid: principal }, select: { uuid: true } })) throw new ApiError("NOT_FOUND", "User not found", 404);
-      // Becoming group Admin grants Admin to every child, including public ones.
-      // Require an explicit common child Admin rather than public editor access.
-      for (const project of projects) {
-        const child = await computeProjectAccess(actor, project.uuid, tx);
-        if (!child.project) throw new ProjectNotFoundError();
-        if (!levelAtLeast(child.level, "admin")) throw new ProjectAccessDeniedError("Initialization requires Admin on every child project");
-      }
-      await tx.projectGroupMember.create({ data: { companyUuid: params.companyUuid, groupUuid: params.groupUuid, userUuid: principal, role: "admin", addedByUuid: principal } });
-    }
-    let accessChanged = !!params.initializeAccess;
+    let accessChanged = false;
     if (params.visibility !== undefined) {
       // Validate supplied tokens even when another conversion already committed.
       const preview = await getGroupVisibilityPreview(actor, params.groupUuid, params.visibility, tx);
@@ -183,7 +168,7 @@ export async function updateProjectGroup(params: ProjectGroupUpdateParams, auth?
       ...(params.visibility !== undefined ? { visibility: params.visibility } : {}),
       ...(accessChanged ? { accessVersion: { increment: 1 } } : {}),
     } });
-    await auditGroup(tx, actor, params.groupUuid, projectUuids, params.initializeAccess ? "group_access_initialized" : "group_updated", {
+    await auditGroup(tx, actor, params.groupUuid, projectUuids, "group_updated", {
       ...(params.visibility !== undefined ? { beforeVisibility: current.visibility, visibility: params.visibility } : {}),
       ...(params.name !== undefined ? { name: params.name } : {}),
       ...(params.description !== undefined ? { description: params.description } : {}),

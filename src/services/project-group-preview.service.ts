@@ -2,12 +2,12 @@ import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api-handler";
 import type { AuthContext } from "@/types/auth";
 import {
-  computeProjectAccess, isProjectVisibility, levelAtLeast, membershipPrincipal,
+  computeProjectAccess, isProjectMemberRole, isProjectVisibility, levelAtLeast, membershipPrincipal,
   ProjectAccessDeniedError, ProjectNotFoundError, resolveInheritedAccessLevel,
   type ProjectAccessClient, type ProjectVisibility,
 } from "@/services/project-access.service";
 import { GroupNotFoundError, requireGroupOperation } from "@/services/project-group-access.service";
-import { accessConfirmationToken, roleRaises, type AccessRoleChange } from "@/services/project-access-preview.service";
+import { accessConfirmationToken, roleRaises, summarizeAccessChanges, type AccessImpactSummary, type AccessRoleChange } from "@/services/project-access-preview.service";
 
 export interface GroupProjectAccessImpact {
   projectUuid: string;
@@ -23,12 +23,14 @@ export interface GroupVisibilityPreview {
   visibility: ProjectVisibility;
   companyAccess: "opened" | "closed" | "unchanged";
   projects: GroupProjectAccessImpact[];
+  summary: AccessImpactSummary;
   confirmationToken: string;
 }
 export interface ProjectGroupMovePreview extends GroupProjectAccessImpact {
   sourceGroupUuid: string | null;
   groupUuid: string | null;
   requiresConfirmation: boolean;
+  summary: AccessImpactSummary;
   confirmationToken: string;
 }
 
@@ -51,21 +53,46 @@ export async function getGroupVisibilityPreview(
     select: { projectUuid: true, userUuid: true, role: true }, orderBy: [{ projectUuid: "asc" }, { userUuid: "asc" }],
   });
   const groupRoles = new Map(inherited.map((m) => [m.userUuid, m.role]));
+  const beforeChildAccess = new Set<string>();
+  const afterChildAccess = new Set<string>();
   const impacts = projects.map((p) => {
     const after = visibility === "private" ? "private" : p.visibility;
     const local = new Map(direct.filter((m) => m.projectUuid === p.uuid).map((m) => [m.userUuid, m.role]));
     const changes = users.flatMap((u) => {
       const beforeRole = resolveInheritedAccessLevel(p.visibility, local.get(u.uuid) ?? null, groupRoles.get(u.uuid) ?? null);
       const afterRole = resolveInheritedAccessLevel(after, local.get(u.uuid) ?? null, groupRoles.get(u.uuid) ?? null);
+      if (beforeRole !== "none") beforeChildAccess.add(u.uuid);
+      if (afterRole !== "none") afterChildAccess.add(u.uuid);
       return beforeRole === afterRole ? [] : [{
         userUuid: u.uuid, name: u.name ?? null, email: u.email ?? null, beforeRole, afterRole,
       }];
     });
     return { projectUuid: p.uuid, name: p.name, fromVisibility: p.visibility, visibility: after, companyAccess: companyAccess(p.visibility, after), changes };
   });
+  const groupChanges = users.flatMap((user) => {
+    const role = groupRoles.get(user.uuid);
+    const explicit = isProjectMemberRole(role) ? role : null;
+    // Project-only discovery keeps basic group access after company access closes.
+    const beforeRole = group.visibility === "public" ? explicit === "admin" ? "admin" : "editor"
+      : explicit ?? (beforeChildAccess.has(user.uuid) ? "viewer" : "none");
+    const afterRole = visibility === "public" ? explicit === "admin" ? "admin" : "editor"
+      : explicit ?? (afterChildAccess.has(user.uuid) ? "viewer" : "none");
+    return beforeRole === afterRole ? [] : [{ userUuid: user.uuid, beforeRole, afterRole }];
+  });
+  // An explicit Editor retains the same role, but public group settings
+  // editing is available company-wide and private settings require Admin.
+  const settingsChanges = group.visibility === visibility ? [] : users.flatMap((user) =>
+    groupRoles.get(user.uuid) === "editor"
+      ? [{ userUuid: user.uuid, increased: visibility === "public" }]
+      : []);
   return {
     groupUuid, fromVisibility: group.visibility, visibility,
     companyAccess: companyAccess(group.visibility, visibility), projects: impacts,
+    summary: summarizeAccessChanges(
+      [...groupChanges, ...impacts.flatMap((project) => project.changes)],
+      impacts.filter((project) => project.fromVisibility !== project.visibility || project.changes.length > 0).length,
+      settingsChanges,
+    ),
     confirmationToken: accessConfirmationToken({
       operation: "group_visibility", companyUuid: auth.companyUuid,
       principal: membershipPrincipal(auth), actorType: auth.type, actorUuid: auth.actorUuid,
@@ -128,6 +155,7 @@ export async function getProjectGroupMovePreview(
     projectUuid, name: project.name, sourceGroupUuid: project.groupUuid, groupUuid,
     fromVisibility: project.visibility, visibility: afterVisibility,
     companyAccess: companyAccess(project.visibility, afterVisibility), changes,
+    summary: summarizeAccessChanges(changes, project.groupUuid !== groupUuid || project.visibility !== afterVisibility ? 1 : 0),
     requiresConfirmation: changes.length > 0 || project.visibility !== afterVisibility || (privateBoundary && project.groupUuid !== groupUuid),
     confirmationToken: accessConfirmationToken({
       operation: "project_group_move", companyUuid: auth.companyUuid,

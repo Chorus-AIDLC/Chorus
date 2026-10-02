@@ -16,6 +16,44 @@ export interface AccessRoleChange {
   afterRole: string;
 }
 
+export interface AccessImpactSummary {
+  affectedUserCount: number;
+  gainedAccessCount: number;
+  lostAccessCount: number;
+  increasedPermissionsCount: number;
+  decreasedPermissionsCount: number;
+  affectedProjectCount: number;
+}
+
+/** Count people once per impact type, even when several resources change. */
+export function summarizeAccessChanges(
+  changes: AccessRoleChange[], affectedProjectCount = 0,
+  permissionChanges: Array<{ userUuid: string; increased: boolean }> = [],
+): AccessImpactSummary {
+  const affected = new Set<string>();
+  const gained = new Set<string>();
+  const lost = new Set<string>();
+  const increased = new Set<string>();
+  const decreased = new Set<string>();
+  for (const change of changes) {
+    if (change.beforeRole === change.afterRole) continue;
+    affected.add(change.userUuid);
+    if (change.beforeRole === "none") gained.add(change.userUuid);
+    else if (change.afterRole === "none") lost.add(change.userUuid);
+    else if (roleRaises(change.beforeRole, change.afterRole)) increased.add(change.userUuid);
+    else decreased.add(change.userUuid);
+  }
+  for (const change of permissionChanges) {
+    affected.add(change.userUuid);
+    (change.increased ? increased : decreased).add(change.userUuid);
+  }
+  return {
+    affectedUserCount: affected.size, gainedAccessCount: gained.size,
+    lostAccessCount: lost.size, increasedPermissionsCount: increased.size,
+    decreasedPermissionsCount: decreased.size, affectedProjectCount,
+  };
+}
+
 export interface ProjectVisibilityPreview {
   projectUuid: string;
   name: string;
@@ -23,6 +61,7 @@ export interface ProjectVisibilityPreview {
   visibility: ProjectVisibility;
   companyAccess: "opened" | "closed" | "unchanged";
   changes: AccessRoleChange[];
+  summary: AccessImpactSummary;
   confirmationToken: string;
 }
 
@@ -110,6 +149,7 @@ export async function getProjectVisibilityPreview(
     projectUuid, name: project.name, fromVisibility: project.visibility, visibility,
     companyAccess: project.visibility === visibility ? "unchanged" : visibility === "public" ? "opened" : "closed",
     changes,
+    summary: summarizeAccessChanges(changes, project.visibility !== visibility ? 1 : 0),
     confirmationToken: accessConfirmationToken({
       operation: "project_visibility", companyUuid: auth.companyUuid,
       principal: membershipPrincipal(auth), actorType: auth.type, actorUuid: auth.actorUuid,

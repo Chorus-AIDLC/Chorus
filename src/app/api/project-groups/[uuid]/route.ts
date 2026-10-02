@@ -42,9 +42,9 @@ export const PATCH = withErrorHandler(
     }
 
     const { uuid } = await context.params;
-    const body = await parseBody<{ name?: string; description?: string; visibility?: ProjectVisibility; initializeAccess?: boolean; confirmationToken?: string }>(request);
+    const body = await parseBody<{ name?: string; description?: string; visibility?: ProjectVisibility; initializeAccess?: unknown; confirmationToken?: string }>(request);
     if (body.visibility !== undefined && !isProjectVisibility(body.visibility)) return errors.validationError({ visibility: "Invalid visibility" });
-    if (body.initializeAccess !== undefined && typeof body.initializeAccess !== "boolean") return errors.validationError({ initializeAccess: "Must be a boolean" });
+    if (body.initializeAccess !== undefined) return errors.validationError({ initializeAccess: "Legacy group Admins are assigned automatically; manual initialization is unsupported" });
     if (body.name !== undefined && (typeof body.name !== "string" || !body.name.trim())) return errors.validationError({ name: "Name is required" });
 
     const group = await updateProjectGroup({
@@ -53,7 +53,6 @@ export const PATCH = withErrorHandler(
       name: body.name?.trim(),
       description: body.description?.trim(),
       visibility: body.visibility,
-      initializeAccess: body.initializeAccess,
       confirmationToken: body.confirmationToken,
     }, auth);
 

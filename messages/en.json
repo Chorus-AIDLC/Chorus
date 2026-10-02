@@ -1081,11 +1081,6 @@
     "convertPrivateHint": "All public projects in this group will become private. Existing project grants remain and group roles are inherited live.",
     "convertPublicHint": "Projects keep their current visibility and grants. Opening the group does not publish private projects.",
     "membersDescription": "Group roles apply live to every child project. Project grants can add privileges above this role.",
-    "initializeTitle": "Initialize group access",
-    "initializeHint": "Legacy groups have no automatic Admin. Initialization makes you the first group Admin and requires authority to manage every child project. If you cannot administer every private project, ask their Admins to grant a common administrator project Admin access first.",
-    "initializeAction": "Initialize as group Admin",
-    "initializing": "Initializing...",
-    "initializeFailed": "Initialization failed. Ask the Admins of all private child projects to grant a common administrator project Admin access, then retry.",
     "loading": "Loading group access...",
     "loadFailed": "Group access could not be loaded.",
     "saveFailed": "Group settings could not be saved.",
@@ -2035,6 +2030,23 @@
   },
   "accessImpact": {
     "title": "Access impact",
+    "affectedUsers": "{count, plural, one {# user affected.} other {# users affected.}}",
+    "noAffectedUsers": "No users are affected.",
+    "overlapHint": "Each count includes unique users. A user may appear in more than one change type.",
+    "project": {
+      "gainedAccess": "{count, plural, one {# user gains access to this project.} other {# users gain access to this project.}}",
+      "lostAccess": "{count, plural, one {# user loses access to this project.} other {# users lose access to this project.}}",
+      "increasedPermissions": "{count, plural, one {# user receives higher permissions.} other {# users receive higher permissions.}}",
+      "decreasedPermissions": "{count, plural, one {# user receives lower permissions.} other {# users receive lower permissions.}}",
+      "affectedProjects": "{count, plural, one {# project affected.} other {# projects affected.}}"
+    },
+    "group": {
+      "gainedAccess": "{count, plural, one {# user gains access to the group or a child project.} other {# users gain access to the group or a child project.}}",
+      "lostAccess": "{count, plural, one {# user loses access to the group or a child project.} other {# users lose access to the group or a child project.}}",
+      "increasedPermissions": "{count, plural, one {# user receives higher permissions in the group or a child project.} other {# users receive higher permissions in the group or a child project.}}",
+      "decreasedPermissions": "{count, plural, one {# user receives lower permissions in the group or a child project.} other {# users receive lower permissions in the group or a child project.}}",
+      "affectedProjects": "{count, plural, one {# child project affected.} other {# child projects affected.}}"
+    },
     "loading": "Loading current access changes...",
     "loadFailed": "The access preview could not be loaded. Check your administration rights and try again.",
     "retry": "Retry preview",

@@ -17,21 +17,17 @@ const { toastSuccess, toastError } = vi.hoisted(() => ({
 vi.mock("sonner", () => ({ toast: { success: toastSuccess, error: toastError } }));
 
 vi.mock("next-intl", async () => {
-  const en = (await import("../../../../../../../messages/en.json")).default as Record<string, unknown>;
-  const resolve = (ns: string, key: string) => {
-    let node: unknown = en;
-    for (const p of (ns ? `${ns}.${key}` : key).split(".")) {
-      node = node && typeof node === "object" ? (node as Record<string, unknown>)[p] : undefined;
-    }
-    return typeof node === "string" ? node : `${ns ? `${ns}.` : ""}${key}`;
-  };
+  const en = (await import("../../../../../../../messages/en.json")).default;
+  const { createTranslator } = await vi.importActual<typeof import("next-intl")>("next-intl");
   const cache = new Map<string, (key: string, values?: Record<string, unknown>) => string>();
   return {
     useTranslations: (ns = "") => {
       let fn = cache.get(ns);
       if (!fn) {
-        fn = (key, values) => resolve(ns, key).replace(/\{(\w+)\}/g, (_, n) =>
-          values && n in values ? String(values[n]) : `{${n}}`);
+        const translate = createTranslator({
+          locale: "en", messages: en as import("next-intl").AbstractIntlMessages, namespace: ns,
+        }) as (key: string, values?: Record<string, string | number | Date>) => string;
+        fn = (key, values) => translate(key, values as Record<string, string | number | Date> | undefined);
         cache.set(ns, fn);
       }
       return fn;
@@ -429,10 +425,14 @@ describe("ProjectAccessTab", () => {
     expect(callsTo("GET", `/api/project-groups/${PROJECT}/members`)).toHaveLength(0);
   });
 
-  it("confirms a group conversion with the child-project diff and token", async () => {
+  it("confirms a group conversion with impact counts and the current token", async () => {
     routes[`GET /api/project-groups/${PROJECT}/members`] = () => ok({ members: MEMBERS });
     routes[`GET /api/project-groups/${PROJECT}/access-preview`] = () => ok({
       confirmationToken: "group-token", companyAccess: "closed",
+      summary: {
+        affectedUserCount: 2, lostAccessCount: 2, gainedAccessCount: 0,
+        increasedPermissionsCount: 0, decreasedPermissionsCount: 0, affectedProjectCount: 1,
+      },
       projects: [{ projectUuid: "child", name: "Public child", companyAccess: "closed", changes: [] }],
     });
     routes[`PATCH /api/project-groups/${PROJECT}`] = () => ok({});
@@ -440,7 +440,11 @@ describe("ProjectAccessTab", () => {
     renderTab({ resourceType: "project-groups" });
     await screen.findByText("Alice");
     await user.click(screen.getByRole("radio", { name: /^Private/ }));
-    expect(await screen.findByText("Public child")).toBeInTheDocument();
+    const impact = await screen.findByTestId("access-impact-preview");
+    expect(impact).toHaveTextContent("2 users affected.");
+    expect(impact).toHaveTextContent("2 users lose access to the group or a child project.");
+    expect(impact).toHaveTextContent("1 child project affected.");
+    expect(within(impact).queryByText("Public child")).not.toBeInTheDocument();
     expect(screen.getByText(/All public projects in this group will become private/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Change visibility" }));
     await waitFor(() => expect(callsTo("PATCH", `/api/project-groups/${PROJECT}`)).toHaveLength(1));

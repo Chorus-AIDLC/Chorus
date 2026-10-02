@@ -1081,11 +1081,6 @@
     "convertPrivateHint": "グループ内のすべての公開プロジェクトが非公開になります。既存の権限は保持され、グループの役割がリアルタイムで継承されます。",
     "convertPublicHint": "プロジェクトの公開範囲と権限は保持されます。グループを公開しても非公開プロジェクトは公開されません。",
     "membersDescription": "グループの役割はすべての子プロジェクトに適用されます。プロジェクト側では追加の権限を付与できます。",
-    "initializeTitle": "グループ権限を初期化",
-    "initializeHint": "既存グループには管理者が自動設定されません。初期化するとあなたが最初のグループ管理者になりますが、すべての子プロジェクトの管理権限が必要です。すべての非公開プロジェクトを管理できない場合は、各管理者に共通の管理者へのプロジェクト Admin 権限付与を依頼してください。",
-    "initializeAction": "グループ管理者として初期化",
-    "initializing": "初期化中…",
-    "initializeFailed": "初期化に失敗しました。すべての非公開子プロジェクトの管理者に共通の管理者へのプロジェクト Admin 権限付与を依頼し、再試行してください。",
     "loading": "グループ権限を読み込み中…",
     "loadFailed": "グループ権限を読み込めませんでした。",
     "saveFailed": "グループ設定を保存できませんでした。",
@@ -2035,6 +2030,23 @@
   },
   "accessImpact": {
     "title": "アクセス権の変更",
+    "affectedUsers": "{count, plural, other {# 人のユーザーに影響があります。}}",
+    "noAffectedUsers": "影響を受けるユーザーはいません。",
+    "overlapHint": "各変更種別内ではユーザーを重複して数えません。同じユーザーが複数の変更種別に含まれる場合があります。",
+    "project": {
+      "gainedAccess": "{count, plural, other {# 人のユーザーがこのプロジェクトへのアクセス権を取得します。}}",
+      "lostAccess": "{count, plural, other {# 人のユーザーがこのプロジェクトへのアクセス権を失います。}}",
+      "increasedPermissions": "{count, plural, other {# 人のユーザーの権限が上がります。}}",
+      "decreasedPermissions": "{count, plural, other {# 人のユーザーの権限が下がります。}}",
+      "affectedProjects": "{count, plural, other {# 件のプロジェクトに影響があります。}}"
+    },
+    "group": {
+      "gainedAccess": "{count, plural, other {# 人のユーザーがグループまたは子プロジェクトへのアクセス権を取得します。}}",
+      "lostAccess": "{count, plural, other {# 人のユーザーがグループまたは子プロジェクトへのアクセス権を失います。}}",
+      "increasedPermissions": "{count, plural, other {# 人のユーザーのグループまたは子プロジェクトでの権限が上がります。}}",
+      "decreasedPermissions": "{count, plural, other {# 人のユーザーのグループまたは子プロジェクトでの権限が下がります。}}",
+      "affectedProjects": "{count, plural, other {# 件の子プロジェクトに影響があります。}}"
+    },
     "loading": "現在のアクセス権変更を読み込み中…",
     "loadFailed": "プレビューを読み込めませんでした。管理権限を確認して再試行してください。",
     "retry": "プレビューを再試行",

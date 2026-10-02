@@ -53,9 +53,7 @@ export function ManageProjectGroupDialog({
     accessLevel: ProjectAccessLevel;
     explicitRole: ProjectAccessLevel | null;
     canManage: boolean;
-    accessInitialized: boolean;
   } | null>(null);
-  const [initializing, setInitializing] = useState(false);
 
   const loadAccess = useCallback(async () => {
     try {
@@ -79,28 +77,6 @@ export function ManageProjectGroupDialog({
     setAccess(null);
     void loadAccess();
   }, [open, groupName, groupDescription, loadAccess]);
-
-  const initializeAccess = async () => {
-    setInitializing(true);
-    setError(null);
-    try {
-      const res = await authFetch(`/api/project-groups/${groupUuid}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ initializeAccess: true }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) {
-        setError(t("initializeFailed"));
-        return;
-      }
-      await loadAccess();
-    } catch {
-      setError(t("initializeFailed"));
-    } finally {
-      setInitializing(false);
-    }
-  };
 
   // Reset state when dialog opens
   const handleOpenChange = (open: boolean) => {
@@ -162,7 +138,7 @@ export function ManageProjectGroupDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!saving && !deleting && !initializing) handleOpenChange(next); }}>
+    <Dialog open={open} onOpenChange={(next) => { if (!saving && !deleting) handleOpenChange(next); }}>
       <DialogContent className="max-h-[90svh] max-w-[620px] gap-0 overflow-y-auto p-0">
         <DialogHeader className="border-b border-border px-6 py-5">
           <div className="flex items-center gap-2.5">
@@ -219,16 +195,7 @@ export function ManageProjectGroupDialog({
             </Button>
           </div>
           </>}
-          {access && !access.accessInitialized && (
-            <section className="space-y-3 rounded-lg border border-border bg-muted/40 p-3">
-              <h3 className="text-sm font-semibold">{t("initializeTitle")}</h3>
-              <p className="text-xs text-muted-foreground">{t("initializeHint")}</p>
-              {access.canManage && <Button onClick={() => void initializeAccess()} disabled={initializing} className="h-auto whitespace-normal">
-                {initializing ? t("initializing") : t("initializeAction")}
-              </Button>}
-            </section>
-          )}
-          {access?.accessInitialized && <ProjectAccessTab
+          {access && <ProjectAccessTab
             resourceType="project-groups"
             projectUuid={groupUuid}
             visibility={access.visibility}

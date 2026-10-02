@@ -458,25 +458,24 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     "project:write",
     "chorus_admin_update_project_group",
     {
-      description: "Update group settings, initialize legacy access, or manage one explicit member. Set preview=true with visibility to obtain a confirmationToken, then confirm the same change. Access administration requires your owner's explicit group Admin role.",
+      description: "Update group settings or manage one explicit member. Legacy groups automatically have their company's first user as Admin. Set preview=true with visibility to obtain an impact summary and confirmationToken, then confirm the same change. Access administration requires your owner's explicit group Admin role.",
       inputSchema: z.object({
         groupUuid: z.string().describe("Project Group UUID"),
         name: z.string().optional().describe("New group name"),
         description: z.string().optional().describe("New group description"),
         visibility: z.enum(["public", "private"]).optional(),
-        initializeAccess: z.boolean().optional().describe("Initialize legacy public group access after child management checks"),
         preview: z.boolean().optional().describe("Return the access impact without changing the group"),
         confirmationToken: z.string().optional().describe("Current token from this actor's matching preview"),
         memberAction: z.enum(["add", "update", "remove"]).optional(),
         userUuid: z.string().optional().describe("Same-company user to grant, update or remove"),
         role: z.enum(["viewer", "editor", "admin"]).optional().describe("Explicit group member role"),
-      }),
+      }).strict(),
     },
-    async ({ groupUuid, name, description, visibility, initializeAccess, preview, confirmationToken, memberAction, userUuid, role }) => {
+    async ({ groupUuid, name, description, visibility, preview, confirmationToken, memberAction, userUuid, role }) => {
       if (memberAction) {
         if (!userUuid || (memberAction !== "remove" && !role) ||
             name !== undefined || description !== undefined || visibility !== undefined ||
-            initializeAccess || preview || confirmationToken !== undefined) {
+            preview || confirmationToken !== undefined) {
           return { content: [{ type: "text", text: "Member changes require userUuid (and role for add/update) and must be submitted separately from group settings" }], isError: true };
         }
         const member = memberAction === "remove"
@@ -490,8 +489,8 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: "memberAction is required for member changes" }], isError: true };
       }
       if (preview) {
-        if (!visibility || initializeAccess || name !== undefined || description !== undefined) {
-          return { content: [{ type: "text", text: "Preview requires visibility and must be separate from initialization or settings changes" }], isError: true };
+        if (!visibility || name !== undefined || description !== undefined) {
+          return { content: [{ type: "text", text: "Preview requires visibility and must be separate from settings changes" }], isError: true };
         }
         const impact = await projectGroupService.getGroupVisibilityPreview(auth, groupUuid, visibility);
         return { content: [{ type: "text", text: JSON.stringify(impact, null, 2) }] };
@@ -502,7 +501,6 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         name,
         description,
         visibility,
-        initializeAccess,
         confirmationToken,
         auth,
       });

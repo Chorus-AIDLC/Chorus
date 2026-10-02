@@ -9,11 +9,15 @@ real-time delivery and user interfaces.
 ## Requirements
 
 ### Requirement: Explicit group memberships
-Groups SHALL have Public/Private visibility and same-company user roles Viewer/Editor/Admin. Agents SHALL inherit their owner's effective role and remain constrained by capability bits. New groups SHALL have their creator as Admin and initialized groups MUST retain an Admin. Existing projects, local memberships and group assignments MUST NOT be rewritten during upgrade; legacy groups SHALL require authorized explicit initialization before member/visibility administration.
+Groups SHALL have Public/Private visibility and same-company user roles Viewer/Editor/Admin. Agents SHALL inherit their owner's effective role and remain constrained by capability bits. New groups SHALL have their creator as Admin and initialized groups MUST retain an Admin. Existing projects, local memberships and group assignments MUST NOT be rewritten during upgrade; legacy groups without creator records SHALL automatically receive their company's first user as Admin (earliest createdAt, then lowest id), matching the legacy project rule. Existing grants SHALL be preserved, and companies without users SHALL be skipped. Manual claiming or initialization MUST NOT be required or offered.
 
-#### Scenario: Safe legacy initialization
-- **WHEN** an actor lacks Admin access to one private project in an uninitialized group
-- **THEN** initializing group administration is rejected and no inherited grants are created
+#### Scenario: Automatic legacy Admin
+- **WHEN** a company has historical groups without creator records and multiple registered users
+- **THEN** the earliest user becomes Admin of every such group without interacting with the UI; existing group and project grants are retained
+
+#### Scenario: No claim by the current visitor
+- **WHEN** another company user edits or views an existing group
+- **THEN** that action does not assign them group Admin and no manual initialization control is offered
 
 #### Scenario: Final group Admin
 - **WHEN** concurrent operations attempt to remove the remaining group Admins
@@ -87,8 +91,16 @@ REST, MCP, pages, actions, text/exact-UUID search, lists, aggregates, SSE, notif
 - **THEN** subsequent group/project events and notifications are withheld and direct reads return not-found
 
 ### Requirement: Group access presentation
-Group creation/settings SHALL provide visibility and member controls gated by explicit authority, private badges and previews. Project access UI SHALL distinguish inherited and additional roles and MUST NOT present inherited grants as removable. Controls SHALL be localized and usable at mobile widths in light and dark themes.
+Group creation/settings SHALL provide visibility and member controls gated by explicit authority, private badges and previews. Project access UI SHALL distinguish inherited and additional roles and MUST NOT present inherited grants as removable. Visibility impact confirmation SHALL display distinct affected-user counts by gained/lost access and increased/decreased permissions, plus affected-project counts, instead of individual identities or per-child change lists. Counts SHALL include group discovery changes for empty groups, deduplicate each person per effect across children, and retain fresh server confirmation. Controls SHALL be localized and usable at mobile widths in light and dark themes.
 
 #### Scenario: Inherited member row
 - **WHEN** project Admin reviews a group-inherited Admin
 - **THEN** the source is labeled and no project control can downgrade or remove the inherited role
+
+#### Scenario: Compact visibility impact
+- **WHEN** the same user loses access to several children during group privatization
+- **THEN** the preview counts that user once for lost access, summarizes the affected projects, and does not render their name, email or UUID
+
+#### Scenario: Empty group privacy impact
+- **WHEN** an Admin previews privatizing a public group with no child projects
+- **THEN** company users without explicit group membership are included in the lost-access count

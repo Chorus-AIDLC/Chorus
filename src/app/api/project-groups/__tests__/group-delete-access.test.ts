@@ -62,9 +62,11 @@ describe("real group REST handlers with locked services", () => {
     expect(await data(await invoke(createGroup, "POST", { name: " new ", visibility: "private" }))).toMatchObject({ name: "new", visibility: "private", accessLevel: "admin", accessInitialized: true });
     expect(fixture.state.projectGroupMember[0].userUuid).toBe("admin");
   });
-  it("REST initializes legacy access explicitly and preserves children", async () => {
+  it("rejects the retired manual initialization request without writes", async () => {
     group("g", "public", false); project(); localMember("p", "admin", "admin");
-    expect(await data(await invoke(PATCH, "PATCH", { initializeAccess: true }))).toMatchObject({ accessInitialized: true });
+    expect((await invoke(PATCH, "PATCH", { initializeAccess: true })).status).toBe(422);
+    expect(fixture.state.projectGroupMember).toEqual([]);
+    expect(fixture.writes).toEqual([]);
     expect(fixture.state.project[0].visibility).toBe("private");
   });
   it("REST preview/confirmation gates both conversions and accompanying settings", async () => {
