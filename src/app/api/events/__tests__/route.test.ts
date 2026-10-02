@@ -88,8 +88,9 @@ vi.mock("@/services/project-access.service", () => ({
   membershipPrincipal: (auth: { type: string; actorUuid: string; ownerUuid?: string }) =>
     auth.type === "user" ? auth.actorUuid : auth.type === "agent" ? (auth.ownerUuid ?? null) : null,
 }));
+const mockAccessibleGroupUuids = vi.fn();
 vi.mock("@/services/project-group-access.service", () => ({
-  accessibleGroupUuids: vi.fn(async () => []),
+  accessibleGroupUuids: (...args: unknown[]) => mockAccessibleGroupUuids(...args),
   getGroupAccess: vi.fn(async () => ({ group: { uuid: "group-1" } })),
 }));
 
@@ -163,6 +164,7 @@ beforeEach(() => {
   mockListVisibleRunningSessionActivities.mockResolvedValue([]);
   mockReconcileOrphanTurns.mockResolvedValue(0);
   mockAccessibleProjectUuids.mockResolvedValue(["proj-1"]);
+  mockAccessibleGroupUuids.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -207,42 +209,41 @@ describe("GET /api/events (change events SSE)", () => {
     expect(mockTouchConnection).toHaveBeenCalledTimes(2);
   });
 
-  it("publishes every fallback group and child when the first user changes on a heartbeat", async () => {
+  it("refreshes only each connected subscriber when the first user changes, without company broadcasts", async () => {
     vi.useFakeTimers();
     mockPrisma.user.findFirst.mockResolvedValue({ uuid: "first-user" });
-    mockPrisma.projectGroup.findMany.mockResolvedValue([{ uuid: "legacy-group" }, { uuid: "empty-group" }]);
-    mockPrisma.project.findMany.mockResolvedValue([{ uuid: "private-child" }, { uuid: "public-child" }]);
-    const abort = new AbortController();
-    const stream = await startStream(await GET(makeRequest("clientType=claude_code", abort.signal)));
+    mockAccessibleGroupUuids.mockResolvedValue(["legacy-group"]);
+    const aborts = [new AbortController(), new AbortController()];
+    const streams = await Promise.all(aborts.map(async (abort) =>
+      startStream(await GET(makeRequest("clientType=claude_code", abort.signal))),
+    ));
     try {
       mockPrisma.user.findFirst.mockResolvedValue({ uuid: "next-user" });
-      await vi.advanceTimersByTimeAsync(30_000);
+      mockAccessibleGroupUuids.mockResolvedValue(["newly-visible-group"]);
+      await vi.advanceTimersByTimeAsync(30_000); await flush();
       expect(mockPrisma.user.findFirst).toHaveBeenLastCalledWith({
         where: { companyUuid }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { uuid: true },
       });
-      expect(mockPrisma.projectGroup.findMany).toHaveBeenCalledWith({
-        where: { companyUuid, members: { none: { companyUuid, role: "admin" } } }, select: { uuid: true },
-      });
-      expect(mockPrisma.project.findMany).toHaveBeenCalledWith({
-        where: { companyUuid, groupUuid: { in: ["legacy-group", "empty-group"] } }, select: { uuid: true },
-      });
-      expect(mockEventBus.emitProjectAccessChanged.mock.calls.map(([event]) => event)).toEqual([
-        { companyUuid, projectUuid: "private-child", userUuids: [] },
-        { companyUuid, projectUuid: "public-child", userUuids: [] },
-      ]);
-      expect(mockEventBus.emitChange.mock.calls.map(([event]) => event)).toEqual([
-        { companyUuid, projectUuid: "", entityType: "project_group", entityUuid: "legacy-group", action: "updated" },
-        { companyUuid, projectUuid: "", entityType: "project_group", entityUuid: "empty-group", action: "updated" },
-      ]);
+      expect(mockAccessibleProjectUuids).toHaveBeenCalledTimes(4);
+      expect(mockAccessibleGroupUuids).toHaveBeenCalledTimes(4);
+      for (const stream of streams) {
+        const rows = stream.chunks.filter((chunk) => chunk.startsWith("data: ")).map((chunk) => JSON.parse(chunk.slice(6)));
+        expect(rows).toEqual(["legacy-group", "newly-visible-group"].map((entityUuid) => ({
+          companyUuid, projectUuid: "", entityType: "project_group", entityUuid, action: "updated",
+        })));
+      }
+      expect(mockEventBus.emitChange).not.toHaveBeenCalled();
+      expect(mockEventBus.emitProjectAccessChanged).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(mockEventBus.emitChange).toHaveBeenCalledTimes(2);
-      expect(mockEventBus.emitProjectAccessChanged).toHaveBeenCalledTimes(2);
+      expect(mockAccessibleProjectUuids).toHaveBeenCalledTimes(4);
+      expect(mockAccessibleGroupUuids).toHaveBeenCalledTimes(4);
     } finally {
-      abort.abort(); await stream.reader.cancel(); await stream.pump;
+      for (const abort of aborts) abort.abort();
+      for (const stream of streams) { await stream.reader.cancel(); await stream.pump; }
     }
   });
 
-  it.each(["lookup", "publish"] as const)("closes project delivery after heartbeat %s failure and recovers when the first user is unchanged", async (failure) => {
+  it.each(["lookup", "projects", "groups"] as const)("closes project delivery after heartbeat %s failure and recovers when the first user is unchanged", async (failure) => {
     vi.useFakeTimers();
     mockGetAuthContext.mockResolvedValue(userAuth);
     mockParseSelfReport.mockReturnValue(null);
@@ -261,17 +262,19 @@ describe("GET /api/events (change events SSE)", () => {
         mockPrisma.user.findFirst.mockRejectedValueOnce(new Error("first-user lookup unavailable"));
       } else {
         mockPrisma.user.findFirst.mockResolvedValue({ uuid: "next-user" });
-        mockPrisma.projectGroup.findMany.mockRejectedValueOnce(new Error("fallback publication unavailable"));
+        if (failure === "projects") mockAccessibleProjectUuids.mockRejectedValueOnce(new Error("project refresh unavailable"));
+        else mockAccessibleGroupUuids.mockRejectedValueOnce(new Error("group refresh unavailable"));
       }
       await vi.advanceTimersByTimeAsync(30_000); await flush();
       handler(change("during-failure")); await flush();
       expect(stream.chunks.join("")).not.toContain("during-failure");
       const reads = mockAccessibleProjectUuids.mock.calls.length;
-      // The successful lookup returns the same UUID observed before the failure.
       await vi.advanceTimersByTimeAsync(30_000); await flush();
       expect(mockAccessibleProjectUuids.mock.calls.length).toBeGreaterThan(reads);
       handler(change("after-recovery")); await flush();
       expect(stream.chunks.join("")).toContain("after-recovery");
+      expect(mockEventBus.emitChange).not.toHaveBeenCalled();
+      expect(mockEventBus.emitProjectAccessChanged).not.toHaveBeenCalled();
     } finally {
       abort.abort(); await stream.reader.cancel(); await stream.pump;
     }

@@ -18,7 +18,7 @@ import {
 } from "@/services/project-access.service";
 import { accessibleGroupUuids, getGroupAccess } from "@/services/project-group-access.service";
 import {
-  firstCompanyUser, invalidateImplicitGroupAdminCache, publishImplicitGroupAdminChange,
+  firstCompanyUser, invalidateImplicitGroupAdminCache,
 } from "@/services/project-group-implicit-admin.service";
 import {
   parseSelfReport,
@@ -218,7 +218,9 @@ export async function GET(request: NextRequest) {
               return;
             }
           } catch (err) {
+            firstUserRefreshFailed = true;
             sseLogger.error({ err }, "SSE accessible-project recompute failed");
+            if (!triggerProjectUuid) accessibleProjects.clear();
             for (const uuid of refreshProjects) accessibleProjects.delete(uuid);
           } finally {
             refreshProjects.clear();
@@ -460,13 +462,38 @@ export async function GET(request: NextRequest) {
       // Heartbeat every 30s to keep connection alive
       const heartbeat = setInterval(() => {
         send(": heartbeat\n\n");
-        void firstCompanyUser(auth.companyUuid).then(async (current) => {
+        void firstCompanyUser(auth.companyUuid).then((current) => {
           if (request.signal.aborted || (current === firstUser && !firstUserRefreshFailed)) return;
           firstUserRefreshFailed = false;
           firstUser = current;
           invalidateImplicitGroupAdminCache(auth);
+          accessibleProjects.clear();
+          groupRevision++;
           recomputeAccess(undefined);
-          await publishImplicitGroupAdminChange(auth.companyUuid);
+          // Each stream detects the same change independently. Refresh only this
+          // subscriber, rather than multiplying company-wide/Redis broadcasts.
+          if (!projectUuid) enqueueGate(async () => {
+            try {
+              while (!request.signal.aborted) {
+                const revision = `${accessRevision}:${groupRevision}`;
+                const refreshed = new Set(await accessibleGroupUuids(auth));
+                if (revision !== `${accessRevision}:${groupRevision}`) continue;
+                const changed = new Set([...knownGroups, ...refreshed]);
+                knownGroups = refreshed;
+                for (const entityUuid of changed) {
+                  send(`data: ${JSON.stringify({
+                    companyUuid: auth.companyUuid, projectUuid: "",
+                    entityType: "project_group", entityUuid, action: "updated",
+                  })}\n\n`);
+                }
+                return;
+              }
+            } catch (err) {
+              firstUserRefreshFailed = true;
+              accessibleProjects.clear();
+              sseLogger.error({ err }, "SSE automatic Admin group refresh failed");
+            }
+          });
         }).catch((err) => {
           firstUserRefreshFailed = true;
           accessibleProjects.clear();

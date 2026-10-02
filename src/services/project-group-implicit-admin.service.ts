@@ -1,5 +1,4 @@
 import { prisma } from "@/lib/prisma";
-import { eventBus } from "@/lib/event-bus";
 import type { ProjectAccessClient } from "@/services/project-access.service";
 
 // Request-scoped only. Transaction clients always read fresh rows after locks;
@@ -77,26 +76,4 @@ export async function implicitProjectAdminUuids(companyUuid: string): Promise<st
   }) : [];
   const liveGroups = new Set(groups.map((group) => group.uuid));
   return projects.filter((project) => !project.groupUuid || !liveGroups.has(project.groupUuid)).map((project) => project.uuid);
-}
-
-// No user-deletion API exists today. A live stream also detects a first-user
-// change during its heartbeat, including changes made outside this process.
-export async function publishImplicitGroupAdminChange(companyUuid: string): Promise<void> {
-  const groups = await prisma.projectGroup.findMany({
-    where: { companyUuid, members: { none: { companyUuid, role: "admin" } } },
-    select: { uuid: true },
-  });
-  const projects = await prisma.project.findMany({
-    where: { companyUuid, groupUuid: { in: groups.map((group) => group.uuid) } },
-    select: { uuid: true },
-  });
-  const automaticProjects = await implicitProjectAdminUuids(companyUuid);
-  for (const projectUuid of new Set([...projects.map((project) => project.uuid), ...automaticProjects])) {
-    eventBus.emitProjectAccessChanged({ companyUuid, projectUuid, userUuids: [] });
-  }
-  for (const group of groups) {
-    eventBus.emitChange({
-      companyUuid, projectUuid: "", entityType: "project_group", entityUuid: group.uuid, action: "updated",
-    });
-  }
 }

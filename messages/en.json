@@ -1992,6 +1992,7 @@
       "directRole": "Direct: {role}",
       "inheritedRole": "Inherited: {role}",
       "automaticAdmin": "Automatic admin",
+      "explicitAdminHint": "Granting an explicit Admin role replaces automatic Admin access. In groups, this can also change inherited permissions in private child projects.",
       "effectiveRole": "Effective: {role}"
     },
     "roles": {

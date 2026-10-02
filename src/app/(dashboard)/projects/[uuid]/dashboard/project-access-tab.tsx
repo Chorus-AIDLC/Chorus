@@ -446,6 +446,11 @@ export function ProjectAccessTab({
                           ) : (
                             <Badge variant="secondary">{t(`roles.${effectiveRole}`)}</Badge>
                           )}
+                          {isAdmin && !inheritedOnly && directRole !== "admin" && automaticAdminUuids.size > 0 && (
+                            <p className="mt-1 whitespace-normal text-[11px] text-muted-foreground">
+                              {t("members.explicitAdminHint")}
+                            </p>
+                          )}
                           {(!isGroup || (automaticAdmin && !inheritedOnly)) && <p className="mt-1 whitespace-normal text-[11px] text-muted-foreground">{t("members.effectiveRole", { role: t(`roles.${effectiveRole}`) })}</p>}
                         </TableCell>
                         {isAdmin && (
@@ -545,6 +550,9 @@ function AddMemberRow({ excludeUuids, onAdd, inheritedMembers, automaticAdminUui
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border p-3">
       <span className="text-[12px] font-medium text-muted-foreground">{t("add.title")}</span>
+      {automaticAdminUuids.size > 0 && (
+        <p className="text-[12px] text-muted-foreground">{t("members.explicitAdminHint")}</p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>

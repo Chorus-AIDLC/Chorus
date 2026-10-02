@@ -1992,6 +1992,7 @@
       "directRole": "직접: {role}",
       "inheritedRole": "상속: {role}",
       "automaticAdmin": "자동 관리자",
+      "explicitAdminHint": "관리자 역할을 명시적으로 부여하면 자동 관리자 권한이 대체됩니다. 그룹에서는 비공개 하위 프로젝트에 상속되는 권한도 변경될 수 있습니다.",
       "effectiveRole": "유효: {role}"
     },
     "roles": {

@@ -1992,6 +1992,7 @@
       "directRole": "直接：{role}",
       "inheritedRole": "継承：{role}",
       "automaticAdmin": "自動管理者",
+      "explicitAdminHint": "管理者ロールを明示的に付与すると、自動管理者の権限が置き換わります。グループでは、非公開の子プロジェクトに継承される権限も変わる場合があります。",
       "effectiveRole": "有効：{role}"
     },
     "roles": {

@@ -1992,6 +1992,7 @@
       "directRole": "直接：{role}",
       "inheritedRole": "继承：{role}",
       "automaticAdmin": "自动管理员",
+      "explicitAdminHint": "显式授予管理员角色会取代自动管理员权限；在项目组中，还可能改变私有子项目继承的权限。",
       "effectiveRole": "有效：{role}"
     },
     "roles": {
