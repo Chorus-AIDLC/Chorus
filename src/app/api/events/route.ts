@@ -16,6 +16,10 @@ import {
   filterExecutionViewsByAccess,
   membershipPrincipal,
 } from "@/services/project-access.service";
+import { accessibleGroupUuids, getGroupAccess } from "@/services/project-group-access.service";
+import {
+  firstCompanyUser, invalidateImplicitGroupAdminCache,
+} from "@/services/project-group-implicit-admin.service";
 import {
   parseSelfReport,
   registerConnection,
@@ -101,6 +105,8 @@ export async function GET(request: NextRequest) {
   // Resolved before the stream opens so a query failure is a 500, never mid-stream.
   // Kept fresh by the `project_access_changed` listener below.
   const principal = membershipPrincipal(auth);
+  let firstUser = await firstCompanyUser(auth.companyUuid);
+  let firstUserRefreshFailed = false;
   const affectsSubscriber = (event: ProjectAccessChangedEvent) => {
     if (event.companyUuid !== auth.companyUuid) return false;
     const userUuids = Array.isArray(event.userUuids) ? event.userUuids : [];
@@ -113,12 +119,28 @@ export async function GET(request: NextRequest) {
   const connectWindowHandler = (event: ProjectAccessChangedEvent) => {
     if (affectsSubscriber(event)) missedAccessChanges.add(event.projectUuid);
   };
+  const missedGroupChanges: RealtimeEvent[] = [];
+  const connectWindowGroupHandler = (event: RealtimeEvent) => {
+    if (event.companyUuid === auth.companyUuid && event.entityType === "project_group") {
+      missedGroupChanges.push(event);
+    }
+  };
   eventBus.on("project_access_changed", connectWindowHandler);
+  eventBus.on("change", connectWindowGroupHandler);
   let accessibleProjects: Set<string>;
+  let knownGroups: Set<string>;
   try {
-    accessibleProjects = new Set(await accessibleProjectUuids(auth));
+    const [projects, groups] = await Promise.all([
+      accessibleProjectUuids(auth),
+      accessibleGroupUuids(auth),
+    ]);
+    accessibleProjects = new Set(projects);
+    // Historical discovery is authority only for a UUID-only invalidation.
+    // Every current-access decision still uses the fresh, revision-aware gate.
+    knownGroups = new Set(groups);
   } catch (err) {
     eventBus.off("project_access_changed", connectWindowHandler);
+    eventBus.off("change", connectWindowGroupHandler);
     throw err;
   }
 
@@ -158,6 +180,18 @@ export async function GET(request: NextRequest) {
       // With nothing outstanding (the common case) delivery is synchronous.
       let gateChain: Promise<void> = Promise.resolve();
       let gateOutstanding = 0;
+      let accessRevision = 0;
+      let groupRevision = 0;
+      let projectAccessClosed = false;
+      const closeProjectAccess = () => {
+        firstUserRefreshFailed = true;
+        projectAccessClosed = true;
+        // Invalidate snapshots and async delivery decisions already in flight.
+        accessRevision++;
+        groupRevision++;
+        accessibleProjects.clear();
+        invalidateImplicitGroupAdminCache(auth);
+      };
       const enqueueGate = (step: () => void | Promise<void>) => {
         gateOutstanding++;
         gateChain = gateChain
@@ -170,35 +204,81 @@ export async function GET(request: NextRequest) {
           });
       };
 
-      // Recompute the accessible set. On failure, fail closed for the project that
-      // triggered it (drop it from the set) and keep the rest of the previous set.
+      // One queued refresh consumes a burst of child access changes. Revoke each
+      // triggering project synchronously, and retry if a change arrives during
+      // the query; no delivery can use an older snapshot while this step runs.
+      let refreshScheduled = false;
+      const refreshProjects = new Set<string>();
       const recomputeAccess = (triggerProjectUuid: string | undefined) => {
+        invalidateImplicitGroupAdminCache(auth);
+        accessRevision++;
+        if (triggerProjectUuid) {
+          accessibleProjects.delete(triggerProjectUuid);
+          refreshProjects.add(triggerProjectUuid);
+        }
+        if (refreshScheduled) return;
+        refreshScheduled = true;
         enqueueGate(async () => {
-          if (request.signal.aborted) return;
           try {
-            accessibleProjects = new Set(await accessibleProjectUuids(auth));
-          } catch (err) {
-            sseLogger.error({ err }, "SSE accessible-project recompute failed");
-            if (triggerProjectUuid) {
-              const next = new Set(accessibleProjects);
-              next.delete(triggerProjectUuid);
-              accessibleProjects = next;
+            while (!request.signal.aborted) {
+              if (projectAccessClosed) return;
+              const revision = accessRevision;
+              const refreshed = new Set(await accessibleProjectUuids(auth));
+              if (projectAccessClosed || request.signal.aborted) return;
+              if (revision !== accessRevision) continue;
+              accessibleProjects = refreshed;
+              return;
             }
+          } catch (err) {
+            firstUserRefreshFailed = true;
+            sseLogger.error({ err }, "SSE accessible-project recompute failed");
+            if (!triggerProjectUuid) closeProjectAccess();
+            for (const uuid of refreshProjects) accessibleProjects.delete(uuid);
+          } finally {
+            refreshProjects.clear();
+            refreshScheduled = false;
           }
         });
       };
 
-      // Events without a project, or company-level project-group events, are not
-      // project-scoped: they keep the company-only filter.
+      // Group metadata has its own discovery gate, including legacy events with
+      // an empty projectUuid.
       const isProjectScoped = (event: { projectUuid?: string; entityType?: string }) =>
         !!event.projectUuid && event.entityType !== "project_group";
 
       const gateDeliver = (
-        event: { projectUuid?: string; entityType?: string },
+        event: { projectUuid?: string; entityType?: string; entityUuid?: string },
         deliver: () => void,
       ) => {
+        if (event.entityType === "project_group") {
+          enqueueGate(async () => {
+            if (!event.entityUuid || request.signal.aborted) return;
+            // getGroupAccess is deliberately fresh. A revoke queued while it is
+            // awaiting the DB invalidates that result, even though its refresh
+            // is later on this same serial chain.
+            for (let attempt = 0; attempt < 3; attempt++) {
+              const revision = `${accessRevision}:${groupRevision}`;
+              invalidateImplicitGroupAdminCache(auth);
+              const access = await getGroupAccess(auth, event.entityUuid);
+              if (revision !== `${accessRevision}:${groupRevision}`) continue;
+              if (request.signal.aborted) return;
+              // The handler projects group events to UUID-only refreshes. A
+              // previous viewer needs that refresh after deletion/revocation,
+              // then loses the remembered visibility until fresh rediscovery.
+              // Consuming it on this serial gate also suppresses queued updates.
+              if (access.group) {
+                knownGroups.add(event.entityUuid);
+                deliver();
+              } else if (knownGroups.delete(event.entityUuid)) {
+                deliver();
+              }
+              return;
+            }
+          });
+          return;
+        }
         const decide = () => {
-          if (isProjectScoped(event) && !accessibleProjects.has(event.projectUuid!)) return;
+          if (isProjectScoped(event) && (projectAccessClosed || !accessibleProjects.has(event.projectUuid!))) return;
           deliver();
         };
         if (gateOutstanding === 0) decide();
@@ -216,19 +296,21 @@ export async function GET(request: NextRequest) {
         memo?: Map<string, Promise<string | null>>,
       ): Promise<boolean> => {
         if (!ideaUuid) return true;
+        if (projectAccessClosed) return false;
         let pending = memo?.get(ideaUuid);
         if (!pending) {
           pending = resolveEntityProjectUuid(auth.companyUuid, "idea", ideaUuid);
           memo?.set(ideaUuid, pending);
         }
         const ideaProjectUuid = await pending;
-        return !!ideaProjectUuid && accessibleProjects.has(ideaProjectUuid);
+        return !projectAccessClosed && !!ideaProjectUuid && accessibleProjects.has(ideaProjectUuid);
       };
 
       // Subscribe to change events
       const handler = (event: RealtimeEvent) => {
         // Filter by company (multi-tenancy)
         if (event.companyUuid !== auth.companyUuid) return;
+        if (event.entityType === "project_group") groupRevision++;
         // Optionally filter by project
         if (projectUuid && event.projectUuid !== projectUuid) return;
 
@@ -245,10 +327,19 @@ export async function GET(request: NextRequest) {
           recomputeAccess(undefined);
         }
 
-        gateDeliver(event, () => send(`data: ${JSON.stringify(event)}\n\n`));
+        const payload = event.entityType === "project_group" ? {
+          companyUuid: auth.companyUuid,
+          projectUuid: "",
+          entityType: "project_group",
+          entityUuid: event.entityUuid,
+          action: event.action,
+        } : event;
+        gateDeliver(event, () => send(`data: ${JSON.stringify(payload)}\n\n`));
       };
 
       eventBus.on("change", handler);
+      eventBus.off("change", connectWindowGroupHandler);
+      for (const event of missedGroupChanges) handler(event);
 
       // Subscribe to presence events
       const presenceHandler = (event: PresenceEvent) => {
@@ -270,6 +361,8 @@ export async function GET(request: NextRequest) {
       // among the changed users.
       const accessChangedHandler = (event: ProjectAccessChangedEvent) => {
         if (!affectsSubscriber(event)) return;
+        // Fail closed immediately, including asynchronous delivery decisions
+        // already ahead of the refresh on the serial gate.
         recomputeAccess(event.projectUuid);
       };
 
@@ -282,7 +375,9 @@ export async function GET(request: NextRequest) {
       // clients have a registered connection and keep using the dedicated
       // /api/events/notifications transport for registration/control/liveness.
       const notificationHandler = (event: Record<string, unknown>) => {
-        send(`data: ${JSON.stringify(event)}\n\n`);
+        gateDeliver({ projectUuid: typeof event.projectUuid === "string" ? event.projectUuid : undefined }, () =>
+          send(`data: ${JSON.stringify(event)}\n\n`),
+        );
       };
       if (notificationChannel) {
         eventBus.on(notificationChannel, notificationHandler);
@@ -303,12 +398,17 @@ export async function GET(request: NextRequest) {
         enqueueGate(async () => {
           // Same rule as the REST execution reads (drop hidden rows, redact hidden
           // lineage anchors), judged against this stream's live accessible set.
-          const executions = await filterExecutionViewsByAccess(
-            auth,
-            event.executions ?? [],
-            accessibleProjects,
-          );
-          send(`data: ${JSON.stringify({ type: "execution", ...event, executions })}\n\n`);
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const revision = accessRevision;
+            const executions = await filterExecutionViewsByAccess(
+              auth, event.executions ?? [], accessibleProjects,
+            );
+            if (revision !== accessRevision) continue;
+            if (!request.signal.aborted) {
+              send(`data: ${JSON.stringify({ type: "execution", ...event, executions })}\n\n`);
+            }
+            return;
+          }
         });
       };
       const executionChannels = visibleConnectionUuids.map(executionEventName);
@@ -375,6 +475,42 @@ export async function GET(request: NextRequest) {
       // Heartbeat every 30s to keep connection alive
       const heartbeat = setInterval(() => {
         send(": heartbeat\n\n");
+        void firstCompanyUser(auth.companyUuid).then((current) => {
+          if (request.signal.aborted || (current === firstUser && !firstUserRefreshFailed)) return;
+          firstUserRefreshFailed = false;
+          projectAccessClosed = false;
+          firstUser = current;
+          invalidateImplicitGroupAdminCache(auth);
+          accessibleProjects.clear();
+          groupRevision++;
+          recomputeAccess(undefined);
+          // Each stream detects the same change independently. Refresh only this
+          // subscriber, rather than multiplying company-wide/Redis broadcasts.
+          if (!projectUuid) enqueueGate(async () => {
+            try {
+              while (!request.signal.aborted) {
+                const revision = `${accessRevision}:${groupRevision}`;
+                const refreshed = new Set(await accessibleGroupUuids(auth));
+                if (revision !== `${accessRevision}:${groupRevision}`) continue;
+                const changed = new Set([...knownGroups, ...refreshed]);
+                knownGroups = refreshed;
+                for (const entityUuid of changed) {
+                  send(`data: ${JSON.stringify({
+                    companyUuid: auth.companyUuid, projectUuid: "",
+                    entityType: "project_group", entityUuid, action: "updated",
+                  })}\n\n`);
+                }
+                return;
+              }
+            } catch (err) {
+              closeProjectAccess();
+              sseLogger.error({ err }, "SSE automatic Admin group refresh failed");
+            }
+          });
+        }).catch((err) => {
+          closeProjectAccess();
+          sseLogger.error({ err }, "SSE automatic Admin refresh failed");
+        });
         // Liveness safety net: bump lastSeenAt. Fire-and-forget — the service
         // swallows + logs its own errors and never throws.
         if (conn) void touchConnection(auth.companyUuid, conn);

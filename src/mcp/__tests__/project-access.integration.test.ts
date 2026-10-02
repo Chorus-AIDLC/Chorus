@@ -24,13 +24,16 @@ const fixture = vi.hoisted(() => {
       (rows[name] ?? []).find((row) => matches(row, where)) ?? null),
     findMany: vi.fn(async ({ where }: { where: Row }) =>
       (rows[name] ?? []).filter((row) => matches(row, where))),
+    count: vi.fn(async ({ where }: { where: Row }) =>
+      (rows[name] ?? []).filter((row) => matches(row, where)).length),
   });
   const prisma = {
+    user: model("user"),
     project: model("project"),
     projectMember: {
       ...model("projectMember"),
-      findUnique: vi.fn(async ({ where }: { where: { projectUuid_userUuid: Row } }) =>
-        (rows.projectMember ?? []).find((row) => matches(row, where.projectUuid_userUuid)) ?? null),
+      findUnique: vi.fn(async ({ where }: { where: { companyUuid: string; projectUuid_userUuid: Row } }) =>
+        (rows.projectMember ?? []).find((row) => row.companyUuid === where.companyUuid && matches(row, where.projectUuid_userUuid)) ?? null),
     },
     idea: model("idea"),
     task: model("task"),
@@ -59,6 +62,7 @@ const fixture = vi.hoisted(() => {
     referenceArtifact: model("reference"),
     agentSession: model("session"),
     projectGroup: model("group"),
+    projectGroupMember: model("projectGroupMember"),
     agent: { findUnique: vi.fn(async () => ({ name: "Agent" })) },
   };
   const entity = (name: string, uuid: string) => (rows[name] ?? []).find((r) => r.uuid === uuid) ?? null;
@@ -93,6 +97,7 @@ const fixture = vi.hoisted(() => {
     },
     activity: { createActivity: vi.fn(async () => undefined) },
     comment: { createComment: vi.fn(async () => ({ uuid: "new-comment" })), resolveProjectUuid: vi.fn(async () => "private") },
+    elaboration: { answerElaboration: vi.fn(async () => ({ uuid: "round", status: "answered" })) },
     reference: {
       REFERENCE_TYPES: ["docs", "repo", "issue_pr", "paper_blog"],
       REFERENCE_TARGET_TYPES: ["idea", "task", "proposal"],
@@ -147,7 +152,7 @@ vi.mock("@/services/assignment.service", () => fixture.services.assignment);
 vi.mock("@/services/checkin.service", () => fixture.services.checkin);
 vi.mock("@/services/search.service", () => fixture.services.search);
 vi.mock("@/services/notification.service", () => ({}));
-vi.mock("@/services/elaboration.service", () => ({}));
+vi.mock("@/services/elaboration.service", () => fixture.services.elaboration);
 vi.mock("@/services/mention.service", () => ({}));
 vi.mock("@/services/agent.service", () => ({}));
 vi.mock("@/lib/logger", () => ({ default: { child: () => ({ warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) } }));
@@ -202,6 +207,7 @@ beforeEach(() => {
   ];
   fixture.rows.projectMember = ["viewer", "editor", "admin"].map((role) =>
     ({ companyUuid: "company", projectUuid: "private", userUuid: role, role }));
+  fixture.rows.projectGroupMember = [{ companyUuid: "company", groupUuid: "group", userUuid: "admin", role: "admin" }];
   for (const type of ["task", "idea", "document", "proposal"]) {
     fixture.rows[type] = ["private", "public", "foreign"].map((projectUuid) => ({
       uuid: `${type}-${projectUuid}`, projectUuid,
@@ -240,7 +246,7 @@ beforeEach(() => {
     { uuid: "session", companyUuid: "company", agentUuid: "agent", taskCheckins: [] },
     { uuid: "private-session", companyUuid: "company", agentUuid: "agent", taskCheckins: [{ taskUuid: "task-private" }] },
   ];
-  fixture.rows.group = [{ uuid: "group", companyUuid: "company" }];
+  fixture.rows.group = [{ uuid: "group", companyUuid: "company", visibility: "public" }];
 });
 
 const entityCalls: [string, Record<string, unknown>, string][] = [
@@ -269,6 +275,115 @@ function setProposalInputs(inputType: "idea" | "document", inputUuids: string[],
 }
 
 describe("MCP central project access", () => {
+  it.each(["idea", "proposal", "document"] as const)(
+    "developer_agent can comment on an accessible %s without its write capability",
+    async (targetType) => {
+      const { handlers, originals } = register(auth("editor", [...ROLE_PRESETS.developer_agent]));
+      const result = await handlers.chorus_add_comment({
+        targetType, targetUuid: `${targetType}-private`, content: "Implementation update",
+      });
+      expect(result.isError).not.toBe(true);
+      expect(originals.chorus_add_comment).toHaveBeenCalledOnce();
+      expect(fixture.services.comment.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({ targetType, targetUuid: `${targetType}-private` }),
+      );
+    },
+  );
+
+  it("developer_agent can answer elaboration when its owner is a project Editor", async () => {
+    const { handlers } = register(auth("editor", [...ROLE_PRESETS.developer_agent]));
+    const result = await handlers.chorus_answer_elaboration({
+      ideaUuid: "idea-private",
+      answers: [{ questionId: "q", selectedOptionId: null, customText: "Clarified" }],
+    });
+    expect(result.isError).not.toBe(true);
+    expect(fixture.services.elaboration.answerElaboration).toHaveBeenCalledOnce();
+  });
+
+  it("elaboration collaboration still requires idea:read before handler and presence", async () => {
+    const permissions = [...ROLE_PRESETS.developer_agent].filter((p) => p !== "idea:read");
+    const { handlers, originals } = register(auth("editor", permissions));
+    expect(await handlers.chorus_answer_elaboration({
+      ideaUuid: "idea-private", answers: [],
+    })).toEqual({
+      content: [{ type: "text", text: "Missing agent capability: idea:read" }], isError: true,
+    });
+    expect(originals.chorus_answer_elaboration).not.toHaveBeenCalled();
+    expect(fixture.services.elaboration.answerElaboration).not.toHaveBeenCalled();
+    expect(eventBus.emitPresence).not.toHaveBeenCalled();
+  });
+
+  it.each(["idea", "proposal", "document"] as const)(
+    "collaboration still requires %s:read and never invokes its handler on capability denial",
+    async (targetType) => {
+      const permissions = [...ROLE_PRESETS.developer_agent].filter((p) => p !== `${targetType}:read`);
+      const { handlers, originals } = register(auth("editor", permissions));
+      const result = await handlers.chorus_add_comment({
+        targetType, targetUuid: `${targetType}-private`, content: "Denied",
+      });
+      expect(result).toEqual({
+        content: [{ type: "text", text: `Missing agent capability: ${targetType}:read` }], isError: true,
+      });
+      expect(originals.chorus_add_comment).not.toHaveBeenCalled();
+      expect(fixture.services.comment.createComment).not.toHaveBeenCalled();
+      expect(eventBus.emitPresence).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["viewer", "nonmember"])(
+    "developer_agent collaboration cannot bypass the %s owner's project access",
+    async (owner) => {
+      const { handlers, originals } = register(auth(owner, [...ROLE_PRESETS.developer_agent]));
+      for (const [name, params] of [
+        ["chorus_add_comment", { targetType: "idea", targetUuid: "idea-private", content: "Denied" }],
+        ["chorus_answer_elaboration", { ideaUuid: "idea-private", answers: [] }],
+      ] as const) {
+        expect((await handlers[name](params)).isError).toBe(true);
+        expect(originals[name]).not.toHaveBeenCalled();
+      }
+      expect(fixture.services.comment.createComment).not.toHaveBeenCalled();
+      expect(fixture.services.elaboration.answerElaboration).not.toHaveBeenCalled();
+      expect(eventBus.emitPresence).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["chorus_get_project", { projectUuid: "private" }],
+    ["chorus_get_project_groups", {}],
+    ["chorus_get_project_group", { groupUuid: "group" }],
+    ["chorus_get_group_dashboard", { groupUuid: "group" }],
+  ] as const)("requires project:read for %s even when the owner is an inherited group Editor", async (tool, params) => {
+    fixture.rows.projectGroupMember.push({ companyUuid: "company", groupUuid: "group", userUuid: "group-editor", role: "editor" });
+    const { handlers, originals } = register(auth("group-editor", ["task:read"]));
+    const response = await handlers[tool](params);
+    expect(response.isError).toBe(true);
+    expect(response.content).toEqual([{ type: "text", text: "Missing agent capability: project:read" }]);
+    expect(originals[tool]).not.toHaveBeenCalled();
+    expect(eventBus.emitPresence).not.toHaveBeenCalled();
+  });
+
+  it("search intersects requested entity types with agent read capabilities", async () => {
+    const { handlers } = register(auth("admin", ["task:read"]));
+    await handlers.chorus_search({ query: "secret", entityTypes: ["task", "project_group", "idea"] });
+    expect(fixture.services.search.search).toHaveBeenCalledWith(expect.objectContaining({ entityTypes: ["task"] }));
+    fixture.services.search.search.mockClear();
+    const result = await handlers.chorus_search({ query: "secret", entityTypes: ["project_group"] });
+    expect(fixture.services.search.search).not.toHaveBeenCalled();
+    expect((result.content[0] as { text: string }).text).not.toContain("secret");
+  });
+
+  it("project-only local grants cannot read the explicit group roster through includeMembers", async () => {
+    const { handlers } = register(auth("editor"));
+    await expect(handlers.chorus_get_project_group({ groupUuid: "group", includeMembers: true }))
+      .rejects.toThrow("Insufficient project group access");
+  });
+
+  it("group audit comments cannot be addressed through the project comment tool", async () => {
+    const { handlers, originals } = register(auth("admin"));
+    const response = await handlers.chorus_get_comments({ targetType: "project_group", targetUuid: "group" });
+    expect(response.isError).toBe(true);
+    expect(originals.chorus_get_comments).not.toHaveBeenCalled();
+  });
   it.each(entityCalls)("hides %s before its actual handler and presence", async (name, params, text) => {
     const { handlers, originals } = register(auth("nonmember"));
     expect(await handlers[name](params)).toEqual({ content: [{ type: "text", text }], isError: true });
@@ -508,7 +623,7 @@ describe("MCP central project access", () => {
       async ({ name, inputType, principal }) => {
         const proposal = setProposalInputs(inputType, [`${inputType}-public`, `${inputType}-private`]);
         if (principal === "revoked") {
-          fixture.rows.projectMember.push({ projectUuid: "private", userUuid: "revoked", role: "viewer" });
+          fixture.rows.projectMember.push({ companyUuid: "company", projectUuid: "private", userUuid: "revoked", role: "viewer" });
           expect((await getProjectAccess(auth("revoked"), "private")).level).toBe("viewer");
           fixture.rows.projectMember = fixture.rows.projectMember.filter((member) => member.userUuid !== "revoked");
         }
@@ -666,9 +781,7 @@ describe("MCP central project access", () => {
     expect(originals.chorus_admin_delete_project_group).not.toHaveBeenCalled();
     expect(fixture.services.group.deleteProjectGroup).not.toHaveBeenCalled();
     expect(eventBus.emitPresence).not.toHaveBeenCalled();
-    expect(fixture.prisma.project.findMany).toHaveBeenCalledWith({
-      where: { companyUuid: "company", groupUuid: "group" }, select: { uuid: true },
-    });
+    expect(fixture.prisma.project.findMany).not.toHaveBeenCalled();
   });
 
   it("allows deletion of an empty group and a group whose private projects are administered", async () => {

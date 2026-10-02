@@ -21,10 +21,10 @@ const { mockState, mockEventBus, mockPrisma, mockNotificationService } = vi.hois
     idea: { findUnique: vi.fn() },
     proposal: { findUnique: vi.fn() },
     document: { findUnique: vi.fn() },
-    user: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn(), findFirst: vi.fn() },
     agent: { findUnique: vi.fn(), findMany: vi.fn() },
     project: { findFirst: vi.fn() },
-    projectMember: { findMany: vi.fn() },
+    projectMember: { findFirst: vi.fn(), findMany: vi.fn() },
     agentInstance: { findFirst: vi.fn() },
   };
 
@@ -1430,12 +1430,29 @@ describe("notification-listener", () => {
           [
             { uuid: "member-agent", ownerUuid: "member-user" },
             { uuid: "outsider-agent", ownerUuid: "outsider-user" },
-          ].filter((a) => where.uuid.in.includes(a.uuid))
+          ].filter((a) => where.companyUuid === "company-uuid" && where.uuid.in.includes(a.uuid))
         )
       );
       mockPrisma.projectMember.findMany.mockImplementation(({ where }: any) =>
         Promise.resolve(
-          ["member-user"].filter((u) => where.userUuid.in.includes(u)).map((userUuid) => ({ userUuid }))
+          ["member-user"].filter((u) =>
+            where.companyUuid === "company-uuid" && where.projectUuid === "project-uuid"
+            && where.userUuid.in.includes(u)
+          ).map((userUuid) => ({ userUuid }))
+        )
+      );
+      // A stored local Admin keeps these tests focused on explicit membership;
+      // no outsider can gain access through the earliest-company-user fallback.
+      mockPrisma.projectMember.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.companyUuid === "company-uuid" && where.projectUuid === "project-uuid" && where.role === "admin"
+            ? { userUuid: "member-user", role: "admin" } : null
+        )
+      );
+      mockPrisma.user.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.companyUuid === "company-uuid" && (!where.uuid || where.uuid === "member-user")
+            ? { uuid: "member-user" } : null
         )
       );
       // Distinguish user vs agent in resolveActorType.
@@ -1449,8 +1466,12 @@ describe("notification-listener", () => {
     });
 
     function setProject(visibility: "public" | "private") {
-      mockPrisma.project.findFirst.mockImplementation(({ select }: any) =>
-        Promise.resolve(select?.visibility ? { visibility } : { name: "Test Project" })
+      mockPrisma.project.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.companyUuid === "company-uuid" && where.uuid === "project-uuid"
+            ? { uuid: "project-uuid", companyUuid: "company-uuid", name: "Test Project", visibility, groupUuid: null }
+            : null
+        )
       );
     }
 

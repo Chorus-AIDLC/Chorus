@@ -41,12 +41,12 @@ describe("POST /api/projects — access control", () => {
     mockCreate.mockResolvedValue({ uuid: "p-new", name: "N", description: null, createdAt: now, updatedAt: now });
   });
 
-  it("user creator becomes createdByUuid; visibility defaults to public", async () => {
+  it("user creator becomes createdByUuid and leaves omitted visibility for the shared creation guard", async () => {
     mockGetAuthContext.mockResolvedValue({ type: "user", companyUuid, actorUuid: "u-1" });
     const res = await post({ name: "N" });
     expect(res.status).toBe(200);
     expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({
-      visibility: "public",
+      visibility: undefined,
       createdByUuid: "u-1",
       actor: { type: "user", uuid: "u-1" },
     }));

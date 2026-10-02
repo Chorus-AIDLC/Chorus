@@ -46,14 +46,23 @@ describe("chorus_admin_create_project — access control", () => {
     mockProjectService.createProject.mockResolvedValue({ uuid: "p-1", name: "N", groupUuid: null });
   });
 
-  it("records the agent's owner as creator and defaults to public", async () => {
+  it("records the agent's owner and lets the service choose default visibility", async () => {
     register("owner-1");
     const res = await toolHandlers.chorus_admin_create_project({ name: "N" });
     expect(res.isError).toBeUndefined();
     expect(mockProjectService.createProject).toHaveBeenCalledWith(expect.objectContaining({
-      visibility: "public",
+      visibility: undefined,
       createdByUuid: "owner-1",
       actor: { type: "agent", uuid: "agent-1" },
+    }));
+  });
+
+  it("keeps omitted visibility undefined for a private-group child", async () => {
+    register("owner-1");
+    await toolHandlers.chorus_admin_create_project({ name: "N", groupUuid: "private-group" });
+    expect(mockProjectService.createProject).toHaveBeenCalledWith(expect.objectContaining({
+      groupUuid: "private-group", visibility: undefined,
+      auth: expect.objectContaining({ ownerUuid: "owner-1" }),
     }));
   });
 

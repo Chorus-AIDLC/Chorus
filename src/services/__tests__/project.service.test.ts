@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Prisma mock =====
 const mockPrisma = vi.hoisted(() => ({
+  user: { findFirst: vi.fn(async () => null) },
   project: {
     findMany: vi.fn(),
     findFirst: vi.fn(),
@@ -28,6 +29,9 @@ const mockPrisma = vi.hoisted(() => ({
   projectMember: {
     create: vi.fn(),
   },
+  projectGroup: { findFirst: vi.fn() },
+  projectGroupMember: { findFirst: vi.fn(), count: vi.fn() },
+  $queryRaw: vi.fn(),
   $transaction: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -225,6 +229,8 @@ describe("createProject", () => {
   it("should pass groupUuid when provided", async () => {
     const groupUuid = "group-0000-0000-0000-000000000001";
     mockPrisma.project.create.mockResolvedValue(makeProject({ groupUuid }));
+    mockPrisma.projectGroup.findFirst.mockResolvedValue({ uuid: groupUuid, companyUuid, visibility: "public" });
+    mockPrisma.projectGroupMember.count.mockResolvedValue(0);
 
     await createProject({
       companyUuid,

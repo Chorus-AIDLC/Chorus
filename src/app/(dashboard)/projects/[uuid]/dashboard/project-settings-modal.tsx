@@ -43,6 +43,7 @@ import {
 interface ProjectAccessInfo {
   visibility: ProjectVisibility;
   accessLevel: ProjectAccessLevel;
+  publicAllowed?: boolean;
 }
 
 interface ProjectSettingsModalProps {
@@ -82,7 +83,14 @@ export function ProjectSettingsModal({
         const body = await res.json();
         if (cancelled) return;
         if (res.ok && body?.success) {
-          setAccess({ visibility: body.data.visibility, accessLevel: body.data.accessLevel });
+          let publicAllowed = !body.data.groupUuid;
+          if (body.data.groupUuid) {
+            const groupRes = await fetch(`/api/project-groups/${body.data.groupUuid}`);
+            const groupBody = await groupRes.json();
+            publicAllowed = groupRes.ok && groupBody?.success && groupBody.data.visibility === "public";
+            if (cancelled) return;
+          }
+          setAccess({ visibility: body.data.visibility, accessLevel: body.data.accessLevel, publicAllowed });
           setAccessFailed(false);
         } else {
           setAccess(null);
@@ -334,6 +342,7 @@ export function ProjectSettingsModal({
                 projectUuid={projectUuid}
                 visibility={access.visibility}
                 accessLevel={access.accessLevel}
+                publicAllowed={access.publicAllowed}
                 onVisibilityChange={handleVisibilityChange}
                 onMembersChanged={() => setAccessReload((n) => n + 1)}
               />

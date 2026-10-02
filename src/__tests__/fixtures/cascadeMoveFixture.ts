@@ -320,6 +320,9 @@ export function buildMockPrisma() {
     activity: activityModel,
     project: projectModel,
     agent: agentModel,
+    // This cascade fixture models explicit grants but no registered-user
+    // roster, so there is no automatic first-user grant to resolve.
+    user: { findFirst: vi.fn(async () => null) },
     projectMember: {
       ...projectMemberModel,
       findUnique: projectMemberModel.findFirst,

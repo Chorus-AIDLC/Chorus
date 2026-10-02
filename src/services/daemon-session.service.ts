@@ -29,6 +29,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { recheckResearchTurn, getResearchEligibility, lockResearchProject } from "@/services/research-eligibility.service";
+import { canActorAccessProject, resolveEntityProjectUuid } from "@/services/project-access.service";
 
 import {
   isOperationTrigger, isResearchTurn, NON_RESEARCH_TURN, NON_OPERATION_TURN,
@@ -2414,6 +2415,74 @@ export interface PendingTurnView {
   operationPayload?: unknown;
 }
 
+interface TurnDeliveryAnchor {
+  sessionUuid: string;
+  trigger: string;
+  session: { sessionId: string; directIdeaUuid: string | null };
+}
+
+async function canAgentReceiveSessionTurn(
+  companyUuid: string, agentUuid: string, turn: TurnDeliveryAnchor,
+): Promise<boolean> {
+  const actor = { type: "agent", uuid: agentUuid };
+  if (turn.session.directIdeaUuid) {
+    const projectUuid = await resolveEntityProjectUuid(companyUuid, "idea", turn.session.directIdeaUuid);
+    return !!projectUuid && canActorAccessProject(companyUuid, actor, projectUuid, "viewer");
+  }
+
+  // No idea ancestor does not mean no project: standalone task/comment wakes
+  // keep their originating entity UUID as the session key. Older per-connection
+  // sessions append ::connectionUuid to that same key.
+  const entityUuid = turn.session.sessionId?.split("::")[0];
+  if (!entityUuid) return false;
+  const projects = await Promise.all(
+    ["task", "comment", "idea", "proposal", "document", "project"].map((type) =>
+      resolveEntityProjectUuid(companyUuid, type, entityUuid)),
+  );
+  const projectUuids = [...new Set(projects.filter((uuid): uuid is string => !!uuid))];
+  if (projectUuids.length) {
+    return (await Promise.all(projectUuids.map((uuid) =>
+      canActorAccessProject(companyUuid, actor, uuid, "viewer")))).every(Boolean);
+  }
+
+  // Autonomous turns always originate in project content; an unresolved or
+  // deleted entity must not degrade to an ad-hoc conversation.
+  if (turn.trigger !== "human_instruction") return false;
+  const [projectNotification, autonomousTurn] = await Promise.all([
+    prisma.notification.findFirst({
+      where: {
+        companyUuid, recipientType: "agent", recipientUuid: agentUuid,
+        entityUuid, projectUuid: { not: "" },
+      },
+      select: { uuid: true },
+    }),
+    prisma.daemonSessionTurn.findFirst({
+      where: {
+        sessionUuid: turn.sessionUuid, trigger: { not: "human_instruction" },
+        session: { companyUuid, agentUuid },
+      },
+      select: { uuid: true },
+    }),
+  ]);
+  // Human instructions with a server-generated key and no project history are
+  // genuinely projectless. Existing notification/turn provenance also protects
+  // follow-up instructions after a standalone entity has been deleted.
+  return !projectNotification && !autonomousTurn;
+}
+
+// A persisted pending turn is not a permanent access grant. Live delivery and
+// reconnect backfill must both resolve its current idea OR originating entity.
+export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string, turnUuid: string): Promise<boolean> {
+  const turn = await prisma.daemonSessionTurn.findFirst({
+    where: { uuid: turnUuid, session: { companyUuid, agentUuid } },
+    select: {
+      sessionUuid: true, trigger: true,
+      session: { select: { sessionId: true, directIdeaUuid: true } },
+    },
+  });
+  return !!turn && canAgentReceiveSessionTurn(companyUuid, agentUuid, turn);
+}
+
 /**
  * List the UNSTARTED (`status = "pending"`) turns of every session whose origin is the
  * given connection, for the authenticated agent within its company. This is the
@@ -2456,7 +2525,13 @@ export async function getPendingTurnsForConnection(params: {
   });
 
   const deliverable = [];
+  const accessBySession = new Map<string, Promise<boolean>>();
   for (const row of rows) {
+    const key = `${row.sessionUuid}:${row.trigger}`;
+    if (!accessBySession.has(key)) {
+      accessBySession.set(key, canAgentReceiveSessionTurn(params.companyUuid, params.agentUuid, row));
+    }
+    if (!await accessBySession.get(key)) continue;
     if (isResearchTurn(row) &&
       (!row.session.directIdeaUuid || !await recheckResearchTurn(params.companyUuid, row.session.directIdeaUuid, row.uuid))) {
       await publishResearchRetirement(params.companyUuid, row.uuid);

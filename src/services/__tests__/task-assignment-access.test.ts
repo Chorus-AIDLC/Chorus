@@ -9,8 +9,8 @@ const PRIVATE = "project-private";
 const PUBLIC = "project-public";
 
 // ----- in-memory fixture world -----
-const projects: Record<string, { uuid: string; companyUuid: string; visibility: string }> = {
-  [PRIVATE]: { uuid: PRIVATE, companyUuid: COMPANY, visibility: "private" },
+const projects: Record<string, { uuid: string; companyUuid: string; visibility: string; groupUuid?: string }> = {
+  [PRIVATE]: { uuid: PRIVATE, companyUuid: COMPANY, visibility: "private", groupUuid: "group-private" },
   [PUBLIC]: { uuid: PUBLIC, companyUuid: COMPANY, visibility: "public" },
 };
 // projectUuid -> userUuid -> role
@@ -30,10 +30,14 @@ const instances: Record<string, { agentUuid: string }> = {
 };
 
 let currentProject = PRIVATE;
+let inherited: Record<string, string> = {};
 
 const mockPrisma = vi.hoisted(() => ({
+  user: { findFirst: vi.fn(async () => null) },
+  projectGroup: { findFirst: vi.fn(async () => ({ uuid: "group-private", companyUuid: "company-1" })) },
   project: { findFirst: vi.fn() },
-  projectMember: { findUnique: vi.fn() },
+  projectMember: { findUnique: vi.fn(), findFirst: vi.fn() },
+  projectGroupMember: { findFirst: vi.fn() },
   agent: { findFirst: vi.fn() },
   agentInstance: { findFirst: vi.fn() },
   task: { findFirst: vi.fn(), update: vi.fn() },
@@ -91,12 +95,24 @@ function row(projectUuid: string, extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   currentProject = PRIVATE;
+  inherited = {};
+  mockPrisma.projectMember.findFirst.mockImplementation(async ({ where }: { where: { companyUuid: string; projectUuid: string; role: string } }) => {
+    if (where.companyUuid !== COMPANY) return null;
+    const entry = Object.entries(members[where.projectUuid] ?? {}).find(([, role]) => role === where.role);
+    return entry ? { userUuid: entry[0], role: entry[1] } : null;
+  });
+  mockPrisma.projectGroupMember.findFirst.mockImplementation(async ({ where }: { where: { userUuid?: string; role?: string } }) => {
+    const entry = Object.entries(inherited).find(([userUuid, role]) =>
+      (where.userUuid === undefined || where.userUuid === userUuid) && (where.role === undefined || where.role === role));
+    return entry ? { userUuid: entry[0], role: entry[1] } : null;
+  });
   mockPrisma.project.findFirst.mockImplementation(async ({ where }: { where: { uuid: string; companyUuid: string } }) => {
     const p = projects[where.uuid];
     return p && p.companyUuid === where.companyUuid ? p : null;
   });
   mockPrisma.projectMember.findUnique.mockImplementation(
-    async ({ where }: { where: { projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
+    async ({ where }: { where: { companyUuid: string; projectUuid_userUuid: { projectUuid: string; userUuid: string } } }) => {
+      if (where.companyUuid !== COMPANY) return null;
       const { projectUuid, userUuid } = where.projectUuid_userUuid;
       const role = members[projectUuid]?.[userUuid];
       return role ? { role } : null;
@@ -160,6 +176,20 @@ const publicAllowed: Array<[string, Assignee]> = [
 
 describe.each(Object.keys(ops) as Array<keyof typeof ops>)("%s assignment access", (op) => {
   describe("private project", () => {
+    it.each(["user", "agent"])("allows a group Editor with a lower local Viewer role as %s", async (type) => {
+      inherited["user-viewer"] = "editor";
+      const assignee = { type, uuid: type === "user" ? "user-viewer" : "agent-of-viewer" };
+      await expect(ops[op](assignee)).resolves.toBeDefined();
+      expect(updateOf[op]()).toHaveBeenCalledOnce();
+    });
+
+    it("rejects an inherited Viewer and keeps a local Editor after group removal", async () => {
+      inherited["user-outsider"] = "viewer";
+      await expect(ops[op]({ type: "user", uuid: "user-outsider" })).rejects.toBeInstanceOf(AssigneeAccessError);
+      inherited = {};
+      await expect(ops[op]({ type: "user", uuid: "user-editor" })).resolves.toBeDefined();
+      expect(updateOf[op]()).toHaveBeenCalledOnce();
+    });
     it.each(privateRejected)("rejects %s", async (_label, assignee) => {
       const err = await ops[op](assignee).catch((e) => e);
       expect(err).toBeInstanceOf(AssigneeAccessError);

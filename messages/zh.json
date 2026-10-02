@@ -1070,7 +1070,29 @@
     "deleteKeepProjects": "将 {count, plural, one {# 个项目} other {# 个项目}} 移至未分组",
     "deleteWithProjects": "永久删除 {count, plural, one {# 个项目} other {# 个项目}}",
     "confirmDelete": "删除分组",
-    "deleting": "删除中..."
+    "deleting": "删除中...",
+    "privateBadge": "私有项目组",
+    "privateTooltip": "只有组成员和有权访问组内项目的人可以发现此组。",
+    "viewMembers": "查看成员",
+    "accessReadOnly": "只有组管理员可以修改可见性或管理成员。",
+    "visibilityDescription": "选择谁可以发现此组。私有组仅包含私有项目。",
+    "publicHint": "公司所有人可发现此组，私有项目保留独立访问规则。",
+    "privateHint": "只有显式组成员及有权访问组内项目的人可发现此组。",
+    "convertPrivateHint": "此组所有公开项目将转为私有。现有项目授权保留，组角色实时继承。",
+    "convertPublicHint": "项目保留当前可见性和授权。公开组不会公开私有项目。",
+    "membersDescription": "组角色实时应用于每个子项目。项目授权可在组角色之上增加权限。",
+    "loading": "正在加载组权限…",
+    "loadFailed": "无法加载组权限。",
+    "saveFailed": "无法保存组设置。",
+    "deleteFailed": "无法删除组。请检查组和项目管理权限。",
+    "privateCreateHint": "此组为私有。新项目必须为私有并实时继承组角色，创建者还会获得本地管理员授权。",
+    "inheritCreateHint": "新项目默认采用组可见性并继承显式组角色。私有项目不会继承公司范围的公开访问权限。",
+    "lastAdmin": "项目组必须保留至少一位管理员。",
+    "accessForbidden": "你无权管理组访问权限。",
+    "accessFailed": "无法更新组权限，请重试。",
+    "visibilityUpdated": "组可见性已更新",
+    "toPrivateTitle": "将此组转为私有？",
+    "toPublicTitle": "将此组转为公开？"
   },
   "groupDashboard": {
     "subtitle": "{count, plural, one {# 个项目} other {# 个项目}} · 聚合仪表盘",
@@ -1085,7 +1107,40 @@
     "newProject": "新建项目",
     "projectStats": "{tasks} 个任务 · {completion}% 完成",
     "noProjects": "此分组中暂无项目",
-    "noProjectsHint": "点击上方「新建项目」添加"
+    "noProjectsHint": "点击上方「新建项目」添加",
+    "activity": {
+      "created": "已创建{entity}",
+      "updated": "已更新{entity}",
+      "approved": "已批准{entity}",
+      "rejected": "已拒绝{entity}",
+      "claimed": "已认领{entity}",
+      "completed": "已完成{entity}",
+      "verified": "已验收{entity}",
+      "submitted": "已提交{entity}",
+      "assigned": "已分配{entity}",
+      "deleted": "已删除{entity}",
+      "status_changed": "已更新{entity}状态",
+      "project_member_added": "已添加项目成员",
+      "project_member_role_changed": "已修改项目成员角色",
+      "project_member_removed": "已移除项目成员",
+      "project_visibility_changed": "已修改项目可见性",
+      "project_group_changed": "已移动项目分组",
+      "group_created": "已创建项目组",
+      "group_updated": "已更新组设置或可见性",
+      "group_deleted": "已删除项目组",
+      "group_access_initialized": "已初始化组权限",
+      "group_member_removed": "已移除组成员",
+      "group_member_changed": "已修改组成员权限"
+    },
+    "entities": {
+      "task": "任务",
+      "idea": "想法",
+      "proposal": "提案",
+      "document": "文档",
+      "project": "项目",
+      "project_group": "项目组",
+      "entity": "条目"
+    }
   },
   "acceptanceCriteria": {
     "title": "验收标准",
@@ -1928,7 +1983,17 @@
       "loadFailed": "无法加载成员。",
       "remove": "移除 {name}",
       "roleFor": "{name} 的角色",
-      "unnamed": "未命名用户"
+      "unnamed": "未命名用户",
+      "source": {
+        "project": "项目直接授权",
+        "group": "继承自项目组",
+        "both": "直接授权＋继承"
+      },
+      "directRole": "直接：{role}",
+      "inheritedRole": "继承：{role}",
+      "automaticAdmin": "自动管理员",
+      "explicitAdminHint": "显式授予管理员角色会取代自动管理员权限；在项目组中，还可能改变私有子项目继承的权限。",
+      "effectiveRole": "有效：{role}"
     },
     "roles": {
       "viewer": "查看者",
@@ -1964,5 +2029,47 @@
     "privateTooltip": "私有项目 — 仅项目成员可见",
     "viewerBanner": "你对此项目只有查看权限。如需修改，请联系项目管理员授予编辑者权限。",
     "commentsReadOnly": "查看者只能阅读评论，无法发表评论。"
+  },
+  "accessImpact": {
+    "title": "访问权限变化",
+    "affectedUsers": "{count, plural, other {# 位用户受影响。}}",
+    "noAffectedUsers": "没有用户受影响。",
+    "overlapHint": "每类变化中的用户均已去重，同一用户可能涉及多类变化。",
+    "project": {
+      "gainedAccess": "{count, plural, other {# 位用户将获得此项目的访问权限。}}",
+      "lostAccess": "{count, plural, other {# 位用户将失去此项目的访问权限。}}",
+      "increasedPermissions": "{count, plural, other {# 位用户的权限将提升。}}",
+      "decreasedPermissions": "{count, plural, other {# 位用户的权限将降低。}}",
+      "affectedProjects": "{count, plural, other {# 个项目受影响。}}"
+    },
+    "group": {
+      "gainedAccess": "{count, plural, other {# 位用户将获得此组或某个子项目的访问权限。}}",
+      "lostAccess": "{count, plural, other {# 位用户将失去此组或某个子项目的访问权限。}}",
+      "increasedPermissions": "{count, plural, other {# 位用户在此组或某个子项目中的权限将提升。}}",
+      "decreasedPermissions": "{count, plural, other {# 位用户在此组或某个子项目中的权限将降低。}}",
+      "affectedProjects": "{count, plural, other {# 个子项目受影响。}}"
+    },
+    "loading": "正在加载当前权限变化…",
+    "loadFailed": "无法加载权限预览。请检查管理权限后重试。",
+    "retry": "重试预览",
+    "confirmationHint": "确认当前变化。如果保存前权限发生变化，请重新预览。",
+    "stale": "权限已变化。请查看刷新后的预览并再次确认。",
+    "moveFailed": "移动失败。可能需要来源和目标管理权限。请重新预览后重试。",
+    "company": {
+      "opened": "此项目将向公司开放访问。",
+      "closed": "公司公开访问将关闭，由显式授权决定访问权限。",
+      "unchanged": "公司访问权限不变。"
+    },
+    "roles": {
+      "none": "无访问权限",
+      "viewer": "查看者",
+      "editor": "编辑者",
+      "admin": "管理员"
+    },
+    "groupCompany": {
+      "opened": "公司用户可以发现此组，私有子项目仍保持私有。",
+      "closed": "组的发现权限将限于显式成员和有项目权限的访客。",
+      "unchanged": "组的发现权限不变。"
+    }
   }
 }

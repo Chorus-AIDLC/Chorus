@@ -28,7 +28,10 @@ function walk(dir: string, pick: (file: string) => boolean): string[] {
 const rel = (file: string) => relative(ROOT, file).split(sep).join("/");
 
 // Any of these in a route file counts as an access check.
-const ROUTE_ACCESS = /\b(requireProjectAccess|requireEntityAccess|requireProjectOperation|getProjectAccess)\b|project-member\.service/;
+const ROUTE_ACCESS = /\b(requireProjectAccess|requireEntityAccess|requireProjectOperation|getProjectAccess)\b|project-member\.service|project-group(-preview)?\.service/;
+
+const GROUP_ROUTE = /^src\/app\/api\/project-groups(?:\/|\/\[uuid\]\/)/;
+const GROUP_ACCESS = /\b(requireGroupOperation|getGroupAccess)\b|project-group(-member|-preview)?\.service/;
 
 // Routes that address a single project or one of its entities MUST check access.
 const PROJECT_OR_ENTITY_ROUTE = [
@@ -37,8 +40,6 @@ const PROJECT_OR_ENTITY_ROUTE = [
   /^src\/app\/api\/(comments|references)\/route\.ts$/,
   /^src\/app\/api\/entities\//,
   /^src\/app\/api\/mentionables\/route\.ts$/,
-  // DELETE ungroups/deletes every project in the group → per-project manage_project.
-  /^src\/app\/api\/project-groups\/\[uuid\]\/route\.ts$/,
 ];
 
 // Every other route must be listed here with the reason it needs no per-project
@@ -91,8 +92,6 @@ const NON_PROJECT_ROUTES: Record<string, string> = {
   "src/app/api/notifications/read-all/route.ts": "own notifications",
   "src/app/api/notifications/route.ts": "own notifications",
   "src/app/api/notifications/unread-count/route.ts": "own notifications",
-  "src/app/api/project-groups/[uuid]/dashboard/route.ts": "multi-project — service-layer filtering (listings task)",
-  "src/app/api/project-groups/route.ts": "multi-project — service-layer filtering (listings task)",
   "src/app/api/project-visits/pin/route.ts": "multi-project — service-layer filtering (listings task)",
   "src/app/api/project-visits/route.ts": "multi-project — service-layer filtering (listings task)",
   "src/app/api/project-visits/visit/route.ts": "multi-project — service-layer filtering (listings task)",
@@ -121,9 +120,16 @@ describe("API route access inventory", () => {
   it("every other route is explicitly classified as non-project", () => {
     const unclassified = routes
       .filter((r) => !PROJECT_OR_ENTITY_ROUTE.some((re) => re.test(r.path)))
+      .filter((r) => !GROUP_ROUTE.test(r.path))
       .filter((r) => !(r.path in NON_PROJECT_ROUTES))
       .map((r) => r.path);
     expect(unclassified).toEqual([]);
+  });
+
+  it("every group route delegates discovery and explicit authority to a shared group service", () => {
+    expect(routes.filter((r) => GROUP_ROUTE.test(r.path))
+      .filter((r) => !GROUP_ACCESS.test(readFileSync(r.file, "utf8")))
+      .map((r) => r.path)).toEqual([]);
   });
 
   it("the allowlist has no stale entries", () => {

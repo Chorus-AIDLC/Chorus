@@ -13,6 +13,7 @@ import * as ideaService from "@/services/idea.service";
 import * as documentService from "@/services/document.service";
 import * as activityService from "@/services/activity.service";
 import * as projectGroupService from "@/services/project-group.service";
+import * as groupMemberService from "@/services/project-group-member.service";
 import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
 import { enforceToolClassification } from "./collection-contract";
@@ -31,7 +32,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         name: z.string().describe("Project name"),
         description: z.string().optional().describe("Project description"),
         groupUuid: z.string().optional().describe("Optional project group UUID to assign this project to. Use chorus_get_project_groups to list available groups."),
-        visibility: z.enum(["public", "private"]).optional().describe("Project visibility (default: public). Private projects are visible only to members; your owner becomes the project admin."),
+        visibility: z.enum(["public", "private"]).optional().describe("Project visibility (defaults to the group's visibility, or public when ungrouped). Private projects require an owner; your owner becomes the project admin."),
       }),
     },
     async ({ name, description, groupUuid, visibility }) => {
@@ -43,7 +44,8 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         name,
         description: description || null,
         groupUuid: groupUuid || null,
-        visibility: visibility ?? "public",
+        visibility,
+        auth,
         createdByUuid: auth.ownerUuid ?? null,
         actor: { type: "agent", uuid: auth.actorUuid },
       });
@@ -427,17 +429,20 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     "project:write",
     "chorus_admin_create_project_group",
     {
-      description: "Create a new project group (Admin exclusive)",
+      description: "Create a public or private project group. Your owner becomes its Admin.",
       inputSchema: z.object({
         name: z.string().describe("Project group name"),
         description: z.string().optional().describe("Project group description"),
+        visibility: z.enum(["public", "private"]).optional().describe("Group visibility (default public)"),
       }),
     },
-    async ({ name, description }) => {
+    async ({ name, description, visibility }) => {
       const group = await projectGroupService.createProjectGroup({
         companyUuid: auth.companyUuid,
         name,
         description: description || null,
+        visibility,
+        auth,
       });
 
       return {
@@ -453,19 +458,51 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     "project:write",
     "chorus_admin_update_project_group",
     {
-      description: "Update a project group (Admin exclusive)",
+      description: "Update group settings or manage one explicit member. Groups without an explicit Admin compute their company's first user as automatic Admin without storing a grant. Set preview=true with visibility to obtain an impact summary and confirmationToken, then confirm the same change. Access administration requires your owner's explicit or automatic group Admin role.",
       inputSchema: z.object({
         groupUuid: z.string().describe("Project Group UUID"),
         name: z.string().optional().describe("New group name"),
         description: z.string().optional().describe("New group description"),
-      }),
+        visibility: z.enum(["public", "private"]).optional(),
+        preview: z.boolean().optional().describe("Return the access impact without changing the group"),
+        confirmationToken: z.string().optional().describe("Current token from this actor's matching preview"),
+        memberAction: z.enum(["add", "update", "remove"]).optional(),
+        userUuid: z.string().optional().describe("Same-company user to grant, update or remove"),
+        role: z.enum(["viewer", "editor", "admin"]).optional().describe("Explicit group member role"),
+      }).strict(),
     },
-    async ({ groupUuid, name, description }) => {
+    async ({ groupUuid, name, description, visibility, preview, confirmationToken, memberAction, userUuid, role }) => {
+      if (memberAction) {
+        if (!userUuid || (memberAction !== "remove" && !role) ||
+            name !== undefined || description !== undefined || visibility !== undefined ||
+            preview || confirmationToken !== undefined) {
+          return { content: [{ type: "text", text: "Member changes require userUuid (and role for add/update) and must be submitted separately from group settings" }], isError: true };
+        }
+        const member = memberAction === "remove"
+          ? await groupMemberService.removeGroupMember(auth, groupUuid, userUuid)
+          : memberAction === "add"
+            ? await groupMemberService.addGroupMember(auth, groupUuid, userUuid, role!)
+            : await groupMemberService.updateGroupMember(auth, groupUuid, userUuid, role!);
+        return { content: [{ type: "text", text: JSON.stringify(member, null, 2) }] };
+      }
+      if (userUuid !== undefined || role !== undefined) {
+        return { content: [{ type: "text", text: "memberAction is required for member changes" }], isError: true };
+      }
+      if (preview) {
+        if (!visibility || name !== undefined || description !== undefined) {
+          return { content: [{ type: "text", text: "Preview requires visibility and must be separate from settings changes" }], isError: true };
+        }
+        const impact = await projectGroupService.getGroupVisibilityPreview(auth, groupUuid, visibility);
+        return { content: [{ type: "text", text: JSON.stringify(impact, null, 2) }] };
+      }
       const group = await projectGroupService.updateProjectGroup({
         companyUuid: auth.companyUuid,
         groupUuid,
         name,
         description,
+        visibility,
+        confirmationToken,
+        auth,
       });
 
       if (!group) {
@@ -485,13 +522,14 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     "project:write",
     "chorus_admin_delete_project_group",
     {
-      description: "Delete a project group (Admin exclusive). Projects in the group become ungrouped.",
+      description: "Delete a project group as an explicit group Admin. Retained private projects preserve their effective grants. Set deleteProjects=true to delete its projects instead.",
       inputSchema: z.object({
         groupUuid: z.string().describe("Project Group UUID"),
+        deleteProjects: z.boolean().optional(),
       }),
     },
-    async ({ groupUuid }) => {
-      const deleted = await projectGroupService.deleteProjectGroup(auth.companyUuid, groupUuid);
+    async ({ groupUuid, deleteProjects = false }) => {
+      const deleted = await projectGroupService.deleteProjectGroup(auth.companyUuid, groupUuid, deleteProjects, auth);
 
       if (!deleted) {
         return { content: [{ type: "text", text: "Project group not found" }], isError: true };
@@ -510,17 +548,25 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     "project:write",
     "chorus_admin_move_project_to_group",
     {
-      description: "Move a project to a different group or ungroup it (Admin exclusive). Set groupUuid to null to ungroup.",
+      description: "Move a project or ungroup it (groupUuid=null). Set preview=true to obtain the access impact and confirmationToken; confirm that same target with the current token. Private boundaries and public role expansions require Admin authorization.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
         groupUuid: z.string().nullable().describe("Target Project Group UUID (null to ungroup)"),
+        preview: z.boolean().optional(),
+        confirmationToken: z.string().optional(),
       }),
     },
-    async ({ projectUuid, groupUuid }) => {
+    async ({ projectUuid, groupUuid, preview, confirmationToken }) => {
+      if (preview) {
+        const impact = await projectGroupService.getProjectGroupMovePreview(auth, projectUuid, groupUuid);
+        return { content: [{ type: "text", text: JSON.stringify(impact, null, 2) }] };
+      }
       const result = await projectGroupService.moveProjectToGroup(
         auth.companyUuid,
         projectUuid,
-        groupUuid
+        groupUuid,
+        auth,
+        confirmationToken,
       );
 
       if (!result) {

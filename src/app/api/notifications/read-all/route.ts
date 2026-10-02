@@ -31,7 +31,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     auth.companyUuid,
     recipientType,
     recipientUuid,
-    projectUuid
+    projectUuid,
+    auth
   );
 
   return success(result);

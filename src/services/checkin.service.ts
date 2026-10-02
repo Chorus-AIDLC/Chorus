@@ -135,6 +135,7 @@ export async function buildCheckinResponse(auth: AuthContext): Promise<CheckinRe
 
 async function buildNotificationSummary(auth: AuthContext): Promise<CheckinResponse["notifications"]> {
   const list = await notificationService.list({
+    auth,
     companyUuid: auth.companyUuid,
     recipientType: auth.type,
     recipientUuid: auth.actorUuid,
@@ -157,7 +158,7 @@ async function buildNotificationSummary(auth: AuthContext): Promise<CheckinRespo
     const results = await Promise.all(
       recent.map((n) =>
         notificationService
-          .markRead(n.uuid, auth.companyUuid, auth.type, auth.actorUuid)
+          .markRead(n.uuid, auth.companyUuid, auth.type, auth.actorUuid, auth)
           .then(() => true)
           .catch(() => false),
       ),
