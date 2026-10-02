@@ -34,6 +34,7 @@ const mockPrisma = vi.hoisted(() => {
     daemonExecution: {
     findFirst: vi.fn(),
     },
+    notification: { findFirst: vi.fn() },
   } as Record<string, any>;
   client.$transaction = vi.fn(async (operation: unknown) =>
     typeof operation === "function"
@@ -69,6 +70,13 @@ vi.mock("@/services/lineage.service", () => ({
 vi.mock("@/services/daemon-connection.service", () => ({
   STALE_THRESHOLD_MS: 90_000,
 }));
+const { mockCanAccessProject, mockEntityProject } = vi.hoisted(() => ({
+  mockCanAccessProject: vi.fn(async () => true),
+  mockEntityProject: vi.fn(async (_company: string, _type: string, _uuid: string): Promise<string | null> => "project-1"),
+}));
+vi.mock("@/services/project-access.service", () => ({
+  canActorAccessProject: mockCanAccessProject, resolveEntityProjectUuid: mockEntityProject,
+}));
 
 import {
   TURN_TRIGGERS,
@@ -98,6 +106,7 @@ import {
   advanceTurnForWake,
   resolveControlSessionId,
   getPendingTurnsForConnection,
+  canAgentReceiveTurn,
   reconcileOrphanTurns,
   SessionReadOnlyError,
   transcriptEventName,
@@ -173,6 +182,11 @@ function transcriptMessageRow(overrides: Partial<Record<string, unknown>> = {}) 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockCanAccessProject.mockResolvedValue(true);
+  mockEntityProject.mockImplementation(async (_company: string, _type: string, uuid: string) =>
+    uuid.startsWith("adhoc") ? null : "project-1",
+  );
+  mockPrisma.notification.findFirst.mockResolvedValue(null);
   vi.useRealTimers();
   mockPrisma.daemonSession.upsert.mockResolvedValue(sessionRow());
   mockPrisma.daemonSession.findUnique.mockResolvedValue({ uuid: sessionUuid, companyUuid });
@@ -3540,6 +3554,29 @@ describe("read-time orphan-turn fallback", () => {
 
 // ===== getPendingTurnsForConnection (backfill read of unstarted turns) =====
 describe("getPendingTurnsForConnection", () => {
+  it("live turn delivery checks the same current project access as backfill", async () => {
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue({ session: { directIdeaUuid: "idea-1" } });
+    expect(await canAgentReceiveTurn(companyUuid, agentUuid, "turn-1")).toBe(true);
+    mockCanAccessProject.mockResolvedValue(false);
+    expect(await canAgentReceiveTurn(companyUuid, agentUuid, "turn-1")).toBe(false);
+    expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
+      where: { uuid: "turn-1", session: { companyUuid, agentUuid } },
+      select: {
+        sessionUuid: true, trigger: true,
+        session: { select: { sessionId: true, directIdeaUuid: true } },
+      },
+    });
+  });
+  it("withholds revoked idea turns while preserving ad-hoc backfill", async () => {
+    mockCanAccessProject.mockResolvedValue(false);
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      { uuid: "hidden", sessionUuid: "s1", seq: 1, trigger: "human_instruction", promptText: "Secret", session: { sessionId: "idea-1", directIdeaUuid: "idea-1" } },
+      { uuid: "adhoc", sessionUuid: "s2", seq: 1, trigger: "human_instruction", promptText: "Hi", session: { sessionId: "adhoc", directIdeaUuid: null } },
+    ]);
+    const turns = await getPendingTurnsForConnection({ companyUuid, agentUuid, connectionUuid });
+    expect(turns.map((t) => t.turnUuid)).toEqual(["adhoc"]);
+    expect(mockCanAccessProject).toHaveBeenCalledWith(companyUuid, { type: "agent", uuid: agentUuid }, "project-1", "viewer");
+  });
   it("lists pending turns of the connection's origin-pinned, agent-owned sessions, mapped to the backfill view", async () => {
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
       {

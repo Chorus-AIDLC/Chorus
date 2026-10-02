@@ -151,8 +151,13 @@ model ProjectGroup {
   companyUuid String
   name        String
   description String?  @default("")
+  visibility  String   @default("public")
+  createdByUuid String?
+  accessVersion Int    @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  members     ProjectGroupMember[]
+  projects    Project[]
 
   @@index([companyUuid])
 }
@@ -166,6 +171,7 @@ model Project {
   name        String
   description String?
   groupUuid   String? // nullable FK → ProjectGroup.uuid
+  group       ProjectGroup? @relation(fields: [groupUuid], references: [uuid], onDelete: Restrict)
   // Access control: "public" (every company member) | "private" (ProjectMember rows only)
   visibility    String   @default("public")
   // Creator User UUID (agent-created → agent's owner). Legacy rows backfilled to the company's first user.
@@ -200,6 +206,23 @@ model ProjectMember {
   updatedAt   DateTime @updatedAt
 
   @@unique([projectUuid, userUuid])
+  @@index([companyUuid, userUuid])
+}
+
+// Explicit group grants are referenced live by child projects.
+model ProjectGroupMember {
+  id          Int      @id @default(autoincrement())
+  uuid        String   @unique @default(uuid())
+  companyUuid String
+  groupUuid   String
+  group       ProjectGroup @relation(fields: [groupUuid], references: [uuid], onDelete: Cascade)
+  userUuid    String
+  role        String
+  addedByUuid String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([groupUuid, userUuid])
   @@index([companyUuid, userUuid])
 }
 

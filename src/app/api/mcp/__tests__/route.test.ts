@@ -28,13 +28,54 @@ vi.mock("@/lib/api-key", () => ({
     },
   }),
 }));
+const { mockGroupAccess, mockChildren, mockAccessible } = vi.hoisted(() => ({
+  mockGroupAccess: vi.fn(), mockChildren: vi.fn(), mockAccessible: vi.fn(),
+}));
+vi.mock("@/services/project-group-access.service", () => ({ getGroupAccess: mockGroupAccess }));
+vi.mock("@/services/project.service", () => ({ getProjectUuidsByGroup: mockChildren }));
+vi.mock("@/services/project-access.service", () => ({ accessibleProjectUuids: mockAccessible }));
 
 describe("Stateless MCP Endpoint", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGroupAccess.mockResolvedValue({ group: { uuid: "group" } });
+    mockChildren.mockResolvedValue(["visible", "hidden"]);
+    mockAccessible.mockResolvedValue(["visible"]);
   });
 
   describe("POST - Stateless Request Handling", () => {
+    it("resolves a group header using owner discovery and only accessible children", async () => {
+      const { POST } = await import("@/app/api/mcp/route");
+      const { createMcpServer } = await import("@/mcp/server");
+      const response = await POST(new NextRequest("http://localhost/api/mcp", {
+        method: "POST", headers: { authorization: "Bearer test-key", "x-chorus-project-group": "group", "x-chorus-project": "hidden" },
+      }));
+      expect(response.status).toBe(200);
+      expect(mockGroupAccess).toHaveBeenCalledWith(expect.objectContaining({ type: "agent", actorUuid: "agent-uuid" }), "group");
+      expect(createMcpServer).toHaveBeenCalledWith(expect.objectContaining({ projectUuids: ["visible"] }));
+    });
+
+    it("returns nondisclosing 404 for a hidden group header without opening a server", async () => {
+      const { POST } = await import("@/app/api/mcp/route");
+      const { createMcpServer } = await import("@/mcp/server");
+      mockGroupAccess.mockResolvedValue({ group: null });
+      const response = await POST(new NextRequest("http://localhost/api/mcp", {
+        method: "POST", headers: { authorization: "Bearer test-key", "x-chorus-project-group": "secret" },
+      }));
+      expect(response.status).toBe(404);
+      expect(createMcpServer).not.toHaveBeenCalled();
+      expect(mockChildren).not.toHaveBeenCalled();
+    });
+
+    it("keeps an explicit empty scope for a visible group with no readable projects", async () => {
+      const { POST } = await import("@/app/api/mcp/route");
+      const { createMcpServer } = await import("@/mcp/server");
+      mockAccessible.mockResolvedValue([]);
+      await POST(new NextRequest("http://localhost/api/mcp", {
+        method: "POST", headers: { authorization: "Bearer test-key", "x-chorus-project-group": "group" },
+      }));
+      expect(createMcpServer).toHaveBeenCalledWith(expect.objectContaining({ projectUuids: [] }));
+    });
     it("should create fresh server+transport and handle request", async () => {
       const { POST } = await import("@/app/api/mcp/route");
 

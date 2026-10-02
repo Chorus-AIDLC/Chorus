@@ -31,6 +31,7 @@ import { zArray } from "./schema-utils";
 import * as notificationService from "@/services/notification.service";
 import * as elaborationService from "@/services/elaboration.service";
 import * as projectGroupService from "@/services/project-group.service";
+import { listGroupMembers } from "@/services/project-group-member.service";
 import * as mentionService from "@/services/mention.service";
 import * as searchService from "@/services/search.service";
 import * as sessionService from "@/services/session.service";
@@ -777,6 +778,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     async (params) => {
       const statusValue = params.status ?? "unread";
       const result = await notificationService.list({
+        auth,
         companyUuid: auth.companyUuid,
         recipientType: auth.type,
         recipientUuid: auth.actorUuid,
@@ -793,7 +795,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         if (unreadUuids.length > 0) {
           await Promise.all(
             unreadUuids.map((uuid: string) =>
-              notificationService.markRead(uuid, auth.companyUuid, auth.type, auth.actorUuid).catch(() => {})
+              notificationService.markRead(uuid, auth.companyUuid, auth.type, auth.actorUuid, auth).catch(() => {})
             )
           );
         }
@@ -829,13 +831,13 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async (params) => {
       if (params.all) {
-        await notificationService.markAllRead(auth.companyUuid, auth.type, auth.actorUuid);
+        await notificationService.markAllRead(auth.companyUuid, auth.type, auth.actorUuid, undefined, auth);
         return { content: [{ type: "text" as const, text: JSON.stringify({ success: true }, null, 2) }] };
       }
       if (!params.notificationUuid) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: "notificationUuid or all=true required" }) }], isError: true };
       }
-      await notificationService.markRead(params.notificationUuid, auth.companyUuid, auth.type, auth.actorUuid);
+      await notificationService.markRead(params.notificationUuid, auth.companyUuid, auth.type, auth.actorUuid, auth);
       return { content: [{ type: "text" as const, text: JSON.stringify({ success: true }, null, 2) }] };
     }
   );
@@ -932,7 +934,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
             result.total,
             page,
             pageSize,
-            ["uuid", "name", "projectCount", "createdAt", "updatedAt"],
+            ["uuid", "name", "visibility", "accessLevel", "canManage", "canCreateProject", "accessInitialized", "projectCount", "createdAt", "updatedAt"],
             undefined,
             { ungroupedCount: result.ungroupedCount },
           ),
@@ -948,15 +950,18 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       description: "Get a single project group by UUID with its projects list.",
       inputSchema: z.object({
         groupUuid: z.string().describe("Project Group UUID"),
+        includeMembers: z.boolean().optional().describe("Include the explicit roster; requires your owner's explicit group membership"),
       }),
     },
-    async ({ groupUuid }) => {
+    async ({ groupUuid, includeMembers }) => {
       const group = await projectGroupService.getProjectGroup(auth.companyUuid, groupUuid, auth);
       if (!group) {
         return { content: [{ type: "text", text: "Project group not found" }], isError: true };
       }
       return {
-        content: [{ type: "text", text: JSON.stringify(group, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify(
+          includeMembers ? { ...group, members: await listGroupMembers(auth, groupUuid) } : group, null, 2,
+        ) }],
       };
     }
   );
@@ -1033,16 +1038,25 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       }),
     }),
     async ({ query, scope, scopeUuid, entityTypes }) => {
-      const result = await searchService.search({
+      const types = entityTypes?.length ? entityTypes : [
+        "task", "idea", "proposal", "document", "project", "project_group",
+      ] as searchService.EntityType[];
+      const permittedTypes = types.filter((type) =>
+        auth.permissions.includes(`${type === "project_group" ? "project" : type}:read`),
+      );
+      const result = permittedTypes.length ? await searchService.search({
         companyUuid: auth.companyUuid,
         auth,
         projectUuids: auth.projectUuids,
         query,
         scope,
         scopeUuid,
-        entityTypes,
+        entityTypes: permittedTypes,
         limit: 50,
-      });
+      }) : {
+        results: [],
+        counts: { tasks: 0, ideas: 0, proposals: 0, documents: 0, projects: 0, projectGroups: 0 },
+      };
       const rows = result.results.map((row) => ({
         ...compactCollectionRow(
           row,

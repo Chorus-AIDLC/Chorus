@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "@/hooks/use-progress-router";
 import {
@@ -8,12 +8,16 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Settings, Trash2, AlertTriangle } from "lucide-react";
 import { authFetch } from "@/lib/auth-client";
+import { ProjectAccessTab, type ProjectAccessLevel, type ProjectVisibility } from "@/app/(dashboard)/projects/[uuid]/dashboard/project-access-tab";
 
 interface ManageProjectGroupDialogProps {
   open: boolean;
@@ -36,12 +40,43 @@ export function ManageProjectGroupDialog({
 }: ManageProjectGroupDialogProps) {
   const t = useTranslations("projectGroups");
   const router = useRouter();
+  const formId = useId();
   const [name, setName] = useState(groupName);
   const [description, setDescription] = useState(groupDescription ?? "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteProjects, setDeleteProjects] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [access, setAccess] = useState<{
+    visibility: ProjectVisibility;
+    accessLevel: ProjectAccessLevel;
+    explicitRole: ProjectAccessLevel | null;
+    canManage: boolean;
+  } | null>(null);
+
+  const loadAccess = useCallback(async () => {
+    try {
+      const res = await authFetch(`/api/project-groups/${groupUuid}`);
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error();
+      setAccess(json.data);
+    } catch {
+      setAccess(null);
+      setError(t("loadFailed"));
+    }
+  }, [groupUuid, t]);
+
+  useEffect(() => {
+    if (!open) return;
+    setName(groupName);
+    setDescription(groupDescription ?? "");
+    setShowDeleteConfirm(false);
+    setDeleteProjects(false);
+    setError(null);
+    setAccess(null);
+    void loadAccess();
+  }, [open, groupName, groupDescription, loadAccess]);
 
   // Reset state when dialog opens
   const handleOpenChange = (open: boolean) => {
@@ -55,8 +90,9 @@ export function ManageProjectGroupDialog({
   };
 
   const handleSave = async () => {
-    if (!name.trim()) return;
+    if (!name.trim() || !access?.canManage) return;
     setSaving(true);
+    setError(null);
     try {
       const res = await authFetch(`/api/project-groups/${groupUuid}`, {
         method: "PATCH",
@@ -66,14 +102,20 @@ export function ManageProjectGroupDialog({
       const json = await res.json();
       if (json.success) {
         onUpdated();
+      } else {
+        setError(t("saveFailed"));
       }
+    } catch {
+      setError(t("saveFailed"));
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async () => {
+    if (access?.accessLevel !== "admin") return;
     setDeleting(true);
+    setError(null);
     try {
       const url = deleteProjects
         ? `/api/project-groups/${groupUuid}?deleteProjects=true`
@@ -85,47 +127,59 @@ export function ManageProjectGroupDialog({
       if (json.success) {
         onOpenChange(false);
         router.push("/projects");
+      } else {
+        setError(t("deleteFailed"));
       }
+    } catch {
+      setError(t("deleteFailed"));
     } finally {
       setDeleting(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-[480px] gap-0 p-0">
-        <DialogHeader className="border-b border-[#E5E2DC] dark:border-[#2a2a2e] px-6 py-5">
+    <Dialog open={open} onOpenChange={(next) => { if (!saving && !deleting) handleOpenChange(next); }}>
+      <DialogContent className="max-h-[90svh] max-w-[620px] gap-0 overflow-y-auto p-0">
+        <DialogHeader className="border-b border-border px-6 py-5">
           <div className="flex items-center gap-2.5">
             <Settings className="h-5 w-5 text-primary" />
             <DialogTitle className="text-[18px] font-semibold tracking-tight text-foreground">
-              {t("manageGroup")}
+              {t(access?.canManage === false ? "viewMembers" : "manageGroup")}
             </DialogTitle>
           </div>
+          <DialogDescription className="sr-only">{t("visibilityDescription")}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5 px-6 py-5">
+          {error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
+          {!access && <p role="status" className="text-sm text-muted-foreground">{t("loading")}</p>}
+          {access?.canManage && <>
           {/* Edit Name */}
           <div className="space-y-1.5">
-            <Label className="text-[13px] font-medium text-foreground">
+            <Label htmlFor={`${formId}-name`} className="text-[13px] font-medium text-foreground">
               {t("groupName")}
             </Label>
             <Input
+              id={`${formId}-name`}
               value={name}
+              disabled={!access?.canManage || saving}
               onChange={(e) => setName(e.target.value)}
-              className="h-10 rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] text-[13px] focus-visible:ring-primary"
+              className="h-10 rounded-lg border-border text-[13px] focus-visible:ring-primary"
             />
           </div>
 
           {/* Edit Description */}
           <div className="space-y-1.5">
-            <Label className="text-[13px] font-medium text-foreground">
+            <Label htmlFor={`${formId}-description`} className="text-[13px] font-medium text-foreground">
               {t("descriptionOptional")}
             </Label>
-            <textarea
+            <Textarea
+              id={`${formId}-description`}
               value={description}
+              disabled={!access?.canManage || saving}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="mobile-input-text w-full rounded-lg border border-[#E5E2DC] dark:border-[#2a2a2e] px-3 py-2.5 text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+              className="rounded-lg border-border py-2.5 text-[13px] focus-visible:ring-primary"
               placeholder={t("descriptionPlaceholder")}
             />
           </div>
@@ -134,73 +188,82 @@ export function ManageProjectGroupDialog({
           <div className="flex justify-end">
             <Button
               onClick={handleSave}
-              disabled={saving || !name.trim() || (name === groupName && description === (groupDescription ?? ""))}
-              className="rounded-lg bg-primary text-[13px] font-medium text-white hover:bg-[#B56A42]"
+              disabled={!access?.canManage || saving || !name.trim() || (name === groupName && description === (groupDescription ?? ""))}
+              className="rounded-lg text-[13px] font-medium"
             >
               {saving ? t("saving") : t("saveChanges")}
             </Button>
           </div>
+          </>}
+          {access && <ProjectAccessTab
+            resourceType="project-groups"
+            projectUuid={groupUuid}
+            visibility={access.visibility}
+            accessLevel={access.explicitRole ?? "viewer"}
+            canReadMembers={access.explicitRole != null}
+            onVisibilityChange={(visibility) => setAccess((prev) => prev ? { ...prev, visibility } : prev)}
+            onMembersChanged={() => { void loadAccess(); onUpdated(); }}
+          />}
         </div>
 
         {/* Danger Zone */}
-        <div className="border-t border-[#E5E2DC] dark:border-[#2a2a2e] px-6 py-5">
+        {access?.accessLevel === "admin" && <div className="border-t border-border px-6 py-5">
           {!showDeleteConfirm ? (
-            <button
+            <Button
+              variant="outline"
               onClick={() => setShowDeleteConfirm(true)}
-              className="flex w-full cursor-pointer items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-left text-[13px] font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-100"
+              className="h-auto w-full justify-start whitespace-normal rounded-lg border-destructive/30 bg-destructive/10 px-4 py-3 text-left text-[13px] text-destructive hover:bg-destructive/20 hover:text-destructive"
             >
               <Trash2 className="h-4 w-4" />
               {t("deleteGroup")}
-            </button>
+            </Button>
           ) : (
-            <div className="space-y-3 rounded-lg border border-red-200 bg-red-50 p-4">
-              <div className="flex items-center gap-2 text-[13px] font-semibold text-red-700">
+            <div className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4">
+              <div id={`${formId}-delete-title`} className="flex items-center gap-2 text-[13px] font-semibold text-destructive">
                 <AlertTriangle className="h-4 w-4" />
                 {t("deleteConfirmTitle")}
               </div>
-              <p className="text-[12px] text-red-600">
+              <p className="text-[12px] text-destructive">
                 {t("deleteConfirmDesc")}
               </p>
 
               {projectCount > 0 && (
-                <div className="space-y-2 pt-1">
-                  <label className="flex cursor-pointer items-center gap-2 text-[12px] text-foreground">
-                    <input
-                      type="radio"
-                      name="deleteOption"
-                      checked={!deleteProjects}
-                      onChange={() => setDeleteProjects(false)}
-                      className="accent-primary"
-                    />
-                    {t("deleteKeepProjects", { count: projectCount })}
-                  </label>
-                  <label className="flex cursor-pointer items-center gap-2 text-[12px] text-red-600">
-                    <input
-                      type="radio"
-                      name="deleteOption"
-                      checked={deleteProjects}
-                      onChange={() => setDeleteProjects(true)}
-                      className="accent-red-600"
-                    />
-                    {t("deleteWithProjects", { count: projectCount })}
-                  </label>
-                </div>
+                <RadioGroup
+                  aria-labelledby={`${formId}-delete-title`}
+                  value={deleteProjects ? "delete" : "keep"}
+                  onValueChange={(value) => setDeleteProjects(value === "delete")}
+                  className="gap-2 pt-1"
+                >
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem id={`${formId}-keep`} value="keep" />
+                    <Label htmlFor={`${formId}-keep`} className="cursor-pointer text-[12px] font-normal text-foreground">
+                      {t("deleteKeepProjects", { count: projectCount })}
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem id={`${formId}-delete`} value="delete" />
+                    <Label htmlFor={`${formId}-delete`} className="cursor-pointer text-[12px] font-normal text-destructive">
+                      {t("deleteWithProjects", { count: projectCount })}
+                    </Label>
+                  </div>
+                </RadioGroup>
               )}
 
-              <div className="flex gap-2 pt-1">
+              <div className="flex flex-wrap gap-2 pt-1">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setShowDeleteConfirm(false)}
-                  className="rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] text-[12px]"
+                  className="rounded-lg border-border text-[12px]"
                 >
                   {t("cancel")}
                 </Button>
                 <Button
                   size="sm"
+                  variant="destructive"
                   onClick={handleDelete}
                   disabled={deleting}
-                  className="rounded-lg bg-red-600 text-[12px] text-white hover:bg-red-700"
+                  className="rounded-lg text-[12px]"
                 >
                   <Trash2 className="mr-1 h-3 w-3" />
                   {deleting ? t("deleting") : t("confirmDelete")}
@@ -208,7 +271,7 @@ export function ManageProjectGroupDialog({
               </div>
             </div>
           )}
-        </div>
+        </div>}
       </DialogContent>
     </Dialog>
   );

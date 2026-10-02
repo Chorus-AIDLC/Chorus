@@ -11,6 +11,7 @@ const ebLogger = logger.child({ module: "event-bus" });
 
 export interface RealtimeEvent {
   companyUuid: string;
+  /** Empty for group metadata; subscribers must discovery-check entityUuid. */
   projectUuid: string;
   entityType: "task" | "idea" | "proposal" | "document" | "project" | "project_group";
   entityUuid: string;
@@ -18,8 +19,8 @@ export interface RealtimeEvent {
   actorUuid?: string;
 }
 
-// Emitted when a project's visibility or membership changes, so SSE subscribers
-// can recompute their accessible-project set.
+// Emitted after commit for project visibility/local membership AND for every
+// child of a changed group grant, so SSE subscribers refresh inherited access.
 export interface ProjectAccessChangedEvent {
   companyUuid: string;
   projectUuid: string;

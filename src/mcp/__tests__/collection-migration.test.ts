@@ -66,7 +66,7 @@ const auth: AgentAuthContext = {
   actorUuid: "agent-1",
   ownerUuid: "owner-1",
   roles: ["admin_agent"],
-  permissions: [],
+  permissions: ["task:read"],
   agentName: "Agent",
 };
 

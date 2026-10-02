@@ -3,7 +3,9 @@
 // Auth via cookie (EventSource automatically sends cookies)
 
 import { getAuthContext } from "@/lib/auth";
-import { eventBus, controlEventName } from "@/lib/event-bus";
+import { eventBus, controlEventName, type ProjectAccessChangedEvent } from "@/lib/event-bus";
+import { canActorAccessProject, membershipPrincipal } from "@/services/project-access.service";
+import logger from "@/lib/logger";
 import {
   parseSelfReport,
   registerConnection,
@@ -16,7 +18,7 @@ import {
   reconcileOffline,
   publishExecutionChange,
 } from "@/services/daemon-execution.service";
-import { reconcileOrphanTurns } from "@/services/daemon-session.service";
+import { canAgentReceiveTurn, reconcileOrphanTurns } from "@/services/daemon-session.service";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -85,9 +87,39 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      // Subscribe to notification events for this user
+      let accessRevision = 0;
+      let deliveryChain = Promise.resolve();
+      const accessChanged = (event: ProjectAccessChangedEvent) => {
+        const principal = membershipPrincipal(auth);
+        if (event.companyUuid === auth.companyUuid &&
+            (!event.userUuids?.length || (!!principal && event.userUuids.includes(principal)))) {
+          accessRevision++;
+        }
+      };
+      eventBus.on("project_access_changed", accessChanged);
+      const deliverGuarded = (event: Record<string, unknown>, allowed: () => Promise<boolean>) => {
+        deliveryChain = deliveryChain.then(async () => {
+          for (let attempt = 0; attempt < 3 && !request.signal.aborted; attempt++) {
+            const revision = accessRevision;
+            const canDeliver = await allowed();
+            if (revision !== accessRevision) continue;
+            if (canDeliver) send(`data: ${JSON.stringify(event)}\n\n`);
+            return;
+          }
+        }).catch((err) => {
+          logger.error({ err }, "SSE notification-access gate failed");
+        });
+      };
+
+      // Creation-time filtering is insufficient for delayed/Redis delivery.
       const handler = (event: Record<string, unknown>) => {
-        send(`data: ${JSON.stringify(event)}\n\n`);
+        if (typeof event.projectUuid === "string" && event.projectUuid) {
+          deliverGuarded(event, () => canActorAccessProject(
+            auth.companyUuid, { type: auth.type, uuid: auth.actorUuid }, event.projectUuid as string, "viewer",
+          ));
+        } else {
+          send(`data: ${JSON.stringify(event)}\n\n`);
+        }
       };
 
       eventBus.on(`notification:${userKey}`, handler);
@@ -101,7 +133,12 @@ export async function GET(request: NextRequest) {
       // Browser clients have no `conn`, so they never subscribe and never receive it.
       const controlHandler = conn
         ? (event: Record<string, unknown>) => {
-            send(`data: ${JSON.stringify(event)}\n\n`);
+            if (event.command === "deliver_turn") {
+              if (typeof event.turnUuid !== "string") return;
+              deliverGuarded(event, () => canAgentReceiveTurn(auth.companyUuid, auth.actorUuid, event.turnUuid as string));
+            } else {
+              send(`data: ${JSON.stringify(event)}\n\n`);
+            }
           }
         : null;
       if (conn && controlHandler) {
@@ -119,6 +156,7 @@ export async function GET(request: NextRequest) {
       // Cleanup on abort (client disconnect)
       request.signal.addEventListener("abort", () => {
         eventBus.off(`notification:${userKey}`, handler);
+        eventBus.off("project_access_changed", accessChanged);
         // Tear down the per-connection control subscription alongside the
         // notification handler (only present for a real daemon connection).
         if (conn && controlHandler) {

@@ -1070,7 +1070,29 @@
     "deleteKeepProjects": "Move {count, plural, one {# project} other {# projects}} to Ungrouped",
     "deleteWithProjects": "Delete {count, plural, one {# project} other {# projects}} permanently",
     "confirmDelete": "Delete Group",
-    "deleting": "Deleting..."
+    "deleting": "Deleting...",
+    "privateBadge": "Private group",
+    "privateTooltip": "Only group members and people with access to a child project can discover this group.",
+    "viewMembers": "View members",
+    "accessReadOnly": "Only group Admins can change visibility or manage members.",
+    "visibilityDescription": "Choose who can discover this group. Private groups contain only private projects.",
+    "publicHint": "Everyone in the company can discover this group. Private projects keep their own access rules.",
+    "privateHint": "Only explicit members and people with access to a child project can discover this group.",
+    "convertPrivateHint": "All public projects in this group will become private. Existing project grants remain and group roles are inherited live.",
+    "convertPublicHint": "Projects keep their current visibility and grants. Opening the group does not publish private projects.",
+    "membersDescription": "Group roles apply live to every child project. Project grants can add privileges above this role.",
+    "loading": "Loading group access...",
+    "loadFailed": "Group access could not be loaded.",
+    "saveFailed": "Group settings could not be saved.",
+    "deleteFailed": "Group could not be deleted. Check your group and project administration rights.",
+    "privateCreateHint": "This group is private. New projects must be private and inherit live group roles; the creator also receives a local Admin grant.",
+    "inheritCreateHint": "New projects default to the group visibility and inherit explicit group roles. Private projects do not inherit company-wide public access.",
+    "lastAdmin": "A group must keep at least one Admin.",
+    "accessForbidden": "You do not have permission to manage group access.",
+    "accessFailed": "Group access could not be updated. Please try again.",
+    "visibilityUpdated": "Group visibility updated",
+    "toPrivateTitle": "Make this group private?",
+    "toPublicTitle": "Make this group public?"
   },
   "groupDashboard": {
     "subtitle": "{count, plural, one {# project} other {# projects}} · Aggregated dashboard",
@@ -1085,7 +1107,40 @@
     "newProject": "New Project",
     "projectStats": "{tasks} tasks · {completion}% complete",
     "noProjects": "No projects in this group yet",
-    "noProjectsHint": "Click \"New Project\" above to add one"
+    "noProjectsHint": "Click \"New Project\" above to add one",
+    "activity": {
+      "created": "{entity} created",
+      "updated": "{entity} updated",
+      "approved": "{entity} approved",
+      "rejected": "{entity} rejected",
+      "claimed": "{entity} claimed",
+      "completed": "{entity} completed",
+      "verified": "{entity} verified",
+      "submitted": "{entity} submitted",
+      "assigned": "{entity} assigned",
+      "deleted": "{entity} deleted",
+      "status_changed": "{entity} status updated",
+      "project_member_added": "Project member added",
+      "project_member_role_changed": "Project member role changed",
+      "project_member_removed": "Project member removed",
+      "project_visibility_changed": "Project visibility changed",
+      "project_group_changed": "Project moved between groups",
+      "group_created": "Group created",
+      "group_updated": "Group settings or visibility updated",
+      "group_deleted": "Group deleted",
+      "group_access_initialized": "Group access initialized",
+      "group_member_removed": "Group member removed",
+      "group_member_changed": "Group member access changed"
+    },
+    "entities": {
+      "task": "Task",
+      "idea": "Idea",
+      "proposal": "Proposal",
+      "document": "Document",
+      "project": "Project",
+      "project_group": "Group",
+      "entity": "Item"
+    }
   },
   "acceptanceCriteria": {
     "title": "Acceptance Criteria",
@@ -1928,7 +1983,17 @@
       "loadFailed": "Members could not be loaded.",
       "remove": "Remove {name}",
       "roleFor": "Role for {name}",
-      "unnamed": "Unnamed user"
+      "unnamed": "Unnamed user",
+      "source": {
+        "project": "Direct project grant",
+        "group": "Inherited from group",
+        "both": "Direct + inherited"
+      },
+      "directRole": "Direct: {role}",
+      "inheritedRole": "Inherited: {role}",
+      "automaticAdmin": "Automatic admin",
+      "explicitAdminHint": "Granting an explicit Admin role replaces automatic Admin access. In groups, this can also change inherited permissions in private child projects.",
+      "effectiveRole": "Effective: {role}"
     },
     "roles": {
       "viewer": "Viewer",
@@ -1964,5 +2029,47 @@
     "privateTooltip": "Private — only project members can see this project",
     "viewerBanner": "You have view-only access to this project. Ask a project admin for Editor access to make changes.",
     "commentsReadOnly": "Viewers can read comments but cannot post."
+  },
+  "accessImpact": {
+    "title": "Access impact",
+    "affectedUsers": "{count, plural, one {# user affected.} other {# users affected.}}",
+    "noAffectedUsers": "No users are affected.",
+    "overlapHint": "Each count includes unique users. A user may appear in more than one change type.",
+    "project": {
+      "gainedAccess": "{count, plural, one {# user gains access to this project.} other {# users gain access to this project.}}",
+      "lostAccess": "{count, plural, one {# user loses access to this project.} other {# users lose access to this project.}}",
+      "increasedPermissions": "{count, plural, one {# user receives higher permissions.} other {# users receive higher permissions.}}",
+      "decreasedPermissions": "{count, plural, one {# user receives lower permissions.} other {# users receive lower permissions.}}",
+      "affectedProjects": "{count, plural, one {# project affected.} other {# projects affected.}}"
+    },
+    "group": {
+      "gainedAccess": "{count, plural, one {# user gains access to the group or a child project.} other {# users gain access to the group or a child project.}}",
+      "lostAccess": "{count, plural, one {# user loses access to the group or a child project.} other {# users lose access to the group or a child project.}}",
+      "increasedPermissions": "{count, plural, one {# user receives higher permissions in the group or a child project.} other {# users receive higher permissions in the group or a child project.}}",
+      "decreasedPermissions": "{count, plural, one {# user receives lower permissions in the group or a child project.} other {# users receive lower permissions in the group or a child project.}}",
+      "affectedProjects": "{count, plural, one {# child project affected.} other {# child projects affected.}}"
+    },
+    "loading": "Loading current access changes...",
+    "loadFailed": "The access preview could not be loaded. Check your administration rights and try again.",
+    "retry": "Retry preview",
+    "confirmationHint": "Confirm these current changes. If access changes before saving, review a new preview.",
+    "stale": "Access changed. Review the refreshed preview before confirming again.",
+    "moveFailed": "Movement failed. Source and target administration may be required. Review a new preview before retrying.",
+    "company": {
+      "opened": "Company access opens for this project.",
+      "closed": "Company access closes; explicit grants determine access.",
+      "unchanged": "Company access is unchanged."
+    },
+    "roles": {
+      "none": "No access",
+      "viewer": "Viewer",
+      "editor": "Editor",
+      "admin": "Admin"
+    },
+    "groupCompany": {
+      "opened": "Company users can discover the group. Private child projects remain private.",
+      "closed": "Group discovery becomes restricted to explicit members and project-only visitors.",
+      "unchanged": "Group discovery is unchanged."
+    }
   }
 }

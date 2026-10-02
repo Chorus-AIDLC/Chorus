@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useCallback, useState, useTransition } from "react";
 import { useTranslations } from "next-intl";
 import { ArrowRightLeft, Check, Loader2 } from "lucide-react";
 import {
@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { AccessImpactPreview, type AccessImpact } from "@/components/access-impact-preview";
 
 interface MoveProjectConfirmDialogProps {
   open: boolean;
@@ -17,7 +18,9 @@ interface MoveProjectConfirmDialogProps {
   projectName: string;
   sourceGroupName: string;
   targetGroupName: string;
-  onConfirm: () => Promise<void>;
+  projectUuid: string;
+  targetGroupUuid: string | null;
+  onConfirm: (confirmationToken: string) => Promise<void>;
 }
 
 export function MoveProjectConfirmDialog({
@@ -27,21 +30,35 @@ export function MoveProjectConfirmDialog({
   sourceGroupName,
   targetGroupName,
   onConfirm,
+  projectUuid,
+  targetGroupUuid,
 }: MoveProjectConfirmDialogProps) {
   const t = useTranslations();
   const [isPending, startTransition] = useTransition();
+  const [preview, setPreview] = useState<AccessImpact | null>(null);
+  const [version, setVersion] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const onLoaded = useCallback((value: AccessImpact | null) => setPreview(value), []);
 
   const handleConfirm = () => {
+    if (!preview || isPending) return;
     startTransition(async () => {
-      await onConfirm();
-      onOpenChange(false);
+      setError(null);
+      try {
+        await onConfirm(preview.confirmationToken);
+        onOpenChange(false);
+      } catch {
+        setError(t("accessImpact.moveFailed"));
+        setPreview(null);
+        setVersion((value) => value + 1);
+      }
     });
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!isPending) onOpenChange(next); }}>
       <DialogContent
-        className="sm:max-w-[440px] gap-0 p-0 rounded-[16px]"
+        className="max-h-[90svh] overflow-y-auto sm:max-w-[440px] gap-0 p-0 rounded-[16px]"
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">
@@ -57,18 +74,25 @@ export function MoveProjectConfirmDialog({
             {t("projectGroups.moveTitle")}
           </p>
 
-          <DialogDescription className="text-center text-[13px] leading-[1.5] text-muted-foreground">
+          <DialogDescription className="break-words text-center text-[13px] leading-[1.5] text-muted-foreground">
             {t("projectGroups.moveDescription", {
               projectName,
               sourceGroupName,
               targetGroupName,
             })}
           </DialogDescription>
+          {open && <AccessImpactPreview
+            key={`${projectUuid}:${targetGroupUuid}:${version}`}
+            url={`/api/projects/${projectUuid}/group/preview?groupUuid=${encodeURIComponent(targetGroupUuid ?? "")}`}
+            onLoaded={onLoaded}
+          />}
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         </div>
 
         <div className="flex justify-end gap-3 p-[16px_24px] border-t border-[#E5E2DC] dark:border-[#2a2a2e]">
           <Button
             variant="outline"
+            disabled={isPending}
             onClick={() => onOpenChange(false)}
             className="rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] text-[13px]"
           >
@@ -76,7 +100,7 @@ export function MoveProjectConfirmDialog({
           </Button>
           <Button
             onClick={handleConfirm}
-            disabled={isPending}
+            disabled={isPending || !preview}
             className="rounded-lg bg-primary hover:bg-[#B56A42] text-white text-[13px] gap-1.5"
           >
             {isPending ? (

@@ -85,7 +85,11 @@ const mockPrisma = vi.hoisted(() => ({
         uuid: "project-1", companyUuid: "company-1", visibility: "public",
       }),
     },
-    projectMember: { findUnique: vi.fn().mockResolvedValue(null) },
+    projectMember: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    user: { findFirst: vi.fn().mockResolvedValue(null) },
     task: { findFirst: vi.fn().mockResolvedValue({ projectUuid: "project-1" }) },
     proposal: { findFirst: vi.fn().mockResolvedValue({ projectUuid: "project-1" }) },
     agent: { update: vi.fn() },

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Prisma mock =====
 const mockPrisma = vi.hoisted(() => ({
+  agent: { findFirst: vi.fn() },
+  comment: { findMany: vi.fn() },
   notification: {
     create: vi.fn(),
     findFirst: vi.fn(),
@@ -55,9 +57,14 @@ vi.mock("@/services/orchestrator.service", () => ({
 // Project-access recipient filter (private projects). Identity by default; the
 // "project-access choke point" block opts into dropping recipients.
 const mockFilterRecipients = vi.hoisted(() => vi.fn());
+const mockAccessibleProjectUuids = vi.hoisted(() => vi.fn());
 vi.mock("@/services/project-access.service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/project-access.service")>();
-  return { ...actual, filterRecipientsByProjectAccess: mockFilterRecipients };
+  return {
+    ...actual,
+    filterRecipientsByProjectAccess: mockFilterRecipients,
+    accessibleProjectUuids: mockAccessibleProjectUuids,
+  };
 });
 
 import {
@@ -126,6 +133,10 @@ beforeEach(() => {
   mockResolveWakerSessionAnchor.mockResolvedValue(null);
   mockResolveDirectIdeaUuid.mockResolvedValue("idea-from-task");
   mockFilterRecipients.mockImplementation(async (_c: string, _p: string, r: unknown[]) => r);
+  mockAccessibleProjectUuids.mockResolvedValue(["project-0000-0000-0000-000000000001"]);
+  mockPrisma.agent.findFirst.mockResolvedValue({ ownerUuid: recipientUuid, roles: ["developer_agent"], permissions: [] });
+  mockPrisma.notification.findMany.mockResolvedValue([]);
+  mockPrisma.comment.findMany.mockResolvedValue([]);
 });
 
 // ===== create =====

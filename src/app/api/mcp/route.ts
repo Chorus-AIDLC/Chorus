@@ -7,6 +7,8 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { createMcpServer } from "@/mcp/server";
 import { extractApiKey, validateApiKey } from "@/lib/api-key";
 import { getProjectUuidsByGroup } from "@/services/project.service";
+import { getGroupAccess } from "@/services/project-group-access.service";
+import { accessibleProjectUuids } from "@/services/project-access.service";
 import type { AgentAuthContext, AgentRole } from "@/types/auth";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import logger from "@/lib/logger";
@@ -42,9 +44,7 @@ export async function POST(request: NextRequest) {
     const projectGroupUuid = request.headers.get("x-chorus-project-group");
     const projectHeader = request.headers.get("x-chorus-project");
 
-    if (projectGroupUuid) {
-      projectUuids = await getProjectUuidsByGroup(validation.agent.companyUuid, projectGroupUuid);
-    } else if (projectHeader) {
+    if (!projectGroupUuid && projectHeader) {
       projectUuids = projectHeader.split(",").map((s) => s.trim()).filter(Boolean);
     }
 
@@ -62,6 +62,18 @@ export async function POST(request: NextRequest) {
       agentName: validation.agent.name,
       projectUuids,
     };
+    if (projectGroupUuid) {
+      const access = await getGroupAccess(auth, projectGroupUuid);
+      if (!access.group) {
+        return NextResponse.json({ error: "Project group not found" }, { status: 404 });
+      }
+      const [children, accessible] = await Promise.all([
+        getProjectUuidsByGroup(auth.companyUuid, projectGroupUuid),
+        accessibleProjectUuids(auth),
+      ]);
+      const visible = new Set(accessible);
+      auth.projectUuids = children.filter((uuid) => visible.has(uuid));
+    }
 
     // Stateless: fresh server+transport per request, no session state
     const transport = new WebStandardStreamableHTTPServerTransport({});

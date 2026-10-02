@@ -42,6 +42,10 @@ vi.mock("@/services/project-access.service", async (importActual) => ({
   ...await importActual<typeof import("@/services/project-access.service")>(),
   accessibleProjectUuids: vi.fn(async () => ["project-1", "project-2"]),
 }));
+vi.mock("@/services/project-group-access.service", async (importActual) => ({
+  ...await importActual<typeof import("@/services/project-group-access.service")>(),
+  getGroupAccess: vi.fn(async () => ({ group: { uuid: "group-1" } })),
+}));
 
 // ===== Import under test (after mocks) =====
 
@@ -724,7 +728,7 @@ describe("search.service", () => {
 
       expect(mockPrisma.projectGroup.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ companyUuid }),
+          where: expect.objectContaining({ AND: expect.arrayContaining([expect.objectContaining({ companyUuid })]) }),
         })
       );
     });

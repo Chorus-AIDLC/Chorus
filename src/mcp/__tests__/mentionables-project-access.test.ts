@@ -76,11 +76,19 @@ const fixture = vi.hoisted(() => {
   const prisma = {
     project: model("project"),
     projectMember: model("projectMember"),
+    projectGroupMember: model("projectGroupMember"),
     idea: model("idea"),
     task: model("task"),
     proposal: model("proposal"),
     document: model("document"),
-    user: model("user"),
+    user: {
+      ...model("user"),
+      // These explicit-membership cases do not define a first company user.
+      findFirst: vi.fn(async (query: Query = {}) => {
+        const row = query.where?.uuid ? find("user", query)[0] : undefined;
+        return row ? select(row, query.select) : null;
+      }),
+    },
     agent: model("agent"),
     daemonConnection: model("daemonConnection"),
     daemonExecution: {
@@ -151,7 +159,7 @@ function auth(ownerUuid?: string): AgentAuthContext {
     actorUuid: "calling-agent",
     agentName: "Calling Agent",
     ownerUuid,
-    permissions: [],
+    permissions: ["project:read", "idea:read", "task:read", "proposal:read", "document:read"],
     roles: [],
   };
 }
@@ -346,7 +354,7 @@ describe("chorus_search_mentionables central project gate", () => {
     });
     expect(tool.original).toHaveBeenCalledOnce();
     expect(fixture.prisma.projectMember.findUnique).toHaveBeenCalledWith({
-      where: { projectUuid_userUuid: { projectUuid: PRIVATE, userUuid: VIEWER } },
+      where: { companyUuid: COMPANY, projectUuid_userUuid: { projectUuid: PRIVATE, userUuid: VIEWER } },
       select: { role: true },
     });
     expect(fixture.prisma.projectMember.findMany).toHaveBeenCalledWith({
@@ -364,7 +372,7 @@ describe("chorus_search_mentionables central project gate", () => {
       take: 20,
     }));
     expect(fixture.prisma.projectMember.findMany).toHaveBeenCalledWith({
-      where: { projectUuid: PRIVATE, userUuid: { in: [VIEWER, EDITOR] } },
+      where: { companyUuid: COMPANY, projectUuid: PRIVATE, userUuid: { in: [VIEWER, EDITOR] } },
       select: { userUuid: true },
     });
     expect(fixture.resolveRootIdea).toHaveBeenCalledWith(COMPANY, entityType, context(entityType).entityUuid);
@@ -393,7 +401,7 @@ describe("chorus_search_mentionables central project gate", () => {
       select: { userUuid: true },
     });
     expect(fixture.prisma.projectMember.findMany).toHaveBeenCalledWith({
-      where: { projectUuid: PRIVATE, userUuid: { in: [VIEWER] } },
+      where: { companyUuid: COMPANY, projectUuid: PRIVATE, userUuid: { in: [VIEWER] } },
       select: { userUuid: true },
     });
     expect(fixture.eventBus.emitPresence).toHaveBeenCalledOnce();
@@ -524,7 +532,7 @@ describe("real mention service recipient membership filtering", () => {
       where: expect.objectContaining({ uuid: { in: [VIEWER, EDITOR] } }),
     }));
     expect(fixture.prisma.projectMember.findMany).toHaveBeenCalledWith({
-      where: { projectUuid: PRIVATE, userUuid: { in: [VIEWER, EDITOR] } },
+      where: { companyUuid: COMPANY, projectUuid: PRIVATE, userUuid: { in: [VIEWER, EDITOR] } },
       select: { userUuid: true },
     });
   });

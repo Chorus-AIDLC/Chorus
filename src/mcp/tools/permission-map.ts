@@ -8,9 +8,8 @@
 // wrapper also derives a default project level from this map, with explicit
 // overrides below for management, public mutations and company-wide tools.
 //
-// Most public-namespaced tools in public.ts (read-only discovery, comments,
-// session, notifications) are NOT gated and are intentionally absent from this
-// map. The exception is `chorus_create_report`, which is public-namespaced
+// Public reads keep their registration surface and are capability-checked at
+// call time by TOOL_READ_PERMISSIONS. The exception is `chorus_create_report`, which is public-namespaced
 // (no `pm_` prefix per add-idea-completion-report Tech Design §"MCP tool
 // contract") but IS gated on `document:write` — it appears here because it
 // goes through `registerPermissionedTool`. Session tools (session.ts) remain
@@ -102,8 +101,32 @@ export const TOOL_PERMISSIONS = {
 
 export type ManagedToolName = keyof typeof TOOL_PERMISSIONS;
 
+// Call-time gates also apply to public reads: an owner's effective access can
+// never supply an agent capability that the API key does not have.
+export const TOOL_READ_PERMISSIONS: Record<string, Permission> = {
+  chorus_get_project: "project:read",
+  chorus_list_projects: "project:read",
+  chorus_get_project_groups: "project:read",
+  chorus_get_project_group: "project:read",
+  chorus_get_group_dashboard: "project:read",
+  chorus_get_activity: "project:read",
+  chorus_get_idea: "idea:read",
+  chorus_get_ideas: "idea:read",
+  chorus_get_available_ideas: "idea:read",
+  chorus_get_elaboration: "idea:read",
+  chorus_get_task: "task:read",
+  chorus_list_tasks: "task:read",
+  chorus_get_available_tasks: "task:read",
+  chorus_get_unblocked_tasks: "task:read",
+  chorus_get_proposal: "proposal:read",
+  chorus_get_proposals: "proposal:read",
+  chorus_get_document: "document:read",
+  chorus_get_documents: "document:read",
+};
+
 export type ToolProjectAccessPolicy =
   | { scope: "resource"; required: "viewer" | "editor" | "manage_project" }
+  | { scope: "group" }
   | { scope: "company" | "filtered" };
 
 // Exceptions are explicit: company tools do not touch project content, while
@@ -153,7 +176,7 @@ export const TOOL_PROJECT_ACCESS_OVERRIDES = {
   chorus_create_session: { scope: "company" },
   chorus_admin_create_project: { scope: "company" },
   chorus_admin_create_project_group: { scope: "company" },
-  chorus_admin_update_project_group: { scope: "company" },
+  chorus_admin_update_project_group: { scope: "group" },
 } as const satisfies Record<string, ToolProjectAccessPolicy>;
 
 /** Fail registration when a new tool has no reviewed access policy. */

@@ -25,7 +25,7 @@ export async function deleteProjectAction(projectUuid: string) {
   if (denied) return denied;
 
   try {
-    const deleted = await deleteProject(auth.companyUuid, projectUuid);
+    const deleted = await deleteProject(auth.companyUuid, projectUuid, auth);
     if (!deleted) {
       return { success: false, error: "Project not found" };
     }
@@ -65,10 +65,13 @@ export async function updateProjectAction(
 
   try {
     const updated = await updateProjectWithAgentCwds({
+      name: data.name,
+      description: data.description,
+      agentCwds: data.agentCwds,
       companyUuid: auth.companyUuid,
       userUuid: auth.actorUuid,
       projectUuid,
-      ...data,
+      auth,
     });
     revalidatePath(`/projects/${projectUuid}/dashboard`);
     return { success: true, data: updated };

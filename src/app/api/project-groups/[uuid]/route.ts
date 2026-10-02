@@ -10,8 +10,7 @@ import {
   updateProjectGroup,
   deleteProjectGroup,
 } from "@/services/project-group.service";
-import { requireProjectOperation } from "@/services/project-access.service";
-import { prisma } from "@/lib/prisma";
+import { isProjectVisibility, type ProjectVisibility } from "@/services/project-access.service";
 
 // GET /api/project-groups/[uuid]
 export const GET = withErrorHandler(
@@ -43,14 +42,19 @@ export const PATCH = withErrorHandler(
     }
 
     const { uuid } = await context.params;
-    const body = await parseBody<{ name?: string; description?: string }>(request);
+    const body = await parseBody<{ name?: string; description?: string; visibility?: ProjectVisibility; initializeAccess?: unknown; confirmationToken?: string }>(request);
+    if (body.visibility !== undefined && !isProjectVisibility(body.visibility)) return errors.validationError({ visibility: "Invalid visibility" });
+    if (body.initializeAccess !== undefined) return errors.validationError({ initializeAccess: "Legacy group Admins are assigned automatically; manual initialization is unsupported" });
+    if (body.name !== undefined && (typeof body.name !== "string" || !body.name.trim())) return errors.validationError({ name: "Name is required" });
 
     const group = await updateProjectGroup({
       companyUuid: auth.companyUuid,
       groupUuid: uuid,
       name: body.name?.trim(),
       description: body.description?.trim(),
-    });
+      visibility: body.visibility,
+      confirmationToken: body.confirmationToken,
+    }, auth);
 
     if (!group) return errors.notFound("Project group");
     return success(group);
@@ -73,19 +77,7 @@ export const DELETE = withErrorHandler(
     const { uuid } = await context.params;
     const shouldDeleteProjects = request.nextUrl.searchParams.get("deleteProjects") === "true";
 
-    // Deleting a group ungroups (or deletes) EVERY project in it, including ones
-    // the caller cannot see. Check manage_project on the full, unfiltered set
-    // before any write: private projects need admin (hidden ones 404), public
-    // projects stay open to every company member. All-or-nothing.
-    const groupProjects = await prisma.project.findMany({
-      where: { companyUuid: auth.companyUuid, groupUuid: uuid },
-      select: { uuid: true },
-    });
-    for (const project of groupProjects) {
-      await requireProjectOperation(auth, project.uuid, "manage_project");
-    }
-
-    const deleted = await deleteProjectGroup(auth.companyUuid, uuid, shouldDeleteProjects);
+    const deleted = await deleteProjectGroup(auth.companyUuid, uuid, shouldDeleteProjects, auth);
 
     if (!deleted) return errors.notFound("Project group");
     return success({ deleted: true });

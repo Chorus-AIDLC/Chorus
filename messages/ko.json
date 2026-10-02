@@ -1070,7 +1070,29 @@
     "deleteKeepProjects": "프로젝트 {count}개를 미분류로 이동",
     "deleteWithProjects": "프로젝트 {count}개 영구 삭제",
     "confirmDelete": "그룹 삭제",
-    "deleting": "삭제 중..."
+    "deleting": "삭제 중...",
+    "privateBadge": "비공개 그룹",
+    "privateTooltip": "그룹 구성원과 하위 프로젝트 접근 권한이 있는 사람만 이 그룹을 볼 수 있습니다.",
+    "viewMembers": "구성원 보기",
+    "accessReadOnly": "그룹 관리자만 공개 범위와 구성원을 관리할 수 있습니다.",
+    "visibilityDescription": "그룹을 볼 수 있는 사람을 선택하세요. 비공개 그룹에는 비공개 프로젝트만 포함할 수 있습니다.",
+    "publicHint": "회사 내 모든 사람이 그룹을 볼 수 있습니다. 비공개 프로젝트는 자체 접근 규칙을 유지합니다.",
+    "privateHint": "명시적 구성원과 하위 프로젝트 접근 권한이 있는 사람만 그룹을 볼 수 있습니다.",
+    "convertPrivateHint": "그룹의 모든 공개 프로젝트가 비공개로 전환됩니다. 기존 프로젝트 권한은 유지되고 그룹 역할은 실시간으로 상속됩니다.",
+    "convertPublicHint": "프로젝트의 공개 범위와 권한은 유지됩니다. 그룹을 공개해도 비공개 프로젝트는 공개되지 않습니다.",
+    "membersDescription": "그룹 역할은 모든 하위 프로젝트에 실시간으로 적용됩니다. 프로젝트 권한은 그룹 역할보다 높은 권한을 추가할 수 있습니다.",
+    "loading": "그룹 권한 로딩 중…",
+    "loadFailed": "그룹 권한을 불러오지 못했습니다.",
+    "saveFailed": "그룹 설정을 저장하지 못했습니다.",
+    "deleteFailed": "그룹을 삭제하지 못했습니다. 그룹 및 프로젝트 관리 권한을 확인하세요.",
+    "privateCreateHint": "이 그룹은 비공개입니다. 새 프로젝트는 비공개로 생성되고 그룹 역할을 실시간 상속합니다. 생성자에게는 개별 관리자 권한도 부여됩니다.",
+    "inheritCreateHint": "새 프로젝트는 그룹 공개 범위와 명시적 역할을 상속합니다. 비공개 프로젝트는 회사 전체의 공개 접근 권한을 상속하지 않습니다.",
+    "lastAdmin": "그룹에는 최소 한 명의 관리자가 필요합니다.",
+    "accessForbidden": "그룹 접근 권한을 관리할 권한이 없습니다.",
+    "accessFailed": "그룹 접근 권한을 업데이트하지 못했습니다. 다시 시도하세요.",
+    "visibilityUpdated": "그룹 공개 범위가 업데이트되었습니다",
+    "toPrivateTitle": "이 그룹을 비공개로 전환할까요?",
+    "toPublicTitle": "이 그룹을 공개로 전환할까요?"
   },
   "groupDashboard": {
     "subtitle": "프로젝트 {count}개 · 통합 대시보드",
@@ -1085,7 +1107,40 @@
     "newProject": "새 프로젝트",
     "projectStats": "작업 {tasks}개 · 완료율 {completion}%",
     "noProjects": "아직 이 그룹에 프로젝트가 없습니다",
-    "noProjectsHint": "위의 \"새 프로젝트\"를 클릭해 추가하세요"
+    "noProjectsHint": "위의 \"새 프로젝트\"를 클릭해 추가하세요",
+    "activity": {
+      "created": "{entity} 생성됨",
+      "updated": "{entity} 업데이트됨",
+      "approved": "{entity} 승인됨",
+      "rejected": "{entity} 거부됨",
+      "claimed": "{entity} 담당됨",
+      "completed": "{entity} 완료됨",
+      "verified": "{entity} 검증됨",
+      "submitted": "{entity} 제출됨",
+      "assigned": "{entity} 할당됨",
+      "deleted": "{entity} 삭제됨",
+      "status_changed": "{entity} 상태 업데이트됨",
+      "project_member_added": "프로젝트 구성원 추가됨",
+      "project_member_role_changed": "프로젝트 구성원 역할 변경됨",
+      "project_member_removed": "프로젝트 구성원 제거됨",
+      "project_visibility_changed": "프로젝트 공개 범위 변경됨",
+      "project_group_changed": "프로젝트 그룹 이동됨",
+      "group_created": "그룹 생성됨",
+      "group_updated": "그룹 설정 또는 공개 범위 업데이트됨",
+      "group_deleted": "그룹 삭제됨",
+      "group_access_initialized": "그룹 권한 초기화됨",
+      "group_member_removed": "그룹 구성원 제거됨",
+      "group_member_changed": "그룹 구성원 권한 변경됨"
+    },
+    "entities": {
+      "task": "작업",
+      "idea": "아이디어",
+      "proposal": "제안",
+      "document": "문서",
+      "project": "프로젝트",
+      "project_group": "그룹",
+      "entity": "항목"
+    }
   },
   "acceptanceCriteria": {
     "title": "수락 기준",
@@ -1928,7 +1983,17 @@
       "loadFailed": "멤버를 불러올 수 없습니다.",
       "remove": "{name} 제거",
       "roleFor": "{name}의 역할",
-      "unnamed": "이름 없는 사용자"
+      "unnamed": "이름 없는 사용자",
+      "source": {
+        "project": "프로젝트 직접 권한",
+        "group": "그룹에서 상속",
+        "both": "직접 권한 + 상속"
+      },
+      "directRole": "직접: {role}",
+      "inheritedRole": "상속: {role}",
+      "automaticAdmin": "자동 관리자",
+      "explicitAdminHint": "관리자 역할을 명시적으로 부여하면 자동 관리자 권한이 대체됩니다. 그룹에서는 비공개 하위 프로젝트에 상속되는 권한도 변경될 수 있습니다.",
+      "effectiveRole": "유효: {role}"
     },
     "roles": {
       "viewer": "뷰어",
@@ -1964,5 +2029,47 @@
     "privateTooltip": "비공개 — 프로젝트 멤버만 이 프로젝트를 볼 수 있습니다",
     "viewerBanner": "이 프로젝트에 대한 보기 전용 권한이 있습니다. 변경하려면 프로젝트 관리자에게 편집자 권한을 요청하세요.",
     "commentsReadOnly": "뷰어는 댓글을 읽을 수 있지만 작성할 수는 없습니다."
+  },
+  "accessImpact": {
+    "title": "접근 권한 변경",
+    "affectedUsers": "{count, plural, other {사용자 #명이 영향을 받습니다.}}",
+    "noAffectedUsers": "영향을 받는 사용자가 없습니다.",
+    "overlapHint": "각 변경 유형의 사용자 수는 중복을 제외합니다. 한 사용자가 여러 변경 유형에 포함될 수 있습니다.",
+    "project": {
+      "gainedAccess": "{count, plural, other {사용자 #명이 이 프로젝트의 접근 권한을 얻습니다.}}",
+      "lostAccess": "{count, plural, other {사용자 #명이 이 프로젝트의 접근 권한을 잃습니다.}}",
+      "increasedPermissions": "{count, plural, other {사용자 #명의 권한이 높아집니다.}}",
+      "decreasedPermissions": "{count, plural, other {사용자 #명의 권한이 낮아집니다.}}",
+      "affectedProjects": "{count, plural, other {프로젝트 #개가 영향을 받습니다.}}"
+    },
+    "group": {
+      "gainedAccess": "{count, plural, other {사용자 #명이 그룹 또는 하위 프로젝트의 접근 권한을 얻습니다.}}",
+      "lostAccess": "{count, plural, other {사용자 #명이 그룹 또는 하위 프로젝트의 접근 권한을 잃습니다.}}",
+      "increasedPermissions": "{count, plural, other {사용자 #명의 그룹 또는 하위 프로젝트 권한이 높아집니다.}}",
+      "decreasedPermissions": "{count, plural, other {사용자 #명의 그룹 또는 하위 프로젝트 권한이 낮아집니다.}}",
+      "affectedProjects": "{count, plural, other {하위 프로젝트 #개가 영향을 받습니다.}}"
+    },
+    "loading": "현재 접근 권한 변경 로딩 중…",
+    "loadFailed": "권한 미리보기를 불러오지 못했습니다. 관리 권한을 확인한 후 다시 시도하세요.",
+    "retry": "미리보기 다시 시도",
+    "confirmationHint": "현재 변경 사항을 확인하세요. 저장 전에 권한이 변경되면 새 미리보기가 필요합니다.",
+    "stale": "접근 권한이 변경되었습니다. 새 미리보기를 확인한 후 다시 승인하세요.",
+    "moveFailed": "이동하지 못했습니다. 출발 및 대상 그룹 관리 권한이 필요할 수 있습니다. 새 미리보기를 확인하세요.",
+    "company": {
+      "opened": "이 프로젝트의 회사 전체 접근이 열립니다.",
+      "closed": "회사 전체 공개 접근이 닫히고 명시적 권한이 적용됩니다.",
+      "unchanged": "회사 접근 권한은 변경되지 않습니다."
+    },
+    "roles": {
+      "none": "접근 없음",
+      "viewer": "뷰어",
+      "editor": "편집자",
+      "admin": "관리자"
+    },
+    "groupCompany": {
+      "opened": "회사 사용자는 그룹을 볼 수 있습니다. 비공개 하위 프로젝트는 비공개로 유지됩니다.",
+      "closed": "그룹 표시는 명시적 구성원과 프로젝트 접근 권한이 있는 방문자로 제한됩니다.",
+      "unchanged": "그룹 표시 범위는 변경되지 않습니다."
+    }
   }
 }

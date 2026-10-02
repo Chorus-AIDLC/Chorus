@@ -15,6 +15,13 @@ const mockRegisterConnection = vi.fn();
 const mockTouchConnection = vi.fn();
 const mockMarkDisconnected = vi.fn();
 const mockReconcileOrphanTurns = vi.fn();
+const mockCanAgentReceiveTurn = vi.fn();
+const mockCanActorAccessProject = vi.fn();
+vi.mock("@/services/project-access.service", () => ({
+  canActorAccessProject: (...args: unknown[]) => mockCanActorAccessProject(...args),
+  membershipPrincipal: (auth: { ownerUuid?: string; actorUuid: string; type: string }) =>
+    auth.type === "user" ? auth.actorUuid : auth.ownerUuid,
+}));
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
@@ -43,6 +50,10 @@ vi.mock("@/services/daemon-connection.service", () => ({
 // Mock the session service so this stays a unit test.
 vi.mock("@/services/daemon-session.service", () => ({
   reconcileOrphanTurns: (...args: unknown[]) => mockReconcileOrphanTurns(...args),
+  canAgentReceiveTurn: (...args: unknown[]) => mockCanAgentReceiveTurn(...args),
+}));
+vi.mock("@/services/daemon-execution.service", () => ({
+  reconcileOffline: vi.fn(async () => 0), publishExecutionChange: vi.fn(async () => undefined),
 }));
 
 import { GET } from "@/app/api/events/notifications/route";
@@ -94,6 +105,8 @@ beforeEach(() => {
   mockGetAuthContext.mockResolvedValue(agentAuth);
   mockParseSelfReport.mockReturnValue({ clientType: "openclaw", host: "h" });
   mockRegisterConnection.mockResolvedValue(connHandle);
+  mockCanActorAccessProject.mockResolvedValue(true);
+  mockCanAgentReceiveTurn.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -101,6 +114,48 @@ afterEach(() => {
 });
 
 describe("GET /api/events/notifications (notification SSE)", () => {
+  it("freshly withholds delayed notifications for a revoked project recipient", async () => {
+    const ac = new AbortController();
+    const { chunks } = await startStream(await GET(makeRequest("", ac.signal)));
+    const handler = mockEventBus.on.mock.calls.find(([channel]) => String(channel).startsWith("notification:"))![1];
+    mockCanActorAccessProject.mockResolvedValue(false);
+    handler({ type: "new_notification", projectUuid: "secret", entityTitle: "Hidden title" });
+    await flush();
+    expect(chunks.join("")).not.toContain("Hidden title");
+    expect(mockCanActorAccessProject).toHaveBeenCalledWith(companyUuid, { type: "agent", uuid: actorUuid }, "secret", "viewer");
+    ac.abort();
+  });
+
+  it("rechecks a grant removal while a notification authorization query is pending", async () => {
+    mockGetAuthContext.mockResolvedValue({ ...agentAuth, ownerUuid: "owner" });
+    const ac = new AbortController();
+    const { chunks } = await startStream(await GET(makeRequest("", ac.signal)));
+    const handler = mockEventBus.on.mock.calls.find(([channel]) => String(channel).startsWith("notification:"))![1];
+    const changed = mockEventBus.on.mock.calls.find(([channel]) => channel === "project_access_changed")![1];
+    let release!: () => void;
+    mockCanActorAccessProject.mockImplementationOnce(() => new Promise<boolean>((resolve) => { release = () => resolve(true); }));
+    mockCanActorAccessProject.mockResolvedValue(false);
+    handler({ type: "new_notification", projectUuid: "secret", entityTitle: "Hidden title" });
+    await flush();
+    changed({ companyUuid, projectUuid: "secret", userUuids: ["owner"] });
+    release();
+    await flush();
+    expect(chunks.join("")).not.toContain("Hidden title");
+    expect(mockCanActorAccessProject).toHaveBeenCalledTimes(2);
+    ac.abort();
+  });
+
+  it("withholds a directed deliver_turn after the persisted turn loses project access", async () => {
+    const ac = new AbortController();
+    const { chunks } = await startStream(await GET(makeRequest("", ac.signal)));
+    const control = mockEventBus.on.mock.calls.find(([channel]) => channel === `control:${connectionUuid}`)![1];
+    mockCanAgentReceiveTurn.mockResolvedValue(false);
+    control({ type: "control", command: "deliver_turn", targetConnectionUuid: connectionUuid, turnUuid: "turn-secret" });
+    await flush();
+    expect(chunks.join("")).not.toContain("turn-secret");
+    expect(mockCanAgentReceiveTurn).toHaveBeenCalledWith(companyUuid, actorUuid, "turn-secret");
+    ac.abort();
+  });
   it("returns 401 without registering when unauthenticated", async () => {
     mockGetAuthContext.mockResolvedValue(null);
     const res = await GET(makeRequest());
