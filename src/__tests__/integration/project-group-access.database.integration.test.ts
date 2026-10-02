@@ -630,4 +630,54 @@ describe.skipIf(!url)("Project group access — real PostgreSQL acceptance", () 
       if (pending) await pending;
     }
   });
+
+  it.each([
+    { source: "missing", detach: true },
+    { source: "missing", detach: false },
+    { source: "foreign", detach: true },
+    { source: "foreign", detach: false },
+  ])("repairs a legacy $source group reference with local grants retained (detach=$detach)", async ({ source, detach }) => {
+    const foreign = source === "foreign" ? await createGroup("F") : null;
+    const sourceUuid = foreign?.uuid ?? randomUUID();
+    const target = detach ? null : await createGroup("A");
+    // Simulate a pre-upgrade MCP assignment; the current create API forbids it.
+    const orphan = await db.project.create({ data: {
+      companyUuid, name: token, groupUuid: sourceUuid, visibility: "private",
+    } });
+    await db.projectMember.createMany({ data: [
+      { companyUuid, projectUuid: orphan.uuid, userUuid: ids.A, role: "admin", addedByUuid: ids.A },
+      { companyUuid, projectUuid: orphan.uuid, userUuid: ids.P, role: "viewer", addedByUuid: ids.A },
+    ] });
+    const localBefore = await db.projectMember.findMany({
+      where: { projectUuid: orphan.uuid }, orderBy: { userUuid: "asc" },
+    });
+    const foreignBefore = foreign ? await db.projectGroup.findUniqueOrThrow({ where: { uuid: sourceUuid } }) : null;
+    const sourceAuditBefore = await db.comment.count({
+      where: { targetType: "project_group", targetUuid: sourceUuid },
+    });
+    const auditBefore = await db.comment.count({ where: { companyUuid } });
+    const deniedPreview = await invoke<Preview, { uuid: string }>(actor("P"), routes.movePreview.GET,
+      `/api/projects/${orphan.uuid}/group/preview?groupUuid=${target?.uuid ?? ""}`, { uuid: orphan.uuid });
+    expect(deniedPreview.status).toBe(403);
+    const missingTarget = await invoke<Preview, { uuid: string }>(actor("A"), routes.movePreview.GET,
+      `/api/projects/${orphan.uuid}/group/preview?groupUuid=${randomUUID()}`, { uuid: orphan.uuid });
+    expect(missingTarget.status).toBe(404);
+    expect((await moveProject("A", orphan.uuid, target?.uuid ?? null, "0".repeat(64))).status).toBe(409);
+    expect((await db.project.findUniqueOrThrow({ where: { uuid: orphan.uuid } })).groupUuid).toBe(sourceUuid);
+    expect(await db.comment.count({ where: { companyUuid } })).toBe(auditBefore);
+
+    const preview = await movePreview("A", orphan.uuid, target?.uuid ?? null);
+    expect((await moveProject("A", orphan.uuid, target?.uuid ?? null, preview.confirmationToken)).status).toBe(200);
+    expect(await db.project.findUniqueOrThrow({ where: { uuid: orphan.uuid } }))
+      .toMatchObject({ groupUuid: target?.uuid ?? null, visibility: "private" });
+    expect(await db.projectMember.findMany({ where: { projectUuid: orphan.uuid }, orderBy: { userUuid: "asc" } }))
+      .toEqual(localBefore);
+    expect((await getProject("A", orphan.uuid)).data.accessLevel).toBe("admin");
+    expect((await getProject("P", orphan.uuid)).data.accessLevel).toBe("viewer");
+    expect(await db.comment.count({ where: { targetType: "project_group", targetUuid: sourceUuid } }))
+      .toBe(sourceAuditBefore);
+    if (foreign) {
+      expect(await db.projectGroup.findUniqueOrThrow({ where: { uuid: sourceUuid } })).toEqual(foreignBefore);
+    }
+  });
 });

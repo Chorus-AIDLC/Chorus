@@ -8,6 +8,8 @@
 
 Add `ProjectGroup.visibility` default public, nullable `createdByUuid`, an `accessVersion` counter for confirmation freshness, and `ProjectGroupMember` (`companyUuid`, `groupUuid`, `userUuid`, role, timestamps, actor provenance; unique group/user). Add an indexed Project→ProjectGroup relation with Prisma-level deletion restricted, so deleting a group must explicitly handle its projects. Follow the repository's `relationMode = "prisma"` without adding database foreign keys. Historical orphan `Project.groupUuid` assignments must not prevent upgrade. Do not rewrite any Project or ProjectMember during migration.
 
+An authorized project Admin can repair a historical missing/foreign-company group reference by confirming a move or detach. Preserve local grants and private visibility; only actual groups in the actor's company receive version updates and protected group audits. Destination authorization and locked confirmation remain unchanged.
+
 New group creation records the user's identity (agent→owner) and a group Admin atomically. Ownerless agents cannot create private groups or bootstrap access administration. Existing groups have no automatically assigned membership: this avoids granting access to existing private projects. A `initializeAccess` action on an existing public group requires management authorization on every contained project and creates the acting principal as first group Admin in a locked transaction. If no single actor has that authority, project admins must first arrange a suitable common administrator using existing member management. Initialized groups cannot lose their last Admin.
 
 ### D2: Shared access contracts

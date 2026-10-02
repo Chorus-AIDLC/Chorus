@@ -3,7 +3,7 @@ import { eventBus } from "@/lib/event-bus";
 import type { AuthContext } from "@/types/auth";
 import { accessibleProjectWhere, computeProjectAccess, isProjectMemberRole, isProjectVisibility, levelAtLeast, membershipPrincipal, ProjectAccessDeniedError, ProjectNotFoundError, type ProjectVisibility, type ProjectMemberRole } from "@/services/project-access.service";
 import { ApiError } from "@/lib/api-handler";
-import { accessibleGroupWhere, getGroupAccess, groupAccessPresentation, requireGroupOperation, type GroupAccessResult } from "@/services/project-group-access.service";
+import { accessibleGroupWhere, getGroupAccess, groupAccessPresentation, requireGroupOperation, GroupNotFoundError, type GroupAccessResult } from "@/services/project-group-access.service";
 import { assertAccessConfirmation } from "@/services/project-access-preview.service";
 import { getGroupVisibilityPreview, getProjectGroupMovePreview } from "@/services/project-group-preview.service";
 import { auditGroup, groupAuth, lockGroups, lockProjects, materializeGroupGrants, publishGroupAccess } from "@/services/project-group-mutation.service";
@@ -328,7 +328,16 @@ export async function moveProjectToGroup(
     if (!targetGroupUuid && locked.groupUuid) await materializeGroupGrants(tx, actor, locked.groupUuid, projectUuid);
     const updated = await tx.project.update({ where: { uuid: projectUuid }, data: { groupUuid: targetGroupUuid, visibility: preview.visibility } });
     for (const uuid of [...new Set([locked.groupUuid, targetGroupUuid].filter((u): u is string => !!u))]) {
-      await tx.projectGroup.update({ where: { uuid }, data: { accessVersion: { increment: 1 } } });
+      // Legacy assignments may reference a missing or another company's group.
+      // The locked preview still validates the destination and project authority;
+      // only actual groups in this company have versions and protected audits.
+      const changed = await tx.projectGroup.updateMany({
+        where: { companyUuid, uuid }, data: { accessVersion: { increment: 1 } },
+      });
+      if (changed.count === 0) {
+        if (uuid === targetGroupUuid) throw new GroupNotFoundError();
+        continue;
+      }
       await auditGroup(tx, actor, uuid, [], "project_moved", {
         projectUuid, sourceGroupUuid: locked.groupUuid, groupUuid: targetGroupUuid, visibility: preview.visibility,
       });

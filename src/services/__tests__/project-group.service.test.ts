@@ -246,6 +246,49 @@ describe("preview-bound group conversion", () => {
 });
 
 describe("protected moves and retained grants", () => {
+  it.each([null, "g"])("repairs a legacy orphan assignment by moving to %s without losing local grants", async (target) => {
+    group();
+    project("legacy", "missing-group");
+    localMember("legacy", "admin", "admin");
+    localMember("legacy", "local", "viewer");
+    const preview = await getProjectGroupMovePreview(auth(), "legacy", target);
+    await moveProjectToGroup("c", "legacy", target, auth(), preview.confirmationToken);
+    expect(fixture.state.project.find((p) => p.uuid === "legacy")).toMatchObject({
+      groupUuid: target, visibility: "private",
+    });
+    expect(await computeProjectAccess(auth(), "legacy")).toMatchObject({ level: "admin" });
+    expect(await computeProjectAccess(auth("local"), "legacy")).toMatchObject({ level: "viewer" });
+    expect(fixture.state.comment.some((c) => c.targetUuid === "missing-group")).toBe(false);
+  });
+
+  it("repairs a legacy foreign-company group reference without changing that group's version or audit", async () => {
+    group();
+    fixture.state.projectGroup.push({
+      uuid: "foreign-source", companyUuid: "other", name: "Foreign",
+      visibility: "private", accessVersion: 7,
+    });
+    project("legacy", "foreign-source");
+    localMember("legacy", "admin", "admin");
+    const preview = await getProjectGroupMovePreview(auth(), "legacy", "g");
+    await moveProjectToGroup("c", "legacy", "g", auth(), preview.confirmationToken);
+    expect(fixture.state.projectGroup.find((g) => g.uuid === "foreign-source")?.accessVersion).toBe(7);
+    expect(fixture.state.comment.some((c) => c.targetUuid === "foreign-source")).toBe(false);
+    expect(fixture.state.project.find((p) => p.uuid === "legacy")?.groupUuid).toBe("g");
+  });
+
+  it("rolls back the move if the required destination version update finds no row", async () => {
+    group();
+    project("p", null);
+    localMember("p", "admin", "admin");
+    const preview = await getProjectGroupMovePreview(auth(), "p", "g");
+    const before = state();
+    fixture.prisma.projectGroup.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(moveProjectToGroup("c", "p", "g", auth(), preview.confirmationToken))
+      .rejects.toMatchObject({ status: 404 });
+    expect(state()).toEqual(before);
+    expect(fixture.events).toEqual([]);
+  });
+
   it.each([
     { source: "source", target: "target", refreshed: ["target", "source"] },
     { source: "source", target: null, refreshed: ["source"] },
