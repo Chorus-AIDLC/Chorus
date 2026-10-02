@@ -39,7 +39,7 @@ beforeEach(() => {
   fetchMock.mockResolvedValue(ok({ members: [], confirmationToken: "move-token", companyAccess: "unchanged", changes: [] }));
   vi.stubGlobal("fetch", fetchMock);
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); document.documentElement.classList.remove("dark"); });
 
 function manage() {
   return render(<ManageProjectGroupDialog open onOpenChange={vi.fn()} groupUuid="group"
@@ -116,6 +116,50 @@ describe("group access dialogs", () => {
     await waitFor(() => expect(screen.getByRole("radio", { name: /^Private/ })).toBeEnabled());
     expect(await screen.findByRole("button", { name: "Delete this group" })).toBeEnabled();
     expect(fetchMock).toHaveBeenCalledWith("/api/project-groups/group/members", undefined);
+  });
+
+  it("saves description edits through the labeled shadcn textarea", async () => {
+    manage();
+    const description = await screen.findByRole("textbox", { name: "Description (optional)" });
+    expect(description).toHaveAttribute("data-slot", "textarea");
+    fireEvent.change(description, { target: { value: " Updated description " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    await waitFor(() => expect(authFetch).toHaveBeenCalledWith("/api/project-groups/group", expect.objectContaining({
+      method: "PATCH", body: JSON.stringify({ name: "Group", description: "Updated description" }),
+    })));
+  });
+
+  it.each(["light", "dark"])("preserves keep/delete choices using shadcn controls in the %s theme", async (theme) => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    authFetch.mockImplementation(async () => ok({ ...group, accessLevel: "admin", explicitRole: "admin" }));
+    const user = userEvent.setup();
+    manage();
+    const deleteButton = await screen.findByRole("button", { name: "Delete this group" });
+    expect(deleteButton).toHaveAttribute("data-slot", "button");
+    await user.click(deleteButton);
+    const keep = screen.getByRole("radio", { name: /Move .* to Ungrouped/ });
+    const remove = screen.getByRole("radio", { name: /Delete .* permanently/ });
+    expect(keep).toBeChecked();
+    expect(remove).not.toBeChecked();
+    expect(keep).toHaveAttribute("data-slot", "radio-group-item");
+    await user.click(remove);
+    expect(remove).toBeChecked();
+    expect(keep).not.toBeChecked();
+    await user.click(keep);
+    expect(keep).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Delete Group" }));
+    await waitFor(() => expect(authFetch).toHaveBeenCalledWith("/api/project-groups/group", { method: "DELETE" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/projects"));
+  });
+
+  it("sends deleteProjects only when the Admin chooses permanent deletion", async () => {
+    authFetch.mockImplementation(async () => ok({ ...group, accessLevel: "admin", explicitRole: "admin" }));
+    const user = userEvent.setup();
+    manage();
+    await user.click(await screen.findByRole("button", { name: "Delete this group" }));
+    await user.click(screen.getByRole("radio", { name: /Delete .* permanently/ }));
+    await user.click(screen.getByRole("button", { name: "Delete Group" }));
+    await waitFor(() => expect(authFetch).toHaveBeenCalledWith("/api/project-groups/group?deleteProjects=true", { method: "DELETE" }));
   });
 
   it("creates a private group with explicit visibility and shows errors without dismissing", async () => {

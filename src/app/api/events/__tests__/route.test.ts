@@ -81,6 +81,7 @@ vi.mock("@/services/project-access.service", () => ({
     auth.type === "user" ? auth.actorUuid : auth.type === "agent" ? (auth.ownerUuid ?? null) : null,
 }));
 vi.mock("@/services/project-group-access.service", () => ({
+  accessibleGroupUuids: vi.fn(async () => []),
   getGroupAccess: vi.fn(async () => ({ group: { uuid: "group-1" } })),
 }));
 
@@ -251,7 +252,7 @@ describe("GET /api/events (change events SSE)", () => {
     const { chunks } = await startStream(res);
 
     // The route subscribed a change handler — grab it and exercise the filter.
-    const changeCall = mockEventBus.on.mock.calls.find((c) => c[0] === "change");
+    const changeCall = mockEventBus.on.mock.calls.filter((c) => c[0] === "change").at(-1);
     expect(changeCall).toBeDefined();
     const handler = changeCall![1] as (e: Record<string, unknown>) => void;
 
@@ -270,7 +271,7 @@ describe("GET /api/events (change events SSE)", () => {
   it("drops change events from a different company (multi-tenancy)", async () => {
     const res = await GET(makeRequest("clientType=claude_code"));
     const { chunks } = await startStream(res);
-    const handler = mockEventBus.on.mock.calls.find((c) => c[0] === "change")![1] as (
+    const handler = mockEventBus.on.mock.calls.filter((c) => c[0] === "change").at(-1)![1] as (
       e: Record<string, unknown>,
     ) => void;
 

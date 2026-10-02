@@ -778,6 +778,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     async (params) => {
       const statusValue = params.status ?? "unread";
       const result = await notificationService.list({
+        auth,
         companyUuid: auth.companyUuid,
         recipientType: auth.type,
         recipientUuid: auth.actorUuid,
@@ -794,7 +795,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         if (unreadUuids.length > 0) {
           await Promise.all(
             unreadUuids.map((uuid: string) =>
-              notificationService.markRead(uuid, auth.companyUuid, auth.type, auth.actorUuid).catch(() => {})
+              notificationService.markRead(uuid, auth.companyUuid, auth.type, auth.actorUuid, auth).catch(() => {})
             )
           );
         }
@@ -830,13 +831,13 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     },
     async (params) => {
       if (params.all) {
-        await notificationService.markAllRead(auth.companyUuid, auth.type, auth.actorUuid);
+        await notificationService.markAllRead(auth.companyUuid, auth.type, auth.actorUuid, undefined, auth);
         return { content: [{ type: "text" as const, text: JSON.stringify({ success: true }, null, 2) }] };
       }
       if (!params.notificationUuid) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: "notificationUuid or all=true required" }) }], isError: true };
       }
-      await notificationService.markRead(params.notificationUuid, auth.companyUuid, auth.type, auth.actorUuid);
+      await notificationService.markRead(params.notificationUuid, auth.companyUuid, auth.type, auth.actorUuid, auth);
       return { content: [{ type: "text" as const, text: JSON.stringify({ success: true }, null, 2) }] };
     }
   );

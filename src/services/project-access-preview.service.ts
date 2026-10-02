@@ -10,6 +10,8 @@ import {
 
 export interface AccessRoleChange {
   userUuid: string;
+  name?: string | null;
+  email?: string | null;
   beforeRole: string;
   afterRole: string;
 }
@@ -90,7 +92,7 @@ export async function getProjectVisibilityPreview(
     select: { userUuid: true, role: true }, orderBy: { userUuid: "asc" },
   }) : [];
   const users = await client.user.findMany({
-    where: { companyUuid: auth.companyUuid }, select: { uuid: true }, orderBy: { uuid: "asc" },
+    where: { companyUuid: auth.companyUuid }, select: { uuid: true, name: true, email: true }, orderBy: { uuid: "asc" },
   });
   const localRoles = new Map(direct.map((r) => [r.userUuid, r.role]));
   const groupRoles = new Map(inherited.map((r) => [r.userUuid, r.role]));
@@ -100,7 +102,9 @@ export async function getProjectVisibilityPreview(
     const groupRole = groupRoles.get(user.uuid) ?? null;
     const beforeRole = resolveInheritedAccessLevel(project.visibility, local, groupRole);
     const afterRole = resolveInheritedAccessLevel(visibility, local, groupRole);
-    if (beforeRole !== afterRole) changes.push({ userUuid: user.uuid, beforeRole, afterRole });
+    if (beforeRole !== afterRole) changes.push({
+      userUuid: user.uuid, name: user.name ?? null, email: user.email ?? null, beforeRole, afterRole,
+    });
   }
   return {
     projectUuid, name: project.name, fromVisibility: project.visibility, visibility,
@@ -110,7 +114,8 @@ export async function getProjectVisibilityPreview(
       operation: "project_visibility", companyUuid: auth.companyUuid,
       principal: membershipPrincipal(auth), actorType: auth.type, actorUuid: auth.actorUuid,
       project: { uuid: project.uuid, visibility: project.visibility, groupUuid: project.groupUuid },
-      visibility, group, direct, inherited, users,
+      // Display identities do not affect access or invalidate a confirmation.
+      visibility, group, direct, inherited, users: users.map(({ uuid }) => ({ uuid })),
     }),
   };
 }

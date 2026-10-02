@@ -329,15 +329,24 @@ export async function moveProjectToGroup(
     const updated = await tx.project.update({ where: { uuid: projectUuid }, data: { groupUuid: targetGroupUuid, visibility: preview.visibility } });
     for (const uuid of [...new Set([locked.groupUuid, targetGroupUuid].filter((u): u is string => !!u))]) {
       await tx.projectGroup.update({ where: { uuid }, data: { accessVersion: { increment: 1 } } });
+      await auditGroup(tx, actor, uuid, [], "project_moved", {
+        projectUuid, sourceGroupUuid: locked.groupUuid, groupUuid: targetGroupUuid, visibility: preview.visibility,
+      });
     }
     await tx.activity.create({ data: {
       companyUuid, projectUuid, targetType: "project", targetUuid: projectUuid,
       actorType: actor.type === "agent" ? "agent" : "user", actorUuid: actor.actorUuid,
-      action: "project_group_changed", value: { sourceGroupUuid: locked.groupUuid, groupUuid: targetGroupUuid, visibility: preview.visibility },
+      action: "project_group_changed", value: { groupUuid: targetGroupUuid, visibility: preview.visibility },
     } });
     return updated;
   });
-  publishGroupAccess(actor, targetGroupUuid ?? initial.project.groupUuid ?? "", [projectUuid]);
+  const refreshGroupUuid = targetGroupUuid ?? initial.project.groupUuid ?? "";
+  publishGroupAccess(actor, refreshGroupUuid, [projectUuid]);
+  if (initial.project.groupUuid && initial.project.groupUuid !== refreshGroupUuid) {
+    // The destination publication already refreshes child access. Refresh the
+    // source sidebar too, without duplicating the child's access-change event.
+    publishGroupAccess(actor, initial.project.groupUuid, []);
+  }
   return { uuid: result.uuid, name: result.name, groupUuid: result.groupUuid, visibility: result.visibility };
 }
 

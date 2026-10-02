@@ -345,6 +345,7 @@ describe("buildCheckinResponse — notifications", () => {
       COMPANY_UUID,
       "agent",
       AGENT_UUID,
+      auth,
     );
     // unread = total unread (7) - marked (2)
     expect(result.notifications.unread).toBe(5);
@@ -354,6 +355,7 @@ describe("buildCheckinResponse — notifications", () => {
     await buildCheckinResponse(auth);
 
     expect(mockNotificationService.list).toHaveBeenCalledWith({
+      auth,
       companyUuid: COMPANY_UUID,
       recipientType: "agent",
       recipientUuid: AGENT_UUID,

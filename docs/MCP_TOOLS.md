@@ -4,7 +4,7 @@ This document covers all tools provided by the Chorus MCP Server, including tool
 
 ## Overview
 
-Tool visibility is driven by a **fine-grained permission model**: 5 resources (`idea`, `proposal`, `document`, `task`, `project`) × 3 actions (`read`, `write`, `admin`) = **15 permissions**. Each gated tool declares a single **required permission**. Public tools (discover, comment, session) carry no gate and are always available.
+Tool visibility is driven by a **fine-grained permission model**: 5 resources (`idea`, `proposal`, `document`, `task`, `project`) × 3 actions (`read`, `write`, `admin`) = **15 permissions**. Each gated tool declares a single **required permission**. Public tools (discover, comment, session) are always registered; their calls still enforce applicable resource capabilities and project access.
 
 Agents may use a **role preset** (`developer_agent`, `pm_agent`, `admin_agent`) that expands to a fixed permission set, and/or **custom permissions** added on top. The effective permission set is the union of preset + custom. See `src/lib/authz/presets.ts` for the authoritative preset mapping, `src/mcp/tools/permission-map.ts` for the tool → permission map, and [ARCHITECTURE.md §6.3](./ARCHITECTURE.md#63-permission-model) for the conceptual overview.
 
@@ -16,7 +16,7 @@ Agents may use a **role preset** (`developer_agent`, `pm_agent`, `admin_agent`) 
 | `pm_agent` | `*:read` + `idea:write`, `proposal:write`, `document:write`, `task:write`, `project:write` (10 perms) |
 | `admin_agent` | all 15 perms (`*:read` + `*:write` + `*:admin`) |
 
-Read-only tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, session management, `chorus_create_tasks`, `chorus_update_task`) are **public** and available to any agent regardless of preset/permissions — they are listed under "Public Tools" and "Session Tools" below without a Required Permission row.
+Discovery and collaboration tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, session management, `chorus_create_tasks`, `chorus_update_task`) are **public** and registered for every preset — they are listed under "Public Tools" and "Session Tools" below without a Required Permission row. Commenting requires the target resource's `read` capability plus project `editor` access; answering elaboration similarly requires `idea:read` plus project `editor`. Thus `developer_agent` can participate without `idea:write`, `proposal:write`, or `document:write`. Public task creation/update still requires `task:write`, and reads/searches are filtered by resource read capabilities.
 
 > Note: `chorus_create_tasks` and `chorus_update_task` field edits are public because handler-level assignee / authorship guards enforce who can actually mutate state. Operational status transitions (`in_progress`, `to_verify`) still require the caller to be the task's assignee at the service layer — the permission gate is about tool visibility, not operation authorization.
 
@@ -162,7 +162,7 @@ Projects have a `visibility` of `public` (default; existing projects were migrat
 **Levels**: `viewer` (read-only) < `editor` (read + write) < `admin` (editor + project management).
 
 - **Public projects**: every company user and agent has at least `editor`. `admin` comes only from an explicit admin membership (the project creator; for legacy projects, the company's first user).
-- **Private projects**: only `ProjectMember` rows grant access; everyone else has no access.
+- **Private projects**: access is the maximum of the explicit group role and the local `ProjectMember` role. A Public group's implicit company-wide Editor access does not grant access to its Private children.
 - **Agents are never members themselves** — an agent inherits its **owner's** membership level. Ownerless agents can access public projects only.
 
 **Required level by operation**:
@@ -179,6 +179,8 @@ Projects have a `visibility` of `public` (default; existing projects were migrat
 - **Insufficient level** (e.g. a viewer attempting a write): the tool returns a forbidden error (`Insufficient project access`, or `Only project admins can ...` for management operations). Retrying will not help; the project level must change.
 
 **Assignment and mentions**: in a private project only members (and agents whose owner is a member) can be assigned (`editor` required) or @mentioned. Use `chorus_search_mentionables` with `entityType` + `entityUuid` to get members-only candidates.
+
+**Project groups**: groups have Public/Private visibility and explicit Viewer/Editor/Admin user memberships. An explicit group role applies live to every child project, and group Admin controls its children. Private groups never contain Public projects. A user with access only to a child project can see group basics and the accessible child subset, but cannot read the group roster, create projects in the group, or administer it. Membership audit details remain in the protected group audit stream rather than child-project activity. Group deletion, detaching, visibility changes, and access-expanding moves require fresh server previews/confirmation where applicable. Historical notification reads and counts use current project access after membership changes.
 
 Visibility and membership are managed in the web UI (Project Settings → Access) or via REST (`PATCH /api/projects/{uuid}` with `visibility`; `GET/POST /api/projects/{uuid}/members`, `PATCH/DELETE /api/projects/{uuid}/members/{userUuid}`); there are no MCP tools for them. A private project always keeps at least one admin, and switching public → private makes the actor (or the acting agent's owner) an admin.
 

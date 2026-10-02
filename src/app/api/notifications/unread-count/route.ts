@@ -20,7 +20,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const count = await notificationService.getUnreadCount(
     auth.companyUuid,
     recipientType,
-    recipientUuid
+    recipientUuid,
+    auth
   );
 
   return success({ count });

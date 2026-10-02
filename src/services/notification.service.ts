@@ -4,6 +4,10 @@
 
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
+import { computeEffectivePermissions } from "@/lib/authz/permissions";
+import { RESOURCES } from "@/lib/authz/types";
+import type { Prisma } from "@/generated/prisma/client";
+import type { AgentAuthContext, AuthContext } from "@/types/auth";
 import { createTurnAndResolveTarget } from "@/services/notification-turn";
 import {
   resolveDirectIdeaUuid,
@@ -16,6 +20,7 @@ import {
   type WakerSessionAnchor,
 } from "@/services/orchestrator.service";
 import {
+  accessibleProjectUuids,
   filterRecipientsByProjectAccess,
   ProjectAccessDeniedError,
 } from "@/services/project-access.service";
@@ -63,6 +68,7 @@ export interface NotificationCreateParams {
 }
 
 export interface NotificationListParams {
+  auth?: AuthContext;
   companyUuid: string;
   recipientType: string;
   recipientUuid: string;
@@ -370,6 +376,109 @@ export async function filterNotificationsByProjectAccess(
 // ===== Service Methods =====
 
 /**
+ * Request callers supply their current context. Internal fan-out/checkin callers
+ * can resolve it from the recipient instead; omitting auth never bypasses access.
+ */
+async function recipientAuth(
+  companyUuid: string,
+  recipientType: string,
+  recipientUuid: string,
+  auth?: AuthContext,
+): Promise<AuthContext> {
+  if (auth) {
+    if (auth.companyUuid !== companyUuid || auth.type !== recipientType || auth.actorUuid !== recipientUuid) {
+      throw new ProjectAccessDeniedError("Notification recipient does not match authentication");
+    }
+    return auth;
+  }
+  if (recipientType === "user") return { type: "user", companyUuid, actorUuid: recipientUuid };
+  if (recipientType === "agent") {
+    const agent = await prisma.agent.findFirst({
+      where: { companyUuid, uuid: recipientUuid },
+      select: { ownerUuid: true, roles: true, permissions: true },
+    });
+    if (agent) {
+      const context: AgentAuthContext = {
+        type: "agent",
+        companyUuid,
+        actorUuid: recipientUuid,
+        ownerUuid: agent.ownerUuid ?? undefined,
+        roles: agent.roles as AgentAuthContext["roles"],
+        permissions: [...computeEffectivePermissions(agent.roles, agent.permissions)],
+        agentName: "",
+      };
+      return context;
+    }
+  }
+  throw new ProjectAccessDeniedError("Notification recipient not found");
+}
+
+/**
+ * Filter in SQL, before skip/take and counts. Empty-project notifications are
+ * owner-scoped instructions/system messages; missing nonempty projects are
+ * hidden, while deleted entities in a still-visible project remain historical.
+ */
+async function recipientNotificationWhere(
+  companyUuid: string,
+  recipientType: string,
+  recipientUuid: string,
+  auth?: AuthContext,
+): Promise<Prisma.NotificationWhereInput> {
+  const context = await recipientAuth(companyUuid, recipientType, recipientUuid, auth);
+  const projects = await accessibleProjectUuids(context);
+  let entityAccess: Prisma.NotificationWhereInput = {};
+  if (context.type === "agent") {
+    const permissions = (context as AgentAuthContext).permissions ?? [];
+    const resources = RESOURCES.filter((resource) => permissions.includes(`${resource}:read`));
+    // Comment notifications carry their target's read capability. Unknown target
+    // types and deleted comments cannot prove that capability and fail closed.
+    // Only resolve this recipient's comment references in visible projects. This
+    // candidate query is deliberately unpaginated so the final SQL predicate can
+    // filter every page/count without enumerating unrelated company comments.
+    const candidates = resources.length && projects.length ? await prisma.notification.findMany({
+      where: {
+        companyUuid,
+        recipientType,
+        recipientUuid,
+        projectUuid: { in: projects },
+        entityType: "comment",
+      },
+      select: { entityUuid: true },
+      distinct: ["entityUuid"],
+    }) : [];
+    const comments = candidates.length ? await prisma.comment.findMany({
+      where: {
+        companyUuid,
+        uuid: { in: candidates.map((candidate) => candidate.entityUuid) },
+        targetType: { in: resources },
+      },
+      select: { uuid: true },
+    }) : [];
+    entityAccess = {
+      OR: [
+        { entityType: { in: resources } },
+        { entityType: "comment", entityUuid: { in: comments.map((comment) => comment.uuid) } },
+      ],
+    };
+  }
+  return {
+    companyUuid,
+    recipientType,
+    recipientUuid,
+    OR: [
+      { projectUuid: "" },
+      { projectUuid: { in: projects }, ...entityAccess },
+    ],
+  };
+}
+
+async function countUnread(where: Prisma.NotificationWhereInput): Promise<number> {
+  return prisma.notification.count({
+    where: { ...where, readAt: null, archivedAt: null },
+  });
+}
+
+/**
  * Create a single notification, emit its SSE event, and run the wake-turn chokepoint —
  * returning BOTH the notification and the `DaemonSessionTurn` the chokepoint created (or
  * `null` when none was created: a non-wake action, a human recipient, or no online origin).
@@ -600,10 +709,9 @@ export async function list(
   const skip = params.skip ?? 0;
   const take = params.take ?? 20;
 
+  const accessWhere = await recipientNotificationWhere(companyUuid, recipientType, recipientUuid, params.auth);
   const where = {
-    companyUuid,
-    recipientType,
-    recipientUuid,
+    ...accessWhere,
     ...(projectUuid && { projectUuid }),
     ...(readFilter === "unread" && { readAt: null }),
     ...(readFilter === "read" && { readAt: { not: null } }),
@@ -619,7 +727,7 @@ export async function list(
       orderBy: { createdAt: "desc" },
     }),
     prisma.notification.count({ where }),
-    getUnreadCount(companyUuid, recipientType, recipientUuid),
+    countUnread(accessWhere),
   ]);
 
   return {
@@ -635,17 +743,10 @@ export async function list(
 export async function getUnreadCount(
   companyUuid: string,
   recipientType: string,
-  recipientUuid: string
+  recipientUuid: string,
+  auth?: AuthContext,
 ): Promise<number> {
-  return prisma.notification.count({
-    where: {
-      companyUuid,
-      recipientType,
-      recipientUuid,
-      readAt: null,
-      archivedAt: null,
-    },
-  });
+  return countUnread(await recipientNotificationWhere(companyUuid, recipientType, recipientUuid, auth));
 }
 
 /**
@@ -655,14 +756,14 @@ export async function markRead(
   uuid: string,
   companyUuid: string,
   recipientType: string,
-  recipientUuid: string
+  recipientUuid: string,
+  auth?: AuthContext,
 ): Promise<NotificationResponse> {
-  const notification = await prisma.notification.updateMany({
+  const accessWhere = await recipientNotificationWhere(companyUuid, recipientType, recipientUuid, auth);
+  await prisma.notification.updateMany({
     where: {
+      ...accessWhere,
       uuid,
-      companyUuid,
-      recipientType,
-      recipientUuid,
       readAt: null,
     },
     data: { readAt: new Date() },
@@ -670,13 +771,13 @@ export async function markRead(
 
   // Fetch the updated notification to return
   const updated = await prisma.notification.findFirst({
-    where: { uuid, companyUuid },
+    where: { ...accessWhere, uuid },
   });
 
   if (!updated) throw new Error("Notification not found");
 
   // Emit count update
-  const unreadCount = await getUnreadCount(companyUuid, recipientType, recipientUuid);
+  const unreadCount = await countUnread(accessWhere);
   eventBus.emit(`notification:${recipientType}:${recipientUuid}`, {
     type: "count_update",
     unreadCount,
@@ -693,13 +794,13 @@ export async function markAllRead(
   companyUuid: string,
   recipientType: string,
   recipientUuid: string,
-  projectUuid?: string
+  projectUuid?: string,
+  auth?: AuthContext,
 ): Promise<{ count: number }> {
+  const accessWhere = await recipientNotificationWhere(companyUuid, recipientType, recipientUuid, auth);
   const result = await prisma.notification.updateMany({
     where: {
-      companyUuid,
-      recipientType,
-      recipientUuid,
+      ...accessWhere,
       readAt: null,
       ...(projectUuid && { projectUuid }),
     },
@@ -707,7 +808,7 @@ export async function markAllRead(
   });
 
   // Emit count update
-  const unreadCount = await getUnreadCount(companyUuid, recipientType, recipientUuid);
+  const unreadCount = await countUnread(accessWhere);
   eventBus.emit(`notification:${recipientType}:${recipientUuid}`, {
     type: "count_update",
     unreadCount,
@@ -723,27 +824,27 @@ export async function archive(
   uuid: string,
   companyUuid: string,
   recipientType: string,
-  recipientUuid: string
+  recipientUuid: string,
+  auth?: AuthContext,
 ): Promise<NotificationResponse> {
+  const accessWhere = await recipientNotificationWhere(companyUuid, recipientType, recipientUuid, auth);
   await prisma.notification.updateMany({
     where: {
+      ...accessWhere,
       uuid,
-      companyUuid,
-      recipientType,
-      recipientUuid,
       archivedAt: null,
     },
     data: { archivedAt: new Date() },
   });
 
   const updated = await prisma.notification.findFirst({
-    where: { uuid, companyUuid },
+    where: { ...accessWhere, uuid },
   });
 
   if (!updated) throw new Error("Notification not found");
 
   // Emit count update (archived notifications don't count as unread)
-  const unreadCount = await getUnreadCount(companyUuid, recipientType, recipientUuid);
+  const unreadCount = await countUnread(accessWhere);
   eventBus.emit(`notification:${recipientType}:${recipientUuid}`, {
     type: "count_update",
     unreadCount,

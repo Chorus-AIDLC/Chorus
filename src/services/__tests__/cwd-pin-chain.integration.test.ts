@@ -66,6 +66,12 @@ function makeStore() {
     notificationPreference: [] as Row[],
     mention: [] as Row[],
     project: [] as Row[],
+    projectMember: [] as Row[],
+    projectGroup: [] as Row[],
+    projectGroupMember: [] as Row[],
+    comment: [] as Row[],
+    proposal: [] as Row[],
+    document: [] as Row[],
     user: [] as Row[],
     agent: [] as Row[],
     projectAgentCwdPreference: [] as Row[],
@@ -79,12 +85,36 @@ function makeStore() {
 
 type Store = ReturnType<typeof makeStore>;
 
-// Match a row against a Prisma `where` clause. Supports scalar equality, the `{ in: [...] }`
-// operator, and the nested `session` relation filter the backfill read uses
-// (turn.session.{companyUuid,agentUuid,originConnectionUuid}).
+// Match the scalar, AND/OR, membership and relation predicates used by notification
+// access checks and the pending-turn backfill.
 function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: Row): boolean {
   for (const [key, cond] of Object.entries(where ?? {})) {
     if (cond === undefined) continue;
+    if (key === "AND") {
+      const branches = Array.isArray(cond) ? cond : [cond];
+      if (!branches.every((branch) => matchWhere(store, model, row, branch as Row))) return false;
+      continue;
+    }
+    if (key === "OR") {
+      if (!Array.isArray(cond) || !cond.some((branch) => matchWhere(store, model, row, branch as Row))) return false;
+      continue;
+    }
+    if (key === "projectUuid_userUuid" && model === "projectMember") {
+      if (!matchWhere(store, model, row, cond as Row)) return false;
+      continue;
+    }
+    if (key === "group" && model === "project") {
+      const group = store.data.projectGroup.find((g) => g.uuid === row.groupUuid);
+      if (!group || !matchWhere(store, "projectGroup", group, cond as Row)) return false;
+      continue;
+    }
+    if (key === "members" && model === "projectGroup") {
+      const some = (cond as Row).some as Row;
+      if (!store.data.projectGroupMember.some((member) =>
+        member.groupUuid === row.uuid && matchWhere(store, "projectGroupMember", member, some),
+      )) return false;
+      continue;
+    }
 
     if (key === "session" && model === "daemonSessionTurn") {
       const session = store.data.daemonSession.find((s) => s.uuid === row.sessionUuid);
@@ -294,6 +324,7 @@ function buildPrismaFake(store: Store) {
       count: vi.fn(async (args: Row) => count("daemonConnection", args)),
     },
     notification: {
+      findFirst: vi.fn(async (args: Row) => findFirst("notification", args)),
       create: vi.fn(async (args: Row) => {
         const row: Row = {
           id: store.nextId(),
@@ -328,6 +359,26 @@ function buildPrismaFake(store: Store) {
     },
     project: {
       findUnique: vi.fn(async (args: Row) => findFirst("project", { where: args.where })),
+      findFirst: vi.fn(async (args: Row) => findFirst("project", args)),
+      findMany: vi.fn(async (args: Row) => findMany("project", args)),
+    },
+    projectMember: {
+      findUnique: vi.fn(async (args: Row) => findFirst("projectMember", args)),
+      findMany: vi.fn(async (args: Row) => findMany("projectMember", args)),
+    },
+    projectGroupMember: {
+      findFirst: vi.fn(async (args: Row) => findFirst("projectGroupMember", args)),
+      findMany: vi.fn(async (args: Row) => findMany("projectGroupMember", args)),
+    },
+    comment: {
+      findFirst: vi.fn(async (args: Row) => findFirst("comment", args)),
+      findMany: vi.fn(async (args: Row) => findMany("comment", args)),
+    },
+    proposal: {
+      findFirst: vi.fn(async (args: Row) => findFirst("proposal", args)),
+    },
+    document: {
+      findFirst: vi.fn(async (args: Row) => findFirst("document", args)),
     },
     notificationPreference: {
       // getPreferences: findUnique by composite { ownerType_ownerUuid }, else create default.
@@ -382,13 +433,6 @@ const hoisted = vi.hoisted(() => {
 });
 const store = hoisted.store;
 vi.mock("@/lib/prisma", () => ({ prisma: hoisted.prismaFake }));
-// Private project access is not under test here: let every recipient through the
-// notification choke point / listener filter (the in-memory fake has no Project rows).
-vi.mock("@/services/project-access.service", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/services/project-access.service")>()),
-  filterRecipientsByProjectAccess: async <T,>(_c: string, _p: string, r: T[]) => r,
-  canActorAccessProject: async () => true,
-}));
 
 // Silence the logger; the real in-process event bus is used (Redis off).
 const mockLogger = vi.hoisted(() => {
@@ -546,8 +590,15 @@ beforeEach(() => {
   // The actor-name resolver (formatTaskResponse → getActorName), the mention-target
   // validator (validateMentionTarget), and project-name lookup read these rows.
   store.data.user.push({ id: store.nextId(), uuid: USER, companyUuid: COMPANY, name: "Alice", email: "a@x.com" });
-  store.data.agent.push({ id: store.nextId(), uuid: AGENT, companyUuid: COMPANY, name: "Daemon Agent", ownerUuid: USER });
-  store.data.project.push({ id: store.nextId(), uuid: PROJECT, companyUuid: COMPANY, name: "Chorus 0.11.2" });
+  store.data.agent.push({
+    id: store.nextId(), uuid: AGENT, companyUuid: COMPANY, name: "Daemon Agent", ownerUuid: USER,
+    roles: ["developer"], permissions: [],
+  });
+  store.data.project.push({
+    id: store.nextId(), uuid: PROJECT, companyUuid: COMPANY, name: "Chorus 0.11.2",
+    visibility: "public", groupUuid: null,
+  });
+  store.data.idea.push({ uuid: IDEA, companyUuid: COMPANY, projectUuid: PROJECT });
 
   // task / idea under IDEA resolves to that direct idea; everything else null.
   mockResolveRootIdea.mockImplementation(async (_c: string, type: string, uuid: string) => {

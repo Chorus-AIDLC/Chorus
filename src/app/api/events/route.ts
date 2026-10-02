@@ -16,7 +16,7 @@ import {
   filterExecutionViewsByAccess,
   membershipPrincipal,
 } from "@/services/project-access.service";
-import { getGroupAccess } from "@/services/project-group-access.service";
+import { accessibleGroupUuids, getGroupAccess } from "@/services/project-group-access.service";
 import {
   parseSelfReport,
   registerConnection,
@@ -114,12 +114,28 @@ export async function GET(request: NextRequest) {
   const connectWindowHandler = (event: ProjectAccessChangedEvent) => {
     if (affectsSubscriber(event)) missedAccessChanges.add(event.projectUuid);
   };
+  const missedGroupChanges: RealtimeEvent[] = [];
+  const connectWindowGroupHandler = (event: RealtimeEvent) => {
+    if (event.companyUuid === auth.companyUuid && event.entityType === "project_group") {
+      missedGroupChanges.push(event);
+    }
+  };
   eventBus.on("project_access_changed", connectWindowHandler);
+  eventBus.on("change", connectWindowGroupHandler);
   let accessibleProjects: Set<string>;
+  let knownGroups: Set<string>;
   try {
-    accessibleProjects = new Set(await accessibleProjectUuids(auth));
+    const [projects, groups] = await Promise.all([
+      accessibleProjectUuids(auth),
+      accessibleGroupUuids(auth),
+    ]);
+    accessibleProjects = new Set(projects);
+    // Historical discovery is authority only for a UUID-only invalidation.
+    // Every current-access decision still uses the fresh, revision-aware gate.
+    knownGroups = new Set(groups);
   } catch (err) {
     eventBus.off("project_access_changed", connectWindowHandler);
+    eventBus.off("change", connectWindowGroupHandler);
     throw err;
   }
 
@@ -173,24 +189,34 @@ export async function GET(request: NextRequest) {
           });
       };
 
-      // Recompute the accessible set. On failure, fail closed for the project that
-      // triggered it (drop it from the set) and keep the rest of the previous set.
+      // One queued refresh consumes a burst of child access changes. Revoke each
+      // triggering project synchronously, and retry if a change arrives during
+      // the query; no delivery can use an older snapshot while this step runs.
+      let refreshScheduled = false;
+      const refreshProjects = new Set<string>();
       const recomputeAccess = (triggerProjectUuid: string | undefined) => {
+        accessRevision++;
+        if (triggerProjectUuid) {
+          accessibleProjects.delete(triggerProjectUuid);
+          refreshProjects.add(triggerProjectUuid);
+        }
+        if (refreshScheduled) return;
+        refreshScheduled = true;
         enqueueGate(async () => {
-          if (request.signal.aborted) return;
           try {
-            // A second revocation can land while this query is running. Never
-            // install an earlier snapshot over the synchronously revoked set.
-            const revision = accessRevision;
-            const refreshed = new Set(await accessibleProjectUuids(auth));
-            if (revision === accessRevision) accessibleProjects = refreshed;
+            while (!request.signal.aborted) {
+              const revision = accessRevision;
+              const refreshed = new Set(await accessibleProjectUuids(auth));
+              if (revision !== accessRevision) continue;
+              accessibleProjects = refreshed;
+              return;
+            }
           } catch (err) {
             sseLogger.error({ err }, "SSE accessible-project recompute failed");
-            if (triggerProjectUuid) {
-              const next = new Set(accessibleProjects);
-              next.delete(triggerProjectUuid);
-              accessibleProjects = next;
-            }
+            for (const uuid of refreshProjects) accessibleProjects.delete(uuid);
+          } finally {
+            refreshProjects.clear();
+            refreshScheduled = false;
           }
         });
       };
@@ -214,7 +240,17 @@ export async function GET(request: NextRequest) {
               const revision = `${accessRevision}:${groupRevision}`;
               const access = await getGroupAccess(auth, event.entityUuid);
               if (revision !== `${accessRevision}:${groupRevision}`) continue;
-              if (access.group && !request.signal.aborted) deliver();
+              if (request.signal.aborted) return;
+              // The handler projects group events to UUID-only refreshes. A
+              // previous viewer needs that refresh after deletion/revocation,
+              // then loses the remembered visibility until fresh rediscovery.
+              // Consuming it on this serial gate also suppresses queued updates.
+              if (access.group) {
+                knownGroups.add(event.entityUuid);
+                deliver();
+              } else if (knownGroups.delete(event.entityUuid)) {
+                deliver();
+              }
               return;
             }
           });
@@ -269,10 +305,19 @@ export async function GET(request: NextRequest) {
           recomputeAccess(undefined);
         }
 
-        gateDeliver(event, () => send(`data: ${JSON.stringify(event)}\n\n`));
+        const payload = event.entityType === "project_group" ? {
+          companyUuid: auth.companyUuid,
+          projectUuid: "",
+          entityType: "project_group",
+          entityUuid: event.entityUuid,
+          action: event.action,
+        } : event;
+        gateDeliver(event, () => send(`data: ${JSON.stringify(payload)}\n\n`));
       };
 
       eventBus.on("change", handler);
+      eventBus.off("change", connectWindowGroupHandler);
+      for (const event of missedGroupChanges) handler(event);
 
       // Subscribe to presence events
       const presenceHandler = (event: PresenceEvent) => {
@@ -294,10 +339,8 @@ export async function GET(request: NextRequest) {
       // among the changed users.
       const accessChangedHandler = (event: ProjectAccessChangedEvent) => {
         if (!affectsSubscriber(event)) return;
-        accessRevision++;
         // Fail closed immediately, including asynchronous delivery decisions
         // already ahead of the refresh on the serial gate.
-        accessibleProjects.delete(event.projectUuid);
         recomputeAccess(event.projectUuid);
       };
 

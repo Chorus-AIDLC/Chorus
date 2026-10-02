@@ -4,7 +4,7 @@ vi.mock("@/lib/prisma", async () => ({ prisma: (await import("./project-group.fi
 vi.mock("@/lib/event-bus", async () => ({ eventBus: (await import("./project-group.fixture")).events }));
 vi.mock("@/services/activity.service", () => ({ createActivityInTx: vi.fn(async () => ({ publish: vi.fn() })) }));
 import { createProjectGroup, updateProjectGroup, deleteProjectGroup, getProjectGroup, listProjectGroups, getGroupDashboard, moveProjectToGroup } from "@/services/project-group.service";
-import { getGroupAccess, requireGroupOperation, accessibleGroupWhere } from "@/services/project-group-access.service";
+import { getGroupAccess, requireGroupOperation, accessibleGroupWhere, accessibleGroupUuids } from "@/services/project-group-access.service";
 import { getGroupVisibilityPreview, getProjectGroupMovePreview } from "@/services/project-group-preview.service";
 import { addGroupMember, updateGroupMember, removeGroupMember, listGroupMembers } from "@/services/project-group-member.service";
 import { computeProjectAccess } from "@/services/project-access.service";
@@ -19,6 +19,37 @@ const convert = async (visibility: "public" | "private", extra = {}) => {
 };
 
 describe("group discovery and filtered aggregates", () => {
+  it("snapshots only discoverable company group UUIDs, including private child-only access", async () => {
+    group("public", "public", false);
+    group("member-only"); groupMember("member-only", "local", "viewer");
+    group("child-only"); project("mine", "child-only"); localMember("mine", "local", "viewer");
+    group("public-child"); project("open", "public-child", "public");
+    group("hidden"); project("secret", "hidden");
+    group("foreign", "public", false);
+    fixture.state.projectGroup.find((row) => row.uuid === "foreign")!.companyUuid = "other-company";
+    expect(await accessibleGroupUuids(auth("local"))).toEqual(["public", "member-only", "child-only", "public-child"]);
+    expect(fixture.prisma.projectGroup.findMany).toHaveBeenLastCalledWith({
+      where: await accessibleGroupWhere(auth("local")), select: { uuid: true },
+    });
+  });
+  it("uses the owner's discovery grants for agents and public discovery for ownerless agents", async () => {
+    group("public", "public", false);
+    group("member-only"); groupMember("member-only", "local", "viewer");
+    group("child-only"); project("mine", "child-only"); localMember("mine", "local", "viewer");
+    group("public-child"); project("open", "public-child", "public");
+    const agent = { type: "agent" as const, companyUuid: "c", actorUuid: "agent", ownerUuid: "local" };
+    expect(await accessibleGroupUuids(agent)).toEqual(["public", "member-only", "child-only", "public-child"]);
+    expect(await accessibleGroupUuids({ ...agent, ownerUuid: undefined })).toEqual(["public", "public-child"]);
+  });
+  it("ignores foreign-company group and child grants when snapshotting discovery", async () => {
+    group("hidden"); groupMember("hidden", "local", "viewer");
+    fixture.state.projectGroupMember.find((row) => row.userUuid === "local")!.companyUuid = "other-company";
+    group("foreign-child"); project("mine", "foreign-child"); localMember("mine", "local", "admin");
+    fixture.state.project.find((row) => row.uuid === "mine")!.companyUuid = "other-company";
+    group("foreign-child-grant"); project("other-mine", "foreign-child-grant"); localMember("other-mine", "local", "admin");
+    fixture.state.projectMember.find((row) => row.projectUuid === "other-mine")!.companyUuid = "other-company";
+    expect(await accessibleGroupUuids(auth("local"))).toEqual([]);
+  });
   it("hides private metadata from an outsider through get/list/dashboard and shared query", async () => {
     group(); project();
     expect((await getGroupAccess(auth("outside"), "g")).group).toBeNull();
@@ -172,7 +203,7 @@ describe("preview-bound group conversion", () => {
     const members = state();
     const preview = await getGroupVisibilityPreview(auth(), "g", "private");
     expect(preview).toMatchObject({ companyAccess: "closed", projects: [{ projectUuid: "p", companyAccess: "closed" }, { projectUuid: "q", companyAccess: "unchanged" }] });
-    expect(preview.projects[0].changes).toContainEqual({ userUuid: "outside", beforeRole: "editor", afterRole: "none" });
+    expect(preview.projects[0].changes).toContainEqual(expect.objectContaining({ userUuid: "outside", beforeRole: "editor", afterRole: "none" }));
     await updateProjectGroup({ companyUuid: "c", groupUuid: "g", visibility: "private", confirmationToken: preview.confirmationToken }, auth());
     expect(fixture.state.project.map((p) => p.visibility)).toEqual(["private", "private"]);
     expect(fixture.state.projectMember).toEqual(members.projectMember); expect(fixture.state.projectGroupMember).toEqual(members.projectGroupMember);
@@ -215,6 +246,60 @@ describe("preview-bound group conversion", () => {
 });
 
 describe("protected moves and retained grants", () => {
+  it.each([
+    { source: "source", target: "target", refreshed: ["target", "source"] },
+    { source: "source", target: null, refreshed: ["source"] },
+    { source: null, target: "target", refreshed: ["target"] },
+    { source: "source", target: "source", refreshed: ["source"] },
+  ])("refreshes each involved group once after moving $source -> $target and publishes child access once", async ({ source, target, refreshed }) => {
+    for (const uuid of new Set([source, target].filter((uuid): uuid is string => uuid !== null))) group(uuid);
+    project("p", source); localMember("p", "admin", "admin");
+    const preview = await getProjectGroupMovePreview(auth(), "p", target);
+    await moveProjectToGroup("c", "p", target, auth(), preview.confirmationToken);
+    const groups = fixture.events.filter((event) => event.type === "change" && event.data.entityType === "project_group");
+    expect(groups.map((event) => event.data.entityUuid)).toEqual(refreshed);
+    expect(groups.every((event) => event.data.companyUuid === "c" && event.data.projectUuid === "")).toBe(true);
+    expect(fixture.events.filter((event) => event.type === "access").map((event) => event.data)).toEqual([
+      { companyUuid: "c", projectUuid: "p", userUuids: [] },
+    ]);
+    expect(fixture.events.filter((event) => event.type === "change" && event.data.entityType === "project")).toHaveLength(1);
+    expect(fixture.events.every((event) => !event.inTransaction)).toBe(true);
+    const auditGroups = source === target ? [] : [source, target].filter((uuid) => uuid !== null);
+    expect(fixture.state.comment.map((comment) => comment.targetUuid)).toEqual(auditGroups);
+  });
+  it("keeps the source UUID in protected move audits and out of destination readers' project activity", async () => {
+    const source = "hidden-source-uuid";
+    group(source); group("target"); groupMember("target", "viewer", "viewer");
+    project("p", source); localMember("p", "local", "viewer");
+    const preview = await getProjectGroupMovePreview(auth(), "p", "target");
+    await moveProjectToGroup("c", "p", "target", auth(), preview.confirmationToken);
+    for (const actor of ["viewer", "local"]) {
+      expect((await getGroupAccess(auth(actor), source)).group).toBeNull();
+      const dashboard = await getGroupDashboard("c", "target", auth(actor));
+      expect(dashboard?.recentActivity).toHaveLength(1);
+      expect(dashboard?.recentActivity[0]).toMatchObject({
+        action: "project_group_changed", value: { groupUuid: "target", visibility: "private" },
+      });
+      expect(JSON.stringify(dashboard)).not.toContain(source);
+    }
+    expect(fixture.state.activity[0].value).not.toHaveProperty("sourceGroupUuid");
+    expect(fixture.state.comment.map((comment) => ({
+      targetType: comment.targetType, targetUuid: comment.targetUuid,
+      content: JSON.parse(comment.content),
+    }))).toEqual([source, "target"].map((targetUuid) => ({
+      targetType: "project_group", targetUuid,
+      content: { action: "project_moved", projectUuid: "p", sourceGroupUuid: source, groupUuid: "target", visibility: "private" },
+    })));
+  });
+  it.each(["comment", "activity"])("rolls back moves and publishes no refresh when %s audit persistence fails", async (table) => {
+    group("source"); group("target"); project("p", "source");
+    const preview = await getProjectGroupMovePreview(auth(), "p", "target");
+    const before = state();
+    fixture.failWrite = table;
+    await expect(moveProjectToGroup("c", "p", "target", auth(), preview.confirmationToken)).rejects.toThrow(`forced ${table} failure`);
+    expect(state()).toEqual(before);
+    expect(fixture.events).toEqual([]);
+  });
   it("ordinary public editing can move when no effective role expands", async () => {
     group("z", "public", false); group("a", "public", false); project("p", "z", "public");
     const preview = await getProjectGroupMovePreview(auth("outside"), "p", "a");
@@ -229,7 +314,7 @@ describe("protected moves and retained grants", () => {
     await expect(moveProjectToGroup("c", "p", "target", auth("outside"), "0".repeat(64))).rejects.toMatchObject({ status: 403 });
     localMember("p", "local", "admin");
     const preview = await getProjectGroupMovePreview(auth("local"), "p", "target");
-    expect(preview.changes).toContainEqual({ userUuid: "admin", beforeRole: "editor", afterRole: "admin" });
+    expect(preview.changes).toContainEqual(expect.objectContaining({ userUuid: "admin", beforeRole: "editor", afterRole: "admin" }));
     await expect(moveProjectToGroup("c", "p", "target", auth("local"))).rejects.toMatchObject({ status: 409 });
     expect(fixture.writes).toEqual([]);
     await moveProjectToGroup("c", "p", "target", auth("local"), preview.confirmationToken);

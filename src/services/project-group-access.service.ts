@@ -52,6 +52,16 @@ export async function accessibleGroupWhere(auth: AuthContext): Promise<Prisma.Pr
   };
 }
 
+// Discovery includes private groups visible only through a child project. Keep
+// only UUIDs when remembering visibility for a connection's later invalidations.
+export async function accessibleGroupUuids(auth: AuthContext): Promise<string[]> {
+  const groups = await prisma.projectGroup.findMany({
+    where: await accessibleGroupWhere(auth),
+    select: { uuid: true },
+  });
+  return groups.map((group) => group.uuid);
+}
+
 export async function getGroupAccess(
   auth: AuthContext, groupUuid: string, client: ProjectAccessClient = prisma,
 ): Promise<GroupAccessResult> {

@@ -44,7 +44,7 @@ export async function getGroupVisibilityPreview(
   const [projects, inherited, users] = await Promise.all([
     client.project.findMany({ where: { companyUuid: auth.companyUuid, groupUuid }, orderBy: { uuid: "asc" }, select: { uuid: true, name: true, visibility: true, groupUuid: true } }),
     client.projectGroupMember.findMany({ where: { companyUuid: auth.companyUuid, groupUuid }, select: { userUuid: true, role: true }, orderBy: { userUuid: "asc" } }),
-    client.user.findMany({ where: { companyUuid: auth.companyUuid }, select: { uuid: true }, orderBy: { uuid: "asc" } }),
+    client.user.findMany({ where: { companyUuid: auth.companyUuid }, select: { uuid: true, name: true, email: true }, orderBy: { uuid: "asc" } }),
   ]);
   const direct = await client.projectMember.findMany({
     where: { companyUuid: auth.companyUuid, projectUuid: { in: projects.map((p) => p.uuid) } },
@@ -57,7 +57,9 @@ export async function getGroupVisibilityPreview(
     const changes = users.flatMap((u) => {
       const beforeRole = resolveInheritedAccessLevel(p.visibility, local.get(u.uuid) ?? null, groupRoles.get(u.uuid) ?? null);
       const afterRole = resolveInheritedAccessLevel(after, local.get(u.uuid) ?? null, groupRoles.get(u.uuid) ?? null);
-      return beforeRole === afterRole ? [] : [{ userUuid: u.uuid, beforeRole, afterRole }];
+      return beforeRole === afterRole ? [] : [{
+        userUuid: u.uuid, name: u.name ?? null, email: u.email ?? null, beforeRole, afterRole,
+      }];
     });
     return { projectUuid: p.uuid, name: p.name, fromVisibility: p.visibility, visibility: after, companyAccess: companyAccess(p.visibility, after), changes };
   });
@@ -68,7 +70,7 @@ export async function getGroupVisibilityPreview(
       operation: "group_visibility", companyUuid: auth.companyUuid,
       principal: membershipPrincipal(auth), actorType: auth.type, actorUuid: auth.actorUuid,
       group: { uuid: group.uuid, visibility: group.visibility, accessVersion: group.accessVersion },
-      visibility, projects, direct, inherited, users,
+      visibility, projects, direct, inherited, users: users.map(({ uuid }) => ({ uuid })),
     }),
   };
 }
@@ -89,13 +91,20 @@ export async function getProjectGroupMovePreview(
     else if (!levelAtLeast(level, "admin")) throw new ProjectAccessDeniedError();
     if (target) await requireGroupOperation(auth, target.uuid, "change_visibility", client);
   }
+  // Ordinary public moves also allow editors; only existing Admin authority
+  // permits enriching their role diff with company user identities.
+  const includeIdentities = levelAtLeast(level, "admin");
   const [direct, inherited, users] = await Promise.all([
     client.projectMember.findMany({ where: { companyUuid: auth.companyUuid, projectUuid }, select: { userUuid: true, role: true }, orderBy: { userUuid: "asc" } }),
     client.projectGroupMember.findMany({
       where: { companyUuid: auth.companyUuid, groupUuid: { in: [...new Set([source?.uuid, target?.uuid].filter((u): u is string => !!u))] } },
       select: { groupUuid: true, userUuid: true, role: true }, orderBy: [{ groupUuid: "asc" }, { userUuid: "asc" }],
     }),
-    client.user.findMany({ where: { companyUuid: auth.companyUuid }, select: { uuid: true }, orderBy: { uuid: "asc" } }),
+    client.user.findMany({
+      where: { companyUuid: auth.companyUuid },
+      select: { uuid: true, ...(includeIdentities ? { name: true, email: true } : {}) },
+      orderBy: { uuid: "asc" },
+    }),
   ]);
   const local = new Map(direct.map((m) => [m.userUuid, m.role]));
   const beforeGroup = new Map(inherited.filter((m) => m.groupUuid === source?.uuid).map((m) => [m.userUuid, m.role]));
@@ -106,7 +115,11 @@ export async function getProjectGroupMovePreview(
     // Detach snapshots the explicit maximum; a public floor is never saved.
     const retained = !target && source ? resolveInheritedAccessLevel("private", local.get(u.uuid) ?? null, beforeGroup.get(u.uuid) ?? null) : local.get(u.uuid) ?? null;
     const afterRole = resolveInheritedAccessLevel(afterVisibility, retained, afterGroup.get(u.uuid) ?? null);
-    return beforeRole === afterRole ? [] : [{ userUuid: u.uuid, beforeRole, afterRole }];
+    return beforeRole === afterRole ? [] : [{
+      userUuid: u.uuid,
+      ...(includeIdentities ? { name: u.name ?? null, email: u.email ?? null } : {}),
+      beforeRole, afterRole,
+    }];
   });
   if (changes.some((c) => roleRaises(c.beforeRole, c.afterRole)) && !levelAtLeast(level, "admin")) {
     throw new ProjectAccessDeniedError("Only source project Admins can confirm a move that expands access");
@@ -122,7 +135,7 @@ export async function getProjectGroupMovePreview(
       project: { uuid: project.uuid, name: project.name, visibility: project.visibility, groupUuid: project.groupUuid },
       source: source ? { uuid: source.uuid, visibility: source.visibility, accessVersion: source.accessVersion } : null,
       target: target ? { uuid: target.uuid, visibility: target.visibility, accessVersion: target.accessVersion } : null,
-      groupUuid, direct, inherited, users,
+      groupUuid, direct, inherited, users: users.map(({ uuid }) => ({ uuid })),
     }),
   };
 }

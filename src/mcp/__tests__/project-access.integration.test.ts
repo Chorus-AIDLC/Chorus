@@ -96,6 +96,7 @@ const fixture = vi.hoisted(() => {
     },
     activity: { createActivity: vi.fn(async () => undefined) },
     comment: { createComment: vi.fn(async () => ({ uuid: "new-comment" })), resolveProjectUuid: vi.fn(async () => "private") },
+    elaboration: { answerElaboration: vi.fn(async () => ({ uuid: "round", status: "answered" })) },
     reference: {
       REFERENCE_TYPES: ["docs", "repo", "issue_pr", "paper_blog"],
       REFERENCE_TARGET_TYPES: ["idea", "task", "proposal"],
@@ -150,7 +151,7 @@ vi.mock("@/services/assignment.service", () => fixture.services.assignment);
 vi.mock("@/services/checkin.service", () => fixture.services.checkin);
 vi.mock("@/services/search.service", () => fixture.services.search);
 vi.mock("@/services/notification.service", () => ({}));
-vi.mock("@/services/elaboration.service", () => ({}));
+vi.mock("@/services/elaboration.service", () => fixture.services.elaboration);
 vi.mock("@/services/mention.service", () => ({}));
 vi.mock("@/services/agent.service", () => ({}));
 vi.mock("@/lib/logger", () => ({ default: { child: () => ({ warn: vi.fn(), error: vi.fn(), debug: vi.fn() }) } }));
@@ -273,6 +274,78 @@ function setProposalInputs(inputType: "idea" | "document", inputUuids: string[],
 }
 
 describe("MCP central project access", () => {
+  it.each(["idea", "proposal", "document"] as const)(
+    "developer_agent can comment on an accessible %s without its write capability",
+    async (targetType) => {
+      const { handlers, originals } = register(auth("editor", [...ROLE_PRESETS.developer_agent]));
+      const result = await handlers.chorus_add_comment({
+        targetType, targetUuid: `${targetType}-private`, content: "Implementation update",
+      });
+      expect(result.isError).not.toBe(true);
+      expect(originals.chorus_add_comment).toHaveBeenCalledOnce();
+      expect(fixture.services.comment.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({ targetType, targetUuid: `${targetType}-private` }),
+      );
+    },
+  );
+
+  it("developer_agent can answer elaboration when its owner is a project Editor", async () => {
+    const { handlers } = register(auth("editor", [...ROLE_PRESETS.developer_agent]));
+    const result = await handlers.chorus_answer_elaboration({
+      ideaUuid: "idea-private",
+      answers: [{ questionId: "q", selectedOptionId: null, customText: "Clarified" }],
+    });
+    expect(result.isError).not.toBe(true);
+    expect(fixture.services.elaboration.answerElaboration).toHaveBeenCalledOnce();
+  });
+
+  it("elaboration collaboration still requires idea:read before handler and presence", async () => {
+    const permissions = [...ROLE_PRESETS.developer_agent].filter((p) => p !== "idea:read");
+    const { handlers, originals } = register(auth("editor", permissions));
+    expect(await handlers.chorus_answer_elaboration({
+      ideaUuid: "idea-private", answers: [],
+    })).toEqual({
+      content: [{ type: "text", text: "Missing agent capability: idea:read" }], isError: true,
+    });
+    expect(originals.chorus_answer_elaboration).not.toHaveBeenCalled();
+    expect(fixture.services.elaboration.answerElaboration).not.toHaveBeenCalled();
+    expect(eventBus.emitPresence).not.toHaveBeenCalled();
+  });
+
+  it.each(["idea", "proposal", "document"] as const)(
+    "collaboration still requires %s:read and never invokes its handler on capability denial",
+    async (targetType) => {
+      const permissions = [...ROLE_PRESETS.developer_agent].filter((p) => p !== `${targetType}:read`);
+      const { handlers, originals } = register(auth("editor", permissions));
+      const result = await handlers.chorus_add_comment({
+        targetType, targetUuid: `${targetType}-private`, content: "Denied",
+      });
+      expect(result).toEqual({
+        content: [{ type: "text", text: `Missing agent capability: ${targetType}:read` }], isError: true,
+      });
+      expect(originals.chorus_add_comment).not.toHaveBeenCalled();
+      expect(fixture.services.comment.createComment).not.toHaveBeenCalled();
+      expect(eventBus.emitPresence).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["viewer", "nonmember"])(
+    "developer_agent collaboration cannot bypass the %s owner's project access",
+    async (owner) => {
+      const { handlers, originals } = register(auth(owner, [...ROLE_PRESETS.developer_agent]));
+      for (const [name, params] of [
+        ["chorus_add_comment", { targetType: "idea", targetUuid: "idea-private", content: "Denied" }],
+        ["chorus_answer_elaboration", { ideaUuid: "idea-private", answers: [] }],
+      ] as const) {
+        expect((await handlers[name](params)).isError).toBe(true);
+        expect(originals[name]).not.toHaveBeenCalled();
+      }
+      expect(fixture.services.comment.createComment).not.toHaveBeenCalled();
+      expect(fixture.services.elaboration.answerElaboration).not.toHaveBeenCalled();
+      expect(eventBus.emitPresence).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     ["chorus_get_project", { projectUuid: "private" }],
     ["chorus_get_project_groups", {}],

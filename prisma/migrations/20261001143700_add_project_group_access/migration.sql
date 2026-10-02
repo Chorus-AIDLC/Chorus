@@ -22,7 +22,6 @@ CREATE TABLE "ProjectGroupMember" (
 CREATE UNIQUE INDEX "ProjectGroupMember_uuid_key" ON "ProjectGroupMember"("uuid");
 CREATE UNIQUE INDEX "ProjectGroupMember_groupUuid_userUuid_key" ON "ProjectGroupMember"("groupUuid", "userUuid");
 CREATE INDEX "ProjectGroupMember_companyUuid_userUuid_idx" ON "ProjectGroupMember"("companyUuid", "userUuid");
-ALTER TABLE "ProjectGroupMember" ADD CONSTRAINT "ProjectGroupMember_groupUuid_fkey"
-  FOREIGN KEY ("groupUuid") REFERENCES "ProjectGroup"("uuid") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "Project" ADD CONSTRAINT "Project_groupUuid_fkey"
-  FOREIGN KEY ("groupUuid") REFERENCES "ProjectGroup"("uuid") ON DELETE RESTRICT ON UPDATE CASCADE;
+-- Relations follow the repository's relationMode = "prisma". In particular,
+-- historical Project.groupUuid values may reference a group that no longer
+-- exists; upgrading must neither reject nor rewrite those existing projects.

@@ -84,10 +84,12 @@ export async function authorizeToolProjectAccess(
       isEntityType(params.targetType ?? params.entityType)) {
     const entity = params.targetType ?? params.entityType;
     const resource = entity === "comment" ? "document" : entity;
-    capability = `${resource}:${toolName === "chorus_add_comment" ? "write" : "read"}` as Permission;
+    // Collaboration tools remain available to agents that can read the target,
+    // including developer_agent; the project Editor gate below controls writes.
+    capability = `${resource}:read` as Permission;
   }
   if (toolName === "chorus_update_task" || toolName === "chorus_create_tasks") capability = "task:write";
-  if (toolName === "chorus_answer_elaboration") capability = "idea:write";
+  if (toolName === "chorus_answer_elaboration") capability = "idea:read";
   if (capability && !auth.permissions.includes(capability)) {
     throw new ProjectAccessDeniedError(`Missing agent capability: ${capability}`);
   }

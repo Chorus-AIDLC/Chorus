@@ -19,8 +19,8 @@ export async function lockProjects(tx: GroupDbClient, companyUuid: string, proje
   }
 }
 
-// Activity requires a project FK. Store the group audit in its polymorphic
-// comment stream even when empty, and in each affected child's activity stream.
+// Keep the complete audit in the protected group stream. Child-project readers
+// may see group basics, but must not infer the group's roster or role changes.
 export async function auditGroup(
   tx: GroupDbClient, auth: AuthContext, groupUuid: string, projectUuids: string[],
   action: string, value: Record<string, unknown>,
@@ -30,6 +30,7 @@ export async function auditGroup(
     authorType: auth.type === "agent" ? "agent" : "user", authorUuid: auth.actorUuid,
     content: JSON.stringify({ action, ...value }),
   } });
+  if (!["group_updated", "group_deleted"].includes(action)) return;
   for (const projectUuid of projectUuids) {
     await tx.activity.create({ data: {
       companyUuid: auth.companyUuid, projectUuid, targetType: "project_group", targetUuid: groupUuid,

@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 
 export interface AccessRoleChange {
   userUuid: string;
+  name?: string | null;
+  email?: string | null;
   beforeRole: string;
   afterRole: string;
 }
@@ -72,11 +74,16 @@ export function AccessImpactPreview({
   );
   const renderChanges = (changes: AccessRoleChange[] = []) => (
     <ul className="space-y-1">
-      {changes.map((change) => (
-        <li key={change.userUuid} className="break-all text-xs">
-          {change.userUuid}: {t(`roles.${change.beforeRole}`)} → {t(`roles.${change.afterRole}`)}
-        </li>
-      ))}
+      {changes.map((change) => {
+        const name = change.name?.trim();
+        const email = change.email?.trim();
+        const identity = name ? (email ? `${name} (${email})` : name) : email || change.userUuid;
+        return (
+          <li key={change.userUuid} title={change.userUuid} className="break-words text-xs [overflow-wrap:anywhere]">
+            {identity}: {t(`roles.${change.beforeRole}`)} → {t(`roles.${change.afterRole}`)}
+          </li>
+        );
+      })}
     </ul>
   );
   return (
