@@ -79,6 +79,8 @@ import {
   systemctlUser,
   journalctlUser,
   launchctl,
+  lingerStatus,
+  lingerMessages,
   resolveServicePaths,
   SERVICE_NAME,
 } from "./daemon-service.mjs";
@@ -853,6 +855,7 @@ export async function runDaemon(flags = {}, deps = {}) {
     systemctlUser,
     journalctlUser,
     launchctl,
+    lingerStatus,
     resolveServicePaths: () => resolveServicePaths(env),
   };
   // The preflight dep bundle — built from the same seams runDaemon resolved, so
@@ -1329,6 +1332,7 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
       // --agent into ExecStart too would let the two sources drift.
       chorusOnly: flags.chorusOnly === true,
       workingDir: process.cwd(),
+      noLinger: flags.noLinger === true,
     };
     const r = svc.installService(spec);
     if (r.installed) {
@@ -1337,10 +1341,11 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
       log(`[Chorus] it will now start automatically at login. Manage it with:`);
       log(`[Chorus]   chorus daemon status | stop | restart | logs`);
       if (r.platform === "linux") {
-        // A --user service only survives logout with lingering enabled; and a
-        // separately-started `chorus daemon -d` would hold the same paths and make
-        // this service exit-and-retry. Surface both so neither is a silent gotcha.
-        log(`[Chorus] to keep it running after you log out: loginctl enable-linger "$USER"`);
+        // installService already ensured lingering (a --user service only survives
+        // logout with it); report the outcome — a failure is a loud warning, never
+        // an install failure. A separately-started `chorus daemon -d` would hold
+        // the same paths and make this service exit-and-retry, so surface that too.
+        for (const m of lingerMessages(r.linger)) (m.level === "warn" ? errLog : log)(`[Chorus] ${m.text}`);
         log(`[Chorus] if you previously ran 'chorus daemon -d', stop it first ('chorus daemon stop') so it doesn't hold the same paths.`);
       } else if (r.platform === "darwin") {
         log(`[Chorus] if you previously ran 'chorus daemon -d', stop it first ('chorus daemon stop') so it doesn't hold the same paths.`);
@@ -1392,6 +1397,16 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
   if (action === "status") {
     if (systemd) {
       log(`[Chorus] daemon is managed by systemd (${SERVICE_NAME}.service) — ${sup.active ? "active" : "installed but NOT active"}.`);
+      // Without lingering logind stops the whole user manager (and this unit) at
+      // logout, so an "active" now can silently mean "gone after you disconnect".
+      // (an injected service seam without lingerStatus reports nothing)
+      const linger = svc.lingerStatus?.() ?? { state: "unknown" };
+      if (linger.state === "yes") {
+        log(`[Chorus] linger: yes (keeps running after logout, starts at boot)`);
+      } else if (linger.state === "no") {
+        errLog(`[Chorus] WARNING: systemd lingering is OFF for ${linger.user} — the daemon will stop when you log out and will not start at boot.`);
+        errLog(`[Chorus] WARNING: fix it with 'chorus daemon install' or: sudo loginctl enable-linger ${linger.user}`);
+      }
       const r = svc.systemctlUser(["status", "--no-pager", `${SERVICE_NAME}.service`]);
       if (r.stdout) log(r.stdout.trimEnd());
       return sup.active ? 0 : 1;

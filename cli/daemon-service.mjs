@@ -28,7 +28,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,6 +47,9 @@ function defaultIO() {
     unlinkSync,
     writeFileSync,
     spawnSync,
+    userInfo,
+    getuid: typeof process.getuid === "function" ? () => process.getuid() : undefined,
+    env: process.env,
     platform: process.platform,
     home: homedir(),
   };
@@ -337,12 +340,187 @@ export function autostartCapability(io = defaultIO()) {
 }
 
 /**
+ * The login name to pass to `loginctl` — `os.userInfo()` first (a unit or a
+ * sudo'd shell may not carry $USER), then $USER / $LOGNAME. Never throws.
+ * @param {object} [io]
+ * @returns {string | null}
+ */
+export function currentUserName(io = defaultIO()) {
+  try {
+    const name = typeof io.userInfo === "function" ? io.userInfo()?.username : undefined;
+    if (typeof name === "string" && name.trim()) return name.trim();
+  } catch {
+    // fall through to the env (userInfo throws for a uid with no passwd entry)
+  }
+  const env = io.env ?? {};
+  for (const v of [env.USER, env.LOGNAME]) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+/**
+ * The numeric uid for SetUserLinger — `os.userInfo().uid` first, then
+ * `process.getuid()`. Never throws.
+ * @param {object} [io]
+ * @returns {number | null}
+ */
+export function currentUserId(io = defaultIO()) {
+  try {
+    const uid = typeof io.userInfo === "function" ? io.userInfo()?.uid : undefined;
+    if (Number.isInteger(uid) && uid >= 0) return uid;
+  } catch {
+    // fall through to getuid
+  }
+  try {
+    const uid = typeof io.getuid === "function" ? io.getuid() : undefined;
+    if (Number.isInteger(uid) && uid >= 0) return uid;
+  } catch {
+    // no uid available
+  }
+  return null;
+}
+
+/** Upper bound for any logind call — an install must never hang on it. */
+export const LINGER_CALL_TIMEOUT_MS = 10_000;
+
+/** Run a logind CLI (`loginctl` / `busctl`) with a bounded wait. Never throws. */
+function logindCall(cmd, args, io) {
+  try {
+    const r = io.spawnSync(cmd, args, { encoding: "utf8", timeout: LINGER_CALL_TIMEOUT_MS });
+    if (r?.error) {
+      // ENOENT (missing binary) or ETIMEDOUT (the spawn timeout fired)
+      return { status: null, stdout: r?.stdout ?? "", stderr: String(r.error.message ?? r.error) };
+    }
+    if (r?.signal) {
+      return { status: null, stdout: r?.stdout ?? "", stderr: `${cmd} killed by ${r.signal}` };
+    }
+    return { status: r?.status ?? null, stdout: r?.stdout ?? "", stderr: r?.stderr ?? "" };
+  } catch (err) {
+    return { status: null, stdout: "", stderr: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Enable lingering via logind's D-Bus API with interactive authorization
+ * FORBIDDEN. `loginctl enable-linger` hard-codes `SetUserLinger(uid, true,
+ * interactive=true)` (and `--no-ask-password` only clears the message header,
+ * not that argument), so under a polkit policy that needs auth it can wait on
+ * an auth agent and block the install. Calling the method directly with
+ * interactive=false and `--allow-interactive-authorization=no` makes polkit
+ * answer immediately (allowed or "Access denied").
+ */
+function setUserLinger(uid, io) {
+  const busTimeoutSec = Math.max(1, Math.floor(LINGER_CALL_TIMEOUT_MS / 2000));
+  return logindCall("busctl", [
+    "--system",
+    "--allow-interactive-authorization=no",
+    `--timeout=${busTimeoutSec}s`,
+    "call",
+    "org.freedesktop.login1",
+    "/org/freedesktop/login1",
+    "org.freedesktop.login1.Manager",
+    "SetUserLinger",
+    "ubb",
+    String(uid),
+    "true",
+    "false",
+  ], io);
+}
+
+/** The copy-pasteable manual fix for a user whose lingering we could not enable. */
+function lingerFix(user) {
+  return `sudo loginctl enable-linger ${user ?? "$USER"}`;
+}
+
+/**
+ * Whether systemd-logind keeps this user's manager (and so a `systemd --user`
+ * daemon) running with no login session. Without lingering logind stops
+ * `user@<uid>.service` shortly after the last session closes — taking the
+ * daemon with it — and does not start it at boot.
+ *   - "yes" / "no" — what `loginctl show-user <user> -p Linger --value` reports.
+ *   - "unknown"    — loginctl missing, non-zero exit (no logind, e.g. a
+ *                    container), unparseable output, or no resolvable user.
+ * @param {object} [io]
+ * @returns {{ state: "yes"|"no"|"unknown", user: string|null, error?: string }}
+ */
+export function lingerStatus(io = defaultIO()) {
+  const user = currentUserName(io);
+  if (!user) return { state: "unknown", user: null, error: "could not determine the current user name" };
+  const r = logindCall("loginctl", ["show-user", user, "-p", "Linger", "--value"], io);
+  if (r.status !== 0) {
+    return { state: "unknown", user, error: `loginctl show-user failed: ${r.stderr.trim() || `exit ${r.status}`}` };
+  }
+  // `--value` prints the bare value (systemd >= 230); tolerate `Linger=yes` too.
+  const value = r.stdout.trim().replace(/^Linger=/, "");
+  if (value === "yes" || value === "no") return { state: value, user };
+  return { state: "unknown", user, error: `unexpected loginctl output: ${JSON.stringify(value)}` };
+}
+
+/**
+ * Idempotently enable lingering for the current user so the `systemd --user`
+ * daemon survives logout and starts at boot. Fail-soft: never throws, and a
+ * failure is reported (with the manual `sudo` fix) rather than failing the
+ * caller's install.
+ * @param {object} [io]
+ * @returns {{ result: "already"|"enabled", user: string }
+ *   | { result: "failed"|"unavailable", user: string|null, error: string, fix: string }}
+ */
+export function ensureLinger(io = defaultIO()) {
+  const status = lingerStatus(io);
+  if (status.state === "yes") return { result: "already", user: status.user };
+  if (!status.user) {
+    return { result: "unavailable", user: null, error: status.error ?? "unknown linger state", fix: lingerFix(null) };
+  }
+  // An "unknown" state still tries to enable: some systemd versions fail
+  // `show-user` for a user with no session and no lingering (e.g. a sudo -u or
+  // cron install) even though enabling works. If logind itself is missing the
+  // enable fails the same way and we report it as unavailable.
+  // Most distros' polkit policy lets a user enable lingering for themselves
+  // without auth; when it doesn't, polkit denies at once (never prompts) and we
+  // fall back to the warning + manual command.
+  const uid = currentUserId(io);
+  if (uid === null) {
+    return { result: "unavailable", user: status.user, error: "could not determine the current uid", fix: lingerFix(status.user) };
+  }
+  const r = setUserLinger(uid, io);
+  if (r.status === 0) return { result: "enabled", user: status.user };
+  const enableError = `SetUserLinger failed: ${r.stderr.trim() || `exit ${r.status}`}`;
+  return {
+    result: status.state === "unknown" ? "unavailable" : "failed",
+    user: status.user,
+    error: status.state === "unknown" ? `${status.error}; ${enableError}` : enableError,
+    fix: lingerFix(status.user),
+  };
+}
+
+/**
+ * Pure: the log lines to print for an ensureLinger outcome. Callers add their
+ * own prefix and route "warn" lines to stderr. `undefined` / "skipped" (the
+ * --no-linger opt-out, or a non-Linux install) prints nothing.
+ * @param {ReturnType<typeof ensureLinger> | { result: "skipped" } | undefined} outcome
+ * @returns {Array<{ level: "info"|"warn", text: string }>}
+ */
+export function lingerMessages(outcome) {
+  if (!outcome || outcome.result === "skipped" || outcome.result === "already") return [];
+  if (outcome.result === "enabled") {
+    return [{ level: "info", text: `enabled systemd lingering for ${outcome.user} — the daemon keeps running after you log out and starts at boot.` }];
+  }
+  return [
+    { level: "warn", text: `WARNING: could not enable systemd lingering (${outcome.error}).` },
+    { level: "warn", text: "WARNING: the daemon will STOP when you log out and will not start at boot until you log in." },
+    { level: "warn", text: `WARNING: fix it with: ${outcome.fix}` },
+  ];
+}
+
+/**
  * Install the systemd --user unit (Linux) or return the template to print
- * (macOS/Windows). On Linux: write the unit, `daemon-reload`, `enable --now`.
+ * (macOS/Windows). On Linux: write the unit, `daemon-reload`, `enable --now`,
+ * then ensure lingering (unless `spec.noLinger`).
  * All IO injected. Never throws — errors surface in the return shape.
  * @param {{
  *   nodePath: string, scriptPath: string, cwds?: string[], agent?: string,
- *   chorusOnly?: boolean, workingDir: string, path: string,
+ *   chorusOnly?: boolean, workingDir: string, path: string, noLinger?: boolean,
  * }} spec
  * @param {object} [io]
  * @returns {{
@@ -351,6 +529,7 @@ export function autostartCapability(io = defaultIO()) {
  *   unitPath?: string,
  *   unitText: string,
  *   steps: string[],
+ *   linger?: ReturnType<typeof ensureLinger> | { result: "skipped" },
  *   error?: string,
  * }}
  */
@@ -380,7 +559,11 @@ export function installService(spec, io = defaultIO()) {
       // Best-effort: a restart failure must not fail an otherwise-good install.
       const restart = systemctlUser(["restart", `${SERVICE_NAME}.service`], io);
       if (restart.status === 0) steps.push(`systemctl --user restart ${SERVICE_NAME}.service`);
-      return { platform: "linux", installed: true, unitPath, unitText, steps };
+      // A --user service only survives logout (and starts at boot) with lingering
+      // on. Fail-soft: a linger failure is reported, never an install failure.
+      const linger = spec.noLinger ? { result: "skipped" } : ensureLinger(io);
+      if (linger.result === "enabled") steps.push(`enabled lingering for ${linger.user} (logind SetUserLinger)`);
+      return { platform: "linux", installed: true, unitPath, unitText, steps, linger };
     } catch (err) {
       return { platform: "linux", installed: false, unitPath, unitText, steps, error: err instanceof Error ? err.message : String(err) };
     }

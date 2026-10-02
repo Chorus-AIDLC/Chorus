@@ -203,6 +203,59 @@ describe("runDaemon — supervisor (systemd) delegation", () => {
     expect(logs.join("")).toMatch(/NOT active/);
   });
 
+  it("status warns with the fix command when lingering is off (exit code unchanged)", async () => {
+    const service = installedActive();
+    service.lingerStatus = vi.fn(() => ({ state: "no", user: "ubuntu" }));
+    const logs = [];
+    const errs = [];
+    const code = await runDaemon(
+      { action: "status" },
+      { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(0);
+    expect(errs.join("\n")).toMatch(/lingering is OFF for ubuntu/);
+    expect(errs.join("\n")).toContain("sudo loginctl enable-linger ubuntu");
+  });
+
+  it("status shows linger: yes and no warning when lingering is on", async () => {
+    const service = installedActive();
+    service.lingerStatus = vi.fn(() => ({ state: "yes", user: "ubuntu" }));
+    const logs = [];
+    const errs = [];
+    const code = await runDaemon(
+      { action: "status" },
+      { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(0);
+    expect(logs.join("\n")).toMatch(/linger: yes/);
+    expect(errs).toEqual([]);
+  });
+
+  it("status prints nothing about lingering when its state is unknown", async () => {
+    const service = installedActive();
+    service.lingerStatus = vi.fn(() => ({ state: "unknown", user: "ubuntu" }));
+    const logs = [];
+    const errs = [];
+    const code = await runDaemon(
+      { action: "status" },
+      { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(0);
+    expect([...logs, ...errs].join("\n")).not.toMatch(/linger/i);
+  });
+
+  it("status keeps exit 1 for an inactive unit even with the linger warning", async () => {
+    const service = fakeService({
+      detectSupervisor: () => ({ kind: "systemd", installed: true, active: false, unitPath: "/u" }),
+      lingerStatus: () => ({ state: "no", user: "ubuntu" }),
+    });
+    const code = await runDaemon(
+      { action: "status" },
+      { lifecycle: fakeLifecycle(), service, log: () => {}, errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(1);
+  });
+
   it("stop delegates to systemctl stop and does not signal the pidfile", async () => {
     const service = installedActive();
     const lifecycle = fakeLifecycle();
@@ -445,6 +498,51 @@ describe("runDaemon — install / uninstall", () => {
     );
     expect(code).toBe(1);
     expect(errs.join("")).toMatch(/install failed: daemon-reload failed/);
+  });
+
+  it("install reports lingering enabled and drops the old unconditional hint", async () => {
+    const service = fakeService({
+      installService: vi.fn(() => ({ platform: "linux", installed: true, unitPath: "/u", unitText: "", steps: ["wrote /u", "loginctl enable-linger ubuntu"], linger: { result: "enabled", user: "ubuntu" } })),
+    });
+    const logs = [];
+    const errs = [];
+    const code = await runDaemon(
+      { action: "install" },
+      { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(0);
+    expect(logs.join("\n")).toMatch(/enabled systemd lingering for ubuntu/);
+    expect(logs.join("\n")).not.toContain('loginctl enable-linger "$USER"');
+    expect(errs.join("\n")).not.toMatch(/WARNING/);
+    expect(service.installService.mock.calls[0][0].noLinger).toBe(false);
+  });
+
+  it("install warns with the sudo fix but still exits 0 when lingering fails", async () => {
+    const service = fakeService({
+      installService: () => ({ platform: "linux", installed: true, unitPath: "/u", unitText: "", steps: ["wrote /u"], linger: { result: "failed", user: "ubuntu", error: "loginctl enable-linger failed: Access denied", fix: "sudo loginctl enable-linger ubuntu" } }),
+    });
+    const errs = [];
+    const code = await runDaemon(
+      { action: "install" },
+      { lifecycle: fakeLifecycle(), service, log: () => {}, errLog: (m) => errs.push(m), env: {} }
+    );
+    expect(code).toBe(0);
+    expect(errs.join("\n")).toContain("sudo loginctl enable-linger ubuntu");
+    expect(errs.join("\n")).toMatch(/STOP when you log out/);
+  });
+
+  it("install --no-linger threads noLinger into the service spec", async () => {
+    const service = fakeService({
+      installService: vi.fn(() => ({ platform: "linux", installed: true, unitPath: "/u", unitText: "", steps: [], linger: { result: "skipped" } })),
+    });
+    const logs = [];
+    const code = await runDaemon(
+      { action: "install", noLinger: true },
+      { lifecycle: fakeLifecycle(), service, log: (m) => logs.push(m), errLog: () => {}, env: {} }
+    );
+    expect(code).toBe(0);
+    expect(service.installService.mock.calls[0][0].noLinger).toBe(true);
+    expect(logs.join("\n")).not.toMatch(/linger/i);
   });
 
   it("install on macOS reports a real launchd install success (exit 0)", async () => {
