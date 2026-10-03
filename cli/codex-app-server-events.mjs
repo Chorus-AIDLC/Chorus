@@ -101,6 +101,9 @@ export class CodexAppServerEvents {
       // Some transports deliver the terminal snapshot without every item event.
       for (const item of Array.isArray(params.turn.items) ? params.turn.items : []) this.#item(item);
       this.#outcome = { status: params.turn.status, turnId: this.#turnId };
+      if (params.turn.status === "failed" && typeof params.turn.error?.message === "string") {
+        this.#outcome.message = params.turn.error.message;
+      }
       this.finish();
       this.#resolveCompletion(this.#outcome);
     }

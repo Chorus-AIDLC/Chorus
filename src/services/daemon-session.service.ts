@@ -28,6 +28,7 @@
 
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { normalizeWakeError, type WakeError } from "@/lib/daemon-wake-error";
 import { recheckResearchTurn, getResearchEligibility, lockResearchProject } from "@/services/research-eligibility.service";
 import { canActorAccessProject, resolveEntityProjectUuid } from "@/services/project-access.service";
 
@@ -249,6 +250,7 @@ export interface TurnView {
   // though the wake exited — the reply was produced but never reached Chorus. Orthogonal to
   // `status`; lets the UI say "reply couldn't be uploaded (reason)" vs "no reply received".
   relayError: string | null;
+  wakeError?: WakeError | null;
   // Per-turn token usage (daemon-token-usage): the whole normalized TokenUsage object, or
   // null when the turn reported none (pre-feature, silent, or unsupported backend). The UI
   // reads it whole (badge + tooltip); a malformed/legacy stored blob projects to null.
@@ -321,6 +323,7 @@ interface DaemonSessionTurnRow {
   status: string;
   interruptedReason: string | null;
   relayError: string | null;
+  wakeError?: unknown;
   // Raw JSON column (daemon-token-usage) — coerced to a validated TokenUsage (or null) by
   // toTurnView. Typed `unknown` because the DB hands back an untrusted JSON value.
   usage: unknown;
@@ -387,6 +390,7 @@ function toTurnView(row: DaemonSessionTurnRow): TurnView {
     status: row.status,
     interruptedReason: row.interruptedReason,
     relayError: row.relayError,
+    wakeError: normalizeWakeError(row.wakeError),
     usage: toTokenUsageView(row.usage),
     executionUuid: row.executionUuid,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
@@ -728,6 +732,7 @@ export async function advanceTurn(
     // when the daemon reports the turn's transcript upload finally failed. Meaningful only
     // on → ended/interrupted; ignored on → running (the run hasn't produced transcript yet).
     relayError?: string | null;
+    wakeError?: WakeError | null;
     // Per-turn token usage (daemon-token-usage). Persisted verbatim in the turn's single
     // `usage` JSON column on a terminal edge; ignored on → running. The actual column write
     // + session rollup increment are wired in the persist task (Task 3).
@@ -770,6 +775,7 @@ export async function advanceTurn(
     executionUuid?: string | null;
     interruptedReason?: string | null;
     relayError?: string | null;
+    wakeError?: Prisma.InputJsonValue;
     usage?: Prisma.InputJsonValue;
     backendSessionId?: string;
   } = { status };
@@ -787,6 +793,11 @@ export async function advanceTurn(
   const isTerminal = status === "ended" || status === "interrupted";
   if (isTerminal && opts.relayError !== undefined) {
     data.relayError = opts.relayError;
+  }
+  if (status === "interrupted" &&
+      (opts.interruptedReason === "crash" || opts.interruptedReason === "invalid_path")) {
+    const wakeError = normalizeWakeError(opts.wakeError);
+    if (wakeError) data.wakeError = wakeError as unknown as Prisma.InputJsonValue;
   }
   // Per-turn token usage (daemon-token-usage): also a TERMINAL-edge-only annotation (the
   // daemon knows it at subprocess exit, same as relayError). Persist the whole normalized
@@ -2109,6 +2120,7 @@ export async function advanceTurnForWake(params: {
   // Transcript-relay failure annotation forwarded from the daemon's exit-path report
   // (fix #444 follow-up). Persisted on the terminal edge only.
   relayError?: string | null;
+  wakeError?: WakeError | null;
   // Per-turn token usage forwarded from the daemon's exit-path report (daemon-token-usage).
   // Persisted verbatim on the terminal edge only; ignored on → running.
   usage?: TokenUsage | null;
@@ -2300,6 +2312,7 @@ export async function advanceTurnForWake(params: {
       ? { interruptedReason: params.interruptedReason }
       : {}),
     ...(params.relayError !== undefined ? { relayError: params.relayError } : {}),
+    ...(params.wakeError !== undefined ? { wakeError: params.wakeError } : {}),
     ...(params.usage !== undefined ? { usage: params.usage } : {}),
     expectedStatus: turn.status as TurnStatus,
     ...((isResearch || isOperation) ? { originFence, backendSessionId: params.backendSessionId } : {}),

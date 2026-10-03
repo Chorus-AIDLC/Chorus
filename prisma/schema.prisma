@@ -783,6 +783,9 @@ model DaemonSessionTurn {
   // WHY its transcript is missing so the UI can say "reply couldn't be uploaded (reason)"
   // instead of the misleading "no reply received". Null on a successful/skipped upload.
   relayError        String?
+  // Bounded structured startup/execution diagnostic, independent of transcript delivery.
+  // Set only on crash/invalid_path terminal turns; historical rows remain null.
+  wakeError         Json?
   // Per-turn token usage (daemon-token-usage) — the whole normalized TokenUsage object
   // ({ inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, model, source },
   // all nullable except source) stored as ONE JSON blob (human instruction: one JSON, not a

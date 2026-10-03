@@ -1741,6 +1741,13 @@
     "turnMergedCount": "{count}개 이벤트 병합됨",
     "turnEndedNoReply": "이 턴에서 에이전트의 응답을 받지 못했습니다.",
     "turnRelayFailed": "에이전트가 응답했지만 응답을 Chorus에 업로드하지 못했습니다:",
+    "turnFailureTitle": "에이전트 시작 또는 실행 실패",
+    "turnFailureCrash": "에이전트가 예기치 않게 중지되었습니다. 진단 세부 정보가 기록되지 않았습니다.",
+    "turnFailureInvalidPath": "작업 디렉터리를 사용할 수 없어 에이전트를 시작하지 못했습니다. 진단 세부 정보가 기록되지 않았습니다.",
+    "turnFailureShowDetails": "오류 세부 정보 펼치기",
+    "turnFailureHideDetails": "오류 세부 정보 접기",
+    "turnFailureExitCode": "종료 코드: {code}",
+    "turnFailureSignal": "신호: {signal}",
     "privacyNote": "대화 기록은 에이전트의 데몬이 보고한 것으로, 로컬 파일 경로가 포함될 수 있습니다. 가장 최근 메시지만 보관됩니다.",
     "noAgents": {
       "title": "아직 대화가 없습니다",

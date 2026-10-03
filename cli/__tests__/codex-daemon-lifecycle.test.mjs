@@ -61,7 +61,7 @@ function harness(files, { handler, autoComplete = true, total = 100, threadId = 
     lineage: { resolve: async () => ({ rootIdeaUuid: IDEA, directIdeaUuid: IDEA }) },
     writeMcpConfigFn: () => ({ path: "/unused.json", cleanup() {} }),
     isNewSessionFn: () => true,
-    advanceTurn: async p => { turns.push(p); },
+    advanceTurn: async p => { turns.push(p); return { ok: true, data: { turnUuid: "ordinary-turn" } }; },
     reportInterrupt: async p => { interrupts.push(p); },
   });
   const control = createControlHandler({

@@ -10,6 +10,7 @@ import { CodexAppServerEvents } from "./codex-app-server-events.mjs";
 import { registerProcessStopHook } from "./process-stop-hooks.mjs";
 import { killProcessTree } from "./process-killer.mjs";
 import { awaitChildSettled } from "./child-exit.mjs";
+import { createWakeErrorCollector } from "./wake-error.mjs";
 import { getThreadId as defaultGetThreadId, setThreadId as defaultSetThreadId } from "./codex-session-map.mjs";
 import {
   getCodexUsageSnapshot as defaultGetUsageSnapshot,
@@ -133,6 +134,8 @@ export function resolveSpawnCommand(codexPath, args, platform = process.platform
 export class CodexSpawner {
   /** @param {CodexSpawnerOptions} [opts] */
   constructor(opts = {}) {
+    /** Backend source for generic reporting of exceptions before child launch. */
+    this.wakeErrorSource = "codex";
     this.sessionDecision = { probeIsAuthoritative: false };
     this.codexPath = opts.codexPath ?? null;
     this.spawnImpl = opts.spawnImpl ?? spawn;
@@ -160,6 +163,7 @@ export class CodexSpawner {
 
   /** One real stdio child and one authoritative turn per wake. */
   async wake({ prompt, sessionId, cwd = process.cwd(), onMessage, onChild }) {
+    const diagnostics = createWakeErrorCollector({ source: this.wakeErrorSource, env: this.env, creds: this.creds });
     const anchor = typeof sessionId === "string" ? sessionId : "";
     let threadId = null;
     let isNew = true;
@@ -171,10 +175,15 @@ export class CodexSpawner {
     let rawDone = false;
     let rawCode = null;
     let wakeFault = null;
+    let processFault = null;
+    let unobserve;
     const fault = (code) => new CodexAppServerError(code, `Codex App Server: ${code}`);
     // Diagnostic text is fixed, never provider errors, callbacks, paths or values.
     const log = (level, text) => { try { this.logger[level]?.(text); } catch {} };
-    const result = (exitCode) => ({ sessionId: anchor, backendSessionId: threadId, exitCode, isNew });
+    const result = (exitCode, failure = false) => ({
+      sessionId: anchor, backendSessionId: threadId, exitCode, isNew,
+      ...(failure ? { wakeError: diagnostics.build({ exitCode: rawCode }) } : {}),
+    });
     const ensureRunning = () => {
       if (cancelled) throw fault("CANCELLED");
       if (client?.closed) throw client.error;
@@ -245,9 +254,15 @@ export class CodexSpawner {
         });
       } catch (error) {
         log("error", `[Chorus] Codex startup: ${safeSpawnError(error)}`);
+        diagnostics.fail(`Cannot spawn codex: ${safeSpawnError(error)}`, "startup");
         throw fault("SPAWN_FAILED");
       }
-      onProcessError = (error) => log("error", `[Chorus] Codex process: ${safeSpawnError(error)}`);
+      unobserve = diagnostics.observeChild(child);
+      child.stderr?.on("data", (chunk) => diagnostics.appendStderr(chunk));
+      onProcessError = (error) => {
+        processFault = safeSpawnError(error);
+        log("error", `[Chorus] Codex process: ${processFault}`);
+      };
       child.on("error", onProcessError);
       rawSettled = awaitChildSettled(child, { logger: this.logger, label: "codex", stdioGraceMs: this.stdioGraceMs })
         .then((code) => { rawDone = true; rawCode = code; return code; });
@@ -359,6 +374,9 @@ export class CodexSpawner {
       const code = error instanceof CodexAppServerError ? error.code : "SETUP_OR_STORE_ERROR";
       log("error", `[Chorus] Codex App Server wake failed (${code}); check Codex 0.157.1+ installation, login, model/config and local session storage. Unsupported args must use model or permitted -c settings.`);
     } finally {
+      if (adapter?.outcome?.status === "failed") {
+        diagnostics.fail(adapter.outcome.message || "Codex turn failed", "execution");
+      }
       try { adapter?.finish(); } catch {
         wakeFault ??= fault("USAGE_STORE_ERROR");
         log("error", "[Chorus] Codex usage persistence failed; check local session storage.");
@@ -391,14 +409,30 @@ export class CodexSpawner {
       }
       unsubscribe?.();
       unregister?.();
+      unobserve?.();
       if (onProcessError) child?.removeListener("error", onProcessError);
     }
     // CLOSED/EOF is expected only after a confirmed valid terminal. All other
     // protocol faults stay failures even if completion arrived in the same chunk.
     const transportFault = client?.error && !["CLOSED", "EOF"].includes(client.error.code);
     if (cancelled) return result(130);
-    if (wakeFault || transportFault || !adapter?.outcome) return result(null);
-    if (adapter.outcome.status !== "completed") return result(1);
-    return result(rawDone && rawCode === 0 ? 0 : null);
+    if (wakeFault || transportFault || !adapter?.outcome) {
+      const error = wakeFault ?? client?.error;
+      const code = error instanceof CodexAppServerError ? error.code : "SETUP_OR_STORE_ERROR";
+      const kind = !child || processFault ? "startup" : "protocol";
+      const hint = code === "EXECUTABLE_MISSING"
+        ? "Cannot locate codex executable; check installation and PATH"
+        : code === "UNSAFE_WINDOWS_SHIM_ARGS"
+          ? "Codex Windows shim cannot safely carry configured arguments; use a native executable"
+          : `Codex App Server: ${code}; check installation, login, model/config and local session storage`;
+      diagnostics.fail(processFault ? `Codex process error: ${processFault}`
+        : error?.rpcMessage || hint, kind);
+      return result(null, true);
+    }
+    if (adapter.outcome.status !== "completed") {
+      diagnostics.fail(adapter.outcome.message || `Codex turn ${adapter.outcome.status}`, "execution");
+      return result(1, true);
+    }
+    return result(rawDone && rawCode === 0 ? 0 : null, !(rawDone && rawCode === 0));
   }
 }

@@ -1232,6 +1232,7 @@ describe("daemon graceful shutdown (fix-daemon-exit-orphan-running-turn)", () =>
     const advanceTurn = async (params) => {
       turnReports.push(params);
       order.push(`turn:${params.status}`);
+      return { ok: true, data: { turnUuid: "ordinary-turn" } };
     };
     const daemon = buildDaemon(
       { url: "https://chorus.example", apiKey: "cho_x" },

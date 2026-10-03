@@ -172,6 +172,8 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
     durationMs: number;
     /** True when the run was aborted via `abortSignal`. (types.ts:140) */
     aborted?: boolean;
+    /** Terminal run error; verified in the published 2026.9.7 SDK declaration. */
+    error?: { kind: string; message: string };
     finalAssistantVisibleText?: string;
     stopReason?: string;
     [key: string]: unknown;

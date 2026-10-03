@@ -33,6 +33,56 @@ function makeClient(overrides = {}) {
 }
 
 describe("createDaemonRestClient — payload shapes (single source of truth)", () => {
+  it.each([
+    ["interrupted", "crash", true],
+    ["interrupted", "invalid_path", true],
+    ["interrupted", "user", false],
+    ["interrupted", "shutdown", false],
+    ["interrupted", "offline", false],
+    ["interrupted", undefined, false],
+    ["ended", undefined, false],
+    ["running", undefined, false],
+  ])("wakeError is failure-only on %s / %s", async (status, interruptedReason, included) => {
+    const fetchImpl = okFetch();
+    const client = makeClient({ fetchImpl });
+    const wakeError = {
+      source: "codex", kind: "execution", message: "Synthetic execution failed",
+      details: "Failure details", exitCode: 0, signal: null,
+    };
+    await client.turnAdvance({ sessionId: "idea-1", turnUuid: "turn-1", status, interruptedReason, wakeError });
+    const body = JSON.parse(fetchImpl.mock.lastCall[1].body);
+    if (included) expect(body.wakeError).toEqual(wakeError);
+    else expect(body).not.toHaveProperty("wakeError");
+  });
+
+  it("omits a null diagnostic on a crash", async () => {
+    const fetchImpl = okFetch();
+    await makeClient({ fetchImpl }).turnAdvance({
+      sessionId: "idea-1", status: "interrupted", interruptedReason: "crash", wakeError: null,
+    });
+    expect(JSON.parse(fetchImpl.mock.lastCall[1].body)).not.toHaveProperty("wakeError");
+  });
+
+  it("terminal retries retain the exact UUID, diagnostic, usage and independent relay failure", async () => {
+    const fetchImpl = okFetch();
+    fetchImpl.mockResolvedValueOnce({ ok: false, status: 503 });
+    const sleep = vi.fn(async () => {});
+    const wakeError = {
+      source: "pi", kind: "protocol", message: "Synthetic protocol failure",
+      details: null, exitCode: 0, signal: null,
+    };
+    const report = {
+      sessionId: "idea-1", turnUuid: "turn-1", status: "interrupted", interruptedReason: "crash",
+      wakeError, transcriptRelayError: "Synthetic relay failure",
+      usage: { inputTokens: 3, outputTokens: 5, cacheCreationTokens: null, cacheReadTokens: null, model: null, source: "pi" },
+    };
+    await makeClient({ fetchImpl, sleep }).turnAdvance(report);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls[0][1].body).toBe(fetchImpl.mock.calls[1][1].body);
+    expect(JSON.parse(fetchImpl.mock.lastCall[1].body)).toMatchObject(report);
+    expect(sleep).toHaveBeenCalledWith(500);
+  });
+
   it("turnAdvance POSTs the exact server contract with Bearer auth", async () => {
     const fetchImpl = okFetch();
     const client = makeClient({ fetchImpl });

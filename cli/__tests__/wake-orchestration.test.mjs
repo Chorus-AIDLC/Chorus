@@ -531,7 +531,7 @@ function makeWaker(overrides = {}) {
   // Interrupt reporter (子3): injected spy so tests assert user-vs-crash reporting.
   const reportInterrupt = overrides.reportInterrupt ?? vi.fn(async () => {});
   // Turn reporter (子1 / coalescing): injected spy so tests can assert coalescedCount.
-  const advanceTurn = overrides.advanceTurn ?? vi.fn(async () => {});
+  const advanceTurn = overrides.advanceTurn ?? vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
   const waker = new Waker({
     creds: { url: "https://c", apiKey: "cho_x" },
     lineage,
@@ -729,7 +729,7 @@ describe("Waker deterministic Claude session-conflict recovery", () => {
             };
       }),
     };
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const reportInterrupt = vi.fn(async () => {});
     const { waker } = makeWaker({ spawner, advanceTurn, reportInterrupt });
     const resolved = await waker.keyFor(TASK_NOTIF);
@@ -912,7 +912,7 @@ describe("Waker.wakeBatch (coalescing §C3)", () => {
   });
 
   it("advances the ONE running turn keyed by sessionId and reports coalescedCount = N on the running edge", async () => {
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const { waker } = makeWaker({ advanceTurn, spawner: spawnerWithChild() });
     await waker.wakeBatch([MENTION_A, MENTION_B], ATTR.key, ATTR);
 
@@ -930,7 +930,7 @@ describe("Waker.wakeBatch (coalescing §C3)", () => {
     // created a server pending turn; resource_resumed did not). The wire count must be 2 so the
     // server settles (2 − 1) = 1 same-session pending turn — never over-reaching into a
     // genuinely-separate post-drain turn (which it would silently mark `merged` and drop).
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const { waker } = makeWaker({ advanceTurn, spawner: spawnerWithChild() });
     await waker.wakeBatch([RESUME, MENTION_A, MENTION_B], ATTR.key, ATTR);
 
@@ -942,7 +942,7 @@ describe("Waker.wakeBatch (coalescing §C3)", () => {
     // [resource_resumed, mention] → 1 turn-backed item → default 1, which the client omits from
     // the running-edge payload, so the server runs no settlement (default window of 1). The
     // batch still runs as ONE coalesced turn: a physical batch of 2 → the synthesized idea anchor.
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const { waker } = makeWaker({ advanceTurn, spawner: spawnerWithChild() });
     await waker.wakeBatch([RESUME, MENTION_A], ATTR.key, ATTR);
 
@@ -972,7 +972,7 @@ describe("Waker.wakeBatch (coalescing §C3)", () => {
   });
 
   it("wake(n) is a thin wakeBatch([n]) — single-wake prompt + turn accounting unchanged, coalescedCount omitted", async () => {
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     const { waker, spawner } = makeWaker({ advanceTurn, spawner: spawnerWithChild() });
     const resolved = await waker.keyFor(TASK_NOTIF);
     await waker.wake(TASK_NOTIF, resolved.key, resolved);
@@ -1307,7 +1307,7 @@ describe("EventRouter dispatch", () => {
         return { sessionId, exitCode: 0, isNew: true };
       }),
     };
-    const advanceTurn = vi.fn(async () => {});
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "ordinary-turn" } }));
     // All notifications resolve to the SAME direct idea → same key.
     const { waker } = makeWaker({
       spawner,
