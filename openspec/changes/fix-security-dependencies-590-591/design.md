@@ -22,7 +22,7 @@ Use exact direct versions for Next.js / eslint-config-next 15.5.27, React / Reac
 
 PostCSS candidates must be at least 8.5.18, nanoid 3.x at least 3.3.18 and sharp at least 0.35.4. Prefer current compatible patches (the issue reports 8.5.28, 3.3.19 and 0.35.5); record actual resolved versions. Confirm package availability and constraints using official package metadata during implementation.
 
-Scope nanoid overrides to the affected 3.x line so `docx` continues to resolve its 5.x dependency. Select sharp override scope after checking its workspace consumers; validate any affected landing build. Retain the existing docx and shiki overrides.
+Scope nanoid overrides by major version so `docx` continues to resolve its 5.x dependency. Implementation audit also identified two advisories affecting the existing 5.1.9 resolution; use the compatible fixed 5.1.16 patch for that branch while updating 3.x to 3.3.19. [6](ref:6289f84e-8611-4b15-bd65-2da268aef4d4) [7](ref:32b759cb-ce66-4a02-8694-c45c003121b3) Select sharp override scope after checking its workspace consumers; validate any affected landing build. Retain the existing docx and shiki overrides.
 
 Task 1 and Task 2 execute sequentially because both update the same package manifest and lockfile.
 
@@ -40,7 +40,7 @@ Use local production images on `linux/amd64` and `linux/arm64`. Emulated arm64 i
 
 For both architectures, verify image versions and startup against external PostgreSQL TLS and embedded PGlite. Each database mode needs a new-database path and an existing-database path seeded by the baseline, followed by upgraded startup, migration count / seeded-row checks and a second startup. Temporary credentials, databases, volumes, ports and image tags must be dedicated to this effort.
 
-Verify `prisma generate`, `db push` (used by CI) and `migrate deploy`. Run existing type/lint/test/build checks. Exercise health, login, authenticated and unauthenticated projects requests, representative rendered UI/CSS and sharp image processing.
+Verify `prisma generate`, `db push` (used by CI) and `migrate deploy`. Run existing type/lint/test/build checks. Final lint and full Vitest/coverage results must come from the completed manifest/lockfile after the Prisma upgrade; earlier application-only results do not replace them. Exercise health, login, authenticated and unauthenticated projects requests, representative rendered UI/CSS and sharp image processing.
 
 ### D4. Security evidence covers the final image
 

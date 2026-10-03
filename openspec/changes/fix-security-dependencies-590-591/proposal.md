@@ -7,7 +7,7 @@ The checked-in lockfile and Docker migration CLI retain the dependency versions 
 ## What Changes
 
 - Upgrade Next.js and its ESLint configuration to 15.5.27 and React / React DOM to 19.2.8, staying within the existing major versions.
-- Update vulnerable PostCSS, nanoid 3.x and sharp resolutions using scoped overrides where needed. Preserve nanoid 5.x consumers and the existing docx / shiki overrides.
+- Update vulnerable PostCSS, nanoid and sharp resolutions using scoped overrides where needed. Preserve nanoid 5.x consumers with a compatible patched 5.x release and retain the existing docx / shiki overrides.
 - Pin Prisma, its client and its PostgreSQL adapter together at 7.10.0. Derive the image migration CLI version from the package resolved during the build, and correct the Docker comment about unversioned installs.
 - Verify frozen installs, application and affected workspace builds, existing tests, CSS / image functionality, both supported image architectures and both external PostgreSQL TLS and embedded PGlite.
 - Deliver before/after dependency and final-image scan evidence, with upstream and OS findings explicitly separated from the remediated packages.
