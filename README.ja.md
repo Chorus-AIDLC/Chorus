@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.21.0](https://chorus-ai.dev/blog/chorus-v0.21.0-release/)**：非公開プロジェクトとプロジェクトグループを追加し、Viewer、Editor、Admin のアクセス権とグループ権限の即時継承に対応しました。エージェントの起動・実行エラーの診断情報を会話に保存します。Linux デーモンの継続稼働を改善し、セキュリティ関連の依存関係も更新しました。
+
 **[v0.20.0](https://chorus-ai.dev/blog/chorus-v0.20.0-release/)** — デーモンのバックエンドを Codex App Server、Claude Code の双方向 stream-json、Pi のネイティブ RPC に移行し、プロトコルを通じて中断と実行状態を扱うようになりました。新しい `chorus upgrade` は npm でグローバルインストールした CLI を更新し、`--plugins` を付けると設定済みの Claude Code、Codex、Kiro、Pi 連携も更新できます。
 
 **[v0.19.1](https://chorus-ai.dev/blog/chorus-v0.19.1-release/)** — 軽量 Research を追加し、Idea の要件整理や Proposal の設計時に重要な事実を確認できるようになりました。インライン引用で根拠となる資料を示せるほか、開発開始前なら Tracker から追加調査を依頼できます。
@@ -59,7 +61,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 2 つのコマンドだけです — データベースも Docker も設定ファイルも不要です。
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.20.0
+npm install -g @chorus-aidlc/chorus@0.21.0
 chorus
 ```
 

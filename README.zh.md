@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.21.0](https://chorus-ai.dev/zh/blog/chorus-v0.21.0-release/)**：新增私有项目与私有项目组，支持 Viewer、Editor、Admin 分级访问和实时权限继承。Agent 启动与执行失败的诊断信息会保存在会话中，同时改进 Linux daemon 持续运行并更新安全依赖。
+
 **[v0.20.0](https://chorus-ai.dev/zh/blog/chorus-v0.20.0-release/)**：daemon 后端改用 Codex App Server、Claude Code 双向 stream-json 和 Pi 原生 RPC，通过协议处理中断与执行状态。新增 `chorus upgrade`，支持 npm 全局安装的 CLI 自升级；加上 `--plugins` 可刷新已配置的 Claude Code、Codex、Kiro 和 Pi 集成。
 
 **[v0.19.1](https://chorus-ai.dev/zh/blog/chorus-v0.19.1-release/)**：新增轻量 Research，在 Idea 澄清和 Proposal 设计时查证关键事实；行内证据引用让结论直接关联来源。开发开始前，也可从 Tracker 发起补充调查。
@@ -50,7 +52,7 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 两条命令即可，无需数据库、无需 Docker、无需配置文件。
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.20.0
+npm install -g @chorus-aidlc/chorus@0.21.0
 chorus
 ```
 
