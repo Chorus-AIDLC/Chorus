@@ -142,6 +142,48 @@ async function begin(source, opts = {}) {
 }
 
 describe("terminal reasons survive pipe errors", () => {
+  it.each(["initialize", "session/prompt", "shutdown"])(
+    "retains a DSH %s rejection when EPIPE arrives before catch resumes", async (method) => {
+      for (const withEpipe of [false, true]) {
+        const child = plainChild("dsh");
+        child.stdin.end = () => queueMicrotask(() => child.exit(1));
+        child.stdin.write = vi.fn((line) => {
+          const request = JSON.parse(line);
+          queueMicrotask(() => {
+            if (request.method === method) {
+              child.send({ jsonrpc: "2.0", id: request.id,
+                error: { code: -32603, message: "Provider authentication failed" } });
+              if (withEpipe) {
+                child.stdin.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" }));
+                child.stderr.emit("data", "provider warning\n");
+              }
+            } else {
+              child.send({ jsonrpc: "2.0", id: request.id, result: request.method === "initialize"
+                ? { serverInfo: { name: "deepseek-harness-sdk-runtime" } }
+                : { messageId: "receipt" } });
+              if (request.method === "session/prompt") {
+                child.send({ jsonrpc: "2.0", method: "session.event", params: {
+                  sessionId: DSH_ID, event: { type: "agent/inbox/spliced",
+                    data: { inserted: [{ id: "receipt" }] } },
+                } });
+                child.send({ jsonrpc: "2.0", method: "session.status",
+                  params: { sessionId: DSH_ID, status: "idle" } });
+              }
+            }
+          });
+          return true;
+        });
+        const result = await wake(makeSpawner("dsh", { spawnImpl: () => child }));
+        expect(result.wakeError).toMatchObject({
+          kind: "protocol", message: "dsh JSON-RPC error -32603: Provider authentication failed",
+          exitCode: 1,
+        });
+        expect(result.wakeError.details).toContain("Provider authentication failed");
+        if (withEpipe) expect(result.wakeError.details).toContain("stdin closed");
+      }
+    },
+  );
+
   it("prefers a later authoritative Claude result to an early stdin error", async () => {
     const { child, running } = await begin("claude");
     child.stdin.emit("error", new Error("broken pipe"));

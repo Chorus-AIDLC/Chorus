@@ -61,7 +61,7 @@ prompt. DSH's generic premature-exit message is also a fallback; Pi retains a
 prompt rejection when a later pipe error arrives.
 
 Before the implementation fix, the selected CLI regression cases had nine
-failures and the matching OpenClaw configuration case failed. After the fix:
+failures and the matching OpenClaw configuration case failed. After the first patch:
 
 | Command | Result |
 | --- | --- |
@@ -77,6 +77,14 @@ These use isolated failing processes, without model-service calls. Existing
 user/shutdown, session-conflict and credential-boundary tests remain passing.
 
 Logs: `/tmp/wake-error-review-{baseline-cli,baseline-openclaw,full-tests,focused-openclaw,tsc,package-tsc,lint}.log`.
+
+The first independent follow-up review found `B1-dsh-rpc-reason-lost`:
+an RPC rejection could arrive before EPIPE, while the catch resumed after it.
+DSH now records the structured rejection before rejecting its RPC waiter.
+Three added regressions cover initialize, prompt and shutdown, each both with
+and without same-callback EPIPE. All three failed before this correction.
+The collector/spawner/DSH correction run passed 128 tests across three files;
+changed-file ESLint and `git diff --check` also passed.
 
 ## Real browser acceptance
 

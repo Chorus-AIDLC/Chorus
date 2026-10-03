@@ -350,11 +350,13 @@ export class DshSpawner {
         if (!waiter) return;
         pending.delete(frame.id);
         if (frame.error && typeof frame.error === "object") {
-          waiter.reject(
-            new Error(
-              `dsh JSON-RPC error ${frame.error.code ?? ""}: ${frame.error.message ?? "unknown error"}`,
-            ),
+          const error = new Error(
+            `dsh JSON-RPC error ${frame.error.code ?? ""}: ${frame.error.message ?? "unknown error"}`,
           );
+          // Record the backend rejection before Promise scheduling lets a pipe
+          // error arrive and populate the delivery fallback.
+          diagnostics.fail(error, "protocol");
+          waiter.reject(error);
         } else {
           waiter.resolve(frame.result);
         }
