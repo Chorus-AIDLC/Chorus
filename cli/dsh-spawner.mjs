@@ -264,7 +264,7 @@ export class DshSpawner {
 
     child.stdout?.setEncoding?.("utf8");
     child.stderr?.setEncoding?.("utf8");
-    child.stdin?.on?.("error", () => fail("Dsh prompt/control delivery failed: stdin closed", "protocol"));
+    child.stdin?.on?.("error", () => fail("Dsh prompt/control delivery failed: stdin closed", "protocol", true));
 
     const closed = deferred();
     const failed = deferred();
@@ -291,11 +291,12 @@ export class DshSpawner {
       cacheReadTokens: null,
     };
 
-    const fail = (message, kind = "protocol") => {
+    const fail = (message, kind = "protocol", fallback = false) => {
+      const error = message instanceof Error ? message : new Error(String(message));
+      if (fallback) diagnostics.failFallback(error, kind);
+      else diagnostics.fail(error, kind);
       if (protocolDone) return;
       protocolDone = true;
-      const error = message instanceof Error ? message : new Error(String(message));
-      diagnostics.fail(error, kind);
       for (const waiter of pending.values()) waiter.reject(error);
       pending.clear();
       idle.reject(error);
@@ -404,7 +405,7 @@ export class DshSpawner {
       closeSeen = true;
       exitCode = code;
       if (stderrBuffer.trim()) this.logger.warn(`[dsh] ${stderrBuffer.trim()}`);
-      if (!protocolDone) fail(`dsh runtime exited before protocol completion (code ${code})`, "execution");
+      if (!protocolDone) fail(`dsh runtime exited before protocol completion (code ${code})`, "execution", true);
       closed.resolve(code);
     });
 
@@ -415,6 +416,7 @@ export class DshSpawner {
         try {
           child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
         } catch (error) {
+          diagnostics.failFallback("Dsh prompt/control delivery failed: stdin closed", "protocol");
           pending.delete(id);
           reject(error);
         }
@@ -491,7 +493,7 @@ export class DshSpawner {
     } catch (error) {
       this.logger.error(`[Chorus] dsh wake failed: ${errorText(error)}`);
       protocolDone = true;
-      diagnostics.fail(error, phase);
+      if (!diagnostics.hasFailure) diagnostics.fail(error, phase);
       await stopRuntime();
       return result(dshSessionId, typeof exitCode === "number" && exitCode !== 0 ? exitCode : null,
         diagnostics.build({ exitCode }));

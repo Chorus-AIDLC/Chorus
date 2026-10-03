@@ -18,6 +18,16 @@ function errorText(value: unknown): string {
   return "";
 }
 
+function isCredentialEnvValue(key: string, value: string | undefined): boolean {
+  if (typeof value !== "string" || !value.trim() ||
+      !/(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|CALLBACK.*KEY)/i.test(key) ||
+      /(?:^|[_-])TOKENS(?:$|[_-])/i.test(key)) return false;
+  // Keep this policy aligned with the separately published CLI helper.
+  if (/(?:API[_-]?KEY|PASSWORD|CALLBACK.*KEY)/i.test(key)) return true;
+  const text = value.trim();
+  return text.length >= 8 && !/^(?:[+-]?\d+(?:\.\d+)?|true|false|yes|no|on|off|null|undefined)$/i.test(text);
+}
+
 /** The separately published package cannot import the CLI's runtime helper. */
 export function createWakeError(
   input: {
@@ -34,7 +44,7 @@ export function createWakeError(
   const credentials = [
     ...secrets,
     ...Object.entries(process.env)
-      .filter(([key]) => /(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|CALLBACK.*KEY)/i.test(key))
+      .filter(([key, value]) => isCredentialEnvValue(key, value))
       .map(([, value]) => value),
   ];
   for (const credential of credentials) {

@@ -425,7 +425,7 @@ export class KiroSpawner {
       // uncaughtException that kills the daemon.
       child.stdin?.on?.("error", (err) => {
         this.logger.warn(`[Chorus] kiro-cli stdin error (ignored): ${err}`);
-        diagnostics.fail("Kiro prompt delivery failed: stdin closed", "protocol");
+        diagnostics.failFallback("Kiro prompt delivery failed: stdin closed", "protocol");
       });
 
       // Feed the prompt over stdin, then close it so the model runs.
@@ -435,7 +435,7 @@ export class KiroSpawner {
         child.stdin?.end();
       } catch (err) {
         this.logger.warn(`[Chorus] failed writing prompt to kiro-cli stdin: ${err}`);
-        diagnostics.fail("Kiro prompt could not be delivered over stdin", "protocol");
+        diagnostics.failFallback("Kiro prompt could not be delivered over stdin", "protocol");
         try { child.stdin?.end?.(); } catch {}
       }
     });

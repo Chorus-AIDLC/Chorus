@@ -41,6 +41,43 @@ cumulative capability specs were mirrored to their Chorus Documents at version
 Purpose placeholders were replaced with concise capability descriptions; each
 updated cumulative spec then passed strict validation.
 
+## PR review follow-up (2026-10-03)
+
+The human requested fixes for the two reproduced findings in Idea comment
+`5c9cfae0-9d55-4082-afe4-64634b6860dc`. Follow-up task
+`0bf744d5-ffd7-4524-8da8-908be84ec971` is attached to the original approved proposal.
+
+Credential inference now excludes plural token-count settings and short,
+numeric or boolean values inferred from broad TOKEN/SECRET environment names.
+Explicit credentials and password/API-key environment values remain protected,
+including short values. The separately published OpenClaw helper uses the same
+policy. Literal, JSON/URL encoding and truncation regressions still pass.
+
+Claude, Kiro, DSH and Pi retain stdin delivery errors as fallback diagnostics.
+Authoritative backend errors take precedence, followed by drained stderr and
+then the delivery fallback. The fallback remains in the details. Missing backend
+text still produces a failed turn, including a raw zero exit after an undelivered
+prompt. DSH's generic premature-exit message is also a fallback; Pi retains a
+prompt rejection when a later pipe error arrives.
+
+Before the implementation fix, the selected CLI regression cases had nine
+failures and the matching OpenClaw configuration case failed. After the fix:
+
+| Command | Result |
+| --- | --- |
+| `pnpm test` | 436 files / 9744 tests passed; 10 files / 237 environment-gated tests skipped |
+| OpenClaw package Vitest suite | 14 files / 223 tests passed; 1 file / 3 live-gated tests skipped |
+| Root and OpenClaw TypeScript checks | Passed |
+| ESLint on changed runtime/test files | Passed |
+
+The regression suite includes eight real Node child-process exits across
+Claude/Kiro/DSH/Pi with short and 200KB prompts, deterministic stderr-first and
+stdin-first event orders, no-stderr fallbacks, and authoritative terminal errors.
+These use isolated failing processes, without model-service calls. Existing
+user/shutdown, session-conflict and credential-boundary tests remain passing.
+
+Logs: `/tmp/wake-error-review-{baseline-cli,baseline-openclaw,full-tests,focused-openclaw,tsc,package-tsc,lint}.log`.
+
 ## Real browser acceptance
 
 On 2026-10-02, Chromium exercised a running Next development server on port

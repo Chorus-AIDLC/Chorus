@@ -820,7 +820,7 @@ export class ClaudeSpawner {
       // daemon". The try/catch below only catches a synchronous throw.
       child.stdin?.on?.("error", (err) => {
         this.logger.warn(`[Chorus] claude stdin error (ignored): ${err}`);
-        if (!channel.resultSeen && !channel.exited && !channel.stopping) diagnostics.fail("Claude prompt/control delivery failed: stdin closed", "protocol");
+        if (!channel.resultSeen && !channel.exited && !channel.stopping) diagnostics.failFallback("Claude prompt/control delivery failed: stdin closed", "protocol");
         channel.markStdinUnusable();
       });
 
@@ -830,7 +830,7 @@ export class ClaudeSpawner {
       // settles the wake (never a synthetic success). Skipped when a stop already
       // started (e.g. from inside onChild above) — see ClaudeControlChannel.sendPrompt.
       if (!channel.sendPrompt(buildUserFrame(prompt)) && !channel.stopping) {
-        diagnostics.fail("Claude prompt could not be delivered over stdin", "protocol");
+        diagnostics.failFallback("Claude prompt could not be delivered over stdin", "protocol");
         channel.closeStdin();
       }
     });

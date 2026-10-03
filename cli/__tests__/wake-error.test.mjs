@@ -7,6 +7,56 @@ import {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("bounded wake diagnostics", () => {
+  it("keeps token counts, flags and short inferred settings readable", () => {
+    const env = {
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: "32000",
+      MAX_THINKING_TOKENS: "1",
+      EXTRA_TOKENS: "3200000000",
+      ENABLE_TOKEN: "true",
+      OPTIONAL_SECRET: "word",
+    };
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    const text = "Error: status 1 at line 132000, retry=true, word count=3200000000";
+    expect(sanitizeWakeErrorText(text, { env })).toBe(text);
+  });
+
+  it("still protects short explicit credentials and password/API-key environment values", () => {
+    const text = "Denied abc xyz 123 abcdefgh-long-token";
+    expect(sanitizeWakeErrorText(text, {
+      creds: { apiKey: "abc" }, secrets: ["123"],
+      env: { CUSTOM_PASSWORD: "xyz", ACCESS_TOKEN: "abcdefgh-long-token" },
+    })).toBe("Denied [redacted] [redacted] [redacted] [redacted]");
+  });
+
+  it("uses stderr before a delivery fallback without losing the fallback detail", () => {
+    const collector = createWakeErrorCollector({ source: "claude" });
+    collector.failFallback("stdin closed", "protocol");
+    collector.appendStderr("Error: Invalid API key\n");
+    expect(collector.hasFailure).toBe(true);
+    expect(collector.build({ exitCode: 1 })).toEqual({
+      source: "claude", kind: "execution", message: "Error: Invalid API key",
+      details: "Error: Invalid API key\n\nstdin closed", exitCode: 1, signal: null,
+    });
+  });
+
+  it("keeps authoritative errors ahead of stderr and delivery fallbacks", () => {
+    const collector = createWakeErrorCollector({ source: "pi" });
+    collector.failFallback("stdin closed", "protocol");
+    collector.appendStderr("provider warning");
+    collector.fail("Authentication rejected", "execution");
+    expect(collector.build({ exitCode: 0 })).toMatchObject({
+      kind: "execution", message: "Authentication rejected", exitCode: 0,
+    });
+  });
+
+  it("falls back to a delivery failure when there is no backend error text", () => {
+    const collector = createWakeErrorCollector({ source: "dsh" });
+    collector.failFallback("stdin closed", "protocol");
+    expect(collector.build({ exitCode: 0 })).toMatchObject({
+      kind: "protocol", message: "stdin closed", details: "stdin closed", exitCode: 0,
+    });
+  });
+
   it("exposes a reusable exact-contract builder for reporting startup exceptions", () => {
     expect(createWakeError({ source: "openclaw", kind: "startup", message: new Error(" launch rejected ") }))
       .toEqual({ source: "openclaw", kind: "startup", message: "launch rejected",

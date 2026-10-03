@@ -23,13 +23,24 @@ export function wakeErrorText(value, options = {}) {
   return Array.isArray(value) ? sanitize(value, knownSecrets(options)) : scalarErrorText(value);
 }
 
+function isCredentialEnvValue(key, value) {
+  if (typeof value !== "string" || !value.trim() ||
+      !/(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|CALLBACK.*KEY)/i.test(key) ||
+      /(?:^|[_-])TOKENS(?:$|[_-])/i.test(key)) return false;
+  // Explicit credential names still protect short keys/passwords. Broad TOKEN/
+  // SECRET matches also catch configuration flags; infer literals conservatively.
+  if (/(?:API[_-]?KEY|PASSWORD|CALLBACK.*KEY)/i.test(key)) return true;
+  const text = value.trim();
+  return text.length >= 8 && !/^(?:[+-]?\d+(?:\.\d+)?|true|false|yes|no|on|off|null|undefined)$/i.test(text);
+}
+
 function knownSecrets({ env = process.env, creds, secrets = [] } = {}) {
   // Include callback credentials in the actual runtime env, as well as the
   // backend's env overlay and authoritative credentials that override it.
   const values = [...secrets, creds?.apiKey];
   for (const runtimeEnv of [process.env, env]) {
     for (const [key, value] of Object.entries(runtimeEnv ?? {})) {
-      if (/(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|CALLBACK.*KEY)/i.test(key)) values.push(value);
+      if (isCredentialEnvValue(key, value)) values.push(value);
     }
   }
   // Match sanitizeUpgradeOutput's representation-aware redaction without
@@ -124,11 +135,13 @@ export function createWakeErrorCollector({ source, env, creds, secrets } = {}) {
   let truncated = false;
   let reason = "";
   let failureKind = null;
+  let fallbackReason = "";
+  let fallbackKind = null;
   let signal = null;
   return {
     get stderrLength() { return stderr.length; },
     get stderrTail() { return sanitize(stderr, credentials, truncated).slice(-WAKE_ERROR_DETAILS_LIMIT); },
-    get hasFailure() { return failureKind !== null; },
+    get hasFailure() { return failureKind !== null || fallbackKind !== null; },
     appendStderr(chunk) {
       const text = String(chunk);
       truncated ||= stderr.length + text.length > WAKE_ERROR_STDERR_LIMIT;
@@ -143,6 +156,13 @@ export function createWakeErrorCollector({ source, env, creds, secrets } = {}) {
       failureKind = kind;
       reason = sanitize(error, credentials).slice(0, WAKE_ERROR_DETAILS_LIMIT);
     },
+    failFallback(error, kind = "protocol") {
+      // Pipe closure can be a consequence of the backend failing. Retain it
+      // without taking the summary away from a terminal error or drained stderr.
+      if (fallbackKind !== null) return;
+      fallbackKind = kind;
+      fallbackReason = sanitize(error, credentials).slice(0, WAKE_ERROR_DETAILS_LIMIT);
+    },
     observeChild(child) {
       const capture = (_code, value) => { if (typeof value === "string" && value) signal ??= value; };
       child.on?.("exit", capture);
@@ -152,13 +172,14 @@ export function createWakeErrorCollector({ source, env, creds, secrets } = {}) {
         child.removeListener?.("close", capture);
       };
     },
-    build({ kind = failureKind ?? "execution", message, exitCode = null, signal: explicitSignal = signal } = {}) {
+    build({ kind, message, exitCode = null, signal: explicitSignal = signal } = {}) {
       const tail = this.stderrTail;
       const structured = sanitize(message, credentials) || reason;
       return createWakeError({
-        source, kind, exitCode, signal: explicitSignal,
-        message: structured || tail.split("\n").at(-1),
-        details: [structured, tail].filter(Boolean).join("\n\n"),
+        source, kind: kind ?? failureKind ?? (tail ? "execution" : fallbackKind ?? "execution"),
+        exitCode, signal: explicitSignal,
+        message: structured || tail.split("\n").at(-1) || fallbackReason,
+        details: [structured, tail, fallbackReason].filter(Boolean).join("\n\n"),
       }, options);
     },
   };

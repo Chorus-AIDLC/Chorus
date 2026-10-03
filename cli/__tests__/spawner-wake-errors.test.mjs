@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { ClaudeSpawner } from "../claude-spawner.mjs";
@@ -69,6 +70,58 @@ function makeSpawner(source, opts = {}) {
 }
 const wake = (spawner, extra = {}) => spawner.wake({ prompt: "go", sessionId: ANCHOR, isNew: true, ...extra });
 
+describe.each(["claude", "kiro", "dsh", "pi"])("%s early-exit diagnostics", (source) => {
+  it.each(["short", "large"])("keeps the real stderr reason for a %s prompt and immediate process exit", async (size) => {
+    const result = await wake(makeSpawner(source, {
+      spawnImpl: (_command, _args, options) => spawn(process.execPath, ["-e", [
+        'require("node:fs").closeSync(0);',
+        'process.stderr.write("Error: Invalid API key (status 1)\\n");',
+        "process.exit(1);",
+      ].join("\n")], { ...options, detached: false }),
+      shutdownTimeoutMs: 2000,
+    }), { prompt: size === "large" ? "x".repeat(200_000) : "go" });
+    expect(result.wakeError).toMatchObject({
+      source, kind: "execution", message: "Error: Invalid API key (status 1)", exitCode: 1,
+    });
+  });
+
+  it.each(["stdin-first", "stderr-first"])("prefers the backend error in %s event order", async (order) => {
+    const child = plainChild(source);
+    child.stdin.write = vi.fn(() => true);
+    child.stdin.end = vi.fn();
+    const spawner = makeSpawner(source, { spawnImpl: () => {
+      queueMicrotask(() => {
+        const stderr = () => child.stderr.emit("data", "Error: Invalid API key (status 1)\n");
+        if (order === "stderr-first") stderr();
+        child.stdin.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" }));
+        if (order === "stdin-first") stderr();
+        child.exit(1);
+      });
+      return child;
+    } });
+    const result = await wake(spawner);
+    expect(result.wakeError).toMatchObject({
+      source, kind: "execution", message: "Error: Invalid API key (status 1)", exitCode: 1,
+    });
+    expect(result.wakeError.details).toContain("stdin closed");
+  });
+
+  it("retains a delivery failure if stderr is empty", async () => {
+    const child = plainChild(source);
+    child.stdin.write = vi.fn(() => true);
+    child.stdin.end = vi.fn();
+    const result = await wake(makeSpawner(source, { spawnImpl: () => {
+      queueMicrotask(() => {
+        child.stdin.emit("error", new Error("broken pipe"));
+        child.exit(1);
+      });
+      return child;
+    } }));
+    expect(result.wakeError).toMatchObject({ source, kind: "protocol", exitCode: 1 });
+    expect(result.wakeError.message).toContain("stdin closed");
+  });
+});
+
 async function begin(source, opts = {}) {
   const child = source === "codex" ? appServerChild({ autoComplete: false }) : plainChild(source);
   let spawned;
@@ -87,6 +140,31 @@ async function begin(source, opts = {}) {
   }
   return { child, running };
 }
+
+describe("terminal reasons survive pipe errors", () => {
+  it("prefers a later authoritative Claude result to an early stdin error", async () => {
+    const { child, running } = await begin("claude");
+    child.stdin.emit("error", new Error("broken pipe"));
+    child.stderr.emit("data", "provider warning\n");
+    child.send({ type: "result", is_error: true, subtype: "error_during_execution",
+      errors: ["Provider rejected the API key"] });
+    child.exit(0);
+    const result = await running;
+    expect(result.wakeError).toMatchObject({
+      kind: "execution", message: "Provider rejected the API key", exitCode: 0,
+    });
+  });
+
+  it("does not replace a Pi rejection with a later stdin error", async () => {
+    const { child, running } = await begin("pi");
+    child.send({ type: "response", id: "chorus-prompt-1", success: false,
+      error: "Provider rejected the API key" });
+    child.stdin.emit("error", new Error("broken pipe"));
+    const result = await running;
+    expect(result.wakeError.message).toBe("Provider rejected the API key");
+    expect(result.wakeError.exitCode).toBe(0);
+  });
+});
 
 function complete(source, child) {
   if (source === "codex") child.terminal();

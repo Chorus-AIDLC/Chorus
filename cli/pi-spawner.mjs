@@ -202,6 +202,7 @@ export class PiRpcChannel {
     this.cancelled = false;
     this.failureReason = null;
     this.failureKind = "protocol";
+    this.failureIsFallback = false;
     this.lastAssistantFailure = null;
     this.textOptions = textOptions;
   }
@@ -245,6 +246,7 @@ export class PiRpcChannel {
     // A stop that already started (from inside onChild) owns the outcome.
     if (!this.write({ id: ID_STATE, type: "get_state" }, "get_state") && !this.#stopWork) {
       this.failed = true;
+      this.failureIsFallback = true;
       this.failureReason = "Pi initial get_state could not be delivered over stdin";
       this.#finish();
     }
@@ -264,6 +266,7 @@ export class PiRpcChannel {
     this.promptSent = this.write({ id: ID_PROMPT, type: "prompt", message: this.prompt }, "prompt");
     if (!this.promptSent) {
       this.failed = true;
+      this.failureIsFallback = true;
       this.failureReason = "Pi prompt could not be delivered over stdin";
       this.#finish();
     }
@@ -387,6 +390,7 @@ export class PiRpcChannel {
       this.settled = true;
       if (this.lastAssistantFailure && !this.cancelled) {
         this.failed = true;
+        this.failureIsFallback = false;
         this.failureKind = "execution";
         this.failureReason = this.lastAssistantFailure;
       }
@@ -417,6 +421,7 @@ export class PiRpcChannel {
         }
         this.logger.error(`[Chorus] pi rejected the prompt: ${String(frame.error)}`);
         this.failed = true;
+        this.failureIsFallback = false;
         this.failureReason = wakeErrorText(frame.error, this.textOptions) || "Pi rejected the prompt without an error reason";
         this.#finish();
         return;
@@ -724,7 +729,10 @@ export class PiSpawner {
         }
         const result = { sessionId: anchor, backendSessionId: anchor || null, exitCode: code, isNew: channel.isNew };
         if (code !== 0 && !channel.cancelled) {
-          if (channel.failed) diagnostics.fail(channel.failureReason, channel.failureKind);
+          if (channel.failed) {
+            if (channel.failureIsFallback) diagnostics.failFallback(channel.failureReason, channel.failureKind);
+            else diagnostics.fail(channel.failureReason, channel.failureKind);
+          }
           result.wakeError = diagnostics.build({ exitCode: raw });
         }
         resolve(result);
@@ -734,8 +742,9 @@ export class PiSpawner {
       // uncaughtException that kills the daemon.
       child.stdin?.on?.("error", (err) => {
         this.logger.warn(`[Chorus] pi stdin error (ignored): ${err}`);
-        if (!channel.stdinClosed && !channel.settled && !channel.cancelled) {
+        if (!channel.stdinClosed && !channel.settled && !channel.cancelled && !channel.failed) {
           channel.failed = true;
+          channel.failureIsFallback = true;
           channel.failureReason = "Pi prompt/control delivery failed: stdin closed";
         }
         channel.markStdinUnusable();
