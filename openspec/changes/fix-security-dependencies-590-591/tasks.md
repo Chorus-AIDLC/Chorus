@@ -2,8 +2,8 @@
 
 ## 1. Application and build dependency remediation
 
-- [ ] 1.1 Upgrade approved direct versions and scoped transitive overrides; verify patched resolutions, retained nanoid 5.x consumers and a frozen install.
-- [ ] 1.2 Run type/lint/test, standalone and affected workspace builds; retain command results for later integration review.
+- [x] 1.1 Upgrade approved direct versions and scoped transitive overrides; verify patched resolutions, retained nanoid 5.x consumers and a frozen install.
+- [x] 1.2 Run type/lint/test, standalone and affected workspace builds; retain command results for later integration review.
 
 ## 2. Prisma and Docker migration consistency
 
