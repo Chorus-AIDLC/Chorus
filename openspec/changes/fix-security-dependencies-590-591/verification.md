@@ -175,3 +175,42 @@ be repeated after Task 2's Prisma upgrade on the completed dependency graph**.
 These Task 1 checks do not substitute for that final validation. Browser,
 production database startup, amd64/arm64 images and image scans remain Task 3
 integration evidence.
+
+
+## Task 2 — Prisma migration version consistency
+
+The application CLI, generated client and PostgreSQL adapter are all pinned to
+7.10.0. `pnpm install --frozen-lockfile` passed without changing the final lockfile
+SHA-256 (`b145f49b85c7c6582ad4c85ce0d7b1fbad93c24d8c348b95abf5c1d772309374`).
+`pnpm db:generate` and `pnpm exec tsc --noEmit` both passed after the upgrade.
+Separate disposable PostgreSQL databases successfully completed `prisma db push`
+and `prisma migrate deploy` (all 45 migrations). Logs are retained under
+`/tmp/chorus-security-590-591-evidence/task2/`.
+
+The new `scripts/prisma-migration-version.mjs` reads the three direct installed
+package metadata files through pnpm's links, validates exact stable 7.x manifest
+pins, installed/pinned equality and cross-package equality, and prints one version.
+Reading the files directly avoids Prisma's private `package.json` exports and its
+CLI-only root export. An initial attempt to resolve those private exports failed;
+the corrected implementation and installed-package check both pass.
+
+Docker exports this version in the builder and installs the production migration
+CLI from that artifact. A missing/empty artifact fails the `RUN` step; there is no
+unversioned fallback. The comment now correctly distinguishes mutable dist-tags
+from stable Prisma 7.x, which still supports `migrate deploy`. The baseline image
+reports Node v22.23.3; Prisma 7.10 requires Node >=20.19 / >=22.12 / >=24.0.
+The installed CLI's `migrate deploy --help` succeeds. Actual final-image versions,
+both architectures and both database runtime paths are verified in Task 3.
+
+`node --test scripts/__tests__/prisma-migration-version.test.mjs` passed 11 tests:
+matching/current and later stable 7.x pins, installed mismatch, cross-package
+mismatch, prerelease/range/latest/new-major/leading-zero/injection inputs and a
+missing installed dependency. Fixtures block package metadata exports and throw
+from their entrypoints, so successful cases establish the helper does not import
+private exports or execute the packages. CI runs the focused tests and the real
+installed-package helper immediately after the frozen install. Focused ESLint
+passed with 0 errors and one existing-style console warning in the CLI error path.
+The Docker context excludes generated coverage, browser output and tsbuildinfo.
+
+Required final lint, full Vitest and coverage remain Task 3 checks on this final
+dependency graph; Task 1's Prisma 7.3 results are not substituted for them.

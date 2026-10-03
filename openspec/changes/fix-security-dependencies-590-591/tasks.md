@@ -7,8 +7,8 @@
 
 ## 2. Prisma and Docker migration consistency
 
-- [ ] 2.1 Pin the Prisma trio and regenerate the lockfile/client; verify installed versions, generation and CI schema synchronization.
-- [ ] 2.2 Export a validated installed migration version and wire the Docker production CLI; verify matching, mismatch and prerelease behavior with focused tests.
+- [x] 2.1 Pin the Prisma trio and regenerate the lockfile/client; verify installed versions, generation and CI schema synchronization.
+- [x] 2.2 Export a validated installed migration version and wire the Docker production CLI; verify matching, mismatch and prerelease behavior with focused tests.
 
 ## 3. Production integration and security evidence
 
