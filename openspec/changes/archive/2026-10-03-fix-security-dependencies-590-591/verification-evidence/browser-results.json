@@ -1,0 +1,42 @@
+{
+  "postgresql": {
+    "browser": "153.0.8010.12",
+    "base": "http://127.0.0.1:55461",
+    "errors": [],
+    "light": {
+      "background": "rgb(196, 123, 84)",
+      "padding": "8px 16px",
+      "bodyBackground": "rgb(250, 248, 245)",
+      "stylesheets": 3,
+      "width": 318
+    },
+    "dark": {
+      "background": "rgb(191, 111, 64)",
+      "bodyBackground": "rgb(33, 30, 28)"
+    },
+    "authenticatedPath": "/projects",
+    "baselineProjectVisible": true,
+    "projectAnimationsSettled": true,
+    "passed": true
+  },
+  "pglite": {
+    "browser": "153.0.8010.12",
+    "base": "http://127.0.0.1:55463",
+    "errors": [],
+    "light": {
+      "background": "rgb(196, 123, 84)",
+      "padding": "8px 16px",
+      "bodyBackground": "rgb(250, 248, 245)",
+      "stylesheets": 3,
+      "width": 318
+    },
+    "dark": {
+      "background": "rgb(191, 111, 64)",
+      "bodyBackground": "rgb(33, 30, 28)"
+    },
+    "authenticatedPath": "/projects",
+    "baselineProjectVisible": true,
+    "projectAnimationsSettled": true,
+    "passed": true
+  }
+}

@@ -42,6 +42,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify production migration version
+        run: |
+          node --test scripts/__tests__/prisma-migration-version.test.mjs
+          node scripts/prisma-migration-version.mjs
+
       - name: Generate Prisma client
         run: npx prisma generate
 

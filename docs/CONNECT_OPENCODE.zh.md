@@ -41,7 +41,7 @@ chorus agents add --agents opencode
 - **不会**写 `~/.bashrc` / `~/.zshrc`。你需要自己在启动 `opencode` 前 export 好 `CHORUS_URL` 和 `CHORUS_API_KEY`。
 - **不会**把插件包 vendor 进仓库。OpenCode 会通过 Bun 从 npm 拉取 `opencode-chorus`（缓存路径是 `~/.cache/opencode/packages/opencode-chorus@latest/`）。
 
-> 还没安装 `chorus` CLI？先用 `npm install -g @chorus-aidlc/chorus@0.17.0` 全局安装，再运行 `chorus agents add --agents opencode`。
+> 还没安装 `chorus` CLI？先用 `npm install -g @chorus-aidlc/chorus` 全局安装，再运行 `chorus agents add --agents opencode`。
 
 ### 手动替代方案
 

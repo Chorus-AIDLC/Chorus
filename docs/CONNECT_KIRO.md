@@ -41,7 +41,7 @@ chorus agents add --agents kiro
 5. Merge the `chorus` MCP server into `~/.kiro/settings/mcp.json`, **preserving any MCP servers you already had** and backing up the original once.
 6. Seed your Chorus credentials once into `~/.chorus/daemon.json`.
 
-If `CHORUS_URL` / `CHORUS_API_KEY` aren't set, `chorus agents add` prompts for them interactively (provided you have a TTY). Don't have the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents kiro`.
+If `CHORUS_URL` / `CHORUS_API_KEY` aren't set, `chorus agents add` prompts for them interactively (provided you have a TTY). Don't have the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus`, then run `chorus agents add --agents kiro`.
 
 ### Global (default) vs a project-local install
 
@@ -84,7 +84,7 @@ The `chorus` agent calls `chorus_checkin()` over MCP and reports back your agent
 Pass the connection explicitly and skip prompts with `--yes` — no TTY required:
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.0
+npm install -g @chorus-aidlc/chorus
 chorus agents add --agents kiro \
   --url https://chorus.example.com \
   --api-key cho_xxx --yes

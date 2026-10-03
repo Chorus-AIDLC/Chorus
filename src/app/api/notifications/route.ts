@@ -28,6 +28,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       : (undefined as "all" | "unread" | "read" | undefined);
 
   const result = await notificationService.list({
+    auth,
     companyUuid: auth.companyUuid,
     recipientType,
     recipientUuid,

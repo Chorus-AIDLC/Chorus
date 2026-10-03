@@ -36,6 +36,7 @@ import { win32 as pathWin32, posix as pathPosix, join } from "node:path";
 import { getSessionId as defaultGetSessionId, setSessionId as defaultSetSessionId } from "./kiro-session-map.mjs";
 import { reconstructTranscript as defaultReconstructTranscript } from "./kiro-transcript.mjs";
 import { awaitChildSettled } from "./child-exit.mjs";
+import { createWakeErrorCollector } from "./wake-error.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -226,6 +227,8 @@ export function pickNewSessionId(before, after) {
 export class KiroSpawner {
   /** @param {KiroSpawnerOptions} [opts] */
   constructor(opts = {}) {
+    /** Backend source for generic reporting of exceptions before child launch. */
+    this.wakeErrorSource = "kiro";
     this.sessionDecision = { probeIsAuthoritative: false };
     this.kiroPath = opts.kiroPath ?? null;
     this.spawnImpl = opts.spawnImpl ?? spawn;
@@ -257,7 +260,18 @@ export class KiroSpawner {
    *           onChild?: (child: import("node:child_process").ChildProcess) => void }} params
    * @returns {Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }>}
    */
-  async wake({ prompt, sessionId, cwd, onMessage, onChild }) {
+  async wake(params) {
+    const diagnostics = createWakeErrorCollector({ source: this.wakeErrorSource, env: this.env, creds: this.creds });
+    const startupResult = { sessionId: typeof params.sessionId === "string" ? params.sessionId : "", exitCode: null, isNew: true };
+    try {
+      return await this.#wake(params, diagnostics, startupResult);
+    } catch (error) {
+      diagnostics.fail(error, "startup");
+      return { ...startupResult, wakeError: diagnostics.build() };
+    }
+  }
+
+  async #wake({ prompt, sessionId, cwd, onMessage, onChild }, diagnostics, startupResult) {
     const anchor = typeof sessionId === "string" ? sessionId : "";
     const runCwd = cwd ?? process.cwd();
 
@@ -265,12 +279,14 @@ export class KiroSpawner {
     // Claude transcript probe: a recorded sessionId means resume via --resume-id.
     const knownSessionId = anchor ? this.getSessionIdFn(anchor) : null;
     const isNew = !knownSessionId;
+    startupResult.isNew = isNew;
 
     const kiroPath = this.kiroPath ?? this.resolveKiroPathFn({ env: this.env, platform: this.platform });
     if (!kiroPath) {
       // No crash — surface visibly and resolve with a failure result.
       this.logger.error("[Chorus] cannot locate the `kiro-cli` executable on PATH; skipping wake");
-      return { sessionId: anchor, exitCode: null, isNew };
+      return { sessionId: anchor, exitCode: null, isNew,
+        wakeError: diagnostics.build({ kind: "startup", message: "Cannot locate kiro-cli executable; check installation and PATH" }) };
     }
 
     assertConfiguredShimArgs(kiroPath, this.cliConfig.args, this.platform);
@@ -312,10 +328,12 @@ export class KiroSpawner {
         });
       } catch (error) {
         this.logger.error(`[Chorus] failed to spawn kiro-cli: ${safeSpawnError(error)}`);
-        resolve({ sessionId: anchor, exitCode: null, isNew });
+        resolve({ sessionId: anchor, exitCode: null, isNew,
+          wakeError: diagnostics.build({ kind: "startup", message: `Cannot spawn kiro-cli: ${safeSpawnError(error)}` }) });
         return;
       }
 
+      diagnostics.observeChild(child);
       // Hand the live child to the caller (interrupt registry) before resolving.
       // Never let a throwing callback escape into the spawn path.
       if (onChild) {
@@ -335,18 +353,21 @@ export class KiroSpawner {
 
       child.stderr?.setEncoding?.("utf8");
       child.stderr?.on("data", (chunk) => {
+        diagnostics.appendStderr(chunk);
         const text = String(chunk).trim();
         if (text) this.logger.warn(`[Chorus] kiro-cli stderr: ${text}`);
       });
 
       child.on("error", (error) => {
         this.logger.error(`[Chorus] kiro-cli process error: ${safeSpawnError(error)}`);
-        resolve({ sessionId: knownSessionId || anchor, exitCode: null, isNew });
+        resolve({ sessionId: knownSessionId || anchor, exitCode: null, isNew,
+          wakeError: diagnostics.build({ kind: "startup", message: `Kiro process error: ${safeSpawnError(error)}` }) });
       });
 
       // Settle on process exit, not only on stdio close: a detached descendant can
       // inherit the pipes and keep `close` from ever firing (see cli/child-exit.mjs).
-      awaitChildSettled(child, { logger: this.logger, label: "kiro-cli" }).then((code) => {
+      awaitChildSettled(child, { logger: this.logger, label: "kiro-cli" }).then((rawCode) => {
+        const code = rawCode === 0 && diagnostics.hasFailure ? 1 : rawCode;
         if (code !== 0) {
           this.logger.warn(`[Chorus] kiro-cli exited with code ${code}`);
         }
@@ -395,21 +416,27 @@ export class KiroSpawner {
           }
         }
 
-        resolve({ sessionId: observedSessionId || anchor, exitCode: code, isNew });
+        const result = { sessionId: observedSessionId || anchor, exitCode: code, isNew };
+        if (code !== 0) result.wakeError = diagnostics.build({ exitCode: rawCode });
+        resolve(result);
       });
 
       // Guard against an ASYNC stdin error (EPIPE) so it never becomes an
       // uncaughtException that kills the daemon.
       child.stdin?.on?.("error", (err) => {
         this.logger.warn(`[Chorus] kiro-cli stdin error (ignored): ${err}`);
+        diagnostics.failFallback("Kiro prompt delivery failed: stdin closed", "protocol");
       });
 
       // Feed the prompt over stdin, then close it so the model runs.
       try {
+        if (typeof child.stdin?.write !== "function") throw new Error("Kiro prompt stdin is unavailable");
         child.stdin?.write(prompt);
         child.stdin?.end();
       } catch (err) {
         this.logger.warn(`[Chorus] failed writing prompt to kiro-cli stdin: ${err}`);
+        diagnostics.failFallback("Kiro prompt could not be delivered over stdin", "protocol");
+        try { child.stdin?.end?.(); } catch {}
       }
     });
   }

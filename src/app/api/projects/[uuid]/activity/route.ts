@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { withErrorHandler, parsePagination } from "@/lib/api-handler";
 import { paginated, errors } from "@/lib/api-response";
 import { getAuthContext, checkAgentPermission } from "@/lib/auth";
+import { requireProjectAccess } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -23,15 +24,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const { uuid: projectUuid } = await context.params;
     const { page, pageSize, skip, take } = parsePagination(request);
 
-    // Find project (query by UUID)
-    const project = await prisma.project.findFirst({
-      where: { uuid: projectUuid, companyUuid: auth.companyUuid },
-      select: { uuid: true },
-    });
-
-    if (!project) {
-      return errors.notFound("Project");
-    }
+    // Project access (404 when not visible to the caller)
+    const project = await requireProjectAccess(auth, projectUuid, "viewer");
 
     const where = {
       projectUuid: project.uuid,

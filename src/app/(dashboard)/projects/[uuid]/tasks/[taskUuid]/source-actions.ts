@@ -3,6 +3,7 @@
 import { getServerAuthContext } from "@/lib/auth-server";
 import { getProposalByUuid } from "@/services/proposal.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess } from "@/lib/project-access-action";
 
 export interface ProposalSource {
   uuid: string;
@@ -14,6 +15,9 @@ export async function getTaskSourceAction(
 ): Promise<ProposalSource | null> {
   const auth = await getServerAuthContext();
   if (!auth) {
+    return null;
+  }
+  if (await denyUnlessEntityAccess(auth, "proposal", proposalUuid, "viewer")) {
     return null;
   }
 

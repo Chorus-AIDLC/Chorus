@@ -17,6 +17,13 @@ vi.mock("@/lib/auth", () => ({
 // Mock the service: the route is the unit under test. ACTIVE_EXECUTION_STATUSES
 // and EXECUTION_ENTITY_TYPES are re-exported for the route's zod enums, so the
 // mock must provide them verbatim.
+const mockFilterExecutionViewsByAccess = vi.hoisted(() =>
+  vi.fn(async (_auth: unknown, rows: unknown[]) => rows),
+);
+vi.mock("@/services/project-access.service", () => ({
+  filterExecutionViewsByAccess: mockFilterExecutionViewsByAccess,
+}));
+
 vi.mock("@/services/daemon-execution.service", () => ({
   ACTIVE_EXECUTION_STATUSES: ["running", "queued"],
   EXECUTION_ENTITY_TYPES: ["task", "idea", "proposal", "document"],
@@ -278,5 +285,16 @@ describe("GET /api/daemon/execution-state (first-paint read)", () => {
     mockGetAuthContext.mockResolvedValue(userAuth);
     await GET(getRequest(`connectionUuid=${connectionUuid}`), emptyCtx);
     expect(mockConnectionVisibleToCaller).toHaveBeenCalledWith(userAuth, connectionUuid);
+  });
+});
+
+describe("project-access filtering of execution rows", () => {
+  it("passes the rows through filterExecutionViewsByAccess with the caller's auth", async () => {
+    mockFilterExecutionViewsByAccess.mockImplementationOnce(async () => [] as never);
+    mockConnectionVisibleToCaller.mockResolvedValue(true);
+    mockGetExecutionsForConnection.mockResolvedValue([{ uuid: "exec-1", entityType: "task", entityUuid: t1, status: "running" }]);
+    const res = await GET(getRequest(`connectionUuid=${connectionUuid}`), emptyCtx);
+    expect(mockFilterExecutionViewsByAccess).toHaveBeenCalledTimes(1);
+    expect((await res.json()).data.executions).toEqual([]);
   });
 });

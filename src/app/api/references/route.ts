@@ -12,6 +12,7 @@ import { success, error, errors, ErrorCode } from "@/lib/api-response";
 import { getAuthContext, isUser, checkAgentPermission } from "@/lib/auth";
 import * as referenceArtifactService from "@/services/reference-artifact.service";
 import { REFERENCE_TARGET_TYPES } from "@/services/reference-artifact.service";
+import { requireEntityAccess, ProjectNotFoundError, type AccessEntityType } from "@/services/project-access.service";
 
 const validTargetTypes = REFERENCE_TARGET_TYPES as readonly string[];
 
@@ -38,6 +39,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       targetType: "Invalid target type",
     });
   }
+
+  // Viewer on the target's project (hidden → same 404 as a missing target).
+  await requireEntityAccess(auth, query.targetType as AccessEntityType, query.targetUuid, "viewer");
 
   const references = await referenceArtifactService.listReferences({
     companyUuid: auth.companyUuid,
@@ -82,6 +86,17 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
   if (!body.title || body.title.trim() === "") {
     return errors.validationError({ title: "Title is required" });
+  }
+
+  // Editor on the target's project. A hidden target gets the service's exact
+  // "not found" 404 so it is indistinguishable from a missing one.
+  try {
+    await requireEntityAccess(auth, body.targetType as AccessEntityType, body.targetUuid, "editor");
+  } catch (err) {
+    if (err instanceof ProjectNotFoundError) {
+      return error(ErrorCode.NOT_FOUND, `Target ${body.targetType} with UUID ${body.targetUuid} not found`);
+    }
+    throw err;
   }
 
   try {

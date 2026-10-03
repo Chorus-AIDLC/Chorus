@@ -52,6 +52,7 @@
 
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { canActorAccessProject } from "@/services/project-access.service";
 import {
   resolveOrCreateSession,
   createPendingTurn,
@@ -799,6 +800,10 @@ export async function createTurnAndResolveTarget(
   if (ctx.recipientType !== "agent") return empty;
 
   try {
+    const canReceive = () => !ctx.projectUuid
+      ? Promise.resolve(true)
+      : canActorAccessProject(ctx.companyUuid, { type: "agent", uuid: ctx.recipientUuid }, ctx.projectUuid, "viewer");
+    if (!await canReceive()) return { ...empty, suppressWake: true };
     // (3) Resolve the agent's connections, then select the ONLINE origin (cwd-bound
     // transcript owner) honoring any pinned target instance. listConnectionsForAgent is
     // sorted online-first with stable identity ties.
@@ -817,7 +822,8 @@ export async function createTurnAndResolveTarget(
     let selection = selectOriginConnection(connections, pin);
 
     // (3a) Session id = the entity's direct idea (when lineage-walkable), else the entity
-    // uuid (ad-hoc). Resolved BEFORE the elaboration_verified upgrade because that origin
+    // uuid for standalone project content (including comment sessions). Resolved
+    // BEFORE the elaboration_verified upgrade because that origin
     // is keyed on the idea anchor.
     let directIdeaUuid: string | null = null;
     if (LINEAGE_ENTITY_TYPES.has(ctx.entityType)) {
@@ -1035,6 +1041,8 @@ export async function createTurnAndResolveTarget(
     // so a session re-pointed to a new cwd simply starts a fresh session there rather than
     // failing to resume; the prior turns remain as read-only history on the same row.
     const sessionId = directIdeaUuid ?? ctx.entityUuid;
+    // Keep the originating entity key when there is no idea ancestor. Delivery
+    // resolves this key to its current project; null lineage is not an access exemption.
     const sessionDirectIdeaUuid: string | null = directIdeaUuid;
     if (directed && directIdeaUuid) {
       const existing = await prisma.daemonSession.findFirst({
@@ -1060,6 +1068,9 @@ export async function createTurnAndResolveTarget(
       }
     }
 
+    // Connection/pin resolution may await several queries after the notification
+    // was filtered. Recheck live inherited/local access before creating a wake.
+    if (!await canReceive()) return { ...empty, suppressWake: true };
     // (6) Resolve-or-create the session (origin + directIdeaUuid write-once on create),
     // then append the pending turn. For human_instruction the canonical free-text body
     // lives on the turn's promptText; every autonomous trigger has promptText = null (the
@@ -1103,6 +1114,7 @@ export async function createTurnAndResolveTarget(
     // their broadcast copy. An un-pinned wake emits NO ping and surfaces NO target →
     // broadcast → online-first, byte-identical to before.
     if (directed) {
+      if (!await canReceive()) return { ...empty, suppressWake: true };
       deliverTurnPing({
         companyUuid: ctx.companyUuid,
         originConnectionUuid: origin.uuid,

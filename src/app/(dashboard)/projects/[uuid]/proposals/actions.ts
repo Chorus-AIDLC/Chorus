@@ -9,8 +9,8 @@ import {
   type DocumentDraftInput,
   type TaskDraftInput,
 } from "@/services/proposal.service";
-import { projectExists } from "@/services/project.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess, denyUnlessProjectAccess } from "@/lib/project-access-action";
 
 // Create Proposal
 export async function createProposalAction(
@@ -28,13 +28,15 @@ export async function createProposalAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, projectUuid, "editor");
+  if (denied) return denied;
+  // Inputs are client-supplied: each must be readable by the caller.
+  for (const inputUuid of data.inputUuids ?? []) {
+    const inputDenied = await denyUnlessEntityAccess(auth, data.inputType, inputUuid, "viewer");
+    if (inputDenied) return inputDenied;
+  }
 
   try {
-    // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
-      return { success: false, error: "Project not found" };
-    }
-
     // Validate required fields
     if (!data.title || data.title.trim() === "") {
       return { success: false, error: "Title is required" };
@@ -92,6 +94,8 @@ export async function fetchProposalsAction(projectUuid: string) {
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, projectUuid, "viewer");
+  if (denied) return denied;
 
   try {
     const { proposals } = await listProposals({

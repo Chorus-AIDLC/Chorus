@@ -87,10 +87,10 @@ function rejection(code = "CONFLICT", message = "Try again") {
   return response({ success: false, error: { code, message } }, 409);
 }
 
-function setup() {
+function setup(extraProps: Partial<React.ComponentProps<typeof CreateProjectDialog>> = {}) {
   const onOpenChange = vi.fn();
   const onCreated = vi.fn();
-  const props = { open: true, onOpenChange, onCreated, groupUuid: "group-1", groupName: "Group 1" };
+  const props = { open: true, onOpenChange, onCreated, groupUuid: "group-1", groupName: "Group 1", ...extraProps };
   const view = render(<StrictMode><CreateProjectDialog {...props} /></StrictMode>);
   const input = screen.getByPlaceholderText("projectGroups.projectTitlePlaceholder");
   const description = screen.getByPlaceholderText("projectGroups.projectDescriptionPlaceholder");
@@ -120,6 +120,30 @@ afterEach(() => {
 });
 
 describe("CreateProjectDialog submission exclusion", () => {
+  it("defaults a Private-group project to private and disables Public creation", async () => {
+    const { button, setOpen } = setup({ groupVisibility: "private" });
+    expect(screen.getByRole("radio", { name: /^projectAccess.visibility.public/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /^projectAccess.visibility.private/ })).toBeChecked();
+    expect(screen.getByText("projectGroups.privateCreateHint")).toBeInTheDocument();
+    await act(async () => fireEvent.click(button));
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string).visibility).toBe("private");
+    await act(async () => vi.advanceTimersByTime(600));
+    setOpen(false);
+    setOpen(true);
+    expect(screen.getByRole("radio", { name: /^projectAccess.visibility.private/ })).toBeChecked();
+  });
+
+  it("blocks project creation for a basic-only group visitor even through Enter", async () => {
+    const { button, input } = setup({ groupVisibility: "private", canCreateProject: false });
+    expect(button).toBeDisabled();
+    await act(async () => {
+      fireEvent.click(button);
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+    expect(validate).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it.each(["click", "Enter", "mixed", "key repeat"] as const)(
     "excludes repeated %s events during validation, POST and success feedback",
     async (gesture) => {
@@ -190,8 +214,26 @@ describe("CreateProjectDialog submission exclusion", () => {
         name: "New project",
         description: "Description",
         groupUuid: "group-1",
+        visibility: "public",
         agentCwds: [{ agentUuid: "agent-1", validationRequestUuid: "validation-1" }],
       }),
+    });
+  });
+
+  it("defaults visibility to public and posts the chosen private visibility", async () => {
+    const { button } = setup();
+    const publicOption = screen.getByRole("radio", { name: /projectAccess\.visibility\.public/ });
+    const privateOption = screen.getByRole("radio", { name: /projectAccess\.visibility\.private/ });
+    expect(publicOption).toBeChecked();
+    expect(privateOption).not.toBeChecked();
+    expect(screen.getByText("projectAccess.visibility.privateHint")).toBeInTheDocument();
+
+    fireEvent.click(privateOption);
+    expect(privateOption).toBeChecked();
+    await act(async () => fireEvent.click(button));
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toMatchObject({
+      name: "New project",
+      visibility: "private",
     });
   });
 
@@ -690,6 +732,7 @@ describe("CreateProjectDialog dismissal and lifetime", () => {
     await act(async () => fireEvent.keyDown(title(), { key: "Enter" }));
     expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toEqual({
       name: "Same name",
+      visibility: "public",
       agentCwds: [{ agentUuid: "agent-1", validationRequestUuid: "validation-1" }],
     });
     await act(async () => vi.advanceTimersByTime(600));

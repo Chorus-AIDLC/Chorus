@@ -79,7 +79,7 @@ describe("directed runtime cwd isolation", () => {
   });
 
   it("reports an invalid directed cwd as an explicit terminal turn state", async () => {
-    const advanceTurn = vi.fn(async () => ({ ok: true }));
+    const advanceTurn = vi.fn(async () => ({ ok: true, data: { turnUuid: "cwd-turn" } }));
     const error = Object.assign(new Error("outside configured roots"), {
       code: "OUTSIDE_ROOT",
     });
@@ -92,7 +92,7 @@ describe("directed runtime cwd isolation", () => {
         throw error;
       },
       advanceTurn,
-      spawner: { wake: vi.fn() },
+      spawner: { wake: vi.fn(), wakeErrorSource: "claude" },
     });
 
     await waker.wake(
@@ -115,8 +115,10 @@ describe("directed runtime cwd isolation", () => {
       expect.objectContaining({
         status: "interrupted",
         interruptedReason: "invalid_path",
-        transcriptRelayError: "OUTSIDE_ROOT: outside configured roots",
+        turnUuid: "cwd-turn",
+        wakeError: expect.objectContaining({ kind: "startup", source: "claude", message: "outside configured roots" }),
       }),
     );
+    expect(advanceTurn.mock.lastCall[0]).not.toHaveProperty("transcriptRelayError");
   });
 });

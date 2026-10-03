@@ -290,3 +290,18 @@ describe('parseQuery', () => {
     });
   });
 });
+
+describe('withErrorHandler — project access errors', () => {
+  it('maps ProjectNotFoundError to 404 and ProjectAccessDeniedError to 403', async () => {
+    const { ProjectNotFoundError, ProjectAccessDeniedError } = await import('@/services/project-access.service');
+    const req = makeRequest('/api/projects/p1');
+
+    const notFound = await withErrorHandler(async () => { throw new ProjectNotFoundError('task'); })(req, { params: Promise.resolve({}) });
+    expect(notFound.status).toBe(404);
+    expect(await notFound.json()).toMatchObject({ success: false, error: { code: 'NOT_FOUND', message: 'Task not found' } });
+
+    const denied = await withErrorHandler(async () => { throw new ProjectAccessDeniedError(); })(req, { params: Promise.resolve({}) });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ success: false, error: { code: 'FORBIDDEN' } });
+  });
+});

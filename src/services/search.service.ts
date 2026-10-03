@@ -3,6 +3,10 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
+import type { AuthContext } from "@/types/auth";
+import { accessibleProjectUuids, ProjectNotFoundError } from "@/services/project-access.service";
+import { accessibleGroupWhere, getGroupAccess } from "@/services/project-group-access.service";
+import type { Prisma } from "@/generated/prisma/client";
 
 // ===== Type Definitions =====
 
@@ -16,6 +20,8 @@ export interface SearchParams {
   scopeUuid?: string;  // project group UUID or project UUID
   entityTypes?: EntityType[];
   limit?: number;
+  auth?: AuthContext;
+  projectUuids?: string[];
 }
 
 export interface SearchResult {
@@ -109,6 +115,7 @@ async function searchExactUuid(
   scope: SearchScope,
   projectUuids: string[] | null,
   groupUuid: string | null,
+  groupWhere: Prisma.ProjectGroupWhereInput,
 ): Promise<SearchResponse | null> {
   const lookups = typesToSearch.map(async (type): Promise<SearchResult | null> => {
     const projectFilter = projectUuids ? { in: projectUuids } : undefined;
@@ -227,7 +234,7 @@ async function searchExactUuid(
         if (scope === "project") return null;
         if (groupUuid && uuid !== groupUuid) return null;
         const projectGroup = await prisma.projectGroup.findFirst({
-          where: { uuid, companyUuid },
+          where: { AND: [groupWhere, { uuid, companyUuid }] },
           select: { uuid: true, name: true, updatedAt: true },
         });
         return projectGroup && {
@@ -542,7 +549,8 @@ async function searchProjectGroups(
   companyUuid: string,
   query: string,
   groupUuid: string | null,
-  limit: number
+  limit: number,
+  groupWhere: Prisma.ProjectGroupWhereInput,
 ): Promise<{ results: SearchResult[]; count: number }> {
   const where: {
     companyUuid: string;
@@ -561,9 +569,10 @@ async function searchProjectGroups(
     where.uuid = groupUuid;
   }
 
+  const guardedWhere = { AND: [groupWhere, where] };
   const [groups, count] = await Promise.all([
     prisma.projectGroup.findMany({
-      where,
+      where: guardedWhere,
       take: limit,
       orderBy: { updatedAt: "desc" },
       select: {
@@ -573,7 +582,7 @@ async function searchProjectGroups(
         updatedAt: true,
       },
     }),
-    prisma.projectGroup.count({ where }),
+    prisma.projectGroup.count({ where: guardedWhere }),
   ]);
 
   const results: SearchResult[] = groups.map(group => ({
@@ -600,8 +609,12 @@ export async function search(params: SearchParams): Promise<SearchResponse> {
     scopeUuid,
     entityTypes,
     limit = 20,
+    auth,
   } = params;
 
+  if (auth && auth.companyUuid !== companyUuid) throw new ProjectNotFoundError();
+  const accessAuth = auth ?? { type: "agent" as const, actorUuid: "", companyUuid };
+  const groupWhere = await accessibleGroupWhere(accessAuth);
   // Validate scope requirements
   if ((scope === "group" || scope === "project") && !scopeUuid) {
     throw new Error(`scopeUuid is required for scope "${scope}"`);
@@ -609,16 +622,34 @@ export async function search(params: SearchParams): Promise<SearchResponse> {
 
   // Determine which entity types to search
   const allTypes: EntityType[] = ["task", "idea", "proposal", "document", "project", "project_group"];
-  const typesToSearch = entityTypes && entityTypes.length > 0 ? entityTypes : allTypes;
+  const typesToSearch = (entityTypes && entityTypes.length > 0 ? entityTypes : allTypes)
+    .filter((type) => scope !== "project" || type !== "project_group");
 
-  // Resolve project UUIDs based on scope
-  let projectUuids: string[] | null = null;
+  // Visibility, caller filters, header defaults and scope are independent
+  // constraints. An explicit empty list must never widen to company-wide search.
+  const headerProjects = (auth as (AuthContext & { projectUuids?: string[] }) | undefined)?.projectUuids;
+  let projectUuids = (await accessibleProjectUuids(
+    accessAuth,
+  )).filter((uuid) =>
+    (params.projectUuids === undefined || params.projectUuids.includes(uuid)) &&
+    (headerProjects === undefined || headerProjects.includes(uuid)),
+  );
   let groupUuid: string | null = null;
 
+  if (projectUuids.length === 0 &&
+      (params.projectUuids !== undefined || headerProjects !== undefined)) {
+    return { results: [], counts: emptyCounts() };
+  }
+
   if (scope === "project" && scopeUuid) {
-    projectUuids = [scopeUuid];
+    projectUuids = projectUuids.filter((uuid) => uuid === scopeUuid);
+    if (projectUuids.length === 0) return { results: [], counts: emptyCounts() };
   } else if (scope === "group" && scopeUuid) {
-    projectUuids = await resolveGroupProjects(companyUuid, scopeUuid);
+    if (!(await getGroupAccess(accessAuth, scopeUuid)).group) {
+      return { results: [], counts: emptyCounts() };
+    }
+    const groupProjects = await resolveGroupProjects(companyUuid, scopeUuid);
+    projectUuids = projectUuids.filter((uuid) => groupProjects.includes(uuid));
     groupUuid = scopeUuid;
   }
 
@@ -630,6 +661,7 @@ export async function search(params: SearchParams): Promise<SearchResponse> {
       scope,
       projectUuids,
       groupUuid,
+      groupWhere,
     );
     if (exactResult) return exactResult;
   }
@@ -658,7 +690,7 @@ export async function search(params: SearchParams): Promise<SearchResponse> {
         searchPromises.push(searchProjects(companyUuid, query, projectUuids, limit));
         break;
       case "project_group":
-        searchPromises.push(searchProjectGroups(companyUuid, query, groupUuid, limit));
+        searchPromises.push(searchProjectGroups(companyUuid, query, groupUuid, limit, groupWhere));
         break;
     }
   }

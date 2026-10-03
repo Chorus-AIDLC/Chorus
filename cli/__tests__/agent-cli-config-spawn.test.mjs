@@ -131,8 +131,12 @@ describe("actual daemon spawn customization", () => {
       expect(() => selectSpawner(type, { ...opts, cliConfig: { args: ["--"] } })).toThrow();
       expect(() => selectSpawner(type, { ...opts, cliConfig: { env: { chorus_url: "secret" } } })).toThrow();
       const shim = selectSpawner(type, { ...opts, platform: "win32", [`${type === "claude-code" ? "claude" : type}Path`]: "C:\\bin\\agent.cmd", cliConfig: { args: ["--custom=%SECRET%&echo"] } });
-      if (type === "codex") expect((await shim.wake(wake)).exitCode).toBeNull();
-      else await expect(shim.wake(wake)).rejects.toThrow(/native executable/);
+      const rejected = await shim.wake(wake);
+      expect(rejected.exitCode).toBeNull();
+      expect(rejected.wakeError).toMatchObject({
+        source: type === "claude-code" ? "claude" : type,
+        kind: "startup", message: expect.stringMatching(/native executable/),
+      });
       expect(opts.spawnImpl).not.toHaveBeenCalled();
     });
   }

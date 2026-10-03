@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Project-access gate: allow by default (behavioural coverage lives in
+// src/app/(dashboard)/projects/__tests__/action-project-access.test.ts).
+vi.mock("@/lib/project-access-action", () => ({
+  denyUnlessProjectAccess: vi.fn(async () => null),
+  denyUnlessEntityAccess: vi.fn(async () => null),
+  denyUnlessProjectOperation: vi.fn(async () => null),
+}));
 import type { UserAuthContext } from "@/types/auth";
 
 const mockGetServerAuthContext = vi.hoisted(() => vi.fn());
@@ -41,6 +49,7 @@ vi.mock("@/lib/logger", () => {
 });
 
 import { deleteDocumentAction } from "../actions";
+import { denyUnlessEntityAccess } from "@/lib/project-access-action";
 
 const COMPANY_A = "company-a";
 const COMPANY_B = "company-b";
@@ -77,6 +86,18 @@ function makeDocRow(overrides: Partial<{ uuid: string; companyUuid: string; proj
 describe("deleteDocumentAction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("maps project-access denials onto the button's lowercase error codes", async () => {
+    mockGetServerAuthContext.mockResolvedValue(humanAuth());
+    vi.mocked(denyUnlessEntityAccess).mockResolvedValueOnce({ success: false, error: "Document not found" });
+    expect(await deleteDocumentAction(DOCUMENT_UUID)).toEqual({ success: false, error: "not_found" });
+    vi.mocked(denyUnlessEntityAccess).mockResolvedValueOnce({
+      success: false,
+      error: "Insufficient project access",
+    });
+    expect(await deleteDocumentAction(DOCUMENT_UUID)).toEqual({ success: false, error: "forbidden" });
+    expect(mockDeleteDocument).not.toHaveBeenCalled();
   });
 
   it("returns unauthorized when no auth context", async () => {

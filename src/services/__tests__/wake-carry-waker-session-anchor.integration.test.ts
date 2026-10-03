@@ -36,6 +36,15 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     count: vi.fn(),
   },
+  agent: {
+    findFirst: vi.fn(async () => ({ ownerUuid: null, roles: ["pm_agent"], permissions: [] })),
+  },
+  project: {
+    findMany: vi.fn(async () => [{ uuid: "project-0000-0000-0000-000000000001" }]),
+  },
+  comment: {
+    findMany: vi.fn(async () => []),
+  },
   daemonSession: {
     findFirst: vi.fn(),
   },
@@ -135,7 +144,8 @@ function makeRecord(overrides: Record<string, unknown> = {}) {
 // Run the crafted raw rows through the REAL read projection (list → formatNotifications →
 // resolveWakerSessionAnchor) and return the formatted NotificationResponses.
 async function project(records: RawRecord[]): Promise<NotificationResponse[]> {
-  mockPrisma.notification.findMany.mockResolvedValue(records);
+  mockPrisma.notification.findMany.mockImplementation(async ({ where }: { where: { entityType?: string } }) =>
+    where.entityType === "comment" ? [] : records);
   const { notifications } = await list({
     companyUuid,
     recipientType: "agent",

@@ -78,6 +78,20 @@ const mockSessionService = vi.hoisted(() => ({
 
 const mockPrisma = vi.hoisted(() => ({
   prisma: {
+    // Model fixtures for the central access gate; these smoke scenarios all
+    // operate on public project-1 while their handler services remain mocked.
+    project: {
+      findFirst: vi.fn().mockResolvedValue({
+        uuid: "project-1", companyUuid: "company-1", visibility: "public",
+      }),
+    },
+    projectMember: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    user: { findFirst: vi.fn().mockResolvedValue(null) },
+    task: { findFirst: vi.fn().mockResolvedValue({ projectUuid: "project-1" }) },
+    proposal: { findFirst: vi.fn().mockResolvedValue({ projectUuid: "project-1" }) },
     agent: { update: vi.fn() },
     acceptanceCriterion: {
       createMany: vi.fn(),

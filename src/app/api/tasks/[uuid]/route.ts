@@ -15,6 +15,7 @@ import {
   checkDependenciesResolved,
 } from "@/services/task.service";
 import { createActivity } from "@/services/activity.service";
+import { requireEntityAccess } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -29,6 +30,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "task", uuid, "viewer");
     const task = await getTask(auth.companyUuid, uuid);
 
     if (!task) {
@@ -50,6 +52,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "task", uuid, "editor");
 
     // Get original Task data for permission check
     const task = await getTaskByUuid(auth.companyUuid, uuid);
@@ -180,6 +183,7 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
     }
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "task", uuid, "editor");
 
     const task = await getTaskByUuid(auth.companyUuid, uuid);
     if (!task) {

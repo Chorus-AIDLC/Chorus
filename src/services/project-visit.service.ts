@@ -4,11 +4,14 @@
 // See docs Tech Design "Sidebar project quick-access" for the read/write contract.
 
 import { prisma } from "@/lib/prisma";
+import { accessibleProjectWhere } from "@/services/project-access.service";
 
 /** A resolved quick-access row: project identity + its group name (null if ungrouped). */
 export interface ProjectRef {
   uuid: string;
   name: string;
+  /** "public" | "private" — drives the sidebar lock indicator. */
+  visibility: string;
   groupUuid: string | null;
   groupName: string | null;
 }
@@ -23,12 +26,15 @@ export interface SidebarQuickAccess {
 const RECENT_LIMIT = 5;
 
 /**
- * True when `projectUuid` names a live project in the caller's company.
+ * True when `projectUuid` names a live project visible to this user.
  * Used to reject forged/foreign UUIDs before any write.
  */
-async function projectInCompany(companyUuid: string, projectUuid: string): Promise<boolean> {
+async function projectVisibleToUser(companyUuid: string, userUuid: string, projectUuid: string): Promise<boolean> {
   const project = await prisma.project.findFirst({
-    where: { uuid: projectUuid, companyUuid },
+    where: {
+      ...await accessibleProjectWhere({ type: "user", actorUuid: userUuid, companyUuid }),
+      uuid: projectUuid,
+    },
     select: { uuid: true },
   });
   return !!project;
@@ -45,7 +51,7 @@ export async function recordVisit(
   userUuid: string,
   projectUuid: string
 ): Promise<void> {
-  if (!(await projectInCompany(companyUuid, projectUuid))) return;
+  if (!(await projectVisibleToUser(companyUuid, userUuid, projectUuid))) return;
 
   const now = new Date();
   await prisma.projectVisit.upsert({
@@ -66,7 +72,7 @@ export async function pinProject(
   userUuid: string,
   projectUuid: string
 ): Promise<void> {
-  if (!(await projectInCompany(companyUuid, projectUuid))) return;
+  if (!(await projectVisibleToUser(companyUuid, userUuid, projectUuid))) return;
 
   const existing = await prisma.projectVisit.findUnique({
     where: { userUuid_projectUuid: { userUuid, projectUuid } },
@@ -158,8 +164,11 @@ export async function getSidebarQuickAccess(
     ...new Set([...pinnedVisits, ...recentVisits].map((v) => v.projectUuid)),
   ];
   const projects = await prisma.project.findMany({
-    where: { companyUuid, uuid: { in: projectUuids } },
-    select: { uuid: true, name: true, groupUuid: true },
+    where: {
+      ...await accessibleProjectWhere({ type: "user", actorUuid: userUuid, companyUuid }),
+      uuid: { in: projectUuids },
+    },
+    select: { uuid: true, name: true, visibility: true, groupUuid: true },
   });
   const projectMap = new Map(projects.map((p) => [p.uuid, p]));
 
@@ -177,9 +186,15 @@ export async function getSidebarQuickAccess(
   });
   const groupNameMap = new Map(groups.map((g) => [g.uuid, g.name]));
 
-  const toRef = (p: { uuid: string; name: string; groupUuid: string | null }): ProjectRef => ({
+  const toRef = (p: {
+    uuid: string;
+    name: string;
+    visibility?: string | null;
+    groupUuid: string | null;
+  }): ProjectRef => ({
     uuid: p.uuid,
     name: p.name,
+    visibility: p.visibility ?? "public",
     groupUuid: p.groupUuid,
     groupName: p.groupUuid ? groupNameMap.get(p.groupUuid) ?? null : null,
   });

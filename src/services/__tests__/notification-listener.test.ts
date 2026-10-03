@@ -21,9 +21,10 @@ const { mockState, mockEventBus, mockPrisma, mockNotificationService } = vi.hois
     idea: { findUnique: vi.fn() },
     proposal: { findUnique: vi.fn() },
     document: { findUnique: vi.fn() },
-    user: { findUnique: vi.fn() },
-    agent: { findUnique: vi.fn() },
-    project: { findUnique: vi.fn() },
+    user: { findUnique: vi.fn(), findFirst: vi.fn() },
+    agent: { findUnique: vi.fn(), findMany: vi.fn() },
+    project: { findFirst: vi.fn() },
+    projectMember: { findFirst: vi.fn(), findMany: vi.fn() },
     agentInstance: { findFirst: vi.fn() },
   };
 
@@ -57,6 +58,15 @@ const { mockState, mockEventBus, mockPrisma, mockNotificationService } = vi.hois
 vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/services/notification.service", () => mockNotificationService);
+// Project-access filter: identity by default (tests not about access); the
+// "private project access" block below delegates to the real implementation.
+const { mockFilterRecipients } = vi.hoisted(() => ({
+  mockFilterRecipients: vi.fn(),
+}));
+vi.mock("@/services/project-access.service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/project-access.service")>();
+  return { ...actual, filterRecipientsByProjectAccess: mockFilterRecipients };
+});
 
 // Import the module and the handler
 import { handleActivity } from "@/services/notification-listener";
@@ -118,13 +128,14 @@ describe("notification-listener", () => {
       name: "Bot Agent",
       ownerUuid: "owner-uuid",
     });
-    mockPrisma.project.findUnique.mockResolvedValue({
+    mockPrisma.project.findFirst.mockResolvedValue({
       uuid: "project-uuid",
       name: "Test Project",
     });
     // Default: an agent_instance resolves to its owning agent. Individual tests
     // override the agentUuid as needed.
     mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "owning-agent" });
+    mockFilterRecipients.mockImplementation(async (_c: string, _p: string, r: unknown[]) => r);
   });
 
   afterEach(() => {
@@ -237,7 +248,7 @@ describe("notification-listener", () => {
         uuid: "pm-agent-123",
         name: "PM Bot",
       });
-      mockPrisma.project.findUnique.mockResolvedValue({
+      mockPrisma.project.findFirst.mockResolvedValue({
         uuid: "project-uuid",
         name: "Test Project",
       });
@@ -286,7 +297,7 @@ describe("notification-listener", () => {
         uuid: "assigned-user-uuid",
         name: "Assigned User",
       });
-      mockPrisma.project.findUnique.mockResolvedValue({
+      mockPrisma.project.findFirst.mockResolvedValue({
         uuid: "project-uuid",
         name: "Test Project",
       });
@@ -695,7 +706,7 @@ describe("notification-listener", () => {
 
   describe("project name resolution", () => {
     it("should fallback to Unknown Project when not found", async () => {
-      mockPrisma.project.findUnique.mockResolvedValue(null);
+      mockPrisma.project.findFirst.mockResolvedValue(null);
       mockPrisma.task.findUnique.mockResolvedValue({
         assigneeType: "user",
         assigneeUuid: "user-1",
@@ -1402,6 +1413,167 @@ describe("notification-listener", () => {
       const agentRec = call.find((n: any) => n.recipientType === "agent");
       expect(agentRec).toBeDefined();
       expect(agentRec.recipientUuid).toBe(OWNING_AGENT);
+    });
+  });
+  describe("private project access", () => {
+    let realFilter: typeof import("@/services/project-access.service").filterRecipientsByProjectAccess;
+
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof import("@/services/project-access.service")>(
+        "@/services/project-access.service"
+      );
+      realFilter = actual.filterRecipientsByProjectAccess;
+      mockFilterRecipients.mockImplementation((c: string, p: string, r: any[]) => realFilter(c, p, r));
+      // Agent ownership: member-agent owned by a member, outsider-agent by a non-member.
+      mockPrisma.agent.findMany.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          [
+            { uuid: "member-agent", ownerUuid: "member-user" },
+            { uuid: "outsider-agent", ownerUuid: "outsider-user" },
+          ].filter((a) => where.companyUuid === "company-uuid" && where.uuid.in.includes(a.uuid))
+        )
+      );
+      mockPrisma.projectMember.findMany.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          ["member-user"].filter((u) =>
+            where.companyUuid === "company-uuid" && where.projectUuid === "project-uuid"
+            && where.userUuid.in.includes(u)
+          ).map((userUuid) => ({ userUuid }))
+        )
+      );
+      // A stored local Admin keeps these tests focused on explicit membership;
+      // no outsider can gain access through the earliest-company-user fallback.
+      mockPrisma.projectMember.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.companyUuid === "company-uuid" && where.projectUuid === "project-uuid" && where.role === "admin"
+            ? { userUuid: "member-user", role: "admin" } : null
+        )
+      );
+      mockPrisma.user.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.companyUuid === "company-uuid" && (!where.uuid || where.uuid === "member-user")
+            ? { uuid: "member-user" } : null
+        )
+      );
+      // Distinguish user vs agent in resolveActorType.
+      mockPrisma.user.findUnique.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          ["member-user", "outsider-user", "commenter"].includes(where.uuid)
+            ? { uuid: where.uuid, name: where.uuid }
+            : null
+        )
+      );
+    });
+
+    function setProject(visibility: "public" | "private") {
+      mockPrisma.project.findFirst.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.companyUuid === "company-uuid" && where.uuid === "project-uuid"
+            ? { uuid: "project-uuid", companyUuid: "company-uuid", name: "Test Project", visibility, groupUuid: null }
+            : null
+        )
+      );
+    }
+
+    it("drops non-member users and agents of non-members on a private project", async () => {
+      setProject("private");
+      mockPrisma.task.findUnique.mockResolvedValue({
+        title: "T",
+        assigneeType: "agent",
+        assigneeUuid: "outsider-agent",
+        createdByUuid: "member-user",
+      });
+      await handleActivity(
+        makeEvent({ action: "status_changed", actorType: "user", actorUuid: "commenter" })
+      );
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call.map((n: any) => n.recipientUuid)).toEqual(["member-user"]);
+      expect(mockPrisma.project.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { uuid: "project-uuid", companyUuid: "company-uuid" } })
+      );
+    });
+
+    it("keeps members and agents of members on a private project (order preserved)", async () => {
+      setProject("private");
+      mockPrisma.task.findUnique.mockResolvedValue({
+        title: "T",
+        assigneeType: "agent",
+        assigneeUuid: "member-agent",
+        createdByUuid: "member-user",
+      });
+      await handleActivity(
+        makeEvent({ action: "status_changed", actorType: "user", actorUuid: "commenter" })
+      );
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call.map((n: any) => n.recipientUuid)).toEqual(["member-agent", "member-user"]);
+    });
+
+    it("skips createBatch entirely when every recipient is an outsider", async () => {
+      setProject("private");
+      mockPrisma.task.findUnique.mockResolvedValue({
+        title: "T",
+        assigneeType: "agent",
+        assigneeUuid: "outsider-agent",
+      });
+      await handleActivity(makeEvent({ action: "assigned", actorType: "user", actorUuid: "commenter" }));
+      expect(mockNotificationService.createBatch).not.toHaveBeenCalled();
+    });
+
+    it("public project keeps every recipient (unchanged behaviour)", async () => {
+      setProject("public");
+      mockPrisma.task.findUnique.mockResolvedValue({
+        title: "T",
+        assigneeType: "agent",
+        assigneeUuid: "outsider-agent",
+        createdByUuid: "outsider-user",
+      });
+      await handleActivity(
+        makeEvent({ action: "status_changed", actorType: "user", actorUuid: "commenter" })
+      );
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call.map((n: any) => n.recipientUuid)).toEqual(["outsider-agent", "outsider-user"]);
+      expect(mockPrisma.projectMember.findMany).not.toHaveBeenCalled();
+    });
+
+    it("filters the comment fan-out and still excludes the comment author", async () => {
+      setProject("private");
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        title: "I",
+        assigneeType: "agent",
+        assigneeUuid: "outsider-agent",
+        createdByUuid: "member-user",
+      });
+      await handleActivity(
+        makeEvent({
+          targetType: "idea",
+          targetUuid: "idea-uuid",
+          action: "comment_added",
+          actorType: "user",
+          actorUuid: "commenter",
+        })
+      );
+      const call = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(call.map((n: any) => `${n.recipientType}:${n.recipientUuid}`)).toEqual(["user:member-user"]);
+      expect(call[0].action).toBe("comment_added");
+    });
+
+    it("drops the agent-only wake recipient (elaboration_verified) for an outsider agent", async () => {
+      setProject("private");
+      mockPrisma.idea.findUnique.mockResolvedValue({
+        title: "I",
+        assigneeType: "agent",
+        assigneeUuid: "outsider-agent",
+      });
+      await handleActivity(
+        makeEvent({
+          targetType: "idea",
+          targetUuid: "idea-uuid",
+          action: "elaboration_verified",
+          actorType: "user",
+          actorUuid: "member-user",
+        })
+      );
+      expect(mockNotificationService.createBatch).not.toHaveBeenCalled();
     });
   });
 });

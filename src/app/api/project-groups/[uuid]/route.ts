@@ -10,6 +10,7 @@ import {
   updateProjectGroup,
   deleteProjectGroup,
 } from "@/services/project-group.service";
+import { isProjectVisibility, type ProjectVisibility } from "@/services/project-access.service";
 
 // GET /api/project-groups/[uuid]
 export const GET = withErrorHandler(
@@ -20,7 +21,7 @@ export const GET = withErrorHandler(
     if (denied) return denied;
 
     const { uuid } = await context.params;
-    const group = await getProjectGroup(auth.companyUuid, uuid);
+    const group = await getProjectGroup(auth.companyUuid, uuid, auth);
     if (!group) return errors.notFound("Project group");
 
     return success(group);
@@ -41,14 +42,19 @@ export const PATCH = withErrorHandler(
     }
 
     const { uuid } = await context.params;
-    const body = await parseBody<{ name?: string; description?: string }>(request);
+    const body = await parseBody<{ name?: string; description?: string; visibility?: ProjectVisibility; initializeAccess?: unknown; confirmationToken?: string }>(request);
+    if (body.visibility !== undefined && !isProjectVisibility(body.visibility)) return errors.validationError({ visibility: "Invalid visibility" });
+    if (body.initializeAccess !== undefined) return errors.validationError({ initializeAccess: "Legacy group Admins are assigned automatically; manual initialization is unsupported" });
+    if (body.name !== undefined && (typeof body.name !== "string" || !body.name.trim())) return errors.validationError({ name: "Name is required" });
 
     const group = await updateProjectGroup({
       companyUuid: auth.companyUuid,
       groupUuid: uuid,
       name: body.name?.trim(),
       description: body.description?.trim(),
-    });
+      visibility: body.visibility,
+      confirmationToken: body.confirmationToken,
+    }, auth);
 
     if (!group) return errors.notFound("Project group");
     return success(group);
@@ -70,7 +76,8 @@ export const DELETE = withErrorHandler(
 
     const { uuid } = await context.params;
     const shouldDeleteProjects = request.nextUrl.searchParams.get("deleteProjects") === "true";
-    const deleted = await deleteProjectGroup(auth.companyUuid, uuid, shouldDeleteProjects);
+
+    const deleted = await deleteProjectGroup(auth.companyUuid, uuid, shouldDeleteProjects, auth);
 
     if (!deleted) return errors.notFound("Project group");
     return success({ deleted: true });

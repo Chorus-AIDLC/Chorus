@@ -21,6 +21,7 @@ import { render, screen, waitFor, act } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import userEvent from "@testing-library/user-event";
 import { IdeaTracker } from "../idea-tracker";
+import { ProjectAccessProvider } from "@/contexts/project-access-context";
 import type { IdeaCardItem } from "../idea-card";
 import type { TrackerGroupsResult, TrackerIdeaItem } from "@/services/idea.service";
 
@@ -227,5 +228,36 @@ describe("IdeaTracker — switch stays reachable at zero ideas", () => {
     expect(screen.getByRole("button", { name: /Ideas/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Lineage/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Stats/ })).toBeTruthy();
+  });
+});
+
+describe("IdeaTracker — project Viewer mode", () => {
+  it("hides the header New Idea button for viewers", () => {
+    render(
+      <ProjectAccessProvider accessLevel="viewer">
+        <IdeaTracker {...baseProps} initialTrackerData={flatTracker} />
+      </ProjectAccessProvider>,
+    );
+    expect(screen.getByTestId("status-group")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New Idea" })).toBeNull();
+  });
+
+  it("hides the empty-state New Idea CTA for viewers", () => {
+    render(
+      <ProjectAccessProvider accessLevel="viewer">
+        <IdeaTracker {...baseProps} initialTrackerData={emptyTracker} />
+      </ProjectAccessProvider>,
+    );
+    expect(screen.getByText("No ideas yet")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New Idea" })).toBeNull();
+  });
+
+  it.each(["editor", "admin"] as const)("keeps New Idea for %s", (level) => {
+    render(
+      <ProjectAccessProvider accessLevel={level}>
+        <IdeaTracker {...baseProps} initialTrackerData={flatTracker} />
+      </ProjectAccessProvider>,
+    );
+    expect(screen.getByRole("button", { name: "New Idea" })).toBeTruthy();
   });
 });

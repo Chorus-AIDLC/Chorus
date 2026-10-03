@@ -8,6 +8,7 @@ import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
 import { createPendingTurn, resolveOrCreateSession, publishTranscriptEvent, STALE_THRESHOLD_MS } from "@/services/daemon-session.service";
 import { deliverTurnPing } from "@/services/daemon-instruction.service";
+import { filterRecipientsByProjectAccess } from "@/services/project-access.service";
 import { getResearchEligibility, lockResearchProject, type ResearchReason } from "@/services/research-eligibility.service";
 
 export type ResearchErrorCode = ResearchReason | "unauthorized" | "assignment_required" |
@@ -52,6 +53,14 @@ export async function requestResearch(params: {
   if (!agent || (params.actorType !== "super_admin" && agent.ownerUuid !== actorUuid)) {
     throw new ResearchError("permission_denied");
   }
+  // Private project access (Tech Design D4): the research notification + wake turn target
+  // this agent, so it must be able to see the idea's project (via its owner). Checked
+  // before the transaction — the in-transaction notification write cannot be filtered
+  // without also suppressing the turn, so an outsider target rejects the whole request.
+  const [allowedRecipient] = await filterRecipientsByProjectAccess(companyUuid, idea.projectUuid, [
+    { type: "agent", uuid: agentUuid },
+  ]);
+  if (!allowedRecipient) throw new ResearchError("permission_denied");
   const permissions = computeEffectivePermissions(agent.roles, agent.permissions);
   const requiredPermissions = ["idea:read", "idea:write", "proposal:read", "task:read", "document:read", "document:write"] as const;
   if (!requiredPermissions.every((p) => permissions.has(p))) {
@@ -104,6 +113,29 @@ export async function requestResearch(params: {
     if (!currentAgent || (params.actorType !== "super_admin" && currentAgent.ownerUuid !== actorUuid) ||
       !requiredPermissions.every((p) => computeEffectivePermissions(currentAgent.roles, currentAgent.permissions).has(p))) {
       throw new ResearchError("permission_denied");
+    }
+    // Private-project access, re-checked UNDER the project lock: membership changes take
+    // the same Project row lock (project-member.service), so this read is serialized with
+    // any concurrent removal. The target agent's owner must still be a member (it receives
+    // the notification + wake); a user actor must still be able to edit.
+    const currentProject = await tx.project.findFirst({
+      where: { uuid: idea.projectUuid, companyUuid },
+      select: { visibility: true },
+    });
+    if (!currentProject) throw new ResearchError("idea_not_found");
+    if (currentProject.visibility === "private") {
+      const roleOf = async (userUuid: string | null) =>
+        userUuid
+          ? (await tx.projectMember.findUnique({
+              where: { projectUuid_userUuid: { projectUuid: idea.projectUuid, userUuid } },
+              select: { role: true },
+            }))?.role ?? null
+          : null;
+      const ownerRole = await roleOf(currentAgent.ownerUuid);
+      const actorRole = params.actorType === "user" ? await roleOf(actorUuid) : "admin";
+      if (!ownerRole || !actorRole || actorRole === "viewer") {
+        throw new ResearchError("permission_denied");
+      }
     }
     const eligibility = await getResearchEligibility(companyUuid, ideaUuid, tx);
     if (!eligibility.eligible) throw new ResearchError(eligibility.reason);

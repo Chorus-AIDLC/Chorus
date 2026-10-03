@@ -14,6 +14,13 @@ vi.mock("@/lib/auth", () => ({
 // + companyUuid scoping itself lives in the service (tested there). So these tests
 // assert the route (a) rejects no-auth, (b) passes the EXACT auth context through,
 // and (c) returns whatever the (scoped) service yields under the standard envelope.
+const mockFilterExecutionViewsByAccess = vi.hoisted(() =>
+  vi.fn(async (_auth: unknown, rows: unknown[]) => rows),
+);
+vi.mock("@/services/project-access.service", () => ({
+  filterExecutionViewsByAccess: mockFilterExecutionViewsByAccess,
+}));
+
 vi.mock("@/services/daemon-execution.service", () => ({
   getVisibleExecutions: (...args: unknown[]) => mockGetVisibleExecutions(...args),
 }));
@@ -140,5 +147,15 @@ describe("GET /api/daemon/executions (aggregate read)", () => {
     const [passedAuth] = mockGetVisibleExecutions.mock.calls[0];
     expect(passedAuth.companyUuid).toBe(companyB);
     expect(body.data.executions).toEqual([]);
+  });
+});
+
+describe("project-access filtering of execution rows", () => {
+  it("passes the rows through filterExecutionViewsByAccess with the caller's auth", async () => {
+    mockFilterExecutionViewsByAccess.mockImplementationOnce(async () => [] as never);
+    mockGetVisibleExecutions.mockResolvedValue([execRow("exec-a", connA, "agent-a")]);
+    const res = await GET(getRequest(), emptyCtx);
+    expect(mockFilterExecutionViewsByAccess).toHaveBeenCalledTimes(1);
+    expect((await res.json()).data.executions).toEqual([]);
   });
 });

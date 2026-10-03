@@ -25,6 +25,7 @@ import type {
   ElaborationQuestionResponse,
   AnswerInput,
 } from "@/types/elaboration";
+import { useCanEditProject } from "@/contexts/project-access-context";
 import { submitElaborationAnswersAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/elaboration-actions";
 import { isImeComposing } from "@/lib/ime";
 
@@ -104,6 +105,8 @@ interface RoundCardProps {
 
 function RoundCard({ round, ideaUuid, onAnswered }: RoundCardProps) {
   const t = useTranslations("elaboration");
+  const tAccess = useTranslations("projectAccess");
+  const canEdit = useCanEditProject();
   // `needs_followup` is a legacy round status no longer written by the service
   // (the per-question issue / follow-up mechanism was removed). Kept here only
   // so any historical rows still render as "done" (read-only Q&A view).
@@ -179,12 +182,22 @@ function RoundCard({ round, ideaUuid, onAnswered }: RoundCardProps) {
         </CollapsibleTrigger>
 
         <CollapsibleContent>
-          {isPending ? (
+          {isPending && canEdit ? (
             <PendingRoundContent
               round={round}
               ideaUuid={ideaUuid}
               onAnswered={onAnswered}
             />
+          ) : isPending ? (
+            // Viewers see the open questions read-only (the server rejects answers too).
+            <div className="space-y-3 px-4 py-3">
+              <p className="text-xs text-muted-foreground">{tAccess("elaborationReadOnly")}</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-foreground">
+                {round.questions.map((q) => (
+                  <li key={q.questionId}>{q.text}</li>
+                ))}
+              </ul>
+            </div>
           ) : (
             <AnsweredRoundContent round={round} />
           )}

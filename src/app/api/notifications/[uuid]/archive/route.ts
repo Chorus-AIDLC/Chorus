@@ -26,7 +26,8 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
         uuid,
         auth.companyUuid,
         recipientType,
-        recipientUuid
+        recipientUuid,
+        auth
       );
 
       return success(notification);

@@ -34,7 +34,7 @@ chorus agents add --agents codex
 5. Write `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE` into `~/.codex/.env` (mode `0600`, idempotent, preserving your other entries). Codex loads this dotenv file into its **own process environment** at startup, so both its plugin hooks and the model's shell-tool `chorus` calls resolve your agent identity with **no manual export**.
 6. Write the native-MCP server block `[mcp_servers.chorus]` into `~/.codex/config.toml` with `url` + `bearer_token_env_var = "CHORUS_API_KEY"` — a **keyless** reference (no API key is stored in `config.toml`). Codex resolves that env var (from the `~/.codex/.env` in step 5) into the `Authorization: Bearer <key>` header when it connects to MCP.
 
-If `CHORUS_URL` / `CHORUS_API_KEY` aren't set, `chorus agents add` prompts for them interactively (provided you have a TTY). Don't have the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus@0.17.0`, then run `chorus agents add --agents codex`.
+If `CHORUS_URL` / `CHORUS_API_KEY` aren't set, `chorus agents add` prompts for them interactively (provided you have a TTY). Don't have the `chorus` CLI yet? Install it globally with `npm install -g @chorus-aidlc/chorus`, then run `chorus agents add --agents codex`.
 
 ### What needs no export
 
@@ -61,7 +61,7 @@ Codex will call `chorus_checkin()` via the MCP server and report back with your 
 Pass the connection explicitly and skip prompts with `--yes` — no TTY required:
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.17.0
+npm install -g @chorus-aidlc/chorus
 chorus agents add --agents codex \
   --url https://chorus.example.com \
   --api-key cho_xxx --yes

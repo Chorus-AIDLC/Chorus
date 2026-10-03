@@ -4,7 +4,7 @@ description: Chorus Proposal workflow — create proposals with document and tas
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.20.0"
+  version: "0.21.0"
   category: project-management
   mcp_server: chorus
 ---

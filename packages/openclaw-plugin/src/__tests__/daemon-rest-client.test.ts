@@ -19,6 +19,36 @@ function makeFetch(impl?: (url: string, init?: RequestInit) => Response | Promis
 const BASE = { url: "https://chorus.example.com/", apiKey: "cho_test" };
 
 describe("createDaemonRestClient — payload shapes (single source of truth)", () => {
+  it("sends bounded crash diagnostics separately from relay failure and usage", async () => {
+    const { fetchImpl, calls } = makeFetch();
+    const apiKey = 'transport"key/callback';
+    const client = createDaemonRestClient({ ...BASE, apiKey, getConnectionUuid: () => "conn-1", fetchImpl });
+    const wakeError = { kind: "execution" as const, source: "openclaw" as const,
+      message: "Provider rejected the request",
+      details: `credentials: ${JSON.stringify(apiKey)}`, exitCode: null, signal: null };
+    await client.turnAdvance({
+      sessionId: "s", turnUuid: "turn-7", status: "interrupted", interruptedReason: "crash",
+      wakeError, transcriptRelayError: "Transcript upload failed",
+      usage: { inputTokens: 1, outputTokens: 2, cacheReadTokens: null,
+        cacheCreationTokens: null, model: null, source: "openclaw" },
+    });
+    const body = JSON.parse(calls[0].init!.body as string);
+    expect(body).toMatchObject({ turnUuid: "turn-7", interruptedReason: "crash",
+      wakeError: { ...wakeError, details: 'credentials: "[redacted]"' },
+      transcriptRelayError: "Transcript upload failed", usage: { inputTokens: 1, outputTokens: 2 } });
+  });
+
+  it.each([
+    ["running", null], ["ended", null], ["interrupted", "user"], ["interrupted", "shutdown"],
+  ] as const)("suppresses diagnostics on %s/%s", async (status, interruptedReason) => {
+    const { fetchImpl, calls } = makeFetch();
+    const client = createDaemonRestClient({ ...BASE, getConnectionUuid: () => "conn-1", fetchImpl });
+    await client.turnAdvance({ sessionId: "s", status, interruptedReason,
+      wakeError: { kind: "execution", source: "openclaw", message: "stale",
+        details: null, exitCode: null, signal: null } });
+    expect(JSON.parse(calls[0].init!.body as string)).not.toHaveProperty("wakeError");
+  });
+
   it("turnAdvance POSTs { connectionUuid, sessionId, status } + entity link + Bearer auth", async () => {
     const { fetchImpl, calls } = makeFetch();
     const client = createDaemonRestClient({

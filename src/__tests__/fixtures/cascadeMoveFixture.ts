@@ -170,7 +170,9 @@ export interface CascadeMoveStore {
   documents: DocumentRow[];
   tasks: TaskRow[];
   activities: ActivityRow[];
-  projects: Array<{ uuid: string; companyUuid: string; name: string }>;
+  projects: Array<{ uuid: string; companyUuid: string; name: string; visibility?: string }>;
+  agents: Array<{ uuid: string; companyUuid: string; ownerUuid: string | null }>;
+  projectMembers: Array<{ uuid: string; companyUuid: string; projectUuid: string; userUuid: string; role: string }>;
   comments: CommentRow[];
   taskDependencies: TaskDependencyRow[];
   acceptanceCriteria: AcceptanceCriterionRow[];
@@ -188,6 +190,8 @@ export const cascadeMoveStore: CascadeMoveStore = {
   tasks: [],
   activities: [],
   projects: [],
+  agents: [],
+  projectMembers: [],
   comments: [],
   taskDependencies: [],
   acceptanceCriteria: [],
@@ -203,6 +207,8 @@ export function resetCascadeMoveStore() {
   cascadeMoveStore.tasks = [];
   cascadeMoveStore.activities = [];
   cascadeMoveStore.projects = [];
+  cascadeMoveStore.agents = [];
+  cascadeMoveStore.projectMembers = [];
   cascadeMoveStore.comments = [];
   cascadeMoveStore.taskDependencies = [];
   cascadeMoveStore.acceptanceCriteria = [];
@@ -221,6 +227,10 @@ type WhereOp = Record<string, unknown> | undefined;
 export function matchesWhere(row: Record<string, unknown>, where: WhereOp): boolean {
   if (!where) return true;
   for (const [key, expected] of Object.entries(where)) {
+    if (key === "projectUuid_userUuid") {
+      if (!matchesWhere(row, expected as Record<string, unknown>)) return false;
+      continue;
+    }
     if (key === "OR") {
       const branches = expected as Record<string, unknown>[];
       if (!branches.some((b) => matchesWhere(row, b))) return false;
@@ -299,6 +309,8 @@ export function buildMockPrisma() {
   const taskModel = makeModel<TaskRow>(() => cascadeMoveStore.tasks);
   const activityModel = makeModel<ActivityRow>(() => cascadeMoveStore.activities);
   const projectModel = makeModel(() => cascadeMoveStore.projects);
+  const agentModel = makeModel(() => cascadeMoveStore.agents);
+  const projectMemberModel = makeModel(() => cascadeMoveStore.projectMembers);
 
   const mockPrisma = {
     idea: ideaModel,
@@ -307,6 +319,14 @@ export function buildMockPrisma() {
     task: taskModel,
     activity: activityModel,
     project: projectModel,
+    agent: agentModel,
+    // This cascade fixture models explicit grants but no registered-user
+    // roster, so there is no automatic first-user grant to resolve.
+    user: { findFirst: vi.fn(async () => null) },
+    projectMember: {
+      ...projectMemberModel,
+      findUnique: projectMemberModel.findFirst,
+    },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
       return await fn(mockPrisma);
     }),
@@ -378,9 +398,10 @@ export interface CascadeMoveFixture {
 export function buildCascadeMoveFixture(): CascadeMoveFixture {
   // Projects
   cascadeMoveStore.projects.push(
-    { uuid: P_OLD, companyUuid: COMPANY_UUID, name: "Old Project" },
-    { uuid: P_NEW, companyUuid: COMPANY_UUID, name: "New Project" }
+    { uuid: P_OLD, companyUuid: COMPANY_UUID, name: "Old Project", visibility: "public" },
+    { uuid: P_NEW, companyUuid: COMPANY_UUID, name: "New Project", visibility: "public" }
   );
+  cascadeMoveStore.agents.push({ uuid: AGENT_UUID, companyUuid: COMPANY_UUID, ownerUuid: ACTOR_USER });
 
   // 1) Primary Idea I in P_OLD.
   cascadeMoveStore.ideas.push({
@@ -611,9 +632,10 @@ export const FULL_TASK_3 = "task-cccc-3333-3333-333333333333";
 export function seedFullPipelineFixture() {
   // Project rows so moveIdea's pre-flight check on the target project passes.
   cascadeMoveStore.projects.push(
-    { uuid: FULL_P_OLD, companyUuid: FULL_COMPANY_A, name: "Old Project" },
-    { uuid: FULL_P_NEW, companyUuid: FULL_COMPANY_A, name: "New Project" }
+    { uuid: FULL_P_OLD, companyUuid: FULL_COMPANY_A, name: "Old Project", visibility: "public" },
+    { uuid: FULL_P_NEW, companyUuid: FULL_COMPANY_A, name: "New Project", visibility: "public" }
   );
+  cascadeMoveStore.agents.push({ uuid: "agent-1", companyUuid: FULL_COMPANY_A, ownerUuid: "user-1" });
 
   // Stage 1 — createIdea: an idea sits in the old project.
   cascadeMoveStore.ideas.push({

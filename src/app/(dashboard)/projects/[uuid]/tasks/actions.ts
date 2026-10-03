@@ -5,6 +5,7 @@ import { getServerAuthContext } from "@/lib/auth-server";
 import { listTasks, updateTask, getTaskByUuid, getProjectTaskDependencies, checkDependenciesResolved, checkAcceptanceCriteriaGate } from "@/services/task.service";
 import { createActivity } from "@/services/activity.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess, denyUnlessProjectAccess } from "@/lib/project-access-action";
 
 // Map column IDs to task statuses
 const columnToStatusMap: Record<string, string> = {
@@ -23,6 +24,8 @@ export async function moveTaskToColumnAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     // Verify task exists and belongs to this company
@@ -77,6 +80,8 @@ export async function forceMoveTaskToColumnAction(
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await getTaskByUuid(auth.companyUuid, taskUuid);
@@ -112,6 +117,8 @@ export async function fetchTasksAction(projectUuid: string) {
   if (!auth) {
     return { success: false as const, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, projectUuid, "viewer");
+  if (denied) return denied;
 
   try {
     const { tasks } = await listTasks({
@@ -130,6 +137,9 @@ export async function fetchTasksAction(projectUuid: string) {
 export async function getProjectDependenciesAction(projectUuid: string) {
   const auth = await getServerAuthContext();
   if (!auth) {
+    return { nodes: [], edges: [] };
+  }
+  if (await denyUnlessProjectAccess(auth, projectUuid, "viewer")) {
     return { nodes: [], edges: [] };
   }
 

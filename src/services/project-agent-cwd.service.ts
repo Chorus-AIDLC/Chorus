@@ -1,5 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus, controlEventName } from "@/lib/event-bus";
+import { guardProjectCreation, initProjectAccess, logProjectCreated, lockProjectManagement } from "@/services/project.service";
+import type { ProjectVisibility } from "@/services/project-access.service";
+import type { AuthContext } from "@/types/auth";
 import {
   listConnectionsForAgent,
   type ConnectionView,
@@ -179,7 +182,15 @@ export async function createProjectWithAgentCwds(params: {
   description: string | null;
   groupUuid: string | null;
   agentCwds: ProjectAgentCwdDraftInput[];
+  visibility?: ProjectVisibility;
+  // Creator User UUID (agents pass their owner); becomes the first admin member.
+  createdByUuid?: string | null;
+  actor?: { type: "user" | "agent"; uuid: string };
+  auth?: AuthContext;
 }) {
+  if (params.visibility === "private" && !params.createdByUuid) {
+    throw new Error("A private project requires a creator");
+  }
   const targets = await Promise.all(
     params.agentCwds.map((draft) => resolveValidatedPreference({
       companyUuid: params.companyUuid,
@@ -187,21 +198,32 @@ export async function createProjectWithAgentCwds(params: {
       ...draft,
     })),
   );
-  return prisma.$transaction(async (tx) => {
+  let publishCreated = () => {};
+  const created = await prisma.$transaction(async (tx) => {
+    const visibility = await guardProjectCreation(tx, params);
     const project = await tx.project.create({
       data: {
         companyUuid: params.companyUuid,
         name: params.name,
         description: params.description,
         groupUuid: params.groupUuid,
+        visibility,
+        createdByUuid: params.createdByUuid ?? null,
       },
       select: {
         uuid: true,
         name: true,
         description: true,
+        groupUuid: true,
+        visibility: true,
         createdAt: true,
         updatedAt: true,
       },
+    });
+    await initProjectAccess(tx, {
+      companyUuid: params.companyUuid,
+      projectUuid: project.uuid,
+      createdByUuid: params.createdByUuid,
     });
     for (const target of targets) {
       const instance = await tx.agentInstance.upsert({
@@ -234,8 +256,16 @@ export async function createProjectWithAgentCwds(params: {
         },
       });
     }
+    publishCreated = await logProjectCreated(tx, {
+      companyUuid: params.companyUuid,
+      projectUuid: project.uuid,
+      visibility,
+      actor: params.actor,
+    });
     return project;
   });
+  publishCreated();
+  return created;
 }
 
 export async function updateProjectWithAgentCwds(params: {
@@ -245,6 +275,7 @@ export async function updateProjectWithAgentCwds(params: {
   name?: string;
   description?: string | null;
   agentCwds: ProjectAgentCwdMutations;
+  auth?: AuthContext;
 }) {
   await requireProject(params.companyUuid, params.projectUuid);
   const targets = await Promise.all(
@@ -265,6 +296,7 @@ export async function updateProjectWithAgentCwds(params: {
   );
 
   return prisma.$transaction(async (tx) => {
+    await lockProjectManagement(tx, params.companyUuid, params.projectUuid, params.auth);
     const project = await tx.project.update({
       where: { uuid: params.projectUuid },
       data: {

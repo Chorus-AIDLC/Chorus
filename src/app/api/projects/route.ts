@@ -13,6 +13,7 @@ import {
   errors,
 } from "@/lib/api-response";
 import { getAuthContext, isUser, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
+import { accessibleProjectWhere, isProjectVisibility, membershipPrincipal } from "@/services/project-access.service";
 import {
   CwdServiceError,
   createProjectWithAgentCwds,
@@ -28,10 +29,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   if (denied) return denied;
 
   const { page, pageSize, skip, take } = parsePagination(request);
+  const where = await accessibleProjectWhere(auth);
 
   const [projects, total] = await Promise.all([
     prisma.project.findMany({
-      where: { companyUuid: auth.companyUuid },
+      where,
       skip,
       take,
       orderBy: { updatedAt: "desc" },
@@ -40,6 +42,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         name: true,
         description: true,
         groupUuid: true,
+        visibility: true,
         createdAt: true,
         updatedAt: true,
         _count: {
@@ -57,7 +60,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       },
     }),
     prisma.project.count({
-      where: { companyUuid: auth.companyUuid },
+      where,
     }),
   ]);
 
@@ -67,6 +70,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     name: p.name,
     description: p.description,
     groupUuid: p.groupUuid,
+    visibility: p.visibility,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
     counts: {
@@ -101,22 +105,21 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     name: string;
     description?: string;
     groupUuid?: string;
+    visibility?: string;
     agentCwds?: Array<{ agentUuid: string; validationRequestUuid: string }>;
   }>(request);
+
+  if (body.visibility !== undefined && !isProjectVisibility(body.visibility)) {
+    return errors.validationError({ visibility: "Must be 'public' or 'private'" });
+  }
+  const creatorUuid = membershipPrincipal(auth);
+  if (body.visibility === "private" && !creatorUuid) {
+    return errors.badRequest("An agent without an owner cannot create a private project");
+  }
 
   // Validate required fields
   if (!body.name || body.name.trim() === "") {
     return errors.validationError({ name: "Name is required" });
-  }
-
-  // Validate groupUuid belongs to the same company if provided
-  if (body.groupUuid) {
-    const group = await prisma.projectGroup.findFirst({
-      where: { uuid: body.groupUuid, companyUuid: auth.companyUuid },
-    });
-    if (!group) {
-      return errors.notFound("Project Group");
-    }
   }
 
   const agentCwds = body.agentCwds ?? [];
@@ -143,6 +146,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       description: body.description?.trim() || null,
       groupUuid: body.groupUuid || null,
       agentCwds,
+      visibility: body.visibility,
+      createdByUuid: creatorUuid,
+      actor: { type: isAgent(auth) ? "agent" : "user", uuid: auth.actorUuid },
+      auth,
     });
   } catch (error) {
     if (error instanceof CwdServiceError) {
@@ -159,6 +166,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     uuid: project.uuid,
     name: project.name,
     description: project.description,
+    groupUuid: project.groupUuid,
+    visibility: project.visibility,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
   });

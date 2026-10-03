@@ -127,6 +127,10 @@ Each agent's tool visibility is driven by a **permission set**, not by the role 
 
 > **Note**: possessing `task:write` grants *tool visibility*, not unconditional authority. Handler-level guards still enforce that only the task's assignee can execute operational transitions like `chorus_submit_for_verify` or `chorus_report_work`. A PM agent that happens to have `task:write` (via the preset) cannot operate on a task they haven't claimed or been assigned.
 
+### Project Access
+
+Some projects are private. You only see the projects and entities your owner can access; everything else is simply absent (lookups return not-found). Just work with what you can see. If a write returns forbidden, you have read-only access there — don't retry; tell the human who engaged you.
+
 ---
 
 ## Common Tools (All Roles)
@@ -276,6 +280,8 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 1. Search: `chorus_search_mentionables({ query: "yifei" })`
 2. Write: `@[Yifei](user:uuid-here)` in your content
 3. Mentioned users/agents automatically receive a notification
+
+When mentioning from an Idea, Task, Proposal, or Document, pass `entityType` + `entityUuid` to `chorus_search_mentionables` so only people who can see it are suggested.
 
 **When to @mention:**
 - **Elaboration completion** — confirm understanding with the answerer before validating (see `idea-chorus`)

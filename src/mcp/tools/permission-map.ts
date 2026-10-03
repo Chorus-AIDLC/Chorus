@@ -2,17 +2,14 @@
 //
 // Coverage contract for permission-gated MCP tools.
 //
-// This map is the *source of truth for tests* (src/mcp/__tests__/server.test.ts):
-// it lets the suite assert that every tool gated via `registerPermissionedTool`
-// is registered under the expected Permission, and catches drift when someone
-// adds a new tool without a gate. Production tool registration uses
-// `registerPermissionedTool` with its Permission inlined at the call site — the
-// map is intentionally not consulted at runtime so the permission for each tool
-// stays visible next to the handler.
+// Tests (src/mcp/__tests__/server.test.ts) use this map to assert that every
+// `registerPermissionedTool` call uses the expected Permission. Registration
+// keeps that permission inline beside its handler. The central project-access
+// wrapper also derives a default project level from this map, with explicit
+// overrides below for management, public mutations and company-wide tools.
 //
-// Most public-namespaced tools in public.ts (read-only discovery, comments,
-// session, notifications) are NOT gated and are intentionally absent from this
-// map. The exception is `chorus_create_report`, which is public-namespaced
+// Public reads keep their registration surface and are capability-checked at
+// call time by TOOL_READ_PERMISSIONS. The exception is `chorus_create_report`, which is public-namespaced
 // (no `pm_` prefix per add-idea-completion-report Tech Design §"MCP tool
 // contract") but IS gated on `document:write` — it appears here because it
 // goes through `registerPermissionedTool`. Session tools (session.ts) remain
@@ -103,3 +100,96 @@ export const TOOL_PERMISSIONS = {
 } as const satisfies Record<string, Permission>;
 
 export type ManagedToolName = keyof typeof TOOL_PERMISSIONS;
+
+// Call-time gates also apply to public reads: an owner's effective access can
+// never supply an agent capability that the API key does not have.
+export const TOOL_READ_PERMISSIONS: Record<string, Permission> = {
+  chorus_get_project: "project:read",
+  chorus_list_projects: "project:read",
+  chorus_get_project_groups: "project:read",
+  chorus_get_project_group: "project:read",
+  chorus_get_group_dashboard: "project:read",
+  chorus_get_activity: "project:read",
+  chorus_get_idea: "idea:read",
+  chorus_get_ideas: "idea:read",
+  chorus_get_available_ideas: "idea:read",
+  chorus_get_elaboration: "idea:read",
+  chorus_get_task: "task:read",
+  chorus_list_tasks: "task:read",
+  chorus_get_available_tasks: "task:read",
+  chorus_get_unblocked_tasks: "task:read",
+  chorus_get_proposal: "proposal:read",
+  chorus_get_proposals: "proposal:read",
+  chorus_get_document: "document:read",
+  chorus_get_documents: "document:read",
+};
+
+export type ToolProjectAccessPolicy =
+  | { scope: "resource"; required: "viewer" | "editor" | "manage_project" }
+  | { scope: "group" }
+  | { scope: "company" | "filtered" };
+
+// Exceptions are explicit: company tools do not touch project content, while
+// filtered tools delegate the accessible-project intersection to their service.
+// Public tool names alone do not tell us whether a call reads or writes.
+export const TOOL_PROJECT_ACCESS_OVERRIDES = {
+  chorus_get_project: { scope: "resource", required: "viewer" },
+  chorus_get_ideas: { scope: "resource", required: "viewer" },
+  chorus_get_documents: { scope: "resource", required: "viewer" },
+  chorus_get_document: { scope: "resource", required: "viewer" },
+  chorus_get_activity: { scope: "resource", required: "viewer" },
+  chorus_get_task: { scope: "resource", required: "viewer" },
+  chorus_list_tasks: { scope: "resource", required: "viewer" },
+  chorus_get_proposals: { scope: "resource", required: "viewer" },
+  chorus_get_available_ideas: { scope: "resource", required: "viewer" },
+  chorus_get_available_tasks: { scope: "resource", required: "viewer" },
+  chorus_get_idea: { scope: "resource", required: "viewer" },
+  chorus_get_proposal: { scope: "resource", required: "viewer" },
+  chorus_get_unblocked_tasks: { scope: "resource", required: "viewer" },
+  chorus_get_comments: { scope: "resource", required: "viewer" },
+  chorus_get_elaboration: { scope: "resource", required: "viewer" },
+  chorus_search_mentionables: { scope: "resource", required: "viewer" },
+  chorus_add_comment: { scope: "resource", required: "editor" },
+  chorus_answer_elaboration: { scope: "resource", required: "editor" },
+  chorus_create_tasks: { scope: "resource", required: "editor" },
+  chorus_update_task: { scope: "resource", required: "editor" },
+  chorus_get_session: { scope: "resource", required: "viewer" },
+  chorus_close_session: { scope: "resource", required: "editor" },
+  chorus_reopen_session: { scope: "resource", required: "editor" },
+  chorus_session_heartbeat: { scope: "resource", required: "editor" },
+  chorus_session_checkin_task: { scope: "resource", required: "editor" },
+  chorus_session_checkout_task: { scope: "resource", required: "editor" },
+  chorus_admin_move_project_to_group: { scope: "resource", required: "manage_project" },
+  chorus_admin_delete_project_group: { scope: "resource", required: "manage_project" },
+
+  chorus_list_projects: { scope: "filtered" },
+  chorus_search: { scope: "filtered" },
+  chorus_get_my_assignments: { scope: "filtered" },
+  chorus_checkin: { scope: "filtered" },
+  chorus_get_project_groups: { scope: "filtered" },
+  chorus_get_project_group: { scope: "filtered" },
+  chorus_get_group_dashboard: { scope: "filtered" },
+
+  chorus_get_notifications: { scope: "company" },
+  chorus_mark_notification_read: { scope: "company" },
+  chorus_list_sessions: { scope: "company" },
+  chorus_create_session: { scope: "company" },
+  chorus_admin_create_project: { scope: "company" },
+  chorus_admin_create_project_group: { scope: "company" },
+  chorus_admin_update_project_group: { scope: "group" },
+} as const satisfies Record<string, ToolProjectAccessPolicy>;
+
+/** Fail registration when a new tool has no reviewed access policy. */
+export function getToolProjectAccessPolicy(name: string): ToolProjectAccessPolicy {
+  if (Object.hasOwn(TOOL_PROJECT_ACCESS_OVERRIDES, name)) {
+    return TOOL_PROJECT_ACCESS_OVERRIDES[name as keyof typeof TOOL_PROJECT_ACCESS_OVERRIDES];
+  }
+  if (Object.hasOwn(TOOL_PERMISSIONS, name)) {
+    const [resource, action] = TOOL_PERMISSIONS[name as ManagedToolName].split(":");
+    return {
+      scope: "resource",
+      required: action === "read" ? "viewer" : resource === "project" ? "manage_project" : "editor",
+    };
+  }
+  throw new Error(`MCP tool missing explicit project access classification: ${name}`);
+}

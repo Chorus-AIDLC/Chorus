@@ -6,6 +6,11 @@ import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, checkAgentPermission } from "@/lib/auth";
 import { validateProposal } from "@/services/proposal.service";
+import {
+  requireProjectAccess,
+  requireProposalInputsAccess,
+  resolveEntityProjectUuid,
+} from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string; proposalUuid: string }> };
 
@@ -19,7 +24,24 @@ export const GET = withErrorHandler<{ uuid: string; proposalUuid: string }>(
     const denied = checkAgentPermission(auth, "proposal:read");
     if (denied) return denied;
 
-    const { proposalUuid } = await context.params;
+    const { uuid: projectUuid, proposalUuid } = await context.params;
+
+    // Project access first (404 when not visible), then the proposal must
+    // belong to the path project — never validate a proposal from elsewhere.
+    await requireProjectAccess(auth, projectUuid, "viewer");
+    const proposalProjectUuid = await resolveEntityProjectUuid(
+      auth.companyUuid,
+      "proposal",
+      proposalUuid,
+    );
+    if (proposalProjectUuid !== projectUuid) {
+      return errors.notFound("Proposal");
+    }
+
+    // Stored inputs are re-checked on every read: one that became hidden since
+    // creation must not leak its title/status through the E5 issue.
+    await requireProposalInputsAccess(auth, proposalUuid);
+
     const result = await validateProposal(auth.companyUuid, proposalUuid);
     return success(result);
   }

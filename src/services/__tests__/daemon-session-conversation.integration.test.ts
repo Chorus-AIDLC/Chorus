@@ -56,15 +56,22 @@ function makeStore() {
     daemonExecution: [] as Row[],
     notification: [] as Row[],
     notificationPreference: [] as Row[],
+    project: [] as Row[],
+    projectMember: [] as Row[],
+    projectGroup: [] as Row[],
+    projectGroupMember: [] as Row[],
+    comment: [] as Row[],
+    proposal: [] as Row[],
+    document: [] as Row[],
     // The wake bridge reads a task_assigned wake's pin from the Task's agent_instance
     // assignee, and the root Idea's assignee for inheritance. This integration exercises
-    // UN-pinned wakes, so the store has no task/idea/instance rows — the findFirst reads
-    // resolve null → no pin → online-first (the behavior this checkpoint asserts), exactly
-    // as before the pin feature.
+    // UN-pinned wakes: the seeded idea has no assignee and there are no task/instance
+    // rows, so pin reads resolve no pin → online-first.
     task: [] as Row[],
     idea: [] as Row[],
     agentInstance: [] as Row[],
     agent: [] as Row[],
+    user: [] as Row[],
     projectAgentCwdPreference: [] as Row[],
   };
   let autoId = 1;
@@ -77,13 +84,20 @@ function makeStore() {
 type Store = ReturnType<typeof makeStore>;
 
 // Match a row against a Prisma `where` clause. Supports scalar equality, the
-// OR/NOT, `{ not: ... }` / `{ in: [...] }` / `{ startsWith: ... }`, and the relation filters the code
+// AND/OR/NOT, `{ not: ... }` / `{ in: [...] }` / `{ startsWith: ... }`, and the relation filters the code
 // uses (turn.session.*, transcriptMessage.turn.sessionUuid, turn.session{agentUuid,...}).
 // null represents SQL UNKNOWN, so NOT startsWith does not admit a nullable prompt.
 function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: Row): boolean | null {
   let unknown = false;
   for (const [key, cond] of Object.entries(where ?? {})) {
     if (cond === undefined) continue;
+    if (key === "AND") {
+      const branches = Array.isArray(cond) ? cond : [cond];
+      const matches = branches.map((branch) => matchWhere(store, model, row, branch as Row));
+      if (matches.includes(false)) return false;
+      if (matches.includes(null)) unknown = true;
+      continue;
+    }
     if (key === "OR") {
       if (!Array.isArray(cond)) return false;
       const matches = cond.map((branch) => matchWhere(store, model, row, branch as Row));
@@ -102,6 +116,22 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
     }
 
     // Nested relation filters.
+    if (key === "projectUuid_userUuid" && model === "projectMember") {
+      if (!matchWhere(store, model, row, cond as Row)) return false;
+      continue;
+    }
+    if (key === "group" && model === "project") {
+      const group = store.data.projectGroup.find((g) => g.uuid === row.groupUuid);
+      if (!group || !matchWhere(store, "projectGroup", group, cond as Row)) return false;
+      continue;
+    }
+    if (key === "members" && model === "projectGroup") {
+      const some = (cond as Row).some as Row;
+      if (!store.data.projectGroupMember.some((member) =>
+        member.groupUuid === row.uuid && matchWhere(store, "projectGroupMember", member, some) === true,
+      )) return false;
+      continue;
+    }
     if (key === "session" && model === "daemonSessionTurn") {
       const session = store.data.daemonSession.find((s) => s.uuid === row.sessionUuid);
       if (!session) return false;
@@ -347,8 +377,8 @@ function buildPrismaFake(store: Store) {
       // rows are seeded here (un-pinned wakes), so this resolves null → no pin.
       findFirst: vi.fn(async (args: Row) => findFirst("task", args)),
     },
-    // Root-idea inheritance read + instance-place resolution. No rows seeded (un-pinned),
-    // so both resolve null → no inherited pin → online-first.
+    // Root-idea inheritance read + instance-place resolution. The idea has no assignee
+    // and no instance is seeded, so there is no inherited pin → online-first.
     idea: {
       findFirst: vi.fn(async (args: Row) => findFirst("idea", args)),
     },
@@ -357,14 +387,41 @@ function buildPrismaFake(store: Store) {
     },
     // idea 5b8ee573: the autonomous-wake project-owner cwd fallback reads the agent's owner
     // then that owner's project cwd preference. This suite exercises UN-pinned online-first
-    // wakes with no agent/preference rows → both resolve null → online-first, unchanged.
+    // wakes with no preference rows → the owner lookup finds no fixed cwd → online-first.
     agent: {
       findFirst: vi.fn(async (args: Row) => findFirst("agent", args)),
     },
     projectAgentCwdPreference: {
       findFirst: vi.fn(async (args: Row) => findFirst("projectAgentCwdPreference", args)),
     },
+    project: {
+      findFirst: vi.fn(async (args: Row) => findFirst("project", args)),
+      findMany: vi.fn(async (args: Row) => findMany("project", args)),
+    },
+    user: { findFirst: vi.fn(async (args: Row) => findFirst("user", args)) },
+    projectGroup: { findFirst: vi.fn(async (args: Row) => findFirst("projectGroup", args)) },
+    projectMember: {
+      findFirst: vi.fn(async (args: Row) => findFirst("projectMember", args)),
+      findUnique: vi.fn(async (args: Row) => findFirst("projectMember", args)),
+      findMany: vi.fn(async (args: Row) => findMany("projectMember", args)),
+    },
+    projectGroupMember: {
+      findFirst: vi.fn(async (args: Row) => findFirst("projectGroupMember", args)),
+      findMany: vi.fn(async (args: Row) => findMany("projectGroupMember", args)),
+      count: vi.fn(async (args: Row) => count("projectGroupMember", args)),
+    },
+    comment: {
+      findFirst: vi.fn(async (args: Row) => findFirst("comment", args)),
+      findMany: vi.fn(async (args: Row) => findMany("comment", args)),
+    },
+    proposal: {
+      findFirst: vi.fn(async (args: Row) => findFirst("proposal", args)),
+    },
+    document: {
+      findFirst: vi.fn(async (args: Row) => findFirst("document", args)),
+    },
     notification: {
+      findFirst: vi.fn(async (args: Row) => findFirst("notification", args)),
       create: vi.fn(async (args: Row) => {
         const row: Row = {
           id: store.nextId(),
@@ -536,6 +593,15 @@ beforeEach(() => {
     store.data[k].length = 0;
   }
   vi.clearAllMocks();
+  // Keep notification counts and pending-turn delivery on the real access resolver.
+  store.data.project.push({ uuid: PROJECT, companyUuid: COMPANY, visibility: "public", groupUuid: null });
+  store.data.agent.push({
+    uuid: AGENT, companyUuid: COMPANY, ownerUuid: "user-int-0001",
+    roles: ["developer"], permissions: [],
+  });
+  // Pending-turn delivery now resolves the session's current idea project. The
+  // fixture's lineage anchor must exist just as it does in the real database.
+  store.data.idea.push({ uuid: IDEA, companyUuid: COMPANY, projectUuid: PROJECT });
 
   mockGetAuthContext.mockResolvedValue(agentAuth());
   // task → direct idea IDEA; default for anything else null.

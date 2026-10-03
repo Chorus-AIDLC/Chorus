@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
 import { withErrorHandler, parseBody, parsePagination } from "@/lib/api-handler";
 import { success, paginated, errors } from "@/lib/api-response";
 import { getAuthContext, isAgent, isUser, checkAgentPermission, hasPermission } from "@/lib/auth";
-import { projectExists } from "@/services/project.service";
+import { requireEntityAccess, requireProjectAccess } from "@/services/project-access.service";
 import { listProposals, createProposal, type DocumentDraft, type TaskDraft } from "@/services/proposal.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -29,10 +29,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const url = new URL(request.url);
     const statusFilter = url.searchParams.get("status") || undefined;
 
-    // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
-      return errors.notFound("Project");
-    }
+    // Project access (404 when not visible, 403 below required level)
+    await requireProjectAccess(auth, projectUuid, "viewer");
 
     const { proposals, total } = await listProposals({
       companyUuid: auth.companyUuid,
@@ -65,10 +63,8 @@ export const POST = withErrorHandler<{ uuid: string }>(
 
     const { uuid: projectUuid } = await context.params;
 
-    // Validate project exists
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
-      return errors.notFound("Project");
-    }
+    // Project access (404 when not visible, 403 below required level)
+    await requireProjectAccess(auth, projectUuid, "editor");
 
     const body = await parseBody<{
       title: string;
@@ -88,6 +84,12 @@ export const POST = withErrorHandler<{ uuid: string }>(
     }
     if (!body.inputUuids || !Array.isArray(body.inputUuids) || body.inputUuids.length === 0) {
       return errors.validationError({ inputUuids: "Input UUIDs are required" });
+    }
+
+    // Inputs are client-supplied references: each must be readable by the caller
+    // (a hidden private idea/document 404s exactly like a missing one).
+    for (const inputUuid of body.inputUuids) {
+      await requireEntityAccess(auth, body.inputType, inputUuid, "viewer");
     }
 
     // Determine creator type

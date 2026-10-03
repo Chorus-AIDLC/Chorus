@@ -1,4 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Project-access gate (private projects): grant access so these tests exercise
+// the route's own contract. Access decisions are covered in
+// src/app/api/__tests__/entity-routes-access.test.ts.
+vi.mock("@/services/project-access.service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/project-access.service")>();
+  return {
+    ...actual,
+    requireEntityAccess: vi.fn(async () => ({ projectUuid: "project-uuid", accessLevel: "editor" })),
+    requireProjectAccess: vi.fn(async () => ({ accessLevel: "editor" })),
+  };
+});
 import { NextRequest } from "next/server";
 
 // ===== Mocks =====

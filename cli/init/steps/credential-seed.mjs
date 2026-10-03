@@ -94,7 +94,7 @@ function resolveDshHome(env) {
  * its doc-mirror wrapper (packages/chorus-dsh/bin/chorus-mcp-call.mjs) reads the
  * credential keys (CHORUS_URL / CHORUS_API_KEY) from `$DSH_HOME/.env` via node:util
  * `parseEnv` whenever the `chorus` CLI is absent from PATH (e.g. invoked via `npx`
- * rather than the documented `npm install -g @chorus-aidlc/chorus@0.17.0`
+ * rather than the documented `npm install -g @chorus-aidlc/chorus`
  * global-install path). Only a `dsh` selection ever reaches this writer; every
  * other agent gets no .env.
  *

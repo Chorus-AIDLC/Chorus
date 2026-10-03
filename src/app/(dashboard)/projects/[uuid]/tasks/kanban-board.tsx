@@ -31,6 +31,7 @@ import { clientLogger } from "@/lib/logger-client";
 import { TaskDetailPanel } from "./task-detail-panel";
 import { getBatchWorkerCountsAction } from "./session-actions";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
+import { useCanEditProject } from "@/contexts/project-access-context";
 
 interface Task {
   uuid: string;
@@ -124,6 +125,8 @@ function getUnresolvedDeps(task: Task): { uuid: string; title: string; status: s
 
 export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, selectedTaskUuid, onTaskSelect, onPanelClose, proposalUuidFilter }: KanbanBoardProps) {
   const t = useTranslations();
+  // Viewers can browse the board but not drag tasks between columns.
+  const canEdit = useCanEditProject();
   const [tasks, setTasks] = useState<Task[]>(initialTasks);
   const [workerCounts, setWorkerCounts] = useState<Record<string, number>>({});
   const [forceDialogOpen, setForceDialogOpen] = useState(false);
@@ -374,6 +377,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                           key={task.uuid}
                           draggableId={task.uuid}
                           index={index}
+                          isDragDisabled={!canEdit}
                         >
                           {(provided, snapshot) => (
                             <div
@@ -500,7 +504,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                         />
                                       )}
                                     </span>
-                                  ) : task.status === "open" ? (
+                                  ) : task.status === "open" && canEdit ? (
                                     <span className="text-primary">
                                       {t("common.assign")}
                                     </span>

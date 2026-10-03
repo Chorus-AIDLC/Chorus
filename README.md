@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.21.0](https://chorus-ai.dev/blog/chorus-v0.21.0-release/)**: Private projects and project groups provide Viewer, Editor, and Admin access with live permission inheritance. Agent startup and execution failures now include persistent diagnostics in conversations. This release also improves Linux daemon persistence and updates security dependencies.
+
 **[v0.20.0](https://chorus-ai.dev/blog/chorus-v0.20.0-release/)** — Daemon backends now use Codex App Server, bidirectional Claude Code stream-json, and native Pi RPC for protocol-based interruption and execution tracking. New `chorus upgrade` updates npm-global CLI installations; `--plugins` also refreshes configured Claude Code, Codex, Kiro, and Pi integrations.
 
 **[v0.19.1](https://chorus-ai.dev/blog/chorus-v0.19.1-release/)** — Lightweight Research checks factual gaps during Idea and Proposal preparation. Inline evidence citations put sources next to claims, and Tracker can request more research before development starts.
@@ -59,7 +61,7 @@ The labels under each stage are the **permissions** an actor needs there — gra
 Two commands. No database, no Docker, no config files.
 
 ```bash
-npm install -g @chorus-aidlc/chorus@0.20.0
+npm install -g @chorus-aidlc/chorus@0.21.0
 chorus
 ```
 

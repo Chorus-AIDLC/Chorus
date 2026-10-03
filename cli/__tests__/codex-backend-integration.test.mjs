@@ -163,6 +163,7 @@ describe("codex token usage end-to-end (daemon-token-usage): real CodexSpawner â
       reportInterrupt: vi.fn(async () => {}),
       advanceTurn: vi.fn(async (payload) => {
         advanceCalls.push(payload);
+        return { ok: true, data: { turnUuid: "ordinary-turn" } };
       }),
     });
     return { waker, advanceCalls };

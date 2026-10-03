@@ -13,10 +13,13 @@ import {
   createReference,
   updateReference,
   deleteReference,
+  getReference,
   REFERENCE_TARGET_TYPES,
   type ReferenceArtifactResponse,
 } from "@/services/reference-artifact.service";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess } from "@/lib/project-access-action";
+import type { AccessEntityType } from "@/services/project-access.service";
 
 const validTargetTypes = REFERENCE_TARGET_TYPES as readonly string[];
 
@@ -30,6 +33,14 @@ type MutationResult =
 
 type DeleteResult = { success: true } | { success: false; error: string };
 
+// Reference artifacts inherit access from their target (idea/proposal/task).
+// A reference on a project the caller cannot see is reported as missing.
+function asReferenceDenied(denied: { success: false; error: string }) {
+  return denied.error.endsWith("not found")
+    ? { success: false as const, error: "Reference not found" }
+    : denied;
+}
+
 // List references for a proposal/task target (oldest-first, company-scoped).
 export async function listReferencesAction(
   targetType: string,
@@ -42,6 +53,8 @@ export async function listReferencesAction(
   if (!validTargetTypes.includes(targetType)) {
     return { success: false, error: `Invalid target type: ${targetType}` };
   }
+  const denied = await denyUnlessEntityAccess(auth, targetType as AccessEntityType, targetUuid, "viewer");
+  if (denied) return denied;
 
   try {
     const references = await listReferences({
@@ -72,6 +85,13 @@ export async function createReferenceAction(input: {
   if (!validTargetTypes.includes(input.targetType)) {
     return { success: false, error: `Invalid target type: ${input.targetType}` };
   }
+  const denied = await denyUnlessEntityAccess(
+    auth,
+    input.targetType as AccessEntityType,
+    input.targetUuid,
+    "editor",
+  );
+  if (denied) return denied;
 
   try {
     const reference = await createReference({
@@ -105,6 +125,15 @@ export async function updateReferenceAction(input: {
   if (!auth) {
     return { success: false, error: "unauthorized" };
   }
+  const ref = await getReference(auth.companyUuid, input.uuid);
+  if (!ref) return { success: false, error: "Reference not found" };
+  const denied = await denyUnlessEntityAccess(
+    auth,
+    ref.targetType as AccessEntityType,
+    ref.targetUuid,
+    "editor",
+  );
+  if (denied) return asReferenceDenied(denied);
 
   try {
     const reference = await updateReference(auth.companyUuid, input.uuid, {
@@ -127,6 +156,15 @@ export async function deleteReferenceAction(uuid: string): Promise<DeleteResult>
   if (!auth) {
     return { success: false, error: "unauthorized" };
   }
+  const ref = await getReference(auth.companyUuid, uuid);
+  if (!ref) return { success: false, error: "Reference not found" };
+  const denied = await denyUnlessEntityAccess(
+    auth,
+    ref.targetType as AccessEntityType,
+    ref.targetUuid,
+    "editor",
+  );
+  if (denied) return asReferenceDenied(denied);
 
   try {
     await deleteReference(auth.companyUuid, uuid);

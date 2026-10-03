@@ -10,6 +10,7 @@ import { getAuthContext, isUser, isAgent, hasPermission } from "@/lib/auth";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import { getTaskByUuid, claimTask } from "@/services/task.service";
 import { AlreadyClaimedError } from "@/lib/errors";
+import { requireEntityAccess } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -22,6 +23,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     }
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "task", uuid, "editor");
 
     const task = await getTaskByUuid(auth.companyUuid, uuid);
     if (!task) {

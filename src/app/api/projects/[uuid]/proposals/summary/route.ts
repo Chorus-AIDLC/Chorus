@@ -5,7 +5,7 @@ import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, checkAgentPermission } from "@/lib/auth";
-import { projectExists } from "@/services/project.service";
+import { requireProjectAccess } from "@/services/project-access.service";
 import { getProjectProposals } from "@/services/proposal.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -22,10 +22,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
 
     const { uuid: projectUuid } = await context.params;
 
-    // Validate project exists and belongs to company
-    if (!(await projectExists(auth.companyUuid, projectUuid))) {
-      return errors.notFound("Project");
-    }
+    // Project access (404 when not visible, 403 below required level)
+    await requireProjectAccess(auth, projectUuid, "viewer");
 
     const data = await getProjectProposals(auth.companyUuid, projectUuid);
 

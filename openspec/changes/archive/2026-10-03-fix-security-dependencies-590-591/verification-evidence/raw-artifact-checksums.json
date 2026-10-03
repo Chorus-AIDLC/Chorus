@@ -1,0 +1,697 @@
+[
+  {
+    "path": "amd64-pg-fresh-all-startup.log",
+    "bytes": 8478,
+    "sha256": "a7cb884f138cba9c9105d6a6af73baef077d837685ebd0b41f5883acc93ca41c"
+  },
+  {
+    "path": "amd64-pg-fresh-initial-startup.log",
+    "bytes": 6929,
+    "sha256": "d7471e473e1dd0e7a777880082c95cf5e178241278a43c5f26147277975857e3"
+  },
+  {
+    "path": "amd64-pg-fresh-launch.log",
+    "bytes": 66,
+    "sha256": "65b74ff64de91a468ed93102640d3d5f96df0108176051ce298755bab787ece4"
+  },
+  {
+    "path": "amd64-pg-fresh-restart.log",
+    "bytes": 40,
+    "sha256": "7b994dea0fcf30cc0e39ffc69b43c5a6bd77c2ebc7d6cb645e9eb54fc6308460"
+  },
+  {
+    "path": "amd64-pg-fresh-stop.log",
+    "bytes": 40,
+    "sha256": "7b994dea0fcf30cc0e39ffc69b43c5a6bd77c2ebc7d6cb645e9eb54fc6308460"
+  },
+  {
+    "path": "amd64-pg-fresh-tls.log",
+    "bytes": 3,
+    "sha256": "7d673a14a860061d83fb0e5ffb71dd98b03423c70357389d3b33c939ae6f74eb"
+  },
+  {
+    "path": "amd64-pg-upgrade-all-startup.log",
+    "bytes": 2726,
+    "sha256": "fb17f3e7cf4d3a6f694c7e822154b8a6b1863e082deb4b681acb8822c09964c8"
+  },
+  {
+    "path": "amd64-pg-upgrade-initial-startup.log",
+    "bytes": 1175,
+    "sha256": "5e240a5c5a52561f6221a6f6e52188c422bab227417261784a294271f5c78726"
+  },
+  {
+    "path": "amd64-pg-upgrade-launch.log",
+    "bytes": 66,
+    "sha256": "40026581fbad034cc1d2240ea13272921a15f2bd61d04aaf5b3d9a44dd0bf0ec"
+  },
+  {
+    "path": "amd64-pg-upgrade-restart.log",
+    "bytes": 42,
+    "sha256": "1c01c88de80af297918369584b703d1e4f92f312ff872ed2945b32a7796718cc"
+  },
+  {
+    "path": "amd64-pg-upgrade-tls.log",
+    "bytes": 3,
+    "sha256": "7d673a14a860061d83fb0e5ffb71dd98b03423c70357389d3b33c939ae6f74eb"
+  },
+  {
+    "path": "amd64-pglite-fresh-all-startup.log",
+    "bytes": 9592,
+    "sha256": "2e84381b379356a8e299e1747885b1e3e84dbf5065e50cea30916ea2f36bfd14"
+  },
+  {
+    "path": "amd64-pglite-fresh-initial-startup.log",
+    "bytes": 7334,
+    "sha256": "8a808c418ce1320281115cdce68dc3ec3764a3143a324c511bd4005d1dd9b149"
+  },
+  {
+    "path": "amd64-pglite-fresh-launch.log",
+    "bytes": 66,
+    "sha256": "3446b02dde5dc9a6d35bbbf9da2fde808679e5ce9fb2b9bac32d4261b5a48a26"
+  },
+  {
+    "path": "amd64-pglite-fresh-restart.log",
+    "bytes": 44,
+    "sha256": "4e40fcb5a25591465738c7d7e83f7acddd0e3174e7686850ea813498171775f1"
+  },
+  {
+    "path": "amd64-pglite-fresh-stop.log",
+    "bytes": 44,
+    "sha256": "4e40fcb5a25591465738c7d7e83f7acddd0e3174e7686850ea813498171775f1"
+  },
+  {
+    "path": "amd64-pglite-upgrade-all-startup.log",
+    "bytes": 3836,
+    "sha256": "70005704b332db754583fc21753572c80338dfc676ec924ee6a23d78393195ce"
+  },
+  {
+    "path": "amd64-pglite-upgrade-initial-startup.log",
+    "bytes": 1578,
+    "sha256": "95a304af0a85c05dbb6960d3d8361d2149175a2f278b3db03f3b602f084c15ea"
+  },
+  {
+    "path": "amd64-pglite-upgrade-launch.log",
+    "bytes": 66,
+    "sha256": "2e437b3be4e5d561cfa9b4d2008e37c34eb069be1e86d1d0a0639700b02ee2fa"
+  },
+  {
+    "path": "amd64-pglite-upgrade-restart.log",
+    "bytes": 46,
+    "sha256": "537912afb382f3529ec46d71aa56a54f977be76d09ca6eb368730547b4af6a42"
+  },
+  {
+    "path": "arm64-pg-fresh-all-startup.log",
+    "bytes": 8478,
+    "sha256": "c7f5e8f8bc5b8daebd8013717dde0d9c54c15d1f809263f45220e2771d5c8093"
+  },
+  {
+    "path": "arm64-pg-fresh-failure.log",
+    "bytes": 86,
+    "sha256": "f58ebb25ce2c9052946f540d847aa9c781c3db2779bc4e8f590a19a01eabb792"
+  },
+  {
+    "path": "arm64-pg-fresh-initial-startup.log",
+    "bytes": 6928,
+    "sha256": "13468a4b3db9244d50130295af8926559cc1854f66270977a40627dcea0eb58e"
+  },
+  {
+    "path": "arm64-pg-fresh-launch.log",
+    "bytes": 66,
+    "sha256": "4c8657ac2e8a171c07c6eb1be851dc2a8135168da7aa39382af4d31cad53ccb0"
+  },
+  {
+    "path": "arm64-pg-fresh-restart.log",
+    "bytes": 40,
+    "sha256": "c3c783c64d6880686183378f23b328849338648d9e38b4dd2c56c61b1f229382"
+  },
+  {
+    "path": "arm64-pg-fresh-stop.log",
+    "bytes": 40,
+    "sha256": "c3c783c64d6880686183378f23b328849338648d9e38b4dd2c56c61b1f229382"
+  },
+  {
+    "path": "arm64-pg-fresh-tls.log",
+    "bytes": 3,
+    "sha256": "7d673a14a860061d83fb0e5ffb71dd98b03423c70357389d3b33c939ae6f74eb"
+  },
+  {
+    "path": "arm64-pg-upgrade-all-startup.log",
+    "bytes": 2720,
+    "sha256": "614111adb4ce3dea75a6629f831b8edb03201e0cf3bbc48b7fc52890cd2d50ca"
+  },
+  {
+    "path": "arm64-pg-upgrade-initial-startup.log",
+    "bytes": 1172,
+    "sha256": "11e91a71acc376b2802ffdd92dbfcdca4f8cb7b92d2db61667eb3b7a4f8715d5"
+  },
+  {
+    "path": "arm64-pg-upgrade-launch.log",
+    "bytes": 66,
+    "sha256": "2f40ffdd99378d1904ec89aaa7e657782c47e97cefdd8385af84dde8bf4daecc"
+  },
+  {
+    "path": "arm64-pg-upgrade-restart.log",
+    "bytes": 42,
+    "sha256": "f990e3f4904918580a9234f53e209362e4ed33e800121db50963b80124ccf8f5"
+  },
+  {
+    "path": "arm64-pg-upgrade-stop.log",
+    "bytes": 42,
+    "sha256": "f990e3f4904918580a9234f53e209362e4ed33e800121db50963b80124ccf8f5"
+  },
+  {
+    "path": "arm64-pg-upgrade-tls.log",
+    "bytes": 3,
+    "sha256": "7d673a14a860061d83fb0e5ffb71dd98b03423c70357389d3b33c939ae6f74eb"
+  },
+  {
+    "path": "arm64-pglite-fresh-all-startup.log",
+    "bytes": 9670,
+    "sha256": "673dd8f57a9f2d8262845ab263977f4cc8b614ba871b2bffa2637fe2016a72fd"
+  },
+  {
+    "path": "arm64-pglite-fresh-initial-startup.log",
+    "bytes": 7411,
+    "sha256": "12ec5ddb0152325b7b8543812ecd9819ea99580241c58236b0a665aad20bc0f0"
+  },
+  {
+    "path": "arm64-pglite-fresh-launch.log",
+    "bytes": 66,
+    "sha256": "72677e0c237445a0f63b4718a1a08d24607c855398022329aa636c7c692ca4dd"
+  },
+  {
+    "path": "arm64-pglite-fresh-restart.log",
+    "bytes": 44,
+    "sha256": "022c42616516610fc7cc748be713ccec1e6a304c3f648e3d7db9fbbb7ece05d3"
+  },
+  {
+    "path": "arm64-pglite-fresh-stop.log",
+    "bytes": 44,
+    "sha256": "022c42616516610fc7cc748be713ccec1e6a304c3f648e3d7db9fbbb7ece05d3"
+  },
+  {
+    "path": "arm64-pglite-upgrade-all-startup.log",
+    "bytes": 3876,
+    "sha256": "8125ac582a311dffa173e1e0e6259a4e6405d4ecc59e31aee344405323d7f258"
+  },
+  {
+    "path": "arm64-pglite-upgrade-initial-startup.log",
+    "bytes": 1617,
+    "sha256": "41d8c5dd0697fadd91a4fac7a21d3f779422640511c3f71acb7c222b5a2a035c"
+  },
+  {
+    "path": "arm64-pglite-upgrade-launch.log",
+    "bytes": 66,
+    "sha256": "2585c2cf578cb9167ea2b6b0df940378f136c6dd5c33f82a8f06c120635a8b4a"
+  },
+  {
+    "path": "arm64-pglite-upgrade-restart.log",
+    "bytes": 46,
+    "sha256": "2db3c2e9043264ea911bd980dfb6ac3ecc1ca16a469c32b4d550326227060204"
+  },
+  {
+    "path": "arm64-pglite-upgrade-stop.log",
+    "bytes": 46,
+    "sha256": "2db3c2e9043264ea911bd980dfb6ac3ecc1ca16a469c32b4d550326227060204"
+  },
+  {
+    "path": "baseline-build-amd64.log",
+    "bytes": 34264,
+    "sha256": "01fdbfb26f1e5051486e4073f839968f40481e95a1931b861c27cb849bf880f3"
+  },
+  {
+    "path": "baseline-grype.log",
+    "bytes": 106,
+    "sha256": "a560eef8098f340b0c509132960e4a05c9b12b747a2a8c8d249e8042ba060e0e"
+  },
+  {
+    "path": "baseline-pg-amd64-migrate.log",
+    "bytes": 6112,
+    "sha256": "e69debf9bc55df0831d9b7c82378c76d289ba551459707e9d7cee60bfeb2bb6e"
+  },
+  {
+    "path": "baseline-pg-amd64-seed.log",
+    "bytes": 55,
+    "sha256": "12153e4e34d5e8330ee97a137a7155e7962c3dee96208d6871c157effe45b8c4"
+  },
+  {
+    "path": "baseline-pg-arm64-migrate.log",
+    "bytes": 6112,
+    "sha256": "612ed0aa1196a926d7cdcf522f752004584d18c61cbc90d050110787ba4b3391"
+  },
+  {
+    "path": "baseline-pg-arm64-seed.log",
+    "bytes": 55,
+    "sha256": "12153e4e34d5e8330ee97a137a7155e7962c3dee96208d6871c157effe45b8c4"
+  },
+  {
+    "path": "baseline-pglite-amd64-launch.log",
+    "bytes": 66,
+    "sha256": "d8a66a1e88613cc7c18d592bde422f5686791aa06f810d2ce3e947d61902842c"
+  },
+  {
+    "path": "baseline-pglite-amd64-remove.log",
+    "bytes": 39,
+    "sha256": "bbc2544c0f0e62591780cc1ac984f97b03cce6188463cd58724fdceaca17543c"
+  },
+  {
+    "path": "baseline-pglite-amd64-seed.log",
+    "bytes": 18,
+    "sha256": "13483475756d7ed91ea1cdd7126507e5c1d27f0db5d37d358e30e15ba24eca03"
+  },
+  {
+    "path": "baseline-pglite-amd64-startup.log",
+    "bytes": 6956,
+    "sha256": "3b676d78029e230eaf93af715908bf1a64728d2b621d5d4c32e1c68cfc1d30b9"
+  },
+  {
+    "path": "baseline-pglite-amd64-stop.log",
+    "bytes": 39,
+    "sha256": "bbc2544c0f0e62591780cc1ac984f97b03cce6188463cd58724fdceaca17543c"
+  },
+  {
+    "path": "baseline-pglite-arm64-launch.log",
+    "bytes": 66,
+    "sha256": "f3cb95df4246149e217c225fe17c4d70f62461cc68625a2fb93c4513cc450de5"
+  },
+  {
+    "path": "baseline-pglite-arm64-remove.log",
+    "bytes": 39,
+    "sha256": "1088b2b2445da7f6fae84d426d5416b521a4325b6153d408bc027d7a10d35ef8"
+  },
+  {
+    "path": "baseline-pglite-arm64-seed.log",
+    "bytes": 18,
+    "sha256": "13483475756d7ed91ea1cdd7126507e5c1d27f0db5d37d358e30e15ba24eca03"
+  },
+  {
+    "path": "baseline-pglite-arm64-startup.log",
+    "bytes": 6956,
+    "sha256": "d4873312de0a9a475c6b0f2f1604741d652bb51e35c92005b40bac8b6af86295"
+  },
+  {
+    "path": "baseline-pglite-arm64-stop.log",
+    "bytes": 39,
+    "sha256": "1088b2b2445da7f6fae84d426d5416b521a4325b6153d408bc027d7a10d35ef8"
+  },
+  {
+    "path": "baseline-syft.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "browser-recheck-network.log",
+    "bytes": 66,
+    "sha256": "9b00ed57ea0d463e70e00d022875b1073eceee6be6b42ef9dcfe446619e90431"
+  },
+  {
+    "path": "browser-recheck-pg-baseline-migrate.log",
+    "bytes": 6112,
+    "sha256": "e69debf9bc55df0831d9b7c82378c76d289ba551459707e9d7cee60bfeb2bb6e"
+  },
+  {
+    "path": "browser-recheck-pg-baseline-seed.log",
+    "bytes": 55,
+    "sha256": "12153e4e34d5e8330ee97a137a7155e7962c3dee96208d6871c157effe45b8c4"
+  },
+  {
+    "path": "browser-recheck-pg-db.log",
+    "bytes": 17,
+    "sha256": "d8049eebd74ca3de66cd13d8e53f361ca5c7141482f8983ecc22565ee61cea3f"
+  },
+  {
+    "path": "browser-recheck-pg-patched-migrate.log",
+    "bytes": 1175,
+    "sha256": "2807ddbfad7b2304d11f549e5c226f34ca78ec852d50d085565574810ccf437a"
+  },
+  {
+    "path": "browser-recheck-pg-patched-start.log",
+    "bytes": 66,
+    "sha256": "424519ddcb14c1b8cf6e554f3df164b8595d870f62dc937293b7fd568962a486"
+  },
+  {
+    "path": "browser-recheck-pg-start.log",
+    "bytes": 66,
+    "sha256": "e0c56d34dafe45cb393da8d2eeed13d00413b8d5a440ffe15e92d21d1c1dd062"
+  },
+  {
+    "path": "browser-recheck-pglite-baseline-remove.log",
+    "bytes": 41,
+    "sha256": "2bd293982494de2995301b68ba5d762d0fb996565c6ddaab3f531eff39cd0ba2"
+  },
+  {
+    "path": "browser-recheck-pglite-baseline-seed.log",
+    "bytes": 21,
+    "sha256": "7d03d9720017685be17e2f493df76d3c710e5d6b93221f9c6ac12d9735ff2b5c"
+  },
+  {
+    "path": "browser-recheck-pglite-baseline-start.log",
+    "bytes": 66,
+    "sha256": "4c8d56b8b038859026e0d4ebdfcbd3ca305ef10dc479ec901266302ca0163e64"
+  },
+  {
+    "path": "browser-recheck-pglite-baseline-stop.log",
+    "bytes": 41,
+    "sha256": "2bd293982494de2995301b68ba5d762d0fb996565c6ddaab3f531eff39cd0ba2"
+  },
+  {
+    "path": "browser-recheck-pglite-patched-migrate.log",
+    "bytes": 1578,
+    "sha256": "eff6a546afe1340ed1e0ad6e236cb3228497c443a599c8cd82befeda41f07680"
+  },
+  {
+    "path": "browser-recheck-pglite-patched-start.log",
+    "bytes": 66,
+    "sha256": "be34caaf22b816136645abc4da370a4984b28618d9b54b75d0ddcab7e889be13"
+  },
+  {
+    "path": "chorus-security-patched-amd64-pg-fresh-db.log",
+    "bytes": 106,
+    "sha256": "5c33f794dc2e1adb88464066f9ce5c945a510f541de8c098914cd5d4e22a14c6"
+  },
+  {
+    "path": "chorus-security-patched-amd64-pg-upgrade-db.log",
+    "bytes": 106,
+    "sha256": "110fe419a2e279f69064cd9491e322d9b10aa5a1687ec51eabebc9d0d027a13d"
+  },
+  {
+    "path": "chorus-security-patched-amd64-pglite-fresh-db.log",
+    "bytes": 106,
+    "sha256": "5c33f794dc2e1adb88464066f9ce5c945a510f541de8c098914cd5d4e22a14c6"
+  },
+  {
+    "path": "chorus-security-patched-amd64-pglite-upgrade-db.log",
+    "bytes": 106,
+    "sha256": "110fe419a2e279f69064cd9491e322d9b10aa5a1687ec51eabebc9d0d027a13d"
+  },
+  {
+    "path": "chorus-security-patched-arm64-pg-fresh-db.log",
+    "bytes": 106,
+    "sha256": "5c33f794dc2e1adb88464066f9ce5c945a510f541de8c098914cd5d4e22a14c6"
+  },
+  {
+    "path": "chorus-security-patched-arm64-pg-upgrade-db.log",
+    "bytes": 106,
+    "sha256": "110fe419a2e279f69064cd9491e322d9b10aa5a1687ec51eabebc9d0d027a13d"
+  },
+  {
+    "path": "chorus-security-patched-arm64-pglite-fresh-db.log",
+    "bytes": 106,
+    "sha256": "5c33f794dc2e1adb88464066f9ce5c945a510f541de8c098914cd5d4e22a14c6"
+  },
+  {
+    "path": "chorus-security-patched-arm64-pglite-upgrade-db.log",
+    "bytes": 106,
+    "sha256": "110fe419a2e279f69064cd9491e322d9b10aa5a1687ec51eabebc9d0d027a13d"
+  },
+  {
+    "path": "final-audit.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "final-checks/coverage.log",
+    "bytes": 362290,
+    "sha256": "5f43a170e408cad857df98223dae45cf877bae9b9a118deb911ca249213340f0"
+  },
+  {
+    "path": "final-checks/create-database.log",
+    "bytes": 17,
+    "sha256": "d8049eebd74ca3de66cd13d8e53f361ca5c7141482f8983ecc22565ee61cea3f"
+  },
+  {
+    "path": "final-checks/db-push.log",
+    "bytes": 275,
+    "sha256": "724f906b4505d5c8fe8a7553fb930f4dc71fbb119c10c43acf234f843ccedc27"
+  },
+  {
+    "path": "final-checks/lint-after-prisma.log",
+    "bytes": 19186,
+    "sha256": "f1aed8bb11fc800da700afbe66c6c55a8acde2a3d244d8a889f5df400c7c79b5"
+  },
+  {
+    "path": "final-checks/lint.log",
+    "bytes": 19186,
+    "sha256": "f1aed8bb11fc800da700afbe66c6c55a8acde2a3d244d8a889f5df400c7c79b5"
+  },
+  {
+    "path": "final-checks/pg-forward.log",
+    "bytes": 61,
+    "sha256": "37f67c8f51f20e3914fb180768ec776819ab1fad7461de025079e528e7556a43"
+  },
+  {
+    "path": "grype-db-update.log",
+    "bytes": 50,
+    "sha256": "c7b4223d373ec352807b8acc11eb7e7406fdde188ecab4cafe351eec1decfe54"
+  },
+  {
+    "path": "patched-amd64-cli-version.log",
+    "bytes": 877,
+    "sha256": "9593b27554c62017779e168b3b5acdd471b8a828a0d4e7e679f60966ec029252"
+  },
+  {
+    "path": "patched-amd64-grype.log",
+    "bytes": 107,
+    "sha256": "37e8cf215d37131b098fae2f4ee3d688f2fd1d5829fe0c784e1763fb39866777"
+  },
+  {
+    "path": "patched-amd64-image-smoke.log",
+    "bytes": 2373,
+    "sha256": "295cdc0468e6cbb05840c239d73241cbe608909f2a51136dcd8d717cb3b2301d"
+  },
+  {
+    "path": "patched-amd64-syft.log",
+    "bytes": 1,
+    "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  {
+    "path": "patched-arm64-cli-version.log",
+    "bytes": 885,
+    "sha256": "a22f46179c907512cc50f5ced9f380c94dc0dbaae37ad26da68c40a1386bcbdd"
+  },
+  {
+    "path": "patched-arm64-grype.log",
+    "bytes": 107,
+    "sha256": "37e8cf215d37131b098fae2f4ee3d688f2fd1d5829fe0c784e1763fb39866777"
+  },
+  {
+    "path": "patched-arm64-image-smoke.log",
+    "bytes": 2375,
+    "sha256": "55f2fc1b5a8a3bb5a63d7f6e1973f404c7497b8513cb25d2383d6566f2a4b651"
+  },
+  {
+    "path": "patched-arm64-syft.log",
+    "bytes": 1,
+    "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  {
+    "path": "patched-build-amd64.log",
+    "bytes": 34808,
+    "sha256": "0f9c38ff04b20ba8217da114765418e3c6699603f5105068eed1cb9554f22e47"
+  },
+  {
+    "path": "patched-build-arm64.log",
+    "bytes": 40414,
+    "sha256": "75d5be55017098b3fbb334eeb4ce9a40e10fb2e477448cb45fb202a30ae1504e"
+  },
+  {
+    "path": "pglite-browser-stable-screenshot.log",
+    "bytes": 269,
+    "sha256": "279c6d9090b74e52025acb99729312e9cd54cf1aa52032797dc980cea288c680"
+  },
+  {
+    "path": "pglite-browser.log",
+    "bytes": 269,
+    "sha256": "279c6d9090b74e52025acb99729312e9cd54cf1aa52032797dc980cea288c680"
+  },
+  {
+    "path": "postgresql-browser-stable-screenshot.log",
+    "bytes": 269,
+    "sha256": "279c6d9090b74e52025acb99729312e9cd54cf1aa52032797dc980cea288c680"
+  },
+  {
+    "path": "postgresql-browser.log",
+    "bytes": 269,
+    "sha256": "279c6d9090b74e52025acb99729312e9cd54cf1aa52032797dc980cea288c680"
+  },
+  {
+    "path": "task1/before-nanoid5-coverage.log",
+    "bytes": 380301,
+    "sha256": "2fdb4efc8aafaa7cc45ac3bbe95dd9f9688447481254363d154289d64dd9f164"
+  },
+  {
+    "path": "task1/before-nanoid5-frozen-install.log",
+    "bytes": 3118,
+    "sha256": "58788df9c39bc74cf6252389069c909e7914c3910c066de5f5b08d2e21ef5b19"
+  },
+  {
+    "path": "task1/before-nanoid5-lockfile-update.log",
+    "bytes": 3553,
+    "sha256": "03f750362cce40959cbd5e95f956f890518e442bac8441bf73d7076431f96ddf"
+  },
+  {
+    "path": "task1/before-nanoid5-standalone-build.log",
+    "bytes": 21396,
+    "sha256": "c28209c5686b49eebaecf80dcff5925a894d103f6a7569093554b7faea7b6268"
+  },
+  {
+    "path": "task1/before-nanoid5-target-smoke.log",
+    "bytes": 1574,
+    "sha256": "20eb9450e4ff55d63822c680463f9dd84a01421fa78ccfa7aee0c566f398cd9d"
+  },
+  {
+    "path": "task1/coverage.log",
+    "bytes": 369744,
+    "sha256": "8dde94d5f42055344eb79706b52ff0d85e6c14ede0ace959846496f24a28f6d3"
+  },
+  {
+    "path": "task1/db-push.log",
+    "bytes": 277,
+    "sha256": "1b2136fdcdb9041e9943117554817f31fd61ad751fe64031652d3c3f83414e59"
+  },
+  {
+    "path": "task1/frozen-install.log",
+    "bytes": 227,
+    "sha256": "31ae21d72ca23950236a2f1d72bdf913d30060a5b078ef1f545fd4b0c78df5b9"
+  },
+  {
+    "path": "task1/landing-build.log",
+    "bytes": 5478,
+    "sha256": "eaab81c559a4244b1a132e47efd157dc4ff52e8cf3e224f114aca36b5d6f3c54"
+  },
+  {
+    "path": "task1/lint.log",
+    "bytes": 19048,
+    "sha256": "c44a6c549dcb07c7f954d8f9750a3fb696de13a65acb316d70ac300d7a3c38ea"
+  },
+  {
+    "path": "task1/lockfile-update.log",
+    "bytes": 3302,
+    "sha256": "3a8a656d6f6358086aae60946b2a5ecd3fa8f7935d34cb034c7986d81f1820ab"
+  },
+  {
+    "path": "task1/prisma-generate.log",
+    "bytes": 166,
+    "sha256": "3564317f98904bac04ba925be8b5357aafb3d2fc8ae0cd6e76a5f50b1d1430a4"
+  },
+  {
+    "path": "task1/research-integration.log",
+    "bytes": 1835,
+    "sha256": "0b6f7c20a60555d54ef9315a5084ce7ed1eb9e36df0e0fbeb0898800dcc89fa8"
+  },
+  {
+    "path": "task1/standalone-build.log",
+    "bytes": 20396,
+    "sha256": "be7a0afc49715b47aab0f54a5ece89fb05d545e3051f5c046990f67efa00db31"
+  },
+  {
+    "path": "task1/target-smoke.log",
+    "bytes": 1590,
+    "sha256": "a169e534d8475678be859b06792d7b16d35078e3f35f3bae23d376ead0b14950"
+  },
+  {
+    "path": "task1/typecheck.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "task1/vitest.log",
+    "bytes": 263271,
+    "sha256": "6df5a2b5fbaa681ebb47645754f2b0d2e50b24cb2073316a8a100d5cb2aeee67"
+  },
+  {
+    "path": "task2/docker-node-version.log",
+    "bytes": 10,
+    "sha256": "e8ec291fa3f9f22fe7eeceb814bc3634455b84b29f6418b67aec871d69111e3a"
+  },
+  {
+    "path": "task2/frozen-install.log",
+    "bytes": 796,
+    "sha256": "6d85ddf1f53c56e32f4e0e9e0ca9cca2dd9d764944f43b8c531f42767981295d"
+  },
+  {
+    "path": "task2/generate.log",
+    "bytes": 168,
+    "sha256": "7de69c190edba61086692a234cbaf0fd48322dd39f7dda436a6903d087c7f577"
+  },
+  {
+    "path": "task2/helper-lint.log",
+    "bytes": 176,
+    "sha256": "062795f9233cfab88f596ff24d4adfddf6fb426fd7ac40eca72b25894c15dcd9"
+  },
+  {
+    "path": "task2/installed-version.log",
+    "bytes": 8,
+    "sha256": "30732cd90951267a1865ef6925a2be10a88c0a83cfd54bb62a1bae7cf6c7f0cc"
+  },
+  {
+    "path": "task2/lockfile-update.log",
+    "bytes": 3361,
+    "sha256": "f402f255951981ab9b04a9f0c4fdf282b97b32dc7561beeb9804af8394d4fd67"
+  },
+  {
+    "path": "task2/migrate-help.log",
+    "bytes": 599,
+    "sha256": "c8f3b0b6c5b678be7a0d1379c5309f04b53e12ad2aa90601b17e2fa1d12088d9"
+  },
+  {
+    "path": "task2/migrate.log",
+    "bytes": 6524,
+    "sha256": "49ff97e1331cc465b476b61aa7afee1f3df658c9561aba5a0920b8d9d418bccb"
+  },
+  {
+    "path": "task2/push.log",
+    "bytes": 1142,
+    "sha256": "5f71a307485e857793fe0f1620f0bdbaa66038203ce2d130e2c3c300b902c5bf"
+  },
+  {
+    "path": "task2/typecheck.log",
+    "bytes": 1,
+    "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+  },
+  {
+    "path": "task2/version-tests.log",
+    "bytes": 931,
+    "sha256": "da442c3daca3576aec1a1a99da6c4ba57c2901bf4befb4ec752da9141f3270a8"
+  },
+  {
+    "path": "baseline-amd64.sbom.json",
+    "bytes": 1633563,
+    "sha256": "36780a739ab6bd55318d4a597a34c930ebc19c889795fdbe199ff6fa8aec1131"
+  },
+  {
+    "path": "patched-amd64.sbom.json",
+    "bytes": 1779063,
+    "sha256": "e656bf8be341b76c2992fd0d5a7665d6c97e6a090cd9e1e4cfc587233759df53"
+  },
+  {
+    "path": "patched-arm64.sbom.json",
+    "bytes": 1778635,
+    "sha256": "e23687c63298422b78dbfa868a708cab4fc7db8caf13e9cc46f90f6affa60a26"
+  },
+  {
+    "path": "baseline-amd64.grype.json",
+    "bytes": 629947,
+    "sha256": "3adfeed67545a9350141568d193a2d0670d969fd44f64b43169c6a224454283b"
+  },
+  {
+    "path": "patched-amd64.grype.json",
+    "bytes": 338016,
+    "sha256": "0e61755190ff662cbf041ec9973853febe9917d5a00dc65d880dbabf9ec90c88"
+  },
+  {
+    "path": "patched-arm64.grype.json",
+    "bytes": 338024,
+    "sha256": "5f3e7b7abcdd612afccefd8746fd6a3b73176fa5ca4520fef73d0d95fd358564"
+  },
+  {
+    "path": "baseline-audit.json",
+    "bytes": 1224722,
+    "sha256": "62991699bd943995dc348df0191843a9fdb8ffcf77fc5800b27e54b3207f5ab7"
+  },
+  {
+    "path": "final-audit.json",
+    "bytes": 1449472,
+    "sha256": "a9fc13435835612f169863d909422f763144b1b0aa3f930e40edeeabd4e80e1c"
+  }
+]

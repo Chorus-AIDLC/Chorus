@@ -62,6 +62,7 @@ import { getTaskSessionsAction } from "./session-actions";
 import type { TaskSessionInfo } from "@/services/session.service";
 import { formatDateTime } from "@/lib/format-date";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
+import { useCanEditProject } from "@/contexts/project-access-context";
 import { motion } from "framer-motion";
 import { fadeIn } from "@/lib/animation";
 import { PANEL_WIDTH_PX } from "@/app/(dashboard)/projects/[uuid]/dashboard/utils";
@@ -250,6 +251,9 @@ export function TaskDetailPanel({
 }: TaskDetailPanelProps) {
   const t = useTranslations();
   const router = useRouter();
+  // Project Viewers are read-only: hide edit / status / assign / delete /
+  // dependency / criteria-marking affordances (server rejects them anyway).
+  const canEdit = useCanEditProject();
 
   // Track whether the initial slide-in animation has completed
   const [hasAnimated, setHasAnimated] = useState(false);
@@ -781,7 +785,7 @@ export function TaskDetailPanel({
           </div>
 
           <div className="flex items-center gap-2 ml-4">
-            {task && !isEditing && (
+            {task && !isEditing && canEdit && (
               <Button
                 variant="outline"
                 size="sm"
@@ -973,6 +977,7 @@ export function TaskDetailPanel({
                                     {t(`status.${statusI18nKeys[dep.status] || dep.status}`)}
                                   </Badge>
                                 </div>
+                                {canEdit && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -981,6 +986,7 @@ export function TaskDetailPanel({
                                 >
                                   <X className="h-3.5 w-3.5 text-[#9A9A9A] hover:text-[#D32F2F]" />
                                 </Button>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -1011,6 +1017,7 @@ export function TaskDetailPanel({
                                     {t(`status.${statusI18nKeys[dep.status] || dep.status}`)}
                                   </Badge>
                                 </div>
+                                {canEdit && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
@@ -1019,6 +1026,7 @@ export function TaskDetailPanel({
                                 >
                                   <X className="h-3.5 w-3.5 text-[#9A9A9A] hover:text-[#D32F2F]" />
                                 </Button>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -1030,7 +1038,7 @@ export function TaskDetailPanel({
                       )}
 
                       {/* Add Dependency */}
-                      {availableDepsForAdd.length > 0 && (
+                      {canEdit && availableDepsForAdd.length > 0 && (
                         <div className="mt-3">
                           <Select
                             key={dependsOn.length}
@@ -1140,8 +1148,8 @@ export function TaskDetailPanel({
                                   </div>
                                 )}
 
-                                {/* Admin action buttons */}
-                                {item.status === "pending" ? (
+                                {/* Admin action buttons (hidden for Viewers) */}
+                                {!canEdit ? null : item.status === "pending" ? (
                                   <div className="mt-2 flex gap-2">
                                     <Button
                                       size="sm"
@@ -1299,7 +1307,7 @@ export function TaskDetailPanel({
                   )}
                 </Button>
               </>
-            ) : task ? (
+            ) : task && canEdit ? (
               <>
                 {/* Assign button - always available except for done/closed */}
                 {task.status !== "done" && task.status !== "closed" && (

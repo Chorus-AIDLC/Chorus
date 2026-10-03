@@ -10,7 +10,7 @@
 //                      { connectionUuid, sessionId, status, turnUuid?,
 //                        backendSessionId?, entityType?, entityUuid?,
 //                        interruptedReason?, transcriptRelayError?, usage?,
-//                        coalescedCount? }
+//                        coalescedCount?, wakeError? }
 //   transcript       → POST /api/daemon/transcript
 //                      { sessionId, messages: [{ role, text }] }
 //   executionState   → POST /api/daemon/execution-state
@@ -95,7 +95,7 @@ function isRetryableFailure(status) {
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  * }} opts
  * @returns {{
- *   turnAdvance: (p: { sessionId: string, turnUuid?: string|null, backendSessionId?: string|null, status: string, entityType?: string|null, entityUuid?: string|null, coalescedCount?: number }) => Promise<DaemonRestResult>,
+ *   turnAdvance: (p: { sessionId: string, turnUuid?: string|null, backendSessionId?: string|null, status: string, entityType?: string|null, entityUuid?: string|null, coalescedCount?: number, wakeError?: ReturnType<typeof import("./wake-error.mjs").createWakeError>|null }) => Promise<DaemonRestResult>,
  *   transcript: (p: { sessionId: string, messages: Array<{ role: string, text: string }> }) => Promise<DaemonRestResult>,
  *   executionState: (p: { executions: Array<Record<string, unknown>> }) => Promise<DaemonRestResult>,
  *   reportInterrupt: (p: { entityType: string, entityUuid: string, reason: string }) => Promise<DaemonRestResult>,
@@ -212,10 +212,11 @@ export function createDaemonRestClient(opts) {
      * carry `transcriptRelayError` — the daemon-known reason its transcript upload
      * finally failed (fix #444 follow-up), persisted as a turn annotation — and `usage`,
      * the whole normalized per-turn TokenUsage object (daemon-token-usage), persisted as
-     * the turn's usage. Both ride the terminal edge only. Requires the connectionUuid (the
+     * the turn's usage. wakeError carries a bounded startup/execution/protocol diagnostic
+     * only on interrupted crash/invalid_path reports. Requires the connectionUuid (the
      * server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ sessionId, turnUuid, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage, backendSessionId, coalescedCount }) {
+    async turnAdvance({ sessionId, turnUuid, status, entityType, entityUuid, interruptedReason, transcriptRelayError, wakeError, usage, backendSessionId, coalescedCount }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -236,6 +237,8 @@ export function createDaemonRestClient(opts) {
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
         // Only meaningful alongside status=interrupted; never sent otherwise.
         ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
+        ...(status === "interrupted" && ["crash", "invalid_path"].includes(interruptedReason) && wakeError
+          ? { wakeError } : {}),
         // Transcript-relay failure annotation (fix #444 follow-up): only sent when the
         // daemon actually knows the upload failed (a truthy reason on a terminal edge).
         ...(transcriptRelayError ? { transcriptRelayError } : {}),

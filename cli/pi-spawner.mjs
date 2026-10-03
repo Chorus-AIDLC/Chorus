@@ -40,6 +40,7 @@ import { win32 as pathWin32, posix as pathPosix } from "node:path";
 import { parseNdjsonChunk } from "./claude-spawner.mjs";
 import { awaitChildSettled } from "./child-exit.mjs";
 import { registerProcessStopHook } from "./process-stop-hooks.mjs";
+import { createWakeErrorCollector, wakeErrorText } from "./wake-error.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -176,7 +177,7 @@ export class PiRpcChannel {
    *           prompt: string, anchor: string, isNew: boolean, platform?: NodeJS.Platform,
    *           forward?: (obj: any) => void, readdirImpl?: (dir: string) => string[] }} o
    */
-  constructor({ stdin, logger, prompt, anchor, isNew, platform = process.platform, forward, readdirImpl }) {
+  constructor({ stdin, logger, prompt, anchor, isNew, platform = process.platform, forward, readdirImpl, textOptions = {} }) {
     this.stdin = stdin ?? null;
     this.logger = logger;
     this.prompt = prompt;
@@ -199,6 +200,11 @@ export class PiRpcChannel {
     this.failed = false;
     /** True when a protocol stop cut the wake short (before or during the run). */
     this.cancelled = false;
+    this.failureReason = null;
+    this.failureKind = "protocol";
+    this.failureIsFallback = false;
+    this.lastAssistantFailure = null;
+    this.textOptions = textOptions;
   }
 
   /** In-flight protocol stop (shared by repeated stop-hook invocations). */
@@ -238,7 +244,12 @@ export class PiRpcChannel {
   /** Open the exchange: ask for the session state before sending the prompt. */
   start() {
     // A stop that already started (from inside onChild) owns the outcome.
-    if (!this.write({ id: ID_STATE, type: "get_state" }, "get_state") && !this.#stopWork) this.failed = true;
+    if (!this.write({ id: ID_STATE, type: "get_state" }, "get_state") && !this.#stopWork) {
+      this.failed = true;
+      this.failureIsFallback = true;
+      this.failureReason = "Pi initial get_state could not be delivered over stdin";
+      this.#finish();
+    }
   }
 
   /**
@@ -253,7 +264,12 @@ export class PiRpcChannel {
       return;
     }
     this.promptSent = this.write({ id: ID_PROMPT, type: "prompt", message: this.prompt }, "prompt");
-    if (!this.promptSent) this.failed = true;
+    if (!this.promptSent) {
+      this.failed = true;
+      this.failureIsFallback = true;
+      this.failureReason = "Pi prompt could not be delivered over stdin";
+      this.#finish();
+    }
   }
 
   /** Close stdin once; idempotent and never throws. pi exits on EOF. */
@@ -358,8 +374,26 @@ export class PiRpcChannel {
       return true;
     }
     if (type === "agent_start" && this.promptSent) this.agentStarted = true;
+    if (this.promptSent && !this.settled) {
+      // Pi can retry after agent_end; only the last assistant outcome at
+      // agent_settled is authoritative. Tool/extension errors remain nonterminal.
+      const assistant = type === "message_end" ? frame.message
+        : type === "agent_end" && Array.isArray(frame.messages)
+          ? frame.messages.findLast((message) => message?.role === "assistant") : null;
+      if (assistant?.role === "assistant") {
+        this.lastAssistantFailure = ["error", "aborted"].includes(assistant.stopReason)
+          ? wakeErrorText(assistant.errorMessage, this.textOptions) || `Pi assistant ended with ${assistant.stopReason}`
+          : null;
+      }
+    }
     if (type === "agent_settled" && this.promptSent && !this.settled) {
       this.settled = true;
+      if (this.lastAssistantFailure && !this.cancelled) {
+        this.failed = true;
+        this.failureIsFallback = false;
+        this.failureKind = "execution";
+        this.failureReason = this.lastAssistantFailure;
+      }
       this.#finish();
       this.#endAbortWait();
     }
@@ -387,6 +421,8 @@ export class PiRpcChannel {
         }
         this.logger.error(`[Chorus] pi rejected the prompt: ${String(frame.error)}`);
         this.failed = true;
+        this.failureIsFallback = false;
+        this.failureReason = wakeErrorText(frame.error, this.textOptions) || "Pi rejected the prompt without an error reason";
         this.#finish();
         return;
       case ID_IDLE_CHECK:
@@ -472,6 +508,8 @@ export class PiRpcChannel {
 export class PiSpawner {
   /** @param {PiSpawnerOptions} [opts] */
   constructor(opts = {}) {
+    /** Backend source for generic reporting of exceptions before child launch. */
+    this.wakeErrorSource = "pi";
     // pi manages new-vs-resume internally (the `--session-id` anchor is
     // create-or-resume), so the daemon's shared Claude transcript probe is NOT
     // authoritative for pi. The waker then logs the spawner's own isNew instead of
@@ -543,7 +581,18 @@ export class PiSpawner {
    *   `backendSessionId` is the resumable anchor after a spawn; `null` on the
    *   pre-spawn failure paths (no run started, nothing to resume).
    */
-  async wake({ prompt, sessionId, isNew, cwd, onMessage, onChild }) {
+  async wake(params) {
+    const diagnostics = createWakeErrorCollector({ source: this.wakeErrorSource, env: this.env, creds: this.creds });
+    try {
+      return await this.#wake(params, diagnostics);
+    } catch (error) {
+      diagnostics.fail(error, "startup");
+      return { sessionId: params.sessionId || "", backendSessionId: null, exitCode: null,
+        isNew: Boolean(params.isNew), wakeError: diagnostics.build() };
+    }
+  }
+
+  async #wake({ prompt, sessionId, isNew, cwd, onMessage, onChild }, diagnostics) {
     const anchor = typeof sessionId === "string" ? sessionId : "";
     const isNewFlag = Boolean(isNew);
 
@@ -552,12 +601,14 @@ export class PiSpawner {
       // No crash — surface visibly and resolve with a failure result (matches the
       // other spawners' "skipping wake" convention: exitCode null, no throw).
       this.logger.error("[Chorus] cannot locate the `pi` executable on PATH; skipping wake");
-      return { sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag };
+      return { sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag,
+        wakeError: diagnostics.build({ kind: "startup", message: "Cannot locate pi executable; check installation and PATH" }) };
     }
 
     assertConfiguredShimArgs(piPath, this.cliConfig.args, this.platform);
     if (!(await this.checkVersion(piPath))) {
-      return { sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag };
+      return { sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag,
+        wakeError: diagnostics.build({ kind: "startup", message: `Pi version is too old for RPC wakes; need >= ${MIN_PI_VERSION}. Upgrade: ${PI_UPGRADE_COMMAND}` }) };
     }
     const args = [...buildPiArgs({ sessionId: anchor }), ...this.cliConfig.args];
     const { command, argv } = resolveSpawnCommand(piPath, args, this.platform, this.env);
@@ -602,14 +653,17 @@ export class PiSpawner {
         });
       } catch (error) {
         this.logger.error(`[Chorus] failed to spawn pi: ${safeSpawnError(error)}`);
-        resolve({ sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag });
+        resolve({ sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag,
+          wakeError: diagnostics.build({ kind: "startup", message: `Cannot spawn pi: ${safeSpawnError(error)}` }) });
         return;
       }
 
       const channel = new PiRpcChannel({
         stdin: child.stdin, logger: this.logger, prompt, anchor, isNew: isNewFlag,
         platform: this.platform, forward, readdirImpl: this.readdirImpl,
+        textOptions: { env: this.env, creds: this.creds },
       });
+      diagnostics.observeChild(child);
       // Protocol interrupt (design D4): the shared killer calls this instead of
       // SIGINT and then force-cleans within the same deadline if the child remains.
       // Registered before onChild so an interrupt can never see an unhooked child.
@@ -644,6 +698,7 @@ export class PiSpawner {
 
       child.stderr?.setEncoding?.("utf8");
       child.stderr?.on("data", (chunk) => {
+        diagnostics.appendStderr(chunk);
         const text = String(chunk).trim();
         if (text) this.logger.warn(`[Chorus] pi stderr: ${text}`);
       });
@@ -652,7 +707,8 @@ export class PiSpawner {
         this.logger.error(`[Chorus] pi process error: ${safeSpawnError(error)}`);
         channel.markExited();
         unregisterStopHook();
-        resolve({ sessionId: anchor, backendSessionId: anchor || null, exitCode: null, isNew: channel.isNew });
+        resolve({ sessionId: anchor, backendSessionId: anchor || null, exitCode: null, isNew: channel.isNew,
+          wakeError: diagnostics.build({ kind: "startup", message: `Pi process error: ${safeSpawnError(error)}` }) });
       });
 
       // A dead child's stdin must never be written again (late dialog answers).
@@ -671,13 +727,26 @@ export class PiSpawner {
         if (code !== 0) {
           this.logger.warn(`[Chorus] pi exited with code ${code}`);
         }
-        resolve({ sessionId: anchor, backendSessionId: anchor || null, exitCode: code, isNew: channel.isNew });
+        const result = { sessionId: anchor, backendSessionId: anchor || null, exitCode: code, isNew: channel.isNew };
+        if (code !== 0 && !channel.cancelled) {
+          if (channel.failed) {
+            if (channel.failureIsFallback) diagnostics.failFallback(channel.failureReason, channel.failureKind);
+            else diagnostics.fail(channel.failureReason, channel.failureKind);
+          }
+          result.wakeError = diagnostics.build({ exitCode: raw });
+        }
+        resolve(result);
       });
 
       // Guard against an ASYNC stdin error (EPIPE) so it never becomes an
       // uncaughtException that kills the daemon.
       child.stdin?.on?.("error", (err) => {
         this.logger.warn(`[Chorus] pi stdin error (ignored): ${err}`);
+        if (!channel.stdinClosed && !channel.settled && !channel.cancelled && !channel.failed) {
+          channel.failed = true;
+          channel.failureIsFallback = true;
+          channel.failureReason = "Pi prompt/control delivery failed: stdin closed";
+        }
         channel.markStdinUnusable();
       });
 

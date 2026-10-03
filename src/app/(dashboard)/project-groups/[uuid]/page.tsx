@@ -18,6 +18,8 @@ import { ManageProjectGroupDialog } from "@/components/manage-project-group-dial
 import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { getProjectInitials, getProjectIconColor, projectIconStyle } from "@/lib/project-colors";
 import { formatDateTime } from "@/lib/format-date";
+import { ProjectLockIndicator } from "@/components/project-lock-indicator";
+import { GroupActivityLabel } from "@/components/group-activity-label";
 
 // ── Types ──────────────────────────────────────────────────────
 interface GroupDashboardData {
@@ -25,6 +27,12 @@ interface GroupDashboardData {
     uuid: string;
     name: string;
     description: string | null;
+    visibility?: "public" | "private";
+    accessLevel?: "viewer" | "editor" | "admin";
+    explicitRole?: "viewer" | "editor" | "admin" | null;
+    canManage?: boolean;
+    canCreateProject?: boolean;
+    accessInitialized?: boolean;
   };
   stats: {
     projectCount: number;
@@ -37,6 +45,7 @@ interface GroupDashboardData {
   projects: {
     uuid: string;
     name: string;
+    visibility?: string;
     taskCount: number;
     completionRate: number;
   }[];
@@ -75,24 +84,6 @@ function formatRelativeTime(dateStr: string, t: ReturnType<typeof useTranslation
   return formatDateTime(dateStr);
 }
 
-function formatActivityText(activity: GroupDashboardData["recentActivity"][0]): string {
-  const actionPast: Record<string, string> = {
-    created: "created",
-    updated: "updated",
-    approved: "approved",
-    rejected: "rejected",
-    claimed: "claimed",
-    completed: "completed",
-    verified: "verified",
-    submitted: "submitted",
-    assigned: "assigned",
-    status_changed: "updated",
-  };
-  const verb = actionPast[activity.action] ?? activity.action;
-  const target = activity.targetType;
-  return `${target.charAt(0).toUpperCase() + target.slice(1)} ${verb}`;
-}
-
 // ── Component ──────────────────────────────────────────────────
 export default function ProjectGroupDashboardPage() {
   const params = useParams<{ uuid: string }>();
@@ -107,7 +98,10 @@ export default function ProjectGroupDashboardPage() {
 
   const fetchDashboard = async () => {
     try {
-      const res = await authFetch(`/api/project-groups/${params.uuid}/dashboard`);
+      const [res, groupRes] = await Promise.all([
+        authFetch(`/api/project-groups/${params.uuid}/dashboard`),
+        authFetch(`/api/project-groups/${params.uuid}`),
+      ]);
       if (!res.ok) {
         if (res.status === 404) {
           router.push("/projects");
@@ -117,10 +111,12 @@ export default function ProjectGroupDashboardPage() {
         return;
       }
       const json = await res.json();
-      if (json.success) {
-        setData(json.data);
+      const groupJson = await groupRes.json();
+      if (json.success && groupRes.ok && groupJson.success) {
+        setError(null);
+        setData({ ...json.data, group: { ...json.data.group, ...groupJson.data } });
       } else {
-        setError(json.error || t("common.genericError"));
+        setError(t("common.genericError"));
       }
     } catch {
       setError(t("common.genericError"));
@@ -181,42 +177,43 @@ export default function ProjectGroupDashboardPage() {
   ];
 
   return (
-    <div className="flex h-full flex-col gap-6 bg-background p-4 md:p-6 lg:p-8">
+    <div className="flex h-full min-w-0 flex-col gap-6 bg-background p-4 md:p-6 lg:p-8">
       {/* Breadcrumb */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-[12px]">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[12px]">
           <Link href="/projects" className="text-primary hover:underline">
             {t("nav.projects")}
           </Link>
           <span className="text-[#9A9A9A]">/</span>
-          <span className="text-[#9A9A9A]">{group.name}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere] text-[#9A9A9A]">{group.name}</span>
         </div>
       </div>
 
       {/* Title Section */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3.5">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary">
             <Folder className="h-[22px] w-[22px] text-white" />
           </div>
-          <div>
-            <h1 className="text-[24px] font-semibold tracking-tight text-foreground">
-              {group.name}
+          <div className="min-w-0">
+            <h1 className="flex flex-wrap items-center gap-2 text-[24px] font-semibold tracking-tight text-foreground">
+              <span className="min-w-0 [overflow-wrap:anywhere]">{group.name}</span>
+              <ProjectLockIndicator kind="group" visibility={group.visibility} showLabel />
             </h1>
             <p className="text-[13px] text-muted-foreground">
               {t("groupDashboard.subtitle", { count: stats.projectCount })}
             </p>
           </div>
         </div>
-        <Button
+        {(group.canManage || group.explicitRole) && <Button
           variant="outline"
           size="sm"
           onClick={() => setShowManage(true)}
           className="gap-2 rounded-lg border-[#E5E2DC] dark:border-[#2a2a2e] bg-card text-[13px] font-medium text-foreground hover:border-primary hover:bg-card"
         >
           <Settings className="h-3.5 w-3.5 text-muted-foreground" />
-          {t("projectGroups.manageGroup")}
-        </Button>
+          {t(group.canManage ? "projectGroups.manageGroup" : "projectGroups.viewMembers")}
+        </Button>}
       </div>
 
       {/* Stats Overview Row */}
@@ -240,18 +237,18 @@ export default function ProjectGroupDashboardPage() {
       <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row">
         {/* Left: Projects in this group */}
         <div className="flex min-w-0 flex-1 flex-col gap-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-[14px] font-semibold text-foreground">
               {t("groupDashboard.projectsInGroup")}
             </h2>
-            <Button
+            {group.canCreateProject && <Button
               size="sm"
               onClick={() => setShowCreateProject(true)}
               className="gap-1.5 rounded-lg bg-primary text-[12px] font-medium text-white hover:bg-[#B56A42]"
             >
               <Plus className="h-3.5 w-3.5" />
               {t("groupDashboard.newProject")}
-            </Button>
+            </Button>}
           </div>
 
           <div className="flex flex-col gap-2">
@@ -265,16 +262,17 @@ export default function ProjectGroupDashboardPage() {
                     href={`/projects/${project.uuid}/dashboard`}
                   >
                     <div className="flex cursor-pointer items-center justify-between rounded-xl border border-[#E5E2DC] dark:border-[#2a2a2e] bg-card py-3 px-4 transition-all hover:border-primary hover:shadow-sm">
-                      <div className="flex items-center gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
                         <div
                           className="project-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold"
                           style={projectIconStyle(iconColor)}
                         >
                           {initials}
                         </div>
-                        <div>
-                          <p className="text-[13px] font-semibold text-foreground">
-                            {project.name}
+                        <div className="min-w-0">
+                          <p className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-foreground">
+                            <span className="min-w-0 [overflow-wrap:anywhere]">{project.name}</span>
+                            <ProjectLockIndicator visibility={project.visibility} />
                           </p>
                           <p className="text-[11px] text-[#9A9A9A]">
                             {t("groupDashboard.projectStats", {
@@ -284,7 +282,7 @@ export default function ProjectGroupDashboardPage() {
                           </p>
                         </div>
                       </div>
-                      <ChevronRight className="h-4 w-4 text-[#9A9A9A]" />
+                      <ChevronRight className="h-4 w-4 shrink-0 text-[#9A9A9A]" />
                     </div>
                   </Link>
                 );
@@ -329,9 +327,9 @@ export default function ProjectGroupDashboardPage() {
                     />
                     <div className="min-w-0 flex-1">
                       <p className="text-[12px] leading-[1.4] text-foreground">
-                        {formatActivityText(activity)}
+                        <GroupActivityLabel targetType={activity.targetType} action={activity.action} />
                       </p>
-                      <p className="mt-1 text-[11px] text-[#9A9A9A]">
+                      <p className="mt-1 [overflow-wrap:anywhere] text-[11px] text-[#9A9A9A]">
                         {activity.projectName} &middot;{" "}
                         {formatRelativeTime(activity.createdAt, t)}
                       </p>
@@ -355,6 +353,8 @@ export default function ProjectGroupDashboardPage() {
         onOpenChange={setShowCreateProject}
         groupUuid={group.uuid}
         groupName={group.name}
+        groupVisibility={group.visibility}
+        canCreateProject={group.canCreateProject === true}
         onCreated={() => {
           fetchDashboard();
         }}
@@ -369,7 +369,6 @@ export default function ProjectGroupDashboardPage() {
         groupDescription={group.description}
         projectCount={stats.projectCount}
         onUpdated={() => {
-          setShowManage(false);
           fetchDashboard();
         }}
       />

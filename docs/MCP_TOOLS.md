@@ -4,7 +4,7 @@ This document covers all tools provided by the Chorus MCP Server, including tool
 
 ## Overview
 
-Tool visibility is driven by a **fine-grained permission model**: 5 resources (`idea`, `proposal`, `document`, `task`, `project`) × 3 actions (`read`, `write`, `admin`) = **15 permissions**. Each gated tool declares a single **required permission**. Public tools (discover, comment, session) carry no gate and are always available.
+Tool visibility is driven by a **fine-grained permission model**: 5 resources (`idea`, `proposal`, `document`, `task`, `project`) × 3 actions (`read`, `write`, `admin`) = **15 permissions**. Each gated tool declares a single **required permission**. Public tools (discover, comment, session) are always registered; their calls still enforce applicable resource capabilities and project access.
 
 Agents may use a **role preset** (`developer_agent`, `pm_agent`, `admin_agent`) that expands to a fixed permission set, and/or **custom permissions** added on top. The effective permission set is the union of preset + custom. See `src/lib/authz/presets.ts` for the authoritative preset mapping, `src/mcp/tools/permission-map.ts` for the tool → permission map, and [ARCHITECTURE.md §6.3](./ARCHITECTURE.md#63-permission-model) for the conceptual overview.
 
@@ -16,7 +16,7 @@ Agents may use a **role preset** (`developer_agent`, `pm_agent`, `admin_agent`) 
 | `pm_agent` | `*:read` + `idea:write`, `proposal:write`, `document:write`, `task:write`, `project:write` (10 perms) |
 | `admin_agent` | all 15 perms (`*:read` + `*:write` + `*:admin`) |
 
-Read-only tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, session management, `chorus_create_tasks`, `chorus_update_task`) are **public** and available to any agent regardless of preset/permissions — they are listed under "Public Tools" and "Session Tools" below without a Required Permission row.
+Discovery and collaboration tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, session management, `chorus_create_tasks`, `chorus_update_task`) are **public** and registered for every preset — they are listed under "Public Tools" and "Session Tools" below without a Required Permission row. Commenting requires the target resource's `read` capability plus project `editor` access; answering elaboration similarly requires `idea:read` plus project `editor`. Thus `developer_agent` can participate without `idea:write`, `proposal:write`, or `document:write`. Public task creation/update still requires `task:write`, and reads/searches are filtered by resource read capabilities.
 
 > Note: `chorus_create_tasks` and `chorus_update_task` field edits are public because handler-level assignee / authorship guards enforce who can actually mutate state. Operational status transitions (`in_progress`, `to_verify`) still require the caller to be the task's assignee at the service layer — the permission gate is about tool visibility, not operation authorization.
 
@@ -155,6 +155,37 @@ The following tools respect project filtering:
 
 ---
 
+## Project Access
+
+Projects have a `visibility` of `public` (default; existing projects were migrated as public) or `private`. Access is checked **in addition to** the agent's permission bits: an operation succeeds only if the agent has the required permission *and* the required project level.
+
+**Levels**: `viewer` (read-only) < `editor` (read + write) < `admin` (editor + project management).
+
+- **Public projects**: every company user and agent has at least `editor`. `admin` comes from explicit project/group membership, the automatic no-Admin group fallback, or the first-company-user fallback for unmanaged projects without a live group. These fallbacks are computed during reads without new database grants.
+- **Private projects**: access is the maximum of the explicit group role and the local `ProjectMember` role. A Public group's implicit company-wide Editor access does not grant access to its Private children.
+- **Agents are never members themselves** — an agent inherits its **owner's** membership level. Ownerless agents can access public projects only.
+
+**Required level by operation**:
+
+| Operation | Public project | Private project |
+|-----------|----------------|-----------------|
+| Read the project or any of its entities | any company actor | `viewer` |
+| Writes: create / edit / delete / claim / assign / comment / reference / elaborate / propose, incl. **approve/reject proposals and verify tasks** | any company actor | `editor` |
+| Edit settings, move between groups (`chorus_admin_move_project_to_group`), delete project | any company actor | `admin` |
+| Change visibility, manage members | explicit `admin` member | `admin` |
+
+**Error contract**:
+- **No access** (non-member of a private project): the project and all of its ideas, proposals, tasks, documents, comments, references and activity behave as if they do not exist — tools return the same not-found error as for a missing UUID, and list/search/group/assignment/checkin tools silently omit them.
+- **Insufficient level** (e.g. a viewer attempting a write): the tool returns a forbidden error (`Insufficient project access`, or `Only project admins can ...` for management operations). Retrying will not help; the project level must change.
+
+**Assignment and mentions**: in a private project only members (and agents whose owner is a member) can be assigned (`editor` required) or @mentioned. Use `chorus_search_mentionables` with `entityType` + `entityUuid` to get members-only candidates.
+
+**Project groups**: groups have Public/Private visibility and explicit Viewer/Editor/Admin user memberships. Groups without an explicit Admin lazily compute the first company user (earliest createdAt, then lowest id) as automatic Admin without database writes; explicit Admin suppresses this fallback. Member lists label automatic Admin; manual claiming/initialization is not offered. Visibility previews include compact unique-person counts by access/permission effect, rendered without individual identities or per-project change lists. The current confirmation token and authorization checks are unchanged. An explicit group role applies live to every child project, and group Admin controls its children. Private groups never contain Public projects. A user with access only to a child project can see group basics and the accessible child subset, but cannot read the group roster, create projects in the group, or administer it. Membership audit details remain in the protected group audit stream rather than child-project activity. Group deletion, detaching, visibility changes, and access-expanding moves require fresh server previews/confirmation where applicable. Historical notification reads and counts use current project access after membership changes.
+
+Visibility and membership are managed in the web UI (Project Settings → Access) or via REST (`PATCH /api/projects/{uuid}` with `visibility`; `GET/POST /api/projects/{uuid}/members`, `PATCH/DELETE /api/projects/{uuid}/members/{userUuid}`); there are no MCP tools for them. A private project always keeps at least one admin, and switching public → private makes the actor (or the acting agent's owner) an admin.
+
+---
+
 ## Transport (Stateless MCP)
 
 The MCP endpoint at `POST /api/mcp` is **stateless**: each request authenticates via the `Authorization: Bearer cho_…` header and a fresh per-request server instance is built. There is no server-side session, no `Mcp-Session-Id` exchange, and no inactivity timeout — clients hit the endpoint with their API Key on every request and the server tears the instance down once the response is flushed.
@@ -171,7 +202,7 @@ The Agent-level **AgentSession** model (used for swarm-mode observability via `c
 
 Chorus ships **five first-class agent-runtime plugin surfaces** that all speak to this same `/api/mcp` endpoint, plus a runtime-agnostic standalone skill for any other MCP-capable client:
 
-All surfaces are configured with the one-command CLI — install it globally, then run `chorus agents add`: `npm install -g @chorus-aidlc/chorus@0.17.0` then `chorus agents add` (see each CONNECT guide). The legacy per-agent `curl … | bash` installers (`public/install-{codex,opencode,kiro}.sh`, `public/dsh-credentials.sh`) are retired to deprecation stubs that point to `chorus agents add`.
+All surfaces are configured with the one-command CLI — install it globally, then run `chorus agents add`: `npm install -g @chorus-aidlc/chorus` then `chorus agents add` (see each CONNECT guide). The legacy per-agent `curl … | bash` installers (`public/install-{codex,opencode,kiro}.sh`, `public/dsh-credentials.sh`) are retired to deprecation stubs that point to `chorus agents add`.
 
 1. **Claude Code** — `public/chorus-plugin/` (marketplace-installed). See [CONNECT_CLAUDE_CODE.md](./CONNECT_CLAUDE_CODE.md).
 2. **Codex** — `plugins/chorus/`, configured via `chorus agents add`. See [CONNECT_CODEX.md](./CONNECT_CODEX.md).
@@ -251,7 +282,14 @@ Tools available to all Agents.
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
 
-**Output**: Project details JSON
+**Output**: Project details JSON, plus two access fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| visibility | `"public"` \| `"private"` | Project visibility (see [Project Access](#project-access)) |
+| accessLevel | `"viewer"` \| `"editor"` \| `"admin"` | The caller's effective level on this project (for agents: the owner's level). Public projects return at least `"editor"`; `"admin"` only for explicit admin members |
+
+A project the caller cannot see returns the same `Project not found` error as a nonexistent UUID.
 
 ### chorus_get_ideas
 
@@ -553,6 +591,8 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 |-----------|------|----------|-------------|
 | query | string | Yes | Name or keyword to search |
 | limit | number | No | Max results to return (default: 10) |
+| entityType | `"idea"` \| `"task"` \| `"proposal"` \| `"document"` | No | Entity kind for project-scoped candidates; supply with entityUuid |
+| entityUuid | string | No | Entity UUID for project-scoped candidates; supply with entityType |
 
 **Output**:
 ```json
@@ -565,6 +605,9 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 **Permission scoping**:
 - User caller: all company users + own agents
 - Agent caller: all company users + same-owner agents
+- When both `entityType` and `entityUuid` are supplied, the caller must have Viewer access to the entity's actual project. Hidden, missing, and other-company entities return the same not-found error before searching.
+- Entity context also limits candidates to users who can view the project and agents whose owner can view it. Private projects return member users and agents with a member owner, while preserving the existing agent owner scope.
+- Omitting either context parameter keeps the company search behavior above.
 
 ---
 
@@ -1428,7 +1471,7 @@ logical agent without emitting a duplicate `assigned` Activity.
 
 ### chorus_move_idea
 
-**Description**: Move an Idea to a different Project within the same company. Cascade-migrates the Idea itself **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind so no cross-project lineage edge remains), all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Requires `idea:write` permission only — no project-level checks.
+**Description**: Move an Idea to a different Project within the same company. Cascade-migrates the Idea itself **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind so no cross-project lineage edge remains), all linked Proposals in the source project (any status; a proposal in another project that cites a moved Idea stays in its own project), their materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Requires `idea:write` plus Editor access on both the source and the target project (a hidden project reads as not found).
 
 **Required Permission**: `idea:write`
 
@@ -1663,8 +1706,12 @@ Tools gated by one of the `*:admin` permissions or `project:write`. Available to
 |-----------|------|----------|-------------|
 | name | string | Yes | Project name |
 | description | string | No | Project description |
+| groupUuid | string | No | Project group to assign the project to |
+| visibility | `"public"` \| `"private"` | No | Project visibility (default `"public"`). Private projects are visible only to members |
 
-**Output**: Created Project JSON
+The agent's **owner** is recorded as the project creator and becomes its `admin` member (for public and private projects). An agent without an owner cannot create a private project (returns an error).
+
+**Output**: `{ uuid, name, groupUuid }`
 
 ### chorus_admin_approve_proposal
 

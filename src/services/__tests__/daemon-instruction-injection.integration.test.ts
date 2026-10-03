@@ -74,9 +74,17 @@ function makeStore() {
     daemonExecution: [] as Row[],
     notification: [] as Row[],
     agent: [] as Row[],
+    user: [] as Row[],
+    project: [] as Row[],
+    projectMember: [] as Row[],
+    projectGroup: [] as Row[],
+    projectGroupMember: [] as Row[],
+    comment: [] as Row[],
+    proposal: [] as Row[],
+    document: [] as Row[],
     // The wake bridge's pin reader resolves the wake entity's root Idea assignee (and an
-    // agent_instance assignee to its place). These instruction flows are un-pinned, so the
-    // reads resolve null → no pin → online-first / the idea's existing session origin.
+    // agent_instance assignee to its place). The seeded idea has no assignee and there
+    // are no task/instance rows, so these instruction flows have no pin.
     task: [] as Row[],
     idea: [] as Row[],
     agentInstance: [] as Row[],
@@ -91,13 +99,20 @@ function makeStore() {
 type Store = ReturnType<typeof makeStore>;
 
 // Match a row against a Prisma `where` clause. Supports scalar equality, the
-// OR/NOT, `{ not: ... }` / `{ in: [...] }` / `{ startsWith: ... }`, and the relation filters the code
+// AND/OR/NOT, `{ not: ... }` / `{ in: [...] }` / `{ startsWith: ... }`, and the relation filters the code
 // uses (turn.session.*, the owner scope `agent.ownerUuid`).
 // null represents SQL UNKNOWN, so NOT startsWith does not admit a nullable prompt.
 function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: Row): boolean | null {
   let unknown = false;
   for (const [key, cond] of Object.entries(where ?? {})) {
     if (cond === undefined) continue;
+    if (key === "AND") {
+      const branches = Array.isArray(cond) ? cond : [cond];
+      const matches = branches.map((branch) => matchWhere(store, model, row, branch as Row));
+      if (matches.includes(false)) return false;
+      if (matches.includes(null)) unknown = true;
+      continue;
+    }
     if (key === "OR") {
       if (!Array.isArray(cond)) return false;
       const matches = cond.map((branch) => matchWhere(store, model, row, branch as Row));
@@ -116,6 +131,22 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
     }
 
     // Nested relation filters.
+    if (key === "projectUuid_userUuid" && model === "projectMember") {
+      if (!matchWhere(store, model, row, cond as Row)) return false;
+      continue;
+    }
+    if (key === "group" && model === "project") {
+      const group = store.data.projectGroup.find((g) => g.uuid === row.groupUuid);
+      if (!group || !matchWhere(store, "projectGroup", group, cond as Row)) return false;
+      continue;
+    }
+    if (key === "members" && model === "projectGroup") {
+      const some = (cond as Row).some as Row;
+      if (!store.data.projectGroupMember.some((member) =>
+        member.groupUuid === row.uuid && matchWhere(store, "projectGroupMember", member, some) === true,
+      )) return false;
+      continue;
+    }
     if (key === "session" && model === "daemonSessionTurn") {
       const session = store.data.daemonSession.find((s) => s.uuid === row.sessionUuid);
       if (!session) return false;
@@ -332,6 +363,7 @@ function buildPrismaFake(store: Store) {
       findFirst: vi.fn(async (args: Row) => findFirst("agentInstance", args)),
     },
     notification: {
+      findFirst: vi.fn(async (args: Row) => findFirst("notification", args)),
       create: vi.fn(async (args: Row) => {
         const row: Row = {
           id: store.nextId(),
@@ -349,7 +381,34 @@ function buildPrismaFake(store: Store) {
       findMany: vi.fn(async (args: Row) => findMany("notification", args)),
     },
     agent: {
+      findFirst: vi.fn(async (args: Row) => findFirst("agent", args)),
       count: vi.fn(async (args: Row) => count("agent", args)),
+    },
+    project: {
+      findFirst: vi.fn(async (args: Row) => findFirst("project", args)),
+      findMany: vi.fn(async (args: Row) => findMany("project", args)),
+    },
+    user: { findFirst: vi.fn(async (args: Row) => findFirst("user", args)) },
+    projectGroup: { findFirst: vi.fn(async (args: Row) => findFirst("projectGroup", args)) },
+    projectMember: {
+      findFirst: vi.fn(async (args: Row) => findFirst("projectMember", args)),
+      findUnique: vi.fn(async (args: Row) => findFirst("projectMember", args)),
+      findMany: vi.fn(async (args: Row) => findMany("projectMember", args)),
+    },
+    projectGroupMember: {
+      findFirst: vi.fn(async (args: Row) => findFirst("projectGroupMember", args)),
+      findMany: vi.fn(async (args: Row) => findMany("projectGroupMember", args)),
+      count: vi.fn(async (args: Row) => count("projectGroupMember", args)),
+    },
+    comment: {
+      findFirst: vi.fn(async (args: Row) => findFirst("comment", args)),
+      findMany: vi.fn(async (args: Row) => findMany("comment", args)),
+    },
+    proposal: {
+      findFirst: vi.fn(async (args: Row) => findFirst("proposal", args)),
+    },
+    document: {
+      findFirst: vi.fn(async (args: Row) => findFirst("document", args)),
     },
   };
   // advanceTurn claims status transitions inside prisma.$transaction (callback form) and
@@ -445,6 +504,7 @@ const EventRouter = EventRouterRaw as new (opts: any) => {
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ===== Fixtures =====
+const PROJECT = "project-int-0001";
 const IDEA = "idea-int-0001";
 const TASK = "task-int-0001";
 const ORIGIN_CONN = "conn-origin-0001";
@@ -500,6 +560,8 @@ function seedConnections() {
     uuid: AGENT,
     companyUuid: COMPANY,
     ownerUuid: "user-int-0001",
+    roles: ["developer"],
+    permissions: [],
   });
 }
 
@@ -530,6 +592,10 @@ beforeEach(() => {
     store.data[k].length = 0;
   }
   vi.clearAllMocks();
+
+  // Exercise the real access resolver with company-public content and a valid agent.
+  store.data.project.push({ uuid: PROJECT, companyUuid: COMPANY, visibility: "public", groupUuid: null });
+  store.data.idea.push({ uuid: IDEA, companyUuid: COMPANY, projectUuid: PROJECT });
 
   mockGetAuthContext.mockResolvedValue(agentAuth);
   // An idea uuid resolves to ITSELF (identity) so the chokepoint's derived

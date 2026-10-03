@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.21.0] - 2026-10-03
+
+### Added
+
+- **Private projects**: Added public/private visibility and Viewer, Editor, and Admin memberships, with agents inheriting their owner's access and read-only views for Viewers. (#589)
+- **Private project groups**: Added group visibility, live membership inheritance, and access-impact previews for visibility changes and project moves. (#592)
+- **Daemon failure details**: Added persisted error summaries and expandable details for failed agent startup or execution, including turns without replies. (#595)
+
+### Fixed
+
+- **Linux daemon persistence**: Automatically enables systemd lingering so the daemon survives logout and starts at boot, with bounded noninteractive authorization and a `--no-linger` opt-out. (#593)
+- **CLI installation guidance**: Removed outdated fixed-version pins from installation guides and bootstrap commands. (#588)
+- **Dependency security**: Patched application and build dependencies, including Next.js, React, Prisma, PostCSS, Nanoid, and Sharp. (#594)
+- **Docker database migrations**: Derives the production migration CLI version from the matching installed Prisma CLI, client, and PostgreSQL adapter. (#594)
+
+### Plugin
+
+- **Versions**: Upgraded all six plugins and four coordinated npm packages to `0.21.0`.
+
+---
+
 ## [0.20.0] - 2026-09-30
 
 ### Added

@@ -66,7 +66,7 @@ const auth: AgentAuthContext = {
   actorUuid: "agent-1",
   ownerUuid: "owner-1",
   roles: ["admin_agent"],
-  permissions: [],
+  permissions: ["task:read"],
   agentName: "Agent",
 };
 
@@ -400,6 +400,8 @@ describe("MCP collection migration", () => {
 
     expect(services.search.search).toHaveBeenCalledWith({
       companyUuid: "company-1",
+      auth,
+      projectUuids: undefined,
       query: uuid,
       scope: "project",
       scopeUuid: "project-1",

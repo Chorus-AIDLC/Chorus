@@ -51,6 +51,7 @@ import type { ExecutionView } from "../types";
 import type { TurnWithMessagesView } from "@/services/daemon-session.service";
 import { Message } from "./message";
 import { TokenUsageBadge } from "./token-usage-badge";
+import { TurnFailure } from "./turn-failure";
 
 // A coalesced-away turn folded into an absorbing band, paired with its (optional) live
 // execution so the expandable row can deep-link to the related entity. Built by the
@@ -263,6 +264,10 @@ export function TurnBand({
             rendering the instruction twice. Live `transcript_appended` events never
             carry it, so skipping it keeps the GET and live render paths identical. */}
         <div className="mt-3 flex min-w-0 flex-col gap-3">
+          {interrupted &&
+            (turn.interruptedReason === "crash" || turn.interruptedReason === "invalid_path") && (
+              <TurnFailure reason={turn.interruptedReason} wakeError={turn.wakeError} />
+            )}
           {visibleMessages.length > 0 ? (
             visibleMessages.map((m) => (
               <Message key={m.uuid} message={m} agentName={agentName} />

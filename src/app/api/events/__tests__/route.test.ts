@@ -3,11 +3,19 @@ import { NextRequest } from "next/server";
 
 // ===== Mocks =====
 const mockGetAuthContext = vi.fn();
+const mockPrisma = vi.hoisted(() => ({
+  user: { findFirst: vi.fn(async () => null as { uuid: string } | null) },
+  projectGroup: { findMany: vi.fn(async () => [] as { uuid: string }[]) },
+  project: { findMany: vi.fn(async () => [] as { uuid: string }[]) },
+}));
+vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 const mockEventBus = vi.hoisted(() => ({
   on: vi.fn(),
   off: vi.fn(),
   emit: vi.fn(),
+  emitChange: vi.fn(),
+  emitProjectAccessChanged: vi.fn(),
 }));
 
 const mockParseSelfReport = vi.fn();
@@ -68,6 +76,24 @@ vi.mock("@/services/daemon-session.service", () => ({
   reconcileOrphanTurns: (...args: unknown[]) => mockReconcileOrphanTurns(...args),
 }));
 
+// Private-project isolation gate: the route resolves the caller's accessible
+// project set at connect. Default to a set containing the projects these tests
+// emit for (project-access behaviour is covered in route.project-access.test.ts).
+const mockAccessibleProjectUuids = vi.fn();
+vi.mock("@/services/project-access.service", () => ({
+  accessibleProjectUuids: (...args: unknown[]) => mockAccessibleProjectUuids(...args),
+  // Session/execution rows resolve their idea's project; default: the accessible one.
+  resolveEntityProjectUuid: async () => "proj-1",
+  filterExecutionViewsByAccess: async (_a: unknown, rows: unknown[]) => rows,
+  membershipPrincipal: (auth: { type: string; actorUuid: string; ownerUuid?: string }) =>
+    auth.type === "user" ? auth.actorUuid : auth.type === "agent" ? (auth.ownerUuid ?? null) : null,
+}));
+const mockAccessibleGroupUuids = vi.fn();
+vi.mock("@/services/project-group-access.service", () => ({
+  accessibleGroupUuids: (...args: unknown[]) => mockAccessibleGroupUuids(...args),
+  getGroupAccess: vi.fn(async () => ({ group: { uuid: "group-1" } })),
+}));
+
 import { GET } from "@/app/api/events/route";
 
 // ===== Helpers =====
@@ -116,11 +142,15 @@ async function startStream(res: Response) {
  * Microtask-only (no setTimeout) so it works under vi.useFakeTimers().
  */
 async function flush() {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
+  // Session/execution delivery is gated on async project resolution (serial gate).
+  for (let i = 0; i < 25; i++) await Promise.resolve();
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.user.findFirst.mockResolvedValue(null);
+  mockPrisma.projectGroup.findMany.mockResolvedValue([]);
+  mockPrisma.project.findMany.mockResolvedValue([]);
   mockGetAuthContext.mockResolvedValue(agentAuth);
   // Default: behave as a daemon connection.
   mockParseSelfReport.mockReturnValue({ clientType: "claude_code", host: "h" });
@@ -133,6 +163,8 @@ beforeEach(() => {
   mockIsSessionVisibleToCaller.mockResolvedValue(true);
   mockListVisibleRunningSessionActivities.mockResolvedValue([]);
   mockReconcileOrphanTurns.mockResolvedValue(0);
+  mockAccessibleProjectUuids.mockResolvedValue(["proj-1"]);
+  mockAccessibleGroupUuids.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -175,6 +207,126 @@ describe("GET /api/events (change events SSE)", () => {
 
     await vi.advanceTimersByTimeAsync(30_000);
     expect(mockTouchConnection).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes only each connected subscriber when the first user changes, without company broadcasts", async () => {
+    vi.useFakeTimers();
+    mockPrisma.user.findFirst.mockResolvedValue({ uuid: "first-user" });
+    mockAccessibleGroupUuids.mockResolvedValue(["legacy-group"]);
+    const aborts = [new AbortController(), new AbortController()];
+    const streams = await Promise.all(aborts.map(async (abort) =>
+      startStream(await GET(makeRequest("clientType=claude_code", abort.signal))),
+    ));
+    try {
+      mockPrisma.user.findFirst.mockResolvedValue({ uuid: "next-user" });
+      mockAccessibleGroupUuids.mockResolvedValue(["newly-visible-group"]);
+      await vi.advanceTimersByTimeAsync(30_000); await flush();
+      expect(mockPrisma.user.findFirst).toHaveBeenLastCalledWith({
+        where: { companyUuid }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { uuid: true },
+      });
+      expect(mockAccessibleProjectUuids).toHaveBeenCalledTimes(4);
+      expect(mockAccessibleGroupUuids).toHaveBeenCalledTimes(4);
+      for (const stream of streams) {
+        const rows = stream.chunks.filter((chunk) => chunk.startsWith("data: ")).map((chunk) => JSON.parse(chunk.slice(6)));
+        expect(rows).toEqual(["legacy-group", "newly-visible-group"].map((entityUuid) => ({
+          companyUuid, projectUuid: "", entityType: "project_group", entityUuid, action: "updated",
+        })));
+      }
+      expect(mockEventBus.emitChange).not.toHaveBeenCalled();
+      expect(mockEventBus.emitProjectAccessChanged).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(mockAccessibleProjectUuids).toHaveBeenCalledTimes(4);
+      expect(mockAccessibleGroupUuids).toHaveBeenCalledTimes(4);
+    } finally {
+      for (const abort of aborts) abort.abort();
+      for (const stream of streams) { await stream.reader.cancel(); await stream.pump; }
+    }
+  });
+
+  it.each(["lookup", "projects", "groups"] as const)("closes project delivery after heartbeat %s failure and recovers when the first user is unchanged", async (failure) => {
+    vi.useFakeTimers();
+    mockGetAuthContext.mockResolvedValue(userAuth);
+    mockParseSelfReport.mockReturnValue(null);
+    mockRegisterConnection.mockResolvedValue(null);
+    mockPrisma.user.findFirst.mockResolvedValue({ uuid: "first-user" });
+    const abort = new AbortController();
+    const stream = await startStream(await GET(makeRequest("", abort.signal)));
+    const handler = mockEventBus.on.mock.calls.filter(([channel]) => channel === "change").at(-1)![1] as (event: object) => void;
+    const change = (entityUuid: string) => ({
+      companyUuid, projectUuid: "proj-1", entityType: "task", entityUuid, action: "updated",
+    });
+    try {
+      handler(change("before-failure")); await flush();
+      expect(stream.chunks.join("")).toContain("before-failure");
+      if (failure === "lookup") {
+        mockPrisma.user.findFirst.mockRejectedValueOnce(new Error("first-user lookup unavailable"));
+      } else {
+        mockPrisma.user.findFirst.mockResolvedValue({ uuid: "next-user" });
+        if (failure === "projects") mockAccessibleProjectUuids.mockRejectedValueOnce(new Error("project refresh unavailable"));
+        else mockAccessibleGroupUuids.mockRejectedValueOnce(new Error("group refresh unavailable"));
+      }
+      await vi.advanceTimersByTimeAsync(30_000); await flush();
+      handler(change("during-failure")); await flush();
+      expect(stream.chunks.join("")).not.toContain("during-failure");
+      const reads = mockAccessibleProjectUuids.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(30_000); await flush();
+      expect(mockAccessibleProjectUuids.mock.calls.length).toBeGreaterThan(reads);
+      handler(change("after-recovery")); await flush();
+      expect(stream.chunks.join("")).toContain("after-recovery");
+      expect(mockEventBus.emitChange).not.toHaveBeenCalled();
+      expect(mockEventBus.emitProjectAccessChanged).not.toHaveBeenCalled();
+    } finally {
+      abort.abort(); await stream.reader.cancel(); await stream.pump;
+    }
+  });
+
+  it.each(["before recovery", "during recovery"])("never reinstalls a pre-failure private snapshot released %s", async (releaseWhen) => {
+    vi.useFakeTimers();
+    mockGetAuthContext.mockResolvedValue(userAuth);
+    mockParseSelfReport.mockReturnValue(null);
+    mockRegisterConnection.mockResolvedValue(null);
+    mockPrisma.user.findFirst.mockResolvedValue({ uuid: "first-user" });
+    let release!: () => void;
+    const delayed = new Promise<string[]>((resolve) => { release = () => resolve(["proj-1", "new-public"]); });
+    mockAccessibleProjectUuids.mockResolvedValueOnce(["proj-1"]).mockReturnValueOnce(delayed);
+    const abort = new AbortController();
+    const stream = await startStream(await GET(makeRequest("", abort.signal)));
+    const listener = (channel: string) => mockEventBus.on.mock.calls.filter(([name]) => name === channel).at(-1)![1] as (event: object) => void;
+    const change = listener("change");
+    const presence = listener("presence");
+    const notification = listener(`notification:user:${userUuid}`);
+    const activity = listener("session_activity");
+    try {
+      change({ companyUuid, projectUuid: "new-public", entityType: "project", entityUuid: "new-public", action: "created" });
+      await flush();
+      expect(mockAccessibleProjectUuids).toHaveBeenCalledTimes(2);
+      mockPrisma.user.findFirst.mockRejectedValueOnce(new Error("heartbeat lookup failed with snapshot outstanding"));
+      await vi.advanceTimersByTimeAsync(30_000); await flush();
+      change({ companyUuid, projectUuid: "proj-1", entityType: "task", entityUuid: "private-queued-change", action: "updated" });
+      presence({ companyUuid, projectUuid: "proj-1", marker: "private-queued-presence" });
+      notification({ companyUuid, projectUuid: "proj-1", marker: "private-queued-notification" });
+      activity({ companyUuid, directIdeaUuid: "private-idea", agentUuid: actorUuid, agentOwnerUuid: userUuid, type: "session_started", marker: "private-queued-activity" });
+      if (releaseWhen === "before recovery") {
+        release(); await flush();
+        expect(mockAccessibleProjectUuids).toHaveBeenCalledTimes(2);
+        expect(stream.chunks.join("")).not.toContain("private-queued");
+      }
+      mockPrisma.user.findFirst.mockResolvedValue({ uuid: "next-user" });
+      mockAccessibleProjectUuids.mockResolvedValue(["new-public"]);
+      await vi.advanceTimersByTimeAsync(30_000); await flush();
+      if (releaseWhen === "during recovery") { release(); await flush(); }
+      expect(mockAccessibleProjectUuids).toHaveBeenCalledTimes(3);
+      expect(stream.chunks.join("")).not.toContain("private-queued");
+      change({ companyUuid, projectUuid: "proj-1", entityType: "task", entityUuid: "private-after-recovery", action: "updated" });
+      change({ companyUuid, projectUuid: "new-public", entityType: "task", entityUuid: "public-after-recovery", action: "updated" });
+      await flush();
+      expect(stream.chunks.join("")).not.toContain("private-after-recovery");
+      expect(stream.chunks.join("")).toContain("public-after-recovery");
+      expect(mockEventBus.emitChange).not.toHaveBeenCalled();
+      expect(mockEventBus.emitProjectAccessChanged).not.toHaveBeenCalled();
+    } finally {
+      release(); abort.abort(); await stream.reader.cancel(); await stream.pump;
+    }
   });
 
   it("marks disconnected on abort (daemon clientType)", async () => {
@@ -233,7 +385,7 @@ describe("GET /api/events (change events SSE)", () => {
     const { chunks } = await startStream(res);
 
     // The route subscribed a change handler — grab it and exercise the filter.
-    const changeCall = mockEventBus.on.mock.calls.find((c) => c[0] === "change");
+    const changeCall = mockEventBus.on.mock.calls.filter((c) => c[0] === "change").at(-1);
     expect(changeCall).toBeDefined();
     const handler = changeCall![1] as (e: Record<string, unknown>) => void;
 
@@ -252,7 +404,7 @@ describe("GET /api/events (change events SSE)", () => {
   it("drops change events from a different company (multi-tenancy)", async () => {
     const res = await GET(makeRequest("clientType=claude_code"));
     const { chunks } = await startStream(res);
-    const handler = mockEventBus.on.mock.calls.find((c) => c[0] === "change")![1] as (
+    const handler = mockEventBus.on.mock.calls.filter((c) => c[0] === "change").at(-1)![1] as (
       e: Record<string, unknown>,
     ) => void;
 

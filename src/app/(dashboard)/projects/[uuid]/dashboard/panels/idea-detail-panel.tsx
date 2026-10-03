@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
+import { useCanEditProject } from "@/contexts/project-access-context";
 import { ElaborationView } from "./elaboration-view";
 import { ProposalView, type ProposalData } from "./proposal-view";
 import { OverviewTimeline } from "./overview-timeline";
@@ -171,6 +172,9 @@ function IdeaDetailPanelContent({
   onNavigate,
 }: IdeaDetailPanelProps) {
   const t = useTranslations();
+  // Project Viewers are read-only: no actions menu (edit / move / delete /
+  // develop / verify …) and no reassign.
+  const canEdit = useCanEditProject();
   const tTracker = useTranslations("ideaTracker");
   const tStatus = useTranslations("status");
   const tLineage = useTranslations("ideaTracker.lineage");
@@ -628,7 +632,7 @@ function IdeaDetailPanelContent({
 
   const status = idea?.derivedStatus || "todo";
   const isContainer = idea?.isContainer === true;
-  const canAssign = idea !== null;
+  const canAssign = idea !== null && canEdit;
   // Shared enable-predicate (same helper as the /ideas idea-detail panel) so
   // the two surfaces never drift.
   const canVerify = canVerifyElaboration({
@@ -727,7 +731,7 @@ function IdeaDetailPanelContent({
           </div>
 
           <div className="flex shrink-0 items-center gap-2 ml-3">
-            {idea && !isLoading && !isEditing && (
+            {idea && !isLoading && !isEditing && canEdit && (
               <IdeaActionsMenu
                 key={idea.uuid}
                 ideaUuid={idea.uuid}
@@ -881,7 +885,7 @@ function IdeaDetailPanelContent({
                         <Switch
                           id="container-toggle"
                           checked={isContainer}
-                          disabled={isTogglingContainer}
+                          disabled={isTogglingContainer || !canEdit}
                           onCheckedChange={handleToggleContainer}
                           aria-label={tLineage("makeContainer")}
                         />

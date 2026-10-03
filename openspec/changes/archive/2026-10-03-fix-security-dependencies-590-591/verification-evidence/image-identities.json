@@ -1,0 +1,41 @@
+{
+  "baseline-amd64": {
+    "Id": "sha256:5dc866a0752b5def828f9ed6f7bd89efaa5befa43e4513e50c31882763c2ccd3",
+    "RepoTags": [
+      "chorus-security:baseline-amd64"
+    ],
+    "RepoDigests": [
+      "chorus-security@sha256:5dc866a0752b5def828f9ed6f7bd89efaa5befa43e4513e50c31882763c2ccd3"
+    ],
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Created": "2026-10-03T03:54:22.027478725Z",
+    "Size": 1027327642
+  },
+  "patched-amd64": {
+    "Id": "sha256:72dee29b0fb8bfb0436797875db2425617ecdf2863e5ca31f0b3ad855a40f474",
+    "RepoTags": [
+      "chorus-security:patched-amd64"
+    ],
+    "RepoDigests": [
+      "chorus-security@sha256:72dee29b0fb8bfb0436797875db2425617ecdf2863e5ca31f0b3ad855a40f474"
+    ],
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Created": "2026-10-03T04:21:34.00505497Z",
+    "Size": 1117369525
+  },
+  "patched-arm64": {
+    "Id": "sha256:7fe520ac226cb4e4e565a1d5fbbbe4958634ff73baab419eefb2df4819dd7916",
+    "RepoTags": [
+      "chorus-security:patched-arm64"
+    ],
+    "RepoDigests": [
+      "chorus-security@sha256:7fe520ac226cb4e4e565a1d5fbbbe4958634ff73baab419eefb2df4819dd7916"
+    ],
+    "Architecture": "arm64",
+    "Os": "linux",
+    "Created": "2026-10-03T04:40:08.084588927Z",
+    "Size": 1112582893
+  }
+}

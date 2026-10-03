@@ -44,7 +44,7 @@ chorus agents add --agents dsh --dsh-profile <name>
 `chorus agents add` 会校验你的 key，并把 `CHORUS_URL` + `CHORUS_API_KEY` 写入
 `~/.chorus/daemon.json`（权限 0600），如有需要还会把 `@chorus-aidlc/chorus-dsh`
 bundle 加入该 profile。它会从上面的 shell 环境读取这些值，缺失的值在有 TTY 时
-交互式询问。还没安装 `chorus` CLI？先用 `npm install -g @chorus-aidlc/chorus@0.17.0` 全局安装，再运行 `chorus agents add --agents dsh --dsh-profile <name>`。
+交互式询问。还没安装 `chorus` CLI？先用 `npm install -g @chorus-aidlc/chorus` 全局安装，再运行 `chorus agents add --agents dsh --dsh-profile <name>`。
 
 对于 `dsh` agent，`chorus agents add` 还会把 `CHORUS_URL`、`CHORUS_API_KEY` 和
 `CHORUS_AGENT_PROFILE`（该 agent 的 UUID）写入 `$DSH_HOME/.env`（默认 `~/.dsh/.env`，

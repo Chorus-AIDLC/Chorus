@@ -1070,7 +1070,29 @@
     "deleteKeepProjects": "Move {count, plural, one {# project} other {# projects}} to Ungrouped",
     "deleteWithProjects": "Delete {count, plural, one {# project} other {# projects}} permanently",
     "confirmDelete": "Delete Group",
-    "deleting": "Deleting..."
+    "deleting": "Deleting...",
+    "privateBadge": "Private group",
+    "privateTooltip": "Only group members and people with access to a child project can discover this group.",
+    "viewMembers": "View members",
+    "accessReadOnly": "Only group Admins can change visibility or manage members.",
+    "visibilityDescription": "Choose who can discover this group. Private groups contain only private projects.",
+    "publicHint": "Everyone in the company can discover this group. Private projects keep their own access rules.",
+    "privateHint": "Only explicit members and people with access to a child project can discover this group.",
+    "convertPrivateHint": "All public projects in this group will become private. Existing project grants remain and group roles are inherited live.",
+    "convertPublicHint": "Projects keep their current visibility and grants. Opening the group does not publish private projects.",
+    "membersDescription": "Group roles apply live to every child project. Project grants can add privileges above this role.",
+    "loading": "Loading group access...",
+    "loadFailed": "Group access could not be loaded.",
+    "saveFailed": "Group settings could not be saved.",
+    "deleteFailed": "Group could not be deleted. Check your group and project administration rights.",
+    "privateCreateHint": "This group is private. New projects must be private and inherit live group roles; the creator also receives a local Admin grant.",
+    "inheritCreateHint": "New projects default to the group visibility and inherit explicit group roles. Private projects do not inherit company-wide public access.",
+    "lastAdmin": "A group must keep at least one Admin.",
+    "accessForbidden": "You do not have permission to manage group access.",
+    "accessFailed": "Group access could not be updated. Please try again.",
+    "visibilityUpdated": "Group visibility updated",
+    "toPrivateTitle": "Make this group private?",
+    "toPublicTitle": "Make this group public?"
   },
   "groupDashboard": {
     "subtitle": "{count, plural, one {# project} other {# projects}} · Aggregated dashboard",
@@ -1085,7 +1107,40 @@
     "newProject": "New Project",
     "projectStats": "{tasks} tasks · {completion}% complete",
     "noProjects": "No projects in this group yet",
-    "noProjectsHint": "Click \"New Project\" above to add one"
+    "noProjectsHint": "Click \"New Project\" above to add one",
+    "activity": {
+      "created": "{entity} created",
+      "updated": "{entity} updated",
+      "approved": "{entity} approved",
+      "rejected": "{entity} rejected",
+      "claimed": "{entity} claimed",
+      "completed": "{entity} completed",
+      "verified": "{entity} verified",
+      "submitted": "{entity} submitted",
+      "assigned": "{entity} assigned",
+      "deleted": "{entity} deleted",
+      "status_changed": "{entity} status updated",
+      "project_member_added": "Project member added",
+      "project_member_role_changed": "Project member role changed",
+      "project_member_removed": "Project member removed",
+      "project_visibility_changed": "Project visibility changed",
+      "project_group_changed": "Project moved between groups",
+      "group_created": "Group created",
+      "group_updated": "Group settings or visibility updated",
+      "group_deleted": "Group deleted",
+      "group_access_initialized": "Group access initialized",
+      "group_member_removed": "Group member removed",
+      "group_member_changed": "Group member access changed"
+    },
+    "entities": {
+      "task": "Task",
+      "idea": "Idea",
+      "proposal": "Proposal",
+      "document": "Document",
+      "project": "Project",
+      "project_group": "Group",
+      "entity": "Item"
+    }
   },
   "acceptanceCriteria": {
     "title": "Acceptance Criteria",
@@ -1212,7 +1267,7 @@
         "step1Title": "Step 1: Set environment variables",
         "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so Kiro CLI can read them on startup.",
         "step2Title": "Step 2: Run chorus agents add",
-        "step2Tip": "chorus agents add installs the Chorus skills, agents, steering, and the chorus MCP server into ~/.kiro globally, so Chorus is available in every directory. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). To install into a different directory, set KIRO_DIR before running. The first command installs the Chorus CLI globally (pinned to version 0.17.0)."
+        "step2Tip": "chorus agents add installs the Chorus skills, agents, steering, and the chorus MCP server into ~/.kiro globally, so Chorus is available in every directory. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). To install into a different directory, set KIRO_DIR before running. The first command installs the latest Chorus CLI globally."
       },
       "pi": {
         "step1Title": "Step 1: Set environment variables",
@@ -1226,7 +1281,7 @@
         "step2Title": "Step 2: Add the Chorus bundle",
         "step2Tip": "Replace {name} with the dsh profile you want to use. The -w flag is required because a dsh profile is a pnpm workspace root. dsh owns the profile package state and satisfies the bundle's peer plugins.",
         "step3Title": "Step 3: Store credentials",
-        "step3Tip": "chorus agents add validates your key and seeds CHORUS_URL and CHORUS_API_KEY into ~/.chorus/daemon.json (mode 0600), adding the Chorus bundle to the profile if needed. Pass --dsh-profile {name} to match the profile from Step 2; it reads the credentials from your environment (Step 1). The first command installs the Chorus CLI globally (pinned to version 0.17.0).",
+        "step3Tip": "chorus agents add validates your key and seeds CHORUS_URL and CHORUS_API_KEY into ~/.chorus/daemon.json (mode 0600), adding the Chorus bundle to the profile if needed. Pass --dsh-profile {name} to match the profile from Step 2; it reads the credentials from your environment (Step 1). The first command installs the latest Chorus CLI globally.",
         "step4Title": "Step 4: Launch and verify",
         "step4Desc": "Run dsh --profile {name}, then ask it to \"check in to chorus\"."
       },
@@ -1234,7 +1289,7 @@
         "step1Title": "Step 1: Set environment variables",
         "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so the plugin can read them on OpenCode startup.",
         "step2Title": "Step 2: Run chorus agents add",
-        "step2Tip": "chorus agents add idempotently adds \"opencode-chorus\" to the \"plugin\" array in ~/.config/opencode/opencode.json. It does not touch your shell rc; OpenCode installs the plugin via Bun on first launch. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). The first command installs the Chorus CLI globally (pinned to version 0.17.0).",
+        "step2Tip": "chorus agents add idempotently adds \"opencode-chorus\" to the \"plugin\" array in ~/.config/opencode/opencode.json. It does not touch your shell rc; OpenCode installs the plugin via Bun on first launch. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). The first command installs the latest Chorus CLI globally.",
         "troubleshootingTitle": "Troubleshooting",
         "issueCache": {
           "title": "Plugin not loaded",
@@ -1686,6 +1741,13 @@
     "turnMergedCount": "{count, plural, one {merged # event} other {merged # events}}",
     "turnEndedNoReply": "No reply was received from the agent on this turn.",
     "turnRelayFailed": "The agent replied, but the reply could not be uploaded to Chorus:",
+    "turnFailureTitle": "Agent wake failed",
+    "turnFailureCrash": "The agent stopped unexpectedly. No diagnostic details were recorded.",
+    "turnFailureInvalidPath": "The agent could not start because its working directory was unavailable. No diagnostic details were recorded.",
+    "turnFailureShowDetails": "Show error details",
+    "turnFailureHideDetails": "Hide error details",
+    "turnFailureExitCode": "Exit code: {code}",
+    "turnFailureSignal": "Signal: {signal}",
     "privacyNote": "Transcript text is reported by the agent's daemon and may include local file paths. Only the most recent messages are kept.",
     "noAgents": {
       "title": "No conversations yet",
@@ -1892,5 +1954,129 @@
     "agentLabel": "Agent",
     "noAgents": "No eligible agents are available.",
     "requestButton": "Request research"
+  },
+  "projectAccess": {
+    "elaborationReadOnly": "You have view-only access, so you can't answer these questions.",
+    "tabs": {
+      "general": "General",
+      "access": "Access"
+    },
+    "loading": "Loading access settings...",
+    "loadFailed": "Access settings could not be loaded.",
+    "visibility": {
+      "title": "Visibility",
+      "description": "Choose who in your company can see this project.",
+      "public": "Public",
+      "publicHint": "Everyone in the company can view and edit this project.",
+      "private": "Private",
+      "privateHint": "Only listed members and their agents can access this project."
+    },
+    "confirm": {
+      "toPrivateTitle": "Make this project private?",
+      "toPrivateDescription": "Only the members listed on this project (and the agents they own) will keep access. Everyone else in the company will lose access immediately.",
+      "toPublicTitle": "Make this project public?",
+      "toPublicDescription": "Everyone in the company (and their agents) will gain access to this project and all of its ideas, documents, proposals and tasks.",
+      "confirm": "Change visibility"
+    },
+    "visibilityUpdated": "Project visibility updated",
+    "members": {
+      "title": "Members",
+      "description": "Project members and their roles.",
+      "name": "Member",
+      "role": "Role",
+      "actions": "Actions",
+      "empty": "No members yet.",
+      "loading": "Loading members...",
+      "loadFailed": "Members could not be loaded.",
+      "remove": "Remove {name}",
+      "roleFor": "Role for {name}",
+      "unnamed": "Unnamed user",
+      "source": {
+        "project": "Direct project grant",
+        "group": "Inherited from group",
+        "both": "Direct + inherited"
+      },
+      "directRole": "Direct: {role}",
+      "inheritedRole": "Inherited: {role}",
+      "automaticAdmin": "Automatic admin",
+      "explicitAdminHint": "Granting an explicit Admin role replaces automatic Admin access. In groups, this can also change inherited permissions in private child projects.",
+      "effectiveRole": "Effective: {role}"
+    },
+    "roles": {
+      "viewer": "Viewer",
+      "editor": "Editor",
+      "admin": "Admin"
+    },
+    "add": {
+      "title": "Add member",
+      "selectUser": "Select a user",
+      "searchPlaceholder": "Search by name or email...",
+      "typeToSearch": "Type to search company users.",
+      "searching": "Searching...",
+      "noResults": "No matching users.",
+      "role": "Role for new member",
+      "add": "Add",
+      "adding": "Adding..."
+    },
+    "memberAdded": "Member added",
+    "memberRemoved": "Member removed",
+    "roleUpdated": "Member role updated",
+    "readOnlyHint": "Only project admins can change visibility or manage members.",
+    "settingsLockedHint": "This project is private. Only project admins can edit its settings.",
+    "deleteLockedHint": "Only project admins can delete a private project.",
+    "errors": {
+      "lastAdmin": "A project must keep at least one admin.",
+      "alreadyMember": "This user is already a member of the project.",
+      "notInCompany": "This user is not in your company.",
+      "forbidden": "You don't have permission to manage access for this project.",
+      "invalid": "The request was invalid. Please try again.",
+      "generic": "Something went wrong. Please try again."
+    },
+    "privateBadge": "Private project",
+    "privateTooltip": "Private — only project members can see this project",
+    "viewerBanner": "You have view-only access to this project. Ask a project admin for Editor access to make changes.",
+    "commentsReadOnly": "Viewers can read comments but cannot post."
+  },
+  "accessImpact": {
+    "title": "Access impact",
+    "affectedUsers": "{count, plural, one {# user affected.} other {# users affected.}}",
+    "noAffectedUsers": "No users are affected.",
+    "overlapHint": "Each count includes unique users. A user may appear in more than one change type.",
+    "project": {
+      "gainedAccess": "{count, plural, one {# user gains access to this project.} other {# users gain access to this project.}}",
+      "lostAccess": "{count, plural, one {# user loses access to this project.} other {# users lose access to this project.}}",
+      "increasedPermissions": "{count, plural, one {# user receives higher permissions.} other {# users receive higher permissions.}}",
+      "decreasedPermissions": "{count, plural, one {# user receives lower permissions.} other {# users receive lower permissions.}}",
+      "affectedProjects": "{count, plural, one {# project affected.} other {# projects affected.}}"
+    },
+    "group": {
+      "gainedAccess": "{count, plural, one {# user gains access to the group or a child project.} other {# users gain access to the group or a child project.}}",
+      "lostAccess": "{count, plural, one {# user loses access to the group or a child project.} other {# users lose access to the group or a child project.}}",
+      "increasedPermissions": "{count, plural, one {# user receives higher permissions in the group or a child project.} other {# users receive higher permissions in the group or a child project.}}",
+      "decreasedPermissions": "{count, plural, one {# user receives lower permissions in the group or a child project.} other {# users receive lower permissions in the group or a child project.}}",
+      "affectedProjects": "{count, plural, one {# child project affected.} other {# child projects affected.}}"
+    },
+    "loading": "Loading current access changes...",
+    "loadFailed": "The access preview could not be loaded. Check your administration rights and try again.",
+    "retry": "Retry preview",
+    "confirmationHint": "Confirm these current changes. If access changes before saving, review a new preview.",
+    "stale": "Access changed. Review the refreshed preview before confirming again.",
+    "moveFailed": "Movement failed. Source and target administration may be required. Review a new preview before retrying.",
+    "company": {
+      "opened": "Company access opens for this project.",
+      "closed": "Company access closes; explicit grants determine access.",
+      "unchanged": "Company access is unchanged."
+    },
+    "roles": {
+      "none": "No access",
+      "viewer": "Viewer",
+      "editor": "Editor",
+      "admin": "Admin"
+    },
+    "groupCompany": {
+      "opened": "Company users can discover the group. Private child projects remain private.",
+      "closed": "Group discovery becomes restricted to explicit members and project-only visitors.",
+      "unchanged": "Group discovery is unchanged."
+    }
   }
 }

@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isAgent, hasPermission, checkAgentPermission } from "@/lib/auth";
-import { getProjectByUuid } from "@/services/project.service";
+import { requireProjectAccess } from "@/services/project-access.service";
 import { getAvailableItems } from "@/services/assignment.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
@@ -23,11 +23,8 @@ export const GET = withErrorHandler<{ uuid: string }>(
 
     const { uuid: projectUuid } = await context.params;
 
-    // Find project
-    const project = await getProjectByUuid(auth.companyUuid, projectUuid);
-    if (!project) {
-      return errors.notFound("Project");
-    }
+    // Project access (404 when not visible to the caller)
+    const project = await requireProjectAccess(auth, projectUuid, "viewer");
 
     // Return different content based on permission
     // Agent with idea:write can claim Ideas; task:write for Tasks
@@ -39,7 +36,9 @@ export const GET = withErrorHandler<{ uuid: string }>(
       auth.companyUuid,
       projectUuid,
       canClaimIdeas,
-      canClaimTasks
+      canClaimTasks,
+      undefined,
+      auth
     );
 
     return success({

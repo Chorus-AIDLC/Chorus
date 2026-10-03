@@ -43,6 +43,7 @@ import { CreateProjectGroupDialog } from "@/components/create-project-group-dial
 import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { getProjectInitials, getProjectIconColor, projectIconStyle } from "@/lib/project-colors";
 import { useProjectQuickAccess } from "@/contexts/project-quick-access-context";
+import { ProjectLockIndicator } from "@/components/project-lock-indicator";
 import { readExpandedGroups, writeExpandedGroups } from "./group-expansion-preference";
 
 // Types
@@ -51,6 +52,7 @@ interface ProjectData {
   name: string;
   description: string | null;
   groupUuid: string | null;
+  visibility?: string;
   createdAt: string;
   updatedAt: string;
   counts: {
@@ -69,6 +71,9 @@ interface ProjectGroupData {
   projectCount: number;
   createdAt: string;
   updatedAt: string;
+  visibility?: "public" | "private";
+  canManage?: boolean;
+  canCreateProject?: boolean;
 }
 
 // Progress colors. `bar` is the (theme-invariant) saturated indicator fill.
@@ -195,26 +200,33 @@ function ProjectGridCard({ project }: { project: ProjectData }) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-[#E5E2DC] dark:border-[#2a2a2e] bg-card p-4 transition-colors hover:bg-secondary">
       {/* Header */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-start gap-2.5">
         <div
           className="project-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
           style={projectIconStyle(iconColor)}
         >
           {initials}
         </div>
-        <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
-          {project.name}
-        </span>
-        {isEmpty && (
-          <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
-            {t("projects.empty")}
-          </Badge>
-        )}
-        {isComplete && (
-          <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] dark:bg-[#12291f] px-1.5 py-0 text-[10px] font-medium text-[#065F46] dark:text-[#4FD1A0]">
-            {t("projects.complete")}
-          </Badge>
-        )}
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-semibold text-foreground">
+            {project.name}
+          </span>
+          {(project.visibility === "private" || isEmpty || isComplete) && (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <ProjectLockIndicator visibility={project.visibility} showLabel />
+              {isEmpty && (
+                <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
+                  {t("projects.empty")}
+                </Badge>
+              )}
+              {isComplete && (
+                <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] dark:bg-[#12291f] px-1.5 py-0 text-[10px] font-medium text-[#065F46] dark:text-[#4FD1A0]">
+                  {t("projects.complete")}
+                </Badge>
+              )}
+            </div>
+          )}
+        </div>
         <div className="ml-auto -mr-1 shrink-0">
           <ProjectPinToggle project={project} />
         </div>
@@ -269,19 +281,24 @@ function ProjectListRow({ project, showDivider = true }: { project: ProjectData;
           {initials}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-[13px] font-semibold text-foreground">
+          <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-2">
+            <span className="min-w-0 truncate text-[13px] font-semibold text-foreground">
               {project.name}
             </span>
-            {isEmpty && (
-              <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
-                {t("projects.empty")}
-              </Badge>
-            )}
-            {isComplete && (
-              <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] dark:bg-[#12291f] px-1.5 py-0 text-[10px] font-medium text-[#065F46] dark:text-[#4FD1A0]">
-                {t("projects.complete")}
-              </Badge>
+            {(project.visibility === "private" || isEmpty || isComplete) && (
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                <ProjectLockIndicator visibility={project.visibility} showLabel />
+                {isEmpty && (
+                  <Badge variant="outline" className="shrink-0 border-0 bg-[#FEF3C7] dark:bg-[#33270f] px-1.5 py-0 text-[10px] font-medium text-[#92400E] dark:text-[#E0A34E]">
+                    {t("projects.empty")}
+                  </Badge>
+                )}
+                {isComplete && (
+                  <Badge variant="outline" className="shrink-0 border-0 bg-[#D1FAE5] dark:bg-[#12291f] px-1.5 py-0 text-[10px] font-medium text-[#065F46] dark:text-[#4FD1A0]">
+                    {t("projects.complete")}
+                  </Badge>
+                )}
+              </div>
             )}
           </div>
           {/* Desktop: stats below name */}
@@ -374,15 +391,16 @@ function GroupSection({
             >
               {/* Group Header */}
               <div className="flex items-center justify-between gap-2 px-4 py-2.5 md:px-6 md:py-3">
-                <CollapsibleTrigger className="flex flex-1 cursor-pointer items-center gap-2.5 text-left md:gap-3">
+                <CollapsibleTrigger className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left md:gap-3">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/[0.08] md:h-9 md:w-9">
                     <Folder className="h-4 w-4 text-primary" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 md:gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5 md:gap-2">
                       <h2 className="truncate text-sm font-semibold text-foreground md:text-base">
                         {group.name}
                       </h2>
+                      <ProjectLockIndicator kind="group" visibility={group.visibility} />
                       <Badge
                         variant="secondary"
                         className="shrink-0 border-0 bg-[#F0EDE8] dark:bg-[#1f1e1c] text-[10px] font-medium text-muted-foreground md:text-[11px]"
@@ -402,7 +420,7 @@ function GroupSection({
                   </div>
                 </CollapsibleTrigger>
                 <div className="flex items-center gap-1 md:gap-2">
-                  <Button
+                  {group.canCreateProject && <Button
                     variant="ghost"
                     size="icon-sm"
                     className="order-1 shrink-0 text-[#9A9A9A] hover:text-muted-foreground md:hidden"
@@ -410,18 +428,19 @@ function GroupSection({
                     aria-label={t("projects.newProject")}
                   >
                     <Plus className="h-4 w-4" />
-                  </Button>
-                  <Link href={`/project-groups/${group.uuid}`} className="order-3 hidden md:order-2 md:block">
+                  </Button>}
+                  <Link href={`/project-groups/${group.uuid}`} className="order-3 shrink-0 md:order-2">
                     <Button
                       variant="ghost"
                       size="sm"
                       className="text-xs text-primary hover:text-[#B56A42]"
+                      aria-label={t("projectGroups.viewDashboard")}
                     >
-                      {t("projectGroups.viewDashboard")}
-                      <ArrowRight className="ml-1 h-3 w-3" />
+                      <span className="hidden md:inline">{t("projectGroups.viewDashboard")}</span>
+                      <ArrowRight className="h-3 w-3 md:ml-1" />
                     </Button>
                   </Link>
-                  <Button
+                  {group.canCreateProject && <Button
                     variant="outline"
                     size="sm"
                     className="order-3 hidden border-[#E5E2DC] dark:border-[#2a2a2e] text-xs md:order-2 md:flex"
@@ -429,7 +448,7 @@ function GroupSection({
                   >
                     <Plus className="mr-1 h-3 w-3" />
                     {t("projects.newProject")}
-                  </Button>
+                  </Button>}
                   <CollapsibleTrigger className="order-2 flex shrink-0 cursor-pointer items-center md:order-1">
                     {open ? (
                       <ChevronDown className="h-3.5 w-3.5 text-[#9A9A9A] md:h-4 md:w-4" />
@@ -802,16 +821,16 @@ export default function ProjectsPage() {
     });
   }
 
-  async function handleConfirmMove() {
+  async function handleConfirmMove(confirmationToken: string) {
     if (!pendingMove) return;
     const res = await fetch(`/api/projects/${pendingMove.projectUuid}/group`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ groupUuid: pendingMove.targetGroupUuid }),
+      body: JSON.stringify({ groupUuid: pendingMove.targetGroupUuid, confirmationToken }),
     });
     const json = await res.json();
     if (!json.success) {
-      throw new Error(json.error || t("projectGroups.moveFailed"));
+      throw new Error(t("projectGroups.moveFailed"));
     }
     // Refresh data
     await fetchData();
@@ -1066,6 +1085,8 @@ export default function ProjectsPage() {
 
       {/* Move confirmation dialog */}
       <MoveProjectConfirmDialog
+        projectUuid={pendingMove?.projectUuid ?? ""}
+        targetGroupUuid={pendingMove?.targetGroupUuid ?? null}
         open={pendingMove !== null}
         onOpenChange={(open) => {
           if (!open) setPendingMove(null);
@@ -1094,6 +1115,8 @@ export default function ProjectsPage() {
         }}
         groupUuid={createProjectTarget?.groupUuid ?? null}
         groupName={createProjectTarget?.groupName ?? ""}
+        groupVisibility={groups.find((group) => group.uuid === createProjectTarget?.groupUuid)?.visibility}
+        canCreateProject={!createProjectTarget?.groupUuid || groups.find((group) => group.uuid === createProjectTarget.groupUuid)?.canCreateProject === true}
         onCreated={() => {
           fetchData();
         }}

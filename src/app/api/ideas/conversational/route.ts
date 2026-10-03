@@ -14,7 +14,8 @@
 // Auth posture mirrors the ad-hoc daemon-session route: any valid auth context, no MCP
 // tool, no new permission bit — visibility is enforced by the service's owner/self +
 // company scope. Typed errors → status: unowned agent / foreign or absent connection /
-// foreign project → 404 (non-disclosure); offline or instance-less connection → 409;
+// foreign project, or a private project the caller cannot edit (project access is
+// enforced in the service and surfaces as ProjectNotVisibleError) → 404 (non-disclosure); offline or instance-less connection → 409;
 // empty / over-length user description → 400.
 
 import { NextRequest } from "next/server";

@@ -17,6 +17,7 @@ import { useSearchParams } from "next/navigation";
 import { Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDarkClass } from "@/hooks/use-dark-class";
+import { useCanEditProject } from "@/contexts/project-access-context";
 import {
   nodeTypes,
   defaultEdgeStyle,
@@ -40,6 +41,7 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const canEdit = useCanEditProject();
 
   // Parse proposalUuids from URL search params
   const proposalUuids = useMemo(() => {
@@ -151,7 +153,10 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
+        // Viewers cannot add (or locally delete) dependencies; the server rejects it too.
+        onConnect={canEdit ? onConnect : undefined}
+        nodesConnectable={canEdit}
+        deleteKeyCode={canEdit ? undefined : null}
         onNodeClick={onNodeClick}
         nodeTypes={nodeTypes}
         fitView

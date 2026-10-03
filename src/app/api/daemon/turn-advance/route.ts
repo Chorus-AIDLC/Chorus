@@ -19,6 +19,7 @@
 // never a 403 that would confirm another agent's resource exists.
 
 import { NextRequest } from "next/server";
+import { wakeErrorSchema } from "@/lib/daemon-wake-error";
 import { z } from "zod";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
@@ -62,6 +63,7 @@ const bodySchema = z
     // malformed/huge value can't bloat the row. Meaningful only on a terminal edge — the
     // service ignores it on → running.
     transcriptRelayError: z.string().min(1).max(500).nullish(),
+    wakeError: wakeErrorSchema.nullish(),
     // Per-turn token usage (daemon-token-usage): the whole normalized TokenUsage object,
     // captured by the daemon from the Claude Code `result` envelope. Token fields are
     // non-negative ints (nullable — a backend fills only what it can report); `model` is a
@@ -120,6 +122,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     endedAt,
     interruptedReason,
     transcriptRelayError,
+    wakeError,
     usage,
   } = parsed.data;
 
@@ -149,6 +152,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     endedAt: endedAt ?? undefined,
     interruptedReason: interruptedReason ?? undefined,
     relayError: transcriptRelayError ?? undefined,
+    wakeError: wakeError ?? undefined,
     // Normalize the Zod-parsed usage (optional fields are number|null|undefined) into the
     // clean TokenUsage shape (number|null) the service persists — undefined → null so the
     // stored JSON has an explicit null for a field the backend didn't report.

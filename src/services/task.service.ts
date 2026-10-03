@@ -7,6 +7,8 @@ import { lockResearchProject, EXECUTED_TASK_STATUSES, provesTaskExecution, type 
 import { formatAssigneeComplete, formatCreatedBy, batchGetActorNames, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, batchResolveAssignmentActors, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
+import { ApiError } from "@/lib/api-handler";
+import { canActorAccessProject } from "@/services/project-access.service";
 import { batchCommentCounts } from "@/services/comment.service";
 import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
@@ -210,6 +212,42 @@ function formatCriterionResponse(
   };
 }
 
+// ===== Assignment access (add-private-project-access, D4 "Assignment") =====
+
+export const ASSIGNEE_ACCESS_DENIED_MESSAGE = "Assignee does not have access to this project";
+
+// Thrown when an idea/task would be assigned to an actor without `editor`
+// access to its project. An ApiError (403 FORBIDDEN) so withErrorHandler
+// surfaces it on REST; MCP tools surface the message as an isError result.
+export class AssigneeAccessError extends ApiError {
+  constructor(message = ASSIGNEE_ACCESS_DENIED_MESSAGE) {
+    super("FORBIDDEN", message, 403);
+    this.name = "AssigneeAccessError";
+  }
+}
+
+// Reject an assignment unless the ASSIGNEE (not the caller) has `editor`
+// access to the project. Users by membership, agents via their owner (ownerless
+// agents only on public projects), agent_instance via its agent. Public
+// projects floor every company actor at editor, so behaviour there is unchanged.
+export async function assertAssigneeProjectAccess(
+  companyUuid: string,
+  assignee: { type: string; uuid: string },
+  projectUuid: string,
+): Promise<void> {
+  let actor = assignee;
+  if (assignee.type === "agent_instance") {
+    const instance = await prisma.agentInstance.findFirst({
+      where: { uuid: assignee.uuid, companyUuid },
+      select: { agentUuid: true },
+    });
+    if (!instance) throw new AssigneeAccessError();
+    actor = { type: "agent", uuid: instance.agentUuid };
+  }
+  const allowed = await canActorAccessProject(companyUuid, actor, projectUuid, "editor");
+  if (!allowed) throw new AssigneeAccessError();
+}
+
 // ===== Internal Helper Functions =====
 
 // Resolve the polymorphic assignee for a claim/assign, honoring an optional
@@ -225,19 +263,24 @@ async function resolveTaskAssigneeFields(
   assigneeType: string,
   assigneeUuid: string,
   instanceUuid?: string | null,
-): Promise<{ assigneeType: string; assigneeUuid: string }> {
+): Promise<{ assigneeType: string; assigneeUuid: string; accessActor: { type: string; uuid: string } }> {
   if (!instanceUuid) {
-    return { assigneeType, assigneeUuid };
+    return { assigneeType, assigneeUuid, accessActor: { type: assigneeType, uuid: assigneeUuid } };
   }
   const instance = await prisma.agentInstance.findFirst({
     where: { uuid: instanceUuid, companyUuid },
-    select: { uuid: true },
+    select: { uuid: true, agentUuid: true },
   });
   if (!instance) {
     // Company-scoped: a non-existent OR foreign-company instance is rejected.
     throw new Error("Agent instance not found");
   }
-  return { assigneeType: "agent_instance", assigneeUuid: instance.uuid };
+  // Project access for a pinned instance is decided by the agent it belongs to.
+  return {
+    assigneeType: "agent_instance",
+    assigneeUuid: instance.uuid,
+    accessActor: { type: "agent", uuid: instance.agentUuid },
+  };
 }
 
 function normalizeAssignmentProvenance(
@@ -747,6 +790,19 @@ export async function claimTask({
     // override therefore reverts a prior instance pin back to a plain agent.
     const resolved = await resolveTaskAssigneeFields(companyUuid, assigneeType, assigneeUuid, instanceUuid);
     const provenance = normalizeAssignmentProvenance(assignedByType, assignedByUuid);
+
+    // The assignee must have editor access to the task's project (private
+    // project isolation). A task outside this company reads as not claimable.
+    const anchor = await prisma.task.findFirst({
+      where: { uuid: taskUuid, companyUuid },
+      select: { projectUuid: true },
+    });
+    if (!anchor) throw new AlreadyClaimedError("Task");
+    await assertAssigneeProjectAccess(
+      companyUuid,
+      resolved.accessActor,
+      anchor.projectUuid,
+    );
 
     const task = await prisma.task.update({
       where: { uuid: taskUuid, status: { in: ["open", "assigned"] } },

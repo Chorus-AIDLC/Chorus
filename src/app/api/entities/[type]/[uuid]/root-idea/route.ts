@@ -15,6 +15,7 @@ import {
   resolveRootIdea,
   type LineageEntityType,
 } from "@/services/lineage.service";
+import { requireEntityAccess, redactLineageByAccess, ProjectNotFoundError } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ type: string; uuid: string }> };
 
@@ -42,7 +43,21 @@ export const GET = withErrorHandler<{ type: string; uuid: string }>(
       );
     }
 
-    const result = await resolveRootIdea(auth.companyUuid, type, uuid);
+    // Viewer on the entity's project. A hidden entity resolves exactly like a
+    // missing one — the service's successful "not_found" outcome — so the
+    // response never reveals that a private entity exists.
+    try {
+      await requireEntityAccess(auth, type, uuid, "viewer");
+    } catch (e) {
+      if (e instanceof ProjectNotFoundError) {
+        return success({ rootIdeaUuid: null, directIdeaUuid: null, lineage: [], resolvedVia: "not_found" });
+      }
+      throw e;
+    }
+
+    // The walk may cross into another project's ideas (a proposal citing them);
+    // ideas hidden from the caller are redacted out of the result.
+    const result = await redactLineageByAccess(auth, await resolveRootIdea(auth.companyUuid, type, uuid));
     // A null rootIdeaUuid is a successful "no idea ancestor" result, not an error.
     // `result` is passed through verbatim, so `directIdeaUuid` (the daemon's session-id
     // anchor — the first idea node on `lineage`) is part of the response contract too.

@@ -13,6 +13,15 @@ const { mockPrisma, mockGetIdeasWithDerivedStatus } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+// Isolate the tracker derivation tests from access resolution. Mixed visibility
+// and revocation use the real resolver in service-project-access.test.ts.
+vi.mock("@/services/project-access.service", async (importActual) => ({
+  ...await importActual<typeof import("@/services/project-access.service")>(),
+  accessibleProjectUuids: vi.fn(async () => [
+    "project-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "project-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+  ]),
+}));
 
 // Container (theme) ideas roll their status up from their children via the
 // project-wide board builder. Mock only that function; keep computeDerivedStatus
@@ -524,10 +533,10 @@ describe("buildIdeaTracker — grouping & ordering & options", () => {
     );
   });
 
-  it("does NOT add projectUuid filter when projectUuids is empty array", async () => {
+  it("keeps an empty projectUuids filter empty", async () => {
     await buildIdeaTracker(agentAuth, { projectUuids: [] });
     const callArg = mockPrisma.idea.findMany.mock.calls[0][0];
-    expect(callArg.where).not.toHaveProperty("projectUuid");
+    expect(callArg.where.projectUuid).toEqual({ in: [] });
   });
 });
 

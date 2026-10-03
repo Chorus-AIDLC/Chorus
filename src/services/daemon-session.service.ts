@@ -28,7 +28,9 @@
 
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { normalizeWakeError, type WakeError } from "@/lib/daemon-wake-error";
 import { recheckResearchTurn, getResearchEligibility, lockResearchProject } from "@/services/research-eligibility.service";
+import { canActorAccessProject, resolveEntityProjectUuid } from "@/services/project-access.service";
 
 import {
   isOperationTrigger, isResearchTurn, NON_RESEARCH_TURN, NON_OPERATION_TURN,
@@ -248,6 +250,7 @@ export interface TurnView {
   // though the wake exited — the reply was produced but never reached Chorus. Orthogonal to
   // `status`; lets the UI say "reply couldn't be uploaded (reason)" vs "no reply received".
   relayError: string | null;
+  wakeError?: WakeError | null;
   // Per-turn token usage (daemon-token-usage): the whole normalized TokenUsage object, or
   // null when the turn reported none (pre-feature, silent, or unsupported backend). The UI
   // reads it whole (badge + tooltip); a malformed/legacy stored blob projects to null.
@@ -320,6 +323,7 @@ interface DaemonSessionTurnRow {
   status: string;
   interruptedReason: string | null;
   relayError: string | null;
+  wakeError?: unknown;
   // Raw JSON column (daemon-token-usage) — coerced to a validated TokenUsage (or null) by
   // toTurnView. Typed `unknown` because the DB hands back an untrusted JSON value.
   usage: unknown;
@@ -386,6 +390,7 @@ function toTurnView(row: DaemonSessionTurnRow): TurnView {
     status: row.status,
     interruptedReason: row.interruptedReason,
     relayError: row.relayError,
+    wakeError: normalizeWakeError(row.wakeError),
     usage: toTokenUsageView(row.usage),
     executionUuid: row.executionUuid,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
@@ -727,6 +732,7 @@ export async function advanceTurn(
     // when the daemon reports the turn's transcript upload finally failed. Meaningful only
     // on → ended/interrupted; ignored on → running (the run hasn't produced transcript yet).
     relayError?: string | null;
+    wakeError?: WakeError | null;
     // Per-turn token usage (daemon-token-usage). Persisted verbatim in the turn's single
     // `usage` JSON column on a terminal edge; ignored on → running. The actual column write
     // + session rollup increment are wired in the persist task (Task 3).
@@ -769,6 +775,7 @@ export async function advanceTurn(
     executionUuid?: string | null;
     interruptedReason?: string | null;
     relayError?: string | null;
+    wakeError?: Prisma.InputJsonValue;
     usage?: Prisma.InputJsonValue;
     backendSessionId?: string;
   } = { status };
@@ -786,6 +793,11 @@ export async function advanceTurn(
   const isTerminal = status === "ended" || status === "interrupted";
   if (isTerminal && opts.relayError !== undefined) {
     data.relayError = opts.relayError;
+  }
+  if (status === "interrupted" &&
+      (opts.interruptedReason === "crash" || opts.interruptedReason === "invalid_path")) {
+    const wakeError = normalizeWakeError(opts.wakeError);
+    if (wakeError) data.wakeError = wakeError as unknown as Prisma.InputJsonValue;
   }
   // Per-turn token usage (daemon-token-usage): also a TERMINAL-edge-only annotation (the
   // daemon knows it at subprocess exit, same as relayError). Persist the whole normalized
@@ -2108,6 +2120,7 @@ export async function advanceTurnForWake(params: {
   // Transcript-relay failure annotation forwarded from the daemon's exit-path report
   // (fix #444 follow-up). Persisted on the terminal edge only.
   relayError?: string | null;
+  wakeError?: WakeError | null;
   // Per-turn token usage forwarded from the daemon's exit-path report (daemon-token-usage).
   // Persisted verbatim on the terminal edge only; ignored on → running.
   usage?: TokenUsage | null;
@@ -2299,6 +2312,7 @@ export async function advanceTurnForWake(params: {
       ? { interruptedReason: params.interruptedReason }
       : {}),
     ...(params.relayError !== undefined ? { relayError: params.relayError } : {}),
+    ...(params.wakeError !== undefined ? { wakeError: params.wakeError } : {}),
     ...(params.usage !== undefined ? { usage: params.usage } : {}),
     expectedStatus: turn.status as TurnStatus,
     ...((isResearch || isOperation) ? { originFence, backendSessionId: params.backendSessionId } : {}),
@@ -2414,6 +2428,74 @@ export interface PendingTurnView {
   operationPayload?: unknown;
 }
 
+interface TurnDeliveryAnchor {
+  sessionUuid: string;
+  trigger: string;
+  session: { sessionId: string; directIdeaUuid: string | null };
+}
+
+async function canAgentReceiveSessionTurn(
+  companyUuid: string, agentUuid: string, turn: TurnDeliveryAnchor,
+): Promise<boolean> {
+  const actor = { type: "agent", uuid: agentUuid };
+  if (turn.session.directIdeaUuid) {
+    const projectUuid = await resolveEntityProjectUuid(companyUuid, "idea", turn.session.directIdeaUuid);
+    return !!projectUuid && canActorAccessProject(companyUuid, actor, projectUuid, "viewer");
+  }
+
+  // No idea ancestor does not mean no project: standalone task/comment wakes
+  // keep their originating entity UUID as the session key. Older per-connection
+  // sessions append ::connectionUuid to that same key.
+  const entityUuid = turn.session.sessionId?.split("::")[0];
+  if (!entityUuid) return false;
+  const projects = await Promise.all(
+    ["task", "comment", "idea", "proposal", "document", "project"].map((type) =>
+      resolveEntityProjectUuid(companyUuid, type, entityUuid)),
+  );
+  const projectUuids = [...new Set(projects.filter((uuid): uuid is string => !!uuid))];
+  if (projectUuids.length) {
+    return (await Promise.all(projectUuids.map((uuid) =>
+      canActorAccessProject(companyUuid, actor, uuid, "viewer")))).every(Boolean);
+  }
+
+  // Autonomous turns always originate in project content; an unresolved or
+  // deleted entity must not degrade to an ad-hoc conversation.
+  if (turn.trigger !== "human_instruction") return false;
+  const [projectNotification, autonomousTurn] = await Promise.all([
+    prisma.notification.findFirst({
+      where: {
+        companyUuid, recipientType: "agent", recipientUuid: agentUuid,
+        entityUuid, projectUuid: { not: "" },
+      },
+      select: { uuid: true },
+    }),
+    prisma.daemonSessionTurn.findFirst({
+      where: {
+        sessionUuid: turn.sessionUuid, trigger: { not: "human_instruction" },
+        session: { companyUuid, agentUuid },
+      },
+      select: { uuid: true },
+    }),
+  ]);
+  // Human instructions with a server-generated key and no project history are
+  // genuinely projectless. Existing notification/turn provenance also protects
+  // follow-up instructions after a standalone entity has been deleted.
+  return !projectNotification && !autonomousTurn;
+}
+
+// A persisted pending turn is not a permanent access grant. Live delivery and
+// reconnect backfill must both resolve its current idea OR originating entity.
+export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string, turnUuid: string): Promise<boolean> {
+  const turn = await prisma.daemonSessionTurn.findFirst({
+    where: { uuid: turnUuid, session: { companyUuid, agentUuid } },
+    select: {
+      sessionUuid: true, trigger: true,
+      session: { select: { sessionId: true, directIdeaUuid: true } },
+    },
+  });
+  return !!turn && canAgentReceiveSessionTurn(companyUuid, agentUuid, turn);
+}
+
 /**
  * List the UNSTARTED (`status = "pending"`) turns of every session whose origin is the
  * given connection, for the authenticated agent within its company. This is the
@@ -2456,7 +2538,13 @@ export async function getPendingTurnsForConnection(params: {
   });
 
   const deliverable = [];
+  const accessBySession = new Map<string, Promise<boolean>>();
   for (const row of rows) {
+    const key = `${row.sessionUuid}:${row.trigger}`;
+    if (!accessBySession.has(key)) {
+      accessBySession.set(key, canAgentReceiveSessionTurn(params.companyUuid, params.agentUuid, row));
+    }
+    if (!await accessBySession.get(key)) continue;
     if (isResearchTurn(row) &&
       (!row.session.directIdeaUuid || !await recheckResearchTurn(params.companyUuid, row.session.directIdeaUuid, row.uuid))) {
       await publishResearchRetirement(params.companyUuid, row.uuid);

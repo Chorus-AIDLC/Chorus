@@ -145,6 +145,7 @@ describe("chorus_get_available_tasks — proposalUuids", () => {
       false,
       true,
       ["prop-x"],
+      AUTH,
     );
   });
 
@@ -162,6 +163,7 @@ describe("chorus_get_available_tasks — proposalUuids", () => {
       false,
       true,
       undefined,
+      AUTH,
     );
   });
 

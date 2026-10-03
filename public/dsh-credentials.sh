@@ -5,7 +5,7 @@
 # command that configures every supported agent
 # (claude / codex / opencode / kiro / openclaw / dsh):
 #
-#   npm install -g @chorus-aidlc/chorus@0.17.0
+#   npm install -g @chorus-aidlc/chorus
 #   chorus agents add
 #
 # This script is still fetched via curl for backward compatibility, but it no
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 BOLD=$'\033[1m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
-INSTALL_CMD="npm install -g @chorus-aidlc/chorus@0.17.0"
+INSTALL_CMD="npm install -g @chorus-aidlc/chorus"
 INIT_CMD="chorus agents add"
 
 printf "${YELLOW}!${RESET} dsh-credentials.sh is deprecated and writes nothing.\n" >&2

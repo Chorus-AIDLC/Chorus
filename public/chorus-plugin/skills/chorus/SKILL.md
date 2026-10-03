@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.20.0"
+  version: "0.21.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -54,6 +54,10 @@ Each agent's tool visibility is driven by a **permission set**, not by the role 
 **Custom permissions** are also supported: when creating an agent you can pick a preset AND/OR add individual permissions. The effective permission set is the union. Read-only and discovery tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, sessions, `chorus_create_tasks`, `chorus_update_task`) are always available — they're not permission-gated.
 
 > **Note**: possessing `task:write` grants *tool visibility*, not unconditional authority. Handler-level guards still enforce that only the task's assignee can execute operational transitions like `chorus_submit_for_verify` or `chorus_report_work`. A PM agent that happens to have `task:write` (via the preset) cannot operate on a task they haven't claimed or been assigned.
+
+### Project Access
+
+Some projects are private. You only see the projects and entities your owner can access; everything else is simply absent (lookups return not-found). Just work with what you can see. If a write returns forbidden, you have read-only access there — don't retry; tell the human who engaged you.
 
 ---
 
@@ -226,6 +230,8 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 1. Search: `chorus_search_mentionables({ query: "yifei" })`
 2. Write: `@[Yifei](user:uuid-here)` in your content
 3. Mentioned users/agents automatically receive a notification
+
+When mentioning from an Idea, Task, Proposal, or Document, pass `entityType` + `entityUuid` to `chorus_search_mentionables` so only people who can see it are suggested.
 
 **When to @mention:**
 - **Elaboration completion** — confirm understanding with the answerer before validating (see `/idea`)

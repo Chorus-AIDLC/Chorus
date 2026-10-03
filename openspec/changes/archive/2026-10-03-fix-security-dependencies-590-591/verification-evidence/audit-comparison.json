@@ -1,0 +1,564 @@
+{
+  "baseline-audit": {
+    "totals": {
+      "info": 0,
+      "low": 28,
+      "moderate": 129,
+      "high": 118,
+      "critical": 3
+    },
+    "target_advisories": [
+      {
+        "package": "next",
+        "advisory": "GHSA-ggv3-7p47-pfv8",
+        "severity": "moderate",
+        "vulnerable": ">=9.5.0 <15.5.13",
+        "patched": ">=15.5.13",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-3x4c-7xq6-9pq8",
+        "severity": "moderate",
+        "vulnerable": ">=10.0.0 <15.5.14",
+        "patched": ">=15.5.14",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-q4gf-8mx6-v5v3",
+        "severity": "high",
+        "vulnerable": ">=13.0.0 <15.5.15",
+        "patched": ">=15.5.15",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "postcss",
+        "advisory": "GHSA-qx2v-qp2m-jg93",
+        "severity": "moderate",
+        "vulnerable": "<8.5.10",
+        "patched": ">=8.5.10",
+        "paths": [
+          {
+            "version": "8.5.6",
+            "paths": []
+          },
+          {
+            "version": "8.5.8",
+            "paths": []
+          },
+          {
+            "version": "8.4.31",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-8h8q-6873-q5fj",
+        "severity": "high",
+        "vulnerable": ">=13.0.0 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-26hh-7cqf-hhc6",
+        "severity": "high",
+        "vulnerable": ">=15.2.0 <15.5.18",
+        "patched": ">=15.5.18",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-3g8h-86w9-wvmq",
+        "severity": "low",
+        "vulnerable": ">=12.2.0 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-ffhc-5mcf-pf4q",
+        "severity": "moderate",
+        "vulnerable": ">=13.4.0 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-vfv6-92ff-j949",
+        "severity": "low",
+        "vulnerable": ">=13.4.6 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-gx5p-jg67-6x7h",
+        "severity": "moderate",
+        "vulnerable": ">=13.0.0 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-mg66-mrh9-m8jx",
+        "severity": "high",
+        "vulnerable": ">=15.0.0 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-h64f-5h5j-jqjh",
+        "severity": "moderate",
+        "vulnerable": ">=10.0.0 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-c4j6-fc7j-m34r",
+        "severity": "high",
+        "vulnerable": ">=13.4.13 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-492v-c6pp-mqqv",
+        "severity": "high",
+        "vulnerable": ">=15.4.0 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-wfc6-r584-vfw7",
+        "severity": "moderate",
+        "vulnerable": ">=14.2.0 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-267c-6grr-h53f",
+        "severity": "high",
+        "vulnerable": ">=15.2.0 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-36qx-fr4f-26g5",
+        "severity": "high",
+        "vulnerable": ">=12.2.0 <15.5.16",
+        "patched": ">=15.5.16",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "sharp",
+        "advisory": "GHSA-f88m-g3jw-g9cj",
+        "severity": "high",
+        "vulnerable": "<0.35.0",
+        "patched": ">=0.35.0",
+        "paths": [
+          {
+            "version": "0.34.5",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-m99w-x7hq-7vfj",
+        "severity": "high",
+        "vulnerable": ">=13.0.0 <15.5.21",
+        "patched": ">=15.5.21",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-89xv-2m56-2m9x",
+        "severity": "high",
+        "vulnerable": ">=14.1.1 <15.5.21",
+        "patched": ">=15.5.21",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-68g3-v927-f742",
+        "severity": "moderate",
+        "vulnerable": ">=13.0.0 <15.5.21",
+        "patched": ">=15.5.21",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-4633-3j49-mh5q",
+        "severity": "moderate",
+        "vulnerable": ">=13.0.0 <15.5.21",
+        "patched": ">=15.5.21",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-4c39-4ccg-62r3",
+        "severity": "moderate",
+        "vulnerable": ">=13.0.0 <15.5.21",
+        "patched": ">=15.5.21",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-p9j2-gv94-2wf4",
+        "severity": "high",
+        "vulnerable": ">=12.0.0 <15.5.21",
+        "patched": ">=15.5.21",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-q8wf-6r8g-63ch",
+        "severity": "moderate",
+        "vulnerable": ">=15.5.0 <15.5.21",
+        "patched": ">=15.5.21",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-955p-x3mx-jcvp",
+        "severity": "moderate",
+        "vulnerable": ">=13.0.0 <15.5.21",
+        "patched": ">=15.5.21",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "postcss",
+        "advisory": "GHSA-6g55-p6wh-862q",
+        "severity": "high",
+        "vulnerable": "<=8.5.11",
+        "patched": ">=8.5.12",
+        "paths": [
+          {
+            "version": "8.5.6",
+            "paths": []
+          },
+          {
+            "version": "8.5.8",
+            "paths": []
+          },
+          {
+            "version": "8.4.31",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "postcss",
+        "advisory": "GHSA-fxqj-rqcc-2cmp",
+        "severity": "moderate",
+        "vulnerable": "<=8.5.22",
+        "patched": ">=8.5.23",
+        "paths": [
+          {
+            "version": "8.5.6",
+            "paths": []
+          },
+          {
+            "version": "8.5.8",
+            "paths": []
+          },
+          {
+            "version": "8.4.31",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "nanoid",
+        "advisory": "GHSA-28wg-ghj8-5hjv",
+        "severity": "high",
+        "vulnerable": ">=4.0.0 <5.1.16",
+        "patched": ">=5.1.16",
+        "paths": [
+          {
+            "version": "5.1.9",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "nanoid",
+        "advisory": "GHSA-28wg-ghj8-5hjv",
+        "severity": "high",
+        "vulnerable": "<3.3.16",
+        "patched": ">=3.3.16",
+        "paths": [
+          {
+            "version": "3.3.11",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "nanoid",
+        "advisory": "GHSA-2v37-7h3g-55p8",
+        "severity": "high",
+        "vulnerable": "<3.3.18",
+        "patched": ">=3.3.18",
+        "paths": [
+          {
+            "version": "3.3.11",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "postcss",
+        "advisory": "GHSA-r28c-9q8g-f849",
+        "severity": "high",
+        "vulnerable": "<=8.5.17",
+        "patched": ">=8.5.18",
+        "paths": [
+          {
+            "version": "8.5.6",
+            "paths": []
+          },
+          {
+            "version": "8.5.8",
+            "paths": []
+          },
+          {
+            "version": "8.4.31",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "nanoid",
+        "advisory": "GHSA-xwg4-73v4-xw9w",
+        "severity": "high",
+        "vulnerable": ">=4.0.0 <5.1.11",
+        "patched": ">=5.1.11",
+        "paths": [
+          {
+            "version": "5.1.9",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "nanoid",
+        "advisory": "GHSA-xwg4-73v4-xw9w",
+        "severity": "high",
+        "vulnerable": "<3.3.12",
+        "patched": ">=3.3.12",
+        "paths": [
+          {
+            "version": "3.3.11",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-p293-qw3h-jr36",
+        "severity": "critical",
+        "vulnerable": ">=13.4.0 <15.5.24",
+        "patched": ">=15.5.24",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "sharp",
+        "advisory": "GHSA-rgj7-g3m4-5g8c",
+        "severity": "high",
+        "vulnerable": "<0.35.4",
+        "patched": ">=0.35.4",
+        "paths": [
+          {
+            "version": "0.34.5",
+            "paths": []
+          }
+        ]
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-2xp9-vwfh-vxw4",
+        "severity": "critical",
+        "vulnerable": ">=10.0.0 <15.5.24",
+        "patched": ">=15.5.24",
+        "paths": [
+          {
+            "version": "15.5.12",
+            "paths": []
+          }
+        ]
+      }
+    ],
+    "critical_advisories": [
+      {
+        "package": "next",
+        "advisory": "GHSA-p293-qw3h-jr36",
+        "version_range": ">=13.4.0 <15.5.24",
+        "patched": ">=15.5.24"
+      },
+      {
+        "package": "astro",
+        "advisory": "GHSA-26w7-cxv4-gfx2",
+        "version_range": "<7.2.8",
+        "patched": ">=7.2.8"
+      },
+      {
+        "package": "next",
+        "advisory": "GHSA-2xp9-vwfh-vxw4",
+        "version_range": ">=10.0.0 <15.5.24",
+        "patched": ">=15.5.24"
+      }
+    ]
+  },
+  "final-audit": {
+    "totals": {
+      "info": 0,
+      "low": 26,
+      "moderate": 111,
+      "high": 92,
+      "critical": 1
+    },
+    "target_advisories": [],
+    "critical_advisories": [
+      {
+        "package": "astro",
+        "advisory": "GHSA-26w7-cxv4-gfx2",
+        "version_range": "<7.2.8",
+        "patched": ">=7.2.8"
+      }
+    ]
+  }
+}

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Prisma mock =====
 const mockPrisma = vi.hoisted(() => ({
+  agent: { findFirst: vi.fn() },
+  comment: { findMany: vi.fn() },
   notification: {
     create: vi.fn(),
     findFirst: vi.fn(),
@@ -52,9 +54,24 @@ vi.mock("@/services/orchestrator.service", () => ({
   resolveWakerSessionAnchor: mockResolveWakerSessionAnchor,
 }));
 
+// Project-access recipient filter (private projects). Identity by default; the
+// "project-access choke point" block opts into dropping recipients.
+const mockFilterRecipients = vi.hoisted(() => vi.fn());
+const mockAccessibleProjectUuids = vi.hoisted(() => vi.fn());
+vi.mock("@/services/project-access.service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/project-access.service")>();
+  return {
+    ...actual,
+    filterRecipientsByProjectAccess: mockFilterRecipients,
+    accessibleProjectUuids: mockAccessibleProjectUuids,
+  };
+});
+
 import {
   create,
   createBatch,
+  createReturningTurn,
+  filterNotificationsByProjectAccess,
   list,
   markRead,
   markAllRead,
@@ -115,6 +132,11 @@ beforeEach(() => {
   // asserting an anchor unless a test opts in.
   mockResolveWakerSessionAnchor.mockResolvedValue(null);
   mockResolveDirectIdeaUuid.mockResolvedValue("idea-from-task");
+  mockFilterRecipients.mockImplementation(async (_c: string, _p: string, r: unknown[]) => r);
+  mockAccessibleProjectUuids.mockResolvedValue(["project-0000-0000-0000-000000000001"]);
+  mockPrisma.agent.findFirst.mockResolvedValue({ ownerUuid: recipientUuid, roles: ["developer_agent"], permissions: [] });
+  mockPrisma.notification.findMany.mockResolvedValue([]);
+  mockPrisma.comment.findMany.mockResolvedValue([]);
 });
 
 // ===== create =====
@@ -461,6 +483,73 @@ describe("createBatch", () => {
 });
 
 // ===== waker-session anchor wiring (wake-carry-waker-session-anchor, T1) =====
+// ===== project-access choke point =====
+describe("project-access choke point", () => {
+  const OUTSIDER = "user-outsider";
+  beforeEach(() => {
+    // Drop the outsider recipient; keep everyone else.
+    mockFilterRecipients.mockImplementation(
+      async (_c: string, _p: string, r: Array<{ uuid: string }>) => r.filter((x) => x.uuid !== OUTSIDER),
+    );
+    mockPrisma.notification.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({ ...makeNotifRecord(), ...data }),
+    );
+    mockPrisma.notification.count.mockResolvedValue(1);
+  });
+
+  it("createBatch drops recipients without project access (no row, no wake, no SSE)", async () => {
+    const member = makeNotifParams();
+    const outsider = makeNotifParams({ recipientUuid: OUTSIDER });
+    const result = await createBatch([outsider, member]);
+
+    expect(mockFilterRecipients).toHaveBeenCalledTimes(1);
+    expect(mockFilterRecipients).toHaveBeenCalledWith(companyUuid, member.projectUuid, [
+      expect.objectContaining({ type: "user", uuid: OUTSIDER }),
+      expect.objectContaining({ type: "user", uuid: recipientUuid }),
+    ]);
+    expect(mockPrisma.notification.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.notification.create.mock.calls[0][0].data.recipientUuid).toBe(recipientUuid);
+    expect(mockCreateTurnAndResolveTarget).toHaveBeenCalledTimes(1);
+    expect(mockEventBus.emit).not.toHaveBeenCalledWith(`notification:user:${OUTSIDER}`, expect.anything());
+    expect(result).toHaveLength(1);
+  });
+
+  it("createBatch writes nothing when every recipient is filtered out", async () => {
+    const result = await createBatch([makeNotifParams({ recipientUuid: OUTSIDER })]);
+    expect(result).toEqual([]);
+    expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+    expect(mockCreateTurnAndResolveTarget).not.toHaveBeenCalled();
+    expect(mockEventBus.emit).not.toHaveBeenCalled();
+  });
+
+  it("filters per project and leaves project-less notifications untouched", async () => {
+    const a = makeNotifParams({ projectUuid: "p-a", recipientUuid: OUTSIDER });
+    const b = makeNotifParams({ projectUuid: "p-b" });
+    const ownerScoped = makeNotifParams({ projectUuid: "", recipientUuid: OUTSIDER });
+    const kept = await filterNotificationsByProjectAccess([a, ownerScoped, b]);
+    expect(kept).toEqual([ownerScoped, b]);
+    expect(mockFilterRecipients).toHaveBeenCalledTimes(2);
+    expect(mockFilterRecipients.mock.calls.map((c) => c[1])).toEqual(["p-a", "p-b"]);
+  });
+
+  it("create / createReturningTurn reject a project-scoped recipient without access", async () => {
+    await expect(create(makeNotifParams({ recipientUuid: OUTSIDER }))).rejects.toMatchObject({
+      name: "ProjectAccessDeniedError",
+      status: 403,
+    });
+    expect(mockPrisma.notification.create).not.toHaveBeenCalled();
+    expect(mockCreateTurnAndResolveTarget).not.toHaveBeenCalled();
+  });
+
+  it("createReturningTurn skips the access check for owner-scoped (no project) notifications", async () => {
+    const { notification } = await createReturningTurn(
+      makeNotifParams({ projectUuid: "", recipientUuid: OUTSIDER }),
+    );
+    expect(mockFilterRecipients).not.toHaveBeenCalled();
+    expect(notification.recipientUuid).toBe(OUTSIDER);
+  });
+});
+
 describe("wakerSession anchor wiring", () => {
   const waker = "agent-waker-0000-0000-000000000001";
 

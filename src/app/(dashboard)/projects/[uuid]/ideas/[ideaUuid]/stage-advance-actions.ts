@@ -11,6 +11,7 @@ import { StageAdvanceError } from "@/services/stage-advance.service";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { resolveTemporaryRuntimeCwd } from "@/services/project-agent-cwd.service";
+import { denyUnlessEntityAccess } from "@/lib/project-access-action";
 
 type TemporaryCwdInput = { agentUuid: string; validationRequestUuid: string };
 
@@ -67,6 +68,10 @@ export async function startDevelopmentAction(
   // through their own task flow, never through this button.
   if (auth.type !== "user" && auth.type !== "super_admin") {
     return { success: false, errorCode: "not_human" };
+  }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) {
+    return { success: false, errorCode: denied.error.endsWith("not found") ? "idea_not_found" : "unauthorized" };
   }
 
   try {
@@ -163,6 +168,10 @@ export async function yoloRequestedAction(
   // their own skill flow, never through this button.
   if (auth.type !== "user" && auth.type !== "super_admin") {
     return { success: false, errorCode: "not_human" };
+  }
+  const denied = await denyUnlessEntityAccess(auth, "idea", ideaUuid, "editor");
+  if (denied) {
+    return { success: false, errorCode: denied.error.endsWith("not found") ? "idea_not_found" : "unauthorized" };
   }
 
   try {

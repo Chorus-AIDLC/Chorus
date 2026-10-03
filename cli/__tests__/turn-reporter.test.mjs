@@ -12,6 +12,22 @@ function okFetch() {
 }
 
 describe("createTurnReporter", () => {
+  it("forwards the exact six-field diagnostic alongside independent terminal annotations", async () => {
+    const fetchImpl = okFetch();
+    const advance = createTurnReporter({ url: "https://c", apiKey: "cho_x",
+      getConnectionUuid: () => "conn-1", logger: silent, fetchImpl });
+    const wakeError = { kind: "startup", source: "dsh", message: "Synthetic launch failure",
+      details: "Failure details", exitCode: null, signal: "SIGTERM" };
+    const usage = { inputTokens: 2, outputTokens: 1, cacheCreationTokens: null,
+      cacheReadTokens: null, model: null, source: "dsh" };
+    await advance({ sessionId: "idea-1", turnUuid: "turn-1", status: "interrupted",
+      interruptedReason: "crash", wakeError, transcriptRelayError: "Synthetic relay failure", usage });
+    expect(JSON.parse(fetchImpl.mock.lastCall[1].body)).toEqual({
+      connectionUuid: "conn-1", sessionId: "idea-1", turnUuid: "turn-1", status: "interrupted",
+      interruptedReason: "crash", wakeError, transcriptRelayError: "Synthetic relay failure", usage,
+    });
+  });
+
   it("POSTs to /api/daemon/turn-advance with Bearer auth, connection + session + status", async () => {
     const fetchImpl = okFetch();
     const advance = createTurnReporter({

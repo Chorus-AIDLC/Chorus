@@ -19,7 +19,7 @@
 //   turnAdvance      → POST /api/daemon/turn-advance
 //                      { connectionUuid, sessionId, status, turnUuid?,
 //                        entityType?, entityUuid?, interruptedReason?,
-//                        transcriptRelayError?, usage? }
+//                        transcriptRelayError?, usage?, wakeError? }
 //   transcript       → POST /api/daemon/transcript
 //                      { sessionId, messages: [{ role, text }] }
 //   executionState   → POST /api/daemon/execution-state
@@ -45,6 +45,8 @@
 //     never swallowed into a silent success.
 //   • A failed report NEVER rejects: every method RESOLVES with `{ ok: false, ... }`
 //     so a fire-and-forget caller can `await` it safely.
+
+import { createWakeError, type WakeError } from "./wake-error.js";
 
 export interface DaemonRestLogger {
   info: (msg: string) => void;
@@ -137,7 +139,8 @@ export interface DaemonRestClient {
     status: "running" | "ended" | "interrupted";
     entityType?: string | null;
     entityUuid?: string | null;
-    interruptedReason?: "user" | "crash" | "shutdown" | null;
+    interruptedReason?: "user" | "crash" | "shutdown" | "invalid_path" | null;
+    wakeError?: WakeError | null;
     transcriptRelayError?: string | null;
     // Per-turn token usage (daemon-token-usage); sent only on a terminal edge.
     usage?: TokenUsage | null;
@@ -226,7 +229,7 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
      * normalized `usage` (daemon-token-usage) — byte-for-byte the CLI client's shape.
      * Requires the connectionUuid.
      */
-    async turnAdvance({ sessionId, turnUuid, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage }) {
+    async turnAdvance({ sessionId, turnUuid, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage, wakeError }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -245,6 +248,8 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
         // Only meaningful alongside status=interrupted; never sent otherwise.
         ...(status === "interrupted" && interruptedReason ? { interruptedReason } : {}),
+        ...(status === "interrupted" && (interruptedReason === "crash" || interruptedReason === "invalid_path") && wakeError
+          ? { wakeError: createWakeError(wakeError, [apiKey]) } : {}),
         // Transcript-relay failure annotation (fix #444 follow-up): only when truthy.
         ...(transcriptRelayError ? { transcriptRelayError } : {}),
         // The whole normalized TokenUsage object, nested under `usage`, only on a terminal edge.

@@ -85,9 +85,17 @@ An Agent with `roles: ["pm_agent"]` and `permissions: ["task:admin"]` has:
 Each permission-gated MCP tool declares **exactly one** required permission. The mapping lives in `src/mcp/tools/permission-map.ts`.
 
 - At registration time, `registerPermissionedTool` (in `src/mcp/tools/register-helpers.ts`) checks whether the agent's effective set contains the tool's required permission. If yes, the tool is registered on the MCP server; if no, it's simply absent from the tool list the agent sees.
-- **Public tools** (`chorus_checkin`, `chorus_get_*`, `chorus_list_*`, `chorus_search*`, `chorus_add_comment`, session tools, `chorus_create_tasks`, `chorus_update_task`) have no permission gate — they appear for every agent. Two caveats worth spelling out:
-  - `chorus_update_task` allows field edits (title, description, priority, etc.) for any agent, but **status transitions** (`in_progress`, `to_verify`) are restricted to the task's assignee via a handler-level check (`src/mcp/tools/public.ts`).
-  - `chorus_create_tasks` has **no handler-level guard** — any authenticated agent can batch-create tasks in any project of its company. If you need tighter control (e.g. only PMs create tasks), treat that as a follow-up and add a permission gate on this tool.
+- **Public-namespaced tools** can appear for every agent, while the central
+  authorization wrapper still checks capabilities at call time. Mapped resource
+  reads require the corresponding `:read` bit; project/group reads require
+  `project:read`. Search returns only requested entity types whose read bits the
+  Agent has. Comment capabilities follow their target resource.
+  - `chorus_update_task` field edits and `chorus_create_tasks` require
+    `task:write`. Status transitions (`in_progress`, `to_verify`) also retain the
+    task-assignee check in the handler.
+  - Capability checks and owner-derived project/group access both apply before
+    handlers or presence delivery. An owner's inherited group role cannot supply
+    a missing capability bit.
 
 For the full tool → required-permission matrix, see [MCP_TOOLS.md](./MCP_TOOLS.md).
 
@@ -201,3 +209,15 @@ Then:
 | Migration that added `permissions` column | `prisma/migrations/*_add_agent_permissions/` |
 
 If any of the above drift from this doc, update the doc — the code is authoritative.
+
+## 9. Project and group access
+
+Capability bits operate together with the Agent owner's effective project role.
+Private projects resolve the maximum of explicit group membership and local
+project membership. Public group access does not implicitly open Private
+children. Explicit group Admins remain Admins of every child.
+
+Group discovery through a locally accessible child grants basic context and
+filtered child data; it grants no group administration. See
+[Project group access](./PROJECT_GROUP_ACCESS.md) for roles, confirmation
+contracts, retained grants, legacy initialization and REST/MCP behavior.

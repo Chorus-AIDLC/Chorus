@@ -13,12 +13,15 @@ import { createActivity } from "@/services/activity.service";
 import type { AcceptanceCriteriaItemInput } from "@/lib/acceptance-criteria";
 import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 import logger from "@/lib/logger";
+import { denyUnlessEntityAccess, denyUnlessProjectAccess } from "@/lib/project-access-action";
 
 export async function claimTaskAction(taskUuid: string) {
   const auth = await getServerAuthContext();
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     // Validate task exists and belongs to this company
@@ -59,7 +62,7 @@ export async function claimTaskAction(taskUuid: string) {
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "Failed to claim task");
-    return { success: false, error: "Failed to claim task" };
+    return { success: false, error: error instanceof Error && error.name === "AssigneeAccessError" ? error.message : "Failed to claim task" };
   }
 }
 
@@ -78,6 +81,8 @@ export async function claimTaskToAgentAction(
   if (!auth || auth.type !== "user") {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await getTaskByUuid(auth.companyUuid, taskUuid);
@@ -148,7 +153,7 @@ export async function claimTaskToAgentAction(
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "Failed to claim task to agent");
-    return { success: false, error: "Failed to claim task" };
+    return { success: false, error: error instanceof Error && error.name === "AssigneeAccessError" ? error.message : "Failed to claim task" };
   }
 }
 
@@ -173,6 +178,8 @@ export async function reassignTaskInstanceNoWakeAction(
   if (!auth || auth.type !== "user") {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await getTaskByUuid(auth.companyUuid, taskUuid);
@@ -206,7 +213,7 @@ export async function reassignTaskInstanceNoWakeAction(
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "Failed to reassign task instance (no wake)");
-    return { success: false, error: "Failed to reassign task" };
+    return { success: false, error: error instanceof Error && error.name === "AssigneeAccessError" ? error.message : "Failed to reassign task" };
   }
 }
 
@@ -215,6 +222,8 @@ export async function releaseTaskAction(taskUuid: string) {
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     // Validate task exists and belongs to this company
@@ -257,6 +266,8 @@ export async function updateTaskStatusAction(taskUuid: string, newStatus: string
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     // Validate task exists and belongs to this company
@@ -295,6 +306,8 @@ export async function verifyTaskAction(taskUuid: string) {
   if (!auth || auth.type !== "user") {
     return { success: false, error: "Only humans can verify tasks" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await getTaskByUuid(auth.companyUuid, taskUuid);
@@ -330,6 +343,8 @@ export async function claimTaskToUserAction(taskUuid: string, userUuid: string) 
   if (!auth || auth.type !== "user") {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await getTaskByUuid(auth.companyUuid, taskUuid);
@@ -368,7 +383,7 @@ export async function claimTaskToUserAction(taskUuid: string, userUuid: string) 
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "Failed to assign task to user");
-    return { success: false, error: "Failed to assign task" };
+    return { success: false, error: error instanceof Error && error.name === "AssigneeAccessError" ? error.message : "Failed to assign task" };
   }
 }
 
@@ -387,6 +402,8 @@ export async function createTaskAction(input: CreateTaskInput) {
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessProjectAccess(auth, input.projectUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await createTask({
@@ -436,6 +453,8 @@ export async function updateTaskFieldsAction(input: UpdateTaskFieldsInput) {
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", input.taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await getTaskByUuid(auth.companyUuid, input.taskUuid);
@@ -472,6 +491,8 @@ export async function deleteTaskAction(taskUuid: string, projectUuid: string) {
   if (!auth) {
     return { success: false, error: "Unauthorized" };
   }
+  const denied = await denyUnlessEntityAccess(auth, "task", taskUuid, "editor");
+  if (denied) return denied;
 
   try {
     const task = await getTaskByUuid(auth.companyUuid, taskUuid);
@@ -532,6 +553,9 @@ export async function getAgentInstancesAction(
 }> {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
+    return { instances: [], resolvedTarget: null };
+  }
+  if (projectUuid && (await denyUnlessProjectAccess(auth, projectUuid, "viewer"))) {
     return { instances: [], resolvedTarget: null };
   }
 

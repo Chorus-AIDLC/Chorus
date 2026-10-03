@@ -1,0 +1,95 @@
+{
+  "commands": [
+    {
+      "command": [
+        "docker",
+        "exec",
+        "chorus-security-590-591-test-pg",
+        "psql",
+        "-U",
+        "postgres",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        "CREATE DATABASE \"chorus_security_final_vitest\";"
+      ],
+      "exit": 0,
+      "seconds": 0.09,
+      "log": "create-database.log"
+    },
+    {
+      "command": [
+        "pnpm",
+        "exec",
+        "prisma",
+        "db",
+        "push"
+      ],
+      "exit": 0,
+      "seconds": 3.73,
+      "log": "db-push.log"
+    },
+    {
+      "command": [
+        "pnpm",
+        "lint"
+      ],
+      "exit": 0,
+      "seconds": 8.57,
+      "log": "lint.log",
+      "note": "Final lint includes the tested stable-animation screenshot wait."
+    },
+    {
+      "command": [
+        "pnpm",
+        "test:coverage"
+      ],
+      "exit": 0,
+      "seconds": 140.88,
+      "log": "coverage.log"
+    }
+  ],
+  "coverage": {
+    "lines": {
+      "total": 5930,
+      "covered": 5793,
+      "skipped": 0,
+      "pct": 97.68
+    },
+    "statements": {
+      "total": 6781,
+      "covered": 6534,
+      "skipped": 0,
+      "pct": 96.35
+    },
+    "functions": {
+      "total": 1219,
+      "covered": 1190,
+      "skipped": 0,
+      "pct": 97.62
+    },
+    "branches": {
+      "total": 5655,
+      "covered": 5125,
+      "skipped": 0,
+      "pct": 90.62
+    },
+    "branchesTrue": {
+      "total": 0,
+      "covered": 0,
+      "skipped": 0,
+      "pct": 100
+    }
+  },
+  "files": {
+    "passed": 438,
+    "skipped": 8,
+    "total": 446
+  },
+  "tests": {
+    "passed": 9828,
+    "skipped": 126,
+    "total": 9954
+  },
+  "host_node": "v24.21.0"
+}

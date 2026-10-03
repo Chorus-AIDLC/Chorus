@@ -13,6 +13,7 @@ import {
   deleteIdea,
   isValidIdeaStatusTransition,
 } from "@/services/idea.service";
+import { requireEntityAccess } from "@/services/project-access.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -27,6 +28,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "idea", uuid, "viewer");
     const idea = await getIdea(auth.companyUuid, uuid);
 
     if (!idea) {
@@ -48,6 +50,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
     if (denied) return denied;
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "idea", uuid, "editor");
 
     // Get original Idea data for permission check
     const idea = await getIdeaByUuid(auth.companyUuid, uuid);
@@ -127,6 +130,7 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
     }
 
     const { uuid } = await context.params;
+    await requireEntityAccess(auth, "idea", uuid, "editor");
 
     const idea = await getIdeaByUuid(auth.companyUuid, uuid);
     if (!idea) {

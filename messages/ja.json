@@ -1070,7 +1070,29 @@
     "deleteKeepProjects": "{count} 件のプロジェクトを未分類へ移動",
     "deleteWithProjects": "{count} 件のプロジェクトを完全に削除",
     "confirmDelete": "グループを削除",
-    "deleting": "削除中..."
+    "deleting": "削除中...",
+    "privateBadge": "非公開グループ",
+    "privateTooltip": "グループメンバーと子プロジェクトへのアクセス権を持つ人のみがこのグループを表示できます。",
+    "viewMembers": "メンバーを表示",
+    "accessReadOnly": "公開範囲やメンバーを管理できるのはグループ管理者のみです。",
+    "visibilityDescription": "グループを表示できる人を選択します。非公開グループには非公開プロジェクトのみを含められます。",
+    "publicHint": "社内の全員がグループを表示できます。非公開プロジェクトは独自のアクセス規則を維持します。",
+    "privateHint": "明示的なメンバーと子プロジェクトにアクセスできる人のみがグループを表示できます。",
+    "convertPrivateHint": "グループ内のすべての公開プロジェクトが非公開になります。既存の権限は保持され、グループの役割がリアルタイムで継承されます。",
+    "convertPublicHint": "プロジェクトの公開範囲と権限は保持されます。グループを公開しても非公開プロジェクトは公開されません。",
+    "membersDescription": "グループの役割はすべての子プロジェクトに適用されます。プロジェクト側では追加の権限を付与できます。",
+    "loading": "グループ権限を読み込み中…",
+    "loadFailed": "グループ権限を読み込めませんでした。",
+    "saveFailed": "グループ設定を保存できませんでした。",
+    "deleteFailed": "グループを削除できませんでした。グループとプロジェクトの管理権限を確認してください。",
+    "privateCreateHint": "このグループは非公開です。新しいプロジェクトは非公開となり、グループの役割を継承します。作成者には個別の管理者権限も付与されます。",
+    "inheritCreateHint": "新しいプロジェクトはグループの公開範囲と明示的な役割を継承します。非公開プロジェクトは社内全体の公開アクセスを継承しません。",
+    "lastAdmin": "グループには少なくとも1人の管理者が必要です。",
+    "accessForbidden": "グループ権限を管理する権限がありません。",
+    "accessFailed": "グループ権限を更新できませんでした。再試行してください。",
+    "visibilityUpdated": "グループの公開範囲を更新しました",
+    "toPrivateTitle": "このグループを非公開にしますか？",
+    "toPublicTitle": "このグループを公開しますか？"
   },
   "groupDashboard": {
     "subtitle": "{count} 件のプロジェクト · 統合ダッシュボード",
@@ -1085,7 +1107,40 @@
     "newProject": "新規プロジェクト",
     "projectStats": "課題 {tasks} 件 · {completion}% 完了",
     "noProjects": "このグループにはまだプロジェクトがありません",
-    "noProjectsHint": "上の「新規プロジェクト」をクリックして追加してください"
+    "noProjectsHint": "上の「新規プロジェクト」をクリックして追加してください",
+    "activity": {
+      "created": "{entity}を作成",
+      "updated": "{entity}を更新",
+      "approved": "{entity}を承認",
+      "rejected": "{entity}を却下",
+      "claimed": "{entity}を担当",
+      "completed": "{entity}を完了",
+      "verified": "{entity}を検証",
+      "submitted": "{entity}を提出",
+      "assigned": "{entity}を割り当て",
+      "deleted": "{entity}を削除",
+      "status_changed": "{entity}の状態を更新",
+      "project_member_added": "プロジェクトメンバーを追加",
+      "project_member_role_changed": "プロジェクトメンバーの役割を変更",
+      "project_member_removed": "プロジェクトメンバーを削除",
+      "project_visibility_changed": "プロジェクトの公開範囲を変更",
+      "project_group_changed": "プロジェクトのグループを移動",
+      "group_created": "グループを作成",
+      "group_updated": "グループの設定または公開範囲を更新",
+      "group_deleted": "グループを削除",
+      "group_access_initialized": "グループ権限を初期化",
+      "group_member_removed": "グループメンバーを削除",
+      "group_member_changed": "グループメンバーの権限を変更"
+    },
+    "entities": {
+      "task": "タスク",
+      "idea": "アイデア",
+      "proposal": "提案",
+      "document": "ドキュメント",
+      "project": "プロジェクト",
+      "project_group": "グループ",
+      "entity": "項目"
+    }
   },
   "acceptanceCriteria": {
     "title": "受け入れ基準",
@@ -1212,7 +1267,7 @@
         "step1Title": "ステップ 1：環境変数を設定",
         "step1Tip": "ヒント：Kiro CLI が起動時に読み取れるよう、~/.bashrc または ~/.zshrc に追加してください。",
         "step2Title": "ステップ 2：chorus agents add を実行",
-        "step2Tip": "chorus agents add は Chorus の skills、agents、steering、および chorus MCP サーバーを ~/.kiro にグローバルインストールし、Chorus をどのディレクトリでも利用できるようにします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。別のディレクトリにインストールするには、実行前に KIRO_DIR を設定してください。 最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。"
+        "step2Tip": "chorus agents add は Chorus の skills、agents、steering、および chorus MCP サーバーを ~/.kiro にグローバルインストールし、Chorus をどのディレクトリでも利用できるようにします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。別のディレクトリにインストールするには、実行前に KIRO_DIR を設定してください。 最初のコマンドは最新の Chorus CLI をグローバルにインストールします。"
       },
       "pi": {
         "step1Title": "ステップ 1：環境変数を設定",
@@ -1226,7 +1281,7 @@
         "step2Title": "ステップ 2：Chorus bundle を追加",
         "step2Tip": "{name} を使用する dsh profile 名に置き換えてください。dsh の profile は pnpm workspace のルートなので -w が必要です。profile の package state と peer plugin は dsh が管理します。",
         "step3Title": "ステップ 3：認証情報を書き込む",
-        "step3Tip": "chorus agents add はキーを検証し、CHORUS_URL と CHORUS_API_KEY を ~/.chorus/daemon.json（モード 0600）に書き込みます。必要に応じて Chorus bundle を profile に追加します。ステップ 2 と同じ profile を指定するには --dsh-profile {name} を渡してください。認証情報は環境変数（ステップ 1）から読み取ります。 最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。",
+        "step3Tip": "chorus agents add はキーを検証し、CHORUS_URL と CHORUS_API_KEY を ~/.chorus/daemon.json（モード 0600）に書き込みます。必要に応じて Chorus bundle を profile に追加します。ステップ 2 と同じ profile を指定するには --dsh-profile {name} を渡してください。認証情報は環境変数（ステップ 1）から読み取ります。 最初のコマンドは最新の Chorus CLI をグローバルにインストールします。",
         "step4Title": "ステップ 4：起動して確認",
         "step4Desc": "dsh --profile {name} を実行し、「check in to chorus」と依頼してください。"
       },
@@ -1234,7 +1289,7 @@
         "step1Title": "ステップ 1：環境変数を設定",
         "step1Tip": "ヒント：OpenCode 起動時にプラグインが読み取れるよう、~/.bashrc または ~/.zshrc に追加してください。",
         "step2Title": "ステップ 2：chorus agents add を実行",
-        "step2Tip": "chorus agents add は ~/.config/opencode/opencode.json の「plugin」配列に「opencode-chorus」を冪等に追加します。シェルの rc は変更しません。OpenCode は初回起動時に Bun 経由でプラグインをインストールします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。 最初のコマンドは Chorus CLI をグローバルにインストールします（バージョン 0.17.0 に固定）。",
+        "step2Tip": "chorus agents add は ~/.config/opencode/opencode.json の「plugin」配列に「opencode-chorus」を冪等に追加します。シェルの rc は変更しません。OpenCode は初回起動時に Bun 経由でプラグインをインストールします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。 最初のコマンドは最新の Chorus CLI をグローバルにインストールします。",
         "troubleshootingTitle": "トラブルシューティング",
         "issueCache": {
           "title": "プラグインが読み込まれない",
@@ -1686,6 +1741,13 @@
     "turnMergedCount": "{count} 件のイベントを統合",
     "turnEndedNoReply": "このターンではエージェントからの返信がありませんでした。",
     "turnRelayFailed": "エージェントは返信しましたが、返信を Chorus にアップロードできませんでした:",
+    "turnFailureTitle": "エージェントの起動・実行に失敗",
+    "turnFailureCrash": "エージェントが予期せず停止しました。診断の詳細は記録されていません。",
+    "turnFailureInvalidPath": "作業ディレクトリを利用できないため、エージェントを起動できませんでした。診断の詳細は記録されていません。",
+    "turnFailureShowDetails": "エラーの詳細を表示",
+    "turnFailureHideDetails": "エラーの詳細を閉じる",
+    "turnFailureExitCode": "終了コード：{code}",
+    "turnFailureSignal": "シグナル：{signal}",
     "privacyNote": "トランスクリプトのテキストはエージェントのデーモンから報告され、ローカルのファイルパスを含む場合があります。保持されるのは最新のメッセージのみです。",
     "noAgents": {
       "title": "まだ会話はありません",
@@ -1892,5 +1954,129 @@
     "agentLabel": "エージェント",
     "noAgents": "利用可能なエージェントがありません。",
     "requestButton": "リサーチを依頼"
+  },
+  "projectAccess": {
+    "elaborationReadOnly": "閲覧のみの権限のため、これらの質問には回答できません。",
+    "tabs": {
+      "general": "一般",
+      "access": "アクセス"
+    },
+    "loading": "アクセス設定を読み込み中...",
+    "loadFailed": "アクセス設定を読み込めませんでした。",
+    "visibility": {
+      "title": "公開範囲",
+      "description": "社内でこのプロジェクトを閲覧できる人を選択します。",
+      "public": "公開",
+      "publicHint": "社内の全員がこのプロジェクトを閲覧・編集できます。",
+      "private": "非公開",
+      "privateHint": "一覧に登録されたメンバーとそのエージェントのみがこのプロジェクトにアクセスできます。"
+    },
+    "confirm": {
+      "toPrivateTitle": "このプロジェクトを非公開にしますか？",
+      "toPrivateDescription": "このプロジェクトに登録されたメンバー（および所有するエージェント）のみがアクセス権を保持します。社内のその他の人は直ちにアクセスできなくなります。",
+      "toPublicTitle": "このプロジェクトを公開しますか？",
+      "toPublicDescription": "社内の全員（およびそのエージェント）が、このプロジェクトとそのすべてのアイデア、ドキュメント、提案、タスクにアクセスできるようになります。",
+      "confirm": "公開範囲を変更"
+    },
+    "visibilityUpdated": "プロジェクトの公開範囲を更新しました",
+    "members": {
+      "title": "メンバー",
+      "description": "プロジェクトのメンバーとそのロールです。",
+      "name": "メンバー",
+      "role": "ロール",
+      "actions": "操作",
+      "empty": "まだメンバーがいません。",
+      "loading": "メンバーを読み込み中...",
+      "loadFailed": "メンバーを読み込めませんでした。",
+      "remove": "{name} を削除",
+      "roleFor": "{name} のロール",
+      "unnamed": "名前のないユーザー",
+      "source": {
+        "project": "プロジェクトの直接権限",
+        "group": "グループから継承",
+        "both": "直接権限＋継承"
+      },
+      "directRole": "直接：{role}",
+      "inheritedRole": "継承：{role}",
+      "automaticAdmin": "自動管理者",
+      "explicitAdminHint": "管理者ロールを明示的に付与すると、自動管理者の権限が置き換わります。グループでは、非公開の子プロジェクトに継承される権限も変わる場合があります。",
+      "effectiveRole": "有効：{role}"
+    },
+    "roles": {
+      "viewer": "閲覧者",
+      "editor": "編集者",
+      "admin": "管理者"
+    },
+    "add": {
+      "title": "メンバーを追加",
+      "selectUser": "ユーザーを選択",
+      "searchPlaceholder": "名前またはメールで検索...",
+      "typeToSearch": "入力して社内ユーザーを検索します。",
+      "searching": "検索中...",
+      "noResults": "一致するユーザーがいません。",
+      "role": "新しいメンバーのロール",
+      "add": "追加",
+      "adding": "追加中..."
+    },
+    "memberAdded": "メンバーを追加しました",
+    "memberRemoved": "メンバーを削除しました",
+    "roleUpdated": "メンバーのロールを更新しました",
+    "readOnlyHint": "公開範囲の変更やメンバー管理はプロジェクト管理者のみが行えます。",
+    "settingsLockedHint": "このプロジェクトは非公開です。設定を編集できるのはプロジェクト管理者のみです。",
+    "deleteLockedHint": "非公開プロジェクトを削除できるのはプロジェクト管理者のみです。",
+    "errors": {
+      "lastAdmin": "プロジェクトには少なくとも 1 人の管理者が必要です。",
+      "alreadyMember": "このユーザーはすでにプロジェクトのメンバーです。",
+      "notInCompany": "このユーザーは社内に存在しません。",
+      "forbidden": "このプロジェクトのアクセスを管理する権限がありません。",
+      "invalid": "リクエストが無効です。もう一度お試しください。",
+      "generic": "問題が発生しました。もう一度お試しください。"
+    },
+    "privateBadge": "非公開プロジェクト",
+    "privateTooltip": "非公開 — プロジェクトメンバーのみがこのプロジェクトを閲覧できます",
+    "viewerBanner": "このプロジェクトは閲覧のみ可能です。変更するにはプロジェクト管理者に編集者権限を依頼してください。",
+    "commentsReadOnly": "閲覧者はコメントを読めますが、投稿はできません。"
+  },
+  "accessImpact": {
+    "title": "アクセス権の変更",
+    "affectedUsers": "{count, plural, other {# 人のユーザーに影響があります。}}",
+    "noAffectedUsers": "影響を受けるユーザーはいません。",
+    "overlapHint": "各変更種別内ではユーザーを重複して数えません。同じユーザーが複数の変更種別に含まれる場合があります。",
+    "project": {
+      "gainedAccess": "{count, plural, other {# 人のユーザーがこのプロジェクトへのアクセス権を取得します。}}",
+      "lostAccess": "{count, plural, other {# 人のユーザーがこのプロジェクトへのアクセス権を失います。}}",
+      "increasedPermissions": "{count, plural, other {# 人のユーザーの権限が上がります。}}",
+      "decreasedPermissions": "{count, plural, other {# 人のユーザーの権限が下がります。}}",
+      "affectedProjects": "{count, plural, other {# 件のプロジェクトに影響があります。}}"
+    },
+    "group": {
+      "gainedAccess": "{count, plural, other {# 人のユーザーがグループまたは子プロジェクトへのアクセス権を取得します。}}",
+      "lostAccess": "{count, plural, other {# 人のユーザーがグループまたは子プロジェクトへのアクセス権を失います。}}",
+      "increasedPermissions": "{count, plural, other {# 人のユーザーのグループまたは子プロジェクトでの権限が上がります。}}",
+      "decreasedPermissions": "{count, plural, other {# 人のユーザーのグループまたは子プロジェクトでの権限が下がります。}}",
+      "affectedProjects": "{count, plural, other {# 件の子プロジェクトに影響があります。}}"
+    },
+    "loading": "現在のアクセス権変更を読み込み中…",
+    "loadFailed": "プレビューを読み込めませんでした。管理権限を確認して再試行してください。",
+    "retry": "プレビューを再試行",
+    "confirmationHint": "現在の変更を確認してください。保存前に権限が変更された場合は再度プレビューが必要です。",
+    "stale": "アクセス権が変更されました。更新されたプレビューを確認してください。",
+    "moveFailed": "移動に失敗しました。移動元と移動先の管理権限が必要な場合があります。再度プレビューしてください。",
+    "company": {
+      "opened": "このプロジェクトの社内アクセスが開放されます。",
+      "closed": "社内の公開アクセスが閉じられ、明示的な権限に従います。",
+      "unchanged": "社内アクセスは変更されません。"
+    },
+    "roles": {
+      "none": "アクセスなし",
+      "viewer": "閲覧者",
+      "editor": "編集者",
+      "admin": "管理者"
+    },
+    "groupCompany": {
+      "opened": "社内ユーザーはグループを表示できます。非公開の子プロジェクトは非公開のままです。",
+      "closed": "グループの表示は明示的なメンバーと子プロジェクトの利用者に制限されます。",
+      "unchanged": "グループの表示範囲は変更されません。"
+    }
   }
 }
