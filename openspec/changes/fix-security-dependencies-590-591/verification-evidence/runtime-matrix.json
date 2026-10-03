@@ -1,0 +1,426 @@
+[
+  {
+    "architecture": "amd64",
+    "database_mode": "pg",
+    "data_mode": "fresh",
+    "container": "chorus-security-patched-amd64-pg-fresh",
+    "port": 55460,
+    "arm64_execution": null,
+    "health": {
+      "status": "ok",
+      "timestamp": "2026-10-03T04:24:40.729Z",
+      "database": "connected"
+    },
+    "user_uuid": "a88d366a-297b-4cc1-9e5c-01ab904d9cd8",
+    "projects_before_restart": [],
+    "concurrent_project_statuses": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "database_before_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 0
+    },
+    "external_connections_tls": true,
+    "database_after_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 0
+    },
+    "passed": true
+  },
+  {
+    "architecture": "amd64",
+    "database_mode": "pg",
+    "data_mode": "upgrade",
+    "container": "chorus-security-patched-amd64-pg-upgrade",
+    "port": 55461,
+    "arm64_execution": null,
+    "health": {
+      "status": "ok",
+      "timestamp": "2026-10-03T04:24:48.748Z",
+      "database": "connected"
+    },
+    "user_uuid": "5d7ec209-55fe-4dac-bc71-191adbff5224",
+    "projects_before_restart": [
+      {
+        "uuid": "30227539-409a-426f-9a9e-eada9ff60e86",
+        "name": "Security baseline project",
+        "description": "Retain during migration upgrade",
+        "groupUuid": null,
+        "visibility": "public",
+        "createdAt": "2026-10-03T03:58:02.967Z",
+        "updatedAt": "2026-10-03T03:58:02.967Z",
+        "counts": {
+          "ideas": 0,
+          "documents": 0,
+          "tasks": 0,
+          "doneTasks": 0,
+          "proposals": 0
+        }
+      }
+    ],
+    "concurrent_project_statuses": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "database_before_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 1
+    },
+    "external_connections_tls": true,
+    "database_after_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 1
+    },
+    "passed": true
+  },
+  {
+    "architecture": "amd64",
+    "database_mode": "pglite",
+    "data_mode": "fresh",
+    "container": "chorus-security-patched-amd64-pglite-fresh",
+    "port": 55462,
+    "arm64_execution": null,
+    "health": {
+      "status": "ok",
+      "timestamp": "2026-10-03T04:25:01.690Z",
+      "database": "connected"
+    },
+    "user_uuid": "2de450ae-a19b-48b7-b9be-c878acc0e15e",
+    "projects_before_restart": [],
+    "concurrent_project_statuses": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "database_before_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 0
+    },
+    "database_after_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 0
+    },
+    "passed": true
+  },
+  {
+    "architecture": "amd64",
+    "database_mode": "pglite",
+    "data_mode": "upgrade",
+    "container": "chorus-security-patched-amd64-pglite-upgrade",
+    "port": 55463,
+    "arm64_execution": null,
+    "health": {
+      "status": "ok",
+      "timestamp": "2026-10-03T04:25:14.730Z",
+      "database": "connected"
+    },
+    "user_uuid": "4fc1a3d6-5b77-4beb-a3ac-e9a757724c52",
+    "projects_before_restart": [
+      {
+        "uuid": "dd44e307-fd40-4277-b56b-256a3eff4e22",
+        "name": "Security baseline project",
+        "description": "Retain during migration upgrade",
+        "groupUuid": null,
+        "visibility": "public",
+        "createdAt": "2026-10-03T03:58:16.553Z",
+        "updatedAt": "2026-10-03T03:58:16.553Z",
+        "counts": {
+          "ideas": 0,
+          "documents": 0,
+          "tasks": 0,
+          "doneTasks": 0,
+          "proposals": 0
+        }
+      }
+    ],
+    "concurrent_project_statuses": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "database_before_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 1
+    },
+    "database_after_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 1
+    },
+    "passed": true
+  },
+  {
+    "architecture": "arm64",
+    "database_mode": "pg",
+    "data_mode": "fresh",
+    "container": "chorus-security-patched-arm64-pg-fresh",
+    "port": 55464,
+    "arm64_execution": "QEMU emulation",
+    "health": {
+      "status": "ok",
+      "timestamp": "2026-10-03T04:43:50.275Z",
+      "database": "connected"
+    },
+    "user_uuid": "11fcffba-64ef-4f4f-98b2-0846eabd8197",
+    "projects_before_restart": [],
+    "concurrent_project_statuses": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "database_before_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 0
+    },
+    "external_connections_tls": true,
+    "database_after_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 0
+    },
+    "passed": true
+  },
+  {
+    "architecture": "arm64",
+    "database_mode": "pg",
+    "data_mode": "upgrade",
+    "container": "chorus-security-patched-arm64-pg-upgrade",
+    "port": 55465,
+    "arm64_execution": "QEMU emulation",
+    "health": {
+      "status": "ok",
+      "timestamp": "2026-10-03T04:44:57.622Z",
+      "database": "connected"
+    },
+    "user_uuid": "62e546ac-b359-49d2-8d25-c9223ead4ea3",
+    "projects_before_restart": [
+      {
+        "uuid": "f9b30e6a-1fab-42c4-b894-6542b5196718",
+        "name": "Security baseline project",
+        "description": "Retain during migration upgrade",
+        "groupUuid": null,
+        "visibility": "public",
+        "createdAt": "2026-10-03T03:58:05.843Z",
+        "updatedAt": "2026-10-03T03:58:05.843Z",
+        "counts": {
+          "ideas": 0,
+          "documents": 0,
+          "tasks": 0,
+          "doneTasks": 0,
+          "proposals": 0
+        }
+      }
+    ],
+    "concurrent_project_statuses": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "database_before_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 1
+    },
+    "external_connections_tls": true,
+    "database_after_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 1
+    },
+    "passed": true
+  },
+  {
+    "architecture": "arm64",
+    "database_mode": "pglite",
+    "data_mode": "fresh",
+    "container": "chorus-security-patched-arm64-pglite-fresh",
+    "port": 55466,
+    "arm64_execution": "QEMU emulation",
+    "health": {
+      "status": "ok",
+      "timestamp": "2026-10-03T04:46:29.680Z",
+      "database": "connected"
+    },
+    "user_uuid": "14a0441d-0038-463e-9b55-a4ce3c5918de",
+    "projects_before_restart": [],
+    "concurrent_project_statuses": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "database_before_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 0
+    },
+    "database_after_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 0
+    },
+    "passed": true
+  },
+  {
+    "architecture": "arm64",
+    "database_mode": "pglite",
+    "data_mode": "upgrade",
+    "container": "chorus-security-patched-arm64-pglite-upgrade",
+    "port": 55467,
+    "arm64_execution": "QEMU emulation",
+    "health": {
+      "status": "ok",
+      "timestamp": "2026-10-03T04:47:47.005Z",
+      "database": "connected"
+    },
+    "user_uuid": "3676abf4-f187-4329-b4c3-c0ac34978def",
+    "projects_before_restart": [
+      {
+        "uuid": "097b01a0-fdb9-4698-baa3-828d5db53a09",
+        "name": "Security baseline project",
+        "description": "Retain during migration upgrade",
+        "groupUuid": null,
+        "visibility": "public",
+        "createdAt": "2026-10-03T03:58:30.793Z",
+        "updatedAt": "2026-10-03T03:58:30.793Z",
+        "counts": {
+          "ideas": 0,
+          "documents": 0,
+          "tasks": 0,
+          "doneTasks": 0,
+          "proposals": 0
+        }
+      }
+    ],
+    "concurrent_project_statuses": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "database_before_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 1
+    },
+    "database_after_restart": {
+      "migration_count": 45,
+      "failed_count": 0,
+      "company_count": 1,
+      "user_count": 1,
+      "project_count": 1
+    },
+    "passed": true
+  }
+]

@@ -12,5 +12,5 @@
 
 ## 3. Production integration and security evidence
 
-- [ ] 3.1 Build and inspect amd64/arm64 production images; verify external PostgreSQL TLS and PGlite fresh, baseline-data upgrade and repeated-start paths.
-- [ ] 3.2 Verify health/login/projects, representative browser CSS and sharp processing; record audit/image scan comparisons, residual advisories and exact verification limits.
+- [x] 3.1 Build and inspect amd64/arm64 production images; verify external PostgreSQL TLS and PGlite fresh, baseline-data upgrade and repeated-start paths.
+- [x] 3.2 Verify health/login/projects, representative browser CSS and sharp processing; record audit/image scan comparisons, residual advisories and exact verification limits.
