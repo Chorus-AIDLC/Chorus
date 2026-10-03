@@ -1,0 +1,2292 @@
+{
+  "scanner": "Grype 0.119.0",
+  "sbom_generator": "Syft 1.54.0",
+  "database": {
+    "schemaVersion": "v6.1.9",
+    "from": "https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.9_2026-10-02T00:35:12Z_1790922713.tar.zst?checksum=sha256%3A3c368df5c3624fe083ad646ca3be59525739dfe9caa4b6d14c7f252d155fbd98",
+    "built": "2026-10-02T06:31:53Z",
+    "path": "/tmp/chorus-security-590-591-tools/grype-db/6/vulnerability.db",
+    "valid": true
+  },
+  "target_packages": [
+    "nanoid",
+    "next",
+    "postcss",
+    "react",
+    "react-dom",
+    "sharp"
+  ],
+  "counting": "Scanner matches, not deduplicated advisories; identical frozen database and final-image filesystem SBOM scope, including global tooling and OS.",
+  "images": {
+    "baseline-amd64": {
+      "severity_counts": {
+        "High": 67,
+        "Critical": 3,
+        "Medium": 85,
+        "Low": 7
+      },
+      "high_critical_matches": 70,
+      "target_high_critical_matches": 20,
+      "high_critical_findings": [
+        {
+          "package": "glob",
+          "version": "10.4.5",
+          "advisory": "GHSA-5j98-mcp5-4vw2",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/glob/package.json"
+          ],
+          "fix_versions": [
+            "10.5.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-p293-qw3h-jr36",
+          "severity": "Critical",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.24"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "lodash",
+          "version": "4.17.21",
+          "advisory": "GHSA-r5fr-rjxr-66jc",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/lodash@4.17.21/node_modules/lodash/package.json"
+          ],
+          "fix_versions": [
+            "4.18.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-c4j6-fc7j-m34r",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.16"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-2phv-j68v-wwqx",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.27.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-m99w-x7hq-7vfj",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.21"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "cross-spawn",
+          "version": "7.0.3",
+          "advisory": "GHSA-3xgq-45jj-v275",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/cross-spawn/package.json"
+          ],
+          "fix_versions": [
+            "7.0.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-mg66-mrh9-m8jx",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.16"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-267c-6grr-h53f",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.16"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-36qx-fr4f-26g5",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.16"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-26hh-7cqf-hhc6",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.18"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-23hp-3jrh-7fpw",
+          "severity": "Critical",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.19"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-492v-c6pp-mqqv",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.16"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "ip-address",
+          "version": "10.1.0",
+          "advisory": "GHSA-mwp4-54f8-5fhr",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/ip-address/package.json"
+          ],
+          "fix_versions": [
+            "10.3.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "ip-address",
+          "version": "9.0.5",
+          "advisory": "GHSA-mwp4-54f8-5fhr",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/ip-address/package.json"
+          ],
+          "fix_versions": [
+            "10.3.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-8x88-c5mf-7j5w",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.18"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-rgw5-rvv9-x895",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-rgw5-rvv9-x895",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-34x7-hfp2-rc4v",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.7"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-mh99-v99m-4gvg",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.3"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-mh99-v99m-4gvg",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.3"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pacote",
+          "version": "19.0.2",
+          "advisory": "GHSA-w4pp-8pjf-rmxw",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/pacote/package.json"
+          ],
+          "fix_versions": [
+            "21.5.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pacote",
+          "version": "20.0.1",
+          "advisory": "GHSA-w4pp-8pjf-rmxw",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/@npmcli/metavuln-calculator/node_modules/pacote/package.json"
+          ],
+          "fix_versions": [
+            "21.5.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-vq4v-j7r6-jq4m",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "postcss",
+          "version": "8.4.31",
+          "advisory": "GHSA-6g55-p6wh-862q",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/postcss@8.4.31/node_modules/postcss/package.json"
+          ],
+          "fix_versions": [
+            "8.5.12"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "zlib",
+          "version": "1.3.2-r0",
+          "advisory": "CVE-2026-85091",
+          "severity": "High",
+          "scope": "Alpine OS",
+          "paths": [
+            "/lib/apk/db/installed"
+          ],
+          "fix_versions": [],
+          "fix_state": ""
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-c59q-g84q-2gj5",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "hono",
+          "version": "4.11.4",
+          "advisory": "GHSA-q5qw-h33p-qvwr",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/hono@4.11.4/node_modules/hono/package.json"
+          ],
+          "fix_versions": [
+            "4.12.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "minimatch",
+          "version": "9.0.5",
+          "advisory": "GHSA-7r86-cg39-jmmj",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/minimatch/package.json"
+          ],
+          "fix_versions": [
+            "9.0.7"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "minimatch",
+          "version": "9.0.5",
+          "advisory": "GHSA-3ppc-4f35-3m26",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/minimatch/package.json"
+          ],
+          "fix_versions": [
+            "9.0.6"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-hwx4-2j3j-g496",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "nanoid",
+          "version": "3.3.11",
+          "advisory": "GHSA-2v37-7h3g-55p8",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/nanoid@3.3.11/node_modules/nanoid/package.json"
+          ],
+          "fix_versions": [
+            "3.3.18"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "deepmerge-ts",
+          "version": "7.1.5",
+          "advisory": "GHSA-ggr8-5vv4-36mx",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/deepmerge-ts@7.1.5/node_modules/deepmerge-ts/package.json"
+          ],
+          "fix_versions": [
+            "8.0.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-r292-9mhp-454m",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.21"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "postcss",
+          "version": "8.4.31",
+          "advisory": "GHSA-r28c-9q8g-f849",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/postcss@8.4.31/node_modules/postcss/package.json"
+          ],
+          "fix_versions": [
+            "8.5.18"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "minimatch",
+          "version": "9.0.5",
+          "advisory": "GHSA-23c5-xmqv-rm74",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/minimatch/package.json"
+          ],
+          "fix_versions": [
+            "9.0.7"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "picomatch",
+          "version": "4.0.3",
+          "advisory": "GHSA-c2c7-rcm5-vvqj",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/picomatch/package.json"
+          ],
+          "fix_versions": [
+            "4.0.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-89xv-2m56-2m9x",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.21"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-7vhp-vf5g-r2fw",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.26.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-p9j2-gv94-2wf4",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.21"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-rxhj-4m44-96r4",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "@hono/node-server",
+          "version": "1.19.9",
+          "advisory": "GHSA-wc8c-qw6v-h7f6",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/@hono+node-server@1.19.9_hono@4.11.4/node_modules/@hono/node-server/package.json"
+          ],
+          "fix_versions": [
+            "1.19.10"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-qffp-2rhf-9h96",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.10"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-8qq5-rm4j-mr97",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.3"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-6j4f-fj2g-mc7p",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-6j4f-fj2g-mc7p",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-qhr7-859c-m2p7",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.6"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-qhr7-859c-m2p7",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.6"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-3jxr-9vmj-r5cp",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-3jxr-9vmj-r5cp",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-w466-c33r-3gjp",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "nanoid",
+          "version": "3.3.11",
+          "advisory": "GHSA-28wg-ghj8-5hjv",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/nanoid@3.3.11/node_modules/nanoid/package.json"
+          ],
+          "fix_versions": [
+            "3.3.16"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "hono",
+          "version": "4.11.4",
+          "advisory": "GHSA-88fw-hqm2-52qc",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/hono@4.11.4/node_modules/hono/package.json"
+          ],
+          "fix_versions": [
+            "4.12.25"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "nanoid",
+          "version": "3.3.11",
+          "advisory": "GHSA-xwg4-73v4-xw9w",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/nanoid@3.3.11/node_modules/nanoid/package.json"
+          ],
+          "fix_versions": [
+            "3.3.12"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-r6q2-hw4h-h46w",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "effect",
+          "version": "3.18.4",
+          "advisory": "GHSA-38f7-945m-qr2g",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/effect@3.18.4/node_modules/effect/package.json"
+          ],
+          "fix_versions": [
+            "3.20.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-83g3-92jg-28cx",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.8"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-9ppj-qmqm-q256",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.11"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-gj8w-mvpf-x27x",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "sigstore",
+          "version": "3.1.0",
+          "advisory": "GHSA-52v5-jr5w-gjxr",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/sigstore/package.json"
+          ],
+          "fix_versions": [
+            "4.1.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-5wx6-mg75-v57r",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-2xp9-vwfh-vxw4",
+          "severity": "Critical",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.24"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "mysql2",
+          "version": "3.15.3",
+          "advisory": "GHSA-3f6p-5ww8-9rcr",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/mysql2@3.15.3/node_modules/mysql2/package.json"
+          ],
+          "fix_versions": [
+            "3.22.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-8h8q-6873-q5fj",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.16"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "next",
+          "version": "15.5.12",
+          "advisory": "GHSA-q4gf-8mx6-v5v3",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/next@15.5.12_@babel+core@7.29.0_react-dom@19.2.3_react@19.2.3__react@19.2.3/node_modules/next/package.json"
+          ],
+          "fix_versions": [
+            "15.5.15"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-72r4-9c5j-mj57",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-fr4h-3cph-29xv",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-qrv3-253h-g69c",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "sharp",
+          "version": "0.34.5",
+          "advisory": "GHSA-f88m-g3jw-g9cj",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/sharp@0.34.5/node_modules/sharp/package.json"
+          ],
+          "fix_versions": [
+            "0.35.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "sharp",
+          "version": "0.34.5",
+          "advisory": "GHSA-rgj7-g3m4-5g8c",
+          "severity": "High",
+          "scope": "application/other",
+          "paths": [
+            "/app/node_modules/.pnpm/sharp@0.34.5/node_modules/sharp/package.json"
+          ],
+          "fix_versions": [
+            "0.35.4"
+          ],
+          "fix_state": "fixed"
+        }
+      ]
+    },
+    "patched-amd64": {
+      "severity_counts": {
+        "High": 44,
+        "Critical": 1,
+        "Medium": 34,
+        "Low": 2
+      },
+      "high_critical_matches": 45,
+      "target_high_critical_matches": 0,
+      "high_critical_findings": [
+        {
+          "package": "glob",
+          "version": "10.4.5",
+          "advisory": "GHSA-5j98-mcp5-4vw2",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/glob/package.json"
+          ],
+          "fix_versions": [
+            "10.5.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-2phv-j68v-wwqx",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.27.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "cross-spawn",
+          "version": "7.0.3",
+          "advisory": "GHSA-3xgq-45jj-v275",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/cross-spawn/package.json"
+          ],
+          "fix_versions": [
+            "7.0.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-23hp-3jrh-7fpw",
+          "severity": "Critical",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.19"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "ip-address",
+          "version": "10.1.0",
+          "advisory": "GHSA-mwp4-54f8-5fhr",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/ip-address/package.json"
+          ],
+          "fix_versions": [
+            "10.3.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "ip-address",
+          "version": "9.0.5",
+          "advisory": "GHSA-mwp4-54f8-5fhr",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/ip-address/package.json"
+          ],
+          "fix_versions": [
+            "10.3.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-8x88-c5mf-7j5w",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.18"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-rgw5-rvv9-x895",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-rgw5-rvv9-x895",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-34x7-hfp2-rc4v",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.7"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-mh99-v99m-4gvg",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.3"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-mh99-v99m-4gvg",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.3"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pacote",
+          "version": "19.0.2",
+          "advisory": "GHSA-w4pp-8pjf-rmxw",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/pacote/package.json"
+          ],
+          "fix_versions": [
+            "21.5.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pacote",
+          "version": "20.0.1",
+          "advisory": "GHSA-w4pp-8pjf-rmxw",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/@npmcli/metavuln-calculator/node_modules/pacote/package.json"
+          ],
+          "fix_versions": [
+            "21.5.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-vq4v-j7r6-jq4m",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "zlib",
+          "version": "1.3.2-r0",
+          "advisory": "CVE-2026-85091",
+          "severity": "High",
+          "scope": "Alpine OS",
+          "paths": [
+            "/lib/apk/db/installed"
+          ],
+          "fix_versions": [],
+          "fix_state": ""
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-c59q-g84q-2gj5",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "minimatch",
+          "version": "9.0.5",
+          "advisory": "GHSA-7r86-cg39-jmmj",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/minimatch/package.json"
+          ],
+          "fix_versions": [
+            "9.0.7"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "minimatch",
+          "version": "9.0.5",
+          "advisory": "GHSA-3ppc-4f35-3m26",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/minimatch/package.json"
+          ],
+          "fix_versions": [
+            "9.0.6"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-hwx4-2j3j-g496",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "deepmerge-ts",
+          "version": "7.1.5",
+          "advisory": "GHSA-ggr8-5vv4-36mx",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/deepmerge-ts@7.1.5/node_modules/deepmerge-ts/package.json"
+          ],
+          "fix_versions": [
+            "8.0.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-r292-9mhp-454m",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.21"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "minimatch",
+          "version": "9.0.5",
+          "advisory": "GHSA-23c5-xmqv-rm74",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/minimatch/package.json"
+          ],
+          "fix_versions": [
+            "9.0.7"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "picomatch",
+          "version": "4.0.3",
+          "advisory": "GHSA-c2c7-rcm5-vvqj",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/picomatch/package.json"
+          ],
+          "fix_versions": [
+            "4.0.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-7vhp-vf5g-r2fw",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.26.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-rxhj-4m44-96r4",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-qffp-2rhf-9h96",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.10"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-8qq5-rm4j-mr97",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.3"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-6j4f-fj2g-mc7p",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-6j4f-fj2g-mc7p",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-qhr7-859c-m2p7",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.6"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-qhr7-859c-m2p7",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.6"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-3jxr-9vmj-r5cp",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-3jxr-9vmj-r5cp",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-w466-c33r-3gjp",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-r6q2-hw4h-h46w",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-83g3-92jg-28cx",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.8"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-9ppj-qmqm-q256",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.11"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-gj8w-mvpf-x27x",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "sigstore",
+          "version": "3.1.0",
+          "advisory": "GHSA-52v5-jr5w-gjxr",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/sigstore/package.json"
+          ],
+          "fix_versions": [
+            "4.1.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-5wx6-mg75-v57r",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "mysql2",
+          "version": "3.15.3",
+          "advisory": "GHSA-3f6p-5ww8-9rcr",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/mysql2@3.15.3/node_modules/mysql2/package.json"
+          ],
+          "fix_versions": [
+            "3.22.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-72r4-9c5j-mj57",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-fr4h-3cph-29xv",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-qrv3-253h-g69c",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.4"
+          ],
+          "fix_state": "fixed"
+        }
+      ]
+    },
+    "patched-arm64": {
+      "severity_counts": {
+        "High": 44,
+        "Critical": 1,
+        "Medium": 34,
+        "Low": 2
+      },
+      "high_critical_matches": 45,
+      "target_high_critical_matches": 0,
+      "high_critical_findings": [
+        {
+          "package": "glob",
+          "version": "10.4.5",
+          "advisory": "GHSA-5j98-mcp5-4vw2",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/glob/package.json"
+          ],
+          "fix_versions": [
+            "10.5.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-2phv-j68v-wwqx",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.27.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "cross-spawn",
+          "version": "7.0.3",
+          "advisory": "GHSA-3xgq-45jj-v275",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/cross-spawn/package.json"
+          ],
+          "fix_versions": [
+            "7.0.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-23hp-3jrh-7fpw",
+          "severity": "Critical",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.19"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "ip-address",
+          "version": "10.1.0",
+          "advisory": "GHSA-mwp4-54f8-5fhr",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/ip-address/package.json"
+          ],
+          "fix_versions": [
+            "10.3.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "ip-address",
+          "version": "9.0.5",
+          "advisory": "GHSA-mwp4-54f8-5fhr",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/ip-address/package.json"
+          ],
+          "fix_versions": [
+            "10.3.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-8x88-c5mf-7j5w",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.18"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-rgw5-rvv9-x895",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-rgw5-rvv9-x895",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-34x7-hfp2-rc4v",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.7"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-mh99-v99m-4gvg",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.3"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-mh99-v99m-4gvg",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.3"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pacote",
+          "version": "19.0.2",
+          "advisory": "GHSA-w4pp-8pjf-rmxw",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/pacote/package.json"
+          ],
+          "fix_versions": [
+            "21.5.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pacote",
+          "version": "20.0.1",
+          "advisory": "GHSA-w4pp-8pjf-rmxw",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/@npmcli/metavuln-calculator/node_modules/pacote/package.json"
+          ],
+          "fix_versions": [
+            "21.5.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-vq4v-j7r6-jq4m",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "zlib",
+          "version": "1.3.2-r0",
+          "advisory": "CVE-2026-85091",
+          "severity": "High",
+          "scope": "Alpine OS",
+          "paths": [
+            "/lib/apk/db/installed"
+          ],
+          "fix_versions": [],
+          "fix_state": ""
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-c59q-g84q-2gj5",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "minimatch",
+          "version": "9.0.5",
+          "advisory": "GHSA-7r86-cg39-jmmj",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/minimatch/package.json"
+          ],
+          "fix_versions": [
+            "9.0.7"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "minimatch",
+          "version": "9.0.5",
+          "advisory": "GHSA-3ppc-4f35-3m26",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/minimatch/package.json"
+          ],
+          "fix_versions": [
+            "9.0.6"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-hwx4-2j3j-g496",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "deepmerge-ts",
+          "version": "7.1.5",
+          "advisory": "GHSA-ggr8-5vv4-36mx",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/deepmerge-ts@7.1.5/node_modules/deepmerge-ts/package.json"
+          ],
+          "fix_versions": [
+            "8.0.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-r292-9mhp-454m",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.21"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "minimatch",
+          "version": "9.0.5",
+          "advisory": "GHSA-23c5-xmqv-rm74",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/minimatch/package.json"
+          ],
+          "fix_versions": [
+            "9.0.7"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "picomatch",
+          "version": "4.0.3",
+          "advisory": "GHSA-c2c7-rcm5-vvqj",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/picomatch/package.json"
+          ],
+          "fix_versions": [
+            "4.0.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-7vhp-vf5g-r2fw",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.26.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-rxhj-4m44-96r4",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-qffp-2rhf-9h96",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.10"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-8qq5-rm4j-mr97",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.3"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-6j4f-fj2g-mc7p",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-6j4f-fj2g-mc7p",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.5"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-qhr7-859c-m2p7",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.6"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-qhr7-859c-m2p7",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.6"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.1",
+          "advisory": "GHSA-3jxr-9vmj-r5cp",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "brace-expansion",
+          "version": "2.0.2",
+          "advisory": "GHSA-3jxr-9vmj-r5cp",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/brace-expansion/package.json"
+          ],
+          "fix_versions": [
+            "2.1.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-w466-c33r-3gjp",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-r6q2-hw4h-h46w",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-83g3-92jg-28cx",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.8"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "tar",
+          "version": "6.2.1",
+          "advisory": "GHSA-9ppj-qmqm-q256",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/dist/node_modules/tar/package.json"
+          ],
+          "fix_versions": [
+            "7.5.11"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-gj8w-mvpf-x27x",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "sigstore",
+          "version": "3.1.0",
+          "advisory": "GHSA-52v5-jr5w-gjxr",
+          "severity": "High",
+          "scope": "Node image npm",
+          "paths": [
+            "/usr/local/lib/node_modules/npm/node_modules/sigstore/package.json"
+          ],
+          "fix_versions": [
+            "4.1.1"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-5wx6-mg75-v57r",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.2"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "mysql2",
+          "version": "3.15.3",
+          "advisory": "GHSA-3f6p-5ww8-9rcr",
+          "severity": "High",
+          "scope": "global Prisma CLI",
+          "paths": [
+            "/root/.local/share/pnpm/global/5/.pnpm/mysql2@3.15.3/node_modules/mysql2/package.json"
+          ],
+          "fix_versions": [
+            "3.22.0"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-72r4-9c5j-mj57",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-fr4h-3cph-29xv",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.4"
+          ],
+          "fix_state": "fixed"
+        },
+        {
+          "package": "pnpm",
+          "version": "9.15.0",
+          "advisory": "GHSA-qrv3-253h-g69c",
+          "severity": "High",
+          "scope": "bundled pnpm cache",
+          "paths": [
+            "/root/.cache/node/corepack/v1/pnpm/9.15.0/package.json"
+          ],
+          "fix_versions": [
+            "10.34.4"
+          ],
+          "fix_state": "fixed"
+        }
+      ]
+    }
+  }
+}

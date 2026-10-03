@@ -8,3 +8,6 @@ packages
 !.env.example
 .pglite
 .chorus
+coverage
+.playwright-mcp
+*.tsbuildinfo

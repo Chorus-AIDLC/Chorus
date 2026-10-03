@@ -36,6 +36,7 @@ COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
 
 COPY . .
+RUN node scripts/prisma-migration-version.mjs > /prisma-migration-version
 RUN pnpm build
 
 # Dereference pnpm symlinks for PGlite packages (needed in production stage)
@@ -64,15 +65,17 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
+COPY --from=builder /prisma-migration-version /tmp/prisma-migration-version
 
-# Install prisma CLI globally for database migrations. PIN to the app's @prisma/client
-# version — an unpinned `pnpm add -g prisma` floats to the latest release, and Prisma
-# CLIs newer than 7.3.0 dropped the `migrate deploy` command (docker-entrypoint.sh),
-# which made the container crash on startup → ECS circuit-breaker rollback. Keep this in
-# lockstep with the `prisma` / `@prisma/client` versions in package.json + pnpm-lock.yaml.
+# Install the exact stable CLI resolved and validated with the client and adapter
+# in the builder. Unversioned installs follow mutable npm dist-tags, which can
+# select a prerelease/new major; stable Prisma 7.x still supports migrate deploy.
 ENV PNPM_HOME="/root/.local/share/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN pnpm add -g prisma@7.3.0
+RUN PRISMA_MIGRATION_VERSION="$(cat /tmp/prisma-migration-version)" \
+ && test -n "$PRISMA_MIGRATION_VERSION" \
+ && pnpm add -g "prisma@$PRISMA_MIGRATION_VERSION" \
+ && rm /tmp/prisma-migration-version
 
 # Copy dotenv for prisma.config.ts (standalone bundles it into server.js but doesn't keep the module)
 COPY --from=builder /app/node_modules/dotenv ./node_modules/dotenv

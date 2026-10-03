@@ -1,0 +1,42 @@
+{
+  "removed_containers": [
+    "chorus-security-patched-amd64-pg-fresh",
+    "chorus-security-patched-amd64-pg-upgrade",
+    "chorus-security-patched-amd64-pglite-fresh",
+    "chorus-security-patched-amd64-pglite-upgrade",
+    "chorus-security-patched-arm64-pg-fresh",
+    "chorus-security-patched-arm64-pg-upgrade",
+    "chorus-security-patched-arm64-pglite-fresh",
+    "chorus-security-patched-arm64-pglite-upgrade",
+    "chorus-security-590-591-pg",
+    "chorus-security-590-591-test-pg"
+  ],
+  "removed_named_volumes": [
+    "chorus-security-pglite-amd64-fresh",
+    "chorus-security-pglite-amd64-upgrade",
+    "chorus-security-pglite-arm64-fresh",
+    "chorus-security-pglite-arm64-upgrade"
+  ],
+  "removed_anonymous_volumes": [
+    "72a0e0797d328d29410e0ec9ae7dbe937e9db80db88ab79c8ee79cbe0ddd98c9",
+    "b4401191744ab03a79f303ae9d20eb4b670ac6125cd26700a00c44948f0491e9"
+  ],
+  "network": "chorus-security-590-591",
+  "retained": [
+    "local production images",
+    "branch/worktree",
+    "protected raw evidence"
+  ],
+  "generic_prune_used": false,
+  "passed": true,
+  "stable_browser_recheck": {
+    "removed_containers": [
+      "chorus-security-patched-amd64-pg-upgrade",
+      "chorus-security-patched-amd64-pglite-upgrade",
+      "chorus-security-590-591-pg"
+    ],
+    "removed_named_volume": "chorus-security-pglite-amd64-upgrade",
+    "removed_network": "chorus-security-590-591",
+    "passed": true
+  }
+}
