@@ -81,8 +81,11 @@ Logs: `/tmp/wake-error-review-{baseline-cli,baseline-openclaw,full-tests,focused
 The first independent follow-up review found `B1-dsh-rpc-reason-lost`:
 an RPC rejection could arrive before EPIPE, while the catch resumed after it.
 DSH now records the structured rejection before rejecting its RPC waiter.
-Three added regressions cover initialize, prompt and shutdown, each both with
-and without same-callback EPIPE. All three failed before this correction.
+Request correlation is retained while stdout drains, so a rejection received
+after EPIPE also remains attributable to the pending RPC. Three added regressions
+cover initialize, prompt and shutdown, each without EPIPE and with same-callback
+EPIPE both before and after the rejection. The missing precedence in each event
+order was independently reproduced before its correction.
 The collector/spawner/DSH correction run passed 128 tests across three files;
 changed-file ESLint and `git diff --check` also passed.
 

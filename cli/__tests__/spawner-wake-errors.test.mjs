@@ -144,19 +144,21 @@ async function begin(source, opts = {}) {
 describe("terminal reasons survive pipe errors", () => {
   it.each(["initialize", "session/prompt", "shutdown"])(
     "retains a DSH %s rejection when EPIPE arrives before catch resumes", async (method) => {
-      for (const withEpipe of [false, true]) {
+      for (const pipeOrder of ["none", "before-rpc", "after-rpc"]) {
         const child = plainChild("dsh");
         child.stdin.end = () => queueMicrotask(() => child.exit(1));
         child.stdin.write = vi.fn((line) => {
           const request = JSON.parse(line);
           queueMicrotask(() => {
             if (request.method === method) {
-              child.send({ jsonrpc: "2.0", id: request.id,
-                error: { code: -32603, message: "Provider authentication failed" } });
-              if (withEpipe) {
+              const pipeError = () => {
                 child.stdin.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" }));
                 child.stderr.emit("data", "provider warning\n");
-              }
+              };
+              if (pipeOrder === "before-rpc") pipeError();
+              child.send({ jsonrpc: "2.0", id: request.id,
+                error: { code: -32603, message: "Provider authentication failed" } });
+              if (pipeOrder === "after-rpc") pipeError();
             } else {
               child.send({ jsonrpc: "2.0", id: request.id, result: request.method === "initialize"
                 ? { serverInfo: { name: "deepseek-harness-sdk-runtime" } }
@@ -179,7 +181,7 @@ describe("terminal reasons survive pipe errors", () => {
           exitCode: 1,
         });
         expect(result.wakeError.details).toContain("Provider authentication failed");
-        if (withEpipe) expect(result.wakeError.details).toContain("stdin closed");
+        if (pipeOrder !== "none") expect(result.wakeError.details).toContain("stdin closed");
       }
     },
   );

@@ -298,7 +298,8 @@ export class DshSpawner {
       if (protocolDone) return;
       protocolDone = true;
       for (const waiter of pending.values()) waiter.reject(error);
-      pending.clear();
+      // Keep request correlation while stdout drains: a backend rejection can
+      // follow EPIPE even though its waiter has already been settled.
       idle.reject(error);
       failed.reject(error);
     };
