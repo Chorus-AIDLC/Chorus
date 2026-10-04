@@ -183,8 +183,8 @@ npm install --prefix /tmp/chorus-pi-compat-0.99.0 --ignore-scripts --no-audit --
 npm install --prefix /tmp/chorus-pi-compat-1.0.2 --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@1.0.2
 mkdir -p /tmp/chorus-pi-compat-artifact
 npm pack ./packages/chorus-pi --ignore-scripts --pack-destination /tmp/chorus-pi-compat-artifact
-node packages/chorus-pi/test/compat-matrix.mjs --artifact /tmp/chorus-pi-compat-artifact/chorus-aidlc-chorus-pi-0.21.0.tgz
-node packages/chorus-pi/test/config-discovery-matrix.mjs --artifact /tmp/chorus-pi-compat-artifact/chorus-aidlc-chorus-pi-0.21.0.tgz
+node packages/chorus-pi/test/compat-matrix.mjs --artifact /tmp/chorus-pi-compat-artifact/chorus-aidlc-chorus-pi-0.21.1.tgz
+node packages/chorus-pi/test/config-discovery-matrix.mjs --artifact /tmp/chorus-pi-compat-artifact/chorus-aidlc-chorus-pi-0.21.1.tgz
 node cli/__tests__/pi-mcp-config-host.mjs
 pnpm exec vitest run cli/__tests__
 ```
