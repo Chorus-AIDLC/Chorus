@@ -125,10 +125,10 @@ export async function runInit(argv = [], deps = {}) {
       if (step.scope === STEP_SCOPES.PER_AGENT) {
         for (const agentId of selectedIds) {
           const adapter = adapters.get(agentId);
-          outcomes.push(await step.run({ ...baseCtx, agentId, adapter }));
+          outcomes.push(await step.run({ ...baseCtx, agentId, adapter, priorOutcomes: outcomes.flat() }));
         }
       } else {
-        outcomes.push(await step.run(baseCtx));
+        outcomes.push(await step.run({ ...baseCtx, priorOutcomes: outcomes.flat() }));
       }
     } catch (err) {
       // A crashing step becomes a visible failed outcome, never a silent abort.

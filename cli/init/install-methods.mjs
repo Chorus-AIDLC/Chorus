@@ -148,6 +148,8 @@ export function installCodex(ctx) {
   // Ensure the native-MCP block is present + normalized to the keyless bearer_token_env_var
   // form. Idempotent; runs on both fresh install and re-run. Never writes a secret. A missing
   // URL is a non-fatal skip (the plugin surface is still installed). Returns a note suffix.
+  let codexMcpWritten = false;
+  const codexOut = (action, detail) => ({ ...out("codex", action, detail), codexMcpWritten });
   const ensureMcp = () => {
     if (ctx.flags?.pluginOnly) return ""; // Upgrade preserves existing connection settings.
     if (!chorusUrl) {
@@ -155,9 +157,10 @@ export function installCodex(ctx) {
     }
     try {
       writeMcp({ configPath, url: chorusUrl });
+      codexMcpWritten = true;
       return ' and wrote [mcp_servers.chorus] (bearer_token_env_var="CHORUS_API_KEY")';
-    } catch (err) {
-      return ` (WARNING: could not write [mcp_servers.chorus]: ${errText({ error: err?.message ?? String(err) })})`;
+    } catch {
+      return " (WARNING: could not write [mcp_servers.chorus]; check config.toml permissions and retry)";
     }
   };
 
@@ -172,13 +175,12 @@ export function installCodex(ctx) {
       if (!ru.ok) return out("codex", FAILED, `codex plugin marketplace upgrade failed: ${errText(ru)}`);
       const rp = run("codex", ["plugin", "add", CHORUS_PLUGIN_ID, "--json"], { env });
       if (!rp.ok) return out("codex", FAILED, `codex plugin add failed: ${errText(rp)}`);
-      return out(
-        "codex",
+      return codexOut(
         REPAIRED,
         `refreshed ${CHORUS_MARKETPLACE_NAME} and reinstalled ${CHORUS_PLUGIN_ID}${ensureMcp()}`,
       );
     }
-    return out("codex", SKIPPED, `already installed (config.toml)${ensureMcp()}`);
+    return codexOut(SKIPPED, `already installed (config.toml)${ensureMcp()}`);
   }
 
   ctx.backup?.(configPath); // back up before the CLI edits it
@@ -188,8 +190,7 @@ export function installCodex(ctx) {
   }
   const r2 = run("codex", ["plugin", "add", CHORUS_PLUGIN_ID, "--json"], { env });
   if (!r2.ok) return out("codex", FAILED, `codex plugin add failed: ${errText(r2)}`);
-  return out(
-    "codex",
+  return codexOut(
     state.marketplaceRegistered ? REPAIRED : INSTALLED,
     `installed ${CHORUS_PLUGIN_ID} via codex plugin CLI${ensureMcp()}`,
   );
