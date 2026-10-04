@@ -307,6 +307,18 @@ async function runSingleAgent(
 		args.push("--thinking", dispatchDefaults.thinkingLevel);
 	}
 	const tools = expandReviewerTools(agent.name, agent.tools, dispatchDefaults.availableToolNames);
+	if (tools?.length === 0) {
+		return {
+			agent: agentName,
+			agentSource: agent.source,
+			task,
+			exitCode: 1,
+			messages: [],
+			stderr: "No permitted tools remain for this agent; refusing unrestricted tool inheritance.",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+			step,
+		};
+	}
 	if (tools && tools.length > 0) args.push("--tools", tools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -489,8 +501,9 @@ export default function (pi: ExtensionAPI) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
 			const dispatchDefaults: DispatchDefaults = {
 				model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-				thinkingLevel: ctx.thinkingLevel,
-				availableToolNames: ctx.tools.map((tool) => tool.name),
+				thinkingLevel: ctx.thinkingLevel ?? pi.getThinkingLevel(),
+				availableToolNames: ("tools" in ctx && Array.isArray(ctx.tools)
+					? ctx.tools : pi.getAllTools()).map((tool) => tool.name),
 			};
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;

@@ -397,6 +397,29 @@ test("normalizeChorusToolName: strips one chorus_ server prefix for generic tool
   expect(normalizeChorusToolName("chorus_chorus_get_task")).toBe("chorus_get_task");
 });
 
+test("generic Chorus tools normalize native, adapter and bare identities without reading input", () => {
+  for (const operation of ["chorus_get_idea", "chorus_get_task", "chorus_checkin"]) {
+    for (const name of [operation, `chorus_${operation}`, `mcp__chorus__${operation}`]) {
+      expect(normalizeChorusToolName(name)).toBe(operation);
+      expect(resolveChorusToolName({
+        toolName: name,
+        get input(): never { throw new Error("Generic normalization must not read arguments"); },
+      })).toBe(operation);
+      expect(NUDGE_TOOL_NAMES).not.toContain(operation);
+    }
+  }
+});
+
+test("generic native normalization rejects malformed values and unrelated namespaces", () => {
+  for (const name of [null, undefined, 1, true, {}, [], Symbol("chorus_get_idea"),
+    new String("chorus_get_idea"), "mcp__chorus__", "mcp__chorus__get_idea",
+    "mcp__other__chorus_get_idea", "mcp__chorus.chorus_get_idea"]) {
+    expect(normalizeChorusToolName(name)).toBe(null);
+  }
+  expect(normalizeChorusToolName("mcp__chorus__chorus_chorus_get_idea"))
+    .toBe("chorus_chorus_get_idea");
+});
+
 test("normalizeChorusToolName: returns null for non-chorus tools", () => {
   expect(normalizeChorusToolName("bash")).toBe(null);
   expect(normalizeChorusToolName("subagent")).toBe(null);
@@ -481,7 +504,7 @@ test("workflow normalization: generic behavior for non-target tools is preserved
     ["chorus_chorus_chorus_get_task", "chorus_chorus_get_task"],
     ["chorus__", "chorus__"],
     ["chorus_get_task\n", "chorus_get_task\n"],
-    ["mcp__chorus__chorus_get_task", null],
+    ["mcp__chorus__chorus_get_task", "chorus_get_task"],
     ["custom.namespace.chorus_get_task", null],
     ["xchorus_checkin", null],
   ]) {

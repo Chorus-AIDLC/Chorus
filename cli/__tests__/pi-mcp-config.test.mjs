@@ -6,10 +6,116 @@
 // exposes the chorus_* tools, and NO literal cho_ key is written. Merge-safe JSON upsert
 // (mirrors the keyless Codex writer, but JSON not TOML).
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { piMcpUrl, resolvePiMcpConfigPath, writePiMcpServer } from "../init/pi-mcp-config.mjs";
+
+describe("Pi backend-specific configuration", () => {
+  const backend = { mode: "legacy", supported: true };
+  it.each(["permissive", "symlink"])("ignores a pre-existing %s temp during migration", (kind) => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-config-temp-"));
+    const source = join(dir, "mcp.json");
+    const configPath = join(dir, "mcp-adapter.json");
+    const previous = JSON.stringify({ mcpServers: { unrelated: { headers: { Authorization: "Bearer DUMMY_OTHER" } } } });
+    writeFileSync(source, previous, { mode: 0o600 });
+    if (kind === "symlink") symlinkSync(source, `${configPath}.tmp`);
+    else writeFileSync(`${configPath}.tmp`, "unowned", { mode: 0o644 });
+    writePiMcpServer({ configPath, url: "https://c.example", backend });
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+    expect(lstatSync(configPath).isSymbolicLink()).toBe(false);
+    expect(readFileSync(source, "utf8")).toBe(previous);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).mcpServers.unrelated.headers.Authorization).toBe("Bearer DUMMY_OTHER");
+    expect(lstatSync(`${configPath}.tmp`).isSymbolicLink()).toBe(kind === "symlink");
+    expect(readFileSync(`${configPath}.tmp`, "utf8")).toBe(kind === "symlink" ? previous : "unowned");
+    expect(readdirSync(dir).sort()).toEqual(["mcp-adapter.json", "mcp-adapter.json.tmp", "mcp.json"]);
+  });
+  it("cleans up only its own temp when rename fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-config-rename-"));
+    const configPath = join(dir, "mcp-adapter.json");
+    writeFileSync(`${configPath}.tmp`, "unowned");
+    expect(() => writePiMcpServer({ configPath, url: "https://c.example", backend }, {
+      rename: () => { throw new Error("rename failed"); },
+    })).toThrow("rename failed");
+    expect(readdirSync(dir)).toEqual(["mcp-adapter.json.tmp"]);
+  });
+  it("uses the adapter5 primary file and fresh direct tools without changing native defaults", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-config-backend-"));
+    const env = { PI_CODING_AGENT_DIR: dir };
+    const configPath = resolvePiMcpConfigPath(env, backend);
+    expect(configPath).toBe(join(dir, "mcp-adapter.json"));
+    writePiMcpServer({ configPath, url: "https://c.example", backend });
+    const first = readFileSync(configPath, "utf8");
+    expect(JSON.parse(first).mcpServers.chorus.directTools).toBe(true);
+    writePiMcpServer({ configPath, url: "https://c.example", backend });
+    expect(readFileSync(configPath, "utf8")).toBe(first);
+    const native = resolvePiMcpConfigPath(env, { mode: "native", supported: true });
+    writePiMcpServer({ configPath: native, url: "https://c.example", backend: { mode: "native" } });
+    expect(JSON.parse(readFileSync(native, "utf8")).mcpServers.chorus).not.toHaveProperty("directTools");
+    expect(JSON.parse(readFileSync(native, "utf8")).mcpServers.chorus).not.toHaveProperty("exposure");
+  });
+  it.each([[false], ["search"], [["chorus_checkin"]]])("migrates legacy user choice %j and preserves other settings without editing source", (directTools) => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-config-migrate-"));
+    const oldPath = join(dir, "mcp.json");
+    const previous = JSON.stringify({ settings: { requestTimeoutMs: 123 }, custom: "keep", mcpServers: {
+      other: { command: "fixture" }, chorus: { directTools, toolPrefix: "custom", bearerToken: "cho_OLD_BEARER", headers: { "X-Custom": "keep", Authorization: "Bearer cho_OLD" } },
+    } });
+    writeFileSync(oldPath, previous);
+    const configPath = resolvePiMcpConfigPath({ PI_CODING_AGENT_DIR: dir }, backend);
+    writePiMcpServer({ configPath, url: "https://c.example", backend });
+    const parsed = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(parsed).toMatchObject({ settings: { requestTimeoutMs: 123 }, custom: "keep", mcpServers: {
+      other: { command: "fixture" }, chorus: { directTools, toolPrefix: "custom", headers: { "X-Custom": "keep", Authorization: "Bearer ${CHORUS_API_KEY}" } },
+    } });
+    expect(readFileSync(configPath, "utf8")).not.toContain("cho_OLD");
+    expect(parsed.mcpServers.chorus).not.toHaveProperty("bearerToken");
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+    expect(readFileSync(oldPath, "utf8")).toBe(previous);
+  });
+  it("preserves explicit global directTools choice rather than overriding it per-server", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-config-choice-"));
+    const configPath = join(dir, "mcp-adapter.json");
+    writeFileSync(configPath, JSON.stringify({ settings: { directTools: false } }));
+    writePiMcpServer({ configPath, url: "https://c.example", backend });
+    const parsed = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(parsed.settings.directTools).toBe(false);
+    expect(parsed.mcpServers.chorus).not.toHaveProperty("directTools");
+  });
+  it("existing primary adapter config wins over stale legacy config", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-config-precedence-"));
+    const configPath = join(dir, "mcp-adapter.json");
+    writeFileSync(configPath, JSON.stringify({ mcpServers: { chorus: { directTools: false }, keep: { command: "keep" } } }));
+    writeFileSync(join(dir, "mcp.json"), JSON.stringify({ mcpServers: { chorus: { directTools: true }, obsolete: { command: "old" } } }));
+    writePiMcpServer({ configPath, url: "https://c.example", backend });
+    const parsed = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(parsed.mcpServers.chorus.directTools).toBe(false);
+    expect(parsed.mcpServers.keep).toEqual({ command: "keep" });
+    expect(parsed.mcpServers).not.toHaveProperty("obsolete");
+  });
+  it("refuses unreadable or malformed legacy migration without writing or leaking raw contents", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-config-unsafe-"));
+    const configPath = join(dir, "mcp-adapter.json");
+    writeFileSync(join(dir, "mcp.json"), '{"secret":"cho_SECRET", bad}');
+    expect(() => writePiMcpServer({ configPath, url: "https://c.example", backend })).toThrow(/not valid JSON/);
+    expect(existsSync(configPath)).toBe(false);
+    expect(() => writePiMcpServer({ configPath, url: "https://c.example" }, { read: () => { throw Object.assign(new Error("cho_SECRET"), { code: "EACCES" }); } })).toThrow(/cannot read.*refusing/);
+    try { writePiMcpServer({ configPath, url: "https://c.example", backend }); } catch (error) { expect(error.message).not.toContain("cho_SECRET"); }
+  });
+  it("unreadable primary never falls back to stale legacy data", () => {
+    const readPaths = [];
+    const writes = [];
+    const configPath = "/fixture/mcp-adapter.json";
+    expect(() => writePiMcpServer({ configPath, url: "https://c.example", backend }, {
+      read: (path) => {
+        readPaths.push(path);
+        if (path === configPath) throw Object.assign(new Error("access denied"), { code: "EACCES" });
+        return JSON.stringify({ mcpServers: { chorus: { bearerToken: "cho_STALE" } } });
+      }, write: (...args) => writes.push(args),
+    })).toThrow(/cannot read.*refusing/);
+    expect(readPaths).toEqual([configPath]);
+    expect(writes).toEqual([]);
+  });
+});
 
 describe("piMcpUrl", () => {
   it("appends /api/mcp to a bare host (with or without a trailing slash)", () => {

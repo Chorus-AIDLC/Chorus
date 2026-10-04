@@ -103,8 +103,8 @@ public/skill/                   ← Standalone skill (any MCP-compatible agent)
 | Aspect | Claude Code | Codex | OpenClaw | Kiro CLI | Pi |
 |--------|-------------|-------|----------|----------|----|
 | Skill invocation | `/chorus:develop` | `$develop` | `/develop` | `/chorus-develop` | `/skill:develop` |
-| Tool names | `chorus_<tool>` | `chorus_<tool>` | `chorus__<tool>` | `chorus_<tool>` / `@chorus` matcher | MCP gateway may expose `chorus_chorus_<tool>`; extension uses native `chorus_<tool>` |
-| MCP config | `.mcp.json` | `~/.codex/config.toml` | Plugin config | `~/.kiro/settings/mcp.json` | `.mcp.json` or `~/.pi/agent/mcp.json` via `pi-mcp-adapter` |
+| Tool names | `chorus_<tool>` | `chorus_<tool>` | `chorus__<tool>` | `chorus_<tool>` / `@chorus` matcher | Native `mcp__chorus__chorus_<tool>` (direct/codemode); legacy adapter5 direct `chorus_chorus_<tool>` or bare; extension uses backend names |
+| MCP config | `.mcp.json` | `~/.codex/config.toml` | Plugin config | `~/.kiro/settings/mcp.json` | Native global `~/.pi/agent/mcp.json` / trusted project `.pi/mcp.json`; legacy adapter5 global `mcp-adapter.json` |
 | Session lifecycle | SubagentStart/Stop hooks | Manual/stateless | Manual | `agentSpawn`/`stop` hooks | Automatic via mutable `subagent_spawn` and `subagent_manage` events |
 | Reviewers | `agents/*.md` via Task | Skills mounted in `spawn_agent` | Reviewer skills via `sessions_spawn` | Native JSON subagents | `agents/chorus-*-reviewer.md` via `pi-subagents` |
 | User interaction | `AskUserQuestion` | Plain text | Plain text | Plain text | Plain text |

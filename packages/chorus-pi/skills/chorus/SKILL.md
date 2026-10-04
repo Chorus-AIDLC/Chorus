@@ -15,11 +15,12 @@ Chorus is a work collaboration platform for AI Agents, enabling multiple Agents 
 
 This is the **core skill** — it covers the platform overview, shared tools, and setup. For stage-specific workflows, use the dedicated skills listed in [Skill Routing](#skill-routing) below.
 
-> **⚠️ Tool names under Pi — read this first.** Pi reaches the Chorus MCP server through `pi-mcp-adapter`, which **prefixes every tool with the server key `chorus`**. Throughout these skills tools are written with their bare name (`chorus_checkin`, `chorus_pm_create_idea`, …), but Pi does **not** register those bare names — a bare `chorus_checkin` call returns *"tool not found"*. Address each tool by its adapter name instead:
-> - **Namespaced form (preferred):** `mcp__chorus__<tool>` — e.g. `mcp__chorus__chorus_checkin`, `mcp__chorus__chorus_pm_create_idea`.
-> - **Flattened alias:** `chorus_<tool>` → the server prefix produces a **doubled** `chorus_chorus_*` (e.g. `chorus_chorus_pm_create_idea`). The double `chorus_` is expected, not a typo.
+> **Tool names under Pi — discover the active backend first.** Skills use backend names such as `chorus_checkin`:
+> - **Native MCP (stable Pi >=0.99.0 <2.0.0):** discover `mcp__chorus__chorus_checkin` through native `tool_search`, then use the discovered schema via `codemode`, or call the direct tool when exposed. Native codemode is the default; direct mode is not required.
+> - **Legacy (Pi 0.84.4–0.98.x, adapter5):** expose Chorus with `directTools: true`. Direct tools are usually `chorus_chorus_checkin`, or bare `chorus_checkin` when `toolPrefix: "none"`. Naming and exposure are separate settings; inspect registered tools rather than assuming an alias.
+> - Legacy `mcp`/`mcpScript` gateway-only calls do **not** trigger workflow reminders. The matcher reads only the outer `toolName`, never `input.tool` or script text. Native codemode emits real child MCP events and therefore supports reminders without duplicate parent nudges.
 >
-> So: wherever a skill names a tool `chorus_…`, call it as `mcp__chorus__chorus_…`. If a tool ever reads as *"not found"*, you almost certainly dropped the `mcp__chorus__` prefix. This is Pi-specific — other harnesses resolve the bare names directly.
+> Bundled reviewers allow only discovered safe query/checkin/comment operations, exclude legacy gateways and fail closed on empty permissions. Worker tool inheritance is unchanged. Hosts below 0.84.4 and Pi 2.x are unsupported; unknown/prerelease versions require diagnosis rather than speculative adapter changes.
 
 ---
 
@@ -79,7 +80,7 @@ The checkin response includes **owner/master information** for the agent:
 
 #### Project Filtering
 
-Results can be filtered by project(s) using optional HTTP headers in your `.mcp.json` configuration:
+Results can be filtered by project(s) using optional HTTP headers in your backend's MCP configuration:
 
 | Header | Format | Example |
 |--------|--------|---------|
@@ -94,7 +95,7 @@ Results can be filtered by project(s) using optional HTTP headers in your `.mcp.
 
 **Affected tools**: `chorus_checkin`, `chorus_get_my_assignments`
 
-**Example `.mcp.json`** (Pi auto-discovers this via pi-mcp-adapter; no installer needed):
+**Example server headers** (native global `mcp.json` / trusted project `.pi/mcp.json`; legacy adapter5 global `mcp-adapter.json`):
 ```json
 {
   "mcpServers": {
@@ -102,7 +103,7 @@ Results can be filtered by project(s) using optional HTTP headers in your `.mcp.
       "type": "http",
       "url": "http://localhost:8637/api/mcp",
       "headers": {
-        "Authorization": "Bearer cho_xxx",
+        "Authorization": "Bearer ${CHORUS_API_KEY}",
         "X-Chorus-Project": "project-uuid-1,project-uuid-2"
       }
     }
@@ -290,7 +291,9 @@ API Keys must be created manually by the user in the Chorus Web UI.
 
 ### 2. MCP Server Configuration
 
-Pi auto-discovers MCP servers via `pi-mcp-adapter`. No installer is needed — place a `.mcp.json` at the project root (or `~/.pi/agent/mcp.json` globally):
+Prefer `chorus agents add`: it selects native MCP for stable Pi >=0.99.0 <2.0.0 (Chorus-only install), or pinned `pi-mcp-adapter@5.0.0` plus Chorus for Pi 0.84.4–0.98.x. Native global config is `~/.pi/agent/mcp.json`; native project config is `.pi/mcp.json` and requires trust. Adapter5's primary global file is `~/.pi/agent/mcp-adapter.json`, not `mcp.json`; its legacy discovery/import paths differ from native. `$PI_CODING_AGENT_DIR` overrides the global agent directory.
+
+Use this JSON at the selected path; on legacy hosts add `"directTools": true` to the Chorus entry for workflow reminders:
 
 ```json
 {
@@ -299,7 +302,7 @@ Pi auto-discovers MCP servers via `pi-mcp-adapter`. No installer is needed — p
       "type": "http",
       "url": "<BASE_URL>/api/mcp",
       "headers": {
-        "Authorization": "Bearer <your-api-key>"
+        "Authorization": "Bearer ${CHORUS_API_KEY}"
       }
     }
   }
@@ -313,6 +316,8 @@ export CHORUS_API_KEY=cho_your_key
 ```
 
 Restart Pi after configuration (`/reload` or a fresh session).
+
+Chorus's own config fallback reads the version-appropriate global file, honoring the agent-dir override; legacy adapter5 primary outranks retained old global `mcp.json`. With `CHORUS_API_KEY` exported it can discover the URL from that generated file. Explicit environment values take precedence; unresolved environment credentials are not sent. Native project `.pi/mcp.json` is not read by this fallback, so export both variables for project-only setup. Fresh legacy setup enables direct tools; existing exposure choices are preserved. Init only copies old global `mcp.json` when adapter primary is absent, leaves the source intact, and refuses malformed/unreadable files. Existing adapter packages and `-builtin:mcp` settings on native hosts produce scope-specific warnings only: manually remove/re-enable them if choosing native, then restart and verify. Neither config writes nor package-installed status guarantee connectivity. Targeted upgrades preserve pins; they never update all extensions or automatically remove an adapter.
 
 ### 3. Verify Connection
 

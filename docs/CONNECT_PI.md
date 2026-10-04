@@ -10,21 +10,25 @@ Pi can also run as a **wakeable `--agent pi` daemon backend** — Chorus wakes a
 
 `chorus init` (a.k.a. `chorus agents add`) wires everything below in one command — select **Pi** in the agent checklist and it:
 
-- installs **`pi-mcp-adapter`** (the MCP tool surface) and then **`@chorus-aidlc/chorus-pi`** (`pi install npm:pi-mcp-adapter && pi install npm:@chorus-aidlc/chorus-pi`), degrading to the manual commands if the `pi` CLI is absent;
-- writes pi's global **`~/.pi/agent/mcp.json`** with an `mcpServers.chorus` entry whose `Authorization` header references the key by **environment variable** (`Bearer ${CHORUS_API_KEY}`) — the resolved endpoint URL is a literal, and **no `cho_` key is ever written to disk** (the same keyless model Claude Code and Codex use);
+- detects the stable Pi version: **>=0.99.0 <2.0.0** installs only **`@chorus-aidlc/chorus-pi`** and uses native MCP; **0.84.4–0.98.x** installs the verified **`pi-mcp-adapter@5.0.0`** before Chorus;
+- writes **`~/.pi/agent/mcp.json`** for native MCP or **`~/.pi/agent/mcp-adapter.json`** for the legacy adapter, with an `mcpServers.chorus` entry whose `Authorization` references **`Bearer ${CHORUS_API_KEY}`** — no literal Chorus key is written;
 - seeds pi as a **wakeable** agent in `~/.chorus/daemon.json`.
 
 You still need `CHORUS_API_KEY` (and, to act as a specific agent, `CHORUS_AGENT_PROFILE`) exported in the shell that launches interactive pi — pi has no settings env-file to persist them into (the daemon spawner injects them for the wake path). The manual steps below are the equivalent by hand.
 
+The maintained host range is **stable Pi >=0.84.4 <2.0.0**. Older versions and Pi 2.x are unsupported and trigger no package operations. Missing Pi gets conditional manual guidance. An unknown, ambiguous or prerelease version never triggers adapter changes or an MCP-complete claim; inspect `pi --version` and use a supported stable version.
+
+`chorus upgrade --plugins` and `chorus init --update-installed` target eligible Chorus components only, never all extensions. The verified legacy adapter5 pin is retained, not refreshed to latest. Other adapter constraints and Chorus pins/ranges are preserved and can leave setup/latest refresh incomplete. Existing global or current-project adapters and `-builtin:mcp` filters produce **warnings only** on native hosts: Chorus does not uninstall packages or edit these settings. See [migration](#existing-adapter-migration-warning-only).
+
 ## Prerequisites
 
 - Chorus instance running and reachable (e.g., `http://localhost:8637` or a deployed URL)
-- The `pi` CLI installed (see [pi.dev](https://pi.dev))
-- The `pi-mcp-adapter` package installed (the one runtime dependency that exposes the Chorus `chorus_*` MCP tools to pi):
+- The `pi` CLI installed within the maintained range (see [pi.dev](https://pi.dev)); check `pi --version`.
+- **Only for Pi below 0.99.0**, install the verified legacy adapter:
   ```bash
-  pi install npm:pi-mcp-adapter
+  pi install npm:pi-mcp-adapter@5.0.0
   ```
-  > `chorus agents add` installs this for you. There is **no** separate subagents package to install — `chorus-pi` bundles pi's official `subagent` tool itself.
+  > Native hosts need no adapter. `chorus agents add` selects the backend for you. There is **no** separate subagents package to install — `chorus-pi` bundles pi's official `subagent` tool itself.
 - A Chorus **API Key** (create one in the Web UI under **Settings → Agents → Create API Key**). Keys start with `cho_`.
 
 ## Step 1: Export environment variables
@@ -40,7 +44,18 @@ export CHORUS_API_KEY="cho_your_api_key"
 
 ## Step 2: Configure the MCP server
 
-Pi's `pi-mcp-adapter` auto-discovers standard MCP config files. `chorus agents add` writes the **global** config at `~/.pi/agent/mcp.json` (the Pi agent-dir override the adapter discovers by default; override the dir with `$PI_CODING_AGENT_DIR`) with the key **referenced from the environment** — no literal key on disk. To do it by hand, place this at that global path (or as a project-root `.mcp.json`):
+### Native MCP (Pi >=0.99.0 <2.0.0)
+
+Prefer the built-in CLI:
+
+```bash
+pi mcp add chorus --url "http://localhost:8637/api/mcp" --bearer-token-env-var CHORUS_API_KEY
+pi mcp list
+```
+
+This writes the user-level `~/.pi/agent/mcp.json`; `$PI_CODING_AGENT_DIR` overrides the agent directory. Native project config is **`.pi/mcp.json`** (`pi mcp add --local`) and requires project trust; root `.mcp.json` is not the native project path. Chorus's own session/checkin fallback reads the version-appropriate global file (native `mcp.json`, legacy `mcp-adapter.json`), including the agent-dir override. It does not discover native project `.pi/mcp.json`, so keep exporting both variables for that project-only setup. Explicit environment values take precedence.
+
+The equivalent native JSON is:
 
 ```json
 {
@@ -56,7 +71,21 @@ Pi's `pi-mcp-adapter` auto-discovers standard MCP config files. `chorus agents a
 }
 ```
 
-> `pi-mcp-adapter` interpolates `${CHORUS_API_KEY}` (and `$env:CHORUS_API_KEY`) in `url`/`headers` at connect time, so the `cho_` key stays in the environment — never in the file. The endpoint URL is written as a literal (it is not a secret). A literal `Bearer cho_...` also still works, but the env-referenced form is what `chorus agents add` writes so a shared/committed config never leaks a key. If you already have `.claude.json` / `~/.codex/config.toml` configured, `pi-mcp-adapter` will discover and offer to adopt those too via `/mcp setup`.
+Native MCP defaults to **codemode**; do not force direct exposure just for Chorus. Both direct calls and native codemode child calls emit real `mcp__chorus__chorus_*` tool events. `pi mcp list` checks the built-in implementation, not which extension currently owns `/mcp` in an interactive session.
+
+### Legacy adapter (Pi 0.84.4–0.98.x)
+
+Adapter **5.0.0** reads **`~/.pi/agent/mcp-adapter.json`** as its primary global configuration (or `$PI_CODING_AGENT_DIR/mcp-adapter.json`). Use the JSON above there and add **`"directTools": true`** to the `mcpServers.chorus` object. Adapter exposure and naming are separate: `toolPrefix: "none"` changes names but does not enable direct exposure.
+
+`chorus agents add` enables direct Chorus tools for fresh legacy setup. It preserves existing server/global `directTools` choices. If the primary adapter file is absent, it copies old `mcp.json` data into the new primary file, preserving other servers/settings and leaving the old source intact. An existing primary wins; unreadable or malformed files are not overwritten. Writes are atomic, mode 0600, with an environment-referenced Chorus header; old literal Chorus bearer tokens are removed from the new output.
+
+Adapter5 also supports legacy config discovery/import, including root `.mcp.json`, but **old global `mcp.json` is not its primary file**. Do not assume identical native and adapter discovery paths. Both backends resolve `${CHORUS_API_KEY}`; keep real keys in the environment.
+
+The Chorus extension also discovers the generated legacy primary for its own HTTP bookkeeping. Exporting `CHORUS_API_KEY` is sufficient to resolve that config's URL; a retained old global `mcp.json` cannot shadow the primary. Explicit `CHORUS_URL` still overrides discovery. Missing environment credentials are not sent as literal `${…}` templates.
+
+### Existing adapter migration (warning-only)
+
+On native hosts, inspect both global and current-project `.pi/settings.json`. If you choose native MCP, manually remove the adapter from the scope that installed it and remove `"-builtin:mcp"` from that scope's `extensions` filter, preserving all unrelated entries and package filters. For a global npm adapter, `pi remove npm:pi-mcp-adapter` is the usual removal command; do not apply a global removal to solve a project-local entry. Restart Pi and verify its active MCP surface. Chorus only warns; it neither performs this cleanup nor promises that writing a config restores connectivity.
 
 ## Step 3: Install the chorus-pi package
 
@@ -75,8 +104,8 @@ Restart Pi after installation (`/reload` or a fresh session) so the extension, s
 | Check | How | Expected |
 |---|---|---|
 | MCP registered | Pi `/mcp` panel | `chorus` shows connected (green plug icon) |
-| MCP tools | `pi.getActiveTools()` or the `/mcp` panel | `chorus_*` tools listed (40+ tools) |
-| **Tool-name prefix** | `mcp({ search: "checkin" })` | Tools are exposed as `chorus_chorus_<tool>` in gateway mode (see note below) |
+| MCP tools | Native `tool_search`/`/mcp`, or legacy direct tool list | Discover `chorus_checkin` using the active backend's names |
+| **Tool-name prefix** | Inspect the discovered schema, then call checkin | Native `mcp__chorus__chorus_checkin`; legacy direct commonly `chorus_chorus_checkin` (see below) |
 | Extension loaded | Start a session and look for the injected context | A `# Chorus Plugin — Active` message appears at the first turn with your checkin info |
 | Skills available | Type `/skill:chorus` | The skill loads |
 | Reviewer agent | Inspect `/subagents` or spawn one | `chorus-proposal-reviewer` is listed |
@@ -129,7 +158,8 @@ The bundled `subagent` tool (pi's official pattern) spawns **ephemeral** childre
 
 | Symptom | Fix |
 |---|---|
-| `chorus` not in `/mcp` panel | Did you place `.mcp.json` at the project root (or `~/.pi/agent/mcp.json`)? Run `/mcp setup` to adopt host configs, or create the file manually. |
+| `chorus` not in `/mcp` panel | Check the backend-specific path above. Native uses global `mcp.json` or trusted project `.pi/mcp.json`; adapter5 uses `mcp-adapter.json`. Inspect adapter/filter conflicts and restart. |
+| No reviewer reminder with a working adapter gateway | Enable legacy direct Chorus tools; gateway-only calls do not expose workflow operations as outer tool names. Native codemode is supported without forcing direct mode. |
 | `chorus` listed but tools don't work | URL or token wrong. Re-check `CHORUS_URL` / `CHORUS_API_KEY` and that the URL is reachable. |
 | Injected context says "connection failed" | `CHORUS_URL` / `CHORUS_API_KEY` not exported in the shell that launches Pi, or Chorus not running. |
 | Skills don't show in `/skill:` autocomplete | Restart the session (`/reload` or fresh). Skills load at session start. |
@@ -141,20 +171,21 @@ The bundled `subagent` tool (pi's official pattern) spawns **ephemeral** childre
 
 The Chorus backend registers tools with their native names, e.g. `chorus_checkin`. The skill docs in this package call tools by those native names (e.g. `chorus_get_task`, `chorus_pm_submit_proposal`) — the same names that work in the Claude Code and Codex plugins.
 
-Pi's `pi-mcp-adapter` exposes MCP tools to the LLM and **prefixes them with the server name** by default (`toolPrefix: "server"`). Since your MCP server is named `chorus`, the LLM-facing tool name becomes `chorus_chorus_checkin` (the `chorus_` server prefix + the backend's `chorus_checkin` name). So:
+Discover the active tools rather than guessing an alias:
 
-- **Gateway mode** (default — you see a single `mcp` tool in the system prompt): call tools as `mcp({ tool: "chorus_chorus_checkin" })` — the double prefix.
-- **Direct mode** (`includeTools` configured, or `toolPrefix: "none"`): call tools as `chorus_checkin` — the native name, matching the skill docs.
+- **Native MCP:** `mcp__chorus__chorus_checkin`, either direct or discovered through native `tool_search` and called through `codemode` using its schema.
+- **Legacy direct adapter:** usually `chorus_chorus_checkin` with the default server prefix, or `chorus_checkin` with `toolPrefix: "none"`; enable exposure separately with `directTools: true`.
+- **Legacy gateway-only:** `mcp`/`mcpScript` calls do not trigger workflow reminders. The workflow matcher inspects only the event's outer `toolName`, never `input.tool` or script text. Native codemode is different: it emits real child events, so reminders work without duplicates.
 
 The extension itself always uses the native names (`chorus_checkin`, `chorus_create_session`, …) because it calls Chorus directly over MCP-over-HTTP, bypassing the gateway prefixing. Only the **main agent's** tool calls are affected.
 
-If you want the skill docs' `chorus_*` names to work verbatim for the main agent, configure the chorus server with `"toolPrefix": "none"` in your mcp config, or add the specific tools via `includeTools`. Otherwise, translate `chorus_X` → `chorus_chorus_X` when calling from the main agent in gateway mode. The in-session verification (`packages/chorus-pi/test/verify-pi-session.md`) auto-detects which mode is active.
+Bundled reviewers receive only discovered safe Chorus query/checkin/comment operations. Legacy gateways are removed from their allowlist; empty permissions fail closed. Worker/custom tool inheritance is unchanged. See `packages/chorus-pi/test/verify-pi-session.md` for an optional in-session check.
 
 ## Run pi as a wakeable daemon backend
 
 pi is a first-class **wakeable daemon backend**: the Chorus daemon can wake a headless pi session on remote dispatch (an idea/task assigned to your agent, an `@mention`, a proposal decision), so pi participates in the reversed-conversation loop like Claude Code / Codex / Kiro.
 
-The simplest path is `chorus init` (a.k.a. `chorus agents add`): select **Pi** in the agent checklist and it installs the adapter + extension (`pi install npm:pi-mcp-adapter && pi install npm:@chorus-aidlc/chorus-pi`), writes the env-referenced `~/.pi/agent/mcp.json` (no literal key — see [Step 2](#step-2-configure-the-mcp-server)), seeds pi as a **wakeable** agent in `~/.chorus/daemon.json`, and — if you opt in — installs the boot daemon that wakes it. To wire it by hand instead, run the daemon with the pi backend:
+The simplest path is `chorus init` (a.k.a. `chorus agents add`): select **Pi** to install the version-appropriate backend and Chorus extension, write the env-referenced config (see [Step 2](#step-2-configure-the-mcp-server)), seed pi as a **wakeable** agent in `~/.chorus/daemon.json`, and optionally install the boot daemon. To wire it by hand instead, run the daemon with the pi backend:
 
 ```bash
 chorus daemon --agent pi
@@ -167,7 +198,7 @@ Notes:
 - Interrupting a wake from the Chorus UI aborts pi's current run cleanly, including a running tool.
 - Nobody is at the terminal during a daemon wake, so any extension dialog (select / confirm / input / editor) is cancelled right away and the daemon logs `cancelled pi extension <method> dialog`. Ask the human through a Chorus comment or elaboration instead.
 - pi has **no permission system**, so no sandbox/skip-permissions flag is involved — `chorus` and `yolo` daemon modes run pi identically.
-- A woken pi reaches Chorus MCP tools only through this package's extension / `pi-mcp-adapter`, so keep chorus-pi installed in the environment the daemon wakes (the npm install above makes that reliable).
+- Keep chorus-pi and the version-appropriate MCP backend configured in the environment the daemon wakes: native on newer hosts, adapter5 direct tools on legacy hosts. The extension's own bookkeeping uses its environment variables separately.
 
 ## Next
 

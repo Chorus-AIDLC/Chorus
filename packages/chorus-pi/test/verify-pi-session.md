@@ -26,17 +26,19 @@ C2. Agent discovery (package-relative, zero copy).
     - (An `Unknown agent` error naming the available agents means discovery failed —
       check the package installed and `extensions/subagent/` shipped.)
 
-C3. MCP connection + tool-name prefix (critical).
-    The skill docs call chorus tools by their backend native name, e.g.
-    `chorus_checkin`. Pi's mcp-adapter may prefix them with the server name
-    (`chorus`), exposing them as `chorus_chorus_checkin`. Determine which works
-    in THIS session by probing both:
-    - Try: `mcp({ tool: "chorus_checkin" })`
-    - If that errors with "unknown tool", try: `mcp({ tool: "chorus_chorus_checkin" })`
-    - Report which name worked as: `C3 prefix: <single|double>`.
-    - Assert: one of them returns the checkin JSON (agent identity + ideaTracker).
-    If BOTH fail, the chorus MCP server isn't connected — check `.mcp.json` /
-    `~/.pi/agent/mcp.json` has a `chorus` server, and restart the session.
+C3. MCP connection + tool-name discovery (critical).
+    Record `pi --version` and inspect THIS session's available tools:
+    - Native Pi >=0.99.0: discover `mcp__chorus__chorus_checkin` using
+      `tool_search` and invoke via the documented `codemode` schema, or call
+      the direct tool if exposed. Native codemode is the default and supported.
+    - Legacy Pi 0.84.4–0.98.x: adapter5 must expose direct Chorus tools, usually
+      `chorus_chorus_checkin` or bare `chorus_checkin` with `toolPrefix: "none"`.
+    - Report `C3 backend/name: <native|legacy-direct> / <actual name>`.
+    - Assert: the discovered checkin returns agent identity. Gateway-only
+      adapter calls are not equivalent: they do not trigger workflow reminders.
+    If discovery fails, check native global `mcp.json`/trusted `.pi/mcp.json`,
+    or legacy global `mcp-adapter.json` and `directTools: true`. Inspect adapter
+    conflicts and `-builtin:mcp` settings manually; restart after changes.
 
 C4. Extension loaded (session_start → checkin + context injection).
     - The extension's `session_start` handler calls checkin and the
@@ -73,8 +75,8 @@ D2. session auto-closes when the subagent call returns.
     session automatically on the `subagent` tool's `tool_result` (no separate
     close tool). By the time D1's call returned, the session should already be
     closed.
-    - Verify on the backend: `mcp({ tool: "chorus_list_sessions", args: { status: "active" } })`
-      (use the prefix that worked in C3).
+    - Verify on the backend: call the discovered `chorus_list_sessions`
+      operation with `{ status: "active" }` using C3's backend/schema.
     - Assert: the session UUID from D1 is NOT in the active list.
     - (Alternatively check `chorus_get_session` with the UUID — it should be `closed`.)
 

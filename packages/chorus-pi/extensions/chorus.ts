@@ -55,7 +55,7 @@
  * config; the existing fallback does not read .pi/mcp.json.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, VERSION, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   forceSubagentCallAsync,
   isReviewerAgent,
@@ -69,32 +69,24 @@ import {
   parseMaxCodeReviewRounds,
   resolveChorusBin,
   resolveChorusConfigFromMcpJson,
+  chorusConfigPaths,
   resolveChorusToolName,
   NUDGE_TOOL_NAMES,
 } from "../lib/lib.js";
 
 // ─── Config ────────────────────────────────────────────────────────────
-// Connection: CHORUS_URL + CHORUS_API_KEY env vars take precedence. When
-// either is unset, fall back to the .mcp.json that pi-mcp-adapter auto-
-// discovers (project-root .mcp.json, then ~/.pi/agent/mcp.json) so a single
-// config source covers both the MCP gateway (literal URL+Bearer) and this
-// extension's own checkin / the OpenSpec wrapper script.
-const _envUrl = process.env.CHORUS_URL ?? "";
-const _envKey = process.env.CHORUS_API_KEY ?? "";
-const _mcp = _envUrl && _envKey
-  ? { url: "", apiKey: "" }
-  : (() => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const _fs = require("node:fs");
-      const _home = process.env.HOME || "";
-      return resolveChorusConfigFromMcpJson(
-        [`${process.cwd()}/.mcp.json`, `${_home}/.pi/agent/mcp.json`],
-        { existsSync: _fs.existsSync },
-        (p: string) => _fs.readFileSync(p, "utf-8"),
-      );
-    })();
-const CHORUS_URL = _envUrl || _mcp.url;
-const CHORUS_API_KEY = _envKey || _mcp.apiKey;
+const _mcp = (() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const _fs = require("node:fs");
+  return resolveChorusConfigFromMcpJson(
+    chorusConfigPaths(process.cwd(), getAgentDir(), VERSION, _fs),
+    { existsSync: _fs.existsSync },
+    (path: string) => _fs.readFileSync(path, "utf-8"),
+    process.env,
+  );
+})();
+const CHORUS_URL = _mcp.url;
+const CHORUS_API_KEY = _mcp.apiKey;
 
 // A neutral SpecModeResult for the not-configured / connection-failed banners,
 // where buildSessionBanner returns before reading the spec fields.
@@ -483,7 +475,9 @@ export default function (pi: ExtensionAPI) {
     }
 
     // Reviewer nudges only fire on a successful chorus_* call.
-    if (event.isError) return;
+    const adapterError = event.details && typeof event.details === "object"
+      ? (event.details as { error?: unknown }).error : undefined;
+    if (event.isError || (typeof adapterError === "string" && adapterError.length > 0)) return;
 
     // ── Reviewer nudges (the 3 Claude PostToolUse hooks) ──────────────
     // Resolve only the outer toolName using an exact workflow suffix with any

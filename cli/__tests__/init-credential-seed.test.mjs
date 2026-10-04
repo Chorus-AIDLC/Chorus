@@ -1096,6 +1096,16 @@ function fakePiWrite(overrideFn) {
 }
 
 describe("seedCredentials — Pi ~/.pi/agent/mcp.json adapter sink", () => {
+  it.each([["0.87.1", "mcp-adapter.json", "directTools:true"], ["1.0.2", "mcp.json", "default codemode"], ["unknown", "mcp.json", "incomplete"]])("writes backend-specific configuration for %s", async (version, name, hint) => {
+    const write = fakePiWrite();
+    const results = await seedCredentials(baseCtx({ selection: ["pi"], env: { PI_CODING_AGENT_DIR: "/tmp/pi-seed-fixture" },
+      run: () => ({ ok: true, stdout: version }), flags: { url: "https://c", apiKey: "cho_secret" },
+      appendAgent: fakeAppend(), writePiMcp: write, validateCredentials: async () => ({ uuid: "u-pi", name: "Pi" }) }));
+    const result = [].concat(results)[0];
+    expect(write.calls[0].configPath).toBe(join("/tmp/pi-seed-fixture", name));
+    expect(result.detail).toContain(hint);
+    expect(result.detail).not.toContain("cho_secret");
+  });
   it("single pi: writes mcp.json under PI_CODING_AGENT_DIR with only { configPath, url } (no key), sets piMcpWritten, never leaks the key", async () => {
     const write = fakePiWrite();
     const res = await seedCredentials(
@@ -1115,7 +1125,7 @@ describe("seedCredentials — Pi ~/.pi/agent/mcp.json adapter sink", () => {
     // The writer is called with ONLY the config path + url — the API key is never passed here
     // (it lives as the env-referenced ${CHORUS_API_KEY} the writer emits into the header).
     expect(write.calls).toHaveLength(1);
-    expect(write.calls[0]).toEqual({ configPath: join("/tmp/xyz-pi-agent", "mcp.json"), url: "https://c" });
+    expect(write.calls[0]).toMatchObject({ configPath: join("/tmp/xyz-pi-agent", "mcp.json"), url: "https://c", backend: expect.any(Object) });
     expect(write.calls[0]).not.toHaveProperty("apiKey");
     expect(o.detail).not.toContain("cho_secret"); // key never echoed
     expect(o.detail).toMatch(/mcp\.json \(0600\)/);

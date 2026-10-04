@@ -80,9 +80,6 @@ These verify Pi discovers the package and the extension's `session_start` actual
 ### C0. Install + configure
 
 ```bash
-# MCP adapter (if not already installed)
-pi install npm:pi-mcp-adapter
-
 # the package — ships the official subagent pattern (extensions/subagent/) and
 # discovers the 3 reviewer agents package-relative, so NO subagents dep and NO
 # manual copy of agents/*.md into ~/.pi/agent/agents/ is needed.
@@ -92,8 +89,17 @@ pi install npm:@chorus-aidlc/chorus-pi
 # env + mcp (adjust URL/key)
 export CHORUS_URL=http://localhost:8637
 export CHORUS_API_KEY=cho_your_key
-# .mcp.json at repo root (pi-mcp-adapter auto-discovers it)
+pi mcp add chorus --url "${CHORUS_URL}/api/mcp" --bearer-token-env-var CHORUS_API_KEY
 ```
+
+The example uses native MCP on stable Pi >=0.99.0 <2.0.0. For Pi
+0.84.4–0.98.x instead install `npm:pi-mcp-adapter@5.0.0` and configure its
+global `mcp-adapter.json` with env-referenced Chorus headers and
+`mcpServers.chorus.directTools: true`. Do not run native `pi mcp` commands on
+those old hosts. See `docs/CONNECT_PI.md` for config paths and warning-only
+migration; preserve user settings and use isolated agent/project directories
+for probes. Native codemode is supported without forcing direct exposure;
+legacy gateway-only calls do not trigger the reviewer nudges below.
 
 ### C1. Discovery checks (in the new Pi session)
 
@@ -164,7 +170,47 @@ Expected, in order:
 
 This exercises every extension event and every skill. If it completes with all VERDICTs PASS, the port is functionally equivalent to the Claude Code plugin.
 
-## What is NOT yet covered
+## Mandatory packed-host compatibility matrix
 
-- **`session_start` checkin + spec-mode injection** (the `mcpCall("chorus_checkin")` call and the `## Spec Mode` block the handler assembles around `resolveSpecMode` — the resolver itself is unit-tested, its wiring into the injected context is not): Layer C1 covers it empirically (a successful checkin banner means it works end to end). A fetch-mock test for this specific path is a future improvement; the session-lifecycle event tests in Layer B′ already prove the `mcpCall`/`pi.on` plumbing works against a mocked fetch.
-- **Reviewer nudge `pi.sendUserMessage` calls**: Layer D2/D3 covers these empirically.
+Prepare isolated SDKs 0.84.4, 0.87.1, 0.99.0 and 1.0.2 under
+`/tmp/chorus-pi-compat-<version>/node_modules` (override with `--roots` or
+`CHORUS_PI_SDK_ROOTS`). Install adapter5 only in the two legacy roots:
+
+```bash
+npm install --prefix /tmp/chorus-pi-compat-0.84.4 --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@0.84.4 pi-mcp-adapter@5.0.0
+npm install --prefix /tmp/chorus-pi-compat-0.87.1 --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@0.87.1 pi-mcp-adapter@5.0.0
+npm install --prefix /tmp/chorus-pi-compat-0.99.0 --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@0.99.0
+npm install --prefix /tmp/chorus-pi-compat-1.0.2 --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@1.0.2
+mkdir -p /tmp/chorus-pi-compat-artifact
+npm pack ./packages/chorus-pi --ignore-scripts --pack-destination /tmp/chorus-pi-compat-artifact
+node packages/chorus-pi/test/compat-matrix.mjs --artifact /tmp/chorus-pi-compat-artifact/chorus-aidlc-chorus-pi-0.21.0.tgz
+node packages/chorus-pi/test/config-discovery-matrix.mjs --artifact /tmp/chorus-pi-compat-artifact/chorus-aidlc-chorus-pi-0.21.0.tgz
+node cli/__tests__/pi-mcp-config-host.mjs
+pnpm exec vitest run cli/__tests__
+```
+
+Run from the repository root. The same packed artifact loads with all four
+actual SDKs, real native/adapter MCP, local MCP/HTTP fixtures and a deterministic
+model provider. The 36 scenarios cover checkin/context, workflow success/error
+gates, native codemode/direct and legacy direct, actual bundled reviewer CLI
+children with permitted/denied operations, worker/custom inheritance and session
+cleanup. Missing a required host or a failed scenario blocks compatibility
+acceptance; mocked unit tests and optional production-provider checks cannot
+replace this evidence. The config-loader probe separately verifies generated
+native/adapter5 files with all four real loaders.
+
+The additional **16-scenario config-discovery matrix** generates files with
+the real CLI writer, then loads the packed extension on each actual SDK without
+exporting `CHORUS_URL`. Fresh/retained-old config and default/custom agent
+directories exercise checkin, worker lifecycle and workflow reminders across
+the installer/runtime boundary. Legacy primary beats retained old global config;
+native hosts keep native selection. Run this in addition to, not instead of,
+the original 36-scenario event/permissions matrix. Offline configuration tests
+also cover malformed/partial/unreadable files and missing environment credentials.
+
+`pi1-native-mcp.mjs` adds 15 native event scenarios on Pi 1.0.2; set `PI_SDK_DIR`
+to the isolated SDK package path when Pi is not global. All these probes isolate
+HOME, agent directory and cwd, use dummy credentials, and never change a live
+Chorus business resource. Layers C–E are optional live-session checks requiring
+explicitly authorized resources; the local matrix does not claim live-provider
+or production workflow coverage.

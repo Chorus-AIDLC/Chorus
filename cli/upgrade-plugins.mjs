@@ -7,6 +7,7 @@ import { readClaudeInstallState } from "./init/adapters.mjs";
 import { installClaude, installCodex, installKiro, readCodexInstallState } from "./init/install-methods.mjs";
 import { normalizeAssetBase } from "./init/file-template.mjs";
 import { runUpgradeCommand, sanitizeUpgradeOutput, upgradeFailure } from "./upgrade-process.mjs";
+import { probePiBackend, inspectPiSettings, managePiPackages } from "./init/pi-mcp-backend.mjs";
 
 const HOSTS = {
   claude: { binary: "claude", variable: "CLAUDE_CONFIG_DIR", dir: [".claude"] },
@@ -86,47 +87,11 @@ function readJson(path, io) {
   catch (e) { if (e.code === "ENOENT") return undefined; throw e; }
 }
 
-// Verified against installed pi update/install --help (2026-09-30). Probe the
-// actual target host as older releases have only the all-extension updater.
-export function upgradePi(target, { run, fs: io = fs }) {
-  const settings = readJson(join(target.destination, "settings.json"), io);
-  if (settings !== undefined && (!object(settings) || (settings.packages !== undefined && !Array.isArray(settings.packages)))) {
-    throw new Error("invalid Pi settings");
-  }
-  const packages = settings?.packages ?? [];
-  let complete = true, changed = false, constrained = false;
-  const help = run("pi", ["update", "--help"]);
-  const targeted = help.ok && /--extension\s+<source>/.test(help.stdout) && /--no-approve\b/.test(help.stdout);
-  let installHelp;
-  for (const spec of ["npm:pi-mcp-adapter", "npm:@chorus-aidlc/chorus-pi"]) {
-    const sources = packages.map((entry) => {
-      const source = typeof entry === "string" ? entry : entry?.source;
-      return source;
-    }).filter((source) => source === spec || (typeof source === "string" && source.startsWith(`${spec}@`)));
-    const present = sources.length > 0;
-    // Pi updates by identity but retains configured constraints. Pinned versions
-    // are a successful no-op; ranges/tags can also exclude the latest release.
-    // Preserve those settings and report incomplete rather than silently unpin.
-    if (sources.some((source) => source !== spec && source !== `${spec}@latest`)) {
-      complete = false;
-      constrained = true;
-      continue;
-    }
-    if (present && !targeted) { complete = false; continue; }
-    if (!present) {
-      installHelp ??= run("pi", ["install", "--help"]);
-      if (!installHelp.ok || !/--no-approve\b/.test(installHelp.stdout)) { complete = false; continue; }
-    }
-    const r = run("pi", present ? ["update", "--extension", spec, "--no-approve"] : ["install", spec, "--no-approve"]);
-    changed = true; // A failed command can still leave a partial change.
-    if (!r.ok) complete = false;
-  }
-  return {
-    complete, changed,
-    detail: complete ? "Refreshed Chorus and pi-mcp-adapter only."
-      : constrained ? "Pi refresh incomplete: configured package version constraints were preserved; remove those constraints to permit latest updates. Other eligible components were attempted."
-        : "Pi refresh incomplete: targeted update/install unsupported or failed; no all-extension update was run.",
-  };
+export function upgradePi(target, { run, fs: io = fs, cwd = process.cwd() }) {
+  const env = { ...target.env, PI_CODING_AGENT_DIR: target.destination };
+  const backend = probePiBackend({ run, env });
+  const scopes = inspectPiSettings({ env, cwd, readJson: (path) => readJson(path, io) });
+  return managePiPackages({ backend, scopes, run, env, update: true });
 }
 
 export async function upgradePlugins(deps = {}) {
@@ -160,14 +125,14 @@ export async function upgradePlugins(deps = {}) {
     try {
       // Package commands must not discover project-local plugin configuration.
       scratch = io.mkdtempSync(join(tmpdir(), "chorus-upgrade-"));
-      const run = (cmd, args) => {
-        if (!args.includes("--help")) changed = true;
-        const result = (deps.run ?? runUpgradeCommand)(cmd, args, { env: target.env, platform, cwd: scratch, timeoutMs: 120_000 });
+      const run = (cmd, args, options = {}) => {
+        if (!args.includes("--help") && !args.includes("--version")) changed = true;
+        const result = (deps.run ?? runUpgradeCommand)(cmd, args, { env: target.env, platform, cwd: scratch, timeoutMs: options.timeoutMs ?? 120_000 });
         if (!result.ok) failures.push(`${cmd} ${args.slice(0, 2).join(" ")}: ${upgradeFailure(result, { env: target.env })}`);
         return result;
       };
       if (target.type === "pi") {
-        const result = upgradePi(target, { run, fs: io });
+        const result = upgradePi(target, { run, fs: io, cwd: deps.cwd });
         results.push({ target: label, ...result, detail: safe([result.detail, ...failures].join("\n")) });
         continue;
       }
