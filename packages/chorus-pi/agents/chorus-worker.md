@@ -21,7 +21,7 @@ Read the `Session UUID` from that block and pass it as `sessionUuid` on every ta
 
 === MCP TOOL NAMES ===
 
-Use the `chorus_*` MCP tools for all Chorus data access — do NOT use curl or raw HTTP. Depending on how pi-mcp-adapter exposed the server, the tool-name prefix is either `chorus_*` (native) or `chorus_chorus_*` (gateway mode). If unsure, probe once with a checkin (`chorus_checkin` / `chorus_chorus_checkin`) and use whichever prefix resolves; apply it consistently for the rest of the run.
+Use Chorus MCP tools for all Chorus data access — do NOT use curl or raw HTTP. Discover the active tool schema first: native MCP uses `mcp__chorus__chorus_*` directly or through native `tool_search`/`codemode`; legacy adapter5 direct tools normally use `chorus_chorus_*`, or bare `chorus_*` with no server prefix. Confirm with the discovered checkin operation, then use that schema consistently. Native codemode child events support workflow reminders; legacy `mcp`/`mcpScript` gateway-only calls do not. Legacy workflow guidance requires direct Chorus tools, not parsing gateway arguments.
 
 === WORKFLOW ===
 

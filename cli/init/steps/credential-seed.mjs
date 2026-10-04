@@ -54,6 +54,7 @@ import { resolveInstallCwds as defaultResolveInstallCwds } from "../../daemon-in
 import { validateAndFetchIdentity } from "../../chorus-client.mjs";
 import { agentTypeForSelection, isWakeableAgentType } from "../agent-type-map.mjs";
 import { writePiMcpServer, resolvePiMcpConfigPath } from "../pi-mcp-config.mjs";
+import { probePiBackend } from "../pi-mcp-backend.mjs";
 
 const STEP_ID = "credential-seed";
 const { SEEDED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
@@ -356,7 +357,7 @@ function isCodexSelection(id) {
  * literal `[mcp_servers.chorus]` Bearer lives separately in `config.toml` and is untouched.
  * @param {Record<string, string | undefined>} env
  */
-function resolveCodexEnvPath(env) {
+export function resolveCodexEnvPath(env) {
   const base = nonEmpty(env.CODEX_HOME) ?? join(nonEmpty(env.HOME) ?? homedir(), ".codex");
   return join(base, ".env");
 }
@@ -423,16 +424,13 @@ export function readCodexEnvProfile(envPath, deps = {}) {
 }
 
 /**
- * Whether an init selection id is Pi (`pi`). Pi's Chorus MCP access is via the ADAPTER
- * path (`pi-mcp-adapter` reads an mcp.json — chorus.ts never registers tools itself), so
- * — like Codex's `[mcp_servers.chorus]` — `chorus agents add` writes pi's global
- * `~/.pi/agent/mcp.json` with an `mcpServers.chorus` entry whose Authorization references
+ * Whether an init selection id is Pi (`pi`). Native MCP or the legacy adapter reads
+ * the selected global config with an mcpServers.chorus entry whose Authorization references
  * the API key by ENV VAR (`Bearer ${CHORUS_API_KEY}`), NO literal key on disk. Unlike dsh /
  * Claude Code / Codex, pi has NO settings env-file to persist the key + profile into, so this
  * write does NOT suppress the CHORUS_AGENT_PROFILE export hint: interactive pi still needs
  * CHORUS_API_KEY (+ CHORUS_AGENT_PROFILE) exported in its shell. We gate on the selection id,
- * NOT the mapped daemon agentType (`pi` → the shared "offline" type, so it can't single pi
- * out). Mirrors {@link isDshSelection} / {@link isClaudeSelection} / {@link isCodexSelection}.
+ * not other hosts. Mirrors {@link isDshSelection} / {@link isClaudeSelection} / {@link isCodexSelection}.
  * @param {string} id
  */
 function isPiSelection(id) {
@@ -706,8 +704,8 @@ export async function seedCredentials(ctx) {
           // "start codex from an exporting shell", no wrapper. Key never echoed.
           codexNote =
             `; wrote CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE into ${p} (0600)${repointWarn} — ` +
-            "interactive Codex (plugin hooks: SessionStart check-in / PostToolUse, AND shell-tool " +
-            "`chorus` calls) authenticates with no manual export. Your cho_ key is not shown here.";
+            "new Codex processes load this environment for plugin hooks and shell-tool `chorus` calls; " +
+            "running App Server sessions may still use the old environment. Your cho_ key is not shown here.";
         } catch (err) {
           // Write failed (locked/unwritable). Emit an actionable, non-secret WARNING; the export
           // hint is still shown (codexEnvWritten stays false). No launcher wrapper.
@@ -727,8 +725,7 @@ export async function seedCredentials(ctx) {
       }
     }
 
-    // pi-only: ALSO write pi's global ~/.pi/agent/mcp.json so `pi-mcp-adapter` exposes the
-    // chorus_* tools to the pi agent (the ADAPTER path — chorus.ts never registers tools). The
+    // pi-only: write the selected native or legacy backend's global MCP configuration. The
     // Authorization header references the key by env var (`Bearer ${CHORUS_API_KEY}`), so NO
     // literal cho_ key is written — the pi analogue of Codex's keyless [mcp_servers.chorus]
     // bearer_token_env_var and CC's plugin .mcp.json ${VAR} interpolation. The URL is not a
@@ -741,18 +738,22 @@ export async function seedCredentials(ctx) {
     let piNote = "";
     let piMcpWritten = false;
     if (isPiSelection(id)) {
-      const configPath = resolvePiMcpConfigPath(env);
+      const backend = probePiBackend({ run: ctx.run, env, cwd: ctx.cwd });
+      const configPath = resolvePiMcpConfigPath(env, backend);
       try {
-        const p = writePiMcp({ configPath, url });
+        const p = writePiMcp({ configPath, url, backend });
         piMcpWritten = true;
         piNote =
           `; wrote mcpServers.chorus (Authorization: Bearer \${CHORUS_API_KEY}) into ${p} (0600) — ` +
-          "pi-mcp-adapter exposes the chorus_* tools with the cho_ key env-sourced (no literal key on " +
-          "disk). Interactive pi still needs CHORUS_API_KEY (+ CHORUS_AGENT_PROFILE) exported in its " +
+          (backend.supported !== true ? `${backend.reason} MCP setup is incomplete. ` : backend.mode === "native"
+            ? "native MCP uses its default codemode; no adapter is required. "
+            : "legacy pi-mcp-adapter 5.0.0 uses mcp-adapter.json (takes precedence over migrated mcp.json). Fresh Chorus configuration enables directTools:true; existing user choices are preserved. Direct tool exposure is required for workflow/reviewer tool names. ") +
+          "Package/configuration setup does not verify live MCP connectivity. No literal key is written. " +
+          "Interactive pi still needs CHORUS_API_KEY (+ CHORUS_AGENT_PROFILE) exported in its " +
           "shell; the daemon injects them for the wake path. Your cho_ key is not shown here.";
-      } catch (err) {
+      } catch {
         piNote =
-          `; WARNING: could not write ${configPath} (${err?.message ?? String(err)}). ` +
+          `; WARNING: could not write ${configPath} safely; inspect existing configuration without overwriting it. ` +
           "pi will not reach Chorus MCP until an mcpServers.chorus entry with an env-referenced " +
           `Authorization (Bearer \${CHORUS_API_KEY}) exists — add it to ${configPath}. ` +
           "Your cho_ key is not shown here.";

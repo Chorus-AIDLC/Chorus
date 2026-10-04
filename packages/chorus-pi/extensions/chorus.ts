@@ -43,14 +43,19 @@
  *                              bookkeeping entry)
  *   - session_shutdown       → close stray sessions (SessionEnd hook)
  *
- * MCP: no installer needed. pi-mcp-adapter auto-discovers the repo's .mcp.json
- * (or ~/.pi/agent/mcp.json) and exposes the chorus_* tools to the main agent.
- * This extension only calls chorus_* for its own bookkeeping (checkin, session
- * create/close) over a direct MCP-over-HTTP fetch — it does NOT rely on the
- * main agent's MCP gateway for that, so hooks fire even before the first turn.
+ * MCP: Pi 1.x has native support (global ~/.pi/agent/mcp.json or trusted-project
+ * .pi/mcp.json). Default codemode subcalls emit tool_call/tool_result with real
+ * mcp__<server>__<tool> names and parentToolCallId; direct MCP events use the same
+ * outer-name matcher. The codemode parent does not identify a workflow.
+ * pi-mcp-adapter remains a legacy route (.mcp.json or ~/.pi/agent/mcp.json) and
+ * replaces built-in MCP in sessions when it registers /mcp.
+ * This extension calls chorus_* for its own bookkeeping (checkin, session
+ * create/close) over a direct MCP-over-HTTP fetch, independently of either
+ * main-agent MCP route. Export CHORUS_URL + CHORUS_API_KEY for native project
+ * config; the existing fallback does not read .pi/mcp.json.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, VERSION, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   forceSubagentCallAsync,
   isReviewerAgent,
@@ -64,32 +69,24 @@ import {
   parseMaxCodeReviewRounds,
   resolveChorusBin,
   resolveChorusConfigFromMcpJson,
+  chorusConfigPaths,
   resolveChorusToolName,
   NUDGE_TOOL_NAMES,
 } from "../lib/lib.js";
 
 // ─── Config ────────────────────────────────────────────────────────────
-// Connection: CHORUS_URL + CHORUS_API_KEY env vars take precedence. When
-// either is unset, fall back to the .mcp.json that pi-mcp-adapter auto-
-// discovers (project-root .mcp.json, then ~/.pi/agent/mcp.json) so a single
-// config source covers both the MCP gateway (literal URL+Bearer) and this
-// extension's own checkin / the OpenSpec wrapper script.
-const _envUrl = process.env.CHORUS_URL ?? "";
-const _envKey = process.env.CHORUS_API_KEY ?? "";
-const _mcp = _envUrl && _envKey
-  ? { url: "", apiKey: "" }
-  : (() => {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const _fs = require("node:fs");
-      const _home = process.env.HOME || "";
-      return resolveChorusConfigFromMcpJson(
-        [`${process.cwd()}/.mcp.json`, `${_home}/.pi/agent/mcp.json`],
-        { existsSync: _fs.existsSync },
-        (p: string) => _fs.readFileSync(p, "utf-8"),
-      );
-    })();
-const CHORUS_URL = _envUrl || _mcp.url;
-const CHORUS_API_KEY = _envKey || _mcp.apiKey;
+const _mcp = (() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const _fs = require("node:fs");
+  return resolveChorusConfigFromMcpJson(
+    chorusConfigPaths(process.cwd(), getAgentDir(), VERSION, _fs),
+    { existsSync: _fs.existsSync },
+    (path: string) => _fs.readFileSync(path, "utf-8"),
+    process.env,
+  );
+})();
+const CHORUS_URL = _mcp.url;
+const CHORUS_API_KEY = _mcp.apiKey;
 
 // A neutral SpecModeResult for the not-configured / connection-failed banners,
 // where buildSessionBanner returns before reading the spec fields.
@@ -478,12 +475,17 @@ export default function (pi: ExtensionAPI) {
     }
 
     // Reviewer nudges only fire on a successful chorus_* call.
-    if (event.isError) return;
+    const adapterError = event.details && typeof event.details === "object"
+      ? (event.details as { error?: unknown }).error : undefined;
+    if (event.isError || (typeof adapterError === "string" && adapterError.length > 0)) return;
 
     // ── Reviewer nudges (the 3 Claude PostToolUse hooks) ──────────────
-    // In MCP gateway mode event.toolName === "mcp" and the real chorus tool
-    // name is in event.input.tool. resolveChorusToolName handles both gateway
-    // and direct modes and returns the native name (e.g. "chorus_submit_for_verify").
+    // Resolve only the outer toolName using an exact workflow suffix with any
+    // prefix. On Pi 1.x this includes native codemode child events: their own
+    // toolName is the real mcp__<server>__<tool>, with parentToolCallId linking
+    // the codemode call. Direct MCP events use the same rule. Arguments and
+    // script text never affect recognition; input.tool is never parsed.
+    // The codemode parent is a non-target, so it cannot add a second reminder.
     const native = resolveChorusToolName(event);
     if (native && (NUDGE_TOOL_NAMES as readonly string[]).includes(native)) {
       const nudges: Record<string, { spawn: string; enabled: boolean }> = {
@@ -512,9 +514,8 @@ export default function (pi: ExtensionAPI) {
   // this is a no-op in the common case. It exists so that if tool_result did not
   // fire — or its close failed and retained the session — the sessions are still
   // closed (or retried) here rather than leaking until session_shutdown.
-  // NOTE: this event has NO `input` field (per pi ToolExecutionEndEvent type),
-  // so reviewer nudges (which need event.input to resolve the chorus tool name in
-  // MCP gateway mode) are handled in tool_result above, not here.
+  // Reviewer nudges stay in tool_result above so this fallback cannot inject
+  // a second reminder.
   pi.on("tool_execution_end", async (event, ctx) => {
     if (!CONFIGURED) return;
     if (event.toolName === "subagent") {

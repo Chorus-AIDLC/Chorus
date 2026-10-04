@@ -25,6 +25,10 @@ ev=$(bun test test/ext-events.test.ts 2>&1); berc=$?
 printf '%s\n' "$ev" | tail -8
 be=$berc
 echo ""
+echo "──────── Layer B: writer-to-extension discovery ────────"
+discovery=$(bun test test/config-discovery.test.ts 2>&1); discoveryrc=$?
+printf '%s\n' "$discovery" | tail -8
+echo ""
 echo "──────── Layer B: bundled agents frontmatter ────────"
 # PR #572 review regression: an unquoted YAML scalar in an agent description
 # (a `tasks: [...]` example) made parseFrontmatter throw at first dispatch,
@@ -36,10 +40,10 @@ ba=$barc
 echo ""
 echo ""
 echo "══════════════════════════════════════════"
-if [ $a -eq 0 ] && [ $b -eq 0 ] && [ $be -eq 0 ] && [ $ba -eq 0 ]; then
+if [ $a -eq 0 ] && [ $b -eq 0 ] && [ $be -eq 0 ] && [ $ba -eq 0 ] && [ $discoveryrc -eq 0 ]; then
   echo "  ALL OFFLINE TESTS PASSED (A: static, B: unit + extension events + agents)"
   exit 0
 else
-  echo "  FAILURES — A exit=$a, B exit=$b, B-ext exit=$be, B-agents exit=$ba"
+  echo "  FAILURES — A exit=$a, B exit=$b, B-ext exit=$be, B-agents exit=$ba, B-discovery exit=$discoveryrc"
   exit 1
 fi

@@ -29,7 +29,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import { type AgentConfig, type AgentScope, discoverAgents, expandReviewerTools } from "./agents.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -268,6 +268,7 @@ type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 interface DispatchDefaults {
 	model?: string;
 	thinkingLevel?: ThinkingLevel;
+	availableToolNames: string[];
 }
 
 async function runSingleAgent(
@@ -305,7 +306,20 @@ async function runSingleAgent(
 	if (inheritsDispatchConfig && dispatchDefaults.thinkingLevel) {
 		args.push("--thinking", dispatchDefaults.thinkingLevel);
 	}
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	const tools = expandReviewerTools(agent.name, agent.tools, dispatchDefaults.availableToolNames);
+	if (tools?.length === 0) {
+		return {
+			agent: agentName,
+			agentSource: agent.source,
+			task,
+			exitCode: 1,
+			messages: [],
+			stderr: "No permitted tools remain for this agent; refusing unrestricted tool inheritance.",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+			step,
+		};
+	}
+	if (tools && tools.length > 0) args.push("--tools", tools.join(","));
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;
@@ -487,7 +501,9 @@ export default function (pi: ExtensionAPI) {
 			const agentScope: AgentScope = params.agentScope ?? "user";
 			const dispatchDefaults: DispatchDefaults = {
 				model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-				thinkingLevel: ctx.thinkingLevel,
+				thinkingLevel: ctx.thinkingLevel ?? pi.getThinkingLevel(),
+				availableToolNames: ("tools" in ctx && Array.isArray(ctx.tools)
+					? ctx.tools : pi.getAllTools()).map((tool) => tool.name),
 			};
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;

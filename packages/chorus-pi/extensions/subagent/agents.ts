@@ -3,10 +3,11 @@
  *
  * Copied from pi's official subagent reference example
  * (earendil-works/pi: packages/coding-agent/examples/extensions/subagent/agents.ts)
- * with ONE chorus-pi customization: `discoverAgents` also loads from a
+ * with Chorus customizations: `discoverAgents` also loads from a
  * package-relative `agents/` directory (BUNDLED_DIR) so the 3 Chorus reviewer
  * agents that ship inside this package are discovered with ZERO manual copy
- * into ~/.pi/agent/agents/. Everything else is verbatim upstream.
+ * into ~/.pi/agent/agents/, and reviewer tool lists include discovered native
+ * Chorus read/comment tools when building a Pi 1.x hard allowlist.
  */
 
 import * as fs from "node:fs";
@@ -29,6 +30,37 @@ export interface AgentConfig {
 export interface AgentDiscoveryResult {
 	agents: AgentConfig[];
 	projectAgentsDir: string | null;
+}
+
+/**
+ * Pi 1.x --tools filters nested tools as well as their codemode entry point.
+ * Keep reviewer project tools restricted while adding the native Chorus
+ * read/comment operations the parent actually has. Workers retain inheritance.
+ */
+export function expandReviewerTools(
+	agentName: string,
+	tools: string[] | undefined,
+	availableToolNames: readonly string[],
+): string[] | undefined {
+	const reviewers = ["chorus-proposal-reviewer", "chorus-task-reviewer", "chorus-code-reviewer"];
+	if (!tools) return reviewers.includes(agentName) ? [] : undefined;
+	if (!reviewers.includes(agentName)) return [...tools];
+	const legacyDirect = availableToolNames.some((name) => name.startsWith("chorus_"));
+	const nativeTools = availableToolNames.some((name) => name.startsWith("mcp__") && name.includes("__chorus_"));
+	const excluded = nativeTools && !legacyDirect ? ["mcp", "mcpScript"]
+		: ["mcp", "mcpScript", "codemode", "tool_search"];
+	const expanded = new Set(tools.filter((name) => !excluded.includes(name)));
+	for (const name of availableToolNames) {
+		const native = name.startsWith("mcp__") ? name.slice(name.lastIndexOf("__") + 2)
+			: name.startsWith("chorus_chorus_") ? name.slice("chorus_".length)
+				: name;
+		if (
+			native.startsWith("chorus_get_") ||
+			["chorus_list_tasks", "chorus_list_projects", "chorus_checkin", "chorus_search",
+				"chorus_query_relations", "chorus_add_comment"].includes(native)
+		) expanded.add(name);
+	}
+	return [...expanded];
 }
 
 /**

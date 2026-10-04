@@ -197,14 +197,14 @@ console.log("cho_fixture_secret_do_not_log");
     writeFileSync(join(piHome, "settings.json"), settings);
     writeFileSync(join(f.bin, "pi"), `#!${process.execPath}
 require("node:fs").appendFileSync(${JSON.stringify(hostLog)}, JSON.stringify(process.argv.slice(2)) + "\\n");
-console.log("--extension <source> --no-approve");
+console.log(process.argv.includes("--version") ? "1.0.2" : "--extension <source> --no-approve");
 `, { mode: 0o755 });
     writeFileSync(join(f.home, ".chorus", "daemon.json"), '{"agents":[{"agentType":"pi"}]}');
     const r = f.run(["update", "--plugins"]);
     expect(r.code, r.out).toBe(1);
     expect(r.out).toMatch(/constraints.*preserved/i);
     expect(readFileSync(join(piHome, "settings.json"), "utf8")).toBe(settings);
-    expect(readFileSync(hostLog, "utf8").trim().split("\n").map(JSON.parse)).toEqual([["update", "--help"]]);
+    expect(readFileSync(hostLog, "utf8").trim().split("\n").map(JSON.parse)).toEqual([["--version"]]);
   });
 
   it.each([{ failInstall: true }, { mismatch: true }])("reports failed or unverifiable installation %j", (opts) => {

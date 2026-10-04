@@ -240,6 +240,8 @@ describe("chorus init — end-to-end (real registry, injected collaborators)", (
     // One shared command runner for every installer. openclaw's INSTALL fails
     // (version probe passes); everything else succeeds.
     const run = (cmd, args = []) => {
+      if (cmd === "pi" && args[0] === "--version") return { ok: true, stdout: "1.0.2" };
+      if (cmd === "pi" && args.includes("--help")) return { ok: true, stdout: "--extension <source> --no-approve" };
       if (cmd === "openclaw" && args[0] === "--version") return { ok: true, stdout: "openclaw 2026.9.9" };
       if (cmd === "openclaw" && args[0] === "plugins" && args[1] === "install") {
         return { ok: false, stderr: "simulated openclaw install failure" };

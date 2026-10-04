@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.21.1] - 2026-10-04
+
+### Added
+
+- **Codex configuration restart**: Added an optional App Server restart after successful configuration, with explicit consent, interruption warnings, and safe deferral for non-interactive sessions. (#599)
+
+### Fixed
+
+- **Pi and dsh workflow reminders**: Corrected workflow tool-name matching across MCP prefixes and added Pi native MCP reviewer compatibility. (#597)
+- **Pi MCP setup and upgrades**: Prefer native MCP on stable Pi >=0.99.0 <2.0.0 while retaining adapter compatibility for Pi 0.84.4–0.98.x; preserve user settings and align credential discovery with generated configuration. (#598)
+
+### Plugin
+
+- **Versions**: Upgraded all six plugins and four coordinated npm packages to `0.21.1`.
+
+---
+
 ## [0.21.0] - 2026-10-03
 
 ### Added
