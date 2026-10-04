@@ -481,9 +481,8 @@ export default function (pi: ExtensionAPI) {
     if (event.isError) return;
 
     // ── Reviewer nudges (the 3 Claude PostToolUse hooks) ──────────────
-    // In MCP gateway mode event.toolName === "mcp" and the real chorus tool
-    // name is in event.input.tool. resolveChorusToolName handles both gateway
-    // and direct modes and returns the native name (e.g. "chorus_submit_for_verify").
+    // Resolve only the outer toolName using an exact workflow suffix with any
+    // prefix. Arguments never affect recognition, including gateway-like names.
     const native = resolveChorusToolName(event);
     if (native && (NUDGE_TOOL_NAMES as readonly string[]).includes(native)) {
       const nudges: Record<string, { spawn: string; enabled: boolean }> = {
@@ -512,9 +511,8 @@ export default function (pi: ExtensionAPI) {
   // this is a no-op in the common case. It exists so that if tool_result did not
   // fire — or its close failed and retained the session — the sessions are still
   // closed (or retried) here rather than leaking until session_shutdown.
-  // NOTE: this event has NO `input` field (per pi ToolExecutionEndEvent type),
-  // so reviewer nudges (which need event.input to resolve the chorus tool name in
-  // MCP gateway mode) are handled in tool_result above, not here.
+  // Reviewer nudges stay in tool_result above so this fallback cannot inject
+  // a second reminder.
   pi.on("tool_execution_end", async (event, ctx) => {
     if (!CONFIGURED) return;
     if (event.toolName === "subagent") {
