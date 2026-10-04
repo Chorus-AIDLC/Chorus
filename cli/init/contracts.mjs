@@ -100,6 +100,8 @@ export const FAILURE_ACTIONS = Object.freeze([OUTCOME_ACTIONS.FAILED]);
  * @property {string} [agentId]     Present for per-agent outcomes.
  * @property {("installed"|"repaired"|"skipped"|"seeded"|"failed"|"unsupported")} action
  * @property {string} detail        One-line human explanation for the summary.
+ * @property {boolean} [codexEnvWritten] Codex credentials persisted in this invocation.
+ * @property {boolean} [codexMcpWritten] Codex native MCP configuration write succeeded.
  */
 
 /**
@@ -114,6 +116,7 @@ export const FAILURE_ACTIONS = Object.freeze([OUTCOME_ACTIONS.FAILED]);
  * @property {(path: string) => (string|null)} backup  Copy a file to <path>.chorus-bak
  *   once before overwrite; returns the backup path or null if the source is absent.
  * @property {NodeJS.ProcessEnv} env
+ * @property {StepOutcome[]} priorOutcomes Completed outcomes from this invocation.
  */
 
 /** True when an outcome represents a failure (drives the process exit code). */

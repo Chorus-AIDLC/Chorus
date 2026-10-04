@@ -897,9 +897,7 @@ describe("seedCredentials — Codex ~/.codex/.env sink", () => {
     expect(o.detail).toMatch(/\.env \(0600\)/);
   });
 
-  it("success note is export-free: names hooks + shell-tool + no manual export, no key value, no wrapper", async () => {
-    // The ~/.codex/.env sink reaches BOTH the plugin hooks (via Codex's process-env snapshot)
-    // and the shell tool, so the note states interactive Codex is export-free — no residual.
+  it("success note distinguishes new processes from running App Server sessions without claiming authentication", async () => {
     const write = fakeCodexWrite();
     const res = await seedCredentials(
       baseCtx({
@@ -913,7 +911,9 @@ describe("seedCredentials — Codex ~/.codex/.env sink", () => {
     const o = [].concat(res)[0];
     expect(o.codexEnvWritten).toBe(true);
     expect(o.detail).toMatch(/hook/i); // hooks are named as covered
-    expect(o.detail).toMatch(/no manual export/i); // export-free, no residual
+    expect(o.detail).toContain("new Codex processes load this environment");
+    expect(o.detail).toContain("running App Server sessions may still use the old environment");
+    expect(o.detail).not.toContain("authenticates");
     expect(o.detail).not.toContain("cho_secret"); // key value never echoed
     expect(o.detail).not.toMatch(/wrapper|chorus launch/i); // owner rejected the wrapper
   });

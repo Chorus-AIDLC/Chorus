@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
  * Run a command synchronously.
  * @param {string} cmd
  * @param {string[]} args
- * @param {{ env?: NodeJS.ProcessEnv, timeoutMs?: number, cwd?: string }} [opts]
+ * @param {{ env?: NodeJS.ProcessEnv, timeoutMs?: number, cwd?: string, maxBuffer?: number, killSignal?: string }} [opts]
  * @returns {{ ok: boolean, code: number|null, stdout: string, stderr: string, error?: string }}
  */
 export function runCommand(cmd, args = [], opts = {}) {
@@ -18,6 +18,8 @@ export function runCommand(cmd, args = [], opts = {}) {
       env: opts.env ?? process.env,
       cwd: opts.cwd,
       timeout: opts.timeoutMs ?? 120_000,
+      maxBuffer: opts.maxBuffer,
+      killSignal: opts.killSignal,
       encoding: "utf8",
     });
     if (r.error) {

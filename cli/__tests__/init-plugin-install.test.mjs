@@ -192,6 +192,7 @@ describe("installCodex (verified codex-cli 0.146.1)", () => {
     expect(mcpCalls[0]).toEqual({ configPath: "/home/u/.codex/config.toml", url: "https://c.example" });
     expect(res.detail).toContain("[mcp_servers.chorus]");
     expect(res.detail).toContain('bearer_token_env_var="CHORUS_API_KEY"');
+    expect(res.codexMcpWritten).toBe(true);
   });
 
   it("normalizes [mcp_servers.chorus] even on the already-installed path (idempotent repair)", () => {
@@ -209,6 +210,7 @@ describe("installCodex (verified codex-cli 0.146.1)", () => {
     expect(run.calls).toHaveLength(0); // no plugin re-install
     expect(mcpCalls).toHaveLength(1); // but the MCP block is still normalized
     expect(mcpCalls[0].url).toBe("https://c.example/api/mcp");
+    expect(res.codexMcpWritten).toBe(true);
   });
 
   it("skips the MCP write (non-fatal) when no Chorus URL resolves", () => {
@@ -220,6 +222,7 @@ describe("installCodex (verified codex-cli 0.146.1)", () => {
     expect(res.action).toBe(INSTALLED); // plugin still installed
     expect(mcpCalls).toHaveLength(0); // no URL → no MCP write
     expect(res.detail).toMatch(/skipped \[mcp_servers\.chorus\].*no Chorus URL/);
+    expect(res.codexMcpWritten).toBe(false);
   });
 
   it("resolves the MCP-block URL from daemon.json (resolveCredentials) when not in flags/env", () => {
@@ -251,12 +254,13 @@ describe("installCodex (verified codex-cli 0.146.1)", () => {
         env: { HOME: "/home/u" },
         flags: { url: "https://c.example", apiKey: "cho_secret" },
         writeCodexMcpServer: () => {
-          throw new Error("EACCES: permission denied");
+          throw new Error("EACCES: permission denied cho_secret");
         },
       }),
     );
     expect(res.action).toBe(INSTALLED); // plugin install still succeeded
     expect(res.detail).toMatch(/WARNING: could not write \[mcp_servers\.chorus\]/);
+    expect(res.codexMcpWritten).toBe(false);
     expect(res.detail).not.toContain("cho_secret");
   });
 });

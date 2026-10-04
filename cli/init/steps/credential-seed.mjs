@@ -357,7 +357,7 @@ function isCodexSelection(id) {
  * literal `[mcp_servers.chorus]` Bearer lives separately in `config.toml` and is untouched.
  * @param {Record<string, string | undefined>} env
  */
-function resolveCodexEnvPath(env) {
+export function resolveCodexEnvPath(env) {
   const base = nonEmpty(env.CODEX_HOME) ?? join(nonEmpty(env.HOME) ?? homedir(), ".codex");
   return join(base, ".env");
 }
@@ -704,8 +704,8 @@ export async function seedCredentials(ctx) {
           // "start codex from an exporting shell", no wrapper. Key never echoed.
           codexNote =
             `; wrote CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE into ${p} (0600)${repointWarn} — ` +
-            "interactive Codex (plugin hooks: SessionStart check-in / PostToolUse, AND shell-tool " +
-            "`chorus` calls) authenticates with no manual export. Your cho_ key is not shown here.";
+            "new Codex processes load this environment for plugin hooks and shell-tool `chorus` calls; " +
+            "running App Server sessions may still use the old environment. Your cho_ key is not shown here.";
         } catch (err) {
           // Write failed (locked/unwritable). Emit an actionable, non-secret WARNING; the export
           // hint is still shown (codexEnvWritten stays false). No launcher wrapper.
