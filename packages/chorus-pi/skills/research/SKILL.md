@@ -13,7 +13,7 @@ metadata:
 
 Answer a concrete factual question for Idea preparation, Proposal design, or an explicit pre-development Tracker Research action. Return evidence to the caller; the caller owns persistence and its existing lifecycle.
 
-> **Host:** Invoke with `/skill:research`. Use the MCP gateway's exposed tool names when saving through the caller; the gateway may prefix native `chorus_` names as `chorus_chorus_`.
+> **Host:** Invoke with `/skill:research`. Use discovered native `mcp__chorus__chorus_*` tools (direct or native `tool_search`/`codemode`) when saving through the caller. Legacy adapter5 direct tools may be `chorus_chorus_*` or bare `chorus_*`; inspect the active schema. Legacy gateway-only calls do not emit workflow reminders.
 
 ## Invocation contract
 

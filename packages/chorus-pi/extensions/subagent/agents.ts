@@ -42,13 +42,18 @@ export function expandReviewerTools(
 	tools: string[] | undefined,
 	availableToolNames: readonly string[],
 ): string[] | undefined {
-	if (!tools) return undefined;
 	const reviewers = ["chorus-proposal-reviewer", "chorus-task-reviewer", "chorus-code-reviewer"];
-	if (!reviewers.includes(agentName) || !tools.includes("codemode")) return [...tools];
-	const expanded = new Set(tools);
+	if (!tools) return reviewers.includes(agentName) ? [] : undefined;
+	if (!reviewers.includes(agentName)) return [...tools];
+	const legacyDirect = availableToolNames.some((name) => name.startsWith("chorus_"));
+	const nativeTools = availableToolNames.some((name) => name.startsWith("mcp__") && name.includes("__chorus_"));
+	const excluded = nativeTools && !legacyDirect ? ["mcp", "mcpScript"]
+		: ["mcp", "mcpScript", "codemode", "tool_search"];
+	const expanded = new Set(tools.filter((name) => !excluded.includes(name)));
 	for (const name of availableToolNames) {
-		if (!name.startsWith("mcp__")) continue;
-		const native = name.slice(name.lastIndexOf("__") + 2);
+		const native = name.startsWith("mcp__") ? name.slice(name.lastIndexOf("__") + 2)
+			: name.startsWith("chorus_chorus_") ? name.slice("chorus_".length)
+				: name;
 		if (
 			native.startsWith("chorus_get_") ||
 			["chorus_list_tasks", "chorus_list_projects", "chorus_checkin", "chorus_search",

@@ -1,9 +1,4 @@
-# pi-init-integration Specification
-
-## Purpose
-TBD - created by archiving change optimize-pi-plugin-npm-parity. Update Purpose after archive.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: chorus init installs the pi plugin automatically
 The Pi adapter SHALL install `npm:@chorus-aidlc/chorus-pi` automatically when a supported Pi host is available and SHALL select its MCP backend from the installed Pi version. Within the maintained package range, stable Pi versions at or above 0.99.0 SHALL use native MCP without installing or updating `pi-mcp-adapter`. Supported older stable versions SHALL retain a validated compatible adapter installation before Chorus. The maintained host floor SHALL be 0.84.4, with 2.x and prereleases outside the declared compatibility range. The adapter SHALL retain existing binary/config-directory detection and graceful manual guidance when Pi is absent.
@@ -42,6 +37,8 @@ The Pi adapter SHALL install `npm:@chorus-aidlc/chorus-pi` automatically when a 
 #### Scenario: existing adapter or disabled builtin
 - **WHEN** a native Pi user follows migration instructions
 - **THEN** the documentation explains scoped manual adapter removal and any required native-MCP re-enabling without claiming Chorus performs either automatically
+
+## ADDED Requirements
 
 ### Requirement: Generated Pi configuration is consumable by extension bookkeeping
 The extension SHALL discover its Chorus connection from the version-appropriate generated global config when `CHORUS_URL` is absent and the advertised API-key environment variable is exported. Legacy adapter5 primary selection SHALL outrank retained old global `mcp.json`, including under an agent-dir override. Native selection and explicit environment precedence SHALL remain intact. Malformed, unreadable or partial configuration SHALL NOT crash discovery, and unresolved environment references SHALL NOT be sent as credentials.

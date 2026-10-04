@@ -7,7 +7,7 @@ acceptance: { level: "none", reason: "read-only chorus reviewer; verdict is post
 
 CRITICAL: READ-ONLY task review. You CANNOT edit, write, or create files in the project directory.
 Bash is READ-ONLY: only test/build commands, cat, grep, ls, git diff/log/show. No git write ops, no rm/mv/cp, no file writes.
-USE THE chorus_* MCP TOOLS for all Chorus data access — do NOT use curl or raw HTTP. On Pi 1.x native MCP, use codemode to call tools named mcp__<server>__chorus_*; tool_search can discover deferred tools. Legacy adapters may expose mcp/mcpScript instead. Probe with a checkin if unsure.
+USE THE chorus_* MCP TOOLS for all Chorus data access — do NOT use curl or raw HTTP. On native Pi >=0.99.0, discover allowed mcp__chorus__chorus_* operations with tool_search and use codemode or the exposed direct tools. Legacy adapter5 requires direct Chorus tools (usually chorus_chorus_* or bare chorus_*). The bundled dispatcher removes legacy mcp/mcpScript gateways, adds only discovered safe query/checkin/comment names, and fails closed on empty permissions. Inspect the active schema and confirm with checkin; never seek an unrestricted gateway fallback.
 - chorus_get_task({ taskUuid }) — fetch the task (has its AC + linked references inline)
 - chorus_get_comments({ targetType: "task", targetUuid }) — prior review comments (check for Round 2+)
 - chorus_get_proposal({ proposalUuid, section: "documents" }) — the PRD/tech-design the task implements

@@ -27,6 +27,34 @@ export interface ChorusConnection {
   apiKey: string;
 }
 
+export function chorusConfigPaths(cwd: string, agentDir: string, hostVersion: string, fs: FsLike): string[] {
+  const version = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(hostVersion);
+  const legacy = version !== null && Number(version[1]) === 0 && Number(version[2]) < 99;
+  let globalPath = join(agentDir, "mcp.json");
+  if (legacy) {
+    const primary = join(agentDir, "mcp-adapter.json");
+    try {
+      if (fs.existsSync(primary)) globalPath = primary;
+    } catch {
+      globalPath = primary;
+    }
+  }
+  return [join(cwd, ".mcp.json"), globalPath];
+}
+
+function resolveConfigValue(value: string, env: Record<string, string | undefined>): string {
+  let unresolved = false;
+  const resolved = value.replace(/\$\{(?:env:)?([^}]+)\}/g, (_match, name: string) => {
+    const replacement = Object.hasOwn(env, name) ? env[name] : undefined;
+    if (typeof replacement !== "string" || replacement.length === 0) {
+      unresolved = true;
+      return "";
+    }
+    return replacement;
+  });
+  return unresolved || resolved.includes("${") ? "" : resolved;
+}
+
 /**
  * Parse the chorus server entry out of a standard .mcp.json shape:
  *   { "mcpServers": { "chorus": { "url": "…/api/mcp",
@@ -36,7 +64,10 @@ export interface ChorusConnection {
  * (accepts both "Bearer cho_…" and a bare "cho_…"). Empty strings if absent.
  * Pure given the raw file text — no fs dependency — so it is unit-testable.
  */
-export function parseChorusServerFromMcpJson(rawJson: string): ChorusConnection {
+export function parseChorusServerFromMcpJson(
+  rawJson: string,
+  env: Record<string, string | undefined> = {},
+): ChorusConnection {
   if (!rawJson) return { url: "", apiKey: "" };
   // Untrusted JSON: every leaf is `unknown` and narrowed with typeof below.
   let obj: { mcpServers?: { chorus?: { url?: unknown; headers?: { Authorization?: unknown } } } } | null;
@@ -54,33 +85,30 @@ export function parseChorusServerFromMcpJson(rawJson: string): ChorusConnection 
     if (auth.startsWith("Bearer ")) apiKey = auth.slice("Bearer ".length);
     else if (auth.startsWith("cho_")) apiKey = auth;
   }
-  return { url, apiKey };
+  return { url: resolveConfigValue(url, env), apiKey: resolveConfigValue(apiKey, env) };
 }
 
-/**
- * Resolve the Chorus connection (url + apiKey) from the standard .mcp.json
- * auto-discovered by pi-mcp-adapter. Searches candidate paths in order
- * (project-root .mcp.json, then ~/.pi/agent/mcp.json), and returns the first
- * COMPLETE chorus server entry (both url AND apiKey present). A partial entry
- * (e.g. only url, no Authorization) is skipped so a complete global candidate
- * is still reached — a partial project config must NOT shadow a complete
- * ~/.pi/agent/mcp.json. Returns { "", "" } if no candidate is complete.
- *
- * Used as a fallback when CHORUS_URL / CHORUS_API_KEY env vars are unset,
- * so a single .mcp.json config source covers both the MCP gateway (literal
- * URL+Bearer) and the extension's own checkin + the OpenSpec wrapper.
- */
 export function resolveChorusConfigFromMcpJson(
   candidatePaths: string[],
   fs: FsLike,
   readFile: ReadFileLike,
+  env: Record<string, string | undefined> = {},
 ): ChorusConnection {
-  for (const p of candidatePaths) {
-    if (!fs.existsSync(p)) continue;
-    const { url, apiKey } = parseChorusServerFromMcpJson(readFile(p));
-    if (url && apiKey) return { url, apiKey };
+  const envUrl = resolveConfigValue(env.CHORUS_URL ?? "", env);
+  const envKey = resolveConfigValue(env.CHORUS_API_KEY ?? "", env);
+  if (envUrl && envKey) return { url: envUrl, apiKey: envKey };
+  for (const path of candidatePaths) {
+    try {
+      if (!fs.existsSync(path)) continue;
+      const parsed = parseChorusServerFromMcpJson(readFile(path), env);
+      const url = envUrl || parsed.url;
+      const apiKey = envKey || parsed.apiKey;
+      if (url && apiKey) return { url, apiKey };
+    } catch {
+      continue;
+    }
   }
-  return { url: "", apiKey: "" };
+  return { url: envUrl, apiKey: envKey };
 }
 
 export type ExecSync = (cmd: string, opts: { stdio: "ignore" }) => void;
@@ -577,9 +605,9 @@ export type NudgeToolName = (typeof NUDGE_TOOL_NAMES)[number];
 /**
  * Normalize a tool name seen in a pi event to the Chorus backend native name.
  * The three workflow operations accept any prefix, but must end the identifier
- * exactly. Other tools retain the adapter's generic normalization below.
+ * exactly. Other tools accept native MCP and legacy adapter names.
  *
- * For other tools, strips at most one leading "chorus_" server prefix.
+ * For other tools, strips one native or legacy Chorus server prefix.
  * Returns null for malformed values or unrecognized names.
  */
 export function normalizeChorusToolName(name: unknown): string | null {
@@ -587,12 +615,11 @@ export function normalizeChorusToolName(name: unknown): string | null {
   for (const operation of NUDGE_TOOL_NAMES) {
     if (name.endsWith(operation)) return operation;
   }
-  let n = name;
-  // The chorus server name is "chorus"; the adapter prefixes it once. Strip one.
-  if (n.startsWith("chorus_chorus_")) n = n.slice("chorus_".length);
-  // Must still be a chorus tool after stripping.
-  if (!n.startsWith("chorus_")) return null;
-  return n;
+  let normalized = name;
+  if (name.startsWith("mcp__chorus__")) normalized = name.slice("mcp__chorus__".length);
+  else if (name.startsWith("chorus_chorus_")) normalized = name.slice("chorus_".length);
+  if (!normalized.startsWith("chorus_")) return null;
+  return normalized;
 }
 
 /**

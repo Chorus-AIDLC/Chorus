@@ -524,6 +524,18 @@ for (const [operation, reviewer] of WORKFLOW_CASES) {
     expect(userMessages).toEqual([]);
   });
 
+  test(`workflow reminder: adapter error details suppress ${operation} before later handlers`, async () => {
+    await resetState();
+    await handlers["tool_result"]({
+      toolName: `chorus_${operation}`, isError: false, details: { error: "tool_error" },
+    }, ctx);
+    expect(userMessages).toEqual([]);
+    await handlers["tool_result"]({
+      toolName: `chorus_${operation}`, isError: false, details: { error: "" },
+    }, ctx);
+    expect(userMessages).toHaveLength(1);
+  });
+
   test(`workflow reminder: outer ${operation} ignores conflicting and malformed arguments`, async () => {
     await resetState();
     const inputs = [

@@ -71,6 +71,7 @@ if (!process.argv.includes("--scenario")) {
       "dist/index.js")).href);
 
   const scratch = await mkdtemp(join(tmpdir(), "chorus-pi1-native-"));
+  process.env.HOME = scratch;
   const agentDir = join(scratch, "agent");
   await mkdir(agentDir);
   process.chdir(scratch);

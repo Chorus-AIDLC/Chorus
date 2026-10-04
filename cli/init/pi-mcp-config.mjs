@@ -1,40 +1,5 @@
-// cli/init/pi-mcp-config.mjs
-// Writes the Chorus MCP server block into pi's global MCP config
-// (`~/.pi/agent/mcp.json` by default) so pi's `pi-mcp-adapter` exposes the
-// `chorus_*` tools to the pi agent — the ADAPTER path (chorus.ts never registers
-// tools itself). The Authorization header references the API key by ENV VAR
-// (`Bearer ${CHORUS_API_KEY}`, which pi-mcp-adapter interpolates at connect time),
-// so the `cho_` key lives in exactly ZERO files here — only the env-var reference.
-// The URL is not a secret, so it is written as a resolved literal (an interactive pi
-// then needs only CHORUS_API_KEY in its shell, not CHORUS_URL).
-//
-// This is the pi analogue of cli/init/codex-mcp-config.mjs (Codex's keyless
-// `[mcp_servers.chorus] bearer_token_env_var`) and the CC plugin `.mcp.json`
-// (`Authorization: Bearer ${CHORUS_URL}`-style ${VAR} interpolation). `pi install`
-// does NOT write an mcp.json for us, so `chorus agents add` writes it here (from the
-// credential-seed step, which already holds the resolved URL).
-//
-// CONFIG CONTRACT (VERIFIED against pi-mcp-adapter 2.32.1 npm readme, repo
-// github.com/nicobailon/pi-mcp-adapter):
-//   - The adapter discovers a Pi GLOBAL override at `<Pi agent dir>/mcp.json`
-//     (`~/.pi/agent/mcp.json` by default, or `$PI_CODING_AGENT_DIR/mcp.json` when set)
-//     — the same file `pi-mcp-adapter init` writes to by default, and higher precedence
-//     than the tool-agnostic `~/.config/mcp/mcp.json`.
-//   - An `mcpServers.<name>` entry supports `type:"http"`, a `url` (raw `${VAR}` /
-//     `$env:VAR` interpolation) and `headers` (also `${VAR}` / `$env:VAR`
-//     interpolation). We use `headers.Authorization = "Bearer ${CHORUS_API_KEY}"` —
-//     the cleanest keyless form, and a one-token change from the literal-Bearer shape
-//     CONNECT_PI.md previously documented.
-//
-// Standard JSON merge (mcp.json is JSON, unlike Codex's TOML): every other top-level
-// field and every OTHER `mcpServers.<name>` entry is preserved verbatim; only
-// `mcpServers.chorus` is upserted. Any legacy literal `bearerToken` on the chorus
-// entry is dropped and a literal `headers.Authorization` is replaced by the env-ref,
-// so a re-run MIGRATES an old literal key off disk. Atomic 0600 temp+rename;
-// idempotent (a re-run with the same url reproduces the file). IO is injectable for
-// tests. The API key is NEVER written — only the env-var reference.
-
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -49,14 +14,13 @@ function nonEmpty(value) {
 }
 
 /**
- * Resolve the pi GLOBAL MCP config path. Honors `PI_CODING_AGENT_DIR` (pi-mcp-adapter's
- * own override of the Pi agent dir), then `HOME` (so tests can inject a temp home), else
- * the OS home dir — ending in `mcp.json`. VERIFIED default `~/.pi/agent/mcp.json`.
+ * Resolve the global native mcp.json or legacy adapter5 mcp-adapter.json path.
+ * Honors PI_CODING_AGENT_DIR, then HOME, then the OS home directory.
  * @param {Record<string, string | undefined>} env
  */
-export function resolvePiMcpConfigPath(env) {
+export function resolvePiMcpConfigPath(env, backend = {}) {
   const base = nonEmpty(env.PI_CODING_AGENT_DIR) ?? join(nonEmpty(env.HOME) ?? homedir(), ".pi", "agent");
-  return join(base, "mcp.json");
+  return join(base, backend.mode === "legacy" && backend.supported !== false ? "mcp-adapter.json" : "mcp.json");
 }
 
 /**
@@ -81,7 +45,7 @@ function isPlainObject(v) {
 }
 
 /**
- * Upsert `mcpServers.chorus` in pi's global mcp.json to
+ * Upsert `mcpServers.chorus` in the selected backend's global config to
  *   { "type": "http", "url": "<mcp-endpoint>", "headers": { "Authorization": "Bearer ${CHORUS_API_KEY}" } }
  * MERGE-SAFE: every other top-level field and every OTHER `mcpServers.<name>` entry is
  * preserved verbatim; on the chorus entry itself every other key (e.g. `toolPrefix`,
@@ -94,16 +58,16 @@ function isPlainObject(v) {
  * the caller treats a throw as a write failure). Atomic 0600 temp+rename; idempotent (a re-run
  * with the same url reproduces the file). The API key is NEVER written — only the env-var
  * reference `${CHORUS_API_KEY}`.
- * @param {{ configPath: string, url: string }} args
+ * @param {{ configPath: string, url: string, backend?: object }} args
  * @param {{
  *   read?: (p: string) => string,
- *   write?: (p: string, c: string, o: object) => void,
+ *   write?: (descriptor: number, content: string) => void,
  *   mkdir?: (p: string, o: object) => void,
  *   rename?: (from: string, to: string) => void,
  * }} [deps]
- * @returns {string} the mcp.json path written
+ * @returns {string} the config path written
  */
-export function writePiMcpServer({ configPath, url }, deps = {}) {
+export function writePiMcpServer({ configPath, url, backend = {} }, deps = {}) {
   const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
   const write = deps.write ?? writeFileSync;
   const mkdir = deps.mkdir ?? mkdirSync;
@@ -112,24 +76,34 @@ export function writePiMcpServer({ configPath, url }, deps = {}) {
   const mcpUrl = piMcpUrl(url);
   if (!mcpUrl) throw new Error("writePiMcpServer requires a url");
 
-  let raw;
-  try {
-    raw = read(configPath);
-  } catch {
-    raw = undefined; // no file yet — start fresh
-  }
-
-  let parsed = {};
-  if (typeof raw === "string" && raw.trim()) {
+  function load(path) {
+    let raw;
     try {
-      parsed = JSON.parse(raw);
-    } catch (err) {
-      throw new Error(`existing ${configPath} is not valid JSON (${err?.message ?? err}) — refusing to overwrite`);
+      raw = read(path);
+    } catch (error) {
+      if (error.code === "ENOENT") return undefined;
+      throw new Error(`cannot read ${path} safely — refusing to overwrite`);
     }
-    if (!isPlainObject(parsed)) {
-      throw new Error(`existing ${configPath} is not a JSON object — refusing to overwrite`);
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch {
+      throw new Error(`existing ${path} is not valid JSON — refusing to overwrite`);
     }
+    if (!isPlainObject(parsed)) throw new Error(`existing ${path} is not a JSON object — refusing to overwrite`);
+    if (parsed.mcpServers !== undefined && !isPlainObject(parsed.mcpServers)) {
+      throw new Error(`existing ${path} has a non-object "mcpServers" block — refusing to overwrite`);
+    }
+    if (parsed.mcpServers?.chorus !== undefined && !isPlainObject(parsed.mcpServers.chorus)) {
+      throw new Error(`existing ${path} has a non-object Chorus server — refusing to overwrite`);
+    }
+    if (parsed.settings !== undefined && !isPlainObject(parsed.settings)) {
+      throw new Error(`existing ${path} has non-object settings — refusing to overwrite`);
+    }
+    return parsed;
   }
+  const legacy = backend.mode === "legacy" && backend.supported !== false;
+  let parsed = load(configPath);
+  if (legacy && parsed === undefined) parsed = load(join(dirname(configPath), "mcp.json"));
+  parsed ??= {};
 
   // Preserve an existing `mcpServers` object (and every server in it); a present-but-non-object
   // `mcpServers` is unsafe to merge.
@@ -150,6 +124,7 @@ export function writePiMcpServer({ configPath, url }, deps = {}) {
 
   servers.chorus = {
     ...chorusRest,
+    ...(legacy && existingChorus.directTools === undefined && parsed.settings?.directTools === undefined ? { directTools: true } : {}),
     type: "http",
     url: mcpUrl,
     headers: { ...existingHeaders, Authorization: AUTHORIZATION_ENV_REF },
@@ -159,8 +134,17 @@ export function writePiMcpServer({ configPath, url }, deps = {}) {
   const content = `${JSON.stringify(parsed, null, 2)}\n`;
 
   mkdir(dirname(configPath), { recursive: true });
-  const tmp = `${configPath}.tmp`;
-  write(tmp, content, { mode: 0o600 });
-  rename(tmp, configPath);
+  const tmp = `${configPath}.${randomUUID()}.tmp`;
+  const descriptor = openSync(tmp, "wx", 0o600);
+  try {
+    try {
+      write(descriptor, content);
+    } finally {
+      closeSync(descriptor);
+    }
+    rename(tmp, configPath);
+  } finally {
+    try { unlinkSync(tmp); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
   return configPath;
 }

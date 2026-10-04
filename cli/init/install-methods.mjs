@@ -22,6 +22,8 @@ import { OUTCOME_ACTIONS } from "./contracts.mjs";
 import { CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME, CHORUS_MARKETPLACE_SOURCE } from "./chorus-plugin-consts.mjs";
 import { writeCodexMcpServer } from "./codex-mcp-config.mjs";
 import { resolveCredentials } from "../credentials.mjs";
+import { PI_LEGACY_ADAPTER_SPEC } from "./pi-compatibility.mjs";
+import { PI_CHORUS_SPEC, readPiPackageState, probePiBackend, inspectPiSettings, managePiPackages } from "./pi-mcp-backend.mjs";
 
 const STEP_ID = "plugin-install";
 const { INSTALLED, REPAIRED, SKIPPED, FAILED, UNSUPPORTED } = OUTCOME_ACTIONS;
@@ -469,118 +471,26 @@ export function installOpenclaw(ctx) {
     : out("openclaw", INSTALLED, `installed ${OPENCLAW_NPM_SPEC} and enabled ${OPENCLAW_PLUGIN_ID}`);
 }
 
-// ---------------------------------------------------------------------------
-// Pi — VERIFIED against docs/CONNECT_PI.md + packages/chorus-pi/README.md
-// (chorus-pi ships to npm as @chorus-aidlc/chorus-pi):
-//   `pi install npm:pi-mcp-adapter`            (the MCP adapter — exposes chorus_* tools)
-//   `pi install npm:@chorus-aidlc/chorus-pi`   (the Chorus skills/agents/extension)
-// pi installs extensions straight from an npm source (the `npm:` prefix on the
-// spec, like OpenClaw). There is NO marketplace step and NO separate enable
-// step (unlike claude / codex / openclaw). pi has no permission system and loads
-// TypeScript via jiti, so the package publishes source as-is — nothing to build.
-//
-// TWO packages: pi reaches the Chorus MCP tools ONLY through `pi-mcp-adapter` (which reads
-// the mcp.json `chorus agents add` writes — see credential-seed's pi branch + pi-mcp-config.mjs);
-// chorus.ts does NOT register tools itself. So we install the adapter FIRST (the tool surface),
-// then chorus-pi (the skills / reviewer agents / session extension). Both are idempotent.
-//
-// Graceful degradation: if the `pi` binary is absent we surface the exact manual
-// commands as UNSUPPORTED guidance (never a hard FAILED — UNSUPPORTED is not a
-// FAILURE_ACTION, so `chorus init` does not abort) and run ZERO commands. This
-// follows the "no guessed command / no crash" rule the other adapters share.
-//
-// VERIFIED-gap: `@chorus-aidlc/chorus-pi` is published at the next coordinated
-// release (A2), so the npm-install path could not be exercised end-to-end on this
-// build host. The command shapes + graceful fallback are implemented; the spec's
-// `pi install npm:<pkg>` form is the documented, reviewed command (pi-mcp-adapter is
-// published — verified 2.32.1).
-// ---------------------------------------------------------------------------
-const PI_ADAPTER_SPEC = "npm:pi-mcp-adapter";
-const PI_NPM_SPEC = "npm:@chorus-aidlc/chorus-pi";
-
-/**
- * Read pi's install state. `pi install` records each package's source in the
- * agent settings file (`<PI_CODING_AGENT_DIR|~/.pi/agent>/settings.json`) under a
- * `packages[]` array — entries are either a string source (`npm:@scope/pkg`) or an
- * object carrying that source plus filtering. We substring-match the stringified
- * entry so detection is robust to either shape. This is the file-read probe the pi
- * adapter previously lacked (its descriptor had no `readState`, so the runtime
- * defaulted `pluginInstalled:false` and every re-run reported a fresh INSTALL
- * instead of the SKIPPED/upgrade messaging the other adapters give).
- */
-export function readPiInstallState({ env = process.env, readJson = readJsonSafe } = {}) {
-  const home = env.HOME || homedir();
-  const agentDir = nonEmpty(env.PI_CODING_AGENT_DIR) || join(home, ".pi", "agent");
-  const settings = readJson(join(agentDir, "settings.json"));
-  const pkgs = Array.isArray(settings?.packages) ? settings.packages : [];
-  const hasPkg = (needle) =>
-    pkgs.some((p) => (typeof p === "string" ? p : JSON.stringify(p)).includes(needle));
-  const adapterInstalled = hasPkg("pi-mcp-adapter");
-  const pluginInstalled = hasPkg("@chorus-aidlc/chorus-pi");
-  return {
-    marketplaceRegistered: false, // pi has no marketplace concept
-    pluginInstalled: pluginInstalled && adapterInstalled,
-    chorusPiInstalled: pluginInstalled,
-    adapterInstalled,
-  };
+export function readPiInstallState(options = {}) {
+  return readPiPackageState(options);
 }
 
 export function installPi(ctx) {
   const run = ctx.run ?? runCommand;
   const env = ctx.env ?? process.env;
-
-  // `pi` must be on PATH to run the install. Probe via PATH (NOT `run`) so an
-  // absent pi surfaces the manual commands and executes NOTHING — and, because
-  // UNSUPPORTED is not a FAILURE_ACTION, never aborts `chorus init`. Injectable
-  // for unit tests (mirrors installDsh's pnpm precheck).
-  const hasBinary = ctx.binaryOnPath ?? binaryOnPath;
-  if (!hasBinary(["pi"], { env })) {
-    return out(
-      "pi",
-      UNSUPPORTED,
-      `pi CLI not found on PATH — install the Chorus extension manually once pi is available: ` +
-        `\`pi install ${PI_ADAPTER_SPEC} && pi install ${PI_NPM_SPEC}\``,
-    );
+  if (!(ctx.binaryOnPath ?? binaryOnPath)(["pi"], { env })) {
+    return out("pi", UNSUPPORTED, "pi CLI not found on PATH — once available, check pi --version. " +
+      `On supported native Pi install only: pi install ${PI_CHORUS_SPEC} --no-approve. ` +
+      `On supported legacy Pi first install: pi install ${PI_LEGACY_ADAPTER_SPEC} --no-approve. ` +
+      "Unknown/unsupported versions require manual compatibility confirmation; MCP setup is incomplete.");
   }
-
-  const state = safeState(ctx);
-  const bothInstalled = state.chorusPiInstalled && state.adapterInstalled;
-
-  // Already fully installed → recognize it (parity with codex/kiro's "already
-  // installed") and do NOTHING, unless the caller explicitly asked to update.
-  if (bothInstalled && !ctx.flags?.updateInstalled) {
-    return out(
-      "pi",
-      SKIPPED,
-      `already installed (${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} in pi settings) — re-run with --update-installed to upgrade`,
-    );
-  }
-
-  // Update requested on an existing install → use pi's OWN updater. `pi install`
-  // of an already-recorded package only re-writes the settings entry; it does NOT
-  // pull the newer published version, so it never clears pi's "Package updates
-  // available — Run pi update --extensions" nag. `pi update --extensions` (exactly
-  // what that nag tells the user to run) refreshes installed extensions — including
-  // chorus-pi + pi-mcp-adapter — to their latest published versions.
-  if (bothInstalled) {
-    const u = run("pi", ["update", "--extensions"], { env });
-    if (!u.ok) return out("pi", FAILED, `pi update --extensions failed: ${errText(u)}`);
-    return out("pi", REPAIRED, `updated installed pi extensions to latest via \`pi update --extensions\` (incl. ${PI_NPM_SPEC})`);
-  }
-
-  // Fresh or partial install → install what's needed (pi install is idempotent for
-  // any already-present one). The MCP adapter is the tool surface, so install it
-  // FIRST; then the chorus-pi package.
-  const ra = run("pi", ["install", PI_ADAPTER_SPEC], { env });
-  if (!ra.ok) return out("pi", FAILED, `pi install ${PI_ADAPTER_SPEC} failed: ${errText(ra)}`);
-  const r = run("pi", ["install", PI_NPM_SPEC], { env });
-  if (!r.ok) return out("pi", FAILED, `pi install failed: ${errText(r)}`);
-
-  // A partial pre-existing install we just completed → REPAIRED; a clean first
-  // install → INSTALLED (same distinction the other adapters draw).
-  return state.chorusPiInstalled || state.adapterInstalled
-    ? out("pi", REPAIRED, `reinstalled ${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} via pi install`)
-    : out("pi", INSTALLED, `installed ${PI_ADAPTER_SPEC} + ${PI_NPM_SPEC} via pi install`);
+  const backend = probePiBackend({ run, env, cwd: ctx.cwd });
+  const scopes = inspectPiSettings({ env, cwd: ctx.cwd, readJson: ctx.readJson });
+  const result = managePiPackages({ backend, scopes, run, env, cwd: ctx.cwd, update: !!ctx.flags?.updateInstalled });
+  const existing = scopes[0].chorus.length || scopes[0].adapters.length;
+  const action = result.failed ? FAILED : !result.complete ? UNSUPPORTED
+    : !result.changed ? SKIPPED : existing ? REPAIRED : INSTALLED;
+  return { ...out("pi", action, result.detail), complete: result.complete, backend, warnings: result.warnings };
 }
 
 // ---------------------------------------------------------------------------
