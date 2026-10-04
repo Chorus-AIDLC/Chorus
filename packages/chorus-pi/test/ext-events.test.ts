@@ -15,13 +15,22 @@
 //   - non-worker agents (scout/planner/reviewer/chorus-*-reviewer) get NO session
 //   - a failed close is retained so session_shutdown retries it (no leak)
 //   - tool_execution_end is an idempotent fallback close
-//   - reviewer nudges still fire on chorus_submit_for_verify
+//   - reviewer nudges use exact workflow suffixes of outer toolName only,
+//     preserve error/reviewer gates, and fire only at tool_result
 //
 // Module-scope state (callSessions) is reset between tests by invoking the
 // session_shutdown handler, which clears it (mirroring real session end).
 
 import { test, expect } from "bun:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  WORKFLOW_CASES,
+  WORKFLOW_PREFIXES,
+  NON_TARGET_OUTER_NAMES,
+  INVALID_NAMES,
+  MALFORMED_INPUTS,
+  invalidWorkflowNames,
+} from "./workflow-cases.js";
 
 // Shapes of the subagent tool-call inputs these tests build and read back.
 interface SubagentItem {
@@ -46,6 +55,7 @@ type FetchInit = { body?: string } | undefined;
 // process.env.CHORUS_URL / CHORUS_API_KEY at load time into frozen consts.
 process.env.CHORUS_URL = "http://localhost:9999/api/mcp";
 process.env.CHORUS_API_KEY = "cho_test_key";
+for (const [, , toggle] of WORKFLOW_CASES) process.env[toggle] = "true";
 
 // ─── fake fetch ────────────────────────────────────────────────────────────
 // mcpCall issues three sequential fetches per tool call: initialize,
@@ -105,6 +115,7 @@ installDefaultFetch();
 const handlers: Record<string, (event: unknown, ctx: unknown) => Promise<unknown>> = {};
 const notifyMessages: { msg: string; level: string }[] = [];
 const userMessages: string[] = [];
+const userMessageOptions: unknown[] = [];
 const eventBus: Record<string, (data: unknown) => void> = {};
 const pi = {
   on: (ev: string, fn: (event: unknown, ctx: unknown) => Promise<unknown>) => {
@@ -116,8 +127,9 @@ const pi = {
     },
     emit: () => {},
   },
-  sendUserMessage: (msg: string) => {
+  sendUserMessage: (msg: string, options: unknown) => {
     userMessages.push(msg);
+    userMessageOptions.push(options);
   },
 };
 const ctx = {
@@ -135,6 +147,7 @@ ext.default(pi as unknown as ExtensionAPI);
 async function resetState(): Promise<void> {
   notifyMessages.length = 0;
   userMessages.length = 0;
+  userMessageOptions.length = 0;
   installDefaultFetch();
   if (handlers["session_shutdown"]) await handlers["session_shutdown"]({}, ctx);
   resetFetch();
@@ -429,7 +442,7 @@ test("subagent tool error still closes the worker session", async () => {
 });
 
 // ─── reviewer nudges still fire on chorus_* submit/verify ───────────────────
-test("reviewer nudge fires on chorus_submit_for_verify (direct mode)", async () => {
+test("reviewer nudge fires on outer chorus_submit_for_verify", async () => {
   await resetState();
   await handlers["tool_result"](
     { toolName: "chorus_submit_for_verify", toolCallId: "tc-verify", isError: false, input: {}, content: [] },
@@ -438,7 +451,7 @@ test("reviewer nudge fires on chorus_submit_for_verify (direct mode)", async () 
   expect(userMessages.some((m) => /chorus-task-reviewer/.test(m))).toBe(true);
 });
 
-test("reviewer nudge fires on chorus_pm_submit_proposal via gateway (event.input.tool)", async () => {
+test("plain mcp with target event.input.tool does not nudge", async () => {
   await resetState();
   await handlers["tool_result"](
     {
@@ -450,7 +463,7 @@ test("reviewer nudge fires on chorus_pm_submit_proposal via gateway (event.input
     },
     ctx,
   );
-  expect(userMessages.some((m) => /chorus-proposal-reviewer/.test(m))).toBe(true);
+  expect(userMessages).toEqual([]);
 });
 
 test("no nudge for a non-trigger chorus tool", async () => {
@@ -461,6 +474,199 @@ test("no nudge for a non-trigger chorus tool", async () => {
   );
   expect(userMessages.length).toBe(0);
 });
+
+// Offline acceptance: real factory handlers, mocked Pi/fetch, no host session.
+for (const [operation, reviewer] of WORKFLOW_CASES) {
+  for (const prefix of WORKFLOW_PREFIXES) {
+    const name = prefix + operation;
+    test(`workflow reminder: outer ${name} delivers once at tool_result`, async () => {
+      await resetState();
+      const event = {
+        toolName: name,
+        toolCallId: "tc-workflow",
+        isError: false,
+        input: { tool: "bash" },
+        content: [],
+      };
+      await handlers["tool_call"](event, ctx);
+      expect(userMessages).toEqual([]);
+      await handlers["tool_result"](event, ctx);
+      expect(userMessages).toHaveLength(1);
+      expect(userMessages[0]).toContain(reviewer);
+      expect(userMessageOptions).toEqual([{ deliverAs: "steer" }]);
+      await handlers["tool_execution_end"](
+        { toolName: name, toolCallId: event.toolCallId, isError: false, result: {} },
+        ctx,
+      );
+      expect(userMessages).toHaveLength(1);
+      expect(toolCalls).toEqual([]);
+    });
+  }
+
+  test(`workflow reminder: trailing text and near misses for ${operation} are ignored`, async () => {
+    await resetState();
+    for (const name of invalidWorkflowNames(operation)) {
+      await handlers["tool_result"](
+        { toolName: name, isError: false, input: { tool: operation } },
+        ctx,
+      );
+    }
+    expect(userMessages).toEqual([]);
+    expect(toolCalls).toEqual([]);
+  });
+
+  test(`workflow reminder: error results suppress outer ${operation} with every prefix`, async () => {
+    await resetState();
+    for (const prefix of WORKFLOW_PREFIXES) {
+      const name = prefix + operation;
+      await handlers["tool_result"]({ toolName: name, isError: true }, ctx);
+    }
+    expect(userMessages).toEqual([]);
+  });
+
+  test(`workflow reminder: outer ${operation} ignores conflicting and malformed arguments`, async () => {
+    await resetState();
+    const inputs = [
+      ...MALFORMED_INPUTS,
+      { tool: "bash" },
+      ...WORKFLOW_CASES.map(([tool]) => ({ tool })),
+    ];
+    for (const prefix of WORKFLOW_PREFIXES) {
+      for (const input of inputs) {
+        userMessages.length = 0;
+        userMessageOptions.length = 0;
+        await handlers["tool_result"]({ toolName: prefix + operation, input, isError: false }, ctx);
+        expect(userMessages).toHaveLength(1);
+        expect(userMessages[0]).toContain(reviewer);
+        expect(userMessageOptions).toEqual([{ deliverAs: "steer" }]);
+      }
+    }
+    expect(toolCalls).toEqual([]);
+  });
+}
+
+test("workflow reminder: malformed and unrelated names never inject or throw", async () => {
+  await resetState();
+  for (const name of INVALID_NAMES) {
+    for (const [operation] of WORKFLOW_CASES) {
+      await handlers["tool_result"](
+        { toolName: name, isError: false, input: { tool: operation } },
+        ctx,
+      );
+    }
+  }
+  expect(userMessages).toEqual([]);
+  expect(toolCalls).toEqual([]);
+});
+
+test("workflow reminder: non-target outer names ignore malformed arguments", async () => {
+  await resetState();
+  for (const toolName of NON_TARGET_OUTER_NAMES) {
+    for (const input of MALFORMED_INPUTS) {
+      await handlers["tool_result"]({ toolName, input, isError: false }, ctx);
+    }
+  }
+  expect(userMessages).toEqual([]);
+  expect(toolCalls).toEqual([]);
+});
+
+test("workflow reminder: wrappers and unrelated outer tools ignore target arguments", async () => {
+  await resetState();
+  for (const toolName of NON_TARGET_OUTER_NAMES) {
+    for (const [operation] of WORKFLOW_CASES) {
+      await handlers["tool_result"](
+        { toolName, input: { tool: operation }, isError: false },
+        ctx,
+      );
+    }
+  }
+  expect(userMessages).toEqual([]);
+  expect(toolCalls).toEqual([]);
+});
+
+test("workflow reminder: input getters are never read by event handlers", async () => {
+  await resetState();
+  let inputReads = 0;
+  const cases: [unknown, string | null][] = [
+    ...WORKFLOW_CASES.flatMap(([operation, reviewer]) =>
+      WORKFLOW_PREFIXES.map((prefix): [string, string] => [prefix + operation, reviewer]),
+    ),
+    ...NON_TARGET_OUTER_NAMES.map((name): [unknown, null] => [name, null]),
+  ];
+  for (const [toolName, reviewer] of cases) {
+    userMessages.length = 0;
+    userMessageOptions.length = 0;
+    const event = {
+      toolName,
+      toolCallId: "tc-unread-input",
+      isError: false,
+      get input(): never {
+        inputReads++;
+        throw new Error("workflow handlers must not read input");
+      },
+    };
+    await handlers["tool_call"](event, ctx);
+    expect(userMessages).toEqual([]);
+    await handlers["tool_result"](event, ctx);
+    if (reviewer) {
+      expect(userMessages).toHaveLength(1);
+      expect(userMessages[0]).toContain(reviewer);
+      expect(userMessageOptions).toEqual([{ deliverAs: "steer" }]);
+    } else {
+      expect(userMessages).toEqual([]);
+    }
+    await handlers["tool_execution_end"](event, ctx);
+    expect(userMessages).toHaveLength(reviewer ? 1 : 0);
+  }
+  expect(inputReads).toBe(0);
+  expect(toolCalls).toEqual([]);
+});
+
+for (const [disabledOperation, , toggle] of WORKFLOW_CASES) {
+  test(`workflow reminder: ${toggle}=false disables only its reviewer`, async () => {
+    await resetState();
+    const prior = process.env[toggle];
+    let gatedExtension: typeof ext;
+    try {
+      process.env[toggle] = "false";
+      // A distinct module URL captures this toggle in the real factory's
+      // immutable config without changing the main lifecycle-test instance.
+      gatedExtension = await import(`../extensions/chorus.ts?gate=${toggle}`);
+    } finally {
+      if (prior === undefined) delete process.env[toggle];
+      else process.env[toggle] = prior;
+    }
+    const gatedHandlers: typeof handlers = {};
+    const messages: { message: string; options: unknown }[] = [];
+    gatedExtension.default({
+      on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => {
+        gatedHandlers[event] = handler;
+      },
+      events: { on: () => {}, emit: () => {} },
+      sendUserMessage: (message: string, options: unknown) => messages.push({ message, options }),
+    } as unknown as ExtensionAPI);
+
+    for (const [operation, reviewer] of WORKFLOW_CASES) {
+      for (const prefix of WORKFLOW_PREFIXES) {
+        messages.length = 0;
+        await gatedHandlers["tool_result"]({
+          toolName: prefix + operation,
+          input: { tool: disabledOperation },
+          isError: false,
+        }, ctx);
+        if (operation === disabledOperation) {
+          expect(messages).toEqual([]);
+        } else {
+          expect(messages).toHaveLength(1);
+          expect(messages[0].message).toContain(reviewer);
+          expect(messages[0].options).toEqual({ deliverAs: "steer" });
+        }
+      }
+    }
+    await gatedHandlers["session_shutdown"]({}, ctx);
+    expect(toolCalls).toEqual([]);
+  });
+}
 
 // ─── async (nicobailon pi-subagents) lifecycle ────────────────────
 

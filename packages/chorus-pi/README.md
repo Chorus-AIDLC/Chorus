@@ -12,23 +12,106 @@ Chorus AI-DLC collaboration platform extension for [Pi](https://pi.dev). Ported 
 
 ## Install
 
+### Pi 1.x: native MCP
+
+This package targets Pi 1.x (`>=1.0.0 <2.0.0`); the native MCP path is verified
+on Pi 1.0.2. Install the Chorus package, export the
+connection variables, and add the server with Pi's built-in CLI:
+
 ```bash
-# MCP adapter (exposes the Chorus chorus_* tools to pi)
+pi install npm:@chorus-aidlc/chorus-pi
+
+export CHORUS_URL="https://your-chorus-instance.example"
+export CHORUS_API_KEY="cho_your_key"
+export CHORUS_AGENT_PROFILE="your-agent-profile"
+
+pi mcp add chorus --url "${CHORUS_URL%/}/api/mcp" --bearer-token-env-var CHORUS_API_KEY
+pi mcp list
+```
+
+The command writes the user-level `~/.pi/agent/mcp.json` with an
+environment-referenced Authorization header. Native project configuration
+lives in `.pi/mcp.json` (add `--local` to `pi mcp add`) and requires project
+trust. Export `CHORUS_URL` and `CHORUS_API_KEY` for Chorus's own checkin/session
+bookkeeping too: the extension's existing config fallback reads `.mcp.json`
+or the global file, and does not discover native project `.pi/mcp.json`.
+
+If `pi-mcp-adapter` is already installed, remove it with
+`pi remove npm:pi-mcp-adapter`. Also remove any `"-builtin:mcp"` entry from
+the `extensions` setting, then restart Pi to use the native route. An
+extension that registers `/mcp` replaces Pi's built-in MCP support in sessions;
+shell `pi mcp list` always uses the built-in implementation, so that command
+alone does not establish which route a running session uses.
+
+Native MCP defaults to **codemode** exposure. Every native MCP subcall passes
+through Pi's `tool_call` and `tool_result` pipeline with the real
+`mcp__<server>__<tool>` name. Codemode child events also carry the enclosing
+call's `parentToolCallId`; native codemode does expose these child events.
+The Chorus workflow matcher uses each event's outer `toolName`, including
+child events, and accepts any prefix ending exactly in
+`chorus_pm_submit_proposal`, `chorus_submit_for_verify`, or
+`chorus_admin_verify_task`. It never parses `input.tool` or script text.
+
+An eligible successful child result emits its existing enabled reviewer
+steering reminder. The enclosing `codemode` result adds no duplicate, and
+failure/configuration gates and reviewer switches still apply. **There is no
+requirement to force `direct` exposure**; direct native MCP events use the same
+matcher. This event contract is documented in the installed Pi 1.0.2
+`docs/mcp.md` Permissions section and `docs/extensions.md` nested-tool guidance.
+
+Run the native host probe from a repository checkout with an installed Pi 1.x
+(the npm package does not include the test files):
+
+```bash
+cd packages/chorus-pi
+node test/pi1-native-mcp.mjs
+# If Pi is not globally installed:
+PI_SDK_DIR=/path/to/@earendil-works/pi-coding-agent node test/pi1-native-mcp.mjs
+```
+
+The [probe](test/pi1-native-mcp.mjs) drives real Pi sessions, native MCP and
+QuickJS codemode against a local stdio fixture. It checks actual tool events,
+parent IDs and reviewer steering messages across codemode/direct, individual
+reviewer switches, missing Chorus configuration, failures and non-target names.
+The model supplies deterministic tool calls; no model-provider credentials or
+real Chorus business operations are involved. These SDK results supplement the
+existing mocked offline tests and do not claim a production workflow transition.
+The three packaged reviewers allow `codemode` and `tool_search` alongside their
+existing tools. Pi 1.x's `--tools` also filters nested MCP calls, so the bundled
+dispatcher adds the parent's discovered native Chorus query/checkin/comment
+names to reviewer lists. It does not add submission/admin operations or
+project write/edit tools. The probe uses each actual reviewer list and this
+expansion to check native MCP access, including a local `chorus_add_comment` fixture.
+Their read-only project policy is unchanged.
+
+### Legacy adapter route
+
+For Pi 1.x installations that retain `pi-mcp-adapter`, the old setup is:
+
+```bash
+# Legacy MCP adapter
 pi install npm:pi-mcp-adapter
 
 # this package
 pi install npm:@chorus-aidlc/chorus-pi
 ```
 
-That is the whole install. The `subagent` tool ships inside this package (pi's
+The adapter's default single `mcp` proxy does not expose an operation in the
+outer tool name, so it does not trigger the three reviewer reminders with this
+package. Use native MCP above, or configure the adapter to expose direct tools.
+This limitation applies to the old adapter proxy, not native codemode.
+
+The `subagent` tool ships inside this package (pi's
 official subagent reference pattern, at `extensions/subagent/`), and the three
 reviewer agents are discovered directly from the package's own `agents/` dir —
 there is **no** separate subagents dependency and **no** manual copy of agent
 files into `~/.pi/agent/agents/`.
 
-Then configure `mcp.json` and env vars — see [`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md).
+For the legacy adapter configuration and env vars, see
+[`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md).
 
-`chorus init` (a.k.a. `chorus agents add`) automates this: select **Pi** in the agent
+`chorus init` (a.k.a. `chorus agents add`) **currently automates the legacy
+adapter route**, including on Pi 1.x. Select **Pi** in the agent
 checklist and it runs both installs (`pi install npm:pi-mcp-adapter && pi install
 npm:@chorus-aidlc/chorus-pi`, degrading to the manual commands if the `pi` CLI is absent)
 **and** writes pi's global `~/.pi/agent/mcp.json` with an `mcpServers.chorus` entry whose
@@ -37,6 +120,10 @@ npm:@chorus-aidlc/chorus-pi`, degrading to the manual commands if the `pi` CLI i
 keyless model Claude Code and Codex use). You still export `CHORUS_API_KEY` (and
 `CHORUS_AGENT_PROFILE`) in the shell that launches interactive pi — pi has no settings env-file
 to persist them into; the daemon spawner injects them for the wake path.
+
+The broader native install/CLI migration remains owned by pending Proposal
+`1e831855-b9c5-4307-85b1-2ded89f48e6e`. The native route above is configured
+manually while that work is pending.
 
 ## Wakeable daemon backend (`--agent pi`)
 
@@ -56,7 +143,7 @@ that wakes it. See [`docs/CONNECT_PI.md`](../../docs/CONNECT_PI.md#run-pi-as-a-w
 
 ## Why Pi is the lowest-friction target
 
-- **MCP: adapter path, keyless config.** `pi-mcp-adapter` reads the `mcp.json` `chorus agents add` writes at `~/.pi/agent/mcp.json` (or a project-root `.mcp.json`) and exposes all 40+ `chorus_*` tools — the extension never registers tools itself. The `Authorization` header references the key by env var (`Bearer ${CHORUS_API_KEY}`, which the adapter interpolates at connect time), so no `cho_` key lands on disk. A literal Bearer also works, but the env-referenced form is what the CLI writes.
+- **MCP: native on Pi 1.x, legacy adapter supported.** Native MCP reads the global or trusted-project Pi config and exposes real `mcp__<server>__<tool>` child events even with default codemode exposure. The legacy adapter reads the global `mcp.json` or project-root `.mcp.json`; `chorus agents add` currently installs that route. Both support environment-referenced Authorization headers. The Chorus extension uses its own HTTP connection for bookkeeping.
 - **Hooks: TypeScript, not bash.** The extension replaces ~10 bash hook scripts with one TS file. No `curl`/`jq`, no Bash 3.2 compatibility traps (the `${2:-{}}` JSON-parse bug that plagued the Codex port is structurally impossible here).
 - **Sub-agent sessions: automatic.** By monitoring `subagent` tool events, the extension auto-creates a Chorus session for each worker task in a dispatch and closes it when the dispatch returns (or when the run settles — `subagent:async-complete` / `process-terminal` — under nicobailon `pi-subagents`) — a capability the Codex port lacks (Codex has no sub-agent lifecycle events, so its workers manage sessions manually).
 - **Skills: same standard.** Pi implements the Agent Skills standard, so the skill bodies port with find/replace only (Claude's `Task` tool → the `subagent` tool; `/chorus:develop` → `/skill:develop`).
@@ -90,6 +177,12 @@ packages/chorus-pi/
 ## Status
 
 **Complete port** of the Claude Code / Codex plugins to Pi. All 12 skills, all 3 reviewer sub-agents plus the `chorus-worker` implementer, the session-aware extension, the bundled official subagent pattern, and the OpenSpec wrapper are implemented and validated (TS transpiles, JSON valid, all skill/agent names compliant with the Agent Skills standard, no Claude/Codex-specific references remain).
+
+That validation describes the existing port and offline checks. Pi 1.x native
+workflow host verification is tracked separately in the follow-up above.
+The subagent measurements and adapter tool allowlists below describe legacy
+setups; broader native reviewer/worker integration remains with the pending
+native-MCP proposal.
 
 The extension goes beyond the Codex port in one key way: by using Pi's `tool_call` event (pre-execution, mutable input), it **auto-injects the Chorus session UUID + workflow into each dispatched worker's task** — the Pi-native equivalent of Claude's `SubagentStart` hook. The Codex port has no pre-spawn mutation channel, so its workers must manage sessions manually. On Pi, dispatch a worker via the `subagent` tool and the extension handles session creation + context injection, then closes the session when the dispatch returns — or when the run settles (`subagent:async-complete` / `process-terminal`) under nicobailon `pi-subagents`.
 

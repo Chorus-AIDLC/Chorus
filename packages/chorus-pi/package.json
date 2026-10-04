@@ -1,7 +1,7 @@
 {
   "name": "@chorus-aidlc/chorus-pi",
   "version": "0.21.0",
-  "description": "Chorus AI-DLC collaboration platform extension for the Pi coding agent. Provides skills for every stage of the AI-DLC lifecycle, read-only reviewer subagents, and session-aware extension hooks. The Chorus MCP server is auto-discovered from the repo's .mcp.json by pi-mcp-adapter — no installer required.",
+  "description": "Chorus AI-DLC collaboration platform extension for Pi 1.x. Provides lifecycle skills, read-only reviewer subagents, and session-aware hooks compatible with native MCP codemode and direct tools.",
   "author": {
     "name": "Chorus-AIDLC"
   },
@@ -43,7 +43,7 @@
     "check:pack": "bash scripts/check-pack.sh"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": ">=1.0.0 <2.0.0"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {

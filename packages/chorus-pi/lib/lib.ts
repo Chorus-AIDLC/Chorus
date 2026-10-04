@@ -575,21 +575,18 @@ export const NUDGE_TOOL_NAMES = [
 export type NudgeToolName = (typeof NUDGE_TOOL_NAMES)[number];
 
 /**
- * Normalize a tool name seen in a pi event to the Chorus backend native name,
- * so it can be matched against NUDGE_TOOL_NAMES regardless of how pi-mcp-adapter
- * exposed it.
+ * Normalize a tool name seen in a pi event to the Chorus backend native name.
+ * The three workflow operations accept any prefix, but must end the identifier
+ * exactly. Other tools retain the adapter's generic normalization below.
  *
- * Handles all three exposure modes:
- *   - gateway mode:  event.toolName === "mcp", real name in event.input.tool
- *                  (e.g. "chorus_chorus_submit_for_verify" — server-prefixed)
- *   - direct, toolPrefix "server": "chorus_chorus_submit_for_verify"
- *   - direct, toolPrefix "none":   "chorus_submit_for_verify" (native)
- *
- * Strips at most one leading "chorus_" server prefix. Returns null if the input
- * is empty or not a chorus tool.
+ * For other tools, strips at most one leading "chorus_" server prefix.
+ * Returns null for malformed values or unrecognized names.
  */
-export function normalizeChorusToolName(name: string | undefined | null): string | null {
-  if (!name) return null;
+export function normalizeChorusToolName(name: unknown): string | null {
+  if (typeof name !== "string" || !name) return null;
+  for (const operation of NUDGE_TOOL_NAMES) {
+    if (name.endsWith(operation)) return operation;
+  }
   let n = name;
   // The chorus server name is "chorus"; the adapter prefixes it once. Strip one.
   if (n.startsWith("chorus_chorus_")) n = n.slice("chorus_".length);
@@ -599,21 +596,14 @@ export function normalizeChorusToolName(name: string | undefined | null): string
 }
 
 /**
- * Resolve the Chorus native tool name from a tool_result / tool_execution_end event,
- * accounting for MCP gateway mode (where the real name lives in event.input.tool).
+ * Resolve the Chorus native tool name solely from an event's outer toolName.
+ * Arguments are never read, even when the identifier contains a gateway prefix.
  *
  * Returns the native name (e.g. "chorus_submit_for_verify") or null.
  */
 export function resolveChorusToolName(event: {
-  toolName: string;
-  input?: { tool?: string } | Record<string, unknown>;
+  toolName?: unknown;
+  input?: unknown;
 }): string | null {
-  // Gateway mode: the agent called the `mcp` proxy tool; the real chorus tool
-  // name is in event.input.tool.
-  if (event.toolName === "mcp") {
-    const input = event.input as { tool?: string } | undefined;
-    return normalizeChorusToolName(input?.tool);
-  }
-  // Direct mode: the tool name itself is the (possibly server-prefixed) chorus name.
   return normalizeChorusToolName(event.toolName);
 }

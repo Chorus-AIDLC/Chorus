@@ -143,6 +143,88 @@ const success = {
   content: [{ type: "text", text: "ok" }],
 };
 
+const workflowOperations = [
+  {
+    operation: "chorus_pm_submit_proposal",
+    argument: "proposalUuid",
+    target: "05a19157-d028-47a1-8887-c05c33b3274a",
+    reminder: "Run the Chorus proposal reviewer for proposal",
+  },
+  {
+    operation: "chorus_submit_for_verify",
+    argument: "taskUuid",
+    target: "5da668db-0b3f-4486-a58b-baa9b269d19b",
+    reminder: "Run the Chorus task reviewer for task",
+  },
+  {
+    operation: "chorus_admin_verify_task",
+    argument: "taskUuid",
+    target: "5da668db-0b3f-4486-a58b-baa9b269d19b",
+    reminder: "First verify whether task",
+  },
+] as const;
+const workflowPrefixes = [
+  "",
+  "chorus_",
+  "mcp__chorus__",
+  "mcp__chorus.",
+  "chorus__",
+  "custom.namespace.",
+  "x",
+];
+const workflowAliases = workflowOperations.flatMap((action) =>
+  workflowPrefixes.map((prefix) => ({ ...action, name: `${prefix}${action.operation}` })),
+);
+
+interface NegativeNameCase {
+  label: string;
+  name: unknown;
+  normalized?: string;
+}
+
+const negativeWorkflowNames: NegativeNameCase[] = [
+  ...workflowAliases.flatMap(({ name, operation }) =>
+    ["_extra", " ", "\t", "\n", "\r\n"].map((suffix) => ({
+      label: `${name} + ${JSON.stringify(suffix)}`,
+      name: `${name}${suffix}`,
+      normalized: name.startsWith("mcp__chorus__") ? `${operation}${suffix}` : undefined,
+    })),
+  ),
+  ...workflowOperations.flatMap(({ operation }) =>
+    [operation.toUpperCase(), operation.slice(0, -1)].flatMap((similar) =>
+      ["", "mcp__chorus__"].map((prefix) => ({
+        label: `${prefix}${similar}`,
+        name: `${prefix}${similar}`,
+        normalized: prefix ? similar : undefined,
+      })),
+    ),
+  ),
+  ...["chorus_checkin", "chorus_get_task", "constructor", "toString", "__proto__", "hasOwnProperty"]
+    .flatMap((other) =>
+      ["", "mcp__chorus__"].map((prefix) => ({
+        label: `${prefix}${other}`,
+        name: `${prefix}${other}`,
+        normalized: prefix ? other : undefined,
+      })),
+    ),
+  { label: "unrelated tool", name: "bash" },
+  { label: "empty", name: "" },
+  { label: "empty MCP suffix", name: "mcp__chorus__" },
+  { label: "null", name: null },
+  { label: "undefined", name: undefined },
+  { label: "number", name: 42 },
+  { label: "true", name: true },
+  { label: "false", name: false },
+  { label: "object", name: {} },
+  { label: "array", name: ["chorus_submit_for_verify"] },
+  { label: "boxed string", name: Object("chorus_submit_for_verify") },
+  { label: "symbol", name: Symbol("chorus_submit_for_verify") },
+  {
+    label: "object must not be coerced",
+    name: { toString: () => { throw new Error("must not coerce tool names"); } },
+  },
+];
+
 beforeEach(() => {
   process.env.CHORUS_URL = "https://chorus.test";
   process.env.CHORUS_API_KEY = "cho_test";
@@ -228,6 +310,252 @@ describe("configuration and helpers", () => {
     const empty = mkdtempSync(join(tmpdir(), "chorus-dsh-empty-"));
     expect(() => resolveConnectionConfig({}, { DSH_HOME: empty })).toThrow("url is required");
   });
+});
+
+describe("workflow name helpers (offline)", () => {
+  it.each(workflowAliases)("normalizes $name to $operation", ({ name, operation }) => {
+    expect(normalizeChorusToolName(name)).toBe(operation);
+  });
+
+  it.each(negativeWorkflowNames)(
+    "rejects workflow matching for $label while preserving generic normalization",
+    ({ name, normalized }) => {
+      expect(normalizeChorusToolName(name)).toBe(normalized);
+    },
+  );
+});
+
+// These call apply's actual registered handlers with a mocked Cordis context
+// and agent. They verify reminder delivery offline, not in a live dsh session.
+describe("workflow handler-to-reminder delivery (offline)", () => {
+  it.each(workflowAliases)(
+    "delivers $name at turn stopping with its target UUID",
+    async ({ name, argument, target, reminder }) => {
+      const ctx = new FakeContext();
+      const agent = fakeAgent();
+      apply(asContext(ctx), config());
+      ctx.emit("agent/session-start", { agent, source: "startup" });
+      expect(ctx.calls[0].name).toBe("mcp__chorus__chorus_checkin");
+      expect(ctx.calls[0].callId).toMatch(/^chorus-dsh:checkin:/);
+
+      const wrongTarget = "00000000-0000-4000-8000-000000000000";
+      const downstream = { kind: "accept", replacement: success };
+      try {
+        expect(
+          await ctx.waterfall(
+            "tools/post-execute",
+            [execution(agent, name, { proposalUuid: wrongTarget, taskUuid: wrongTarget, [argument]: target }), success],
+            async () => downstream,
+          ),
+        ).toBe(downstream);
+        expect(agent.steered).toHaveLength(0);
+        expect(agent.injected).toHaveLength(0);
+        await ctx.serial("agent/turn-stopping", { agent, turn: 1 });
+        expect(agent.steered).toHaveLength(1);
+        expect(agent.steered[0]).toMatchObject({
+          role: "user",
+          source: { kind: "plugin", plugin: "chorus-dsh" },
+        });
+        const text = agent.steered[0].content[0].text;
+        expect(text).toContain(`${reminder} ${target}`);
+        expect(text).not.toContain(wrongTarget);
+        await ctx.serial("agent/turn-stopping", { agent, turn: 1 });
+        expect(agent.steered).toHaveLength(1);
+      } finally {
+        await ctx.dispose();
+      }
+    },
+  );
+
+  it.each(negativeWorkflowNames)("does not queue or crash for $label", async ({ name }) => {
+    const ctx = new FakeContext();
+    const agent = fakeAgent();
+    apply(asContext(ctx), config());
+    ctx.emit("agent/session-start", { agent, source: "startup" });
+    const downstream = { kind: "accept" };
+    try {
+      const exec = { ...execution(agent, "ignored", {}), name };
+      expect(
+        await ctx.waterfall("tools/post-execute", [exec, success], async () => downstream),
+      ).toBe(downstream);
+      await ctx.serial("agent/turn-stopping", { agent, turn: 1 });
+      expect(agent.steered).toHaveLength(0);
+      expect(agent.injected).toHaveLength(0);
+      expect(ctx.logs.warn).toHaveLength(0);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it.each(workflowOperations)(
+    "deduplicates aliases of $operation while keeping different UUIDs",
+    async ({ operation, argument, target, reminder }) => {
+      const ctx = new FakeContext();
+      const agent = fakeAgent();
+      apply(asContext(ctx), config({ maxPendingActions: 2 }));
+      ctx.emit("agent/session-start", { agent, source: "startup" });
+      const second = "00000000-0000-4000-8000-000000000002";
+      const dropped = "00000000-0000-4000-8000-000000000003";
+      try {
+        for (const prefix of workflowPrefixes) {
+          await ctx.waterfall(
+            "tools/post-execute",
+            [execution(agent, `${prefix}${operation}`, { [argument]: target }), success],
+            async () => ({ kind: "accept" }),
+          );
+        }
+        expect(ctx.logs.warn).toHaveLength(0);
+        for (const uuid of [second, second, dropped]) {
+          await ctx.waterfall(
+            "tools/post-execute",
+            [execution(agent, `custom.${operation}`, { [argument]: uuid }), success],
+            async () => ({ kind: "accept" }),
+          );
+        }
+        expect(ctx.logs.warn).toHaveLength(1);
+        expect(ctx.logs.warn[0]).toContain("pending workflow action limit (2)");
+        await ctx.serial("agent/turn-stopping", { agent, turn: 1 });
+        expect(agent.steered).toHaveLength(1);
+        const text = agent.steered[0].content[0].text;
+        expect(text.split(reminder)).toHaveLength(3);
+        expect(text).toContain(`${reminder} ${target}`);
+        expect(text).toContain(`${reminder} ${second}`);
+        expect(text).not.toContain(dropped);
+        // Flushing restores capacity, including for a previously dropped target.
+        await ctx.waterfall(
+          "tools/post-execute",
+          [execution(agent, `x${operation}`, { [argument]: dropped }), success],
+          async () => ({ kind: "accept" }),
+        );
+        await ctx.serial("agent/turn-stopping", { agent, turn: 2 });
+        expect(agent.steered).toHaveLength(2);
+        expect(agent.steered[1].content[0].text).toContain(`${reminder} ${dropped}`);
+      } finally {
+        await ctx.dispose();
+      }
+    },
+  );
+
+  const gatedActions = workflowOperations.flatMap((action) =>
+    ["error", "non-accept", "synthetic", "no agent", "no state"].map((gate) => ({ ...action, gate })),
+  );
+  it.each(gatedActions)("suppresses $operation for $gate", async ({ operation, argument, target, gate }) => {
+    const ctx = new FakeContext();
+    const agent = fakeAgent();
+    apply(asContext(ctx), config({ maxPendingActions: 1 }));
+    if (gate !== "no state") ctx.emit("agent/session-start", { agent, source: "startup" });
+    const exec = {
+      ...execution(agent, `x${operation}`, { [argument]: target }),
+      agent: gate === "no agent" ? undefined : agent,
+      callId: gate === "synthetic" ? "chorus-dsh:checkin:99" : "call-1",
+    };
+    const downstream = gate === "non-accept" ? { kind: "block", feedback: [] } : { kind: "accept" };
+    try {
+      expect(
+        await ctx.waterfall(
+          "tools/post-execute",
+          [exec, { ...success, isError: gate === "error" }],
+          async () => downstream,
+        ),
+      ).toBe(downstream);
+      await ctx.serial("agent/turn-stopping", { agent, turn: 1 });
+      expect(agent.steered).toHaveLength(0);
+      // A rejected call must not consume capacity for the next eligible one.
+      if (gate === "no state") ctx.emit("agent/session-start", { agent, source: "startup" });
+      await ctx.waterfall(
+        "tools/post-execute",
+        [execution(agent, operation, { [argument]: target }), success],
+        async () => ({ kind: "accept" }),
+      );
+      await ctx.serial("agent/turn-stopping", { agent, turn: 2 });
+      expect(agent.steered).toHaveLength(1);
+      expect(ctx.logs.warn).toHaveLength(0);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
+  it("waits for downstream acceptance before queuing an action", async () => {
+    const ctx = new FakeContext();
+    const agent = fakeAgent();
+    apply(asContext(ctx), config());
+    ctx.emit("agent/session-start", { agent, source: "startup" });
+    const downstream = { kind: "accept" };
+    let accept!: (value: typeof downstream) => void;
+    const pending = ctx.waterfall(
+      "tools/post-execute",
+      [execution(agent, "xchorus_submit_for_verify", { taskUuid: "task-1" }), success],
+      () => new Promise<typeof downstream>((resolve) => { accept = resolve; }),
+    );
+    try {
+      await ctx.serial("agent/turn-stopping", { agent, turn: 1 });
+      expect(agent.steered).toHaveLength(0);
+      accept(downstream);
+      expect(await pending).toBe(downstream);
+      expect(agent.steered).toHaveLength(0);
+      await ctx.serial("agent/turn-stopping", { agent, turn: 2 });
+      expect(agent.steered).toHaveLength(1);
+    } finally {
+      accept(downstream);
+      await pending;
+      await ctx.dispose();
+    }
+  });
+
+  it.each(["restart", "agent disposal", "plugin disposal"])(
+    "clears queued reminders on %s",
+    async (lifecycle) => {
+      const ctx = new FakeContext();
+      const agent = fakeAgent();
+      apply(asContext(ctx), config());
+      ctx.emit("agent/session-start", { agent, source: "startup" });
+      await ctx.waterfall(
+        "tools/post-execute",
+        [execution(agent, "xchorus_submit_for_verify", { taskUuid: "task-1" }), success],
+        async () => ({ kind: "accept" }),
+      );
+      if (lifecycle === "restart") ctx.emit("agent/session-start", { agent, source: "resume" });
+      if (lifecycle === "agent disposal") ctx.emit("agent/disposed", { agent });
+      if (lifecycle === "plugin disposal") await ctx.dispose();
+      try {
+        expect(ctx.calls[0].signal.aborted).toBe(true);
+        await ctx.serial("agent/turn-stopping", { agent, turn: 1 });
+        expect(agent.steered).toHaveLength(0);
+      } finally {
+        if (lifecycle !== "plugin disposal") await ctx.dispose();
+      }
+    },
+  );
+
+  it.each(["CHORUS_DAEMON_HEADLESS", "CHORUS_TEST_DAEMON_ORIGIN"])(
+    "disables all alias reminders for daemon origin via %s",
+    async (marker) => {
+      vi.stubEnv(marker, "1");
+      const ctx = new FakeContext();
+      const agent = fakeAgent();
+      try {
+        apply(asContext(ctx), config({ daemonOriginEnv: marker }));
+        expect(ctx.handlers.size).toBe(0);
+        ctx.emit("agent/session-start", { agent, source: "startup" });
+        for (const { name, argument, target } of workflowAliases) {
+          const downstream = { kind: "accept" };
+          expect(
+            await ctx.waterfall(
+              "tools/post-execute",
+              [execution(agent, name, { [argument]: target }), success],
+              async () => downstream,
+            ),
+          ).toBe(downstream);
+        }
+        await ctx.serial("agent/turn-stopping", { agent, turn: 1 });
+        expect(agent.steered).toHaveLength(0);
+        expect(ctx.tools.execute).not.toHaveBeenCalled();
+      } finally {
+        await ctx.dispose();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 });
 
 describe("runtime", () => {

@@ -3,6 +3,14 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  WORKFLOW_CASES,
+  WORKFLOW_PREFIXES,
+  NON_TARGET_OUTER_NAMES,
+  INVALID_NAMES,
+  MALFORMED_INPUTS,
+  invalidWorkflowNames,
+} from "./workflow-cases.js";
+import {
   forceSubagentCallAsync,
   isReviewerAgent,
   isWorkerAgent,
@@ -385,8 +393,8 @@ test("normalizeChorusToolName: native name passes through", () => {
   expect(normalizeChorusToolName("chorus_submit_for_verify")).toBe("chorus_submit_for_verify");
 });
 
-test("normalizeChorusToolName: strips one chorus_ server prefix (gateway/direct-server mode)", () => {
-  expect(normalizeChorusToolName("chorus_chorus_submit_for_verify")).toBe("chorus_submit_for_verify");
+test("normalizeChorusToolName: strips one chorus_ server prefix for generic tools", () => {
+  expect(normalizeChorusToolName("chorus_chorus_get_task")).toBe("chorus_get_task");
 });
 
 test("normalizeChorusToolName: returns null for non-chorus tools", () => {
@@ -396,12 +404,12 @@ test("normalizeChorusToolName: returns null for non-chorus tools", () => {
   expect(normalizeChorusToolName(undefined)).toBe(null);
 });
 
-test("resolveChorusToolName: gateway mode reads event.input.tool", () => {
+test("resolveChorusToolName: plain mcp does not unwrap event.input.tool", () => {
   expect(resolveChorusToolName({ toolName: "mcp", input: { tool: "chorus_chorus_submit_for_verify" } }))
-    .toBe("chorus_submit_for_verify");
+    .toBe(null);
 });
 
-test("resolveChorusToolName: direct mode reads event.toolName", () => {
+test("resolveChorusToolName: reads event.toolName", () => {
   expect(resolveChorusToolName({ toolName: "chorus_chorus_submit_for_verify" })).toBe("chorus_submit_for_verify");
   expect(resolveChorusToolName({ toolName: "chorus_submit_for_verify" })).toBe("chorus_submit_for_verify");
 });
@@ -417,6 +425,110 @@ test("NUDGE_TOOL_NAMES: the three reviewer-trigger tools", () => {
     "chorus_submit_for_verify",
     "chorus_admin_verify_task",
   ]);
+});
+
+for (const [operation] of WORKFLOW_CASES) {
+  for (const prefix of WORKFLOW_PREFIXES) {
+    const name = prefix + operation;
+    test(`workflow normalization: exact suffix ${name}`, () => {
+      expect(normalizeChorusToolName(name)).toBe(operation);
+      // Outer names determine the operation regardless of arguments.
+      expect(resolveChorusToolName({ toolName: name, input: { tool: "bash" } })).toBe(operation);
+    });
+  }
+
+  test(`workflow normalization: rejects trailing text and near misses for ${operation}`, () => {
+    for (const name of invalidWorkflowNames(operation)) {
+      // Generic normalization may return non-target Chorus names; they must
+      // never become one of the allowed workflow operations.
+      expect(NUDGE_TOOL_NAMES).not.toContain(normalizeChorusToolName(name));
+      expect(NUDGE_TOOL_NAMES).not.toContain(
+        resolveChorusToolName({ toolName: name, input: { tool: operation } }),
+      );
+    }
+  });
+
+  test(`workflow resolution: ${operation} ignores conflicting and malformed arguments`, () => {
+    const inputs = [
+      ...MALFORMED_INPUTS,
+      { tool: "bash" },
+      ...WORKFLOW_CASES.map(([tool]) => ({ tool })),
+    ];
+    for (const prefix of WORKFLOW_PREFIXES) {
+      for (const input of inputs) {
+        expect(resolveChorusToolName({ toolName: prefix + operation, input })).toBe(operation);
+      }
+    }
+  });
+}
+
+test("workflow normalization: malformed and unrelated names never identify a workflow", () => {
+  for (const name of INVALID_NAMES) {
+    expect(NUDGE_TOOL_NAMES).not.toContain(normalizeChorusToolName(name));
+    for (const [operation] of WORKFLOW_CASES) {
+      expect(NUDGE_TOOL_NAMES).not.toContain(
+        resolveChorusToolName({ toolName: name, input: { tool: operation } }),
+      );
+    }
+  }
+  expect(resolveChorusToolName({})).toBe(null);
+});
+
+test("workflow normalization: generic behavior for non-target tools is preserved", () => {
+  for (const [name, expected] of [
+    ["chorus_checkin", "chorus_checkin"],
+    ["chorus_chorus_checkin", "chorus_checkin"],
+    ["chorus_chorus_chorus_get_task", "chorus_chorus_get_task"],
+    ["chorus__", "chorus__"],
+    ["chorus_get_task\n", "chorus_get_task\n"],
+    ["mcp__chorus__chorus_get_task", null],
+    ["custom.namespace.chorus_get_task", null],
+    ["xchorus_checkin", null],
+  ]) {
+    expect(normalizeChorusToolName(name)).toBe(expected);
+    expect(resolveChorusToolName({ toolName: name, input: { tool: "chorus_submit_for_verify" } })).toBe(expected);
+  }
+});
+
+test("workflow resolution: non-target outer names ignore malformed arguments", () => {
+  for (const toolName of NON_TARGET_OUTER_NAMES) {
+    for (const input of MALFORMED_INPUTS) {
+      expect(NUDGE_TOOL_NAMES).not.toContain(resolveChorusToolName({ toolName, input }));
+    }
+  }
+});
+
+test("workflow resolution: wrappers and unrelated outer tools ignore target arguments", () => {
+  for (const toolName of NON_TARGET_OUTER_NAMES) {
+    for (const [operation] of WORKFLOW_CASES) {
+      expect(NUDGE_TOOL_NAMES).not.toContain(
+        resolveChorusToolName({ toolName, input: { tool: operation } }),
+      );
+    }
+  }
+});
+
+test("workflow resolution: input getters are never read", () => {
+  let inputReads = 0;
+  const cases: [unknown, string | null][] = [
+    ...WORKFLOW_CASES.flatMap(([operation]) =>
+      WORKFLOW_PREFIXES.map((prefix): [string, string] => [prefix + operation, operation]),
+    ),
+    ...NON_TARGET_OUTER_NAMES.map((name): [unknown, string | null] => [
+      name,
+      name === "chorus_get_task" ? name : null,
+    ]),
+  ];
+  for (const [toolName, expected] of cases) {
+    expect(resolveChorusToolName({
+      toolName,
+      get input(): never {
+        inputReads++;
+        throw new Error("workflow recognition must not read input");
+      },
+    })).toBe(expected);
+  }
+  expect(inputReads).toBe(0);
 });
 
 // ─── buildSessionBanner (user-visible startup banner) ───────────────────────

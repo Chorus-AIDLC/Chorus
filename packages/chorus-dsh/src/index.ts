@@ -195,7 +195,13 @@ export function isDaemonOrigin(
   return env[daemonOriginEnv] === "1";
 }
 
-export function normalizeChorusToolName(name: string): string | undefined {
+export function normalizeChorusToolName(name: unknown): string | undefined {
+  if (typeof name !== "string") return undefined;
+  // Hosts may prepend any namespace, including one without a delimiter.
+  // Match complete workflow names before the generic MCP normalization.
+  for (const action of Object.keys(ACTIONS)) {
+    if (name.endsWith(action)) return action;
+  }
   const prefix = "mcp__chorus__";
   return name.startsWith(prefix) && name.length > prefix.length
     ? name.slice(prefix.length)
@@ -408,7 +414,7 @@ export function apply(ctx: Context, config: Config): void {
         return downstream;
       }
       const state = getState(exec.agent);
-      if (!state || !(normalized in ACTIONS)) return downstream;
+      if (!state || !Object.hasOwn(ACTIONS, normalized)) return downstream;
       addPendingAction(
         ctx,
         state,
