@@ -435,6 +435,39 @@ function plainTextToEditorContent(text: string): Record<string, unknown> {
 
 // ── Imperative suggestion popup rendering ──────────────────────
 
+type ClientRectSource = DOMRect | null | (() => DOMRect | null) | undefined;
+
+// Anchor the fixed-position popup to the caret rect: below it, or above it when
+// there is too little room below. Exported for unit testing.
+export function positionSuggestionPopup(popup: HTMLElement, clientRect: ClientRectSource) {
+  const rect = typeof clientRect === "function" ? clientRect() : clientRect;
+  if (!rect) return;
+  popup.style.position = "fixed";
+  popup.style.left = `${rect.left}px`;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  if (spaceBelow < 220) {
+    popup.style.top = "";
+    popup.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+  } else {
+    popup.style.bottom = "";
+    popup.style.top = `${rect.bottom + 4}px`;
+  }
+}
+
+// Keeps the popup glued to the caret while the editor itself moves without a
+// Tiptap update — e.g. typing "@" while a Sheet is still sliding in, or when an
+// ancestor scrolls. Returns a cleanup function.
+export function trackSuggestionPopup(popup: HTMLElement, getClientRect: () => ClientRectSource) {
+  const reposition = () => positionSuggestionPopup(popup, getClientRect());
+  const events = ["animationend", "transitionend", "scroll"] as const;
+  for (const type of events) document.addEventListener(type, reposition, true);
+  window.addEventListener("resize", reposition);
+  return () => {
+    for (const type of events) document.removeEventListener(type, reposition, true);
+    window.removeEventListener("resize", reposition);
+  };
+}
+
 // Exported for unit testing the row DOM (dot / count badge / roles-removed /
 // user-row-unchanged) without booting a full Tiptap editor + suggestion flow.
 export function createSuggestionPopupRenderer(
@@ -813,6 +846,9 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
     const keyDownRef = useRef<KeyDownHandler | null>(null);
     const wrapperRef = useRef<HTMLDivElement | null>(null);
     const popupRef = useRef<HTMLDivElement | null>(null);
+    // Latest caret rect source + listener cleanup for repositioning the popup.
+    const clientRectRef = useRef<ClientRectSource>(null);
+    const stopTrackingRef = useRef<(() => void) | null>(null);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const currentCommandRef = useRef<((attrs: any) => void) | null>(null);
     const [, forceUpdate] = useState(0);
@@ -1000,22 +1036,10 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
                   popupRef.current = popup;
                   currentCommandRef.current = props.command;
 
-                  if (props.clientRect) {
-                    const rect =
-                      typeof props.clientRect === "function"
-                        ? props.clientRect()
-                        : props.clientRect;
-                    if (rect) {
-                      popup.style.position = "fixed";
-                      popup.style.left = `${rect.left}px`;
-                      const spaceBelow = window.innerHeight - rect.bottom;
-                      if (spaceBelow < 220) {
-                        popup.style.bottom = `${window.innerHeight - rect.top + 4}px`;
-                      } else {
-                        popup.style.top = `${rect.bottom + 4}px`;
-                      }
-                    }
-                  }
+                  clientRectRef.current = props.clientRect;
+                  positionSuggestionPopup(popup, props.clientRect);
+                  stopTrackingRef.current?.();
+                  stopTrackingRef.current = trackSuggestionPopup(popup, () => clientRectRef.current);
 
                   // Mount inside the editor wrapper (not document.body) so the
                   // popup lives within the same DOM subtree as the editor. When
@@ -1043,22 +1067,9 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 onUpdate: (props: any) => {
                   currentCommandRef.current = props.command;
-                  if (popupRef.current && props.clientRect) {
-                    const rect =
-                      typeof props.clientRect === "function"
-                        ? props.clientRect()
-                        : props.clientRect;
-                    if (rect) {
-                      popupRef.current.style.left = `${rect.left}px`;
-                      const spaceBelow = window.innerHeight - rect.bottom;
-                      if (spaceBelow < 220) {
-                        popupRef.current.style.top = "";
-                        popupRef.current.style.bottom = `${window.innerHeight - rect.top + 4}px`;
-                      } else {
-                        popupRef.current.style.bottom = "";
-                        popupRef.current.style.top = `${rect.bottom + 4}px`;
-                      }
-                    }
+                  clientRectRef.current = props.clientRect;
+                  if (popupRef.current) {
+                    positionSuggestionPopup(popupRef.current, props.clientRect);
                   }
 
                   if (popupRef.current) {
@@ -1081,6 +1092,9 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
                   return false;
                 },
                 onExit: () => {
+                  stopTrackingRef.current?.();
+                  stopTrackingRef.current = null;
+                  clientRectRef.current = null;
                   popupRef.current?.remove();
                   popupRef.current = null;
                   currentCommandRef.current = null;
@@ -1144,6 +1158,9 @@ export const MentionEditor = forwardRef<MentionEditorRef, MentionEditorProps>(
         editor.setEditable(!disabled);
       }
     }, [disabled, editor]);
+
+    // Drop popup reposition listeners if unmounted mid-suggestion.
+    useEffect(() => () => stopTrackingRef.current?.(), []);
 
     const insertProgrammaticReply = useCallback(
       (attrs: {
