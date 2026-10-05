@@ -13,6 +13,7 @@
 | **ProjDevBench** | End-to-end project construction | Project-level development evaluation | [PROJDEVBENCH.md](./PROJDEVBENCH.md) |
 | **PRDBench** | PRD → complete project, multi-modal evaluation | PRD-to-project aligns with Chorus Proposal workflow | [PRDBENCH.md](./PRDBENCH.md) |
 | **MARBLE (MultiAgentBench)** | Multi-agent coordination quality | Multi-agent collaboration metrics | [MARBLE.md](./MARBLE.md) |
+| **Experiment Results** | Chorus vs CC Baseline on PRDBench | Empirical findings from Task 47 | [EXPERIMENT_RESULTS.md](./EXPERIMENT_RESULTS.md) |
 
 ## Background
 
