@@ -56,7 +56,8 @@ beforeEach(() => {
 });
 async function open(user: ReturnType<typeof userEvent.setup>) { await user.click(await screen.findByRole("button", { name: "Actions" })); }
 
-describe("Tracker panel action integration", () => {
+// Real Radix interactions take ~1s each; under full-suite parallel load they can exceed the 5s default.
+describe("Tracker panel action integration", { timeout: 20_000 }, () => {
   it("has independent Close, no footer, and inline Save/Cancel while editing", async () => {
     const user = userEvent.setup(); const view = render(<Panel />); await open(user);
     expect(view.container.querySelector(".border-t")).toBeNull();

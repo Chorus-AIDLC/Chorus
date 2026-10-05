@@ -140,7 +140,7 @@ test("actual dispatcher refuses an empty reviewer allowlist instead of spawning 
 	const previousDirectory = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = directory;
 	mkdirSync(path.join(directory, "agents"));
-	let registered: any;
+	let registered: { execute: (...args: unknown[]) => Promise<{ isError?: boolean }> } | undefined;
 	const spawn = spyOn(childProcess, "spawn").mockImplementation(() => {
 		throw new Error("Unexpected subprocess with empty reviewer permissions");
 	});
@@ -149,11 +149,11 @@ test("actual dispatcher refuses an empty reviewer allowlist instead of spawning 
 			registerTool: (tool: unknown) => { registered = tool; },
 			getAllTools: () => [],
 			getThinkingLevel: () => "off",
-		} as any);
+		} as unknown as Parameters<typeof subagentExtension>[0]);
 		for (const permissions of ["tools: mcp, mcpScript, codemode, tool_search\n", ""]) {
 			writeFileSync(path.join(directory, "agents/chorus-task-reviewer.md"),
 				`---\nname: chorus-task-reviewer\ndescription: Local permission fixture\n${permissions}---\nReview only.\n`);
-			const result = await registered.execute("empty-reviewer", {
+			const result = await registered!.execute("empty-reviewer", {
 				agent: "chorus-task-reviewer", task: "No external operations", async: false,
 			}, undefined, undefined, { cwd: directory, hasUI: false });
 			expect(result.isError).toBe(true);

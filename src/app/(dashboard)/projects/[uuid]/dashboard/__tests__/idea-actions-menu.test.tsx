@@ -80,7 +80,8 @@ beforeEach(() => {
 });
 async function open(user: ReturnType<typeof userEvent.setup>) { await user.click(screen.getByRole("button", { name: "Actions" })); }
 
-describe("Tracker Actions — real Radix interactions", () => {
+// Real Radix interactions take ~1s each; under full-suite parallel load they can exceed the 5s default.
+describe("Tracker Actions — real Radix interactions", { timeout: 20_000 }, () => {
   describe.each([false, true])("Research cwd retry, mobile=%s", (mobile) => {
     it.each(["pick", "auto_pin"])("captures the %s selection and dispatches atomically without lifecycle assignment", async (outcome) => {
       mockViewport(mobile);
