@@ -43,7 +43,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Dependency audit (root, high/critical)
-        run: node scripts/audit-root.mjs
+        run: |
+          node --test scripts/__tests__/audit-root.test.mjs
+          node scripts/audit-root.mjs
 
       - name: Verify production migration version
         run: |
