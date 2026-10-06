@@ -162,6 +162,8 @@
       "docx": "9.6.1",
       "shiki": "^4.1.0",
       "postcss@8": "8.5.28",
+      "source-map-js@1": "1.2.2",
+      "proxy-addr@2": "2.0.8",
       "nanoid@3": "3.3.19",
       "nanoid@5": "5.1.16",
       "next>sharp": "0.35.5",
