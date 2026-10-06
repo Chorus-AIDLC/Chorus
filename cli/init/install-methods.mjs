@@ -685,7 +685,8 @@ export function hermesFollowUpChecklist({ url } = {}) {
     `  1. export CHORUS_URL=${url || "<your Chorus URL>"} and export CHORUS_API_KEY=<this agent's cho_ key> in the gateway's environment`,
     "  2. hermes config set terminal.cwd <path to the repository this gateway serves>",
     "  3. hermes config set security.approval.transport chorus   and   hermes config set security.approval.transport_fallback builtin",
-    "  4. hermes gateway install   (then: hermes gateway start)",
+    "  4. hermes config set approvals.mode manual   (unattended gateways: the default smart mode lets Hermes' guardian approve before you are asked)",
+    "  5. hermes gateway install   (then: hermes gateway start)",
     "  (no platform-enable step: the chorus platform auto-enables when CHORUS_URL and CHORUS_API_KEY are set; --enable already set plugins.enabled)",
   ];
 }
