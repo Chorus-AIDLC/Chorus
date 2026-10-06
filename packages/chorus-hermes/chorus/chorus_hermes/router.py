@@ -181,10 +181,10 @@ class EventRouter:
 
     # -- notifications -------------------------------------------------------------
 
-    async def _unread(self) -> Optional[List[Mapping[str, Any]]]:
+    async def _unread(self, status: str = "unread") -> Optional[List[Mapping[str, Any]]]:
         try:
             result = await self.mcp.acall_tool(
-                "chorus_get_notifications", {"status": "unread", "limit": 50, "autoMarkRead": False})
+                "chorus_get_notifications", {"status": status, "limit": 50, "autoMarkRead": False})
         except Exception as exc:
             logger.warning("[Chorus] notification re-read failed: %s", type(exc).__name__)
             return None
@@ -314,7 +314,9 @@ class EventRouter:
         return await self._resolve_and_dispatch(wake)
 
     async def _redispatch_autonomous(self, turn, turn_uuid, session_id, direct, trigger) -> Optional[WakeRequest]:
-        notifications = await self._unread()
+        # Search read notifications too: the connect-time chorus_checkin marks up to 5 as read,
+        # and the server-side pending turn (deduped by turnUuid) is what owes the wake.
+        notifications = await self._unread(status="all")
         if notifications is None:
             self._skip(f"turn:{turn_uuid}", "notification re-read failed")
             return None

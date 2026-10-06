@@ -210,6 +210,18 @@ def test_pending_autonomous_rebuilds_from_notification_and_dedups_broadcast(setu
     assert len(dispatched) == 1
 
 
+def test_pending_autonomous_searches_read_notifications(setup):
+    # The connect-time chorus_checkin may already have marked the backing notification read;
+    # the pending turn must still be rebuilt from it.
+    fake, router, dispatched, _ = setup
+    fake.notifications = [notif("n-6", action="mentioned", entityType="idea", entityUuid="i-2")]
+    fake.pending = [{"turnUuid": "tu-4", "sessionId": "i-2", "directIdeaUuid": "i-2", "trigger": "mentioned",
+                     "promptText": None}]
+    run(router.sweep_pending_turns())
+    assert [w.turn_uuid for w in dispatched] == ["tu-4"]
+    assert {"status": "all", "limit": 50, "autoMarkRead": False} in fake.tool_calls("chorus_get_notifications")
+
+
 def test_pending_only_turn_filter_and_unknown_trigger(setup):
     fake, router, dispatched, _ = setup
     fake.pending = [{"turnUuid": "a", "sessionId": "s", "trigger": "human_instruction", "promptText": "x"},
