@@ -34,11 +34,10 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from . import adapter as chorus_adapter
-from .router import WakeRequest
+from .router import WakeRequest, parse_time
 from .turns import TurnRecord, entity_of, sanitize
 
 logger = logging.getLogger(__name__)
@@ -58,7 +57,6 @@ POLL_INTERVAL_S = 10.0       # comment re-read while waiting (backstop for a mis
 DEADLINE_MARGIN_S = 1.0      # answer before the host deadline so a deny is not discarded as late
 REQUEST_MAP_TTL_S = 600.0    # stale pre_approval_request entries are pruned after this
 COMMENT_PAGE_SIZE = 20
-TRIGGER_SLACK_S = 10.0       # a triggering comment is created at most this long after its notification
 PENDING_TURN_RETRIES = 3     # the pending turn is created right after the notification; retry briefly
 PENDING_TURN_RETRY_S = 0.5
 MAX_COMMAND_CHARS = 2000
@@ -92,15 +90,6 @@ def parse_reply(content: Any) -> Optional[Tuple[str, str]]:
 
 def is_approval_reply(content: Any) -> bool:
     return parse_reply(content) is not None
-
-
-def _parse_time(value: Any) -> Optional[float]:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
 
 
 # -- pending requests ---------------------------------------------------------------------------
@@ -171,6 +160,11 @@ class ApprovalBroker:
             token = "".join(secrets.choice(TOKEN_ALPHABET) for _ in range(TOKEN_LENGTH))
             if token not in self._pending:
                 return token
+
+    def is_pending(self, token: str) -> bool:
+        with self._lock:
+            entry = self._pending.get(token)
+            return entry is not None and not entry.done.is_set()
 
     def pending(self) -> List[PendingApproval]:
         with self._lock:
@@ -352,24 +346,71 @@ BROKER = ApprovalBroker()
 
 
 # -- router filter: approval replies never start a turn -------------------------------------------
+#
+# Chorus links neither a Notification nor a pending turn to the comment behind it, so the filter
+# re-derives the link and only acts when it is unambiguous:
+#   comment ↔ notification: same author, created in [n - COMMENT_BEFORE_S, n + COMMENT_AFTER_S],
+#     and — for ``mentioned`` — the server's context snippet in ``message`` equals the comment's
+#     (``mention.service.ts`` buildContextSnippet); several candidates must agree or be separated
+#     by a clear time margin;
+#   pending turn ↔ notification: the router's ``createdAt`` match (``exactNotification``).
+# Anything ambiguous fails open: the wake is dispatched normally and no turn is closed.
+
+COMMENT_BEFORE_S = 30.0
+COMMENT_AFTER_S = 1.0
+COMMENT_MARGIN_S = 1.0
+_MENTION_MARKUP = re.compile(r"@\[([^\]]+)\]\((?:user|agent):[0-9a-fA-F-]{36}(?:\?[^)]*)?\)")
+_MENTION_MESSAGE = re.compile(r'mentioned you: "(.*)"\s*$', re.DOTALL)
 
 
-def _triggering_comment(comments: List[Mapping[str, Any]], notification: Mapping[str, Any]
-                        ) -> Optional[Mapping[str, Any]]:
-    """The comment that produced ``notification``: same author, latest one not after it (+ slack)."""
-    actor = notification.get("actorUuid")
-    when = _parse_time(notification.get("createdAt"))
-    best, best_t = None, None
+def context_snippet(content: str) -> str:
+    """Python port of ``buildContextSnippet`` (``src/services/mention.service.ts``)."""
+    cleaned = _MENTION_MARKUP.sub(lambda m: f"@{m.group(1)}", content)
+    return cleaned if len(cleaned) <= 120 else cleaned[:117] + "..."
+
+
+def _snippet_matches(content: Any, snippet: str) -> bool:
+    if not isinstance(content, str):
+        return False
+    mine = context_snippet(content)
+    if mine == snippet:
+        return True
+    if snippet.endswith("...") and len(snippet) > 8:  # JS slices UTF-16 units; compare a safe prefix
+        return context_snippet(content).startswith(snippet[:-5])
+    return False
+
+
+def _author_uuid(comment: Mapping[str, Any]) -> Any:
+    author = comment.get("author") if isinstance(comment.get("author"), Mapping) else {}
+    return author.get("uuid") or comment.get("authorUuid")
+
+
+def triggering_comment(comments: List[Mapping[str, Any]], notification: Mapping[str, Any]
+                       ) -> Optional[Mapping[str, Any]]:
+    """The comment that produced ``notification``, or ``None`` when it cannot be singled out."""
+    actor, when = notification.get("actorUuid"), parse_time(notification.get("createdAt"))
+    if not isinstance(actor, str) or when is None:
+        return None
+    snippet = None
+    if notification.get("action") == "mentioned":
+        m = _MENTION_MESSAGE.search(notification.get("message") or "")
+        snippet = m.group(1) if m else None
+    cands = []
     for c in comments:
-        author = c.get("author") if isinstance(c.get("author"), Mapping) else {}
-        if (author.get("uuid") or c.get("authorUuid")) != actor:
+        t = parse_time(c.get("createdAt"))
+        if _author_uuid(c) != actor or t is None or not (-COMMENT_BEFORE_S <= t - when <= COMMENT_AFTER_S):
             continue
-        t = _parse_time(c.get("createdAt"))
-        if when is not None and t is not None and t > when + TRIGGER_SLACK_S:
+        if snippet is not None and not _snippet_matches(c.get("content"), snippet):
             continue
-        if best is None or (t is not None and (best_t is None or t > best_t)):
-            best, best_t = c, t
-    return best
+        cands.append((abs(when - t), c))
+    if not cands:
+        return None
+    cands.sort(key=lambda item: item[0])
+    if len(cands) == 1 or len({c.get("content") for _, c in cands}) == 1:
+        return cands[0][1]
+    if cands[1][0] - cands[0][0] > COMMENT_MARGIN_S:
+        return cands[0][1]
+    return None
 
 
 class ReplyFilter:
@@ -387,7 +428,13 @@ class ReplyFilter:
             return n.get("action") in REPLY_ACTIONS
         if wake.source == "pending_turn":
             trigger = wake.pending_turn.get("trigger") if isinstance(wake.pending_turn, Mapping) else None
-            return trigger == "mentioned"
+            if trigger != "mentioned":
+                return False
+            if not wake.transport.get("exactNotification"):
+                logger.info("[Chorus] %s: cannot tie the pending turn to one notification; dispatching "
+                            "normally", wake.label)
+                return False
+            return True
         return False
 
     async def __call__(self, wake: WakeRequest) -> bool:
@@ -403,16 +450,24 @@ class ReplyFilter:
         except Exception as exc:
             logger.warning("[Chorus] comment re-read for %s failed: %s", wake.label, type(exc).__name__)
             return False
-        comment = _triggering_comment(_comments_of(result), n)
-        if comment is None or not is_approval_reply(comment.get("content")):
+        comment = triggering_comment(_comments_of(result), n)
+        if comment is None:
+            if n.get("action") == "mentioned":
+                logger.info("[Chorus] %s: triggering comment not identified; dispatching normally", wake.label)
             return False
-        self.broker.offer(comment)
+        parsed = parse_reply(comment.get("content"))
+        if parsed is None:
+            return False
+        resolved = self.broker.offer(comment)
+        if resolved is None and not self.broker.is_pending(parsed[1]):
+            logger.info("[Chorus] %s: approval-style comment %s by %s matches no pending request; "
+                        "consumed without a turn", wake.label, comment.get("uuid"), _author_uuid(comment))
         self.consumed.append(wake.label)
         logger.info("[Chorus] %s is an approval reply; not starting a turn", wake.label)
         if wake.source == "pending_turn" and wake.turn_uuid:
             await self._close(wake.turn_uuid, wake.pending_turn.get("sessionId"), etype, euuid)
         elif n.get("action") == "mentioned":
-            chorus_adapter.spawn(self._close_live_mention(etype, euuid), getattr(self.adapter, "_bg", None))
+            chorus_adapter.spawn(self._close_live_mention(n), getattr(self.adapter, "_bg", None))
         return True
 
     async def _close(self, turn_uuid: str, session_id: Any, etype: str, euuid: str) -> None:
@@ -426,24 +481,49 @@ class ReplyFilter:
         await turns.close_unstarted(TurnRecord(session_id=session_id, entity=entity,
                                                requested_turn_uuid=turn_uuid))
 
-    async def _close_live_mention(self, etype: str, euuid: str) -> None:
-        """A live @mention reply also left a server-side ``mentioned`` pending turn: close it."""
+    async def _close_live_mention(self, n: Mapping[str, Any]) -> None:
+        """A live @mention reply also left a server-side ``mentioned`` pending turn: close exactly it.
+
+        The turn is the one the router's ``createdAt`` correlation ties to this notification; with
+        no unambiguous match (or a server without ``createdAt``) it is left alone.
+        """
         turns = self.adapter.turns
         if turns is None:
             return
-        _root, direct = await self.router.lineage.resolve(etype, euuid)
-        anchors = {a for a in (direct, euuid) if a}
         for attempt in range(PENDING_TURN_RETRIES):
-            pending = await turns.pending_turns()
-            match = [t for t in pending if t.get("trigger") == "mentioned"
-                     and (t.get("sessionId") in anchors or str(t.get("sessionId", "")).split("::")[0] in anchors)
-                     and f"turn:{t.get('turnUuid')}" not in self.router.seen]
-            if match:
-                turn = match[-1]  # the newest: the reply that just arrived
-                await self._close(turn["turnUuid"], turn.get("sessionId"), etype, euuid)
+            pending = [t for t in await turns.pending_turns() if t.get("trigger") == "mentioned"
+                       and f"turn:{t.get('turnUuid')}" not in self.router.seen]
+            turn = await self._turn_for_notification(pending, n)
+            if turn is not None:
+                await self._close(turn["turnUuid"], turn.get("sessionId"), n.get("entityType"), n.get("entityUuid"))
                 return
             if attempt + 1 < PENDING_TURN_RETRIES:
                 await asyncio.sleep(PENDING_TURN_RETRY_S)
+        logger.info("[Chorus] approval reply %s: no pending turn tied to it; leaving pending turns alone",
+                    n.get("uuid"))
+
+    async def _turn_for_notification(self, pending: List[Mapping[str, Any]], n: Mapping[str, Any]
+                                     ) -> Optional[Mapping[str, Any]]:
+        """The pending turn whose router correlation picks exactly ``n`` (the inverse match)."""
+        if not pending:
+            return None
+        notifications = await self.router._unread(status="all") or []
+        candidates = [x for x in notifications if isinstance(x, Mapping) and x.get("action") == "mentioned"
+                      and isinstance(x.get("uuid"), str)]
+        if not any(x.get("uuid") == n.get("uuid") for x in candidates):
+            candidates.append(n)
+        found = []
+        for turn in pending:
+            session_id = turn.get("sessionId")
+            if not isinstance(session_id, str) or not session_id:
+                continue
+            direct = turn.get("directIdeaUuid") if isinstance(turn.get("directIdeaUuid"), str) else None
+            prefix = session_id.split("::")[0] if direct is None and "::" in session_id else None
+            anchors = {a for a in (direct, session_id, prefix) if a}
+            match, exact = await self.router.match_turn_notification(turn, candidates, anchors, direct)
+            if exact and match is not None and match.get("uuid") == n.get("uuid"):
+                found.append(turn)
+        return found[0] if len(found) == 1 else None
 
 
 def _setup_router(adapter: Any, router: Any) -> None:

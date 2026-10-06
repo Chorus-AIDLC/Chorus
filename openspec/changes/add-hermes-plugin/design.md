@@ -124,6 +124,11 @@ dispatch → turns.start (turn-advance running, execution-state)
 - It awaits a future that the SSE router resolves when a `mentioned` or `comment_added` notification on that entity carries the token from the owner. Those notifications are matched by re-reading `chorus_get_comments`.
 - Timeout returns `deny`.
 - Approval replies never start a model turn. Before dispatching a `mentioned` / `comment_added` wake, or a pending turn with trigger `mentioned` (Chorus stores @mention replies as pending turns, `src/services/notification-turn.ts`, and the reconnect sweep would otherwise replay them), the router re-reads the triggering comment. A comment matching `^(approve (once|session|always)|deny) [A-Z0-9]{6}` goes to the transport, and the pending turn is closed `ended` without running the agent.
+- Correlation. Chorus links neither a Notification nor a pending turn to its comment, so the plugin re-derives both links and acts only when the result is unambiguous; otherwise it fails open and dispatches the wake normally:
+  - comment ↔ notification: same author, created within 30s before the notification (1s after), and for `mentioned` the server's context snippet in `message` (`buildContextSnippet`) must match;
+  - pending turn ↔ notification: `GET /api/daemon/pending-turns` now returns each turn's `createdAt` (additive). The bridge creates the turn right after its notification, so the nearest notification of the session in [-1s, +5s], with a 1s margin over the runner-up, is the exact match;
+  - a notification belongs to a session when its entity is an anchor, or when its entity's direct Idea is the session's Idea (task-woken sessions);
+  - pending turns that cannot be correlated this way (an older server without `createdAt`, or a burst) are never closed as replies.
 
 ## `chorus agents add`
 

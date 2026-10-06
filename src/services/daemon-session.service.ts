@@ -2426,6 +2426,9 @@ export interface PendingTurnView {
   trigger: string;
   promptText: string | null;
   operationPayload?: unknown;
+  // ISO-8601 creation time. The wake bridge creates a turn right after its Notification row,
+  // so clients correlate a pending turn with the notification (and comment) that produced it.
+  createdAt: string | null;
 }
 
 interface TurnDeliveryAnchor {
@@ -2533,6 +2536,7 @@ export async function getPendingTurnsForConnection(params: {
       trigger: true,
       promptText: true,
       operationPayload: true,
+      createdAt: true,
       session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } },
     },
   });
@@ -2562,5 +2566,6 @@ export async function getPendingTurnsForConnection(params: {
     trigger: !params.operationProtocol && isOperationTrigger(r.trigger) ? "human_instruction" : r.trigger,
     ...(params.operationProtocol ? { operationPayload: r.operationPayload ?? null } : {}),
     promptText: r.promptText,
+    createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
   }));
 }

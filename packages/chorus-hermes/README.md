@@ -71,13 +71,14 @@ the built-in prompt for everything else:
 hermes config set security.approval.transport chorus
 hermes config set security.approval.transport_fallback builtin   # required for CLI/TUI prompts
 hermes config set approvals.timeout 300                          # seconds; no reply = deny
-hermes config set approvals.mode manual   # optional: the default "smart" guardian may approve first
+hermes config set approvals.mode manual                          # recommended for an unattended gateway
 ```
 
-With the default `approvals.mode: smart`, Hermes' guardian model decides
-low-risk commands itself and only escalates the rest to a human, so a command
-may run without a Chorus approval comment. Use `manual` to have every flagged
-command go to the owner.
+Set `approvals.mode: manual` on a gateway that Chorus wakes unattended. With the
+default `smart` mode, Hermes asks its guardian model first and runs any command
+the guardian approves without consulting the transport, so the owner never sees
+it. A live run approved `rm -rf <dir>` this way. With `manual`, every flagged
+command reaches the owner on Chorus.
 
 When a woken turn needs approval, the agent comments on the Chorus entity it is
 working on, @mentioning you, with the redacted command, the allowed replies and a
@@ -85,7 +86,11 @@ working on, @mentioning you, with the redacted command, the allowed replies and 
 `approve session <token>` (when offered), `approve always <token>` (when
 offered) or `deny <token>`. Only the agent owner's reply counts; any other owner
 reply carrying the token denies, and no reply within `approvals.timeout` denies.
-Approval replies never start a new agent turn. Sessions that were not started by
+Approval replies do not start a new agent turn. The plugin links each reply to
+its notification and pending turn by author, text and timestamps. When the link
+is ambiguous (two @mentions within about a second, or a Chorus server whose
+pending-turns API lacks `createdAt`), the wake runs normally so that an ordinary
+mention is never dropped. Sessions that were not started by
 a Chorus wake (interactive CLI/TUI, other gateway platforms) are declined by the
 transport, so without `transport_fallback: builtin` Hermes denies them instead of
 prompting.

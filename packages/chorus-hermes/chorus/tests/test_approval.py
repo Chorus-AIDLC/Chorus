@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -191,7 +192,7 @@ def test_comment_mentions_owner_with_command_choices_and_token(broker, fake_adap
     assert "recursive delete" in body and "curl -H" in body and "sekrit" not in body
     assert f"`approve once {token}`" in body and f"`approve session {token}`" in body
     assert f"`deny {token}`" in body and "approve always" not in body
-    assert len(token) == 6 and token.isalnum() and token.isupper()
+    assert re.fullmatch(r"[A-Z0-9]{6}", token)
 
 
 def test_owner_approve_once_resolves_correlated_decision(broker, fake_adapter):
@@ -284,9 +285,29 @@ def test_hook_ignores_builtin_surfaces(broker):
 # -- router filter (via the adapter harness) -----------------------------------------------------------
 
 
+AGENT_MENTION = "@[Hermes](agent:a08ba4e9-57ee-4f19-92bf-39322d89ef33)"
+
+
 def _comment(uuid, content, created, author=OWNER, target=("task", "t-1")):
     return {"uuid": uuid, "targetType": target[0], "targetUuid": target[1], "content": content,
             "author": {"type": "user", "uuid": author, "name": "Felix"}, "createdAt": created}
+
+
+def mention_notif(uuid, content, created, entity_type="task", entity_uuid="t-1", **kw):
+    """A ``mentioned`` notification as mention.service.ts builds it (snippet in ``message``)."""
+    return notif(uuid=uuid, action="mentioned", entity_type=entity_type, entity_uuid=entity_uuid,
+                 message=f'Felix mentioned you: "{approval.context_snippet(content)}"', createdAt=created, **kw)
+
+
+def pending(turn_uuid, created, session="i-1", direct="i-1"):
+    return {"turnUuid": turn_uuid, "sessionId": session, "directIdeaUuid": direct, "trigger": "mentioned",
+            "createdAt": created}
+
+
+def ts(seconds: float) -> str:
+    whole, frac = divmod(seconds, 1)
+    m, sec = divmod(int(whole), 60)
+    return f"2026-01-01T00:{m:02d}:{sec:02d}.{int(round(frac * 1000)):03d}Z"
 
 
 class ApprovalHarness(Harness):
@@ -295,65 +316,92 @@ class ApprovalHarness(Harness):
         monkeypatch.setattr(approval, "PENDING_TURN_RETRY_S", 0.01)
         super().__init__(hermes_mod, tmp_path)
         self.comments: List[Dict[str, Any]] = []
-        self.fake.tools["chorus_get_comments"] = lambda args: {"comments": [
-            c for c in self.comments if (c["targetType"], c["targetUuid"]) == (args["targetType"], args["targetUuid"])]}
+        self.fake.tools["chorus_get_comments"] = lambda args: {"comments": sorted(
+            [c for c in self.comments if (c["targetType"], c["targetUuid"]) == (args["targetType"], args["targetUuid"])],
+            key=lambda c: c["createdAt"], reverse=True)}
         self.fake.lineage["task:t-1"] = ("i-1", "i-1")
+        self.fake.lineage["task:t-2"] = ("i-1", "i-1")
+        self.fake.lineage["idea:i-1"] = ("i-1", "i-1")
+
+    def add_notification(self, n):
+        """Chorus lists notifications newest first."""
+        self.fake.notifications.insert(0, n)
+
+    def closed(self):
+        return [(b["status"], b.get("turnUuid")) for b in self.turn_bodies()]
 
 
-def test_live_mention_approval_reply_resolves_and_closes_its_pending_turn(hermes, tmp_path, monkeypatch):
+@pytest.fixture
+def pending_entry():
+    entries = []
+
+    def make(token, target=("task", "t-1")):
+        entry = approval.PendingApproval(token=token, request=FakeRequest(), target_type=target[0],
+                                         target_uuid=target[1], owner_uuid=OWNER, chat_id="idea:i-1")
+        approval.BROKER._pending[token] = entry
+        entries.append(token)
+        return entry
+
+    yield make
+    for token in entries:
+        approval.BROKER._pending.pop(token, None)
+
+
+def test_context_snippet_matches_server_format():
+    assert approval.context_snippet(f"{AGENT_MENTION} approve once ABC234") == "@Hermes approve once ABC234"
+    long = f"{AGENT_MENTION} " + "x" * 200
+    assert approval.context_snippet(long) == ("@Hermes " + "x" * 200)[:117] + "..."
+
+
+def test_live_mention_approval_reply_resolves_and_closes_its_pending_turn(hermes, tmp_path, monkeypatch,
+                                                                         pending_entry):
     h = ApprovalHarness(hermes, tmp_path, monkeypatch)
-    broker = approval.BROKER
-    entry = approval.PendingApproval(token="ABC234", request=FakeRequest(), target_type="task",
-                                     target_uuid="t-1", owner_uuid=OWNER, chat_id="idea:i-1")
-    broker._pending["ABC234"] = entry
-    try:
-        async def go():
-            await h.connect()
-            h.comments.append(_comment("cm-1", "@[Hermes](agent:agent-1) approve once ABC234",
-                                       "2026-01-01T00:00:00.000Z"))
-            h.fake.pending = [{"turnUuid": "tu-9", "sessionId": "i-1", "directIdeaUuid": "i-1",
-                               "trigger": "mentioned"}]
-            h.notify(notif(uuid="n-9", action="mentioned", entity_type="task", entity_uuid="t-1",
-                           createdAt="2026-01-01T00:00:00.100Z"))
-            await wait_for(lambda: len(h.turn_bodies()) == 2)
-            # the sweep after a reconnect must not replay it either
-            h.fake.feed.event({"type": "connection_registered", "connectionUuid": "c-1", "connectedAt": "z"})
-            await asyncio.sleep(0.1)
-            await h.adapter.disconnect()
-
-        asyncio.run(go())
-    finally:
-        broker._pending.pop("ABC234", None)
-    assert entry.choice == "once" and entry.resolved_by == "cm-1"
-    assert h.handled == []
-    assert [(b["status"], b.get("turnUuid")) for b in h.turn_bodies()] == [("running", "tu-9"), ("ended", "tu-9")]
-
-
-def test_comment_added_reply_is_consumed_without_pending_turn(hermes, tmp_path, monkeypatch):
-    h = ApprovalHarness(hermes, tmp_path, monkeypatch)
+    entry = pending_entry("ABC234")
+    reply = f"{AGENT_MENTION} approve once ABC234"
 
     async def go():
         await h.connect()
-        h.comments.append(_comment("cm-1", "deny QWE234", "2026-01-01T00:00:00.000Z"))
+        h.comments.append(_comment("cm-1", reply, ts(0)))
+        h.fake.pending = [pending("tu-9", ts(0.2))]
+        h.notify(mention_notif("n-9", reply, ts(0.1)))
+        await wait_for(lambda: len(h.turn_bodies()) == 2)
+        # the sweep after a reconnect must not replay it either
+        h.fake.feed.event({"type": "connection_registered", "connectionUuid": "c-1", "connectedAt": "z"})
+        await asyncio.sleep(0.1)
+        await h.adapter.disconnect()
+
+    asyncio.run(go())
+    assert entry.choice == "once" and entry.resolved_by == "cm-1"
+    assert h.handled == []
+    assert h.closed() == [("running", "tu-9"), ("ended", "tu-9")]
+
+
+def test_comment_added_reply_is_consumed_without_pending_turn(hermes, tmp_path, monkeypatch, pending_entry):
+    h = ApprovalHarness(hermes, tmp_path, monkeypatch)
+    entry = pending_entry("QWE234")
+
+    async def go():
+        await h.connect()
+        h.comments.append(_comment("cm-1", "deny QWE234", ts(0)))
         h.notify(notif(uuid="n-1", action="comment_added", entity_type="task", entity_uuid="t-1",
-                       createdAt="2026-01-01T00:00:00.050Z"))
+                       message='Felix commented on "Idea One"', createdAt=ts(0.05)))
         await wait_for(lambda: any("consumed" in r for _, r in h.adapter.router.skipped))
         await h.adapter.disconnect()
 
     asyncio.run(go())
+    assert entry.choice == "deny"
     assert h.handled == [] and h.turn_bodies() == []
 
 
 def test_ordinary_mention_still_wakes(hermes, tmp_path, monkeypatch):
     h = ApprovalHarness(hermes, tmp_path, monkeypatch)
+    text = f"{AGENT_MENTION} please look at this"
 
     async def go():
         await h.connect()
-        h.comments.append(_comment("cm-0", "approve once OLD234", "2026-01-01T00:00:00.000Z"))
-        h.comments.insert(0, _comment("cm-1", "@[Hermes](agent:agent-1) please look at this",
-                                      "2026-01-01T00:01:00.000Z"))
-        h.notify(notif(uuid="n-2", action="mentioned", entity_type="task", entity_uuid="t-1",
-                       createdAt="2026-01-01T00:01:00.020Z"))
+        h.comments.append(_comment("cm-0", "approve once OLD234", ts(0)))
+        h.comments.append(_comment("cm-1", text, ts(60)))
+        h.notify(mention_notif("n-2", text, ts(60.02)))
         await wait_for(lambda: h.handled)
         await h.idle()
         await h.adapter.disconnect()
@@ -362,38 +410,90 @@ def test_ordinary_mention_still_wakes(hermes, tmp_path, monkeypatch):
     assert len(h.handled) == 1
 
 
-def test_replayed_pending_turn_after_reconnect_is_closed_not_run(hermes, tmp_path, monkeypatch):
-    """The live SSE event was missed; the reconnect sweep finds the mention's pending turn."""
+def test_live_race_ordinary_mention_then_reply_within_seconds(hermes, tmp_path, monkeypatch, pending_entry):
+    """Reviewer probe: an ordinary mention followed within 10s by an approval reply.
+
+    Both comments already exist when the ordinary mention's notification is processed; the
+    snippet ties each notification to its own comment, so only the reply is swallowed."""
     h = ApprovalHarness(hermes, tmp_path, monkeypatch)
+    entry = pending_entry("RAC234")
+    ordinary = f"{AGENT_MENTION} please also fix the README"
+    reply = f"{AGENT_MENTION} approve once RAC234"
 
     async def go():
-        h.fake.notifications.append(notif(uuid="n-5", action="mentioned", entity_type="task", entity_uuid="t-1",
-                                          createdAt="2026-01-01T00:00:00.100Z"))
-        h.comments.append(_comment("cm-5", "approve session ZXC234", "2026-01-01T00:00:00.000Z"))
-        h.fake.pending = [{"turnUuid": "tu-5", "sessionId": "i-1", "directIdeaUuid": "i-1",
-                           "trigger": "mentioned"}]
+        await h.connect()
+        h.comments += [_comment("cm-1", ordinary, ts(0)), _comment("cm-2", reply, ts(3))]
+        h.fake.pending = [pending("tu-2", ts(3.2))]
+        h.notify(mention_notif("n-1", ordinary, ts(0.1)))
+        h.notify(mention_notif("n-2", reply, ts(3.1)))
+        await wait_for(lambda: h.handled and len(h.turn_bodies()) >= 3)
+        await h.idle()
+        await h.adapter.disconnect()
+
+    asyncio.run(go())
+    assert entry.choice == "once"
+    assert [e.metadata["chorus_wake"] for e in h.handled] == ["n-1"]
+    assert ("ended", "tu-2") in h.closed()
+    assert ("running", "tu-2") in h.closed()
+
+
+def test_sweep_ordinary_mention_and_newer_reply_on_same_idea(hermes, tmp_path, monkeypatch):
+    """Reviewer probe (B1): the ordinary mention's pending turn runs; only the reply's turn closes."""
+    h = ApprovalHarness(hermes, tmp_path, monkeypatch)
+    ordinary = f"{AGENT_MENTION} please also fix the README"
+    reply = "approve once ZXC234"
+
+    async def go():
+        h.add_notification(mention_notif("n-1", ordinary, ts(0.1), entity_type="idea", entity_uuid="i-1"))
+        h.add_notification(mention_notif("n-2", reply, ts(300.1), entity_type="idea", entity_uuid="i-1"))
+        h.comments += [_comment("cm-1", ordinary, ts(0), target=("idea", "i-1")),
+                       _comment("cm-2", reply, ts(300), target=("idea", "i-1"))]
+        h.fake.pending = [pending("tu-1", ts(0.2)), pending("tu-2", ts(300.2))]
+        await h.connect()
+        await wait_for(lambda: h.handled)
+        await h.idle()
+        await h.adapter.disconnect()
+
+    asyncio.run(go())
+    assert [e.metadata["chorus_wake"] for e in h.handled] == ["turn:tu-1"]
+    assert h.handled[0].raw_message["uuid"] == "n-1"
+    assert sorted(h.closed()) == [("ended", "tu-1"), ("ended", "tu-2"), ("running", "tu-1"), ("running", "tu-2")]
+    assert [label for label, r in h.adapter.router.skipped if "consumed" in r] == ["turn:tu-2"]
+
+
+def test_replayed_reply_on_task_with_mention_history_is_closed(hermes, tmp_path, monkeypatch):
+    """Reviewer probe: a task-woken (idea-anchored) session with ≥2 mentioned notifications."""
+    h = ApprovalHarness(hermes, tmp_path, monkeypatch)
+    reply = f"{AGENT_MENTION} approve session ZXC234"
+
+    async def go():
+        for i, text in enumerate([f"{AGENT_MENTION} start", f"{AGENT_MENTION} and the docs"]):
+            h.add_notification(mention_notif(f"n-old{i}", text, ts(10 * i + 0.1)))
+            h.comments.append(_comment(f"cm-old{i}", text, ts(10 * i)))
+        h.add_notification(mention_notif("n-5", reply, ts(100.1)))
+        h.comments.append(_comment("cm-5", reply, ts(100)))
+        h.fake.pending = [pending("tu-5", ts(100.3))]
         await h.connect()
         await wait_for(lambda: len(h.turn_bodies()) == 2)
         await h.adapter.disconnect()
 
     asyncio.run(go())
     assert h.handled == []
-    assert [(b["status"], b.get("turnUuid")) for b in h.turn_bodies()] == [("running", "tu-5"), ("ended", "tu-5")]
+    assert h.closed() == [("running", "tu-5"), ("ended", "tu-5")]
 
 
 def test_pending_turn_closed_even_if_live_copy_was_already_seen(hermes, tmp_path, monkeypatch):
     h = ApprovalHarness(hermes, tmp_path, monkeypatch)
     monkeypatch.setattr(approval, "PENDING_TURN_RETRIES", 1)
+    reply = "deny RTY234"
 
     async def go():
         await h.connect()
-        h.comments.append(_comment("cm-6", "deny RTY234", "2026-01-01T00:00:00.000Z"))
-        h.notify(notif(uuid="n-6", action="mentioned", entity_type="task", entity_uuid="t-1",
-                       createdAt="2026-01-01T00:00:00.100Z"))
+        h.comments.append(_comment("cm-6", reply, ts(0)))
+        h.notify(mention_notif("n-6", reply, ts(0.1)))
         await wait_for(lambda: any("consumed" in r for _, r in h.adapter.router.skipped))
         await asyncio.sleep(0.05)  # live close found no pending turn yet
-        h.fake.pending = [{"turnUuid": "tu-6", "sessionId": "i-1", "directIdeaUuid": "i-1",
-                           "trigger": "mentioned"}]
+        h.fake.pending = [pending("tu-6", ts(0.4))]
         h.fake.feed.event({"type": "control", "command": "deliver_turn", "targetConnectionUuid": "c-1",
                            "turnUuid": "tu-6"})
         await wait_for(lambda: len(h.turn_bodies()) == 2)
@@ -401,7 +501,72 @@ def test_pending_turn_closed_even_if_live_copy_was_already_seen(hermes, tmp_path
 
     asyncio.run(go())
     assert h.handled == []
-    assert [(b["status"], b.get("turnUuid")) for b in h.turn_bodies()] == [("running", "tu-6"), ("ended", "tu-6")]
+    assert h.closed() == [("running", "tu-6"), ("ended", "tu-6")]
+
+
+@pytest.mark.parametrize("case", ["no_created_at", "burst"])
+def test_ambiguous_pending_turn_is_never_closed(hermes, tmp_path, monkeypatch, case):
+    """Fail open: without a unique createdAt correlation the turn is not closed as a reply."""
+    h = ApprovalHarness(hermes, tmp_path, monkeypatch)
+    reply = "approve once AMB234"
+
+    async def go():
+        h.add_notification(mention_notif("n-1", reply, ts(0.1)))
+        h.comments.append(_comment("cm-1", reply, ts(0)))
+        turn = pending("tu-1", ts(0.3))
+        if case == "no_created_at":
+            turn.pop("createdAt")
+        else:  # a second mention a split second apart makes the timing ambiguous
+            other = f"{AGENT_MENTION} hello"
+            h.add_notification(mention_notif("n-2", other, ts(0.4)))
+            h.comments.append(_comment("cm-2", other, ts(0.35)))
+        h.fake.pending = [turn]
+        await h.connect()
+        await asyncio.sleep(0.2)
+        await h.idle()
+        await h.adapter.disconnect()
+
+    asyncio.run(go())
+    assert not any("consumed" in r for _, r in h.adapter.router.skipped)
+    if case == "no_created_at":  # legacy match: dispatched normally (fail open), not closed as a reply
+        assert [e.metadata["chorus_wake"] for e in h.handled] == ["turn:tu-1"]
+    else:  # ambiguous burst: neither run nor closed
+        assert h.handled == [] and h.closed() == []
+
+
+def test_live_reply_without_turn_created_at_leaves_pending_turns_alone(hermes, tmp_path, monkeypatch):
+    h = ApprovalHarness(hermes, tmp_path, monkeypatch)
+    monkeypatch.setattr(approval, "PENDING_TURN_RETRIES", 1)
+    reply = "approve once OLD234"
+
+    async def go():
+        await h.connect()
+        h.comments.append(_comment("cm-1", reply, ts(0)))
+        h.fake.pending = [{"turnUuid": "tu-x", "sessionId": "i-1", "directIdeaUuid": "i-1", "trigger": "mentioned"}]
+        h.notify(mention_notif("n-1", reply, ts(0.1)))
+        await wait_for(lambda: any("consumed" in r for _, r in h.adapter.router.skipped))
+        await asyncio.sleep(0.05)
+        await h.adapter.disconnect()
+
+    asyncio.run(go())
+    assert h.turn_bodies() == [] and h.handled == []
+
+
+def test_triggering_comment_rules():
+    reply = "approve once ABC234"
+    n = mention_notif("n", reply, ts(10))
+    assert approval.triggering_comment([_comment("a", reply, ts(9.9))], n)["uuid"] == "a"
+    # another author / too old / after the notification → none
+    assert approval.triggering_comment([_comment("a", reply, ts(9.9), author="x")], n) is None
+    assert approval.triggering_comment([_comment("a", reply, ts(-30))], n) is None
+    assert approval.triggering_comment([_comment("a", reply, ts(12))], n) is None
+    # same snippet twice: identical content agrees
+    assert approval.triggering_comment([_comment("a", reply, ts(9)), _comment("b", reply, ts(9.5))], n)
+    # comment_added (no snippet): two different owner comments close together → ambiguous
+    ca = notif(uuid="c", action="comment_added", createdAt=ts(10), message="Felix commented")
+    assert approval.triggering_comment([_comment("a", reply, ts(9.8)), _comment("b", "hi", ts(9.9))], ca) is None
+    assert approval.triggering_comment([_comment("a", reply, ts(2)), _comment("b", "hi", ts(9.9))], ca)["uuid"] == "b"
+    assert approval.triggering_comment([_comment("a", reply, ts(9.9))], {**n, "createdAt": None}) is None
 
 
 def test_close_keeps_running_execution_row(hermes, tmp_path, monkeypatch):

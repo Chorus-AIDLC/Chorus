@@ -3683,6 +3683,7 @@ describe("getPendingTurnsForConnection", () => {
         seq: 4,
         trigger: "human_instruction",
         promptText: "do X",
+        createdAt: new Date("2026-01-01T00:00:01.000Z"),
         session: { sessionId: "idea-1", directIdeaUuid: "idea-1" },
       },
       {
@@ -3691,6 +3692,7 @@ describe("getPendingTurnsForConnection", () => {
         seq: 1,
         trigger: "human_instruction",
         promptText: "do Y",
+        createdAt: new Date("2026-01-01T00:00:02.000Z"),
         session: { sessionId: "adhoc-2", directIdeaUuid: null },
       },
     ]);
@@ -3707,8 +3709,8 @@ describe("getPendingTurnsForConnection", () => {
     });
 
     expect(turns).toEqual([
-      { turnUuid: "t1", sessionUuid: "s1", sessionId: "idea-1", directIdeaUuid: "idea-1", seq: 4, trigger: "human_instruction", promptText: "do X" },
-      { turnUuid: "t2", sessionUuid: "s2", sessionId: "adhoc-2", directIdeaUuid: null, seq: 1, trigger: "human_instruction", promptText: "do Y" },
+      { turnUuid: "t1", sessionUuid: "s1", sessionId: "idea-1", directIdeaUuid: "idea-1", seq: 4, trigger: "human_instruction", promptText: "do X", createdAt: "2026-01-01T00:00:01.000Z" },
+      { turnUuid: "t2", sessionUuid: "s2", sessionId: "adhoc-2", directIdeaUuid: null, seq: 1, trigger: "human_instruction", promptText: "do Y", createdAt: "2026-01-01T00:00:02.000Z" },
     ]);
   });
 

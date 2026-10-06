@@ -28,6 +28,7 @@ import asyncio
 import inspect
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Union
 
 from .prompts import OPERATION_ACTIONS, WAKE_ACTIONS, build_prompt
@@ -53,6 +54,21 @@ ACTION_TO_TURN_TRIGGER = {
 AUTONOMOUS_TURN_TRIGGERS = frozenset(
     {"mentioned", "task_assigned", "elaboration_verified", "start_development", "yolo_requested"})
 CONTROL_COMMANDS = frozenset({"interrupt", "resume", "deliver_turn"})
+
+# Pending turn ↔ notification correlation by the turn's ``createdAt`` (see match_turn_notification).
+TURN_MATCH_BEFORE_S = 1.0
+TURN_MATCH_AFTER_S = 5.0
+TURN_MATCH_MARGIN_S = 1.0
+
+
+def parse_time(value: Any) -> Optional[float]:
+    """ISO-8601 (``…Z``) → epoch seconds, or ``None``."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -314,6 +330,49 @@ class EventRouter:
             return None
         return await self._resolve_and_dispatch(wake)
 
+    async def _belongs(self, n: Mapping[str, Any], anchors: set, direct: Optional[str]) -> bool:
+        """Whether notification ``n`` is about this session: its entity is an anchor, or (for an
+        idea-anchored session) its entity's direct Idea is the session's (task-woken sessions)."""
+        if n.get("entityUuid") in anchors:
+            return True
+        if not direct:
+            return False
+        _root, entity_direct = await self.lineage.resolve(n.get("entityType"), n.get("entityUuid"))
+        return entity_direct == direct
+
+    async def match_turn_notification(self, turn: Mapping[str, Any], candidates: List[Mapping[str, Any]],
+                                      anchors: set, direct: Optional[str]) -> tuple:
+        """``(notification, exact)`` for a pending turn.
+
+        ``exact`` is True only when the turn's ``createdAt`` (the server creates the turn right after
+        its notification) singles out one notification of this session: the nearest one in
+        ``[-TURN_MATCH_BEFORE_S, +TURN_MATCH_AFTER_S]`` with a clear margin over the runner-up.
+        Otherwise the legacy best-effort match is returned with ``exact=False`` (or ``None`` when a
+        burst makes the timing ambiguous).
+        """
+        t = parse_time(turn.get("createdAt"))
+        if t is not None:
+            timed = []
+            for x in candidates:
+                nt = parse_time(x.get("createdAt"))
+                if nt is not None and -TURN_MATCH_BEFORE_S <= t - nt <= TURN_MATCH_AFTER_S \
+                        and await self._belongs(x, anchors, direct):
+                    timed.append((abs(t - nt), x))
+            timed.sort(key=lambda item: item[0])
+            if len(timed) == 1 or (len(timed) > 1 and timed[1][0] - timed[0][0] > TURN_MATCH_MARGIN_S):
+                return timed[0][1], True
+            if timed:
+                return None, False
+        match = next((x for x in candidates if x.get("entityUuid") in anchors), None)
+        if match is None and direct:
+            for x in candidates:
+                if await self._belongs(x, anchors, direct):
+                    match = x
+                    break
+        if match is None and len(candidates) == 1:
+            match = candidates[0]
+        return match, False
+
     async def _redispatch_autonomous(self, turn, turn_uuid, session_id, direct, trigger) -> Optional[WakeRequest]:
         # Search read notifications too: the connect-time chorus_checkin marks up to 5 as read,
         # and the server-side pending turn (deduped by turnUuid) is what owes the wake.
@@ -325,16 +384,14 @@ class EventRouter:
                       and ACTION_TO_TURN_TRIGGER.get(x.get("action")) == trigger]
         idea_prefix = session_id.split("::")[0] if direct is None and "::" in session_id else None
         anchors = {a for a in (direct, session_id, idea_prefix) if isinstance(a, str) and a}
-        match = next((x for x in candidates if x.get("entityUuid") in anchors), None)
-        if match is None and len(candidates) == 1:
-            match = candidates[0]
+        match, exact = await self.match_turn_notification(turn, candidates, anchors, direct)
         if match is None:
             self._skip(f"turn:{turn_uuid}", f"no unambiguous unread {trigger} notification")
             return None
         n = dict(match)
         wake = WakeRequest(source="pending_turn", notification=n, label=f"turn:{turn_uuid}",
                            entity_type=n.get("entityType"), entity_uuid=n.get("entityUuid"),
-                           turn_uuid=turn_uuid, pending_turn=turn)
+                           turn_uuid=turn_uuid, pending_turn=turn, transport={"exactNotification": exact})
         # Filters run before the broadcast-copy check: a pending turn whose live notification was
         # already consumed (e.g. an approval reply) must still be closed by the filter that owns it.
         if await self._filtered(wake):
