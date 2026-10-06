@@ -14,6 +14,10 @@ history that lacks the marker (a resumed session, or one rotated by
 compression) is injected as well — the Codex ``resume`` source.
 
 ``on_session_start`` only warms the check-in (its return value is ignored).
+
+``delegate_task`` children (``platform == "subagent"`` or a ``parent_session_id``) get neither the
+check-in nor the context block: ``chorus_checkin`` marks unread notifications as read, which would
+consume the parent gateway's wakes (the same side effect ``skills.py`` blocks at tool level).
 Every callback is wrapped: an exception logs and falls back to "no change", and
 each Chorus call has a short timeout so the hooks stay well under
 ``plugins.hook_callback_timeout`` (default 30s).
@@ -71,6 +75,18 @@ def _contains_marker(value: Any, depth: int = 0) -> bool:
 def history_has_marker(history: Any) -> bool:
     """True when any message (``content``, ``api_content`` sidecar, multimodal parts) carries the marker."""
     return isinstance(history, (list, tuple)) and any(_contains_marker(m) for m in history)
+
+
+SUBAGENT_PLATFORM = "subagent"
+
+
+def is_child_session(platform: Any = None, parent_session_id: Any = None) -> bool:
+    """True for a ``delegate_task`` child (Hermes runs children with ``platform="subagent"`` and
+    passes the parent's id as ``parent_session_id`` to ``pre_llm_call``)."""
+    if isinstance(parent_session_id, str) and parent_session_id.strip():
+        return True
+    value = getattr(platform, "value", platform)
+    return isinstance(value, str) and value.strip().lower() == SUBAGENT_PLATFORM
 
 
 def _default_project_root() -> str:
@@ -307,10 +323,11 @@ class ChorusHooks:
 
     # ------------------------------------------------------------------ hooks
 
-    def on_session_start(self, session_id: str = "", **_: Any) -> None:
+    def on_session_start(self, session_id: str = "", platform: Any = None, parent_session_id: Any = None,
+                         **_: Any) -> None:
         """Warm the check-in for this session in the background (return value is ignored by Hermes)."""
         try:
-            if not session_id:
+            if not session_id or is_child_session(platform, parent_session_id):
                 return None
             try:
                 cfg = self._config()
@@ -339,8 +356,11 @@ class ChorusHooks:
         return None
 
     def pre_llm_call(self, session_id: str = "", conversation_history: Any = None,
-                     is_first_turn: bool = False, **_: Any) -> Optional[dict]:
+                     is_first_turn: bool = False, platform: Any = None, parent_session_id: Any = None,
+                     **_: Any) -> Optional[dict]:
         try:
+            if is_child_session(platform, parent_session_id):
+                return None  # never chorus_checkin from a delegate_task child
             history = list(conversation_history or [])
             reason = self._injection_reason(session_id or "", history, bool(is_first_turn))
             if reason is None:

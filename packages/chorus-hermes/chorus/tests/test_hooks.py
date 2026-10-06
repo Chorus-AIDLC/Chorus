@@ -221,6 +221,24 @@ def mcp_ok(payload):
     return json.dumps({"result": json.dumps(payload)})
 
 
+@pytest.mark.parametrize("kw", [{"platform": "subagent"}, {"platform": "cli", "parent_session_id": "parent-1"},
+                                {"platform": "subagent", "parent_session_id": "parent-1"}])
+def test_delegate_task_children_never_check_in(kw):
+    hooks, backend = make()
+    hooks.on_session_start(session_id="child-1", **kw)
+    out = hooks.pre_llm_call(session_id="child-1", conversation_history=[user("review")], is_first_turn=True,
+                             user_message="review", model="m", **kw)
+    assert out is None and backend.calls == []
+
+
+def test_top_level_session_with_empty_parent_still_checks_in():
+    hooks, backend = make()
+    hooks.on_session_start(session_id="s1", platform="chorus")
+    out = hooks.pre_llm_call(session_id="s1", conversation_history=[user("hi")], is_first_turn=True,
+                             user_message="hi", model="m", platform="chorus", parent_session_id="")
+    assert h.MARKER in out["context"] and [c[0] for c in backend.calls] == ["chorus_checkin"]
+
+
 def test_submit_proposal_reminder_appended():
     hooks, _ = make()
     res = mcp_ok({"uuid": "prop-9", "status": "pending"})
