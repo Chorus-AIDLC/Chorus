@@ -52,7 +52,8 @@ def test_mcp_declared_only_in_portable_package():
     assert mcp["$schema"] == "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
     server = mcp["mcpServers"]["chorus"]
     assert server["type"] == "streamable-http"
-    assert server["url"].endswith("/api/mcp")
+    # Hermes rejects ${VAR} in portable urls (spike 5), so the loopback default is literal.
+    assert server["url"] == "http://localhost:8637/api/mcp"
     assert server["headers"] == {"Authorization": "Bearer ${CHORUS_API_KEY}"}
 
 

@@ -71,7 +71,7 @@ All REST failures MUST be logged and MUST NOT crash the gateway.
 
 #### Scenario: Failed turn surfaces in chat
 
-- **GIVEN** a woken turn that raises a provider error
+- **GIVEN** a woken turn that ends in `FAILURE` (handler exception or failed delivery), or a provider error that Hermes renders as reply text (observed via the `api_request_error` hook for that session)
 - **WHEN** it ends
 - **THEN** the adapter MUST send `turn-advance` `interrupted/crash` with a `wakeError` whose message is ≤500 characters
 - **AND** the Chorus chat panel MUST show the failure
