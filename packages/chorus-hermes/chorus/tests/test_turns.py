@@ -180,8 +180,10 @@ def test_rest_failures_are_logged_not_raised(cfg, caplog):
     assert run(go()) == []
     assert t.turn_uuid is None
     assert "failed" in caplog.text
-    # transcript fell back to the sessionId when no turn was admitted
-    assert fake.bodies("/api/daemon/transcript")[0]["sessionId"] == "i-1"
+    # nothing is attributed to "the session's latest turn" without an admitted turn
+    assert fake.bodies("/api/daemon/transcript") == []
+    assert fake.bodies("/api/daemon/report-interrupt") == []
+    assert fake.bodies("/api/daemon/execution-state") == []
 
 
 def test_transport_exceptions_are_swallowed(cfg):
@@ -217,3 +219,57 @@ def test_close_unstarted_admits_and_ends(cfg):
     t = rec(requested_turn_uuid="p-1")
     run(r.close_unstarted(t))
     assert [b["status"] for b in fake.bodies("/api/daemon/turn-advance")] == ["running", "ended"]
+
+
+# -- admission (B2-start-without-admission) ------------------------------------------------
+
+
+def _admit(cfg, fake, conn="c-1", **kw):
+    r = reporter(cfg, fake, conn=conn)
+    t = rec(**kw)
+    return run(r.start(t)), t, r
+
+
+def test_admission_rejected_on_404_and_409(cfg):
+    from .fixtures.chorus_fake import error
+
+    for status in (404, 409, 400):
+        fake = FakeChorus()
+        fake.turn_advance_hook = lambda body, s=status: error(s, "Invalid turn transition ended → running")
+        admission, t, r = _admit(cfg, fake, requested_turn_uuid="tu-1")
+        assert admission.status == "rejected" and not admission.admitted and admission.http_status == status
+        assert t.turn_uuid is None and r.executions == {}
+        assert fake.bodies("/api/daemon/execution-state") == []
+
+
+def test_admission_unavailable_on_5xx_network_and_no_connection(cfg):
+    from .fixtures.chorus_fake import error
+
+    def down(body):
+        raise httpx.ConnectError("down")
+
+    for hook in (lambda body: error(503), lambda body: error(429), down):
+        fake = FakeChorus()
+        fake.turn_advance_hook = hook
+        admission, t, r = _admit(cfg, fake)
+        assert admission.status == "unavailable" and t.turn_uuid is None and r.executions == {}
+        assert fake.bodies("/api/daemon/execution-state") == []
+    fake = FakeChorus()
+    admission, t, _ = _admit(cfg, fake, conn=None)
+    assert admission.status == "unavailable" and fake.calls == []
+
+
+def test_admission_for_a_different_turn_is_rejected(cfg):
+    from .fixtures.chorus_fake import envelope
+
+    fake = FakeChorus()
+    fake.turn_advance_hook = lambda body: envelope({"turn": {"uuid": "someone-elses", "status": "running"}})
+    admission, t, _ = _admit(cfg, fake, requested_turn_uuid="tu-1")
+    assert admission.status == "rejected" and t.turn_uuid is None
+
+
+def test_admitted_turn_marks_running(cfg):
+    fake = FakeChorus()
+    admission, t, r = _admit(cfg, fake, requested_turn_uuid="tu-1")
+    assert admission.admitted and admission.turn_uuid == "tu-1" == t.turn_uuid
+    assert r.executions["task:t-1"]["status"] == "running"

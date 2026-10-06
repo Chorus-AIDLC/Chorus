@@ -63,6 +63,8 @@ class FakeChorus:
         self.owner = {"uuid": "owner-1", "name": "Felix", "email": None}
         self.turn_counter = 0
         self.fail_paths: set = set()
+        # ``fn(body) -> Optional[httpx.Response]`` for turn-advance (may raise to simulate a network error)
+        self.turn_advance_hook: Optional[Callable[[Dict[str, Any]], Optional[httpx.Response]]] = None
         self.tools: Dict[str, Callable[[Dict[str, Any]], Any]] = {
             "chorus_checkin": lambda args: {"agent": {"uuid": "agent-1", "name": "Hermes", "owner": self.owner}},
             "chorus_get_notifications": lambda args: {"notifications": list(self.notifications)},
@@ -109,6 +111,10 @@ class FakeChorus:
                 "content": [{"type": "text", "text": "unknown tool"}], "isError": True}
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
         if path == "/api/daemon/turn-advance":
+            if self.turn_advance_hook is not None:
+                hooked = self.turn_advance_hook(body)
+                if hooked is not None:
+                    return hooked
             if body.get("turnUuid"):
                 uuid = body["turnUuid"]
             else:

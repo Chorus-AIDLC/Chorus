@@ -9,7 +9,10 @@ Flow (see ``openspec/changes/add-hermes-plugin/design.md`` "Gateway scheduling")
 
     connect()  → chorus_checkin (owner uuid → extra["allow_from"]) → SSE loop
     SSE        → router → dispatch(wake)  [per-chat FIFO: one Hermes turn per chat at a time]
-    dispatch   → turn-advance running → execution-state → transcript(user)
+    dispatch   → turn-advance running (ADMISSION: nothing below runs unless the server admits the
+                 turn — rejected (4xx) drops the wake, unavailable (network/5xx) releases it for
+                 a later sweep / deliver_turn)
+               → execution-state → transcript(user)
                → handle_message(MessageEvent(chat_id=idea:<uuid>, user_id=<owner uuid>))
     send()     → transcript(assistant) only — never a Chorus comment
     on_processing_complete(outcome) → terminal turn-advance (+ report-interrupt) → next queued wake
@@ -352,7 +355,12 @@ class ChorusAdapterCore:
             self._active[chat_id] = turn
         finally:
             self._starting.discard(chat_id)
-        await self.turns.start(rec)
+        admission = await self.turns.start(rec)
+        if not admission.admitted:
+            await self._not_admitted(turn, admission)
+            return
+        if self.router is not None:
+            self.router.seen.add(f"turn:{admission.turn_uuid}")  # a later sweep must not re-run it
         if turn.interrupting or turn.shutdown:
             await self._finalize(turn, "interrupted", "shutdown" if turn.shutdown else "user")
             return
@@ -382,6 +390,27 @@ class ChorusAdapterCore:
         if getattr(event, "_gateway_accepted", True) is False and self._active.get(chat_id) is turn:
             await self._finalize(turn, "interrupted", "crash",
                                  self.turns.wake_error("Hermes gateway did not accept the wake", kind="startup"))
+
+    async def _not_admitted(self, turn: ActiveTurn, admission: Any) -> None:
+        """The server did not admit the turn: no model run, no transcript, no terminal report.
+
+        Nothing was marked running, so there is nothing of ours to end — and the session's turn may
+        belong to another consumer (409), so it must not be touched. ``rejected`` drops the wake;
+        ``unavailable`` releases its dedup keys so a reconnect sweep / ``deliver_turn`` retries it.
+        """
+        wake = turn.wake
+        if self._active.get(turn.chat_id) is turn:
+            self._active.pop(turn.chat_id, None)
+        if admission.status == "unavailable" and self.router is not None:
+            self.router.release(wake)
+        logger.warning("[Chorus] wake %s not run: admission %s%s", wake.label, admission.status,
+                       f" (HTTP {admission.http_status})" if admission.http_status else "")
+        entity = turn.record.entity
+        if entity and not any(entity_of(w.entity_type, w.entity_uuid) == entity
+                              for q in self._queues.values() for w in q):
+            await self.turns.drop_execution(entity)  # its queued row, if it waited behind another turn
+        if self._queues.get(turn.chat_id):
+            spawn(self._drain(turn.chat_id, None), self._bg)
 
     @staticmethod
     def _mapping(turn: ActiveTurn) -> Dict[str, Any]:

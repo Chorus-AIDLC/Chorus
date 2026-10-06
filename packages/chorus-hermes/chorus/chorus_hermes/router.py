@@ -3,7 +3,8 @@
 The router turns SSE events into :class:`WakeRequest` objects and hands each one
 to ``dispatch``. Rules, in order, for a ``new_notification``:
 
-1. dedup by ``notificationUuid`` (shared ``seen`` set, also keyed ``turn:<uuid>``);
+1. dedup by ``notificationUuid`` (``inflight`` while being routed, ``seen`` once handled — the
+   same two sets are keyed ``turn:<uuid>`` for pending turns);
 2. re-read it via ``chorus_get_notifications {status:"unread", limit:50, autoMarkRead:false}``;
 3. **pre-dispatch filters** see the re-read notification (any action) and may consume it
    — the hook point for the approval transport (``mentioned`` / ``comment_added`` replies);
@@ -11,6 +12,12 @@ to ``dispatch``. Rules, in order, for a ``new_notification``:
 5. skip ``human_instruction`` and operation actions (they arrive only as pending turns);
 6. skip when ``suppressWake`` is true;
 7. skip when ``targetConnectionUuid`` is set and is not this connection.
+
+Dedup is two-phase: a key is ``inflight`` while its re-read / matching runs (so a concurrent
+duplicate is dropped) and only moves to ``seen`` once the wake was dispatched or definitively
+skipped. A retryable failure (notification re-read failed, original notification not found yet,
+admission unavailable — see :meth:`EventRouter.release`) releases the key so a later sweep or
+``deliver_turn`` recovers the turn.
 
 Pending turns (``deliver_turn`` control pings and the reconnect sweep) go through the same
 filters before dispatch (an autonomous pending turn reaches them even when its notification was
@@ -59,6 +66,8 @@ CONTROL_COMMANDS = frozenset({"interrupt", "resume", "deliver_turn"})
 TURN_MATCH_BEFORE_S = 1.0
 TURN_MATCH_AFTER_S = 5.0
 TURN_MATCH_MARGIN_S = 1.0
+NOTIFICATION_PAGE_SIZE = 50
+NOTIFICATION_MAX_PAGES = 5  # pending-turn replay pages back at most this many notification pages
 
 
 def parse_time(value: Any) -> Optional[float]:
@@ -86,6 +95,9 @@ class WakeRequest:
     prompt_text: Optional[str] = None  # server-side promptText (human_instruction) — already in chat
     transport: Dict[str, Any] = field(default_factory=dict)
     pending_turn: Optional[Mapping[str, Any]] = None
+    # A pending turn's own ``sessionId``: the server-side session the turn belongs to. When set it
+    # IS the session (never re-derived from a notification or lineage).
+    canonical_session_id: Optional[str] = None
 
     @property
     def action(self) -> Optional[str]:
@@ -93,7 +105,7 @@ class WakeRequest:
 
     @property
     def session_id(self) -> Optional[str]:
-        return self.direct_idea_uuid or self.entity_uuid
+        return self.canonical_session_id or self.direct_idea_uuid or self.entity_uuid
 
     @property
     def chat_id(self) -> str:
@@ -161,7 +173,8 @@ class EventRouter:
         self.get_connection_uuid = get_connection_uuid
         self.pending_turns = pending_turns
         self.wake_actions = wake_actions
-        self.seen: set = seen if seen is not None else set()
+        self.seen: set = seen if seen is not None else set()  # handled (dispatched or definitively skipped)
+        self.inflight: set = set()  # being routed right now (concurrent-duplicate guard)
         self.filters: List[PreDispatchFilter] = []
         self.control_hooks: Dict[str, Callable[..., Any]] = {}
         self.skipped: List[tuple] = []  # (label, reason) — diagnostics/tests
@@ -192,16 +205,52 @@ class EventRouter:
                 return True
         return False
 
+    # -- dedup ---------------------------------------------------------------------
+
+    def _claim(self, key: str) -> bool:
+        """Mark ``key`` in flight; False when it is already in flight or handled."""
+        if key in self.seen or key in self.inflight:
+            return False
+        self.inflight.add(key)
+        return True
+
+    def _settle(self, key: str, handled: bool) -> None:
+        """End ``key``'s flight; ``handled`` moves it to ``seen`` unless :meth:`release` already
+        dropped it while the wake was being dispatched (admission unavailable)."""
+        was_inflight = key in self.inflight
+        self.inflight.discard(key)
+        if handled and was_inflight:
+            self.seen.add(key)
+
+    def release(self, wake: "WakeRequest") -> None:
+        """Forget a dispatched wake so it can be routed again (admission was unavailable).
+
+        Drops its notification uuid and ``turn:<uuid>`` key from both dedup sets: a later
+        reconnect sweep or ``deliver_turn`` re-dispatches the still-pending server turn.
+        """
+        keys = {wake.label}
+        if wake.turn_uuid:
+            keys.add(f"turn:{wake.turn_uuid}")
+        nid = wake.notification.get("uuid") if isinstance(wake.notification, Mapping) else None
+        if isinstance(nid, str) and nid:
+            keys.add(nid)
+        for key in keys:
+            self.seen.discard(key)
+            self.inflight.discard(key)
+        logger.info("[Chorus] wake %s released for retry", wake.label)
+
     def _skip(self, label: str, reason: str) -> None:
         self.skipped.append((label, reason))
         logger.info("[Chorus] wake %s skipped: %s", label, reason)
 
     # -- notifications -------------------------------------------------------------
 
-    async def _unread(self, status: str = "unread") -> Optional[List[Mapping[str, Any]]]:
+    async def _unread(self, status: str = "unread", offset: int = 0) -> Optional[List[Mapping[str, Any]]]:
+        args: Dict[str, Any] = {"status": status, "limit": NOTIFICATION_PAGE_SIZE, "autoMarkRead": False}
+        if offset:
+            args["offset"] = offset
         try:
-            result = await self.mcp.acall_tool(
-                "chorus_get_notifications", {"status": status, "limit": 50, "autoMarkRead": False})
+            result = await self.mcp.acall_tool("chorus_get_notifications", args)
         except Exception as exc:
             logger.warning("[Chorus] notification re-read failed: %s", type(exc).__name__)
             return None
@@ -216,10 +265,15 @@ class EventRouter:
         if not isinstance(nid, str) or not nid:
             logger.warning("[Chorus] new_notification missing notificationUuid, skipping")
             return None
-        if nid in self.seen:
+        if not self._claim(nid):
             self._skip(nid, "duplicate notificationUuid")
             return None
-        self.seen.add(nid)
+        try:
+            return await self._route_notification(event, nid)
+        finally:
+            self.inflight.discard(nid)  # never leave a key in flight (it was settled, or it failed)
+
+    async def _route_notification(self, event: Mapping[str, Any], nid: str) -> Optional[WakeRequest]:
         transport = {
             "targetConnectionUuid": event.get("targetConnectionUuid")
             if isinstance(event.get("targetConnectionUuid"), str) else None,
@@ -227,12 +281,18 @@ class EventRouter:
         }
         notifications = await self._unread()
         if notifications is None:
+            self._settle(nid, False)  # retryable: a later pending-turn sweep may still route it
             self._skip(nid, "could not fetch notifications")
             return None
         n = next((x for x in notifications if isinstance(x, Mapping) and x.get("uuid") == nid), None)
         if n is None:
+            # Already read (e.g. by a check-in): not handled HERE, so its pending turn (if any) stays
+            # replayable by the sweep instead of being skipped as an "already handled" copy.
+            self._settle(nid, False)
             self._skip(nid, "not in unread list")
             return None
+        # From here on the notification is handled (dispatched or definitively skipped).
+        self._settle(nid, True)
         n = dict(n)
         wake = WakeRequest(source="notification", notification=n, label=nid,
                            entity_type=n.get("entityType"), entity_uuid=n.get("entityUuid"), transport=transport)
@@ -255,7 +315,12 @@ class EventRouter:
         return await self._resolve_and_dispatch(wake)
 
     async def _resolve_and_dispatch(self, wake: WakeRequest) -> Optional[WakeRequest]:
-        if wake.direct_idea_uuid is None and wake.root_idea_uuid is None:
+        if wake.canonical_session_id is not None:
+            # A pending turn's session is fixed by the server: only fill in the root for attribution.
+            if wake.root_idea_uuid is None:
+                root, _direct = await self.lineage.resolve(wake.entity_type, wake.entity_uuid)
+                wake.root_idea_uuid = root or wake.direct_idea_uuid
+        elif wake.direct_idea_uuid is None and wake.root_idea_uuid is None:
             root, direct = await self.lineage.resolve(wake.entity_type, wake.entity_uuid)
             wake.root_idea_uuid, wake.direct_idea_uuid = root, direct
         if wake.prompt is None:
@@ -299,23 +364,30 @@ class EventRouter:
             logger.warning("[Chorus] pending-turn %s missing sessionId, skipping", turn_uuid)
             return None
         seen_key = f"turn:{turn_uuid}"
-        if seen_key in self.seen:
+        if not self._claim(seen_key):
             return None
+        try:
+            wake, handled = await self._route_pending_turn(turn, turn_uuid, session_id, seen_key)
+            self._settle(seen_key, handled)
+            return wake
+        finally:
+            self.inflight.discard(seen_key)
+
+    async def _route_pending_turn(self, turn, turn_uuid, session_id, seen_key) -> tuple:
+        """``(dispatched wake or None, handled)``; ``handled=False`` leaves the turn recoverable."""
         trigger = turn.get("trigger")
         direct = turn.get("directIdeaUuid") if isinstance(turn.get("directIdeaUuid"), str) else None
 
         if trigger in AUTONOMOUS_TURN_TRIGGERS:
-            self.seen.add(seen_key)
             return await self._redispatch_autonomous(turn, turn_uuid, session_id, direct, trigger)
 
         if trigger != "human_instruction":
             self._skip(seen_key, f"pending trigger {trigger!r} is not re-dispatched here")
-            return None
+            return None, False
         instruction = turn.get("promptText").strip() if isinstance(turn.get("promptText"), str) else ""
         if not instruction:
             self._skip(seen_key, "pending human_instruction has no promptText")
-            return None
-        self.seen.add(seen_key)
+            return None, False
         n = {
             "action": "human_instruction",
             "entityType": "idea" if direct else "daemon_session",
@@ -325,10 +397,11 @@ class EventRouter:
         wake = WakeRequest(source="pending_turn", notification=n, label=seen_key,
                            entity_type=n["entityType"], entity_uuid=n["entityUuid"],
                            direct_idea_uuid=direct, root_idea_uuid=direct, turn_uuid=turn_uuid,
-                           prompt_text=turn.get("promptText"), pending_turn=turn)
+                           prompt_text=turn.get("promptText"), pending_turn=turn,
+                           canonical_session_id=session_id)
         if await self._filtered(wake):
-            return None
-        return await self._resolve_and_dispatch(wake)
+            return None, True
+        return await self._resolve_and_dispatch(wake), True
 
     async def _belongs(self, n: Mapping[str, Any], anchors: set, direct: Optional[str]) -> bool:
         """Whether notification ``n`` is about this session: its entity is an anchor, or (for an
@@ -342,7 +415,8 @@ class EventRouter:
 
     async def match_turn_notification(self, turn: Mapping[str, Any], candidates: List[Mapping[str, Any]],
                                       anchors: set, direct: Optional[str]) -> tuple:
-        """``(notification, exact)`` for a pending turn.
+        """``(notification, exact)`` for a pending turn. Only notifications of THIS turn's session
+        (see :meth:`_belongs`) are ever returned — never a guess from another session or Idea.
 
         ``exact`` is True only when the turn's ``createdAt`` (the server creates the turn right after
         its notification) singles out one notification of this session: the nearest one in
@@ -373,39 +447,61 @@ class EventRouter:
                 if await self._belongs(x, anchors, direct):
                     match = x
                     break
-        if match is None and len(candidates) == 1:
-            match = candidates[0]
         return match, False
 
-    async def _redispatch_autonomous(self, turn, turn_uuid, session_id, direct, trigger) -> Optional[WakeRequest]:
+    async def _find_turn_notification(self, turn, trigger, anchors, direct) -> tuple:
+        """Page through notifications (read ones too) for the pending turn's own notification.
+
+        ``(match, exact)``, or ``None`` when the re-read failed. Stops at the first page that yields
+        a match, at a short page, or after ``NOTIFICATION_MAX_PAGES`` pages.
+        """
+        candidates: List[Mapping[str, Any]] = []
+        match, exact = None, False
+        for page in range(NOTIFICATION_MAX_PAGES):
+            notifications = await self._unread(status="all", offset=page * NOTIFICATION_PAGE_SIZE)
+            if notifications is None:
+                return None
+            candidates.extend(x for x in notifications if isinstance(x, Mapping) and isinstance(x.get("uuid"), str)
+                              and ACTION_TO_TURN_TRIGGER.get(x.get("action")) == trigger)
+            match, exact = await self.match_turn_notification(turn, candidates, anchors, direct)
+            if match is not None or len(notifications) < NOTIFICATION_PAGE_SIZE:
+                break
+        return match, exact
+
+    async def _redispatch_autonomous(self, turn, turn_uuid, session_id, direct, trigger) -> tuple:
         # Search read notifications too: the connect-time chorus_checkin marks up to 5 as read,
         # and the server-side pending turn (deduped by turnUuid) is what owes the wake.
-        notifications = await self._unread(status="all")
-        if notifications is None:
-            self._skip(f"turn:{turn_uuid}", "notification re-read failed")
-            return None
-        candidates = [x for x in notifications if isinstance(x, Mapping) and isinstance(x.get("uuid"), str)
-                      and ACTION_TO_TURN_TRIGGER.get(x.get("action")) == trigger]
+        label = f"turn:{turn_uuid}"
         idea_prefix = session_id.split("::")[0] if direct is None and "::" in session_id else None
         anchors = {a for a in (direct, session_id, idea_prefix) if isinstance(a, str) and a}
-        match, exact = await self.match_turn_notification(turn, candidates, anchors, direct)
+        found = await self._find_turn_notification(turn, trigger, anchors, direct)
+        if found is None:
+            self._skip(label, "notification re-read failed (will retry)")
+            return None, False
+        match, exact = found
         if match is None:
-            self._skip(f"turn:{turn_uuid}", f"no unambiguous unread {trigger} notification")
-            return None
+            # Never borrow another session's notification; leave the turn pending for a later sweep.
+            self._skip(label, f"no {trigger} notification of session {session_id} found (left pending)")
+            return None, False
         n = dict(match)
-        wake = WakeRequest(source="pending_turn", notification=n, label=f"turn:{turn_uuid}",
+        wake = WakeRequest(source="pending_turn", notification=n, label=label,
                            entity_type=n.get("entityType"), entity_uuid=n.get("entityUuid"),
-                           turn_uuid=turn_uuid, pending_turn=turn, transport={"exactNotification": exact})
+                           direct_idea_uuid=direct, turn_uuid=turn_uuid, pending_turn=turn,
+                           transport={"exactNotification": exact}, canonical_session_id=session_id)
         # Filters run before the broadcast-copy check: a pending turn whose live notification was
         # already consumed (e.g. an approval reply) must still be closed by the filter that owns it.
         if await self._filtered(wake):
             self.seen.add(match["uuid"])
-            return None
+            return None, True
+        if match["uuid"] in self.inflight:
+            # Its live copy is being routed right now; if that fails, a later sweep retries the turn.
+            self._skip(label, f"live copy {match['uuid']} in flight")
+            return None, False
         if match["uuid"] in self.seen:
-            self._skip(f"turn:{turn_uuid}", f"broadcast copy {match['uuid']} already handled")
-            return None
+            self._skip(label, f"broadcast copy {match['uuid']} already handled")
+            return None, True
         self.seen.add(match["uuid"])
-        return await self._resolve_and_dispatch(wake)
+        return await self._resolve_and_dispatch(wake), True
 
     # -- resume ----------------------------------------------------------------------
 

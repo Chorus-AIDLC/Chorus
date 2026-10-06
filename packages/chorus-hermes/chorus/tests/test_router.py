@@ -294,3 +294,159 @@ def test_lineage_failure_falls_back_to_entity(setup):
     fake.notifications = [notif()]
     wake = run(router.handle_notification(event()))
     assert wake.chat_id == "task:t-1"
+
+
+# -- pending-turn replay must stay in its own session (B2-cross-idea-notification-fallback) ----
+
+
+TURN_A = {"turnUuid": "turn-A", "sessionId": "idea-A", "directIdeaUuid": "idea-A", "trigger": "mentioned",
+          "promptText": None, "createdAt": "2026-10-05T10:00:00Z"}
+
+
+def test_pending_turn_never_borrows_another_ideas_notification(setup):
+    """Leo's repro: the only `mentioned` candidate is Idea B's (old, already read) notification."""
+    fake, router, dispatched, _ = setup
+    fake.notifications = [notif("notification-B", action="mentioned", entityType="idea", entityUuid="idea-B",
+                                createdAt="2026-10-06T10:00:00Z")]
+    fake.lineage["idea:idea-B"] = ("idea-B", "idea-B")
+    fake.pending = [dict(TURN_A)]
+    run(router.sweep_pending_turns())
+    assert dispatched == []
+    # left recoverable: not marked handled, so a later sweep looks again
+    assert "turn:turn-A" not in router.seen and "notification-B" not in router.seen
+    fake.notifications.append(notif("notification-A", action="mentioned", entityType="idea", entityUuid="idea-A",
+                                    createdAt="2026-10-05T09:59:59.500Z"))
+    run(router.sweep_pending_turns())
+    (wake,) = dispatched
+    assert wake.notification["uuid"] == "notification-A"
+    assert wake.session_id == "idea-A" and wake.chat_id == "idea:idea-A" and wake.turn_uuid == "turn-A"
+
+
+def test_pending_turn_without_created_at_needs_a_lineage_match_too(setup):
+    fake, router, dispatched, _ = setup
+    fake.notifications = [notif("n-B", action="mentioned", entityType="idea", entityUuid="idea-B")]
+    fake.lineage["idea:idea-B"] = ("idea-B", "idea-B")
+    fake.pending = [{k: v for k, v in TURN_A.items() if k != "createdAt"}]
+    run(router.sweep_pending_turns())
+    assert dispatched == [] and "turn:turn-A" not in router.seen
+
+
+def test_pending_turn_keeps_its_canonical_session(setup):
+    """The notification's entity (a task) or its lineage never re-derives the pending turn's session."""
+    fake, router, dispatched, _ = setup
+    fake.notifications = [notif("n-t", action="task_assigned", entityType="task", entityUuid="t-9")]
+    fake.lineage["task:t-9"] = ("root-X", "idea-X")  # lineage would move the session to idea-X
+    fake.pending = [{"turnUuid": "tu-t", "sessionId": "t-9", "directIdeaUuid": None, "trigger": "task_assigned",
+                     "promptText": None}]
+    run(router.sweep_pending_turns())
+    (wake,) = dispatched
+    assert wake.session_id == "t-9" and wake.chat_id == "task:t-9" and wake.direct_idea_uuid is None
+    assert wake.root_idea_uuid == "root-X"
+
+
+def test_pending_turn_for_a_task_of_its_idea_uses_the_idea_session(setup):
+    fake, router, dispatched, _ = setup
+    fake.notifications = [notif("n-t", action="task_assigned", entityType="task", entityUuid="t-1")]
+    fake.lineage["task:t-1"] = ("idea-A", "idea-A")
+    fake.pending = [{"turnUuid": "tu-1", "sessionId": "idea-A", "directIdeaUuid": "idea-A",
+                     "trigger": "task_assigned", "promptText": None}]
+    run(router.sweep_pending_turns())
+    (wake,) = dispatched
+    assert wake.session_id == "idea-A" and wake.entity_uuid == "t-1" and wake.chat_id == "idea:idea-A"
+
+
+def test_pending_turn_pages_back_for_its_notification(setup):
+    fake, router, dispatched, _ = setup
+    others = [notif(f"n-{i}", action="mentioned", entityType="idea", entityUuid="idea-B") for i in range(50)]
+    mine = notif("n-A", action="mentioned", entityType="idea", entityUuid="idea-A")
+    fake.lineage["idea:idea-B"] = ("idea-B", "idea-B")
+
+    def paged(args):
+        offset = args.get("offset", 0)
+        return {"notifications": (others + [mine])[offset:offset + args["limit"]]}
+
+    fake.tools["chorus_get_notifications"] = paged
+    fake.pending = [{k: v for k, v in TURN_A.items() if k != "createdAt"}]
+    run(router.sweep_pending_turns())
+    (wake,) = dispatched
+    assert wake.notification["uuid"] == "n-A"
+    assert [c.get("offset", 0) for c in fake.tool_calls("chorus_get_notifications")] == [0, 50]
+
+
+# -- dedup must not be poisoned by a failed re-read (B2-failed-fetch-poisons-dedup) -------------
+
+
+def test_failed_reread_does_not_poison_the_pending_turn(setup):
+    """Leo's repro: the first sweep's notification re-read fails (503); the second must re-read and dispatch."""
+    fake, router, dispatched, _ = setup
+    fetches = []
+
+    def flaky(args):
+        fetches.append(args)
+        if len(fetches) == 1:
+            raise RuntimeError("temporary 503")
+        return {"notifications": [notif("n-A", action="mentioned", entityType="idea", entityUuid="idea-A",
+                                        createdAt="2026-10-05T10:00:00Z")]}
+
+    fake.tools["chorus_get_notifications"] = flaky
+    fake.pending = [dict(TURN_A)]
+    run(router.sweep_pending_turns())
+    assert dispatched == [] and "turn:turn-A" not in router.seen and not router.inflight
+    run(router.sweep_pending_turns())
+    assert len(fetches) == 2 and [w.turn_uuid for w in dispatched] == ["turn-A"]
+    run(router.sweep_pending_turns())  # handled now: no third dispatch
+    assert len(dispatched) == 1
+
+
+def test_concurrent_duplicate_pending_turn_dispatches_once(setup):
+    fake, router, dispatched, _ = setup
+    fake.notifications = [notif("n-A", action="mentioned", entityType="idea", entityUuid="idea-A",
+                                createdAt="2026-10-05T10:00:00Z")]
+
+    async def go():
+        return await asyncio.gather(*(router.dispatch_pending_turn(dict(TURN_A)) for _ in range(3)))
+
+    results = run(go())
+    assert len(dispatched) == 1 and sum(r is not None for r in results) == 1
+    assert len(fake.tool_calls("chorus_get_notifications")) == 1
+
+
+def test_failed_live_reread_is_recovered_by_the_pending_sweep(setup):
+    fake, router, dispatched, _ = setup
+    calls = []
+
+    def flaky(args):
+        calls.append(args)
+        if len(calls) == 1:
+            raise RuntimeError("temporary 503")
+        return {"notifications": [notif("n-A", action="mentioned", entityType="idea", entityUuid="idea-A")]}
+
+    fake.tools["chorus_get_notifications"] = flaky
+    assert run(router.handle_notification(event("n-A"))) is None
+    assert "n-A" not in router.seen and not router.inflight
+    fake.pending = [{k: v for k, v in TURN_A.items() if k != "createdAt"}]
+    run(router.sweep_pending_turns())
+    assert [w.notification["uuid"] for w in dispatched] == ["n-A"]
+
+
+def test_release_makes_a_dispatched_wake_routable_again(setup):
+    fake, router, dispatched, _ = setup
+    fake.notifications = [notif("n-A", action="mentioned", entityType="idea", entityUuid="idea-A")]
+    fake.pending = [{k: v for k, v in TURN_A.items() if k != "createdAt"}]
+    run(router.sweep_pending_turns())
+    (wake,) = dispatched
+    run(router.sweep_pending_turns())
+    assert len(dispatched) == 1
+    router.release(wake)  # e.g. turn admission was unavailable
+    run(router.sweep_pending_turns())
+    assert len(dispatched) == 2
+
+
+def test_live_copy_already_read_leaves_its_pending_turn_replayable(setup):
+    fake, router, dispatched, _ = setup
+    fake.notifications = []  # the unread re-read no longer lists it (a check-in marked it read)
+    assert run(router.handle_notification(event("n-A"))) is None
+    fake.notifications = [notif("n-A", action="mentioned", entityType="idea", entityUuid="idea-A")]
+    fake.pending = [{k: v for k, v in TURN_A.items() if k != "createdAt"}]
+    run(router.sweep_pending_turns())
+    assert [w.notification["uuid"] for w in dispatched] == ["n-A"]

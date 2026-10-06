@@ -12,7 +12,10 @@ Per turn, in order:
    ``interruptedReason`` ``user`` | ``crash`` (+ strict ``wakeError``) | ``shutdown``.
 5. ``POST /api/daemon/report-interrupt`` after a ``user`` / ``crash`` interrupt.
 
-Every REST failure is logged and swallowed; nothing here raises into the gateway.
+Every REST failure is logged and swallowed; nothing here raises into the gateway. The
+``running`` edge is the exception to "telemetry only": it is the server's ADMISSION decision, so
+:meth:`TurnReporter.start` returns a typed :class:`Admission` and the caller must not run the
+agent unless it is ``admitted``.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from .rest import ChorusRest
+from .rest import ChorusRest, ChorusRestError
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +112,33 @@ class Usage:
                 "model": self.model, "source": WAKE_ERROR_SOURCE}
 
 
+ADMITTED = "admitted"
+REJECTED = "rejected"        # the server refused the running edge (4xx): never run, never retry
+UNAVAILABLE = "unavailable"  # network error / 5xx / no connection: never run, retry later
+
+
+@dataclass
+class Admission:
+    """Outcome of ``turn-advance {status:"running"}``.
+
+    ``rejected`` covers a definite refusal (404 unknown session/turn, 409 invalid transition — e.g.
+    the turn already ended or another consumer runs it — and other non-retryable 4xx, or a 2xx
+    that names a different turn than requested). ``unavailable`` covers network errors, 5xx,
+    408/429 and a missing connection: the turn may still be pending, so the wake may be retried.
+    """
+    status: str
+    turn_uuid: Optional[str] = None
+    http_status: Optional[int] = None
+    error: Optional[str] = None
+
+    @property
+    def admitted(self) -> bool:
+        return self.status == ADMITTED
+
+
+RETRYABLE_4XX = frozenset({408, 425, 429})
+
+
 @dataclass
 class TurnRecord:
     """One reported turn. ``session_id`` is the Chorus business key (directIdea or entity)."""
@@ -135,11 +165,16 @@ class TurnReporter:
     # -- REST helpers ----------------------------------------------------------
 
     async def _post(self, path: str, body: Dict[str, Any]) -> Any:
+        data, _exc = await self._post_result(path, body)
+        return data
+
+    async def _post_result(self, path: str, body: Dict[str, Any]) -> tuple:
+        """``(data, exception)``; the exception is logged, never raised."""
         try:
-            return await self.rest.apost(path, body)
+            return await self.rest.apost(path, body), None
         except Exception as exc:  # REST failures never crash the gateway
             logger.warning("[Chorus] POST %s failed: %s", path, sanitize(exc, self.secrets)[:300])
-            return None
+            return None, exc
 
     def wake_error(self, message: Any, *, kind: str = "execution", details: Any = None) -> Dict[str, Any]:
         return make_wake_error(message, kind=kind, details=details, secrets=self.secrets)
@@ -182,10 +217,17 @@ class TurnReporter:
     async def _advance(self, rec: TurnRecord, status: str, *, turn_uuid: Optional[str] = None,
                        reason: Optional[str] = None, wake_error: Optional[Dict[str, Any]] = None,
                        usage: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        result = await self._advance_result(rec, status, turn_uuid=turn_uuid, reason=reason,
+                                            wake_error=wake_error, usage=usage)
+        return result.turn_uuid if result.admitted else None
+
+    async def _advance_result(self, rec: TurnRecord, status: str, *, turn_uuid: Optional[str] = None,
+                              reason: Optional[str] = None, wake_error: Optional[Dict[str, Any]] = None,
+                              usage: Optional[Dict[str, Any]] = None) -> Admission:
         conn = self.get_connection_uuid()
         if not conn:
             logger.warning("[Chorus] turn-advance %s skipped: no registered connection", status)
-            return None
+            return Admission(UNAVAILABLE, error="no registered connection")
         body: Dict[str, Any] = {"connectionUuid": conn, "sessionId": rec.session_id, "status": status}
         if turn_uuid:
             body["turnUuid"] = turn_uuid
@@ -197,31 +239,51 @@ class TurnReporter:
                 body["wakeError"] = wake_error
         if usage:
             body["usage"] = usage
-        data = await self._post("/api/daemon/turn-advance", body)
+        data, exc = await self._post_result("/api/daemon/turn-advance", body)
+        if exc is not None:
+            code = exc.status if isinstance(exc, ChorusRestError) else 0
+            message = sanitize(getattr(exc, "message", None) or exc, self.secrets)[:300]
+            if 400 <= code < 500 and code not in RETRYABLE_4XX:
+                return Admission(REJECTED, http_status=code, error=message)
+            return Admission(UNAVAILABLE, http_status=code or None, error=message)
         turn = data.get("turn") if isinstance(data, Mapping) else None
         uuid = turn.get("uuid") if isinstance(turn, Mapping) else None
-        return uuid if isinstance(uuid, str) else None
+        if not isinstance(uuid, str) or not uuid:
+            return Admission(REJECTED, http_status=200, error="turn-advance returned no turn uuid")
+        if turn_uuid and uuid != turn_uuid:
+            logger.warning("[Chorus] turn-advance %s for %s answered for a different turn", status, turn_uuid)
+            return Admission(REJECTED, http_status=200, error="turn-advance answered for a different turn")
+        return Admission(ADMITTED, turn_uuid=uuid, http_status=200)
 
-    async def start(self, rec: TurnRecord) -> Optional[str]:
-        """turn-advance running, then mark the execution running + snapshot."""
-        rec.turn_uuid = await self._advance(rec, "running", turn_uuid=rec.requested_turn_uuid)
+    async def start(self, rec: TurnRecord) -> Admission:
+        """turn-advance running (the server's admission); only when admitted, mark the execution
+        running + snapshot. A rejected/unavailable admission leaves ``rec.turn_uuid`` unset and
+        reports nothing else."""
+        admission = await self._advance_result(rec, "running", turn_uuid=rec.requested_turn_uuid)
+        if not admission.admitted:
+            logger.warning("[Chorus] turn admission %s for session %s%s: %s", admission.status, rec.session_id,
+                           f" (HTTP {admission.http_status})" if admission.http_status else "",
+                           admission.error or "")
+            return admission
+        rec.turn_uuid = admission.turn_uuid
         if rec.entity:
             self.executions[self._key(rec.entity)] = {
                 "entityType": rec.entity[0], "entityUuid": rec.entity[1],
                 "rootIdeaUuid": rec.root_idea_uuid, "directIdeaUuid": rec.direct_idea_uuid,
                 "status": "running", "startedAt": _now_iso()}
             await self.emit_snapshot()
-        return rec.turn_uuid
+        return admission
 
     async def transcript(self, rec: TurnRecord, role: str, text: str) -> None:
         if not isinstance(text, str) or not text.strip() or role not in ("user", "assistant"):
             return
-        body: Dict[str, Any] = {"messages": [{"role": role, "text": text}]}
-        if rec.turn_uuid:
-            body["turnUuid"] = rec.turn_uuid
-        else:
-            body["sessionId"] = rec.session_id
-        await self._post("/api/daemon/transcript", body)
+        if not rec.turn_uuid:
+            # Never attach text to "whatever turn the session has": without an admitted turn the
+            # session's latest turn may belong to another consumer.
+            logger.warning("[Chorus] transcript skipped — no admitted turn for session %s", rec.session_id)
+            return
+        await self._post("/api/daemon/transcript",
+                         {"messages": [{"role": role, "text": text}], "turnUuid": rec.turn_uuid})
 
     async def finish(self, rec: TurnRecord, status: str, reason: Optional[str] = None,
                      wake_error: Optional[Dict[str, Any]] = None) -> None:
@@ -239,7 +301,8 @@ class TurnReporter:
         else:
             logger.warning("[Chorus] terminal report skipped — no admitted turn for session %s", rec.session_id)
         conn = self.get_connection_uuid()
-        if status == "interrupted" and reason in REPORT_INTERRUPT_REASONS and rec.entity and conn:
+        if status == "interrupted" and reason in REPORT_INTERRUPT_REASONS and rec.entity and conn \
+                and rec.turn_uuid:
             await self._post("/api/daemon/report-interrupt", {
                 "connectionUuid": conn, "entityType": rec.entity[0], "entityUuid": rec.entity[1],
                 "reason": reason})

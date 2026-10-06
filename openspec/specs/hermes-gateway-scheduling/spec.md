@@ -35,7 +35,7 @@ The plugin MUST call `ctx.register_platform("chorus", ...)` with an adapter subc
 
 ### Requirement: The adapter SHALL apply the daemon's wake-routing rules
 
-For each `new_notification` event, the adapter MUST dedup by `notificationUuid`, then re-read the notification through `chorus_get_notifications {status:"unread", limit:50, autoMarkRead:false}`. It MUST skip the wake when any of these hold: the action is not in the daemon's `WAKE_ACTIONS` set; the action is `human_instruction` or an operation action (these arrive only as pending turns); `suppressWake` is true; or `targetConnectionUuid` is set and differs from its own connection. For `control` events, it MUST ignore any whose `targetConnectionUuid` is not its own. It MUST handle `deliver_turn` (fetch that pending turn), `interrupt` (cancel the running turn for that entity), and `resume`.
+For each `new_notification` event, the adapter MUST dedup by `notificationUuid`, then re-read the notification through `chorus_get_notifications {status:"unread", limit:50, autoMarkRead:false}`. It MUST skip the wake when any of these hold: the action is not in the daemon's `WAKE_ACTIONS` set; the action is `human_instruction` or an operation action (these arrive only as pending turns); `suppressWake` is true; or `targetConnectionUuid` is set and differs from its own connection. For `control` events, it MUST ignore any whose `targetConnectionUuid` is not its own. It MUST handle `deliver_turn` (fetch that pending turn), `interrupt` (cancel the running turn for that entity), and `resume`. Dedup MUST distinguish a key that is in flight (dropping a concurrent duplicate) from one that was handled. A retryable failure (the notification re-read failed, a pending turn's notification was not found yet, or turn admission was unavailable) MUST release the key so a later sweep or `deliver_turn` recovers the turn.
 
 #### Scenario: Directed wake for another instance is skipped
 
@@ -48,9 +48,15 @@ For each `new_notification` event, the adapter MUST dedup by `notificationUuid`,
 - **WHEN** a `new_notification` arrives with `suppressWake: true`
 - **THEN** no agent turn MUST start
 
+#### Scenario: A failed re-read does not lose the pending turn
+
+- **GIVEN** a pending turn whose notification re-read fails once
+- **WHEN** the next sweep runs
+- **THEN** the adapter MUST re-read and dispatch that turn exactly once
+
 ### Requirement: Wakes SHALL run as per-Idea gateway sessions with daemon-equivalent prompts
 
-Each accepted wake MUST be dispatched with `handle_message` as a `MessageEvent` whose `chat_id` is `idea:<directIdeaUuid>`, falling back to `<entityType>:<entityUuid>`. Successive wakes for the same Idea therefore resume the same Hermes session. The message text MUST be produced by a Python port of `cli/prompts.mjs` (`HEADLESS_PREAMBLE` + `buildPromptBody` per action + orchestrator guidance). A parity test MUST render a fixture set through both `cli/prompts.mjs` and the Python port and require identical output. Pending turns MUST use `promptText` (`human_instruction`) or the rebuilt notification prompt. The adapter MUST serialise wakes per chat itself: a wake for a chat whose turn is still running MUST wait in an adapter-side FIFO, and MUST be reported as `queued` in execution-state until it starts. Chorus wakes MUST NOT be handed to the gateway's `busy_input_mode` handling, because `interrupt` mode would cancel the running turn.
+Each accepted wake MUST be dispatched with `handle_message` as a `MessageEvent` whose `chat_id` is `idea:<directIdeaUuid>`, falling back to `<entityType>:<entityUuid>`. Successive wakes for the same Idea therefore resume the same Hermes session. The message text MUST be produced by a Python port of `cli/prompts.mjs` (`HEADLESS_PREAMBLE` + `buildPromptBody` per action + orchestrator guidance). A parity test MUST render a fixture set through both `cli/prompts.mjs` and the Python port and require identical output. Pending turns MUST use `promptText` (`human_instruction`) or the rebuilt notification prompt. A pending turn MUST run in its own `sessionId`. Its notification MUST be one of that session (its entity is the session anchor, or the entity's direct Idea is the session's Idea), searched page by page; a notification of another session or Idea MUST NOT be used. When none is found, the turn MUST stay pending and recoverable. The adapter MUST serialise wakes per chat itself: a wake for a chat whose turn is still running MUST wait in an adapter-side FIFO, and MUST be reported as `queued` in execution-state until it starts. Chorus wakes MUST NOT be handed to the gateway's `busy_input_mode` handling, because `interrupt` mode would cancel the running turn.
 
 #### Scenario: Two wakes for one Idea share a session
 
@@ -66,7 +72,7 @@ Each accepted wake MUST be dispatched with `handle_message` as a `MessageEvent` 
 ### Requirement: The adapter SHALL report turn lifecycle, transcripts and execution state
 
 For every turn, the adapter MUST call these endpoints, in this order:
-1. `POST /api/daemon/turn-advance {status:"running"}`, keeping the returned `turn.uuid`. A pending turn sends its own `turnUuid`.
+1. `POST /api/daemon/turn-advance {status:"running"}`, keeping the returned `turn.uuid`. A pending turn sends its own `turnUuid`. This is the server's admission: unless it returns a turn uuid (the requested one, for a pending turn), the adapter MUST NOT mark the execution running, write a transcript, call `handle_message`, or send any terminal report. A refusal (4xx, e.g. 404/409) drops the wake. An unavailable server (network error or 5xx) leaves the wake retryable.
 2. `POST /api/daemon/execution-state` with the full snapshot of running and queued executions, sent on every change.
 3. `POST /api/daemon/transcript` for the wake text and each finalized assistant message. The chat-panel copy of an autonomous wake MAY omit `HEADLESS_PREAMBLE`, since Hermes still receives the full prompt. A `human_instruction` turn MUST NOT add a user message, because Chorus already shows that text.
 4. A terminal `turn-advance` once the turn ends. It is `ended` on success, and `interrupted` with `interruptedReason` of `user` (cancelled), `crash` (raised error, with a strict `wakeError {kind, source, message≤500}`), or `shutdown` (gateway stop). Token `usage` is included when Hermes exposes it.
@@ -80,6 +86,12 @@ All REST failures MUST be logged and MUST NOT crash the gateway.
 - **WHEN** it ends
 - **THEN** the adapter MUST send `turn-advance` `interrupted/crash` with a `wakeError` whose message is ≤500 characters
 - **AND** the Chorus chat panel MUST show the failure
+
+#### Scenario: Refused admission does not run the model
+
+- **GIVEN** a wake whose `turn-advance running` returns 404 or 409, or fails with a network error or 5xx
+- **WHEN** the adapter starts it
+- **THEN** `handle_message` MUST NOT be called and no transcript or running execution MUST be reported
 
 #### Scenario: Interrupt from Chorus
 

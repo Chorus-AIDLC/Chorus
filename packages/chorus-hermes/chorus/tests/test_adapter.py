@@ -628,3 +628,113 @@ def test_client_version_comes_from_plugin_yaml_without_pyyaml(hermes, monkeypatc
     monkeypatch.setitem(sys.modules, "yaml", None)  # the Hermes runtime has no PyYAML
     expected = str(real_yaml.safe_load((PLUGIN_DIR / "plugin.yaml").read_text())["version"])
     assert hermes._client_version() == expected != "0.0.0"
+
+
+# -- admission (B2-start-without-admission; Leo's round-2 repro) ------------------------------
+
+
+def _pending_wake(hermes_router, turn_uuid="already-ended"):
+    return hermes_router.WakeRequest(
+        source="pending_turn", notification=notif("n-A", entity_uuid="idea-A"), label=f"turn:{turn_uuid}",
+        entity_type="idea", entity_uuid="idea-A", direct_idea_uuid="idea-A", root_idea_uuid="idea-A",
+        turn_uuid=turn_uuid, prompt="[Chorus] You were mentioned", canonical_session_id="idea-A")
+
+
+def _network_down(body):
+    raise httpx.ConnectError("connection refused")
+
+
+ADMISSION_FAILURES = {
+    "409": (lambda body: _fake_error(409, "Invalid turn transition ended → running"), "rejected"),
+    "404": (lambda body: _fake_error(404, "Turn not found"), "rejected"),
+    "network": (_network_down, "unavailable"),
+    "503": (lambda body: _fake_error(503, "Service Unavailable"), "unavailable"),
+}
+
+
+def _fake_error(status, message):
+    from .fixtures.chorus_fake import error
+
+    return error(status, message)
+
+
+@pytest.mark.parametrize("case", sorted(ADMISSION_FAILURES))
+def test_failed_admission_never_runs_the_model(hermes, tmp_path, case):
+    """turn-advance running refused (404/409) or unavailable (network/5xx): no handle_message, no
+    transcript, no running execution row, and no terminal report that could end another consumer's turn."""
+    from chorus_hermes import router as router_mod
+
+    hook, expected = ADMISSION_FAILURES[case]
+    h = Harness(hermes, tmp_path)
+
+    async def go():
+        await h.connect()
+        await h.idle()
+        h.fake.turn_advance_hook = hook
+        h.adapter.router.seen.add("turn:already-ended")  # as the router does before dispatching
+        await h.adapter.dispatch(_pending_wake(router_mod))
+        await h.idle()
+        released = "turn:already-ended" not in h.adapter.router.seen
+        await h.adapter.disconnect()
+        return released
+
+    released = run(go())
+    assert h.handled == [] and h.adapter.started_events == []
+    assert h.fake.bodies("/api/daemon/transcript") == []
+    assert [b["status"] for b in h.turn_bodies()] == ["running"]  # the refused admission only
+    assert not any(e["status"] == "running" for b in h.fake.bodies("/api/daemon/execution-state")
+                   for e in b["executions"])
+    assert h.fake.bodies("/api/daemon/report-interrupt") == []
+    # unavailable → released for a later sweep / deliver_turn; rejected → stays handled (dropped)
+    assert released is (expected == "unavailable")
+
+
+def test_rejected_live_wake_is_dropped_without_ending_the_other_consumers_turn(hermes, tmp_path):
+    h = Harness(hermes, tmp_path)
+    h.fake.lineage["idea:i-1"] = ("i-1", "i-1")
+
+    async def go():
+        await h.connect()
+        h.fake.turn_advance_hook = lambda body: _fake_error(409, "Invalid turn transition running → running")
+        h.notify(notif())
+        await wait_for(lambda: h.turn_bodies())
+        await h.idle()
+        await h.adapter.disconnect()
+
+    run(go())
+    assert h.handled == [] and [b["status"] for b in h.turn_bodies()] == ["running"]
+    assert h.fake.bodies("/api/daemon/transcript") == []
+
+
+def test_unavailable_admission_is_retried_by_the_next_sweep(hermes, tmp_path):
+    h = Harness(hermes, tmp_path)
+    h.fake.pending = [{"turnUuid": "tu-9", "sessionId": "i-1", "directIdeaUuid": "i-1",
+                       "trigger": "human_instruction", "promptText": "continue please"}]
+    attempts = []
+
+    def flaky(body):
+        attempts.append(body["status"])
+        return _fake_error(503, "Service Unavailable") if len(attempts) == 1 else None
+
+    h.fake.turn_advance_hook = flaky
+
+    async def go():
+        await h.connect()
+        await wait_for(lambda: attempts)
+        await h.idle()
+        assert h.handled == []
+        h.fake.feed.event({"type": "control", "command": "deliver_turn", "targetConnectionUuid": "c-1",
+                           "turnUuid": "tu-9"})
+        await wait_for(lambda: h.handled)
+        await h.idle()
+        # admitted and done: a further sweep does not run it again
+        h.fake.feed.event({"type": "control", "command": "deliver_turn", "targetConnectionUuid": "c-1",
+                           "turnUuid": "tu-9"})
+        await asyncio.sleep(0.05)
+        await h.idle()
+        await h.adapter.disconnect()
+
+    run(go())
+    assert len(h.handled) == 1
+    assert [(b["status"], b.get("turnUuid")) for b in h.turn_bodies()] == [
+        ("running", "tu-9"), ("running", "tu-9"), ("ended", "tu-9")]
