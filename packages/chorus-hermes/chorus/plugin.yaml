@@ -19,3 +19,14 @@ requires_env:
     description: "Chorus agent API key (starts with cho_)"
     prompt: "Chorus API key"
     password: true
+# Must equal what register() registers (hermes plugins validate "declared hooks").
+provides_hooks:
+  # hooks.py — session lifecycle (check-in context + post-tool reminders)
+  - pre_llm_call
+  - on_session_start
+  - on_session_reset
+  - transform_tool_result
+  # skills.py — read-only reviewer guard
+  - pre_tool_call
+  - subagent_start
+  - subagent_stop
