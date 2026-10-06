@@ -1,6 +1,6 @@
 ---
 name: plugin-maintenance
-description: Guide for modifying the Chorus plugin (Claude Code, Codex, OpenClaw, Kiro, Pi, and dsh ports), updating skill documentation, and releasing new plugin versions.
+description: Guide for modifying the Chorus plugin (Claude Code, Codex, OpenClaw, Kiro, Pi, dsh, and Hermes ports), updating skill documentation, and releasing new plugin versions.
 license: AGPL-3.0
 metadata:
   author: chorus
@@ -10,7 +10,7 @@ metadata:
 
 # Chorus Plugin & Skill Maintenance
 
-How to modify the Chorus plugin, update skill documentation, and release new versions. **Six plugin packages** are maintained in parallel — Claude Code, Codex, OpenClaw, Kiro, Pi, and dsh (DeepSeek Harness) — plus the standalone skill surface. That is **seven skill surfaces total**; when you change skill content, sweep all seven (see [Skill Content Changes — Seven Surfaces](#skill-content-changes--seven-surfaces)).
+How to modify the Chorus plugin, update skill documentation, and release new versions. **Seven plugin packages** are maintained in parallel — Claude Code, Codex, OpenClaw, Kiro, Pi, dsh (DeepSeek Harness), and Hermes Agent — plus the standalone skill surface. That is **eight skill surfaces total**; when you change skill content, sweep all eight (see [Skill Content Changes — Seven Surfaces](#skill-content-changes--seven-surfaces), which also lists the Hermes copy). The Hermes port has its own section: [Hermes Agent port](#hermes-agent-port).
 
 ## File Structure
 
@@ -91,6 +91,10 @@ packages/chorus-dsh/            ← DeepSeek Harness (dsh) plugin — published 
     <stage>-chorus/SKILL.md     ← 13 stage/reviewer skills, `-chorus` SUFFIX (brainstorm/develop/idea/
                                   proposal/quick-dev/review/yolo/docs/orchestrate/openspec-aware/
                                   code-reviewer/proposal-reviewer/task-reviewer)
+
+packages/chorus-hermes/         ← Hermes Agent (Nous Research) port — NOT on npm/PyPI; installed from a git subdir pinned to a SHA
+  chorus/                       ← native plugin (plugin.yaml + register(ctx)); see "Hermes Agent port"
+  chorus-mcp/                   ← portable Agent Plugins v1 package (plugin.json + mcp.json): the chorus MCP server
 
 public/skill/                   ← Standalone skill (any MCP-compatible agent)
   chorus/SKILL.md               ← Same structure, softer language, IDE-agnostic
@@ -263,6 +267,7 @@ Chorus skill content lives in **seven parallel surfaces**. A content change must
 4. `public/kiro-plugin/.kiro/skills/chorus-<skill>/SKILL.md` — Kiro (note the `chorus-` **prefix**; the overview lives in `steering/chorus.md`, not a `chorus/SKILL.md`)
 5. `packages/chorus-pi/skills/<skill>/SKILL.md` — Pi
 6. `packages/chorus-dsh/skills/<skill>-chorus/SKILL.md` — dsh (note the `-chorus` **suffix**; keeps a `chorus/SKILL.md` overview)
+   - plus `packages/chorus-hermes/chorus/skills/<skill>/SKILL.md` — Hermes (bare names, loaded as `skill_view("chorus:<skill>")`; reviewers are `chorus-<kind>-reviewer` skills, not agent files). See [Hermes Agent port](#hermes-agent-port).
 7. `public/skill/<skill>-chorus/SKILL.md` — standalone (note the `-chorus` suffix and flatter set)
 
 **Sweep command** — find every occurrence before editing so nothing is missed:
@@ -270,7 +275,8 @@ Chorus skill content lives in **seven parallel surfaces**. A content change must
 grep -rniE "<your-search-term>" \
   public/chorus-plugin/skills/ plugins/chorus/skills/ \
   packages/openclaw-plugin/skills/ public/kiro-plugin/.kiro/skills/ \
-  packages/chorus-pi/skills/ packages/chorus-dsh/skills/ public/skill/
+  packages/chorus-pi/skills/ packages/chorus-dsh/skills/ \
+  packages/chorus-hermes/chorus/skills/ public/skill/
 ```
 
 Then bump the relevant version sequences (shared skill frontmatter across plugin surfaces 1–5, independent standalone version for #6, and per-package versions as needed).
@@ -420,4 +426,123 @@ cd packages/chorus-pi && bash test/all.sh
 
 # dsh — typecheck + lint + unit tests + published-bundle validation
 cd packages/chorus-dsh && pnpm run typecheck && pnpm run lint && pnpm test && pnpm run check:package
+
+# Hermes — pytest (fakes only; node for prompt parity) + Hermes' own manifest validation
+python -m pytest packages/chorus-hermes/chorus/tests
+hermes plugins validate packages/chorus-hermes/chorus && hermes plugins validate packages/chorus-hermes/chorus-mcp
 ```
+
+## Hermes Agent port
+
+Source: `packages/chorus-hermes/`. User docs: `packages/chorus-hermes/README.md` (install, configure,
+troubleshooting, Hermes compatibility notes with file:line evidence) and `docs/CONNECT_HERMES{,.zh}.md`.
+Design/spec: `openspec/changes/add-hermes-plugin/`. Verified against Hermes commit `2b52acc2d`.
+
+### Layout — two directories, installed separately
+
+```
+packages/chorus-hermes/
+  README.md
+  chorus/                       ← native plugin, installed as ~/.hermes/plugins/chorus
+    plugin.yaml                 ← name: chorus, kind: standalone (no "general" kind), version, provides_hooks
+    __init__.py                 ← register(ctx): hooks, skills, gateway platform, approval transport
+    chorus_hermes/              ← config, mcp_client, rest, hooks, reminders, spec_mode, skills (reviewer guard),
+                                  sse, router, prompts (port of cli/prompts.mjs), adapter, turns, approval
+    skills/<name>/SKILL.md      ← independent Hermes copy (see below)
+    tests/                      ← pytest; fixtures/ holds the prompt-parity fixtures + node renderer
+  chorus-mcp/                   ← portable package, installed as ~/.hermes/plugins/chorus-mcp
+    plugin.json                 ← name: chorus-mcp, version
+    mcp.json                    ← chorus server, LITERAL http://localhost:8637/api/mcp + Bearer ${CHORUS_API_KEY}
+```
+
+Why two: Hermes declares MCP servers only in portable packages, and only a native plugin can register
+hooks, skills, a platform and an approval transport. Keep `mcp.json` out of `chorus/` and Python out of
+`chorus-mcp/` (enforced by `test_package.py`). Portable `mcp.json` URLs are not `${VAR}`-expanded, so do
+NOT "fix" the literal loopback URL; remote Chorus uses a native `mcp_servers.chorus` entry, which
+`chorus agents add` writes (`cli/init/hermes-mcp-config.mjs`). Keep `provides_hooks` in `plugin.yaml`
+equal to what `register()` registers, or `hermes plugins validate` fails. Both directories must keep
+scanning `safe` — git installs are `community` trust and a `caution` verdict blocks the install (the
+scanner flags phrases like "you are … now"; see the `_NOW` workaround in `prompts.py`).
+
+Runtime model: online scheduling through the `chorus` gateway platform (SSE client type `hermes`), like
+OpenClaw — **not** the Chorus daemon (`agent-type-map.mjs` maps hermes → `offline`). Operation turns
+(`research_requested`, `idea_creation_requested`) are skipped by the router, same as OpenClaw.
+
+### Version sync
+
+Hermes manifests are not npm packages, but they track the **app version** (root `package.json`) and
+pytest fails on drift. On every release bump, set `X.Y.Z` in:
+- `packages/chorus-hermes/chorus/plugin.yaml` — `version:`
+- `packages/chorus-hermes/chorus-mcp/plugin.json` — `"version"`
+- every `packages/chorus-hermes/chorus/skills/*/SKILL.md` — `metadata.version` (`test_skills.py::test_frontmatter`)
+
+The gateway's SSE `clientVersion` is read from `plugin.yaml` at runtime (`adapter._client_version`), and `mcp_client.py` sends no `initialize`/`clientInfo` — no version is hardcoded in Python.
+
+### Independent skill copy
+
+`chorus/skills/` is its own copy (started from `packages/chorus-pi/skills`), registered with
+`ctx.register_skill` and resolved as `chorus:<name>`. These skills are not listed in `<available_skills>`,
+so the session-start Quick Reference tells the model to `skill_view("chorus:<name>")`. When porting a
+skill change:
+- human questions → elaboration rounds / Chorus comments (no `AskUserQuestion`);
+- sub-agents → `delegate_task(goal, context)` (no `Task`/`Agent`/`spawn_agent`/`subagent`);
+- no `${CLAUDE_PLUGIN_ROOT}`, Codex paths or `/skill:` syntax;
+- reviewers are skills `chorus-{proposal,task,code}-reviewer`. The parent's `delegate_task` context
+  starts with `[chorus-reviewer:<kind>]`, and `skills.py` makes that child read-only. Keep the marker kinds
+  equal to the skill names (`test_reviewer_marker_kinds_match_skill_names`).
+`test_skills.py` greps for foreign-tool references and scan-triggering phrases. Run it after every edit.
+
+### Prompt parity
+
+`chorus_hermes/prompts.py` is a byte-exact Python port of `cli/prompts.mjs` (wake prompts for every
+`WAKE_ACTIONS` action). `tests/test_prompts_parity.py` renders `tests/fixtures/prompt_fixtures.json` with
+`node tests/fixtures/render_prompts.mjs` and compares the output with the Python output. **Any change to
+`cli/prompts.mjs` must be mirrored in `prompts.py`** and, for a new action or edge case, gets a fixture.
+The test skips without `node`. CI/dev must have it.
+
+Also mirror changes in `cli/event-router.mjs` (`NOTIFICATION_ACTION_TO_TURN_TRIGGER`) into `router.py`
+`ACTION_TO_TURN_TRIGGER`. Reminder text mirrors `plugins/chorus/hooks/on-post-*.sh` (Codex parity).
+
+### Release = the tag's SHA is the install ref
+
+Hermes `--ref` accepts only a full 40-hex commit SHA, and a release commit cannot contain its own SHA. So
+**never commit a SHA** (`test_no_commit_sha_committed`). The release tag `vX.Y.Z` *is* the release:
+`chorus agents add --agents hermes` (`installHermes` in `cli/init/install-methods.mjs`) resolves
+`v<CLI version>` with `git ls-remote` — peeled `^{}` first, then the unpeeled ref (Chorus tags are
+lightweight) — and fails closed if the tag is missing. The tag must therefore be pushed to
+`github.com/Chorus-AIDLC/Chorus` before the matching CLI is published to npm, or new installs fail.
+Users update with `chorus agents add --agents hermes --update-installed` (reinstalls with `--force` at
+the new tag's SHA), then `hermes gateway restart`.
+
+If you change the post-install checklist (`hermesFollowUpChecklist`), update the README "Configure"
+section, `docs/CONNECT_HERMES{,.zh}.md`, and the Hermes tab in
+`src/components/install-guide/AgentInstallGuide.tsx` (+ `messages/{en,zh,ja,ko}.json`).
+
+### Local test recipe
+
+```bash
+# 1. unit tests + manifest validation (no Hermes import needed for pytest)
+python -m pytest packages/chorus-hermes/chorus/tests
+hermes plugins validate packages/chorus-hermes/chorus
+hermes plugins validate packages/chorus-hermes/chorus-mcp
+
+# 2. install the committed working tree into the local Hermes (--ref must be a SHA the repo has)
+REPO=file://$PWD; SHA=$(git rev-parse HEAD)
+hermes plugins install "$REPO#packages/chorus-hermes/chorus"     --ref "$SHA" --enable --force
+hermes plugins install "$REPO#packages/chorus-hermes/chorus-mcp" --ref "$SHA" --enable --force
+hermes plugins list --plain --no-bundled          # both: enabled  git pinned@<sha8>
+hermes plugins doctor chorus && hermes plugins doctor chorus-mcp
+
+# 3. run against a local Chorus (pnpm dev on :8637 matches the portable MCP URL)
+#    ~/.hermes/.env: CHORUS_URL=http://localhost:8637, CHORUS_API_KEY=cho_…
+hermes config set terminal.cwd /path/to/test/repo
+hermes config set security.approval.transport chorus
+hermes config set security.approval.transport_fallback builtin
+hermes config set approvals.mode manual
+hermes gateway run                                # foreground; or: hermes gateway restart
+hermes chat -Q -q "Call chorus_checkin and print the agent name"
+```
+
+Then confirm in Chorus that the agent is online (client "Hermes"), and assign an Idea to it to watch a
+gateway turn. To test tag resolution, create a temporary lightweight tag, run the resolve-then-install
+commands from the README with `REPO=file://$PWD`, then `git tag -d` it. Never push it.

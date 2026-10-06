@@ -58,6 +58,9 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
             <TabsTrigger value="openclaw" className="shrink-0">
               {t("install.tabs.openClaw")}
             </TabsTrigger>
+            <TabsTrigger value="hermes" className="shrink-0">
+              {t("install.tabs.hermes")}
+            </TabsTrigger>
             <TabsTrigger value="other" className="shrink-0">
               {t("install.tabs.other")}
             </TabsTrigger>
@@ -365,6 +368,59 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
                 </div>
               </CollapsibleContent>
             </Collapsible>
+          </TabsContent>
+
+          {/* Hermes Tab */}
+          <TabsContent value="hermes" className="mt-4 space-y-4">
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.hermes.step1Title")}
+              </h3>
+              <p className="mb-2 text-sm text-muted-foreground">
+                {t("install.hermes.step1Desc")}{" "}
+                <a
+                  href="https://hermes-agent.nousresearch.com/docs/getting-started/installation"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline-offset-4 hover:underline"
+                >
+                  {t("install.hermes.step1Link")}
+                </a>
+              </p>
+              <CodeBlock language="bash" code="hermes --version" />
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.hermes.step2Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code={`export CHORUS_URL="${origin}"\nexport CHORUS_API_KEY="${displayKey}"\nnpm install -g @chorus-aidlc/chorus\nchorus agents add --agents hermes`}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.hermes.step2Tip")}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.hermes.step3Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code={`printf 'CHORUS_URL=%s\\nCHORUS_API_KEY=%s\\n' "$CHORUS_URL" "$CHORUS_API_KEY" >> ~/.hermes/.env
+hermes config set terminal.cwd /path/to/your/repo
+hermes config set security.approval.transport chorus
+hermes config set security.approval.transport_fallback builtin
+hermes config set approvals.mode manual
+hermes gateway install
+hermes gateway start`}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.hermes.step3Tip")}
+              </p>
+            </div>
           </TabsContent>
 
           {/* Other Agents Tab */}

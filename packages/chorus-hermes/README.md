@@ -1,24 +1,64 @@
 # Chorus for Hermes Agent
 
 Chorus integration for [Hermes Agent](https://github.com/NousResearch/hermes-agent)
-(Nous Research). Two independently installable directories:
+(Nous Research). It has two directories, and you install each one separately:
 
 | Directory | Hermes plugin type | What it provides |
 |---|---|---|
-| `chorus/` | native plugin (`plugin.yaml` + `register(ctx)`) | session check-in and reminders, Chorus skills, the `chorus` gateway platform, the `chorus` approval transport |
+| `chorus/` | native plugin (`plugin.yaml` + `register(ctx)`) | session check-in and reminders, Chorus skills, the read-only reviewer guard, the `chorus` gateway platform, the `chorus` approval transport |
 | `chorus-mcp/` | portable Agent Plugins v1 package (`plugin.json` + `mcp.json`) | the `chorus` MCP server, so the model gets `mcp__chorus__*` tools |
 
-> Status: skeleton. The native plugin currently registers nothing; hooks, skills,
-> the gateway platform and the approval transport land in follow-up tasks.
+**Why two directories.** Hermes declares MCP servers only in a portable package
+(`mcp.json`); a native plugin cannot ship one. The native plugin is needed for
+everything that runs outside the model's tool loop: hooks, skills, the gateway
+platform and the approval transport. One install therefore cannot do both, and
+`hermes plugins validate` keeps `mcp.json` out of `chorus/` (see note 6).
 
-Compatibility is pinned to Hermes commit `2b52acc2d`.
+The Hermes gateway runs as a long-lived service, so Chorus schedules it
+**online through the plugin**, the same way it schedules OpenClaw. The `chorus` gateway
+platform keeps an SSE connection to Chorus open (client type `hermes`), shows
+the agent online, and runs a gateway turn for each Chorus wake (assignment,
+@mention, proposal decision, task verification, …). The Node `chorus daemon` is
+not involved: `chorus agents add` records the agent as `offline` for the daemon.
+
+Compatibility is pinned to Hermes commit `2b52acc2d` (`hermes --version` →
+`v0.21.5+… upstream 2b52acc2`).
 
 ## Install
 
-Hermes `--ref` accepts only a full 40-character commit SHA, so resolve the
-release tag first. Chorus release tags are **lightweight**, so the peeled
-`^{}` query returns nothing for them and the unpeeled ref is the one that
-answers; keep both lines.
+You need a Chorus agent API key (`cho_…`, **Settings → Agents → Create API Key**)
+and the `hermes` CLI on `PATH`
+([installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation)).
+
+### Fastest path: `chorus agents add`
+
+```bash
+export CHORUS_URL=https://chorus.example.com
+export CHORUS_API_KEY=cho_your_agent_key
+npm install -g @chorus-aidlc/chorus
+chorus agents add --agents hermes
+```
+
+For a Hermes agent, `chorus agents add`:
+
+- resolves the release tag `v<chorus CLI version>` to its commit SHA and runs the
+  two `hermes plugins install … --ref <sha> --enable` commands shown below. If
+  the tag does not resolve, it fails closed and installs nothing;
+- skips the install when both plugins are already present. Pass
+  `--update-installed` to reinstall at the current version;
+- for a **non-loopback** `CHORUS_URL`, writes the native `mcp_servers.chorus`
+  entry into `$HERMES_HOME/config.yaml` (literal `<CHORUS_URL>/api/mcp`, header
+  kept as the `Bearer ${CHORUS_API_KEY}` placeholder, other config preserved).
+  See [MCP URL](#mcp-url-loopback-vs-remote-chorus);
+- prints the follow-up checklist from [Configure](#configure). It writes no
+  secret anywhere.
+
+### Manual install (resolve the tag, then install)
+
+Hermes `--ref` accepts only a full 40-character commit SHA. A tag name or a short
+SHA is rejected, so resolve the release tag first. Chorus release tags are
+**lightweight**, so the peeled `^{}` query returns nothing for them and the
+unpeeled ref is the one that answers. Keep both lines.
 
 ```bash
 VERSION=0.21.1   # the Chorus release you want
@@ -32,40 +72,82 @@ hermes plugins install Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus-mcp --r
 hermes plugins list --plain --no-bundled   # both: enabled  git pinned@<sha8>
 ```
 
-Never install unpinned; if the tag does not resolve, stop.
+Never install unpinned. If the tag does not resolve, stop. `--enable` writes
+`plugins.enabled`, which every non-bundled plugin needs (note 4).
 
 ## Configure
 
-Credentials are read only from the environment (or `~/.hermes/.env`):
+This is the same checklist `chorus agents add` prints (`hermesFollowUpChecklist`
+in `cli/init/install-methods.mjs`):
+
+1. `CHORUS_URL` and `CHORUS_API_KEY` in the **gateway's** environment.
+2. `terminal.cwd` set to the repository this gateway serves.
+3. `security.approval.transport chorus` and `security.approval.transport_fallback builtin`.
+4. `approvals.mode manual`.
+5. `hermes gateway install`, then `hermes gateway start`.
+
+There is no platform-enable step. The `chorus` platform enables itself when
+`CHORUS_URL` and `CHORUS_API_KEY` are set (note 4).
+
+### Environment
+
+The plugin reads credentials only from the environment, or from `~/.hermes/.env`,
+which also covers a gateway running as a service:
 
 ```bash
 export CHORUS_URL=https://chorus.example.com     # no trailing /api/mcp
 export CHORUS_API_KEY=<your cho_ agent key>
 ```
 
-**MCP URL.** Portable `mcp.json` URLs are not env-expanded (see note 5), so
-`chorus-mcp/mcp.json` ships the literal loopback URL
-`http://localhost:8637/api/mcp` (a local `pnpm dev` Chorus). For any other
-deployment add a native entry, which Hermes *does* expand and which wins over
-the portable server of the same name:
+| Variable | Effect | Default |
+|---|---|---|
+| `CHORUS_URL` | Chorus base URL | (required) |
+| `CHORUS_API_KEY` | Agent API key (`cho_…`) | (required) |
+| `CHORUS_ENABLE_OPENSPEC` | `false` turns off OpenSpec detection; the session context then reports the fallback spec mode | `true` |
+| `CHORUS_OPENSPEC_MODE` | `off` is the legacy equivalent of `CHORUS_ENABLE_OPENSPEC=false` | (unset) |
+| `CHORUS_ENABLE_CODE_REVIEWER` | `false` drops the code-reviewer reminder after the last task of an idea-rooted proposal is verified | `true` |
+| `CHORUS_ALLOWED_USERS` | Optional gateway allowlist override. When set, it replaces the owner uuid the adapter seeds and must contain it | (unset) |
+
+### MCP URL: loopback vs remote Chorus
+
+Portable `mcp.json` URLs are not env-expanded (note 5). `chorus-mcp/mcp.json`
+therefore ships the literal loopback URL `http://localhost:8637/api/mcp`, which
+matches a local `pnpm dev` Chorus. For any other deployment, add a native entry.
+Hermes *does* expand native entries, and a native entry wins over the portable
+server of the same name:
 
 ```bash
 hermes config set mcp_servers.chorus.url '${CHORUS_URL}/api/mcp'
 hermes config set mcp_servers.chorus.headers.Authorization 'Bearer ${CHORUS_API_KEY}'
 ```
 
-The single quotes matter: the config stores the `${VAR}` placeholders, never the
-values. With the native entry present Hermes logs
-`Portable MCP server 'chorus' conflicts with native config; skipping` — expected.
+Keep the single quotes, so the config stores the `${VAR}` placeholders and
+never the values. (`chorus agents add` writes the same entry with a literal URL.)
+With the native entry present, Hermes logs
+`Portable MCP server 'chorus' conflicts with native config; skipping`. This is expected.
 
-**Gateway working directory.** Set `terminal.cwd` in `~/.hermes/config.yaml` to
-the repository this gateway serves. The plugin reports `realpath(terminal.cwd)`
-to Chorus and refuses to connect when it is unset or a placeholder (`.`, `auto`,
-`cwd`).
+### Gateway working directory: one gateway, one repository
 
-**Approvals through Chorus.** To answer dangerous-command approvals of
-Chorus-woken gateway turns from Chorus, select the plugin's transport and keep
-the built-in prompt for everything else:
+Set `terminal.cwd` in `~/.hermes/config.yaml` to the repository this gateway
+serves:
+
+```bash
+hermes config set terminal.cwd /path/to/your/repo
+```
+
+The plugin reports `realpath(terminal.cwd)` to Chorus. It refuses to connect
+when the value is unset, a placeholder (`.`, `auto`, `cwd`) or not a directory;
+it never reports `$HOME`. There is no per-wake working directory: every wake
+runs in this repository. To serve several repositories, run one gateway per
+repository, each under its own Hermes profile / `HERMES_HOME`. Chorus allows one
+live connection per agent, host and cwd. A second gateway with the same agent,
+host and cwd gets `connection_conflict` (see [Troubleshooting](#troubleshooting)).
+
+### Approvals through Chorus
+
+A Chorus-woken gateway turn runs unattended. To answer its dangerous-command
+approvals from Chorus, select the plugin's transport and keep the built-in prompt
+for everything else:
 
 ```bash
 hermes config set security.approval.transport chorus
@@ -74,48 +156,149 @@ hermes config set approvals.timeout 300                          # seconds; no r
 hermes config set approvals.mode manual                          # recommended for an unattended gateway
 ```
 
-Set `approvals.mode: manual` on a gateway that Chorus wakes unattended. With the
-default `smart` mode, Hermes asks its guardian model first and runs any command
-the guardian approves without consulting the transport, so the owner never sees
-it. A live run approved `rm -rf <dir>` this way. With `manual`, every flagged
-command reaches the owner on Chorus.
+Set `approvals.mode: manual` on a gateway that Chorus wakes unattended. In the
+default `smart` mode, Hermes first asks its guardian model, and when the guardian
+approves a command it runs without the transport, so the owner never sees it.
+In a live run the guardian approved `rm -rf <dir>` this way. With `manual`,
+every flagged command reaches the owner on Chorus.
 
-When a woken turn needs approval, the agent comments on the Chorus entity it is
-working on, @mentioning you, with the redacted command, the allowed replies and a
-6-character token. Reply on that entity with `approve once <token>`,
-`approve session <token>` (when offered), `approve always <token>` (when
-offered) or `deny <token>`. Only the agent owner's reply counts; any other owner
-reply carrying the token denies, and no reply within `approvals.timeout` denies.
-Approval replies do not start a new agent turn. The plugin links each reply to
-its notification and pending turn by author, text and timestamps. When the link
-is ambiguous (two @mentions within about a second, or a Chorus server whose
-pending-turns API lacks `createdAt`), the wake runs normally so that an ordinary
-mention is never dropped. Sessions that were not started by
-a Chorus wake (interactive CLI/TUI, other gateway platforms) are declined by the
-transport, so without `transport_fallback: builtin` Hermes denies them instead of
-prompting.
+When a woken turn needs approval, the agent posts a comment on the Chorus entity
+it is working on. The comment @mentions you and shows the redacted command, the
+allowed replies and a 6-character token. Reply on that entity with
+`approve once <token>`, `approve session <token>` (when offered),
+`approve always <token>` (when offered) or `deny <token>`. Only a reply from the
+agent's owner counts. Any other reply from the owner that carries the token
+denies, and no reply within `approvals.timeout` also denies. Approval replies do
+not start a new agent turn.
+
+Sessions that a Chorus wake did not start (interactive CLI/TUI, other gateway
+platforms) are declined by the transport. Without `transport_fallback: builtin`,
+Hermes denies them instead of prompting.
+
+### Start the gateway
+
+```bash
+hermes gateway install   # systemd / launchd service
+hermes gateway start
+hermes gateway status
+# or, in the foreground (WSL, Docker, debugging):
+hermes gateway run
+```
+
+Once connected, the agent shows as online in Chorus (presence label **Hermes**).
+Assign it an Idea or task, or @mention it, to wake it.
+
+## Using it
+
+- **Check-in.** On the first turn of every session (and after a reset or context
+  compression), the plugin injects a `## Checkin` / `## Spec Mode` /
+  `## Quick Reference` block with `chorus_checkin` output. This happens in
+  interactive CLI/TUI sessions and in gateway turns alike.
+- **Skills** are registered as `chorus:<name>`. They are not listed in
+  `<available_skills>`, so load them explicitly:
+  `skill_view("chorus:develop")`, `skill_view("chorus:yolo")`, …
+  The set: `chorus`, `idea`, `brainstorm`, `research`, `proposal`, `develop`,
+  `review`, `quick-dev`, `yolo`, `orchestrate`, `openspec-aware`, `spec-lite`,
+  `chorus-cli`, `docs`, plus the reviewer skills
+  `chorus-{proposal,task,code}-reviewer`.
+- **Reviewers.** After `chorus_pm_submit_proposal`, `chorus_submit_for_verify` and
+  `chorus_admin_verify_task`, the tool result carries a reminder to spawn a
+  reviewer with `delegate_task`. The reviewer's `context` begins with the marker
+  `[chorus-reviewer:<kind>]` (`proposal`, `task`, `code`) and the child is told
+  to `skill_view("chorus:chorus-<kind>-reviewer")`. While a session carries the
+  marker, the guard makes it read-only: it allows Chorus `get_`/`list_`/`search`
+  reads, `chorus_add_comment` (the VERDICT), `read_file`, `search_files`,
+  `skill_view` and tool search, and blocks everything else, including terminal,
+  writes, nested delegation, `chorus_checkin` and `chorus_get_notifications`.
+
+## Known limitations
+
+- **Operation turns are not executed yet.** Chorus "research" and "create
+  idea" operation requests (`research_requested`, `idea_creation_requested`)
+  are skipped by the Hermes gateway, the same as OpenClaw. Run them from a
+  Claude Code / Codex daemon agent, or do the work in an interactive Hermes
+  session.
+- **Ambiguous approval replies fail open.** Chorus does not link a notification or
+  a pending turn to its comment, so the plugin matches each approval reply to
+  its notification and pending turn by author, text and timestamps. When the
+  match is ambiguous, the wake runs normally so that an ordinary @mention is
+  never dropped. This happens with two @mentions within about a second, or with
+  a Chorus server whose pending-turns API lacks `createdAt`. The reply then
+  starts an agent turn, and it does **not** answer the approval. Reply again (or
+  let it time out to deny).
+- **Check-in marks up to 5 notifications read.** `chorus_checkin` (the gateway's
+  connect-time check-in and every session-start check-in) returns and marks
+  read up to 5 recent unread notifications. The gateway therefore rebuilds
+  wakes from server-side pending turns and also reads already-read notifications,
+  so no wake is lost. Your Chorus notification inbox can still show those
+  notifications as read before the agent acts on them.
+- **One repository per gateway** (see above). There is no `chorus daemon` backend
+  for Hermes.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| Agent stays **offline** in Chorus | The gateway is not running (`hermes gateway status`), or the `chorus` platform did not start. Check the gateway log for `[Chorus] gateway platform not started: …`. Usual causes: `CHORUS_URL` / `CHORUS_API_KEY` missing from the *gateway's* environment (a service does not inherit your shell; use `~/.hermes/.env`), `terminal.cwd` unset or a placeholder, `chorus_checkin` failing (wrong URL or key), or the agent has no owner. Confirm `plugins.enabled` lists `chorus` (`hermes plugins list --plain --no-bundled`). |
+| `[Chorus] connection conflict: another live client already serves host=… cwd=…` | Another live client is already connected for this agent on the same host and cwd, such as a second gateway or a duplicate profile. The plugin stops retrying until restarted. Stop the duplicate, or point it at a different repository / agent, then `hermes gateway restart`. |
+| Approval comment posted, then the command was **denied** | No owner reply carrying the token arrived within `approvals.timeout` (300s in the example above), or the reply came from someone other than the agent's owner, or it was typed wrong. Reply exactly `approve once <token>` on the same entity. Raise `approvals.timeout` if needed. |
+| A dangerous command ran without asking you | `approvals.mode` is still `smart`, so the guardian approved it. Set `hermes config set approvals.mode manual`. |
+| CLI/TUI approvals are denied without a prompt | `security.approval.transport_fallback` is not `builtin`. |
+| No `mcp__chorus__*` tools | `chorus-mcp` is not installed or enabled; or Chorus is not on `localhost:8637` and the native `mcp_servers.chorus` entry is missing (see [MCP URL](#mcp-url-loopback-vs-remote-chorus)); or `CHORUS_API_KEY` is unset (an unresolved `${VAR}` header fails closed). Run `hermes plugins validate` on the installed package and look for `⚠ mcp:chorus` lines. |
+| `hermes plugins install … --ref v0.21.1` fails | `--ref` must be a full 40-hex commit SHA, not a tag or short SHA. Resolve the tag with `git ls-remote` as shown in [Install](#manual-install-resolve-the-tag-then-install). |
+| Install `BLOCKED` by the security scan | Git installs are `community` trust, so a `caution` verdict blocks them. The released directories scan `safe`. If you changed them locally, rerun `hermes plugins validate` and fix the findings. |
+| Skills "not found" | Use the namespaced name, e.g. `skill_view("chorus:develop")`, not `develop`. |
 
 ## Develop
 
 ```bash
-python -m pytest packages/chorus-hermes/chorus/tests     # needs pytest, httpx, pyyaml
+python -m pytest packages/chorus-hermes/chorus/tests     # needs pytest, httpx, pyyaml (node for prompt parity)
 hermes plugins validate packages/chorus-hermes/chorus
 hermes plugins validate packages/chorus-hermes/chorus-mcp
+hermes plugins doctor chorus && hermes plugins doctor chorus-mcp   # after installing
 ```
 
 Tests use fakes only (a recording `ctx`, `httpx.MockTransport`) and never import
-Hermes. Package checks: `plugin.yaml` / `plugin.json` versions equal the root
-`package.json` version (bumped by the release skill), no `cho_…` key and no
-commit SHA is committed, and `mcp.json` exists only in `chorus-mcp/`.
+Hermes. Package checks: the versions in `plugin.yaml` / `plugin.json` and every
+skill's `metadata.version` equal the root `package.json` version (the release
+skill bumps them); no `cho_…` key and no commit SHA is committed; and `mcp.json`
+exists only in `chorus-mcp/`. `test_prompts_parity.py` renders the shared
+fixtures through `cli/prompts.mjs` with `node` and requires byte-identical
+output from `chorus_hermes/prompts.py`.
+
+**Installing your working tree into a local Hermes.** `--ref` must be a SHA that
+the source repository has, so commit your work, then install from the local
+checkout. The `--force` flag overwrites an existing install:
+
+```bash
+REPO=file://$PWD                       # the Chorus checkout
+SHA=$(git rev-parse HEAD)
+hermes plugins install "$REPO#packages/chorus-hermes/chorus"     --ref "$SHA" --enable --force
+hermes plugins install "$REPO#packages/chorus-hermes/chorus-mcp" --ref "$SHA" --enable --force
+hermes plugins list --plain --no-bundled   # enabled  git pinned@<sha8>
+hermes gateway restart                     # pick up the new code
+```
+
+To exercise the tag-resolution path itself, create a temporary lightweight tag,
+resolve it as in [Install](#manual-install-resolve-the-tag-then-install) with
+`REPO=file://$PWD`, and delete the tag afterwards. Never push it. A recorded run
+follows the compatibility notes below.
 
 Shared modules in `chorus/chorus_hermes/`:
 
-- `config.py` — `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_ALLOWED_USERS` from the
+- `config.py`: `CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_ALLOWED_USERS` from the
   environment; `terminal_cwd()` from the Hermes config.
-- `mcp_client.py` — stateless JSON-RPC `tools/call` to `/api/mcp` over httpx
-  (sync and async; JSON or SSE replies; no `initialize` needed because Chorus MCP
-  is stateless per request).
-- `rest.py` — Chorus REST calls with `{success, data}` unwrapping.
+- `mcp_client.py`: stateless JSON-RPC `tools/call` to `/api/mcp` over httpx
+  (sync and async; JSON or SSE replies). No `initialize` is needed, because Chorus MCP
+  is stateless per request.
+- `rest.py`: Chorus REST calls that unwrap `{success, data}`.
+- `hooks.py` / `reminders.py` / `spec_mode.py`: session check-in context and
+  post-tool reminders (Codex hook parity).
+- `skills.py`: skill registration and the read-only reviewer guard.
+- `sse.py` / `router.py` / `prompts.py` / `adapter.py` / `turns.py`: the gateway
+  platform (SSE, wake routing, prompts ported from `cli/prompts.mjs`, turn
+  reporting).
+- `approval.py`: the `chorus` approval transport.
 
 ## Hermes compatibility notes
 

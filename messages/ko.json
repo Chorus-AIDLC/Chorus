@@ -1245,6 +1245,7 @@
         "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
+        "hermes": "Hermes",
         "other": "기타 에이전트"
       },
       "profileStep": {
@@ -1268,6 +1269,15 @@
         "step1Tip": "팁: Kiro CLI가 시작 시 읽을 수 있도록 ~/.bashrc 또는 ~/.zshrc에 추가하세요.",
         "step2Title": "2단계: chorus agents add 실행",
         "step2Tip": "chorus agents add은 Chorus의 skills, agents, steering 및 chorus MCP 서버를 ~/.kiro에 전역으로 설치하여 모든 디렉터리에서 Chorus를 사용할 수 있게 합니다. CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다. 다른 디렉터리에 설치하려면 실행 전에 KIRO_DIR을 설정하세요. 첫 번째 명령은 최신 Chorus CLI를 전역으로 설치합니다."
+      },
+      "hermes": {
+        "step1Title": "1단계: Hermes Agent 설치",
+        "step1Desc": "Hermes Agent(Nous Research)를 설치하고 PATH에서 hermes CLI를 사용할 수 있는지 확인하세요.",
+        "step1Link": "Hermes 설치 가이드",
+        "step2Title": "2단계: chorus agents add 실행",
+        "step2Tip": "chorus agents add --agents hermes는 해당 Chorus 릴리스 태그를 커밋 SHA로 변환하고(Hermes의 --ref는 40자 전체 SHA만 받습니다), 두 개의 플러그인 디렉터리를 설치합니다: chorus(훅, 스킬, 게이트웨이 플랫폼, 승인 트랜스포트)와 chorus-mcp(Chorus MCP 서버). Chorus가 localhost에 있지 않으면 ~/.hermes/config.yaml에 mcp_servers.chorus도 기록하며, 키 자체는 저장하지 않고 CHORUS_API_KEY를 참조합니다.",
+        "step3Title": "3단계: 게이트웨이 구성 및 시작",
+        "step3Tip": "게이트웨이 서비스는 셸 환경을 상속하지 않으므로 자격 증명은 ~/.hermes/.env에 둡니다. 게이트웨이 하나는 저장소 하나를 담당합니다: terminal.cwd를 그 저장소로 설정하세요. Chorus가 깨운 턴의 승인 요청은 Chorus 댓글로 올라오며 여기에 답하면 됩니다. approvals.mode manual로 두면 플래그된 명령이 Hermes의 guardian 모델에 의해 자동 승인되지 않고 반드시 여러분에게 전달됩니다. 시작하면 에이전트가 Chorus에서 온라인으로 표시됩니다."
       },
       "pi": {
         "step1Title": "1단계: 환경 변수 설정",
