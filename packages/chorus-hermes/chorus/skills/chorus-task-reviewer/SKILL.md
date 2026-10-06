@@ -62,7 +62,7 @@ This replaces a shell. The Chorus Hermes plugin enforces it because your context
 - `search_files` — find files by name and content under the repo path
 - `skill_view`, `skills_list`, `todo_list`, `session_search`
 - `web_search`, `web_extract` — only to check a hallucination-risk specific against public docs
-- `chorus_get_*`, `chorus_list_*`, `chorus_search*`, `chorus_checkin`
+- `chorus_get_*`, `chorus_list_*`, `chorus_search*` (except `chorus_get_notifications`), plus `tool_search` / `tool_describe` to discover deferred Chorus tools
 - `chorus_add_comment` — exactly once, to post your verdict
 
 **Blocked:** `terminal`, `write_file`, `patch`, `execute_code`, `delegate_task`, and every other Chorus write (`chorus_admin_*`, `chorus_update_task`, `chorus_report_work`, `chorus_report_criteria_self_check`, `chorus_mark_acceptance_criteria`, `chorus_submit_for_verify`, and so on). A blocked tool call is expected, not an error to work around: do not retry it, and do not look for another tool that does the same thing. Work from the bundle.

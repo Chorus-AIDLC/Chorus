@@ -54,12 +54,22 @@ def test_reviewer_write_tools_blocked(guard, marker_in, tool):
 @pytest.mark.parametrize("tool", [
     "mcp__chorus__chorus_add_comment", "mcp__chorus__chorus_get_task", "mcp__chorus__chorus_get_proposal",
     "mcp__chorus__chorus_list_tasks", "mcp__chorus__chorus_search", "mcp__chorus__chorus_get_comments",
-    "mcp__chorus__chorus_checkin", "mcp__chorus__read_resource", "chorus_get_task",
+    "mcp__chorus__read_resource", "chorus_get_task",
     "read_file", "search_files", "skill_view", "skills_list", "web_search",
+    "tool_search", "tool_describe",
 ])
 def test_reviewer_read_tools_allowed(guard, tool):
     _start_reviewer(guard)
     assert _call(guard, tool) is None
+
+
+@pytest.mark.parametrize("tool", [
+    "mcp__chorus__chorus_checkin", "mcp__chorus__chorus_get_notifications", "chorus_get_notifications",
+])
+def test_reviewer_notification_consuming_reads_blocked(guard, tool):
+    # These mark the shared agent's notifications as read and would swallow the parent's wakes.
+    _start_reviewer(guard)
+    assert _call(guard, tool)["action"] == "block"
 
 
 def test_non_reviewer_sessions_untouched(guard):

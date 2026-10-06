@@ -49,10 +49,14 @@ MARKER_RE = re.compile(r"\[chorus-reviewer:([A-Za-z0-9_-]+)\]")
 ALLOWED_BUILTIN_TOOLS = frozenset({
     "read_file", "search_files", "skill_view", "skills_list",
     "web_search", "web_extract", "session_search", "todo_list",
+    # Tool-search bridge discovery (read-only); Hermes defers MCP tools behind it by default.
+    "tool_search", "tool_describe",
 })
 # Chorus operations a reviewer may call: reads plus the single verdict comment.
-ALLOWED_CHORUS_EXACT = frozenset({"chorus_add_comment", "chorus_checkin"})
+ALLOWED_CHORUS_EXACT = frozenset({"chorus_add_comment"})
 ALLOWED_CHORUS_PREFIXES = ("chorus_get_", "chorus_list_", "chorus_search")
+# Reads that mark the shared agent's notifications as read, which would consume the parent's wakes.
+DENIED_CHORUS_READS = frozenset({"chorus_checkin", "chorus_get_notifications"})
 # Per-server MCP utility tools (mcp__<server>__<op>): read-only.
 ALLOWED_MCP_UTILITIES = frozenset({"list_resources", "read_resource", "list_prompts", "get_prompt"})
 
@@ -82,6 +86,8 @@ def base_tool_name(tool_name: str) -> Tuple[str, bool]:
 
 def is_reviewer_allowed(tool_name: str) -> bool:
     base, via_mcp = base_tool_name(tool_name)
+    if base in DENIED_CHORUS_READS:
+        return False
     if base in ALLOWED_CHORUS_EXACT or base.startswith(ALLOWED_CHORUS_PREFIXES):
         return True
     if via_mcp:

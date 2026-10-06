@@ -59,7 +59,7 @@ The Chorus Hermes plugin enforces read-only mode for you because your context st
 - `read_file`, `search_files` — repository inspection (the repo path is in your context)
 - `skill_view`, `skills_list`, `todo_list`, `session_search`
 - `web_search`, `web_extract` — only to check a hallucination-risk specific (SDK version, API path, CLI flag) against public docs
-- `chorus_get_*`, `chorus_list_*`, `chorus_search*`, `chorus_checkin`
+- `chorus_get_*`, `chorus_list_*`, `chorus_search*` (except `chorus_get_notifications`), plus `tool_search` / `tool_describe` to discover deferred Chorus tools
 - `chorus_add_comment` — exactly once, to post your verdict
 
 **Blocked:** `terminal`, `write_file`, `patch`, `execute_code`, `delegate_task`, and every other Chorus write (`chorus_admin_*`, `chorus_pm_*`, `chorus_update_task`, and so on). A blocked tool call is expected, not an error to work around: do not retry it, and do not look for another tool that does the same thing. Work from what the allowed tools give you.
