@@ -787,6 +787,19 @@ describe("installHermes (verified against the local `hermes plugins install --he
     expect(run.calls.filter((c) => c.cmd === "hermes")).toHaveLength(1);
   });
 
+  it("surfaces the hermes 'Error:' line, not the leading custom-source warning, when an install fails", () => {
+    const run = fakeRun((cmd) => cmd === "git"
+      ? { ok: true, code: 0, stdout: `${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`, stderr: "" }
+      : {
+          ok: false, code: 1, stderr: "",
+          stdout: "Warning: custom (unreviewed) source — not from the Hermes catalog.\nCloning https://github.com/Chorus-AIDLC/Chorus.git (subdir: \npackages/chorus-hermes/chorus)...\nError: Plugin subdirectory 'packages/chorus-hermes/chorus' does not exist in the\nrepository.\n",
+        });
+    const res = installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "0.22.0" }));
+    expect(res.action).toBe(FAILED);
+    expect(res.detail).toContain("Error: Plugin subdirectory 'packages/chorus-hermes/chorus' does not exist in the repository.");
+    expect(res.detail).not.toContain("Warning: custom");
+  });
+
   it("reports not detected with the Hermes install docs link and runs nothing when hermes is not on PATH", () => {
     const run = fakeRun();
     const { io, lines } = logIo();

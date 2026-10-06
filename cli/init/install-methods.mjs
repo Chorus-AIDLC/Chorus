@@ -33,7 +33,14 @@ const out = (agentId, action, detail) => ({ stepId: STEP_ID, agentId, action, de
 
 /** First non-empty line of a command result's stderr/stdout, trimmed short. */
 function errText(r) {
-  const t = (r?.stderr || r?.error || r?.stdout || "").trim().split("\n")[0] || "unknown error";
+  // Prefer the CLI's own "Error:"/"fatal:" line (and its wrapped continuation) over
+  // a leading banner — e.g. `hermes plugins install` prints a "Warning: custom
+  // (unreviewed) source" line on stdout before the real error.
+  const lines = [r?.stderr, r?.stdout].map((s) => String(s ?? "").trim()).filter(Boolean).join("\n").split("\n");
+  const at = lines.findIndex((l) => /^\s*(error|fatal)\b/i.test(l));
+  const t = at >= 0
+    ? lines.slice(at).map((l) => l.trim()).filter(Boolean).join(" ")
+    : (r?.stderr || r?.error || r?.stdout || "").trim().split("\n")[0] || "unknown error";
   return t.length > 160 ? `${t.slice(0, 157)}…` : t;
 }
 
