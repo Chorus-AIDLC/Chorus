@@ -246,7 +246,7 @@ returns only `d2136dc3…<40 hex> refs/tags/v0.21.1` (no `^{}` line).
 $ REPO=file:///home/felix/dev/Chorus TAG=v0.21.1-hermes-wip
 $ SHA=$(git ls-remote "$REPO" "refs/tags/$TAG^{}" | cut -f1)        # -> '' (lightweight)
 $ [ -n "$SHA" ] || SHA=$(git ls-remote "$REPO" "refs/tags/$TAG" | cut -f1)
-SHA=3ecf91f4…   # 40 hex chars; full SHA elided, no SHA is committed
+SHA=35fd9a11…   # 40 hex chars; full SHA elided, no SHA is committed
 $ hermes plugins install "$REPO#packages/chorus-hermes/chorus" --ref "$SHA" --enable --force
 Cloning file:///home/felix/dev/Chorus (subdir: packages/chorus-hermes/chorus)...
 ✓ Installed  file:///home/felix/dev/Chorus#packages/chorus-hermes/chorus
@@ -257,8 +257,8 @@ Cloning file:///home/felix/dev/Chorus (subdir: packages/chorus-hermes/chorus-mcp
              Location: /home/felix/.hermes/plugins/chorus-mcp
 ✓ Plugin chorus-mcp enabled.
 $ hermes plugins list --plain --no-bundled
-enabled      git pinned@3ecf91f4 0.21.1   chorus
-enabled      git pinned@3ecf91f4 0.21.1   chorus-mcp
+enabled      git pinned@35fd9a11 0.21.1   chorus
+enabled      git pinned@35fd9a11 0.21.1   chorus-mcp
 $ git tag -d v0.21.1-hermes-wip
 ```
 
