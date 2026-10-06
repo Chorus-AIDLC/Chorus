@@ -84,6 +84,13 @@ After user approval, write the approved content into `CHANGELOG.md` — add the 
 cd packages/openclaw-plugin
 npm install --package-lock-only --ignore-scripts --no-audit --no-fund
 cd ../..
+
+# Hermes plugin manifests are not npm packages but MUST carry the same version
+# (pytest packages/chorus-hermes/chorus/tests fails on drift):
+# packages/chorus-hermes/chorus/plugin.yaml      -> version: X.Y.Z
+# packages/chorus-hermes/chorus-mcp/plugin.json  -> "version": "X.Y.Z"
+# Never commit a commit SHA for Hermes installs; users resolve v<X.Y.Z> to its
+# peeled SHA at install time (see packages/chorus-hermes/README.md).
 ```
 
 The GitHub Release tag, root Chorus CLI, OpenClaw plugin, dsh plugin, and
@@ -110,7 +117,9 @@ git add CHANGELOG.md package.json \
   packages/openclaw-plugin/package.json \
   packages/openclaw-plugin/package-lock.json \
   packages/chorus-dsh/package.json \
-  packages/chorus-pi/package.json
+  packages/chorus-pi/package.json \
+  packages/chorus-hermes/chorus/plugin.yaml \
+  packages/chorus-hermes/chorus-mcp/plugin.json
 git commit -m "chore: bump version to vX.Y.Z and update CHANGELOG"
 git push origin develop
 
@@ -210,6 +219,7 @@ gh release view vX.Y.Z
 - [ ] CHANGELOG draft presented to user and **approved**
 - [ ] CHANGELOG.md written with approved content
 - [ ] Root, OpenClaw, dsh, and chorus-pi package versions are the same `X.Y.Z`
+- [ ] Hermes `chorus/plugin.yaml` and `chorus-mcp/plugin.json` versions are the same `X.Y.Z`
 - [ ] OpenClaw `package-lock.json` refreshed for `X.Y.Z` (chorus-pi needs no lockfile refresh)
 - [ ] Changes committed and pushed to `develop`
 - [ ] PR from `develop` → `main` created, CI passed, and merged

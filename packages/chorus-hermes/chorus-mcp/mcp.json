@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "chorus": {
+      "type": "streamable-http",
+      "url": "${CHORUS_URL}/api/mcp",
+      "headers": { "Authorization": "Bearer ${CHORUS_API_KEY}" }
+    }
+  }
+}
