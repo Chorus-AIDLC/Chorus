@@ -530,8 +530,34 @@ def test_ambiguous_pending_turn_is_never_closed(hermes, tmp_path, monkeypatch, c
     assert not any("consumed" in r for _, r in h.adapter.router.skipped)
     if case == "no_created_at":  # legacy match: dispatched normally (fail open), not closed as a reply
         assert [e.metadata["chorus_wake"] for e in h.handled] == ["turn:tu-1"]
-    else:  # ambiguous burst: neither run nor closed
-        assert h.handled == [] and h.closed() == []
+    else:  # ambiguous burst: still dispatched normally (fail open), never closed as a reply
+        assert [e.metadata["chorus_wake"] for e in h.handled] == ["turn:tu-1"]
+
+
+@pytest.mark.parametrize("second", ["ordinary", "reply"])
+def test_burst_sweep_never_drops_the_ordinary_mention(hermes, tmp_path, monkeypatch, second):
+    """Regression (review B2): two mentions <1s apart replayed by the reconnect sweep."""
+    h = ApprovalHarness(hermes, tmp_path, monkeypatch)
+    a = f"{AGENT_MENTION} please fix A"
+    b = f"{AGENT_MENTION} and also B" if second == "ordinary" else f"{AGENT_MENTION} approve once ZXC234"
+
+    async def go():
+        h.add_notification(mention_notif("n-1", a, ts(0.1), entity_type="idea", entity_uuid="i-1"))
+        h.add_notification(mention_notif("n-2", b, ts(0.6), entity_type="idea", entity_uuid="i-1"))
+        h.comments += [_comment("cm-1", a, ts(0), target=("idea", "i-1")),
+                       _comment("cm-2", b, ts(0.5), target=("idea", "i-1"))]
+        h.fake.pending = [pending("tu-1", ts(0.15)), pending("tu-2", ts(0.65))]
+        await h.connect()
+        await asyncio.sleep(0.5)
+        await h.idle()
+        await h.adapter.disconnect()
+
+    asyncio.run(go())
+    handled = [e.metadata["chorus_wake"] for e in h.handled]
+    assert "turn:tu-1" in handled  # the ordinary mention always runs
+    assert not any("no unambiguous" in r for _, r in h.adapter.router.skipped)
+    if second == "ordinary":
+        assert sorted(handled) == ["turn:tu-1", "turn:tu-2"]
 
 
 def test_live_reply_without_turn_created_at_leaves_pending_turns_alone(hermes, tmp_path, monkeypatch):

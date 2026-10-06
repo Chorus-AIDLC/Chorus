@@ -347,8 +347,8 @@ class EventRouter:
         ``exact`` is True only when the turn's ``createdAt`` (the server creates the turn right after
         its notification) singles out one notification of this session: the nearest one in
         ``[-TURN_MATCH_BEFORE_S, +TURN_MATCH_AFTER_S]`` with a clear margin over the runner-up.
-        Otherwise the legacy best-effort match is returned with ``exact=False`` (or ``None`` when a
-        burst makes the timing ambiguous).
+        Otherwise a best-effort match is returned with ``exact=False``: for a burst whose timing is
+        ambiguous, the nearest in-window notification not yet claimed by another wake.
         """
         t = parse_time(turn.get("createdAt"))
         if t is not None:
@@ -362,7 +362,11 @@ class EventRouter:
             if len(timed) == 1 or (len(timed) > 1 and timed[1][0] - timed[0][0] > TURN_MATCH_MARGIN_S):
                 return timed[0][1], True
             if timed:
-                return None, False
+                # Burst: timing can't single out one notification. Never drop the turn; hand it the
+                # nearest notification not yet claimed by another wake, marked inexact so no filter
+                # (e.g. the approval-reply filter) may close it.
+                unclaimed = next((x for _, x in timed if x.get("uuid") not in self.seen), None)
+                return (unclaimed or timed[0][1]), False
         match = next((x for x in candidates if x.get("entityUuid") in anchors), None)
         if match is None and direct:
             for x in candidates:
