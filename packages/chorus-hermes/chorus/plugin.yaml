@@ -30,3 +30,7 @@ provides_hooks:
   - pre_tool_call
   - subagent_start
   - subagent_stop
+  # adapter.py — gateway turn bookkeeping (session binding via pre_llm_call, usage, provider errors, stops)
+  - post_api_request
+  - api_request_error
+  - agent_loop_stopped
