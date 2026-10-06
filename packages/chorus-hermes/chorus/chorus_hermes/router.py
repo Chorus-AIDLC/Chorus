@@ -452,11 +452,14 @@ class EventRouter:
     async def _find_turn_notification(self, turn, trigger, anchors, direct) -> tuple:
         """Page through notifications (read ones too) for the pending turn's own notification.
 
-        ``(match, exact)``, or ``None`` when the re-read failed. Stops at the first page that yields
-        a match, at a short page, or after ``NOTIFICATION_MAX_PAGES`` pages.
+        ``(match, exact)``, or ``None`` when the re-read failed. Keeps paging while the best match is
+        only inexact (an older same-session notification on page 1 must not shadow the exact one on
+        a later page); stops at an exact match, at a short page, or after ``NOTIFICATION_MAX_PAGES``.
+        A turn without ``createdAt`` can never match exactly, so it stops at its first match.
         """
         candidates: List[Mapping[str, Any]] = []
         match, exact = None, False
+        timed = parse_time(turn.get("createdAt")) is not None
         for page in range(NOTIFICATION_MAX_PAGES):
             notifications = await self._unread(status="all", offset=page * NOTIFICATION_PAGE_SIZE)
             if notifications is None:
@@ -464,7 +467,7 @@ class EventRouter:
             candidates.extend(x for x in notifications if isinstance(x, Mapping) and isinstance(x.get("uuid"), str)
                               and ACTION_TO_TURN_TRIGGER.get(x.get("action")) == trigger)
             match, exact = await self.match_turn_notification(turn, candidates, anchors, direct)
-            if match is not None or len(notifications) < NOTIFICATION_PAGE_SIZE:
+            if exact or (match is not None and not timed) or len(notifications) < NOTIFICATION_PAGE_SIZE:
                 break
         return match, exact
 

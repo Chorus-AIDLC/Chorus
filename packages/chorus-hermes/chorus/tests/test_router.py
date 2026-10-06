@@ -373,6 +373,32 @@ def test_pending_turn_pages_back_for_its_notification(setup):
     assert [c.get("offset", 0) for c in fake.tool_calls("chorus_get_notifications")] == [0, 50]
 
 
+def test_inexact_page_one_match_does_not_shadow_exact_match_on_page_two(setup):
+    """Review note: an older out-of-window same-session notification on page 1 must not win over the
+    turn's exact (createdAt-correlated) notification on page 2."""
+    fake, router, dispatched, _ = setup
+    old_a = notif("old-A", action="mentioned", entityType="idea", entityUuid="idea-A",
+                  createdAt="2026-10-01T09:00:00.000Z")
+    fillers = [notif(f"n-{i}", action="mentioned", entityType="idea", entityUuid="idea-B",
+                     createdAt="2026-10-06T11:00:00.000Z") for i in range(49)]
+    exact_a = notif("exact-A", action="mentioned", entityType="idea", entityUuid="idea-A",
+                    createdAt="2026-10-06T10:00:00.000Z")
+    fake.lineage["idea:idea-B"] = ("idea-B", "idea-B")
+    pages = [old_a] + fillers + [exact_a]
+
+    def paged(args):
+        offset = args.get("offset", 0)
+        return {"notifications": pages[offset:offset + args["limit"]]}
+
+    fake.tools["chorus_get_notifications"] = paged
+    fake.pending = [{"turnUuid": "tu-x", "sessionId": "idea-A", "directIdeaUuid": "idea-A",
+                     "trigger": "mentioned", "promptText": None, "createdAt": "2026-10-06T10:00:00.200Z"}]
+    run(router.sweep_pending_turns())
+    (wake,) = dispatched
+    assert wake.notification["uuid"] == "exact-A"
+    assert wake.transport.get("exactNotification") is True
+
+
 # -- dedup must not be poisoned by a failed re-read (B2-failed-fetch-poisons-dedup) -------------
 
 
