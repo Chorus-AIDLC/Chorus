@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, self-chec
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.0"
+  version: "0.17.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -12,6 +12,16 @@ metadata:
 # Develop Skill
 
 This skill covers the **Development** stage of the AI-DLC workflow: claiming Tasks, doing the work, reporting progress, and submitting for verification.
+
+---
+
+## Claude Code background child ownership
+
+**Claude Code only** — this rule covers background children owned by this session, not independently assigned Chorus agents or other backends. If you launch children with `run_in_background` (or a worker/reviewer launches asynchronously), collect and handle ALL background worker/reviewer results before ending a normal turn. Do not end immediately after dispatch: launch acknowledgement is not completion. Wait for each owned child's completion notification, handle its result, and read this round's reviewer VERDICT before advancing a review gate.
+
+Before posting a human decision request, finish independent children or explicitly cancel outstanding children and record which children remain incomplete, why, and the follow-up needed in a Chorus work report/comment. Then post the decision request through the applicable interaction channel and end the turn without polling the human; in headless mode use a Chorus comment/elaboration panel, never a blocking terminal prompt. Leave human-gated work pending for a later wake.
+
+Respect explicit user stop/cancel and shutdown: do not delay them to collect results or restart cancelled work. This is not a mandate to wait forever; record incomplete work when possible without blocking shutdown.
 
 ---
 

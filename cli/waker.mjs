@@ -76,6 +76,7 @@ export class Waker {
     this.validateRuntimeCwd = opts.validateRuntimeCwd;
     this.hooks = opts.hooks;
     this.logger = opts.logger ?? NOOP_LOGGER;
+    this.postComment = opts.postComment;
     this.writeMcpConfigFn = opts.writeMcpConfigFn ?? writeMcpConfig;
     this.isNewSessionFn = opts.isNewSessionFn ?? isNewSession;
     // Interrupt reporter (子3): default no-op-with-log so a Waker built without one
@@ -845,9 +846,21 @@ export class Waker {
       }
 
       // Lifecycle line 3 — completion: duration + exit code, one compact line.
+      if (result?.backgroundTasksTerminated && ["idea", "task"].includes(first.entityType)) {
+        try {
+          if (!this.postComment) throw new Error("comment reporter unavailable");
+          await this.postComment({
+            targetType: first.entityType,
+            targetUuid: first.entityUuid,
+            content: `Daemon wake ${sessionId}: Claude terminated unfinished background agents after its post-turn wait ceiling. This wake is abnormal even if the process exited with code 0. Review unfinished work before resuming; no task statuses were automatically changed.`,
+          });
+        } catch {
+          this.logger.warn("[Chorus] Could not post the background-agent termination comment; wake failure remains recorded");
+        }
+      }
       const durationMs = Date.now() - startMs;
       this.logger.info(
-        `[Chorus] ✓ wake done: ${target} (exit=${result?.exitCode ?? "?"}, ${durationMs}ms)`
+        `[Chorus] ${cleanExit ? "✓" : "!"} wake done: ${target} (exit=${result?.exitCode ?? "?"}, ${durationMs}ms)`
       );
       if (this.verbose) {
         this.logger.info(

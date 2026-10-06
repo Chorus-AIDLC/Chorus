@@ -319,6 +319,7 @@ export function buildDaemon(creds, deps = {}) {
         hooks,
         logger,
         reportInterrupt,
+        postComment: (comment) => mcpClient.callTool("chorus_add_comment", comment),
         advanceTurn,
         verbose,
         validateRuntimeCwd: (runtimeCwd) => validateDirectory({ cwd: runtimeCwd, browseRoots }),
