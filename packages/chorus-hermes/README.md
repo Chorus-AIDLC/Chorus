@@ -71,7 +71,13 @@ the built-in prompt for everything else:
 hermes config set security.approval.transport chorus
 hermes config set security.approval.transport_fallback builtin   # required for CLI/TUI prompts
 hermes config set approvals.timeout 300                          # seconds; no reply = deny
+hermes config set approvals.mode manual   # optional: the default "smart" guardian may approve first
 ```
+
+With the default `approvals.mode: smart`, Hermes' guardian model decides
+low-risk commands itself and only escalates the rest to a human, so a command
+may run without a Chorus approval comment. Use `manual` to have every flagged
+command go to the owner.
 
 When a woken turn needs approval, the agent comments on the Chorus entity it is
 working on, @mentioning you, with the redacted command, the allowed replies and a
