@@ -1275,7 +1275,7 @@
         "step1Desc": "Install Hermes Agent (Nous Research) and make sure the hermes CLI is on PATH.",
         "step1Link": "Hermes installation guide",
         "step2Title": "Step 2: Run chorus agents add",
-        "step2Tip": "chorus agents add --agents hermes resolves the matching Chorus release tag to its commit SHA (Hermes --ref accepts only a full 40-character SHA) and installs two plugin directories: chorus (hooks, skills, gateway platform, approval transport) and chorus-mcp (the Chorus MCP server). For a Chorus that is not on localhost it also writes mcp_servers.chorus into ~/.hermes/config.yaml, referencing CHORUS_API_KEY instead of storing the key.",
+        "step2Tip": "chorus agents add --agents hermes resolves the matching Chorus release tag to its commit SHA (Hermes --ref accepts only a full 40-character SHA) and installs two plugin directories: chorus (hooks, skills, gateway platform, approval transport) and chorus-mcp (the Chorus MCP server). For any Chorus URL other than http://localhost:8637 it also writes mcp_servers.chorus into ~/.hermes/config.yaml, referencing CHORUS_API_KEY instead of storing the key.",
         "step3Title": "Step 3: Configure and start the gateway",
         "step3Tip": "The gateway service does not inherit your shell, so its credentials go in ~/.hermes/.env. One gateway serves one repository: set terminal.cwd to it. Approvals for Chorus-woken turns are posted as Chorus comments for you to answer; approvals.mode manual makes sure every flagged command reaches you instead of being auto-approved by Hermes' guardian model. Once started, the agent shows online in Chorus."
       },

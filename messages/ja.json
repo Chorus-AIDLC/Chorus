@@ -1275,7 +1275,7 @@
         "step1Desc": "Hermes Agent（Nous Research）をインストールし、hermes CLI が PATH から使えることを確認してください。",
         "step1Link": "Hermes インストールガイド",
         "step2Title": "ステップ 2：chorus agents add を実行",
-        "step2Tip": "chorus agents add --agents hermes は対応する Chorus リリースタグをコミット SHA に解決し（Hermes の --ref は完全な 40 文字の SHA のみ受け付けます）、2 つのプラグインディレクトリをインストールします：chorus（フック、スキル、ゲートウェイプラットフォーム、承認トランスポート）と chorus-mcp（Chorus MCP サーバー）。Chorus が localhost 以外にある場合は、~/.hermes/config.yaml に mcp_servers.chorus も書き込みます。キーそのものは保存せず、CHORUS_API_KEY を参照します。",
+        "step2Tip": "chorus agents add --agents hermes は対応する Chorus リリースタグをコミット SHA に解決し（Hermes の --ref は完全な 40 文字の SHA のみ受け付けます）、2 つのプラグインディレクトリをインストールします：chorus（フック、スキル、ゲートウェイプラットフォーム、承認トランスポート）と chorus-mcp（Chorus MCP サーバー）。Chorus の URL が http://localhost:8637 以外の場合は、~/.hermes/config.yaml に mcp_servers.chorus も書き込みます。キーそのものは保存せず、CHORUS_API_KEY を参照します。",
         "step3Title": "ステップ 3：ゲートウェイを設定して起動",
         "step3Tip": "ゲートウェイのサービスはシェルの環境を引き継がないため、認証情報は ~/.hermes/.env に書きます。1 つのゲートウェイが担当するのは 1 つのリポジトリです：terminal.cwd をそのリポジトリに設定してください。Chorus から起動されたターンの承認は Chorus のコメントとして届き、あなたが返信します。approvals.mode manual にすると、フラグが付いたコマンドが Hermes の guardian モデルに自動承認されず、必ずあなたに届きます。起動すると、エージェントは Chorus でオンラインと表示されます。"
       },

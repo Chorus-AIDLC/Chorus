@@ -51,7 +51,7 @@ chorus agents add --agents hermes
 - resolves the release tag `v<CLI version>` to its 40-hex commit SHA with
   `git ls-remote` and installs both directories with `--ref <sha> --enable`.
   An unresolvable tag fails closed and installs nothing;
-- skips an existing install (use `--update-installed` to reinstall);
+- if both plugins are already installed, offers to reinstall them at the current version (`[y/N]`; automatic with `--yes` or without a TTY); `chorus upgrade --plugins` also reinstalls;
 - for a Chorus that is **not** on `localhost:8637`, writes the native
   `mcp_servers.chorus` entry into `$HERMES_HOME/config.yaml` (see Step 3);
 - prints the follow-up checklist (Steps 2 to 5). It never writes your key.

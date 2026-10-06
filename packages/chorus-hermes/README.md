@@ -44,9 +44,10 @@ For a Hermes agent, `chorus agents add`:
 - resolves the release tag `v<chorus CLI version>` to its commit SHA and runs the
   two `hermes plugins install … --ref <sha> --enable` commands shown below. If
   the tag does not resolve, it fails closed and installs nothing;
-- skips the install when both plugins are already present. Pass
-  `--update-installed` to reinstall at the current version;
-- for a **non-loopback** `CHORUS_URL`, writes the native `mcp_servers.chorus`
+- if both plugins are already present, offers to reinstall them at the current
+  version (`[y/N]`; reinstalls without asking under `--yes` or when there is no
+  TTY). `chorus upgrade --plugins` also reinstalls;
+- for any `CHORUS_URL` other than `http://localhost:8637`, writes the native `mcp_servers.chorus`
   entry into `$HERMES_HOME/config.yaml` (literal `<CHORUS_URL>/api/mcp`, header
   kept as the `Bearer ${CHORUS_API_KEY}` placeholder, other config preserved).
   See [MCP URL](#mcp-url-loopback-vs-remote-chorus);

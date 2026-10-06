@@ -409,7 +409,9 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`printf 'CHORUS_URL=%s\\nCHORUS_API_KEY=%s\\n' "$CHORUS_URL" "$CHORUS_API_KEY" >> ~/.hermes/.env
+                code={`mkdir -p ~/.hermes && touch ~/.hermes/.env && chmod 600 ~/.hermes/.env
+sed -i.bak '/^CHORUS_URL=/d;/^CHORUS_API_KEY=/d' ~/.hermes/.env
+printf 'CHORUS_URL=%s\\nCHORUS_API_KEY=%s\\n' "$CHORUS_URL" "$CHORUS_API_KEY" >> ~/.hermes/.env
 hermes config set terminal.cwd /path/to/your/repo
 hermes config set security.approval.transport chorus
 hermes config set security.approval.transport_fallback builtin

@@ -511,8 +511,9 @@ Hermes `--ref` accepts only a full 40-hex commit SHA, and a release commit canno
 `v<CLI version>` with `git ls-remote` — peeled `^{}` first, then the unpeeled ref (Chorus tags are
 lightweight) — and fails closed if the tag is missing. The tag must therefore be pushed to
 `github.com/Chorus-AIDLC/Chorus` before the matching CLI is published to npm, or new installs fail.
-Users update with `chorus agents add --agents hermes --update-installed` (reinstalls with `--force` at
-the new tag's SHA), then `hermes gateway restart`.
+Users update with `chorus upgrade --plugins` or by re-running `chorus agents add --agents hermes`
+(which offers to reinstall with `--force` at the new tag's SHA; automatic under `--yes`), then
+`hermes gateway restart`.
 
 If you change the post-install checklist (`hermesFollowUpChecklist`), update the README "Configure"
 section, `docs/CONNECT_HERMES{,.zh}.md`, and the Hermes tab in
