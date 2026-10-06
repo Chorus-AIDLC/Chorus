@@ -68,7 +68,7 @@ def test_no_secrets_in_package():
 
 
 def test_no_commit_sha_committed():
-    hits = [str(p) for p in _package_files() if p.suffix in {".yaml", ".json", ".py"}
+    hits = [str(p) for p in _package_files() if p.suffix in {".yaml", ".json", ".py", ".md"}
             and SHA_RE.search(p.read_text(errors="ignore"))]
     assert hits == []
 
