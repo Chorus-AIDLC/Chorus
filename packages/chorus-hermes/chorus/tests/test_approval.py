@@ -610,3 +610,28 @@ def test_close_keeps_running_execution_row(hermes, tmp_path, monkeypatch):
 
     asyncio.run(go())
     assert all("entityType" not in b for b in h.turn_bodies())
+
+
+def test_approval_survives_a_hermes_internal_run_without_a_chorus_turn(broker, fake_adapter):
+    """An async-delegation follow-up runs in the chat with no Chorus turn: keep waiting (e2e BHR4CH)."""
+    fake_adapter._active = {}
+    fake_adapter.chat_running = lambda chat_id: chat_id == "task:t-1"
+    req = FakeRequest(timeout_seconds=3)
+    broker.on_pre_approval_request(request_id="req-1", session_key="agent:main:chorus:dm:task:t-1")
+    t, out = present_async(broker, req)
+    token = posted_token(fake_adapter)
+    time.sleep(0.2)  # several poll intervals: the old _active-only check abandoned here
+    assert "value" not in out
+    assert broker.offer(owner_reply(f"approve once {token}")) == "once"
+    t.join(3)
+    assert out["value"].choice == "once"
+
+
+def test_approval_abandoned_when_no_run_is_live(broker, fake_adapter):
+    fake_adapter._active = {}
+    fake_adapter.chat_running = lambda chat_id: False
+    req = FakeRequest(timeout_seconds=3)
+    broker.on_pre_approval_request(request_id="req-1", session_key="agent:main:chorus:dm:task:t-1")
+    start = time.monotonic()
+    assert broker.present(req).choice == "deny"
+    assert time.monotonic() - start < 1.0

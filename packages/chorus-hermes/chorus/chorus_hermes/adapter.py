@@ -42,6 +42,11 @@ logger = logging.getLogger(__name__)
 PLATFORM_NAME = "chorus"
 PLATFORM_LABEL = "Chorus"
 DRAIN_WAIT_S = 30.0
+# A Hermes-internal run (e.g. the ``[ASYNC DELEGATION BATCH COMPLETE]`` follow-up an async
+# ``delegate_task`` injects) can hold the chat's gateway session without any Chorus turn.
+# Wakes wait behind it this long (polling every GATEWAY_BUSY_POLL_S) before starting anyway.
+GATEWAY_BUSY_WAIT_S = 3600.0
+GATEWAY_BUSY_POLL_S = 0.5
 STOP_GRACE_S = 10.0
 
 PLATFORM_HINT = (
@@ -131,6 +136,7 @@ class ChorusAdapterCore:
         self._active: Dict[str, ActiveTurn] = {}
         self._queues: Dict[str, Deque[WakeRequest]] = collections.defaultdict(collections.deque)
         self._starting: set = set()
+        self._gateway_waiters: set = set()  # chat ids with a wait-for-gateway-release drainer
         self.session_keys: Dict[str, Dict[str, Any]] = {}  # session_key -> Chorus entity mapping
         self._hermes_session_to_chat: Dict[str, str] = {}
         self._connection_uuid: Optional[str] = None
@@ -276,16 +282,52 @@ class ChorusAdapterCore:
     def chat_busy(self, chat_id: str) -> bool:
         return chat_id in self._active or chat_id in self._starting or bool(self._queues.get(chat_id))
 
+    def _chat_session_key(self, chat_id: str) -> Optional[str]:
+        """The Hermes gateway session key a wake for ``chat_id`` would run under."""
+        try:
+            source = self.build_source(chat_id=chat_id, chat_name=chat_id, chat_type="dm",
+                                       user_id=self.owner_uuid, user_name=self.owner_name or self.owner_uuid)
+            return self._source_session_key(source)
+        except Exception:
+            return None
+
+    def gateway_session_busy(self, chat_id: str) -> bool:
+        """True while the Hermes gateway runs this chat's session outside any Chorus turn."""
+        key = self._chat_session_key(chat_id)
+        return bool(key) and key in (getattr(self, "_active_sessions", None) or {})
+
+    def chat_running(self, chat_id: str) -> bool:
+        """An agent run is live in this chat: a Chorus turn, or a Hermes-internal run."""
+        return chat_id in self._active or chat_id in self._starting or self.gateway_session_busy(chat_id)
+
     async def dispatch(self, wake: WakeRequest) -> None:
         """Run a wake now, or queue it behind the running turn of the same chat (FIFO)."""
         chat_id = wake.chat_id
-        if self.chat_busy(chat_id):
+        gateway_busy = not self.chat_busy(chat_id) and self.gateway_session_busy(chat_id)
+        if gateway_busy or self.chat_busy(chat_id):
             self._queues[chat_id].append(wake)
-            logger.info("[Chorus] wake %s queued behind running turn on %s", wake.label, chat_id)
+            logger.info("[Chorus] wake %s queued behind running %s on %s", wake.label,
+                        "Hermes session" if gateway_busy else "turn", chat_id)
             await self.turns.mark_queued(entity_of(wake.entity_type, wake.entity_uuid),
                                          wake.root_idea_uuid, wake.direct_idea_uuid)
+            if gateway_busy and chat_id not in self._gateway_waiters:
+                # No Chorus turn will finalize and drain this queue: wait for the gateway instead.
+                # Handing the wake to the busy gateway would let Hermes' busy-input policy steer /
+                # redirect / drop it without accepting it (reported as a false wake failure).
+                self._gateway_waiters.add(chat_id)
+                spawn(self._drain_after_gateway(chat_id), self._bg)
             return
         await self._start(wake)
+
+    async def _drain_after_gateway(self, chat_id: str) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + GATEWAY_BUSY_WAIT_S
+            while self.gateway_session_busy(chat_id) and loop.time() < deadline:
+                await asyncio.sleep(GATEWAY_BUSY_POLL_S)
+        finally:
+            self._gateway_waiters.discard(chat_id)
+        await self._drain(chat_id, None)
 
     def _build_event(self, wake: WakeRequest, text: str, *, control: bool = False, message_id: str = ""):
         h = self._h

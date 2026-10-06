@@ -426,6 +426,32 @@ def test_two_wakes_for_one_idea_share_a_session_sequentially(hermes, tmp_path):
     assert statuses == [("running", "t-1"), ("ended", "t-1"), ("running", "t-2"), ("ended", "t-2")]
 
 
+def test_wake_waits_behind_a_hermes_internal_run_instead_of_failing(hermes, tmp_path, monkeypatch):
+    """e2e: an async delegate_task follow-up held the chat's gateway session with no Chorus turn;
+    the wake was handed to the busy gateway, not accepted, and reported as a false wakeError."""
+    monkeypatch.setattr(hermes, "GATEWAY_BUSY_POLL_S", 0.01)
+    h = Harness(hermes, tmp_path)
+
+    async def go():
+        await h.connect()
+        key = "agent:main:chorus:dm:idea:i-1"
+        h.adapter._active_sessions[key] = True  # Hermes-internal run owns the session
+        h.notify(notif("n-1"))
+        await wait_for(lambda: h.adapter._queues.get("idea:i-1"))
+        await asyncio.sleep(0.05)
+        assert h.handled == [] and h.adapter.busy_events == []  # never handed to the busy gateway
+        assert h.adapter.chat_running("idea:i-1") and not h.adapter._active
+        h.adapter._active_sessions.pop(key)  # the internal run finished
+        await wait_for(lambda: len(h.handled) == 1)
+        await h.idle()
+        await h.adapter.disconnect()
+
+    run(go())
+    statuses = [b["status"] for b in h.turn_bodies()]
+    assert statuses == ["running", "ended"]
+    assert not any("wakeError" in b for b in h.turn_bodies())
+
+
 def test_handler_failure_reports_crash(hermes, tmp_path):
     h = Harness(hermes, tmp_path)
     h.raise_exc = RuntimeError("model exploded")

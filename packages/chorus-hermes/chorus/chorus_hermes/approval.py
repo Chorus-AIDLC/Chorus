@@ -230,7 +230,7 @@ class ApprovalBroker:
                 return
             if entry.done.wait(min(self.poll_interval, remaining)):
                 return
-            if entry.chat_id and entry.chat_id not in getattr(adapter, "_active", {entry.chat_id: True}):
+            if entry.chat_id and not _chat_running(adapter, entry.chat_id):
                 logger.info("[Chorus] approval %s abandoned: its turn is no longer running", entry.token)
                 return
             try:
@@ -293,6 +293,18 @@ class ApprovalBroker:
                 entry.done.set()
                 return entry.choice
         return None
+
+
+def _chat_running(adapter: Any, chat_id: str) -> bool:
+    """Whether an agent run is still live in ``chat_id`` (a Chorus turn or a Hermes-internal
+    follow-up run such as an async delegation completion) — the approval is still wanted."""
+    running = getattr(adapter, "chat_running", None)
+    if callable(running):
+        try:
+            return bool(running(chat_id))
+        except Exception:
+            return True
+    return chat_id in getattr(adapter, "_active", {chat_id: True})
 
 
 def _secrets_of(adapter: Any) -> tuple:
