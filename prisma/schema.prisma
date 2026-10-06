@@ -529,7 +529,7 @@ model DaemonConnection {
   agentUuid   String
   agent       Agent   @relation(fields: [agentUuid], references: [uuid], onDelete: Cascade)
 
-  clientType    String // claude_code | openclaw | browser | other
+  clientType    String // claude_code | openclaw | codex | kiro | dsh | pi | hermes | browser | other
   clientVersion String? // self-reported, untrusted, display-only
   // Self-reported hostname (display-only). Non-null with "" default: a @@unique
   // over a nullable column is broken for dedup because connectors treat each

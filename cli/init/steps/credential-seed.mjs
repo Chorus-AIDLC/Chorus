@@ -4,7 +4,7 @@
 // the init SELECTION (ctx.selection) and captures ONE Chorus key per selected
 // agent, writing each as its own `agents[]` entry tagged with the daemon agentType
 // its adapter maps to (cli/init/agent-type-map.mjs — claude→claude-code, codex,
-// kiro, everything else→offline). This is how one `chorus init` run wires several
+// kiro, pi, everything else — opencode/openclaw/dsh/hermes — →offline). This is how one `chorus init` run wires several
 // agents into a single daemon at once (daemon-multi-agent).
 //
 // It reuses the existing, tested credential plumbing:

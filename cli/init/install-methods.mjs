@@ -573,10 +573,165 @@ export async function installKiro(ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Hermes Agent — VERIFIED against the local Hermes CLI (`hermes plugins install
+// --help`, `hermes plugins list --help`):
+//   `hermes plugins install <owner/repo/subdir> --ref <40-hex COMMIT_SHA> --enable [--force]`
+//   `hermes plugins list --json`   → [{ name, status, version, source, ... }]
+// `--ref` accepts ONLY an immutable 40-character commit SHA (no tag names), so the
+// release tag `v<cli-version>` is first resolved with `git ls-remote` to its PEELED
+// commit (`refs/tags/v<ver>^{}`, present for annotated tags), falling back to the
+// unpeeled ref for a lightweight tag. An unresolvable tag fails CLOSED: nothing is
+// installed. Hermes installs a git subdirectory under $HERMES_HOME/plugins/<last
+// path segment>, i.e. `chorus` (native plugin) and `chorus-mcp` (portable MCP pkg).
+// Hermes presence comes from the plugin's own gateway connection (clientType
+// "hermes"), not the Chorus daemon, so the selection maps to agentType "offline".
+// No secret is written anywhere: the plugin reads CHORUS_URL / CHORUS_API_KEY from
+// the environment, and the follow-up checklist only names the variables.
+// ---------------------------------------------------------------------------
+export const HERMES_GIT_URL = "https://github.com/Chorus-AIDLC/Chorus.git";
+/** The two plugin directories `chorus agents add` installs, in order. `name` is the
+ *  installed plugin name (Hermes uses the last subdir segment). */
+export const HERMES_PLUGINS = Object.freeze([
+  Object.freeze({ name: "chorus", source: "Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus" }),
+  Object.freeze({ name: "chorus-mcp", source: "Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus-mcp" }),
+]);
+export const HERMES_INSTALL_DOCS_URL = "https://hermes-agent.nousresearch.com/docs/getting-started/installation";
+
+const CLI_PACKAGE_JSON_URL = new URL("../../package.json", import.meta.url);
+
+/** The chorus CLI version (root package.json), or null when unreadable. */
+export function chorusCliVersion({ pkgUrl = CLI_PACKAGE_JSON_URL } = {}) {
+  try {
+    const v = JSON.parse(readFileSync(fileURLToPath(pkgUrl), "utf8"))?.version;
+    return nonEmpty(v) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function hermesHome(env) {
+  return nonEmpty(env.HERMES_HOME) ?? join(env.HOME || homedir(), ".hermes");
+}
+
+/**
+ * Resolve release tag `tag` to its commit SHA via `git ls-remote`. Prefers the
+ * peeled `^{}` line (annotated tag → commit); falls back to the unpeeled ref
+ * (lightweight tag already points at the commit).
+ * @returns {{ ok: true, sha: string } | { ok: false, error: string }}
+ */
+export function resolveHermesTagSha(tag, { run = runCommand, env = process.env, gitUrl = HERMES_GIT_URL } = {}) {
+  const ref = `refs/tags/${tag}`;
+  const r = run("git", ["ls-remote", gitUrl, ref, `${ref}^{}`], { env, timeoutMs: 60_000 });
+  if (!r?.ok) return { ok: false, error: `git ls-remote failed: ${errText(r)}` };
+  let peeled;
+  let unpeeled;
+  for (const line of String(r.stdout ?? "").split("\n")) {
+    const [sha, name] = line.trim().split(/\s+/);
+    if (!/^[0-9a-f]{40}$/i.test(sha ?? "")) continue;
+    if (name === `${ref}^{}`) peeled = sha.toLowerCase();
+    else if (name === ref) unpeeled = sha.toLowerCase();
+  }
+  const sha = peeled ?? unpeeled;
+  return sha ? { ok: true, sha } : { ok: false, error: `tag ${tag} not found on ${gitUrl}` };
+}
+
+/**
+ * Hermes install state. Prefers `hermes plugins list --json` (only when `hermes`
+ * is on PATH); otherwise falls back to the on-disk plugin dirs under
+ * $HERMES_HOME/plugins. Read-only.
+ */
+export function readHermesInstallState({ env = process.env, run, binaryOnPath: onPath = binaryOnPath } = {}) {
+  const names = HERMES_PLUGINS.map((p) => p.name);
+  let found = null;
+  if (onPath(["hermes"], { env })) {
+    const r = (run ?? runCommand)("hermes", ["plugins", "list", "--json"], { env, timeoutMs: 60_000 });
+    if (r?.ok) {
+      try {
+        const list = JSON.parse(r.stdout);
+        if (Array.isArray(list)) {
+          found = {};
+          for (const p of list) if (p && names.includes(p.name)) found[p.name] = p;
+        }
+      } catch {
+        found = null;
+      }
+    }
+  }
+  if (!found) {
+    const dir = join(hermesHome(env), "plugins");
+    found = {};
+    if (existsSync(join(dir, "chorus", "plugin.yaml"))) found.chorus = { name: "chorus" };
+    if (existsSync(join(dir, "chorus-mcp", "plugin.json"))) found["chorus-mcp"] = { name: "chorus-mcp" };
+  }
+  const installed = names.filter((n) => found[n]);
+  return {
+    marketplaceRegistered: false, // Hermes installs from a git subdirectory — no marketplace
+    pluginInstalled: installed.length === names.length,
+    installedPlugins: installed,
+    version: found.chorus?.version,
+  };
+}
+
+/** The post-install checklist (names env vars only — never a secret value). */
+export function hermesFollowUpChecklist({ url } = {}) {
+  return [
+    "Hermes follow-up configuration:",
+    `  1. export CHORUS_URL=${url || "<your Chorus URL>"} and export CHORUS_API_KEY=<this agent's cho_ key> in the gateway's environment`,
+    "  2. hermes config set terminal.cwd <path to the repository this gateway serves>",
+    "  3. hermes config set security.approval.transport chorus",
+    "  4. enable the chorus gateway platform (platforms.chorus.enabled: true — see packages/chorus-hermes/README.md)",
+    "  5. hermes gateway install   (then: hermes gateway start)",
+  ];
+}
+
+export function installHermes(ctx) {
+  const run = ctx.run ?? runCommand;
+  const env = ctx.env ?? process.env;
+  if (!(ctx.binaryOnPath ?? binaryOnPath)(["hermes"], { env })) {
+    return out("hermes", UNSUPPORTED, `hermes CLI not detected on PATH — install Hermes Agent first (${HERMES_INSTALL_DOCS_URL}), then re-run`);
+  }
+  const state = safeState(ctx, { run });
+  const update = !!ctx.flags?.updateInstalled;
+  const logChecklist = () => {
+    for (const line of hermesFollowUpChecklist({ url: nonEmpty(ctx.flags?.url) ?? nonEmpty(env.CHORUS_URL) })) ctx.io?.log?.(line);
+  };
+  if (state.pluginInstalled && !update) {
+    logChecklist();
+    return out("hermes", SKIPPED, "already installed (chorus + chorus-mcp)");
+  }
+
+  const version = nonEmpty(ctx.cliVersion) ?? chorusCliVersion();
+  if (!version) return out("hermes", FAILED, "could not determine the chorus CLI version to pin the Hermes plugins — nothing installed");
+  const tag = `v${version}`;
+  const resolved = (ctx.resolveTagSha ?? resolveHermesTagSha)(tag, { run, env });
+  if (!resolved?.ok) {
+    return out("hermes", FAILED, `could not resolve release tag ${tag} to a commit SHA (${resolved?.error ?? "unknown error"}) — nothing installed`);
+  }
+
+  const already = new Set(state.installedPlugins ?? []);
+  for (const { name, source } of HERMES_PLUGINS) {
+    // Re-install over an existing dir only on an accepted refresh (Hermes refuses
+    // an existing target without --force); a partial install skips what exists.
+    if (already.has(name) && !update) continue;
+    const args = ["plugins", "install", source, "--ref", resolved.sha, "--enable"];
+    if (already.has(name)) args.push("--force");
+    const r = run("hermes", args, { env, timeoutMs: 300_000 });
+    if (!r.ok) return out("hermes", FAILED, `hermes plugins install ${name} failed: ${errText(r)}`);
+  }
+  logChecklist();
+  const repaired = already.size > 0;
+  return out(
+    "hermes",
+    repaired ? REPAIRED : INSTALLED,
+    `${repaired ? "reinstalled" : "installed"} chorus + chorus-mcp at ${tag} (${resolved.sha.slice(0, 12)}) and enabled them`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Guided (not automated) — the fallback mechanism for an agent that has no
 // verified native install path: surface a precise next step instead of running
 // an unverified command (the "no guessed command" rule). NO agent currently
-// ships as guided — claude / codex / opencode / openclaw / kiro / dsh / pi all
+// ships as guided — claude / codex / opencode / openclaw / kiro / dsh / pi / hermes all
 // have real installers (pi flipped to `installPi` once @chorus-aidlc/chorus-pi
 // shipped to npm). `guided()` is kept as the mechanism for a future agent added
 // before its install command is verified.

@@ -15,6 +15,14 @@ import {
   installOpencode,
   installDsh,
   installOpenclaw,
+  installHermes,
+  readHermesInstallState,
+  resolveHermesTagSha,
+  hermesFollowUpChecklist,
+  chorusCliVersion,
+  HERMES_PLUGINS,
+  HERMES_GIT_URL,
+  HERMES_INSTALL_DOCS_URL,
   readCodexInstallState,
   readOpencodeInstallState,
   readDshInstallState,
@@ -40,7 +48,7 @@ function fakeRun(script = () => ({ ok: true, code: 0, stdout: "", stderr: "" }))
 
 function ctxFor(
   agentId,
-  { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer, resolveCredentials } = {},
+  { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer, resolveCredentials, cliVersion, resolveTagSha } = {},
 ) {
   return {
     agentId,
@@ -51,6 +59,8 @@ function ctxFor(
     flags,
     binaryOnPath,
     minHostVersion,
+    cliVersion,
+    resolveTagSha,
     // Codex MCP-config deps default to hermetic no-ops so codex tests never touch the real
     // ~/.codex/config.toml or read the real ~/.chorus/daemon.json. Tests that assert on them
     // override these.
@@ -666,5 +676,179 @@ describe("state readers (temp fixtures)", () => {
     // openclaw.json present but without the chorus entry.
     writeFileSync(join(empty, "openclaw.json"), JSON.stringify({ plugins: { entries: { other: { enabled: true } } } }));
     expect(readOpenclawInstallState({ env: { OPENCLAW_CONFIG_DIR: empty } }).pluginInstalled).toBe(false);
+  });
+});
+
+
+describe("installHermes (verified against the local `hermes plugins install --help`)", () => {
+  const SHA_PEELED = "a".repeat(40);
+  const SHA_TAG = "b".repeat(40);
+  const lsRemote = (stdout, ok = true) => fakeRun((cmd) =>
+    cmd === "git" ? { ok, code: ok ? 0 : 128, stdout, stderr: ok ? "" : "fatal: unable to access" } : { ok: true, code: 0, stdout: "", stderr: "" });
+  const logIo = () => {
+    const lines = [];
+    return { io: { log: (m) => lines.push(m) }, lines };
+  };
+
+  it("resolves v<cli-version> to the PEELED commit SHA, then installs both dirs with --ref <sha> --enable", () => {
+    const run = lsRemote(`${SHA_TAG}\trefs/tags/v0.22.0\n${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`);
+    const { io, lines } = logIo();
+    const res = installHermes(ctxFor("hermes", { run, io, binaryOnPath: () => true, cliVersion: "0.22.0", env: { CHORUS_URL: "https://c.example" } }));
+    expect(res.action).toBe(INSTALLED);
+    expect(run.calls[0]).toMatchObject({ cmd: "git", args: ["ls-remote", HERMES_GIT_URL, "refs/tags/v0.22.0", "refs/tags/v0.22.0^{}"] });
+    expect(run.calls.slice(1).map((c) => [c.cmd, c.args])).toEqual([
+      ["hermes", ["plugins", "install", "Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus", "--ref", SHA_PEELED, "--enable"]],
+      ["hermes", ["plugins", "install", "Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus-mcp", "--ref", SHA_PEELED, "--enable"]],
+    ]);
+    expect(res.detail).toContain("v0.22.0");
+    const text = lines.join("\n");
+    for (const needle of ["CHORUS_URL=https://c.example", "CHORUS_API_KEY", "terminal.cwd", "security.approval.transport chorus", "platforms.chorus.enabled", "hermes gateway install"]) {
+      expect(text).toContain(needle);
+    }
+  });
+
+  it("falls back to the unpeeled ref for a lightweight tag", () => {
+    const run = lsRemote(`${SHA_TAG}\trefs/tags/v0.22.0\n`);
+    const res = installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "0.22.0" }));
+    expect(res.action).toBe(INSTALLED);
+    expect(run.calls[1].args).toContain(SHA_TAG);
+  });
+
+  it("fails closed and installs NOTHING when the tag cannot be resolved", () => {
+    for (const run of [lsRemote(""), lsRemote("", false), lsRemote("deadbeef\trefs/tags/v0.22.0\n")]) {
+      const { io, lines } = logIo();
+      const res = installHermes(ctxFor("hermes", { run, io, binaryOnPath: () => true, cliVersion: "0.22.0" }));
+      expect(res.action).toBe(FAILED);
+      expect(res.detail).toContain("v0.22.0");
+      expect(res.detail).toContain("nothing installed");
+      expect(run.calls.filter((c) => c.cmd === "hermes")).toHaveLength(0);
+      expect(lines).toHaveLength(0);
+    }
+  });
+
+  it("uses the injectable resolver instead of git when provided", () => {
+    const run = fakeRun();
+    const resolveTagSha = (tag) => ({ ok: true, sha: tag === "v1.2.3" ? SHA_PEELED : "x" });
+    const res = installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "1.2.3", resolveTagSha }));
+    expect(res.action).toBe(INSTALLED);
+    expect(run.calls.every((c) => c.cmd === "hermes")).toBe(true);
+    expect(run.calls[0].args).toContain(SHA_PEELED);
+  });
+
+  it("skips (no network, no install) when already installed and updateInstalled is not set", () => {
+    const run = fakeRun();
+    const { io, lines } = logIo();
+    const res = installHermes(ctxFor("hermes", {
+      state: { pluginInstalled: true, installedPlugins: ["chorus", "chorus-mcp"] },
+      run, io, binaryOnPath: () => true, cliVersion: "0.22.0",
+    }));
+    expect(res.action).toBe(SKIPPED);
+    expect(run.calls).toHaveLength(0);
+    expect(lines.join("\n")).toContain("hermes gateway install");
+  });
+
+  it("reinstalls with --force on an accepted refresh (updateInstalled)", () => {
+    const run = lsRemote(`${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`);
+    const res = installHermes(ctxFor("hermes", {
+      state: { pluginInstalled: true, installedPlugins: ["chorus", "chorus-mcp"] },
+      run, binaryOnPath: () => true, cliVersion: "0.22.0", flags: { updateInstalled: true },
+    }));
+    expect(res.action).toBe(REPAIRED);
+    const installs = run.calls.filter((c) => c.cmd === "hermes");
+    expect(installs).toHaveLength(2);
+    for (const c of installs) expect(c.args).toEqual(expect.arrayContaining(["--ref", SHA_PEELED, "--enable", "--force"]));
+  });
+
+  it("repairs a partial install by installing only the missing directory", () => {
+    const run = lsRemote(`${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`);
+    const res = installHermes(ctxFor("hermes", {
+      state: { pluginInstalled: false, installedPlugins: ["chorus"] },
+      run, binaryOnPath: () => true, cliVersion: "0.22.0",
+    }));
+    expect(res.action).toBe(REPAIRED);
+    const installs = run.calls.filter((c) => c.cmd === "hermes");
+    expect(installs).toHaveLength(1);
+    expect(installs[0].args[2]).toBe("Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus-mcp");
+  });
+
+  it("reports FAILED with the CLI error when a hermes plugins install fails", () => {
+    const run = fakeRun((cmd) => cmd === "git"
+      ? { ok: true, code: 0, stdout: `${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`, stderr: "" }
+      : { ok: false, code: 1, stdout: "", stderr: "clone failed" });
+    const res = installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "0.22.0" }));
+    expect(res.action).toBe(FAILED);
+    expect(res.detail).toContain("clone failed");
+    expect(run.calls.filter((c) => c.cmd === "hermes")).toHaveLength(1);
+  });
+
+  it("reports not detected with the Hermes install docs link and runs nothing when hermes is not on PATH", () => {
+    const run = fakeRun();
+    const { io, lines } = logIo();
+    const res = installHermes(ctxFor("hermes", { run, io, binaryOnPath: () => false, cliVersion: "0.22.0" }));
+    expect(res.action).toBe(UNSUPPORTED);
+    expect(res.detail).toContain("not detected");
+    expect(res.detail).toContain(HERMES_INSTALL_DOCS_URL);
+    expect(run.calls).toHaveLength(0);
+    expect(lines).toHaveLength(0);
+  });
+
+  it("never passes or prints an API key", () => {
+    const run = lsRemote(`${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`);
+    const { io, lines } = logIo();
+    installHermes(ctxFor("hermes", {
+      run, io, binaryOnPath: () => true, cliVersion: "0.22.0",
+      env: { CHORUS_API_KEY: "cho_secret_value" }, flags: { apiKey: "cho_secret_value" },
+    }));
+    expect(JSON.stringify(run.calls.map((c) => c.args))).not.toContain("cho_secret_value");
+    expect(lines.join("\n")).not.toContain("cho_secret_value");
+  });
+
+  it("chorusCliVersion reads the root package.json version", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+    expect(chorusCliVersion()).toBe(pkg.version);
+    expect(chorusCliVersion({ pkgUrl: pathToFileURL(join(tmpdir(), "no-such-chorus-pkg.json")) })).toBeNull();
+  });
+
+  it("hermesFollowUpChecklist uses a placeholder when no URL is known", () => {
+    expect(hermesFollowUpChecklist().join("\n")).toContain("<your Chorus URL>");
+  });
+});
+
+describe("resolveHermesTagSha", () => {
+  it("prefers the peeled ^{} commit over the tag object", () => {
+    const run = fakeRun(() => ({ ok: true, stdout: `${"1".repeat(40)}\trefs/tags/v9.9.9\n${"2".repeat(40)}\trefs/tags/v9.9.9^{}\n` }));
+    expect(resolveHermesTagSha("v9.9.9", { run })).toEqual({ ok: true, sha: "2".repeat(40) });
+  });
+  it("returns ok:false when the tag is absent", () => {
+    const run = fakeRun(() => ({ ok: true, stdout: "" }));
+    expect(resolveHermesTagSha("v9.9.9", { run }).ok).toBe(false);
+  });
+});
+
+describe("readHermesInstallState", () => {
+  it("parses `hermes plugins list --json` when hermes is on PATH", () => {
+    const run = fakeRun(() => ({ ok: true, stdout: JSON.stringify([
+      { name: "chorus", status: "enabled", version: "0.22.0" },
+      { name: "chorus-mcp", status: "enabled" },
+      { name: "other" },
+    ]) }));
+    const state = readHermesInstallState({ env: { HERMES_HOME: "/nonexistent-xyz" }, run, binaryOnPath: () => true });
+    expect(run.calls[0]).toMatchObject({ cmd: "hermes", args: ["plugins", "list", "--json"] });
+    expect(state).toMatchObject({ pluginInstalled: true, installedPlugins: ["chorus", "chorus-mcp"], version: "0.22.0" });
+  });
+  it("falls back to the on-disk plugin dirs under $HERMES_HOME/plugins", () => {
+    const home = mkdtempSync(join(tmpdir(), "hermes-"));
+    mkdirSync(join(home, "plugins", "chorus"), { recursive: true });
+    writeFileSync(join(home, "plugins", "chorus", "plugin.yaml"), "name: chorus\n");
+    const run = fakeRun();
+    const partial = readHermesInstallState({ env: { HERMES_HOME: home }, run, binaryOnPath: () => false });
+    expect(run.calls).toHaveLength(0);
+    expect(partial).toMatchObject({ pluginInstalled: false, installedPlugins: ["chorus"] });
+    mkdirSync(join(home, "plugins", "chorus-mcp"), { recursive: true });
+    writeFileSync(join(home, "plugins", "chorus-mcp", "plugin.json"), "{}");
+    expect(readHermesInstallState({ env: { HERMES_HOME: home }, binaryOnPath: () => false }).pluginInstalled).toBe(true);
+  });
+  it("HERMES_PLUGINS names the two directories in install order", () => {
+    expect(HERMES_PLUGINS.map((p) => p.name)).toEqual(["chorus", "chorus-mcp"]);
   });
 });

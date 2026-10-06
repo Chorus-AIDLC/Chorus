@@ -14,6 +14,7 @@
 //   - openclaw : bin `openclaw`; dir ~/.openclaw|~/.config/openclaw  (NOT independently verified — probe both; see NOTE)
 //   - pi       : bin `pi`;       dir ~/.pi|~/.config/pi       (NOT independently verified — probe both; see NOTE)
 //   - dsh      : bin `dsh`;      dir $DSH_HOME|~/.dsh         ($DSH_HOME per dsh integration; see NOTE)
+//   - hermes   : bin `hermes`;   dir $HERMES_HOME|~/.hermes   (hermes_constants.get_hermes_home: HERMES_HOME env → ~/.hermes)
 //
 // NOTE: openclaw / pi / dsh config-dir specifics were not verifiable on this
 // build host (their CLIs/config were not all present); the descriptors probe the
@@ -36,12 +37,14 @@ import {
   installOpenclaw,
   installKiro,
   installPi,
+  installHermes,
   readCodexInstallState,
   readOpencodeInstallState,
   readDshInstallState,
   readOpenclawInstallState,
   readKiroInstallState,
   readPiInstallState,
+  readHermesInstallState,
 } from "./install-methods.mjs";
 
 // Re-export the shared marketplace identifiers from their canonical home so
@@ -97,6 +100,7 @@ export const AGENT_DESCRIPTORS = [
   { id: "openclaw", displayName: "OpenClaw", binaries: ["openclaw"], configDirs: ["~/.openclaw", "~/.config/openclaw"], readState: readOpenclawInstallState, install: installOpenclaw },
   { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], readState: readPiInstallState, install: installPi },
   { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"], readState: readDshInstallState, install: installDsh },
+  { id: "hermes", displayName: "Hermes", binaries: ["hermes"], configDirs: ["$HERMES_HOME", "~/.hermes"], readState: readHermesInstallState, install: installHermes },
 ];
 
 /**
@@ -118,7 +122,7 @@ export function buildAdapter(d) {
       // "function"` alone would report every fallback agent as supported — the
       // pre-existing latent bug); guided installers are tagged `.guided === true`,
       // so exclude them here. Every current agent (claude/codex/opencode + dsh/
-      // openclaw/kiro/pi) has a real installer → true; a future guided fallback → false.
+      // openclaw/kiro/pi/hermes) has a real installer → true; a future guided fallback → false.
       return { supported: typeof d.install === "function" && d.install.guided !== true, ...base };
     },
     installPlugin: (ctx = {}) =>

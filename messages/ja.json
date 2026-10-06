@@ -1613,6 +1613,7 @@
     "clientKiro": "Kiro",
     "clientDsh": "DeepSeek Harness",
     "clientPi": "Pi",
+    "clientHermes": "Hermes",
     "clientUnknown": "不明なクライアント",
     "uptimeMonoDays": "{days}日 {time}",
     "mobileBack": "接続",

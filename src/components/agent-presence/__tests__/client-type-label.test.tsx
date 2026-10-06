@@ -26,6 +26,18 @@ describe("useClientTypeLabel", () => {
     expect(result.current("dsh")).toBe("DeepSeek Harness");
   });
 
+  it("renders the Hermes label for the hermes client type", () => {
+    const { result } = renderHook(() => useClientTypeLabel());
+
+    expect(result.current("hermes")).toBe("Hermes");
+  });
+
+  it("defines clientHermes in every supported locale", () => {
+    for (const messages of [en, zh, ja, ko]) {
+      expect(messages.agentConnections.clientHermes).toBe("Hermes");
+    }
+  });
+
   it("defines clientDsh in every supported locale", () => {
     for (const messages of [en, zh, ja, ko]) {
       expect(messages.agentConnections.clientDsh).toBe("DeepSeek Harness");
