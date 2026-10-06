@@ -68,15 +68,16 @@ def _hermes() -> SimpleNamespace:
 
 
 def _client_version() -> str:
-    try:
-        import yaml
-        from pathlib import Path
+    """``version:`` from plugin.yaml (line parse: the Hermes runtime ships without PyYAML)."""
+    import re
+    from pathlib import Path
 
-        data = yaml.safe_load((Path(__file__).resolve().parents[1] / "plugin.yaml").read_text(encoding="utf-8"))
-        version = data.get("version") if isinstance(data, Mapping) else None
-        return str(version) if version else "0.0.0"
-    except Exception:
+    try:
+        text = (Path(__file__).resolve().parents[1] / "plugin.yaml").read_text(encoding="utf-8")
+    except OSError:
         return "0.0.0"
+    match = re.search(r"^version:\s*[\"']?([^\"'\s#]+)", text, re.MULTILINE)
+    return match.group(1) if match else "0.0.0"
 
 
 @dataclass

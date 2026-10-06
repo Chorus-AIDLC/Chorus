@@ -592,3 +592,13 @@ def test_chat_id_falls_back_to_entity_without_direct_idea(hermes, tmp_path):
     run(go())
     assert h.handled[0].source.chat_id == "task:t-9"
     assert h.turn_bodies()[0]["sessionId"] == "t-9"
+
+
+def test_client_version_comes_from_plugin_yaml_without_pyyaml(hermes, monkeypatch):
+    import yaml as real_yaml
+
+    from .conftest import PLUGIN_DIR
+
+    monkeypatch.setitem(sys.modules, "yaml", None)  # the Hermes runtime has no PyYAML
+    expected = str(real_yaml.safe_load((PLUGIN_DIR / "plugin.yaml").read_text())["version"])
+    assert hermes._client_version() == expected != "0.0.0"
