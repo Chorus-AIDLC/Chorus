@@ -34,6 +34,17 @@ const BASE = {
 };
 const mk = (o) => ({ ...BASE, ...o });
 
+describe("headless background lifetime policy", () => {
+  it("leaves background-agent waiting to runtime configuration, not a global foreground mandate", () => {
+    const prompt = buildPrompt(mk({}));
+    expect(prompt).toContain(HEADLESS_PREAMBLE);
+    expect(HEADLESS_PREAMBLE).not.toContain("run_in_background");
+    expect(HEADLESS_PREAMBLE).not.toMatch(/(?:collect and handle ALL|Wait for each owned child's)/);
+    expect(HEADLESS_PREAMBLE).toContain("END THE TURN and leave the work");
+    expect(HEADLESS_PREAMBLE).toContain("do not poll or wait for a synchronous reply");
+  });
+});
+
 /** Count non-overlapping occurrences of `needle` in `hay`. */
 function occurrences(hay, needle) {
   return hay.split(needle).length - 1;

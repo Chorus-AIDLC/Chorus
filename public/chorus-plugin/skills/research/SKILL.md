@@ -4,7 +4,7 @@ description: Bounded factual research for Chorus Idea clarification, Proposal de
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.21.2"
+  version: "0.21.1"
   category: project-management
   mcp_server: chorus
 ---
