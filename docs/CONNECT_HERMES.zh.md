@@ -36,7 +36,7 @@ chorus agents add --agents hermes
 `chorus agents add --agents hermes` 会：
 
 - 用 `git ls-remote` 把发布 tag `v<CLI 版本>` 解析成 40 位 commit SHA，再以 `--ref <sha> --enable` 安装两个目录；tag 解析不到时直接失败，不安装任何东西；
-- 两个插件都已安装时，会询问是否按当前版本重新安装（`[y/N]`；带 `--yes` 或无 TTY 时自动重装）；`chorus upgrade --plugins` 也会重新安装；
+- 两个插件都已安装时，会询问是否按当前版本重新安装（`[y/N]`；带 `--yes` 或无 TTY 时自动重装）；
 - Chorus **不在** `localhost:8637` 时，向 `$HERMES_HOME/config.yaml` 写入原生 `mcp_servers.chorus` 条目（见第 3 步）；
 - 打印后续配置清单（第 2–5 步）。不会写入你的 key。
 

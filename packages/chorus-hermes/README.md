@@ -46,7 +46,7 @@ For a Hermes agent, `chorus agents add`:
   the tag does not resolve, it fails closed and installs nothing;
 - if both plugins are already present, offers to reinstall them at the current
   version (`[y/N]`; reinstalls without asking under `--yes` or when there is no
-  TTY). `chorus upgrade --plugins` also reinstalls;
+  TTY);
 - for any `CHORUS_URL` other than `http://localhost:8637`, writes the native `mcp_servers.chorus`
   entry into `$HERMES_HOME/config.yaml` (literal `<CHORUS_URL>/api/mcp`, header
   kept as the `Bearer ${CHORUS_API_KEY}` placeholder, other config preserved).
