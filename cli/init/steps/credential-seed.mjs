@@ -55,6 +55,7 @@ import { validateAndFetchIdentity } from "../../chorus-client.mjs";
 import { agentTypeForSelection, isWakeableAgentType } from "../agent-type-map.mjs";
 import { writePiMcpServer, resolvePiMcpConfigPath } from "../pi-mcp-config.mjs";
 import { probePiBackend } from "../pi-mcp-backend.mjs";
+import { binaryOnPath as defaultBinaryOnPath } from "../detect.mjs";
 
 const STEP_ID = "credential-seed";
 const { SEEDED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
@@ -460,9 +461,19 @@ export async function seedCredentials(ctx) {
   const readCodexProfile = ctx.readCodexEnvProfile ?? readCodexEnvProfile;
   const writePiMcp = ctx.writePiMcp ?? writePiMcpServer;
 
-  const selection = Array.isArray(ctx.selection) ? ctx.selection.filter((id) => nonEmpty(id)) : [];
+  let selection = Array.isArray(ctx.selection) ? ctx.selection.filter((id) => nonEmpty(id)) : [];
   if (selection.length === 0) {
     return out(SKIPPED, "no agents selected — no credentials to seed");
+  }
+
+  // Hermes selected but not installed: its plugin-install step will report "not detected"
+  // and write nothing, so don't park a key for it in ~/.chorus/daemon.json either. Filtered
+  // BEFORE the loop so the first remaining agent still gets the --api-key/CHORUS_API_KEY prefill.
+  const skippedOutcomes = [];
+  if (selection.includes("hermes") && !(ctx.binaryOnPath ?? defaultBinaryOnPath)(["hermes"], { env })) {
+    selection = selection.filter((id) => id !== "hermes");
+    skippedOutcomes.push(out(SKIPPED, "hermes: hermes CLI not detected on PATH — no credentials seeded"));
+    if (selection.length === 0) return skippedOutcomes;
   }
 
   // The Chorus server URL is shared across all selected agents (one Chorus
@@ -494,7 +505,7 @@ export async function seedCredentials(ctx) {
   }
 
   /** @type {import("../contracts.mjs").StepOutcome[]} */
-  const outcomes = [];
+  const outcomes = [...skippedOutcomes];
 
   for (let i = 0; i < selection.length; i += 1) {
     const id = selection[i];

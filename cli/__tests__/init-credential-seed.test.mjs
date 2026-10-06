@@ -1212,3 +1212,38 @@ describe("seedCredentials — Pi ~/.pi/agent/mcp.json adapter sink", () => {
     expect(write.calls).toHaveLength(0);
   });
 });
+
+describe("seedCredentials — hermes not detected", () => {
+  it("does not park a key for hermes when the hermes CLI is not on PATH, and the next agent still gets the prefill", async () => {
+    const append = fakeAppend();
+    const res = await seedCredentials(baseCtx({
+      selection: ["hermes", "opencode"],
+      flags: { url: "https://c.example", apiKey: "cho_first" },
+      appendAgent: append,
+      binaryOnPath: () => false,
+    }));
+    expect(append.calls).toHaveLength(1);
+    expect(append.calls[0]).toMatchObject({ apiKey: "cho_first", agentType: "offline" });
+    expect(res[0]).toMatchObject({ action: SKIPPED });
+    expect(res[0].detail).toContain("hermes");
+    expect(res[1]).toMatchObject({ action: SEEDED });
+  });
+
+  it("returns only the skip outcome for a hermes-only selection", async () => {
+    const append = fakeAppend();
+    const res = await seedCredentials(baseCtx({
+      selection: ["hermes"], flags: { url: "https://c.example", apiKey: "cho_k" }, appendAgent: append, binaryOnPath: () => false,
+    }));
+    expect(append.calls).toHaveLength(0);
+    expect(res).toHaveLength(1);
+    expect(res[0].action).toBe(SKIPPED);
+  });
+
+  it("seeds hermes as offline when the hermes CLI is on PATH", async () => {
+    const append = fakeAppend();
+    await seedCredentials(baseCtx({
+      selection: ["hermes"], flags: { url: "https://c.example", apiKey: "cho_k" }, appendAgent: append, binaryOnPath: () => true,
+    }));
+    expect(append.calls[0]).toMatchObject({ apiKey: "cho_k", agentType: "offline" });
+  });
+});

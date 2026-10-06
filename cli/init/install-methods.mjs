@@ -21,6 +21,7 @@ import { installFileTemplate } from "./file-template.mjs";
 import { OUTCOME_ACTIONS } from "./contracts.mjs";
 import { CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME, CHORUS_MARKETPLACE_SOURCE } from "./chorus-plugin-consts.mjs";
 import { writeCodexMcpServer } from "./codex-mcp-config.mjs";
+import { writeHermesMcpServer, resolveHermesConfigPath, isHermesLoopbackDefault } from "./hermes-mcp-config.mjs";
 import { resolveCredentials } from "../credentials.mjs";
 import { PI_LEGACY_ADAPTER_SPEC } from "./pi-compatibility.mjs";
 import { PI_CHORUS_SPEC, readPiPackageState, probePiBackend, inspectPiSettings, managePiPackages } from "./pi-mcp-backend.mjs";
@@ -587,6 +588,11 @@ export async function installKiro(ctx) {
 // "hermes"), not the Chorus daemon, so the selection maps to agentType "offline".
 // No secret is written anywhere: the plugin reads CHORUS_URL / CHORUS_API_KEY from
 // the environment, and the follow-up checklist only names the variables.
+// Like Codex, Hermes is an exception to the "plugin surface only" rule: for a
+// NON-loopback Chorus the portable chorus-mcp package (literal loopback URL) cannot
+// reach the server, so we upsert a native `mcp_servers.chorus` entry in
+// $HERMES_HOME/config.yaml (literal URL + `Bearer ${CHORUS_API_KEY}` placeholder) via
+// writeHermesMcpServer — see cli/init/hermes-mcp-config.mjs for why not `hermes config set`.
 // ---------------------------------------------------------------------------
 export const HERMES_GIT_URL = "https://github.com/Chorus-AIDLC/Chorus.git";
 /** The two plugin directories `chorus agents add` installs, in order. `name` is the
@@ -678,9 +684,9 @@ export function hermesFollowUpChecklist({ url } = {}) {
     "Hermes follow-up configuration:",
     `  1. export CHORUS_URL=${url || "<your Chorus URL>"} and export CHORUS_API_KEY=<this agent's cho_ key> in the gateway's environment`,
     "  2. hermes config set terminal.cwd <path to the repository this gateway serves>",
-    "  3. hermes config set security.approval.transport chorus",
-    "  4. enable the chorus gateway platform (platforms.chorus.enabled: true — see packages/chorus-hermes/README.md)",
-    "  5. hermes gateway install   (then: hermes gateway start)",
+    "  3. hermes config set security.approval.transport chorus   and   hermes config set security.approval.transport_fallback builtin",
+    "  4. hermes gateway install   (then: hermes gateway start)",
+    "  (no platform-enable step: the chorus platform auto-enables when CHORUS_URL and CHORUS_API_KEY are set; --enable already set plugins.enabled)",
   ];
 }
 
@@ -692,12 +698,36 @@ export function installHermes(ctx) {
   }
   const state = safeState(ctx, { run });
   const update = !!ctx.flags?.updateInstalled;
+  // URL for the native mcp_servers.chorus entry: flag/env first, then (like Codex) the
+  // credential resolver, which covers a URL typed at the credential-seed prompt.
+  let chorusUrl = nonEmpty(ctx.flags?.url) ?? nonEmpty(env.CHORUS_URL);
+  if (!chorusUrl && !ctx.flags?.pluginOnly) {
+    try {
+      chorusUrl = nonEmpty((ctx.resolveCredentials ?? resolveCredentials)(ctx.flags ?? {}, { env }).url);
+    } catch {
+      chorusUrl = undefined;
+    }
+  }
   const logChecklist = () => {
-    for (const line of hermesFollowUpChecklist({ url: nonEmpty(ctx.flags?.url) ?? nonEmpty(env.CHORUS_URL) })) ctx.io?.log?.(line);
+    for (const line of hermesFollowUpChecklist({ url: chorusUrl })) ctx.io?.log?.(line);
+  };
+  // Non-loopback Chorus → write/merge the native mcp_servers.chorus entry (literal URL,
+  // `Bearer ${CHORUS_API_KEY}` placeholder — never the key). The loopback default is
+  // already served by the portable chorus-mcp package. Idempotent; returns a note suffix.
+  const ensureMcp = () => {
+    if (ctx.flags?.pluginOnly || !chorusUrl || isHermesLoopbackDefault(chorusUrl)) return "";
+    const configPath = resolveHermesConfigPath(env);
+    try {
+      const r = (ctx.writeHermesMcpServer ?? writeHermesMcpServer)({ configPath, url: chorusUrl, backup: ctx.backup });
+      return r.changed ? `; wrote mcp_servers.chorus (${r.mcpUrl}) to ${configPath}` : "; mcp_servers.chorus already up to date";
+    } catch (err) {
+      return `; WARNING: could not write mcp_servers.chorus to ${configPath}: ${err?.message ?? String(err)}`;
+    }
   };
   if (state.pluginInstalled && !update) {
+    const note = ensureMcp();
     logChecklist();
-    return out("hermes", SKIPPED, "already installed (chorus + chorus-mcp)");
+    return out("hermes", SKIPPED, `already installed (chorus + chorus-mcp)${note}`);
   }
 
   const version = nonEmpty(ctx.cliVersion) ?? chorusCliVersion();
@@ -718,12 +748,13 @@ export function installHermes(ctx) {
     const r = run("hermes", args, { env, timeoutMs: 300_000 });
     if (!r.ok) return out("hermes", FAILED, `hermes plugins install ${name} failed: ${errText(r)}`);
   }
+  const note = ensureMcp();
   logChecklist();
   const repaired = already.size > 0;
   return out(
     "hermes",
     repaired ? REPAIRED : INSTALLED,
-    `${repaired ? "reinstalled" : "installed"} chorus + chorus-mcp at ${tag} (${resolved.sha.slice(0, 12)}) and enabled them`,
+    `${repaired ? "reinstalled" : "installed"} chorus + chorus-mcp at ${tag} (${resolved.sha.slice(0, 12)}) and enabled them${note}`,
   );
 }
 

@@ -4,7 +4,8 @@
 // "Idempotent, backed-up plugin installation"). Commands are faked (ctx.run);
 // state readers are exercised against temp fixtures.
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { writeHermesMcpServer as realWriteHermesMcpServer } from "../init/hermes-mcp-config.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -48,7 +49,7 @@ function fakeRun(script = () => ({ ok: true, code: 0, stdout: "", stderr: "" }))
 
 function ctxFor(
   agentId,
-  { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer, resolveCredentials, cliVersion, resolveTagSha } = {},
+  { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer, resolveCredentials, cliVersion, resolveTagSha, writeHermesMcpServer } = {},
 ) {
   return {
     agentId,
@@ -66,6 +67,9 @@ function ctxFor(
     // override these.
     writeCodexMcpServer: writeCodexMcpServer ?? (() => {}),
     resolveCredentials: resolveCredentials ?? (() => ({ url: undefined, apiKey: undefined })),
+    // Hermes native-MCP writer defaults to a hermetic no-op so no test touches the real
+    // ~/.hermes/config.yaml. Tests that exercise the real writer pass it with a temp HERMES_HOME.
+    writeHermesMcpServer: writeHermesMcpServer ?? (() => ({ changed: false })),
     adapter: { id: agentId, installPlugin: () => {}, readInstallState: () => state },
   };
 }
@@ -702,9 +706,11 @@ describe("installHermes (verified against the local `hermes plugins install --he
     ]);
     expect(res.detail).toContain("v0.22.0");
     const text = lines.join("\n");
-    for (const needle of ["CHORUS_URL=https://c.example", "CHORUS_API_KEY", "terminal.cwd", "security.approval.transport chorus", "platforms.chorus.enabled", "hermes gateway install"]) {
+    for (const needle of ["CHORUS_URL=https://c.example", "CHORUS_API_KEY", "terminal.cwd", "security.approval.transport chorus", "security.approval.transport_fallback builtin", "hermes gateway install"]) {
       expect(text).toContain(needle);
     }
+    // No platform-enable step (the platform auto-enables; --enable sets plugins.enabled).
+    expect(text).not.toContain("platforms.chorus.enabled");
   });
 
   it("falls back to the unpeeled ref for a lightweight tag", () => {
@@ -807,6 +813,97 @@ describe("installHermes (verified against the local `hermes plugins install --he
     const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
     expect(chorusCliVersion()).toBe(pkg.version);
     expect(chorusCliVersion({ pkgUrl: pathToFileURL(join(tmpdir(), "no-such-chorus-pkg.json")) })).toBeNull();
+  });
+
+  describe("native mcp_servers.chorus entry", () => {
+    const okRun = () => lsRemote(`${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`);
+    const tempHome = (initial) => {
+      const home = mkdtempSync(join(tmpdir(), "hermes-home-"));
+      if (initial !== undefined) writeFileSync(join(home, "config.yaml"), initial);
+      return home;
+    };
+    const ctxWithHome = (home, extra = {}) => ctxFor("hermes", {
+      run: okRun(), binaryOnPath: () => true, cliVersion: "0.22.0",
+      writeHermesMcpServer: realWriteHermesMcpServer,
+      ...extra,
+      env: { HERMES_HOME: home, HOME: "/nonexistent-home", CHORUS_API_KEY: "cho_secret_value_1234567890", ...(extra.env ?? {}) },
+    });
+
+    it("writes url + literal Bearer ${CHORUS_API_KEY} placeholder for a remote CHORUS_URL, preserving other config; re-run is a no-op", () => {
+      const initial = "model: foo  # keep me\nterminal:\n  cwd: /srv/repo\nmcp_servers:\n  other:\n    url: https://o.example/mcp\n";
+      const home = tempHome(initial);
+      const backups = [];
+      const res = installHermes(ctxWithHome(home, { env: { CHORUS_URL: "https://chorus.example.com" }, backup: (p) => backups.push(p) }));
+      expect(res.action).toBe(INSTALLED);
+      expect(res.detail).toContain("mcp_servers.chorus");
+      const after = readFileSync(join(home, "config.yaml"), "utf8");
+      expect(after).toBe(
+        "model: foo  # keep me\nterminal:\n  cwd: /srv/repo\nmcp_servers:\n  other:\n    url: https://o.example/mcp\n" +
+          '  chorus:\n    url: "https://chorus.example.com/api/mcp"\n    headers:\n      Authorization: "Bearer ${CHORUS_API_KEY}"\n',
+      );
+      expect(after).not.toContain("cho_secret_value");
+      expect(backups).toEqual([join(home, "config.yaml")]);
+
+      // Idempotent re-run (already installed → skipped path) leaves the file unchanged and takes no backup.
+      const again = installHermes(ctxWithHome(home, {
+        state: { pluginInstalled: true, installedPlugins: ["chorus", "chorus-mcp"] },
+        env: { CHORUS_URL: "https://chorus.example.com" }, backup: (p) => backups.push(p),
+      }));
+      expect(again.action).toBe(SKIPPED);
+      expect(again.detail).toContain("already up to date");
+      expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe(after);
+      expect(backups).toHaveLength(1);
+    });
+
+    it("creates config.yaml when absent and uses --url over env", () => {
+      const home = tempHome();
+      installHermes(ctxWithHome(home, { flags: { url: "https://flag.example/" }, env: { CHORUS_URL: "https://env.example" } }));
+      const after = readFileSync(join(home, "config.yaml"), "utf8");
+      expect(after).toContain('url: "https://flag.example/api/mcp"');
+      expect(after).toContain('Authorization: "Bearer ${CHORUS_API_KEY}"');
+    });
+
+    it("writes nothing for the loopback default (served by the portable chorus-mcp package)", () => {
+      for (const url of ["http://localhost:8637", "http://127.0.0.1:8637/", "http://localhost:8637/api/mcp"]) {
+        const home = tempHome("model: foo\n");
+        const res = installHermes(ctxWithHome(home, { env: { CHORUS_URL: url } }));
+        expect(res.action).toBe(INSTALLED);
+        expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe("model: foo\n");
+      }
+    });
+
+    it("writes nothing when no URL is known or on --plugin-only", () => {
+      const home = tempHome("model: foo\n");
+      installHermes(ctxWithHome(home));
+      installHermes(ctxWithHome(home, { flags: { pluginOnly: true }, env: { CHORUS_URL: "https://chorus.example.com" } }));
+      expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe("model: foo\n");
+    });
+
+    it("falls back to the credential resolver URL (interactive credential-seed path)", () => {
+      const home = tempHome();
+      installHermes(ctxWithHome(home, { resolveCredentials: () => ({ url: "https://resolved.example", apiKey: "cho_x" }) }));
+      const after = readFileSync(join(home, "config.yaml"), "utf8");
+      expect(after).toContain('url: "https://resolved.example/api/mcp"');
+      expect(after).not.toContain("cho_x");
+    });
+
+    it("does not write the MCP entry when the plugin install fails", () => {
+      const home = tempHome();
+      const run = fakeRun((cmd) => cmd === "git"
+        ? { ok: true, code: 0, stdout: `${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`, stderr: "" }
+        : { ok: false, code: 1, stdout: "", stderr: "clone failed" });
+      const res = installHermes(ctxWithHome(home, { run, env: { CHORUS_URL: "https://chorus.example.com" } }));
+      expect(res.action).toBe(FAILED);
+      expect(existsSync(join(home, "config.yaml"))).toBe(false);
+    });
+
+    it("reports a warning (install still succeeds) when the config cannot be merged", () => {
+      const home = tempHome("mcp_servers: {other: {url: x}}\n");
+      const res = installHermes(ctxWithHome(home, { env: { CHORUS_URL: "https://chorus.example.com" } }));
+      expect(res.action).toBe(INSTALLED);
+      expect(res.detail).toContain("WARNING");
+      expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe("mcp_servers: {other: {url: x}}\n");
+    });
   });
 
   it("hermesFollowUpChecklist uses a placeholder when no URL is known", () => {

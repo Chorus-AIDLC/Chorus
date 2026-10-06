@@ -185,7 +185,10 @@ relative to the Hermes checkout.
   (`mcp_tool_config.py:426-438`).
 - Plan change: `chorus-mcp/mcp.json` ships `http://localhost:8637/api/mcp` with
   `Authorization: Bearer ${CHORUS_API_KEY}`; non-loopback deployments add the
-  native `mcp_servers.chorus` entry shown above (`chorus agents add` writes it).
+  native `mcp_servers.chorus` entry shown above. `chorus agents add --agents hermes`
+  writes it into `$HERMES_HOME/config.yaml` when `CHORUS_URL` is not the loopback
+  default (literal `<CHORUS_URL>/api/mcp` URL, header kept as the
+  `Bearer ${CHORUS_API_KEY}` placeholder, other config preserved, idempotent).
 - Measured (live, `CHORUS_URL` = a remote Chorus):
   - native entry: `hermes chat -Q -q "Call ... chorus_checkin ..."` →
     `TOOL=mcp__chorus__chorus_checkin AGENT_NAME=Clay AGENT_UUID=00fc5c33-6c04-4516-af2c-0715221d5ad2`.
