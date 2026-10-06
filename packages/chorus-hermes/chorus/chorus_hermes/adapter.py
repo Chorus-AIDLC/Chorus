@@ -54,6 +54,14 @@ PLATFORM_HINT = (
 
 # Live adapters (normally one); hooks look turns up here.
 _ADAPTERS: "weakref.WeakSet" = weakref.WeakSet()
+# ``fn(adapter, router)`` called on every connect once the router exists (approval transport filter).
+_ROUTER_SETUP: List[Callable[[Any, EventRouter], None]] = []
+
+
+def on_router_created(fn: Callable[[Any, EventRouter], None]) -> None:
+    """Register ``fn(adapter, router)`` to run whenever an adapter builds its event router."""
+    if fn not in _ROUTER_SETUP:
+        _ROUTER_SETUP.append(fn)
 
 
 def _hermes() -> SimpleNamespace:
@@ -184,6 +192,11 @@ class ChorusAdapterCore:
                                   get_connection_uuid=self._get_connection_uuid,
                                   pending_turns=self.turns.pending_turns)
         self.router.control_hooks.update(is_running=self.is_entity_running, interrupt=self.interrupt_entity)
+        for setup in list(_ROUTER_SETUP):
+            try:
+                setup(self, self.router)
+            except Exception:
+                logger.exception("[Chorus] router setup callback failed")
         self.sse = SseClient(
             cfg, cwd=self.cwd, client_version=_client_version(), on_event=self._on_sse_event,
             on_control=self._on_sse_control, on_conflict=self._on_conflict, on_registered=self._on_registered,

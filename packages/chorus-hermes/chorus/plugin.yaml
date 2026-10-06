@@ -34,3 +34,5 @@ provides_hooks:
   - post_api_request
   - api_request_error
   - agent_loop_stopped
+  # approval.py — request_id → session_key correlation for the chorus approval transport
+  - pre_approval_request

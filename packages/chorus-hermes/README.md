@@ -63,6 +63,27 @@ the repository this gateway serves. The plugin reports `realpath(terminal.cwd)`
 to Chorus and refuses to connect when it is unset or a placeholder (`.`, `auto`,
 `cwd`).
 
+**Approvals through Chorus.** To answer dangerous-command approvals of
+Chorus-woken gateway turns from Chorus, select the plugin's transport and keep
+the built-in prompt for everything else:
+
+```bash
+hermes config set security.approval.transport chorus
+hermes config set security.approval.transport_fallback builtin   # required for CLI/TUI prompts
+hermes config set approvals.timeout 300                          # seconds; no reply = deny
+```
+
+When a woken turn needs approval, the agent comments on the Chorus entity it is
+working on, @mentioning you, with the redacted command, the allowed replies and a
+6-character token. Reply on that entity with `approve once <token>`,
+`approve session <token>` (when offered), `approve always <token>` (when
+offered) or `deny <token>`. Only the agent owner's reply counts; any other owner
+reply carrying the token denies, and no reply within `approvals.timeout` denies.
+Approval replies never start a new agent turn. Sessions that were not started by
+a Chorus wake (interactive CLI/TUI, other gateway platforms) are declined by the
+transport, so without `transport_fallback: builtin` Hermes denies them instead of
+prompting.
+
 ## Develop
 
 ```bash

@@ -13,7 +13,8 @@ to ``dispatch``. Rules, in order, for a ``new_notification``:
 7. skip when ``targetConnectionUuid`` is set and is not this connection.
 
 Pending turns (``deliver_turn`` control pings and the reconnect sweep) go through the same
-filters before dispatch. ``control`` events are honoured only when ``targetConnectionUuid``
+filters before dispatch (an autonomous pending turn reaches them even when its notification was
+already handled live, so a filter can close it). ``control`` events are honoured only when ``targetConnectionUuid``
 equals this connection.
 
 Session mapping: every wake carries ``chat_id`` = ``idea:<directIdeaUuid>`` or
@@ -330,16 +331,19 @@ class EventRouter:
         if match is None:
             self._skip(f"turn:{turn_uuid}", f"no unambiguous unread {trigger} notification")
             return None
-        if match["uuid"] in self.seen:
-            self._skip(f"turn:{turn_uuid}", f"broadcast copy {match['uuid']} already handled")
-            return None
-        self.seen.add(match["uuid"])
         n = dict(match)
         wake = WakeRequest(source="pending_turn", notification=n, label=f"turn:{turn_uuid}",
                            entity_type=n.get("entityType"), entity_uuid=n.get("entityUuid"),
                            turn_uuid=turn_uuid, pending_turn=turn)
+        # Filters run before the broadcast-copy check: a pending turn whose live notification was
+        # already consumed (e.g. an approval reply) must still be closed by the filter that owns it.
         if await self._filtered(wake):
+            self.seen.add(match["uuid"])
             return None
+        if match["uuid"] in self.seen:
+            self._skip(f"turn:{turn_uuid}", f"broadcast copy {match['uuid']} already handled")
+            return None
+        self.seen.add(match["uuid"])
         return await self._resolve_and_dispatch(wake)
 
     # -- resume ----------------------------------------------------------------------
