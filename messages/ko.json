@@ -1245,6 +1245,7 @@
         "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
+        "hermes": "Hermes",
         "other": "기타 에이전트"
       },
       "profileStep": {
@@ -1268,6 +1269,15 @@
         "step1Tip": "팁: Kiro CLI가 시작 시 읽을 수 있도록 ~/.bashrc 또는 ~/.zshrc에 추가하세요.",
         "step2Title": "2단계: chorus agents add 실행",
         "step2Tip": "chorus agents add은 Chorus의 skills, agents, steering 및 chorus MCP 서버를 ~/.kiro에 전역으로 설치하여 모든 디렉터리에서 Chorus를 사용할 수 있게 합니다. CHORUS_URL과 CHORUS_API_KEY는 환경 변수(1단계)에서 읽습니다. 다른 디렉터리에 설치하려면 실행 전에 KIRO_DIR을 설정하세요. 첫 번째 명령은 최신 Chorus CLI를 전역으로 설치합니다."
+      },
+      "hermes": {
+        "step1Title": "1단계: Hermes Agent 설치",
+        "step1Desc": "Hermes Agent(Nous Research)를 설치하고 PATH에서 hermes CLI를 사용할 수 있는지 확인하세요.",
+        "step1Link": "Hermes 설치 가이드",
+        "step2Title": "2단계: chorus agents add 실행",
+        "step2Tip": "chorus agents add --agents hermes는 해당 Chorus 릴리스 태그를 커밋 SHA로 변환하고(Hermes의 --ref는 40자 전체 SHA만 받습니다), 두 개의 플러그인 디렉터리를 설치합니다: chorus(훅, 스킬, 게이트웨이 플랫폼, 승인 트랜스포트)와 chorus-mcp(Chorus MCP 서버). Chorus URL이 http://localhost:8637이 아니면 ~/.hermes/config.yaml에 mcp_servers.chorus도 기록하며, config.yaml에는 키 자체를 저장하지 않고 CHORUS_API_KEY를 참조합니다. 또한 CHORUS_URL과 CHORUS_API_KEY를 ~/.hermes/.env(권한 0600)에 기록하며, 게이트웨이는 시작할 때 이 파일을 읽습니다.",
+        "step3Title": "3단계: 게이트웨이 시작",
+        "step3Tip": "chorus agents add가 이미 자격 증명을 ~/.hermes/.env에 기록하고, ~/.hermes/config.yaml에 terminal.cwd(명령을 실행한 git 저장소 또는 --hermes-cwd /path/to/repo로 지정한 경로)를 설정해 두었습니다. 승인도 Chorus 댓글을 통하도록 바꾸고 approvals.mode manual을 설정했으므로, 플래그된 명령이 Hermes의 guardian 모델에 의해 자동 승인되지 않고 반드시 여러분에게 전달됩니다. 이미 설정해 둔 값은 그대로 유지됩니다. 게이트웨이 하나는 저장소 하나를 담당하며, 바꾸려면 hermes config set terminal.cwd /path/to/repo를 실행한 뒤 hermes gateway restart 하세요. 시작하면 에이전트가 Chorus에서 온라인으로 표시됩니다."
       },
       "pi": {
         "step1Title": "1단계: 환경 변수 설정",
@@ -1613,6 +1623,7 @@
     "clientKiro": "Kiro",
     "clientDsh": "DeepSeek Harness",
     "clientPi": "Pi",
+    "clientHermes": "Hermes",
     "clientUnknown": "알 수 없는 클라이언트",
     "uptimeMonoDays": "{days}일 {time}",
     "mobileBack": "연결",

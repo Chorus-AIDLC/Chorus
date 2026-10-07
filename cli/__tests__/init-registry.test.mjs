@@ -7,7 +7,7 @@ import { buildAdapter, readClaudeInstallState, CHORUS_PLUGIN_ID, CHORUS_MARKETPL
 import { guided } from "../init/install-methods.mjs";
 import { OUTCOME_ACTIONS } from "../init/contracts.mjs";
 
-const EXPECTED_IDS = ["claude", "codex", "kiro", "opencode", "openclaw", "pi", "dsh"];
+const EXPECTED_IDS = ["claude", "codex", "kiro", "opencode", "openclaw", "pi", "dsh", "hermes"];
 
 describe("AGENT_REGISTRY", () => {
   it("contains one adapter per supported harness", () => {
@@ -74,7 +74,7 @@ describe("readInstallState.supported — real installer vs guided fallback", () 
     getAdapter(id).readInstallState({ env: {}, home: "/nonexistent-xyz" }).supported;
 
   it("is true for every agent with a real automated installer", () => {
-    for (const id of ["claude", "codex", "opencode", "dsh", "openclaw", "kiro", "pi"]) {
+    for (const id of ["claude", "codex", "opencode", "dsh", "openclaw", "kiro", "pi", "hermes"]) {
       expect(supportedOf(id)).toBe(true);
     }
   });

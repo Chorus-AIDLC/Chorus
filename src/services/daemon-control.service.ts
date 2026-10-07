@@ -187,6 +187,14 @@ export async function authorizeConnectionControl(params: {
  *  - `deliver_turn` carries `targetConnectionUuid` + the precise `turnUuid` to run; the
  *    wire event omits the entity fields entirely (the daemon reads the turn by uuid).
  */
+/**
+ * Client types whose runs are hard-gated on server turn admission (a `resume` must
+ * hand them a pending turn to admit). The Chorus daemon admits a resumed run
+ * best-effort without a turn, so it is deliberately absent and its resume path
+ * stays unchanged.
+ */
+export const RESUME_TURN_CLIENT_TYPES: ReadonlySet<string> = new Set(["hermes"]);
+
 export type DispatchControlParams =
   | {
       companyUuid: string;
@@ -197,6 +205,9 @@ export type DispatchControlParams =
       resumeReason?: "user" | "crash";
       runtimeCwd?: string | null;
       orchestrator?: OrchestratorAttribution | null;
+      // `resume` only: the pending continuation turn created for a client that admits
+      // every run by turn (see RESUME_TURN_CLIENT_TYPES). Older clients ignore it.
+      turnUuid?: string | null;
     }
   | {
       companyUuid: string;
@@ -229,6 +240,7 @@ export function dispatchControl(params: DispatchControlParams): void {
           // Only a resume carries a reason; spread-if-present keeps the interrupt
           // wire shape byte-identical to before.
           ...(params.resumeReason ? { resumeReason: params.resumeReason } : {}),
+          ...(params.command === "resume" && params.turnUuid ? { turnUuid: params.turnUuid } : {}),
           ...(params.command === "resume"
             ? { orchestrator: params.orchestrator ?? null }
             : {}),

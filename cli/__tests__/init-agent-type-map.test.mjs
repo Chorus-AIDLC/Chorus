@@ -31,6 +31,12 @@ describe("agentTypeForSelection", () => {
     expect(agentTypeForSelection("dsh")).toBe("offline");
   });
 
+  it("maps hermes to offline — presence comes from the Hermes plugin's own gateway connection", () => {
+    expect(agentTypeForSelection("hermes")).toBe("offline");
+    expect(SELECTION_TO_AGENT_TYPE.hermes).toBe("offline");
+    expect(isWakeableAgentType(agentTypeForSelection("hermes"))).toBe(false);
+  });
+
   it("fails closed to offline for an unknown / unmapped id (never a wakeable default)", () => {
     expect(agentTypeForSelection("gemini")).toBe("offline");
     expect(agentTypeForSelection("")).toBe("offline");

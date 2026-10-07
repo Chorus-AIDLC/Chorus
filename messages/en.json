@@ -1245,6 +1245,7 @@
         "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
+        "hermes": "Hermes",
         "other": "Other Agents"
       },
       "profileStep": {
@@ -1268,6 +1269,15 @@
         "step1Tip": "Tip: Add these to ~/.bashrc or ~/.zshrc so Kiro CLI can read them on startup.",
         "step2Title": "Step 2: Run chorus agents add",
         "step2Tip": "chorus agents add installs the Chorus skills, agents, steering, and the chorus MCP server into ~/.kiro globally, so Chorus is available in every directory. It reads CHORUS_URL and CHORUS_API_KEY from your environment (Step 1). To install into a different directory, set KIRO_DIR before running. The first command installs the latest Chorus CLI globally."
+      },
+      "hermes": {
+        "step1Title": "Step 1: Install Hermes Agent",
+        "step1Desc": "Install Hermes Agent (Nous Research) and make sure the hermes CLI is on PATH.",
+        "step1Link": "Hermes installation guide",
+        "step2Title": "Step 2: Run chorus agents add",
+        "step2Tip": "chorus agents add --agents hermes resolves the matching Chorus release tag to its commit SHA (Hermes --ref accepts only a full 40-character SHA) and installs two plugin directories: chorus (hooks, skills, gateway platform, approval transport) and chorus-mcp (the Chorus MCP server). For any Chorus URL other than http://localhost:8637 it also writes mcp_servers.chorus into ~/.hermes/config.yaml, referencing CHORUS_API_KEY rather than storing the key there. It also writes CHORUS_URL and CHORUS_API_KEY into ~/.hermes/.env (mode 0600), which the gateway loads at startup.",
+        "step3Title": "Step 3: Start the gateway",
+        "step3Tip": "chorus agents add has already written the credentials into ~/.hermes/.env and set, in ~/.hermes/config.yaml, terminal.cwd (the git repository you ran it in, or --hermes-cwd /path/to/repo) plus approval routing through Chorus comments with approvals.mode manual, so every flagged command reaches you instead of being auto-approved by Hermes' guardian model. Values you had already set are kept. One gateway serves one repository; to change it, run hermes config set terminal.cwd /path/to/repo and hermes gateway restart. Once started, the agent shows online in Chorus."
       },
       "pi": {
         "step1Title": "Step 1: Set environment variables",
@@ -1613,6 +1623,7 @@
     "clientKiro": "Kiro",
     "clientDsh": "DeepSeek Harness",
     "clientPi": "Pi",
+    "clientHermes": "Hermes",
     "clientUnknown": "Unknown client",
     "uptimeMonoDays": "{days}d {time}",
     "mobileBack": "Connections",

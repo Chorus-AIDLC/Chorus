@@ -1,7 +1,7 @@
 // cli/init/agent-type-map.mjs
 // The single translation between a `chorus init` adapter selection id (see
 // cli/init/adapters.mjs — "claude" | "codex" | "kiro" | "opencode" | "openclaw" |
-// "pi" | "dsh") and the daemon's agentType vocabulary (cli/daemon-agent.mjs
+// "pi" | "dsh" | "hermes") and the daemon's agentType vocabulary (cli/daemon-agent.mjs
 // KNOWN_AGENTS). It lives in ONE place so the credential-seed step (which writes
 // each selected agent's daemon.json agents[] entry) and the daemon-setup step
 // (which gates auto-start on whether any selected agent is wakeable) can never
@@ -12,7 +12,7 @@
 //      "claude-code" EXPLICITLY here. No caller ever passes the raw init id
 //      through to daemon.json; every write goes through agentTypeForSelection.
 //   2. Any selection the daemon cannot wake as a first-class backend
-//      (opencode / openclaw, and dsh while its harness is dormant/offline)
+//      (opencode / openclaw / hermes, and dsh while its harness is dormant/offline)
 //      maps to the non-wakeable "offline" classification. Its key is still parked
 //      in agents[] for the `chorus mcp` proxy, but the daemon builds no spawner
 //      and dispatches no wake (spawner-select.mjs fail-closes on "offline").
@@ -35,6 +35,9 @@ export const SELECTION_TO_AGENT_TYPE = Object.freeze({
   opencode: "offline",
   openclaw: "offline",
   dsh: "offline",
+  // Hermes presence + wakes come from the Hermes plugin's OWN gateway connection
+  // (clientType "hermes"), never from the Chorus daemon — so it is never daemon-woken.
+  hermes: "offline",
 });
 
 /**

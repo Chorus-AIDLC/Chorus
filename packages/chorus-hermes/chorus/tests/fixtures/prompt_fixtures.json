@@ -1,0 +1,675 @@
+{
+ "single": [
+  {
+   "name": "task_assigned",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "task_assigned"
+   }
+  },
+  {
+   "name": "task_assigned_orchestrator",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "task_assigned",
+    "orchestrator": {
+     "type": "agent",
+     "uuid": "a-7",
+     "name": "Clay"
+    }
+   }
+  },
+  {
+   "name": "task_assigned_human_orchestrator",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "task_assigned",
+    "orchestrator": {
+     "type": "user",
+     "uuid": "u-1",
+     "name": "Ann"
+    }
+   }
+  },
+  {
+   "name": "task_assigned_waker",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "task_assigned",
+    "wakerSession": {
+     "agentUuid": "a-8",
+     "agentName": "Pi",
+     "ideaUuid": "i-2222"
+    }
+   }
+  },
+  {
+   "name": "task_assigned_both",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "task_assigned",
+    "orchestrator": {
+     "type": "agent",
+     "uuid": "a-7",
+     "name": "Clay"
+    },
+    "wakerSession": {
+     "agentUuid": "a-8",
+     "agentName": "Pi",
+     "ideaUuid": "i-2222"
+    }
+   }
+  },
+  {
+   "name": "task_assigned_null_orchestrator",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "task_assigned",
+    "orchestrator": null,
+    "wakerSession": null
+   }
+  },
+  {
+   "name": "mentioned",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "@Hermes can you check?\nsecond line",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "mentioned"
+   }
+  },
+  {
+   "name": "mentioned_idea",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "entityTitle": "Hermes plugin",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "mentioned"
+   }
+  },
+  {
+   "name": "elaboration_requested",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "entityTitle": "Hermes plugin",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "elaboration_requested"
+   }
+  },
+  {
+   "name": "elaboration_answered",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "entityTitle": "Hermes plugin",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "elaboration_answered"
+   }
+  },
+  {
+   "name": "elaboration_verified",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "entityTitle": "Hermes plugin",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "elaboration_verified"
+   }
+  },
+  {
+   "name": "start_development",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "entityTitle": "Hermes plugin",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "start_development"
+   }
+  },
+  {
+   "name": "yolo_requested",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "entityTitle": "Hermes plugin",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "yolo_requested"
+   }
+  },
+  {
+   "name": "proposal_rejected",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "proposal",
+    "entityUuid": "pr-4",
+    "entityTitle": "Proposal X",
+    "message": "Needs more tests",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "proposal_rejected"
+   }
+  },
+  {
+   "name": "proposal_approved_note",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "proposal",
+    "entityUuid": "pr-4",
+    "entityTitle": "Proposal X",
+    "message": "Proposal approved. Note: ship it. Note: really",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "proposal_approved"
+   }
+  },
+  {
+   "name": "proposal_approved_plain",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "proposal",
+    "entityUuid": "pr-4",
+    "entityTitle": "Proposal X",
+    "message": "Proposal approved.",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "proposal_approved"
+   }
+  },
+  {
+   "name": "proposal_approved_null_message",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "proposal",
+    "entityUuid": "pr-4",
+    "entityTitle": "Proposal X",
+    "message": null,
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "proposal_approved"
+   }
+  },
+  {
+   "name": "idea_claimed",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "entityTitle": "Hermes plugin",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "idea_claimed"
+   }
+  },
+  {
+   "name": "task_reopened",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "task_reopened"
+   }
+  },
+  {
+   "name": "task_verified",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "task_verified"
+   }
+  },
+  {
+   "name": "resource_resumed",
+   "notification": {
+    "action": "resource_resumed",
+    "entityType": "task",
+    "entityUuid": "t-3333"
+   }
+  },
+  {
+   "name": "resource_resumed_crash",
+   "notification": {
+    "action": "resource_resumed",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "resumedFrom": "crash"
+   }
+  },
+  {
+   "name": "resource_resumed_user_orch",
+   "notification": {
+    "action": "resource_resumed",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "resumedFrom": "user",
+    "orchestrator": {
+     "type": "agent",
+     "uuid": "a-7",
+     "name": "Clay"
+    }
+   }
+  },
+  {
+   "name": "human_instruction",
+   "notification": {
+    "action": "human_instruction",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "instructionText": "  Please rebase onto main.  \n"
+   }
+  },
+  {
+   "name": "human_instruction_full",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "entityTitle": "Hermes plugin",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "human_instruction",
+    "instructionText": "Do the thing"
+   }
+  },
+  {
+   "name": "human_instruction_no_project",
+   "notification": {
+    "action": "human_instruction",
+    "entityType": "daemon_session",
+    "entityUuid": "s-1",
+    "instructionText": "hi",
+    "projectUuid": ""
+   }
+  },
+  {
+   "name": "human_instruction_bare",
+   "notification": {
+    "action": "human_instruction",
+    "instructionText": "just text"
+   }
+  },
+  {
+   "name": "human_instruction_empty",
+   "notification": {
+    "action": "human_instruction",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "instructionText": "   "
+   }
+  },
+  {
+   "name": "human_instruction_missing",
+   "notification": {
+    "action": "human_instruction"
+   }
+  },
+  {
+   "name": "research_requested",
+   "notification": {
+    "action": "research_requested",
+    "sessionId": "i-2222",
+    "directIdeaUuid": "i-2222",
+    "entityType": "idea",
+    "entityUuid": "i-2222",
+    "operationPayload": {
+     "version": 1,
+     "kind": "research",
+     "ideaUuid": "i-2222"
+    }
+   }
+  },
+  {
+   "name": "idea_creation_elaborate",
+   "notification": {
+    "action": "idea_creation_requested",
+    "sessionId": "i-2222",
+    "directIdeaUuid": "i-2222",
+    "projectUuid": "p-1111",
+    "operationPayload": {
+     "version": 1,
+     "kind": "idea_creation",
+     "ideaUuid": "i-2222",
+     "projectUuid": "p-1111",
+     "mode": "elaborate",
+     "researchFirst": false,
+     "descriptionText": "Build a Hermes plugin.\nWith details."
+    }
+   }
+  },
+  {
+   "name": "idea_creation_decompose",
+   "notification": {
+    "action": "idea_creation_requested",
+    "sessionId": "i-2222",
+    "directIdeaUuid": "i-2222",
+    "operationPayload": {
+     "version": 1,
+     "kind": "idea_creation",
+     "ideaUuid": "i-2222",
+     "projectUuid": "p-1111",
+     "mode": "decompose",
+     "researchFirst": true,
+     "descriptionText": "Split this"
+    }
+   }
+  },
+  {
+   "name": "idea_creation_invalid",
+   "notification": {
+    "action": "idea_creation_requested",
+    "sessionId": "other",
+    "directIdeaUuid": "i-2222",
+    "operationPayload": {
+     "version": 1,
+     "kind": "idea_creation",
+     "ideaUuid": "i-2222",
+     "projectUuid": "p-1111",
+     "mode": "elaborate",
+     "researchFirst": false,
+     "descriptionText": "x"
+    }
+   }
+  },
+  {
+   "name": "research_bool_version",
+   "notification": {
+    "action": "research_requested",
+    "sessionId": "i-2222",
+    "directIdeaUuid": "i-2222",
+    "operationPayload": {
+     "version": true,
+     "kind": "research",
+     "ideaUuid": "i-2222"
+    }
+   }
+  },
+  {
+   "name": "missing_fields",
+   "notification": {
+    "action": "task_assigned"
+   }
+  },
+  {
+   "name": "null_fields",
+   "notification": {
+    "action": "mentioned",
+    "entityType": null,
+    "entityUuid": null,
+    "entityTitle": null,
+    "projectUuid": null,
+    "message": null,
+    "actorName": null,
+    "actorType": null,
+    "actorUuid": null
+   }
+  },
+  {
+   "name": "unknown_action",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "comment_added"
+   }
+  },
+  {
+   "name": "no_action",
+   "notification": {}
+  }
+ ],
+ "batch": [
+  {
+   "name": "empty",
+   "notifications": []
+  },
+  {
+   "name": "single",
+   "notifications": [
+    {
+     "uuid": "n-1",
+     "projectUuid": "p-1111",
+     "entityType": "task",
+     "entityUuid": "t-3333",
+     "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+     "message": "Please take a look",
+     "actorType": "user",
+     "actorUuid": "u-9",
+     "actorName": "Felix",
+     "action": "task_assigned"
+    }
+   ]
+  },
+  {
+   "name": "single_renderable",
+   "notifications": [
+    {
+     "uuid": "n-1",
+     "projectUuid": "p-1111",
+     "entityType": "task",
+     "entityUuid": "t-3333",
+     "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+     "message": "Please take a look",
+     "actorType": "user",
+     "actorUuid": "u-9",
+     "actorName": "Felix",
+     "action": "task_assigned"
+    },
+    {
+     "action": "human_instruction",
+     "instructionText": ""
+    }
+   ]
+  },
+  {
+   "name": "none_renderable",
+   "notifications": [
+    {
+     "uuid": "n-1",
+     "projectUuid": "p-1111",
+     "entityType": "task",
+     "entityUuid": "t-3333",
+     "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+     "message": "Please take a look",
+     "actorType": "user",
+     "actorUuid": "u-9",
+     "actorName": "Felix",
+     "action": "comment_added"
+    }
+   ]
+  },
+  {
+   "name": "mixed",
+   "notifications": [
+    {
+     "uuid": "a",
+     "projectUuid": "p-1111",
+     "entityType": "task",
+     "entityUuid": "t-3333",
+     "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+     "message": "Please take a look",
+     "actorType": "user",
+     "actorUuid": "u-9",
+     "actorName": "Felix",
+     "action": "task_assigned"
+    },
+    {
+     "uuid": "b",
+     "projectUuid": "p-1111",
+     "entityType": "task",
+     "entityUuid": "t-3333",
+     "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+     "message": "Please take a look",
+     "actorType": "user",
+     "actorUuid": "u-9",
+     "actorName": "Felix",
+     "action": "mentioned",
+     "wakerSession": {
+      "agentUuid": "a-8",
+      "agentName": "Pi",
+      "ideaUuid": "i-2222"
+     }
+    },
+    {
+     "uuid": "c",
+     "projectUuid": "p-1111",
+     "entityType": "task",
+     "entityUuid": "t-3333",
+     "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+     "message": "newest",
+     "actorType": "user",
+     "actorUuid": "u-9",
+     "actorName": "Felix",
+     "action": "task_assigned"
+    },
+    {
+     "action": "human_instruction",
+     "entityType": "idea",
+     "entityUuid": "i-2222",
+     "instructionText": "one"
+    },
+    {
+     "action": "human_instruction",
+     "entityType": "idea",
+     "entityUuid": "i-2222",
+     "instructionText": "two"
+    },
+    {
+     "action": "resource_resumed",
+     "entityType": "idea",
+     "entityUuid": "i-2222"
+    }
+   ]
+  },
+  {
+   "name": "no_entity",
+   "notifications": [
+    {
+     "action": "human_instruction",
+     "instructionText": "a"
+    },
+    {
+     "action": "human_instruction",
+     "instructionText": "b"
+    }
+   ]
+  }
+ ]
+}

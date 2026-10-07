@@ -2,7 +2,7 @@
 
 对于 **Claude Code 和 Codex 之外** 的 agent —— 任意 MCP 兼容客户端，例如 Cursor、Continue、自研 agent 或手写集成 —— 最快的路径是把 Chorus 的 URL 和 API Key 喂给 agent 本身，用自然语言 prompt 让它自己完成安装和配置。你把指引文档地址告诉它，剩下的它搞定。
 
-> Claude Code 见 [CONNECT_CLAUDE_CODE.zh.md](CONNECT_CLAUDE_CODE.zh.md)；Codex 见 [CONNECT_CODEX.zh.md](CONNECT_CODEX.zh.md)。这两个客户端都有官方 plugin，除了 MCP 工具本身，还能用上 hooks、skills、slash 命令等。
+> Claude Code 见 [CONNECT_CLAUDE_CODE.zh.md](CONNECT_CLAUDE_CODE.zh.md)；Codex 见 [CONNECT_CODEX.zh.md](CONNECT_CODEX.zh.md)。这两个客户端都有官方 plugin，除了 MCP 工具本身，还能用上 hooks、skills、slash 命令等。[Kiro](CONNECT_KIRO.md)、[Pi](CONNECT_PI.md)、[dsh](CONNECT_DSH.zh.md)、[OpenCode](CONNECT_OPENCODE.zh.md)、OpenClaw 与 [Hermes Agent](CONNECT_HERMES.zh.md) 也有官方集成，使用这些客户端时请优先选用。
 
 ## 前置条件
 

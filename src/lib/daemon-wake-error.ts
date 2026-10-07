@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const WAKE_ERROR_KINDS = ["startup", "execution", "protocol"] as const;
-export const WAKE_ERROR_SOURCES = ["claude", "codex", "pi", "kiro", "dsh", "openclaw"] as const;
+export const WAKE_ERROR_SOURCES = ["claude", "codex", "pi", "kiro", "dsh", "openclaw", "hermes"] as const;
 
 /** Only bounded plain text crosses the daemon-to-conversation boundary. */
 export function sanitizeWakeErrorText(text: string): string {

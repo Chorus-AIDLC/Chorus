@@ -1245,6 +1245,7 @@
         "dsh": "DeepSeek Harness",
         "opencode": "OpenCode",
         "openClaw": "OpenClaw",
+        "hermes": "Hermes",
         "other": "その他のエージェント"
       },
       "profileStep": {
@@ -1268,6 +1269,15 @@
         "step1Tip": "ヒント：Kiro CLI が起動時に読み取れるよう、~/.bashrc または ~/.zshrc に追加してください。",
         "step2Title": "ステップ 2：chorus agents add を実行",
         "step2Tip": "chorus agents add は Chorus の skills、agents、steering、および chorus MCP サーバーを ~/.kiro にグローバルインストールし、Chorus をどのディレクトリでも利用できるようにします。CHORUS_URL と CHORUS_API_KEY は環境変数（ステップ 1）から読み取ります。別のディレクトリにインストールするには、実行前に KIRO_DIR を設定してください。 最初のコマンドは最新の Chorus CLI をグローバルにインストールします。"
+      },
+      "hermes": {
+        "step1Title": "ステップ 1：Hermes Agent をインストール",
+        "step1Desc": "Hermes Agent（Nous Research）をインストールし、hermes CLI が PATH から使えることを確認してください。",
+        "step1Link": "Hermes インストールガイド",
+        "step2Title": "ステップ 2：chorus agents add を実行",
+        "step2Tip": "chorus agents add --agents hermes は対応する Chorus リリースタグをコミット SHA に解決し（Hermes の --ref は完全な 40 文字の SHA のみ受け付けます）、2 つのプラグインディレクトリをインストールします：chorus（フック、スキル、ゲートウェイプラットフォーム、承認トランスポート）と chorus-mcp（Chorus MCP サーバー）。Chorus の URL が http://localhost:8637 以外の場合は、~/.hermes/config.yaml に mcp_servers.chorus も書き込みます。config.yaml にはキーそのものを保存せず、CHORUS_API_KEY を参照します。また、CHORUS_URL と CHORUS_API_KEY を ~/.hermes/.env（パーミッション 0600）に書き込み、ゲートウェイは起動時にそれを読み込みます。",
+        "step3Title": "ステップ 3：ゲートウェイを起動",
+        "step3Tip": "chorus agents add は認証情報を ~/.hermes/.env に書き込み、~/.hermes/config.yaml に terminal.cwd（実行したときの git リポジトリ、または --hermes-cwd /path/to/repo で指定したパス）を設定済みです。承認も Chorus のコメント経由に切り替え、approvals.mode manual を設定しているため、フラグが付いたコマンドが Hermes の guardian モデルに自動承認されず、必ずあなたに届きます。すでに設定していた値はそのまま残ります。1 つのゲートウェイが担当するのは 1 つのリポジトリです。変更するには hermes config set terminal.cwd /path/to/repo を実行してから hermes gateway restart してください。起動すると、エージェントは Chorus でオンラインと表示されます。"
       },
       "pi": {
         "step1Title": "ステップ 1：環境変数を設定",
@@ -1613,6 +1623,7 @@
     "clientKiro": "Kiro",
     "clientDsh": "DeepSeek Harness",
     "clientPi": "Pi",
+    "clientHermes": "Hermes",
     "clientUnknown": "不明なクライアント",
     "uptimeMonoDays": "{days}日 {time}",
     "mobileBack": "接続",

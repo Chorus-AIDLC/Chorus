@@ -48,11 +48,12 @@ const TAB_NAMES = [
   "DeepSeek Harness",
   "OpenCode",
   "OpenClaw",
+  "Hermes",
   "Other Agents",
 ];
 
 describe("AgentInstallGuide dsh onboarding", () => {
-  it("renders eight ordered, non-shrinking tabs in a horizontally scrollable row", () => {
+  it("renders nine ordered, non-shrinking tabs in a horizontally scrollable row", () => {
     const { container } = render(<AgentInstallGuide apiKey={null} />);
     const tabList = container.querySelector<HTMLElement>('[data-slot="tabs-list"]');
 
@@ -202,6 +203,50 @@ describe("AgentInstallGuide dsh onboarding", () => {
       expect(screen.getByText(PROFILE_TITLE)).toBeTruthy();
       expect(screen.getByText(/export CHORUS_AGENT_PROFILE="<agent-uuid>"/)).toBeTruthy();
     }
+  });
+
+  it("renders the Hermes tab: install Hermes, chorus agents add --agents hermes, then configure and start the gateway", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<AgentInstallGuide apiKey="cho_live_test_key" />);
+
+    await user.click(screen.getByRole("tab", { name: "Hermes" }));
+
+    expect(screen.getByText("Step 1: Install Hermes Agent")).toBeTruthy();
+    expect(screen.getByText("Step 2: Run chorus agents add")).toBeTruthy();
+    expect(screen.getByText("Step 3: Start the gateway")).toBeTruthy();
+
+    const link = screen.getByRole("link", { name: "Hermes installation guide" });
+    expect(link.getAttribute("href")).toBe(
+      "https://hermes-agent.nousresearch.com/docs/getting-started/installation",
+    );
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(screen.getByText("hermes --version")).toBeTruthy();
+
+    expect(screen.getByText(/export CHORUS_API_KEY="cho_live_test_key"/)).toBeTruthy();
+    expect(
+      screen.getByText(/npm install -g @chorus-aidlc\/chorus cd \/path\/to\/your\/repo chorus agents add --agents hermes/),
+    ).toBeTruthy();
+
+    // Step 3 = the hermesFollowUpChecklist in cli/init/install-methods.mjs.
+    const gateway = Array.from(container.querySelectorAll("pre")).find((pre) =>
+      pre.textContent?.includes("hermes gateway install"),
+    );
+    expect(gateway).toBeTruthy();
+    const script = gateway!.textContent ?? "";
+    // chorus agents add writes terminal.cwd + approval routing, so only the gateway commands remain.
+    expect(script).toBe("hermes gateway install\nhermes gateway start");
+    // chorus agents add writes ~/.hermes/.env itself, so the gateway script neither
+    // echoes the key nor edits the dotenv by hand.
+    expect(script).not.toContain("cho_live_test_key");
+    expect(script).not.toContain("~/.hermes/.env");
+    expect(screen.getByText(/writes CHORUS_URL and CHORUS_API_KEY into ~\/\.hermes\/\.env \(mode 0600\)/)).toBeTruthy();
+
+    expect(screen.getByText(/--ref accepts only a full 40-character SHA/)).toBeTruthy();
+    expect(screen.getByText(/approvals\.mode manual, so every flagged command reaches you/)).toBeTruthy();
+    // Hermes is scheduled through its own gateway, not the Chorus CLI daemon profile.
+    expect(
+      screen.queryByText("Step 3 (optional): Set the default agent for the Chorus CLI"),
+    ).toBeNull();
   });
 
   it("uses the API-key placeholder when no live key is available", async () => {
