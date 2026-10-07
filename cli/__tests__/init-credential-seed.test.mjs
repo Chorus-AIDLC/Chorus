@@ -18,6 +18,8 @@ import {
   readClaudeSettingsProfile,
   writeCodexEnvFile,
   readCodexEnvProfile,
+  writeHermesEnvFile,
+  resolveHermesEnvPath,
 } from "../init/steps/credential-seed.mjs";
 import { writePiMcpServer } from "../init/pi-mcp-config.mjs";
 import { appendAgentConfig, writeLoginFile } from "../login.mjs";
@@ -70,6 +72,10 @@ function baseCtx(over = {}) {
     // identity" → the write path (no repoint prompt); repoint tests override it.
     writeCodexEnv: vi.fn(({ envPath }) => envPath),
     readCodexEnvProfile: () => undefined,
+    // Stub the Hermes $HERMES_HOME/.env sink so `hermes`-selection tests never touch the REAL
+    // ~/.hermes/.env. Tests that assert on the write override these.
+    writeHermesEnv: vi.fn(({ envPath }) => envPath),
+    readHermesEnvProfile: () => undefined,
     // Stub the pi ~/.pi/agent/mcp.json sink so `pi`-selection tests never touch the REAL
     // ~/.pi/agent/mcp.json. Tests that assert on the write override this (a recording fake, or
     // the real writer against a temp PI_CODING_AGENT_DIR).
@@ -1245,5 +1251,84 @@ describe("seedCredentials — hermes not detected", () => {
       selection: ["hermes"], flags: { url: "https://c.example", apiKey: "cho_k" }, appendAgent: append, binaryOnPath: () => true,
     }));
     expect(append.calls[0]).toMatchObject({ apiKey: "cho_k", agentType: "offline" });
+  });
+});
+
+describe("Hermes $HERMES_HOME/.env sink", () => {
+  it("resolveHermesEnvPath honors HERMES_HOME, then HOME/.hermes", () => {
+    expect(resolveHermesEnvPath({ HERMES_HOME: "/h/home", HOME: "/u" })).toBe(join("/h/home", ".env"));
+    expect(resolveHermesEnvPath({ HOME: "/u" })).toBe(join("/u", ".hermes", ".env"));
+  });
+
+  it("writeHermesEnvFile: 0600, merge-preserving (keeps model provider keys), idempotent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hermes-env-"));
+    const p = join(dir, ".env");
+    writeFileSync(p, "OPENROUTER_API_KEY=sk-keep\nCHORUS_URL=https://old\n");
+    writeHermesEnvFile({ envPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    const parsed = parseEnv(readFileSync(p, "utf8"));
+    expect(parsed).toMatchObject({ OPENROUTER_API_KEY: "sk-keep", CHORUS_URL: "https://c", CHORUS_API_KEY: "cho_k", CHORUS_AGENT_PROFILE: "u-1" });
+    expect(statSync(p).mode & 0o777).toBe(0o600);
+    const before = readFileSync(p, "utf8");
+    writeHermesEnvFile({ envPath: p, url: "https://c", apiKey: "cho_k", agentProfile: "u-1" });
+    expect(readFileSync(p, "utf8")).toBe(before);
+    expect(() => writeHermesEnvFile({ envPath: p, url: "https://c", apiKey: "cho_k" })).toThrow(/requires/);
+  });
+
+  it("seedCredentials writes the real file under a temp HERMES_HOME, sets hermesEnvWritten, never echoes the key", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hermes-home-"));
+    const res = await seedCredentials(baseCtx({
+      selection: ["hermes"],
+      env: { HERMES_HOME: home },
+      flags: { url: "https://c.example", apiKey: "cho_secret" },
+      binaryOnPath: () => true,
+      writeHermesEnv: writeHermesEnvFile,
+      readHermesEnvProfile: readCodexEnvProfile,
+      validateCredentials: async () => ({ uuid: "u-h", name: "Hermes Agent" }),
+    }));
+    const o = [].concat(res)[0];
+    expect(o.action).toBe(SEEDED);
+    expect(o.hermesEnvWritten).toBe(true);
+    expect(o.detail).toMatch(/\.env \(0600\)/);
+    expect(o.detail).not.toContain("cho_secret");
+    const parsed = parseEnv(readFileSync(join(home, ".env"), "utf8"));
+    expect(parsed).toMatchObject({ CHORUS_URL: "https://c.example", CHORUS_API_KEY: "cho_secret", CHORUS_AGENT_PROFILE: "u-h" });
+  });
+
+  it("repoint: non-TTY overwrites with a WARNING; TTY decline leaves the file alone", async () => {
+    const write = vi.fn(({ envPath }) => envPath);
+    const warned = [].concat(await seedCredentials(baseCtx({
+      selection: ["hermes"], binaryOnPath: () => true,
+      flags: { url: "https://c", apiKey: "cho_k" },
+      writeHermesEnv: write, readHermesEnvProfile: () => "u-OLD",
+      validateCredentials: async () => ({ uuid: "u-NEW", name: "H" }),
+    })))[0];
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(warned.detail).toMatch(/repointed Hermes from u-OLD to u-NEW/);
+
+    const write2 = vi.fn(({ envPath }) => envPath);
+    const declined = [].concat(await seedCredentials(baseCtx({
+      selection: ["hermes"], binaryOnPath: () => true,
+      io: { log: () => {}, isTTY: true },
+      promptFn: async () => "n",
+      flags: { url: "https://c", apiKey: "cho_k" },
+      writeHermesEnv: write2, readHermesEnvProfile: () => "u-OLD",
+      validateCredentials: async () => ({ uuid: "u-NEW", name: "H" }),
+    })))[0];
+    expect(write2).not.toHaveBeenCalled();
+    expect(declined.hermesEnvWritten).toBeUndefined();
+    expect(declined.detail).toMatch(/left Hermes as u-OLD/);
+  });
+
+  it("write failure: non-secret WARNING, hermesEnvWritten unset", async () => {
+    const o = [].concat(await seedCredentials(baseCtx({
+      selection: ["hermes"], binaryOnPath: () => true,
+      flags: { url: "https://c", apiKey: "cho_secret" },
+      env: { HERMES_HOME: "/nonexistent-hermes-home" },
+      writeHermesEnv: () => { throw new Error("EACCES"); },
+      validateCredentials: async () => ({ uuid: "u-h", name: "H" }),
+    })))[0];
+    expect(o.hermesEnvWritten).toBeUndefined();
+    expect(o.detail).toMatch(/WARNING: could not write .*EACCES/);
+    expect(o.detail).not.toContain("cho_secret");
   });
 });

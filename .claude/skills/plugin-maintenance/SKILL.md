@@ -535,7 +535,7 @@ hermes plugins list --plain --no-bundled          # both: enabled  git pinned@<s
 hermes plugins doctor chorus && hermes plugins doctor chorus-mcp
 
 # 3. run against a local Chorus (pnpm dev on :8637 matches the portable MCP URL)
-#    ~/.hermes/.env: CHORUS_URL=http://localhost:8637, CHORUS_API_KEY=cho_…
+#    ~/.hermes/.env: CHORUS_URL=http://localhost:8637, CHORUS_API_KEY=cho_… (chorus agents add writes it; a manual plugin install does not)
 hermes config set terminal.cwd /path/to/test/repo
 hermes config set security.approval.transport chorus
 hermes config set security.approval.transport_fallback builtin

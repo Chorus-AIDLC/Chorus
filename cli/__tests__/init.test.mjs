@@ -304,6 +304,15 @@ describe("profileExportHint", () => {
     expect(text).not.toContain("u-codex"); // config.toml already carries its env — no manual export
     expect(text.match(/export CHORUS_AGENT_PROFILE=/g)).toHaveLength(1);
   });
+
+  it("omits a Hermes agent whose env was written to $HERMES_HOME/.env (hermesEnvWritten)", () => {
+    const io = capture();
+    profileExportHint(
+      [{ stepId: "credential-seed", action: OUTCOME_ACTIONS.SEEDED, detail: "…", agentUuid: "u-hermes", agentName: "Hermes", hermesEnvWritten: true }],
+      io,
+    );
+    expect(io.lines.join("\n")).not.toContain("u-hermes");
+  });
 });
 
 describe("chorus agents add — router dispatch (real entry)", () => {

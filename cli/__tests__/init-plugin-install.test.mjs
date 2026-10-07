@@ -706,7 +706,7 @@ describe("installHermes (verified against the local `hermes plugins install --he
     ]);
     expect(res.detail).toContain("v0.22.0");
     const text = lines.join("\n");
-    for (const needle of ["CHORUS_URL=https://c.example", "CHORUS_API_KEY", "terminal.cwd", "security.approval.transport chorus", "security.approval.transport_fallback builtin", "approvals.mode manual", "hermes gateway install"]) {
+    for (const needle of ["CHORUS_URL (https://c.example)", "CHORUS_API_KEY", "~/.hermes/.env", "terminal.cwd", "security.approval.transport chorus", "security.approval.transport_fallback builtin", "approvals.mode manual", "hermes gateway install"]) {
       expect(text).toContain(needle);
     }
     // No platform-enable step (the platform auto-enables; --enable sets plugins.enabled).

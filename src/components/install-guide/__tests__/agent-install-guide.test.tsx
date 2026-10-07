@@ -234,7 +234,6 @@ describe("AgentInstallGuide dsh onboarding", () => {
     expect(gateway).toBeTruthy();
     const script = gateway!.textContent ?? "";
     for (const line of [
-      "~/.hermes/.env",
       "hermes config set terminal.cwd",
       "hermes config set security.approval.transport chorus",
       "hermes config set security.approval.transport_fallback builtin",
@@ -244,8 +243,11 @@ describe("AgentInstallGuide dsh onboarding", () => {
     ]) {
       expect(script).toContain(line);
     }
-    // The key is never echoed into the gateway script; it reads the Step 2 exports.
+    // chorus agents add writes ~/.hermes/.env itself, so the gateway script neither
+    // echoes the key nor edits the dotenv by hand.
     expect(script).not.toContain("cho_live_test_key");
+    expect(script).not.toContain("~/.hermes/.env");
+    expect(screen.getByText(/writes CHORUS_URL and CHORUS_API_KEY into ~\/\.hermes\/\.env \(mode 0600\)/)).toBeTruthy();
 
     expect(screen.getByText(/--ref accepts only a full 40-character SHA/)).toBeTruthy();
     expect(screen.getByText(/approvals\.mode manual makes sure every flagged command reaches you/)).toBeTruthy();

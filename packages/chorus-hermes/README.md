@@ -51,8 +51,13 @@ For a Hermes agent, `chorus agents add`:
   entry into `$HERMES_HOME/config.yaml` (literal `<CHORUS_URL>/api/mcp`, header
   kept as the `Bearer ${CHORUS_API_KEY}` placeholder, other config preserved).
   See [MCP URL](#mcp-url-loopback-vs-remote-chorus);
-- prints the follow-up checklist from [Configure](#configure). It writes no
-  secret anywhere.
+- writes `CHORUS_URL`, `CHORUS_API_KEY` and `CHORUS_AGENT_PROFILE` into
+  `$HERMES_HOME/.env` (default `~/.hermes/.env`), the same way it writes
+  `~/.codex/.env` for Codex: mode 0600, other keys (model provider keys) kept, the
+  key never printed. Hermes loads this file at CLI and gateway startup, so a gateway
+  running as a service connects without any shell export. If the file already names
+  a different agent, it asks before repointing (it warns instead when there is no TTY);
+- prints the follow-up checklist from [Configure](#configure).
 
 ### Manual install (resolve the tag, then install)
 
@@ -81,7 +86,7 @@ Never install unpinned. If the tag does not resolve, stop. `--enable` writes
 This is the same checklist `chorus agents add` prints (`hermesFollowUpChecklist`
 in `cli/init/install-methods.mjs`):
 
-1. `CHORUS_URL` and `CHORUS_API_KEY` in the **gateway's** environment.
+1. `CHORUS_URL` and `CHORUS_API_KEY` in `~/.hermes/.env`. `chorus agents add` writes them; add them by hand only after a manual install or a reported write failure.
 2. `terminal.cwd` set to the repository this gateway serves.
 3. `security.approval.transport chorus` and `security.approval.transport_fallback builtin`.
 4. `approvals.mode manual`.
@@ -92,12 +97,15 @@ There is no platform-enable step. The `chorus` platform enables itself when
 
 ### Environment
 
-The plugin reads credentials only from the environment, or from `~/.hermes/.env`,
-which also covers a gateway running as a service:
+The plugin reads credentials only from the process environment. Hermes loads
+`$HERMES_HOME/.env` (default `~/.hermes/.env`) into it at startup, and that file
+overrides stale shell exports. This is the only channel that reaches a gateway
+running as a service. `chorus agents add` writes it for you. After a manual install,
+write it yourself (`chmod 600`):
 
 ```bash
-export CHORUS_URL=https://chorus.example.com     # no trailing /api/mcp
-export CHORUS_API_KEY=<your cho_ agent key>
+CHORUS_URL=https://chorus.example.com     # no trailing /api/mcp
+CHORUS_API_KEY=<your cho_ agent key>
 ```
 
 | Variable | Effect | Default |

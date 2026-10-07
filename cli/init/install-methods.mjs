@@ -689,7 +689,7 @@ export function readHermesInstallState({ env = process.env, run, binaryOnPath: o
 export function hermesFollowUpChecklist({ url } = {}) {
   return [
     "Hermes follow-up configuration:",
-    `  1. export CHORUS_URL=${url || "<your Chorus URL>"} and export CHORUS_API_KEY=<this agent's cho_ key> in the gateway's environment`,
+    `  1. CHORUS_URL (${url || "<your Chorus URL>"}) and CHORUS_API_KEY are written to $HERMES_HOME/.env (default ~/.hermes/.env) by chorus agents add — add them there yourself only if that step reported a WARNING or you used --plugin-only`,
     "  2. hermes config set terminal.cwd <path to the repository this gateway serves>",
     "  3. hermes config set security.approval.transport chorus   and   hermes config set security.approval.transport_fallback builtin",
     "  4. hermes config set approvals.mode manual   (unattended gateways: the default smart mode lets Hermes' guardian approve before you are asked)",

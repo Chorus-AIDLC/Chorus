@@ -54,7 +54,10 @@ chorus agents add --agents hermes
 - if both plugins are already installed, offers to reinstall them at the current version (`[y/N]`; automatic with `--yes` or without a TTY);
 - for a Chorus that is **not** on `localhost:8637`, writes the native
   `mcp_servers.chorus` entry into `$HERMES_HOME/config.yaml` (see Step 3);
-- prints the follow-up checklist (Steps 2 to 5). It never writes your key.
+- writes `CHORUS_URL`, `CHORUS_API_KEY` and `CHORUS_AGENT_PROFILE` into
+  `$HERMES_HOME/.env` (default `~/.hermes/.env`, mode 0600, other keys kept), the
+  same way it writes `~/.codex/.env` for Codex, so Step 2 is already done;
+- prints the follow-up checklist (Steps 3 to 5). Your key is never printed.
 
 ### Manual install
 
@@ -78,7 +81,8 @@ hermes plugins list --plain --no-bundled   # both: enabled  git pinned@<sha8>
 
 The plugin reads `CHORUS_URL` and `CHORUS_API_KEY` only from the environment.
 A gateway running as a systemd/launchd service does not inherit your shell, so
-put them in `~/.hermes/.env`:
+they go in `~/.hermes/.env`, which Hermes loads at startup. `chorus agents add`
+writes this file for you. After a manual install, create it yourself (`chmod 600 ~/.hermes/.env`):
 
 ```bash
 CHORUS_URL=https://chorus.example.com

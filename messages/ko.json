@@ -1275,9 +1275,9 @@
         "step1Desc": "Hermes Agent(Nous Research)를 설치하고 PATH에서 hermes CLI를 사용할 수 있는지 확인하세요.",
         "step1Link": "Hermes 설치 가이드",
         "step2Title": "2단계: chorus agents add 실행",
-        "step2Tip": "chorus agents add --agents hermes는 해당 Chorus 릴리스 태그를 커밋 SHA로 변환하고(Hermes의 --ref는 40자 전체 SHA만 받습니다), 두 개의 플러그인 디렉터리를 설치합니다: chorus(훅, 스킬, 게이트웨이 플랫폼, 승인 트랜스포트)와 chorus-mcp(Chorus MCP 서버). Chorus URL이 http://localhost:8637이 아니면 ~/.hermes/config.yaml에 mcp_servers.chorus도 기록하며, 키 자체는 저장하지 않고 CHORUS_API_KEY를 참조합니다.",
+        "step2Tip": "chorus agents add --agents hermes는 해당 Chorus 릴리스 태그를 커밋 SHA로 변환하고(Hermes의 --ref는 40자 전체 SHA만 받습니다), 두 개의 플러그인 디렉터리를 설치합니다: chorus(훅, 스킬, 게이트웨이 플랫폼, 승인 트랜스포트)와 chorus-mcp(Chorus MCP 서버). Chorus URL이 http://localhost:8637이 아니면 ~/.hermes/config.yaml에 mcp_servers.chorus도 기록하며, config.yaml에는 키 자체를 저장하지 않고 CHORUS_API_KEY를 참조합니다. 또한 CHORUS_URL과 CHORUS_API_KEY를 ~/.hermes/.env(권한 0600)에 기록하며, 게이트웨이는 시작할 때 이 파일을 읽습니다.",
         "step3Title": "3단계: 게이트웨이 구성 및 시작",
-        "step3Tip": "게이트웨이 서비스는 셸 환경을 상속하지 않으므로 자격 증명은 ~/.hermes/.env에 둡니다. 게이트웨이 하나는 저장소 하나를 담당합니다: terminal.cwd를 그 저장소로 설정하세요. Chorus가 깨운 턴의 승인 요청은 Chorus 댓글로 올라오며 여기에 답하면 됩니다. approvals.mode manual로 두면 플래그된 명령이 Hermes의 guardian 모델에 의해 자동 승인되지 않고 반드시 여러분에게 전달됩니다. 시작하면 에이전트가 Chorus에서 온라인으로 표시됩니다."
+        "step3Tip": "게이트웨이 서비스는 셸 환경을 상속하지 않으며, chorus agents add가 이미 자격 증명을 ~/.hermes/.env에 기록해 두었습니다. 게이트웨이 하나는 저장소 하나를 담당합니다: terminal.cwd를 그 저장소로 설정하세요. Chorus가 깨운 턴의 승인 요청은 Chorus 댓글로 올라오며 여기에 답하면 됩니다. approvals.mode manual로 두면 플래그된 명령이 Hermes의 guardian 모델에 의해 자동 승인되지 않고 반드시 여러분에게 전달됩니다. 시작하면 에이전트가 Chorus에서 온라인으로 표시됩니다."
       },
       "pi": {
         "step1Title": "1단계: 환경 변수 설정",

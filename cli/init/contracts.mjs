@@ -103,6 +103,7 @@ export const FAILURE_ACTIONS = Object.freeze([OUTCOME_ACTIONS.FAILED]);
  * @property {("installed"|"repaired"|"skipped"|"seeded"|"failed"|"unsupported")} action
  * @property {string} detail        One-line human explanation for the summary.
  * @property {boolean} [codexEnvWritten] Codex credentials persisted in this invocation.
+ * @property {boolean} [hermesEnvWritten] Hermes credentials persisted into $HERMES_HOME/.env in this invocation.
  * @property {boolean} [codexMcpWritten] Codex native MCP configuration write succeeded.
  */
 

@@ -38,7 +38,8 @@ chorus agents add --agents hermes
 - 用 `git ls-remote` 把发布 tag `v<CLI 版本>` 解析成 40 位 commit SHA，再以 `--ref <sha> --enable` 安装两个目录；tag 解析不到时直接失败，不安装任何东西；
 - 两个插件都已安装时，会询问是否按当前版本重新安装（`[y/N]`；带 `--yes` 或无 TTY 时自动重装）；
 - Chorus **不在** `localhost:8637` 时，向 `$HERMES_HOME/config.yaml` 写入原生 `mcp_servers.chorus` 条目（见第 3 步）；
-- 打印后续配置清单（第 2–5 步）。不会写入你的 key。
+- 像为 Codex 写 `~/.codex/.env` 一样，把 `CHORUS_URL`、`CHORUS_API_KEY` 和 `CHORUS_AGENT_PROFILE` 写进 `$HERMES_HOME/.env`（默认 `~/.hermes/.env`，权限 0600，保留其他已有键），第 2 步因此已经完成；
+- 打印后续配置清单（第 3–5 步）。不会打印你的 key。
 
 ### 手动安装
 
@@ -58,7 +59,7 @@ hermes plugins list --plain --no-bundled   # 两者都应为：enabled  git pinn
 
 ## 第 2 步：为 gateway 提供凭证
 
-插件只从环境变量读取 `CHORUS_URL` 和 `CHORUS_API_KEY`。以 systemd/launchd 服务运行的 gateway 不会继承你的 shell 环境，所以要写进 `~/.hermes/.env`：
+插件只从环境变量读取 `CHORUS_URL` 和 `CHORUS_API_KEY`。以 systemd/launchd 服务运行的 gateway 不会继承你的 shell 环境，所以要写进 `~/.hermes/.env`（Hermes 启动时会加载它）。`chorus agents add` 会自动写入；手动安装时需要自己创建（`chmod 600 ~/.hermes/.env`）：
 
 ```bash
 CHORUS_URL=https://chorus.example.com
