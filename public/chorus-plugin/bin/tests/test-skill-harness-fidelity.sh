@@ -130,11 +130,12 @@ echo "skill/harness fidelity guard (checks 1-4 blacklist, 5-6 require — see he
 echo ""
 
 # ── Check 1 — no TeamCreate anywhere in shipped files ────────────────────────
-# packages/chorus-pi/test/{static.sh,README.md} name it in order to forbid it.
+# packages/chorus-pi/test/{static.sh,README.md} and the Hermes skill test name it in order to forbid it.
 echo "Check 1 — no \`TeamCreate\` (no harness in this repo exposes it)"
 FOUND=$(hits 'TeamCreate' "$ROOT/public" "$ROOT/plugins" "$ROOT/packages" \
   | grep -v '^packages/chorus-pi/test/static\.sh$' \
-  | grep -v '^packages/chorus-pi/test/README\.md$')
+  | grep -v '^packages/chorus-pi/test/README\.md$' \
+  | grep -v '^packages/chorus-hermes/chorus/tests/test_skills\.py$')
 report "no TeamCreate reference" "$FOUND"
 echo ""
 
