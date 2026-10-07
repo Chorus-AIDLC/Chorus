@@ -2416,6 +2416,39 @@ export async function advanceTurnForWake(params: {
  * uses, plus the `trigger`/`promptText` so a `human_instruction` re-runs with its
  * canonical free-text body.
  */
+/**
+ * `promptText` of a server-created `resume` continuation turn (POST /api/daemon/resume,
+ * turn-gated clients only). Human-readable in the session view, and the reverse map lets
+ * pending-turn replay recover the reason the run was interrupted.
+ */
+export const RESUME_TURN_PROMPT_TEXT = {
+  user: "Resumed after an interrupt.",
+  crash: "Resumed after the previous run exited abnormally.",
+} as const;
+
+/**
+ * Create the pending `resume` continuation turn for a turn-gated client, linked to the
+ * execution it resumes. Older still-pending resume turns of the session are settled as
+ * `merged` first (superseded), so at most one resume turn is ever pending per session and
+ * none is left behind for a later FIFO admission to pick up.
+ */
+export async function createResumeTurn(params: {
+  sessionUuid: string;
+  executionUuid: string;
+  resumedFrom: "user" | "crash";
+}): Promise<TurnView> {
+  await prisma.daemonSessionTurn.updateMany({
+    where: { sessionUuid: params.sessionUuid, trigger: "resume", status: "pending" },
+    data: { status: MERGED_TURN_STATUS },
+  });
+  return createPendingTurn({
+    sessionUuid: params.sessionUuid,
+    trigger: "resume",
+    executionUuid: params.executionUuid,
+    promptText: RESUME_TURN_PROMPT_TEXT[params.resumedFrom],
+  });
+}
+
 export interface PendingTurnView {
   turnUuid: string;
   sessionUuid: string;
@@ -2429,6 +2462,9 @@ export interface PendingTurnView {
   // ISO-8601 creation time. The wake bridge creates a turn right after its Notification row,
   // so clients correlate a pending turn with the notification (and comment) that produced it.
   createdAt: string | null;
+  // `resume` turns only: the resumed execution's entity and why it was interrupted, so a
+  // client can replay a resume whose control event was lost or whose admission failed.
+  resume?: { entityType: string; entityUuid: string; resumedFrom: "user" | "crash" };
 }
 
 interface TurnDeliveryAnchor {
@@ -2536,10 +2572,22 @@ export async function getPendingTurnsForConnection(params: {
       trigger: true,
       promptText: true,
       operationPayload: true,
+      executionUuid: true,
       createdAt: true,
       session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } },
     },
   });
+  const resumeExecutionUuids = rows
+    .filter((r) => r.trigger === "resume" && r.executionUuid)
+    .map((r) => r.executionUuid as string);
+  const resumeEntities = new Map<string, { entityType: string; entityUuid: string }>();
+  if (resumeExecutionUuids.length > 0) {
+    const executions = await prisma.daemonExecution.findMany({
+      where: { companyUuid: params.companyUuid, uuid: { in: resumeExecutionUuids } },
+      select: { uuid: true, entityType: true, entityUuid: true },
+    });
+    for (const e of executions) resumeEntities.set(e.uuid, { entityType: e.entityType, entityUuid: e.entityUuid });
+  }
 
   const deliverable = [];
   const accessBySession = new Map<string, Promise<boolean>>();
@@ -2567,5 +2615,16 @@ export async function getPendingTurnsForConnection(params: {
     ...(params.operationProtocol ? { operationPayload: r.operationPayload ?? null } : {}),
     promptText: r.promptText,
     createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
+    ...resumeView(r, resumeEntities),
   }));
+}
+
+function resumeView(
+  r: { trigger: string; executionUuid: string | null; promptText: string | null },
+  entities: Map<string, { entityType: string; entityUuid: string }>,
+): Pick<PendingTurnView, "resume"> {
+  const entity = r.trigger === "resume" && r.executionUuid ? entities.get(r.executionUuid) : undefined;
+  if (!entity) return {};
+  const resumedFrom = r.promptText === RESUME_TURN_PROMPT_TEXT.crash ? "crash" : "user";
+  return { resume: { ...entity, resumedFrom } };
 }

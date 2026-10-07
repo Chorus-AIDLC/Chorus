@@ -66,6 +66,7 @@ import {
   executionEventName,
   reportExecutionInterrupt,
   resumeExecution,
+  restoreInterruptedExecution,
   isConnectionLive,
   hasRunningExecution,
   INTERRUPTED_EXECUTION_STATUS,
@@ -1128,5 +1129,16 @@ describe("hasRunningExecution", () => {
     });
     // No connection read at all — this predicate carries no liveness/threshold logic.
     expect(mockPrisma.daemonConnection.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("restoreInterruptedExecution", () => {
+  it("puts a resumed (running) row back to interrupted with its prior reason", async () => {
+    mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 1 });
+    await restoreInterruptedExecution(companyUuid, connectionUuid, "task", t1, "crash");
+    expect(mockPrisma.daemonExecution.updateMany).toHaveBeenCalledWith({
+      where: { companyUuid, connectionUuid, entityType: "task", entityUuid: t1, status: "running" },
+      data: { status: "interrupted", interruptedReason: "crash" },
+    });
   });
 });

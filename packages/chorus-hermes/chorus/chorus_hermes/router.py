@@ -381,6 +381,9 @@ class EventRouter:
         if trigger in AUTONOMOUS_TURN_TRIGGERS:
             return await self._redispatch_autonomous(turn, turn_uuid, session_id, direct, trigger)
 
+        if trigger == "resume":
+            return await self._redispatch_resume(turn, turn_uuid, session_id, direct, seen_key)
+
         if trigger != "human_instruction":
             self._skip(seen_key, f"pending trigger {trigger!r} is not re-dispatched here")
             return None, False
@@ -401,6 +404,23 @@ class EventRouter:
                            canonical_session_id=session_id)
         if await self._filtered(wake):
             return None, True
+        return await self._resolve_and_dispatch(wake), True
+
+    async def _redispatch_resume(self, turn, turn_uuid, session_id, direct, seen_key) -> tuple:
+        """Replay a persisted ``resume`` continuation turn (its control event was lost, or its first
+        admission failed). The server returns the resumed execution's entity and reason with it."""
+        r = turn.get("resume") if isinstance(turn.get("resume"), Mapping) else None
+        etype = r.get("entityType") if r else None
+        euuid = r.get("entityUuid") if r else None
+        if not isinstance(etype, str) or not isinstance(euuid, str) or not euuid:
+            self._skip(seen_key, "pending resume turn has no resumed entity")
+            return None, False
+        n: Dict[str, Any] = {"action": "resource_resumed", "entityType": etype, "entityUuid": euuid}
+        if r.get("resumedFrom") in ("user", "crash"):
+            n["resumedFrom"] = r["resumedFrom"]
+        wake = WakeRequest(source="resume", notification=n, label=seen_key, entity_type=etype,
+                           entity_uuid=euuid, direct_idea_uuid=direct, root_idea_uuid=direct,
+                           turn_uuid=turn_uuid, pending_turn=turn, canonical_session_id=session_id)
         return await self._resolve_and_dispatch(wake), True
 
     async def _belongs(self, n: Mapping[str, Any], anchors: set, direct: Optional[str]) -> bool:
@@ -520,13 +540,26 @@ class EventRouter:
         if isinstance(orch, Mapping) and orch.get("type") == "agent" and isinstance(orch.get("uuid"), str) \
                 and isinstance(orch.get("name"), str):
             n["orchestrator"] = dict(orch)
-        # The server hands a turn-gated client a pending continuation turn to admit: the
-        # interrupted turn is terminal, so without it the resume would be refused admission.
+        # The server hands a turn-gated client a pending continuation turn to admit (the
+        # interrupted turn is terminal). Without one, a turn-less admission would pick up some
+        # OTHER pending turn of the session, so such a resume is refused, never guessed.
         turn_uuid = event.get("turnUuid") if isinstance(event.get("turnUuid"), str) and event.get("turnUuid") \
             else None
-        wake = WakeRequest(source="resume", notification=n, label=f"resume:{etype}:{euuid}",
-                           entity_type=etype, entity_uuid=euuid, turn_uuid=turn_uuid)
-        return await self._resolve_and_dispatch(wake)
+        if turn_uuid is None:
+            logger.warning("[Chorus] resume for %s:%s carries no continuation turn; not running it "
+                           "(this Chorus server predates Hermes resume support)", etype, euuid)
+            return None
+        seen_key = f"turn:{turn_uuid}"
+        if not self._claim(seen_key):
+            return None
+        try:
+            wake = WakeRequest(source="resume", notification=n, label=seen_key,
+                               entity_type=etype, entity_uuid=euuid, turn_uuid=turn_uuid)
+            dispatched = await self._resolve_and_dispatch(wake)
+            self._settle(seen_key, True)
+            return dispatched
+        finally:
+            self.inflight.discard(seen_key)
 
     # -- control -----------------------------------------------------------------------
 

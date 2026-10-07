@@ -757,8 +757,7 @@ def _strict_admission(fake, pending):
     fake.turn_advance_hook = hook
 
 
-@pytest.mark.parametrize("server_turn", [True, False])
-def test_resume_after_interrupt_runs_only_with_a_continuation_turn(hermes, tmp_path, server_turn):
+def test_resume_after_interrupt_runs_its_continuation_turn(hermes, tmp_path):
     h = Harness(hermes, tmp_path)
     pending = ["turn-live"]
     _strict_admission(h.fake, pending)
@@ -775,26 +774,74 @@ def test_resume_after_interrupt_runs_only_with_a_continuation_turn(hermes, tmp_p
         await h.idle()
         runs_before = len(h.handled)
         h.gate.set()
-        resume = {"type": "control", "command": "resume", "targetConnectionUuid": "c-1",
-                  "entityType": "task", "entityUuid": "t-1", "resumeReason": "user"}
-        if server_turn:
-            pending.append("turn-resume")  # what POST /api/daemon/resume now creates for hermes
-            resume["turnUuid"] = "turn-resume"
-        h.fake.feed.event(resume)
-        if server_turn:
-            await wait_for(lambda: len(h.handled) > runs_before)
-        else:
-            await asyncio.sleep(0.1)
+        pending.append("turn-resume")  # what POST /api/daemon/resume creates for hermes
+        h.fake.feed.event({"type": "control", "command": "resume", "targetConnectionUuid": "c-1",
+                           "entityType": "task", "entityUuid": "t-1", "resumeReason": "user",
+                           "turnUuid": "turn-resume"})
+        await wait_for(lambda: len(h.handled) > runs_before)
         await h.idle()
         await h.adapter.disconnect()
         return runs_before
 
     runs_before = run(go())
-    admitted = [b.get("turnUuid") for b in h.turn_bodies() if b["status"] == "running"]
-    if server_turn:
-        assert len(h.handled) == runs_before + 1
-        assert admitted[-1] == "turn-resume" and pending == []
-        assert [b["status"] for b in h.turn_bodies() if b.get("turnUuid") == "turn-resume"][-1] == "ended"
-    else:
-        # admission stays a hard gate: no continuation turn → the model never runs again
-        assert len(h.handled) == runs_before
+    assert len(h.handled) == runs_before + 1 and pending == []
+    assert [b.get("turnUuid") for b in h.turn_bodies() if b["status"] == "running"][-1] == "turn-resume"
+    assert [b["status"] for b in h.turn_bodies() if b.get("turnUuid") == "turn-resume"][-1] == "ended"
+
+
+def test_turnless_resume_never_takes_another_pending_turn(hermes, tmp_path):
+    """Bob's repro: a resume without turnUuid while another instruction is pending must not run."""
+    h = Harness(hermes, tmp_path)
+    pending = ["turn-other-instruction"]
+    h.fake.lineage["idea:i-1"] = ("i-1", "i-1")
+
+    async def go():
+        await h.connect()
+        await h.idle()
+        _strict_admission(h.fake, pending)
+        await h.adapter.router.handle_control({"type": "control", "command": "resume", "targetConnectionUuid": "c-1",
+                                               "entityType": "idea", "entityUuid": "i-1", "resumeReason": "user"})
+        await asyncio.sleep(0.05)
+        await h.idle()
+        await h.adapter.disconnect()
+
+    run(go())
+    assert h.handled == [] and pending == ["turn-other-instruction"]
+    assert not [b for b in h.turn_bodies() if b["status"] == "running"]
+
+
+def test_resume_turn_is_retried_by_the_sweep_after_unavailable_admission(hermes, tmp_path):
+    """Bob's repro: first admission 503 → server recovers → sweep runs the same resume turn to the end."""
+    h = Harness(hermes, tmp_path)
+    h.fake.lineage["idea:i-1"] = ("i-1", "i-1")
+    resume_turn = {"turnUuid": "turn-resume", "sessionId": "i-1", "directIdeaUuid": "i-1", "trigger": "resume",
+                   "promptText": "Resumed after an interrupt.",
+                   "resume": {"entityType": "idea", "entityUuid": "i-1", "resumedFrom": "user"}}
+    attempts = []
+
+    def flaky(body):
+        if body.get("status") == "running":
+            attempts.append(body.get("turnUuid"))
+            if len(attempts) == 1:
+                return _fake_error(503, "Service Unavailable")
+            h.fake.pending = []
+        return None
+
+    async def go():
+        await h.connect()
+        await h.idle()
+        h.fake.pending = [resume_turn]
+        h.fake.turn_advance_hook = flaky
+        await h.adapter.router.handle_control({"type": "control", "command": "resume", "targetConnectionUuid": "c-1",
+                                               "entityType": "idea", "entityUuid": "i-1", "resumeReason": "user",
+                                               "turnUuid": "turn-resume"})
+        await h.idle()
+        assert h.handled == []  # the 503 kept the model from running
+        await h.adapter.router.sweep_pending_turns()
+        await wait_for(lambda: h.handled)
+        await h.idle()
+        await h.adapter.disconnect()
+
+    run(go())
+    assert attempts == ["turn-resume", "turn-resume"] and len(h.handled) == 1
+    assert [b["status"] for b in h.turn_bodies() if b.get("turnUuid") == "turn-resume"][-1] == "ended"

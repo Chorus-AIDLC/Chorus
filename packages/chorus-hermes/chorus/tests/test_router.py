@@ -276,11 +276,41 @@ def test_control_resume_dispatches_resource_resumed(setup):
     fake, router, dispatched, _ = setup
     fake.lineage["task:t-1"] = ("r", "i-1")
     run(router.handle_control({"type": "control", "command": "resume", "targetConnectionUuid": "c-me",
-                               "entityType": "task", "entityUuid": "t-1", "resumeReason": "crash"}))
+                               "entityType": "task", "entityUuid": "t-1", "resumeReason": "crash",
+                               "turnUuid": "turn-r"}))
     (wake,) = dispatched
     assert wake.action == "resource_resumed" and wake.chat_id == "idea:i-1"
     assert "EXITED ABNORMALLY" in wake.prompt
-    assert wake.turn_uuid is None  # an older server sends no continuation turn
+
+
+def test_control_resume_without_a_continuation_turn_is_refused(setup):
+    """A turn-less resume (older server) would let FIFO admission take another pending turn."""
+    fake, router, dispatched, _ = setup
+    fake.lineage["task:t-1"] = ("r", "i-1")
+    run(router.handle_control({"type": "control", "command": "resume", "targetConnectionUuid": "c-me",
+                               "entityType": "task", "entityUuid": "t-1", "resumeReason": "user"}))
+    assert dispatched == []
+
+
+def test_pending_resume_turn_is_replayed_with_its_entity_and_reason(setup):
+    fake, router, dispatched, _ = setup
+    fake.lineage["task:t-1"] = ("r", "i-1")
+    turn = {"turnUuid": "turn-r", "sessionId": "i-1", "directIdeaUuid": "i-1", "trigger": "resume",
+            "promptText": "Resumed after the previous run exited abnormally.",
+            "resume": {"entityType": "task", "entityUuid": "t-1", "resumedFrom": "crash"}}
+    run(router.dispatch_pending_turn(turn))
+    (wake,) = dispatched
+    assert wake.turn_uuid == "turn-r" and wake.action == "resource_resumed"
+    assert wake.entity_type == "task" and wake.entity_uuid == "t-1" and wake.chat_id == "idea:i-1"
+    assert "EXITED ABNORMALLY" in wake.prompt
+    run(router.dispatch_pending_turn(turn))  # the same turn is not run twice
+    assert len(dispatched) == 1
+
+
+def test_pending_resume_turn_without_entity_stays_recoverable(setup):
+    _, router, dispatched, _ = setup
+    run(router.dispatch_pending_turn({"turnUuid": "turn-r", "sessionId": "i-1", "trigger": "resume"}))
+    assert dispatched == [] and "turn:turn-r" not in router.seen
 
 
 def test_control_resume_carries_the_continuation_turn(setup):

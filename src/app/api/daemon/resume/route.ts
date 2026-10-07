@@ -31,9 +31,10 @@ import {
   CONTROL_ENTITY_TYPES,
   RESUME_TURN_CLIENT_TYPES,
 } from "@/services/daemon-control.service";
-import { createPendingTurn } from "@/services/daemon-session.service";
+import { createResumeTurn } from "@/services/daemon-session.service";
 import {
   resumeExecution,
+  restoreInterruptedExecution,
   publishExecutionChange,
   isConnectionLive,
 } from "@/services/daemon-execution.service";
@@ -110,7 +111,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
   const execution = await prisma.daemonExecution?.findFirst({
     where: { companyUuid: auth.companyUuid, connectionUuid, entityType, entityUuid },
-    select: { directIdeaUuid: true },
+    select: { uuid: true, directIdeaUuid: true },
   });
   const resumedSession = await prisma.daemonSession?.findFirst({
     where: {
@@ -122,19 +123,27 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   });
 
   // A client that admits every run by turn (Hermes) needs a pending continuation turn:
-  // the interrupted turn is terminal, so a turn-less resume would be refused admission
-  // and never run. Created only for those clients so the daemon's resume is unchanged.
-  // Best-effort: on failure the resume is still dispatched (the client logs the refusal).
+  // the interrupted turn is terminal, and a turn-less resume would let the client's
+  // admission pick up some OTHER pending turn of the session. So for those clients the
+  // turn is mandatory: if it cannot be created the resume is undone (the row stays
+  // interrupted and resumable) and nothing is dispatched. The daemon is unaffected.
   let resumeTurnUuid: string | undefined;
   const connection = await prisma.daemonConnection?.findFirst({
     where: { companyUuid: auth.companyUuid, uuid: connectionUuid },
     select: { clientType: true },
   });
-  if (resumedSession?.uuid && connection && RESUME_TURN_CLIENT_TYPES.has(connection.clientType)) {
+  if (connection && RESUME_TURN_CLIENT_TYPES.has(connection.clientType)) {
     try {
-      resumeTurnUuid = (await createPendingTurn({ sessionUuid: resumedSession.uuid, trigger: "resume" })).uuid;
+      if (!resumedSession?.uuid || !execution?.uuid) throw new Error("no session to resume");
+      resumeTurnUuid = (await createResumeTurn({
+        sessionUuid: resumedSession.uuid,
+        executionUuid: execution.uuid,
+        resumedFrom: result.resumedFrom,
+      })).uuid;
     } catch {
-      resumeTurnUuid = undefined;
+      await restoreInterruptedExecution(auth.companyUuid, connectionUuid, entityType, entityUuid, result.resumedFrom);
+      await publishExecutionChange(auth.companyUuid, connectionUuid);
+      return errors.conflict("Could not prepare the resumed run; the execution is still interrupted — try again.");
     }
   }
 

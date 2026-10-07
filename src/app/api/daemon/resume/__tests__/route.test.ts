@@ -13,7 +13,8 @@ const mockResolveResourceOrchestrator = vi.fn();
 const mockExecutionFindFirst = vi.fn();
 const mockSessionFindFirst = vi.fn();
 const mockConnectionFindFirst = vi.fn();
-const mockCreatePendingTurn = vi.fn();
+const mockCreateResumeTurn = vi.fn();
+const mockRestoreInterruptedExecution = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
@@ -29,7 +30,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/services/daemon-session.service", () => ({
-  createPendingTurn: (...args: unknown[]) => mockCreatePendingTurn(...args),
+  createResumeTurn: (...args: unknown[]) => mockCreateResumeTurn(...args),
 }));
 
 vi.mock("@/services/daemon-control.service", () => ({
@@ -41,6 +42,7 @@ vi.mock("@/services/daemon-control.service", () => ({
 
 vi.mock("@/services/daemon-execution.service", () => ({
   resumeExecution: (...args: unknown[]) => mockResumeExecution(...args),
+  restoreInterruptedExecution: (...args: unknown[]) => mockRestoreInterruptedExecution(...args),
   publishExecutionChange: (...args: unknown[]) => mockPublishExecutionChange(...args),
   isConnectionLive: (...args: unknown[]) => mockIsConnectionLive(...args),
 }));
@@ -84,7 +86,8 @@ beforeEach(() => {
   mockExecutionFindFirst.mockResolvedValue(null);
   mockSessionFindFirst.mockResolvedValue(null);
   mockConnectionFindFirst.mockResolvedValue(null);
-  mockCreatePendingTurn.mockResolvedValue({ uuid: "turn-resume" });
+  mockCreateResumeTurn.mockResolvedValue({ uuid: "turn-resume" });
+  mockRestoreInterruptedExecution.mockResolvedValue(undefined);
 });
 
 describe("POST /api/daemon/resume", () => {
@@ -205,15 +208,17 @@ describe("POST /api/daemon/resume", () => {
 
   describe("continuation turn for turn-gated clients (B4-resume-without-pending-turn)", () => {
     beforeEach(() => {
-      mockExecutionFindFirst.mockResolvedValue({ directIdeaUuid: "idea-1" });
+      mockExecutionFindFirst.mockResolvedValue({ uuid: "exec-1", directIdeaUuid: "idea-1" });
       mockSessionFindFirst.mockResolvedValue({ uuid: "session-1", runtimeCwd: null });
     });
 
-    it("creates a pending resume turn for a hermes connection and dispatches its uuid", async () => {
+    it("creates a resume turn linked to the execution for a hermes connection and dispatches its uuid", async () => {
       mockConnectionFindFirst.mockResolvedValue({ clientType: "hermes" });
       const res = await POST(postRequest(validBody), emptyCtx);
       expect(res.status).toBe(200);
-      expect(mockCreatePendingTurn).toHaveBeenCalledWith({ sessionUuid: "session-1", trigger: "resume" });
+      expect(mockCreateResumeTurn).toHaveBeenCalledWith({
+        sessionUuid: "session-1", executionUuid: "exec-1", resumedFrom: "user",
+      });
       expect(mockDispatchControl).toHaveBeenCalledWith(
         expect.objectContaining({ command: "resume", turnUuid: "turn-resume" }),
       );
@@ -221,24 +226,31 @@ describe("POST /api/daemon/resume", () => {
 
     it("leaves the daemon resume unchanged: no turn is created and none is dispatched", async () => {
       mockConnectionFindFirst.mockResolvedValue({ clientType: "claude_code" });
-      await POST(postRequest(validBody), emptyCtx);
-      expect(mockCreatePendingTurn).not.toHaveBeenCalled();
-      expect(mockDispatchControl.mock.calls[0][0]).not.toHaveProperty("turnUuid");
-    });
-
-    it("still dispatches the resume when the turn cannot be created", async () => {
-      mockConnectionFindFirst.mockResolvedValue({ clientType: "hermes" });
-      mockCreatePendingTurn.mockRejectedValue(new Error("db down"));
       const res = await POST(postRequest(validBody), emptyCtx);
       expect(res.status).toBe(200);
+      expect(mockCreateResumeTurn).not.toHaveBeenCalled();
       expect(mockDispatchControl.mock.calls[0][0]).not.toHaveProperty("turnUuid");
     });
 
-    it("creates no turn when the session cannot be found", async () => {
+    it("undoes the resume and dispatches nothing when the turn cannot be created", async () => {
+      mockConnectionFindFirst.mockResolvedValue({ clientType: "hermes" });
+      mockResumeExecution.mockResolvedValue({ ok: true, resumedFrom: "crash" });
+      mockCreateResumeTurn.mockRejectedValue(new Error("db down"));
+      const res = await POST(postRequest(validBody), emptyCtx);
+      expect(res.status).toBe(409);
+      expect(mockRestoreInterruptedExecution).toHaveBeenCalledWith(companyUuid, connectionUuid, "task", t1, "crash");
+      expect(mockDispatchControl).not.toHaveBeenCalled();
+      expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
+    });
+
+    it("undoes the resume when the session cannot be found", async () => {
       mockConnectionFindFirst.mockResolvedValue({ clientType: "hermes" });
       mockSessionFindFirst.mockResolvedValue(null);
-      await POST(postRequest(validBody), emptyCtx);
-      expect(mockCreatePendingTurn).not.toHaveBeenCalled();
+      const res = await POST(postRequest(validBody), emptyCtx);
+      expect(res.status).toBe(409);
+      expect(mockCreateResumeTurn).not.toHaveBeenCalled();
+      expect(mockRestoreInterruptedExecution).toHaveBeenCalled();
+      expect(mockDispatchControl).not.toHaveBeenCalled();
     });
   });
 });

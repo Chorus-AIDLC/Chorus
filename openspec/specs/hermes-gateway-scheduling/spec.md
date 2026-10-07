@@ -103,9 +103,21 @@ All REST failures MUST be logged and MUST NOT crash the gateway.
 
 - **GIVEN** a turn was interrupted and the owner clicks Resume
 - **WHEN** `POST /api/daemon/resume` targets a connection whose client type admits every run by turn (`hermes`)
-- **THEN** the server MUST create a pending `resume` turn for the session and carry its `turnUuid` on the `resume` control event, while the daemon's resume stays unchanged (no turn created, none dispatched)
+- **THEN** the server MUST settle any older still-pending `resume` turn of the session as `merged`, create one pending `resume` turn linked to the resumed execution, and carry its `turnUuid` on the `resume` control event, while the daemon's resume stays unchanged (no turn created, none dispatched)
 - **AND** the adapter MUST admit exactly that turn before running the model
-- **AND** a `resume` without a `turnUuid` MUST still be refused admission, so admission is never bypassed
+
+#### Scenario: Resume continuation cannot be prepared
+
+- **GIVEN** a Resume for a `hermes` connection whose session cannot be found or whose resume turn cannot be created
+- **WHEN** the route handles it
+- **THEN** it MUST put the execution back to `interrupted` with its prior reason, dispatch nothing, and return an error, so the run stays resumable
+- **AND** the adapter MUST refuse any `resume` control event without a `turnUuid` rather than run it, because a turn-less admission would take another pending turn of the session
+
+#### Scenario: A resume turn is recoverable
+
+- **GIVEN** a pending `resume` turn whose control event was lost or whose first admission was unavailable (network error or 5xx)
+- **WHEN** a pending-turn sweep or `deliver_turn` runs
+- **THEN** `pending-turns` MUST return the turn with `resume: {entityType, entityUuid, resumedFrom}`, and the adapter MUST re-dispatch it as that entity's `resource_resumed` wake and admit the same turn
 
 ### Requirement: Outbound gateway replies SHALL NOT post to Chorus implicitly
 
