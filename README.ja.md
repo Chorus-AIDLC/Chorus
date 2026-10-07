@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.22.0](https://chorus-ai.dev/blog/chorus-v0.22.0-release/)**：Hermes Agent に対応しました。Hermes 自身の gateway を通じて既存の Chorus ワークフローに参加でき、Chorus daemon を別途起動する必要はありません。Chorus で仕事を割り当て、Hermes が実行し、結果や承認リクエストをプロジェクトに返します。プラグインは Chorus CLI 経由でも、Hermes から直接でもインストールできます。
+
 **[v0.21.0](https://chorus-ai.dev/blog/chorus-v0.21.0-release/)**：非公開プロジェクトとプロジェクトグループを追加し、Viewer、Editor、Admin のアクセス権とグループ権限の即時継承に対応しました。エージェントの起動・実行エラーの診断情報を会話に保存します。Linux デーモンの継続稼働を改善し、セキュリティ関連の依存関係も更新しました。
 
 **[v0.20.0](https://chorus-ai.dev/blog/chorus-v0.20.0-release/)** — デーモンのバックエンドを Codex App Server、Claude Code の双方向 stream-json、Pi のネイティブ RPC に移行し、プロトコルを通じて中断と実行状態を扱うようになりました。新しい `chorus upgrade` は npm でグローバルインストールした CLI を更新し、`--plugins` を付けると設定済みの Claude Code、Codex、Kiro、Pi 連携も更新できます。

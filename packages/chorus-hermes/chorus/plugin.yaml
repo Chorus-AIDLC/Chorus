@@ -3,7 +3,7 @@ label: Chorus
 # Hermes 2b52acc2d accepts kind: standalone|backend|exclusive|platform|model-provider.
 # A standalone (user) plugin may call ctx.register_platform(); see README "Hermes compatibility notes".
 kind: standalone
-version: 0.21.1
+version: 0.22.0
 description: >
   Chorus AI-DLC integration for Hermes Agent: session check-in and reminders,
   Chorus skills, a gateway platform that receives Chorus wakes, and an

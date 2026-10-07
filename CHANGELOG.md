@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.22.0] - 2026-10-07
+
+### Added
+
+- **Hermes Agent integration**: Added native Chorus skills, read-only reviewers, gateway scheduling, approval transport, and execution reporting, with release-pinned installation through `chorus agents add --agents hermes`. (#603)
+
+### Fixed
+
+- **Claude daemon background agents**: Extended the default post-turn wait ceiling to one hour and report unfinished background-agent termination as a failed execution instead of silent success. (#602)
+- **Mention suggestions**: Keep the suggestion popup anchored to the editor during animations, scrolling, and window resizing.
+- **Dependency security**: Patched vulnerable dependencies and added a fail-closed CI audit gate for critical and high-severity root dependency advisories. (#601, #602)
+
+### Plugin
+
+- **Versions**: Upgraded all seven plugins and four coordinated npm packages to `0.22.0`.
+
+---
+
 ## [0.21.1] - 2026-10-04
 
 ### Added

@@ -4,7 +4,7 @@ description: Chorus documentation router for Hermes Agent — consult the live C
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.21.1"
+  version: "0.22.0"
   category: project-management
   mcp_server: chorus
 ---

@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.22.0](https://chorus-ai.dev/blog/chorus-v0.22.0-release/)**: Hermes Agent 연동을 추가했습니다. 별도의 Chorus daemon 없이 Hermes 자체 gateway를 통해 기존 Chorus 워크플로에 참여합니다. Chorus에서 작업을 할당하면 Hermes가 실행하고, 결과와 승인 요청을 프로젝트로 보냅니다. 플러그인은 Chorus CLI를 사용하거나 Hermes에서 직접 설치할 수 있습니다.
+
 **[v0.21.0](https://chorus-ai.dev/blog/chorus-v0.21.0-release/)**: 비공개 프로젝트와 프로젝트 그룹을 추가하고 Viewer, Editor, Admin 접근 권한과 그룹 권한의 즉시 상속을 지원합니다. 에이전트 시작 및 실행 실패의 진단 정보를 대화에 저장합니다. Linux 데몬의 지속 실행을 개선하고 보안 관련 의존성도 업데이트했습니다.
 
 **[v0.20.0](https://chorus-ai.dev/blog/chorus-v0.20.0-release/)** — 데몬 백엔드를 Codex App Server, Claude Code 양방향 stream-json, Pi 네이티브 RPC로 전환해 프로토콜로 중단과 실행 상태를 처리합니다. 새 `chorus upgrade` 명령은 npm으로 전역 설치한 CLI를 업데이트하며, `--plugins`를 추가하면 설정된 Claude Code, Codex, Kiro, Pi 연동도 갱신합니다.
