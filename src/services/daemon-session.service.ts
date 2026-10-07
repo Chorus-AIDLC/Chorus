@@ -2418,13 +2418,20 @@ export async function advanceTurnForWake(params: {
  */
 /**
  * `promptText` of a server-created `resume` continuation turn (POST /api/daemon/resume,
- * turn-gated clients only). Human-readable in the session view, and the reverse map lets
- * pending-turn replay recover the reason the run was interrupted.
+ * turn-gated clients only). WIRE CONTRACT: pending-turn replay maps these exact strings
+ * back to `resumedFrom` (see `resumeView`), and resume turns already stored carry them.
+ * Changing a value would make stored crash turns replay as user resumes — add a new entry
+ * and keep the old one in `RESUME_TURN_REASON_BY_TEXT` instead.
  */
 export const RESUME_TURN_PROMPT_TEXT = {
   user: "Resumed after an interrupt.",
   crash: "Resumed after the previous run exited abnormally.",
 } as const;
+
+const RESUME_TURN_REASON_BY_TEXT: ReadonlyMap<string, "user" | "crash"> = new Map([
+  [RESUME_TURN_PROMPT_TEXT.user, "user"],
+  [RESUME_TURN_PROMPT_TEXT.crash, "crash"],
+]);
 
 /**
  * Create the pending `resume` continuation turn for a turn-gated client, linked to the
@@ -2437,10 +2444,31 @@ export async function createResumeTurn(params: {
   executionUuid: string;
   resumedFrom: "user" | "crash";
 }): Promise<TurnView> {
-  await prisma.daemonSessionTurn.updateMany({
+  const superseded = await prisma.daemonSessionTurn.findMany({
     where: { sessionUuid: params.sessionUuid, trigger: "resume", status: "pending" },
-    data: { status: MERGED_TURN_STATUS },
   });
+  if (superseded.length > 0) {
+    await prisma.daemonSessionTurn.updateMany({
+      where: { uuid: { in: superseded.map((t) => t.uuid) }, status: "pending" },
+      data: { status: MERGED_TURN_STATUS },
+    });
+    const session = await prisma.daemonSession.findUnique({
+      where: { uuid: params.sessionUuid },
+      select: { companyUuid: true },
+    });
+    // Same live convergence as coalesced turns: a raw updateMany emits nothing on its own.
+    if (session) {
+      for (const row of superseded) {
+        publishTranscriptEvent({
+          companyUuid: session.companyUuid,
+          sessionUuid: params.sessionUuid,
+          trigger: "turn_status_changed",
+          turn: toTurnView({ ...row, status: MERGED_TURN_STATUS }),
+          messages: [],
+        });
+      }
+    }
+  }
   return createPendingTurn({
     sessionUuid: params.sessionUuid,
     trigger: "resume",
@@ -2625,6 +2653,6 @@ function resumeView(
 ): Pick<PendingTurnView, "resume"> {
   const entity = r.trigger === "resume" && r.executionUuid ? entities.get(r.executionUuid) : undefined;
   if (!entity) return {};
-  const resumedFrom = r.promptText === RESUME_TURN_PROMPT_TEXT.crash ? "crash" : "user";
+  const resumedFrom = RESUME_TURN_REASON_BY_TEXT.get(r.promptText ?? "") ?? "user";
   return { resume: { ...entity, resumedFrom } };
 }

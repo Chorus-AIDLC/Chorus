@@ -3750,6 +3750,11 @@ describe("getPendingTurnsForConnection", () => {
 
 describe("createResumeTurn", () => {
   it("supersedes older pending resume turns, then creates one linked to the execution", async () => {
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
+      { uuid: "turn-old", sessionUuid: "s1", seq: 3, trigger: "resume", status: "pending", promptText: null,
+        backendSessionId: null, startedAt: null, endedAt: null, createdAt: new Date(), interruptedReason: null,
+        relayError: null, wakeError: null, usage: null, operationPayload: null, executionUuid: "exec-0" },
+    ]);
     mockPrisma.daemonSessionTurn.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.daemonSession.findUnique.mockResolvedValue({ uuid: "s1", companyUuid, directIdeaUuid: null });
     mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue({ seq: 3 });
@@ -3759,7 +3764,7 @@ describe("createResumeTurn", () => {
     }));
     const view = await createResumeTurn({ sessionUuid: "s1", executionUuid: "exec-1", resumedFrom: "user" });
     expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
-      where: { sessionUuid: "s1", trigger: "resume", status: "pending" },
+      where: { uuid: { in: ["turn-old"] }, status: "pending" },
       data: { status: "merged" },
     });
     expect(mockPrisma.daemonSessionTurn.create).toHaveBeenCalledWith({
@@ -3769,5 +3774,7 @@ describe("createResumeTurn", () => {
       }),
     });
     expect(view.uuid).toBe("turn-new");
+    const changed = mockEventBus.emit.mock.calls.map(([, p]) => p).filter((p) => p?.trigger === "turn_status_changed");
+    expect(changed.map((p) => [p.turn.uuid, p.turn.status])).toEqual([["turn-old", "merged"]]);
   });
 });
