@@ -27,6 +27,7 @@ import {
   isHermesLoopbackDefault,
   readHermesGatewaySettings,
   writeHermesGatewaySettings,
+  readHermesNativeMcpUrl,
   HERMES_CWD_PLACEHOLDERS,
   HERMES_RECOMMENDED_SETTINGS,
 } from "./hermes-mcp-config.mjs";
@@ -733,7 +734,8 @@ async function configureHermesGateway(ctx, { env }) {
   if (ctx.flags?.pluginOnly) return "";
   const configPath = resolveHermesConfigPath(env);
   const io = ctx.io ?? {};
-  const ask = io.isTTY && typeof io.ask === "function" ? io.ask : null;
+  // --yes means "accept the defaults": behave like a non-TTY run (no cwd prompt).
+  const ask = io.isTTY && typeof io.ask === "function" && !ctx.flags?.yes ? io.ask : null;
   let current = {};
   try {
     current = (ctx.readHermesGatewaySettings ?? readHermesGatewaySettings)(configPath) ?? {};
@@ -820,10 +822,21 @@ export async function installHermes(ctx) {
   };
   // Non-loopback Chorus → write/merge the native mcp_servers.chorus entry (literal URL,
   // `Bearer ${CHORUS_API_KEY}` placeholder — never the key). The loopback default is
-  // already served by the portable chorus-mcp package. Idempotent; returns a note suffix.
+  // already served by the portable chorus-mcp package, BUT a native entry left by an
+  // earlier remote run still wins over it, so an existing literal entry is repointed to
+  // the loopback URL too (the .env, gateway and MCP must reach the same Chorus). An entry
+  // that already follows ${CHORUS_URL} tracks the .env and is left alone. Idempotent.
   const ensureMcp = () => {
-    if (ctx.flags?.pluginOnly || !chorusUrl || isHermesLoopbackDefault(chorusUrl)) return "";
+    if (ctx.flags?.pluginOnly || !chorusUrl) return "";
     const configPath = resolveHermesConfigPath(env);
+    let existing;
+    try {
+      existing = (ctx.readHermesNativeMcpUrl ?? readHermesNativeMcpUrl)(configPath);
+    } catch {
+      existing = undefined;
+    }
+    if (typeof existing === "string" && existing.includes("${CHORUS_URL}")) return "";
+    if (isHermesLoopbackDefault(chorusUrl) && existing === undefined) return "";
     try {
       const r = (ctx.writeHermesMcpServer ?? writeHermesMcpServer)({ configPath, url: chorusUrl, backup: ctx.backup });
       return r.changed ? `; wrote mcp_servers.chorus (${r.mcpUrl}) to ${configPath}` : "; mcp_servers.chorus already up to date";

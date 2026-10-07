@@ -8,6 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 
 import {
   writeHermesMcpServer as realWriteHermesMcpServer,
   readHermesGatewaySettings as realReadGateway,
+  readHermesNativeMcpUrl as realReadNativeMcpUrl,
   writeHermesGatewaySettings as realWriteGateway,
 } from "../init/hermes-mcp-config.mjs";
 import { tmpdir } from "node:os";
@@ -53,7 +54,7 @@ function fakeRun(script = () => ({ ok: true, code: 0, stdout: "", stderr: "" }))
 
 function ctxFor(
   agentId,
-  { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer, resolveCredentials, cliVersion, resolveTagSha, writeHermesMcpServer, readHermesGatewaySettings, writeHermesGatewaySettings, findGitRoot, cwd } = {},
+  { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer, resolveCredentials, cliVersion, resolveTagSha, writeHermesMcpServer, readHermesNativeMcpUrl, readHermesGatewaySettings, writeHermesGatewaySettings, findGitRoot, cwd } = {},
 ) {
   return {
     agentId,
@@ -74,6 +75,7 @@ function ctxFor(
     // Hermes native-MCP writer defaults to a hermetic no-op so no test touches the real
     // ~/.hermes/config.yaml. Tests that exercise the real writer pass it with a temp HERMES_HOME.
     writeHermesMcpServer: writeHermesMcpServer ?? (() => ({ changed: false })),
+    readHermesNativeMcpUrl: readHermesNativeMcpUrl ?? (() => undefined),
     // Same for the gateway-settings reader/writer (terminal.cwd + approval routing).
     readHermesGatewaySettings: readHermesGatewaySettings ?? (() => ({})),
     writeHermesGatewaySettings: writeHermesGatewaySettings ?? (() => ({ changed: true })),
@@ -894,6 +896,31 @@ describe("installHermes (verified against the local `hermes plugins install --he
       }
     });
 
+    it("repoints a native entry left by an earlier remote run when switching back to loopback (B4)", async () => {
+      const home = tempHome("model: foo\n");
+      const real = { readHermesNativeMcpUrl: realReadNativeMcpUrl };
+      await installHermes(ctxWithHome(home, { ...real, env: { CHORUS_URL: "https://old.example.com" } }));
+      expect(readFileSync(join(home, "config.yaml"), "utf8")).toContain("https://old.example.com/api/mcp");
+      const res = await installHermes(ctxWithHome(home, {
+        ...real, flags: { url: "http://localhost:8637" },
+        state: { pluginInstalled: true, installedPlugins: ["chorus", "chorus-mcp"] },
+      }));
+      expect(res.action).toBe(SKIPPED);
+      const text = readFileSync(join(home, "config.yaml"), "utf8");
+      expect(realReadNativeMcpUrl(join(home, "config.yaml"))).toBe("http://localhost:8637/api/mcp");
+      expect(text).not.toContain("old.example.com");
+      expect(text).toContain("model: foo");
+    });
+
+    it("leaves a native entry that follows ${CHORUS_URL} alone (it already tracks the .env)", async () => {
+      const initial = 'mcp_servers:\n  chorus:\n    url: "${CHORUS_URL}/api/mcp"\n';
+      const home = tempHome(initial);
+      await installHermes(ctxWithHome(home, {
+        readHermesNativeMcpUrl: realReadNativeMcpUrl, env: { CHORUS_URL: "https://chorus.example.com" },
+      }));
+      expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe(initial);
+    });
+
     it("writes nothing when no URL is known or on --plugin-only", async () => {
       const home = tempHome("model: foo\n");
       await installHermes(ctxWithHome(home));
@@ -991,6 +1018,13 @@ describe("installHermes (verified against the local `hermes plugins install --he
       }));
       expect(asked[0]).toContain(`[${repo}]`);
       expect(realReadGateway(cfg)["terminal.cwd"]).toBe(other);
+    });
+
+    it("TTY with --yes accepts the detected repo without prompting", async () => {
+      const { home, repo, cfg } = setup();
+      const ask = async () => { throw new Error("must not prompt under --yes"); };
+      await installHermes(ctxGw(home, { flags: { yes: true }, findGitRoot: () => repo, io: { log: () => {}, isTTY: true, ask } }));
+      expect(realReadGateway(cfg)["terminal.cwd"]).toBe(repo);
     });
 
     it("outside a git repo without a TTY: warns and leaves terminal.cwd unset, still fills approvals", async () => {

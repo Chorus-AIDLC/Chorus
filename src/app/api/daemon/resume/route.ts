@@ -29,7 +29,9 @@ import {
   authorizeConnectionControl,
   dispatchControl,
   CONTROL_ENTITY_TYPES,
+  RESUME_TURN_CLIENT_TYPES,
 } from "@/services/daemon-control.service";
+import { createPendingTurn } from "@/services/daemon-session.service";
 import {
   resumeExecution,
   publishExecutionChange,
@@ -116,8 +118,25 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       agentUuid: authz.target.agentUuid,
       sessionId: execution?.directIdeaUuid ?? entityUuid,
     },
-    select: { runtimeCwd: true },
+    select: { uuid: true, runtimeCwd: true },
   });
+
+  // A client that admits every run by turn (Hermes) needs a pending continuation turn:
+  // the interrupted turn is terminal, so a turn-less resume would be refused admission
+  // and never run. Created only for those clients so the daemon's resume is unchanged.
+  // Best-effort: on failure the resume is still dispatched (the client logs the refusal).
+  let resumeTurnUuid: string | undefined;
+  const connection = await prisma.daemonConnection?.findFirst({
+    where: { companyUuid: auth.companyUuid, uuid: connectionUuid },
+    select: { clientType: true },
+  });
+  if (resumedSession?.uuid && connection && RESUME_TURN_CLIENT_TYPES.has(connection.clientType)) {
+    try {
+      resumeTurnUuid = (await createPendingTurn({ sessionUuid: resumedSession.uuid, trigger: "resume" })).uuid;
+    } catch {
+      resumeTurnUuid = undefined;
+    }
+  }
 
   // Tell the daemon to re-spawn and continue the session, then push the updated
   // active set so the UI reflects the resumed row immediately. `resumeReason` is the
@@ -130,6 +149,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     entityUuid,
     resumeReason: result.resumedFrom,
     orchestrator,
+    ...(resumeTurnUuid ? { turnUuid: resumeTurnUuid } : {}),
     ...(resumedSession?.runtimeCwd ? { runtimeCwd: resumedSession.runtimeCwd } : {}),
   });
   await publishExecutionChange(auth.companyUuid, connectionUuid);

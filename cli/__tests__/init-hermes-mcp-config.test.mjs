@@ -189,4 +189,11 @@ describe("gateway settings (terminal.cwd + approval routing) — textual YAML up
     expect(writeHermesGatewaySettings({ configPath: p, values, backup: (f) => backups.push(f) }).changed).toBe(false);
     expect(backups).toEqual([p]);
   });
+
+  it("a quoted value containing ' #' is read whole and its comment survives a rewrite", () => {
+    const text = 'terminal:\n  cwd: "/srv/repo #1"   # mine\n';
+    expect(readYamlScalar(text, "terminal.cwd")).toBe("/srv/repo #1");
+    expect(readYamlScalar("a:\n  b: 'it''s #2' # c\n", "a.b")).toBe("it's #2");
+    expect(upsertYamlScalar(text, "terminal.cwd", "/x")).toBe('terminal:\n  cwd: "/x"   # mine\n');
+  });
 });

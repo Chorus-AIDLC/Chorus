@@ -280,6 +280,16 @@ def test_control_resume_dispatches_resource_resumed(setup):
     (wake,) = dispatched
     assert wake.action == "resource_resumed" and wake.chat_id == "idea:i-1"
     assert "EXITED ABNORMALLY" in wake.prompt
+    assert wake.turn_uuid is None  # an older server sends no continuation turn
+
+
+def test_control_resume_carries_the_continuation_turn(setup):
+    fake, router, dispatched, _ = setup
+    fake.lineage["task:t-1"] = ("r", "i-1")
+    run(router.handle_control({"type": "control", "command": "resume", "targetConnectionUuid": "c-me",
+                               "entityType": "task", "entityUuid": "t-1", "turnUuid": "turn-resume"}))
+    (wake,) = dispatched
+    assert wake.turn_uuid == "turn-resume"
 
 
 def test_control_unknown_command_ignored(setup):

@@ -738,3 +738,63 @@ def test_unavailable_admission_is_retried_by_the_next_sweep(hermes, tmp_path):
     assert len(h.handled) == 1
     assert [(b["status"], b.get("turnUuid")) for b in h.turn_bodies()] == [
         ("running", "tu-9"), ("running", "tu-9"), ("ended", "tu-9")]
+
+
+# -- interrupt → Resume against the server's real admission contract (B4-resume-without-pending-turn) --
+
+def _strict_admission(fake, pending):
+    """Mirror advanceTurnForWake: → running admits the given pending turn uuid, or the oldest pending
+    one when no uuid is sent; anything else is 404. Admitted turns leave ``pending``."""
+    def hook(body):
+        if body.get("status") != "running":
+            return None
+        uuid = body.get("turnUuid") or (pending[0] if pending else None)
+        if uuid not in pending:
+            return _fake_error(404, "Turn not found")
+        pending.remove(uuid)
+        from .fixtures.chorus_fake import envelope
+        return envelope({"turn": {"uuid": uuid, "status": "running"}})
+    fake.turn_advance_hook = hook
+
+
+@pytest.mark.parametrize("server_turn", [True, False])
+def test_resume_after_interrupt_runs_only_with_a_continuation_turn(hermes, tmp_path, server_turn):
+    h = Harness(hermes, tmp_path)
+    pending = ["turn-live"]
+    _strict_admission(h.fake, pending)
+    h.fake.lineage["task:t-1"] = ("i-1", "i-1")
+
+    async def go():
+        h.gate = asyncio.Event()
+        await h.connect()
+        h.notify(notif(entity_type="task", entity_uuid="t-1"))
+        await wait_for(lambda: h.handled)
+        h.fake.feed.event({"type": "control", "command": "interrupt", "targetConnectionUuid": "c-1",
+                           "entityType": "task", "entityUuid": "t-1"})
+        await wait_for(lambda: h.adapter.outcomes)
+        await h.idle()
+        runs_before = len(h.handled)
+        h.gate.set()
+        resume = {"type": "control", "command": "resume", "targetConnectionUuid": "c-1",
+                  "entityType": "task", "entityUuid": "t-1", "resumeReason": "user"}
+        if server_turn:
+            pending.append("turn-resume")  # what POST /api/daemon/resume now creates for hermes
+            resume["turnUuid"] = "turn-resume"
+        h.fake.feed.event(resume)
+        if server_turn:
+            await wait_for(lambda: len(h.handled) > runs_before)
+        else:
+            await asyncio.sleep(0.1)
+        await h.idle()
+        await h.adapter.disconnect()
+        return runs_before
+
+    runs_before = run(go())
+    admitted = [b.get("turnUuid") for b in h.turn_bodies() if b["status"] == "running"]
+    if server_turn:
+        assert len(h.handled) == runs_before + 1
+        assert admitted[-1] == "turn-resume" and pending == []
+        assert [b["status"] for b in h.turn_bodies() if b.get("turnUuid") == "turn-resume"][-1] == "ended"
+    else:
+        # admission stays a hard gate: no continuation turn → the model never runs again
+        assert len(h.handled) == runs_before

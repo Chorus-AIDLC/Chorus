@@ -99,6 +99,14 @@ All REST failures MUST be logged and MUST NOT crash the gateway.
 - **THEN** the adapter MUST cancel that Hermes turn
 - **AND** report `interrupted/user`
 
+#### Scenario: Resume after an interrupt
+
+- **GIVEN** a turn was interrupted and the owner clicks Resume
+- **WHEN** `POST /api/daemon/resume` targets a connection whose client type admits every run by turn (`hermes`)
+- **THEN** the server MUST create a pending `resume` turn for the session and carry its `turnUuid` on the `resume` control event, while the daemon's resume stays unchanged (no turn created, none dispatched)
+- **AND** the adapter MUST admit exactly that turn before running the model
+- **AND** a `resume` without a `turnUuid` MUST still be refused admission, so admission is never bypassed
+
 ### Requirement: Outbound gateway replies SHALL NOT post to Chorus implicitly
 
 The adapter's `send()` MUST record the agent's final reply as a transcript message only. It MUST NOT create Chorus comments. All Chorus writes MUST happen through explicit MCP tool calls made by the agent.

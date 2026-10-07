@@ -174,12 +174,22 @@ export const HERMES_RECOMMENDED_SETTINGS = Object.freeze({
 const keyRe = (k) => new RegExp(`^\\s*(${k}|"${k}"|'${k}')\\s*:(.*)$`);
 
 function parseScalar(raw) {
-  let v = raw.replace(/\s+#.*$/, "").trim();
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-    v = v.length >= 2 ? v.slice(1, -1) : v;
-    return raw.trim().startsWith('"') ? v.replace(/\\"/g, '"').replace(/\\\\/g, "\\") : v.replace(/''/g, "'");
-  }
+  const t = raw.trim();
+  // Quoted: the value ends at the closing quote, so a " #" inside it is not a comment.
+  const dq = t.match(/^"((?:[^"\\]|\\.)*)"/);
+  if (dq) return dq[1].replace(/\\(["\\])/g, "$1");
+  const sq = t.match(/^'((?:[^']|'')*)'/);
+  if (sq) return sq[1].replace(/''/g, "'");
+  const v = t.replace(/\s+#.*$/, "").trim();
   return v === "" || v === "~" || v === "null" ? undefined : v;
+}
+
+/** The ` # …` comment after a scalar value (outside any quotes), or "". */
+function trailingComment(raw) {
+  const t = raw.trimStart();
+  const quoted = t.match(/^"(?:[^"\\]|\\.)*"|^'(?:[^']|'')*'/);
+  const rest = quoted ? t.slice(quoted[0].length) : t;
+  return (rest.match(/\s+#.*$/) ?? [""])[0];
 }
 
 /**
@@ -246,7 +256,7 @@ export function upsertYamlScalar(text, dotted, value) {
     if (next !== undefined && isContent(next) && indentOf(next) > r.childIndent) {
       throw new Error(`${dotted} in config.yaml is a mapping, not a scalar`);
     }
-    const comment = (lines[r.line].match(keyRe(leaf))[2].match(/\s+#.*$/) ?? [""])[0];
+    const comment = trailingComment(lines[r.line].match(keyRe(leaf))[2]);
     lines[r.line] = `${" ".repeat(r.childIndent)}${leaf}: ${yamlStr(value)}${comment}`;
   } else {
     const rest = keys.slice(r.missingDepth);
@@ -298,4 +308,10 @@ export function writeHermesGatewaySettings({ configPath, values, backup }) {
   chmodSync(tmp, mode);
   renameSync(tmp, configPath);
   return { configPath, changed: true };
+}
+
+/** The native `mcp_servers.chorus.url` in the Hermes config, or undefined when there is none. */
+export function readHermesNativeMcpUrl(configPath) {
+  if (!existsSync(configPath)) return undefined;
+  return readYamlScalar(readFileSync(configPath, "utf8"), "mcp_servers.chorus.url");
 }

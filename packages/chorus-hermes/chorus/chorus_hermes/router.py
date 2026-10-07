@@ -520,8 +520,12 @@ class EventRouter:
         if isinstance(orch, Mapping) and orch.get("type") == "agent" and isinstance(orch.get("uuid"), str) \
                 and isinstance(orch.get("name"), str):
             n["orchestrator"] = dict(orch)
+        # The server hands a turn-gated client a pending continuation turn to admit: the
+        # interrupted turn is terminal, so without it the resume would be refused admission.
+        turn_uuid = event.get("turnUuid") if isinstance(event.get("turnUuid"), str) and event.get("turnUuid") \
+            else None
         wake = WakeRequest(source="resume", notification=n, label=f"resume:{etype}:{euuid}",
-                           entity_type=etype, entity_uuid=euuid)
+                           entity_type=etype, entity_uuid=euuid, turn_uuid=turn_uuid)
         return await self._resolve_and_dispatch(wake)
 
     # -- control -----------------------------------------------------------------------
