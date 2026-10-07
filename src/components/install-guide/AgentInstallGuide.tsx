@@ -396,7 +396,7 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`export CHORUS_URL="${origin}"\nexport CHORUS_API_KEY="${displayKey}"\nnpm install -g @chorus-aidlc/chorus\nchorus agents add --agents hermes`}
+                code={`export CHORUS_URL="${origin}"\nexport CHORUS_API_KEY="${displayKey}"\nnpm install -g @chorus-aidlc/chorus\ncd /path/to/your/repo\nchorus agents add --agents hermes`}
               />
               <p className="mt-2 text-xs text-muted-foreground">
                 {t("install.hermes.step2Tip")}
@@ -409,11 +409,7 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </h3>
               <CodeBlock
                 language="bash"
-                code={`hermes config set terminal.cwd /path/to/your/repo
-hermes config set security.approval.transport chorus
-hermes config set security.approval.transport_fallback builtin
-hermes config set approvals.mode manual
-hermes gateway install
+                code={`hermes gateway install
 hermes gateway start`}
               />
               <p className="mt-2 text-xs text-muted-foreground">

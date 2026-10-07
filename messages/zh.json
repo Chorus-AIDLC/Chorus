@@ -1276,8 +1276,8 @@
         "step1Link": "Hermes 安装指南",
         "step2Title": "第 2 步：运行 chorus agents add",
         "step2Tip": "chorus agents add --agents hermes 会把对应的 Chorus 发布 tag 解析成 commit SHA（Hermes 的 --ref 只接受完整的 40 位 SHA），并安装两个插件目录：chorus（hooks、技能、gateway 平台、审批 transport）和 chorus-mcp（Chorus MCP 服务器）。如果 Chorus 地址不是 http://localhost:8637，它还会把 mcp_servers.chorus 写入 ~/.hermes/config.yaml，其中引用 CHORUS_API_KEY，不在该文件中保存 key 本身。它还会把 CHORUS_URL 和 CHORUS_API_KEY 写入 ~/.hermes/.env（权限 0600），gateway 启动时会加载它。",
-        "step3Title": "第 3 步：配置并启动 gateway",
-        "step3Tip": "gateway 服务不会继承你的 shell 环境；chorus agents add 已经把凭证写入 ~/.hermes/.env。一个 gateway 只服务一个仓库：把 terminal.cwd 设为该仓库。Chorus 唤醒的轮次需要审批时，会以 Chorus 评论的形式请你答复；approvals.mode manual 确保每条被标记的命令都交给你，而不是被 Hermes 的 guardian 模型自动批准。启动后，agent 会在 Chorus 中显示为在线。"
+        "step3Title": "第 3 步：启动 gateway",
+        "step3Tip": "chorus agents add 已经把凭证写入 ~/.hermes/.env，并在 ~/.hermes/config.yaml 中设置好 terminal.cwd（运行命令时所在的 git 仓库，或 --hermes-cwd /path/to/repo 指定的路径）。它还把审批改为通过 Chorus 评论进行，并设置 approvals.mode manual，确保每条被标记的命令都交给你，而不是被 Hermes 的 guardian 模型自动批准。你已经设置过的值会保留。一个 gateway 只服务一个仓库；要更换，执行 hermes config set terminal.cwd /path/to/repo 后再 hermes gateway restart。启动后，agent 会在 Chorus 中显示为在线。"
       },
       "pi": {
         "step1Title": "第 1 步：设置环境变量",

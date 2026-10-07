@@ -11,9 +11,9 @@
 // e.g. Codex's keyless [mcp_servers.chorus] bearer_token_env_var, Kiro's ${env:...}
 // mcp.json) — but NEVER a literal API key/secret (those live in the credential sinks).
 
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCommand } from "./run-command.mjs";
 import { binaryOnPath } from "./detect.mjs";
@@ -21,7 +21,15 @@ import { installFileTemplate } from "./file-template.mjs";
 import { OUTCOME_ACTIONS } from "./contracts.mjs";
 import { CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME, CHORUS_MARKETPLACE_SOURCE } from "./chorus-plugin-consts.mjs";
 import { writeCodexMcpServer } from "./codex-mcp-config.mjs";
-import { writeHermesMcpServer, resolveHermesConfigPath, isHermesLoopbackDefault } from "./hermes-mcp-config.mjs";
+import {
+  writeHermesMcpServer,
+  resolveHermesConfigPath,
+  isHermesLoopbackDefault,
+  readHermesGatewaySettings,
+  writeHermesGatewaySettings,
+  HERMES_CWD_PLACEHOLDERS,
+  HERMES_RECOMMENDED_SETTINGS,
+} from "./hermes-mcp-config.mjs";
 import { resolveCredentials } from "../credentials.mjs";
 import { PI_LEGACY_ADAPTER_SPEC } from "./pi-compatibility.mjs";
 import { PI_CHORUS_SPEC, readPiPackageState, probePiBackend, inspectPiSettings, managePiPackages } from "./pi-mcp-backend.mjs";
@@ -688,17 +696,108 @@ export function readHermesInstallState({ env = process.env, run, binaryOnPath: o
 /** The post-install checklist (names env vars only — never a secret value). */
 export function hermesFollowUpChecklist({ url } = {}) {
   return [
-    "Hermes follow-up configuration:",
-    `  1. CHORUS_URL (${url || "<your Chorus URL>"}) and CHORUS_API_KEY are written to $HERMES_HOME/.env (default ~/.hermes/.env) by chorus agents add — add them there yourself only if that step reported a WARNING or you used --plugin-only`,
-    "  2. hermes config set terminal.cwd <path to the repository this gateway serves>",
-    "  3. hermes config set security.approval.transport chorus   and   hermes config set security.approval.transport_fallback builtin",
-    "  4. hermes config set approvals.mode manual   (unattended gateways: the default smart mode lets Hermes' guardian approve before you are asked)",
-    "  5. hermes gateway install   (then: hermes gateway start)",
-    "  (no platform-enable step: the chorus platform auto-enables when CHORUS_URL and CHORUS_API_KEY are set; --enable already set plugins.enabled)",
+    "Hermes next steps:",
+    "  1. hermes gateway install   (then: hermes gateway start — or hermes gateway restart if it is already running)",
+    `  chorus agents add has written CHORUS_URL (${url || "<your Chorus URL>"}) / CHORUS_API_KEY to $HERMES_HOME/.env (default ~/.hermes/.env)`,
+    "  and terminal.cwd + security.approval.transport chorus / transport_fallback builtin / approvals.mode manual to $HERMES_HOME/config.yaml",
+    "  (see the summary above for anything it could not set). One gateway serves one repository: to change it,",
+    "  hermes config set terminal.cwd <repo>  (or re-run with --hermes-cwd <repo>), then hermes gateway restart.",
   ];
 }
 
-export function installHermes(ctx) {
+/** `git rev-parse --show-toplevel` of `cwd`, or undefined outside a repository. */
+export function findGitRoot(cwd, { env = process.env, run = runCommand } = {}) {
+  const r = run("git", ["rev-parse", "--show-toplevel"], { env, cwd, timeoutMs: 15_000 });
+  return r?.ok ? nonEmpty(String(r.stdout ?? "").split("\n")[0]) : undefined;
+}
+
+const expandHome = (p, env) => (p === "~" || p.startsWith("~/") ? join(env.HOME || homedir(), p.slice(1)) : p);
+const isDir = (p) => {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Fill in the gateway settings the plugin needs in $HERMES_HOME/config.yaml: terminal.cwd (the
+ * repository this gateway serves — a service-run gateway's own process cwd is $HERMES_HOME, and
+ * Hermes falls back to $HOME, so this must be decided at install time) and the approval routing
+ * (HERMES_RECOMMENDED_SETTINGS). Never overwrites a value the user already set, except that an
+ * explicit --hermes-cwd always wins. terminal.cwd source order: --hermes-cwd → an existing
+ * explicit directory → the git repository `chorus agents add` runs in (confirmed on a TTY) →
+ * a TTY prompt → warn. Returns a summary note suffix; never throws.
+ */
+async function configureHermesGateway(ctx, { env }) {
+  if (ctx.flags?.pluginOnly) return "";
+  const configPath = resolveHermesConfigPath(env);
+  const io = ctx.io ?? {};
+  const ask = io.isTTY && typeof io.ask === "function" ? io.ask : null;
+  let current = {};
+  try {
+    current = (ctx.readHermesGatewaySettings ?? readHermesGatewaySettings)(configPath) ?? {};
+  } catch {
+    current = {};
+  }
+  const values = {};
+  const notes = [];
+
+  const cur = nonEmpty(current["terminal.cwd"]);
+  const curOk = cur && !HERMES_CWD_PLACEHOLDERS.has(cur) && isDir(expandHome(cur, env));
+  const accept = (p, how) => {
+    const abs = resolvePath(expandHome(p, env));
+    if (!isDir(abs)) {
+      notes.push(`WARNING: terminal.cwd not set — ${abs} is not a directory`);
+      return;
+    }
+    if (abs !== cur) values["terminal.cwd"] = abs;
+    else notes.push(`terminal.cwd already ${abs}`);
+    if (how) notes.push(how);
+  };
+  const explicit = nonEmpty(ctx.flags?.hermesCwd);
+  if (explicit) {
+    accept(explicit);
+  } else if (curOk) {
+    notes.push(`kept terminal.cwd ${cur}`);
+  } else {
+    const root = (ctx.findGitRoot ?? findGitRoot)(ctx.cwd ?? process.cwd(), { env });
+    if (root && ask) {
+      accept(nonEmpty(await ask(`Repository this Hermes gateway serves (terminal.cwd) [${root}]: `)) ?? root);
+    } else if (root) {
+      accept(root, "terminal.cwd taken from the current git repository — pass --hermes-cwd <repo> to choose another");
+    } else if (ask) {
+      const answer = nonEmpty(await ask("Repository this Hermes gateway serves (terminal.cwd, blank to skip): "));
+      if (answer) accept(answer);
+      else notes.push("WARNING: terminal.cwd not set — the chorus platform will not start until you run hermes config set terminal.cwd <repo>");
+    } else {
+      notes.push(
+        "WARNING: terminal.cwd not set (not run inside a git repository) — the chorus platform will not start until you " +
+          "run hermes config set terminal.cwd <repo> or re-run with --hermes-cwd <repo>",
+      );
+    }
+  }
+
+  for (const [k, v] of Object.entries(HERMES_RECOMMENDED_SETTINGS)) {
+    const have = nonEmpty(current[k]);
+    if (have === undefined) values[k] = v;
+    else if (have !== v) notes.push(`kept ${k}: ${have} (recommended: ${v})`);
+  }
+
+  if (Object.keys(values).length > 0) {
+    try {
+      const w = (ctx.writeHermesGatewaySettings ?? writeHermesGatewaySettings)({ configPath, values, backup: ctx.backup });
+      if (w?.changed !== false) {
+        notes.unshift(`set ${Object.entries(values).map(([k, v]) => `${k}=${v}`).join(", ")} in ${configPath}`);
+      }
+    } catch (err) {
+      notes.unshift(`WARNING: could not write ${Object.keys(values).join(", ")} to ${configPath}: ${err?.message ?? String(err)}`);
+    }
+  }
+  return notes.length ? `; ${notes.join("; ")}` : "";
+}
+
+export async function installHermes(ctx) {
   const run = ctx.run ?? runCommand;
   const env = ctx.env ?? process.env;
   if (!(ctx.binaryOnPath ?? binaryOnPath)(["hermes"], { env })) {
@@ -733,7 +832,7 @@ export function installHermes(ctx) {
     }
   };
   if (state.pluginInstalled && !update) {
-    const note = ensureMcp();
+    const note = ensureMcp() + (await configureHermesGateway(ctx, { env }));
     logChecklist();
     return out("hermes", SKIPPED, `already installed (chorus + chorus-mcp)${note}`);
   }
@@ -756,7 +855,7 @@ export function installHermes(ctx) {
     const r = run("hermes", args, { env, timeoutMs: 300_000 });
     if (!r.ok) return out("hermes", FAILED, `hermes plugins install ${name} failed: ${errText(r)}`);
   }
-  const note = ensureMcp();
+  const note = ensureMcp() + (await configureHermesGateway(ctx, { env }));
   logChecklist();
   const repaired = already.size > 0;
   return out(

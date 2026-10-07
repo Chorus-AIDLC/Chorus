@@ -427,9 +427,8 @@ cd packages/chorus-pi && bash test/all.sh
 # dsh — typecheck + lint + unit tests + published-bundle validation
 cd packages/chorus-dsh && pnpm run typecheck && pnpm run lint && pnpm test && pnpm run check:package
 
-# Hermes — pytest (fakes only; node for prompt parity) + Hermes' own manifest validation
+# Hermes — pytest (fakes only; node for prompt parity; no Hermes install needed)
 python -m pytest packages/chorus-hermes/chorus/tests
-hermes plugins validate packages/chorus-hermes/chorus && hermes plugins validate packages/chorus-hermes/chorus-mcp
 ```
 
 ## Hermes Agent port
@@ -519,31 +518,6 @@ If you change the post-install checklist (`hermesFollowUpChecklist`), update the
 section, `docs/CONNECT_HERMES{,.zh}.md`, and the Hermes tab in
 `src/components/install-guide/AgentInstallGuide.tsx` (+ `messages/{en,zh,ja,ko}.json`).
 
-### Local test recipe
-
-```bash
-# 1. unit tests + manifest validation (no Hermes import needed for pytest)
-python -m pytest packages/chorus-hermes/chorus/tests
-hermes plugins validate packages/chorus-hermes/chorus
-hermes plugins validate packages/chorus-hermes/chorus-mcp
-
-# 2. install the committed working tree into the local Hermes (--ref must be a SHA the repo has)
-REPO=file://$PWD; SHA=$(git rev-parse HEAD)
-hermes plugins install "$REPO#packages/chorus-hermes/chorus"     --ref "$SHA" --enable --force
-hermes plugins install "$REPO#packages/chorus-hermes/chorus-mcp" --ref "$SHA" --enable --force
-hermes plugins list --plain --no-bundled          # both: enabled  git pinned@<sha8>
-hermes plugins doctor chorus && hermes plugins doctor chorus-mcp
-
-# 3. run against a local Chorus (pnpm dev on :8637 matches the portable MCP URL)
-#    ~/.hermes/.env: CHORUS_URL=http://localhost:8637, CHORUS_API_KEY=cho_… (chorus agents add writes it; a manual plugin install does not)
-hermes config set terminal.cwd /path/to/test/repo
-hermes config set security.approval.transport chorus
-hermes config set security.approval.transport_fallback builtin
-hermes config set approvals.mode manual
-hermes gateway run                                # foreground; or: hermes gateway restart
-hermes chat -Q -q "Call chorus_checkin and print the agent name"
-```
-
-Then confirm in Chorus that the agent is online (client "Hermes"), and assign an Idea to it to watch a
-gateway turn. To test tag resolution, create a temporary lightweight tag, run the resolve-then-install
-commands from the README with `REPO=file://$PWD`, then `git tag -d` it. Never push it.
+An end-to-end run against a real Hermes is optional and not part of version alignment. If the `hermes`
+CLI happens to be installed, `hermes plugins validate packages/chorus-hermes/chorus` (and `…/chorus-mcp`)
+is a cheap extra manifest check.

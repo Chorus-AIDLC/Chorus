@@ -213,7 +213,7 @@ describe("AgentInstallGuide dsh onboarding", () => {
 
     expect(screen.getByText("Step 1: Install Hermes Agent")).toBeTruthy();
     expect(screen.getByText("Step 2: Run chorus agents add")).toBeTruthy();
-    expect(screen.getByText("Step 3: Configure and start the gateway")).toBeTruthy();
+    expect(screen.getByText("Step 3: Start the gateway")).toBeTruthy();
 
     const link = screen.getByRole("link", { name: "Hermes installation guide" });
     expect(link.getAttribute("href")).toBe(
@@ -224,7 +224,7 @@ describe("AgentInstallGuide dsh onboarding", () => {
 
     expect(screen.getByText(/export CHORUS_API_KEY="cho_live_test_key"/)).toBeTruthy();
     expect(
-      screen.getByText(/npm install -g @chorus-aidlc\/chorus chorus agents add --agents hermes/),
+      screen.getByText(/npm install -g @chorus-aidlc\/chorus cd \/path\/to\/your\/repo chorus agents add --agents hermes/),
     ).toBeTruthy();
 
     // Step 3 = the hermesFollowUpChecklist in cli/init/install-methods.mjs.
@@ -233,16 +233,8 @@ describe("AgentInstallGuide dsh onboarding", () => {
     );
     expect(gateway).toBeTruthy();
     const script = gateway!.textContent ?? "";
-    for (const line of [
-      "hermes config set terminal.cwd",
-      "hermes config set security.approval.transport chorus",
-      "hermes config set security.approval.transport_fallback builtin",
-      "hermes config set approvals.mode manual",
-      "hermes gateway install",
-      "hermes gateway start",
-    ]) {
-      expect(script).toContain(line);
-    }
+    // chorus agents add writes terminal.cwd + approval routing, so only the gateway commands remain.
+    expect(script).toBe("hermes gateway install\nhermes gateway start");
     // chorus agents add writes ~/.hermes/.env itself, so the gateway script neither
     // echoes the key nor edits the dotenv by hand.
     expect(script).not.toContain("cho_live_test_key");
@@ -250,7 +242,7 @@ describe("AgentInstallGuide dsh onboarding", () => {
     expect(screen.getByText(/writes CHORUS_URL and CHORUS_API_KEY into ~\/\.hermes\/\.env \(mode 0600\)/)).toBeTruthy();
 
     expect(screen.getByText(/--ref accepts only a full 40-character SHA/)).toBeTruthy();
-    expect(screen.getByText(/approvals\.mode manual makes sure every flagged command reaches you/)).toBeTruthy();
+    expect(screen.getByText(/approvals\.mode manual, so every flagged command reaches you/)).toBeTruthy();
     // Hermes is scheduled through its own gateway, not the Chorus CLI daemon profile.
     expect(
       screen.queryByText("Step 3 (optional): Set the default agent for the Chorus CLI"),

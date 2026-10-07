@@ -63,7 +63,29 @@ def test_terminal_cwd_expands_user(monkeypatch, tmp_path):
     {"terminal": {"cwd": "cwd"}}, {"terminal": {"cwd": "/definitely/not/here"}}, "nonsense",
 ])
 def test_terminal_cwd_unknown(cfg):
-    assert c.terminal_cwd(cfg) is None
+    assert c.terminal_cwd(cfg, env={}) is None
+
+
+@pytest.mark.parametrize("cwd", [None, ".", "auto"])
+def test_terminal_cwd_falls_back_to_messaging_cwd_on_local(tmp_path, cwd):
+    cfg = {"terminal": {"cwd": cwd}} if cwd else {}
+    assert c.terminal_cwd(cfg, env={"MESSAGING_CWD": str(tmp_path)}) == os.path.realpath(tmp_path)
+
+
+@pytest.mark.parametrize("cfg,env", [
+    ({"terminal": {"backend": "docker"}}, None),            # non-local backend: sandbox default
+    ({}, {"MESSAGING_CWD": "."}),                           # placeholder again
+    ({}, {"MESSAGING_CWD": "/definitely/not/here"}),        # not a directory
+])
+def test_terminal_cwd_messaging_cwd_rejected(tmp_path, cfg, env):
+    env = env or {"MESSAGING_CWD": str(tmp_path)}
+    assert c.terminal_cwd(cfg, env=env) is None
+
+
+def test_explicit_terminal_cwd_wins_over_messaging_cwd(tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    assert c.terminal_cwd({"terminal": {"cwd": str(tmp_path)}}, env={"MESSAGING_CWD": str(other)}) == os.path.realpath(tmp_path)
 
 
 def test_terminal_cwd_uses_loader(tmp_path):

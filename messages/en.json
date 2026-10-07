@@ -1276,8 +1276,8 @@
         "step1Link": "Hermes installation guide",
         "step2Title": "Step 2: Run chorus agents add",
         "step2Tip": "chorus agents add --agents hermes resolves the matching Chorus release tag to its commit SHA (Hermes --ref accepts only a full 40-character SHA) and installs two plugin directories: chorus (hooks, skills, gateway platform, approval transport) and chorus-mcp (the Chorus MCP server). For any Chorus URL other than http://localhost:8637 it also writes mcp_servers.chorus into ~/.hermes/config.yaml, referencing CHORUS_API_KEY rather than storing the key there. It also writes CHORUS_URL and CHORUS_API_KEY into ~/.hermes/.env (mode 0600), which the gateway loads at startup.",
-        "step3Title": "Step 3: Configure and start the gateway",
-        "step3Tip": "The gateway service does not inherit your shell; chorus agents add has already written its credentials into ~/.hermes/.env. One gateway serves one repository: set terminal.cwd to it. Approvals for Chorus-woken turns are posted as Chorus comments for you to answer; approvals.mode manual makes sure every flagged command reaches you instead of being auto-approved by Hermes' guardian model. Once started, the agent shows online in Chorus."
+        "step3Title": "Step 3: Start the gateway",
+        "step3Tip": "chorus agents add has already written the credentials into ~/.hermes/.env and set, in ~/.hermes/config.yaml, terminal.cwd (the git repository you ran it in, or --hermes-cwd /path/to/repo) plus approval routing through Chorus comments with approvals.mode manual, so every flagged command reaches you instead of being auto-approved by Hermes' guardian model. Values you had already set are kept. One gateway serves one repository; to change it, run hermes config set terminal.cwd /path/to/repo and hermes gateway restart. Once started, the agent shows online in Chorus."
       },
       "pi": {
         "step1Title": "Step 1: Set environment variables",

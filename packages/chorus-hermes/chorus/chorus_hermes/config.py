@@ -3,8 +3,10 @@
 Credentials come only from the environment (``CHORUS_URL``, ``CHORUS_API_KEY``);
 nothing is ever written to disk by this module. The working directory the
 gateway reports to Chorus is ``realpath(terminal.cwd)`` from the Hermes config.
-Placeholder values (``.``, ``auto``, ``cwd``) and an unset key mean "unknown":
-the caller must refuse to connect rather than silently report ``$HOME``.
+When that is unset or a placeholder (``.``, ``auto``, ``cwd``) the plugin follows
+Hermes' own fallback one step: a local backend uses ``MESSAGING_CWD``. Hermes'
+last resort, ``$HOME``, means "unknown" here: the caller must refuse to connect
+rather than silently report ``$HOME``.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from typing import Any, Callable, Mapping, Optional
 ENV_URL = "CHORUS_URL"
 ENV_API_KEY = "CHORUS_API_KEY"
 ENV_ALLOWED_USERS = "CHORUS_ALLOWED_USERS"
+ENV_MESSAGING_CWD = "MESSAGING_CWD"
 
 # Mirrors gateway/cwd_placeholder.py CWD_PLACEHOLDERS at Hermes 2b52acc2d.
 CWD_PLACEHOLDERS = frozenset({".", "auto", "cwd"})
@@ -104,15 +107,25 @@ def terminal_cwd(
     hermes_config: Optional[Mapping[str, Any]] = None,
     *,
     loader: Callable[[], Mapping[str, Any]] = load_hermes_config,
+    env: Optional[Mapping[str, str]] = None,
 ) -> Optional[str]:
-    """``realpath(terminal.cwd)`` or ``None`` when unset / a placeholder / not a directory."""
+    """The repository this gateway serves, or ``None`` when it cannot be known.
+
+    ``realpath(terminal.cwd)``; when that is unset or a placeholder and the terminal
+    backend is local, ``realpath(MESSAGING_CWD)`` (Hermes' resolve_placeholder_terminal_cwd
+    order). ``None`` for anything that would leave Hermes on ``$HOME`` or is not a directory.
+    """
     cfg = loader() if hermes_config is None else hermes_config
     terminal = cfg.get("terminal") if isinstance(cfg, Mapping) else None
     raw = terminal.get("cwd") if isinstance(terminal, Mapping) else None
-    if not isinstance(raw, str):
-        return None
-    raw = raw.strip()
+    raw = raw.strip() if isinstance(raw, str) else ""
     if not raw or raw in CWD_PLACEHOLDERS:
-        return None
+        backend = terminal.get("backend") if isinstance(terminal, Mapping) else None
+        backend = (backend if isinstance(backend, str) else "local").strip().lower() or "local"
+        env = os.environ if env is None else env
+        messaging = (env.get(ENV_MESSAGING_CWD) or "").strip()
+        if backend != "local" or not messaging or messaging in CWD_PLACEHOLDERS:
+            return None
+        raw = messaging
     resolved = os.path.realpath(os.path.expanduser(raw))
     return resolved if os.path.isdir(resolved) else None

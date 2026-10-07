@@ -5,6 +5,10 @@ import { mkdtempSync, readFileSync, statSync, writeFileSync, chmodSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  readYamlScalar,
+  upsertYamlScalar,
+  readHermesGatewaySettings,
+  writeHermesGatewaySettings,
   upsertHermesMcpYaml,
   writeHermesMcpServer,
   resolveHermesConfigPath,
@@ -132,5 +136,57 @@ describe("isHermesLoopbackDefault", () => {
     for (const u of ["https://chorus.example.com", "http://localhost:3000", "https://localhost:8637", "http://localhost:8637/chorus", "", undefined, "not a url"]) {
       expect(isHermesLoopbackDefault(u)).toBe(false);
     }
+  });
+});
+
+describe("gateway settings (terminal.cwd + approval routing) — textual YAML upsert", () => {
+  const cfg = 'model: x\nterminal:\n  backend: local\n  cwd: "."   # "." = current directory\nother:\n  a: 1\n';
+
+  it("replaces a nested scalar in place, keeping its trailing comment and every other line", () => {
+    const next = upsertYamlScalar(cfg, "terminal.cwd", "/repo");
+    expect(next).toBe(cfg.replace('cwd: "."', 'cwd: "/repo"'));
+    expect(readYamlScalar(next, "terminal.cwd")).toBe("/repo");
+  });
+
+  it("creates missing parent mappings, appending new top-level blocks", () => {
+    let next = upsertYamlScalar(cfg, "security.approval.transport", "chorus");
+    next = upsertYamlScalar(next, "security.approval.transport_fallback", "builtin");
+    next = upsertYamlScalar(next, "approvals.mode", "manual");
+    expect(next.startsWith(cfg)).toBe(true);
+    expect(next).toContain('security:\n  approval:\n    transport: "chorus"\n    transport_fallback: "builtin"\n');
+    expect(next).toContain('approvals:\n  mode: "manual"\n');
+    expect(readYamlScalar(next, "security.approval.transport_fallback")).toBe("builtin");
+  });
+
+  it("inserts a missing child inside an existing block, matching its indent", () => {
+    const next = upsertYamlScalar("security:\n    redact: true\nz: 1\n", "security.approval.transport", "chorus");
+    expect(next).toBe('security:\n    redact: true\n    approval:\n      transport: "chorus"\nz: 1\n');
+  });
+
+  it("is idempotent and refuses to replace a mapping or flow mapping", () => {
+    const once = upsertYamlScalar(cfg, "terminal.cwd", "/repo");
+    expect(upsertYamlScalar(once, "terminal.cwd", "/repo")).toBe(once);
+    expect(() => upsertYamlScalar(cfg, "terminal", "x")).toThrow(/mapping/);
+    expect(() => upsertYamlScalar("terminal: {backend: local}\n", "terminal.cwd", "/r")).toThrow(/block mapping/);
+  });
+
+  it("reads unset / null / placeholder values faithfully", () => {
+    expect(readYamlScalar(cfg, "terminal.cwd")).toBe(".");
+    expect(readYamlScalar(cfg, "approvals.mode")).toBeUndefined();
+    expect(readYamlScalar("approvals:\n  mode: ~\n", "approvals.mode")).toBeUndefined();
+  });
+
+  it("writeHermesGatewaySettings: atomic, keeps the file mode, backs up once, no-op on re-run", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hermes-gw-"));
+    const p = join(dir, "config.yaml");
+    writeFileSync(p, cfg);
+    chmodSync(p, 0o640);
+    const backups = [];
+    const values = { "terminal.cwd": "/repo", "approvals.mode": "manual" };
+    expect(writeHermesGatewaySettings({ configPath: p, values, backup: (f) => backups.push(f) }).changed).toBe(true);
+    expect(statSync(p).mode & 0o777).toBe(0o640);
+    expect(readHermesGatewaySettings(p)).toEqual({ "terminal.cwd": "/repo", "approvals.mode": "manual" });
+    expect(writeHermesGatewaySettings({ configPath: p, values, backup: (f) => backups.push(f) }).changed).toBe(false);
+    expect(backups).toEqual([p]);
   });
 });

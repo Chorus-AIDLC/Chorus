@@ -30,6 +30,7 @@ Hermes 只能通过可移植包声明 MCP 服务器，而 hooks、技能、平�
 export CHORUS_URL="http://localhost:8637"
 export CHORUS_API_KEY="cho_your_api_key"
 npm install -g @chorus-aidlc/chorus
+cd /path/to/your/repo        # 这个 gateway 要服务的仓库
 chorus agents add --agents hermes
 ```
 
@@ -39,7 +40,8 @@ chorus agents add --agents hermes
 - 两个插件都已安装时，会询问是否按当前版本重新安装（`[y/N]`；带 `--yes` 或无 TTY 时自动重装）；
 - Chorus **不在** `localhost:8637` 时，向 `$HERMES_HOME/config.yaml` 写入原生 `mcp_servers.chorus` 条目（见第 3 步）；
 - 像为 Codex 写 `~/.codex/.env` 一样，把 `CHORUS_URL`、`CHORUS_API_KEY` 和 `CHORUS_AGENT_PROFILE` 写进 `$HERMES_HOME/.env`（默认 `~/.hermes/.env`，权限 0600，保留其他已有键），第 2 步因此已经完成；
-- 打印后续配置清单（第 3–5 步）。不会打印你的 key。
+- 把 `terminal.cwd`（第 4 步）和审批配置（第 5 步）写进 `$HERMES_HOME/config.yaml`。只补上没设置过的值，不会覆盖你自己设过的值；
+- 打印剩下要做的事：启动 gateway（第 6 步）。不会打印你的 key。
 
 ### 手动安装
 
@@ -88,13 +90,18 @@ hermes config set mcp_servers.chorus.headers.Authorization 'Bearer ${CHORUS_API_
 
 ## 第 4 步：一个 gateway 对应一个仓库
 
+用 `hermes gateway install` 安装的 gateway 以后台服务运行，进程自己的工作目录是 `$HERMES_HOME`，不是你的仓库。仓库只由 `terminal.cwd` 决定。`chorus agents add` 按以下顺序设置它：先用 `--hermes-cwd <path>`；没有就保留已有的明确目录；再没有就用运行命令时所在的 git 仓库（有终端时会先确认）。如果不在仓库里、也没有终端，就给出警告并保持未设置。自己设置或修改：
+
 ```bash
 hermes config set terminal.cwd /path/to/your/repo
+hermes gateway restart
 ```
 
-每次唤醒都在 `terminal.cwd` 中运行，插件会把它的真实路径上报给 Chorus。未设置或为占位值（`.`、`auto`、`cwd`）时，平台拒绝连接。要服务多个仓库，就为每个仓库各用一个 Hermes profile 运行一个 gateway。
+每次唤醒都在 `terminal.cwd` 中运行，插件会把它的真实路径上报给 Chorus。未设置或为占位值（`.`、`auto`、`cwd`）时，插件会像 Hermes 一样退回到 `MESSAGING_CWD`（仅限 local 后端）；Hermes 最后会退回 `$HOME`，插件不接受这一步，会直接拒绝连接。要服务多个仓库，就为每个仓库各用一个 Hermes profile 运行一个 gateway。
 
 ## 第 5 步：通过 Chorus 评论审批
+
+`chorus agents add` 会在这些值未设置时自动写入；`approvals.timeout` 为可选项：
 
 ```bash
 hermes config set security.approval.transport chorus

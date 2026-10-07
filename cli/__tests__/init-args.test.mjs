@@ -56,6 +56,11 @@ describe("parseInitFlags", () => {
     });
   });
 
+  it("parses --hermes-cwd (space + = forms)", () => {
+    expect(parseInitFlags(["--hermes-cwd", "/repo"]).hermesCwd).toBe("/repo");
+    expect(parseInitFlags(["--hermes-cwd=~/r"]).hermesCwd).toBe("~/r");
+  });
+
   it("parses --dsh-profile (space + = forms)", () => {
     expect(parseInitFlags(["--dsh-profile", "work"]).dshProfile).toBe("work");
     expect(parseInitFlags(["--dsh-profile=personal"]).dshProfile).toBe("personal");

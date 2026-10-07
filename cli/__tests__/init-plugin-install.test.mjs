@@ -5,7 +5,11 @@
 // state readers are exercised against temp fixtures.
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
-import { writeHermesMcpServer as realWriteHermesMcpServer } from "../init/hermes-mcp-config.mjs";
+import {
+  writeHermesMcpServer as realWriteHermesMcpServer,
+  readHermesGatewaySettings as realReadGateway,
+  writeHermesGatewaySettings as realWriteGateway,
+} from "../init/hermes-mcp-config.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -49,7 +53,7 @@ function fakeRun(script = () => ({ ok: true, code: 0, stdout: "", stderr: "" }))
 
 function ctxFor(
   agentId,
-  { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer, resolveCredentials, cliVersion, resolveTagSha, writeHermesMcpServer } = {},
+  { state = {}, run, backup, env = {}, io, flags, binaryOnPath, minHostVersion, writeCodexMcpServer, resolveCredentials, cliVersion, resolveTagSha, writeHermesMcpServer, readHermesGatewaySettings, writeHermesGatewaySettings, findGitRoot, cwd } = {},
 ) {
   return {
     agentId,
@@ -70,6 +74,11 @@ function ctxFor(
     // Hermes native-MCP writer defaults to a hermetic no-op so no test touches the real
     // ~/.hermes/config.yaml. Tests that exercise the real writer pass it with a temp HERMES_HOME.
     writeHermesMcpServer: writeHermesMcpServer ?? (() => ({ changed: false })),
+    // Same for the gateway-settings reader/writer (terminal.cwd + approval routing).
+    readHermesGatewaySettings: readHermesGatewaySettings ?? (() => ({})),
+    writeHermesGatewaySettings: writeHermesGatewaySettings ?? (() => ({ changed: true })),
+    findGitRoot: findGitRoot ?? (() => undefined),
+    cwd,
     adapter: { id: agentId, installPlugin: () => {}, readInstallState: () => state },
   };
 }
@@ -694,10 +703,10 @@ describe("installHermes (verified against the local `hermes plugins install --he
     return { io: { log: (m) => lines.push(m) }, lines };
   };
 
-  it("resolves v<cli-version> to the PEELED commit SHA, then installs both dirs with --ref <sha> --enable", () => {
+  it("resolves v<cli-version> to the PEELED commit SHA, then installs both dirs with --ref <sha> --enable", async () => {
     const run = lsRemote(`${SHA_TAG}\trefs/tags/v0.22.0\n${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`);
     const { io, lines } = logIo();
-    const res = installHermes(ctxFor("hermes", { run, io, binaryOnPath: () => true, cliVersion: "0.22.0", env: { CHORUS_URL: "https://c.example" } }));
+    const res = await installHermes(ctxFor("hermes", { run, io, binaryOnPath: () => true, cliVersion: "0.22.0", env: { CHORUS_URL: "https://c.example" } }));
     expect(res.action).toBe(INSTALLED);
     expect(run.calls[0]).toMatchObject({ cmd: "git", args: ["ls-remote", HERMES_GIT_URL, "refs/tags/v0.22.0", "refs/tags/v0.22.0^{}"] });
     expect(run.calls.slice(1).map((c) => [c.cmd, c.args])).toEqual([
@@ -706,24 +715,24 @@ describe("installHermes (verified against the local `hermes plugins install --he
     ]);
     expect(res.detail).toContain("v0.22.0");
     const text = lines.join("\n");
-    for (const needle of ["CHORUS_URL (https://c.example)", "CHORUS_API_KEY", "~/.hermes/.env", "terminal.cwd", "security.approval.transport chorus", "security.approval.transport_fallback builtin", "approvals.mode manual", "hermes gateway install"]) {
+    for (const needle of ["CHORUS_URL (https://c.example)", "CHORUS_API_KEY", "~/.hermes/.env", "terminal.cwd", "security.approval.transport chorus", "transport_fallback builtin", "approvals.mode manual", "hermes gateway install", "--hermes-cwd"]) {
       expect(text).toContain(needle);
     }
     // No platform-enable step (the platform auto-enables; --enable sets plugins.enabled).
     expect(text).not.toContain("platforms.chorus.enabled");
   });
 
-  it("falls back to the unpeeled ref for a lightweight tag", () => {
+  it("falls back to the unpeeled ref for a lightweight tag", async () => {
     const run = lsRemote(`${SHA_TAG}\trefs/tags/v0.22.0\n`);
-    const res = installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "0.22.0" }));
+    const res = await installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "0.22.0" }));
     expect(res.action).toBe(INSTALLED);
     expect(run.calls[1].args).toContain(SHA_TAG);
   });
 
-  it("fails closed and installs NOTHING when the tag cannot be resolved", () => {
+  it("fails closed and installs NOTHING when the tag cannot be resolved", async () => {
     for (const run of [lsRemote(""), lsRemote("", false), lsRemote("deadbeef\trefs/tags/v0.22.0\n")]) {
       const { io, lines } = logIo();
-      const res = installHermes(ctxFor("hermes", { run, io, binaryOnPath: () => true, cliVersion: "0.22.0" }));
+      const res = await installHermes(ctxFor("hermes", { run, io, binaryOnPath: () => true, cliVersion: "0.22.0" }));
       expect(res.action).toBe(FAILED);
       expect(res.detail).toContain("v0.22.0");
       expect(res.detail).toContain("nothing installed");
@@ -732,19 +741,19 @@ describe("installHermes (verified against the local `hermes plugins install --he
     }
   });
 
-  it("uses the injectable resolver instead of git when provided", () => {
+  it("uses the injectable resolver instead of git when provided", async () => {
     const run = fakeRun();
     const resolveTagSha = (tag) => ({ ok: true, sha: tag === "v1.2.3" ? SHA_PEELED : "x" });
-    const res = installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "1.2.3", resolveTagSha }));
+    const res = await installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "1.2.3", resolveTagSha }));
     expect(res.action).toBe(INSTALLED);
     expect(run.calls.every((c) => c.cmd === "hermes")).toBe(true);
     expect(run.calls[0].args).toContain(SHA_PEELED);
   });
 
-  it("skips (no network, no install) when already installed and updateInstalled is not set", () => {
+  it("skips (no network, no install) when already installed and updateInstalled is not set", async () => {
     const run = fakeRun();
     const { io, lines } = logIo();
-    const res = installHermes(ctxFor("hermes", {
+    const res = await installHermes(ctxFor("hermes", {
       state: { pluginInstalled: true, installedPlugins: ["chorus", "chorus-mcp"] },
       run, io, binaryOnPath: () => true, cliVersion: "0.22.0",
     }));
@@ -753,9 +762,9 @@ describe("installHermes (verified against the local `hermes plugins install --he
     expect(lines.join("\n")).toContain("hermes gateway install");
   });
 
-  it("reinstalls with --force on an accepted refresh (updateInstalled)", () => {
+  it("reinstalls with --force on an accepted refresh (updateInstalled)", async () => {
     const run = lsRemote(`${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`);
-    const res = installHermes(ctxFor("hermes", {
+    const res = await installHermes(ctxFor("hermes", {
       state: { pluginInstalled: true, installedPlugins: ["chorus", "chorus-mcp"] },
       run, binaryOnPath: () => true, cliVersion: "0.22.0", flags: { updateInstalled: true },
     }));
@@ -765,9 +774,9 @@ describe("installHermes (verified against the local `hermes plugins install --he
     for (const c of installs) expect(c.args).toEqual(expect.arrayContaining(["--ref", SHA_PEELED, "--enable", "--force"]));
   });
 
-  it("repairs a partial install by installing only the missing directory", () => {
+  it("repairs a partial install by installing only the missing directory", async () => {
     const run = lsRemote(`${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`);
-    const res = installHermes(ctxFor("hermes", {
+    const res = await installHermes(ctxFor("hermes", {
       state: { pluginInstalled: false, installedPlugins: ["chorus"] },
       run, binaryOnPath: () => true, cliVersion: "0.22.0",
     }));
@@ -777,33 +786,33 @@ describe("installHermes (verified against the local `hermes plugins install --he
     expect(installs[0].args[2]).toBe("Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus-mcp");
   });
 
-  it("reports FAILED with the CLI error when a hermes plugins install fails", () => {
+  it("reports FAILED with the CLI error when a hermes plugins install fails", async () => {
     const run = fakeRun((cmd) => cmd === "git"
       ? { ok: true, code: 0, stdout: `${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`, stderr: "" }
       : { ok: false, code: 1, stdout: "", stderr: "clone failed" });
-    const res = installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "0.22.0" }));
+    const res = await installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "0.22.0" }));
     expect(res.action).toBe(FAILED);
     expect(res.detail).toContain("clone failed");
     expect(run.calls.filter((c) => c.cmd === "hermes")).toHaveLength(1);
   });
 
-  it("surfaces the hermes 'Error:' line, not the leading custom-source warning, when an install fails", () => {
+  it("surfaces the hermes 'Error:' line, not the leading custom-source warning, when an install fails", async () => {
     const run = fakeRun((cmd) => cmd === "git"
       ? { ok: true, code: 0, stdout: `${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`, stderr: "" }
       : {
           ok: false, code: 1, stderr: "",
           stdout: "Warning: custom (unreviewed) source — not from the Hermes catalog.\nCloning https://github.com/Chorus-AIDLC/Chorus.git (subdir: \npackages/chorus-hermes/chorus)...\nError: Plugin subdirectory 'packages/chorus-hermes/chorus' does not exist in the\nrepository.\n",
         });
-    const res = installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "0.22.0" }));
+    const res = await installHermes(ctxFor("hermes", { run, binaryOnPath: () => true, cliVersion: "0.22.0" }));
     expect(res.action).toBe(FAILED);
     expect(res.detail).toContain("Error: Plugin subdirectory 'packages/chorus-hermes/chorus' does not exist in the repository.");
     expect(res.detail).not.toContain("Warning: custom");
   });
 
-  it("reports not detected with the Hermes install docs link and runs nothing when hermes is not on PATH", () => {
+  it("reports not detected with the Hermes install docs link and runs nothing when hermes is not on PATH", async () => {
     const run = fakeRun();
     const { io, lines } = logIo();
-    const res = installHermes(ctxFor("hermes", { run, io, binaryOnPath: () => false, cliVersion: "0.22.0" }));
+    const res = await installHermes(ctxFor("hermes", { run, io, binaryOnPath: () => false, cliVersion: "0.22.0" }));
     expect(res.action).toBe(UNSUPPORTED);
     expect(res.detail).toContain("not detected");
     expect(res.detail).toContain(HERMES_INSTALL_DOCS_URL);
@@ -811,10 +820,10 @@ describe("installHermes (verified against the local `hermes plugins install --he
     expect(lines).toHaveLength(0);
   });
 
-  it("never passes or prints an API key", () => {
+  it("never passes or prints an API key", async () => {
     const run = lsRemote(`${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`);
     const { io, lines } = logIo();
-    installHermes(ctxFor("hermes", {
+    await installHermes(ctxFor("hermes", {
       run, io, binaryOnPath: () => true, cliVersion: "0.22.0",
       env: { CHORUS_API_KEY: "cho_secret_value" }, flags: { apiKey: "cho_secret_value" },
     }));
@@ -822,7 +831,7 @@ describe("installHermes (verified against the local `hermes plugins install --he
     expect(lines.join("\n")).not.toContain("cho_secret_value");
   });
 
-  it("chorusCliVersion reads the root package.json version", () => {
+  it("chorusCliVersion reads the root package.json version", async () => {
     const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
     expect(chorusCliVersion()).toBe(pkg.version);
     expect(chorusCliVersion({ pkgUrl: pathToFileURL(join(tmpdir(), "no-such-chorus-pkg.json")) })).toBeNull();
@@ -842,11 +851,11 @@ describe("installHermes (verified against the local `hermes plugins install --he
       env: { HERMES_HOME: home, HOME: "/nonexistent-home", CHORUS_API_KEY: "cho_secret_value_1234567890", ...(extra.env ?? {}) },
     });
 
-    it("writes url + literal Bearer ${CHORUS_API_KEY} placeholder for a remote CHORUS_URL, preserving other config; re-run is a no-op", () => {
+    it("writes url + literal Bearer ${CHORUS_API_KEY} placeholder for a remote CHORUS_URL, preserving other config; re-run is a no-op", async () => {
       const initial = "model: foo  # keep me\nterminal:\n  cwd: /srv/repo\nmcp_servers:\n  other:\n    url: https://o.example/mcp\n";
       const home = tempHome(initial);
       const backups = [];
-      const res = installHermes(ctxWithHome(home, { env: { CHORUS_URL: "https://chorus.example.com" }, backup: (p) => backups.push(p) }));
+      const res = await installHermes(ctxWithHome(home, { env: { CHORUS_URL: "https://chorus.example.com" }, backup: (p) => backups.push(p) }));
       expect(res.action).toBe(INSTALLED);
       expect(res.detail).toContain("mcp_servers.chorus");
       const after = readFileSync(join(home, "config.yaml"), "utf8");
@@ -858,7 +867,7 @@ describe("installHermes (verified against the local `hermes plugins install --he
       expect(backups).toEqual([join(home, "config.yaml")]);
 
       // Idempotent re-run (already installed → skipped path) leaves the file unchanged and takes no backup.
-      const again = installHermes(ctxWithHome(home, {
+      const again = await installHermes(ctxWithHome(home, {
         state: { pluginInstalled: true, installedPlugins: ["chorus", "chorus-mcp"] },
         env: { CHORUS_URL: "https://chorus.example.com" }, backup: (p) => backups.push(p),
       }));
@@ -868,75 +877,172 @@ describe("installHermes (verified against the local `hermes plugins install --he
       expect(backups).toHaveLength(1);
     });
 
-    it("creates config.yaml when absent and uses --url over env", () => {
+    it("creates config.yaml when absent and uses --url over env", async () => {
       const home = tempHome();
-      installHermes(ctxWithHome(home, { flags: { url: "https://flag.example/" }, env: { CHORUS_URL: "https://env.example" } }));
+      await installHermes(ctxWithHome(home, { flags: { url: "https://flag.example/" }, env: { CHORUS_URL: "https://env.example" } }));
       const after = readFileSync(join(home, "config.yaml"), "utf8");
       expect(after).toContain('url: "https://flag.example/api/mcp"');
       expect(after).toContain('Authorization: "Bearer ${CHORUS_API_KEY}"');
     });
 
-    it("writes nothing for the loopback default (served by the portable chorus-mcp package)", () => {
+    it("writes nothing for the loopback default (served by the portable chorus-mcp package)", async () => {
       for (const url of ["http://localhost:8637", "http://127.0.0.1:8637/", "http://localhost:8637/api/mcp"]) {
         const home = tempHome("model: foo\n");
-        const res = installHermes(ctxWithHome(home, { env: { CHORUS_URL: url } }));
+        const res = await installHermes(ctxWithHome(home, { env: { CHORUS_URL: url } }));
         expect(res.action).toBe(INSTALLED);
         expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe("model: foo\n");
       }
     });
 
-    it("writes nothing when no URL is known or on --plugin-only", () => {
+    it("writes nothing when no URL is known or on --plugin-only", async () => {
       const home = tempHome("model: foo\n");
-      installHermes(ctxWithHome(home));
-      installHermes(ctxWithHome(home, { flags: { pluginOnly: true }, env: { CHORUS_URL: "https://chorus.example.com" } }));
+      await installHermes(ctxWithHome(home));
+      await installHermes(ctxWithHome(home, { flags: { pluginOnly: true }, env: { CHORUS_URL: "https://chorus.example.com" } }));
       expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe("model: foo\n");
     });
 
-    it("falls back to the credential resolver URL (interactive credential-seed path)", () => {
+    it("falls back to the credential resolver URL (interactive credential-seed path)", async () => {
       const home = tempHome();
-      installHermes(ctxWithHome(home, { resolveCredentials: () => ({ url: "https://resolved.example", apiKey: "cho_x" }) }));
+      await installHermes(ctxWithHome(home, { resolveCredentials: () => ({ url: "https://resolved.example", apiKey: "cho_x" }) }));
       const after = readFileSync(join(home, "config.yaml"), "utf8");
       expect(after).toContain('url: "https://resolved.example/api/mcp"');
       expect(after).not.toContain("cho_x");
     });
 
-    it("does not write the MCP entry when the plugin install fails", () => {
+    it("does not write the MCP entry when the plugin install fails", async () => {
       const home = tempHome();
       const run = fakeRun((cmd) => cmd === "git"
         ? { ok: true, code: 0, stdout: `${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`, stderr: "" }
         : { ok: false, code: 1, stdout: "", stderr: "clone failed" });
-      const res = installHermes(ctxWithHome(home, { run, env: { CHORUS_URL: "https://chorus.example.com" } }));
+      const res = await installHermes(ctxWithHome(home, { run, env: { CHORUS_URL: "https://chorus.example.com" } }));
       expect(res.action).toBe(FAILED);
       expect(existsSync(join(home, "config.yaml"))).toBe(false);
     });
 
-    it("reports a warning (install still succeeds) when the config cannot be merged", () => {
+    it("reports a warning (install still succeeds) when the config cannot be merged", async () => {
       const home = tempHome("mcp_servers: {other: {url: x}}\n");
-      const res = installHermes(ctxWithHome(home, { env: { CHORUS_URL: "https://chorus.example.com" } }));
+      const res = await installHermes(ctxWithHome(home, { env: { CHORUS_URL: "https://chorus.example.com" } }));
       expect(res.action).toBe(INSTALLED);
       expect(res.detail).toContain("WARNING");
       expect(readFileSync(join(home, "config.yaml"), "utf8")).toBe("mcp_servers: {other: {url: x}}\n");
     });
   });
 
-  it("hermesFollowUpChecklist uses a placeholder when no URL is known", () => {
+  describe("gateway settings: terminal.cwd + approval routing in config.yaml", () => {
+    const okRun = () => lsRemote(`${SHA_PEELED}\trefs/tags/v0.22.0^{}\n`);
+    const setup = (initial) => {
+      const home = mkdtempSync(join(tmpdir(), "hermes-gw-home-"));
+      const repo = join(home, "repo");
+      mkdirSync(repo);
+      if (initial !== undefined) writeFileSync(join(home, "config.yaml"), initial);
+      return { home, repo, cfg: join(home, "config.yaml") };
+    };
+    const ctxGw = (home, extra = {}) => ctxFor("hermes", {
+      run: okRun(), binaryOnPath: () => true, cliVersion: "0.22.0",
+      readHermesGatewaySettings: realReadGateway, writeHermesGatewaySettings: realWriteGateway,
+      ...extra,
+      env: { HERMES_HOME: home, HOME: "/nonexistent-home", ...(extra.env ?? {}) },
+    });
+
+    it("non-TTY inside a git repo: writes the repo root as terminal.cwd plus the three approval settings", async () => {
+      const { home, repo, cfg } = setup('terminal:\n  cwd: "."\n');
+      const res = await installHermes(ctxGw(home, { findGitRoot: () => repo }));
+      expect(res.action).toBe(INSTALLED);
+      expect(realReadGateway(cfg)).toEqual({
+        "terminal.cwd": repo,
+        "security.approval.transport": "chorus",
+        "security.approval.transport_fallback": "builtin",
+        "approvals.mode": "manual",
+      });
+      expect(res.detail).toContain(`terminal.cwd=${repo}`);
+      expect(res.detail).toContain("--hermes-cwd");
+    });
+
+    it("--hermes-cwd wins over an existing value and the git repo", async () => {
+      const { home, repo, cfg } = setup();
+      const other = join(home, "other");
+      mkdirSync(other);
+      writeFileSync(cfg, `terminal:\n  cwd: "${repo}"\n`);
+      await installHermes(ctxGw(home, { flags: { hermesCwd: other }, findGitRoot: () => repo }));
+      expect(realReadGateway(cfg)["terminal.cwd"]).toBe(other);
+    });
+
+    it("never overwrites values the user already set", async () => {
+      const { home, repo, cfg } = setup();
+      writeFileSync(cfg, `terminal:\n  cwd: "${repo}"\napprovals:\n  mode: smart\nsecurity:\n  approval:\n    transport: builtin\n`);
+      const res = await installHermes(ctxGw(home, { findGitRoot: () => join(home, "elsewhere") }));
+      const got = realReadGateway(cfg);
+      expect(got["terminal.cwd"]).toBe(repo);
+      expect(got["approvals.mode"]).toBe("smart");
+      expect(got["security.approval.transport"]).toBe("builtin");
+      expect(got["security.approval.transport_fallback"]).toBe("builtin"); // the only unset one
+      expect(res.detail).toContain("kept approvals.mode: smart (recommended: manual)");
+      expect(res.detail).toContain(`kept terminal.cwd ${repo}`);
+    });
+
+    it("TTY: confirms the detected repo, and accepts a typed path instead", async () => {
+      const { home, repo, cfg } = setup();
+      const other = join(home, "other");
+      mkdirSync(other);
+      const asked = [];
+      await installHermes(ctxGw(home, {
+        findGitRoot: () => repo,
+        io: { log: () => {}, isTTY: true, ask: async (q) => { asked.push(q); return other; } },
+      }));
+      expect(asked[0]).toContain(`[${repo}]`);
+      expect(realReadGateway(cfg)["terminal.cwd"]).toBe(other);
+    });
+
+    it("outside a git repo without a TTY: warns and leaves terminal.cwd unset, still fills approvals", async () => {
+      const { home, cfg } = setup();
+      const res = await installHermes(ctxGw(home, { findGitRoot: () => undefined }));
+      expect(res.detail).toMatch(/WARNING: terminal\.cwd not set/);
+      expect(realReadGateway(cfg)["terminal.cwd"]).toBeUndefined();
+      expect(realReadGateway(cfg)["approvals.mode"]).toBe("manual");
+    });
+
+    it("a non-directory --hermes-cwd is rejected with a warning", async () => {
+      const { home, cfg } = setup();
+      const res = await installHermes(ctxGw(home, { flags: { hermesCwd: join(home, "missing") } }));
+      expect(res.detail).toMatch(/is not a directory/);
+      expect(realReadGateway(cfg)["terminal.cwd"]).toBeUndefined();
+    });
+
+    it("also runs on the already-installed path (re-running agents add repairs the settings)", async () => {
+      const { home, repo, cfg } = setup();
+      const res = await installHermes(ctxGw(home, {
+        state: { pluginInstalled: true, installedPlugins: ["chorus", "chorus-mcp"] },
+        findGitRoot: () => repo,
+      }));
+      expect(res.action).toBe(SKIPPED);
+      expect(realReadGateway(cfg)["terminal.cwd"]).toBe(repo);
+    });
+
+    it("--plugin-only (chorus upgrade --plugins) touches no gateway settings", async () => {
+      const { home, repo, cfg } = setup();
+      await installHermes(ctxGw(home, { flags: { pluginOnly: true }, findGitRoot: () => repo }));
+      expect(existsSync(cfg)).toBe(false);
+    });
+  });
+
+  it("hermesFollowUpChecklist uses a placeholder when no URL is known", async () => {
     expect(hermesFollowUpChecklist().join("\n")).toContain("<your Chorus URL>");
   });
 });
 
 describe("resolveHermesTagSha", () => {
-  it("prefers the peeled ^{} commit over the tag object", () => {
+  it("prefers the peeled ^{} commit over the tag object", async () => {
     const run = fakeRun(() => ({ ok: true, stdout: `${"1".repeat(40)}\trefs/tags/v9.9.9\n${"2".repeat(40)}\trefs/tags/v9.9.9^{}\n` }));
     expect(resolveHermesTagSha("v9.9.9", { run })).toEqual({ ok: true, sha: "2".repeat(40) });
   });
-  it("returns ok:false when the tag is absent", () => {
+  it("returns ok:false when the tag is absent", async () => {
     const run = fakeRun(() => ({ ok: true, stdout: "" }));
     expect(resolveHermesTagSha("v9.9.9", { run }).ok).toBe(false);
   });
 });
 
 describe("readHermesInstallState", () => {
-  it("parses `hermes plugins list --json` when hermes is on PATH", () => {
+  it("parses `hermes plugins list --json` when hermes is on PATH", async () => {
     const run = fakeRun(() => ({ ok: true, stdout: JSON.stringify([
       { name: "chorus", status: "enabled", version: "0.22.0" },
       { name: "chorus-mcp", status: "enabled" },
@@ -946,7 +1052,7 @@ describe("readHermesInstallState", () => {
     expect(run.calls[0]).toMatchObject({ cmd: "hermes", args: ["plugins", "list", "--json"] });
     expect(state).toMatchObject({ pluginInstalled: true, installedPlugins: ["chorus", "chorus-mcp"], version: "0.22.0" });
   });
-  it("falls back to the on-disk plugin dirs under $HERMES_HOME/plugins", () => {
+  it("falls back to the on-disk plugin dirs under $HERMES_HOME/plugins", async () => {
     const home = mkdtempSync(join(tmpdir(), "hermes-"));
     mkdirSync(join(home, "plugins", "chorus"), { recursive: true });
     writeFileSync(join(home, "plugins", "chorus", "plugin.yaml"), "name: chorus\n");
@@ -958,7 +1064,7 @@ describe("readHermesInstallState", () => {
     writeFileSync(join(home, "plugins", "chorus-mcp", "plugin.json"), "{}");
     expect(readHermesInstallState({ env: { HERMES_HOME: home }, binaryOnPath: () => false }).pluginInstalled).toBe(true);
   });
-  it("HERMES_PLUGINS names the two directories in install order", () => {
+  it("HERMES_PLUGINS names the two directories in install order", async () => {
     expect(HERMES_PLUGINS.map((p) => p.name)).toEqual(["chorus", "chorus-mcp"]);
   });
 });

@@ -1276,8 +1276,8 @@
         "step1Link": "Hermes インストールガイド",
         "step2Title": "ステップ 2：chorus agents add を実行",
         "step2Tip": "chorus agents add --agents hermes は対応する Chorus リリースタグをコミット SHA に解決し（Hermes の --ref は完全な 40 文字の SHA のみ受け付けます）、2 つのプラグインディレクトリをインストールします：chorus（フック、スキル、ゲートウェイプラットフォーム、承認トランスポート）と chorus-mcp（Chorus MCP サーバー）。Chorus の URL が http://localhost:8637 以外の場合は、~/.hermes/config.yaml に mcp_servers.chorus も書き込みます。config.yaml にはキーそのものを保存せず、CHORUS_API_KEY を参照します。また、CHORUS_URL と CHORUS_API_KEY を ~/.hermes/.env（パーミッション 0600）に書き込み、ゲートウェイは起動時にそれを読み込みます。",
-        "step3Title": "ステップ 3：ゲートウェイを設定して起動",
-        "step3Tip": "ゲートウェイのサービスはシェルの環境を引き継ぎません。認証情報は chorus agents add がすでに ~/.hermes/.env に書き込んでいます。1 つのゲートウェイが担当するのは 1 つのリポジトリです：terminal.cwd をそのリポジトリに設定してください。Chorus から起動されたターンの承認は Chorus のコメントとして届き、あなたが返信します。approvals.mode manual にすると、フラグが付いたコマンドが Hermes の guardian モデルに自動承認されず、必ずあなたに届きます。起動すると、エージェントは Chorus でオンラインと表示されます。"
+        "step3Title": "ステップ 3：ゲートウェイを起動",
+        "step3Tip": "chorus agents add は認証情報を ~/.hermes/.env に書き込み、~/.hermes/config.yaml に terminal.cwd（実行したときの git リポジトリ、または --hermes-cwd /path/to/repo で指定したパス）を設定済みです。承認も Chorus のコメント経由に切り替え、approvals.mode manual を設定しているため、フラグが付いたコマンドが Hermes の guardian モデルに自動承認されず、必ずあなたに届きます。すでに設定していた値はそのまま残ります。1 つのゲートウェイが担当するのは 1 つのリポジトリです。変更するには hermes config set terminal.cwd /path/to/repo を実行してから hermes gateway restart してください。起動すると、エージェントは Chorus でオンラインと表示されます。"
       },
       "pi": {
         "step1Title": "ステップ 1：環境変数を設定",

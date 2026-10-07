@@ -154,3 +154,148 @@ export function writeHermesMcpServer({ configPath, url, backup }) {
   renameSync(tmp, configPath);
   return { configPath, changed: true, mcpUrl };
 }
+
+// ---------------------------------------------------------------------------
+// Gateway settings (terminal.cwd + approval routing). Same TARGETED TEXTUAL approach as
+// mcp_servers.chorus above, generalized to a nested block-mapping scalar: only the target
+// line (or a newly inserted key path) changes; every other line and comment is preserved.
+// ---------------------------------------------------------------------------
+
+/** Hermes' terminal.cwd placeholders (gateway/cwd_placeholder.py CWD_PLACEHOLDERS). */
+export const HERMES_CWD_PLACEHOLDERS = new Set([".", "auto", "cwd"]);
+
+/** Settings `chorus agents add` fills in when unset (never overwrites an existing value). */
+export const HERMES_RECOMMENDED_SETTINGS = Object.freeze({
+  "security.approval.transport": "chorus",
+  "security.approval.transport_fallback": "builtin",
+  "approvals.mode": "manual",
+});
+
+const keyRe = (k) => new RegExp(`^\\s*(${k}|"${k}"|'${k}')\\s*:(.*)$`);
+
+function parseScalar(raw) {
+  let v = raw.replace(/\s+#.*$/, "").trim();
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    v = v.length >= 2 ? v.slice(1, -1) : v;
+    return raw.trim().startsWith('"') ? v.replace(/\\"/g, '"').replace(/\\\\/g, "\\") : v.replace(/''/g, "'");
+  }
+  return v === "" || v === "~" || v === "null" ? undefined : v;
+}
+
+/**
+ * Walk a dotted key path through block mappings. Returns, per level, the matched line
+ * index, or the insertion context for the first missing key.
+ */
+function walk(lines, keys) {
+  let start = -1;
+  let end = lines.length;
+  let parentIndent = -2;
+  for (let depth = 0; depth < keys.length; depth += 1) {
+    const first = lines.slice(start + 1, end).find(isContent);
+    const childIndent = depth === 0 ? 0 : first && indentOf(first) > parentIndent ? indentOf(first) : parentIndent + 2;
+    let found = -1;
+    for (let i = start + 1; i < end; i += 1) {
+      if (isContent(lines[i]) && indentOf(lines[i]) === childIndent && keyRe(keys[depth]).test(lines[i])) {
+        found = i;
+        break;
+      }
+    }
+    if (found === -1) return { missingDepth: depth, start, end, childIndent };
+    if (depth === keys.length - 1) return { line: found, childIndent };
+    const inline = lines[found].match(keyRe(keys[depth]))[2].replace(/\s+#.*$/, "").trim();
+    if (inline && !["{}", "null", "~"].includes(inline)) {
+      throw new Error(`${keys.slice(0, depth + 1).join(".")} in config.yaml is not a block mapping`);
+    }
+    if (inline) lines[found] = `${" ".repeat(childIndent)}${keys[depth]}:`;
+    let stop = found + 1;
+    while (stop < lines.length && !(isContent(lines[stop]) && indentOf(lines[stop]) <= childIndent)) stop += 1;
+    start = found;
+    end = stop;
+    parentIndent = childIndent;
+  }
+  return {};
+}
+
+function splitLines(text) {
+  const lines = text.length ? text.split(/\r?\n/) : [];
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+/** Read a dotted scalar (e.g. "terminal.cwd") from config text; undefined when absent/null. */
+export function readYamlScalar(text, dotted) {
+  const keys = dotted.split(".");
+  try {
+    const r = walk(splitLines(text), keys);
+    if (r.line === undefined) return undefined;
+    return parseScalar(splitLines(text)[r.line].match(keyRe(keys[keys.length - 1]))[2]);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Pure transform: set a dotted scalar, creating missing parent mappings. */
+export function upsertYamlScalar(text, dotted, value) {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const keys = dotted.split(".");
+  const lines = splitLines(text);
+  const r = walk(lines, keys);
+  const leaf = keys[keys.length - 1];
+  if (r.line !== undefined) {
+    const next = lines[r.line + 1];
+    if (next !== undefined && isContent(next) && indentOf(next) > r.childIndent) {
+      throw new Error(`${dotted} in config.yaml is a mapping, not a scalar`);
+    }
+    const comment = (lines[r.line].match(keyRe(leaf))[2].match(/\s+#.*$/) ?? [""])[0];
+    lines[r.line] = `${" ".repeat(r.childIndent)}${leaf}: ${yamlStr(value)}${comment}`;
+  } else {
+    const rest = keys.slice(r.missingDepth);
+    const block = rest.map((k, i) => {
+      const pad = " ".repeat(r.childIndent + 2 * i);
+      return i === rest.length - 1 ? `${pad}${k}: ${yamlStr(value)}` : `${pad}${k}:`;
+    });
+    if (r.missingDepth === 0) {
+      const sep = lines.length && !isBlank(lines[lines.length - 1]) ? [""] : [];
+      lines.push(...sep, ...block);
+    } else {
+      let at = r.end;
+      while (at > r.start + 1 && !isContent(lines[at - 1])) at -= 1;
+      lines.splice(at, 0, ...block);
+    }
+  }
+  return lines.join(eol) + eol;
+}
+
+/** Current values of terminal.cwd + the recommended settings ({} when the file is missing). */
+export function readHermesGatewaySettings(configPath) {
+  if (!existsSync(configPath)) return {};
+  const text = readFileSync(configPath, "utf8");
+  const out = {};
+  for (const k of ["terminal.cwd", ...Object.keys(HERMES_RECOMMENDED_SETTINGS)]) {
+    const v = readYamlScalar(text, k);
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * Write the given dotted scalars into the Hermes config. Idempotent, backs up an existing
+ * file before the first change, atomic temp+rename keeping the file mode (0600 when new).
+ * @param {{ configPath: string, values: Record<string, string>, backup?: (p: string) => unknown }} args
+ * @returns {{ configPath: string, changed: boolean }}
+ */
+export function writeHermesGatewaySettings({ configPath, values, backup }) {
+  const existed = existsSync(configPath);
+  const existing = existed ? readFileSync(configPath, "utf8") : "";
+  let next = existing;
+  for (const [k, v] of Object.entries(values)) next = upsertYamlScalar(next, k, v);
+  if (next === existing) return { configPath, changed: false };
+  const mode = existed ? statSync(configPath).mode & 0o777 : 0o600;
+  if (existed && typeof backup === "function") backup(configPath);
+  mkdirSync(dirname(configPath), { recursive: true });
+  const tmp = `${configPath}.chorus-tmp-${process.pid}`;
+  writeFileSync(tmp, next, { mode });
+  chmodSync(tmp, mode);
+  renameSync(tmp, configPath);
+  return { configPath, changed: true };
+}

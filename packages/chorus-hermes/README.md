@@ -36,7 +36,9 @@ and the `hermes` CLI on `PATH`
 export CHORUS_URL=https://chorus.example.com
 export CHORUS_API_KEY=cho_your_agent_key
 npm install -g @chorus-aidlc/chorus
+cd /path/to/your/repo            # the repository this gateway will serve
 chorus agents add --agents hermes
+hermes gateway install && hermes gateway start
 ```
 
 For a Hermes agent, `chorus agents add`:
@@ -57,7 +59,12 @@ For a Hermes agent, `chorus agents add`:
   key never printed. Hermes loads this file at CLI and gateway startup, so a gateway
   running as a service connects without any shell export. If the file already names
   a different agent, it asks before repointing (it warns instead when there is no TTY);
-- prints the follow-up checklist from [Configure](#configure).
+- writes the gateway settings into `$HERMES_HOME/config.yaml`: `terminal.cwd`
+  (see [Gateway working directory](#gateway-working-directory-one-gateway-one-repository)),
+  `security.approval.transport: chorus`, `security.approval.transport_fallback: builtin`
+  and `approvals.mode: manual`. It only fills in values that are unset and never
+  overwrites one you chose (the summary lists what it kept); other config is preserved;
+- prints the next steps from [Configure](#configure).
 
 ### Manual install (resolve the tag, then install)
 
@@ -83,14 +90,16 @@ Never install unpinned. If the tag does not resolve, stop. `--enable` writes
 
 ## Configure
 
-This is the same checklist `chorus agents add` prints (`hermesFollowUpChecklist`
-in `cli/init/install-methods.mjs`):
+After `chorus agents add` the only step left is `hermes gateway install`, then
+`hermes gateway start` (or `hermes gateway restart` if it is already running).
+The command has already set everything below. Check its summary for anything it
+could not set (for example `terminal.cwd` when it ran outside a git repository).
+After a manual install, set these yourself:
 
-1. `CHORUS_URL` and `CHORUS_API_KEY` in `~/.hermes/.env`. `chorus agents add` writes them; add them by hand only after a manual install or a reported write failure.
+1. `CHORUS_URL` and `CHORUS_API_KEY` in `~/.hermes/.env`.
 2. `terminal.cwd` set to the repository this gateway serves.
 3. `security.approval.transport chorus` and `security.approval.transport_fallback builtin`.
 4. `approvals.mode manual`.
-5. `hermes gateway install`, then `hermes gateway start`.
 
 There is no platform-enable step. The `chorus` platform enables itself when
 `CHORUS_URL` and `CHORUS_API_KEY` are set (note 4).
@@ -137,16 +146,29 @@ With the native entry present, Hermes logs
 
 ### Gateway working directory: one gateway, one repository
 
-Set `terminal.cwd` in `~/.hermes/config.yaml` to the repository this gateway
-serves:
+A gateway installed with `hermes gateway install` runs as a service whose own
+working directory is `$HERMES_HOME`, never your repository. The repository it
+works in comes only from `terminal.cwd` in `~/.hermes/config.yaml`, so it has to
+be decided at install time. `chorus agents add` sets it in this order:
+
+1. `--hermes-cwd <path>`, if given (it always wins);
+2. an existing explicit `terminal.cwd` that is a directory, which is kept;
+3. the git repository you run `chorus agents add` in. On a TTY it asks you to
+   confirm, and you can type another path;
+4. otherwise it asks on a TTY. Without a TTY it warns and leaves the value unset.
+
+To change it later:
 
 ```bash
 hermes config set terminal.cwd /path/to/your/repo
+hermes gateway restart
 ```
 
-The plugin reports `realpath(terminal.cwd)` to Chorus. It refuses to connect
-when the value is unset, a placeholder (`.`, `auto`, `cwd`) or not a directory;
-it never reports `$HOME`. There is no per-wake working directory: every wake
+The plugin reports `realpath(terminal.cwd)` to Chorus. When `terminal.cwd` is
+unset or a placeholder (`.`, `auto`, `cwd`), it follows Hermes' own fallback one
+step: with the local terminal backend it uses `MESSAGING_CWD`. Hermes' last
+resort is `$HOME`, and the plugin never reports that: it refuses to connect
+instead, and also refuses a path that is not a directory. There is no per-wake working directory: every wake
 runs in this repository. To serve several repositories, run one gateway per
 repository, each under its own Hermes profile / `HERMES_HOME`. Chorus allows one
 live connection per agent, host and cwd. A second gateway with the same agent,
@@ -156,7 +178,8 @@ host and cwd gets `connection_conflict` (see [Troubleshooting](#troubleshooting)
 
 A Chorus-woken gateway turn runs unattended. To answer its dangerous-command
 approvals from Chorus, select the plugin's transport and keep the built-in prompt
-for everything else:
+for everything else. `chorus agents add` sets these when they are unset; the
+`timeout` line is optional:
 
 ```bash
 hermes config set security.approval.transport chorus
