@@ -4,7 +4,7 @@
 // the init SELECTION (ctx.selection) and captures ONE Chorus key per selected
 // agent, writing each as its own `agents[]` entry tagged with the daemon agentType
 // its adapter maps to (cli/init/agent-type-map.mjs — claude→claude-code, codex,
-// kiro, everything else→offline). This is how one `chorus init` run wires several
+// kiro, pi, everything else — opencode/openclaw/dsh/hermes — →offline). This is how one `chorus init` run wires several
 // agents into a single daemon at once (daemon-multi-agent).
 //
 // It reuses the existing, tested credential plumbing:
@@ -55,6 +55,7 @@ import { validateAndFetchIdentity } from "../../chorus-client.mjs";
 import { agentTypeForSelection, isWakeableAgentType } from "../agent-type-map.mjs";
 import { writePiMcpServer, resolvePiMcpConfigPath } from "../pi-mcp-config.mjs";
 import { probePiBackend } from "../pi-mcp-backend.mjs";
+import { binaryOnPath as defaultBinaryOnPath } from "../detect.mjs";
 
 const STEP_ID = "credential-seed";
 const { SEEDED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
@@ -404,6 +405,53 @@ export function writeCodexEnvFile({ envPath, url, apiKey, agentProfile }, deps =
 }
 
 /**
+ * Whether an init selection id is Hermes (`hermes`). Hermes gets its own credential sink —
+ * `$HERMES_HOME/.env` — because the Chorus Hermes plugin reads CHORUS_URL / CHORUS_API_KEY
+ * only from the process env, and Hermes' `load_hermes_dotenv()` loads that file into
+ * `os.environ` at CLI and gateway startup (overriding stale shell exports). A gateway run as
+ * a systemd/launchd service never inherits the operator's shell, so this file is the only
+ * export-free channel. Mirrors {@link isCodexSelection}.
+ * @param {string} id
+ */
+function isHermesSelection(id) {
+  return id === "hermes";
+}
+
+/**
+ * Resolve the Hermes dotenv path: `$HERMES_HOME/.env`, else `~/.hermes/.env` (Hermes'
+ * `get_hermes_home()`; same resolution as resolveHermesConfigPath). `HOME` is honored so
+ * tests can inject a temp home.
+ * @param {Record<string, string | undefined>} env
+ */
+export function resolveHermesEnvPath(env) {
+  const base = nonEmpty(env.HERMES_HOME) ?? join(nonEmpty(env.HOME) ?? homedir(), ".hermes");
+  return join(base, ".env");
+}
+
+/**
+ * Merge-preserving upsert of CHORUS_URL + CHORUS_API_KEY + CHORUS_AGENT_PROFILE into the
+ * Hermes `.env`. Same invariants as {@link writeCodexEnvFile} (shared {@link upsertDotenvFile}:
+ * idempotent, 0600, atomic temp+rename, other keys — e.g. model provider keys — preserved,
+ * key never echoed). The native `mcp_servers.chorus` entry keeps its `Bearer ${CHORUS_API_KEY}`
+ * placeholder, which Hermes expands from this env.
+ * @param {{ envPath: string, url: string, apiKey: string, agentProfile: string }} args
+ * @param {Parameters<typeof upsertDotenvFile>[1]} [deps]
+ * @returns {string} the `.env` path written
+ */
+export function writeHermesEnvFile({ envPath, url, apiKey, agentProfile }, deps = {}) {
+  const u = nonEmpty(url);
+  const k = nonEmpty(apiKey);
+  const prof = nonEmpty(agentProfile);
+  if (!u || !k || !prof) {
+    throw new Error("writeHermesEnvFile requires url, apiKey, and agentProfile");
+  }
+  return upsertDotenvFile(
+    { path: envPath, managed: { CHORUS_URL: u, CHORUS_API_KEY: k, CHORUS_AGENT_PROFILE: prof } },
+    deps,
+  );
+}
+
+/**
  * Read the `CHORUS_AGENT_PROFILE` currently recorded in a Codex `~/.codex/.env`, for cross-run
  * REPOINT detection (the Codex analogue of {@link readClaudeSettingsProfile}). Parses the
  * dotenv with `node:util` `parseEnv` (matching how the dsh tests read the same channel).
@@ -458,11 +506,24 @@ export async function seedCredentials(ctx) {
   const readSettingsProfile = ctx.readClaudeSettingsProfile ?? readClaudeSettingsProfile;
   const writeCodexEnv = ctx.writeCodexEnv ?? writeCodexEnvFile;
   const readCodexProfile = ctx.readCodexEnvProfile ?? readCodexEnvProfile;
+  const writeHermesEnv = ctx.writeHermesEnv ?? writeHermesEnvFile;
+  // Same dotenv format as ~/.codex/.env, so the Codex reader parses it.
+  const readHermesProfile = ctx.readHermesEnvProfile ?? readCodexEnvProfile;
   const writePiMcp = ctx.writePiMcp ?? writePiMcpServer;
 
-  const selection = Array.isArray(ctx.selection) ? ctx.selection.filter((id) => nonEmpty(id)) : [];
+  let selection = Array.isArray(ctx.selection) ? ctx.selection.filter((id) => nonEmpty(id)) : [];
   if (selection.length === 0) {
     return out(SKIPPED, "no agents selected — no credentials to seed");
+  }
+
+  // Hermes selected but not installed: its plugin-install step will report "not detected"
+  // and write nothing, so don't park a key for it in ~/.chorus/daemon.json either. Filtered
+  // BEFORE the loop so the first remaining agent still gets the --api-key/CHORUS_API_KEY prefill.
+  const skippedOutcomes = [];
+  if (selection.includes("hermes") && !(ctx.binaryOnPath ?? defaultBinaryOnPath)(["hermes"], { env })) {
+    selection = selection.filter((id) => id !== "hermes");
+    skippedOutcomes.push(out(SKIPPED, "hermes: hermes CLI not detected on PATH — no credentials seeded"));
+    if (selection.length === 0) return skippedOutcomes;
   }
 
   // The Chorus server URL is shared across all selected agents (one Chorus
@@ -494,7 +555,7 @@ export async function seedCredentials(ctx) {
   }
 
   /** @type {import("../contracts.mjs").StepOutcome[]} */
-  const outcomes = [];
+  const outcomes = [...skippedOutcomes];
 
   for (let i = 0; i < selection.length; i += 1) {
     const id = selection[i];
@@ -725,6 +786,59 @@ export async function seedCredentials(ctx) {
       }
     }
 
+    // hermes-only: write $HERMES_HOME/.env so the Hermes CLI AND gateway (often a systemd/launchd
+    // service that never sees the operator's shell) load CHORUS_URL/CHORUS_API_KEY into os.environ,
+    // which is the only place the Chorus Hermes plugin reads them. Same repoint rules as Codex:
+    // the file holds ONE identity and Hermes' loader overrides the shell, so a DIFFERENT prior
+    // profile prompts on a TTY / warns on non-TTY. A successful write sets hermesEnvWritten
+    // (export hint suppressed). The key is only written into the 0600 file.
+    let hermesNote = "";
+    let hermesEnvWritten = false;
+    if (isHermesSelection(id)) {
+      const envPath = resolveHermesEnvPath(env);
+      const newProfile = identity.uuid;
+      const existingProfile = readHermesProfile(envPath);
+      const isRepoint = existingProfile !== undefined && existingProfile !== newProfile;
+      let doWrite = true;
+      let declined = false;
+      let repointWarn = "";
+      if (isRepoint) {
+        if (isTTY && typeof ask === "function") {
+          const ans = String(
+            (await ask(
+              `Hermes is currently configured as ${existingProfile}; ` +
+                `repoint it to ${identity.name} (${newProfile})? [y/N]: `,
+            )) ?? "",
+          ).trim();
+          if (!/^y(es)?$/i.test(ans)) {
+            doWrite = false;
+            declined = true;
+          }
+        } else {
+          repointWarn = ` (WARNING: repointed Hermes from ${existingProfile} to ${newProfile})`;
+        }
+      }
+      if (doWrite) {
+        try {
+          const p = writeHermesEnv({ envPath, url, apiKey, agentProfile: newProfile });
+          hermesEnvWritten = true;
+          hermesNote =
+            `; wrote CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE into ${p} (0600)${repointWarn} — ` +
+            "Hermes loads it at CLI and gateway startup; restart a running gateway (hermes gateway restart) " +
+            "to pick it up. Your cho_ key is not shown here.";
+        } catch (err) {
+          hermesNote =
+            `; WARNING: could not write ${envPath} (${err?.message ?? String(err)}). ` +
+            "The Hermes gateway will not reach Chorus until CHORUS_URL and CHORUS_API_KEY are in " +
+            `${envPath} — add them there. Your cho_ key is not shown here.`;
+        }
+      } else if (declined) {
+        hermesNote =
+          `; left Hermes as ${existingProfile} — edit ${envPath} to change it ` +
+          "(a shell export would be overridden by Hermes' .env loader).";
+      }
+    }
+
     // pi-only: write the selected native or legacy backend's global MCP configuration. The
     // Authorization header references the key by env var (`Bearer ${CHORUS_API_KEY}`), so NO
     // literal cho_ key is written — the pi analogue of Codex's keyless [mcp_servers.chorus]
@@ -760,14 +874,15 @@ export async function seedCredentials(ctx) {
       }
     }
 
-    // Combined side-file note + hint-suppression flags (dsh, claude, codex, and pi are mutually
+    // Combined side-file note + hint-suppression flags (dsh, claude, codex, hermes, and pi are mutually
     // exclusive selection ids, so at most one note is set per iteration). piMcpWritten is carried
     // for observability but is NOT a hint-suppression flag (see the pi branch above).
-    const sideNote = `${dshNote}${claudeNote}${codexNote}${piNote}`;
+    const sideNote = `${dshNote}${claudeNote}${codexNote}${hermesNote}${piNote}`;
     const hintFlags = {
       ...(profileInEnv ? { profileInEnv: true } : {}),
       ...(settingsEnvWritten ? { settingsEnvWritten: true } : {}),
       ...(codexEnvWritten ? { codexEnvWritten: true } : {}),
+      ...(hermesEnvWritten ? { hermesEnvWritten: true } : {}),
       ...(piMcpWritten ? { piMcpWritten: true } : {}),
     };
 

@@ -42,6 +42,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Dependency audit (root, high/critical)
+        run: |
+          node --test scripts/__tests__/audit-root.test.mjs
+          node scripts/audit-root.mjs
+
       - name: Verify production migration version
         run: |
           node --test scripts/__tests__/prisma-migration-version.test.mjs
@@ -84,6 +89,18 @@ jobs:
           # Sub-agent session naming: name comes from the SubagentStart event's
           # agent_type (never the pre-fix `unknown-<digits>` pending filename).
           bash public/chorus-plugin/bin/tests/test-subagent-session-name.sh
+
+      # Hermes plugin (packages/chorus-hermes): fakes only, never imports Hermes. Also the
+      # guard that plugin.yaml / plugin.json / skill metadata.version match package.json.
+      - name: Setup Python (Hermes plugin tests)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'   # lowest Python Hermes supports (requires-python >=3.11)
+
+      - name: Run Hermes plugin tests
+        run: |
+          python -m pip install --quiet pytest httpx pyyaml
+          python -m pytest -q packages/chorus-hermes/chorus/tests
 
       - name: Upload coverage artifact
         if: always()

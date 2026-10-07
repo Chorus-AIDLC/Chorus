@@ -2,7 +2,7 @@
 
 For agents **other than Claude Code and Codex** — any MCP-capable client such as Cursor, Continue, a custom agent, or a hand-rolled integration — the fastest path is to let the agent itself install and configure Chorus using a natural-language prompt. You hand it the Chorus URL + API Key and point it at the skill doc; it handles the rest.
 
-> For Claude Code, see [CONNECT_CLAUDE_CODE.md](CONNECT_CLAUDE_CODE.md). For Codex, see [CONNECT_CODEX.md](CONNECT_CODEX.md). Both have official plugins that give you more than the raw MCP tools (hooks, skills, slash commands).
+> For Claude Code, see [CONNECT_CLAUDE_CODE.md](CONNECT_CLAUDE_CODE.md). For Codex, see [CONNECT_CODEX.md](CONNECT_CODEX.md). Both have official plugins that give you more than the raw MCP tools (hooks, skills, slash commands). Official integrations also exist for [Kiro](CONNECT_KIRO.md), [Pi](CONNECT_PI.md), [dsh](CONNECT_DSH.md), [OpenCode](CONNECT_OPENCODE.md), OpenClaw and [Hermes Agent](CONNECT_HERMES.md) — prefer those when you use one of these clients.
 
 ## Prerequisites
 

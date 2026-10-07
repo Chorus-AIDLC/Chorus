@@ -283,6 +283,20 @@ describe("dispatchControl resume", () => {
     expect(event).toMatchObject({ command: "resume", resumeReason: "crash" });
   });
 
+  it("carries the continuation turnUuid on a resume only when one was created", () => {
+    dispatchControl({
+      companyUuid, targetConnectionUuid: connectionUuid, command: "resume",
+      entityType: "task", entityUuid: t1, turnUuid: "turn-resume",
+    });
+    dispatchControl({
+      companyUuid, targetConnectionUuid: connectionUuid, command: "interrupt",
+      entityType: "task", entityUuid: t1, turnUuid: "turn-x",
+    });
+    const [[, resume], [, interrupt]] = mockEventBus.emit.mock.calls;
+    expect(resume).toMatchObject({ command: "resume", turnUuid: "turn-resume" });
+    expect(interrupt).not.toHaveProperty("turnUuid");
+  });
+
   it("carries orchestrator attribution on resume without changing the event actor model", () => {
     const orchestrator = {
       type: "agent" as const,

@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.22.0](https://chorus-ai.dev/zh/blog/chorus-v0.22.0-release/)**：新增 Hermes Agent 接入，通过自身 gateway 参与 Chorus 现有工作流，无需另起 Chorus daemon。在 Chorus 分配工作，由 Hermes 执行，结果与审批请求回到项目中。支持通过 Chorus CLI 或直接使用 Hermes 安装插件。
+
 **[v0.21.0](https://chorus-ai.dev/zh/blog/chorus-v0.21.0-release/)**：新增私有项目与私有项目组，支持 Viewer、Editor、Admin 分级访问和实时权限继承。Agent 启动与执行失败的诊断信息会保存在会话中，同时改进 Linux daemon 持续运行并更新安全依赖。
 
 **[v0.20.0](https://chorus-ai.dev/zh/blog/chorus-v0.20.0-release/)**：daemon 后端改用 Codex App Server、Claude Code 双向 stream-json 和 Pi 原生 RPC，通过协议处理中断与执行状态。新增 `chorus upgrade`，支持 npm 全局安装的 CLI 自升级；加上 `--plugins` 可刷新已配置的 Claude Code、Codex、Kiro 和 Pi 集成。
@@ -109,7 +111,7 @@ Kanban 看板随 Agent 工作进度自动更新，任务卡片在 To Do → In P
 
 ## 连接 Agent
 
-最快的方式是应用内的 setup 向导：打开 **Settings → Setup Guide**。它会创建 API Key，并给出适配你所用客户端的完整命令，无论是 Claude Code、Codex、Kiro、dsh、OpenCode、OpenClaw、Pi，还是任何兼容 MCP 的 agent。
+最快的方式是应用内的 setup 向导：打开 **Settings → Setup Guide**。它会创建 API Key，并给出适配你所用客户端的完整命令，无论是 Claude Code、Codex、Kiro、dsh、OpenCode、OpenClaw、Pi、Hermes，还是任何兼容 MCP 的 agent。
 
 按客户端分的完整接入指南 → **[Agent 接入平台](https://doc.chorus-ai.dev/zh/reference/agents/)**。
 

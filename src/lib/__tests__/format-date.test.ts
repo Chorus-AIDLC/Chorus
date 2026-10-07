@@ -31,7 +31,8 @@ describe("formatDateTime", () => {
 describe("formatShortDate", () => {
   it("returns compact month + day format", () => {
     const d = new Date(2026, 3, 5);
-    const result = formatShortDate(d);
+    // Pin the locale: the default follows the host (e.g. zh-CN yields "4月5日").
+    const result = formatShortDate(d, "en-US");
     expect(result).toContain("5");
     expect(result).toMatch(/Apr/);
   });

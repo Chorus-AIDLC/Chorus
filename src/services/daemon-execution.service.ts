@@ -1011,6 +1011,24 @@ export async function resumeExecution(
   return { ok: true, resumedFrom };
 }
 
+/**
+ * Undo a {@link resumeExecution} whose continuation could not be set up: put the row
+ * back to `interrupted` with its prior reason, so it stays resumable and the UI keeps
+ * showing the Resume action.
+ */
+export async function restoreInterruptedExecution(
+  companyUuid: string,
+  connectionUuid: string,
+  entityType: string,
+  entityUuid: string,
+  interruptedReason: "user" | "crash",
+): Promise<void> {
+  await prisma.daemonExecution.updateMany({
+    where: { companyUuid, connectionUuid, entityType, entityUuid, status: "running" },
+    data: { status: INTERRUPTED_EXECUTION_STATUS, interruptedReason },
+  });
+}
+
 // ===== SSE event publish =====
 //
 // One publish helper, two callers: the ingest route (after a snapshot reconcile)

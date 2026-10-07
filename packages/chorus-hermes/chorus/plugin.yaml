@@ -1,0 +1,38 @@
+name: chorus
+label: Chorus
+# Hermes 2b52acc2d accepts kind: standalone|backend|exclusive|platform|model-provider.
+# A standalone (user) plugin may call ctx.register_platform(); see README "Hermes compatibility notes".
+kind: standalone
+version: 0.22.0
+description: >
+  Chorus AI-DLC integration for Hermes Agent: session check-in and reminders,
+  Chorus skills, a gateway platform that receives Chorus wakes, and an
+  approval transport routed through Chorus comments. Pair it with the
+  portable chorus-mcp package for the Chorus MCP tools.
+author: Chorus-AIDLC
+requires_env:
+  - name: CHORUS_URL
+    description: "Chorus base URL (e.g. https://chorus.example.com)"
+    prompt: "Chorus URL"
+    password: false
+  - name: CHORUS_API_KEY
+    description: "Chorus agent API key (starts with cho_)"
+    prompt: "Chorus API key"
+    password: true
+# Must equal what register() registers (hermes plugins validate "declared hooks").
+provides_hooks:
+  # hooks.py — session lifecycle (check-in context + post-tool reminders)
+  - pre_llm_call
+  - on_session_start
+  - on_session_reset
+  - transform_tool_result
+  # skills.py — read-only reviewer guard
+  - pre_tool_call
+  - subagent_start
+  - subagent_stop
+  # adapter.py — gateway turn bookkeeping (session binding via pre_llm_call, usage, provider errors, stops)
+  - post_api_request
+  - api_request_error
+  - agent_loop_stopped
+  # approval.py — request_id → session_key correlation for the chorus approval transport
+  - pre_approval_request

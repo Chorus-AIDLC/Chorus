@@ -200,7 +200,7 @@ The Agent-level **AgentSession** model (used for swarm-mode observability via `c
 
 ### Client surfaces
 
-Chorus ships **five first-class agent-runtime plugin surfaces** that all speak to this same `/api/mcp` endpoint, plus a runtime-agnostic standalone skill for any other MCP-capable client:
+Chorus ships **six first-class agent-runtime plugin surfaces** that all speak to this same `/api/mcp` endpoint, plus a runtime-agnostic standalone skill for any other MCP-capable client:
 
 All surfaces are configured with the one-command CLI — install it globally, then run `chorus agents add`: `npm install -g @chorus-aidlc/chorus` then `chorus agents add` (see each CONNECT guide). The legacy per-agent `curl … | bash` installers (`public/install-{codex,opencode,kiro}.sh`, `public/dsh-credentials.sh`) are retired to deprecation stubs that point to `chorus agents add`.
 
@@ -209,6 +209,7 @@ All surfaces are configured with the one-command CLI — install it globally, th
 3. **OpenClaw** — `packages/openclaw-plugin/` (TypeScript SSE/MCP runtime).
 4. **Kiro CLI** — `public/kiro-plugin/.kiro/` template tree, installed by `chorus agents add` (native cross-platform file-template; global `~/.kiro/` or `<cwd>/.kiro/`). See [CONNECT_KIRO.md](./CONNECT_KIRO.md).
 5. **dsh** — public npm bundle `@chorus-aidlc/chorus-dsh`, installed into a dsh profile with `dsh plugin --profile <name> add` (orchestrated by `chorus agents add`). See [CONNECT_DSH.md](./CONNECT_DSH.md). (Unattended daemon wakes via `--agent dsh` are temporarily offline.)
+6. **Hermes Agent** — `packages/chorus-hermes/` (a native plugin `chorus/` + a portable MCP package `chorus-mcp/`), installed from GitHub pinned to the release tag's commit SHA by `chorus agents add --agents hermes`. Scheduled online through its own gateway platform (client type `hermes`), not the daemon. See [CONNECT_HERMES.md](./CONNECT_HERMES.md).
 
 For any other MCP-capable agent (Cursor, Continue, custom), see the standalone skill at `public/skill/` and [CONNECT_OTHER_AGENTS.md](./CONNECT_OTHER_AGENTS.md).
 

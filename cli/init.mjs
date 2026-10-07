@@ -209,7 +209,8 @@ export function summarize(outcomes, io, selectedIds = []) {
  * on its own; when it wrote the full CHORUS_* env into `~/.claude/settings.json`
  * (outcome `settingsEnvWritten: true`) Claude Code injects it at session start; and when
  * it wrote the CHORUS_* env into `~/.codex/.env` (outcome `codexEnvWritten: true`) Codex
- * loads it into its process env at startup, reaching both its plugin hooks and shell tool.
+ * loads it into its process env at startup, reaching both its plugin hooks and shell tool;
+ * Hermes likewise loads `$HERMES_HOME/.env` (outcome `hermesEnvWritten: true`).
  * Either way a manual export is redundant — that agent is omitted from the hint. Every other
  * agent (Kiro, …) has no such file channel and still gets the hint.
  * @param {import("./init/contracts.mjs").StepOutcome[]} outcomes
@@ -222,9 +223,10 @@ export function profileExportHint(outcomes, io) {
     // dsh persists CHORUS_AGENT_PROFILE in $DSH_HOME/.env and loads it into the
     // session env itself — no manual export needed, so skip it here. Claude Code
     // likewise has its full CHORUS_* env written into ~/.claude/settings.json
-    // (settingsEnvWritten), and Codex into ~/.codex/.env (codexEnvWritten) — those sessions
+    // (settingsEnvWritten), Codex into ~/.codex/.env (codexEnvWritten), and Hermes into
+    // $HERMES_HOME/.env (hermesEnvWritten) — those sessions
     // are fully wired, so skip them too.
-    if (o && (o.profileInEnv === true || o.settingsEnvWritten === true || o.codexEnvWritten === true)) continue;
+    if (o && (o.profileInEnv === true || o.settingsEnvWritten === true || o.codexEnvWritten === true || o.hermesEnvWritten === true)) continue;
     if (o && typeof o.agentUuid === "string" && o.agentUuid && !seen.has(o.agentUuid)) {
       seen.add(o.agentUuid);
       profiles.push({ agentUuid: o.agentUuid, agentName: typeof o.agentName === "string" ? o.agentName : "" });

@@ -83,7 +83,9 @@ export const FAILURE_ACTIONS = Object.freeze([OUTCOME_ACTIONS.FAILED]);
  * @property {(ctx: StepContext) => StepOutcome} installPlugin
  *   Register the agent's native remote marketplace and install/enable the Chorus
  *   plugin surface. MUST be idempotent, MUST back up before overwrite via
- *   ctx.backup(), and MUST NOT write any per-agent MCP/credential config.
+ *   ctx.backup(), and MUST NOT write any per-agent MCP/credential config — except
+ *   Codex and Hermes, whose plugin CLIs cannot, and which write a keyless native MCP
+ *   entry (env-var placeholder only, never a secret).
  */
 
 /**
@@ -101,6 +103,7 @@ export const FAILURE_ACTIONS = Object.freeze([OUTCOME_ACTIONS.FAILED]);
  * @property {("installed"|"repaired"|"skipped"|"seeded"|"failed"|"unsupported")} action
  * @property {string} detail        One-line human explanation for the summary.
  * @property {boolean} [codexEnvWritten] Codex credentials persisted in this invocation.
+ * @property {boolean} [hermesEnvWritten] Hermes credentials persisted into $HERMES_HOME/.env in this invocation.
  * @property {boolean} [codexMcpWritten] Codex native MCP configuration write succeeded.
  */
 

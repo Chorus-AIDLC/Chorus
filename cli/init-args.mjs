@@ -21,7 +21,7 @@
  *
  * @param {string[]} argv
  * @returns {{ agents?: string[], all?: boolean, yes?: boolean, url?: string,
- *   apiKey?: string, dshProfile?: string, daemonAutostart?: boolean, noLinger?: boolean,
+ *   apiKey?: string, dshProfile?: string, hermesCwd?: string, daemonAutostart?: boolean, noLinger?: boolean,
  *   daemonWake?: string[], daemonWakeAll?: boolean, help?: boolean }}
  */
 export function parseInitFlags(argv) {
@@ -47,6 +47,8 @@ export function parseInitFlags(argv) {
     else if (a.startsWith("--api-key=")) out.apiKey = a.slice("--api-key=".length);
     else if (a === "--dsh-profile") out.dshProfile = argv[i + 1];
     else if (a.startsWith("--dsh-profile=")) out.dshProfile = a.slice("--dsh-profile=".length);
+    else if (a === "--hermes-cwd") out.hermesCwd = argv[i + 1];
+    else if (a.startsWith("--hermes-cwd=")) out.hermesCwd = a.slice("--hermes-cwd=".length);
     else if (a === "--help" || a === "-h") out.help = true;
   }
   // Normalize a comma-separated, repeatable token list into a de-duped lowercased id
@@ -104,6 +106,9 @@ OPTIONS
   --dsh-profile <name>     dsh profile to install the Chorus bundle into
                            (env: CHORUS_DSH_PROFILE). Required for dsh in a
                            non-interactive run; prompted on a TTY.
+  --hermes-cwd <path>      Repository the Hermes gateway serves (terminal.cwd).
+                           Default: the git repository you run this in
+                           (confirmed on a TTY).
   --daemon-wake <a,b>      Enable daemon auto-waking for these selected agents
                            (repeatable). Wakeable agents (claude/codex/kiro) default
                            to NOT woken; this opts specific ones in. On a TTY you are

@@ -25,6 +25,12 @@ describe("daemon wake error boundary", () => {
     expect(normalizeWakeError(raw)).toBeNull();
   });
 
+  it("accepts a hermes-sourced wake error (Hermes gateway plugin)", () => {
+    expect(normalizeWakeError({ ...diagnostic, source: "hermes" })).toEqual({
+      ...diagnostic, source: "hermes", details: null, exitCode: null, signal: null,
+    });
+  });
+
   it("accepts exact size boundaries and rejects oversized reports rather than truncating admission", () => {
     expect(wakeErrorSchema.safeParse({
       ...diagnostic, message: "x".repeat(500), details: "x".repeat(8000), signal: "s".repeat(50),

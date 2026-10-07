@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.22.0](https://chorus-ai.dev/blog/chorus-v0.22.0-release/)**: Hermes Agent now joins the existing Chorus workflow through its own gateway, with no separate Chorus daemon. Assign work in Chorus, run it in Hermes, and bring results and approval requests back to the project. Install through the Chorus CLI or directly with Hermes.
+
 **[v0.21.0](https://chorus-ai.dev/blog/chorus-v0.21.0-release/)**: Private projects and project groups provide Viewer, Editor, and Admin access with live permission inheritance. Agent startup and execution failures now include persistent diagnostics in conversations. This release also improves Linux daemon persistence and updates security dependencies.
 
 **[v0.20.0](https://chorus-ai.dev/blog/chorus-v0.20.0-release/)** — Daemon backends now use Codex App Server, bidirectional Claude Code stream-json, and native Pi RPC for protocol-based interruption and execution tracking. New `chorus upgrade` updates npm-global CLI installations; `--plugins` also refreshes configured Claude Code, Codex, Kiro, and Pi integrations.
@@ -118,7 +120,7 @@ Task cards flow between To Do → In Progress → To Verify as agents work, with
 
 ## Connect an Agent
 
-The fastest path is the in-app wizard: open **Settings → Setup Guide**. It creates the API key and shows the exact commands for your client — Claude Code, Codex, Kiro, dsh, OpenCode, OpenClaw, Pi, or any MCP-compatible agent.
+The fastest path is the in-app wizard: open **Settings → Setup Guide**. It creates the API key and shows the exact commands for your client — Claude Code, Codex, Kiro, dsh, OpenCode, OpenClaw, Pi, Hermes, or any MCP-compatible agent.
 
 Full per-client guides → **[Agent platforms](https://doc.chorus-ai.dev/reference/agents/)**.
 

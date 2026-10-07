@@ -191,6 +191,21 @@ describe("GET /api/events/notifications (notification SSE)", () => {
     expect(joined).not.toContain('"connectedAt"');
   });
 
+  it("emits connection_registered for a hermes (Hermes gateway plugin) connection", async () => {
+    mockParseSelfReport.mockReturnValue({ clientType: "hermes", host: "h", cwd: "/srv/repo", livenessAck: "v1" });
+    const res = await GET(makeRequest("clientType=hermes&livenessAck=v1&host=h&cwd=%2Fsrv%2Frepo"));
+    const { chunks } = await startStream(res);
+
+    expect(mockRegisterConnection).toHaveBeenCalledWith(
+      companyUuid,
+      actorUuid,
+      expect.objectContaining({ clientType: "hermes" }),
+    );
+    const joined = chunks.join("");
+    expect(joined).toContain('"type":"connection_registered"');
+    expect(joined).toContain(`"connectionUuid":"${connectionUuid}"`);
+  });
+
   it("negotiates exactly livenessAck=v1 and exposes the active generation fence", async () => {
     mockParseSelfReport.mockReturnValue({
       clientType: "openclaw",

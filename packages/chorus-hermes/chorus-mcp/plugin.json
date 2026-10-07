@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "chorus-mcp",
+  "version": "0.22.0",
+  "description": "Chorus MCP server (streamable HTTP) for Hermes Agent and other Agent Plugins v1 hosts.",
+  "author": { "name": "Chorus-AIDLC" },
+  "homepage": "https://github.com/Chorus-AIDLC/Chorus",
+  "repository": "https://github.com/Chorus-AIDLC/Chorus",
+  "license": "AGPL-3.0",
+  "keywords": ["chorus", "mcp", "ai-dlc"]
+}

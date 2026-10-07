@@ -60,6 +60,9 @@ export const SESSION_CONFLICT_FAILURE = "session_conflict";
 
 const STDERR_BUFFER_LIMIT = 64 * 1024;
 const SESSION_CONFLICT_RE = /\bsession id\b[^\r\n]{0,200}\bis already in use\b/i;
+export const DEFAULT_CLAUDE_BG_WAIT_CEILING_MS = 3_600_000;
+const BACKGROUND_TERMINATION_RE = /Background tasks still running after \d+(?:\.\d+)?s; terminating\./;
+const BACKGROUND_TERMINATION_MESSAGE = "Claude terminated unfinished background agents after its post-turn wait ceiling; this wake did not complete successfully.";
 const CLAUDE_PROJECT_KEY_CAP = 200;
 
 /**
@@ -678,6 +681,12 @@ export class ClaudeSpawner {
     // walks the tree by pid, and detached there only spawns a new console window.
     const detached = (this.platform ?? process.platform) !== "win32";
     const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
+    if (getAgentEnv(childEnv, "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", this.platform) === undefined) {
+      const override = getAgentEnv(childEnv, "CHORUS_CLAUDE_BG_WAIT_CEILING_MS", this.platform)?.trim();
+      const valid = /^\d+$/.test(override ?? "") && Number.isSafeInteger(Number(override));
+      childEnv.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = valid ? String(Number(override)) : String(DEFAULT_CLAUDE_BG_WAIT_CEILING_MS);
+      if (override && !valid) this.logger.warn("[Chorus] Invalid CHORUS_CLAUDE_BG_WAIT_CEILING_MS; using the 3600000ms default");
+    }
     for (const key of Object.keys(childEnv)) {
       if (["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"].includes(key.toUpperCase())) delete childEnv[key];
     }
@@ -735,6 +744,8 @@ export class ClaudeSpawner {
 
       let stdoutBuf = "";
       let stderrBuf = "";
+      let backgroundStderrBuf = "";
+      let backgroundTasksTerminated = false;
       let sessionConflictSeen = false;
       let observedSessionId = id;
       let terminalSeen = false;
@@ -773,6 +784,15 @@ export class ClaudeSpawner {
       child.stderr?.on("data", (chunk) => {
         const rawText = String(chunk);
         diagnostics.appendStderr(rawText);
+        for (let offset = 0; !backgroundTasksTerminated && offset < rawText.length; offset += 1024) {
+          backgroundStderrBuf += rawText.slice(offset, offset + 1024);
+          if (BACKGROUND_TERMINATION_RE.test(backgroundStderrBuf)) {
+            backgroundTasksTerminated = true;
+            diagnostics.fail(BACKGROUND_TERMINATION_MESSAGE);
+            this.logger.warn(`[Chorus] ${BACKGROUND_TERMINATION_MESSAGE}`);
+          }
+          backgroundStderrBuf = backgroundStderrBuf.slice(-512);
+        }
         stderrBuf = (stderrBuf + rawText).slice(-STDERR_BUFFER_LIMIT);
         if (SESSION_CONFLICT_RE.test(stderrBuf)) sessionConflictSeen = true;
         const text = rawText.trim();
@@ -806,6 +826,7 @@ export class ClaudeSpawner {
         // the process-error handler above for why the anchor is the resumable value).
         const result = { sessionId: observedSessionId, backendSessionId: id,
           exitCode: code === 0 && (terminalFailed || diagnostics.hasFailure) ? 1 : code, isNew };
+        if (backgroundTasksTerminated) result.backgroundTasksTerminated = true;
         if (result.exitCode !== 0) result.wakeError = diagnostics.build({ exitCode: code });
         if (code !== null && code !== 0 && sessionConflictSeen) {
           result.failureClassification = SESSION_CONFLICT_FAILURE;

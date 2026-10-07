@@ -11,9 +11,9 @@
 // e.g. Codex's keyless [mcp_servers.chorus] bearer_token_env_var, Kiro's ${env:...}
 // mcp.json) — but NEVER a literal API key/secret (those live in the credential sinks).
 
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCommand } from "./run-command.mjs";
 import { binaryOnPath } from "./detect.mjs";
@@ -21,6 +21,16 @@ import { installFileTemplate } from "./file-template.mjs";
 import { OUTCOME_ACTIONS } from "./contracts.mjs";
 import { CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME, CHORUS_MARKETPLACE_SOURCE } from "./chorus-plugin-consts.mjs";
 import { writeCodexMcpServer } from "./codex-mcp-config.mjs";
+import {
+  writeHermesMcpServer,
+  resolveHermesConfigPath,
+  isHermesLoopbackDefault,
+  readHermesGatewaySettings,
+  writeHermesGatewaySettings,
+  readHermesNativeMcpUrl,
+  HERMES_CWD_PLACEHOLDERS,
+  HERMES_RECOMMENDED_SETTINGS,
+} from "./hermes-mcp-config.mjs";
 import { resolveCredentials } from "../credentials.mjs";
 import { PI_LEGACY_ADAPTER_SPEC } from "./pi-compatibility.mjs";
 import { PI_CHORUS_SPEC, readPiPackageState, probePiBackend, inspectPiSettings, managePiPackages } from "./pi-mcp-backend.mjs";
@@ -32,7 +42,14 @@ const out = (agentId, action, detail) => ({ stepId: STEP_ID, agentId, action, de
 
 /** First non-empty line of a command result's stderr/stdout, trimmed short. */
 function errText(r) {
-  const t = (r?.stderr || r?.error || r?.stdout || "").trim().split("\n")[0] || "unknown error";
+  // Prefer the CLI's own "Error:"/"fatal:" line (and its wrapped continuation) over
+  // a leading banner — e.g. `hermes plugins install` prints a "Warning: custom
+  // (unreviewed) source" line on stdout before the real error.
+  const lines = [r?.stderr, r?.stdout].map((s) => String(s ?? "").trim()).filter(Boolean).join("\n").split("\n");
+  const at = lines.findIndex((l) => /^\s*(error|fatal)\b/i.test(l));
+  const t = at >= 0
+    ? lines.slice(at).map((l) => l.trim()).filter(Boolean).join(" ")
+    : (r?.stderr || r?.error || r?.stdout || "").trim().split("\n")[0] || "unknown error";
   return t.length > 160 ? `${t.slice(0, 157)}…` : t;
 }
 
@@ -573,10 +590,299 @@ export async function installKiro(ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Hermes Agent — VERIFIED against the local Hermes CLI (`hermes plugins install
+// --help`, `hermes plugins list --help`):
+//   `hermes plugins install <owner/repo/subdir> --ref <40-hex COMMIT_SHA> --enable [--force]`
+//   `hermes plugins list --json`   → [{ name, status, version, source, ... }]
+// `--ref` accepts ONLY an immutable 40-character commit SHA (no tag names), so the
+// release tag `v<cli-version>` is first resolved with `git ls-remote` to its PEELED
+// commit (`refs/tags/v<ver>^{}`, present for annotated tags), falling back to the
+// unpeeled ref for a lightweight tag. An unresolvable tag fails CLOSED: nothing is
+// installed. Hermes installs a git subdirectory under $HERMES_HOME/plugins/<last
+// path segment>, i.e. `chorus` (native plugin) and `chorus-mcp` (portable MCP pkg).
+// Hermes presence comes from the plugin's own gateway connection (clientType
+// "hermes"), not the Chorus daemon, so the selection maps to agentType "offline".
+// No secret is written anywhere: the plugin reads CHORUS_URL / CHORUS_API_KEY from
+// the environment, and the follow-up checklist only names the variables.
+// Like Codex, Hermes is an exception to the "plugin surface only" rule: for a
+// NON-loopback Chorus the portable chorus-mcp package (literal loopback URL) cannot
+// reach the server, so we upsert a native `mcp_servers.chorus` entry in
+// $HERMES_HOME/config.yaml (literal URL + `Bearer ${CHORUS_API_KEY}` placeholder) via
+// writeHermesMcpServer — see cli/init/hermes-mcp-config.mjs for why not `hermes config set`.
+// ---------------------------------------------------------------------------
+export const HERMES_GIT_URL = "https://github.com/Chorus-AIDLC/Chorus.git";
+/** The two plugin directories `chorus agents add` installs, in order. `name` is the
+ *  installed plugin name (Hermes uses the last subdir segment). */
+export const HERMES_PLUGINS = Object.freeze([
+  Object.freeze({ name: "chorus", source: "Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus" }),
+  Object.freeze({ name: "chorus-mcp", source: "Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus-mcp" }),
+]);
+export const HERMES_INSTALL_DOCS_URL = "https://hermes-agent.nousresearch.com/docs/getting-started/installation";
+
+const CLI_PACKAGE_JSON_URL = new URL("../../package.json", import.meta.url);
+
+/** The chorus CLI version (root package.json), or null when unreadable. */
+export function chorusCliVersion({ pkgUrl = CLI_PACKAGE_JSON_URL } = {}) {
+  try {
+    const v = JSON.parse(readFileSync(fileURLToPath(pkgUrl), "utf8"))?.version;
+    return nonEmpty(v) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function hermesHome(env) {
+  return nonEmpty(env.HERMES_HOME) ?? join(env.HOME || homedir(), ".hermes");
+}
+
+/**
+ * Resolve release tag `tag` to its commit SHA via `git ls-remote`. Prefers the
+ * peeled `^{}` line (annotated tag → commit); falls back to the unpeeled ref
+ * (lightweight tag already points at the commit).
+ * @returns {{ ok: true, sha: string } | { ok: false, error: string }}
+ */
+export function resolveHermesTagSha(tag, { run = runCommand, env = process.env, gitUrl = HERMES_GIT_URL } = {}) {
+  const ref = `refs/tags/${tag}`;
+  const r = run("git", ["ls-remote", gitUrl, ref, `${ref}^{}`], { env, timeoutMs: 60_000 });
+  if (!r?.ok) return { ok: false, error: `git ls-remote failed: ${errText(r)}` };
+  let peeled;
+  let unpeeled;
+  for (const line of String(r.stdout ?? "").split("\n")) {
+    const [sha, name] = line.trim().split(/\s+/);
+    if (!/^[0-9a-f]{40}$/i.test(sha ?? "")) continue;
+    if (name === `${ref}^{}`) peeled = sha.toLowerCase();
+    else if (name === ref) unpeeled = sha.toLowerCase();
+  }
+  const sha = peeled ?? unpeeled;
+  return sha ? { ok: true, sha } : { ok: false, error: `tag ${tag} not found on ${gitUrl}` };
+}
+
+/**
+ * Hermes install state. Prefers `hermes plugins list --json` (only when `hermes`
+ * is on PATH); otherwise falls back to the on-disk plugin dirs under
+ * $HERMES_HOME/plugins. Read-only.
+ */
+export function readHermesInstallState({ env = process.env, run, binaryOnPath: onPath = binaryOnPath } = {}) {
+  const names = HERMES_PLUGINS.map((p) => p.name);
+  let found = null;
+  if (onPath(["hermes"], { env })) {
+    const r = (run ?? runCommand)("hermes", ["plugins", "list", "--json"], { env, timeoutMs: 60_000 });
+    if (r?.ok) {
+      try {
+        const list = JSON.parse(r.stdout);
+        if (Array.isArray(list)) {
+          found = {};
+          for (const p of list) if (p && names.includes(p.name)) found[p.name] = p;
+        }
+      } catch {
+        found = null;
+      }
+    }
+  }
+  if (!found) {
+    const dir = join(hermesHome(env), "plugins");
+    found = {};
+    if (existsSync(join(dir, "chorus", "plugin.yaml"))) found.chorus = { name: "chorus" };
+    if (existsSync(join(dir, "chorus-mcp", "plugin.json"))) found["chorus-mcp"] = { name: "chorus-mcp" };
+  }
+  const installed = names.filter((n) => found[n]);
+  return {
+    marketplaceRegistered: false, // Hermes installs from a git subdirectory — no marketplace
+    pluginInstalled: installed.length === names.length,
+    installedPlugins: installed,
+    version: found.chorus?.version,
+  };
+}
+
+/** The post-install checklist (names env vars only — never a secret value). */
+export function hermesFollowUpChecklist({ url } = {}) {
+  return [
+    "Hermes next steps:",
+    "  1. hermes gateway install   (then: hermes gateway start — or hermes gateway restart if it is already running)",
+    `  chorus agents add has written CHORUS_URL (${url || "<your Chorus URL>"}) / CHORUS_API_KEY to $HERMES_HOME/.env (default ~/.hermes/.env)`,
+    "  and terminal.cwd + security.approval.transport chorus / transport_fallback builtin / approvals.mode manual to $HERMES_HOME/config.yaml",
+    "  (see the summary above for anything it could not set). One gateway serves one repository: to change it,",
+    "  hermes config set terminal.cwd <repo>  (or re-run with --hermes-cwd <repo>), then hermes gateway restart.",
+  ];
+}
+
+/** `git rev-parse --show-toplevel` of `cwd`, or undefined outside a repository. */
+export function findGitRoot(cwd, { env = process.env, run = runCommand } = {}) {
+  const r = run("git", ["rev-parse", "--show-toplevel"], { env, cwd, timeoutMs: 15_000 });
+  return r?.ok ? nonEmpty(String(r.stdout ?? "").split("\n")[0]) : undefined;
+}
+
+const expandHome = (p, env) => (p === "~" || p.startsWith("~/") ? join(env.HOME || homedir(), p.slice(1)) : p);
+const isDir = (p) => {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Fill in the gateway settings the plugin needs in $HERMES_HOME/config.yaml: terminal.cwd (the
+ * repository this gateway serves — a service-run gateway's own process cwd is $HERMES_HOME, and
+ * Hermes falls back to $HOME, so this must be decided at install time) and the approval routing
+ * (HERMES_RECOMMENDED_SETTINGS). Never overwrites a value the user already set, except that an
+ * explicit --hermes-cwd always wins. terminal.cwd source order: --hermes-cwd → an existing
+ * explicit directory → the git repository `chorus agents add` runs in (confirmed on a TTY) →
+ * a TTY prompt → warn. Returns a summary note suffix; never throws.
+ */
+async function configureHermesGateway(ctx, { env }) {
+  if (ctx.flags?.pluginOnly) return "";
+  const configPath = resolveHermesConfigPath(env);
+  const io = ctx.io ?? {};
+  // --yes means "accept the defaults": behave like a non-TTY run (no cwd prompt).
+  const ask = io.isTTY && typeof io.ask === "function" && !ctx.flags?.yes ? io.ask : null;
+  let current = {};
+  try {
+    current = (ctx.readHermesGatewaySettings ?? readHermesGatewaySettings)(configPath) ?? {};
+  } catch {
+    current = {};
+  }
+  const values = {};
+  const notes = [];
+
+  const cur = nonEmpty(current["terminal.cwd"]);
+  const curOk = cur && !HERMES_CWD_PLACEHOLDERS.has(cur) && isDir(expandHome(cur, env));
+  const accept = (p, how) => {
+    const abs = resolvePath(expandHome(p, env));
+    if (!isDir(abs)) {
+      notes.push(`WARNING: terminal.cwd not set — ${abs} is not a directory`);
+      return;
+    }
+    if (abs !== cur) values["terminal.cwd"] = abs;
+    else notes.push(`terminal.cwd already ${abs}`);
+    if (how) notes.push(how);
+  };
+  const explicit = nonEmpty(ctx.flags?.hermesCwd);
+  if (explicit) {
+    accept(explicit);
+  } else if (curOk) {
+    notes.push(`kept terminal.cwd ${cur}`);
+  } else {
+    const root = (ctx.findGitRoot ?? findGitRoot)(ctx.cwd ?? process.cwd(), { env });
+    if (root && ask) {
+      accept(nonEmpty(await ask(`Repository this Hermes gateway serves (terminal.cwd) [${root}]: `)) ?? root);
+    } else if (root) {
+      accept(root, "terminal.cwd taken from the current git repository — pass --hermes-cwd <repo> to choose another");
+    } else if (ask) {
+      const answer = nonEmpty(await ask("Repository this Hermes gateway serves (terminal.cwd, blank to skip): "));
+      if (answer) accept(answer);
+      else notes.push("WARNING: terminal.cwd not set — the chorus platform will not start until you run hermes config set terminal.cwd <repo>");
+    } else {
+      notes.push(
+        "WARNING: terminal.cwd not set (not run inside a git repository) — the chorus platform will not start until you " +
+          "run hermes config set terminal.cwd <repo> or re-run with --hermes-cwd <repo>",
+      );
+    }
+  }
+
+  for (const [k, v] of Object.entries(HERMES_RECOMMENDED_SETTINGS)) {
+    const have = nonEmpty(current[k]);
+    if (have === undefined) values[k] = v;
+    else if (have !== v) notes.push(`kept ${k}: ${have} (recommended: ${v})`);
+  }
+
+  if (Object.keys(values).length > 0) {
+    try {
+      const w = (ctx.writeHermesGatewaySettings ?? writeHermesGatewaySettings)({ configPath, values, backup: ctx.backup });
+      if (w?.changed !== false) {
+        notes.unshift(`set ${Object.entries(values).map(([k, v]) => `${k}=${v}`).join(", ")} in ${configPath}`);
+      }
+    } catch (err) {
+      notes.unshift(`WARNING: could not write ${Object.keys(values).join(", ")} to ${configPath}: ${err?.message ?? String(err)}`);
+    }
+  }
+  return notes.length ? `; ${notes.join("; ")}` : "";
+}
+
+export async function installHermes(ctx) {
+  const run = ctx.run ?? runCommand;
+  const env = ctx.env ?? process.env;
+  if (!(ctx.binaryOnPath ?? binaryOnPath)(["hermes"], { env })) {
+    return out("hermes", UNSUPPORTED, `hermes CLI not detected on PATH — install Hermes Agent first (${HERMES_INSTALL_DOCS_URL}), then re-run`);
+  }
+  const state = safeState(ctx, { run });
+  const update = !!ctx.flags?.updateInstalled;
+  // URL for the native mcp_servers.chorus entry: flag/env first, then (like Codex) the
+  // credential resolver, which covers a URL typed at the credential-seed prompt.
+  let chorusUrl = nonEmpty(ctx.flags?.url) ?? nonEmpty(env.CHORUS_URL);
+  if (!chorusUrl && !ctx.flags?.pluginOnly) {
+    try {
+      chorusUrl = nonEmpty((ctx.resolveCredentials ?? resolveCredentials)(ctx.flags ?? {}, { env }).url);
+    } catch {
+      chorusUrl = undefined;
+    }
+  }
+  const logChecklist = () => {
+    for (const line of hermesFollowUpChecklist({ url: chorusUrl })) ctx.io?.log?.(line);
+  };
+  // Non-loopback Chorus → write/merge the native mcp_servers.chorus entry (literal URL,
+  // `Bearer ${CHORUS_API_KEY}` placeholder — never the key). The loopback default is
+  // already served by the portable chorus-mcp package, BUT a native entry left by an
+  // earlier remote run still wins over it, so an existing literal entry is repointed to
+  // the loopback URL too (the .env, gateway and MCP must reach the same Chorus). An entry
+  // that already follows ${CHORUS_URL} tracks the .env and is left alone. Idempotent.
+  const ensureMcp = () => {
+    if (ctx.flags?.pluginOnly || !chorusUrl) return "";
+    const configPath = resolveHermesConfigPath(env);
+    let existing;
+    try {
+      existing = (ctx.readHermesNativeMcpUrl ?? readHermesNativeMcpUrl)(configPath);
+    } catch {
+      existing = undefined;
+    }
+    if (typeof existing === "string" && existing.includes("${CHORUS_URL}")) return "";
+    if (isHermesLoopbackDefault(chorusUrl) && existing === undefined) return "";
+    try {
+      const r = (ctx.writeHermesMcpServer ?? writeHermesMcpServer)({ configPath, url: chorusUrl, backup: ctx.backup });
+      return r.changed ? `; wrote mcp_servers.chorus (${r.mcpUrl}) to ${configPath}` : "; mcp_servers.chorus already up to date";
+    } catch (err) {
+      return `; WARNING: could not write mcp_servers.chorus to ${configPath}: ${err?.message ?? String(err)}`;
+    }
+  };
+  if (state.pluginInstalled && !update) {
+    const note = ensureMcp() + (await configureHermesGateway(ctx, { env }));
+    logChecklist();
+    return out("hermes", SKIPPED, `already installed (chorus + chorus-mcp)${note}`);
+  }
+
+  const version = nonEmpty(ctx.cliVersion) ?? chorusCliVersion();
+  if (!version) return out("hermes", FAILED, "could not determine the chorus CLI version to pin the Hermes plugins — nothing installed");
+  const tag = `v${version}`;
+  const resolved = (ctx.resolveTagSha ?? resolveHermesTagSha)(tag, { run, env });
+  if (!resolved?.ok) {
+    return out("hermes", FAILED, `could not resolve release tag ${tag} to a commit SHA (${resolved?.error ?? "unknown error"}) — nothing installed`);
+  }
+
+  const already = new Set(state.installedPlugins ?? []);
+  for (const { name, source } of HERMES_PLUGINS) {
+    // Re-install over an existing dir only on an accepted refresh (Hermes refuses
+    // an existing target without --force); a partial install skips what exists.
+    if (already.has(name) && !update) continue;
+    const args = ["plugins", "install", source, "--ref", resolved.sha, "--enable"];
+    if (already.has(name)) args.push("--force");
+    const r = run("hermes", args, { env, timeoutMs: 300_000 });
+    if (!r.ok) return out("hermes", FAILED, `hermes plugins install ${name} failed: ${errText(r)}`);
+  }
+  const note = ensureMcp() + (await configureHermesGateway(ctx, { env }));
+  logChecklist();
+  const repaired = already.size > 0;
+  return out(
+    "hermes",
+    repaired ? REPAIRED : INSTALLED,
+    `${repaired ? "reinstalled" : "installed"} chorus + chorus-mcp at ${tag} (${resolved.sha.slice(0, 12)}) and enabled them${note}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Guided (not automated) — the fallback mechanism for an agent that has no
 // verified native install path: surface a precise next step instead of running
 // an unverified command (the "no guessed command" rule). NO agent currently
-// ships as guided — claude / codex / opencode / openclaw / kiro / dsh / pi all
+// ships as guided — claude / codex / opencode / openclaw / kiro / dsh / pi / hermes all
 // have real installers (pi flipped to `installPi` once @chorus-aidlc/chorus-pi
 // shipped to npm). `guided()` is kept as the mechanism for a future agent added
 // before its install command is verified.
