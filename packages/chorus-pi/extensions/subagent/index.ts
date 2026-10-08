@@ -320,6 +320,7 @@ async function runSingleAgent(
 		};
 	}
 	if (tools && tools.length > 0) args.push("--tools", tools.join(","));
+	for (const extension of agent.subagentOnlyExtensions ?? []) args.push("-e", extension);
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;

@@ -56,6 +56,7 @@
  */
 
 import { getAgentDir, VERSION, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { mcpCall as callChorusMcp } from "../lib/mcp-client.js";
 import {
   forceSubagentCallAsync,
   isReviewerAgent,
@@ -70,23 +71,25 @@ import {
   resolveChorusBin,
   resolveChorusConfigFromMcpJson,
   chorusConfigPaths,
+  chorusMcpBackend,
   resolveChorusToolName,
   NUDGE_TOOL_NAMES,
 } from "../lib/lib.js";
 
 // ─── Config ────────────────────────────────────────────────────────────
-const _mcp = (() => {
+function resolveConnection(cwd: string, backend?: ReturnType<typeof chorusMcpBackend>) {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const _fs = require("node:fs");
   return resolveChorusConfigFromMcpJson(
-    chorusConfigPaths(process.cwd(), getAgentDir(), VERSION, _fs),
+    chorusConfigPaths(cwd, getAgentDir(), VERSION, _fs, backend),
     { existsSync: _fs.existsSync },
     (path: string) => _fs.readFileSync(path, "utf-8"),
     process.env,
   );
-})();
-const CHORUS_URL = _mcp.url;
-const CHORUS_API_KEY = _mcp.apiKey;
+}
+const _mcp = resolveConnection(process.cwd());
+let CHORUS_URL = _mcp.url;
+let CHORUS_API_KEY = _mcp.apiKey;
 
 // A neutral SpecModeResult for the not-configured / connection-failed banners,
 // where buildSessionBanner returns before reading the spec fields.
@@ -120,7 +123,7 @@ const CHORUS_BIN = resolveChorusBin(import.meta.url, {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   existsSync: require("node:fs").existsSync,
 });
-const CONFIGURED = CHORUS_URL !== "" && CHORUS_API_KEY !== "";
+let CONFIGURED = CHORUS_URL !== "" && CHORUS_API_KEY !== "";
 
 // Package version — single source of truth is the bundled package.json (kept in
 // lockstep with the Chorus app version at release), never a hardcoded literal.
@@ -143,73 +146,8 @@ const PKG_VERSION: string = (() => {
 })();
 
 // ─── MCP-over-HTTP helper (TS replacement for chorus-mcp-call.sh) ───────────
-let mcpSessionId: string | null = null;
-
-function endpoint(): string {
-  const base = CHORUS_URL.replace(/\/$/, "");
-  return base.includes("/api/mcp") ? base : `${base}/api/mcp`;
-}
-
 async function mcpCall<T = unknown>(tool: string, args: Record<string, unknown> = {}): Promise<T> {
-  const url = endpoint();
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${CHORUS_API_KEY}`,
-    "Content-Type": "application/json",
-    Accept: "application/json, text/event-stream",
-  };
-  if (mcpSessionId) headers["Mcp-Session-Id"] = mcpSessionId;
-
-  // 1. initialize
-  const init = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-03-26",
-        capabilities: {},
-        clientInfo: { name: "chorus-pi", version: PKG_VERSION },
-      },
-    }),
-  });
-  mcpSessionId = init.headers.get("mcp-session-id") ?? mcpSessionId;
-
-  // 2. initialized notification (no reply expected)
-  await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-  });
-
-  // 3. tools/call
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: { name: tool, arguments: args },
-    }),
-  });
-  let raw = await res.text();
-  // Streamable transport may wrap in SSE framing; strip 'data: ' prefix.
-  if (/^(event:|data:)/m.test(raw)) {
-    raw = raw
-      .split("\n")
-      .find((l) => l.startsWith("data: "))
-      ?.slice(6) ?? raw;
-  }
-  const json = JSON.parse(raw);
-  if (json.error) throw new Error(`MCP ${tool}: ${json.error.message ?? JSON.stringify(json.error)}`);
-  const text = json.result?.content?.[0]?.text ?? "{}";
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return text as unknown as T;
-  }
+  return callChorusMcp<T>({ url: CHORUS_URL, apiKey: CHORUS_API_KEY, version: PKG_VERSION }, tool, args);
 }
 
 // ─── Session bookkeeping (ephemeral subagent model) ────────────────────────
@@ -297,6 +235,13 @@ export default function (pi: ExtensionAPI) {
   //   not configured        -> warning (env vars missing)
   //   connection failed     -> error (checkin couldn't reach Chorus)
   pi.on("session_start", async (event, ctx) => {
+    const backend = chorusMcpBackend(pi.getCommands?.() ?? []);
+    if (backend) {
+      const connection = resolveConnection(ctx.cwd, backend);
+      CHORUS_URL = connection.url;
+      CHORUS_API_KEY = connection.apiKey;
+      CONFIGURED = CHORUS_URL !== "" && CHORUS_API_KEY !== "";
+    }
     // Not configured — emit the warning banner and bail (no checkin to attempt).
     if (!CONFIGURED) {
       const banner = buildSessionBanner({
@@ -592,6 +537,5 @@ export default function (pi: ExtensionAPI) {
     runIdToSid.clear();
     injectedOnce = false;
     checkinContext = null;
-    mcpSessionId = null;
   });
 }

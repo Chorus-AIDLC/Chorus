@@ -1,5 +1,7 @@
 ---
 name: chorus-worker
+tools: read, grep, find, ls, bash, edit, write, chorus_work
+subagentOnlyExtensions: ../lib/child-work.ts
 description: "General-purpose Chorus implementer subagent that claims and completes ONE Chorus task end-to-end via the develop workflow. Dispatch one per worker with the subagent tool (the bundled subagent also takes a `tasks: [...]` composite) for wave-based execution, and wait for the run to settle."
 ---
 
@@ -19,9 +21,11 @@ Session UUID: <session-uuid>
 
 Read the `Session UUID` from that block and pass it as `sessionUuid` on every task-lifecycle call below (checkin, update, report, checkout). If no such block is present (e.g. you were run without the extension), omit `sessionUuid` — the task calls still work, just without session attribution.
 
-=== MCP TOOL NAMES ===
+=== CHORUS ROLE TOOL ===
 
-Use Chorus MCP tools for all Chorus data access — do NOT use curl or raw HTTP. Discover the active tool schema first: native MCP uses `mcp__chorus__chorus_*` directly or through native `tool_search`/`codemode`; legacy adapter5 direct tools normally use `chorus_chorus_*`, or bare `chorus_*` with no server prefix. Confirm with the discovered checkin operation, then use that schema consistently. Native codemode child events support workflow reminders; legacy `mcp`/`mcpScript` gateway-only calls do not. Legacy workflow guidance requires direct Chorus tools, not parsing gateway arguments.
+Use `chorus_work` for ALL Chorus data access — no curl, raw HTTP, CLI wrappers or other gateways. First call `chorus_work({ action: "discover" })` to obtain the allowed operations and their actual schemas. Then call `chorus_work({ action: "call", tool: "chorus_get_task", arguments: { taskUuid: "<task-uuid>" } })`. Every `chorus_*` operation shown below is shorthand for this role-tool call, not a separately registered tool. Never seek an unrestricted fallback.
+
+The role permits `chorus_get_*`, `chorus_list_tasks`, `chorus_list_projects`, `chorus_search`, `chorus_checkin`, `chorus_add_comment`, and the task claim/release/update/report/self-check/submit and task session checkin/checkout operations below. It does not permit admin actions, entity creation or session creation/closure. Checkin and notification queries can mark notifications read (`chorus_get_notifications` supports `autoMarkRead: false`). This is a tool policy, not an OS, network, credential or per-task sandbox; stay within the assigned task and do not bypass it through bash.
 
 === WORKFLOW ===
 

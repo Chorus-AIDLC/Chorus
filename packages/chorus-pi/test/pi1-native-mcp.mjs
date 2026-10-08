@@ -35,6 +35,7 @@ if (!process.argv.includes("--scenario")) {
   const scenarios = ["codemode", "direct"].flatMap((exposure) =>
     ["all", "none", ...Object.keys(toggles), "unconfigured"].map((gate) => ({ exposure, gate })));
   scenarios.push(...Object.keys(toggles).map((profile) => ({ exposure: "codemode", gate: "all", profile })));
+  scenarios.push({ exposure: "codemode", gate: "all", profile: "legacy-native-reviewer" });
   for (const { exposure, gate, profile } of scenarios) {
       const output = execFileSync(process.execPath,
         [fileURLToPath(import.meta.url), "--scenario", exposure, gate, ...(profile ? [profile] : [])], {
@@ -48,7 +49,7 @@ if (!process.argv.includes("--scenario")) {
             CHORUS_SPEC_MODE: "off",
             ...Object.fromEntries(Object.entries(toggles).map(([reviewer, name]) =>
               [name, String(gate !== "none" && gate !== reviewer)])),
-            PI_PROBE_NATIVE_TOOLS: JSON.stringify(results[0]?.nativeToolNames ?? []),
+            PI_PROBE_NATIVE_TOOLS: JSON.stringify(results[0]?.availableToolNames ?? []),
           },
         });
       results.push(JSON.parse(output));
@@ -62,6 +63,8 @@ if (!process.argv.includes("--scenario")) {
   }, null, 2));
 } else {
   const [, exposure, gate, profile] = process.argv.slice(2);
+  const legacyProfile = profile === "legacy-native-reviewer";
+  const roleProvider = profile && !legacyProfile;
   const {
     createAgentSession, createCodemodeExtension, createMcpExtension, createToolSearchExtension,
     DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager, parseFrontmatter,
@@ -76,10 +79,12 @@ if (!process.argv.includes("--scenario")) {
   await mkdir(agentDir);
   process.chdir(scratch);
   process.env.PI_CODING_AGENT_DIR = agentDir;
+  const backendCalls = [];
   const backend = createServer(async (request, response) => {
     let body = "";
     for await (const part of request) body += part;
     const rpc = JSON.parse(body);
+    if (rpc.method === "tools/call") backendCalls.push(rpc.params.name);
     response.setHeader("content-type", "application/json");
     // Chorus's bookkeeping uses this HTTP fixture, not the real Chorus server.
     response.end(JSON.stringify({
@@ -145,8 +150,8 @@ if (!process.argv.includes("--scenario")) {
       dispatched.add(probe.id);
       const content = fresh ? [{
         type: "toolCall", id: `fixture-${probe.id}`,
-        name: exposure === "codemode" ? "codemode" : `mcp__chorus__${probe.operation}`,
-        arguments: exposure === "codemode"
+        name: roleProvider ? "chorus_review" : exposure === "codemode" ? "codemode" : `mcp__chorus__${probe.operation}`,
+        arguments: roleProvider ? { action: "call", tool: probe.operation, arguments: args } : exposure === "codemode"
           ? { code: `console.log(await tools.mcp__chorus__${probe.operation}(${JSON.stringify(args)}));` }
           : args,
       }] : [{ type: "text", text: "Local probe complete." }];
@@ -168,22 +173,27 @@ if (!process.argv.includes("--scenario")) {
 
   let session;
   try {
-    const profileTools = profile ? parseFrontmatter(
+    const profileFrontmatter = legacyProfile ? { tools: "read, bash, codemode, tool_search, mcp, mcpScript" } : profile ? parseFrontmatter(
       await readFile(resolve(here, `../agents/${profile}.md`), "utf8"),
-    ).frontmatter.tools.split(",").map((name) => name.trim()) : undefined;
+    ).frontmatter : undefined;
+    const profileTools = profileFrontmatter?.tools.split(",").map((name) => name.trim());
     const { expandReviewerTools } = await import(
       pathToFileURL(resolve(here, "../extensions/subagent/agents.ts")).href);
-    const allowedTools = expandReviewerTools(profile, profileTools,
+    const allowedTools = expandReviewerTools(legacyProfile ? "chorus-task-reviewer" : profile, profileTools,
       JSON.parse(process.env.PI_PROBE_NATIVE_TOOLS ?? "[]"));
-    if (profileTools) {
-      assert.ok(profileTools.includes("codemode"));
-      assert.ok(profileTools.includes("tool_search"));
+    if (roleProvider) {
+      assert.ok(profileTools.includes("chorus_review"));
+      for (const conditional of ["codemode", "tool_search", "mcp", "mcpScript"]) {
+        assert.ok(!profileTools.includes(conditional));
+      }
       assert.ok(!profileTools.includes("write") && !profileTools.includes("edit"));
-      assert.ok(allowedTools.includes("mcp__chorus__chorus_list_tasks"));
-      assert.ok(allowedTools.includes("mcp__chorus__chorus_list_projects"));
-      assert.ok(allowedTools.includes("mcp__chorus__chorus_add_comment"));
-      assert.ok(!allowedTools.includes("mcp__chorus__chorus_admin_verify_task"));
-      assert.ok(!allowedTools.includes("mcp__chorus__chorus_submit_for_verify"));
+      assert.deepEqual(allowedTools, profileTools);
+    }
+    if (legacyProfile) {
+      assert.ok(allowedTools.includes("codemode"));
+      for (const forbidden of ["tool_search", "mcp", "mcpScript", "mcp__chorus__chorus_admin_verify_task"]) {
+        assert.ok(!allowedTools.includes(forbidden));
+      }
     }
     const resourceLoader = new DefaultResourceLoader({
       cwd: scratch, agentDir, settingsManager,
@@ -191,6 +201,7 @@ if (!process.argv.includes("--scenario")) {
       noThemes: true, noContextFiles: true,
       additionalExtensionPaths: [
         resolve(here, "../extensions/chorus.ts"), resolve(here, "../extensions/subagent/index.ts"),
+        ...(roleProvider ? [resolve(here, "../agents", profileFrontmatter.subagentOnlyExtensions)] : []),
       ],
       extensionFactories: [
         createCodemodeExtension(),
@@ -228,22 +239,23 @@ if (!process.argv.includes("--scenario")) {
     // Native servers connect in the background; this driver can produce a tool
     // call faster than that startup completes. Wait for the real registrations.
     const readyDeadline = Date.now() + 10_000;
-    while (!session.getCallableToolNames().includes("mcp__chorus__chorus_get_task")) {
+    while (!session.getCallableToolNames().includes(roleProvider ? "chorus_review" : "mcp__chorus__chorus_get_task")) {
       assert.ok(Date.now() < readyDeadline, "Native MCP fixture did not connect");
       await new Promise((accept) => setTimeout(accept, 10));
     }
-    if (exposure === "codemode") assert.ok(session.getActiveToolNames().includes("codemode"));
-    if (profile) assert.deepEqual(
+    if (!roleProvider && exposure === "codemode") assert.ok(session.getActiveToolNames().includes("codemode"));
+    if (roleProvider) assert.deepEqual(
       session.getCallableToolNames().filter((name) => name.startsWith("mcp__")).sort(),
-      ["chorus_get_task", "chorus_list_tasks", "chorus_list_projects", "chorus_add_comment"]
-        .map((name) => `mcp__chorus__${name}`).sort(),
-      "The native reviewer hard allowlist admits only the fixture reads/comment",
+      [],
+      "The packaged reviewer uses its restricted provider, not ambient MCP tools",
     );
     const probes = profile ? [
       { operation: "chorus_get_task", fail: false, decoy: true },
       { operation: "chorus_list_tasks", fail: false },
       { operation: "chorus_list_projects", fail: false },
       { operation: "chorus_add_comment", fail: false },
+      { operation: "chorus_admin_verify_task", fail: true },
+      { operation: "chorus_submit_for_verify", fail: true },
     ] : [
       ...operations.map(([operation, reviewer]) => ({ operation, reviewer, fail: false })),
       ...operations.map(([operation]) => ({ operation, fail: true })),
@@ -259,14 +271,15 @@ if (!process.argv.includes("--scenario")) {
       await session.prompt("native-probe:" + JSON.stringify({ ...probe, id: index }));
       const newEvents = events.slice(beforeEvents);
       const resultsForTool = newEvents.filter((event) =>
-        event.type === "tool_result" && event.name === `mcp__chorus__${probe.operation}`);
+        event.type === "tool_result" && event.name === (roleProvider ? "chorus_review" :
+          legacyProfile && probe.fail ? "codemode" : `mcp__chorus__${probe.operation}`));
       assert.equal(resultsForTool.length, 1, JSON.stringify({
         events: newEvents,
         results: session.messages.slice(beforeMessages).filter((message) => message.role === "toolResult"),
       }));
       const result = resultsForTool[0];
       assert.equal(result.isError, probe.fail);
-      assert.equal(result.parentId, exposure === "codemode" ? `fixture-${index}` : undefined);
+      assert.equal(result.parentId, !roleProvider && !(legacyProfile && probe.fail) && exposure === "codemode" ? `fixture-${index}` : undefined);
       assert.equal(newEvents.filter((event) =>
         event.type === "tool_call" && event.name === result.name).length, 1);
       const reminders = session.messages.slice(beforeMessages).filter((message) =>
@@ -279,21 +292,26 @@ if (!process.argv.includes("--scenario")) {
       assert.equal(newQueues.some((queue) => queue.steering.some((text) =>
         text.includes("spawn chorus-"))), expected === 1);
       assert.ok(newQueues.every((queue) => queue.followUp.length === 0));
-      if (exposure === "codemode") {
+      if (!roleProvider && exposure === "codemode") {
         const parents = newEvents.filter((event) =>
           event.type === "tool_result" && event.name === "codemode");
         assert.equal(parents.length, 1);
-        assert.equal(parents[0].isError, false, "Child errors can occur in successful parent scripts");
+        assert.equal(parents[0].isError, legacyProfile && probe.fail);
       }
       results.push({ ...probe, toolName: result.name, parentId: result.parentId,
         reminderCount: reminders.length,
         steeringText: reminders.map((message) => message.content) });
     }
     assert.deepEqual(extensionErrors, []);
+    if (roleProvider) {
+      assert.deepEqual(backendCalls.filter((name) => name !== "chorus_checkin"),
+        probes.filter((probe) => !probe.fail).map((probe) => probe.operation));
+    }
     assert.ok(modelRequests.length >= probes.length * 2);
     console.log(JSON.stringify({
       exposure, gate, profile, profileTools, allowedTools, configured: gate !== "unconfigured",
       nativeToolNames: session.getCallableToolNames().filter((name) => name.startsWith("mcp__")),
+      availableToolNames: session.getAllTools().map((tool) => tool.name),
       reviewerSettings: Object.fromEntries(Object.entries(toggles).map(([reviewer, name]) =>
         [reviewer, process.env[name] === "true"])), cases: results, events,
       eventCount: events.length, modelRequests: modelRequests.length,
