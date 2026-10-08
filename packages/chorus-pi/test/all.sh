@@ -38,12 +38,16 @@ bag=$(bun test test/agents.test.ts 2>&1); barc=$?
 printf '%s\n' "$bag" | tail -6
 ba=$barc
 echo ""
+echo "──────── Layer B: child role tools and shared MCP transport ────────"
+role=$(bun test test/role-tools.test.ts test/mcp-client.test.ts 2>&1); rolerc=$?
+printf '%s\n' "$role" | tail -8
+echo ""
 echo ""
 echo "══════════════════════════════════════════"
-if [ $a -eq 0 ] && [ $b -eq 0 ] && [ $be -eq 0 ] && [ $ba -eq 0 ] && [ $discoveryrc -eq 0 ]; then
-  echo "  ALL OFFLINE TESTS PASSED (A: static, B: unit + extension events + agents)"
+if [ $a -eq 0 ] && [ $b -eq 0 ] && [ $be -eq 0 ] && [ $ba -eq 0 ] && [ $discoveryrc -eq 0 ] && [ $rolerc -eq 0 ]; then
+  echo "  ALL OFFLINE TESTS PASSED (A: static, B: unit + extension events + agents + role tools + MCP)"
   exit 0
 else
-  echo "  FAILURES — A exit=$a, B exit=$b, B-ext exit=$be, B-agents exit=$ba, B-discovery exit=$discoveryrc"
+  echo "  FAILURES — A exit=$a, B exit=$b, B-ext exit=$be, B-agents exit=$ba, B-discovery exit=$discoveryrc, B-role exit=$rolerc"
   exit 1
 fi

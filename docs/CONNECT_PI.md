@@ -81,7 +81,7 @@ Adapter **5.0.0** reads **`~/.pi/agent/mcp-adapter.json`** as its primary global
 
 Adapter5 also supports legacy config discovery/import, including root `.mcp.json`, but **old global `mcp.json` is not its primary file**. Do not assume identical native and adapter discovery paths. Both backends resolve `${CHORUS_API_KEY}`; keep real keys in the environment.
 
-The Chorus extension also discovers the generated legacy primary for its own HTTP bookkeeping. Exporting `CHORUS_API_KEY` is sufficient to resolve that config's URL; a retained old global `mcp.json` cannot shadow the primary. Explicit `CHORUS_URL` still overrides discovery. Missing environment credentials are not sent as literal `${…}` templates.
+The Chorus extension and child role tools use the active MCP backend for HTTP connection discovery, including adapter5 on modern Pi. Adapter sessions check project `.pi/mcp-adapter.json`, root `.mcp.json`, then the global adapter primary; a retained global native `mcp.json` cannot shadow an existing adapter primary. Native sessions ignore stale adapter files. Explicit environment values override discovery; complete file-based credentials need no duplicate exports. Missing environment credentials are not sent as literal `${…}` templates, and configuration files are not rewritten.
 
 ### Existing adapter migration (warning-only)
 
@@ -179,7 +179,51 @@ Discover the active tools rather than guessing an alias:
 
 The extension itself always uses the native names (`chorus_checkin`, `chorus_create_session`, …) because it calls Chorus directly over MCP-over-HTTP, bypassing the gateway prefixing. Only the **main agent's** tool calls are affected.
 
-Bundled reviewers receive only discovered safe Chorus query/checkin/comment operations. Legacy gateways are removed from their allowlist; empty permissions fail closed. Worker/custom tool inheritance is unchanged. See `packages/chorus-pi/test/verify-pi-session.md` for an optional in-session check.
+### Child role tools and their boundary
+
+Packaged reviewers use `chorus_review`; the worker uses `chorus_work` for all
+Chorus access. Their frontmatter explicitly loads `../lib/child-review.ts` or
+`../lib/child-work.ts` through `subagentOnlyExtensions`, resolved relative to
+the agent file. Both nicobailon `pi-subagents` and the bundled dispatcher support
+this; the bundled launcher passes provider paths as separate `-e` arguments,
+not tool names. User/project overrides still win; copied agent files need a
+provider path appropriate to their new location.
+
+```js
+chorus_review({ action: "discover" })
+chorus_review({ action: "call", tool: "chorus_get_proposal", arguments: { proposalUuid: "<uuid>", section: "full" } })
+chorus_work({ action: "discover" })
+chorus_work({ action: "call", tool: "chorus_submit_for_verify", arguments: { taskUuid: "<uuid>", summary: "Implemented and tested" } })
+```
+
+Discovery returns only allowed, available operations with their actual schemas.
+Reviewers permit `chorus_get_*`, `chorus_list_tasks`, `chorus_list_projects`,
+`chorus_search`, `chorus_checkin`, and `chorus_add_comment`. Workers add
+`chorus_claim_task`, `chorus_release_task`, `chorus_update_task`,
+`chorus_report_work`, `chorus_report_criteria_self_check`,
+`chorus_submit_for_verify`, `chorus_session_checkin_task`, and
+`chorus_session_checkout_task`. Neither role permits admin actions, entity
+creation, or session creation/closure. Forbidden calls fail before network
+dispatch; backend failures are errors, not empty successes.
+
+Both roles explicitly declare `read, grep, find, ls, bash` and their role tool;
+workers also declare `edit, write`. They require no optional `tool_search`,
+`codemode`, `mcp`, or `mcpScript`, native MCP inheritance, role server aliases,
+or adapter direct exposure. Adapter5's default script mode works for these
+children; the parent session's legacy gateway reminder limitation still applies.
+Providers reuse the existing Chorus connection without rewriting MCP settings.
+Legacy custom reviewer definitions use the same policy for direct-tool expansion,
+remove unrestricted gateways, and fail closed on empty permissions. Other custom
+agents keep their previous tool declarations/inheritance.
+
+**Read-only means tool policy and behavioral instructions, not a sandbox.**
+Bash, inherited credentials, network access, and subprocesses are not isolated.
+Task/code reviewers may run tests/builds with generated outputs, but may not
+deliberately change source or perform git writes; proposal reviewers inspect
+only. Comment target scope is behavioral, not enforced per UUID.
+`chorus_checkin` auto-marks fetched unread notifications read, and
+`chorus_get_notifications` does so by default; set `autoMarkRead: false` for a
+non-marking notification query. Query access is therefore not strictly side-effect-free.
 
 ## Run pi as a wakeable daemon backend
 

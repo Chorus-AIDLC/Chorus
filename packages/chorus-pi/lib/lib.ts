@@ -27,11 +27,21 @@ export interface ChorusConnection {
   apiKey: string;
 }
 
-export function chorusConfigPaths(cwd: string, agentDir: string, hostVersion: string, fs: FsLike): string[] {
+export type ChorusMcpBackend = "native" | "adapter";
+
+export function chorusMcpBackend(commands: readonly { name: string; sourceInfo?: { path?: string } }[]): ChorusMcpBackend | undefined {
+  if (commands.some((command) => /^mcp-adapter(?::\d+)?$/.test(command.name))) return "adapter";
+  if (commands.some((command) => command.name === "mcp" && command.sourceInfo?.path === "builtin:mcp")) return "native";
+  return undefined;
+}
+
+export function chorusConfigPaths(
+  cwd: string, agentDir: string, hostVersion: string, fs: FsLike, backend?: ChorusMcpBackend,
+): string[] {
   const version = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(hostVersion);
   const legacy = version !== null && Number(version[1]) === 0 && Number(version[2]) < 99;
   let globalPath = join(agentDir, "mcp.json");
-  if (legacy) {
+  if (backend === "adapter" || (backend === undefined && legacy)) {
     const primary = join(agentDir, "mcp-adapter.json");
     try {
       if (fs.existsSync(primary)) globalPath = primary;
@@ -39,7 +49,8 @@ export function chorusConfigPaths(cwd: string, agentDir: string, hostVersion: st
       globalPath = primary;
     }
   }
-  return [join(cwd, ".mcp.json"), globalPath];
+  return [...(backend === "adapter" ? [join(cwd, ".pi", "mcp-adapter.json")] : []),
+    join(cwd, ".mcp.json"), globalPath];
 }
 
 function resolveConfigValue(value: string, env: Record<string, string | undefined>): string {

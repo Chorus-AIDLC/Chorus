@@ -25,7 +25,39 @@ bash test/precheck.sh
 # then: launch a fresh `pi` session and paste test/verify-pi-session.md to it
 ```
 
-Layers A + B + B′ must all be green before any integration work. They run in <1s and need no runtime.
+Layers A + B + B′ must all be green before any integration work. The offline suite also includes agent parsing/provider wiring, role policy and MCP transport tests; it needs no live server.
+
+## Issue #606 — actual child role matrix
+
+Prepare one isolated SDK installation containing Pi 1.1.x, `pi-subagents@0.76.1`
+and `pi-mcp-adapter@5.1.0`, then run from the repository root:
+
+```bash
+npm install --prefix /tmp/chorus-pi-child-sdk --no-audit --no-fund @earendil-works/pi-coding-agent@1.1.0 pi-subagents@0.76.1 pi-mcp-adapter@5.1.0
+node packages/chorus-pi/test/child-role-runtime.mjs --sdk-root /tmp/chorus-pi-child-sdk
+node packages/chorus-pi/test/child-role-runtime.mjs --sdk-root /tmp/chorus-pi-child-sdk --artifact /path/to/chorus-pi.tgz
+```
+
+This launches all four packaged agents in each of twelve cells: native/adapter ×
+nicobailon/bundled dispatcher × env/file/file-stale connection. Only the model and
+loopback MCP server are fixtures. The 48 actual child runs check registry contents, paginated schema discovery,
+allowed operations, pre-network denial, backend errors, completed asynchronous
+results and successful exits. A launch acknowledgement is not success. The
+adapter uses default script mode; no role server aliases or agent overrides are
+installed. File modes remove both connection environment variables; file-stale
+also installs conflicting inactive-backend configuration. The env mode checks
+explicit overrides against conflicting file credentials. Parent checkin, worker
+session creation/closure and unchanged configuration bytes are asserted too.
+Use `--host`, `--dispatcher`, `--connection`, `--timeout` and `--keep` for focused runs.
+
+Real-provider AI-DLC acceptance is separate: run an isolated local Chorus project
+through elaboration, proposal review, worker implementation, task review,
+verification, aggregate review and a completion report on both native and adapter
+hosts. Audit actual child metadata and persisted entities rather than relying on
+the model's summary. When hosts share a local Chorus agent, correlate worker
+session UUIDs to run IDs; another run's active session is not a cleanup leak.
+See [the recorded #606 verification](issue-606-verification.md) for evidence and
+limitations. Never commit model credentials or raw private runtime logs.
 
 ## Layer A — Static validation (`test/static.sh`)
 
@@ -208,7 +240,8 @@ native hosts keep native selection. Run this in addition to, not instead of,
 the original 36-scenario event/permissions matrix. Offline configuration tests
 also cover malformed/partial/unreadable files and missing environment credentials.
 
-`pi1-native-mcp.mjs` adds 15 native event scenarios on Pi 1.0.2; set `PI_SDK_DIR`
+`pi1-native-mcp.mjs` adds 16 native event scenarios on Pi 1.0.2, including a legacy
+reviewer override's model-visible codemode access and mutation denial; set `PI_SDK_DIR`
 to the isolated SDK package path when Pi is not global. All these probes isolate
 HOME, agent directory and cwd, use dummy credentials, and never change a live
 Chorus business resource. Layers C–E are optional live-session checks requiring

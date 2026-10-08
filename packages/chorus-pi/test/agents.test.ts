@@ -2,11 +2,13 @@ import { test, expect } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
-import { expandReviewerTools } from "../extensions/subagent/agents.ts";
+import { CONFIG_DIR_NAME, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { discoverAgents, expandReviewerTools } from "../extensions/subagent/agents.ts";
+import { isRoleToolAllowed } from "../lib/role-policy.ts";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as childProcess from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mock, spyOn } from "bun:test";
 
 const sdkDirectory = path.dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")));
@@ -85,7 +87,7 @@ test("Pi 1 reviewer allowlist includes discovered native reads and comments, exc
 	];
 	for (const role of ["proposal", "task", "code"]) {
 		const result = expandReviewerTools(`chorus-${role}-reviewer`, declared, available)!;
-		expect(result).toEqual([...declared.slice(0, 4), ...available.slice(3, 11)]);
+		expect(result).toEqual([...declared.slice(0, 2), ...available.slice(3, 9), available[10]]);
 		expect(declared).toEqual(["read", "bash", "codemode", "tool_search", "mcp"]);
 	}
 });
@@ -101,8 +103,60 @@ test("every bundled reviewer can call its prescribed Chorus operations", () => {
 		const nativeNames = required.map((name) => `mcp__chorus__${name}`);
 		const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
 		const expanded = expandReviewerTools(frontmatter.name, tools, nativeNames)!;
-		for (const name of nativeNames) expect(expanded).toContain(name);
+		expect(expanded).toEqual(tools);
+		for (const name of required) expect(isRoleToolAllowed("reviewer", name)).toBe(true);
 	}
+});
+
+test("legacy native reviewers retain only an available restricted codemode entrypoint", () => {
+	const declared = ["read", "bash", "codemode", "tool_search", "mcp", "mcpScript"];
+	const native = ["codemode", "mcp__chorus__chorus_get_task", "mcp__chorus__chorus_admin_verify_task"];
+	expect(expandReviewerTools("chorus-task-reviewer", declared, native)).toEqual([
+		"read", "bash", "mcp__chorus__chorus_get_task", "codemode",
+	]);
+	expect(expandReviewerTools("chorus-task-reviewer", declared, native.slice(1))).not.toContain("codemode");
+	expect(expandReviewerTools("chorus-task-reviewer", declared, [...native, "chorus_get_task"])).not.toContain("codemode");
+});
+
+test("packaged role tools have explicit providers and never expand ambient tools", async () => {
+	for (const file of files) {
+		const { frontmatter } = parseFrontmatter<{ name: string; tools: string; subagentOnlyExtensions: string }>(
+			fs.readFileSync(path.join(AGENTS_DIR, file), "utf-8"),
+		);
+		const worker = frontmatter.name === "chorus-worker";
+		const roleTool = worker ? "chorus_work" : "chorus_review";
+		const expected = ["read", "grep", "find", "ls", "bash", ...(worker ? ["edit", "write"] : []), roleTool];
+		const tools = frontmatter.tools.split(",").map((tool) => tool.trim());
+		expect(tools).toEqual(expected);
+		expect(frontmatter.subagentOnlyExtensions).toBe(`../lib/child-${worker ? "work" : "review"}.ts`);
+		const providerPath = path.resolve(AGENTS_DIR, frontmatter.subagentOnlyExtensions);
+		const { default: provider } = await import(providerPath);
+		const registered: string[] = [];
+		provider({ registerTool: (tool: { name: string }) => registered.push(tool.name) });
+		expect(registered).toEqual([roleTool]);
+		for (const available of [[], ["mcp__chorus__chorus_get_task", "chorus_chorus_add_comment", "mcp", "chorus_work"]]) {
+			expect(expandReviewerTools(frontmatter.name, tools, available)).toEqual(expected);
+		}
+	}
+});
+
+test("implementation reviewers allow incidental verification outputs without source edits", () => {
+	for (const role of ["task", "code"]) {
+		const content = fs.readFileSync(path.join(AGENTS_DIR, `chorus-${role}-reviewer.md`), "utf-8");
+		expect(content).toContain("incidental test/build outputs are allowed");
+		expect(content).toContain("Do not deliberately create, modify, or delete project source, tests, configuration, or documentation.");
+		expect(content).toContain("no source-rewriting or autofix modes");
+		expect(content).not.toContain("no file writes");
+		expect(content).not.toContain("Creating, modifying, or deleting any files IN THE PROJECT DIRECTORY");
+	}
+});
+
+test("legacy declared reviewer mutations and obsolete operations are filtered by the shared policy", () => {
+	const tools = ["read", "chorus_work", "chorus_chorus_update_task", "mcp__chorus__chorus_admin_verify_task",
+		"chorus_query_relations", "chorus_get_new_query", "chorus_list_projects"];
+	expect(expandReviewerTools("chorus-task-reviewer", tools, tools)).toEqual([
+		"read", "chorus_get_new_query", "chorus_list_projects",
+	]);
 });
 
 test("Pi 1 worker inheritance and custom agents keep their declared tools", () => {
@@ -133,6 +187,86 @@ test("reviewer discovery failure does not retain unrestricted gateways", () => {
 		expect(expandReviewerTools("chorus-task-reviewer", declared, available)).toEqual(["read", "bash"]);
 	}
 	expect(expandReviewerTools("chorus-task-reviewer", undefined, [])).toEqual([]);
+});
+
+test("provider paths resolve against the winning agent file, preserving user and project overrides", () => {
+	const directory = mkdtempSync(path.join(tmpdir(), "chorus-agent-paths-"));
+	const previousDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = path.join(directory, "user");
+	const userAgents = path.join(directory, "user", "agents");
+	const project = path.join(directory, "project");
+	const projectAgents = path.join(project, CONFIG_DIR_NAME, "agents");
+	mkdirSync(userAgents, { recursive: true });
+	mkdirSync(projectAgents, { recursive: true });
+	try {
+		const bundled = discoverAgents(project, "user").agents;
+		for (const agent of bundled) {
+			expect(agent.subagentOnlyExtensions).toEqual([
+				path.resolve(AGENTS_DIR, `../lib/child-${agent.name === "chorus-worker" ? "work" : "review"}.ts`),
+			]);
+		}
+		const userFile = path.join(userAgents, "chorus-task-reviewer.md");
+		writeFileSync(userFile, "---\nname: chorus-task-reviewer\ndescription: User override\ntools: [read, chorus_review]\nsubagentOnlyExtensions: [../providers/review.ts, /tmp/absolute-provider.ts]\n---\nUser review\n");
+		const userAgent = discoverAgents(project, "both").agents.find((agent) => agent.name === "chorus-task-reviewer")!;
+		expect(userAgent.filePath).toBe(userFile);
+		expect(userAgent.tools).toEqual(["read", "chorus_review"]);
+		expect(userAgent.subagentOnlyExtensions).toEqual([
+			path.join(directory, "user/providers/review.ts"), "/tmp/absolute-provider.ts",
+		]);
+		const projectFile = path.join(projectAgents, "chorus-task-reviewer.md");
+		writeFileSync(projectFile, "---\nname: chorus-task-reviewer\ndescription: Project override\ntools: read, chorus_review\nsubagentOnlyExtensions: ./review.ts, ../providers/extra.ts\n---\nProject review\n");
+		const projectAgent = discoverAgents(project, "both").agents.find((agent) => agent.name === "chorus-task-reviewer")!;
+		expect(projectAgent.filePath).toBe(projectFile);
+		expect(projectAgent.subagentOnlyExtensions).toEqual([
+			path.join(projectAgents, "review.ts"), path.resolve(projectAgents, "../providers/extra.ts"),
+		]);
+		writeFileSync(projectFile, "---\nname: chorus-task-reviewer\ndescription: No provider override\ntools: read\n---\nCustom review\n");
+		expect(discoverAgents(project, "both").agents.find((agent) => agent.name === "chorus-task-reviewer")!.subagentOnlyExtensions).toBeUndefined();
+	} finally {
+		if (previousDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDirectory;
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
+test("actual dispatcher launches each role provider separately from the tool allowlist", async () => {
+	const directory = mkdtempSync(path.join(tmpdir(), "chorus-child-launch-"));
+	const previousDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = directory;
+	let registered: { execute: (...args: unknown[]) => Promise<{ isError?: boolean }> } | undefined;
+	const calls: string[][] = [];
+	const spawn = spyOn(childProcess, "spawn").mockImplementation((_command, args) => {
+		calls.push(args as string[]);
+		const process = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
+		queueMicrotask(() => process.emit("close", 0));
+		return process as ReturnType<typeof childProcess.spawn>;
+	});
+	try {
+		subagentExtension({
+			registerTool: (tool: unknown) => { registered = tool; },
+			getAllTools: () => [{ name: "mcp__chorus__chorus_get_task" }, { name: "mcp" }],
+			getThinkingLevel: () => "off",
+		} as unknown as Parameters<typeof subagentExtension>[0]);
+		for (const file of files) {
+			const agent = file.replace(/\.md$/, "");
+			const worker = agent === "chorus-worker";
+			const result = await registered!.execute("role-launch", {
+				agent, task: "Local launch fixture", async: false,
+			}, undefined, undefined, { cwd: directory, hasUI: false });
+			expect(result.isError).not.toBe(true);
+			const args = calls.at(-1)!;
+			expect(args[args.indexOf("-e") + 1]).toBe(path.resolve(AGENTS_DIR, `../lib/child-${worker ? "work" : "review"}.ts`));
+			expect(args[args.indexOf("--tools") + 1].split(",")).toEqual([
+				"read", "grep", "find", "ls", "bash", ...(worker ? ["edit", "write"] : []), worker ? "chorus_work" : "chorus_review",
+			]);
+		}
+		expect(calls).toHaveLength(4);
+	} finally {
+		spawn.mockRestore();
+		if (previousDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDirectory;
+		rmSync(directory, { recursive: true, force: true });
+	}
 });
 
 test("actual dispatcher refuses an empty reviewer allowlist instead of spawning with inherited tools", async () => {
