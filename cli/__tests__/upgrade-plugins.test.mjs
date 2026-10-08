@@ -8,7 +8,10 @@ import { CHORUS_PLUGIN_ID } from "../init/chorus-plugin-consts.mjs";
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 function fixture(config, version = "1.0.2") {
-  const home = fs.mkdtempSync(join(tmpdir(), "chorus-plugin-test-"));
+  // realpath the fixture home: on macOS tmpdir() sits under the /var -> /private/var
+  // symlink, and upgradePlugins resolves its targets, so unresolved expectations
+  // would never match.
+  const home = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "chorus-plugin-test-")));
   roots.push(home);
   const write = (path, value) => {
     fs.mkdirSync(join(path, ".."), { recursive: true });
