@@ -162,19 +162,34 @@ The daemon's subprocess spawning SHALL work on Linux, macOS, and Windows without
 
 ### Requirement: Reconnect with backfill
 
-When the notification subscription drops, ends, errors, or delivers no bytes for 75 seconds, the daemon SHALL abort that stream, reconnect with its existing bounded backoff, fetch notifications that arrived while it was disconnected, and re-fire any wakes that were missed. Any non-empty byte chunk, including an SSE comment heartbeat or partial frame, SHALL refresh the 75-second deadline. Reconnect and explicit disconnect SHALL clear the prior connection's watchdog so an obsolete timer cannot affect a replacement stream.
+When the notification subscription drops, ends, errors, or delivers no bytes for 75 seconds, the daemon SHALL abort that stream and reconnect with its existing bounded backoff. Any non-empty byte chunk, including an SSE comment heartbeat or partial frame, SHALL refresh the 75-second deadline. Reconnect and explicit disconnect SHALL clear the prior connection's watchdog so an obsolete timer cannot affect a replacement stream.
+
+Legacy reconnect behavior SHALL retain notification backfill. Protocol-1 recovery SHALL instead reconcile already-materialized pending turns after connection registration, using durable context and current authorization; it MUST NOT reconstruct work from unread notifications. This includes short disconnects: a notification whose target selection returned `none` or `offline_pin` without creating a turn remains notify-only after reconnect, regardless of the gap's duration. An already-materialized pending turn remains recoverable independently of notification read status.
 
 #### Scenario: Missed dispatch is recovered on reconnect
 
+- **GIVEN** a legacy daemon using notification-based reconnect backfill
 - **WHEN** the subscription drops, a `task_assigned` notification is created during the gap, and the subscription then reconnects
-- **THEN** the daemon backfills the unhandled notification and wakes Claude Code for it
+- **THEN** the legacy daemon retains its existing notification-backfill behavior
+
+#### Scenario: Protocol-1 reconnect recovers an existing pending turn
+
+- **WHEN** a protocol-1 connection registers after reconnect and an authorized pending turn already has durable source context
+- **THEN** recovery SHALL re-dispatch that exact turn even if its source notification is already read
+- **AND** notifications without a materialized turn SHALL NOT become new executions through reconnect recovery
+
+#### Scenario: A short disconnect leaves a notification without a turn
+
+- **WHEN** a mention arrives during a short disconnect and target selection returns `none` or `offline_pin` without materializing a turn
+- **THEN** the notification SHALL remain visible under ordinary access rules
+- **AND** protocol-1 reconnect SHALL NOT automatically execute it or manufacture a turn
 
 #### Scenario: Silent stream triggers deterministic reconnect
 
 - **GIVEN** an established notification stream that remains open at the API level
 - **WHEN** no bytes arrive for 75 seconds
 - **THEN** the daemon MUST abort that stream and enter the normal reconnect flow
-- **AND** a successful reconnect MUST invoke notification backfill
+- **AND** successful connection registration after reconnect MUST invoke the protocol-appropriate recovery: notification backfill for legacy behavior, or authorized existing-pending-turn reconciliation for protocol 1
 
 #### Scenario: Heartbeat bytes refresh the watchdog
 
