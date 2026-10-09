@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change add-chorus-cli-daemon. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Daemon subcommand and notification subscription
 
 The CLI SHALL provide a `chorus daemon` subcommand that runs a long-lived client process. On start it SHALL resolve credentials (see cli-auth), open a Server-Sent Events subscription to the remote Chorus notification stream (`/api/events/notifications`) authenticated with the `cho_` API key, and remain running until terminated. Adding the `daemon` and `login` subcommands SHALL NOT change the behavior of invoking the CLI with no subcommand (which continues to launch the Chorus server).
@@ -160,19 +162,34 @@ The daemon's subprocess spawning SHALL work on Linux, macOS, and Windows without
 
 ### Requirement: Reconnect with backfill
 
-When the notification subscription drops, ends, errors, or delivers no bytes for 75 seconds, the daemon SHALL abort that stream, reconnect with its existing bounded backoff, fetch notifications that arrived while it was disconnected, and re-fire any wakes that were missed. Any non-empty byte chunk, including an SSE comment heartbeat or partial frame, SHALL refresh the 75-second deadline. Reconnect and explicit disconnect SHALL clear the prior connection's watchdog so an obsolete timer cannot affect a replacement stream.
+When the notification subscription drops, ends, errors, or delivers no bytes for 75 seconds, the daemon SHALL abort that stream and reconnect with its existing bounded backoff. Any non-empty byte chunk, including an SSE comment heartbeat or partial frame, SHALL refresh the 75-second deadline. Reconnect and explicit disconnect SHALL clear the prior connection's watchdog so an obsolete timer cannot affect a replacement stream.
+
+Legacy reconnect behavior SHALL retain notification backfill. Protocol-1 recovery SHALL instead reconcile already-materialized pending turns after connection registration, using durable context and current authorization; it MUST NOT reconstruct work from unread notifications. This includes short disconnects: a notification whose target selection returned `none` or `offline_pin` without creating a turn remains notify-only after reconnect, regardless of the gap's duration. An already-materialized pending turn remains recoverable independently of notification read status.
 
 #### Scenario: Missed dispatch is recovered on reconnect
 
+- **GIVEN** a legacy daemon using notification-based reconnect backfill
 - **WHEN** the subscription drops, a `task_assigned` notification is created during the gap, and the subscription then reconnects
-- **THEN** the daemon backfills the unhandled notification and wakes Claude Code for it
+- **THEN** the legacy daemon retains its existing notification-backfill behavior
+
+#### Scenario: Protocol-1 reconnect recovers an existing pending turn
+
+- **WHEN** a protocol-1 connection registers after reconnect and an authorized pending turn already has durable source context
+- **THEN** recovery SHALL re-dispatch that exact turn even if its source notification is already read
+- **AND** notifications without a materialized turn SHALL NOT become new executions through reconnect recovery
+
+#### Scenario: A short disconnect leaves a notification without a turn
+
+- **WHEN** a mention arrives during a short disconnect and target selection returns `none` or `offline_pin` without materializing a turn
+- **THEN** the notification SHALL remain visible under ordinary access rules
+- **AND** protocol-1 reconnect SHALL NOT automatically execute it or manufacture a turn
 
 #### Scenario: Silent stream triggers deterministic reconnect
 
 - **GIVEN** an established notification stream that remains open at the API level
 - **WHEN** no bytes arrive for 75 seconds
 - **THEN** the daemon MUST abort that stream and enter the normal reconnect flow
-- **AND** a successful reconnect MUST invoke notification backfill
+- **AND** successful connection registration after reconnect MUST invoke the protocol-appropriate recovery: notification backfill for legacy behavior, or authorized existing-pending-turn reconciliation for protocol 1
 
 #### Scenario: Heartbeat bytes refresh the watchdog
 
@@ -393,3 +410,154 @@ The daemon SHALL advertise `livenessAck=v1` when opening its SSE subscription. A
 - **THEN** the listener MUST remain non-throwing and log the failure
 - **AND** the failed acknowledgment MUST NOT advance server-side liveness
 
+### Requirement: Retryable delivery preserves routing eligibility
+
+The daemon SHALL distinguish in-flight routing from successfully accepted work. A transient read, resolution, or enqueue failure MUST leave the original event eligible for retry, while concurrent notification and directed-turn delivery MUST admit the same identified work at most once per connection lifetime.
+
+#### Scenario: Both initial delivery reads fail
+- **WHEN** a comment notification read and its pending-turn GET fail before enqueue, then transport recovers
+- **THEN** later recovery MUST be able to accept that same turn once
+- **AND** a failed attempt MUST NOT leave a successful dedup marker
+
+#### Scenario: Two routes race with a failing first attempt
+- **WHEN** a broadcast and a directed ping refer to the same identified turn and the first in-flight route fails
+- **THEN** the second route or recovery MUST retain eligibility without duplicate acceptance
+- **AND** targeting and suppression MUST remain unchanged
+
+### Requirement: Recover delivery independently of SSE disconnection
+
+For already-materialized protocol-supported turns with reliable identity, the daemon SHALL retry transient delivery failures independently of SSE stream health, using bounded request deadlines, capped backoff, coalesced connection-scoped requests, and retained recovery responsibility. Permanent authorization or identity failures MUST be diagnosed rather than hot-looped or redirected. Pending recovery SHALL NOT scan a notification outbox or materialize turns from offline notify-only notifications.
+
+#### Scenario: Heartbeats continue while REST fails
+- **WHEN** SSE heartbeat bytes continue while REST delivery reads fail temporarily
+- **THEN** recovery MUST occur after reads recover without requiring a new chat, service restart, or SSE disconnect
+
+#### Scenario: New chat does not stand in for old recovery
+- **WHEN** a newer chat turn arrives while a prior comment awaits recovery
+- **THEN** both identities MUST be retained and the new chat MUST NOT be treated as successful delivery of the prior comment
+
+#### Scenario: Shutdown or connection replacement races with a read
+- **WHEN** a delayed recovery response completes after stop or after a different connection generation registers
+- **THEN** it MUST NOT enqueue work for the stopped or obsolete connection
+- **AND** stopping MUST cancel recovery timers and abort cancellable reads
+
+### Requirement: Autonomous recovery uses durable authorized identity
+
+For new protocol-supported autonomous wakes, the server SHALL persist versioned source notification context associated with the exact turn before publishing turn-backed delivery. Recovery of that materialized turn MUST NOT depend on notification `readAt`, archive state or unread-list windows, or guess a notification from trigger similarity. Notification persistence alone SHALL NOT imply a recoverable turn or an outbox guarantee. All reads and admissions MUST enforce current tenant, agent, effective delivery target and resource visibility boundaries.
+
+#### Scenario: The source notification is already read
+- **WHEN** an authorized pending turn has durable source context but its notification is read or outside the unread window
+- **THEN** recovery MUST reconstruct the exact original wake without unread-list matching
+
+#### Scenario: Legacy context is ambiguous
+- **WHEN** an older pending turn lacks a provable source association
+- **THEN** recovery MUST report the limitation and MUST NOT guess, replay unrelated work, or mark it successfully handled
+
+#### Scenario: Visibility has been revoked
+- **WHEN** a previously authorized pending turn is no longer accessible to the agent
+- **THEN** recovery MUST NOT expose its context or execute it
+
+### Requirement: Wake lifecycle follows actual admitted turn identities
+
+The new daemon protocol SHALL carry exact turn identities through ordinary and coalesced wake admission, lifecycle reporting and transcript attribution. An identified wake MUST NOT consume an unrelated oldest-pending turn. Existing legacy clients SHALL remain compatible without silently acquiring the new protocol's guarantees.
+
+#### Scenario: A missed comment precedes a runnable chat
+- **WHEN** a chat turn is admitted while an older comment turn remains pending
+- **THEN** the chat's lifecycle and transcript MUST belong to the chat turn, not the older comment
+- **AND** successful recovery of the comment MUST retain its original identity
+
+#### Scenario: A batch skips an undelivered historical turn
+- **WHEN** coalescing contains known turns B and C while older A was never accepted
+- **THEN** batch settlement MUST reference B and C explicitly and MUST NOT consume A by count-based FIFO inference
+
+#### Scenario: Exact admission is refused
+- **WHEN** the server refuses an identified turn due to authorization, origin, state or identity
+- **THEN** the daemon MUST NOT start that wake's model execution or substitute another pending turn
+
+#### Scenario: Admission transiently fails before commit
+- **WHEN** exact single or batch admission fails transiently before the server commits
+- **THEN** the waker MUST retain that batch and retry with the same admission identity without releasing a duplicate queue owner
+- **AND** successful recovery MUST start the model exactly once for the original members
+
+#### Scenario: Admission commits but its response is lost
+- **WHEN** the server commits admission but the daemon loses its response
+- **THEN** retry with the same admissionUuid, primary turn and members MUST return the same still-valid result without advancing or merging other turns
+- **AND** the model MUST start only after confirmed admission, at most once
+
+#### Scenario: Stop occurs during uncertain admission
+- **WHEN** shutdown interrupts retry while admission may already have committed
+- **THEN** the daemon MUST stop retry/spawn, retain exact identity for safe settlement, and MUST NOT falsely report model execution
+
+#### Scenario: Canonical session origin moves after admission
+- **WHEN** connection A admits a turn and the canonical session is subsequently routed to connection B
+- **THEN** A SHALL still be able to end or interrupt its exact admitted turn using persisted admission ownership and the original token and members, subject to current tenant, agent and resource access checks
+- **AND** B MUST NOT settle A's execution, while A MUST NOT admit or retry work whose effective delivery target is B (the immutable per-turn hard target when present, otherwise the current canonical session origin)
+
+### Requirement: Same-identity reconnect preserves uncertain admission
+
+A transport reconnect followed by registration of the same connection UUID SHALL preserve each unstarted exact admission's token and execution responsibility. A genuinely different identity, conflict or shutdown SHALL cancel pending admission safely. Exact admission retries and cleanup SHALL retain the originally captured connection UUID rather than adopting a later registration's identity.
+
+#### Scenario: Committed admission loses its response before reconnect
+- **WHEN** the server committed running, the acknowledgment was lost, and the daemon reconnects with the same UUID
+- **THEN** it SHALL retry the original token and start the model only once after confirmation, without reporting shutdown interruption for a mere transport reconnect
+
+#### Scenario: A new registration replaces an uncertain admission owner
+- **WHEN** the daemon registers a different connection UUID while old admission is unresolved
+- **THEN** old unstarted work SHALL be cancelled without model execution, and cleanup SHALL report using the old identity, never the new one
+
+### Requirement: Offline autonomous notifications preserve notify-only compatibility
+
+When target selection returns `none` or `offline_pin`, an autonomous notification SHALL retain the existing notify-only semantics without deferred recovery responsibility. Reconnect and protocol-1 pending reads MUST NOT materialize a turn from that notification, immediately or after indefinite waiting. Hard pins SHALL NOT fall back to another connection; proposal ambiguity and access denial SHALL NOT produce execution.
+
+If notification persistence succeeds but turn materialization fails, the notification SHALL remain notify-only and the failure SHALL be logged. There SHALL be no notification outbox, guaranteed later materialization or guessed replay. This boundary SHALL NOT weaken recovery for already-materialized pending turns, which remains independent of notification `readAt`, archive state and unread-list windows.
+
+Ordinary MCP notification reads SHALL retain the full access-filtered notification set subject to their existing status, pagination and auto-mark behavior, without a legacy-only or protocol-owner visibility predicate. Browser/UI history and legacy notification backfill, pending/SSE delivery and lifecycle/coalescing compatibility SHALL remain intact. Those legacy paths SHALL NOT gain exact-identity guarantees or imply a new server-side deferred-turn recovery guarantee.
+
+#### Scenario: Comment arrives with no online target
+- **WHEN** a mention is persisted and target selection returns `none` or `offline_pin`
+- **THEN** it SHALL remain notify-only without a deferred turn obligation
+- **AND** a later reconnect or protocol-1 pending read MUST NOT manufacture a turn from it
+
+#### Scenario: Notification exists but turn materialization fails
+- **WHEN** the notification is persisted but creation of its turn fails
+- **THEN** the notification SHALL remain visible under ordinary access and query filters and the failure SHALL be logged
+- **AND** recovery MUST NOT guess a turn or promise eventual execution from an outbox
+
+#### Scenario: Ordinary MCP notification visibility remains compatible
+- **WHEN** a caller lists notifications through MCP
+- **THEN** existing access, status, pagination and auto-mark rules SHALL apply without hiding notifications based on recovery protocol ownership
+- **AND** legacy compatibility SHALL remain unchanged rather than enforcing a protocol-1-only cutover
+
+#### Scenario: Another cwd connects before an offline hard-pinned target
+- **WHEN** target selection returns `offline_pin` and another daemon connects
+- **THEN** target selection MUST NOT fall back to that daemon
+- **AND** even a later matching connection SHALL NOT trigger deferred materialization through pending recovery
+
+### Requirement: Materialized turns retain unique source and hard-target identity
+
+Turn creation SHALL be uniquely keyed by the source notification, so repeated or concurrent creation attempts cannot create a second turn or replay an already terminal turn. Source uniqueness SHALL NOT establish recovery responsibility for a notification without a turn. Directed canonical session origin and runtime cwd updates SHALL apply to standalone entity sessions as well as Idea sessions, without modifying existing immutable admission ownership.
+
+Each materialized hard-pinned turn SHALL retain its target connection and runtime cwd independently of later canonical session origin changes. Pending reads, live projection and exact admission/retry SHALL enforce that per-turn target; an unpinned turn SHALL continue to use the current canonical origin. Moving the session MUST NOT move a different pending hard-pinned wake, and the original target SHALL remain able to recover that pending wake. Terminal settlement SHALL continue to use immutable admission ownership.
+
+#### Scenario: Repeated creation uses the same source notification
+- **WHEN** multiple turn creation attempts use the same source notification UUID
+- **THEN** they SHALL resolve to the existing turn rather than create another
+- **AND** an already terminal turn MUST NOT be replayed
+
+#### Scenario: Standalone quick task changes directed origin
+- **WHEN** a standalone task session was created on connection A and a new directed wake selects B
+- **THEN** B SHALL discover and admit the new pending turn on the same canonical entity session
+- **AND** an already-admitted A turn SHALL still settle only through A's immutable admission identity
+
+#### Scenario: Hard-pinned pending work survives another wake moving the session
+- **WHEN** A's hard-pinned wake has already been materialized but not admitted, and B's separate wake moves the same standalone or Idea session to B
+- **THEN** B MUST neither receive nor admit A's turn, including inside a mixed exact batch
+- **AND** A SHALL recover its own turn with A's original runtime cwd when it reconnects, even while the canonical origin remains B
+
+### Requirement: Delivery failure diagnostics are actionable and secret-safe
+
+Delivery diagnostics SHALL identify the failed operation, work identifiers, safe cause/status and planned recovery without exposing credentials or full prompts.
+
+#### Scenario: HTTP connection resets
+- **WHEN** a delivery read fails with ECONNRESET
+- **THEN** diagnostics MUST preserve that safe cause code and the recovery attempt context without printing Authorization or API keys

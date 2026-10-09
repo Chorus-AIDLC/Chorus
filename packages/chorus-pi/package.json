@@ -1,6 +1,6 @@
 {
   "name": "@chorus-aidlc/chorus-pi",
-  "version": "0.22.0",
+  "version": "0.22.1",
   "description": "Chorus AI-DLC collaboration platform extension for Pi >=0.84.4 <2. Supports native MCP on Pi >=0.99.0 and a verified adapter on older hosts, with lifecycle skills and read-only reviewers.",
   "author": {
     "name": "Chorus-AIDLC"

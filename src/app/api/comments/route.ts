@@ -42,7 +42,13 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   // newest-first page plus continuation metadata for the comment component's
   // infinite scroll. Absent both, fall through to the unchanged offset path.
   if (query.cursor !== undefined || query.limit !== undefined) {
-    const limit = Math.min(100, Math.max(1, parseInt(query.limit || "10", 10)));
+    const limit = query.limit === undefined ? 10 : Number(query.limit);
+    if (
+      (query.limit !== undefined && !/^\d+$/.test(query.limit)) ||
+      !Number.isInteger(limit) || limit < 1 || limit > 100
+    ) {
+      return errors.validationError({ limit: "limit must be an integer from 1 to 100" });
+    }
     const { comments, total, nextCursor, hasMore } =
       await commentService.listComments({
         companyUuid: auth.companyUuid,
@@ -52,7 +58,10 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         limit,
       });
 
-    return success({ comments, total, nextCursor, hasMore });
+    const commentsWithOwner = await commentService.resolveAgentOwners(comments);
+    const response = success({ comments: commentsWithOwner, total, nextCursor, hasMore });
+    response.headers.set("Cache-Control", "no-store");
+    return response;
   }
 
   const { page, pageSize, skip, take } = parsePagination(request);

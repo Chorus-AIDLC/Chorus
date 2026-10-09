@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolvePiMcpConfigPath, writePiMcpServer } from "../../../cli/init/pi-mcp-config.mjs";
-import { chorusConfigPaths, resolveChorusConfigFromMcpJson } from "../lib/lib.ts";
+import { chorusConfigPaths, chorusMcpBackend, resolveChorusConfigFromMcpJson } from "../lib/lib.ts";
 
 const config = (url: unknown, authorization: unknown = "Bearer cho_file") => JSON.stringify({
   mcpServers: { chorus: { url, headers: { Authorization: authorization } } },
@@ -23,6 +23,35 @@ test("host paths keep native discovery and prefer legacy primary", () => {
       "/project/.mcp.json", "/agent/mcp.json",
     ]);
   }
+});
+
+test("active adapter on modern Pi overrides version routing without changing native precedence", () => {
+  const native = { name: "mcp", sourceInfo: { path: "builtin:mcp" } };
+  expect(chorusMcpBackend([native])).toBe("native");
+  expect(chorusMcpBackend([native, { name: "mcp-adapter" }])).toBe("adapter");
+  expect(chorusMcpBackend([{ name: "mcp-adapter:2" }])).toBe("adapter");
+  expect(chorusMcpBackend([{ name: "mcp-adapter-unrelated" }])).toBeUndefined();
+  expect(chorusMcpBackend([])).toBeUndefined();
+  const files: Record<string, string> = {
+    "/agent/mcp.json": config("https://native", "Bearer cho_native"),
+    "/agent/mcp-adapter.json": config("https://adapter", "Bearer cho_adapter"),
+  };
+  const fs = { existsSync: (path: string) => path in files };
+  const resolve = (backend: "native" | "adapter", env: Record<string, string> = {}) => resolveChorusConfigFromMcpJson(
+    chorusConfigPaths("/project", "/agent", "1.1.0", fs, backend), fs, (path) => files[path], env,
+  );
+  expect(resolve("adapter")).toEqual({ url: "https://adapter", apiKey: "cho_adapter" });
+  expect(resolve("native")).toEqual({ url: "https://native", apiKey: "cho_native" });
+  expect(resolve("adapter", { CHORUS_URL: "https://env", CHORUS_API_KEY: "cho_env" }))
+    .toEqual({ url: "https://env", apiKey: "cho_env" });
+  files["/project/.pi/mcp-adapter.json"] = config("https://project-adapter");
+  files["/project/.mcp.json"] = config("https://project-shared");
+  expect(resolve("adapter").url).toBe("https://project-adapter");
+  expect(resolve("native").url).toBe("https://project-shared");
+  delete files["/project/.pi/mcp-adapter.json"];
+  delete files["/project/.mcp.json"];
+  files["/agent/mcp-adapter.json"] = "{";
+  expect(resolve("adapter")).toEqual({ url: "", apiKey: "" });
 });
 
 test("malformed, partial and unreadable candidates safely fall through without mixing credentials", () => {

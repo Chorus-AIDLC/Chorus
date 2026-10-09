@@ -160,14 +160,14 @@ describe("event-router — directed-wake broadcast suppression (#fetchAndRoute)"
     );
   });
 
-  it("AC-2: an un-pinned wake does NOT consult the self-identity getter (no targeting at all)", async () => {
+  it("AC-2: an un-pinned wake captures the connection generation without suppressing", async () => {
     const getConnectionUuid = vi.fn(() => MY_CONN);
     const { enqueued, router } = wire([mentionNotif()], { getConnectionUuid });
     router.dispatch({ type: "new_notification", notificationUuid: "ni-mention" });
     await flush();
 
     expect(enqueued).toHaveLength(1);
-    expect(getConnectionUuid).not.toHaveBeenCalled(); // no target → no comparison
+    expect(getConnectionUuid).toHaveBeenCalled();
   });
 
   it("AC-3: before the handshake assigns a connection uuid, a TARGETED wake is treated as 'not mine' → suppressed", async () => {
@@ -248,305 +248,169 @@ describe("event-router — directed-wake broadcast suppression (#fetchAndRoute)"
   });
 });
 
-// ===== C/D. directed autonomous pending-turn re-dispatch + dedup =====
-describe("event-router — directed autonomous pending-turn re-dispatch (dispatchPendingTurn)", () => {
-  /**
-   * Wire a router for the pending-turn path: the mcp re-read returns `notifications`, used to
-   * rebuild the autonomous prompt + dedup. Reuses a SHARED seen set so the broadcast and the
-   * deliver_turn delivery collapse.
-   */
-  function wirePending(notifications, { seen = new Set() } = {}) {
-    const enqueued = [];
-    const mcpClient = { callTool: vi.fn(async () => ({ notifications })) };
-    const waker = {
-      keyFor: vi.fn(async () => ({
-        key: `idea:${DIRECT_IDEA}`,
-        rootIdeaUuid: DIRECT_IDEA,
-        directIdeaUuid: DIRECT_IDEA,
-      })),
-      markQueued: vi.fn(),
-      wake: vi.fn(async () => {}),
-    };
-    const queue = { enqueue: (key, task) => enqueued.push({ key, task }) };
-    const router = new EventRouter({
-      mcpClient,
-      waker,
-      queue,
-      wakeActions: WAKE_ACTIONS,
-      seen,
-      getConnectionUuid: () => MY_CONN,
-      logger: silent,
-    });
-    return { seen, enqueued, mcpClient, waker, router };
-  }
-
-  const pendingMention = {
-    turnUuid: "turn-m1",
-    sessionId: DIRECT_IDEA,
-    directIdeaUuid: DIRECT_IDEA,
-    trigger: "mentioned",
-    promptText: null, // autonomous turns carry NO canonical text — rebuilt from the notification
+function precise(notification = mentionNotif(), overrides = {}) {
+  return {
+    turnUuid: "turn-m1", sessionId: DIRECT_IDEA, directIdeaUuid: DIRECT_IDEA,
+    trigger: notification.action, promptText: null,
+    wakeContext: { version: 1, notificationUuid: notification.uuid, notification },
+    ...overrides,
   };
+}
 
-  it("AC-4: re-dispatches a `mentioned` pending turn, rebuilding the prompt from the re-read notification (promptText is null)", async () => {
-    const { enqueued, mcpClient, waker, router } = wirePending([mentionNotif()]);
-    router.dispatchPendingTurn(pendingMention);
-    await flush();
+function broadcast(pending = precise()) {
+  return { type: "new_notification", notificationUuid: pending.wakeContext.notificationUuid,
+    turnUuid: pending.turnUuid, wakeContext: pending.wakeContext, targetConnectionUuid: MY_CONN };
+}
 
-    // It re-read the notifications to rebuild the autonomous prompt context.
-    expect(mcpClient.callTool).toHaveBeenCalledWith(
-      "chorus_get_notifications",
-      expect.objectContaining({ status: "unread" })
-    );
-    // Woke via the FULL notification (so buildPrompt has entityTitle/actorName/message),
-    // enqueued on the same session lane.
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((accept, fail) => { resolve = accept; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+describe("event-router exact durable identity", () => {
+  it.each(["mentioned", "task_assigned", "elaboration_verified", "start_development", "yolo_requested"])(
+    "reconstructs %s without unread notification lookup", async (action) => {
+      const { router, enqueued, mcpClient, seen } = wire([]);
+      const pending = precise(mentionNotif({ action, entityType: "task", entityUuid: "child-task" }));
+      expect(await router.dispatchPendingTurn(pending)).toEqual({ status: "accepted" });
+      expect(mcpClient.callTool).not.toHaveBeenCalled();
+      expect(enqueued[0].task.notification).toMatchObject({
+        action, turnUuid: "turn-m1", uuid: "ni-mention", entityUuid: "child-task",
+        wakeRecoveryProtocol: 1, message: "take a look please", admissionUuid: expect.any(String),
+      });
+      expect([...seen].sort()).toEqual(["ni-mention", "turn:turn-m1"]);
+    },
+  );
+
+  it.each([true, false])("dedups concurrent dual-route delivery, notificationFirst=%s", async (notificationFirst) => {
+    const { router, enqueued, waker } = wire([]);
+    const gate = deferred();
+    waker.keyFor.mockReturnValueOnce(gate.promise);
+    const first = notificationFirst ? router.dispatch(broadcast()) : router.dispatchPendingTurn(precise());
+    const second = notificationFirst ? router.dispatchPendingTurn(precise()) : router.dispatch(broadcast());
+    expect(router.inFlight.size).toBe(2);
+    expect(router.seen.size).toBe(0);
+    gate.resolve({ key: "idea:" + DIRECT_IDEA, rootIdeaUuid: DIRECT_IDEA, directIdeaUuid: DIRECT_IDEA });
+    expect(await first).toEqual({ status: "accepted" });
+    expect(await second).toEqual({ status: "duplicate" });
+    expect(await router.dispatchPendingTurn(precise())).toEqual({ status: "duplicate" });
     expect(enqueued).toHaveLength(1);
-    expect(enqueued[0].key).toBe(`idea:${DIRECT_IDEA}`);
-    const [n] = waker.markQueued.mock.calls[0];
-    expect(n.action).toBe("mentioned");
-    expect(n.entityUuid).toBe(DIRECT_IDEA);
-    expect(n.entityTitle).toBe("My idea"); // rebuilt context, not a null-prompt turn
+    expect(waker.keyFor).toHaveBeenCalledTimes(1);
   });
 
-  it("AC-4: re-dispatches a `task_assigned` pending turn (matched by entityUuid===sessionId)", async () => {
-    const taskNotif = mentionNotif({
-      uuid: "ni-task",
-      entityType: "task",
-      entityUuid: "task-xyz",
-      action: "task_assigned",
-    });
-    const { enqueued, waker, router } = wirePending([taskNotif]);
-    router.dispatchPendingTurn({
-      turnUuid: "turn-t1",
-      sessionId: "task-xyz", // ad-hoc / task-anchored: sessionId === the task entity uuid
-      directIdeaUuid: null,
-      trigger: "task_assigned",
-      promptText: null,
-    });
-    await flush();
-
+  it("releases both aliases after failed concurrent routing and retries exactly once", async () => {
+    const { router, enqueued, waker } = wire([]);
+    const gate = deferred();
+    waker.keyFor.mockReturnValueOnce(gate.promise);
+    const first = router.dispatch(broadcast());
+    const second = router.dispatchPendingTurn(precise());
+    gate.reject(new Error("synthetic network failure"));
+    expect((await first).status).toBe("retryable");
+    expect((await second).status).toBe("retryable");
+    expect(router.seen.size).toBe(0);
+    expect(router.inFlight.size).toBe(0);
+    expect((await router.dispatchPendingTurn(precise())).status).toBe("accepted");
     expect(enqueued).toHaveLength(1);
-    const [n] = waker.markQueued.mock.calls[0];
-    expect(n.action).toBe("task_assigned");
-    expect(n.entityUuid).toBe("task-xyz");
   });
 
-  it("AC-4: re-dispatches an `elaboration_verified` pending turn (matched by trigger + idea anchor)", async () => {
-    const verifyNotif = mentionNotif({
-      uuid: "ni-verify",
-      action: "elaboration_verified",
-    });
-    const { enqueued, waker, router } = wirePending([verifyNotif]);
-    router.dispatchPendingTurn({
-      turnUuid: "turn-v1",
-      sessionId: DIRECT_IDEA,
-      directIdeaUuid: DIRECT_IDEA,
-      trigger: "elaboration_verified",
-      promptText: null,
-    });
-    await flush();
-
-    expect(enqueued).toHaveLength(1);
-    const [n] = waker.markQueued.mock.calls[0];
-    expect(n.action).toBe("elaboration_verified");
-  });
-
-  it("AC-4b: re-dispatches a `start_development` pending turn (matched by trigger + idea anchor)", async () => {
-    const startDevNotif = mentionNotif({
-      uuid: "ni-start-dev",
-      action: "start_development",
-    });
-    const { enqueued, waker, router } = wirePending([startDevNotif]);
-    router.dispatchPendingTurn({
-      turnUuid: "turn-sd1",
-      sessionId: DIRECT_IDEA,
-      directIdeaUuid: DIRECT_IDEA,
-      trigger: "start_development",
-      promptText: null,
-    });
-    await flush();
-
-    expect(enqueued).toHaveLength(1);
-    const [n] = waker.markQueued.mock.calls[0];
-    expect(n.action).toBe("start_development");
-  });
-
-  it("AC-4 DEDUP: the broadcast copy (target==me) then the deliver_turn delivery collapse to ONE wake", async () => {
-    const seen = new Set();
-    const { enqueued, waker, router } = wirePending([mentionNotif()], { seen });
-
-    // Route 1: the target's broadcast copy wakes (target === me) and marks the notification seen.
-    router.dispatch({
-      type: "new_notification",
-      notificationUuid: "ni-mention",
-      targetConnectionUuid: MY_CONN,
-    });
-    await flush();
-    expect(enqueued).toHaveLength(1);
-
-    // Route 2: the deliver_turn → pending re-dispatch for the SAME logical wake. It re-reads
-    // the notification, finds it already `seen`, and dedups away — no second wake.
-    router.dispatchPendingTurn(pendingMention);
-    await flush();
-
-    expect(enqueued).toHaveLength(1); // still exactly ONE wake
-    expect(waker.wake).not.toHaveBeenCalled(); // wakes run on the queue, not invoked here
-    expect(seen.has("ni-mention")).toBe(true);
-    expect(seen.has("turn:turn-m1")).toBe(true);
-  });
-
-  it("AC-4 DEDUP: the deliver_turn delivery FIRST then the broadcast copy collapse to ONE wake", async () => {
-    const seen = new Set();
-    const { enqueued, router } = wirePending([mentionNotif()], { seen });
-
-    // Route 2 first: the deliver_turn → pending re-dispatch wakes and claims the broadcast key.
-    router.dispatchPendingTurn(pendingMention);
-    await flush();
-    expect(enqueued).toHaveLength(1);
-    expect(seen.has("ni-mention")).toBe(true); // claimed the broadcast's key
-
-    // Route 1: the broadcast copy arrives — `dispatch` sees the notificationUuid already
-    // marked and drops it (no second wake).
-    router.dispatch({
-      type: "new_notification",
-      notificationUuid: "ni-mention",
-      targetConnectionUuid: MY_CONN,
-    });
-    await flush();
-
-    expect(enqueued).toHaveLength(1); // still exactly ONE wake
-  });
-
-  it("dedups a re-delivered pending turn against itself (turn:{uuid} key), single wake", async () => {
-    const seen = new Set();
-    const { enqueued, router } = wirePending([mentionNotif()], { seen });
-    router.dispatchPendingTurn(pendingMention);
-    router.dispatchPendingTurn(pendingMention); // same turn delivered twice
-    await flush();
-    expect(enqueued).toHaveLength(1);
-    expect(seen.has("turn:turn-m1")).toBe(true);
-  });
-
-  it("missed-broadcast recovery: a lineage-anchored task_assigned (entityUuid != sessionId) is recovered as the single unread candidate", async () => {
-    // The wake notification's entity is the TASK, but the turn's session anchors on the
-    // lineage idea — so anchor equality cannot match without a lineage round-trip. With a
-    // single unread task_assigned candidate it is unambiguously this turn's wake.
-    const taskNotif = mentionNotif({
-      uuid: "ni-task-lineage",
-      entityType: "task",
-      entityUuid: "task-child", // NOT the session anchor
-      action: "task_assigned",
-    });
-    const { enqueued, waker, router } = wirePending([taskNotif]);
-    router.dispatchPendingTurn({
-      turnUuid: "turn-tl",
-      sessionId: DIRECT_IDEA, // the lineage idea, != the task entityUuid
-      directIdeaUuid: DIRECT_IDEA,
-      trigger: "task_assigned",
-      promptText: null,
-    });
-    await flush();
-
-    expect(enqueued).toHaveLength(1);
-    const [n] = waker.markQueued.mock.calls[0];
-    expect(n.uuid).toBe("ni-task-lineage");
-    expect(n.action).toBe("task_assigned");
-  });
-
-  it("cross-cwd mention: matched by the idea prefix of a composite sessionId `${idea}::${conn}`", async () => {
-    const { enqueued, waker, router } = wirePending([mentionNotif()]);
-    router.dispatchPendingTurn({
-      turnUuid: "turn-xc",
-      sessionId: `${DIRECT_IDEA}::conn-strands`, // cross-cwd per-instance session key
-      directIdeaUuid: null, // null for a per-instance cross-cwd session
-      trigger: "mentioned",
-      promptText: null,
-    });
-    await flush();
-
-    expect(enqueued).toHaveLength(1);
-    const [n] = waker.markQueued.mock.calls[0];
-    expect(n.uuid).toBe("ni-mention"); // matched the idea-prefixed mention by its entityUuid
-  });
-
-  it("ambiguity guard: 2+ unread candidates for the trigger with NO anchor match → defers (no wake), logged", async () => {
-    const infos = [];
-    const enqueued = [];
-    // Two unread mentions, NEITHER anchored on the turn's session → cannot disambiguate.
-    const m1 = mentionNotif({ uuid: "ni-a", entityUuid: "other-1" });
-    const m2 = mentionNotif({ uuid: "ni-b", entityUuid: "other-2" });
-    const router = new EventRouter({
-      mcpClient: { callTool: vi.fn(async () => ({ notifications: [m1, m2] })) },
-      waker: { keyFor: vi.fn(), markQueued: vi.fn(), wake: vi.fn(async () => {}) },
-      queue: { enqueue: (k, t) => enqueued.push({ k, t }) },
-      wakeActions: WAKE_ACTIONS,
-      seen: new Set(),
-      getConnectionUuid: () => MY_CONN,
-      logger: { ...silent, info: (m) => infos.push(m) },
-    });
-    router.dispatchPendingTurn({
-      turnUuid: "turn-amb",
-      sessionId: DIRECT_IDEA,
-      directIdeaUuid: DIRECT_IDEA,
-      trigger: "mentioned",
-      promptText: null,
-    });
-    await flush();
-
-    expect(enqueued).toHaveLength(0); // safe: defer to reconnect backfill rather than guess
-    expect(infos.join("")).toMatch(/2 candidate/);
-  });
-
-  it("skips (logged) when no matching unread notification exists to rebuild the prompt", async () => {
-    const infos = [];
-    const enqueued = [];
-    const router = new EventRouter({
-      mcpClient: { callTool: vi.fn(async () => ({ notifications: [] })) }, // none to match
-      waker: { keyFor: vi.fn(), markQueued: vi.fn(), wake: vi.fn(async () => {}) },
-      queue: { enqueue: (k, t) => enqueued.push({ k, t }) },
-      wakeActions: WAKE_ACTIONS,
-      seen: new Set(),
-      getConnectionUuid: () => MY_CONN,
-      logger: { ...silent, info: (m) => infos.push(m) },
-    });
-    router.dispatchPendingTurn(pendingMention);
-    await flush();
+  it.each([0, 1, 2])("blocks legacy pending turns with %s unread candidates without guessing", async (count) => {
+    const { router, enqueued, mcpClient } = wire(Array.from({ length: count }, () => mentionNotif()));
+    const pending = precise();
+    delete pending.wakeContext;
+    expect(await router.dispatchPendingTurn(pending)).toEqual({ status: "blocked", reason: "missing_wake_context" });
+    expect(router.seen.size).toBe(0);
     expect(enqueued).toHaveLength(0);
-    expect(infos.join("")).toMatch(/no unambiguous unread wake notification.*0 candidate/i);
-  });
-
-  it("a `human_instruction` pending turn is UNCHANGED — still re-derived from the turn's own promptText (not the notification re-read)", () => {
-    const { enqueued, mcpClient, waker, router } = wirePending([]);
-    router.dispatchPendingTurn({
-      turnUuid: "turn-hi",
-      sessionId: DIRECT_IDEA,
-      directIdeaUuid: DIRECT_IDEA,
-      trigger: "human_instruction",
-      promptText: "Resume the deploy.",
-    });
-    // human_instruction is synchronous + does NOT re-read notifications.
     expect(mcpClient.callTool).not.toHaveBeenCalled();
-    expect(enqueued).toHaveLength(1);
-    const [n] = waker.markQueued.mock.calls[0];
-    expect(n.action).toBe("human_instruction");
-    expect(n.instructionText).toBe("Resume the deploy.");
   });
 
-  it("the router stays non-throwing when the notification re-read rejects (logged, no crash)", async () => {
-    const warns = [];
-    const enqueued = [];
-    const router = new EventRouter({
-      mcpClient: { callTool: vi.fn(async () => { throw new Error("network down"); }) },
-      waker: { keyFor: vi.fn(), markQueued: vi.fn(), wake: vi.fn(async () => {}) },
-      queue: { enqueue: (k, t) => enqueued.push({ k, t }) },
-      wakeActions: WAKE_ACTIONS,
-      seen: new Set(),
-      getConnectionUuid: () => MY_CONN,
-      logger: { ...silent, warn: (m) => warns.push(m) },
-    });
-    expect(() => router.dispatchPendingTurn(pendingMention)).not.toThrow();
+  it("retains the explicit legacy event path and retries a failed lookup", async () => {
+    const { router, enqueued, mcpClient } = wire([mentionNotif()]);
+    mcpClient.callTool.mockRejectedValueOnce(new Error("synthetic failure"));
+    const event = { type: "new_notification", notificationUuid: "ni-mention" };
+    expect((await router.dispatch(event)).status).toBe("retryable");
+    expect(router.seen.size).toBe(0);
+    expect((await router.dispatch(event)).status).toBe("accepted");
+    expect(enqueued).toHaveLength(1);
+  });
+
+  it.each(["version", "notification", "trigger", "uuid"])("blocks invalid %s context", async (field) => {
+    const { router, enqueued } = wire([]);
+    const pending = precise();
+    if (field === "version") pending.wakeContext.version = 2;
+    if (field === "notification") pending.wakeContext.notification = null;
+    if (field === "trigger") pending.trigger = "task_assigned";
+    if (field === "uuid") pending.wakeContext.notificationUuid = "unrelated-notification";
+    expect((await router.dispatchPendingTurn(pending)).status).toBe("blocked");
+    expect(enqueued).toHaveLength(0);
+    expect(router.seen.size).toBe(0);
+  });
+
+  it("never downgrades an unsupported protocol to legacy routing", async () => {
+    const { router, mcpClient, enqueued } = wire([mentionNotif()]);
+    expect((await router.dispatch({ type: "new_notification", notificationUuid: "ni-mention", wakeRecoveryProtocol: 2 })).status).toBe("blocked");
+    expect((await router.dispatchPendingTurn({ ...precise(), wakeRecoveryProtocol: 2 })).status).toBe("blocked");
+    expect(mcpClient.callTool).not.toHaveBeenCalled();
+    expect(enqueued).toHaveLength(0);
+  });
+
+  it.each(["stop", "invalidate", "abort", "connection"])("drops late key resolution after %s", async (boundary) => {
+    let connection = MY_CONN;
+    const { router, waker, enqueued } = wire([], { getConnectionUuid: () => connection });
+    const controller = new AbortController();
+    const gate = deferred();
+    waker.keyFor.mockReturnValueOnce(gate.promise);
+    const result = router.dispatch(broadcast(), { signal: controller.signal });
+    if (boundary === "connection") connection = OTHER_CONN;
+    else if (boundary === "abort") controller.abort();
+    else router[boundary]();
+    if (boundary === "abort") expect((await result).status).toBe("retryable");
+    gate.resolve({ key: "idea:" + DIRECT_IDEA });
+    expect((await result).status).not.toBe("accepted");
     await flush();
     expect(enqueued).toHaveLength(0);
-    expect(warns.join("")).toMatch(/re-read failed/i);
+    expect(router.seen.size).toBe(0);
+  });
+
+  it("drops late MCP reads after abort and releases ownership before they complete", async () => {
+    const { router, enqueued, mcpClient } = wire([mentionNotif()]);
+    const controller = new AbortController();
+    const gate = deferred();
+    mcpClient.callTool.mockReturnValueOnce(gate.promise);
+    const event = { type: "new_notification", notificationUuid: "ni-mention" };
+    const result = router.dispatch(event, { signal: controller.signal });
+    controller.abort();
+    expect((await result).status).toBe("retryable");
+    expect(router.inFlight.size).toBe(0);
+    expect((await router.dispatch(event)).status).toBe("accepted");
+    gate.resolve({ notifications: [mentionNotif()] });
+    await flush();
+    expect(enqueued).toHaveLength(1);
+  });
+
+  it("does not count queue refusal or throw as accepted", async () => {
+    const { router, enqueued } = wire([]);
+    const enqueue = router.queue.enqueue;
+    router.queue.enqueue = () => false;
+    expect((await router.dispatchPendingTurn(precise())).status).toBe("retryable");
+    expect(router.seen.size).toBe(0);
+    router.queue.enqueue = () => { throw new Error("queue unavailable"); };
+    expect((await router.dispatchPendingTurn(precise())).status).toBe("retryable");
+    expect(router.seen.size).toBe(0);
+    router.queue.enqueue = enqueue;
+    expect((await router.dispatchPendingTurn(precise())).status).toBe("accepted");
+    expect(enqueued).toHaveLength(1);
+  });
+
+  it("preserves target, suppression and runtime cwd on pending recovery", async () => {
+    const { router, enqueued } = wire([]);
+    expect((await router.dispatchPendingTurn(precise(mentionNotif(), { targetConnectionUuid: OTHER_CONN }))).status).toBe("ignored");
+    expect((await router.dispatchPendingTurn(precise(mentionNotif(), { suppressWake: true }))).status).toBe("ignored");
+    expect(router.seen.size).toBe(0);
+    expect((await router.dispatchPendingTurn(precise(mentionNotif(), {
+      targetConnectionUuid: MY_CONN, runtimeCwd: "/isolated/workspace",
+    }))).status).toBe("accepted");
+    expect(enqueued[0].task.notification).toMatchObject({ targetConnectionUuid: MY_CONN, runtimeCwd: "/isolated/workspace" });
   });
 });

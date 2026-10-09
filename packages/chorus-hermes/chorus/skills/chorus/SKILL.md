@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform for Hermes Agent — overvie
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.22.0"
+  version: "0.22.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -297,7 +297,7 @@ Chorus on Hermes is two independently installable directories:
 Hermes `--ref` accepts only a full 40-character commit SHA, so resolve the release tag first. Chorus release tags are **lightweight**, so the peeled `^{}` query returns nothing for them and the unpeeled ref is the one that answers; keep both lines:
 
 ```bash
-VERSION=0.22.0   # the Chorus release you want
+VERSION=0.22.1   # the Chorus release you want
 REPO=https://github.com/Chorus-AIDLC/Chorus.git
 SHA=$(git ls-remote "$REPO" "refs/tags/v$VERSION^{}" | cut -f1)
 [ -n "$SHA" ] || SHA=$(git ls-remote "$REPO" "refs/tags/v$VERSION" | cut -f1)
@@ -308,7 +308,7 @@ hermes plugins install Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus-mcp --r
 hermes plugins list --plain --no-bundled   # both: enabled  git pinned@<sha8>
 ```
 
-`<sha>` is the 40-character value resolved into `$SHA` above (pass `"$SHA"`). **Never install unpinned**; if the tag does not resolve, stop. Easier path: install the Chorus CLI (`npm install -g @chorus-aidlc/chorus@0.22.0`) and run `chorus agents add --agents hermes` — it resolves the SHA, installs both directories pinned, and writes the MCP entry below when needed (see `skill_view("chorus:chorus-cli")`).
+`<sha>` is the 40-character value resolved into `$SHA` above (pass `"$SHA"`). **Never install unpinned**; if the tag does not resolve, stop. Easier path: install the Chorus CLI (`npm install -g @chorus-aidlc/chorus@0.22.1`) and run `chorus agents add --agents hermes` — it resolves the SHA, installs both directories pinned, and writes the MCP entry below when needed (see `skill_view("chorus:chorus-cli")`).
 
 ### 3. Environment and MCP URL
 

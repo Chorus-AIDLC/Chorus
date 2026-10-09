@@ -27,7 +27,7 @@ echo "═══ A1b. no undefined module-scope variables (catches the callSessio
 # A transpile (bun build) does NOT catch references to undeclared variables because
 # TS strips types and bun's transpiler is lenient. So grep for the known module-scope
 # consts and assert every reference is preceded by a declaration.
-for v in callSessions injectedOnce checkinContext mcpSessionId runIdToSid inflightCloses; do
+for v in callSessions injectedOnce checkinContext runIdToSid inflightCloses; do
   decls=$(grep -cE "^[[:space:]]*const $v\\b|^[[:space:]]*let $v\\b" extensions/chorus.ts)
   uses=$(grep -cE "\b$v\b" extensions/chorus.ts)
   if [ "$decls" -ge 1 ]; then ok "$v declared ($decls×) and used ($uses×)"; else no "$v used ($uses×) but NEVER declared — runtime ReferenceError"; fi
@@ -58,23 +58,28 @@ for a in agents/*.md; do
   name=$(grep -m1 "^name:" "$a" | sed 's/^name:[[:space:]]*//')
   desc=$(grep -m1 "^description:" "$a" | sed 's/^description:[[:space:]]*//')
   tools=$(grep -m1 "^tools:" "$a" | sed 's/^tools:[[:space:]]*//')
+  provider=$(grep -m1 "^subagentOnlyExtensions:" "$a" | sed 's/^subagentOnlyExtensions:[[:space:]]*//')
   [ -n "$name" ] && [ -n "$desc" ] || { no "$a missing name/description"; continue; }
   case "$name" in
     *-reviewer)
-      # reviewers MUST declare an explicit tools list AND be read-only (no write/edit)
-      if [ -z "$tools" ]; then no "$a reviewer missing tools (must be an explicit read-only list)"; continue; fi
-      if echo "$tools" | grep -qiE '\b(write|edit|replace|undo)\b'; then
-        no "$a reviewer has write tools (should be read-only)"
+      if [ "$tools" != "read, grep, find, ls, bash, chorus_review" ] || [ "$provider" != "../lib/child-review.ts" ]; then
+        no "$a reviewer requires explicit local tools + chorus_review provider"
       else
         ok "$a reviewer name='$name' tools='$tools'"
       fi
       ;;
+    chorus-worker)
+      if [ "$tools" = "read, grep, find, ls, bash, edit, write, chorus_work" ] && [ "$provider" = "../lib/child-work.ts" ]; then
+        ok "$a worker tools and provider explicit"
+      else
+        no "$a worker requires explicit local tools + chorus_work provider"
+      fi
+      ;;
     *)
-      # worker/implementer agents intentionally OMIT tools so they inherit the
-      # dispatcher's full capabilities (write/edit/bash/mcp). name+description suffice.
-      ok "$a name='$name' tools='${tools:-<inherit full>}'"
+      no "$a unexpected packaged agent"
       ;;
   esac
+  [ -f "agents/$provider" ] && ok "$a provider exists" || no "$a provider missing"
 done
 
 echo "═══ A5. wrapper bash syntax ═══"

@@ -105,7 +105,7 @@ const svc = vi.hoisted(() => {
     // document.service
     getDocument: f(), getDocumentByUuid: f(), updateDocument: f(), deleteDocument: f(),
     // comment.service
-    listComments: f(), createComment: f(),
+    listComments: f(), createComment: f(), resolveAgentOwners: f(),
     // reference-artifact.service
     listReferences: f(), createReference: f(), getReference: f(), updateReference: f(), deleteReference: f(),
     // lineage.service
@@ -140,7 +140,9 @@ vi.mock("@/services/document.service", () => ({
   getDocument: svc.getDocument, getDocumentByUuid: svc.getDocumentByUuid, updateDocument: svc.updateDocument,
   deleteDocument: svc.deleteDocument,
 }));
-vi.mock("@/services/comment.service", () => ({ listComments: svc.listComments, createComment: svc.createComment }));
+vi.mock("@/services/comment.service", () => ({
+  listComments: svc.listComments, createComment: svc.createComment, resolveAgentOwners: svc.resolveAgentOwners,
+}));
 vi.mock("@/services/reference-artifact.service", () => ({
   REFERENCE_TARGET_TYPES: ["proposal", "task", "idea"],
   listReferences: svc.listReferences, createReference: svc.createReference, getReference: svc.getReference,
@@ -267,6 +269,7 @@ beforeEach(() => {
 
   svc.listComments.mockResolvedValue({ comments: [], total: 0 });
   svc.createComment.mockResolvedValue({ uuid: "comment-1" });
+  svc.resolveAgentOwners.mockImplementation(async (comments: unknown[]) => comments);
 
   // ref-<where> references point at the task in that project.
   svc.getReference.mockImplementation(async (_c: string, uuid: string) => {
@@ -546,6 +549,134 @@ describe("cross-entity checks", () => {
     const res = await h(mentionablesRoute.GET)(req("GET", "/api/mentionables?q=a"), ctx({}));
     expect(res.status).toBe(200);
     expect(svc.searchMentionables).toHaveBeenCalled();
+  });
+});
+
+describe("comment HTTP reads", () => {
+  const targetTypes = ["idea", "proposal", "task", "document"];
+  const read = (query: string) => h(commentsRoute.GET)(req("GET", `/api/comments?${query}`), ctx({}));
+  const targetQuery = (targetType = "task", targetUuid = id(targetType, "priv")) =>
+    `targetType=${targetType}&targetUuid=${targetUuid}`;
+  const expectNoReads = () => {
+    expect(svc.listComments).not.toHaveBeenCalled();
+    expect(svc.resolveAgentOwners).not.toHaveBeenCalled();
+  };
+
+  beforeEach(() => {
+    authState.current = VIEWER;
+  });
+
+  it.each(targetTypes)("returns attributed cursor comments and metadata to a %s viewer", async (targetType) => {
+    const comments = [
+      { uuid: "newer", content: "agent comment", author: { type: "agent", uuid: "agent-1", name: "Agent" } },
+      { uuid: "older", content: "user comment", author: { type: "user", uuid: "u-viewer", name: "Viewer" } },
+    ];
+    const attributed = [
+      { ...comments[0], author: { ...comments[0].author, owner: { uuid: "owner-1", name: "Owner" } } },
+      comments[1],
+    ];
+    svc.listComments.mockResolvedValue({ comments, total: 3, nextCursor: "older", hasMore: true });
+    svc.resolveAgentOwners.mockResolvedValue(attributed);
+
+    const response = await read(`${targetQuery(targetType)}&limit=2`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      success: true, data: { comments: attributed, total: 3, nextCursor: "older", hasMore: true },
+    });
+    expect(svc.listComments).toHaveBeenCalledExactlyOnceWith({
+      companyUuid: C, targetType, targetUuid: id(targetType, "priv"), cursor: null, limit: 2,
+    });
+    expect(svc.resolveAgentOwners).toHaveBeenCalledExactlyOnceWith(comments);
+    expect(svc.listComments.mock.invocationCallOrder[0]).toBeLessThan(svc.resolveAgentOwners.mock.invocationCallOrder[0]);
+  });
+
+  it.each([
+    { query: "cursor=older", cursor: "older", limit: 10 },
+    { query: "cursor=older&limit=1", cursor: "older", limit: 1 },
+    { query: "limit=100", cursor: null, limit: 100 },
+  ])("accepts cursor defaults and limit boundaries: $query", async ({ query, cursor, limit }) => {
+    svc.listComments.mockResolvedValue({ comments: [], total: 0, nextCursor: null, hasMore: false });
+
+    const response = await read(`${targetQuery()}&${query}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      success: true, data: { comments: [], total: 0, nextCursor: null, hasMore: false },
+    });
+    expect(svc.listComments).toHaveBeenCalledExactlyOnceWith({
+      companyUuid: C, targetType: "task", targetUuid: id("task", "priv"), cursor, limit,
+    });
+  });
+
+  it.each(["", "0", "-1", "101", "1.5", "10foo", "NaN", "Infinity", "1e1", "0x10", " 10 ", "+1", "9".repeat(310)])(
+    "rejects invalid cursor limit %j before comment or owner reads", async (limit) => {
+      const response = await read(`${targetQuery()}&limit=${encodeURIComponent(limit)}`);
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toMatchObject({
+        success: false, error: { code: "VALIDATION_ERROR", details: { limit: expect.any(String) } },
+      });
+      expectNoReads();
+    },
+  );
+
+  it.each(["limit=10", "page=1"])("rejects unauthenticated reads: %s", async (pagination) => {
+    authState.current = null;
+
+    const response = await read(`${targetQuery()}&${pagination}`);
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ success: false, error: { code: "UNAUTHORIZED" } });
+    expectNoReads();
+  });
+
+  it.each(targetTypes)("does not disclose hidden, missing, or foreign-company %s targets", async (targetType) => {
+    db.entities[targetType].push({ uuid: "foreign-target", companyUuid: "company-2", projectUuid: PUB });
+    authState.current = OUTSIDER;
+
+    for (const pagination of ["limit=10", "cursor=older", "limit=NaN", "page=1"]) {
+      const bodies = [];
+      for (const targetUuid of [id(targetType, "priv"), "missing-target", "foreign-target"]) {
+        const response = await read(`${targetQuery(targetType, targetUuid)}&${pagination}`);
+        expect(response.status).toBe(404);
+        bodies.push(await response.json());
+      }
+      expect(bodies[0]).toEqual(bodies[1]);
+      expect(bodies[0]).toEqual(bodies[2]);
+      expect(bodies[0]).toMatchObject({ success: false, error: { code: "NOT_FOUND" } });
+    }
+    expectNoReads();
+  });
+
+  it.each(["", "targetType=task", "targetUuid=some-target", "targetType=comment&targetUuid=some-target"])(
+    "validates required and supported targets: %s", async (query) => {
+      const response = await read(`${query}&limit=10`);
+      expect(response.status).toBe(422);
+      expectNoReads();
+    },
+  );
+
+  it.each([
+    { query: "", page: 1, pageSize: 20, skip: 0 },
+    { query: "&page=2&pageSize=2", page: 2, pageSize: 2, skip: 2 },
+  ])("preserves offset shape, pagination and ordering: $query", async ({ query, page, pageSize, skip }) => {
+    const comments = [
+      { uuid: "older", author: { type: "agent", uuid: "agent-1", name: "Agent" } },
+      { uuid: "newer", author: { type: "user", uuid: "u-viewer", name: "Viewer" } },
+    ];
+    svc.listComments.mockResolvedValue({ comments, total: 4 });
+
+    const response = await read(`${targetQuery()}${query}`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ success: true, data: comments, meta: { page, pageSize, total: 4 } });
+    expect(svc.listComments).toHaveBeenCalledExactlyOnceWith({
+      companyUuid: C, targetType: "task", targetUuid: id("task", "priv"), skip, take: pageSize,
+    });
+    expect(svc.resolveAgentOwners).not.toHaveBeenCalled();
   });
 });
 

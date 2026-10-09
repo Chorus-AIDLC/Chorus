@@ -45,6 +45,18 @@ beforeEach(() => {
 });
 
 describe("GET /api/daemon/pending-turns", () => {
+  it("negotiates recovery capability without tagging legacy rows as safe", async () => {
+    const response = await GET(getRequest(`?connectionUuid=${connectionUuid}&wakeRecoveryProtocol=1`), emptyCtx);
+    expect(response.status).toBe(200);
+    expect(mockGetPendingTurnsForConnection).toHaveBeenCalledWith({ companyUuid, agentUuid, connectionUuid, operationProtocol: false, wakeRecoveryProtocol: 1 });
+    expect(await response.json()).toMatchObject({ data: { wakeRecoveryProtocol: 1, turns: pendingTurns } });
+    expect(pendingTurns[0]).not.toHaveProperty("wakeContext");
+  });
+  it("rejects unknown recovery protocols rather than guessing legacy", async () => {
+    const response = await GET(getRequest(`?connectionUuid=${connectionUuid}&wakeRecoveryProtocol=2`), emptyCtx);
+    expect(response.status).toBe(400);
+    expect(mockGetPendingTurnsForConnection).not.toHaveBeenCalled();
+  });
   it.each(["", "&researchProtocol=0", "&researchProtocol=1", "&researchProtocol=2"])("delivers Research to both legacy and upgraded clients (%s)", async (query) => {
     const research = { ...pendingTurns[0], turnUuid: "research", promptText: "[Chorus Tracker Research]\nRead evidence" };
     const autonomous = { ...pendingTurns[0], turnUuid: "autonomous", promptText: null };

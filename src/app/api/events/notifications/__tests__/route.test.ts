@@ -16,6 +16,7 @@ const mockTouchConnection = vi.fn();
 const mockMarkDisconnected = vi.fn();
 const mockReconcileOrphanTurns = vi.fn();
 const mockCanAgentReceiveTurn = vi.fn();
+const mockGetWakeRecoveryDelivery = vi.fn();
 const mockCanActorAccessProject = vi.fn();
 vi.mock("@/services/project-access.service", () => ({
   canActorAccessProject: (...args: unknown[]) => mockCanActorAccessProject(...args),
@@ -51,6 +52,7 @@ vi.mock("@/services/daemon-connection.service", () => ({
 vi.mock("@/services/daemon-session.service", () => ({
   reconcileOrphanTurns: (...args: unknown[]) => mockReconcileOrphanTurns(...args),
   canAgentReceiveTurn: (...args: unknown[]) => mockCanAgentReceiveTurn(...args),
+  getWakeRecoveryDelivery: (...args: unknown[]) => mockGetWakeRecoveryDelivery(...args),
 }));
 vi.mock("@/services/daemon-execution.service", () => ({
   reconcileOffline: vi.fn(async () => 0), publishExecutionChange: vi.fn(async () => undefined),
@@ -113,6 +115,67 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("wake recovery SSE wire", () => {
+  const context = { version: 1, notificationUuid: "source", notification: { uuid: "source", action: "mentioned" } };
+  const event = { type: "new_notification", turnUuid: "turn", notificationUuid: "source", wakeContext: context, projectUuid: "project" };
+  it("advertises v1 and projects freshly authorized persisted identity on both channels", async () => {
+    const abort = new AbortController();
+    const response = await GET(makeRequest("clientType=codex&wakeRecoveryProtocol=1", abort.signal));
+    const { chunks } = await startStream(response);
+    mockGetWakeRecoveryDelivery.mockResolvedValue({ turnUuid: "turn", wakeContext: context, targetConnectionUuid: connectionUuid, runtimeCwd: "/fixture" });
+    const handler = mockEventBus.on.mock.calls.find(([channel]) => channel === `notification:agent:${actorUuid}`)![1];
+    const control = mockEventBus.on.mock.calls.find(([channel]) => channel === `control:${connectionUuid}`)![1];
+    handler(event);
+    control({ type: "control", command: "deliver_turn", turnUuid: "turn" });
+    await flush();
+    await flush();
+    const events = chunks.join("").split("\n").filter((line) => line.startsWith("data: ")).map((line) => JSON.parse(line.slice(6)));
+    expect(events[0]).toMatchObject({ type: "connection_registered", wakeRecoveryProtocol: 1 });
+    expect(events.slice(1)).toHaveLength(2);
+    for (const delivered of events.slice(1)) expect(delivered).toMatchObject({ turnUuid: "turn", wakeContext: context, targetConnectionUuid: connectionUuid });
+    expect(mockGetWakeRecoveryDelivery).toHaveBeenCalledWith(companyUuid, actorUuid, connectionUuid, "turn");
+    abort.abort();
+  });
+
+  it("withholds inaccessible/stale-origin contexts and suppresses unpersisted wakes", async () => {
+    const abort = new AbortController();
+    const response = await GET(makeRequest("clientType=codex&wakeRecoveryProtocol=1", abort.signal));
+    const { chunks } = await startStream(response);
+    mockGetWakeRecoveryDelivery.mockResolvedValue(null);
+    const handler = mockEventBus.on.mock.calls.find(([channel]) => channel === `notification:agent:${actorUuid}`)![1];
+    handler(event);
+    handler({ type: "new_notification", notificationUuid: "no-turn", action: "mentioned" });
+    await flush();
+    await flush();
+    expect(chunks.join("")).not.toContain('"notificationUuid":"source"');
+    expect(chunks.join("")).toContain('"suppressWake":true');
+    expect(chunks.join("")).toContain('"wakeContext":null');
+    abort.abort();
+  });
+
+  it("strips new recovery fields and secondary batch events from legacy streams", async () => {
+    const abort = new AbortController();
+    const response = await GET(makeRequest("clientType=codex", abort.signal));
+    const { chunks } = await startStream(response);
+    const handler = mockEventBus.on.mock.calls.find(([channel]) => channel === `notification:agent:${actorUuid}`)![1];
+    handler(event);
+    handler({ ...event, notificationUuid: "second", wakeRecoveryOnly: true });
+    await flush();
+    await flush();
+    expect(chunks.join("")).toContain('"notificationUuid":"source"');
+    expect(chunks.join("")).not.toContain('"wakeContext"');
+    expect(chunks.join("")).not.toContain('"turnUuid"');
+    expect(chunks.join("")).not.toContain('"second"');
+    abort.abort();
+  });
+
+  it("rejects unknown protocol versions before registering a connection", async () => {
+    const response = await GET(makeRequest("clientType=codex&wakeRecoveryProtocol=2"));
+    expect(response.status).toBe(400);
+    expect(mockRegisterConnection).not.toHaveBeenCalled();
+  });
+});
+
 describe("GET /api/events/notifications (notification SSE)", () => {
   it("freshly withholds delayed notifications for a revoked project recipient", async () => {
     const ac = new AbortController();
@@ -153,7 +216,7 @@ describe("GET /api/events/notifications (notification SSE)", () => {
     control({ type: "control", command: "deliver_turn", targetConnectionUuid: connectionUuid, turnUuid: "turn-secret" });
     await flush();
     expect(chunks.join("")).not.toContain("turn-secret");
-    expect(mockCanAgentReceiveTurn).toHaveBeenCalledWith(companyUuid, actorUuid, "turn-secret");
+    expect(mockCanAgentReceiveTurn).toHaveBeenCalledWith(companyUuid, actorUuid, "turn-secret", connectionUuid);
     ac.abort();
   });
   it("returns 401 without registering when unauthenticated", async () => {

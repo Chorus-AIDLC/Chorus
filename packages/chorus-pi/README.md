@@ -19,10 +19,11 @@ as a packed artifact on isolated SDKs 0.84.4, 0.87.1, 0.99.0, and 1.0.2.
 Prereleases, older hosts and Pi 2.x are not declared supported.
 
 Legacy sessions must expose Chorus tools directly (`directTools: true` in
-the adapter's Chorus server entry) for workflow reminders. Reviewer dispatch
-allows only discovered Chorus query/checkin/comment tools and excludes legacy
-`mcp`, `mcpScript`, `codemode`, and `tool_search` gateways. Workers retain their
-normal tools. Existing adapter installations are never automatically removed.
+the adapter's Chorus server entry) for parent workflow reminders. Packaged
+children instead load their role providers explicitly: `chorus_review` for
+query/checkin/comment access, and `chorus_work` for task execution. They do not
+require native or adapter gateway names. Existing adapter installations are
+never automatically removed.
 
 From the repository root, prepare isolated SDK installations and run:
 
@@ -107,13 +108,12 @@ reviewer switches, missing Chorus configuration, failures and non-target names.
 The model supplies deterministic tool calls; no model-provider credentials or
 real Chorus business operations are involved. These SDK results supplement the
 existing mocked offline tests and do not claim a production workflow transition.
-The three packaged reviewers allow `codemode` and `tool_search` alongside their
-existing tools. Pi 1.x's `--tools` also filters nested MCP calls, so the bundled
-dispatcher adds the parent's discovered native Chorus query/checkin/comment
-names to reviewer lists. It does not add submission/admin operations or
-project write/edit tools. The probe uses each actual reviewer list and this
-expansion to check native MCP access, including a local `chorus_add_comment` fixture.
-Their read-only project policy is unchanged.
+This native-MCP probe covers parent transport/event behavior, not the new child
+role-provider contract. Packaged reviewer lists no longer require native
+`codemode`/`tool_search` or expand the parent's MCP tools. See
+`test/agents.test.ts` for role-provider registration, agent-relative paths,
+override precedence and bundled launcher argument regressions. Their read-only
+project policy is unchanged.
 
 ### Legacy adapter route
 
@@ -137,9 +137,14 @@ Adapter5's primary global file is `~/.pi/agent/mcp-adapter.json` (or
 `mcpServers.chorus.directTools: true` with an env-referenced Authorization
 header. Existing explicit exposure choices are preserved. Native project
 `.pi/mcp.json` and the adapter's legacy discovery/import paths are not equivalent.
-The extension's own HTTP bookkeeping also reads this generated legacy primary
-without requiring a separate `CHORUS_URL` export; retained old global
-`mcp.json` cannot shadow it. Unresolved environment credentials are not sent.
+The extension's HTTP bookkeeping and child role tools select configuration from
+the active MCP backend, including adapter5 on modern Pi. Adapter sessions read
+project `.pi/mcp-adapter.json`, root `.mcp.json`, then the global adapter primary;
+retained global native `mcp.json` cannot shadow an existing adapter primary.
+Native sessions keep native discovery precedence and ignore stale adapter files.
+Explicit environment values override file discovery; a complete file-based
+connection does not require duplicate `CHORUS_URL` / `CHORUS_API_KEY` exports.
+Unresolved environment credentials are not sent. No configuration is rewritten.
 
 The `subagent` tool ships inside this package (pi's
 official subagent reference pattern, at `extensions/subagent/`), and the three
@@ -172,6 +177,49 @@ receive no package operations; missing Pi gets conditional manual guidance.
 Writing config is not a connectivity guarantee. Export `CHORUS_URL`,
 `CHORUS_API_KEY` and optionally `CHORUS_AGENT_PROFILE` when launching interactive
 Pi; the daemon injects them for wakes.
+
+## Child role tools
+
+All three reviewers declare `read, grep, find, ls, bash, chorus_review`; the
+worker declares the same local tools plus `edit, write, chorus_work` instead of
+`chorus_review`. Their agent-relative `subagentOnlyExtensions` loads
+`../lib/child-review.ts` or `../lib/child-work.ts` with nicobailon `pi-subagents`
+and the bundled dispatcher. The latter resolves paths against the agent file
+and passes each via `-e`, separately from `--tools`. User/project agent overrides
+retain precedence; if you copy an agent elsewhere, update its provider path.
+
+Children use the role gateway for **all** Chorus access, on both native MCP and
+adapter5 hosts (including default script mode), without changing user MCP config:
+
+```js
+chorus_review({ action: "discover" })
+chorus_review({ action: "call", tool: "chorus_get_task", arguments: { taskUuid: "<uuid>" } })
+chorus_work({ action: "discover" })
+chorus_work({ action: "call", tool: "chorus_report_work", arguments: { taskUuid: "<uuid>", report: "Implemented and tested" } })
+```
+
+Discovery returns actual allowed remote schemas; use them for call arguments.
+Reviewers allow `chorus_get_*`, `chorus_list_tasks`, `chorus_list_projects`,
+`chorus_search`, `chorus_checkin`, and `chorus_add_comment`. Workers additionally
+allow `chorus_claim_task`, `chorus_release_task`, `chorus_update_task`,
+`chorus_report_work`, `chorus_report_criteria_self_check`,
+`chorus_submit_for_verify`, `chorus_session_checkin_task`, and
+`chorus_session_checkout_task`. Admin actions, entity creation, and session
+creation/closure remain outside both roles. Forbidden calls fail before network
+dispatch; missing config, remote failures, and cancellation remain visible.
+No child requires `tool_search`, `codemode`, `mcp`, or `mcpScript`. Legacy custom
+reviewer definitions still expand allowed direct operations via the same policy,
+with unrestricted gateways removed; empty reviewer permissions fail closed.
+Non-reviewer custom agents keep their existing declared tools or inheritance.
+
+**This is a tool-surface policy, not a security sandbox.** Bash, test/build
+subprocesses, inherited credentials, and network access are not isolated. Task
+and code reviewers may run tests/builds that create outputs, but must not edit
+source or perform git writes; proposal reviewers use inspection only. Comment
+target scope is behavioral, not enforced per UUID. `chorus_checkin` can mark
+notifications read, as can `chorus_get_notifications` by default (use
+`autoMarkRead: false` to avoid that query's effect). Parent MCP exposure and
+legacy gateway workflow-reminder limitations are unchanged.
 
 ## Wakeable daemon backend (`--agent pi`)
 
@@ -217,7 +265,7 @@ packages/chorus-pi/
 │   ├── chorus-proposal-reviewer.md   # read-only reviewers
 │   ├── chorus-task-reviewer.md
 │   ├── chorus-code-reviewer.md
-│   └── chorus-worker.md              # general-purpose task implementer (inherits full tools)
+│   └── chorus-worker.md              # task implementer (local edits + chorus_work)
 ├── bin/
 │   └── chorus-mcp-call.sh    # stateless MCP-over-HTTP wrapper (from the Codex port) for OpenSpec byte-exact document mirroring
 └── README.md
@@ -296,25 +344,14 @@ such sections.
   so `checkin → in_progress → report → checkout → submit_for_verify` flows are
   identical; only close timing differs (blocking closes at `tool_result`, async
   closes on `subagent:async-complete`/`process-terminal`).
-- **Why the packaged agents do not set `async: false`.** Under nicobailon
-  0.65+ a foreground (`async: false`) child runs inside the parent process
-  and never loads the parent's ambient extensions — tools registered by an
-  ambient adapter such as `pi-mcp-adapter` (`mcp`, `mcpScript`) are
-  unavailable, and nicobailon's child-tool diagnostic treats an allowlist
-  that declares them as a failed run (exit 1) even if the agent never
-  called them. The Chorus reviewers/worker need `mcp` to post verdicts and
-  check in, so they run as background children (nicobailon default). Wait
-  for completion with `bg_wait`/the run notification; the bundled subagent
-  is unaffected because its child is a separate `pi --mode json` process
-  that loads extensions.
-- **Reviewers and workers are pinned to the background path.** "Async is the
-  default" is not a guarantee: a caller that passes `async: false` gets an
-  in-process foreground child in which every Chorus agent loses `chorus_*` — for
-  a reviewer the declared `tools` allowlist turns that into a failed run, for a
-  worker (no allowlist) it degrades quietly. (Measured 2026-09-20 with a probe
-  agent that declares no `tools`: a foreground child's whole tool set was
-  `read, bash, edit, write, bg_wait, contact_supervisor` — no `mcp`, no
-  `chorus_*` — and it could not post a comment.) The extension therefore pins the
+- **Children explicitly load their role tools.** Agent-relative
+  `subagentOnlyExtensions` loads `chorus_review` or `chorus_work`; neither
+  depends on the parent's ambient MCP adapter or inherited native MCP tools.
+  Missing optional gateway names are not declared as required tools.
+- **Reviewers and workers remain pinned to the background path.** The
+  existing session-lifecycle routing is retained, independently of role-tool
+  loading. Wait for completion with `bg_wait`/the run notification. The bundled
+  dispatcher still blocks on its separate `pi --mode json` child. The extension pins the
   run-level `async: true` at `tool_call` whenever a `chorus-*-reviewer` or a
   worker (`worker`, `chorus-worker`) is in the call, **removing** the `clarify`
   property (`delete`, not `clarify: false` — `clarify: true` defeats async anyway,

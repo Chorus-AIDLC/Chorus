@@ -96,6 +96,7 @@ class MockSse {
   }
   async connect() {
     this.connected = true;
+    this.opts.onConnectionId?.("test-connection");
   }
   disconnect() {
     this.connected = false;
@@ -450,7 +451,7 @@ describe("integration checkpoint: direct-idea session id, resume, and isolation"
 
   class MockSse {
     constructor(opts) { this.opts = opts; this.connected = false; }
-    async connect() { this.connected = true; }
+    async connect() { this.connected = true; this.opts.onConnectionId?.("test-connection"); }
     disconnect() { this.connected = false; }
     deliver(event) { this.opts.onEvent(event); }
   }
@@ -1050,9 +1051,7 @@ describe("integration checkpoint (子3): interrupt + resume + crash recovery", (
     void calls;
   });
 
-  // --- AC3: a crash exit (non-zero, no interrupt) → reportInterrupt('crash');
-  // reconnect-backfill re-fires the wake without a user action. ---
-  it("AC3: a crashed wake reports reason=crash; reconnect-backfill re-fires the wake automatically", async () => {
+  it("AC3: a crashed wake reports reason=crash; reconnect does not replay an uncorrelated legacy notification", async () => {
     const reportInterrupt = vi.fn(async () => {});
     const { spawner, calls, resolveWake } = makeFakeSpawner();
 
@@ -1090,24 +1089,15 @@ describe("integration checkpoint (子3): interrupt + resume + crash recovery", (
     // The execution row has cleared — the wake is no longer running.
     expect(daemon.waker.executions.has(`task:${TASK_UUID}`)).toBe(false);
 
-    // (2) The reconnect-backfill path next runs (in production: after the SSE link
-    //     re-establishes). The daemon's seen set still holds n-crash from the live
-    //     dispatch, so a same-uuid backfill is a no-op — that is the correct behavior
-    //     for a still-running daemon process. The auto-recovery promise from the spec
-    //     applies to a DAEMON RESTART (the realistic crash-recovery scenario, fresh seen
-    //     set). Simulate that by clearing seen, then driving onReconnect.
     daemon.router.seen.clear();
     await captured.fireReconnect();
+    captured.deliver({ type: "connection_registered", connectionUuid: CONN });
     await new Promise((r) => setTimeout(r, 30));
 
-    // The backfill re-dispatched the same notification through the wired router →
-    // a SECOND wake fired automatically with no user action.
-    expect(spawner.wake).toHaveBeenCalledTimes(2);
-    expect(calls[1].sessionId).toBe(DIRECT); // anchored on the same direct idea
+    expect(spawner.wake).toHaveBeenCalledTimes(1);
+    expect(calls[0].sessionId).toBe(DIRECT);
 
-    // Resolve the recovery wake cleanly — no further crash/interrupt report.
     reportInterrupt.mockClear();
-    resolveWake(1, 0);
     await new Promise((r) => setTimeout(r, 10));
     expect(reportInterrupt).not.toHaveBeenCalled();
 

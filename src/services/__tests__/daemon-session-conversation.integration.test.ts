@@ -35,6 +35,8 @@
 //       the turn table via the backfill read (instruction not lost).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { isDeepStrictEqual } from "node:util";
+import { Prisma } from "@/generated/prisma/client";
 import { NextRequest } from "next/server";
 
 // ===== Stateful in-memory prisma fake =====
@@ -132,6 +134,16 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
       )) return false;
       continue;
     }
+    if (key === "wakeNotification" && model === "daemonSessionTurn") {
+      const notification = store.data.notification.find((candidate) => candidate.uuid === row.wakeNotificationUuid);
+      const predicate = cond === null ? null : "is" in (cond as Row) ? (cond as Row).is : cond;
+      if (predicate === null) {
+        if (notification) return false;
+      } else if (!notification || matchWhere(store, "notification", notification, predicate as Row) !== true) {
+        return false;
+      }
+      continue;
+    }
     if (key === "session" && model === "daemonSessionTurn") {
       const session = store.data.daemonSession.find((s) => s.uuid === row.sessionUuid);
       if (!session) return false;
@@ -152,12 +164,27 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
     }
     if (typeof cond === "object") {
       const c = cond as Row;
+      if ("equals" in c) {
+        const jsonValue = (value: unknown) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+        const actual = Array.isArray(c.path)
+          ? (c.path as string[]).reduce<unknown>((value, field) => (value as Row | null)?.[field], val)
+          : val;
+        if (c.equals === Prisma.DbNull) {
+          if (actual != null) return false;
+        } else if (!isDeepStrictEqual(jsonValue(actual), jsonValue(c.equals))) return false;
+        continue;
+      }
       if ("not" in c) {
-        if (val === c.not) return false;
+        if (c.not === null) {
+          if (val == null) return false;
+        } else if (val == null) {
+          unknown = true;
+        } else if (val === c.not) return false;
         continue;
       }
       if ("in" in c) {
-        if (!Array.isArray(c.in) || !(c.in as unknown[]).includes(val)) return false;
+        if (val == null) unknown = true;
+        else if (!Array.isArray(c.in) || !(c.in as unknown[]).includes(val)) return false;
         continue;
       }
       if ("startsWith" in c) {
@@ -171,7 +198,8 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
       // Unknown operator object — treat as no match to surface a gap loudly.
       return false;
     }
-    if (val !== cond) return false;
+    if (val == null) unknown = true;
+    else if (val !== cond) return false;
   }
   return unknown ? null : true;
 }
@@ -245,6 +273,34 @@ function compare(a: unknown, b: unknown): number {
 }
 
 function buildPrismaFake(store: Store) {
+  function createTurn(data: Row, skipDuplicates = false) {
+    const duplicate = store.data.daemonSessionTurn.some((turn) =>
+      (data.wakeNotificationUuid != null && turn.wakeNotificationUuid === data.wakeNotificationUuid) ||
+      (turn.sessionUuid === data.sessionUuid && turn.seq === data.seq),
+    );
+    if (duplicate) {
+      if (skipDuplicates) return null;
+      throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    }
+    const row: Row = {
+      id: store.nextId(),
+      uuid: store.nextUuid("turn"),
+      backendSessionId: null,
+      promptText: null,
+      wakeContext: null,
+      wakeNotificationUuid: null,
+      wakeTargetConnectionUuid: null,
+      wakeRuntimeCwd: null,
+      executionUuid: null,
+      startedAt: null,
+      endedAt: null,
+      createdAt: new Date(),
+      ...data,
+    };
+    store.data.daemonSessionTurn.push(row);
+    return { ...row };
+  }
+
   function findMany(model: keyof Store["data"], args: Row = {}) {
     let rows = store.data[model].filter((r) => matchWhere(store, model, r, (args.where as Row) ?? {}));
     rows = applyOrderBy(store, model, rows, args.orderBy);
@@ -311,21 +367,13 @@ function buildPrismaFake(store: Store) {
         findFirst("daemonSessionTurn", { where: args.where }),
       ),
       findMany: vi.fn(async (args: Row) => findMany("daemonSessionTurn", args)),
-      create: vi.fn(async (args: Row) => {
-        const row: Row = {
-          id: store.nextId(),
-          uuid: store.nextUuid("turn"),
-          backendSessionId: null,
-          promptText: null,
-          executionUuid: null,
-          startedAt: null,
-          endedAt: null,
-          createdAt: new Date(),
-          ...(args.data as Row),
-        };
-        store.data.daemonSessionTurn.push(row);
-        return { ...row };
-      }),
+      create: vi.fn(async (args: Row) => createTurn(args.data as Row)),
+      createManyAndReturn: vi.fn(async (args: Row) =>
+        (args.data as Row[]).flatMap((data) => {
+          const row = createTurn(data, args.skipDuplicates === true);
+          return row ? [row] : [];
+        }),
+      ),
       update: vi.fn(async (args: Row) => {
         const row = store.data.daemonSessionTurn.find((t) => t.uuid === (args.where as Row).uuid);
         if (!row) throw new Error("turn not found for update");
@@ -421,6 +469,14 @@ function buildPrismaFake(store: Store) {
       findFirst: vi.fn(async (args: Row) => findFirst("document", args)),
     },
     notification: {
+      findUnique: vi.fn(async (args: Row) => findFirst("notification", args)),
+      updateMany: vi.fn(async (args: Row) => {
+        const rows = store.data.notification.filter((row) =>
+          matchWhere(store, "notification", row, (args.where as Row) ?? {}) === true,
+        );
+        for (const row of rows) Object.assign(row, args.data as Row);
+        return { count: rows.length };
+      }),
       findFirst: vi.fn(async (args: Row) => findFirst("notification", args)),
       create: vi.fn(async (args: Row) => {
         const row: Row = {
@@ -507,6 +563,10 @@ vi.mock("@/lib/auth", () => ({ getAuthContext: mockGetAuthContext }));
 import * as notificationService from "@/services/notification.service";
 import {
   assertContinuable,
+  canAgentReceiveTurn,
+  createPendingTurn,
+  getPendingTurnsForConnection,
+  getWakeRecoveryDelivery,
   transcriptEventName,
   type TranscriptEvent,
 } from "@/services/daemon-session.service";
@@ -602,6 +662,7 @@ beforeEach(() => {
   // Pending-turn delivery now resolves the session's current idea project. The
   // fixture's lineage anchor must exist just as it does in the real database.
   store.data.idea.push({ uuid: IDEA, companyUuid: COMPANY, projectUuid: PROJECT });
+  store.data.task.push({ uuid: TASK, companyUuid: COMPANY, projectUuid: PROJECT });
 
   mockGetAuthContext.mockResolvedValue(agentAuth());
   // task → direct idea IDEA; default for anything else null.
@@ -845,6 +906,85 @@ describe("integration: continuation pinned to origin connection (read-only when 
 // ===== Thread 5: dropped ping + reconnect re-derives the pending turn via backfill =====
 
 describe("integration: reconnect backfill re-derives the unstarted (pending) turn from the turn table", () => {
+  it.each([
+    { source: "persisted", visible: true },
+    { source: "legacy", visible: true },
+    { source: "malformed", visible: false },
+    { source: "wrong-recipient", visible: false },
+    { source: "missing-entity", visible: false },
+  ])("checks persisted turn source=$source for legacy and recovery delivery", async ({ source, visible }) => {
+    await notificationService.create({ ...baseNotif, action: "task_assigned", message: "Assigned" });
+    const turn = store.data.daemonSessionTurn[0];
+    const notification = store.data.notification.find((candidate) => candidate.uuid === turn.wakeNotificationUuid)!;
+    const context = turn.wakeContext as { notification: Record<string, unknown> };
+    if (source === "legacy") turn.wakeContext = null;
+    if (source === "malformed") turn.wakeContext = { version: 2 };
+    if (source === "wrong-recipient") context.notification.recipientUuid = "another-agent";
+    if (source === "missing-entity") context.notification.entityUuid = "deleted-task";
+    const scope = { companyUuid: COMPANY, agentUuid: AGENT, connectionUuid: ORIGIN_CONN };
+    expect(await getPendingTurnsForConnection(scope)).toEqual(
+      visible ? [expect.objectContaining({ turnUuid: turn.uuid })] : [],
+    );
+    expect(await getPendingTurnsForConnection({ ...scope, wakeRecoveryProtocol: 1 })).toEqual(
+      visible ? [expect.objectContaining({ turnUuid: turn.uuid })] : [],
+    );
+    expect(await canAgentReceiveTurn(COMPANY, AGENT, turn.uuid as string, ORIGIN_CONN)).toBe(visible);
+    expect(notification.readAt).toBeNull();
+  });
+
+  it.each(["/directed/runtime", null])("uses the turn target and runtime cwd %s instead of a changed canonical origin", async (runtimeCwd) => {
+    await notificationService.create({ ...baseNotif, action: "task_assigned", message: "Assigned" });
+    const session = store.data.daemonSession[0];
+    const turn = store.data.daemonSessionTurn[0];
+    Object.assign(session, { originConnectionUuid: OTHER_CONN, runtimeCwd: "/canonical/runtime" });
+    Object.assign(turn, { wakeTargetConnectionUuid: ORIGIN_CONN, wakeRuntimeCwd: runtimeCwd });
+
+    const pending = await getPendingTurnsForConnection({ companyUuid: COMPANY, agentUuid: AGENT, connectionUuid: ORIGIN_CONN });
+    expect(pending).toEqual([expect.objectContaining({ turnUuid: turn.uuid, runtimeCwd })]);
+    expect(await getPendingTurnsForConnection({ companyUuid: COMPANY, agentUuid: AGENT, connectionUuid: OTHER_CONN })).toEqual([]);
+    expect(await canAgentReceiveTurn(COMPANY, AGENT, turn.uuid as string, ORIGIN_CONN)).toBe(true);
+    expect(await canAgentReceiveTurn(COMPANY, AGENT, turn.uuid as string, OTHER_CONN)).toBe(false);
+    expect(await getWakeRecoveryDelivery(COMPANY, AGENT, ORIGIN_CONN, turn.uuid as string)).toMatchObject({
+      turnUuid: turn.uuid, targetConnectionUuid: ORIGIN_CONN, runtimeCwd,
+    });
+    expect(await getWakeRecoveryDelivery(COMPANY, AGENT, OTHER_CONN, turn.uuid as string)).toBeNull();
+    expect(await getPendingTurnsForConnection({ companyUuid: "another-company", agentUuid: AGENT, connectionUuid: ORIGIN_CONN })).toEqual([]);
+    expect(await getPendingTurnsForConnection({ companyUuid: COMPANY, agentUuid: "another-agent", connectionUuid: ORIGIN_CONN })).toEqual([]);
+  });
+
+  it("uses the canonical session origin and cwd when the turn has no explicit target", async () => {
+    await notificationService.create({ ...baseNotif, action: "task_assigned", message: "Assigned" });
+    const session = store.data.daemonSession[0];
+    const turn = store.data.daemonSessionTurn[0];
+    expect(turn).toMatchObject({ wakeTargetConnectionUuid: null, wakeRuntimeCwd: null });
+    Object.assign(session, { originConnectionUuid: OTHER_CONN, runtimeCwd: "/canonical/runtime" });
+
+    expect(await getPendingTurnsForConnection({ companyUuid: COMPANY, agentUuid: AGENT, connectionUuid: ORIGIN_CONN })).toEqual([]);
+    expect(await getPendingTurnsForConnection({ companyUuid: COMPANY, agentUuid: AGENT, connectionUuid: OTHER_CONN })).toEqual([
+      expect.objectContaining({ turnUuid: turn.uuid, runtimeCwd: "/canonical/runtime" }),
+    ]);
+    expect(await canAgentReceiveTurn(COMPANY, AGENT, turn.uuid as string, ORIGIN_CONN)).toBe(false);
+    expect(await canAgentReceiveTurn(COMPANY, AGENT, turn.uuid as string, OTHER_CONN)).toBe(true);
+  });
+
+  it("deduplicates a repeated wake notification while allocating a distinct sequence for concurrent wakes", async () => {
+    await notificationService.create({ ...baseNotif, action: "task_assigned", message: "Assigned" });
+    const original = store.data.daemonSessionTurn[0];
+    const wakeContext = original.wakeContext as NonNullable<Parameters<typeof createPendingTurn>[0]["wakeContext"]>;
+    const repeated = await createPendingTurn({ sessionUuid: original.sessionUuid as string, trigger: "task_assigned", wakeContext });
+    expect(repeated.uuid).toBe(original.uuid);
+    expect(store.data.daemonSessionTurn).toHaveLength(1);
+
+    const turns = await Promise.all(["wake-second", "wake-third"].map((notificationUuid) => createPendingTurn({
+      sessionUuid: original.sessionUuid as string,
+      trigger: "task_assigned",
+      wakeContext: { ...wakeContext, notificationUuid },
+    })));
+    expect(turns.map((turn) => turn.seq).sort()).toEqual([2, 3]);
+    expect(store.data.daemonSessionTurn).toHaveLength(3);
+    expect(new Set(store.data.daemonSessionTurn.map((turn) => turn.wakeNotificationUuid)).size).toBe(3);
+  });
+
   it("returns the pending human_instruction turn (with its promptText) for the origin connection, not from notifications", async () => {
     const INSTRUCTION = "Re-run after the dropped ping.";
     // A human_instruction wake creates a pending turn (simulating a wake whose SSE ping

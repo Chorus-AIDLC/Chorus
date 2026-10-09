@@ -768,6 +768,14 @@ model DaemonSessionTurn {
   trigger           String // task_assigned | mentioned | elaboration | elaboration_verified | start_development | yolo_requested | resume | human_instruction | idea_creation_requested | research_requested
   promptText        String? // human instruction body or server-composed operation compatibility snapshot
   operationPayload  Json? // versioned dedicated operation; historical rows remain null
+  wakeContext       Json?
+  wakeNotificationUuid String? @unique
+  wakeNotification Notification? @relation(fields: [wakeNotificationUuid], references: [uuid], onDelete: Restrict)
+  wakeTargetConnectionUuid String?
+  wakeRuntimeCwd String?
+  admissionUuid     String?                   @unique
+  admissionConnectionUuid String?
+  admissionTurnUuids Json?
   status            String                    @default("pending") // pending | running | ended | interrupted
   // Discriminator for the `interrupted` status: `user` = user-requested interrupt,
   // `crash` = subprocess exited dirty, `shutdown` = daemon graceful shutdown killed
@@ -803,6 +811,7 @@ model DaemonSessionTurn {
 
   @@unique([sessionUuid, seq])
   @@index([sessionUuid, status])
+  @@index([wakeTargetConnectionUuid, status])
 }
 
 // A single user/assistant transcript message on a turn. Tool-call, tool-result,
@@ -844,6 +853,7 @@ model Notification {
   // daemon read the instruction body in the chorus_get_notifications call it already
   // makes, with no extra round-trip. Null for every non-instruction notification.
   instructionText String?
+  wakeTurn DaemonSessionTurn?
   actorType       String // user | agent
   actorUuid       String
   actorName       String // Denormalized to avoid joins

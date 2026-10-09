@@ -150,7 +150,6 @@ try {
           const data = rpc.params.name === "chorus_create_session" ? { uuid: `fixture-session-${lifecycle.length}` } : {};
           result = { content: [{ type: "text", text: JSON.stringify(data) }] };
         } else {
-          assert.notEqual(values.connection, "env");
           assert.ok(fixtureNames.includes(rpc.params.name));
           await appendFile(mcpLog, JSON.stringify({ pid: process.pid, ...rpc.params }) + "\n");
           result = { content: [{ type: "text", text: rpc.params.arguments?.fail ? "fixture failure" : "fixture success" }],
@@ -285,14 +284,9 @@ try {
     const before = (await logs(mcpLog)).length;
     const allowed = ["chorus_get_task", "chorus_list_tasks", "chorus_list_projects", "chorus_add_comment", "chorus_checkin"];
     const denied = ["chorus_pm_submit_proposal", "chorus_submit_for_verify", "chorus_admin_verify_task"];
-    const childActions = [...allowed, ...denied]
-      .map((operation) => action(operation, { marker }));
-    if (legacy) childActions.push(
-      { name: "mcp", arguments: { tool: names.chorus_submit_for_verify, args: { marker } } },
-      { name: "mcpScript", arguments: { code: `await tools.${names.chorus_submit_for_verify}(${JSON.stringify({ marker })})` } },
-      { name: "codemode", arguments: { code: `await tools.${names.chorus_submit_for_verify}(${JSON.stringify({ marker })})` } },
-      { name: "tool_search", arguments: { query: "chorus_submit_for_verify" } },
-    );
+    const childActions = [{ name: "chorus_review", arguments: { action: "discover" } },
+      ...[...allowed, ...denied].map((operation) => ({ name: "chorus_review",
+        arguments: { action: "call", tool: operation, arguments: { marker } } }))];
     const messageStart = session.messages.length;
     await session.prompt(prompt(marker, [{ name: "subagent", arguments: {
       agent: reviewer, task: prompt(marker, childActions), async: false,
@@ -304,23 +298,24 @@ try {
     assert.ok(childTurns.some((turn) => turn.completed === childActions.length), `${reviewer} child did not finish`);
     const childResults = childTurns.at(-1).messages.filter((message) => message.toolCallId.startsWith(`compat-${marker}-`));
     assert.equal(childResults.length, childActions.length);
-    assert.ok(childResults.slice(0, allowed.length).every((message) => !message.isError), JSON.stringify(childResults));
-    assert.ok(childResults.slice(allowed.length).every((message) => message.isError), JSON.stringify(childResults));
-    if (values.exposure === "direct") {
-      const forbiddenNames = [...denied.map((operation) => names[operation]),
-        ...(legacy ? ["mcp", "mcpScript", "codemode", "tool_search"] : [])];
-      assert.ok(childTurns.every((turn) => !turn.tools.some((name) =>
-        forbiddenNames.includes(name))),
+    assert.ok(childResults.slice(0, 1 + allowed.length).every((message) => !message.isError), JSON.stringify(childResults));
+    assert.ok(childResults.slice(1 + allowed.length).every((message) => message.isError), JSON.stringify(childResults));
+    assert.ok(childTurns.every((turn) => turn.tools.includes("chorus_review")));
+    const forbiddenNames = [...denied.map((operation) => names[operation]),
+      "mcp", "mcpScript", "codemode", "tool_search", "chorus_work"];
+    assert.ok(childTurns.every((turn) => !turn.tools.some((name) => forbiddenNames.includes(name))),
       "Reviewer hard allowlist must not expose mutations");
-    }
     assert.ok(childTurns.every((turn) => !turn.hasSessionWorkflow));
-    results.push({ reviewer, allowed: allowed.length, denied: childActions.length - allowed.length, childPid: childTurns[0].pid });
+    results.push({ reviewer, allowed: allowed.length, denied: denied.length, childPid: childTurns[0].pid });
   }
   for (const agent of values.gate === "all" ? ["chorus-worker", "compat-custom"] : []) {
     const before = lifecycle.length;
     const marker = `child-${agent}`;
+    const childAction = (operation) => agent === "chorus-worker"
+      ? { name: "chorus_work", arguments: { action: "call", tool: operation, arguments: { marker } } }
+      : action(operation, { marker });
     await session.prompt(prompt(marker, [{ name: "subagent", arguments: { agent,
-      task: prompt(marker, [action("chorus_get_task", { marker }), action("chorus_submit_for_verify", { marker })]) } }]));
+      task: prompt(marker, [childAction("chorus_get_task"), childAction("chorus_submit_for_verify")]) } }]));
     assert.deepEqual((await logs(mcpLog)).filter((call) => call.arguments?.marker === marker).map((call) => call.name),
       ["chorus_get_task", "chorus_submit_for_verify"], `${agent} must retain inherited tools`);
     const childTurns = (await logs(modelLog)).filter((turn) => turn.id === marker && turn.pid !== process.pid);

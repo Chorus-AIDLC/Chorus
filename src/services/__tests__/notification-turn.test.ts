@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createWakeContext } from "@/services/daemon-wake-context";
 
 // ===== Mocks =====
 // The bridge composes three services + the logger. Mock them all so this is a true
@@ -900,6 +901,23 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
 //                        existing session origin creates a PER-INSTANCE session (own
 //                        transcript); the existing session's origin is never re-pointed.
 describe("createTurnAndResolveTarget — directed live delivery", () => {
+  it("persists the exact source context before its directed ping, and never pings a failed write", async () => {
+    const wakeContext = createWakeContext({
+      uuid: "exact-source", action: "mentioned", entityType: "task", entityUuid: taskUuid,
+      projectUuid: "project", projectName: "fixture", recipientType: "agent", recipientUuid: agentUuid,
+      actorType: "user", actorUuid: "owner", actorName: "Fixture", entityTitle: "Task", message: "Do this",
+    })!;
+    const request = ctx({ action: "mentioned", pinnedHost: "fixture-host", pinnedCwd: "/fixture", wakeContext });
+    mockListConnectionsForAgent.mockResolvedValue([onlineConn({ host: "fixture-host", cwd: "/fixture" })]);
+    await createTurnAndResolveTarget(request);
+    expect(mockCreatePendingTurn).toHaveBeenCalledWith(expect.objectContaining({ wakeContext }));
+    expect(mockDeliverTurnPing).toHaveBeenCalled();
+    expect(mockCreatePendingTurn.mock.invocationCallOrder[0]).toBeLessThan(mockDeliverTurnPing.mock.invocationCallOrder[0]);
+    mockDeliverTurnPing.mockClear();
+    mockCreatePendingTurn.mockRejectedValueOnce(new Error("isolated persistence fault"));
+    expect(await createTurnAndResolveTarget(request)).toMatchObject({ turn: null });
+    expect(mockDeliverTurnPing).not.toHaveBeenCalled();
+  });
   const pinnedHost = "Laptop-Q3";
   const pinnedCwd = "/home/u/dev/payments";
   const pinnedConnUuid = "conn-pinned-target";

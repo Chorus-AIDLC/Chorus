@@ -65,6 +65,7 @@ export function createTurnReporter(opts) {
   });
 
   return async function advanceTurn({
+    connectionUuid,
     sessionId,
     turnUuid,
     status,
@@ -76,6 +77,10 @@ export function createTurnReporter(opts) {
     usage,
     backendSessionId,
     coalescedCount,
+    turnUuids,
+    admissionUuid,
+    wakeRecoveryProtocol,
+    signal,
   }) {
     if (typeof sessionId !== "string" || !sessionId || !TURN_STATUSES.has(status)) {
       logger.warn(
@@ -101,6 +106,7 @@ export function createTurnReporter(opts) {
     // truthy (fix #444 follow-up) — and logs the failure cause on a network error / non-2xx.
     // Return the result so running admission can be correlated with its terminal edge.
     const result = await client.turnAdvance({
+      connectionUuid,
       sessionId,
       turnUuid,
       status,
@@ -116,6 +122,10 @@ export function createTurnReporter(opts) {
       // Coalesced-wake count (add-daemon-wake-coalescing): threaded straight through; the
       // client sends it only on the → running edge and only when > 1 (a single wake omits it).
       coalescedCount,
+      turnUuids,
+      admissionUuid,
+      wakeRecoveryProtocol,
+      signal,
     });
     return result;
   };

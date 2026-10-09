@@ -135,6 +135,7 @@ export class SseListener {
       cwd: this.cwd,
       startedAt: PROCESS_STARTED_AT.toISOString(),
       livenessAck: "v1",
+      wakeRecoveryProtocol: "1",
     });
     this.endpoint = `${this.url}/api/events/notifications?${params.toString()}`;
 

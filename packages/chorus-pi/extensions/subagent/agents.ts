@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { isRoleToolAllowed } from "../../lib/role-policy.ts";
 
 export type AgentScope = "user" | "project" | "both";
 
@@ -21,6 +22,7 @@ export interface AgentConfig {
 	name: string;
 	description: string;
 	tools?: string[];
+	subagentOnlyExtensions?: string[];
 	model?: string;
 	systemPrompt: string;
 	source: "user" | "project";
@@ -33,9 +35,8 @@ export interface AgentDiscoveryResult {
 }
 
 /**
- * Pi 1.x --tools filters nested tools as well as their codemode entry point.
- * Keep reviewer project tools restricted while adding the native Chorus
- * read/comment operations the parent actually has. Workers retain inheritance.
+ * Packaged role gateways need no host-specific expansion. Legacy reviewer
+ * overrides receive only direct operations permitted by the shared policy.
  */
 export function expandReviewerTools(
 	agentName: string,
@@ -45,20 +46,21 @@ export function expandReviewerTools(
 	const reviewers = ["chorus-proposal-reviewer", "chorus-task-reviewer", "chorus-code-reviewer"];
 	if (!tools) return reviewers.includes(agentName) ? [] : undefined;
 	if (!reviewers.includes(agentName)) return [...tools];
-	const legacyDirect = availableToolNames.some((name) => name.startsWith("chorus_"));
-	const nativeTools = availableToolNames.some((name) => name.startsWith("mcp__") && name.includes("__chorus_"));
-	const excluded = nativeTools && !legacyDirect ? ["mcp", "mcpScript"]
-		: ["mcp", "mcpScript", "codemode", "tool_search"];
-	const expanded = new Set(tools.filter((name) => !excluded.includes(name)));
+	const excluded = ["mcp", "mcpScript", "codemode", "tool_search", "chorus_work"];
+	const canonicalName = (name: string) => name.startsWith("mcp__") ? name.slice(name.lastIndexOf("__") + 2)
+		: name.startsWith("chorus_chorus_") ? name.slice("chorus_".length) : name;
+	const expanded = new Set(tools.filter((name) => !excluded.includes(name) && (
+		name === "chorus_review" || (!name.startsWith("mcp__") && !name.startsWith("chorus_")) ||
+		isRoleToolAllowed("reviewer", canonicalName(name))
+	)));
+	if (expanded.has("chorus_review")) return [...expanded];
 	for (const name of availableToolNames) {
-		const native = name.startsWith("mcp__") ? name.slice(name.lastIndexOf("__") + 2)
-			: name.startsWith("chorus_chorus_") ? name.slice("chorus_".length)
-				: name;
-		if (
-			native.startsWith("chorus_get_") ||
-			["chorus_list_tasks", "chorus_list_projects", "chorus_checkin", "chorus_search",
-				"chorus_query_relations", "chorus_add_comment"].includes(native)
-		) expanded.add(name);
+		if (isRoleToolAllowed("reviewer", canonicalName(name))) expanded.add(name);
+	}
+	if (tools.includes("codemode") && availableToolNames.includes("codemode") &&
+		!availableToolNames.some((name) => name.startsWith("chorus_")) &&
+		[...expanded].some((name) => name.startsWith("mcp__") && name.includes("__chorus_"))) {
+		expanded.add("codemode");
 	}
 	return [...expanded];
 }
@@ -84,6 +86,7 @@ type AgentFrontmatter = {
 	name?: unknown;
 	description?: unknown;
 	tools?: unknown;
+	subagentOnlyExtensions?: unknown;
 	model?: unknown;
 };
 
@@ -144,6 +147,8 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			name: frontmatter.name,
 			description: frontmatter.description,
 			tools: parseToolList(frontmatter.tools),
+			subagentOnlyExtensions: parseToolList(frontmatter.subagentOnlyExtensions)?.map((extension) =>
+				path.resolve(path.dirname(filePath), extension)),
 			model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
 			systemPrompt: body,
 			source,

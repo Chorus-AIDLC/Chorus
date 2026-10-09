@@ -63,6 +63,7 @@ export class WakeQueue {
    * @param {any} item  opaque data (e.g. `{ notification, attribution }`)
    */
   enqueue(key, item) {
+    if (this.stopped) return false;
     if (!this.pending.has(key)) this.pending.set(key, []);
     this.pending.get(key).push(item);
     // A key becomes "ready" to claim a global slot only when it's not already
@@ -73,6 +74,7 @@ export class WakeQueue {
       this.readyKeys.push(key);
     }
     this.#pump();
+    return true;
   }
 
   /** Number of keys with pending work (for tests/observability). */

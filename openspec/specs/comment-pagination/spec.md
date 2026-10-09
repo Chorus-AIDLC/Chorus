@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change add-comment-pagination. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Cursor-based comment page retrieval
 
 The comment service SHALL provide a cursor-based retrieval mode for an entity's comments that returns a bounded page ordered newest-first, alongside a cursor for fetching the next-older page. This mode SHALL be additive: the existing offset (`skip`/`take`, oldest-first) retrieval mode used by the MCP `chorus_get_comments` tool MUST remain unchanged in behavior and ordering.
@@ -35,22 +37,33 @@ The comment service SHALL provide a cursor-based retrieval mode for an entity's 
 
 ### Requirement: Comment list HTTP and server-action pagination
 
-The comment listing HTTP endpoint and the server action that the UI calls SHALL expose the cursor-based mode while preserving the existing offset response for callers that do not request cursor pagination.
+The comment listing HTTP endpoint and server action SHALL expose cursor-based mode while preserving the existing offset response for callers that do not request cursor pagination. The browser comment component SHALL use authenticated, non-cached HTTP reads independently of the Server Action queue.
 
 #### Scenario: HTTP cursor request
 
-- **WHEN** `GET /api/comments` is called with a `cursor` and/or `limit` query parameter for a valid target
-- **THEN** the response body contains the comment page, the total count, a `nextCursor`, and a `hasMore` flag
+- **WHEN** an authorized viewer requests GET `/api/comments` with cursor and/or a valid limit
+- **THEN** the response contains comments with agent-owner attribution, total, nextCursor and hasMore
+- **AND** it is not cached
+
+#### Scenario: Invalid cursor limit
+
+- **WHEN** a provided cursor-mode limit is not an integer from 1 through 100
+- **THEN** the endpoint returns a validation error without querying comments
 
 #### Scenario: HTTP offset request unchanged
 
-- **WHEN** `GET /api/comments` is called without `cursor` or `limit`
-- **THEN** it responds with the pre-existing offset/paginated response shape
+- **WHEN** GET `/api/comments` omits cursor and limit
+- **THEN** it preserves the existing offset response and ordering
 
 #### Scenario: Server action returns page plus continuation
 
-- **WHEN** the comment server action is invoked with a target and optional cursor/limit
-- **THEN** it returns the resolved comments (with agent-owner attribution), the total count, the `nextCursor`, and the `hasMore` flag
+- **WHEN** an existing caller uses the comment server action
+- **THEN** it still receives attributed comments and cursor continuation metadata
+
+#### Scenario: Access remains enforced
+
+- **WHEN** a requester lacks viewer access to the target
+- **THEN** comment and owner data are not returned and hidden targets retain the existing non-disclosing denial
 
 ### Requirement: Universal comment component loads incrementally on scroll
 
@@ -106,3 +119,30 @@ Surfaces that display a comment count SHALL derive it from the server-reported t
 - **WHEN** only the first page of comments is loaded for an entity that has more comments than one page
 - **THEN** the displayed comment count equals the entity's total comment count, not the number of loaded comments
 
+### Requirement: Bounded recoverable comment reads
+
+The comment UI SHALL bound each read including response parsing to 15 seconds, SHALL handle rejected and malformed reads, and SHALL support retry without closing the panel. Obsolete reads SHALL be cancelled or ignored.
+
+#### Scenario: First-page failure or deadline
+
+- **WHEN** the initial read rejects, returns an invalid response, or exceeds its deadline
+- **THEN** the initial spinner exits and a localized error with retry is shown
+- **AND WHEN** retry succeeds
+- **THEN** the comment page and accurate count are rendered
+
+#### Scenario: Older-page recovery
+
+- **WHEN** an older-page read fails
+- **THEN** existing comments and the continuation cursor remain intact and an explicit retry is available
+- **AND** repeated scroll notifications cannot stack requests
+
+#### Scenario: Obsolete response
+
+- **WHEN** the target changes, the component unmounts, or a new initial attempt supersedes an old one
+- **THEN** old responses cannot alter current comments, counters, pagination, errors, or loading state
+
+#### Scenario: Realtime refresh resilience
+
+- **WHEN** realtime events overlap or a background read fails
+- **THEN** refreshes are coalesced and visible comments remain usable without unhandled rejection
+- **AND** stale refresh results cannot undo successful local comment mutations

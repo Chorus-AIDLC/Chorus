@@ -12,6 +12,22 @@ function okFetch() {
 }
 
 describe("createTurnReporter", () => {
+  it("forwards exact admission identity and cancellation through the REST abstraction", async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn(async (_url, options) => {
+      expect(options.signal.aborted).toBe(false);
+      controller.abort();
+      expect(options.signal.aborted).toBe(true);
+      return { ok: true, status: 200, json: async () => ({ ok: true, data: { turnUuid: "turn-2" } }) };
+    });
+    const advance = createTurnReporter({ url: "https://isolated.invalid", apiKey: "synthetic",
+      getConnectionUuid: () => "conn-1", logger: silent, fetchImpl });
+    await advance({ sessionId: "idea-1", turnUuid: "turn-2", turnUuids: ["turn-2", "turn-3"],
+      admissionUuid: "admission-1", wakeRecoveryProtocol: 1, status: "running", signal: controller.signal });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({ turnUuid: "turn-2",
+      turnUuids: ["turn-2", "turn-3"], admissionUuid: "admission-1", wakeRecoveryProtocol: 1 });
+  });
+
   it("forwards the exact six-field diagnostic alongside independent terminal annotations", async () => {
     const fetchImpl = okFetch();
     const advance = createTurnReporter({ url: "https://c", apiKey: "cho_x",

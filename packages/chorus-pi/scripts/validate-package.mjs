@@ -150,6 +150,20 @@ for (const name of expectedAgentsSorted) {
     (frontmatter[1].match(/^description:\s*(.+)$/m)?.[1] ?? "").trim().length > 20,
     `agent ${name}: missing description`,
   );
+  const worker = name === "chorus-worker";
+  const expectedTools = worker
+    ? "read, grep, find, ls, bash, edit, write, chorus_work"
+    : "read, grep, find, ls, bash, chorus_review";
+  const provider = worker ? "../lib/child-work.ts" : "../lib/child-review.ts";
+  assert(
+    frontmatter[1].match(/^tools:\s*(.+)$/m)?.[1] === expectedTools,
+    `agent ${name}: expected local tools and stable role gateway`,
+  );
+  assert(
+    frontmatter[1].match(/^subagentOnlyExtensions:\s*(.+)$/m)?.[1] === provider,
+    `agent ${name}: expected agent-relative role provider`,
+  );
+  await access(join(root, "agents", provider));
 }
 
 // ─── Bundled official-subagent extension ─────────────────────────────────────

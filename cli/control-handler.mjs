@@ -253,7 +253,7 @@ export function createControlHandler(deps) {
         for (const candidate of waker?.executions?.values() ?? []) {
           if (
             candidate.status === "running" &&
-            candidate.child &&
+            (candidate.child || candidate.admission || candidate.operationTurnUuid) &&
             candidate.directIdeaUuid === entityUuid
           ) {
             killEntityType = candidate.entityType;
@@ -269,6 +269,10 @@ export function createControlHandler(deps) {
         }
       }
       if (!entry || entry.status !== "running" || !entry.child) {
+        if (entry?.status === "running" && entry.admission) {
+          waker.markInterrupting?.(killEntityType, killEntityUuid);
+          return;
+        }
         if (entry?.status === "running" && entry.operationTurnUuid) {
           // Admission can be committed while its response is still in flight.
           // Cancel locally before reporting, so even a lost response cannot launch.

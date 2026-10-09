@@ -124,7 +124,10 @@ const connectionUuid = "conn-0000-0000-0000-000000000001";
 const sessionUuid = "sess-0000-0000-0000-000000000001";
 const sessionId = "idea-0000-0000-0000-000000000001"; // directIdeaUuid as session id
 const turnUuid = "turn-0000-0000-0000-000000000001";
-const nonResearchTurn = NON_OPERATION_TURN;
+const legacyDeliveryFilter = {
+  OR: [{ wakeTargetConnectionUuid: null }, { wakeTargetConnectionUuid: connectionUuid }],
+};
+const legacyFifoFilter = { AND: [NON_OPERATION_TURN, legacyDeliveryFilter] };
 
 function sessionRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -2669,7 +2672,7 @@ describe("advanceTurnForWake", () => {
     ownedSessionWithLatestTurn("pending");
     await advanceTurnForWake({ companyUuid, agentUuid, connectionUuid, sessionId, status: "running" });
     const runningResolve = mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0];
-    expect(runningResolve.where).toEqual({ sessionUuid, status: "pending", ...nonResearchTurn });
+    expect(runningResolve.where).toEqual({ sessionUuid, status: "pending", ...legacyFifoFilter });
     expect(runningResolve.orderBy).toEqual({ seq: "asc" });
 
     vi.clearAllMocks();
@@ -2678,7 +2681,7 @@ describe("advanceTurnForWake", () => {
     ownedSessionWithLatestTurn("running");
     await advanceTurnForWake({ companyUuid, agentUuid, connectionUuid, sessionId, status: "ended" });
     const endedResolve = mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0];
-    expect(endedResolve.where).toEqual({ sessionUuid, status: "running", ...nonResearchTurn });
+    expect(endedResolve.where).toEqual({ sessionUuid, status: "running", ...legacyFifoFilter });
     expect(endedResolve.orderBy).toEqual({ seq: "asc" });
   });
 
@@ -2784,7 +2787,7 @@ describe("advanceTurnForWake", () => {
     });
 
     expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
-      where: { uuid: turnUuid, sessionUuid },
+      where: { uuid: turnUuid, sessionUuid, ...legacyDeliveryFilter },
       orderBy: { seq: "asc" },
     });
   });
@@ -2895,7 +2898,7 @@ describe("advanceTurnForWake", () => {
 
     expect(res).toEqual({ ok: false, reason: "not_found" });
     expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
-      where: { sessionUuid, status: "running", ...nonResearchTurn },
+      where: { sessionUuid, status: "running", ...legacyFifoFilter },
       orderBy: { seq: "asc" },
     });
     expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
@@ -3014,7 +3017,7 @@ describe("advanceTurnForWake", () => {
 
     expect(res).toMatchObject({ ok: true, turn: { uuid: "turn-1" } });
     expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
-      where: { uuid: "turn-1", sessionUuid },
+      where: { uuid: "turn-1", sessionUuid, ...legacyDeliveryFilter },
       orderBy: { seq: "asc" },
     });
     expect(mockPrisma.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
@@ -3105,7 +3108,7 @@ describe("advanceTurnForWake", () => {
     expect(res).toMatchObject({ ok: true });
     // → interrupted leaves from the same state as → ended: the running turn.
     const resolve = mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0];
-    expect(resolve.where).toEqual({ sessionUuid, status: "running", ...nonResearchTurn });
+    expect(resolve.where).toEqual({ sessionUuid, status: "running", ...legacyFifoFilter });
     const updateArg = mockPrisma.daemonSessionTurn.updateMany.mock.calls.find(
       (call: any[]) => call[0].data.status === "interrupted",
     )![0];
@@ -3221,13 +3224,13 @@ describe("advanceTurnForWake — coalescedCount settlement of superseded pending
 
     // The N-1 coalesced-away turns are the next PENDING ones by ascending seq, seq > X(=10), capped at N-1(=2).
     const findArg = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0];
-    expect(findArg.where).toEqual({ sessionUuid, status: "pending", seq: { gt: 10 }, ...nonResearchTurn });
+    expect(findArg.where).toEqual({ sessionUuid, status: "pending", seq: { gt: 10 }, ...legacyFifoFilter });
     expect(findArg.orderBy).toEqual({ seq: "asc" });
     expect(findArg.take).toBe(2);
 
     // They are settled to the terminal 'merged' status by uuid — nothing else touched.
     expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
-      where: { uuid: { in: ["turn-2", "turn-3"] }, status: "pending", ...nonResearchTurn },
+      where: { uuid: { in: ["turn-2", "turn-3"] }, status: "pending", ...legacyFifoFilter },
       data: { status: MERGED_TURN_STATUS },
     });
     expect(MERGED_TURN_STATUS).toBe("merged");
@@ -3268,7 +3271,7 @@ describe("advanceTurnForWake — coalescedCount settlement of superseded pending
     expect(findArg.take).toBe(1);
     expect(findArg.where.seq).toEqual({ gt: 10 });
     expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
-      where: { uuid: { in: ["turn-2"] }, status: "pending", ...nonResearchTurn },
+      where: { uuid: { in: ["turn-2"] }, status: "pending", ...legacyFifoFilter },
       data: { status: MERGED_TURN_STATUS },
     });
   });
@@ -3550,7 +3553,7 @@ describe("reconcileOrphanTurns", () => {
     expect(mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0].where).toEqual({
       sessionUuid,
       status: "running",
-      ...nonResearchTurn,
+      ...legacyFifoFilter,
     });
     expect(mockPrisma.daemonSessionTurn.update.mock.calls[0][0].where).toEqual({
       uuid: newTurnUuid,
@@ -3680,7 +3683,7 @@ describe("getPendingTurnsForConnection", () => {
     expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
       where: { uuid: "turn-1", session: { companyUuid, agentUuid } },
       select: {
-        sessionUuid: true, trigger: true,
+        sessionUuid: true, trigger: true, wakeContext: true,
         session: { select: { sessionId: true, directIdeaUuid: true } },
       },
     });
@@ -3693,7 +3696,7 @@ describe("getPendingTurnsForConnection", () => {
     ]);
     const turns = await getPendingTurnsForConnection({ companyUuid, agentUuid, connectionUuid });
     expect(turns.map((t) => t.turnUuid)).toEqual(["adhoc"]);
-    expect(mockCanAccessProject).toHaveBeenCalledWith(companyUuid, { type: "agent", uuid: agentUuid }, "project-1", "viewer");
+    expect(mockCanAccessProject).toHaveBeenCalledWith(companyUuid, { type: "agent", uuid: agentUuid }, "project-1", "viewer", mockPrisma);
   });
   it("lists pending turns of the connection's origin-pinned, agent-owned sessions, mapped to the backfill view", async () => {
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([
@@ -3721,11 +3724,13 @@ describe("getPendingTurnsForConnection", () => {
 
     // The query fences status=pending AND session owner-scope AND origin pinning.
     const whereArg = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where;
-    expect(whereArg.status).toBe("pending");
-    expect(whereArg.session).toEqual({
-      companyUuid,
-      agentUuid,
-      originConnectionUuid: connectionUuid,
+    expect(whereArg).toEqual({
+      status: "pending",
+      session: { companyUuid, agentUuid },
+      OR: [
+        { wakeTargetConnectionUuid: connectionUuid },
+        { wakeTargetConnectionUuid: null, session: { originConnectionUuid: connectionUuid } },
+      ],
     });
 
     expect(turns).toEqual([
