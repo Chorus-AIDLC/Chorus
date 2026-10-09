@@ -27,11 +27,11 @@ import {
   type ReplyMentionTarget,
 } from "@/components/mention-editor";
 import {
-  getCommentsAction,
   createCommentAction,
   deleteCommentAction,
 } from "@/app/(dashboard)/projects/comment-actions";
 import type { CommentWithOwner } from "@/services/comment.service";
+import { getCommentPage } from "@/lib/comment-reader";
 import {
   ContentWithMentions,
   type RenderMentionArg,
@@ -258,7 +258,11 @@ interface UnifiedCommentsProps {
   compact?: boolean;
 }
 
-export function UnifiedComments({
+export function UnifiedComments(props: UnifiedCommentsProps) {
+  return <UnifiedCommentsContent key={`${props.targetType}:${props.targetUuid}`} {...props} />;
+}
+
+function UnifiedCommentsContent({
   targetType,
   targetUuid,
   currentUserUuid,
@@ -276,6 +280,7 @@ export function UnifiedComments({
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoadingPage, setIsLoadingPage] = useState(false);
+  const [pageError, setPageError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [oldestCursor, setOldestCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -286,6 +291,14 @@ export function UnifiedComments({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const deletingCommentUuidsRef = useRef(new Set<string>());
   const deletedCommentUuidsRef = useRef(new Set<string>());
+  const readRef = useRef<AbortController | null>(null);
+  const mutationRevisionRef = useRef(0);
+  const pendingSyncRef = useRef(false);
+  const pendingOlderRef = useRef(false);
+  const syncRef = useRef<() => Promise<void>>(async () => {});
+  const olderRef = useRef<() => Promise<void>>(async () => {});
+  const pageErrorRef = useRef(false);
+  const loadErrorRef = useRef<string | null>(null);
 
   // Mutable mirrors of state the IntersectionObserver / SSE callbacks read, so they
   // see fresh values without being torn down + rebuilt on every state change.
@@ -309,44 +322,125 @@ export function UnifiedComments({
   }, [total, onCountChange]);
 
   // Initial / reset load — the newest page only (fast first paint).
-  const loadInitial = useCallback(async () => {
+  const finishRead = useCallback((controller: AbortController) => {
+    if (readRef.current !== controller) return;
+    readRef.current = null;
+    if (pendingOlderRef.current && hasMoreRef.current && !pageErrorRef.current) {
+      pendingOlderRef.current = false;
+      void olderRef.current();
+    } else {
+      pendingOlderRef.current = false;
+      if (pendingSyncRef.current) void syncRef.current();
+    }
+  }, []);
+
+  const loadInitial = useCallback(async (): Promise<void> => {
+    readRef.current?.abort();
+    const controller = new AbortController();
+    readRef.current = controller;
+    const revision = mutationRevisionRef.current;
+    isLoadingRef.current = true;
+    isLoadingPageRef.current = false;
+    pageErrorRef.current = false;
+    pendingOlderRef.current = false;
+    loadErrorRef.current = null;
+    setIsLoadingPage(false);
+    setPageError(false);
     setIsLoading(true);
     setLoadError(null);
-    const result = await getCommentsAction(targetType, targetUuid, {
-      limit: COMMENT_PAGE_SIZE,
-    });
-    if (result.success) {
+    try {
+      const result = await getCommentPage(targetType, targetUuid, {
+        limit: COMMENT_PAGE_SIZE,
+        signal: controller.signal,
+      });
+      if (readRef.current !== controller) return;
+      if (revision !== mutationRevisionRef.current) {
+        void loadInitial();
+        return;
+      }
+      if (!result.success) throw new Error("Comment read failed");
+      commentsRef.current = result.comments;
+      oldestCursorRef.current = result.nextCursor;
+      hasMoreRef.current = result.hasMore;
       setComments(result.comments);
       setOldestCursor(result.nextCursor);
       setHasMore(result.hasMore);
       setTotal(result.total);
-    } else {
-      setLoadError(result.error);
+    } catch {
+      if (readRef.current !== controller) return;
+      loadErrorRef.current = "Failed to load comments";
+      setLoadError(loadErrorRef.current);
+    } finally {
+      if (readRef.current === controller) {
+        isLoadingRef.current = false;
+        setIsLoading(false);
+        finishRead(controller);
+      }
     }
-    setIsLoading(false);
-  }, [targetType, targetUuid]);
+  }, [targetType, targetUuid, finishRead]);
 
   useEffect(() => {
-    loadInitial();
+    void loadInitial();
+    return () => {
+      const controller = readRef.current;
+      readRef.current = null;
+      pendingSyncRef.current = false;
+      pendingOlderRef.current = false;
+      controller?.abort();
+    };
   }, [loadInitial]);
 
   // Load the next OLDER page (scroll-down) and append below the current list.
   const loadOlder = useCallback(async () => {
     if (isLoadingPageRef.current || isLoadingRef.current) return;
     if (!hasMoreRef.current || !oldestCursorRef.current) return;
+    pageErrorRef.current = false;
+    setPageError(false);
+    if (readRef.current) {
+      pendingOlderRef.current = true;
+      return;
+    }
+    const controller = new AbortController();
+    readRef.current = controller;
+    const revision = mutationRevisionRef.current;
+    isLoadingPageRef.current = true;
     setIsLoadingPage(true);
-    const result = await getCommentsAction(targetType, targetUuid, {
-      cursor: oldestCursorRef.current,
-      limit: COMMENT_PAGE_SIZE,
-    });
-    if (result.success) {
-      setComments((prev) => mergeCommentsByUuid(prev, result.comments));
+    try {
+      const result = await getCommentPage(targetType, targetUuid, {
+        cursor: oldestCursorRef.current,
+        limit: COMMENT_PAGE_SIZE,
+        signal: controller.signal,
+      });
+      if (readRef.current !== controller) return;
+      if (revision !== mutationRevisionRef.current) {
+        pendingSyncRef.current = true;
+        throw new Error("Comment page invalidated");
+      }
+      if (!result.success) throw new Error("Comment read failed");
+      const merged = mergeCommentsByUuid(commentsRef.current, result.comments);
+      commentsRef.current = merged;
+      oldestCursorRef.current = result.nextCursor;
+      hasMoreRef.current = result.hasMore;
+      setComments(merged);
       setOldestCursor(result.nextCursor);
       setHasMore(result.hasMore);
       setTotal(result.total);
+    } catch {
+      if (readRef.current !== controller) return;
+      pageErrorRef.current = true;
+      setPageError(true);
+    } finally {
+      if (readRef.current === controller) {
+        isLoadingPageRef.current = false;
+        setIsLoadingPage(false);
+        finishRead(controller);
+      }
     }
-    setIsLoadingPage(false);
-  }, [targetType, targetUuid]);
+  }, [targetType, targetUuid, finishRead]);
+
+  useEffect(() => {
+    olderRef.current = loadOlder;
+  }, [loadOlder]);
 
   // Auto-load older pages when the bottom sentinel scrolls into view. Re-runs once
   // the initial load finishes (isLoading flips false) so it attaches to the sentinel
@@ -356,7 +450,7 @@ export function UnifiedComments({
     if (!node) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) loadOlder();
+        if (entries[0]?.isIntersecting && !pageErrorRef.current) void loadOlder();
       },
       { rootMargin: "120px" }
     );
@@ -366,24 +460,59 @@ export function UnifiedComments({
 
   // SSE real-time delivery: instead of reloading the whole list, sweep newest→older
   // pages and merge them in de-duped by uuid (burst-safe — see syncLatestComments).
-  useRealtimeEntityEvent(targetType, targetUuid, (event) => {
-    if (currentUserUuid && event.actorUuid === currentUserUuid) return;
-    syncLatestComments(commentsRef.current, async (cursor) => {
-      const result = await getCommentsAction(targetType, targetUuid, {
-        cursor,
-        limit: COMMENT_PAGE_SIZE,
+  const syncComments = useCallback(async () => {
+    if (loadErrorRef.current) {
+      pendingSyncRef.current = false;
+      return;
+    }
+    if (readRef.current || isLoadingRef.current) {
+      pendingSyncRef.current = true;
+      return;
+    }
+    pendingSyncRef.current = false;
+    const controller = new AbortController();
+    readRef.current = controller;
+    const revision = mutationRevisionRef.current;
+    try {
+      const sync = await syncLatestComments(commentsRef.current, async (cursor) => {
+        const result = await getCommentPage(targetType, targetUuid, {
+          cursor,
+          limit: COMMENT_PAGE_SIZE,
+          signal: controller.signal,
+        });
+        if (!result.success) throw new Error("Comment sync failed");
+        return result;
       });
-      return result.success ? result : null;
-    }).then((sync) => {
+      if (readRef.current !== controller) return;
+      if (revision !== mutationRevisionRef.current) {
+        pendingSyncRef.current = true;
+        return;
+      }
       if (!sync) return;
+      commentsRef.current = sync.comments;
       setComments(sync.comments);
       setTotal(sync.total);
       if (!sync.contiguous) {
         // Window was reset to the newest pages — adopt the new bottom cursor.
         setOldestCursor(sync.resetOldestCursor);
         setHasMore(sync.resetHasMore);
+        oldestCursorRef.current = sync.resetOldestCursor;
+        hasMoreRef.current = sync.resetHasMore;
       }
-    });
+    } catch {
+      pendingSyncRef.current = false;
+    } finally {
+      finishRead(controller);
+    }
+  }, [targetType, targetUuid, finishRead]);
+
+  useEffect(() => {
+    syncRef.current = syncComments;
+  }, [syncComments]);
+
+  useRealtimeEntityEvent(targetType, targetUuid, (event) => {
+    if (currentUserUuid && event.actorUuid === currentUserUuid) return;
+    void syncComments();
   });
 
   const handleSubmit = async () => {
@@ -394,11 +523,14 @@ export function UnifiedComments({
     setIsSubmitting(false);
 
     if (result.success) {
+      mutationRevisionRef.current += 1;
       // Optimistic insert via the same merge path so the later SSE echo de-dups.
       // Only bump the total when the comment is genuinely new to the loaded window
       // (guards against a double-count if an echo already merged it in).
       const isNew = !commentsRef.current.some((c) => c.uuid === result.comment.uuid);
-      setComments((prev) => mergeCommentsByUuid(prev, [result.comment]));
+      const merged = mergeCommentsByUuid(commentsRef.current, [result.comment]);
+      commentsRef.current = merged;
+      setComments(merged);
       if (isNew) setTotal((prev) => prev + 1);
       setComment("");
       editorRef.current?.clear();
@@ -430,6 +562,7 @@ export function UnifiedComments({
         }
 
         deletedCommentUuidsRef.current.add(commentUuid);
+        mutationRevisionRef.current += 1;
         if (commentsRef.current.some((item) => item.uuid === commentUuid)) {
           const nextComments = commentsRef.current.filter(
             (item) => item.uuid !== commentUuid,
@@ -544,6 +677,13 @@ export function UnifiedComments({
               <span className="ml-2 text-xs text-muted-foreground">
                 {t("comments.loadingMore")}
               </span>
+            </div>
+          ) : pageError ? (
+            <div role="alert" className="flex flex-col items-center gap-2 py-4 text-sm text-muted-foreground">
+              <p>{t("comments.loadError")}</p>
+              <Button variant="outline" size="sm" onClick={loadOlder}>
+                {t("comments.retry")}
+              </Button>
             </div>
           ) : (
             !hasMore && (
