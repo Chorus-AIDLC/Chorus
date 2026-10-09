@@ -23,6 +23,8 @@ export class EventRouter {
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.seen = opts.seen ?? new Set();
     this.acceptedAliases = new Map();
+    this.acceptedAdmissions = new Map();
+    this.rejectedAdmissions = new Map();
     this.inFlight = new Map();
     this.generation = 0;
     this.stopped = false;
@@ -40,18 +42,39 @@ export class EventRouter {
     this.invalidate();
   }
 
-  releaseAccepted(turnUuids) {
+  releaseAccepted(turnUuids, deliveryAdmissions) {
     for (const turnUuid of turnUuids) {
       const key = `turn:${turnUuid}`;
+      if (deliveryAdmissions && this.acceptedAdmissions.get(key) !== deliveryAdmissions[turnUuid]) continue;
       for (const alias of this.acceptedAliases.get(key) ?? [key]) this.seen.delete(alias);
       this.acceptedAliases.delete(key);
+      this.acceptedAdmissions.delete(key);
+    }
+  }
+
+  rejectAdmission(report) {
+    if (report.connectionUuid !== undefined && report.connectionUuid !== this.getConnectionUuid()) return;
+    this.rejectedAdmissions.set(report.admissionUuid, report);
+  }
+
+  reconcilePendingTurns(turns) {
+    const pending = new Set(turns.filter((turn) => nonempty(turn?.turnUuid)).map((turn) => turn.turnUuid));
+    for (const [admissionUuid, report] of this.rejectedAdmissions) {
+      if (report.connectionUuid !== undefined && report.connectionUuid !== this.getConnectionUuid()) {
+        this.rejectedAdmissions.delete(admissionUuid);
+        continue;
+      }
+      const survivors = report.turnUuids.filter((turnUuid) => pending.has(turnUuid));
+      if (survivors.length === report.turnUuids.length) continue;
+      this.releaseAccepted(survivors, report.deliveryAdmissions);
+      this.rejectedAdmissions.delete(admissionUuid);
     }
   }
 
   #accept(keys) {
     for (const key of keys) {
       this.seen.add(key);
-      if (key.startsWith("turn:")) this.acceptedAliases.set(key, keys);
+      if (key.startsWith("turn:")) this.acceptedAliases.set(key, [...new Set([...(this.acceptedAliases.get(key) ?? []), ...keys])]);
     }
   }
 
@@ -294,6 +317,7 @@ export class EventRouter {
     if (notification.turnUuid) notification.admissionUuid = randomUUID();
     const accepted = this.queue.enqueue(attribution.key, { notification, attribution, ...(isolated ? { isolated: true } : {}) });
     if (accepted === false) return { status: "retryable", reason: "queue_refused" };
+    if (notification.turnUuid) this.acceptedAdmissions.set(`turn:${notification.turnUuid}`, notification.admissionUuid);
     if (notification.uuid) this.seen.add(notification.uuid);
     if (notification.turnUuid) this.seen.add(`turn:${notification.turnUuid}`);
     try {

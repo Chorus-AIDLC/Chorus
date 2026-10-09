@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import type { Notification, Prisma } from "@/generated/prisma/client";
+import { Prisma, type Notification } from "@/generated/prisma/client";
 import type { AgentAuthContext, AuthContext } from "@/types/auth";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -14,7 +14,9 @@ vi.mock("@/lib/prisma", async () => ({
 }));
 const events = vi.hoisted(() => ({ emit: vi.fn() }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: events }));
-vi.mock("@/services/notification-turn", () => ({ createTurnAndResolveTarget: vi.fn() }));
+vi.mock("@/services/notification-turn", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/services/notification-turn")>(), createTurnAndResolveTarget: vi.fn(),
+}));
 const enrichment = vi.hoisted(() => ({
   resolveResourceOrchestrator: vi.fn(async () => null),
   resolveWakerSessionAnchor: vi.fn(async () => null),
@@ -48,6 +50,13 @@ function matches(row: Notification, where: Prisma.NotificationWhereInput = {}): 
     if (field === "NOT") return !(Array.isArray(expected) ? expected : [expected as Prisma.NotificationWhereInput]).some((part) => matches(row, part));
     const actual = row[field as keyof Notification];
     if (expected !== null && typeof expected === "object") {
+      if (field === "wakeRecovery" && "equals" in expected) {
+        if (expected.equals === Prisma.DbNull) return actual === null;
+        const path = "path" in expected ? expected.path as string[] : [];
+        const value = path.reduce<unknown>((current, key) => current && typeof current === "object"
+          ? (current as Record<string, unknown>)[key] : undefined, actual);
+        return value === expected.equals;
+      }
       if ("in" in expected) return (expected.in as unknown[]).includes(actual);
       if ("not" in expected) return actual !== expected.not;
     }
@@ -108,6 +117,8 @@ function add(uuid: string, projectUuid: string, overrides: Partial<Notification>
     readAt: null,
     archivedAt: null,
     instructionText: null,
+    wakeRecovery: null,
+    wakeRecoveryPending: false,
     createdAt: new Date(Date.UTC(2026, 9, 1, 0, rows.length)),
     updatedAt: new Date(),
     ...overrides,
@@ -499,6 +510,25 @@ describe("MCP notifications and checkin share service access filtering", () => {
     expect(next.unreadCount).toBe(1);
     expect(oldest.readAt).toBeNull();
     expect(JSON.stringify(first)).not.toContain("private project title");
+  });
+
+  it("MCP excludes outbox-owned wakes before pagination and auto-marking, including settled recovery", async () => {
+    const recipient = { recipientType: "agent", recipientUuid: "agent" };
+    const visible = add("online-legacy", "public", {
+      ...recipient, wakeRecovery: { version: 1, deliveryOwner: "legacy" },
+    });
+    const deferred = add("deferred", "public", {
+      ...recipient, wakeRecoveryPending: true, wakeRecovery: { version: 1, deliveryOwner: "outbox" },
+    });
+    const recovered = add("recovered", "public", {
+      ...recipient, wakeRecoveryPending: false, wakeRecovery: { version: 1, deliveryOwner: "protocol1" },
+    });
+    const handlers = register(agentAuth());
+    const result = payload(await handlers.chorus_get_notifications({ status: "unread", limit: 1, offset: 0 }));
+    expect(result).toMatchObject({ total: 1, unreadCount: 1, notifications: [{ uuid: visible.uuid }] });
+    expect(visible.readAt).not.toBeNull();
+    expect(deferred.readAt).toBeNull();
+    expect(recovered.readAt).toBeNull();
   });
 
   it("MCP mark-all leaves inaccessible rows unread", async () => {

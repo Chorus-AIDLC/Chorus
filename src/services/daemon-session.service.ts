@@ -27,6 +27,7 @@
 // a resume against a different working directory would `No conversation found`.
 
 import { Prisma } from "@/generated/prisma/client";
+import { legacyWakeTurnWhere } from "@/services/notification-wake-policy";
 import { prisma } from "@/lib/prisma";
 import { normalizeWakeError, type WakeError } from "@/lib/daemon-wake-error";
 import { parseWakeContext, type WakeContext } from "@/services/daemon-wake-context";
@@ -547,6 +548,8 @@ export async function createPendingTurn(params: {
   promptText?: string | null;
   operationPayload?: OperationPayload;
   wakeContext?: WakeContext;
+  wakeTargetConnectionUuid?: string;
+  wakeRuntimeCwd?: string | null;
   executionUuid?: string | null;
 }, db: SessionTransactionClient = prisma): Promise<TurnView> {
   // The session must exist and carries the companyUuid the SSE event needs. (The
@@ -591,18 +594,28 @@ export async function createPendingTurn(params: {
     });
     const seq = (last?.seq ?? 0) + 1;
     try {
-      row = await db.daemonSessionTurn.create({
-        data: {
-          sessionUuid: params.sessionUuid,
-          seq,
-          trigger: params.trigger,
-          promptText: params.promptText ?? null,
-          ...(params.operationPayload ? { operationPayload: params.operationPayload } : {}),
-          ...(params.wakeContext ? { wakeContext: params.wakeContext } : {}),
-          status: "pending",
-          executionUuid: params.executionUuid ?? null,
-        },
-      });
+      const data = {
+        sessionUuid: params.sessionUuid,
+        seq,
+        trigger: params.trigger,
+        promptText: params.promptText ?? null,
+        ...(params.operationPayload ? { operationPayload: params.operationPayload } : {}),
+        ...(params.wakeContext ? { wakeContext: params.wakeContext, wakeNotificationUuid: params.wakeContext.notificationUuid } : {}),
+        ...(params.wakeTargetConnectionUuid ? { wakeTargetConnectionUuid: params.wakeTargetConnectionUuid, wakeRuntimeCwd: params.wakeRuntimeCwd ?? null } : {}),
+        status: "pending" as const,
+        executionUuid: params.executionUuid ?? null,
+      };
+      if (params.wakeContext) {
+        const inserted = await db.daemonSessionTurn.createManyAndReturn({ data: [data], skipDuplicates: true });
+        row = inserted[0];
+        if (!row) {
+          const existing = await db.daemonSessionTurn.findUnique({ where: { wakeNotificationUuid: params.wakeContext.notificationUuid } });
+          if (existing) return toTurnView(existing);
+          continue;
+        }
+      } else {
+        row = await db.daemonSessionTurn.create({ data });
+      }
       break;
     } catch (e) {
       // P2002 = unique-constraint violation on (sessionUuid, seq): another create won
@@ -2165,9 +2178,13 @@ export async function advanceTurnForWake(params: {
   // Recheck origin in SQL, including settlement, if the session is repointed after
   // the initial read. Ordinary reports from an older origin keep their existing behavior.
   const originCompatible = { OR: [NON_OPERATION_TURN, { session: originFence }] };
-  const fifoFilter = isolateOperations || session.originConnectionUuid !== params.connectionUuid
+  const operationFilter = isolateOperations || session.originConnectionUuid !== params.connectionUuid
     ? NON_OPERATION_TURN : isolateResearch
       ? { AND: [NON_RESEARCH_TURN, originCompatible] } : originCompatible;
+  const legacyDeliveryFilter = { AND: [legacyWakeTurnWhere(), { OR: [
+    { wakeTargetConnectionUuid: null }, { wakeTargetConnectionUuid: params.connectionUuid },
+  ] }] };
+  const fifoFilter = { AND: [operationFilter, legacyDeliveryFilter] };
   const fromStatus =
     params.status === "running"
       ? "pending"
@@ -2176,7 +2193,7 @@ export async function advanceTurnForWake(params: {
         : null;
   const turn = await prisma.daemonSessionTurn.findFirst({
     where: params.turnUuid
-      ? { uuid: params.turnUuid, sessionUuid: session.uuid }
+      ? { uuid: params.turnUuid, sessionUuid: session.uuid, ...legacyDeliveryFilter }
       : {
           sessionUuid: session.uuid,
           ...(fromStatus ? { status: fromStatus } : {}),
@@ -2503,7 +2520,6 @@ async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]
     result = await prisma.$transaction(async (tx): Promise<AdvanceTurnForWakeResult> => {
       const fence = {
         companyUuid: params.companyUuid, agentUuid: params.agentUuid,
-        ...(params.status === "running" ? { originConnectionUuid: params.connectionUuid } : {}),
       };
       const sessions = await tx.$queryRaw<Array<{ uuid: string }>>`
         SELECT "uuid" FROM "DaemonSession"
@@ -2527,6 +2543,9 @@ async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]
       const rows = await tx.daemonSessionTurn.findMany({ where: { uuid: { in: members }, sessionUuid: session.uuid } });
       if (rows.length !== members.length) return { ok: false, reason: "not_found" };
       for (const row of rows) {
+        if (params.status === "running" && (row.wakeTargetConnectionUuid ?? session.originConnectionUuid) !== params.connectionUuid) {
+          return { ok: false, reason: "not_found" };
+        }
         if (!await canAgentReceiveSessionTurn(params.companyUuid, params.agentUuid, { ...row, session }, tx)) {
           return { ok: false, reason: "not_found" };
         }
@@ -2723,9 +2742,9 @@ async function canAgentReceiveSessionTurn(
 
 // A persisted pending turn is not a permanent access grant. Live delivery and
 // reconnect backfill must both resolve its current idea OR originating entity.
-export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string, turnUuid: string, connectionUuid?: string): Promise<boolean> {
+export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string, turnUuid: string, connectionUuid?: string, legacyOnly = false): Promise<boolean> {
   const turn = await prisma.daemonSessionTurn.findFirst({
-    where: { uuid: turnUuid, session: { companyUuid, agentUuid, ...(connectionUuid ? { originConnectionUuid: connectionUuid } : {}) } },
+    where: { uuid: turnUuid, session: { companyUuid, agentUuid }, ...(connectionUuid ? wakeTargetFilter(connectionUuid) : {}), ...(legacyOnly ? { AND: [legacyWakeTurnWhere()] } : {}) },
     select: {
       sessionUuid: true, trigger: true, wakeContext: true,
       session: { select: { sessionId: true, directIdeaUuid: true } },
@@ -2736,12 +2755,19 @@ export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string
 
 export async function getWakeRecoveryDelivery(companyUuid: string, agentUuid: string, connectionUuid: string, turnUuid: string) {
   const turn = await prisma.daemonSessionTurn.findFirst({
-    where: { uuid: turnUuid, status: "pending", session: { companyUuid, agentUuid, originConnectionUuid: connectionUuid } },
-    select: { uuid: true, sessionUuid: true, trigger: true, wakeContext: true, session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } } },
+    where: { uuid: turnUuid, status: "pending", session: { companyUuid, agentUuid }, ...wakeTargetFilter(connectionUuid) },
+    select: { uuid: true, sessionUuid: true, trigger: true, wakeContext: true, wakeTargetConnectionUuid: true, wakeRuntimeCwd: true, session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } } },
   });
   if (!turn || !await canAgentReceiveSessionTurn(companyUuid, agentUuid, turn)) return null;
   const wakeContext = parseWakeContext(turn.wakeContext);
-  return { turnUuid: turn.uuid, wakeContext, ...(wakeContext ? { notificationUuid: wakeContext.notificationUuid } : {}), runtimeCwd: turn.session.runtimeCwd, targetConnectionUuid: connectionUuid };
+  return { turnUuid: turn.uuid, wakeContext, ...(wakeContext ? { notificationUuid: wakeContext.notificationUuid } : {}), runtimeCwd: turn.wakeTargetConnectionUuid ? turn.wakeRuntimeCwd : turn.session.runtimeCwd, targetConnectionUuid: connectionUuid };
+}
+
+function wakeTargetFilter(connectionUuid: string): Prisma.DaemonSessionTurnWhereInput {
+  return { OR: [
+    { wakeTargetConnectionUuid: connectionUuid },
+    { wakeTargetConnectionUuid: null, session: { originConnectionUuid: connectionUuid } },
+  ] };
 }
 
 /**
@@ -2771,8 +2797,9 @@ export async function getPendingTurnsForConnection(params: {
       session: {
         companyUuid: params.companyUuid,
         agentUuid: params.agentUuid,
-        originConnectionUuid: params.connectionUuid,
       },
+      ...wakeTargetFilter(params.connectionUuid),
+      ...(params.wakeRecoveryProtocol === 1 ? {} : { AND: [legacyWakeTurnWhere()] }),
     },
     orderBy: [{ session: { createdAt: "asc" } }, { seq: "asc" }],
     select: {
@@ -2783,6 +2810,8 @@ export async function getPendingTurnsForConnection(params: {
       promptText: true,
       operationPayload: true,
       wakeContext: true,
+      wakeTargetConnectionUuid: true,
+      wakeRuntimeCwd: true,
       executionUuid: true,
       createdAt: true,
       session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } },
@@ -2821,7 +2850,7 @@ export async function getPendingTurnsForConnection(params: {
     sessionUuid: r.sessionUuid,
     sessionId: r.session.sessionId,
     directIdeaUuid: r.session.directIdeaUuid,
-    runtimeCwd: r.session.runtimeCwd,
+    runtimeCwd: r.wakeTargetConnectionUuid ? r.wakeRuntimeCwd : r.session.runtimeCwd,
     seq: r.seq,
     trigger: !params.operationProtocol && isOperationTrigger(r.trigger) ? "human_instruction" : r.trigger,
     ...(params.operationProtocol ? { operationPayload: r.operationPayload ?? null } : {}),

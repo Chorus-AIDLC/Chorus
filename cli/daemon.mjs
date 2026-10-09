@@ -322,9 +322,14 @@ export function buildDaemon(creds, deps = {}) {
         reportInterrupt,
         postComment: (comment) => mcpClient.callTool("chorus_add_comment", comment),
         advanceTurn,
+        getConnectionUuid: () => connectionState.connectionUuid,
         verbose,
-        onAdmissionCancelled: (turnUuids) => {
-          router.releaseAccepted(turnUuids);
+        onAdmissionCancelled: (turnUuids, deliveryAdmissions) => {
+          router.releaseAccepted(turnUuids, deliveryAdmissions);
+          recovery.reconcile();
+        },
+        onAdmissionRejected: (report) => {
+          router.rejectAdmission(report);
           recovery.reconcile();
         },
         validateRuntimeCwd: (runtimeCwd) => validateDirectory({ cwd: runtimeCwd, browseRoots }),
@@ -476,6 +481,7 @@ export function buildDaemon(creds, deps = {}) {
       apiKey: creds.apiKey,
       getConnectionUuid: () => connectionState.connectionUuid,
       dispatchPendingTurn: (turn, options) => router.dispatchPendingTurn?.(turn, options),
+      reconcilePendingTurns: (turns) => router.reconcilePendingTurns(turns),
       fetchImpl: deps.fetchImpl,
     });
     const recovery = createDeliveryRecovery({ router, backfill, getConnectionUuid: () => connectionState.connectionUuid, logger });
@@ -508,7 +514,7 @@ export function buildDaemon(creds, deps = {}) {
         cwd,
         onEvent: (event) => recovery.dispatch(event),
         onConnectionId: (connectionUuid) => {
-          if (connectionState.connectionUuid) waker.cancelPendingAdmissions();
+          if (connectionState.connectionUuid && connectionState.connectionUuid !== connectionUuid) waker.cancelPendingAdmissions();
           connectionState.connectionUuid = connectionUuid;
           recovery.register();
           logger.info(
@@ -544,7 +550,7 @@ export function buildDaemon(creds, deps = {}) {
         },
         onControl,
         acknowledgeHeartbeat: (registration) => daemonRestClient.heartbeat(registration),
-        onReconnect: () => { recovery.suspend(); waker.cancelPendingAdmissions(); },
+        onReconnect: () => { recovery.suspend(); },
         logger,
       });
 

@@ -8,6 +8,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaClient } from "../../generated/prisma/client";
+vi.mock("@/generated/prisma/client", async () => import("../../generated/prisma/client"));
 
 const state = vi.hoisted(() => ({ db: null as unknown, emit: vi.fn() }));
 vi.mock("@/lib/prisma", () => ({ get prisma() { return state.db; } }));

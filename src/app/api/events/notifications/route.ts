@@ -167,7 +167,7 @@ export async function GET(request: NextRequest) {
                 });
                 return;
               }
-              deliverGuarded(event, () => canAgentReceiveTurn(auth.companyUuid, auth.actorUuid, event.turnUuid as string));
+              deliverGuarded(event, () => canAgentReceiveTurn(auth.companyUuid, auth.actorUuid, event.turnUuid as string, conn.uuid, true));
             } else {
               send(`data: ${JSON.stringify(event)}\n\n`);
             }

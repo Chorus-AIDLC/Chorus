@@ -43,6 +43,8 @@
 //       to end on the live-send side.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { isDeepStrictEqual } from "node:util";
+import { Prisma } from "@/generated/prisma/client";
 
 // ===== Stateful in-memory prisma fake =====
 //
@@ -87,16 +89,31 @@ type Store = ReturnType<typeof makeStore>;
 
 // Match the scalar, AND/OR, membership and relation predicates used by notification
 // access checks and the pending-turn backfill.
-function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: Row): boolean {
+function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: Row): boolean | null {
+  let unknown = false;
   for (const [key, cond] of Object.entries(where ?? {})) {
     if (cond === undefined) continue;
     if (key === "AND") {
       const branches = Array.isArray(cond) ? cond : [cond];
-      if (!branches.every((branch) => matchWhere(store, model, row, branch as Row))) return false;
+      const matches = branches.map((branch) => matchWhere(store, model, row, branch as Row));
+      if (matches.includes(false)) return false;
+      if (matches.includes(null)) unknown = true;
       continue;
     }
     if (key === "OR") {
-      if (!Array.isArray(cond) || !cond.some((branch) => matchWhere(store, model, row, branch as Row))) return false;
+      if (!Array.isArray(cond)) return false;
+      const matches = cond.map((branch) => matchWhere(store, model, row, branch as Row));
+      if (!matches.includes(true)) {
+        if (!matches.includes(null)) return false;
+        unknown = true;
+      }
+      continue;
+    }
+    if (key === "NOT") {
+      const branches = Array.isArray(cond) ? cond : [cond];
+      const matches = branches.map((branch) => matchWhere(store, model, row, branch as Row));
+      if (matches.includes(true)) return false;
+      if (matches.includes(null)) unknown = true;
       continue;
     }
     if (key === "projectUuid_userUuid" && model === "projectMember") {
@@ -122,6 +139,16 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
       continue;
     }
 
+    if (key === "wakeNotification" && model === "daemonSessionTurn") {
+      const notification = store.data.notification.find((candidate) => candidate.uuid === row.wakeNotificationUuid);
+      const predicate = cond === null ? null : "is" in (cond as Row) ? (cond as Row).is : cond;
+      if (predicate === null) {
+        if (notification) return false;
+      } else if (!notification || matchWhere(store, "notification", notification, predicate as Row) !== true) {
+        return false;
+      }
+      continue;
+    }
     if (key === "session" && model === "daemonSessionTurn") {
       const session = store.data.daemonSession.find((s) => s.uuid === row.sessionUuid);
       if (!session) return false;
@@ -130,22 +157,47 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
     }
 
     const val = row[key];
+    if (cond === null) {
+      if (val != null) return false;
+      continue;
+    }
     if (cond !== null && typeof cond === "object") {
       const c = cond as Row;
+      if ("equals" in c) {
+        const jsonValue = (value: unknown) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+        const actual = Array.isArray(c.path)
+          ? (c.path as string[]).reduce<unknown>((value, field) => (value as Row | null)?.[field], val)
+          : val;
+        if (c.equals === Prisma.DbNull) {
+          if (actual != null) return false;
+        } else if (!isDeepStrictEqual(jsonValue(actual), jsonValue(c.equals))) return false;
+        continue;
+      }
       if ("in" in c) {
-        if (!Array.isArray(c.in) || !(c.in as unknown[]).includes(val)) return false;
+        if (val == null) unknown = true;
+        else if (!Array.isArray(c.in) || !(c.in as unknown[]).includes(val)) return false;
         continue;
       }
       if ("not" in c) {
-        if (val === c.not) return false;
+        if (c.not === null) {
+          if (val == null) return false;
+        } else if (val == null) {
+          unknown = true;
+        } else if (val === c.not) return false;
+        continue;
+      }
+      if ("startsWith" in c) {
+        if (val == null) unknown = true;
+        else if (typeof val !== "string" || typeof c.startsWith !== "string" || !val.startsWith(c.startsWith)) return false;
         continue;
       }
       // Unknown operator object — no match, surfaced loudly rather than silently passing.
       return false;
     }
-    if (val !== cond) return false;
+    if (val == null) unknown = true;
+    else if (val !== cond) return false;
   }
-  return true;
+  return unknown ? null : true;
 }
 
 function applyOrderBy(store: Store, model: keyof Store["data"], rows: Row[], orderBy: unknown): Row[] {
@@ -212,6 +264,34 @@ function compare(a: unknown, b: unknown): number {
 }
 
 function buildPrismaFake(store: Store) {
+  function createTurn(data: Row, skipDuplicates = false) {
+    const duplicate = store.data.daemonSessionTurn.some((turn) =>
+      (data.wakeNotificationUuid != null && turn.wakeNotificationUuid === data.wakeNotificationUuid) ||
+      (turn.sessionUuid === data.sessionUuid && turn.seq === data.seq),
+    );
+    if (duplicate) {
+      if (skipDuplicates) return null;
+      throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    }
+    const row: Row = {
+      id: store.nextId(),
+      uuid: store.nextUuid("turn"),
+      backendSessionId: null,
+      promptText: null,
+      wakeContext: null,
+      wakeNotificationUuid: null,
+      wakeTargetConnectionUuid: null,
+      wakeRuntimeCwd: null,
+      executionUuid: null,
+      startedAt: null,
+      endedAt: null,
+      createdAt: new Date(),
+      ...data,
+    };
+    store.data.daemonSessionTurn.push(row);
+    return { ...row };
+  }
+
   function findMany(model: keyof Store["data"], args: Row = {}) {
     let rows = store.data[model].filter((r) => matchWhere(store, model, r, (args.where as Row) ?? {}));
     rows = applyOrderBy(store, model, rows, args.orderBy);
@@ -303,20 +383,13 @@ function buildPrismaFake(store: Store) {
       findFirst: vi.fn(async (args: Row) => findFirst("daemonSessionTurn", args)),
       findUnique: vi.fn(async (args: Row) => findFirst("daemonSessionTurn", { where: args.where })),
       findMany: vi.fn(async (args: Row) => findMany("daemonSessionTurn", args)),
-      create: vi.fn(async (args: Row) => {
-        const row: Row = {
-          id: store.nextId(),
-          uuid: store.nextUuid("turn"),
-          promptText: null,
-          executionUuid: null,
-          startedAt: null,
-          endedAt: null,
-          createdAt: new Date(),
-          ...(args.data as Row),
-        };
-        store.data.daemonSessionTurn.push(row);
-        return { ...row };
-      }),
+      create: vi.fn(async (args: Row) => createTurn(args.data as Row)),
+      createManyAndReturn: vi.fn(async (args: Row) =>
+        (args.data as Row[]).flatMap((data) => {
+          const row = createTurn(data, args.skipDuplicates === true);
+          return row ? [row] : [];
+        }),
+      ),
       update: vi.fn(async (args: Row) => {
         const row = store.data.daemonSessionTurn.find((t) => t.uuid === (args.where as Row).uuid);
         if (!row) throw new Error("turn not found for update");
@@ -330,11 +403,21 @@ function buildPrismaFake(store: Store) {
       count: vi.fn(async (args: Row) => count("daemonConnection", args)),
     },
     notification: {
+      findUnique: vi.fn(async (args: Row) => findFirst("notification", args)),
+      updateMany: vi.fn(async (args: Row) => {
+        const rows = store.data.notification.filter((row) =>
+          matchWhere(store, "notification", row, (args.where as Row) ?? {}) === true,
+        );
+        for (const row of rows) Object.assign(row, args.data as Row);
+        return { count: rows.length };
+      }),
       findFirst: vi.fn(async (args: Row) => findFirst("notification", args)),
       create: vi.fn(async (args: Row) => {
         const row: Row = {
           id: store.nextId(),
           uuid: store.nextUuid("notif"),
+          wakeRecovery: null,
+          wakeRecoveryPending: false,
           readAt: null,
           archivedAt: null,
           instructionText: null,
@@ -849,8 +932,8 @@ describe("integration: KEY ASSERTION — the wake reads the EXACT assignment sha
 // SOFT "degrade to online-first" behavior.
 // ===========================================================================================
 
-describe("integration: an OFFLINE assignment (HARD) pin is notify-only (never re-routed); a fully-offline agent records a plain notification", () => {
-  it("a task_assigned wake pinned (agent_instance, HARD) to an OFFLINE place is notify-only (NO re-route to the online-elsewhere instance)", async () => {
+describe("integration: offline assignment pins retain pending notification recovery without a turn or reroute", () => {
+  it("preserves deferred recovery for an offline hard pin without rerouting to an online instance", async () => {
     // The assignment is pinned to the (PIN_HOST, PIN_CWD) instance. This is now a HARD pin
     // (owner choice B): when its instance is offline the wake is notify-only — NO turn, NO
     // session — and is NEVER re-routed to the agent's online-elsewhere connection (routing to
@@ -886,15 +969,28 @@ describe("integration: an OFFLINE assignment (HARD) pin is notify-only (never re
       actorName: "Alice",
     });
 
-    // HARD offline pin → notify-only: NO turn, NO session; only the plain Notification stands.
-    // Crucially it did NOT re-route to the online-elsewhere connection.
     expect(store.data.daemonSessionTurn).toHaveLength(0);
     expect(store.data.daemonSession).toHaveLength(0);
     expect(store.data.notification).toHaveLength(1);
+    expect(store.data.notification[0]).toMatchObject({
+      wakeRecoveryPending: true,
+      wakeRecovery: { version: 1, deliveryOwner: "protocol1" },
+    });
+    expect(hoisted.prismaFake.notification.updateMany).toHaveBeenCalledWith({
+      where: {
+        uuid: store.data.notification[0].uuid,
+        wakeRecoveryPending: true,
+        wakeRecovery: { equals: { version: 1, deliveryOwner: "outbox" } },
+      },
+      data: {
+        wakeRecoveryPending: true,
+        wakeRecovery: { version: 1, deliveryOwner: "protocol1" },
+      },
+    });
     expect(mockLogger.error).not.toHaveBeenCalled();
   });
 
-  it("a fully-offline agent records a PLAIN notification with NO turn (none — nothing to degrade to, no durable queue)", async () => {
+  it("retains deferred recovery for a fully-offline agent without prematurely creating a turn", async () => {
     seedInstance(PIN_HOST, PIN_CWD);
     seedTask({
       status: "assigned",
@@ -924,9 +1020,11 @@ describe("integration: an OFFLINE assignment (HARD) pin is notify-only (never re
       actorName: "Alice",
     });
 
-    // The plain Notification IS recorded, but NO turn / NO session is created — the
-    // fully-offline target is a notification-only event. A skipped wake is not an error.
     expect(store.data.notification).toHaveLength(1);
+    expect(store.data.notification[0]).toMatchObject({
+      wakeRecoveryPending: true,
+      wakeRecovery: { version: 1, deliveryOwner: "protocol1" },
+    });
     expect(store.data.daemonSessionTurn).toHaveLength(0);
     expect(store.data.daemonSession).toHaveLength(0);
     expect(mockLogger.error).not.toHaveBeenCalled();
@@ -938,6 +1036,7 @@ describe("integration: an OFFLINE assignment (HARD) pin is notify-only (never re
       connectionUuid: PINNED_CONN,
     });
     expect(pending).toHaveLength(0);
+    expect(store.data.notification[0].wakeRecoveryPending).toBe(true);
   });
 });
 

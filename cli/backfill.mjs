@@ -152,6 +152,7 @@ export function createBackfill(opts) {
       return { status: result.retryable ? "retryable" : "blocked", outcomes: {}, httpStatus: result.status };
     }
     const turns = result.data.turns;
+    opts.reconcilePendingTurns?.(turns);
 
     let redispatched = 0;
     const outcomes = {};

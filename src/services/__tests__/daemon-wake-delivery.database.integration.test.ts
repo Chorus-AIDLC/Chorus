@@ -273,6 +273,156 @@ describe("isolated database / CLI durable wake delivery", () => {
     expect(await messages(legacyUuid)).toEqual([]);
   }
 
+  function deferredWakeParams(overrides: Partial<Parameters<typeof notifications.createReturningTurn>[0]> = {}) {
+    return {
+      companyUuid: state.companyUuid, projectUuid, projectName: "delivery project",
+      recipientType: "agent", recipientUuid: state.agentUuid, entityType: "idea", entityUuid: ideaUuid,
+      entityTitle: "delivery idea", action: "mentioned", message: "offline comment", actorType: "user",
+      actorUuid: randomUUID(), actorName: "Fixture human", ...overrides,
+    };
+  }
+
+  async function pendingFor(target = connectionUuid) {
+    const response = await routeFetch(`https://delivery.invalid/api/daemon/pending-turns?connectionUuid=${target}&wakeRecoveryProtocol=1`);
+    expect(response.status).toBe(200);
+    return (await response.json()).data.turns as any[];
+  }
+
+  it("recovers newly persisted offline notifications even after read, but never historical unread rows", async () => {
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "offline" } });
+    const wake = await notifications.createReturningTurn(deferredWakeParams());
+    expect(wake.turn).toBeNull();
+    expect(await db.notification.findUniqueOrThrow({ where: { uuid: wake.notification.uuid } })).toMatchObject({ wakeRecoveryPending: true, wakeRecovery: { version: 1 } });
+    const historical = await db.notification.create({ data: deferredWakeParams({ message: "historical unread" }) });
+    await notifications.markRead(wake.notification.uuid, state.companyUuid, "agent", state.agentUuid);
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "online", lastSeenAt: new Date() } });
+    const worker = harness();
+    worker.recovery.register();
+    await vi.waitFor(() => expect(worker.launches).toHaveLength(1), { timeout: 5_000 });
+    await worker.settled();
+    const recovered = await db.daemonSessionTurn.findUniqueOrThrow({ where: { wakeNotificationUuid: wake.notification.uuid } });
+    expect(recovered).toMatchObject({ status: "ended", wakeContext: { notificationUuid: wake.notification.uuid } });
+    expect(worker.launches[0].prompt).toContain("offline comment");
+    await pendingFor();
+    expect(await db.daemonSessionTurn.count({ where: { wakeNotificationUuid: wake.notification.uuid } })).toBe(1);
+    expect(await db.daemonSessionTurn.findUnique({ where: { wakeNotificationUuid: historical.uuid } })).toBeNull();
+    expect(await db.notification.findUniqueOrThrow({ where: { uuid: wake.notification.uuid } })).toMatchObject({ wakeRecoveryPending: false });
+    await expectLegacyUntouched();
+  });
+
+  it("preserves explicit offline pins through other connections and recovers only on the selected target", async () => {
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "offline" } });
+    const other = await db.daemonConnection.create({ data: { companyUuid: state.companyUuid, agentUuid: state.agentUuid, clientType: "codex", status: "online", host: "other-host", cwd: "/other" } });
+    const wake = await notifications.createReturningTurn(deferredWakeParams({ pinnedHost: "isolated-delivery", pinnedCwd: directory }));
+    expect(wake.turn).toBeNull();
+    expect(await pendingFor(other.uuid)).toEqual([]);
+    expect(await db.daemonSessionTurn.findUnique({ where: { wakeNotificationUuid: wake.notification.uuid } })).toBeNull();
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "online", lastSeenAt: new Date() } });
+    expect(await pendingFor(other.uuid)).toEqual([]);
+    expect(await pendingFor()).toEqual(expect.arrayContaining([expect.objectContaining({ wakeContext: expect.objectContaining({ notificationUuid: wake.notification.uuid }) })]));
+  });
+
+  it("does not recover deferred work after project access revocation", async () => {
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "offline" } });
+    const wake = await notifications.createReturningTurn(deferredWakeParams());
+    await db.project.update({ where: { uuid: projectUuid }, data: { visibility: "private" } });
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "online", lastSeenAt: new Date() } });
+    expect(await pendingFor()).toEqual([]);
+    expect(await db.daemonSessionTurn.findUnique({ where: { wakeNotificationUuid: wake.notification.uuid } })).toBeNull();
+    expect(await db.notification.findUniqueOrThrow({ where: { uuid: wake.notification.uuid } })).toMatchObject({ wakeRecoveryPending: false });
+  });
+
+  it("retains proposal ambiguity suppression during offline recovery", async () => {
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "offline" } });
+    const standalone = await db.idea.create({ data: { companyUuid: state.companyUuid, projectUuid, title: "no canonical session", createdByUuid: state.agentUuid } });
+    const wake = await notifications.createReturningTurn(deferredWakeParams({ action: "proposal_approved", entityUuid: standalone.uuid }));
+    expect(wake.turn).toBeNull();
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "online", lastSeenAt: new Date() } });
+    await db.daemonConnection.create({ data: { companyUuid: state.companyUuid, agentUuid: state.agentUuid, clientType: "codex", status: "online", host: "second-host", cwd: "/second" } });
+    await pendingFor();
+    expect(await db.daemonSessionTurn.findUnique({ where: { wakeNotificationUuid: wake.notification.uuid } })).toBeNull();
+    expect(await db.notification.findUniqueOrThrow({ where: { uuid: wake.notification.uuid } })).toMatchObject({ wakeRecoveryPending: false });
+  });
+
+  it("deduplicates concurrent materialization and repairs a lost outbox settlement without replay", async () => {
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "offline" } });
+    const wake = await notifications.createReturningTurn(deferredWakeParams());
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "online", lastSeenAt: new Date() } });
+    await Promise.all([pendingFor(), pendingFor()]);
+    const recovered = await db.daemonSessionTurn.findUniqueOrThrow({ where: { wakeNotificationUuid: wake.notification.uuid } });
+    expect(await db.daemonSessionTurn.count({ where: { wakeNotificationUuid: wake.notification.uuid } })).toBe(1);
+    await db.daemonSessionTurn.update({ where: { uuid: recovered.uuid }, data: { status: "ended" } });
+    await db.notification.update({ where: { uuid: wake.notification.uuid }, data: { wakeRecoveryPending: true } });
+    await pendingFor();
+    expect(await db.daemonSessionTurn.count({ where: { wakeNotificationUuid: wake.notification.uuid } })).toBe(1);
+    expect(await db.notification.findUniqueOrThrow({ where: { uuid: wake.notification.uuid } })).toMatchObject({ wakeRecoveryPending: false });
+  });
+
+  it("recovers batch-created offline mentions with their original pins after archival", async () => {
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "offline" } });
+    const batch = await notifications.createBatch([
+      deferredWakeParams({ pinnedHost: "isolated-delivery", pinnedCwd: directory, message: "batch one" }),
+      deferredWakeParams({ pinnedHost: "isolated-delivery", pinnedCwd: directory, message: "batch two" }),
+    ]);
+    await db.notification.updateMany({ where: { uuid: { in: batch.map((notification) => notification.uuid) } }, data: { archivedAt: new Date(), readAt: new Date() } });
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "online", lastSeenAt: new Date() } });
+    const recovered = (await pendingFor()).filter((turn) => turn.wakeContext);
+    expect(recovered.map((turn) => turn.wakeContext.notification.message)).toEqual(["batch one", "batch two"]);
+    expect(new Set(recovered.map((turn) => turn.turnUuid)).size).toBe(2);
+    expect(await db.notification.count({ where: { recipientUuid: state.agentUuid, wakeRecoveryPending: true } })).toBe(0);
+  });
+
+  it("repoints standalone task sessions while preserving immutable admission ownership", async () => {
+    const task = await db.task.create({ data: { companyUuid: state.companyUuid, projectUuid, title: "quick task", createdByUuid: state.agentUuid } });
+    const params = deferredWakeParams({ entityType: "task", entityUuid: task.uuid, pinnedHost: "isolated-delivery", pinnedCwd: directory });
+    const first = await notifications.createReturningTurn(params);
+    expect(first.turn).not.toBeNull();
+    const admission = { companyUuid: state.companyUuid, agentUuid: state.agentUuid, connectionUuid, sessionId: task.uuid, turnUuid: first.turn!.uuid, turnUuids: [first.turn!.uuid], admissionUuid: randomUUID(), wakeRecoveryProtocol: 1 as const, status: "running" as const };
+    expect(await sessions.advanceTurnForWake(admission)).toMatchObject({ ok: true });
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "offline" } });
+    const replacement = await db.daemonConnection.create({ data: { companyUuid: state.companyUuid, agentUuid: state.agentUuid, clientType: "codex", status: "online", host: "new-host", cwd: "/new" } });
+    const next = await notifications.createReturningTurn({ ...params, pinnedHost: "new-host", pinnedCwd: "/new" });
+    expect(next.turn).not.toBeNull();
+    expect(await db.daemonSession.findUniqueOrThrow({ where: { uuid: next.turn!.sessionUuid } })).toMatchObject({ sessionId: task.uuid, directIdeaUuid: null, originConnectionUuid: replacement.uuid, runtimeCwd: "/new" });
+    expect(await pendingFor(replacement.uuid)).toEqual(expect.arrayContaining([expect.objectContaining({ turnUuid: next.turn!.uuid })]));
+    expect(await sessions.advanceTurnForWake({ ...admission, connectionUuid: replacement.uuid, status: "ended" })).toMatchObject({ ok: false });
+    expect(await sessions.advanceTurnForWake({ ...admission, status: "ended" })).toMatchObject({ ok: true });
+    expect(await sessions.advanceTurnForWake({ ...admission, connectionUuid: replacement.uuid, turnUuid: next.turn!.uuid, turnUuids: [next.turn!.uuid], admissionUuid: randomUUID() })).toMatchObject({ ok: true });
+  });
+
+  it.each(["task", "idea"])("keeps materialized %s hard pins owned by their target after canonical origin changes", async (entityType) => {
+    const entityUuid = entityType === "idea" ? ideaUuid : (await db.task.create({ data: { companyUuid: state.companyUuid, projectUuid, title: "pinned task", createdByUuid: state.agentUuid } })).uuid;
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "offline" } });
+    const second = await db.daemonConnection.create({ data: { companyUuid: state.companyUuid, agentUuid: state.agentUuid, clientType: "codex", status: "offline", host: "pinned-second", cwd: "/second" } });
+    const firstWake = await notifications.createReturningTurn(deferredWakeParams({ entityType, entityUuid, pinnedHost: "isolated-delivery", pinnedCwd: directory, message: "only execute on A" }));
+    const secondWake = await notifications.createReturningTurn(deferredWakeParams({ entityType, entityUuid, pinnedHost: "pinned-second", pinnedCwd: "/second", message: "only execute on B" }));
+    expect(firstWake.turn).toBeNull();
+    expect(secondWake.turn).toBeNull();
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "online", lastSeenAt: new Date() } });
+    const firstTurn = (await pendingFor()).find((turn) => turn.wakeContext?.notificationUuid === firstWake.notification.uuid);
+    expect(firstTurn).toBeDefined();
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "offline" } });
+    await db.daemonConnection.update({ where: { uuid: second.uuid }, data: { status: "online", lastSeenAt: new Date() } });
+    const onSecond = await pendingFor(second.uuid);
+    const secondTurn = onSecond.find((turn) => turn.wakeContext?.notificationUuid === secondWake.notification.uuid);
+    expect(secondTurn).toMatchObject({ runtimeCwd: "/second" });
+    expect(onSecond.some((turn) => turn.turnUuid === firstTurn.turnUuid)).toBe(false);
+    expect(await sessions.getWakeRecoveryDelivery(state.companyUuid, state.agentUuid, second.uuid, firstTurn.turnUuid)).toBeNull();
+    expect(await sessions.canAgentReceiveTurn(state.companyUuid, state.agentUuid, firstTurn.turnUuid, second.uuid)).toBe(false);
+    const admission = { companyUuid: state.companyUuid, agentUuid: state.agentUuid, connectionUuid: second.uuid, sessionId: entityUuid, turnUuid: firstTurn.turnUuid, turnUuids: [firstTurn.turnUuid], admissionUuid: randomUUID(), wakeRecoveryProtocol: 1 as const, status: "running" as const };
+    expect(await sessions.advanceTurnForWake(admission)).toMatchObject({ ok: false, reason: "not_found" });
+    expect(await sessions.advanceTurnForWake({ ...admission, turnUuid: secondTurn.turnUuid, turnUuids: [secondTurn.turnUuid, firstTurn.turnUuid] })).toMatchObject({ ok: false });
+    expect(await savedTurn(firstTurn.turnUuid)).toMatchObject({ status: "pending", wakeTargetConnectionUuid: connectionUuid, wakeRuntimeCwd: directory });
+    expect(await savedTurn(secondTurn.turnUuid)).toMatchObject({ status: "pending" });
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "online", lastSeenAt: new Date() } });
+    expect((await pendingFor()).find((turn) => turn.turnUuid === firstTurn.turnUuid)).toMatchObject({ runtimeCwd: directory });
+    expect(await sessions.getWakeRecoveryDelivery(state.companyUuid, state.agentUuid, connectionUuid, firstTurn.turnUuid)).toMatchObject({ runtimeCwd: directory });
+    expect(await sessions.advanceTurnForWake({ ...admission, connectionUuid })).toMatchObject({ ok: true });
+    expect(await sessions.advanceTurnForWake({ ...admission, connectionUuid })).toMatchObject({ ok: true });
+    expect(await sessions.advanceTurnForWake({ ...admission, connectionUuid, status: "ended" })).toMatchObject({ ok: true });
+    expect(await sessions.advanceTurnForWake({ ...admission, turnUuid: secondTurn.turnUuid, turnUuids: [secondTurn.turnUuid], admissionUuid: randomUUID() })).toMatchObject({ ok: true });
+  });
+
   it.each([false, true])("recovers read/out-of-window context after both initial reads fail, later chat=%s", async (laterChat) => {
     const original = await createWake("original comment: recover this exact context");
     const worker = harness({ failReads: true });

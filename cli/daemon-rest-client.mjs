@@ -231,8 +231,7 @@ export function createDaemonRestClient(opts) {
      * only on interrupted crash/invalid_path reports. Requires the connectionUuid (the
      * server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ sessionId, turnUuid, turnUuids, admissionUuid, wakeRecoveryProtocol, signal, status, entityType, entityUuid, interruptedReason, transcriptRelayError, wakeError, usage, backendSessionId, coalescedCount }) {
-      const connectionUuid = getConnectionUuid();
+    async turnAdvance({ connectionUuid = getConnectionUuid(), sessionId, turnUuid, turnUuids, admissionUuid, wakeRecoveryProtocol, signal, status, entityType, entityUuid, interruptedReason, transcriptRelayError, wakeError, usage, backendSessionId, coalescedCount }) {
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
         logger.warn(`[Chorus] ${error}`);

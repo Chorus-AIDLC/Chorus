@@ -80,6 +80,8 @@ export class Waker {
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.postComment = opts.postComment;
     this.onAdmissionCancelled = opts.onAdmissionCancelled ?? (() => {});
+    this.onAdmissionRejected = opts.onAdmissionRejected ?? (() => {});
+    this.getConnectionUuid = opts.getConnectionUuid;
     this.writeMcpConfigFn = opts.writeMcpConfigFn ?? writeMcpConfig;
     this.isNewSessionFn = opts.isNewSessionFn ?? isNewSession;
     // Interrupt reporter (子3): default no-op-with-log so a Waker built without one
@@ -495,6 +497,9 @@ export class Waker {
       .map((notification) => notification?.turnUuid).filter((turnUuid) => typeof turnUuid === "string" && turnUuid))];
     const exactAdmission = !operations.length && turnUuids.length > 0;
     const admission = exactAdmission ? {
+      ...(this.getConnectionUuid ? { connectionUuid: this.getConnectionUuid() } : {}),
+      deliveryAdmissions: Object.fromEntries(list.filter((notification) => notification.turnUuid)
+        .map((notification) => [notification.turnUuid, notification.admissionUuid])),
       turnUuid: turnUuids[0], turnUuids,
       admissionUuid: first.admissionUuid ?? randomUUID(), wakeRecoveryProtocol: 1,
     } : null;
@@ -516,12 +521,14 @@ export class Waker {
     let childStarted = false;
     let validatingRuntimeCwd = false;
     let sessionStartAttempted = false;
+    let rejectedAdmission;
     const admitOrdinaryTurn = () => {
       if (sessionId && !turnAdvancedToRunning) {
         turnAdvancedToRunning = true;
         runningTurnUuidPromise = admission
           ? this.#admitExact({ ...admission, sessionId, status: "running",
-              entityType: entity?.entityType ?? null, entityUuid: entity?.entityUuid ?? null }, admissionSignal)
+              entityType: entity?.entityType ?? null, entityUuid: entity?.entityUuid ?? null }, admissionSignal,
+              (report) => { rejectedAdmission = report; })
           : this.#advanceTurn(sessionId, "running", entity, null, null, null, null, coalescedCount);
       }
       return runningTurnUuidPromise;
@@ -967,10 +974,11 @@ export class Waker {
       } catch {
         // best-effort
       }
+      if (rejectedAdmission) this.onAdmissionRejected(rejectedAdmission);
     }
   }
 
-  async #admitExact(report, signal) {
+  async #admitExact(report, signal, onRejected) {
     let attempt = 0;
     while (!signal.aborted) {
       attempt++;
@@ -995,6 +1003,7 @@ export class Waker {
       const status = result?.status;
       if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
         this.logger.warn(`[Chorus] exact admission refused turn=${report.turnUuid} status=${status}; no subprocess started`);
+        if ([404, 409].includes(status) && report.turnUuids.length > 1) onRejected(report);
         return null;
       }
       const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempt - 1, 5));
@@ -1014,7 +1023,7 @@ export class Waker {
     await this.#retireUnstartedOperation({
       ...report, status: "interrupted", interruptedReason: signal.reason === "user" ? "user" : "shutdown",
     });
-    if (signal.reason !== "user") this.onAdmissionCancelled(report.turnUuids);
+    if (signal.reason !== "user") this.onAdmissionCancelled(report.turnUuids, report.deliveryAdmissions);
     return null;
   }
 

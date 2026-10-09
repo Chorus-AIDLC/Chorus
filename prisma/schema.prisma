@@ -769,6 +769,10 @@ model DaemonSessionTurn {
   promptText        String? // human instruction body or server-composed operation compatibility snapshot
   operationPayload  Json? // versioned dedicated operation; historical rows remain null
   wakeContext       Json?
+  wakeNotificationUuid String? @unique
+  wakeNotification Notification? @relation(fields: [wakeNotificationUuid], references: [uuid], onDelete: Restrict)
+  wakeTargetConnectionUuid String?
+  wakeRuntimeCwd String?
   admissionUuid     String?                   @unique
   admissionConnectionUuid String?
   admissionTurnUuids Json?
@@ -807,6 +811,7 @@ model DaemonSessionTurn {
 
   @@unique([sessionUuid, seq])
   @@index([sessionUuid, status])
+  @@index([wakeTargetConnectionUuid, status])
 }
 
 // A single user/assistant transcript message on a turn. Tool-call, tool-result,
@@ -848,6 +853,9 @@ model Notification {
   // daemon read the instruction body in the chorus_get_notifications call it already
   // makes, with no extra round-trip. Null for every non-instruction notification.
   instructionText String?
+  wakeRecovery Json?
+  wakeRecoveryPending Boolean @default(false)
+  wakeTurn DaemonSessionTurn?
   actorType       String // user | agent
   actorUuid       String
   actorName       String // Denormalized to avoid joins
@@ -859,6 +867,7 @@ model Notification {
 
   @@index([recipientType, recipientUuid, readAt])
   @@index([companyUuid, recipientUuid])
+  @@index([companyUuid, recipientUuid, wakeRecoveryPending, updatedAt])
   @@index([entityType, entityUuid])
   @@index([projectUuid])
 }

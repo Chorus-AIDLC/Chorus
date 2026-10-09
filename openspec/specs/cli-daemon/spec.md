@@ -476,7 +476,59 @@ The new daemon protocol SHALL carry exact turn identities through ordinary and c
 #### Scenario: Canonical session origin moves after admission
 - **WHEN** connection A admits a turn and the canonical session is subsequently routed to connection B
 - **THEN** A SHALL still be able to end or interrupt its exact admitted turn using persisted admission ownership and the original token and members, subject to current tenant, agent and resource access checks
-- **AND** B MUST NOT settle A's execution, while A MUST NOT admit new work or replay launch admission against B's current session origin
+- **AND** B MUST NOT settle A's execution, while A MUST NOT admit or retry work whose effective delivery target is B (the immutable per-turn hard target when present, otherwise the current canonical session origin)
+
+### Requirement: Same-identity reconnect preserves uncertain admission
+
+A transport reconnect followed by registration of the same connection UUID SHALL preserve each unstarted exact admission's token and execution responsibility. A genuinely different identity, conflict or shutdown SHALL cancel pending admission safely. Exact admission retries and cleanup SHALL retain the originally captured connection UUID rather than adopting a later registration's identity.
+
+#### Scenario: Committed admission loses its response before reconnect
+- **WHEN** the server committed running, the acknowledgment was lost, and the daemon reconnects with the same UUID
+- **THEN** it SHALL retry the original token and start the model only once after confirmation, without reporting shutdown interruption for a mere transport reconnect
+
+#### Scenario: A new registration replaces an uncertain admission owner
+- **WHEN** the daemon registers a different connection UUID while old admission is unresolved
+- **THEN** old unstarted work SHALL be cancelled without model execution, and cleanup SHALL report using the old identity, never the new one
+
+### Requirement: Offline autonomous notifications retain explicit recovery responsibility
+
+New eligible autonomous notifications SHALL persist a versioned target envelope and pending recovery responsibility atomically with creation, even when no daemon is online and no turn exists. A protocol-1 pending read SHALL materialize at most 100 deferred intents for its authenticated company/agent through current access and target-selection checks. Hard pins SHALL NOT fall back to another connection; proposal ambiguity and access denial SHALL NOT produce execution. Deferred intents SHALL rotate through bounded scans without starvation. Read/archive status SHALL NOT decide whether execution is owed. Historical notifications without explicit responsibility MUST NOT be replayed.
+
+Turn creation SHALL be uniquely keyed by the source notification, so concurrent scans or lost outbox settlement cannot create a second turn or replay an already terminal turn. Directed canonical session origin and runtime cwd updates SHALL apply to standalone entity sessions as well as Idea sessions, without modifying existing immutable admission ownership.
+
+Each materialized hard-pinned turn SHALL retain its target connection and runtime cwd independently of later canonical session origin changes. Pending reads, live projection and exact admission/retry SHALL enforce that per-turn target; an unpinned turn SHALL continue to use the current canonical origin. Moving the session MUST NOT move a different pending hard-pinned wake, and the original target SHALL remain able to recover that pending wake. Terminal settlement SHALL continue to use immutable admission ownership.
+
+Deferred recovery SHALL have a durable protocol ownership boundary. Initial online materialization MAY atomically grant legacy delivery only before recovery claims ownership. Protocol-1 recovery ownership MUST survive outbox settlement and MUST NOT be downgraded by a racing initial notification path. Legacy automated notification reads SHALL exclude unclaimed/protocol-1-owned sources before pagination and auto-marking; UI history SHALL remain visible. Legacy pending/SSE delivery and lifecycle/coalescing SHALL likewise exclude their associated turns, while protocol-1 recovery remains possible. Existing historical notification and immediate-online compatibility paths SHALL be retained without attributing exact-identity guarantees to legacy FIFO execution.
+
+#### Scenario: Comment arrives while the agent has no online daemon
+- **WHEN** a new eligible mention is persisted offline and later its selected daemon connects
+- **THEN** recovery SHALL create and deliver its exact durable turn without requiring a new chat message
+- **AND** marking the notification read or archived SHALL NOT lose the wake, while older unread notifications without recovery responsibility remain untouched
+
+#### Scenario: Legacy daemon reconnects before the upgraded daemon
+- **WHEN** an offline notification is owned by the outbox/protocol-1 recovery and a legacy daemon reconnects
+- **THEN** legacy automated notification reads, pending projection and lifecycle admission MUST NOT execute or consume it, even after protocol-1 materialization clears pending
+- **AND** the upgraded daemon SHALL subsequently recover it once, without replaying a legacy execution
+
+#### Scenario: Initial notification settlement races recovery ownership
+- **WHEN** recovery claims the source before the initial notification path finishes
+- **THEN** initial settlement MUST NOT expose that source to legacy delivery
+- **AND** if initial online settlement wins first, recovery MUST NOT later claim or duplicate its turn
+
+#### Scenario: A different cwd connects before the hard-pinned target
+- **WHEN** the deferred mention has an explicit offline host/cwd pin and another daemon connects
+- **THEN** that daemon MUST NOT materialize or execute the mention
+- **AND** the matching target SHALL recover it when online, subject to current access
+
+#### Scenario: Standalone quick task changes directed origin
+- **WHEN** a standalone task session was created on connection A and a new directed wake selects B
+- **THEN** B SHALL discover and admit the new pending turn on the same canonical entity session
+- **AND** an already-admitted A turn SHALL still settle only through A's immutable admission identity
+
+#### Scenario: Hard-pinned pending work survives another wake moving the session
+- **WHEN** A's deferred hard-pinned wake has been materialized but not admitted, and B's separate wake moves the same standalone or Idea session to B
+- **THEN** B MUST neither receive nor admit A's turn, including inside a mixed exact batch
+- **AND** A SHALL recover its own turn with A's original runtime cwd when it reconnects, even while the canonical origin remains B
 
 ### Requirement: Delivery failure diagnostics are actionable and secret-safe
 

@@ -34,7 +34,8 @@ vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 // can stamp the directed target; we assert the chokepoint INVOKES it per created
 // notification and threads its `targetConnectionUuid` onto the emitted event.
 const mockCreateTurnAndResolveTarget = vi.hoisted(() => vi.fn());
-vi.mock("@/services/notification-turn", () => ({
+vi.mock("@/services/notification-turn", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/services/notification-turn")>(),
   createTurnAndResolveTarget: mockCreateTurnAndResolveTarget,
 }));
 

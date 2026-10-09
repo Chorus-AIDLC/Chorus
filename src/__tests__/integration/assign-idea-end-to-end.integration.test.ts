@@ -83,12 +83,14 @@ vi.mock("@/lib/event-bus", () => ({
 vi.mock("@/services/daemon-instruction.service", () => ({
   deliverTurnPing: vi.fn(),
 }));
-vi.mock("@/services/orchestrator.service", () => ({
+vi.mock("@/services/orchestrator.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/services/orchestrator.service")>(),
   resolveResourceOrchestrator: vi.fn().mockResolvedValue(null),
 }));
 
 import { registerPmTools } from "@/mcp/tools/pm";
 import { handleActivity } from "@/services/notification-listener";
+import { legacyWakeTurnWhere } from "@/services/notification-wake-policy";
 import type { AgentAuthContext } from "@/types/auth";
 
 // ===== Scenario identifiers =====
@@ -277,6 +279,10 @@ describe("assign_idea end-to-end — agent target (AC#1)", () => {
     const agentNotif = ideaClaimedNotifications().find((n) => n.recipientType === "agent");
     expect(agentNotif).toBeDefined();
     expect(agentNotif!.recipientUuid).toBe(PM_AGENT);
+    expect(agentNotif).toMatchObject({
+      wakeRecoveryPending: false,
+      wakeRecovery: { version: 1, deliveryOwner: "legacy" },
+    });
     // The human creator is also notified; the actor (assigner) is never self-notified.
     expect(ideaClaimedNotifications().some((n) => n.recipientType === "user" && n.recipientUuid === CREATOR)).toBe(true);
     expect(ideaClaimedNotifications().every((n) => n.recipientUuid !== CALLER)).toBe(true);
@@ -288,6 +294,27 @@ describe("assign_idea end-to-end — agent target (AC#1)", () => {
       (s) => s.uuid === agentInstanceStore.daemonSessionTurns[0].sessionUuid,
     );
     expect(session?.agentUuid).toBe(PM_AGENT);
+    expect(agentInstanceStore.daemonSessionTurns[0]).toMatchObject({
+      wakeNotificationUuid: agentNotif!.uuid,
+      wakeContext: { notificationUuid: agentNotif!.uuid },
+      wakeTargetConnectionUuid: null,
+      wakeRuntimeCwd: null,
+    });
+    const legacyTurnFilter = {
+      AND: [legacyWakeTurnWhere(), { session: { companyUuid: COMPANY, agentUuid: PM_AGENT } }],
+    };
+    expect(await mockPrisma.daemonSessionTurn.findMany({ where: legacyTurnFilter })).toHaveLength(1);
+    expect(await mockPrisma.notification.updateMany({
+      where: { uuid: agentNotif!.uuid, wakeRecovery: { equals: { version: 1, deliveryOwner: "outbox" } } },
+      data: { wakeRecovery: { version: 1, deliveryOwner: "protocol1" } },
+    })).toEqual({ count: 0 });
+    expect(agentNotif!.wakeRecovery).toEqual({ version: 1, deliveryOwner: "legacy" });
+    expect(await mockPrisma.notification.updateMany({
+      where: { uuid: agentNotif!.uuid, wakeRecovery: { equals: { deliveryOwner: "legacy", version: 1 } } },
+      data: { wakeRecovery: { version: 1, deliveryOwner: "protocol1" } },
+    })).toEqual({ count: 1 });
+    expect(await mockPrisma.daemonSessionTurn.findMany({ where: legacyTurnFilter })).toEqual([]);
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(1);
   });
 
   it("rejects an ineligible target agent (no idea:write) — no assignment, no Activity, no notification", async () => {

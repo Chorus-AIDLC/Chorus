@@ -106,3 +106,13 @@ For legacy clients without the capability, the server SHALL retain the existing 
 - **WHEN** admission commits a batch but its successful response is lost
 - **THEN** an identical authorized retry MUST return that same batch result without separately replaying merged members
 - **AND** unrelated older pending work MUST remain untouched
+
+#### Scenario: Rejected batch retains a smaller pending subset
+- **WHEN** exact multi-member admission receives 404/409 and a subsequent authoritative pending read contains a strictly smaller subset of those members
+- **THEN** the daemon SHALL release only that subset's original local delivery ownership and submit survivors through fresh exact admission
+- **AND** terminal, running or inaccessible members MUST NOT be executed or interrupted, and stale cleanup MUST NOT release a newer delivery
+
+#### Scenario: Permanent rejection has no membership change
+- **WHEN** authoritative pending reads still contain every member of a rejected batch
+- **THEN** the daemon SHALL NOT retry the same rejected batch or hot-loop admission POSTs
+- **AND** it MAY keep bounded periodic pending reconciliation to detect later membership changes; singleton permanent denials remain suppressed

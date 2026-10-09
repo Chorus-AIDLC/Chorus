@@ -401,6 +401,7 @@ describe("project-Agent fixed cwd resolution", () => {
       targetConnectionUuid: null,
       runtimeCwd: "/work/fixed",
       suppressWake: true,
+      recoveryDeferred: true,
     });
     expect(mockResolveOrCreateSession).not.toHaveBeenCalled();
   });
