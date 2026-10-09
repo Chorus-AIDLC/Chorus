@@ -29,10 +29,10 @@ const mockCreateCommentAction = vi.hoisted(() => vi.fn());
 const mockDeleteCommentAction = vi.hoisted(() => vi.fn());
 const mockReplyToAuthor = vi.hoisted(() => vi.fn());
 vi.mock("@/app/(dashboard)/projects/comment-actions", () => ({
-  getCommentsAction: mockGetCommentsAction,
   createCommentAction: mockCreateCommentAction,
   deleteCommentAction: mockDeleteCommentAction,
 }));
+vi.mock("@/lib/comment-reader", () => ({ getCommentPage: mockGetCommentsAction }));
 
 let entityCallback: ((event: { actorUuid?: string }) => void) | null = null;
 vi.mock("@/contexts/realtime-context", () => ({
@@ -55,7 +55,7 @@ vi.mock("@/components/mention-editor", async () => {
   const React = await import("react");
   return {
     MentionEditor: React.forwardRef<MentionEditorRef, MentionEditorProps>(
-      function MockMentionEditor(_props, ref) {
+      function MockMentionEditor(props, ref) {
         React.useImperativeHandle(ref, () => ({
           focus: () =>
             document
@@ -69,7 +69,7 @@ vi.mock("@/components/mention-editor", async () => {
               ?.focus();
           },
         }));
-        return <textarea data-comment-editor aria-label="comment editor" />;
+        return <textarea data-comment-editor aria-label="comment editor" onChange={event => props.onChange(event.target.value)} />;
       },
     ),
   };
@@ -272,7 +272,10 @@ describe("UnifiedComments (render)", () => {
 
     // First paint requested exactly one page of 10, no cursor.
     expect(mockGetCommentsAction).toHaveBeenCalledTimes(1);
-    expect(mockGetCommentsAction).toHaveBeenCalledWith("idea", "idea-1", { limit: 10 });
+    expect(mockGetCommentsAction).toHaveBeenCalledWith("idea", "idea-1", {
+      limit: 10,
+      signal: expect.any(AbortSignal),
+    });
 
     // Count reflects server total (12), not the 2 loaded.
     await waitFor(() => expect(onCountChange).toHaveBeenLastCalledWith(12));
@@ -325,6 +328,224 @@ describe("UnifiedComments (render)", () => {
     expect(mockGetCommentsAction).toHaveBeenLastCalledWith("idea", "idea-1", {
       cursor: "c2",
       limit: 10,
+      signal: expect.any(AbortSignal),
+    });
+  });
+});
+
+describe("UnifiedComments read recovery", () => {
+  const page = (comments = [c1]): CommentPageResult & { success: true } => ({
+    success: true, comments, total: comments.length, nextCursor: null, hasMore: false,
+  });
+
+  function deferredPage() {
+    type PageResult = ReturnType<typeof page> | { success: false; error: string };
+    let resolve!: (result: PageResult) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<PageResult>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it.each(["reject", "timeout"])("recovers an initial %s via Retry without remounting", async (failure) => {
+    if (failure === "reject") mockGetCommentsAction.mockRejectedValueOnce(new Error("offline"));
+    else mockGetCommentsAction.mockResolvedValueOnce({ success: false, error: "Failed to load comments" });
+    mockGetCommentsAction.mockResolvedValue(page());
+    render(<UnifiedComments targetType="idea" targetUuid="idea-1" />);
+    await userEvent.click(await screen.findByRole("button", { name: "comments.retry" }));
+    expect(await screen.findByText("c1")).toBeTruthy();
+    expect(screen.queryByText("comments.loadError")).toBeNull();
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves history and cursor on older failure and suppresses automatic retry storms", async () => {
+    const older = deferredPage();
+    mockGetCommentsAction.mockResolvedValueOnce({ ...page([c3]), total: 2, nextCursor: "c3", hasMore: true })
+      .mockReturnValueOnce(older.promise).mockResolvedValue(page([c1]));
+    render(<UnifiedComments targetType="idea" targetUuid="idea-1" />);
+    await screen.findByText("c3");
+    await act(async () => { observers.forEach(observer => { observer.trigger(); observer.trigger(); }); });
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(2);
+    await act(async () => older.reject(new Error("offline")));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByText("c3")).toBeTruthy();
+    await act(async () => observers.forEach(observer => observer.trigger()));
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole("button", { name: "comments.retry" }));
+    expect(await screen.findByText("c1")).toBeTruthy();
+    expect(screen.getByText("c3")).toBeTruthy();
+    expect(mockGetCommentsAction).toHaveBeenLastCalledWith("idea", "idea-1", {
+      cursor: "c3", limit: 10, signal: expect.any(AbortSignal),
+    });
+  });
+
+  it.each([
+    { httpFailure: false, delayedSync: false },
+    { httpFailure: true, delayedSync: false },
+    { httpFailure: false, delayedSync: true },
+    { httpFailure: true, delayedSync: true },
+  ])("keeps older pagination recoverable after a local mutation ($httpFailure, delayed sync: $delayedSync)", async ({ httpFailure, delayedSync }) => {
+    const older = deferredPage();
+    const sync = deferredPage();
+    const history = Array.from({ length: 12 }, (_, index) => makeComment(`history-${index}`,
+      new Date(Date.UTC(2026, 8, 20 - index)).toISOString()));
+    const posted = makeComment("posted", "2026-10-09T10:00:00.000Z");
+    const newest = { ...page([posted, ...history.slice(0, 9)]), total: 13, nextCursor: "history-8", hasMore: true };
+    const lastPage = { ...page(history.slice(10)), total: 13 };
+    mockGetCommentsAction.mockResolvedValueOnce({ ...page(history.slice(0, 10)), total: 12, nextCursor: "history-9", hasMore: true })
+      .mockReturnValueOnce(older.promise).mockReturnValueOnce(delayedSync ? sync.promise : Promise.resolve(newest)).mockResolvedValueOnce(lastPage);
+    mockCreateCommentAction.mockResolvedValueOnce({ success: true, comment: posted });
+    const onCountChange = vi.fn();
+    render(<UnifiedComments targetType="idea" targetUuid="idea-1" currentUserUuid="user-1" onCountChange={onCountChange} />);
+    await screen.findByText("history-9");
+    await act(async () => observers.forEach(observer => observer.trigger()));
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(2);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "comment editor" }), "new comment");
+    await user.click(screen.getByRole("button", { name: "" }));
+    await screen.findByText("posted");
+    await act(async () => older.resolve(httpFailure ? { success: false, error: "Failed to load comments" } : lastPage));
+    expect(await screen.findByRole("button", { name: "comments.retry" })).toBeTruthy();
+    expect(screen.getByText("history-9")).toBeTruthy();
+    expect(screen.queryByText("history-11")).toBeNull();
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(3);
+    await user.click(screen.getByRole("button", { name: "comments.retry" }));
+    if (delayedSync) {
+      expect(mockGetCommentsAction).toHaveBeenCalledTimes(3);
+      await act(async () => sync.resolve(newest));
+    }
+    expect(await screen.findByText("history-11")).toBeTruthy();
+    for (const entry of history) expect(screen.getAllByText(entry.content)).toHaveLength(1);
+    expect(screen.getAllByText("posted")).toHaveLength(1);
+    expect(mockGetCommentsAction).toHaveBeenLastCalledWith("idea", "idea-1", {
+      cursor: "history-9", limit: 10, signal: expect.any(AbortSignal),
+    });
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(4);
+    expect(screen.queryByRole("button", { name: "comments.retry" })).toBeNull();
+    await waitFor(() => expect(onCountChange).toHaveBeenLastCalledWith(13));
+  });
+
+  it("aborts an old target and ignores its late page/count", async () => {
+    const stale = deferredPage();
+    const onCountChange = vi.fn();
+    mockGetCommentsAction.mockReturnValueOnce(stale.promise).mockResolvedValue(page([c2]));
+    const view = render(<UnifiedComments targetType="idea" targetUuid="idea-1" onCountChange={onCountChange} />);
+    const signal = mockGetCommentsAction.mock.calls[0][2].signal;
+    view.rerender(<UnifiedComments targetType="task" targetUuid="task-2" onCountChange={onCountChange} />);
+    expect(signal.aborted).toBe(true);
+    await screen.findByText("c2");
+    await act(async () => stale.resolve({ ...page([c1]), total: 99 }));
+    expect(screen.queryByText("c1")).toBeNull();
+    expect(onCountChange).toHaveBeenLastCalledWith(1);
+  });
+
+  it("aborts an unmounted read and ignores a late rejection", async () => {
+    const stale = deferredPage();
+    const onCountChange = vi.fn();
+    mockGetCommentsAction.mockReturnValueOnce(stale.promise);
+    const view = render(<UnifiedComments targetType="idea" targetUuid="idea-1" onCountChange={onCountChange} />);
+    const signal = mockGetCommentsAction.mock.calls[0][2].signal;
+    view.unmount();
+    onCountChange.mockClear();
+    expect(signal.aborted).toBe(true);
+    await act(async () => stale.reject(new Error("late rejection")));
+    expect(onCountChange).not.toHaveBeenCalled();
+  });
+
+  it("coalesces realtime events and retains visible comments on a background rejection", async () => {
+    const sync = deferredPage();
+    mockGetCommentsAction.mockResolvedValueOnce(page()).mockReturnValueOnce(sync.promise).mockResolvedValue(page([c2, c1]));
+    render(<UnifiedComments targetType="idea" targetUuid="idea-1" />);
+    await screen.findByText("c1");
+    await act(async () => { entityCallback?.({}); entityCallback?.({}); entityCallback?.({}); });
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(2);
+    await act(async () => sync.resolve(page()));
+    expect(await screen.findByText("c2")).toBeTruthy();
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(3);
+    mockGetCommentsAction.mockRejectedValueOnce(new Error("background failure"));
+    await act(async () => entityCallback?.({}));
+    expect(screen.getByText("c1")).toBeTruthy();
+    expect(screen.getByText("c2")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "comments.retry" })).toBeNull();
+  });
+
+  it("does not let a stale sync resurrect a deleted comment", async () => {
+    const stale = deferredPage();
+    mockGetCommentsAction.mockResolvedValueOnce(page()).mockReturnValueOnce(stale.promise).mockResolvedValue(page([]));
+    render(<UnifiedComments targetType="idea" targetUuid="idea-1" currentUserUuid="user-1" />);
+    await screen.findByText("c1");
+    await act(async () => entityCallback?.({ actorUuid: "someone-else" }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "comments.actionsLabel:Dev" }));
+    await user.click(screen.getByRole("menuitem", { name: "comments.delete" }));
+    await user.click(await screen.findByRole("button", { name: "comments.deleteConfirm" }));
+    await waitFor(() => expect(screen.queryByText("c1")).toBeNull());
+    await act(async () => stale.resolve(page()));
+    expect(screen.queryByText("c1")).toBeNull();
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(3);
+  });
+
+  it("remembers a scroll trigger during a realtime refresh", async () => {
+    const sync = deferredPage();
+    const newest = { ...page([c3]), total: 2, hasMore: true, nextCursor: "c3" };
+    mockGetCommentsAction.mockResolvedValueOnce(newest).mockReturnValueOnce(sync.promise).mockResolvedValue(page([c1]));
+    render(<UnifiedComments targetType="idea" targetUuid="idea-1" />);
+    await screen.findByText("c3");
+    await act(async () => entityCallback?.({}));
+    await act(async () => observers.forEach(observer => observer.trigger()));
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(2);
+    await act(async () => sync.resolve(newest));
+    expect(await screen.findByText("c1")).toBeTruthy();
+    expect(mockGetCommentsAction).toHaveBeenLastCalledWith("idea", "idea-1", {
+      cursor: "c3", limit: 10, signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("retains the entire loaded window when a later realtime page fails", async () => {
+    mockGetCommentsAction.mockResolvedValueOnce(page()).mockResolvedValueOnce({
+      ...page([c3]), total: 3, hasMore: true, nextCursor: "c3",
+    }).mockResolvedValueOnce({ success: false, error: "Failed to load comments" });
+    render(<UnifiedComments targetType="idea" targetUuid="idea-1" />);
+    await screen.findByText("c1");
+    await act(async () => entityCallback?.({}));
+    expect(screen.getByText("c1")).toBeTruthy();
+    expect(screen.queryByText("c3")).toBeNull();
+    expect(mockGetCommentsAction).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([false, true])("establishes pagination after posting during initial loading (replacement fails: %s)", async (replacementFails) => {
+    const initial = deferredPage();
+    const history = Array.from({ length: 12 }, (_, index) =>
+      makeComment(`history-${index}`, new Date(Date.UTC(2026, 8, 20 - index)).toISOString()),
+    );
+    const posted = makeComment("posted", "2026-10-09T10:00:00.000Z");
+    const newest = { ...page([posted, ...history.slice(0, 9)]), total: 13, nextCursor: "history-8", hasMore: true };
+    mockGetCommentsAction.mockReturnValueOnce(initial.promise);
+    if (replacementFails) mockGetCommentsAction.mockRejectedValueOnce(new Error("replacement failure"));
+    mockGetCommentsAction.mockResolvedValueOnce(newest).mockResolvedValueOnce({ ...page(history.slice(9)), total: 13 });
+    mockCreateCommentAction.mockResolvedValueOnce({ success: true, comment: posted });
+    const onCountChange = vi.fn();
+    render(<UnifiedComments targetType="idea" targetUuid="idea-1" currentUserUuid="user-1" onCountChange={onCountChange} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "comment editor" }), "new comment");
+    await user.click(screen.getByRole("button"));
+    await waitFor(() => expect(mockCreateCommentAction).toHaveBeenCalledTimes(1));
+    await act(async () => initial.resolve({ ...page(history.slice(0, 10)), total: 12, nextCursor: "history-9", hasMore: true }));
+    if (replacementFails) {
+      expect(await screen.findByText("comments.loadError")).toBeTruthy();
+      expect(screen.queryByText("comments.noMoreComments")).toBeNull();
+      await user.click(screen.getByRole("button", { name: "comments.retry" }));
+    }
+    expect(await screen.findByText("posted")).toBeTruthy();
+    expect(screen.queryByText("comments.noMoreComments")).toBeNull();
+    await waitFor(() => expect(onCountChange).toHaveBeenLastCalledWith(13));
+    await act(async () => observers.forEach(observer => observer.trigger()));
+    expect(await screen.findByText("history-11")).toBeTruthy();
+    expect(screen.getAllByText("posted")).toHaveLength(1);
+    expect(mockGetCommentsAction).toHaveBeenLastCalledWith("idea", "idea-1", {
+      cursor: "history-8", limit: 10, signal: expect.any(AbortSignal),
     });
   });
 });
