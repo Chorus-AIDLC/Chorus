@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,7 +15,10 @@ afterEach(() => {
 // Actual entry-point execution in an isolated npm-global layout. The npm process
 // is a fixture, so no registry, real installation, daemon or user home is touched.
 function installation({ version = "1.0.0", latest = "1.1.0", failInstall = false, mismatch = false, removeModule = false } = {}) {
-  const root = mkdtempSync(join(tmpdir(), "chorus-upgrade-entry-"));
+  // realpath the fixture root: on macOS tmpdir() sits under the /var -> /private/var
+  // symlink, and the upgrade code resolves its targets, so unresolved expectations
+  // would never match.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "chorus-upgrade-entry-")));
   roots.push(root);
   const prefix = join(root, "npm prefix");
   const globalRoot = join(prefix, "lib", "node_modules");
