@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createWakeError, createWakeErrorCollector, sanitizeWakeErrorText,
-  WAKE_ERROR_STDERR_LIMIT, wakeErrorText,
+  WAKE_ERROR_MIN_TAIL_MATCH, WAKE_ERROR_STDERR_LIMIT, wakeErrorText,
 } from "../wake-error.mjs";
 
 afterEach(() => vi.unstubAllEnvs());
@@ -101,6 +101,58 @@ describe("bounded wake diagnostics", () => {
     collector.appendStderr("secret-credential-value" + "\u0000".repeat(WAKE_ERROR_STDERR_LIMIT - 8));
     expect(collector.stderrTail).not.toContain("al-value");
     expect(collector.stderrTail).toBe("[redacted]");
+  });
+
+  describe("retained-tail repair without ambient credentials", () => {
+    // knownSecrets always folds in process.env; blank every credential-looking
+    // variable so these cases reproduce identically on a laptop and a bare CI runner.
+    beforeEach(() => {
+      for (const key of Object.keys(process.env)) {
+        if (/(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD)/i.test(key)) vi.stubEnv(key, "");
+      }
+    });
+
+    // Retain `secret.slice(cut)` at the head of the window; NUL filler is
+    // stripped by sanitization, so the head is all that reaches stderrTail.
+    function retainedTail(secret, cut, secrets) {
+      const collector = createWakeErrorCollector({ source: "pi", secrets });
+      collector.appendStderr(secret + "\u0000".repeat(WAKE_ERROR_STDERR_LIMIT - (secret.length - cut)));
+      return collector.stderrTail;
+    }
+
+    it("does not let a weak match on a longer unrelated credential shadow the cut one", () => {
+      const cut = "secret-credential-value";
+      // Longer, so it is scored first, and ends with the residue's first byte.
+      const unrelated = "unrelated-much-longer-credential-a";
+      expect(retainedTail(cut, 15, [unrelated, cut])).toBe("[redacted]");
+      // Order of the explicit list must not matter either.
+      expect(retainedTail(cut, 15, [cut, unrelated])).toBe("[redacted]");
+    });
+
+    it("leaves sub-threshold residue alone instead of mis-redacting unrelated text", () => {
+      // A 3-char tail collides with this credential's last bytes, but is below
+      // WAKE_ERROR_MIN_TAIL_MATCH, so it is not evidence of a cut key.
+      expect(retainedTail("#ue rest of a diagnostic", 1, ["unrelated-credential-value"]))
+        .toBe("ue rest of a diagnostic");
+    });
+
+    it("bounds the residue at every cut offset for secret lengths 1..64", () => {
+      const alphabet = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789-";
+      for (let length = 1; length <= 64; length++) {
+        const secret = Array.from({ length }, (_, i) => alphabet[(i * 7 + length) % alphabet.length]).join("");
+        for (let cut = 0; cut < length; cut++) {
+          const rest = secret.slice(cut);
+          // Worst case for shadowing: a longer credential that ends with the
+          // residue's leading bytes (up to the sub-threshold maximum).
+          const decoy = "decoy-credential-" + "z".repeat(64) +
+            rest.slice(0, Math.min(rest.length, WAKE_ERROR_MIN_TAIL_MATCH - 1));
+          const tail = retainedTail(secret, cut, [decoy, secret]);
+          // Tails shorter than the threshold are the documented, accepted residue.
+          const expected = cut === 0 || rest.length >= WAKE_ERROR_MIN_TAIL_MATCH ? "[redacted]" : rest;
+          expect(tail, `length=${length} cut=${cut}`).toBe(expected);
+        }
+      }
+    });
   });
 
   it("prefers the first structured reason, includes complementary stderr and preserves raw zero", () => {
