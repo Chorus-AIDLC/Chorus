@@ -54,6 +54,8 @@
 //       connection, first human_instruction turn created; resumable on that connection.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { isDeepStrictEqual } from "node:util";
+import { Prisma } from "@/generated/prisma/client";
 import { NextRequest } from "next/server";
 
 // ===== Stateful in-memory prisma fake =====
@@ -147,6 +149,16 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
       )) return false;
       continue;
     }
+    if (key === "wakeNotification" && model === "daemonSessionTurn") {
+      const notification = store.data.notification.find((candidate) => candidate.uuid === row.wakeNotificationUuid);
+      const predicate = cond === null ? null : "is" in (cond as Row) ? (cond as Row).is : cond;
+      if (predicate === null) {
+        if (notification) return false;
+      } else if (!notification || matchWhere(store, "notification", notification, predicate as Row) !== true) {
+        return false;
+      }
+      continue;
+    }
     if (key === "session" && model === "daemonSessionTurn") {
       const session = store.data.daemonSession.find((s) => s.uuid === row.sessionUuid);
       if (!session) return false;
@@ -164,14 +176,33 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
     }
 
     const val = row[key];
+    if (cond === null) {
+      if (val != null) return false;
+      continue;
+    }
     if (cond !== null && typeof cond === "object") {
       const c = cond as Row;
+      if ("equals" in c) {
+        const jsonValue = (value: unknown) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+        const actual = Array.isArray(c.path)
+          ? (c.path as string[]).reduce<unknown>((value, field) => (value as Row | null)?.[field], val)
+          : val;
+        if (c.equals === Prisma.DbNull) {
+          if (actual != null) return false;
+        } else if (!isDeepStrictEqual(jsonValue(actual), jsonValue(c.equals))) return false;
+        continue;
+      }
       if ("not" in c) {
-        if (val === c.not) return false;
+        if (c.not === null) {
+          if (val == null) return false;
+        } else if (val == null) {
+          unknown = true;
+        } else if (val === c.not) return false;
         continue;
       }
       if ("in" in c) {
-        if (!Array.isArray(c.in) || !(c.in as unknown[]).includes(val)) return false;
+        if (val == null) unknown = true;
+        else if (!Array.isArray(c.in) || !(c.in as unknown[]).includes(val)) return false;
         continue;
       }
       if ("startsWith" in c) {
@@ -185,7 +216,8 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
       // Unknown operator object — treat as no match to surface a gap loudly.
       return false;
     }
-    if (val !== cond) return false;
+    if (val == null) unknown = true;
+    else if (val !== cond) return false;
   }
   return unknown ? null : true;
 }
@@ -257,6 +289,34 @@ function compare(a: unknown, b: unknown): number {
 }
 
 function buildPrismaFake(store: Store) {
+  function createTurn(data: Row, skipDuplicates = false) {
+    const duplicate = store.data.daemonSessionTurn.some((turn) =>
+      (data.wakeNotificationUuid != null && turn.wakeNotificationUuid === data.wakeNotificationUuid) ||
+      (turn.sessionUuid === data.sessionUuid && turn.seq === data.seq),
+    );
+    if (duplicate) {
+      if (skipDuplicates) return null;
+      throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    }
+    const row: Row = {
+      id: store.nextId(),
+      uuid: store.nextUuid("turn"),
+      backendSessionId: null,
+      promptText: null,
+      wakeContext: null,
+      wakeNotificationUuid: null,
+      wakeTargetConnectionUuid: null,
+      wakeRuntimeCwd: null,
+      executionUuid: null,
+      startedAt: null,
+      endedAt: null,
+      createdAt: new Date(),
+      ...data,
+    };
+    store.data.daemonSessionTurn.push(row);
+    return { ...row };
+  }
+
   function findMany(model: keyof Store["data"], args: Row = {}) {
     let rows = store.data[model].filter((r) => matchWhere(store, model, r, (args.where as Row) ?? {}));
     rows = applyOrderBy(store, model, rows, args.orderBy);
@@ -321,20 +381,13 @@ function buildPrismaFake(store: Store) {
         findFirst("daemonSessionTurn", { where: args.where }),
       ),
       findMany: vi.fn(async (args: Row) => findMany("daemonSessionTurn", args)),
-      create: vi.fn(async (args: Row) => {
-        const row: Row = {
-          id: store.nextId(),
-          uuid: store.nextUuid("turn"),
-          promptText: null,
-          executionUuid: null,
-          startedAt: null,
-          endedAt: null,
-          createdAt: new Date(),
-          ...(args.data as Row),
-        };
-        store.data.daemonSessionTurn.push(row);
-        return { ...row };
-      }),
+      create: vi.fn(async (args: Row) => createTurn(args.data as Row)),
+      createManyAndReturn: vi.fn(async (args: Row) =>
+        (args.data as Row[]).flatMap((data) => {
+          const row = createTurn(data, args.skipDuplicates === true);
+          return row ? [row] : [];
+        }),
+      ),
       update: vi.fn(async (args: Row) => {
         const row = store.data.daemonSessionTurn.find((t) => t.uuid === (args.where as Row).uuid);
         if (!row) throw new Error("turn not found for update");
@@ -363,6 +416,14 @@ function buildPrismaFake(store: Store) {
       findFirst: vi.fn(async (args: Row) => findFirst("agentInstance", args)),
     },
     notification: {
+      findUnique: vi.fn(async (args: Row) => findFirst("notification", args)),
+      updateMany: vi.fn(async (args: Row) => {
+        const rows = store.data.notification.filter((row) =>
+          matchWhere(store, "notification", row, (args.where as Row) ?? {}) === true,
+        );
+        for (const row of rows) Object.assign(row, args.data as Row);
+        return { count: rows.length };
+      }),
       findFirst: vi.fn(async (args: Row) => findFirst("notification", args)),
       create: vi.fn(async (args: Row) => {
         const row: Row = {

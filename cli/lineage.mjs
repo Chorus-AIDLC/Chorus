@@ -19,10 +19,8 @@
 // other (see waker.mjs).
 //
 // Uses global fetch (Node 18+), exactly like sse-listener.mjs, so it adds no
-// dependency and reuses the same Bearer auth path. On any failure (unreachable
-// server, non-2xx, malformed body) it returns both ids as null so the caller
-// falls back to a per-entity session key — "no idea ancestor" is a normal,
-// non-fatal outcome.
+// dependency and reuses the same Bearer auth path. Failed resolution rejects
+// without caching; successful null attribution means "no idea ancestor".
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -42,7 +40,7 @@ export class LineageResolver {
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
     /**
      * Per-run cache keyed by `${type}:${uuid}`. Holds the full attribution
-     * `{ rootIdeaUuid, directIdeaUuid }` so repeats of the same entity single-flight.
+     * `{ rootIdeaUuid, directIdeaUuid }` for successful resolutions only.
      * @type {Map<string, { rootIdeaUuid: string|null, directIdeaUuid: string|null }>}
      */
     this.cache = new Map();
@@ -50,18 +48,16 @@ export class LineageResolver {
 
   /**
    * Resolve an event to its idea attribution `{ rootIdeaUuid, directIdeaUuid }`.
-   * One REST call per notification; the per-run cache single-flights repeats of
-   * the same entity. On any failure both ids are null (caller falls back to a
-   * per-entity key). Never throws.
+   * Successful resolutions are cached per entity. Failures reject with safe
+   * deliveryRetryable/status metadata and are never cached.
    * @param {{ entityType?: string, entityUuid?: string }} event
    * @returns {Promise<{ rootIdeaUuid: string|null, directIdeaUuid: string|null }>}
    */
   async resolve(event) {
     const entityType = event?.entityType;
     const entityUuid = event?.entityUuid;
-    if (!entityType || !entityUuid) {
-      this.logger.warn("[Chorus] lineage: event missing entityType/entityUuid");
-      return { rootIdeaUuid: null, directIdeaUuid: null };
+    if (typeof entityType !== "string" || !entityType.trim() || typeof entityUuid !== "string" || !entityUuid.trim()) {
+      throw this.#failure("LINEAGE_INVALID_ENTITY", 400);
     }
     // An ad-hoc conversation (`daemon_session`) has NO idea ancestor by definition, and
     // the root-idea endpoint does not accept it (it would 400). Short-circuit to the
@@ -89,15 +85,22 @@ export class LineageResolver {
     return (await this.resolve(event)).rootIdeaUuid;
   }
 
+  #failure(code, status) {
+    const error = new Error(`Lineage resolution failed (${code})`);
+    error.code = code;
+    if (status !== undefined) error.status = status;
+    error.deliveryRetryable = !status || status === 408 || status === 429 || status >= 500;
+    this.logger.warn(`[Chorus] lineage: ${code} status=${status ?? "unknown"}`);
+    return error;
+  }
+
   /**
    * Call GET /api/entities/{type}/{uuid}/root-idea and return
-   * `{ rootIdeaUuid, directIdeaUuid }` (each string | null). Returns both null on
-   * any error so the caller degrades to a per-entity session key — never throws.
+   * `{ rootIdeaUuid, directIdeaUuid }` (each string | null). Rejects on failure.
    * @param {string} entityType @param {string} entityUuid
    * @returns {Promise<{ rootIdeaUuid: string|null, directIdeaUuid: string|null }>}
    */
   async #resolveViaServer(entityType, entityUuid) {
-    const NONE = { rootIdeaUuid: null, directIdeaUuid: null };
     const endpoint =
       `${this.url}/api/entities/${encodeURIComponent(entityType)}/` +
       `${encodeURIComponent(entityUuid)}/root-idea`;
@@ -106,45 +109,34 @@ export class LineageResolver {
       response = await this.fetchImpl(endpoint, {
         headers: { Authorization: `Bearer ${this.apiKey}`, Accept: "application/json" },
       });
-    } catch (err) {
-      this.logger.warn(`[Chorus] lineage: request failed for ${entityType}:${entityUuid}: ${err}`);
-      return NONE;
+    } catch {
+      throw this.#failure("LINEAGE_REQUEST_FAILED");
     }
     if (!response.ok) {
-      this.logger.warn(
-        `[Chorus] lineage: server returned ${response.status} for ${entityType}:${entityUuid}`
-      );
-      return NONE;
+      throw this.#failure("LINEAGE_HTTP_ERROR", response.status);
     }
     let body;
     try {
       body = await response.json();
-    } catch (err) {
-      this.logger.warn(`[Chorus] lineage: bad JSON for ${entityType}:${entityUuid}: ${err}`);
-      return NONE;
+    } catch {
+      throw this.#failure("LINEAGE_INVALID_JSON");
     }
     // API envelope: { success: true, data: { rootIdeaUuid, directIdeaUuid, lineage, ... } }.
     const data = body && typeof body === "object" ? body.data : undefined;
-    if (!data || typeof data !== "object" || !("rootIdeaUuid" in data)) {
-      this.logger.warn(
-        `[Chorus] lineage: unexpected response shape for ${entityType}:${entityUuid}`
-      );
-      return NONE;
+    if (body?.success === false || !data || typeof data !== "object" || Array.isArray(data) || !("rootIdeaUuid" in data)) {
+      throw this.#failure("LINEAGE_INVALID_RESPONSE");
     }
     const root = data.rootIdeaUuid;
-    if (root !== null && typeof root !== "string") {
-      this.logger.warn(`[Chorus] lineage: non-string rootIdeaUuid for ${entityType}:${entityUuid}`);
-      return NONE;
+    if (root !== null && (typeof root !== "string" || !root.trim())) {
+      throw this.#failure("LINEAGE_INVALID_RESPONSE");
     }
     // directIdeaUuid is the daemon's session anchor. Older servers may omit it
-    // (pre-directIdeaUuid endpoint): treat a missing/non-string value as null so
+    // (pre-directIdeaUuid endpoint): treat a missing value as null so
     // the caller falls back to a per-entity key rather than misanchoring.
     const directRaw = data.directIdeaUuid;
     const direct = typeof directRaw === "string" ? directRaw : null;
-    if (directRaw !== undefined && directRaw !== null && typeof directRaw !== "string") {
-      this.logger.warn(
-        `[Chorus] lineage: non-string directIdeaUuid for ${entityType}:${entityUuid}`
-      );
+    if (directRaw !== undefined && directRaw !== null && (typeof directRaw !== "string" || !directRaw.trim())) {
+      throw this.#failure("LINEAGE_INVALID_RESPONSE");
     }
     // A non-null ROOT idea with a null/absent DIRECT idea is a lineage gap: the wake will
     // anchor the execution on the entity (task/proposal), never on the idea conversation,

@@ -52,6 +52,7 @@
 
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { parseWakeContext, type WakeContext } from "@/services/daemon-wake-context";
 import { canActorAccessProject } from "@/services/project-access.service";
 import {
   resolveOrCreateSession,
@@ -231,6 +232,7 @@ export function triggerForAction(action: string): TurnTrigger | null {
  * so the bridge is trivially unit-testable with plain fixtures.
  */
 export interface WakeNotificationContext {
+  wakeContext?: WakeContext | null;
   companyUuid: string;
   recipientType: string;
   recipientUuid: string;
@@ -690,7 +692,7 @@ export async function resolveIdeaSessionOriginTarget(
     select: { originConnectionUuid: true },
   });
   if (!session) return null;
-  // The origin must be ONLINE to be wakeable (no durable queue). An offline origin is
+  // The origin must be ONLINE to be wakeable. An offline origin is
   // not directed — fall back to online-first.
   return (
     connections.find(
@@ -724,6 +726,7 @@ export async function resolveIdeaSessionOriginTarget(
  * a momentarily-no-online un-pinned wake must stay byte-identical to before).
  */
 export interface WakeTurnResult {
+  wakeContext?: WakeContext | null;
   turn: TurnView | null;
   targetConnectionUuid: string | null;
   runtimeCwd: string | null;
@@ -1044,12 +1047,12 @@ export async function createTurnAndResolveTarget(
     // Keep the originating entity key when there is no idea ancestor. Delivery
     // resolves this key to its current project; null lineage is not an access exemption.
     const sessionDirectIdeaUuid: string | null = directIdeaUuid;
-    if (directed && directIdeaUuid) {
+    if (directed) {
       const existing = await prisma.daemonSession.findFirst({
         where: {
           companyUuid: ctx.companyUuid,
           agentUuid: ctx.recipientUuid,
-          sessionId: directIdeaUuid,
+          sessionId,
         },
         select: { uuid: true, originConnectionUuid: true },
       });
@@ -1099,11 +1102,20 @@ export async function createTurnAndResolveTarget(
       trigger === "human_instruction" && promptText
         ? await findReusablePendingInstructionTurn(session.uuid, promptText)
         : null;
+    let wakeContext = ctx.wakeContext ?? null;
+    if (turn && wakeContext) {
+      const persisted = await prisma.daemonSessionTurn.findUnique({
+        where: { uuid: turn.uuid }, select: { wakeContext: true },
+      });
+      wakeContext = parseWakeContext(persisted?.wakeContext);
+    }
     if (!turn) {
       turn = await createPendingTurn({
         sessionUuid: session.uuid,
         trigger,
         promptText,
+        ...(wakeContext ? { wakeContext } : {}),
+        ...(pin ? { wakeTargetConnectionUuid: origin.uuid, wakeRuntimeCwd: directedRuntimeCwd } : {}),
       });
     }
 
@@ -1123,13 +1135,14 @@ export async function createTurnAndResolveTarget(
       });
       return {
         turn,
+        wakeContext,
         targetConnectionUuid: origin.uuid,
         runtimeCwd: effectiveRuntimeCwd,
         suppressWake: false,
       };
     }
 
-    return { turn, targetConnectionUuid: null, runtimeCwd: null, suppressWake: false };
+    return { turn, wakeContext, targetConnectionUuid: null, runtimeCwd: null, suppressWake: false };
   } catch (error) {
     // VISIBLE failure (repo "no silent errors"): log with full context but DO NOT
     // rethrow — the notification was already created and must not be aborted by a

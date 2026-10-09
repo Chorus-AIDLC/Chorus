@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import type { Notification, Prisma } from "@/generated/prisma/client";
+import type { Prisma, Notification } from "@/generated/prisma/client";
 import type { AgentAuthContext, AuthContext } from "@/types/auth";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -14,7 +14,9 @@ vi.mock("@/lib/prisma", async () => ({
 }));
 const events = vi.hoisted(() => ({ emit: vi.fn() }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: events }));
-vi.mock("@/services/notification-turn", () => ({ createTurnAndResolveTarget: vi.fn() }));
+vi.mock("@/services/notification-turn", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/services/notification-turn")>(), createTurnAndResolveTarget: vi.fn(),
+}));
 const enrichment = vi.hoisted(() => ({
   resolveResourceOrchestrator: vi.fn(async () => null),
   resolveWakerSessionAnchor: vi.fn(async () => null),
@@ -499,6 +501,33 @@ describe("MCP notifications and checkin share service access filtering", () => {
     expect(next.unreadCount).toBe(1);
     expect(oldest.readAt).toBeNull();
     expect(JSON.stringify(first)).not.toContain("private project title");
+  });
+
+  it.each([undefined, "unread", "read", "all"])("MCP returns the full accessible notification list for status=%s", async (status) => {
+    for (const autoMarkRead of [undefined, false, true]) {
+      rows.length = 0;
+      const recipient = { recipientType: "agent", recipientUuid: "agent" };
+      const readAt = new Date();
+      const read = add("already-read", "public", { ...recipient, readAt });
+      const assigned = add("assigned", "public", recipient);
+      const mentioned = add("mentioned", "public", { ...recipient, action: "mentioned" });
+      const hidden = add("private", "private", recipient);
+      const incapable = add("idea", "public", { ...recipient, entityType: "idea" });
+      fixture.state.projectGroupMember = [];
+      const handlers = register(agentAuth());
+      const result = payload(await handlers.chorus_get_notifications({ status, autoMarkRead }));
+      const expectedUuids = status === "read" ? [read.uuid]
+        : status === "all" ? [mentioned.uuid, assigned.uuid, read.uuid]
+          : [mentioned.uuid, assigned.uuid];
+      expect(result.notifications.map((row) => row.uuid)).toEqual(expectedUuids);
+      expect(result).toMatchObject({ total: expectedUuids.length, unreadCount: 2 });
+      const shouldMark = (status === undefined || status === "unread") && autoMarkRead !== false;
+      expect(assigned.readAt !== null).toBe(shouldMark);
+      expect(mentioned.readAt !== null).toBe(shouldMark);
+      expect(read.readAt).toEqual(readAt);
+      expect(hidden.readAt).toBeNull();
+      expect(incapable.readAt).toBeNull();
+    }
   });
 
   it("MCP mark-all leaves inaccessible rows unread", async () => {

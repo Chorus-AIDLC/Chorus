@@ -33,6 +33,8 @@
 //   `orderBy` (single key, used by createPendingTurn's seq lookup).
 
 import { vi } from "vitest";
+import { isDeepStrictEqual } from "node:util";
+import { Prisma } from "@/generated/prisma/client";
 import type { AuthContext } from "@/types/auth";
 
 // ===== Row types (only the fields the exercised services read/write) =====
@@ -177,6 +179,10 @@ export interface DaemonSessionTurnRow {
   seq: number;
   trigger: string;
   promptText: string | null;
+  wakeContext?: unknown;
+  wakeNotificationUuid?: string | null;
+  wakeTargetConnectionUuid?: string | null;
+  wakeRuntimeCwd?: string | null;
   status: string;
   executionUuid: string | null;
   startedAt: Date | null;
@@ -335,22 +341,35 @@ interface RelationResolver {
   resolve: (row: Record<string, unknown>) => unknown;
 }
 
-function matchScalar(actual: unknown, expected: unknown): boolean {
+function matchScalar(actual: unknown, expected: unknown): boolean | null {
+  if (expected === null) return actual == null;
   if (expected !== null && typeof expected === "object") {
     const op = expected as Record<string, unknown>;
+    if ("equals" in op) {
+      const jsonValue = (value: unknown) => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+      const value = Array.isArray(op.path)
+        ? (op.path as string[]).reduce<unknown>((value, field) => (value as Record<string, unknown> | null)?.[field], actual)
+        : actual;
+      return op.equals === Prisma.DbNull ? value == null : isDeepStrictEqual(jsonValue(value), jsonValue(op.equals));
+    }
     if ("in" in op) {
-      return (op.in as unknown[]).includes(actual);
+      return actual == null ? null : (op.in as unknown[]).includes(actual);
     }
     if ("notIn" in op) {
-      return !(op.notIn as unknown[]).includes(actual);
+      return actual == null ? null : !(op.notIn as unknown[]).includes(actual);
     }
     if ("not" in op) {
-      return actual !== op.not;
+      if (op.not === null) return actual != null;
+      const match = matchScalar(actual, op.not);
+      return match === null ? null : !match;
+    }
+    if ("startsWith" in op) {
+      return actual == null ? null : typeof actual === "string" && typeof op.startsWith === "string" && actual.startsWith(op.startsWith);
     }
     // Unknown operator object — fall back to strict equality on the object.
     return actual === expected;
   }
-  return actual === expected;
+  return actual == null ? null : actual === expected;
 }
 
 export function matchesWhere(
@@ -358,16 +377,39 @@ export function matchesWhere(
   where: Where,
   relations: Record<string, RelationResolver> = {},
 ): boolean {
+  return evaluateWhere(row, where, relations) === true;
+}
+
+function evaluateWhere(
+  row: Record<string, unknown>,
+  where: Where,
+  relations: Record<string, RelationResolver>,
+): boolean | null {
   if (!where) return true;
+  let unknown = false;
   for (const [key, expected] of Object.entries(where)) {
+    if (expected === undefined) continue;
     if (key === "OR") {
       const branches = expected as Where[];
-      if (!branches.some((b) => matchesWhere(row, b, relations))) return false;
+      const matches = branches.map((branch) => evaluateWhere(row, branch, relations));
+      if (!matches.includes(true)) {
+        if (!matches.includes(null)) return false;
+        unknown = true;
+      }
       continue;
     }
     if (key === "AND") {
-      const branches = expected as Where[];
-      if (!branches.every((b) => matchesWhere(row, b, relations))) return false;
+      const branches = Array.isArray(expected) ? expected : [expected];
+      const matches = branches.map((branch) => evaluateWhere(row, branch as Where, relations));
+      if (matches.includes(false)) return false;
+      if (matches.includes(null)) unknown = true;
+      continue;
+    }
+    if (key === "NOT") {
+      const branches = Array.isArray(expected) ? expected : [expected];
+      const matches = branches.map((branch) => evaluateWhere(row, branch as Where, relations));
+      if (matches.includes(true)) return false;
+      if (matches.includes(null)) unknown = true;
       continue;
     }
     // Nested relation filter: { agent: { ownerUuid: x } } or { is: {...} }/{ some: {...} }.
@@ -376,9 +418,13 @@ export function matchesWhere(
       const related = relation.resolve(row);
       const filter = expected as Record<string, unknown>;
       if (relation.kind === "one") {
-        const target = (filter.is ?? filter) as Where;
+        const target = filter === null ? null : "is" in filter ? filter.is : filter;
+        if (target === null) {
+          if (related) return false;
+          continue;
+        }
         if (!related || Array.isArray(related)) return false;
-        if (!matchesWhere(related as Record<string, unknown>, target, relations)) return false;
+        if (!matchesWhere(related as Record<string, unknown>, target as Where, relations)) return false;
       } else {
         const someFilter = (filter.some ?? filter) as Where;
         const list = (related as Record<string, unknown>[]) ?? [];
@@ -386,9 +432,11 @@ export function matchesWhere(
       }
       continue;
     }
-    if (!matchScalar(row[key], expected)) return false;
+    const match = matchScalar(row[key], expected);
+    if (match === false) return false;
+    if (match === null) unknown = true;
   }
-  return true;
+  return unknown ? null : true;
 }
 
 // ===== select / include projection =====
@@ -454,6 +502,7 @@ function hydrateRelation(
 // ===== Generic model factory =====
 
 interface ModelOptions {
+  uniqueKeys?: string[][];
   relations?: Record<string, RelationResolver>;
   // Compound-unique `where` keys (e.g. agentUuid_sessionId) expanded to their
   // component scalar match before the generic matcher runs.
@@ -485,6 +534,11 @@ function makeModel<T extends Record<string, unknown>>(
 ) {
   const relations = options.relations ?? {};
   const compoundKeys = options.compoundKeys ?? {};
+  const isDuplicate = (data: Record<string, unknown>, rows = getRows()) =>
+    (options.uniqueKeys ?? []).some((fields) =>
+      fields.every((field) => data[field] != null) &&
+      rows.some((row) => fields.every((field) => row[field] === data[field])),
+    );
 
   const findOne = (args: { where?: Where; select?: Record<string, unknown>; include?: Record<string, unknown> } = {}) => {
     const where = normalizeWhere(args.where as Record<string, unknown> | undefined, compoundKeys);
@@ -523,8 +577,28 @@ function makeModel<T extends Record<string, unknown>>(
     }),
     create: vi.fn(async (args: { data: Record<string, unknown>; select?: Record<string, unknown>; include?: Record<string, unknown> }) => {
       const row = { ...(options.defaults?.() ?? {}), ...args.data } as T;
+      if (isDuplicate(row)) throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
       getRows().push(row);
       return projectRow(row, { select: args.select, include: args.include }, relations);
+    }),
+    createManyAndReturn: vi.fn(async (args: { data: Record<string, unknown>[]; skipDuplicates?: boolean; select?: Record<string, unknown> }) => {
+      const inserted: T[] = [];
+      for (const data of args.data) {
+        const row = { ...(options.defaults?.() ?? {}), ...data } as T;
+        if (isDuplicate(row, [...getRows(), ...inserted])) {
+          if (args.skipDuplicates) continue;
+          throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+        }
+        inserted.push(row);
+      }
+      getRows().push(...inserted);
+      return inserted.map((row) => projectRow(row, args, relations));
+    }),
+    updateMany: vi.fn(async (args: { where: Where; data: Record<string, unknown> }) => {
+      const where = normalizeWhere(args.where, compoundKeys);
+      const rows = getRows().filter((row) => matchesWhere(row, where, relations));
+      for (const row of rows) Object.assign(row, args.data);
+      return { count: rows.length };
     }),
     update: vi.fn(async (args: { where: Where; data: Record<string, unknown>; select?: Record<string, unknown>; include?: Record<string, unknown> }) => {
       const where = normalizeWhere(args.where as Record<string, unknown> | undefined, compoundKeys);
@@ -668,8 +742,24 @@ export function buildMockPrisma() {
     daemonSessionTurn: makeModel<DaemonSessionTurnRow & Record<string, unknown>>(
       () => agentInstanceStore.daemonSessionTurns as (DaemonSessionTurnRow & Record<string, unknown>)[],
       {
+        uniqueKeys: [["uuid"], ["sessionUuid", "seq"], ["wakeNotificationUuid"]],
+        relations: {
+          wakeNotification: {
+            kind: "one",
+            resolve: (row) => agentInstanceStore.notifications.find((notification) => notification.uuid === row.wakeNotificationUuid) ?? null,
+          },
+          session: {
+            kind: "one",
+            resolve: (row) => agentInstanceStore.daemonSessions.find((session) => session.uuid === row.sessionUuid) ?? null,
+          },
+        },
         defaults: () => ({
           uuid: nextUuid("turn"),
+          backendSessionId: null,
+          wakeContext: null,
+          wakeNotificationUuid: null,
+          wakeTargetConnectionUuid: null,
+          wakeRuntimeCwd: null,
           promptText: null,
           status: "pending",
           executionUuid: null,

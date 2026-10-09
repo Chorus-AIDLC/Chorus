@@ -7,7 +7,9 @@ turn — instead of one turn per wake, and how that single turn is accounted so 
 coalesced-away pending turns are settled (not left stuck as `queued`/`pending`).
 Batching is natural only (no debounce/collect timer, no batch-size cap);
 per-key serialization and the global cross-key concurrency cap are preserved.
+
 ## Requirements
+
 ### Requirement: Coalesce pending same-key wakes into one batch
 The daemon's wake scheduler SHALL, when a session key's execution slot becomes
 free, drain ALL currently-pending wakes for that key and run them as a SINGLE
@@ -73,29 +75,56 @@ empty SHALL be omitted from the prompt.
 - **THEN** each renders as its own labeled block, ordered by arrival, under one shared backlog preamble
 
 ### Requirement: A coalesced batch is accounted as a single turn without stuck queued rows
-A coalesced batch SHALL be reported as one running turn. The daemon SHALL emit an
-execution snapshot in which the merged-away resources are no longer present as
-"queued" (the session-anchor running row is synthesized from the batch attribution,
-not assumed to be one of the merged resources), so the server reconcile ends them
-and the UI does not show them stuck in the queued state. The daemon SHALL report
-the coalesced event count on the running-transition, and the server SHALL settle
-the coalesced-away pending turns of that session — after advancing the oldest
-pending turn to `running`, it marks the next `count − 1` pending turns of the same
-session, by ascending seq, to a terminal `merged` state — so coalesced-away turns
-do not linger as `pending` (which would otherwise re-dispatch as duplicate wakes on
-reconnect). A pending turn created after the batch was drained (higher seq, beyond
-the reported count) SHALL survive for the next batch. No new execution-status value
-and no database migration are required.
+
+A coalesced batch SHALL be reported as one running turn. The daemon SHALL emit an execution snapshot in which merged-away resources are no longer present as queued; the session-anchor running row SHALL be synthesized from batch attribution so server reconciliation clears merged-away execution rows.
+
+With the exact-identity protocol, the daemon SHALL report the actual batch member turn UUIDs, the selected primary UUID and a stable admissionUuid retained across retries. On first admission the server SHALL atomically validate current authorization, each member's effective delivery target (its hard target when present, otherwise canonical session origin), same-session membership, unique identifiers and pending state, advance the primary to running, and settle only the other specified members as terminal merged. A retry with the identical persisted admission identity and members SHALL return the same still-valid running/merged outcome after rechecking authorization, effective targets and saved admission ownership, without further settlement. It MUST NOT admit arbitrary already-running work or settle an unrelated older pending turn. A rejected batch admission MUST NOT start model execution or partially settle members. Prompt-only events without a persisted turn SHALL NOT fabricate batch member identifiers or consume additional FIFO turns.
+
+Batch recovery SHALL operate on already-materialized turn identities independently of notification `readAt`, archive state or unread-list windows. Notification-only outcomes (`none`, `offline_pin`, or logged turn-materialization failure after notification persistence) SHALL NOT establish an outbox obligation or cause guessed/deferred batch members to be created. Unique source-notification identity and per-turn hard target/runtime cwd SHALL remain intact. A same-UUID transport reconnect SHALL preserve an uncertain batch's token, members and captured admitting connection; a changed identity, conflict, shutdown or explicit interrupt SHALL cancel unstarted admission safely. Terminal settlement SHALL use immutable admission ownership rather than a later canonical session origin.
+
+For legacy clients without the capability, the server SHALL retain the existing coalescedCount behavior: advance the oldest pending turn and settle the next count minus one pending turns by ascending seq. No notification outbox ownership or legacy-only visibility restriction SHALL be added to this compatibility path; ordinary MCP notification reads SHALL remain fully access-filtered under existing query semantics. The exact-identity guarantee SHALL NOT be attributed to that fallback. A turn absent from an identified batch, including one created after queue drain, SHALL survive for another batch. No new execution-status value is required.
 
 #### Scenario: Merged-away queued resources clear from the UI
 - **WHEN** four resources were shown queued for a session and they are coalesced into one running batch
-- **THEN** the next execution snapshot no longer lists the merged-away resources as queued, and after reconcile the UI shows one running entry and no leftover queued entries for that session
+- **THEN** the next execution snapshot no longer lists merged-away resources as queued and reconciliation shows one running entry without those leftover queued resources
 
 #### Scenario: Coalesced-away pending turns are settled by count
-- **WHEN** the daemon coalesces N pending wakes for a session into one running batch and reports coalescedCount = N
-- **THEN** the server advances the oldest pending turn of that session to `running` and marks the next N−1 pending turns (by ascending seq) as terminal `merged`, leaving turns of unrelated sessions untouched
+- **WHEN** a legacy daemon without exact identity reports coalescedCount = N
+- **THEN** the server advances the oldest pending turn and merges the next N minus one pending turns in that session, preserving legacy compatibility
 
 #### Scenario: A turn arriving after the drain survives
-- **WHEN** a new notification for the session arrives after the daemon drained its queue (its pending turn has a seq beyond the reported count)
-- **THEN** that turn is NOT settled as merged and remains `pending` for the next batch
+- **WHEN** a notification creates a turn after the daemon drains its batch
+- **THEN** that turn is not among the exact batch identifiers and MUST remain pending rather than being settled as merged
 
+#### Scenario: Exact batch members exclude older missed work
+- **WHEN** a batch contains known turns B and C but older pending A was never admitted to its queue
+- **THEN** B and C alone SHALL be accounted for and A MUST remain untouched
+
+#### Scenario: Invalid batch membership rejects atomically
+- **WHEN** any exact member is unauthorized, belongs to another session or effective delivery target, is duplicated, or is no longer pending without a matching valid admission retry
+- **THEN** the server MUST reject without partially advancing other members and the daemon MUST NOT execute that rejected batch
+
+#### Scenario: Lost successful batch acknowledgment is recoverable
+- **WHEN** admission commits a batch but its successful response is lost
+- **THEN** an identical authorized retry MUST return that same batch result without separately replaying merged members
+- **AND** unrelated older pending work MUST remain untouched
+
+#### Scenario: Same-UUID reconnect during uncertain batch admission
+- **WHEN** a transport reconnect registers the same connection UUID while batch admission is unresolved
+- **THEN** the daemon SHALL retain the original token, primary and ordered members and retry without reporting a shutdown interruption
+- **AND** it SHALL start the model at most once, only after confirmed admission
+
+#### Scenario: Mixed batch includes another connection's hard-pinned turn
+- **WHEN** B submits an exact batch containing A's materialized hard-pinned turn after the canonical session moves to B
+- **THEN** admission SHALL reject atomically without executing or settling any member
+- **AND** A's pending turn SHALL retain A's target and runtime cwd for authorized recovery
+
+#### Scenario: Rejected batch retains a smaller pending subset
+- **WHEN** exact multi-member admission receives 404/409 and a subsequent authoritative pending read contains a strictly smaller subset of those members
+- **THEN** the daemon SHALL release only that subset's original local delivery ownership and submit survivors through fresh exact admission
+- **AND** terminal, running or inaccessible members MUST NOT be executed or interrupted, and stale cleanup MUST NOT release a newer delivery
+
+#### Scenario: Permanent rejection has no membership change
+- **WHEN** authoritative pending reads still contain every member of a rejected batch
+- **THEN** the daemon SHALL NOT retry the same rejected batch or hot-loop admission POSTs
+- **AND** it MAY keep bounded periodic pending reconciliation to detect later membership changes; singleton permanent denials remain suppressed

@@ -18,7 +18,7 @@ import {
   reconcileOffline,
   publishExecutionChange,
 } from "@/services/daemon-execution.service";
-import { canAgentReceiveTurn, reconcileOrphanTurns } from "@/services/daemon-session.service";
+import { canAgentReceiveTurn, getWakeRecoveryDelivery, reconcileOrphanTurns } from "@/services/daemon-session.service";
 import { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +28,8 @@ export async function GET(request: NextRequest) {
   if (!auth) {
     return new Response("Unauthorized", { status: 401 });
   }
+  const wakeRecoveryProtocol = request.nextUrl.searchParams.get("wakeRecoveryProtocol");
+  if (wakeRecoveryProtocol !== null && wakeRecoveryProtocol !== "1") return new Response("Unsupported wake recovery protocol", { status: 400 });
 
   // Self-report registry (auth is already settled above — these query params
   // are read AFTER auth and never influence the authorization outcome).
@@ -82,6 +84,7 @@ export async function GET(request: NextRequest) {
           `data: ${JSON.stringify({
             type: "connection_registered",
             connectionUuid: conn.uuid,
+            ...(wakeRecoveryProtocol === "1" ? { wakeRecoveryProtocol: 1 } : {}),
             ...(acknowledgmentAware ? { connectedAt: conn.connectedAt.toISOString() } : {}),
           })}\n\n`,
         );
@@ -113,12 +116,31 @@ export async function GET(request: NextRequest) {
 
       // Creation-time filtering is insufficient for delayed/Redis delivery.
       const handler = (event: Record<string, unknown>) => {
+        const legacy = { ...event };
+        delete legacy.wakeContext;
+        delete legacy.turnUuid;
+        delete legacy.wakeRecoveryOnly;
+        if (event.wakeRecoveryOnly && (!conn || wakeRecoveryProtocol !== "1")) return;
+        if (conn && wakeRecoveryProtocol === "1" && event.type === "new_notification") {
+          const delivery = { ...event, wakeRecoveryProtocol: 1, wakeContext: null, suppressWake: true } as Record<string, unknown>;
+          if (typeof event.turnUuid === "string") {
+            deliverGuarded(delivery, async () => {
+              const recovered = await getWakeRecoveryDelivery(auth.companyUuid, auth.actorUuid, conn.uuid, event.turnUuid as string);
+              if (!recovered) return false;
+              Object.assign(delivery, recovered, { suppressWake: event.suppressWake === true || !recovered.wakeContext });
+              return true;
+            });
+          } else if (typeof event.projectUuid === "string" && event.projectUuid) {
+            deliverGuarded(delivery, () => canActorAccessProject(auth.companyUuid, { type: auth.type, uuid: auth.actorUuid }, event.projectUuid as string, "viewer"));
+          } else send(`data: ${JSON.stringify(delivery)}\n\n`);
+          return;
+        }
         if (typeof event.projectUuid === "string" && event.projectUuid) {
-          deliverGuarded(event, () => canActorAccessProject(
+          deliverGuarded(legacy, () => canActorAccessProject(
             auth.companyUuid, { type: auth.type, uuid: auth.actorUuid }, event.projectUuid as string, "viewer",
           ));
         } else {
-          send(`data: ${JSON.stringify(event)}\n\n`);
+          send(`data: ${JSON.stringify(legacy)}\n\n`);
         }
       };
 
@@ -135,7 +157,17 @@ export async function GET(request: NextRequest) {
         ? (event: Record<string, unknown>) => {
             if (event.command === "deliver_turn") {
               if (typeof event.turnUuid !== "string") return;
-              deliverGuarded(event, () => canAgentReceiveTurn(auth.companyUuid, auth.actorUuid, event.turnUuid as string));
+              if (wakeRecoveryProtocol === "1") {
+                const delivery = { ...event, wakeRecoveryProtocol: 1 };
+                deliverGuarded(delivery, async () => {
+                  const recovered = await getWakeRecoveryDelivery(auth.companyUuid, auth.actorUuid, conn.uuid, event.turnUuid as string);
+                  if (!recovered) return false;
+                  Object.assign(delivery, recovered);
+                  return true;
+                });
+                return;
+              }
+              deliverGuarded(event, () => canAgentReceiveTurn(auth.companyUuid, auth.actorUuid, event.turnUuid as string, conn.uuid));
             } else {
               send(`data: ${JSON.stringify(event)}\n\n`);
             }

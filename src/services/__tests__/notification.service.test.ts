@@ -34,7 +34,8 @@ vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 // can stamp the directed target; we assert the chokepoint INVOKES it per created
 // notification and threads its `targetConnectionUuid` onto the emitted event.
 const mockCreateTurnAndResolveTarget = vi.hoisted(() => vi.fn());
-vi.mock("@/services/notification-turn", () => ({
+vi.mock("@/services/notification-turn", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/services/notification-turn")>(),
   createTurnAndResolveTarget: mockCreateTurnAndResolveTarget,
 }));
 
@@ -333,6 +334,48 @@ describe("create", () => {
 
 // ===== createBatch =====
 describe("createBatch", () => {
+  it("persists exact single and batch notification snapshots before publishing recoverable events", async () => {
+    const params = makeNotifParams({ recipientType: "agent", recipientUuid: "wake-agent", action: "mentioned" });
+    const notifications = ["source-1", "source-2", "source-3"].map((uuid) => makeNotifRecord({ ...params, uuid }));
+    mockPrisma.notification.create
+      .mockResolvedValueOnce(notifications[0]).mockResolvedValueOnce(notifications[1]).mockResolvedValueOnce(notifications[2]);
+    mockPrisma.notification.count.mockResolvedValue(3);
+    const persisted = new Set<string>();
+    mockCreateTurnAndResolveTarget.mockImplementation(async (context) => {
+      const source = context.wakeContext;
+      expect(source).toMatchObject({ version: 1, notificationUuid: source.notification.uuid, notification: {
+        action: "mentioned", message: params.message, recipientUuid: "wake-agent", entityUuid: params.entityUuid,
+      } });
+      expect(source.notification).not.toHaveProperty("companyUuid");
+      expect(source.notification).not.toHaveProperty("readAt");
+      persisted.add(source.notificationUuid);
+      return { turn: { uuid: `turn-${source.notificationUuid}` }, wakeContext: source, targetConnectionUuid: "origin", runtimeCwd: null, suppressWake: false };
+    });
+    mockEventBus.emit.mockImplementation((_channel, event) => {
+      expect(persisted.has(event.notificationUuid)).toBe(true);
+      expect(event.turnUuid).toBe(`turn-${event.notificationUuid}`);
+      expect(event.wakeContext.notificationUuid).toBe(event.notificationUuid);
+    });
+    try {
+      await create(params);
+      await createBatch([params, params]);
+      expect(mockEventBus.emit).toHaveBeenCalledTimes(3);
+      expect(mockEventBus.emit.mock.calls[2][1]).toMatchObject({ wakeRecoveryOnly: true, notificationUuid: "source-3" });
+    } finally {
+      mockEventBus.emit.mockReset();
+    }
+  });
+
+  it("gives newly created human instructions a durable recovery-safe context", async () => {
+    const params = makeNotifParams({ recipientType: "agent", action: "human_instruction", instructionText: "do the new instruction" });
+    mockPrisma.notification.create.mockResolvedValue(makeNotifRecord(params));
+    mockPrisma.notification.count.mockResolvedValue(1);
+    await create(params);
+    expect(mockCreateTurnAndResolveTarget).toHaveBeenCalledWith(expect.objectContaining({
+      wakeContext: expect.objectContaining({ version: 1, notificationUuid: notifUuid, notification: expect.objectContaining({ instructionText: "do the new instruction" }) }),
+    }));
+  });
+
   it("should create multiple notifications and emit per-recipient events", async () => {
     const recipient2 = "user-0000-0000-0000-000000000002";
     const params1 = makeNotifParams();

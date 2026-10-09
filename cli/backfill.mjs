@@ -67,6 +67,7 @@ export function createBackfill(opts) {
   const seen = opts.seen ?? new Set();
   const logger = opts.logger ?? NOOP_LOGGER;
   const limit = opts.limit ?? 50;
+  const legacyWarnings = new Set();
   // 子1 pending-turn backfill wiring (optional).
   const url = opts.url ?? null;
   const apiKey = opts.apiKey ?? null;
@@ -133,39 +134,61 @@ export function createBackfill(opts) {
    *
    * @param {string} [onlyTurnUuid]
    */
-  async function backfillPendingTurns(onlyTurnUuid) {
+  async function backfillPendingTurns(onlyTurnUuid, options = {}) {
     if (!pendingTurnsClient || !dispatchPendingTurn) {
       // Pending-turn backfill not wired (e.g. notification-only callers / older tests).
-      return;
+      return { status: "blocked", outcomes: {} };
     }
     // The shared client reads `GET /api/daemon/pending-turns?connectionUuid=…`, skipping
     // (no log) while the connectionUuid is not known yet — a normal early state — and
     // surfacing a network error / non-2xx / bad JSON / missing turns array with its cause
     // (logged) as `result.ok === false`. We just consume the parsed turns; never throw.
-    const result = await pendingTurnsClient.readPendingTurns();
+    const connectionUuid = getConnectionUuid?.();
+    const current = () => !options.signal?.aborted && getConnectionUuid?.() === connectionUuid && (options.shouldDispatch?.() ?? true);
+    const result = await pendingTurnsClient.readPendingTurns({ signal: options.signal });
+    if (!current()) return { status: "blocked", outcomes: {} };
     if (!result.ok || !result.data) {
       // Either nothing to read yet (skipped) or a logged failure — nothing to dispatch.
-      return;
+      return { status: result.retryable ? "retryable" : "blocked", outcomes: {}, httpStatus: result.status };
     }
     const turns = result.data.turns;
+    opts.reconcilePendingTurns?.(turns);
 
     let redispatched = 0;
+    const outcomes = {};
+    const selected = new Set(options.turnUuids ?? (onlyTurnUuid ? [onlyTurnUuid] : []));
     for (const t of turns) {
       if (!t || typeof t.turnUuid !== "string") continue;
       // Live `deliver_turn` precision: when a specific turnUuid was announced, dispatch
       // ONLY it — skip every other pending turn of the connection (they are recovered by
       // the arg-less reconnect sweep, not by a single-turn live ping).
-      if (onlyTurnUuid && t.turnUuid !== onlyTurnUuid) continue;
+      if (selected.size && !options.sweep && !selected.has(t.turnUuid)) continue;
+      if (options.recoverableOnly && !selected.has(t.turnUuid) && t.wakeContext?.version !== 1 && !t.operationPayload) {
+        if (!legacyWarnings.has(t.turnUuid)) {
+          legacyWarnings.add(t.turnUuid);
+          logger.warn(`[Chorus] pending turn ${t.turnUuid}: no supported durable wake context; automatic historical replay blocked`);
+        }
+        continue;
+      }
       // The router (dispatchPendingTurn) is the single owner of marking-seen (keyed
       // `turn:<uuid>`), exactly like the notification path — so do NOT mark here.
-      if (seen.has(`turn:${t.turnUuid}`)) continue;
+      if (seen.has(`turn:${t.turnUuid}`)) {
+        outcomes[t.turnUuid] = { status: "duplicate" };
+        continue;
+      }
+      if (!current()) return { status: "blocked", outcomes };
       redispatched++;
-      dispatchPendingTurn(t);
+      try {
+        outcomes[t.turnUuid] = await dispatchPendingTurn(t, { signal: options.signal }) ?? { status: "accepted" };
+      } catch {
+        outcomes[t.turnUuid] = { status: "retryable" };
+      }
     }
     if (redispatched > 0) {
       const scope = onlyTurnUuid ? `turn ${onlyTurnUuid}` : `${redispatched} pending turn(s)`;
       logger.info(`[Chorus] backfill re-derived ${scope} from the turn table`);
     }
+    return { status: "accepted", outcomes };
   }
 
   async function backfill() {

@@ -83,12 +83,14 @@ vi.mock("@/lib/event-bus", () => ({
 vi.mock("@/services/daemon-instruction.service", () => ({
   deliverTurnPing: vi.fn(),
 }));
-vi.mock("@/services/orchestrator.service", () => ({
+vi.mock("@/services/orchestrator.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/services/orchestrator.service")>(),
   resolveResourceOrchestrator: vi.fn().mockResolvedValue(null),
 }));
 
 import { registerPmTools } from "@/mcp/tools/pm";
 import { handleActivity } from "@/services/notification-listener";
+import { canAgentReceiveTurn } from "@/services/daemon-session.service";
 import type { AgentAuthContext } from "@/types/auth";
 
 // ===== Scenario identifiers =====
@@ -288,6 +290,17 @@ describe("assign_idea end-to-end — agent target (AC#1)", () => {
       (s) => s.uuid === agentInstanceStore.daemonSessionTurns[0].sessionUuid,
     );
     expect(session?.agentUuid).toBe(PM_AGENT);
+    expect(agentInstanceStore.daemonSessionTurns[0]).toMatchObject({
+      wakeNotificationUuid: agentNotif!.uuid,
+      wakeContext: { notificationUuid: agentNotif!.uuid },
+      wakeTargetConnectionUuid: null,
+      wakeRuntimeCwd: null,
+    });
+    const turnUuid = agentInstanceStore.daemonSessionTurns[0].uuid;
+    expect(await canAgentReceiveTurn(COMPANY, PM_AGENT, turnUuid)).toBe(true);
+    expect(await canAgentReceiveTurn(COMPANY, CALLER, turnUuid)).toBe(false);
+    expect(await canAgentReceiveTurn("another-company", PM_AGENT, turnUuid)).toBe(false);
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(1);
   });
 
   it("rejects an ineligible target agent (no idea:write) — no assignment, no Activity, no notification", async () => {

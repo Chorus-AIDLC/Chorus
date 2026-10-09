@@ -59,6 +59,31 @@ const turnView = {
 
 const runningBody = { connectionUuid, sessionId, status: "running", entityType: "task", entityUuid: "task-9" };
 
+describe("exact admission HTTP contract", () => {
+  const exact = { ...runningBody, wakeRecoveryProtocol: 1, admissionUuid: "64f4b968-c1b5-49fb-95f2-2f821361452c", turnUuid: "turn-1", turnUuids: ["turn-1", "turn-2"] };
+  it("forwards the stable token and ordered membership, preserving the success envelope", async () => {
+    const response = await POST(postRequest(exact), emptyCtx);
+    expect(response.status).toBe(200);
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledWith(expect.objectContaining(exact));
+    expect(await response.json()).toMatchObject({ data: { turn: { uuid: "turn-1" } } });
+  });
+  it("keeps the existing uncapped batch-size contract", async () => {
+    const members = Array.from({ length: 101 }, (_, index) => `turn-${index + 1}`);
+    const response = await POST(postRequest({ ...exact, turnUuids: members }), emptyCtx);
+    expect(response.status).toBe(200);
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledWith(expect.objectContaining({ turnUuids: members }));
+  });
+  it.each([
+    { admissionUuid: undefined }, { turnUuid: undefined }, { turnUuids: undefined },
+    { turnUuids: ["turn-1", "turn-1"] }, { turnUuids: ["turn-2"] },
+    { wakeRecoveryProtocol: 2 }, { wakeRecoveryProtocol: undefined }, { admissionUuid: "invalid" },
+  ])("rejects malformed exact identities without invoking admission (%j)", async (override) => {
+    const response = await POST(postRequest({ ...exact, ...override }), emptyCtx);
+    expect(response.status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetAuthContext.mockResolvedValue(agentAuth);

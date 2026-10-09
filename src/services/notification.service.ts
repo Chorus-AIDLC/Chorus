@@ -9,6 +9,7 @@ import { RESOURCES } from "@/lib/authz/types";
 import type { Prisma } from "@/generated/prisma/client";
 import type { AgentAuthContext, AuthContext } from "@/types/auth";
 import { createTurnAndResolveTarget } from "@/services/notification-turn";
+import { createWakeContext } from "@/services/daemon-wake-context";
 import {
   resolveDirectIdeaUuid,
   type TurnView,
@@ -533,13 +534,9 @@ export async function createReturningTurn(
   // target connection. This is the single chokepoint where every wake notification is
   // born, so human and autonomous wakes are handled symmetrically. The bridge is
   // failure-isolated (logs + swallows): a turn-creation/ping failure MUST NOT abort or
-  // block this already-created notification. We surface its return so the send path gets
-  // the exact turn created (no seq read-back), and so the SSE event can carry the directed
-  // target. It runs BEFORE the SSE emit so the `new_notification` event can stamp the
-  // resolved `targetConnectionUuid` (the bridge reads only `params`, not the created row,
-  // so this reorder is behavior-preserving for the notification row itself).
-  const { turn, targetConnectionUuid, runtimeCwd, suppressWake } =
-    await createTurnAndResolveTarget(params);
+  // block this already-created notification.
+  const { turn, targetConnectionUuid, runtimeCwd, suppressWake, wakeContext } =
+    await createTurnAndResolveTarget({ ...params, wakeContext: createWakeContext(notification) });
 
   // Emit SSE event for real-time notification delivery (includes details for toast).
   //
@@ -567,6 +564,7 @@ export async function createReturningTurn(
   eventBus.emit(`notification:${params.recipientType}:${params.recipientUuid}`, {
     type: "new_notification",
     notificationUuid: notification.uuid,
+    ...(turn && wakeContext ? { turnUuid: turn.uuid, wakeContext } : {}),
     unreadCount,
     action: params.action,
     actorName: params.actorName,
@@ -638,41 +636,31 @@ export async function createBatch(
   // `targetConnectionUuid` (directed live delivery, fix-pinned-wake-directed-delivery; this
   // is the path mentions take, so it is where the headline @mention misroute is fixed).
   // Each attempt is failure-isolated inside the bridge: a turn-creation/ping failure logs
-  // and is swallowed, never aborting the notifications that were already created. Run
-  // sequentially so per-session monotonic turn `seq` allocation is not raced when one batch
-  // carries multiple wakes for the same agent session. Map each resolved target back to its
-  // notification params (referential identity) so the per-recipient emit below can read it.
-  const targetByParams = new Map<
-    NotificationCreateParams,
-    { targetConnectionUuid: string | null; runtimeCwd: string | null; suppressWake: boolean }
-  >();
-  for (const params of notifications) {
-    const { targetConnectionUuid, runtimeCwd, suppressWake } =
-      await createTurnAndResolveTarget(params);
-    targetByParams.set(params, { targetConnectionUuid, runtimeCwd, suppressWake });
+  // and is swallowed, never aborting the notifications that were already created.
+  const wakes: Awaited<ReturnType<typeof createTurnAndResolveTarget>>[] = [];
+  for (const [index, params] of notifications.entries()) {
+    const result = await createTurnAndResolveTarget({ ...params, wakeContext: createWakeContext(created[index]) });
+    wakes.push(result);
   }
 
-  // Deduplicate recipients and emit one event per recipient
-  const recipientKeys = new Set<string>();
-  for (const params of notifications) {
-    recipientKeys.add(`${params.recipientType}:${params.recipientUuid}:${params.companyUuid}`);
-  }
-
-  for (const key of recipientKeys) {
-    const [recipientType, recipientUuid, companyUuid] = key.split(":");
+  const emittedRecipients = new Set<string>();
+  for (const [index, matchParams] of notifications.entries()) {
+    const { recipientType, recipientUuid, companyUuid } = matchParams;
 
     const unreadCount = await getUnreadCount(companyUuid, recipientType, recipientUuid);
 
-    const match = created.find(
-      (n) => n.recipientType === recipientType && n.recipientUuid === recipientUuid
-    );
-    const matchParams = notifications.find(
-      (n) => n.recipientType === recipientType && n.recipientUuid === recipientUuid
-    );
+    const match = created[index];
+    const wake = wakes[index];
+    const recipientKey = `${companyUuid}:${recipientType}:${recipientUuid}`;
+    const wakeRecoveryOnly = emittedRecipients.has(recipientKey);
+    if (wakeRecoveryOnly && !(wake?.turn && wake.wakeContext)) continue;
+    emittedRecipients.add(recipientKey);
 
     eventBus.emit(`notification:${recipientType}:${recipientUuid}`, {
       type: "new_notification",
       notificationUuid: match?.uuid,
+      ...(wakeRecoveryOnly ? { wakeRecoveryOnly: true } : {}),
+      ...(wake?.turn && wake.wakeContext ? { turnUuid: wake.turn.uuid, wakeContext: wake.wakeContext } : {}),
       unreadCount,
       action: matchParams?.action,
       actorName: matchParams?.actorName,
@@ -682,17 +670,11 @@ export async function createBatch(
       projectUuid: matchParams?.projectUuid,
       // Transport-only directed-delivery target for the recipient's wake (null when
       // un-pinned / notify-only). Resolved above by the wake-turn chokepoint.
-      targetConnectionUuid: matchParams
-        ? targetByParams.get(matchParams)?.targetConnectionUuid ?? null
-        : null,
-      runtimeCwd: matchParams
-        ? targetByParams.get(matchParams)?.runtimeCwd ?? null
-        : null,
+      targetConnectionUuid: wake?.targetConnectionUuid ?? null,
+      runtimeCwd: wake?.runtimeCwd ?? null,
       // Transport-only offline-pin marker: true ONLY for an offline-pin wake — tells every
       // daemon to suppress (Q2 notify-only), distinguishing it from an un-pinned wake.
-      suppressWake: matchParams
-        ? targetByParams.get(matchParams)?.suppressWake ?? false
-        : false,
+      suppressWake: wake?.suppressWake ?? false,
     });
   }
 
