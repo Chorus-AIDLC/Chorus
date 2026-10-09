@@ -602,6 +602,7 @@ beforeEach(() => {
   // Pending-turn delivery now resolves the session's current idea project. The
   // fixture's lineage anchor must exist just as it does in the real database.
   store.data.idea.push({ uuid: IDEA, companyUuid: COMPANY, projectUuid: PROJECT });
+  store.data.task.push({ uuid: TASK, companyUuid: COMPANY, projectUuid: PROJECT });
 
   mockGetAuthContext.mockResolvedValue(agentAuth());
   // task → direct idea IDEA; default for anything else null.

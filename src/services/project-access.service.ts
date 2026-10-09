@@ -214,26 +214,27 @@ export async function resolveEntityProjectUuid(
   companyUuid: string,
   entityType: AccessEntityType | string,
   entityUuid: string,
+  client: Pick<typeof prisma, "project" | "idea" | "proposal" | "task" | "document" | "comment"> = prisma,
 ): Promise<string | null> {
   const where = { uuid: entityUuid, companyUuid };
   const select = { projectUuid: true } as const;
   switch (entityType) {
     case "project": {
-      const p = await prisma.project.findFirst({ where, select: { uuid: true } });
+      const p = await client.project.findFirst({ where, select: { uuid: true } });
       return p?.uuid ?? null;
     }
     case "idea":
-      return (await prisma.idea.findFirst({ where, select }))?.projectUuid ?? null;
+      return (await client.idea.findFirst({ where, select }))?.projectUuid ?? null;
     case "proposal":
-      return (await prisma.proposal.findFirst({ where, select }))?.projectUuid ?? null;
+      return (await client.proposal.findFirst({ where, select }))?.projectUuid ?? null;
     case "task":
-      return (await prisma.task.findFirst({ where, select }))?.projectUuid ?? null;
+      return (await client.task.findFirst({ where, select }))?.projectUuid ?? null;
     case "document":
-      return (await prisma.document.findFirst({ where, select }))?.projectUuid ?? null;
+      return (await client.document.findFirst({ where, select }))?.projectUuid ?? null;
     case "comment": {
-      const c = await prisma.comment.findFirst({ where, select: { targetType: true, targetUuid: true } });
+      const c = await client.comment.findFirst({ where, select: { targetType: true, targetUuid: true } });
       if (!c || c.targetType === "comment") return null;
-      return resolveEntityProjectUuid(companyUuid, c.targetType, c.targetUuid);
+      return resolveEntityProjectUuid(companyUuid, c.targetType, c.targetUuid, client);
     }
     default:
       return null;
@@ -363,10 +364,11 @@ export async function canActorAccessProject(
   actor: { type: string; uuid: string },
   projectUuid: string,
   min: ProjectMemberRole,
+  client: ProjectAccessClient & Pick<typeof prisma, "agent"> = prisma,
 ): Promise<boolean> {
   let ownerUuid: string | undefined;
   if (actor.type === "agent") {
-    const agent = await prisma.agent.findFirst({
+    const agent = await client.agent.findFirst({
       where: { uuid: actor.uuid, companyUuid },
       select: { ownerUuid: true },
     });
@@ -378,6 +380,7 @@ export async function canActorAccessProject(
   const { level } = await computeProjectAccess(
     { type: actor.type as "user" | "agent", companyUuid, actorUuid: actor.uuid, ownerUuid },
     projectUuid,
+    client,
   );
   return levelAtLeast(level, min);
 }

@@ -36,6 +36,7 @@ import { formatBanner, agentNotFoundWarningLine } from "./daemon-banner.mjs";
 import { ChorusClient, validateAndFetchIdentity } from "./chorus-client.mjs";
 import { SseListener } from "./sse-listener.mjs";
 import { createBackfill } from "./backfill.mjs";
+import { createDeliveryRecovery } from "./delivery-recovery.mjs";
 import { EventRouter } from "./event-router.mjs";
 import { WakeQueue } from "./wake-queue.mjs";
 import { Waker } from "./waker.mjs";
@@ -322,6 +323,10 @@ export function buildDaemon(creds, deps = {}) {
         postComment: (comment) => mcpClient.callTool("chorus_add_comment", comment),
         advanceTurn,
         verbose,
+        onAdmissionCancelled: (turnUuids) => {
+          router.releaseAccepted(turnUuids);
+          recovery.reconcile();
+        },
         validateRuntimeCwd: (runtimeCwd) => validateDirectory({ cwd: runtimeCwd, browseRoots }),
         killer: deps.killer,
         sigintTimeoutMs,
@@ -376,6 +381,9 @@ export function buildDaemon(creds, deps = {}) {
       interruptAll() {
         for (const candidate of runtimeWakers.values()) candidate.interruptAll();
       },
+      cancelPendingAdmissions() {
+        for (const candidate of runtimeWakers.values()) candidate.cancelPendingAdmissions?.();
+      },
       buildExecutionSnapshot: () =>
         [...runtimeWakers.values()].flatMap((candidate) => candidate.buildExecutionSnapshot()),
     };
@@ -426,7 +434,7 @@ export function buildDaemon(creds, deps = {}) {
         orchestrator,
       });
     };
-    const deliverTurn = (turnUuid) => backfill?.pendingTurnsOnly?.(turnUuid);
+    const deliverTurn = (turnUuid) => recovery.deliver(turnUuid);
     const onControl = createControlHandler({
       waker,
       getConnectionUuid: () => connectionState.connectionUuid,
@@ -467,9 +475,10 @@ export function buildDaemon(creds, deps = {}) {
       url: creds.url,
       apiKey: creds.apiKey,
       getConnectionUuid: () => connectionState.connectionUuid,
-      dispatchPendingTurn: (turn) => router.dispatchPendingTurn?.(turn),
+      dispatchPendingTurn: (turn, options) => router.dispatchPendingTurn?.(turn, options),
       fetchImpl: deps.fetchImpl,
     });
+    const recovery = createDeliveryRecovery({ router, backfill, getConnectionUuid: () => connectionState.connectionUuid, logger });
 
     // Per-connection SSE listener, self-reporting THIS connection's cwd so the server
     // registers it as a distinct (agent, clientType, host, cwd) row. Test injection:
@@ -497,9 +506,11 @@ export function buildDaemon(creds, deps = {}) {
         // The working directory THIS connection serves (T3). `undefined` ⇒ the listener
         // reports its process cwd (single-path / HARD-1). It is just the served path.
         cwd,
-        onEvent: (event) => router.dispatch(event),
+        onEvent: (event) => recovery.dispatch(event),
         onConnectionId: (connectionUuid) => {
+          if (connectionState.connectionUuid) waker.cancelPendingAdmissions();
           connectionState.connectionUuid = connectionUuid;
+          recovery.register();
           logger.info(
             `[Chorus] registered as connection ${connectionUuid}` +
               (cwd ? ` (cwd=${cwd})` : "")
@@ -524,6 +535,8 @@ export function buildDaemon(creds, deps = {}) {
               `Stop the other daemon (or wait for it to go offline) and restart to take it over.`
           );
           outcome.skipped = true;
+          recovery.stop();
+          waker.cancelPendingAdmissions();
           // Tear down THIS path's listener: no reconnect, no re-probe (Q4).
           sseListener.disconnect?.();
           // Terminal outcome: this path conflicted (idempotent — counts once).
@@ -531,7 +544,7 @@ export function buildDaemon(creds, deps = {}) {
         },
         onControl,
         acknowledgeHeartbeat: (registration) => daemonRestClient.heartbeat(registration),
-        onReconnect: backfill,
+        onReconnect: () => { recovery.suspend(); waker.cancelPendingAdmissions(); },
         logger,
       });
 
@@ -543,6 +556,7 @@ export function buildDaemon(creds, deps = {}) {
       queue,
       router,
       backfill,
+      recovery,
       sseListener,
       hooks,
       outcome,
@@ -585,6 +599,7 @@ export function buildDaemon(creds, deps = {}) {
       // 1. Stop taking new work: disconnect the SSE listeners (no new notifications)
       //    and latch the queue (queued-but-unstarted wakes never spawn).
       for (const c of connections) {
+        c.recovery?.stop();
         c.sseListener.disconnect?.();
         // Latch each connection's OWN queue (queues are per-connection now — add-daemon-
         // wake-coalescing) so queued-but-unstarted wakes never spawn.

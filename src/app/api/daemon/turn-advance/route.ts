@@ -45,6 +45,9 @@ const bodySchema = z
     connectionUuid: z.string().min(1),
     sessionId: z.string().min(1),
     turnUuid: z.string().min(1).max(100).nullish(),
+    wakeRecoveryProtocol: z.literal(1).optional(),
+    admissionUuid: z.string().uuid().optional(),
+    turnUuids: z.array(z.string().min(1).max(100)).min(1).optional(),
     backendSessionId: z.string().trim().min(1).max(200).nullish(),
     status: z.enum([...TURN_STATUSES]),
     // Number of same-session wakes the daemon coalesced into THIS batch (daemon-wake-
@@ -89,6 +92,17 @@ const bodySchema = z
   .refine((b) => b.status !== "interrupted" || b.interruptedReason != null, {
     message: "interruptedReason is required with status=interrupted",
     path: ["interruptedReason"],
+  })
+  .refine((body) => body.wakeRecoveryProtocol !== 1 ||
+    (!!body.turnUuid && !!body.admissionUuid && (body.status !== "running" || !!body.turnUuids)), {
+    message: "Exact wake recovery requires turnUuid, admissionUuid and running turnUuids",
+  })
+  .refine((body) => !body.turnUuids || (body.wakeRecoveryProtocol === 1 &&
+    new Set(body.turnUuids).size === body.turnUuids.length && body.turnUuids.includes(body.turnUuid ?? "")), {
+    message: "Exact members must be unique and include the primary turn",
+  })
+  .refine((body) => !body.admissionUuid || body.wakeRecoveryProtocol === 1, {
+    message: "admissionUuid requires wakeRecoveryProtocol=1",
   });
 
 // POST /api/daemon/turn-advance — advance a turn's lifecycle by session business key.
@@ -113,6 +127,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     connectionUuid,
     sessionId,
     turnUuid,
+    turnUuids,
+    admissionUuid,
+    wakeRecoveryProtocol,
     backendSessionId,
     status,
     coalescedCount,
@@ -143,6 +160,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     operationProtocol: request.nextUrl.searchParams.get("operationProtocol") === "1",
     researchMode: request.nextUrl.searchParams.get("researchProtocol") === "1" ? "isolated" : "legacy",
     turnUuid: turnUuid ?? undefined,
+    ...(wakeRecoveryProtocol === 1 ? { wakeRecoveryProtocol, admissionUuid, turnUuids } : {}),
     backendSessionId: backendSessionId ?? undefined,
     status,
     coalescedCount,

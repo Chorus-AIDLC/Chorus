@@ -19,6 +19,8 @@
 // wake. A failure is logged and swallowed — it must never crash the daemon
 // (no-silent-errors: visible log, no throw).
 
+import { randomUUID } from "node:crypto";
+import { deliveryRequest, deliveryError } from "./delivery-request.mjs";
 import { OPERATION_ACTIONS, isExactOperation, validateOperation } from "./operation.mjs";
 import { buildBatchPrompt } from "./prompts.mjs";
 import { writeMcpConfig } from "./mcp-config.mjs";
@@ -77,6 +79,7 @@ export class Waker {
     this.hooks = opts.hooks;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.postComment = opts.postComment;
+    this.onAdmissionCancelled = opts.onAdmissionCancelled ?? (() => {});
     this.writeMcpConfigFn = opts.writeMcpConfigFn ?? writeMcpConfig;
     this.isNewSessionFn = opts.isNewSessionFn ?? isNewSession;
     // Interrupt reporter (子3): default no-op-with-log so a Waker built without one
@@ -114,6 +117,7 @@ export class Waker {
     // Retry exact launch-abort reports after a network outage. These timers carry
     // delivery cleanup only; the existing server turn remains the lifecycle authority.
     this.operationRecoveryTimers = new Set();
+    this.admissionController = new AbortController();
     // Daemon graceful-shutdown flag (fix-daemon-exit-orphan-running-turn). Set once
     // by interruptAll() and never cleared — a shutting-down Waker is on its way out.
     // The wake exit path reads it to report the TURN as interrupted(shutdown), and to
@@ -176,7 +180,10 @@ export class Waker {
    * @param {string} entityType @param {string} entityUuid
    */
   markInterrupting(entityType, entityUuid) {
-    this.interrupting.add(this.#execKey(entityType, entityUuid));
+    const key = this.#execKey(entityType, entityUuid);
+    this.interrupting.add(key);
+    const entry = this.executions.get(key);
+    if (!entry?.child) entry?.cancelAdmission?.();
   }
 
   /**
@@ -194,6 +201,7 @@ export class Waker {
    */
   interruptAll() {
     this.shuttingDown = true;
+    this.cancelPendingAdmissions();
     for (const timer of this.operationRecoveryTimers) clearTimeout(timer);
     this.operationRecoveryTimers.clear();
     for (const [key, entry] of this.executions) {
@@ -208,6 +216,15 @@ export class Waker {
         this.logger.warn(`[Chorus] shutdown: kill dispatch failed for ${key}: ${err}`);
       }
     }
+  }
+
+  stop() {
+    this.interruptAll();
+  }
+
+  cancelPendingAdmissions() {
+    this.admissionController.abort();
+    if (!this.shuttingDown) this.admissionController = new AbortController();
   }
 
   /** Recognized wake-triggering resource kinds the server's DaemonExecution accepts. */
@@ -373,9 +390,18 @@ export class Waker {
    *   all items carry the same ids). `rootIdeaUuid` → snapshot; `directIdeaUuid` → session anchor.
    */
   async wakeBatch(notifications, key, attribution) {
+    if (this.admissionController.signal.aborted) return;
+    const wakeAdmissionController = new AbortController();
+    const admissionSignal = AbortSignal.any([this.admissionController.signal, wakeAdmissionController.signal]);
     let cfg;
     let operationTurnUuid = null;
     const receivedList = Array.isArray(notifications) ? notifications : [];
+    const backed = receivedList.filter((notification) => notification?.action !== "resource_resumed");
+    if (backed.some((notification) => notification?.wakeRecoveryProtocol != null &&
+        (notification.wakeRecoveryProtocol !== 1 || typeof notification.turnUuid !== "string" || !notification.turnUuid))) {
+      this.logger.warn(`[Chorus] invalid exact wake identity/protocol for ${key}; refusing legacy downgrade`);
+      return;
+    }
     // Defense in depth for callers bypassing the router: malformed operations
     // never clear a conflict guard, request admission or settle a pending turn.
     try {
@@ -462,9 +488,18 @@ export class Waker {
     // duration. `Date.now()` is fine here (runtime metric, not a resume seed).
     const startMs = Date.now();
     const target = entity ? `${entity.entityType}:${entity.entityUuid}` : key;
-    const sessionId = directIdeaUuid ?? first?.entityUuid ?? null;
+    const sessionId = first?.sessionId ?? directIdeaUuid ?? first?.entityUuid ?? null;
     const operations = list.filter(isExactOperation);
     const operationRequestUuid = batchSize === 1 && operations.length ? first.turnUuid : null;
+    const turnUuids = [...new Set(list.filter((notification) => notification?.action !== "resource_resumed")
+      .map((notification) => notification?.turnUuid).filter((turnUuid) => typeof turnUuid === "string" && turnUuid))];
+    const exactAdmission = !operations.length && turnUuids.length > 0;
+    const admission = exactAdmission ? {
+      turnUuid: turnUuids[0], turnUuids,
+      admissionUuid: first.admissionUuid ?? randomUUID(), wakeRecoveryProtocol: 1,
+    } : null;
+    const transcriptIdentity = admission?.turnUuid || operationRequestUuid
+      ? { turnUuid: admission?.turnUuid ?? operationRequestUuid } : {};
     const requestedRuntimeCwd =
       typeof first?.runtimeCwd === "string" && first.runtimeCwd
         ? first.runtimeCwd
@@ -484,16 +519,17 @@ export class Waker {
     const admitOrdinaryTurn = () => {
       if (sessionId && !turnAdvancedToRunning) {
         turnAdvancedToRunning = true;
-        runningTurnUuidPromise = this.#advanceTurn(
-          sessionId, "running", entity, null, null, null, null, coalescedCount,
-        );
+        runningTurnUuidPromise = admission
+          ? this.#admitExact({ ...admission, sessionId, status: "running",
+              entityType: entity?.entityType ?? null, entityUuid: entity?.entityUuid ?? null }, admissionSignal)
+          : this.#advanceTurn(sessionId, "running", entity, null, null, null, null, coalescedCount);
       }
       return runningTurnUuidPromise;
     };
     const flushSession = async () => {
       if (!sessionId || !sessionStartAttempted) return {};
       try {
-        return await this.hooks?.onSessionEnd?.({ sessionId }) ?? {};
+        return await this.hooks?.onSessionEnd?.({ sessionId, ...transcriptIdentity }) ?? {};
       } catch (err) {
         this.logger.warn(`[Chorus] onSessionEnd flush failed for ${key}: ${err}`);
         return {};
@@ -532,6 +568,7 @@ export class Waker {
           status: "running",
           startedAt: new Date().toISOString(),
           child: null,
+          ...(admission ? { admission, cancelAdmission: () => wakeAdmissionController.abort("user") } : {}),
           ...(operationRequestUuid ? { operationTurnUuid: operationRequestUuid } : {}),
         });
         this.#emitExecutionChange();
@@ -621,10 +658,14 @@ export class Waker {
         runningTurnUuidPromise = Promise.resolve(operationTurnUuid);
       }
 
+      if (admission && !await admitOrdinaryTurn()) return;
+      if (!admission && !operations.length) {
+        this.logger.info(`[Chorus] legacy wake admission for ${key}: exact turn identity unavailable`);
+      }
       cfg = this.writeMcpConfigFn(this.creds);
 
       sessionStartAttempted = true;
-      await this.hooks?.onSessionStart?.({ rootIdeaKey: key, sessionId: sessionId ?? "", isNew });
+      await this.hooks?.onSessionStart?.({ rootIdeaKey: key, sessionId: sessionId ?? "", isNew, ...transcriptIdentity });
 
       // Turn lifecycle (子1): the server created a `pending` turn for this wake at the
       // notification chokepoint, keyed on the same session business key the daemon
@@ -642,7 +683,7 @@ export class Waker {
         childStarted = true;
         const entry = execKey ? this.executions.get(execKey) : null;
         if (entry && entry.status === "running") entry.child = child;
-        if (operationTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) {
+        if ((operationTurnUuid || admission) && (this.shuttingDown || (admission && admissionSignal.aborted) || (execKey && this.interrupting.has(execKey)))) {
           // Some backends await binary discovery before onChild. A stop during
           // that interval must still terminate the child as soon as it exists.
           try {
@@ -663,7 +704,7 @@ export class Waker {
         // inside the hook; the trailing .catch is belt-and-braces so a rejected hook
         // promise can never surface as an unhandled rejection in the wake path.
         this.hooks
-          ?.onTranscriptMessage?.({ rootIdeaKey: key, sessionId: observedSessionId, message })
+          ?.onTranscriptMessage?.({ rootIdeaKey: key, sessionId: observedSessionId, message, ...transcriptIdentity })
           .catch(() => {});
       };
       const wakeParams = {
@@ -680,9 +721,9 @@ export class Waker {
         onChild,
         onMessage,
       };
-      if (operationTurnUuid && (this.shuttingDown || (execKey && this.interrupting.has(execKey)))) {
+      if ((operationTurnUuid || admission) && (this.shuttingDown || (admission && admissionSignal.aborted) || (execKey && this.interrupting.has(execKey)))) {
         await this.#retireUnstartedOperation({
-          sessionId, turnUuid: operationTurnUuid, status: "interrupted",
+          sessionId, turnUuid: operationTurnUuid, ...admission, status: "interrupted",
           interruptedReason: execKey && this.interrupting.has(execKey) ? "user" : "shutdown",
         });
         return;
@@ -804,6 +845,8 @@ export class Waker {
             result?.backendSessionId,
             1,
             runningTurnUuid,
+            null,
+            admission,
           );
         } else {
           const reason = wasInterrupting ? "user" : this.shuttingDown ? "shutdown" : "crash";
@@ -818,6 +861,7 @@ export class Waker {
             1,
             runningTurnUuid,
             wakeError,
+            admission,
           );
         }
       }
@@ -896,6 +940,7 @@ export class Waker {
           1,
           runningTurnUuid,
           wakeError,
+          admission,
         );
       } else if (sessionId) {
         this.logger.warn(`[Chorus] terminal report skipped for session ${sessionId}: running admission returned no turn UUID`);
@@ -925,6 +970,54 @@ export class Waker {
     }
   }
 
+  async #admitExact(report, signal) {
+    let attempt = 0;
+    while (!signal.aborted) {
+      attempt++;
+      let result;
+      try {
+        result = await deliveryRequest(
+          async (requestSignal) => {
+            const outcome = await this.advanceTurn({ ...report, signal: requestSignal });
+            if (signal.aborted && outcome?.ok && outcome.data?.turnUuid === report.turnUuid) {
+              await this.#retireUnstartedOperation({
+                ...report, status: "interrupted", interruptedReason: signal.reason === "user" ? "user" : "shutdown",
+              });
+            }
+            return outcome;
+          }, { signal },
+        );
+      } catch (error) {
+        this.logger.warn(`[Chorus] exact admission turn=${report.turnUuid} attempt=${attempt}: ${deliveryError(error)}`);
+      }
+      if (signal.aborted) break;
+      if (result?.ok && result.data?.turnUuid === report.turnUuid) return report.turnUuid;
+      const status = result?.status;
+      if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+        this.logger.warn(`[Chorus] exact admission refused turn=${report.turnUuid} status=${status}; no subprocess started`);
+        return null;
+      }
+      const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempt - 1, 5));
+      this.logger.warn(`[Chorus] exact admission unconfirmed turn=${report.turnUuid} attempt=${attempt} status=${Number(status) || "unknown"} retryInMs=${delay}`);
+      await new Promise((resolve) => {
+        const finish = () => {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, delay);
+        signal.addEventListener("abort", finish, { once: true });
+        if (signal.aborted) finish();
+      });
+    }
+    this.logger.info(`[Chorus] exact admission cancelled turn=${report.turnUuid}; no subprocess started`);
+    await this.#retireUnstartedOperation({
+      ...report, status: "interrupted", interruptedReason: signal.reason === "user" ? "user" : "shutdown",
+    });
+    if (signal.reason !== "user") this.onAdmissionCancelled(report.turnUuids);
+    return null;
+  }
+
   #setupWakeError(error) {
     // Additive spawner metadata is available before binary discovery/child creation.
     // Older injected spawners may omit it; do not invent a backend for their errors.
@@ -936,12 +1029,12 @@ export class Waker {
 
   async #retireUnstartedOperation(report) {
     try {
-      const result = await this.advanceTurn(report);
+      const result = await deliveryRequest(signal => this.advanceTurn({ ...report, signal }));
       // Terminal retries are idempotent. A 404/409 means this exact row is gone
       // or already settled differently; no other turn is selected or changed.
       if (result?.ok || [404, 409].includes(result?.status)) return;
     } catch (err) {
-      this.logger.warn(`[Chorus] Operation launch cleanup failed for ${report.turnUuid}: ${err}`);
+      this.logger.warn(`[Chorus] Operation launch cleanup failed for ${report.turnUuid}: ${report.wakeRecoveryProtocol === 1 ? deliveryError(err) : err}`);
     }
     if (this.shuttingDown) return; // offline reconcile / pending backfill owns restart
     this.logger.warn(`[Chorus] Operation launch cleanup deferred for ${report.turnUuid}; retrying in 30s`);
@@ -996,11 +1089,12 @@ export class Waker {
    * @param {ReturnType<typeof createWakeError>|null} [wakeError] Independent failure diagnostic.
    * @returns {Promise<string|null>} The resolved turn UUID on → running, else null.
    */
-  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null, backendSessionId = null, coalescedCount = 1, turnUuid = null, wakeError = null) {
+  async #advanceTurn(sessionId, status, entity, interruptedReason = null, transcriptRelayError = null, usage = null, backendSessionId = null, coalescedCount = 1, turnUuid = null, wakeError = null, admission = null) {
     try {
       const outcome = await this.advanceTurn({
         sessionId,
         ...(turnUuid ? { turnUuid } : {}),
+        ...admission,
         status,
         entityType: entity?.entityType ?? null,
         entityUuid: entity?.entityUuid ?? null,

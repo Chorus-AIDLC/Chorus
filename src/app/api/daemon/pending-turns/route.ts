@@ -30,6 +30,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   }
 
   const connectionUuid = request.nextUrl.searchParams.get("connectionUuid");
+  const wakeRecoveryProtocol = request.nextUrl.searchParams.get("wakeRecoveryProtocol");
+  if (wakeRecoveryProtocol !== null && wakeRecoveryProtocol !== "1") return errors.badRequest("Unsupported wake recovery protocol");
   if (!connectionUuid) {
     return errors.badRequest("connectionUuid is required");
   }
@@ -48,8 +50,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     agentUuid: auth.actorUuid,
     connectionUuid,
     operationProtocol: request.nextUrl.searchParams.get("operationProtocol") === "1",
+    ...(wakeRecoveryProtocol === "1" ? { wakeRecoveryProtocol: 1 as const } : {}),
   });
 
   // Capability projection preserves the UUID of the persisted operation for every generation.
-  return success({ turns });
+  return success({ turns, ...(wakeRecoveryProtocol === "1" ? { wakeRecoveryProtocol: 1 } : {}) });
 });

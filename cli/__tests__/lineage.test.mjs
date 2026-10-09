@@ -78,13 +78,14 @@ describe("LineageResolver.rootIdeaFor (REST)", () => {
     expect(res).toEqual({ rootIdeaUuid: "root-idea", directIdeaUuid: null });
   });
 
-  it("resolve() returns both null on failure (caller falls back to a per-entity key)", async () => {
+  it("resolve() rejects on failure without caching fallback attribution", async () => {
     const fetchImpl = fakeFetch(() => jsonResponse({ success: false }, { ok: false, status: 500 }));
-    const r = makeResolver(fetchImpl);
-    expect(await r.resolve({ entityType: "task", entityUuid: "t" })).toEqual({
-      rootIdeaUuid: null,
-      directIdeaUuid: null,
+    const resolver = makeResolver(fetchImpl);
+    await expect(resolver.resolve({ entityType: "task", entityUuid: "task-1" })).rejects.toMatchObject({
+      status: 500,
+      deliveryRetryable: true,
     });
+    expect(resolver.cache.size).toBe(0);
   });
 
   it("resolve() short-circuits daemon_session (no idea ancestor) WITHOUT a request", async () => {
@@ -135,21 +136,36 @@ describe("LineageResolver.rootIdeaFor (REST)", () => {
     expect(await r.rootIdeaFor({ entityType: "task", entityUuid: "t" })).toBeNull();
   });
 
-  it("returns null (not throw) on a non-2xx response", async () => {
-    const fetchImpl = fakeFetch(() => jsonResponse({ success: false }, { ok: false, status: 500 }));
-    const r = makeResolver(fetchImpl);
-    expect(await r.rootIdeaFor({ entityType: "task", entityUuid: "t" })).toBeNull();
+  it.each([408, 429, 500, 502, 503, 504])("rejects retryable HTTP %s without caching", async (status) => {
+    const fetchImpl = fakeFetch(() => jsonResponse({ success: false }, { ok: false, status }));
+    const resolver = makeResolver(fetchImpl);
+    await expect(resolver.rootIdeaFor({ entityType: "task", entityUuid: "task-1" })).rejects.toMatchObject({
+      code: "LINEAGE_HTTP_ERROR", status, deliveryRetryable: true,
+    });
+    expect(resolver.cache.size).toBe(0);
   });
 
-  it("returns null (not throw) when fetch rejects (server unreachable)", async () => {
+  it.each([400, 401, 403, 404, 409, 422])("rejects permanent HTTP %s without caching", async (status) => {
+    const fetchImpl = fakeFetch(() => jsonResponse({ success: false }, { ok: false, status }));
+    const resolver = makeResolver(fetchImpl);
+    await expect(resolver.rootIdeaFor({ entityType: "task", entityUuid: "task-1" })).rejects.toMatchObject({
+      code: "LINEAGE_HTTP_ERROR", status, deliveryRetryable: false,
+    });
+    expect(resolver.cache.size).toBe(0);
+  });
+
+  it("rejects retryably when fetch rejects (server unreachable)", async () => {
     const fetchImpl = fakeFetch(() => {
       throw new Error("ECONNREFUSED");
     });
-    const r = makeResolver(fetchImpl);
-    expect(await r.rootIdeaFor({ entityType: "task", entityUuid: "t" })).toBeNull();
+    const resolver = makeResolver(fetchImpl);
+    await expect(resolver.rootIdeaFor({ entityType: "task", entityUuid: "task-1" })).rejects.toMatchObject({
+      code: "LINEAGE_REQUEST_FAILED", deliveryRetryable: true,
+    });
+    expect(resolver.cache.size).toBe(0);
   });
 
-  it("returns null (not throw) on malformed JSON", async () => {
+  it("rejects retryably on malformed JSON", async () => {
     const fetchImpl = fakeFetch(() => ({
       ok: true,
       status: 200,
@@ -157,27 +173,38 @@ describe("LineageResolver.rootIdeaFor (REST)", () => {
         throw new Error("invalid json");
       },
     }));
-    const r = makeResolver(fetchImpl);
-    expect(await r.rootIdeaFor({ entityType: "task", entityUuid: "t" })).toBeNull();
+    const resolver = makeResolver(fetchImpl);
+    await expect(resolver.rootIdeaFor({ entityType: "task", entityUuid: "task-1" })).rejects.toMatchObject({
+      code: "LINEAGE_INVALID_JSON", deliveryRetryable: true,
+    });
+    expect(resolver.cache.size).toBe(0);
   });
 
-  it("returns null on an unexpected response shape (no data.rootIdeaUuid)", async () => {
-    const fetchImpl = fakeFetch(() => jsonResponse({ success: true, data: { lineage: [] } }));
-    const r = makeResolver(fetchImpl);
-    expect(await r.rootIdeaFor({ entityType: "task", entityUuid: "t" })).toBeNull();
+  it.each([
+    null,
+    {},
+    { success: true, data: { lineage: [] } },
+    { success: false, data: { rootIdeaUuid: null, directIdeaUuid: null } },
+    { success: true, data: { rootIdeaUuid: 42 } },
+    { success: true, data: { rootIdeaUuid: "" } },
+    { success: true, data: { rootIdeaUuid: "root", directIdeaUuid: 42 } },
+    { success: true, data: { rootIdeaUuid: "root", directIdeaUuid: " " } },
+  ])("rejects invalid response %j without caching", async (body) => {
+    const fetchImpl = fakeFetch(() => jsonResponse(body));
+    const resolver = makeResolver(fetchImpl);
+    await expect(resolver.rootIdeaFor({ entityType: "task", entityUuid: "task-1" })).rejects.toMatchObject({
+      code: "LINEAGE_INVALID_RESPONSE", deliveryRetryable: true,
+    });
+    expect(resolver.cache.size).toBe(0);
   });
 
-  it("returns null when rootIdeaUuid is a non-string, non-null value", async () => {
-    const fetchImpl = fakeFetch(() => rootIdeaData({ rootIdeaUuid: 42 }));
-    const r = makeResolver(fetchImpl);
-    expect(await r.rootIdeaFor({ entityType: "task", entityUuid: "t" })).toBeNull();
-  });
-
-  it("returns null (not throw, no request) on a missing entityUuid", async () => {
+  it("rejects a missing entityUuid without making a request", async () => {
     const fetchImpl = fakeFetch(() => rootIdeaData({ rootIdeaUuid: "x" }));
-    const r = makeResolver(fetchImpl);
-    expect(await r.rootIdeaFor({ entityType: "task" })).toBeNull();
-    expect(fetchImpl.calls).toHaveLength(0); // never hit the network
+    const resolver = makeResolver(fetchImpl);
+    await expect(resolver.rootIdeaFor({ entityType: "task" })).rejects.toMatchObject({
+      code: "LINEAGE_INVALID_ENTITY", status: 400, deliveryRetryable: false,
+    });
+    expect(fetchImpl.calls).toHaveLength(0);
   });
 
   it("caches resolution within a run (one request per entity key)", async () => {

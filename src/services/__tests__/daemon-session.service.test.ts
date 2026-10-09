@@ -3680,7 +3680,7 @@ describe("getPendingTurnsForConnection", () => {
     expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
       where: { uuid: "turn-1", session: { companyUuid, agentUuid } },
       select: {
-        sessionUuid: true, trigger: true,
+        sessionUuid: true, trigger: true, wakeContext: true,
         session: { select: { sessionId: true, directIdeaUuid: true } },
       },
     });
@@ -3693,7 +3693,7 @@ describe("getPendingTurnsForConnection", () => {
     ]);
     const turns = await getPendingTurnsForConnection({ companyUuid, agentUuid, connectionUuid });
     expect(turns.map((t) => t.turnUuid)).toEqual(["adhoc"]);
-    expect(mockCanAccessProject).toHaveBeenCalledWith(companyUuid, { type: "agent", uuid: agentUuid }, "project-1", "viewer");
+    expect(mockCanAccessProject).toHaveBeenCalledWith(companyUuid, { type: "agent", uuid: agentUuid }, "project-1", "viewer", mockPrisma);
   });
   it("lists pending turns of the connection's origin-pinned, agent-owned sessions, mapped to the backfill view", async () => {
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValue([

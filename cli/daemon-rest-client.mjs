@@ -38,6 +38,8 @@
 //     a `{ ok: false, ... }` result so a fire-and-forget caller can `await` it safely.
 //     The callers decide whether to react; the failure is already visible in the log.
 
+import { deliveryError, deliveryRequest } from "./delivery-request.mjs";
+
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
 // Bounded retry policy for the TERMINAL turn-advance edge only (fix-phantom-running-turn).
@@ -142,7 +144,7 @@ export function createDaemonRestClient(opts) {
    *                         turn-advance edge).
    * @returns {Promise<DaemonRestResult>}
    */
-  async function post(op, path, body, successLog, context = "", readData = false, retry = null) {
+  async function post(op, path, body, successLog, context = "", readData = false, retry = null, signal) {
     const attempts = retry ? retry.attempts : 1;
     const delaysMs = retry?.delaysMs ?? [];
     // Named distinctly from the module-closure `sleepImpl` so this local never reads as a
@@ -154,15 +156,28 @@ export function createDaemonRestClient(opts) {
       failure = undefined;
       let response;
       try {
-        response = await fetchImpl(`${url}${path}`, {
+        response = await deliveryRequest(async (requestSignal) => {
+          const fetched = await fetchImpl(`${url}${path}`, {
           method: "POST",
           headers: jsonHeaders,
           body: JSON.stringify(body),
-        });
+          signal: requestSignal,
+          });
+          if (readData && fetched.ok) {
+            try {
+              const parsed = await fetched.json();
+              return { ok: fetched.ok, status: fetched.status, json: async () => parsed };
+            } catch (error) {
+              if (requestSignal.aborted) throw error;
+              return { ok: fetched.ok, status: fetched.status, json: async () => { throw new Error("Invalid JSON"); } };
+            }
+          }
+          return fetched;
+        }, { signal, timeoutMs: opts.requestTimeoutMs });
       } catch (err) {
         // Network-level failure (DNS, connection refused, abort, …). Surface WITH cause.
         // `head`/`tail` are split so the attempt ordinal can be injected before the cause.
-        failure = { status: null, head: `${op} request failed${context}`, tail: `: ${err}` };
+        failure = { status: null, head: `${op} request failed${context}`, tail: `: ${deliveryError(err)}` };
       }
       if (!failure && !response.ok) {
         // Non-2xx. Surface WITH the status so a 4xx/5xx is debuggable.
@@ -184,7 +199,7 @@ export function createDaemonRestClient(opts) {
         return { ok: true, status: response.status, ...(data !== undefined ? { data } : {}) };
       }
 
-      const canRetry = attempt < attempts && isRetryableFailure(failure.status);
+      const canRetry = !signal?.aborted && attempt < attempts && isRetryableFailure(failure.status);
       // Per-attempt visibility, but ONLY when another attempt actually follows: the ordinal
       // exists to explain a retry. A single-shot op, or a terminal failure that will be
       // re-logged verbatim two lines below, must not emit a redundant ordinal line.
@@ -199,7 +214,7 @@ export function createDaemonRestClient(opts) {
     // before retries existed, so existing log-grep expectations still match.
     const error = `${failure.head}${failure.tail}`;
     logger.warn(`[Chorus] ${error}`);
-    return { ok: false, status: failure.status, error };
+    return { ok: false, status: failure.status, error, retryable: !signal?.aborted && isRetryableFailure(failure.status) };
   }
 
   return {
@@ -216,7 +231,7 @@ export function createDaemonRestClient(opts) {
      * only on interrupted crash/invalid_path reports. Requires the connectionUuid (the
      * server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ sessionId, turnUuid, status, entityType, entityUuid, interruptedReason, transcriptRelayError, wakeError, usage, backendSessionId, coalescedCount }) {
+    async turnAdvance({ sessionId, turnUuid, turnUuids, admissionUuid, wakeRecoveryProtocol, signal, status, entityType, entityUuid, interruptedReason, transcriptRelayError, wakeError, usage, backendSessionId, coalescedCount }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -233,6 +248,7 @@ export function createDaemonRestClient(opts) {
         sessionId,
         status,
         ...(turnUuid ? { turnUuid } : {}),
+        ...(wakeRecoveryProtocol === 1 ? { wakeRecoveryProtocol, turnUuids, admissionUuid } : {}),
         // Only sent when BOTH are present, so the server never gets a partial linkage.
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
         // Only meaningful alongside status=interrupted; never sent otherwise.
@@ -276,10 +292,14 @@ export function createDaemonRestClient(opts) {
               sleep: sleepImpl,
             }
           : null,
+        signal,
       );
       const resolvedTurnUuid =
         typeof result.data?.turn?.uuid === "string" ? result.data.turn.uuid : null;
       if (status !== "running") return result;
+      if (wakeRecoveryProtocol === 1 && result.ok && resolvedTurnUuid !== turnUuid) {
+        return { ok: false, status: result.status, retryable: true, error: "Exact admission response correlation unavailable" };
+      }
       const { data: _rawData, ...baseResult } = result;
       return resolvedTurnUuid
         ? { ...baseResult, data: { turnUuid: resolvedTurnUuid } }
@@ -292,11 +312,11 @@ export function createDaemonRestClient(opts) {
      * for the content filter (only `{ role, text }` for user/assistant) and any batching.
      * No connectionUuid needed (the agent key + sessionId resolve the turn server-side).
      */
-    async transcript({ sessionId, messages }) {
+    async transcript({ sessionId, turnUuid, messages }) {
       return post(
         "transcript upload",
         "/api/daemon/transcript",
-        { sessionId, messages },
+        { ...(turnUuid ? { turnUuid } : { sessionId }), messages },
         `transcript uploaded (${messages.length} msg) for session ${sessionId}`,
       );
     },
@@ -392,7 +412,7 @@ export function createDaemonRestClient(opts) {
      *
      * @returns {Promise<DaemonRestResult & { data?: { turns: Array<{ turnUuid: string, sessionId: string, directIdeaUuid: string|null, trigger: string, promptText: string|null }> } }>}
      */
-    async readPendingTurns() {
+    async readPendingTurns({ signal } = {}) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         // No connectionUuid yet: nothing to read against. A normal early state — skip.
@@ -400,21 +420,32 @@ export function createDaemonRestClient(opts) {
       }
       // Declare support for isolated Research turns. Legacy clients receive the
       // same requests and acknowledge them through their existing FIFO path.
-      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&researchProtocol=1&operationProtocol=1`;
+      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&researchProtocol=1&operationProtocol=1&wakeRecoveryProtocol=1`;
       let response;
       try {
-        response = await fetchImpl(endpoint, {
+        response = await deliveryRequest(async (requestSignal) => {
+          const fetched = await fetchImpl(endpoint, {
           headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
-        });
+            signal: requestSignal,
+          });
+          if (!fetched.ok) return fetched;
+          let parsed;
+          try { parsed = await fetched.json(); }
+          catch (error) {
+            if (requestSignal.aborted) throw error;
+            return { ok: true, status: fetched.status, json: async () => { throw new Error("Invalid JSON"); } };
+          }
+          return { ok: true, status: fetched.status, json: async () => parsed };
+        }, { signal, timeoutMs: opts.requestTimeoutMs });
       } catch (err) {
-        const error = `pending-turns backfill request failed: ${err}`;
+        const error = `pending-turns backfill request failed: ${deliveryError(err)}`;
         logger.warn(`[Chorus] ${error}`);
-        return { ok: false, status: null, error };
+        return { ok: false, status: null, error, retryable: !signal?.aborted };
       }
       if (!response.ok) {
         const error = `pending-turns backfill returned ${response.status}`;
         logger.warn(`[Chorus] ${error}`);
-        return { ok: false, status: response.status, error };
+        return { ok: false, status: response.status, error, retryable: isRetryableFailure(response.status) };
       }
       let parsed;
       try {

@@ -29,6 +29,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { normalizeWakeError, type WakeError } from "@/lib/daemon-wake-error";
+import { parseWakeContext, type WakeContext } from "@/services/daemon-wake-context";
 import { recheckResearchTurn, getResearchEligibility, lockResearchProject } from "@/services/research-eligibility.service";
 import { canActorAccessProject, resolveEntityProjectUuid } from "@/services/project-access.service";
 
@@ -545,6 +546,7 @@ export async function createPendingTurn(params: {
   trigger: TurnTrigger;
   promptText?: string | null;
   operationPayload?: OperationPayload;
+  wakeContext?: WakeContext;
   executionUuid?: string | null;
 }, db: SessionTransactionClient = prisma): Promise<TurnView> {
   // The session must exist and carries the companyUuid the SSE event needs. (The
@@ -596,6 +598,7 @@ export async function createPendingTurn(params: {
           trigger: params.trigger,
           promptText: params.promptText ?? null,
           ...(params.operationPayload ? { operationPayload: params.operationPayload } : {}),
+          ...(params.wakeContext ? { wakeContext: params.wakeContext } : {}),
           status: "pending",
           executionUuid: params.executionUuid ?? null,
         },
@@ -2110,6 +2113,9 @@ export async function advanceTurnForWake(params: {
   researchMode?: "isolated" | "legacy";
   operationProtocol?: boolean;
   turnUuid?: string | null;
+  wakeRecoveryProtocol?: 1;
+  turnUuids?: string[];
+  admissionUuid?: string;
   backendSessionId?: string | null;
   status: TurnStatus;
   entityType?: string | null;
@@ -2131,6 +2137,7 @@ export async function advanceTurnForWake(params: {
   // the same session (by ascending seq) are settled to `merged` — see below.
   coalescedCount?: number;
 }): Promise<AdvanceTurnForWakeResult> {
+  if (params.wakeRecoveryProtocol === 1) return advanceExactWake(params);
   // Resolve the agent's OWN session by its business key (company + agent fenced).
   const session = await prisma.daemonSession.findFirst({
     where: {
@@ -2477,7 +2484,156 @@ export async function createResumeTurn(params: {
   });
 }
 
+class ExactWakeConflict extends Error {}
+
+async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]): Promise<AdvanceTurnForWakeResult> {
+  const conflict = (from = "admission_conflict"): AdvanceTurnForWakeResult => ({
+    ok: false, reason: "invalid_transition", from, to: params.status,
+  });
+  if (!params.turnUuid || !params.admissionUuid ||
+    !["running", "ended", "interrupted"].includes(params.status)) return conflict();
+  const requested = params.turnUuids;
+  if (params.status === "running" && !requested) return conflict();
+  if (requested && (!requested.length ||
+    new Set(requested).size !== requested.length || !requested.includes(params.turnUuid))) return conflict();
+  const changed: TurnView[] = [];
+  let activity: Parameters<typeof publishSessionActivityEvent>[0] | undefined;
+  let result: AdvanceTurnForWakeResult;
+  try {
+    result = await prisma.$transaction(async (tx): Promise<AdvanceTurnForWakeResult> => {
+      const fence = {
+        companyUuid: params.companyUuid, agentUuid: params.agentUuid,
+        ...(params.status === "running" ? { originConnectionUuid: params.connectionUuid } : {}),
+      };
+      const sessions = await tx.$queryRaw<Array<{ uuid: string }>>`
+        SELECT "uuid" FROM "DaemonSession"
+        WHERE "companyUuid" = ${params.companyUuid} AND "agentUuid" = ${params.agentUuid}
+          AND "sessionId" = ${params.sessionId}
+        FOR UPDATE`;
+      if (!sessions.length) return { ok: false, reason: "not_found" };
+      const session = await tx.daemonSession.findFirst({
+        where: { uuid: sessions[0].uuid, ...fence }, include: { agent: { select: { ownerUuid: true } } },
+      });
+      const connection = await tx.daemonConnection.findFirst({
+        where: { uuid: params.connectionUuid, companyUuid: params.companyUuid, agentUuid: params.agentUuid },
+        select: { uuid: true },
+      });
+      if (!session || !connection) return { ok: false, reason: "not_found" };
+      const primary = await tx.daemonSessionTurn.findFirst({ where: { uuid: params.turnUuid!, sessionUuid: session.uuid } });
+      if (!primary) return { ok: false, reason: "not_found" };
+      const stored = primary.admissionTurnUuids;
+      const members = requested ?? (Array.isArray(stored) && stored.every((value) => typeof value === "string") ? stored as string[] : []);
+      if (!members.length || !members.includes(primary.uuid)) return conflict();
+      const rows = await tx.daemonSessionTurn.findMany({ where: { uuid: { in: members }, sessionUuid: session.uuid } });
+      if (rows.length !== members.length) return { ok: false, reason: "not_found" };
+      for (const row of rows) {
+        if (!await canAgentReceiveSessionTurn(params.companyUuid, params.agentUuid, { ...row, session }, tx)) {
+          return { ok: false, reason: "not_found" };
+        }
+      }
+      if (primary.admissionUuid) {
+        if (primary.admissionConnectionUuid !== params.connectionUuid) return { ok: false, reason: "not_found" };
+        if (primary.admissionUuid !== params.admissionUuid || JSON.stringify(stored) !== JSON.stringify(members) ||
+          rows.some((row) => row.uuid !== primary.uuid && row.status !== MERGED_TURN_STATUS)) return conflict();
+        if ((primary.backendSessionId ?? null) !== (params.backendSessionId ?? null) &&
+          !(primary.status === "running" && params.status !== "running" && !primary.backendSessionId)) {
+          return { ok: false, reason: "backend_session_conflict" };
+        }
+        if (params.status === "running") {
+          return primary.status === "running" ? { ok: true, turn: toTurnView(primary) } : conflict(primary.status);
+        }
+        if (primary.status === params.status) return { ok: true, turn: toTurnView(primary) };
+        if (primary.status !== "running") return conflict(primary.status);
+      } else {
+        if (params.status !== "running" || rows.some((row) => row.status !== "pending" || row.admissionUuid)) return conflict(primary.status);
+        const isolated = rows.some((row) => isResearchTurn(row) || isOperationTrigger(row.trigger));
+        if (isolated && rows.length !== 1) return conflict();
+        if (isOperationTrigger(primary.trigger)) {
+          const idea = session.directIdeaUuid ? await tx.idea.findFirst({
+            where: { uuid: session.directIdeaUuid, companyUuid: params.companyUuid }, select: { projectUuid: true },
+          }) : null;
+          try {
+            validateOperationPayload(primary.trigger, primary.operationPayload, {
+              directIdeaUuid: session.directIdeaUuid, projectUuid: idea?.projectUuid ?? null,
+            });
+          } catch { return { ok: false, reason: "invalid_operation_payload" }; }
+        }
+        if (isResearchTurn(primary)) {
+          if (!session.directIdeaUuid) return conflict();
+          const idea = await tx.idea.findFirst({ where: { uuid: session.directIdeaUuid, companyUuid: params.companyUuid }, select: { projectUuid: true } });
+          if (!idea) return conflict();
+          await lockResearchProject(tx, params.companyUuid, idea.projectUuid);
+          if (!(await getResearchEligibility(params.companyUuid, session.directIdeaUuid, tx)).eligible) return conflict("research_stage_changed");
+        }
+        if (primary.backendSessionId && primary.backendSessionId !== params.backendSessionId) {
+          return { ok: false, reason: "backend_session_conflict" };
+        }
+      }
+      const terminal = params.status !== "running";
+      const wakeError = params.status === "interrupted" &&
+        (params.interruptedReason === "crash" || params.interruptedReason === "invalid_path") ? normalizeWakeError(params.wakeError) : null;
+      const execution = !terminal && params.entityType && params.entityUuid ? await tx.daemonExecution.findFirst({
+        where: { companyUuid: params.companyUuid, connectionUuid: params.connectionUuid, entityType: params.entityType, entityUuid: params.entityUuid },
+        select: { uuid: true },
+      }) : null;
+      const data: Prisma.DaemonSessionTurnUpdateManyMutationInput = terminal ? {
+        status: params.status, endedAt: params.endedAt ?? new Date(),
+        ...(params.backendSessionId ? { backendSessionId: params.backendSessionId } : {}),
+        interruptedReason: params.status === "interrupted" ? params.interruptedReason ?? null : null,
+        ...(params.relayError !== undefined ? { relayError: params.relayError } : {}),
+        ...(wakeError ? { wakeError: wakeError as unknown as Prisma.InputJsonValue } : {}),
+        ...(params.usage ? { usage: params.usage as unknown as Prisma.InputJsonValue } : {}),
+      } : {
+        status: "running", startedAt: params.startedAt ?? new Date(), admissionUuid: params.admissionUuid,
+        admissionTurnUuids: members, admissionConnectionUuid: params.connectionUuid, backendSessionId: params.backendSessionId ?? null,
+        ...(execution ? { executionUuid: execution.uuid } : {}),
+      };
+      const claimed = await tx.daemonSessionTurn.updateMany({
+        where: { uuid: primary.uuid, sessionUuid: session.uuid, status: primary.status, session: fence }, data,
+      });
+      if (claimed.count !== 1) throw new ExactWakeConflict();
+      if (!terminal) {
+        const secondary = members.filter((uuid) => uuid !== primary.uuid);
+        if (secondary.length) {
+          const settled = await tx.daemonSessionTurn.updateMany({
+            where: { uuid: { in: secondary }, sessionUuid: session.uuid, status: "pending", session: fence },
+            data: { status: MERGED_TURN_STATUS },
+          });
+          if (settled.count !== secondary.length) throw new ExactWakeConflict();
+          changed.push(...rows.filter((row) => secondary.includes(row.uuid)).map((row) => toTurnView({ ...row, status: MERGED_TURN_STATUS })));
+        }
+      } else if (params.usage) {
+        await tx.daemonSession.update({ where: { uuid: session.uuid }, data: {
+          totalInputTokens: { increment: params.usage.inputTokens ?? 0 }, totalOutputTokens: { increment: params.usage.outputTokens ?? 0 },
+          totalCacheReadTokens: { increment: params.usage.cacheReadTokens ?? 0 }, totalCacheCreationTokens: { increment: params.usage.cacheCreationTokens ?? 0 },
+        } });
+      }
+      if (params.backendSessionId) await tx.daemonSession.updateMany({
+        where: { uuid: session.uuid, backendSessionId: null }, data: { backendSessionId: params.backendSessionId },
+      });
+      const updated = await tx.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: primary.uuid } });
+      const view = toTurnView(updated);
+      changed.unshift(view);
+      activity = {
+        type: terminal ? "session_ended" : "session_started", companyUuid: params.companyUuid,
+        sessionUuid: session.uuid, activityUuid: primary.uuid, directIdeaUuid: session.directIdeaUuid,
+        agentUuid: session.agentUuid, originConnectionUuid: session.originConnectionUuid, agentOwnerUuid: session.agent?.ownerUuid ?? null,
+      };
+      return { ok: true, turn: view };
+    }, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error instanceof ExactWakeConflict || (typeof error === "object" && error !== null && "code" in error && error.code === "P2002")) return conflict();
+    throw error;
+  }
+  if (result.ok) {
+    for (const turn of changed) publishTranscriptEvent({ companyUuid: params.companyUuid, sessionUuid: turn.sessionUuid, trigger: "turn_status_changed", turn, messages: [] });
+    if (activity) publishSessionActivityEvent(activity);
+  }
+  return result;
+}
+
 export interface PendingTurnView {
+  wakeContext?: WakeContext | null;
   turnUuid: string;
   sessionUuid: string;
   sessionId: string;
@@ -2496,6 +2652,7 @@ export interface PendingTurnView {
 }
 
 interface TurnDeliveryAnchor {
+  wakeContext?: unknown;
   sessionUuid: string;
   trigger: string;
   session: { sessionId: string; directIdeaUuid: string | null };
@@ -2503,11 +2660,25 @@ interface TurnDeliveryAnchor {
 
 async function canAgentReceiveSessionTurn(
   companyUuid: string, agentUuid: string, turn: TurnDeliveryAnchor,
+  db: SessionTransactionClient = prisma,
 ): Promise<boolean> {
   const actor = { type: "agent", uuid: agentUuid };
+  if (turn.wakeContext != null) {
+    const context = parseWakeContext(turn.wakeContext);
+    if (!context || context.notification.recipientUuid !== agentUuid) return false;
+    const notification = context.notification;
+    if (notification.projectUuid) {
+      const currentProject = await resolveEntityProjectUuid(companyUuid, notification.entityType, notification.entityUuid, db);
+      if (!currentProject ||
+        !await canActorAccessProject(companyUuid, actor, currentProject, "viewer", db) ||
+        !await canActorAccessProject(companyUuid, actor, notification.projectUuid, "viewer", db)) return false;
+    } else if (notification.action !== "human_instruction" || notification.entityType !== "daemon_session") {
+      return false;
+    }
+  }
   if (turn.session.directIdeaUuid) {
-    const projectUuid = await resolveEntityProjectUuid(companyUuid, "idea", turn.session.directIdeaUuid);
-    return !!projectUuid && canActorAccessProject(companyUuid, actor, projectUuid, "viewer");
+    const projectUuid = await resolveEntityProjectUuid(companyUuid, "idea", turn.session.directIdeaUuid, db);
+    return !!projectUuid && canActorAccessProject(companyUuid, actor, projectUuid, "viewer", db);
   }
 
   // No idea ancestor does not mean no project: standalone task/comment wakes
@@ -2517,26 +2688,26 @@ async function canAgentReceiveSessionTurn(
   if (!entityUuid) return false;
   const projects = await Promise.all(
     ["task", "comment", "idea", "proposal", "document", "project"].map((type) =>
-      resolveEntityProjectUuid(companyUuid, type, entityUuid)),
+      resolveEntityProjectUuid(companyUuid, type, entityUuid, db)),
   );
   const projectUuids = [...new Set(projects.filter((uuid): uuid is string => !!uuid))];
   if (projectUuids.length) {
     return (await Promise.all(projectUuids.map((uuid) =>
-      canActorAccessProject(companyUuid, actor, uuid, "viewer")))).every(Boolean);
+      canActorAccessProject(companyUuid, actor, uuid, "viewer", db)))).every(Boolean);
   }
 
   // Autonomous turns always originate in project content; an unresolved or
   // deleted entity must not degrade to an ad-hoc conversation.
   if (turn.trigger !== "human_instruction") return false;
   const [projectNotification, autonomousTurn] = await Promise.all([
-    prisma.notification.findFirst({
+    db.notification.findFirst({
       where: {
         companyUuid, recipientType: "agent", recipientUuid: agentUuid,
         entityUuid, projectUuid: { not: "" },
       },
       select: { uuid: true },
     }),
-    prisma.daemonSessionTurn.findFirst({
+    db.daemonSessionTurn.findFirst({
       where: {
         sessionUuid: turn.sessionUuid, trigger: { not: "human_instruction" },
         session: { companyUuid, agentUuid },
@@ -2552,15 +2723,25 @@ async function canAgentReceiveSessionTurn(
 
 // A persisted pending turn is not a permanent access grant. Live delivery and
 // reconnect backfill must both resolve its current idea OR originating entity.
-export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string, turnUuid: string): Promise<boolean> {
+export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string, turnUuid: string, connectionUuid?: string): Promise<boolean> {
   const turn = await prisma.daemonSessionTurn.findFirst({
-    where: { uuid: turnUuid, session: { companyUuid, agentUuid } },
+    where: { uuid: turnUuid, session: { companyUuid, agentUuid, ...(connectionUuid ? { originConnectionUuid: connectionUuid } : {}) } },
     select: {
-      sessionUuid: true, trigger: true,
+      sessionUuid: true, trigger: true, wakeContext: true,
       session: { select: { sessionId: true, directIdeaUuid: true } },
     },
   });
   return !!turn && canAgentReceiveSessionTurn(companyUuid, agentUuid, turn);
+}
+
+export async function getWakeRecoveryDelivery(companyUuid: string, agentUuid: string, connectionUuid: string, turnUuid: string) {
+  const turn = await prisma.daemonSessionTurn.findFirst({
+    where: { uuid: turnUuid, status: "pending", session: { companyUuid, agentUuid, originConnectionUuid: connectionUuid } },
+    select: { uuid: true, sessionUuid: true, trigger: true, wakeContext: true, session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } } },
+  });
+  if (!turn || !await canAgentReceiveSessionTurn(companyUuid, agentUuid, turn)) return null;
+  const wakeContext = parseWakeContext(turn.wakeContext);
+  return { turnUuid: turn.uuid, wakeContext, ...(wakeContext ? { notificationUuid: wakeContext.notificationUuid } : {}), runtimeCwd: turn.session.runtimeCwd, targetConnectionUuid: connectionUuid };
 }
 
 /**
@@ -2582,6 +2763,7 @@ export async function getPendingTurnsForConnection(params: {
   agentUuid: string;
   connectionUuid: string;
   operationProtocol?: boolean;
+  wakeRecoveryProtocol?: 1;
 }): Promise<PendingTurnView[]> {
   const rows = await prisma.daemonSessionTurn.findMany({
     where: {
@@ -2600,6 +2782,7 @@ export async function getPendingTurnsForConnection(params: {
       trigger: true,
       promptText: true,
       operationPayload: true,
+      wakeContext: true,
       executionUuid: true,
       createdAt: true,
       session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } },
@@ -2620,7 +2803,7 @@ export async function getPendingTurnsForConnection(params: {
   const deliverable = [];
   const accessBySession = new Map<string, Promise<boolean>>();
   for (const row of rows) {
-    const key = `${row.sessionUuid}:${row.trigger}`;
+    const key = row.wakeContext != null ? row.uuid : `${row.sessionUuid}:${row.trigger}`;
     if (!accessBySession.has(key)) {
       accessBySession.set(key, canAgentReceiveSessionTurn(params.companyUuid, params.agentUuid, row));
     }
@@ -2634,6 +2817,7 @@ export async function getPendingTurnsForConnection(params: {
   }
   return deliverable.map((r) => ({
     turnUuid: r.uuid,
+    ...(params.wakeRecoveryProtocol === 1 ? { wakeContext: parseWakeContext(r.wakeContext) } : {}),
     sessionUuid: r.sessionUuid,
     sessionId: r.session.sessionId,
     directIdeaUuid: r.session.directIdeaUuid,

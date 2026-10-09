@@ -547,6 +547,30 @@ export function extractTranscriptText(obj) {
  * @returns {UploadHooks}
  */
 export function createTranscriptUploadHooks(opts) {
+  const legacy = createTurnTranscriptUploadHooks(opts);
+  const turns = new Map();
+  const resolve = (info) => {
+    if (!info?.turnUuid) return legacy;
+    if (!turns.has(info.turnUuid)) turns.set(info.turnUuid, createTurnTranscriptUploadHooks(opts));
+    return turns.get(info.turnUuid);
+  };
+  return {
+    async onConnect() {},
+    onSessionStart: (info) => resolve(info).onSessionStart(info),
+    onTranscriptMessage: (info) => resolve(info).onTranscriptMessage(info),
+    async onSessionEnd(info) {
+      const hooks = resolve(info);
+      try {
+        return await hooks.onSessionEnd(info);
+      } finally {
+        if (info?.turnUuid && turns.get(info.turnUuid) === hooks) turns.delete(info.turnUuid);
+      }
+    },
+    onExecutionChange() {},
+  };
+}
+
+function createTurnTranscriptUploadHooks(opts) {
   const logger = opts.logger ?? NOOP_LOGGER;
   const batchDelayMs = opts.batchDelayMs ?? 50;
   const setTimeoutImpl = opts.setTimeoutImpl ?? setTimeout;
@@ -567,20 +591,11 @@ export function createTranscriptUploadHooks(opts) {
     logger,
   });
 
-  // NOTE ON SCOPE: this instance's `currentSessionId` / `pending` / `chain` /
-  // `lastRelayError` are per-hook-instance, and the daemon builds ONE transcript-hook
-  // instance per connection (per cwd) — see daemon.mjs. The per-(agent,session) WakeQueue
-  // serializes wakes of the SAME session, but different sessions (root-idea keys) on the
-  // same cwd can run concurrently (maxConcurrency). This single-session-batching state
-  // therefore assumes at most one ACTIVE session producing transcript at a time on a given
-  // cwd, which holds for today's usage (one dispatched conversation per cwd at a time); it
-  // is NOT a general guarantee. `lastRelayError` inherits exactly this scope — no stronger,
-  // no weaker — so it is only as isolated as the batching state it rides alongside.
-  //
   // The session this batch belongs to (set by onSessionStart, and re-affirmed by each
   // message's observed session id from the stream). Messages queued for one session
   // are flushed before the session changes, so they always target the right turn.
   let currentSessionId = null;
+  let currentTurnUuid = null;
   /** @type {Array<{ role: "user"|"assistant", text: string }>} */
   let pending = [];
   let timer = null;
@@ -613,10 +628,10 @@ export function createTranscriptUploadHooks(opts) {
    * 502 previously dropped the turn's transcript silently on the first try). A `skipped`
    * result (empty batch / no session) is a success no-op, never retried.
    */
-  async function upload(sessionId, messages) {
+  async function upload(sessionId, turnUuid, messages) {
     if (!sessionId || messages.length === 0) return;
     for (let attempt = 1; attempt <= maxUploadAttempts; attempt += 1) {
-      const result = await client.transcript({ sessionId, messages });
+      const result = await client.transcript({ sessionId, turnUuid, messages });
       // ok (2xx) or an intentional skip → done. A success CLEARS any prior relay error
       // (a transient failure that a later batch recovered must not be surfaced as a drop).
       if (!result || result.ok || result.skipped) {
@@ -649,6 +664,7 @@ export function createTranscriptUploadHooks(opts) {
     }
     if (pending.length === 0) return;
     const sessionId = currentSessionId;
+    const turnUuid = currentTurnUuid;
     const batch = pending;
     pending = [];
     if (!sessionId) {
@@ -657,7 +673,7 @@ export function createTranscriptUploadHooks(opts) {
       logger.warn(`[Chorus] dropping ${batch.length} transcript msg — no session id yet`);
       return;
     }
-    const run = () => upload(sessionId, batch);
+    const run = () => upload(sessionId, turnUuid, batch);
     chain = chain.then(run, run);
   }
 
@@ -679,11 +695,12 @@ export function createTranscriptUploadHooks(opts) {
      * subsequent messages attach to the right turn. (子1 — onSessionStart contract.)
      * @param {{ rootIdeaKey: string, sessionId: string, isNew: boolean }} info
      */
-    async onSessionStart({ sessionId } = {}) {
+    async onSessionStart({ sessionId, turnUuid } = {}) {
       // If the session changed mid-stream, flush the old session's pending batch first
       // so its messages don't get re-tagged to the new session.
       if (currentSessionId && currentSessionId !== sessionId) flush();
       currentSessionId = sessionId || currentSessionId || null;
+      currentTurnUuid = turnUuid ?? null;
       // A new wake starts → clear the previous wake's relay error so a stale drop from an
       // earlier turn isn't re-reported here (fix #444 follow-up). This is sequential-reuse
       // hygiene; it does NOT defend against two sessions overlapping on one hook instance

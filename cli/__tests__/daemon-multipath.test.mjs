@@ -176,6 +176,7 @@ describe("AC#2/#3 single daemon serving a SET of cwds", () => {
     );
     await daemon.start();
     // Drive a wake only on connection #2 (repo-b).
+    daemon.connections[1].sseListener.deliver({ type: "connection_registered", connectionUuid: "connection-b" });
     daemon.connections[1].sseListener.deliver({ type: "new_notification", notificationUuid: "notif-1" });
     await new Promise((r) => setTimeout(r, 20));
 
@@ -218,6 +219,7 @@ describe("AC#2/#3 single daemon serving a SET of cwds", () => {
     );
     await daemon.start();
     const conn = daemon.connections[0];
+    conn.sseListener.deliver({ type: "connection_registered", connectionUuid: "connection-a" });
     conn.sseListener.deliver({ type: "new_notification", notificationUuid: "notif-1" });
     await new Promise((r) => setTimeout(r, 30));
     conn.sseListener.deliver({ type: "new_notification", notificationUuid: "notif-2" });
@@ -295,6 +297,7 @@ describe("AC#6 HARD-1: an unspecified cwd degrades to the process default", () =
       }
     );
     await daemon.start();
+    captured.deliver({ type: "connection_registered", connectionUuid: "connection-default" });
     captured.deliver({ type: "new_notification", notificationUuid: "notif-1" });
     await new Promise((r) => setTimeout(r, 20));
     expect(spawnCalls).toHaveLength(1);

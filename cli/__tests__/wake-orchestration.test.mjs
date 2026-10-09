@@ -1366,6 +1366,7 @@ describe("EventRouter dispatch", () => {
     };
     const { waker } = makeWaker({
       spawner,
+      advanceTurn: vi.fn(async ({ turnUuid }) => ({ ok: true, data: { turnUuid } })),
       lineage: { resolve: async () => ({ rootIdeaUuid: ROOT_IDEA, directIdeaUuid: DIRECT_IDEA }) },
     });
     const queue = new WakeQueue({
@@ -1394,7 +1395,8 @@ describe("EventRouter dispatch", () => {
       trigger: "human_instruction",
       promptText: "deploy the retry fix now",
     });
-    router.dispatch({ type: "new_notification", notificationUuid: "m1" });
+    router.dispatch({ type: "new_notification", notificationUuid: "m1", turnUuid: "t-mention",
+      wakeContext: { version: 1, notificationUuid: "m1", notification: mention } });
     await new Promise((r) => setTimeout(r, 15));
     expect(spawner.wake).toHaveBeenCalledTimes(1); // both piled up on the same key
 
