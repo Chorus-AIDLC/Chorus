@@ -216,7 +216,7 @@ describe("GET /api/events/notifications (notification SSE)", () => {
     control({ type: "control", command: "deliver_turn", targetConnectionUuid: connectionUuid, turnUuid: "turn-secret" });
     await flush();
     expect(chunks.join("")).not.toContain("turn-secret");
-    expect(mockCanAgentReceiveTurn).toHaveBeenCalledWith(companyUuid, actorUuid, "turn-secret", connectionUuid, true);
+    expect(mockCanAgentReceiveTurn).toHaveBeenCalledWith(companyUuid, actorUuid, "turn-secret", connectionUuid);
     ac.abort();
   });
   it("returns 401 without registering when unauthenticated", async () => {

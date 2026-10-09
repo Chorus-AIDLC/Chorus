@@ -1,5 +1,4 @@
 import { NON_OPERATION_TURN } from "@/services/daemon-operation";
-import { Prisma } from "@/generated/prisma/client";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ===== Prisma mock =====
@@ -125,27 +124,8 @@ const connectionUuid = "conn-0000-0000-0000-000000000001";
 const sessionUuid = "sess-0000-0000-0000-000000000001";
 const sessionId = "idea-0000-0000-0000-000000000001"; // directIdeaUuid as session id
 const turnUuid = "turn-0000-0000-0000-000000000001";
-const legacyWakeTurnFilter = {
-  OR: [
-    { wakeNotificationUuid: null },
-    {
-      wakeNotification: {
-        is: {
-          wakeRecoveryPending: false,
-          OR: [
-            { wakeRecovery: { equals: Prisma.DbNull } },
-            { wakeRecovery: { path: ["deliveryOwner"], equals: "legacy" } },
-          ],
-        },
-      },
-    },
-  ],
-};
 const legacyDeliveryFilter = {
-  AND: [
-    legacyWakeTurnFilter,
-    { OR: [{ wakeTargetConnectionUuid: null }, { wakeTargetConnectionUuid: connectionUuid }] },
-  ],
+  OR: [{ wakeTargetConnectionUuid: null }, { wakeTargetConnectionUuid: connectionUuid }],
 };
 const legacyFifoFilter = { AND: [NON_OPERATION_TURN, legacyDeliveryFilter] };
 
@@ -3751,7 +3731,6 @@ describe("getPendingTurnsForConnection", () => {
         { wakeTargetConnectionUuid: connectionUuid },
         { wakeTargetConnectionUuid: null, session: { originConnectionUuid: connectionUuid } },
       ],
-      AND: [legacyWakeTurnFilter],
     });
 
     expect(turns).toEqual([

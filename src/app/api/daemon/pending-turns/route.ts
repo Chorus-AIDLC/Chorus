@@ -20,7 +20,6 @@ import { success, errors } from "@/lib/api-response";
 import { getAuthContext } from "@/lib/auth";
 import { connectionBelongsToAgent } from "@/services/daemon-execution.service";
 import { getPendingTurnsForConnection } from "@/services/daemon-session.service";
-import { recoverDeferredNotificationWakes } from "@/services/notification-wake-recovery";
 
 // GET /api/daemon/pending-turns?connectionUuid=… — list this connection's origin-pinned
 // sessions' unstarted (pending) turns.
@@ -44,10 +43,6 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const owns = await connectionBelongsToAgent(auth.companyUuid, auth.actorUuid, connectionUuid);
   if (!owns) {
     return errors.notFound("Connection");
-  }
-
-  if (wakeRecoveryProtocol === "1") {
-    await recoverDeferredNotificationWakes({ companyUuid: auth.companyUuid, agentUuid: auth.actorUuid, connectionUuid });
   }
 
   const turns = await getPendingTurnsForConnection({

@@ -429,8 +429,6 @@ function buildPrismaFake(store: Store) {
         const row: Row = {
           id: store.nextId(),
           uuid: store.nextUuid("notif"),
-          wakeRecovery: null,
-          wakeRecoveryPending: false,
           readAt: null,
           archivedAt: null,
           instructionText: null,

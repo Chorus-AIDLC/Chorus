@@ -411,7 +411,7 @@ The daemon SHALL distinguish in-flight routing from successfully accepted work. 
 
 ### Requirement: Recover delivery independently of SSE disconnection
 
-For protocol-supported work with reliable identity, the daemon SHALL retry transient delivery failures independently of SSE stream health, using bounded request deadlines, capped backoff, coalesced connection-scoped requests, and retained recovery responsibility. Permanent authorization or identity failures MUST be diagnosed rather than hot-looped or redirected.
+For already-materialized protocol-supported turns with reliable identity, the daemon SHALL retry transient delivery failures independently of SSE stream health, using bounded request deadlines, capped backoff, coalesced connection-scoped requests, and retained recovery responsibility. Permanent authorization or identity failures MUST be diagnosed rather than hot-looped or redirected. Pending recovery SHALL NOT scan a notification outbox or materialize turns from offline notify-only notifications.
 
 #### Scenario: Heartbeats continue while REST fails
 - **WHEN** SSE heartbeat bytes continue while REST delivery reads fail temporarily
@@ -428,7 +428,7 @@ For protocol-supported work with reliable identity, the daemon SHALL retry trans
 
 ### Requirement: Autonomous recovery uses durable authorized identity
 
-For new protocol-supported autonomous wakes, the server SHALL persist versioned source notification context associated with the exact turn before publishing delivery. Recovery MUST NOT depend on notification unread status or guess a notification from trigger similarity. All reads and admissions MUST enforce current tenant, agent, origin and resource visibility boundaries.
+For new protocol-supported autonomous wakes, the server SHALL persist versioned source notification context associated with the exact turn before publishing turn-backed delivery. Recovery of that materialized turn MUST NOT depend on notification `readAt`, archive state or unread-list windows, or guess a notification from trigger similarity. Notification persistence alone SHALL NOT imply a recoverable turn or an outbox guarantee. All reads and admissions MUST enforce current tenant, agent, effective delivery target and resource visibility boundaries.
 
 #### Scenario: The source notification is already read
 - **WHEN** an authorized pending turn has durable source context but its notification is read or outside the unread window
@@ -490,35 +490,44 @@ A transport reconnect followed by registration of the same connection UUID SHALL
 - **WHEN** the daemon registers a different connection UUID while old admission is unresolved
 - **THEN** old unstarted work SHALL be cancelled without model execution, and cleanup SHALL report using the old identity, never the new one
 
-### Requirement: Offline autonomous notifications retain explicit recovery responsibility
+### Requirement: Offline autonomous notifications preserve notify-only compatibility
 
-New eligible autonomous notifications SHALL persist a versioned target envelope and pending recovery responsibility atomically with creation, even when no daemon is online and no turn exists. A protocol-1 pending read SHALL materialize at most 100 deferred intents for its authenticated company/agent through current access and target-selection checks. Hard pins SHALL NOT fall back to another connection; proposal ambiguity and access denial SHALL NOT produce execution. Deferred intents SHALL rotate through bounded scans without starvation. Read/archive status SHALL NOT decide whether execution is owed. Historical notifications without explicit responsibility MUST NOT be replayed.
+When target selection returns `none` or `offline_pin`, an autonomous notification SHALL retain the existing notify-only semantics without deferred recovery responsibility. Reconnect and protocol-1 pending reads MUST NOT materialize a turn from that notification, immediately or after indefinite waiting. Hard pins SHALL NOT fall back to another connection; proposal ambiguity and access denial SHALL NOT produce execution.
 
-Turn creation SHALL be uniquely keyed by the source notification, so concurrent scans or lost outbox settlement cannot create a second turn or replay an already terminal turn. Directed canonical session origin and runtime cwd updates SHALL apply to standalone entity sessions as well as Idea sessions, without modifying existing immutable admission ownership.
+If notification persistence succeeds but turn materialization fails, the notification SHALL remain notify-only and the failure SHALL be logged. There SHALL be no notification outbox, guaranteed later materialization or guessed replay. This boundary SHALL NOT weaken recovery for already-materialized pending turns, which remains independent of notification `readAt`, archive state and unread-list windows.
+
+Ordinary MCP notification reads SHALL retain the full access-filtered notification set subject to their existing status, pagination and auto-mark behavior, without a legacy-only or protocol-owner visibility predicate. Browser/UI history and legacy notification backfill, pending/SSE delivery and lifecycle/coalescing compatibility SHALL remain intact. Those legacy paths SHALL NOT gain exact-identity guarantees or imply a new server-side deferred-turn recovery guarantee.
+
+#### Scenario: Comment arrives with no online target
+- **WHEN** a mention is persisted and target selection returns `none` or `offline_pin`
+- **THEN** it SHALL remain notify-only without a deferred turn obligation
+- **AND** a later reconnect or protocol-1 pending read MUST NOT manufacture a turn from it
+
+#### Scenario: Notification exists but turn materialization fails
+- **WHEN** the notification is persisted but creation of its turn fails
+- **THEN** the notification SHALL remain visible under ordinary access and query filters and the failure SHALL be logged
+- **AND** recovery MUST NOT guess a turn or promise eventual execution from an outbox
+
+#### Scenario: Ordinary MCP notification visibility remains compatible
+- **WHEN** a caller lists notifications through MCP
+- **THEN** existing access, status, pagination and auto-mark rules SHALL apply without hiding notifications based on recovery protocol ownership
+- **AND** legacy compatibility SHALL remain unchanged rather than enforcing a protocol-1-only cutover
+
+#### Scenario: Another cwd connects before an offline hard-pinned target
+- **WHEN** target selection returns `offline_pin` and another daemon connects
+- **THEN** target selection MUST NOT fall back to that daemon
+- **AND** even a later matching connection SHALL NOT trigger deferred materialization through pending recovery
+
+### Requirement: Materialized turns retain unique source and hard-target identity
+
+Turn creation SHALL be uniquely keyed by the source notification, so repeated or concurrent creation attempts cannot create a second turn or replay an already terminal turn. Source uniqueness SHALL NOT establish recovery responsibility for a notification without a turn. Directed canonical session origin and runtime cwd updates SHALL apply to standalone entity sessions as well as Idea sessions, without modifying existing immutable admission ownership.
 
 Each materialized hard-pinned turn SHALL retain its target connection and runtime cwd independently of later canonical session origin changes. Pending reads, live projection and exact admission/retry SHALL enforce that per-turn target; an unpinned turn SHALL continue to use the current canonical origin. Moving the session MUST NOT move a different pending hard-pinned wake, and the original target SHALL remain able to recover that pending wake. Terminal settlement SHALL continue to use immutable admission ownership.
 
-Deferred recovery SHALL have a durable protocol ownership boundary. Initial online materialization MAY atomically grant legacy delivery only before recovery claims ownership. Protocol-1 recovery ownership MUST survive outbox settlement and MUST NOT be downgraded by a racing initial notification path. Legacy automated notification reads SHALL exclude unclaimed/protocol-1-owned sources before pagination and auto-marking; UI history SHALL remain visible. Legacy pending/SSE delivery and lifecycle/coalescing SHALL likewise exclude their associated turns, while protocol-1 recovery remains possible. Existing historical notification and immediate-online compatibility paths SHALL be retained without attributing exact-identity guarantees to legacy FIFO execution.
-
-#### Scenario: Comment arrives while the agent has no online daemon
-- **WHEN** a new eligible mention is persisted offline and later its selected daemon connects
-- **THEN** recovery SHALL create and deliver its exact durable turn without requiring a new chat message
-- **AND** marking the notification read or archived SHALL NOT lose the wake, while older unread notifications without recovery responsibility remain untouched
-
-#### Scenario: Legacy daemon reconnects before the upgraded daemon
-- **WHEN** an offline notification is owned by the outbox/protocol-1 recovery and a legacy daemon reconnects
-- **THEN** legacy automated notification reads, pending projection and lifecycle admission MUST NOT execute or consume it, even after protocol-1 materialization clears pending
-- **AND** the upgraded daemon SHALL subsequently recover it once, without replaying a legacy execution
-
-#### Scenario: Initial notification settlement races recovery ownership
-- **WHEN** recovery claims the source before the initial notification path finishes
-- **THEN** initial settlement MUST NOT expose that source to legacy delivery
-- **AND** if initial online settlement wins first, recovery MUST NOT later claim or duplicate its turn
-
-#### Scenario: A different cwd connects before the hard-pinned target
-- **WHEN** the deferred mention has an explicit offline host/cwd pin and another daemon connects
-- **THEN** that daemon MUST NOT materialize or execute the mention
-- **AND** the matching target SHALL recover it when online, subject to current access
+#### Scenario: Repeated creation uses the same source notification
+- **WHEN** multiple turn creation attempts use the same source notification UUID
+- **THEN** they SHALL resolve to the existing turn rather than create another
+- **AND** an already terminal turn MUST NOT be replayed
 
 #### Scenario: Standalone quick task changes directed origin
 - **WHEN** a standalone task session was created on connection A and a new directed wake selects B
@@ -526,7 +535,7 @@ Deferred recovery SHALL have a durable protocol ownership boundary. Initial onli
 - **AND** an already-admitted A turn SHALL still settle only through A's immutable admission identity
 
 #### Scenario: Hard-pinned pending work survives another wake moving the session
-- **WHEN** A's deferred hard-pinned wake has been materialized but not admitted, and B's separate wake moves the same standalone or Idea session to B
+- **WHEN** A's hard-pinned wake has already been materialized but not admitted, and B's separate wake moves the same standalone or Idea session to B
 - **THEN** B MUST neither receive nor admit A's turn, including inside a mixed exact batch
 - **AND** A SHALL recover its own turn with A's original runtime cwd when it reconnects, even while the canonical origin remains B
 

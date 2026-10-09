@@ -90,7 +90,7 @@ vi.mock("@/services/orchestrator.service", async (importOriginal) => ({
 
 import { registerPmTools } from "@/mcp/tools/pm";
 import { handleActivity } from "@/services/notification-listener";
-import { legacyWakeTurnWhere } from "@/services/notification-wake-policy";
+import { canAgentReceiveTurn } from "@/services/daemon-session.service";
 import type { AgentAuthContext } from "@/types/auth";
 
 // ===== Scenario identifiers =====
@@ -279,10 +279,6 @@ describe("assign_idea end-to-end — agent target (AC#1)", () => {
     const agentNotif = ideaClaimedNotifications().find((n) => n.recipientType === "agent");
     expect(agentNotif).toBeDefined();
     expect(agentNotif!.recipientUuid).toBe(PM_AGENT);
-    expect(agentNotif).toMatchObject({
-      wakeRecoveryPending: false,
-      wakeRecovery: { version: 1, deliveryOwner: "legacy" },
-    });
     // The human creator is also notified; the actor (assigner) is never self-notified.
     expect(ideaClaimedNotifications().some((n) => n.recipientType === "user" && n.recipientUuid === CREATOR)).toBe(true);
     expect(ideaClaimedNotifications().every((n) => n.recipientUuid !== CALLER)).toBe(true);
@@ -300,20 +296,10 @@ describe("assign_idea end-to-end — agent target (AC#1)", () => {
       wakeTargetConnectionUuid: null,
       wakeRuntimeCwd: null,
     });
-    const legacyTurnFilter = {
-      AND: [legacyWakeTurnWhere(), { session: { companyUuid: COMPANY, agentUuid: PM_AGENT } }],
-    };
-    expect(await mockPrisma.daemonSessionTurn.findMany({ where: legacyTurnFilter })).toHaveLength(1);
-    expect(await mockPrisma.notification.updateMany({
-      where: { uuid: agentNotif!.uuid, wakeRecovery: { equals: { version: 1, deliveryOwner: "outbox" } } },
-      data: { wakeRecovery: { version: 1, deliveryOwner: "protocol1" } },
-    })).toEqual({ count: 0 });
-    expect(agentNotif!.wakeRecovery).toEqual({ version: 1, deliveryOwner: "legacy" });
-    expect(await mockPrisma.notification.updateMany({
-      where: { uuid: agentNotif!.uuid, wakeRecovery: { equals: { deliveryOwner: "legacy", version: 1 } } },
-      data: { wakeRecovery: { version: 1, deliveryOwner: "protocol1" } },
-    })).toEqual({ count: 1 });
-    expect(await mockPrisma.daemonSessionTurn.findMany({ where: legacyTurnFilter })).toEqual([]);
+    const turnUuid = agentInstanceStore.daemonSessionTurns[0].uuid;
+    expect(await canAgentReceiveTurn(COMPANY, PM_AGENT, turnUuid)).toBe(true);
+    expect(await canAgentReceiveTurn(COMPANY, CALLER, turnUuid)).toBe(false);
+    expect(await canAgentReceiveTurn("another-company", PM_AGENT, turnUuid)).toBe(false);
     expect(agentInstanceStore.daemonSessionTurns).toHaveLength(1);
   });
 

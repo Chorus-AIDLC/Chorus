@@ -232,7 +232,6 @@ export function triggerForAction(action: string): TurnTrigger | null {
  * so the bridge is trivially unit-testable with plain fixtures.
  */
 export interface WakeNotificationContext {
-  recoveryConnectionUuid?: string;
   wakeContext?: WakeContext | null;
   companyUuid: string;
   recipientType: string;
@@ -727,7 +726,6 @@ export async function resolveIdeaSessionOriginTarget(
  * a momentarily-no-online un-pinned wake must stay byte-identical to before).
  */
 export interface WakeTurnResult {
-  recoveryDeferred?: boolean;
   wakeContext?: WakeContext | null;
   turn: TurnView | null;
   targetConnectionUuid: string | null;
@@ -997,16 +995,13 @@ export async function createTurnAndResolveTarget(
     // and a momentarily-no-online UN-PINNED wake must remain byte-identical to before (no new
     // suppression behavior). So only `offline_pin` suppresses agent-wide.
     if (selection.kind === "offline_pin") {
-      return { turn: null, targetConnectionUuid: null, runtimeCwd: pin?.runtimeCwd ?? null, suppressWake: true, recoveryDeferred: true };
+      return { turn: null, targetConnectionUuid: null, runtimeCwd: pin?.runtimeCwd ?? null, suppressWake: true };
     }
     if (selection.kind === "none") {
-      return { ...empty, recoveryDeferred: true };
+      return empty;
     }
 
     const origin = selection.connection;
-    if (ctx.recoveryConnectionUuid && ctx.recoveryConnectionUuid !== origin.uuid) {
-      return { ...empty, recoveryDeferred: true };
-    }
     const directed = selection.kind === "directed";
     // The wake's spawn cwd. A pin that fixed an explicit runtime cwd (project_fixed /
     // temporary / a task instance carrying its own runtimeCwd) keeps it on `pin.runtimeCwd`.
@@ -1163,7 +1158,7 @@ export async function createTurnAndResolveTarget(
       },
       "Failed to create DaemonSessionTurn for wake notification (notification was still created)",
     );
-    return { ...empty, recoveryDeferred: true };
+    return empty;
   }
 }
 

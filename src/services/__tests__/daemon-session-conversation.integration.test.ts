@@ -482,8 +482,6 @@ function buildPrismaFake(store: Store) {
         const row: Row = {
           id: store.nextId(),
           uuid: store.nextUuid("notif"),
-          wakeRecovery: null,
-          wakeRecoveryPending: false,
           readAt: null,
           archivedAt: null,
           instructionText: null,
@@ -909,30 +907,29 @@ describe("integration: continuation pinned to origin connection (read-only when 
 
 describe("integration: reconnect backfill re-derives the unstarted (pending) turn from the turn table", () => {
   it.each([
-    { owner: "legacy", pending: false, legacyVisible: true },
-    { owner: "legacy", pending: true, legacyVisible: false },
-    { owner: "protocol1", pending: false, legacyVisible: false },
-    { owner: "outbox", pending: true, legacyVisible: false },
-    { owner: null, pending: false, legacyVisible: true },
-    { owner: null, pending: true, legacyVisible: false },
-  ])("fences legacy delivery for owner=$owner pending=$pending", async ({ owner, pending, legacyVisible }) => {
+    { source: "persisted", visible: true },
+    { source: "legacy", visible: true },
+    { source: "malformed", visible: false },
+    { source: "wrong-recipient", visible: false },
+    { source: "missing-entity", visible: false },
+  ])("checks persisted turn source=$source for legacy and recovery delivery", async ({ source, visible }) => {
     await notificationService.create({ ...baseNotif, action: "task_assigned", message: "Assigned" });
     const turn = store.data.daemonSessionTurn[0];
     const notification = store.data.notification.find((candidate) => candidate.uuid === turn.wakeNotificationUuid)!;
-    Object.assign(notification, {
-      wakeRecovery: owner === null ? null : { version: 1, deliveryOwner: owner },
-      wakeRecoveryPending: pending,
-    });
+    const context = turn.wakeContext as { notification: Record<string, unknown> };
+    if (source === "legacy") turn.wakeContext = null;
+    if (source === "malformed") turn.wakeContext = { version: 2 };
+    if (source === "wrong-recipient") context.notification.recipientUuid = "another-agent";
+    if (source === "missing-entity") context.notification.entityUuid = "deleted-task";
     const scope = { companyUuid: COMPANY, agentUuid: AGENT, connectionUuid: ORIGIN_CONN };
     expect(await getPendingTurnsForConnection(scope)).toEqual(
-      legacyVisible ? [expect.objectContaining({ turnUuid: turn.uuid })] : [],
+      visible ? [expect.objectContaining({ turnUuid: turn.uuid })] : [],
     );
-    expect(await canAgentReceiveTurn(COMPANY, AGENT, turn.uuid as string, ORIGIN_CONN, true)).toBe(legacyVisible);
-    expect(await getPendingTurnsForConnection({ ...scope, wakeRecoveryProtocol: 1 })).toEqual([
-      expect.objectContaining({ turnUuid: turn.uuid }),
-    ]);
-    expect(await canAgentReceiveTurn(COMPANY, AGENT, turn.uuid as string, ORIGIN_CONN)).toBe(true);
-    expect(notification.wakeRecoveryPending).toBe(pending);
+    expect(await getPendingTurnsForConnection({ ...scope, wakeRecoveryProtocol: 1 })).toEqual(
+      visible ? [expect.objectContaining({ turnUuid: turn.uuid })] : [],
+    );
+    expect(await canAgentReceiveTurn(COMPANY, AGENT, turn.uuid as string, ORIGIN_CONN)).toBe(visible);
+    expect(notification.readAt).toBeNull();
   });
 
   it.each(["/directed/runtime", null])("uses the turn target and runtime cwd %s instead of a changed canonical origin", async (runtimeCwd) => {

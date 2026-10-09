@@ -5,11 +5,6 @@ import { NextRequest } from "next/server";
 const mockGetAuthContext = vi.fn();
 const mockConnectionBelongsToAgent = vi.fn();
 const mockGetPendingTurnsForConnection = vi.fn();
-const mockRecoverDeferredNotificationWakes = vi.fn();
-
-vi.mock("@/services/notification-wake-recovery", () => ({
-  recoverDeferredNotificationWakes: (...args: unknown[]) => mockRecoverDeferredNotificationWakes(...args),
-}));
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
@@ -53,8 +48,7 @@ describe("GET /api/daemon/pending-turns", () => {
   it("negotiates recovery capability without tagging legacy rows as safe", async () => {
     const response = await GET(getRequest(`?connectionUuid=${connectionUuid}&wakeRecoveryProtocol=1`), emptyCtx);
     expect(response.status).toBe(200);
-    expect(mockGetPendingTurnsForConnection).toHaveBeenCalledWith(expect.objectContaining({ wakeRecoveryProtocol: 1 }));
-    expect(mockRecoverDeferredNotificationWakes).toHaveBeenCalledWith({ companyUuid, agentUuid, connectionUuid });
+    expect(mockGetPendingTurnsForConnection).toHaveBeenCalledWith({ companyUuid, agentUuid, connectionUuid, operationProtocol: false, wakeRecoveryProtocol: 1 });
     expect(await response.json()).toMatchObject({ data: { wakeRecoveryProtocol: 1, turns: pendingTurns } });
     expect(pendingTurns[0]).not.toHaveProperty("wakeContext");
   });

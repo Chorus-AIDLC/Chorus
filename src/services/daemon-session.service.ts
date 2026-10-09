@@ -27,7 +27,6 @@
 // a resume against a different working directory would `No conversation found`.
 
 import { Prisma } from "@/generated/prisma/client";
-import { legacyWakeTurnWhere } from "@/services/notification-wake-policy";
 import { prisma } from "@/lib/prisma";
 import { normalizeWakeError, type WakeError } from "@/lib/daemon-wake-error";
 import { parseWakeContext, type WakeContext } from "@/services/daemon-wake-context";
@@ -2181,9 +2180,9 @@ export async function advanceTurnForWake(params: {
   const operationFilter = isolateOperations || session.originConnectionUuid !== params.connectionUuid
     ? NON_OPERATION_TURN : isolateResearch
       ? { AND: [NON_RESEARCH_TURN, originCompatible] } : originCompatible;
-  const legacyDeliveryFilter = { AND: [legacyWakeTurnWhere(), { OR: [
+  const legacyDeliveryFilter = { OR: [
     { wakeTargetConnectionUuid: null }, { wakeTargetConnectionUuid: params.connectionUuid },
-  ] }] };
+  ] };
   const fifoFilter = { AND: [operationFilter, legacyDeliveryFilter] };
   const fromStatus =
     params.status === "running"
@@ -2742,9 +2741,9 @@ async function canAgentReceiveSessionTurn(
 
 // A persisted pending turn is not a permanent access grant. Live delivery and
 // reconnect backfill must both resolve its current idea OR originating entity.
-export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string, turnUuid: string, connectionUuid?: string, legacyOnly = false): Promise<boolean> {
+export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string, turnUuid: string, connectionUuid?: string): Promise<boolean> {
   const turn = await prisma.daemonSessionTurn.findFirst({
-    where: { uuid: turnUuid, session: { companyUuid, agentUuid }, ...(connectionUuid ? wakeTargetFilter(connectionUuid) : {}), ...(legacyOnly ? { AND: [legacyWakeTurnWhere()] } : {}) },
+    where: { uuid: turnUuid, session: { companyUuid, agentUuid }, ...(connectionUuid ? wakeTargetFilter(connectionUuid) : {}) },
     select: {
       sessionUuid: true, trigger: true, wakeContext: true,
       session: { select: { sessionId: true, directIdeaUuid: true } },
@@ -2799,7 +2798,6 @@ export async function getPendingTurnsForConnection(params: {
         agentUuid: params.agentUuid,
       },
       ...wakeTargetFilter(params.connectionUuid),
-      ...(params.wakeRecoveryProtocol === 1 ? {} : { AND: [legacyWakeTurnWhere()] }),
     },
     orderBy: [{ session: { createdAt: "asc" } }, { seq: "asc" }],
     select: {

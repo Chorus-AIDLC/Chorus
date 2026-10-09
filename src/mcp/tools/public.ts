@@ -779,7 +779,6 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       const statusValue = params.status ?? "unread";
       const result = await notificationService.list({
         auth,
-        automated: true,
         companyUuid: auth.companyUuid,
         recipientType: auth.type,
         recipientUuid: auth.actorUuid,

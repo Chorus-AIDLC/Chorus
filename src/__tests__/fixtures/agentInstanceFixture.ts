@@ -226,8 +226,6 @@ export interface NotificationRow {
   actorUuid: string;
   actorName: string;
   instructionText: string | null;
-  wakeRecovery?: unknown;
-  wakeRecoveryPending?: boolean;
   readAt: Date | null;
   archivedAt: Date | null;
   createdAt: Date;
@@ -792,8 +790,6 @@ export function buildMockPrisma() {
       {
         defaults: () => ({
           uuid: nextUuid("notification"),
-          wakeRecovery: null,
-          wakeRecoveryPending: false,
           instructionText: null,
           readAt: null,
           archivedAt: null,

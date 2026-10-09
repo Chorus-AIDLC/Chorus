@@ -3,7 +3,6 @@
 // All operations scoped by companyUuid for multi-tenancy
 
 import { prisma } from "@/lib/prisma";
-import logger from "@/lib/logger";
 import { eventBus } from "@/lib/event-bus";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import { RESOURCES } from "@/lib/authz/types";
@@ -11,8 +10,6 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { AgentAuthContext, AuthContext } from "@/types/auth";
 import { createTurnAndResolveTarget } from "@/services/notification-turn";
 import { createWakeContext } from "@/services/daemon-wake-context";
-import { notificationWakeRecoveryData, settleNotificationWakeRecovery } from "@/services/notification-wake-recovery";
-import { legacyNotificationDeliveryWhere } from "@/services/notification-wake-policy";
 import {
   resolveDirectIdeaUuid,
   type TurnView,
@@ -53,7 +50,9 @@ export interface NotificationCreateParams {
   // Pinned target daemon instance carried by a `mentioned` wake (cwd-addressable
   // instances). The mention markup encodes the owner-chosen `(host, cwd)` and
   // mention.service threads it here so the autonomous wake (notification-turn.ts)
-  // routes to that instance. A `task_assigned` / `idea_claimed` wake instead reads
+  // routes to that instance. These are NOT persisted on the Notification row — they
+  // are transport-only into the wake-turn chokepoint, which resolves them to a live
+  // connection at wake time. A `task_assigned` / `idea_claimed` wake instead reads
   // its pin from the assignment itself: an `agent_instance` assignee resolves to its
   // AgentInstance, with the root idea's instance inherited for same-agent lineage
   // (notification-turn.ts resolvePinnedTarget), so it does not need these fields.
@@ -71,7 +70,6 @@ export interface NotificationCreateParams {
 
 export interface NotificationListParams {
   auth?: AuthContext;
-  automated?: boolean;
   companyUuid: string;
   recipientType: string;
   recipientUuid: string;
@@ -522,7 +520,6 @@ export async function createReturningTurn(
       // Write-once denormalized copy of a human_instruction turn's prompt; null for
       // every other notification. The canonical copy is the turn's promptText.
       instructionText: params.instructionText ?? null,
-      ...notificationWakeRecoveryData(params),
     },
   });
 
@@ -538,13 +535,8 @@ export async function createReturningTurn(
   // born, so human and autonomous wakes are handled symmetrically. The bridge is
   // failure-isolated (logs + swallows): a turn-creation/ping failure MUST NOT abort or
   // block this already-created notification.
-  const wakeResult = await createTurnAndResolveTarget({ ...params, wakeContext: createWakeContext(notification) });
-  const { turn, targetConnectionUuid, runtimeCwd, suppressWake, wakeContext } = wakeResult;
-  if (notification.wakeRecoveryPending) {
-    await settleNotificationWakeRecovery(notification.uuid, wakeResult).catch((error) => {
-      logger.error({ errorType: error instanceof Error ? error.name : "unknown", notificationUuid: notification.uuid }, "Deferred wake settlement failed; recovery responsibility retained");
-    });
-  }
+  const { turn, targetConnectionUuid, runtimeCwd, suppressWake, wakeContext } =
+    await createTurnAndResolveTarget({ ...params, wakeContext: createWakeContext(notification) });
 
   // Emit SSE event for real-time notification delivery (includes details for toast).
   //
@@ -633,7 +625,6 @@ export async function createBatch(
           actorName: params.actorName,
           // Write-once denormalized copy (null for every non-instruction notification).
           instructionText: params.instructionText ?? null,
-          ...notificationWakeRecoveryData(params),
         },
       })
     )
@@ -649,11 +640,6 @@ export async function createBatch(
   const wakes: Awaited<ReturnType<typeof createTurnAndResolveTarget>>[] = [];
   for (const [index, params] of notifications.entries()) {
     const result = await createTurnAndResolveTarget({ ...params, wakeContext: createWakeContext(created[index]) });
-    if (created[index].wakeRecoveryPending) {
-      await settleNotificationWakeRecovery(created[index].uuid, result).catch((error) => {
-        logger.error({ errorType: error instanceof Error ? error.name : "unknown", notificationUuid: created[index].uuid }, "Deferred wake settlement failed; recovery responsibility retained");
-      });
-    }
     wakes.push(result);
   }
 
@@ -706,10 +692,8 @@ export async function list(
   const take = params.take ?? 20;
 
   const accessWhere = await recipientNotificationWhere(companyUuid, recipientType, recipientUuid, params.auth);
-  const deliveryWhere = params.automated && recipientType === "agent" ? legacyNotificationDeliveryWhere() : {};
   const where = {
     ...accessWhere,
-    AND: [deliveryWhere],
     ...(projectUuid && { projectUuid }),
     ...(readFilter === "unread" && { readAt: null }),
     ...(readFilter === "read" && { readAt: { not: null } }),
@@ -725,7 +709,7 @@ export async function list(
       orderBy: { createdAt: "desc" },
     }),
     prisma.notification.count({ where }),
-    countUnread({ ...accessWhere, AND: [deliveryWhere] }),
+    countUnread(accessWhere),
   ]);
 
   return {

@@ -416,8 +416,6 @@ function buildPrismaFake(store: Store) {
         const row: Row = {
           id: store.nextId(),
           uuid: store.nextUuid("notif"),
-          wakeRecovery: null,
-          wakeRecoveryPending: false,
           readAt: null,
           archivedAt: null,
           instructionText: null,
@@ -932,8 +930,8 @@ describe("integration: KEY ASSERTION — the wake reads the EXACT assignment sha
 // SOFT "degrade to online-first" behavior.
 // ===========================================================================================
 
-describe("integration: offline assignment pins retain pending notification recovery without a turn or reroute", () => {
-  it("preserves deferred recovery for an offline hard pin without rerouting to an online instance", async () => {
+describe("integration: offline assignment pins stay notify-only without a turn or reroute", () => {
+  it("keeps an offline hard pin notify-only without rerouting to an online instance", async () => {
     // The assignment is pinned to the (PIN_HOST, PIN_CWD) instance. This is now a HARD pin
     // (owner choice B): when its instance is offline the wake is notify-only — NO turn, NO
     // session — and is NEVER re-routed to the agent's online-elsewhere connection (routing to
@@ -973,24 +971,15 @@ describe("integration: offline assignment pins retain pending notification recov
     expect(store.data.daemonSession).toHaveLength(0);
     expect(store.data.notification).toHaveLength(1);
     expect(store.data.notification[0]).toMatchObject({
-      wakeRecoveryPending: true,
-      wakeRecovery: { version: 1, deliveryOwner: "protocol1" },
+      recipientUuid: AGENT,
+      entityUuid: TASK,
+      readAt: null,
     });
-    expect(hoisted.prismaFake.notification.updateMany).toHaveBeenCalledWith({
-      where: {
-        uuid: store.data.notification[0].uuid,
-        wakeRecoveryPending: true,
-        wakeRecovery: { equals: { version: 1, deliveryOwner: "outbox" } },
-      },
-      data: {
-        wakeRecoveryPending: true,
-        wakeRecovery: { version: 1, deliveryOwner: "protocol1" },
-      },
-    });
+    expect(await getPendingTurnsForConnection({ companyUuid: COMPANY, agentUuid: AGENT, connectionUuid: OTHER_CONN })).toEqual([]);
     expect(mockLogger.error).not.toHaveBeenCalled();
   });
 
-  it("retains deferred recovery for a fully-offline agent without prematurely creating a turn", async () => {
+  it("keeps a fully-offline agent notify-only without creating a turn on reconnect", async () => {
     seedInstance(PIN_HOST, PIN_CWD);
     seedTask({
       status: "assigned",
@@ -1022,8 +1011,9 @@ describe("integration: offline assignment pins retain pending notification recov
 
     expect(store.data.notification).toHaveLength(1);
     expect(store.data.notification[0]).toMatchObject({
-      wakeRecoveryPending: true,
-      wakeRecovery: { version: 1, deliveryOwner: "protocol1" },
+      recipientUuid: AGENT,
+      entityUuid: TASK,
+      readAt: null,
     });
     expect(store.data.daemonSessionTurn).toHaveLength(0);
     expect(store.data.daemonSession).toHaveLength(0);
@@ -1036,7 +1026,8 @@ describe("integration: offline assignment pins retain pending notification recov
       connectionUuid: PINNED_CONN,
     });
     expect(pending).toHaveLength(0);
-    expect(store.data.notification[0].wakeRecoveryPending).toBe(true);
+    expect(store.data.notification[0].readAt).toBeNull();
+    expect(store.data.daemonSessionTurn).toHaveLength(0);
   });
 });
 

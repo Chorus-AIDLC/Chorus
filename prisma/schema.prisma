@@ -853,8 +853,6 @@ model Notification {
   // daemon read the instruction body in the chorus_get_notifications call it already
   // makes, with no extra round-trip. Null for every non-instruction notification.
   instructionText String?
-  wakeRecovery Json?
-  wakeRecoveryPending Boolean @default(false)
   wakeTurn DaemonSessionTurn?
   actorType       String // user | agent
   actorUuid       String
@@ -867,7 +865,6 @@ model Notification {
 
   @@index([recipientType, recipientUuid, readAt])
   @@index([companyUuid, recipientUuid])
-  @@index([companyUuid, recipientUuid, wakeRecoveryPending, updatedAt])
   @@index([entityType, entityUuid])
   @@index([projectUuid])
 }

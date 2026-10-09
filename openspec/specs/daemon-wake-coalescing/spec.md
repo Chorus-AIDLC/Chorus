@@ -78,9 +78,11 @@ empty SHALL be omitted from the prompt.
 
 A coalesced batch SHALL be reported as one running turn. The daemon SHALL emit an execution snapshot in which merged-away resources are no longer present as queued; the session-anchor running row SHALL be synthesized from batch attribution so server reconciliation clears merged-away execution rows.
 
-With the exact-identity protocol, the daemon SHALL report the actual batch member turn UUIDs, the selected primary UUID and a stable admissionUuid retained across retries. On first admission the server SHALL atomically validate current authorization, origin, same-session membership, unique identifiers and pending state, advance the primary to running, and settle only the other specified members as terminal merged. A retry with the identical persisted admission identity and members SHALL return the same still-valid running/merged outcome after rechecking authorization and origin, without further settlement. It MUST NOT admit arbitrary already-running work or settle an unrelated older pending turn. A rejected batch admission MUST NOT start model execution or partially settle members. Prompt-only events without a persisted turn SHALL NOT fabricate batch member identifiers or consume additional FIFO turns.
+With the exact-identity protocol, the daemon SHALL report the actual batch member turn UUIDs, the selected primary UUID and a stable admissionUuid retained across retries. On first admission the server SHALL atomically validate current authorization, each member's effective delivery target (its hard target when present, otherwise canonical session origin), same-session membership, unique identifiers and pending state, advance the primary to running, and settle only the other specified members as terminal merged. A retry with the identical persisted admission identity and members SHALL return the same still-valid running/merged outcome after rechecking authorization, effective targets and saved admission ownership, without further settlement. It MUST NOT admit arbitrary already-running work or settle an unrelated older pending turn. A rejected batch admission MUST NOT start model execution or partially settle members. Prompt-only events without a persisted turn SHALL NOT fabricate batch member identifiers or consume additional FIFO turns.
 
-For legacy clients without the capability, the server SHALL retain the existing coalescedCount behavior: advance the oldest pending turn and settle the next count minus one pending turns by ascending seq. The exact-identity guarantee SHALL NOT be attributed to that fallback. A turn absent from an identified batch, including one created after queue drain, SHALL survive for another batch. No new execution-status value is required.
+Batch recovery SHALL operate on already-materialized turn identities independently of notification `readAt`, archive state or unread-list windows. Notification-only outcomes (`none`, `offline_pin`, or logged turn-materialization failure after notification persistence) SHALL NOT establish an outbox obligation or cause guessed/deferred batch members to be created. Unique source-notification identity and per-turn hard target/runtime cwd SHALL remain intact. A same-UUID transport reconnect SHALL preserve an uncertain batch's token, members and captured admitting connection; a changed identity, conflict, shutdown or explicit interrupt SHALL cancel unstarted admission safely. Terminal settlement SHALL use immutable admission ownership rather than a later canonical session origin.
+
+For legacy clients without the capability, the server SHALL retain the existing coalescedCount behavior: advance the oldest pending turn and settle the next count minus one pending turns by ascending seq. No notification outbox ownership or legacy-only visibility restriction SHALL be added to this compatibility path; ordinary MCP notification reads SHALL remain fully access-filtered under existing query semantics. The exact-identity guarantee SHALL NOT be attributed to that fallback. A turn absent from an identified batch, including one created after queue drain, SHALL survive for another batch. No new execution-status value is required.
 
 #### Scenario: Merged-away queued resources clear from the UI
 - **WHEN** four resources were shown queued for a session and they are coalesced into one running batch
@@ -99,13 +101,23 @@ For legacy clients without the capability, the server SHALL retain the existing 
 - **THEN** B and C alone SHALL be accounted for and A MUST remain untouched
 
 #### Scenario: Invalid batch membership rejects atomically
-- **WHEN** any exact member is unauthorized, belongs to another session or origin, is duplicated, or is no longer pending without a matching valid admission retry
+- **WHEN** any exact member is unauthorized, belongs to another session or effective delivery target, is duplicated, or is no longer pending without a matching valid admission retry
 - **THEN** the server MUST reject without partially advancing other members and the daemon MUST NOT execute that rejected batch
 
 #### Scenario: Lost successful batch acknowledgment is recoverable
 - **WHEN** admission commits a batch but its successful response is lost
 - **THEN** an identical authorized retry MUST return that same batch result without separately replaying merged members
 - **AND** unrelated older pending work MUST remain untouched
+
+#### Scenario: Same-UUID reconnect during uncertain batch admission
+- **WHEN** a transport reconnect registers the same connection UUID while batch admission is unresolved
+- **THEN** the daemon SHALL retain the original token, primary and ordered members and retry without reporting a shutdown interruption
+- **AND** it SHALL start the model at most once, only after confirmed admission
+
+#### Scenario: Mixed batch includes another connection's hard-pinned turn
+- **WHEN** B submits an exact batch containing A's materialized hard-pinned turn after the canonical session moves to B
+- **THEN** admission SHALL reject atomically without executing or settling any member
+- **AND** A's pending turn SHALL retain A's target and runtime cwd for authorized recovery
 
 #### Scenario: Rejected batch retains a smaller pending subset
 - **WHEN** exact multi-member admission receives 404/409 and a subsequent authoritative pending read contains a strictly smaller subset of those members

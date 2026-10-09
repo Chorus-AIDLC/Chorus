@@ -4,6 +4,8 @@
 
 Idea: `67981f96-c380-4777-81f1-134ef71aeb89`。用户已确认以 2026-10-09 06:38、06:42（UTC+8）为首批样本，并明确只允许隔离验证，操作运行中的服务须另行确认。
 
+PR #609 后续决策（追加 elaboration `e2a7b8d9`，沿用现有 YOLO 授权）：保留既有离线 notify-only 语义与 legacy 兼容，移除尚未发布的 deferred notification recovery/outbox/legacy-only visibility 功能。恢复责任仅覆盖已物化的 turn，不从 `none` / `offline_pin` 无限等待并补建 turn。本文现场与测试记录均为此前调查/实现阶段的历史证据，不代表本次文档修订运行过测试或已部署。
+
 ### 现场时间线
 
 1. 06:38:32：本机收到 turn `143ced12-54b2-42e5-ac2a-7c5ea90b7338` 的 deliver_turn，同秒 pending-turn GET 与通知 `ba0684ab-9ffd-44a4-a7e4-498d000b6cb4` 路由出现 fetch failed。深入调查时，以只读 API 查询，该 turn 仍 pending、startedAt=null。
@@ -26,7 +28,7 @@ Idea: `67981f96-c380-4777-81f1-134ef71aeb89`。用户已确认以 2026-10-09 06:
 
 ### 根因链与限制
 
-- 触发条件：HTTP 传输失败。当前会话以原生 Node fetch 对同一 origin 做四次无认证只读 GET，得到一次 `cause.code=ECONNRESET` 后三次 200；认证读取也观察到 ECONNRESET。历史日志没有 cause，不能断言两次历史失败必然也是同一底层原因，更不能归因于 DNS、代理或 CloudFront 的具体配置。
+- 触发条件：HTTP 传输失败。原调查会话以原生 Node fetch 对同一 origin 做四次无认证只读 GET，得到一次 `cause.code=ECONNRESET` 后三次 200；认证读取也观察到 ECONNRESET。历史日志没有 cause，不能断言两次历史失败必然也是同一底层原因，更不能归因于 DNS、代理或 CloudFront 的具体配置。
 - 永久漏处理机制：router 在异步取数之前写 seen，错误、找不到通知和 lineage 失败不撤销，且 pending-turn 与 notification 双路径共享错误的成功状态。[router](ref:807524b9-e934-4a8e-8548-319a5562e603)
 - 恢复触发缺口：pending GET 失败直接返回；SSE 只在断开或 75 秒无字节时重连，正常心跳不会补偿独立 HTTP 失败；新聊天的指定 turn 请求也不会恢复旧 turn。[GET](ref:d73afb2f-110e-4c64-b894-41ed05f036d2) [backfill](ref:bff43567-3059-459b-95ac-9ec9fc4e09fa) [SSE](ref:bfc41a00-cd16-42f9-9850-f10630450e56)
 - 状态错位机制：ordinary admission 未携带已知 turn UUID，服务端选最早 pending。此时 daemon 实际处理顺序可能因为前一次失败而与持久化 FIFO 不同。[waker](ref:0da801a6-ee82-4e32-a383-5254008bba79) [server](ref:ee626220-7bc7-474f-9d3a-07faa6ae3181)
@@ -34,7 +36,7 @@ Idea: `67981f96-c380-4777-81f1-134ef71aeb89`。用户已确认以 2026-10-09 06:
 
 ## Goals / Non-Goals
 
-恢复可重试故障，保证同一进程同一连接内准确入队一次、正确 turn 归属，并解释无法恢复的旧数据。不是跨进程任意副作用 exactly-once 系统，不重构 SSE，不强制网络代理/DNS 配置，不补写历史状态，不自动重放存量业务消息。
+恢复已物化 turn 的可重试故障，保证同一进程同一连接内准确入队一次、正确 turn 归属，并解释无法恢复的旧数据。不是跨进程任意副作用 exactly-once 系统，不重构 SSE，不强制网络代理/DNS 配置，不补写历史状态，不自动重放存量业务消息。通知已存在但 turn 未物化时保持 notify-only 并记录失败，不提供 outbox 保证，也不猜测重放。
 
 ## Decisions And Module Contracts
 
@@ -42,7 +44,7 @@ Idea: `67981f96-c380-4777-81f1-134ef71aeb89`。用户已确认以 2026-10-09 06:
 
 新增可空 `DaemonSessionTurn.wakeContext` JSON 字段，使用带 version 的校验结构，保存源 notificationUuid 与重建唤醒所必需的最小原始通知上下文：action、entity type/UUID、actor identity 和必要文本。不得保存密钥、执行命令或扩大项目访问授权。读取时沿用现有 company/agent/session/origin 和当前项目访问检查；可变的归属/权限在交付时重新验证。
 
-单条与批量通知创建流程均需传递精确 source notification UUID；在发送任何通知或 deliver_turn 之前将对应 turn 与 context 持久化。失败不得发布“可恢复”的新协议事件；避免生成无法关联的孤立成功记录。新能力标记启用返回 wakeContext、turnUuid 和精确 source identity；旧字段、旧客户端及已有行保持兼容。
+单条与批量通知创建流程均需传递精确 source notification UUID；在发布 turn-backed 的新协议交付事件之前将对应 turn 与 context 持久化。通知本身可以先持久化；若随后 turn 物化失败，通知保留 notify-only 并记录失败，不得发布“可恢复”的新协议事件，不建立 outbox 或猜测补建。新能力标记启用返回 wakeContext、turnUuid 和精确 source identity；旧字段、旧客户端及已有行保持兼容，普通 MCP 通知读取不增加协议所有权过滤。
 
 跨任务 wire contract：能力参数名为 `wakeRecoveryProtocol=1`（pending GET 与 SSE URL）；turn-advance 的 JSON 标记为 `wakeRecoveryProtocol: 1`。context 形状为 `{ version: 1, notificationUuid, notification }`，其中 notification 为 router 使用的规范化通知对象，至少含 uuid、action、entityType、entityUuid，并保留生成提示需要的 message/entityTitle/actorName 与既有归属信息。新广播事件携带 `turnUuid` 与 `wakeContext`；pending DTO 亦携带它们。精确批次请求使用 `turnUuid` 为主 turn、`turnUuids` 为去重后的成员数组；legacy 请求不带协议标记，继续现有语义。未知 context/protocol 版本不得自动降级为猜测执行。
 
@@ -56,13 +58,13 @@ Idea: `67981f96-c380-4777-81f1-134ef71aeb89`。用户已确认以 2026-10-09 06:
 
 ### 3. Connection-scoped recovery
 
-为每个 agent/cwd connection 建立单一协调器，负责定向重试、注册完成后的校验和低频未处理工作协调。定向请求保持只处理目标 UUID；周期扫描是独立动作，不能借新聊天默默重放全部历史 work。
+为每个 agent/cwd connection 建立单一协调器，负责已物化 turn 的定向重试、注册完成后的校验和低频 pending 协调。定向请求保持只处理目标 UUID；周期扫描是独立动作，不扫描通知 outbox、不为离线通知补建 turn，不能借新聊天默默重放全部历史 work。
 
 网络异常、超时、429、5xx：快速重试采用 1s/2s/4s 后进入最高 30s 的带抖动恢复周期，不因短期预算耗尽就遗忘责任；最多一个扫描请求和一个定时器，重复 ping 合并。401/403、不可见/不存在、权限撤销、无效 context 则停止热重试并记录原因，等待身份/连接更新或人工处理。所有读取具有 10s 应用层 deadline；通知来源与 pending-turn 来源不能互相无限阻塞。
 
 周期扫描仅对新协议下能证实未被接受、具有可靠身份的 turn 自动投递；旧数据有歧义时诊断而不重放。已运行/已终止 turn 不进入恢复。in-flight 阶段到 queue admission 后由既有执行队列接管，不把“未结束”误作“未接收”。
 
-连接注册/重连完成后使用新的 connection UUID；旧代际返回值不得入队。stop/dispose 清定时器、abort REST、使不能中断的 MCP 回调失效，避免关闭/冲突连接重新开始工作。多 agent/cwd 不共享恢复状态。[接线](ref:fcb35efb-663c-43b0-aa9b-748757e8a77b) [control](ref:72c2b105-f267-4be6-9f76-9f0e077bb201)
+连接注册/重连完成后使用注册返回的 connection UUID；读取按连接代际隔离，旧代际返回值不得入队。同 UUID 重连不取消不确定的精确准入；真正变更 UUID、冲突或停止才取消旧身份的未启动工作。stop/dispose 清定时器、abort REST、使不能中断的 MCP 回调失效，避免关闭/冲突连接重新开始工作。多 agent/cwd 不共享恢复状态。[接线](ref:fcb35efb-663c-43b0-aa9b-748757e8a77b) [control](ref:72c2b105-f267-4be6-9f76-9f0e077bb201)
 
 ### 4. Exact ordinary and batch lifecycle
 
@@ -82,23 +84,21 @@ Idea: `67981f96-c380-4777-81f1-134ef71aeb89`。用户已确认以 2026-10-09 06:
 
 ## Validation / Delivery
 
-### PR #609 review follow-up: offline notification responsibility
+### PR #609 review follow-up: notify-only boundary and materialized-turn recovery
 
-New autonomous wake notifications atomically store a versioned `Notification.wakeRecovery` target envelope and `wakeRecoveryPending=true` with the notification itself. This is an explicit outbox, not an unread-notification replay. Historical rows default to false and are never opted in by a data migration. Human instructions and dedicated operation audit notifications keep their existing producers; this outbox does not manufacture additional executions for them.
+The appended elaboration decision `e2a7b8d9` for Idea `67981f96-c380-4777-81f1-134ef71aeb89` preserves existing offline notify-only semantics and legacy compatibility under the existing YOLO authority. It removes the entire unshipped deferred-notification recovery feature, including notification outbox fields, recovery scans and protocol-ownership/legacy-only visibility filtering. Target selection returning `none` or `offline_pin` leaves a notification only; reconnect and protocol-1 pending GET do not later materialize a turn from it, indefinitely or otherwise. A hard pin never falls back to another connection. Current access, lineage and proposal ambiguity checks remain in force.
 
-Protocol-1 pending GET, after connection ownership authentication, attempts at most 100 outstanding intents for that company/agent before returning pending turns. It reuses the notification bridge's current project access, lineage, connection selection, hard-pin and ambiguity policies. An explicit mention/temporary/stage-entry target snapshot survives offline time. Only the currently selected connection can materialize a deferred wake; another online cwd cannot take it. Offline/no-target intents remain pending. Access denial or proposal ambiguity retires the wake responsibility without execution. Unsupported envelopes are logged and retired rather than replayed as legacy notifications. Each deferred attempt updates the queue timestamp so a bounded prefix of offline pins cannot permanently starve later intents.
+If notification persistence succeeds but turn materialization fails, the notification remains notify-only and the failure is logged. There is no durable outbox responsibility, guaranteed later materialization or guessed replay at this boundary. This differs from failure to deliver an already-materialized pending turn: that turn retains recovery responsibility and its durable source context independently of notification `readAt`, archive state or unread-list windows.
 
-The turn's nullable unique `wakeNotificationUuid` deduplicates concurrent materializers and interrupted settlement. Insert uses conflict-safe insertion; a duplicate notification returns its existing turn, while a distinct notification that races on the session sequence retries sequence allocation. A retry finding an existing turn clears the intent without recreating or re-admitting it, including when it is already terminal. Reading/archiving notifications does not clear execution responsibility. Failed post-creation settlement is logged; the persisted outbox retains responsibility. Migration `20261009024000_deferred_notification_wakes` is additive and requires server-first deployment; it is not applied to a live database in this change.
+The turn's nullable unique `wakeNotificationUuid` remains the source identity deduplication boundary. Conflict-safe creation returns an existing turn for the same source rather than creating or replaying another, even if the existing turn is terminal; distinct notifications racing on session sequence allocation retry that allocation. Source uniqueness does not turn a notification without a turn into an execution obligation.
 
-Canonical directed origin/runtime-cwd repointing now also covers standalone entity sessions (`sessionId=entityUuid`, no Idea ancestor), not only Idea sessions. This changes the current delivery owner, never a running turn's immutable `admissionConnectionUuid`; an old admitted execution remains settleable only by its original owner.
+Canonical directed origin/runtime-cwd repointing still covers standalone entity sessions (`sessionId=entityUuid`, no Idea ancestor) as well as Idea sessions. This changes the current delivery owner, never a running turn's immutable `admissionConnectionUuid`; an old admitted execution remains settleable only by its original owner.
 
-Independent review found that mutable canonical origin also moved a different still-pending hard-pinned wake. The follow-up migration additionally stores nullable `wakeTargetConnectionUuid` and `wakeRuntimeCwd` on turns materialized with a hard pin. Pending reads and SSE projection use that target when present (with an index), and exact admission/retry checks every batch member's effective target, falling back to canonical origin only for unpinned rows. Thus B's newer directed wake cannot steal A's pending pinned wake, while A can still discover and admit its own turn after reconnect without moving the canonical session back. Terminal reports retain the separate immutable admission-owner check. Regression covers both standalone tasks and Idea sessions, mixed-batch rejection, live projection, correct per-turn cwd, and subsequent authorized A/B admission.
+Prior independent review found that mutable canonical origin also moved a different still-pending hard-pinned wake. Retain nullable `wakeTargetConnectionUuid` and `wakeRuntimeCwd` on already-materialized hard-pinned turns. Pending reads and SSE projection use that target when present (with an index), and exact admission/retry checks every batch member's effective target, falling back to canonical origin only for unpinned rows. Thus B's newer directed wake cannot steal A's pending pinned wake, while A can discover and admit its own turn after reconnect without moving the canonical session back. Terminal reports retain the separate immutable admission-owner check. Earlier regression evidence covered standalone tasks and Idea sessions, mixed-batch rejection, live projection, per-turn cwd and authorized A/B admission; it is historical evidence, not a fresh test result for this revision.
 
-Independent review also reproduced old unread backfill executing a notification whose offline outbox still owed work, followed by protocol-1 replay after upgrade. A durable `wakeRecovery.deliveryOwner` now enforces cutover: new intents begin `outbox`; only successful initial materialization may compare-and-swap that owner to `legacy` and clear pending. Deferred/no-target work and recovery claims become permanently `protocol1`. A recovery claim and initial settlement race on the same JSON snapshot; the loser cannot hand the other's work to legacy execution. Clearing the pending bit does not clear protocol-1 ownership.
+Ordinary MCP notification reads retain the full notification set allowed by existing tenant/agent/project access and requested status/pagination filters, with existing auto-mark behavior. There is no legacy-only or protocol-owner visibility predicate; browser/UI history and legacy pending/SSE/lifecycle/coalescing compatibility remain intact. Historical legacy unread backfill remains compatible, but is not a new server-side deferred-turn recovery guarantee and does not gain exact-identity guarantees. The prior review's legacy/outbox duplicate-execution finding explains why retaining an outbox would require a new ownership boundary; that unshipped boundary and the outbox are both removed, not deployed as a cutover mechanism.
 
-The MCP notification read applies the shared legacy-delivery predicate **before** pagination/count/auto-mark processing. Browser/UI reads remain unchanged. Legacy pending-turn reads, live deliver-turn projection, explicit/FIFO admission and coalesced settlement enforce the same source ownership via the turn's unique Notification relation; protocol-1 reads/admissions can recover exclusive sources. Legacy delivery remains available for ordinary historical notices and successful initial online materialization, but offline protocol-1-owned work requires an upgraded daemon rather than being replayed by an old CLI. Notification-source deletion is restricted while a linked turn exists, preventing ownership from silently degrading to legacy through deletion. This is an enforced execution boundary, not just rollout advice. Existing uncorrelated legacy FIFO semantics are not given exact-identity guarantees.
-
-The recovery loop is event-driven with backoff **plus** a 30-second periodic reconciliation (approximately two pending reads/minute/connection), not polling-free. Empty outbox lookup uses the company/agent/pending/timestamp index; nonempty scans are bounded. Database fixtures validate SQL and concurrent request interleaving on a single pooled PGlite connection; they are not a production multi-connection contention/load test.
+The retained recovery loop is event-driven with backoff **plus** a 30-second periodic reconciliation of already-materialized pending turns (approximately two pending reads/minute/connection), not polling-free. It performs no notification outbox lookup. Earlier database fixtures validated SQL and concurrent request interleaving on a single pooled PGlite connection, not production multi-connection contention/load. The revised unshipped migration `20261009024000_deferred_notification_wakes` retains only turn source/hard-target columns and indexes despite its historical name; notification outbox columns/indexes are removed from the migration definition, not dropped from a live database here. The Prisma-managed source-notification relation remains; it is not a protocol-ownership gate.
 
 ### PR #609 review follow-up: admission continuity and partial conflict
 
@@ -113,6 +113,8 @@ After a multi-member 404/409 rejection and local wake cleanup, the router retain
 - 本轮调查脚本使用 fake queue，不产生真实 agent；实施后的真实部署仍须人类另行授权。若实现需要改变以上权限、兼容或行为边界，回到方案审核，不自行扩大范围。
 
 ## Implementation And Review Evidence
+
+以下为此前实现/审查阶段留存的证据与计数，并非本次 PR #609 文档修订的测试结果；尤其不用于证明已移除的 outbox/可见性功能仍存在，也不构成当前修订或部署验收。
 
 - 服务端任务 `368851b1-05bb-4d08-9509-a08abdc60ec3` 经独立审查 PASS WITH NOTES：可空迁移、durable context、当前访问检查、精确原子准入和幂等 token；2896 项相关测试通过、127 项环境依赖测试跳过。隔离 PGlite fixture 使用单连接池，验证真实 SQL/事务行为但不宣称覆盖多连接竞争。
 - CLI 任务 `2e1d40d6-b444-4024-8d1d-7614adc7de82` 第二轮独立审查 PASS。首轮发现真实 LineageResolver 把失败当 null 祖先缓存，及普通准入等待无法接受用户中断；均补真实组件回归并修复。失败 lineage 不缓存，合法 null 祖先仍受支持；每个未启动 wake 独立取消，不影响其他 session。
@@ -132,7 +134,9 @@ Final review `B1-origin-repoint-orphans-admitted-turn` reproduced a canonical se
 
 ### Authorized rollout order
 
-1. 先确认目标服务端 revision、数据库备份与回滚窗口，检查迁移 `20261008233000_daemon_wake_recovery`。它只增加 nullable wakeContext、唯一 admissionUuid、admissionConnectionUuid 与 admissionTurnUuids，不回填历史来源或执行所有权，不自动改变 pending/running。
+2026-10-09 本轮补修期间用户另行明确授权：完成后本地打包 CLI、覆盖安装并重启 daemon 供其测试。该授权仅扩大本机操作边界，不授权 PR 合并、远端服务部署/数据库迁移或历史业务重放；本机安装不能替代匹配服务端的完整验收。下列远端 rollout 步骤仍须另行授权。
+
+1. 先确认目标服务端 revision、数据库备份与回滚窗口，检查迁移 `20261008233000_daemon_wake_recovery`（nullable wakeContext、唯一 admissionUuid、admissionConnectionUuid、admissionTurnUuids）及修订后的 `20261009024000_deferred_notification_wakes`。后者虽保留历史名称，但仅增加 turn 的 nullable `wakeNotificationUuid`、`wakeTargetConnectionUuid`、`wakeRuntimeCwd` 及来源唯一索引/target-status 索引；已从未发布的迁移定义移除 notification outbox 列与索引，不是执行线上 DROP；Prisma 管理的来源通知关系仍保留，不作为协议所有权门槛。不回填历史来源或执行所有权，不自动改变 pending/running，也不为 `none` / `offline_pin` 通知补建 turn。以上均为未来经授权的 rollout 指引，本次未应用迁移。
 2. 先部署兼容新协议的数据库/服务端，再在经授权的隔离 canary daemon 上安装匹配 CLI。旧客户端仍用 legacy DTO；新 CLI 对无法确认精确 turn 的旧服务端响应拒绝启动而不是静默 FIFO 降级，所以不能先滚动新 CLI 再升级服务端。
 3. 使用新的合成 Idea/comment 测试短时 GET/准入失败。验证同一 notification/turn 从 pending 到精确 running/ended，transcript 只落在主 turn；模拟稳定 SSE 时不需要人工聊天或重连。分别确认不同 agent、cwd/origin 不互相接管。
 4. 观察安全日志里的 connection、turn、attempt、status/cause、next retry。若持久 401/403/404、未知 context version 或旧行无法还原来源，应诊断并人工处理，不反复投递或猜测通知。短暂 ECONNRESET 只证明传输重置，不能据此声称 DNS/代理/CDN 根因已修好。
