@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.22.1] - 2026-10-09
+
+### Fixed
+
+- **Activity comments**: Recover stalled comment loading with bounded requests, explicit retries, and stale-response isolation while preserving pagination and realtime updates. (#611)
+- **Daemon mention recovery**: Persist wake context and retry failed deliveries independently of SSE connectivity while preserving exact execution and transcript ownership. (#609)
+- **Pi sub-agent tools**: Restore role-scoped Chorus tools for reviewers and workers across native MCP and adapter hosts. (#608)
+- **Docker dependency security**: Override vulnerable mysql2 and deepmerge-ts dependencies in the Prisma migration CLI and validate patched versions during image builds. (#610)
+- **macOS CLI tests**: Resolve temporary fixture paths consistently with real filesystem paths. (#607)
+
+### Plugin
+
+- **Versions**: Upgraded all seven plugins and four coordinated npm packages to `0.22.1`.
+
+---
+
 ## [0.22.0] - 2026-10-07
 
 ### Added

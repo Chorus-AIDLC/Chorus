@@ -4,7 +4,7 @@ description: Optional divergent-then-convergent dialogue for fuzzy ideas on Herm
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.22.0"
+  version: "0.22.1"
   category: project-management
   mcp_server: chorus
 ---

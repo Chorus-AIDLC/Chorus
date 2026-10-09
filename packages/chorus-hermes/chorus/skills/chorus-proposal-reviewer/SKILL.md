@@ -4,7 +4,7 @@ description: 'Read-only Chorus proposal reviewer for Hermes. Runs as a delegate_
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.22.0"
+  version: "0.22.1"
   category: project-management
   mcp_server: chorus
 ---
