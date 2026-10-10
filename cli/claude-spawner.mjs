@@ -211,6 +211,59 @@ export const CHORUS_MCP_SERVER_NAME = "chorus";
 export const CHORUS_MODE_DENIED_TOOLS = ["Edit", "Write", "NotebookEdit"];
 
 /**
+ * Tools that MUST be absent from a "chorus" wake's registry: the ones we deny by
+ * name, plus the code-running and fetching tools we rely on `--restricted` to
+ * drop. Asserted against the init frame on every wake.
+ *
+ * This list cannot catch a writer introduced under a name we have never heard of
+ * — no static list can. What it does catch is the mechanism itself regressing,
+ * which is the failure that actually happened: `--allowedTools` quietly stopped
+ * restricting and nothing noticed for a whole release line.
+ */
+export const CHORUS_MODE_FORBIDDEN_TOOLS = [
+  "Bash", "BashOutput", "KillShell", "WebFetch", "mcp__ide__executeCode", ...CHORUS_MODE_DENIED_TOOLS,
+];
+
+/**
+ * Classify a "chorus" wake's tool registry from the stream-json init frame, which
+ * the CLI emits before any model turn — so this costs no tokens and runs on EVERY
+ * wake rather than once at daemon startup. A CLI upgrade mid-daemon is caught.
+ *
+ * Three outcomes, deliberately distinct:
+ *   "ok"         — the registry is clean; proceed.
+ *   "violated"   — a forbidden tool is present. The restriction the operator asked
+ *                  for is not in force, so the wake must not continue.
+ *   "unverified" — the frame carries no readable tool list. Reported, never fatal:
+ *                  this is a check, not a gate, and an older CLI (or a capture that
+ *                  omits the field) must not take every wake down with it.
+ *
+ * Scope limit, stated plainly: nothing here fires if the CLI announces no registry
+ * at all. Gating prompt delivery on one optional line of CLI output would trade a
+ * silent weakening for a silent outage.
+ *
+ * @param {object|null} initFrame  The `{type:"system",subtype:"init"}` frame.
+ * @param {PermissionMode} permissionMode
+ * @returns {{ verdict: "ok"|"violated"|"unverified", message: string|null }}
+ */
+export function describeToolEnforcement(initFrame, permissionMode) {
+  if (permissionMode === "yolo") return { verdict: "ok", message: null };
+  if (!initFrame || !Array.isArray(initFrame.tools)) {
+    return {
+      verdict: "unverified",
+      message: "Claude reported no tool list, so --chorus-only could not be verified for this wake.",
+    };
+  }
+  const leaked = CHORUS_MODE_FORBIDDEN_TOOLS.filter((tool) => initFrame.tools.includes(tool));
+  if (leaked.length === 0) return { verdict: "ok", message: null };
+  return {
+    verdict: "violated",
+    message: `--chorus-only is not being enforced by this Claude Code build: ${leaked.join(", ")} `
+      + `${leaked.length === 1 ? "is" : "are"} still available to the woken agent. `
+      + "Restricted wakes cannot run. Use --yolo to accept full autonomy explicitly.",
+  };
+}
+
+/**
  * Permission posture for the spawned headless Claude.
  *
  * `--allowedTools` is an auto-APPROVE allowlist, not a restriction: tools outside
@@ -777,6 +830,12 @@ export class ClaudeSpawner {
       let observedSessionId = id;
       let terminalSeen = false;
       let terminalFailed = false;
+      // Verify the tool registry the moment the CLI announces it. The init frame
+      // precedes any model turn, so an abort here lands before the woken agent can
+      // act — without reordering prompt delivery, which a dozen flows (interrupt,
+      // control frames, fixture replay) rely on happening right after spawn.
+      // Only "chorus" verifies; yolo has nothing to check.
+      let enforcementChecked = this.permissionMode === "yolo";
 
       child.stdout?.setEncoding?.("utf8");
       child.stdout?.on("data", (chunk) => {
@@ -785,6 +844,18 @@ export class ClaudeSpawner {
           String(chunk),
           (obj) => {
             if (obj && typeof obj.session_id === "string") observedSessionId = obj.session_id;
+            if (!enforcementChecked && obj?.type === "system" && obj?.subtype === "init") {
+              enforcementChecked = true;
+              const { verdict, message } = describeToolEnforcement(obj, this.permissionMode);
+              if (message) this.logger.warn(`[Chorus] ${message}`);
+              if (verdict === "violated" && !channel.stopping && !channel.exited) {
+                diagnostics.fail(message, "startup");
+                // Abort before the model's first turn: close stdin so the CLI ends
+                // the conversation, and drop the frame instead of forwarding it.
+                channel.closeStdin();
+                return;
+              }
+            }
             if (obj?.type === "result" && !terminalSeen) {
               terminalSeen = true;
               terminalFailed = obj.is_error === true || (typeof obj.subtype === "string" && obj.subtype.startsWith("error"));
