@@ -5,6 +5,14 @@ export const WAKE_ERROR_MESSAGE_LIMIT = 500;
 export const WAKE_ERROR_DETAILS_LIMIT = 8000;
 export const WAKE_ERROR_SIGNAL_LIMIT = 50;
 export const WAKE_ERROR_STDERR_LIMIT = 16_000;
+// Shortest credential tail that counts as evidence of a key sliced by the
+// retained-tail boundary. Below this, a suffix match is noise: a 1-char tail
+// collides with ANY text starting with that character, so an unrelated
+// credential whose last byte happens to match would redact innocent output —
+// and, worse, shadow the form that actually was cut. Credential tails of 1-3
+// characters are deliberately NOT repaired: that residue carries no usable
+// information, and matching it costs correctness everywhere else.
+export const WAKE_ERROR_MIN_TAIL_MATCH = 4;
 const REDACTED = "[redacted]";
 const SOURCES = new Set(["claude", "codex", "pi", "kiro", "dsh", "openclaw"]);
 const KINDS = new Set(["startup", "execution", "protocol"]);
@@ -78,17 +86,49 @@ function sanitize(text, secrets, truncated = false) {
   }
   let clean = stripVTControlCharacters(scalarErrorText(text))
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
-  for (const secret of secrets) {
-    clean = clean.split(secret).join(REDACTED);
-    // A bounded raw tail may begin in the middle of a known credential.
-    if (truncated) {
-      for (let length = Math.min(secret.length - 1, clean.length); length > 0; length--) {
+  // A bounded raw tail may begin in the middle of a known credential. Score
+  // EVERY form and keep the longest match, rather than stopping at the first
+  // hit: `secrets` is ordered longest-first, so a weak match on a long
+  // unrelated credential would otherwise win before the form that was
+  // genuinely cut gets its turn.
+  const ranges = [];
+  if (truncated) {
+    let best = 0;
+    for (const secret of secrets) {
+      const longest = Math.min(secret.length - 1, clean.length);
+      for (let length = longest; length >= WAKE_ERROR_MIN_TAIL_MATCH && length > best; length--) {
         if (clean.startsWith(secret.slice(-length))) {
-          clean = REDACTED + clean.slice(length);
+          best = length;
           break;
         }
       }
     }
+    if (best > 0) ranges.push([0, best]);
+  }
+  // Locate the cut tail and every whole occurrence on the SAME raw text, then
+  // redact their union. Replacing whole forms first would destroy the suffix
+  // evidence of a cut credential that contains another known one; repairing
+  // first would split a whole credential that the tail match only overlaps.
+  for (const secret of secrets) {
+    for (let at = clean.indexOf(secret); at !== -1; at = clean.indexOf(secret, at + 1)) {
+      ranges.push([at, at + secret.length]);
+    }
+  }
+  if (ranges.length) {
+    ranges.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    for (const [start, stop] of ranges) {
+      const last = merged.at(-1);
+      if (last && start < last[1]) last[1] = Math.max(last[1], stop);
+      else merged.push([start, stop]);
+    }
+    let redacted = "";
+    let cursor = 0;
+    for (const [start, stop] of merged) {
+      redacted += clean.slice(cursor, start) + REDACTED;
+      cursor = stop;
+    }
+    clean = redacted + clean.slice(cursor);
   }
   return clean
     .replace(/\b(?:Bearer|Basic)\s+[^\s"'`,;<>\\]+/gi, (match) => `${match.split(/\s/)[0]} ${REDACTED}`)
