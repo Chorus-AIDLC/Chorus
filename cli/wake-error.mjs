@@ -86,14 +86,12 @@ function sanitize(text, secrets, truncated = false) {
   }
   let clean = stripVTControlCharacters(scalarErrorText(text))
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
-  for (const secret of secrets) {
-    clean = clean.split(secret).join(REDACTED);
-  }
   // A bounded raw tail may begin in the middle of a known credential. Score
-  // EVERY form and rewrite once with the longest match, rather than rewriting
-  // on the first hit: `secrets` is ordered longest-first, so a weak match on a
-  // long unrelated credential would otherwise win and stop the scan before the
-  // form that was genuinely cut gets its turn.
+  // EVERY form and keep the longest match, rather than stopping at the first
+  // hit: `secrets` is ordered longest-first, so a weak match on a long
+  // unrelated credential would otherwise win before the form that was
+  // genuinely cut gets its turn.
+  const ranges = [];
   if (truncated) {
     let best = 0;
     for (const secret of secrets) {
@@ -105,7 +103,32 @@ function sanitize(text, secrets, truncated = false) {
         }
       }
     }
-    if (best > 0) clean = REDACTED + clean.slice(best);
+    if (best > 0) ranges.push([0, best]);
+  }
+  // Locate the cut tail and every whole occurrence on the SAME raw text, then
+  // redact their union. Replacing whole forms first would destroy the suffix
+  // evidence of a cut credential that contains another known one; repairing
+  // first would split a whole credential that the tail match only overlaps.
+  for (const secret of secrets) {
+    for (let at = clean.indexOf(secret); at !== -1; at = clean.indexOf(secret, at + 1)) {
+      ranges.push([at, at + secret.length]);
+    }
+  }
+  if (ranges.length) {
+    ranges.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    for (const [start, stop] of ranges) {
+      const last = merged.at(-1);
+      if (last && start < last[1]) last[1] = Math.max(last[1], stop);
+      else merged.push([start, stop]);
+    }
+    let redacted = "";
+    let cursor = 0;
+    for (const [start, stop] of merged) {
+      redacted += clean.slice(cursor, start) + REDACTED;
+      cursor = stop;
+    }
+    clean = redacted + clean.slice(cursor);
   }
   return clean
     .replace(/\b(?:Bearer|Basic)\s+[^\s"'`,;<>\\]+/gi, (match) => `${match.split(/\s/)[0]} ${REDACTED}`)

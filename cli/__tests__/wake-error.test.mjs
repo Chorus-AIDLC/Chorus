@@ -127,6 +127,23 @@ describe("bounded wake diagnostics", () => {
       expect(retainedTail(cut, 15, [unrelated, cut])).toBe("[redacted]");
     });
 
+    it("repairs a cut credential that contains another known credential", () => {
+      // Redacting the inner key first must not erase the outer key's suffix evidence.
+      const outer = "PREFIXPART-innerkey12345";
+      for (let cut = 0; cut < outer.length; cut++) {
+        const rest = outer.slice(cut);
+        const expected = cut === 0 || rest.length >= WAKE_ERROR_MIN_TAIL_MATCH ? "[redacted]" : rest;
+        expect(retainedTail(outer, cut, [outer, "innerkey12345"]), `cut=${cut}`).toBe(expected);
+      }
+    });
+
+    it("does not let a tail match split a whole credential at the window start", () => {
+      // The decoy's last 4 bytes equal the whole key's first 4: the repair must
+      // not consume only that prefix and leave the rest of the key exposed.
+      expect(retainedTail("#abcdefgh-key rest", 1, ["decoy-credential-abcd", "abcdefgh-key"]))
+        .toBe("[redacted] rest");
+    });
+
     it("leaves sub-threshold residue alone instead of mis-redacting unrelated text", () => {
       // A 3-char tail collides with this credential's last bytes, but is below
       // WAKE_ERROR_MIN_TAIL_MATCH, so it is not evidence of a cut key.
