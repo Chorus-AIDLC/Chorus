@@ -49,6 +49,7 @@ import { STEP_SCOPES, OUTCOME_ACTIONS } from "../contracts.mjs";
 import {
   prompt as defaultPrompt,
   appendAgentConfig as defaultAppendAgentConfig,
+  updateAgentSettings as defaultUpdateAgentSettings,
 } from "../../login.mjs";
 import { resolveInstallCwds as defaultResolveInstallCwds } from "../../daemon-install-config.mjs";
 import { validateAndFetchIdentity } from "../../chorus-client.mjs";
@@ -499,6 +500,7 @@ export async function seedCredentials(ctx) {
   const flags = ctx.flags ?? {};
   const validate = ctx.validateCredentials ?? validateAndFetchIdentity;
   const append = ctx.appendAgent ?? defaultAppendAgentConfig;
+  const updateSettings = ctx.updateAgentSettings ?? defaultUpdateAgentSettings;
   const resolveCwds = ctx.resolveInstallCwds ?? defaultResolveInstallCwds;
   const ask = ctx.promptFn ?? defaultPrompt;
   const writeDshEnv = ctx.writeDshEnv ?? writeDshCredentialsEnv;
@@ -595,16 +597,23 @@ export async function seedCredentials(ctx) {
     // (its key serves `chorus mcp`) but not woken until the operator opts in — via
     // `--daemon-wake <ids>` / `--daemon-wake-all`, or a per-agent prompt on a TTY.
     let daemonWake;
+    // Whether the operator actually ASKED for this value, as opposed to it being
+    // the non-TTY default. The distinction matters only on a re-run against an
+    // already-configured agent: applying a defaulted `false` there would quietly
+    // switch waking back OFF for an agent the operator had opted in.
+    let daemonWakeRequested = false;
     if (isWakeableAgentType(agentType)) {
       const flaggedAll = flags.daemonWakeAll === true;
       const flaggedThis = Array.isArray(flags.daemonWake) && flags.daemonWake.includes(id);
       if (flaggedAll || flaggedThis) {
         daemonWake = true;
+        daemonWakeRequested = true;
       } else if (isTTY && typeof ask === "function") {
         const ans = String(
           (await ask(`Enable daemon waking for ${identity.name} (${agentType})? [y/N]: `)) ?? "",
         ).trim();
         daemonWake = /^y(es)?$/i.test(ans);
+        daemonWakeRequested = true; // an interactive answer is an explicit choice
       } else {
         daemonWake = false; // non-TTY default: not woken
       }
@@ -887,14 +896,39 @@ export async function seedCredentials(ctx) {
     };
 
     if (!res.ok) {
+      // The key already backs an agent, so `append` wrote nothing — including the
+      // daemonWake / cwds computed for THIS run. Apply those to the existing entry
+      // instead: without this, `--daemon-wake <id>` could never switch waking on
+      // for an agent that was already configured, and still reported success.
+      const requested = {
+        ...(daemonWakeRequested ? { daemonWake } : {}),
+        ...(cwds.length ? { cwds } : {}),
+      };
+      // Identity is carried either way so the orchestrator can still print the
+      // CHORUS_AGENT_PROFILE export hint on an idempotent re-run.
+      const meta = { agentUuid: identity.uuid, agentName: identity.name, ...hintFlags };
+      const settingNames = Object.keys(requested);
+      if (settingNames.length === 0) {
+        outcomes.push(
+          out(SKIPPED, `${id}: ${identity.name} (${identity.uuid}) already configured (same key) — left unchanged${sideNote}`, meta),
+        );
+        continue;
+      }
+      const upd = updateSettings({ apiKey, ...requested });
+      if (!upd.ok) {
+        // Settings were requested and could not be applied: report it as a failure
+        // so a scripted run sees a nonzero exit instead of "Done".
+        outcomes.push(
+          out(FAILED, `${id}: ${identity.name} (${identity.uuid}) is configured, but ${settingNames.join(" / ")} could not be applied `
+            + `(${upd.reason}) — edit ~/.chorus/daemon.json, or remove the agent with \`chorus agents remove ${identity.name}\` and add it again${sideNote}`, meta),
+        );
+        continue;
+      }
+      // changed:false is a genuine no-op — report it as SKIPPED, not as work done.
       outcomes.push(
-        out(
-          SKIPPED,
-          `${id}: ${identity.name} (${identity.uuid}) already configured (same key) — left unchanged${sideNote}`,
-          // Carry the identity so the orchestrator can print a CHORUS_AGENT_PROFILE
-          // export hint even on an idempotent re-run (the agent is still configured).
-          { agentUuid: identity.uuid, agentName: identity.name, ...hintFlags },
-        ),
+        upd.changed
+          ? out(SEEDED, `${id}: ${identity.name} (${identity.uuid}) already configured (same key) — updated ${upd.applied.join(" / ")} on agents[${upd.index}]${sideNote}`, meta)
+          : out(SKIPPED, `${id}: ${identity.name} (${identity.uuid}) already configured (same key) — ${settingNames.join(" / ")} already at the requested value${sideNote}`, meta),
       );
       continue;
     }
