@@ -114,9 +114,13 @@ describe("bounded wake diagnostics", () => {
 
     // Retain `secret.slice(cut)` at the head of the window; NUL filler is
     // stripped by sanitization, so the head is all that reaches stderrTail.
+    // One filler allocation, sliced per case: the sweep below runs this ~2000
+    // times, and rebuilding a 16KB string each time is what made it exceed the
+    // default 5s timeout on CI while staying fast locally.
+    const FILLER = "\u0000".repeat(WAKE_ERROR_STDERR_LIMIT);
     function retainedTail(secret, cut, secrets) {
       const collector = createWakeErrorCollector({ source: "pi", secrets });
-      collector.appendStderr(secret + "\u0000".repeat(WAKE_ERROR_STDERR_LIMIT - (secret.length - cut)));
+      collector.appendStderr(secret + FILLER.slice(0, WAKE_ERROR_STDERR_LIMIT - (secret.length - cut)));
       return collector.stderrTail;
     }
 
@@ -170,7 +174,7 @@ describe("bounded wake diagnostics", () => {
           expect(tail, `length=${length} cut=${cut}`).toBe(expected);
         }
       }
-    });
+    }, 30_000); // a 2000-case sweep: generous enough for a loaded CI runner
   });
 
   it("prefers the first structured reason, includes complementary stderr and preserves raw zero", () => {
