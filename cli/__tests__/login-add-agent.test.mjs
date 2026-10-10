@@ -5,7 +5,7 @@
 // install wizard loop adding more than one agent in a run.
 
 import { describe, it, expect, vi } from "vitest";
-import { appendAgentConfig, runLogin } from "../login.mjs";
+import { appendAgentConfig, updateAgentSettings, UPDATABLE_AGENT_SETTINGS, runLogin } from "../login.mjs";
 import { resolveInstallCredentials } from "../daemon-install-config.mjs";
 
 /** Injected IO for updateDaemonConfig: read returns fileContent (or throws when null). */
@@ -293,5 +293,68 @@ describe("install wizard — multi-add loop", () => {
     );
     expect(res.ok).toBe(true);
     expect(appendAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateAgentSettings", () => {
+  // Two agents plus unrelated fields, so every test also proves what is NOT touched.
+  const twoAgents = () => JSON.stringify({
+    agents: [
+      { url: "https://a", apiKey: "cho_one", agentType: "claude-code", agentName: "dev",
+        daemonWake: false, cwds: ["/old"], env: { KEEP: "1" }, args: ["--keep"] },
+      { url: "https://a", apiKey: "cho_two", agentType: "codex", agentName: "pm", daemonWake: true },
+    ],
+    unrelatedTopLevel: "keep me",
+  });
+
+  it("switches waking on for an agent that already exists", () => {
+    const { io, written } = mkIO(twoAgents());
+    const res = updateAgentSettings({ apiKey: "cho_one", daemonWake: true }, io);
+    expect(res).toMatchObject({ ok: true, changed: true, index: 0, applied: ["daemonWake"] });
+    expect(parseWritten(written).agents[0].daemonWake).toBe(true);
+  });
+
+  it("leaves every other field, agent and top-level key byte-for-byte", () => {
+    const { io, written } = mkIO(twoAgents());
+    updateAgentSettings({ apiKey: "cho_one", daemonWake: true, cwds: ["/new"] }, io);
+    const out = parseWritten(written);
+    expect(out.agents[0]).toEqual({
+      url: "https://a", apiKey: "cho_one", agentType: "claude-code", agentName: "dev",
+      daemonWake: true, cwds: ["/new"], env: { KEEP: "1" }, args: ["--keep"],
+    });
+    expect(out.agents[1]).toEqual(JSON.parse(twoAgents()).agents[1]);
+    expect(out.unrelatedTopLevel).toBe("keep me");
+  });
+
+  it("reports no change when the setting already holds, instead of claiming a write", () => {
+    const { io, written } = mkIO(twoAgents());
+    const res = updateAgentSettings({ apiKey: "cho_two", daemonWake: true }, io);
+    expect(res).toEqual({ ok: true, changed: false, index: 1, applied: [] });
+    expect(written.content).toBeUndefined(); // nothing written at all
+  });
+
+  it("never changes identity or backend, even when asked", () => {
+    const { io, written } = mkIO(twoAgents());
+    updateAgentSettings({ apiKey: "cho_one", daemonWake: true, agentType: "codex", apiKeyNew: "x" }, io);
+    expect(parseWritten(written).agents[0].agentType).toBe("claude-code");
+    expect(UPDATABLE_AGENT_SETTINGS).toEqual(["daemonWake", "cwds"]);
+  });
+
+  it("reports absent for an unknown key, a flat config and a missing file", () => {
+    // A flat single-agent config has no agents[] to patch; folding it is append's job.
+    const flat = JSON.stringify({ url: "https://a", apiKey: "cho_one", agent: "claude-code" });
+    for (const content of [twoAgents(), flat, null]) {
+      const { io, written } = mkIO(content);
+      const key = content === twoAgents() ? "cho_missing" : "cho_one";
+      expect(updateAgentSettings({ apiKey: key, daemonWake: true }, io)).toEqual({ ok: false, reason: "absent" });
+      expect(written.content).toBeUndefined();
+    }
+  });
+
+  it("does not make appendAgentConfig mutate a duplicate", () => {
+    // The companion contract: append stays append-only.
+    const { io, written } = mkIO(twoAgents());
+    expect(appendAgentConfig({ apiKey: "cho_one", daemonWake: true }, io)).toEqual({ ok: false, reason: "duplicate" });
+    expect(written.content).toBeUndefined();
   });
 });

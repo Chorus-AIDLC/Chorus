@@ -56,6 +56,9 @@ function fixture() {
       run,
       validateCredentials: validate,
       appendAgent,
+      // The duplicate path now patches setting-only fields on the existing entry;
+      // keep this hermetic so the test never touches the real daemon.json.
+      updateAgentSettings: vi.fn(() => ({ ok: true, changed: false, index: 0, applied: [] })),
       promptFn: vi.fn(async (question) => question.includes("API key") ? "cho_other_test_secret" : "n"),
       resolveInstallCwds: async () => ({ cwds: [] }),
       readJson: () => ({ agents: appended }),

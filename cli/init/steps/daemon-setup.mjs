@@ -157,7 +157,12 @@ export async function setupDaemon(ctx) {
   //     has nothing to wake. Their agents[] entries are already persisted (credential-seed)
   //     for the `chorus mcp` proxy; skip the auto-start prompt AND the service install.
   if (hasSelection && !willWake) {
+    // Say WHY, not just what. Reporting only the end state sent operators looking
+    // for a typo in --daemon-wake when the real cause was that the flag applied to
+    // nobody, or that waking was never asked for.
     log("[chorus agents add] no agent is enabled for daemon waking — the daemon would wake no local backend.");
+    log("[chorus agents add] enable it with --daemon-wake <agent> (or --daemon-wake-all); "
+      + "check the current state with `chorus agents` (wake:off marks an opted-out agent).");
     log("[chorus agents add] agents' keys are configured in ~/.chorus/daemon.json for `chorus mcp`.");
     return out(SKIPPED, "no agent enabled for daemon waking — agents[] persisted; boot service not installed");
   }

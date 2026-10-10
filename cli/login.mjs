@@ -152,6 +152,77 @@ function nonEmpty(value) {
 }
 
 /**
+ * Settings that `updateAgentSettings` may change on an agent that is ALREADY
+ * configured. Deliberately short: these are the fields `chorus agents add`
+ * computes per run and that carry no identity, so re-applying them to an existing
+ * entry cannot turn it into a different agent.
+ *
+ * `agentType` is excluded on purpose — swapping an agent's backend is closer to
+ * replacing the agent than to adjusting a setting, and deserves its own decision.
+ */
+export const UPDATABLE_AGENT_SETTINGS = ["daemonWake", "cwds"];
+
+/**
+ * Apply setting-only changes to an agent that is already in `agents[]`, matched by
+ * `apiKey`. This is the companion to {@link appendAgentConfig}, NOT a mode of it:
+ * `appendAgentConfig` refuses a duplicate key and writes nothing, which silently
+ * dropped the `daemonWake` / `cwds` computed for that same run — so `chorus agents
+ * add --daemon-wake <id>` could never switch waking on for an existing agent, while
+ * still reporting success. Keeping append append-only means no future caller has to
+ * wonder whether it mutates a neighbour.
+ *
+ * Only {@link UPDATABLE_AGENT_SETTINGS} are touched. Every other field of the
+ * matched entry, every other entry, and every unrelated top-level key are written
+ * back unchanged.
+ *
+ * @param {{ apiKey: string, daemonWake?: boolean, cwds?: string[] }} agentObj
+ * @param {object} [deps]  Same injection surface as {@link updateDaemonConfig}.
+ * @returns {{ ok: true, changed: boolean, path?: string, index: number, applied: string[] }
+ *          | { ok: false, reason: "absent" }}
+ */
+export function updateAgentSettings(agentObj, deps = {}) {
+  const path = deps.path ?? loginFilePath();
+  const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
+
+  let current = {};
+  try {
+    const parsed = JSON.parse(read(path));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) current = parsed;
+  } catch {
+    // treat as empty
+  }
+  rejectSharedCliConfig(current);
+
+  const agents = Array.isArray(current.agents)
+    ? current.agents.filter((a) => a && typeof a === "object")
+    : [];
+  // A flat single-agent config has no agents[] to update. Report it as absent
+  // rather than migrating here: folding the flat form is appendAgentConfig's
+  // documented job, and doing it in two places would let them drift.
+  const index = agents.findIndex((a) => a.apiKey === agentObj.apiKey);
+  if (index === -1) return { ok: false, reason: "absent" };
+
+  const target = agents[index];
+  const applied = [];
+  const patched = { ...target };
+  for (const field of UPDATABLE_AGENT_SETTINGS) {
+    if (!Object.hasOwn(agentObj, field) || agentObj[field] === undefined) continue;
+    const next = agentObj[field];
+    // Already at the requested value: report no change so the caller can say
+    // "already enabled" rather than claiming it just did something.
+    if (JSON.stringify(target[field]) === JSON.stringify(next)) continue;
+    patched[field] = next;
+    applied.push(field);
+  }
+  if (applied.length === 0) return { ok: true, changed: false, index, applied };
+
+  const nextAgents = agents.slice();
+  nextAgents[index] = patched;
+  const writtenPath = updateDaemonConfig({ agents: nextAgents }, deps);
+  return { ok: true, changed: true, path: writtenPath, index, applied };
+}
+
+/**
  * Append a new agent to `~/.chorus/daemon.json`'s `agents[]` (daemon-multi-agent),
  * via the same field-merge writer, WITHOUT overwriting any existing agent.
  *

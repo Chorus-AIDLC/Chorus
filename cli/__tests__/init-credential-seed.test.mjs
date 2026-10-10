@@ -295,12 +295,62 @@ describe("seedCredentials — failure & idempotency", () => {
         // Same key typed for both agents → the second append dedups.
         promptFn: async () => "cho_same",
         appendAgent: append,
+        // Injected: the duplicate path now applies setting-only fields to the
+        // existing entry, and a unit test must not reach the real daemon.json.
+        updateAgentSettings: () => ({ ok: true, changed: false, index: 0, applied: [] }),
       }),
     );
     const outcomes = [].concat(res);
     expect(outcomes[0].action).toBe(SEEDED);
     expect(outcomes[1].action).toBe(SKIPPED);
     expect(outcomes[1].detail).toMatch(/already configured/);
+  });
+
+  it("applies --daemon-wake to an agent that is already configured", async () => {
+    // The whole point: before this, append's duplicate early-return dropped the
+    // daemonWake computed for this run, so waking could never be switched on.
+    const update = vi.fn(() => ({ ok: true, changed: true, index: 0, applied: ["daemonWake"] }));
+    const res = [].concat(await seedCredentials(baseCtx({
+      selection: ["claude"],
+      io: { log: () => {}, isTTY: false },
+      flags: { url: "https://c", apiKey: "cho_same", daemonWake: ["claude"] },
+      appendAgent: () => ({ ok: false, reason: "duplicate" }),
+      updateAgentSettings: update,
+    })));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "cho_same", daemonWake: true }));
+    expect(res[0].action).toBe(SEEDED);
+    expect(res[0].detail).toMatch(/updated daemonWake on agents\[0\]/);
+  });
+
+  it("never applies a defaulted daemonWake to an existing agent", async () => {
+    // On a non-TTY with no flag, daemonWake defaults to false. Applying that to an
+    // already-configured agent would silently switch OFF an operator's opt-in.
+    const update = vi.fn();
+    const res = [].concat(await seedCredentials(baseCtx({
+      selection: ["claude"],
+      io: { log: () => {}, isTTY: false },
+      flags: { url: "https://c", apiKey: "cho_same" },
+      appendAgent: () => ({ ok: false, reason: "duplicate" }),
+      updateAgentSettings: update,
+    })));
+    expect(update).not.toHaveBeenCalled();
+    expect(res[0].action).toBe(SKIPPED);
+    expect(res[0].detail).toMatch(/left unchanged/);
+  });
+
+  it("fails loudly when a requested setting cannot be applied", async () => {
+    // Silence here is what made the original bug expensive: Done + exit 0 while
+    // the daemon then refused to wake anything.
+    const res = [].concat(await seedCredentials(baseCtx({
+      selection: ["claude"],
+      io: { log: () => {}, isTTY: false },
+      flags: { url: "https://c", apiKey: "cho_same", daemonWake: ["claude"] },
+      appendAgent: () => ({ ok: false, reason: "duplicate" }),
+      updateAgentSettings: () => ({ ok: false, reason: "absent" }),
+    })));
+    expect(res[0].action).toBe(FAILED);
+    expect(res[0].detail).toMatch(/could not be applied \(absent\)/);
+    expect(res[0].detail).toMatch(/chorus agents remove/);
   });
 
   it("skips entirely (single SKIPPED) when the selection is empty", async () => {
