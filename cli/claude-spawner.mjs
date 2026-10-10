@@ -201,15 +201,41 @@ export function resolveClaudePath(deps = {}) {
 export const CHORUS_MCP_SERVER_NAME = "chorus";
 
 /**
- * Permission posture for the spawned headless Claude. Headless `claude -p`
- * auto-DENIES any tool that isn't pre-approved (there's no interactive prompt to
- * answer), so without one of these the woken agent can't call a single chorus_*
- * tool and exits having done nothing. Verified against Claude Code 2.1.177.
+ * Tools `--restricted` leaves in the registry that can still write or mutate, and
+ * so must be removed by name for the "chorus" posture (whose contract is Chorus
+ * MCP tools ONLY). `Task` is deliberately absent: it cannot escalate — a subagent
+ * dispatched under `--restricted` gets no Bash — and Chorus swarm mode needs it.
+ * The init-frame assertion treats this list as the thing to verify, so a future
+ * CLI release that adds another writer fails the wake instead of leaking.
+ */
+export const CHORUS_MODE_DENIED_TOOLS = ["Edit", "Write", "NotebookEdit"];
+
+/**
+ * Permission posture for the spawned headless Claude.
  *
- * - "chorus" (default): `--allowedTools "mcp__chorus__*"` — the woken agent may
- *   use Chorus MCP tools (comment, claim, report, status) but NOT Bash / file
- *   edits. Safe default: covers comment/assign/elaboration wakes out of the box,
- *   minimal blast radius.
+ * `--allowedTools` is an auto-APPROVE allowlist, not a restriction: tools outside
+ * it still run. An earlier revision of this comment claimed headless `claude -p`
+ * auto-denies anything unlisted (verified against 2.1.177); that stopped being
+ * true, and `--chorus-only` silently became a no-op — a woken agent ran Bash 33
+ * times with zero denials under 2.1.295. Enforcement must therefore come from
+ * flags that REMOVE tools, never from the allowlist alone, and the init-frame
+ * assertion in this module checks the result on every wake rather than trusting
+ * this comment to stay true.
+ *
+ * - "chorus" (default): `--restricted` drops the code-running tools (Bash, REPL,
+ *   WebFetch) and confines the file tools to the working directories;
+ *   CHORUS_MODE_DENIED_TOOLS removes the writers `--restricted` leaves behind; and
+ *   `--allowedTools "mcp__chorus__*"` auto-approves the Chorus tools so the wake
+ *   can actually work. Subagent dispatch inherits the restriction — a
+ *   general-purpose subagent spawned under `--restricted` has no Bash either.
+ *
+ *   CAVEAT: `--restricted` ignores user, project and local settings files
+ *   (managed settings and `--settings` still apply). On a deployment whose
+ *   credentials come from `~/.claude/settings.json` (e.g. `awsCredentialExport`,
+ *   `apiKeyHelper`), the wake then fails authentication and retries until it is
+ *   killed. Such operators must pass the auth subset through the per-agent
+ *   `args` passthrough as `--settings <path>`; those args are appended after
+ *   this list.
  * - "yolo": `--dangerously-skip-permissions` — full autonomy (Bash, file writes,
  *   everything). Needed for real code-writing AI-DLC work. Dangerous: the woken
  *   agent gets a full shell under the daemon's key, with a prompt that embeds
@@ -237,13 +263,14 @@ export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "c
   if (mcpConfigPath) args.push("--mcp-config", mcpConfigPath);
   // Headless wakes have no human to answer AskUserQuestion — block it at the tool
   // layer in every mode (daemon-headless-interaction-guard).
-  args.push("--disallowedTools", "AskUserQuestion");
+  args.push("--disallowedTools", "AskUserQuestion", ...(permissionMode === "yolo" ? [] : CHORUS_MODE_DENIED_TOOLS));
   if (permissionMode === "yolo") {
     args.push("--dangerously-skip-permissions");
   } else {
-    // Default: allow only this daemon's Chorus MCP tools through, and route every
-    // other tool's permission request to the spawner (which denies it explicitly).
-    args.push("--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`, "--permission-prompt-tool", "stdio");
+    // Remove the code-running tools outright (--restricted), auto-approve this
+    // daemon's Chorus MCP tools, and keep routing any prompt that still happens to
+    // the spawner so it is denied visibly rather than silently.
+    args.push("--restricted", "--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`, "--permission-prompt-tool", "stdio");
   }
   return args;
 }
