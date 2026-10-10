@@ -201,10 +201,10 @@ export function resolveClaudePath(deps = {}) {
 export const CHORUS_MCP_SERVER_NAME = "chorus";
 
 /**
- * Tools `--restricted` leaves in the registry that can still write or mutate, and
- * so must be removed by name for the "chorus" posture (whose contract is Chorus
- * MCP tools ONLY). `Task` is deliberately absent: it cannot escalate — a subagent
- * dispatched under `--restricted` gets no Bash — and Chorus swarm mode needs it.
+ * Writers denied by name on top of the `--tools` allowlist, so the "chorus"
+ * contract (Chorus MCP tools ONLY) does not rest on one flag's semantics holding.
+ * `Task` is deliberately absent: it cannot escalate — a subagent inherits the
+ * parent's registry — and Chorus swarm mode needs it.
  * The init-frame assertion treats this list as the thing to verify, so a future
  * CLI release that adds another writer fails the wake instead of leaking.
  */
@@ -275,20 +275,14 @@ export function describeToolEnforcement(initFrame, permissionMode) {
  * assertion in this module checks the result on every wake rather than trusting
  * this comment to stay true.
  *
- * - "chorus" (default): `--restricted` drops the code-running tools (Bash, REPL,
- *   WebFetch) and confines the file tools to the working directories;
- *   CHORUS_MODE_DENIED_TOOLS removes the writers `--restricted` leaves behind; and
- *   `--allowedTools "mcp__chorus__*"` auto-approves the Chorus tools so the wake
- *   can actually work. Subagent dispatch inherits the restriction — a
- *   general-purpose subagent spawned under `--restricted` has no Bash either.
- *
- *   CAVEAT: `--restricted` ignores user, project and local settings files
- *   (managed settings and `--settings` still apply). On a deployment whose
- *   credentials come from `~/.claude/settings.json` (e.g. `awsCredentialExport`,
- *   `apiKeyHelper`), the wake then fails authentication and retries until it is
- *   killed. Such operators must pass the auth subset through the per-agent
- *   `args` passthrough as `--settings <path>`; those args are appended after
- *   this list.
+ * - "chorus" (default): `--tools "mcp__chorus__*"` empties the built-in tool
+ *   registry — it is an allowlist that REMOVES, unlike `--allowedTools` — and
+ *   `--strict-mcp-config` keeps the operator's own MCP servers out, so the wake
+ *   sees this daemon's Chorus tools and nothing else. CHORUS_MODE_DENIED_TOOLS is
+ *   still denied by name: two independent mechanisms, because the whole reason
+ *   this code exists is that a single one quietly stopped working.
+ *   Subagent dispatch inherits the registry, so `Task` cannot be used to reach a
+ *   shell that the parent session does not have.
  * - "yolo": `--dangerously-skip-permissions` — full autonomy (Bash, file writes,
  *   everything). Needed for real code-writing AI-DLC work. Dangerous: the woken
  *   agent gets a full shell under the daemon's key, with a prompt that embeds
@@ -320,10 +314,23 @@ export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "c
   if (permissionMode === "yolo") {
     args.push("--dangerously-skip-permissions");
   } else {
-    // Remove the code-running tools outright (--restricted), auto-approve this
-    // daemon's Chorus MCP tools, and keep routing any prompt that still happens to
-    // the spawner so it is denied visibly rather than silently.
-    args.push("--restricted", "--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`, "--permission-prompt-tool", "stdio");
+    // `--tools` is the ENFORCING allowlist: naming only this daemon's Chorus
+    // server empties the built-in registry outright, and `--strict-mcp-config`
+    // drops the operator's own MCP servers so nothing else rides in. Then
+    // `--allowedTools` auto-approves what is left, and any prompt that still
+    // happens is routed to the spawner so it is denied visibly.
+    //
+    // `--restricted` would also work and additionally confines file tools to the
+    // working directories, but it ignores user/project/local settings files — on a
+    // deployment whose credentials live in ~/.claude/settings.json the wake then
+    // fails authentication, and neither the per-agent `args` passthrough (settings
+    // is a managed control) nor any current config key can forward them back.
+    args.push(
+      "--tools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`,
+      "--strict-mcp-config",
+      "--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`,
+      "--permission-prompt-tool", "stdio",
+    );
   }
   return args;
 }

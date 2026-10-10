@@ -83,9 +83,11 @@ describe("buildArgs", () => {
       "Edit",
       "Write",
       "NotebookEdit",
-      // default permission mode: REMOVE the code-running tools, allow only Chorus
-      // MCP tools through, and route any prompt that still happens to the spawner
-      "--restricted",
+      // default permission mode: --tools empties the built-in registry, strict MCP
+      // config keeps the operator's servers out, --allowedTools auto-approves the rest
+      "--tools",
+      "mcp__chorus__*",
+      "--strict-mcp-config",
       "--allowedTools",
       "mcp__chorus__*",
       "--permission-prompt-tool",
@@ -114,8 +116,9 @@ describe("buildArgs", () => {
     // The allowlist alone auto-approves; it never restricted. Enforcement has to
     // come from --restricted plus an explicit deny of the writers it leaves behind.
     const args = buildArgs({ sessionId: "s", isNew: true });
-    expect(args).toContain("--restricted");
-    const deny = args.slice(args.indexOf("--disallowedTools") + 1, args.indexOf("--restricted"));
+    expect(args).toContain("--strict-mcp-config");
+    expect(args[args.indexOf("--tools") + 1]).toBe("mcp__chorus__*");
+    const deny = args.slice(args.indexOf("--disallowedTools") + 1, args.indexOf("--tools"));
     expect(deny).toEqual(["AskUserQuestion", ...CHORUS_MODE_DENIED_TOOLS]);
   });
 
@@ -136,7 +139,8 @@ describe("buildArgs", () => {
 
   it("yolo does not restrict and does not deny the writers", () => {
     const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: "yolo" });
-    expect(args).not.toContain("--restricted");
+    expect(args).not.toContain("--tools");
+    expect(args).not.toContain("--strict-mcp-config");
     for (const tool of CHORUS_MODE_DENIED_TOOLS) expect(args).not.toContain(tool);
   });
 
@@ -162,7 +166,7 @@ describe("buildArgs", () => {
       "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
       "--resume", "sid-4",
       "--disallowedTools", "AskUserQuestion", "Edit", "Write", "NotebookEdit",
-      "--restricted",
+      "--tools", "mcp__chorus__*", "--strict-mcp-config",
       "--allowedTools", "mcp__chorus__*", "--permission-prompt-tool", "stdio",
     ]);
   });
