@@ -20,6 +20,9 @@ import {
   SESSION_CONFLICT_FAILURE,
   CONTROL_FRAME_TYPES,
   CHORUS_TOOL_DENY_MESSAGE,
+  CHORUS_MODE_DENIED_TOOLS,
+  CHORUS_MODE_FORBIDDEN_TOOLS,
+  describeToolEnforcement,
   UNSUPPORTED_CONTROL_ERROR,
   ClaudeControlChannel,
 } from "../claude-spawner.mjs";
@@ -43,6 +46,9 @@ function makeFakeChild() {
   child.stdout.setEncoding = () => {};
   child.stderr = new EventEmitter();
   child.stderr.setEncoding = () => {};
+  /** Announce a tool registry the way the real CLI does, to exercise the enforcement check. */
+  child.emitInit = (tools) => child.stdout.emit(
+    "data", `${JSON.stringify({ type: "system", subtype: "init", tools })}\n`);
   return child;
 }
 
@@ -74,8 +80,14 @@ describe("buildArgs", () => {
       "/tmp/m.json",
       "--disallowedTools",
       "AskUserQuestion",
-      // default permission mode: allow only Chorus MCP tools through and route
-      // every other permission prompt to the spawner over the control protocol
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      // default permission mode: --tools empties the built-in registry, strict MCP
+      // config keeps the operator's servers out, --allowedTools auto-approves the rest
+      "--tools",
+      "mcp__chorus__*",
+      "--strict-mcp-config",
       "--allowedTools",
       "mcp__chorus__*",
       "--permission-prompt-tool",
@@ -100,6 +112,38 @@ describe("buildArgs", () => {
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
 
+  it("default permission mode REMOVES tools rather than relying on the allowlist", () => {
+    // The allowlist alone auto-approves; it never restricted. Enforcement has to
+    // come from --restricted plus an explicit deny of the writers it leaves behind.
+    const args = buildArgs({ sessionId: "s", isNew: true });
+    expect(args).toContain("--strict-mcp-config");
+    expect(args[args.indexOf("--tools") + 1]).toBe("mcp__chorus__*");
+    const deny = args.slice(args.indexOf("--disallowedTools") + 1, args.indexOf("--tools"));
+    expect(deny).toEqual(["AskUserQuestion", ...CHORUS_MODE_DENIED_TOOLS]);
+  });
+
+  it("the variadic deny list is terminated by a flag, never by a bare value", () => {
+    // --disallowedTools is variadic: whatever follows the last tool name must be a
+    // flag, or it is swallowed as another tool name.
+    for (const mode of ["chorus", "yolo"]) {
+      const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: mode });
+      const after = args[args.indexOf("--disallowedTools") + 1 + (mode === "yolo" ? 1 : 1 + CHORUS_MODE_DENIED_TOOLS.length)];
+      expect(after?.startsWith("--"), `${mode}: ${after}`).toBe(true);
+    }
+  });
+
+  it("every denied tool is also asserted against the init frame", () => {
+    // Denying a tool and verifying it is gone must not drift apart.
+    for (const tool of CHORUS_MODE_DENIED_TOOLS) expect(CHORUS_MODE_FORBIDDEN_TOOLS).toContain(tool);
+  });
+
+  it("yolo does not restrict and does not deny the writers", () => {
+    const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: "yolo" });
+    expect(args).not.toContain("--tools");
+    expect(args).not.toContain("--strict-mcp-config");
+    for (const tool of CHORUS_MODE_DENIED_TOOLS) expect(args).not.toContain(tool);
+  });
+
   it("yolo permission mode skips all permissions and drops the allowlist", () => {
     const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: "yolo" });
     expect(args).toContain("--dangerously-skip-permissions");
@@ -121,7 +165,8 @@ describe("buildArgs", () => {
     expect(buildArgs({ sessionId: "sid-4", isNew: false })).toEqual([
       "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
       "--resume", "sid-4",
-      "--disallowedTools", "AskUserQuestion",
+      "--disallowedTools", "AskUserQuestion", "Edit", "Write", "NotebookEdit",
+      "--tools", "mcp__chorus__*", "--strict-mcp-config",
       "--allowedTools", "mcp__chorus__*", "--permission-prompt-tool", "stdio",
     ]);
   });
@@ -1345,5 +1390,83 @@ describe("ClaudeSpawner protocol stop hook (interrupt)", () => {
     expect(log.warn).toEqual(["[Chorus] claude control request can_use_tool has no request_id; not answered"]);
     child.emit("close", 0);
     await promise;
+  });
+});
+
+describe("ClaudeSpawner enforcement check on the init frame", () => {
+  it("aborts a chorus wake whose registry still has Bash, and says why", async () => {
+    const { log, logger } = recordingLogger();
+    const { child, onMessage, promise } = startWake({ permissionMode: "chorus", logger });
+    child.emitInit(["Task", "Read", "Bash"]);
+    child.emit("close", 1);
+    const result = await promise.catch((err) => err);
+
+    expect(log.warn.join("\n")).toMatch(/not being enforced/);
+    expect(log.warn.join("\n")).toContain("Bash");
+    // The offending frame is swallowed rather than handed to the daemon.
+    expect(onMessage.mock.calls.flat().some((f) => f?.subtype === "init")).toBe(false);
+    expect(child.stdin.end).toHaveBeenCalled();
+    expect(JSON.stringify(result)).toMatch(/not being enforced|exitCode/);
+  });
+
+  it("lets a clean chorus registry through and forwards the frame", async () => {
+    const { log, logger } = recordingLogger();
+    const { child, onMessage, promise } = startWake({ permissionMode: "chorus", logger });
+    child.emitInit(["Task", "Read", "Glob"]);
+    emitFrames(child, [{ type: "result", subtype: "success", session_id: SID }]);
+    child.emit("close", 0);
+    await promise;
+
+    expect(log.warn.join("\n")).not.toMatch(/not being enforced|could not be verified/);
+    expect(onMessage.mock.calls.flat().some((f) => f?.subtype === "init")).toBe(true);
+  });
+
+  it("does not check a yolo wake even when Bash is present", async () => {
+    const { log, logger } = recordingLogger();
+    const { child, promise } = startWake({ permissionMode: "yolo", logger });
+    child.emitInit(["Bash", "Write"]);
+    emitFrames(child, [{ type: "result", subtype: "success", session_id: SID }]);
+    child.emit("close", 0);
+    await promise;
+    expect(log.warn.join("\n")).not.toMatch(/not being enforced|could not be verified/);
+  });
+});
+
+describe("describeToolEnforcement", () => {
+  const chorusOnlyTools = ["Task", "Glob", "Grep", "Read", "Skill", "ToolSearch"];
+  const init = (tools) => ({ type: "system", subtype: "init", ...(tools === undefined ? {} : { tools }) });
+
+  it("passes a registry with none of the forbidden tools", () => {
+    expect(describeToolEnforcement(init(chorusOnlyTools), "chorus")).toEqual({ verdict: "ok", message: null });
+  });
+
+  it("names every leaked tool and points at the explicit yolo opt-in", () => {
+    const { verdict, message } = describeToolEnforcement(init([...chorusOnlyTools, "Bash", "Write"]), "chorus");
+    expect(verdict).toBe("violated");
+    expect(message).toContain("Bash");
+    expect(message).toContain("Write");
+    expect(message).not.toContain("Glob");
+    expect(message).toContain("--yolo");
+  });
+
+  it("reports an unreadable registry without taking the wake down", () => {
+    // A check, not a gate: an older CLI that omits the field must still work.
+    for (const frame of [null, init(undefined), init("Bash")]) {
+      const { verdict, message } = describeToolEnforcement(frame, "chorus");
+      expect(verdict).toBe("unverified");
+      expect(message).toContain("could not be verified");
+    }
+  });
+
+  it("never blocks a yolo wake, whatever the registry says", () => {
+    for (const frame of [null, init(["Bash", "Write"]), init(undefined)]) {
+      expect(describeToolEnforcement(frame, "yolo")).toEqual({ verdict: "ok", message: null });
+    }
+  });
+
+  it("catches the real-world regression: the allowlist present but Bash still there", () => {
+    // The exact shape observed under Claude Code 2.1.295 before the fix.
+    const observed = ["Task", "CronDelete", "CronList", "Edit", "Glob", "Grep", "Read", "Write", "Bash"];
+    expect(describeToolEnforcement(init(observed), "chorus").verdict).toBe("violated");
   });
 });
