@@ -20,6 +20,7 @@ import {
   SESSION_CONFLICT_FAILURE,
   CONTROL_FRAME_TYPES,
   CHORUS_TOOL_DENY_MESSAGE,
+  CHORUS_MODE_DENIED_TOOLS,
   UNSUPPORTED_CONTROL_ERROR,
   ClaudeControlChannel,
 } from "../claude-spawner.mjs";
@@ -74,8 +75,12 @@ describe("buildArgs", () => {
       "/tmp/m.json",
       "--disallowedTools",
       "AskUserQuestion",
-      // default permission mode: allow only Chorus MCP tools through and route
-      // every other permission prompt to the spawner over the control protocol
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      // default permission mode: REMOVE the code-running tools, allow only Chorus
+      // MCP tools through, and route any prompt that still happens to the spawner
+      "--restricted",
       "--allowedTools",
       "mcp__chorus__*",
       "--permission-prompt-tool",
@@ -100,6 +105,31 @@ describe("buildArgs", () => {
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
 
+  it("default permission mode REMOVES tools rather than relying on the allowlist", () => {
+    // The allowlist alone auto-approves; it never restricted. Enforcement has to
+    // come from --restricted plus an explicit deny of the writers it leaves behind.
+    const args = buildArgs({ sessionId: "s", isNew: true });
+    expect(args).toContain("--restricted");
+    const deny = args.slice(args.indexOf("--disallowedTools") + 1, args.indexOf("--restricted"));
+    expect(deny).toEqual(["AskUserQuestion", ...CHORUS_MODE_DENIED_TOOLS]);
+  });
+
+  it("the variadic deny list is terminated by a flag, never by a bare value", () => {
+    // --disallowedTools is variadic: whatever follows the last tool name must be a
+    // flag, or it is swallowed as another tool name.
+    for (const mode of ["chorus", "yolo"]) {
+      const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: mode });
+      const after = args[args.indexOf("--disallowedTools") + 1 + (mode === "yolo" ? 1 : 1 + CHORUS_MODE_DENIED_TOOLS.length)];
+      expect(after?.startsWith("--"), `${mode}: ${after}`).toBe(true);
+    }
+  });
+
+  it("yolo does not restrict and does not deny the writers", () => {
+    const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: "yolo" });
+    expect(args).not.toContain("--restricted");
+    for (const tool of CHORUS_MODE_DENIED_TOOLS) expect(args).not.toContain(tool);
+  });
+
   it("yolo permission mode skips all permissions and drops the allowlist", () => {
     const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: "yolo" });
     expect(args).toContain("--dangerously-skip-permissions");
@@ -121,7 +151,8 @@ describe("buildArgs", () => {
     expect(buildArgs({ sessionId: "sid-4", isNew: false })).toEqual([
       "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
       "--resume", "sid-4",
-      "--disallowedTools", "AskUserQuestion",
+      "--disallowedTools", "AskUserQuestion", "Edit", "Write", "NotebookEdit",
+      "--restricted",
       "--allowedTools", "mcp__chorus__*", "--permission-prompt-tool", "stdio",
     ]);
   });
