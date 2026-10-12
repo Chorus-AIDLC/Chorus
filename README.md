@@ -135,7 +135,7 @@ API keys are created under **Settings → Agents → Create API Key**. They star
 | Framework | Next.js 15 (App Router, Turbopack) |
 | Language | TypeScript 5 (strict mode) |
 | Frontend | React 19, Tailwind CSS 4, shadcn/ui |
-| Data | PostgreSQL 16 + Prisma 7, Redis 7 (optional) |
+| Data | PostgreSQL 17 + Prisma 7, Redis 7 (optional) |
 | Agent Integration | MCP SDK (HTTP Streamable Transport) |
 | Auth | OIDC + PKCE / API Key / SuperAdmin |
 | i18n | next-intl (en, zh, ko, ja) |

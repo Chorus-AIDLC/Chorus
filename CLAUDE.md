@@ -11,7 +11,7 @@ Core philosophy: **"Reversed Conversation"** — AI proposes, humans verify (not
 - **Framework**: Next.js 15 (App Router, Turbopack for dev)
 - **Language**: TypeScript 5 (strict mode)
 - **Frontend**: React 19, Tailwind CSS 4, shadcn/ui (Radix UI)
-- **Database**: PostgreSQL 16, Prisma ORM 7
+- **Database**: PostgreSQL 17, Prisma ORM 7
 - **Cache/Pub-Sub**: Redis 7 (ioredis, optional — falls back to in-memory)
 - **Testing**: Vitest 4
 - **Auth**: OIDC (users), API Keys with `cho_` prefix (agents), SuperAdmin (env-based bcrypt)

@@ -2,6 +2,8 @@
 
 **`chorusaidlc/chorus-app`** — The official Docker image for [Chorus](https://github.com/Chorus-AIDLC/Chorus), an AI Agent & Human collaboration platform implementing the AI-DLC (AI-Driven Development Lifecycle) workflow.
 
+For a portable Linux deployment with PostgreSQL, private credentials, loopback-only HTTP or an optional Cloudflare Named Tunnel, and backup/restore instructions, use the **[Self-host guide](SELF_HOST.md)** / **[中文自托管指南](SELF_HOST.zh.md)**. Those guides use the isolated `deploy/self-host/` Compose files; the examples below remain general image examples, not hardened public-deployment defaults.
+
 ## Quick Start
 
 ```bash
@@ -56,6 +58,8 @@ The embedded mode:
 
 For production with multiple replicas, use Docker Compose with external PostgreSQL and Redis.
 
+**Existing PostgreSQL 16 installations:** PostgreSQL 17 cannot open a PostgreSQL 16 data volume. Do not simply change the image and restart against the existing volume. Keep the source on PostgreSQL 16, take a logical backup with `pg_dump`, and restore with `pg_restore` into a fresh volume on PostgreSQL 17 in an isolated Compose project before validating and planning cutover. Preserve the original volume, app signing material, and private configuration for recovery; never run `docker compose down -v` as an upgrade step. See the [self-host backup and restore guide](SELF_HOST.md#6-back-up-and-restore-safely).
+
 Create a `docker-compose.yml`:
 
 ```yaml
@@ -93,7 +97,7 @@ services:
       retries: 5
 
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: chorus
       POSTGRES_PASSWORD: chorus

@@ -1,0 +1,19 @@
+services:
+  app:
+    environment:
+      NEXTAUTH_URL: ${CHORUS_PUBLIC_URL:?Set the external HTTPS URL}
+      COOKIE_SECURE: "true"
+
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:?Select a cloudflared release at least 2025.4.0}
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run", "--token-file", "/run/secrets/tunnel_token"]
+    secrets:
+      - tunnel_token
+    depends_on:
+      app:
+        condition: service_healthy
+
+secrets:
+  tunnel_token:
+    file: ${CLOUDFLARED_TOKEN_FILE:?Set an absolute path to the private tunnel token file}
