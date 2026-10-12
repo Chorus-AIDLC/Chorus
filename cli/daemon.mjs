@@ -169,6 +169,9 @@ export function buildDaemon(creds, deps = {}) {
     logger,
     permissionMode,
     creds,
+    // Per-agent override for workspace mode: a build whose credential hook the
+    // extractor cannot recognise points at its own settings file here.
+    claudeSettingsPath: deps.claudeSettingsPath,
     bundleVersion: deps.bundleVersion,
     prepareManagedConfigFn: deps.prepareManagedDshConfig,
   });

@@ -723,7 +723,10 @@ export class ClaudeSpawner {
     // never on the individual wake, so it is built ONCE per spawner and reused —
     // and `dispose()` removes it, because it carries credential hooks.
     this.writeWorkspaceSettings = opts.writeWorkspaceSettings ?? writeWorkspaceSettings;
-    this.workspaceSettingsOptions = opts.workspaceSettingsOptions ?? {};
+    // `claudeSettingsPath` on the agent entry is the documented override for builds
+    // whose credential hook the extractor cannot recognise.
+    this.workspaceSettingsOptions = opts.workspaceSettingsOptions
+      ?? (opts.claudeSettingsPath ? { authSettingsPath: opts.claudeSettingsPath } : {});
     this.#workspaceSettings = null;
     this.creds = opts.creds ?? null;
     // POSIX spawns `detached: true` (process-group leader) so the interrupt path

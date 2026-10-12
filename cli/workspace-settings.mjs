@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync, mkdirSync, renameSync, rmSync } from "node
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
+import { claudeSettingsPath } from "./credentials.mjs";
 
 /**
  * Settings keys copied verbatim from the operator's Claude Code settings so a
@@ -244,7 +245,11 @@ export function writeWorkspaceSettings(o = {}, deps = {}) {
   const rename = deps.rename ?? renameSync;
   const remove = deps.rm ?? ((p) => rmSync(p, { recursive: true, force: true }));
 
-  const operatorSettings = o.operatorSettingsPath ? readJsonSafe(o.operatorSettingsPath, read) : null;
+  // Default to the operator's own Claude Code settings: extraction is the zero-config
+  // path, and requiring every caller to pass the path means one that forgets gets a
+  // credentials error rather than the obvious behaviour.
+  const operatorPath = o.operatorSettingsPath ?? claudeSettingsPath();
+  const operatorSettings = readJsonSafe(operatorPath, read);
   const authSettings = o.authSettingsPath ? readJsonSafe(o.authSettingsPath, read) : null;
   if (o.authSettingsPath && !authSettings) {
     throw new Error(
@@ -266,6 +271,7 @@ export function writeWorkspaceSettings(o = {}, deps = {}) {
       "Chorus workspace mode: no usable Claude Code credentials could be resolved. "
       + "`--restricted`-style sandboxing ignores user settings, so credentials must be forwarded explicitly; "
       + `the keys Chorus looks for are ${FORWARDED_AUTH_KEYS.join(", ")}. `
+      + `Looked in ${operatorPath}. `
       + "Point `claudeSettingsPath` in ~/.chorus/daemon.json at a settings file that carries your build's "
       + "credential hook, or run the wake in yolo mode to accept full autonomy instead.",
     );

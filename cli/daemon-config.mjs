@@ -317,6 +317,7 @@ function positiveInt(value) {
  * @property {string} agentType                 Backend: claude-code | codex | kiro | dsh | offline.
  * @property {string[]} args                   Literal extra backend arguments (per-agent only).
  * @property {Record<string,string>} env       Literal child environment overrides (per-agent only).
+ * @property {string} [claudeSettingsPath]     Workspace-mode credential settings override.
  * @property {boolean} [daemonWake]             Wake opt-in for a wakeable backend; only
  *                                              `false` disables (absent/true ⇒ woken).
  * @property {Array<string|undefined>} cwds     Served paths (`undefined` ⇒ process cwd).
@@ -469,6 +470,9 @@ export function resolveAgentConfigs(flags = {}, deps = {}) {
       sigintTimeoutMs,
       browseRoots,
       daemonWake: entry.daemonWake,
+      // Workspace-mode override: the settings file carrying this build's credential
+      // hook, for installs whose hook the extractor does not recognise.
+      claudeSettingsPath: nonEmptyStr(entry.claudeSettingsPath),
       label,
       agentUuid: nonEmptyStr(entry.agentUuid),
       agentName: nonEmptyStr(entry.agentName),
