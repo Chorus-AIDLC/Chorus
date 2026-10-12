@@ -30,6 +30,10 @@ major-version selection or production cutover was added.
   permissions, explicit offline acknowledgement, repeat refusal, unsupported
   schema, restore failure and count/sequence mismatch. AWS reuse now rejects local
   or unmarked wrappers without renaming `default_deploy.sh`.
+- Independent review found that SQL `LIKE 'pg_%'` treated `_` as a wildcard and
+  accidentally accepted a user-created `pgextra` schema. The guard now matches
+  the literal `pg_` prefix; the real regression creates a populated `pgextra`
+  schema and proves rejection before target creation while preserving the source.
 - Existing local app, PG17 database and independent Cloudflare connector retained
   their pre-test start times; no deployment, source credentials, public route or
   restored application data was changed.

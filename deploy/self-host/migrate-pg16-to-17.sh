@@ -135,7 +135,7 @@ wait_ready() {
 sql() { docker exec -i --user postgres "$1" psql -X -qAt -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DATABASE"; }
 wait_ready "$OLD_CONTAINER"
 unsupported="$(sql "$OLD_CONTAINER" <<'SQL'
-SELECT count(*) FROM pg_namespace WHERE nspname NOT IN ('public','information_schema') AND nspname NOT LIKE 'pg_%';
+SELECT count(*) FROM pg_namespace WHERE nspname NOT IN ('public','information_schema') AND nspname !~ '^pg_';
 SELECT count(*) FROM pg_extension WHERE extname <> 'plpgsql';
 SELECT count(*) FROM pg_foreign_table;
 SELECT count(*) FROM pg_class WHERE relkind IN ('r','p','m') AND relrowsecurity;

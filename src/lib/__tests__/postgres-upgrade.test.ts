@@ -116,6 +116,7 @@ describe.skipIf(process.env.CHORUS_TEST_PG_UPGRADE !== "1")("real isolated PG16 
     const prefix = `chorus-pg-test-${randomUUID()}`;
     const source = `${prefix}-old`;
     const target = `${prefix}-new`;
+    const unsupportedTarget = `${prefix}-unsupported`;
     const incompatible = `${prefix}-incompatible`;
     const fixture = mkdtempSync(join(tmpdir(), "chorus-pg-upgrade-live-"));
     const passwordFile = join(fixture, "password");
@@ -158,9 +159,19 @@ SELECT setval('migration_probe_id_seq', 42, true);`);
       ready(source);
       expect(query(source, "SELECT id, body, labels, encode(raw,'hex') FROM migration_probe; SELECT checksum FROM _prisma_migrations ORDER BY migration_name;")).toBe(before);
       expect(query(source, "SELECT current_setting('server_version_num')::int / 10000;")).toBe("16");
+      query(source, "CREATE SCHEMA pgextra; CREATE TABLE pgextra.probe(id serial); INSERT INTO pgextra.probe DEFAULT VALUES;");
+      docker(["stop", source]);
+      const unsupported = spawnSync("bash", [script, "--source-volume", source, "--target-volume", unsupportedTarget,
+        "--backup-dir", join(fixture, "unsupported-backup"), "--password-file", passwordFile, "--writers-stopped"], { encoding: "utf8", timeout: 120000 });
+      expect(unsupported.status).not.toBe(0);
+      expect(unsupported.stderr).toContain("Only public-schema databases");
+      expect(spawnSync("docker", ["volume", "inspect", unsupportedTarget], { stdio: "ignore" }).status).not.toBe(0);
+      docker(["start", source]);
+      ready(source);
+      expect(query(source, "SELECT count(*) FROM pgextra.probe;")).toBe("1");
     } finally {
-      for (const name of [source, incompatible, `${target}-source16`, `${target}-target17`]) spawnSync("docker", ["rm", "-f", name], { stdio: "ignore", timeout: 30000 });
-      for (const name of [source, incompatible, target, `${target}-source16`]) spawnSync("docker", ["volume", "rm", name], { stdio: "ignore", timeout: 30000 });
+      for (const name of [source, incompatible, `${target}-source16`, `${target}-target17`, `${unsupportedTarget}-source16`, `${unsupportedTarget}-target17`]) spawnSync("docker", ["rm", "-f", name], { stdio: "ignore", timeout: 30000 });
+      for (const name of [source, incompatible, target, `${target}-source16`, unsupportedTarget, `${unsupportedTarget}-source16`]) spawnSync("docker", ["volume", "rm", name], { stdio: "ignore", timeout: 30000 });
       rmSync(fixture, { recursive: true, force: true });
     }
   }, 300000);
