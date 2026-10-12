@@ -738,6 +738,16 @@ finally:
     expect(calls()).toEqual([]);
   });
 
+  it.each(["local", "unmarked"])("refuses AWS reuse/overwrite of a %s wrapper", target => {
+    const body = `#!/usr/bin/env bash\n${target === "local" ? "CHORUS_DEPLOY_TARGET=local\n" : ""}exit 99\n`;
+    writeFileSync(wrapperPath(), body, { mode: 0o700 });
+    const result = run(["--target", "aws", "--dry-run"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("refusing AWS reuse/overwrite");
+    expect(readFileSync(wrapperPath(), "utf8")).toBe(body);
+    expect(calls()).toEqual([]);
+  });
+
   it.each(["alb", "cloudfront"])("preserves default AWS %s dry-run routing", mode => {
     const result = run([], {
       CHORUS_INSTALL_DRY_RUN: "1", DEPLOY_MODE: mode, AWS_REGION: "us-east-1",
@@ -745,6 +755,7 @@ finally:
       ADMIN_EMAIL: "admin@example.invalid", ADMIN_PASSWORD: "test-only-password",
     });
     expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(wrapperPath(), "utf8")).toContain("CHORUS_DEPLOY_TARGET=aws\n");
     expect(calls().some(call => call.command === "aws")).toBe(true);
     expect(calls().some(call => call.command === "docker")).toBe(false);
     expect(readFileSync(join(fixture, "default_deploy.sh"), "utf8")).toContain(`DEPLOY_MODE="${mode}"`);

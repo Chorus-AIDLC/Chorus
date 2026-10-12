@@ -74,6 +74,10 @@ pnpm docker:db              # Start PostgreSQL + Redis via Docker
 docker compose up -d db     # Start PostgreSQL only (:5433)
 ```
 
+Existing PG16 Docker volumes must be migrated before these PG17-default startup
+commands. Follow `docs/POSTGRES_UPGRADE.md`; keep the original volume and use the
+documented private Compose override after migration, not bare `pnpm docker:db`.
+
 ## Architecture Patterns
 
 ### UUID-First

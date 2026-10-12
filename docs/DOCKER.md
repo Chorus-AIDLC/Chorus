@@ -6,6 +6,11 @@ For a portable Linux deployment with PostgreSQL, private credentials, loopback-o
 
 ## Quick Start
 
+**Existing PG16 volumes, including development `pnpm docker:db`:** migrate before
+starting the new PG17 default. Use the explicit [offline migration script and cutover
+instructions](POSTGRES_UPGRADE.md) / [中文](POSTGRES_UPGRADE.zh.md). The helper keeps
+the original volume intact; ordinary Compose startup does not convert it.
+
 ```bash
 docker pull chorusaidlc/chorus-app:latest
 ```

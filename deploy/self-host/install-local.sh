@@ -208,7 +208,7 @@ unset database_password LOGIN_PASSWORD admin_hash
 (
   set -o noclobber
   {
-    printf '#!/usr/bin/env bash\nset -euo pipefail\nset +x\n'
+    printf '#!/usr/bin/env bash\nset -euo pipefail\nset +x\nCHORUS_DEPLOY_TARGET=local\n'
     printf 'for option in "$@"; do\n  [ "$option" = --dry-run ] || { printf "ERROR: Saved deployment accepts only --dry-run.\\n" >&2; exit 1; }\ndone\n'
     printf 'ROOT=%q\n' "$ROOT"
     printf 'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"\n'

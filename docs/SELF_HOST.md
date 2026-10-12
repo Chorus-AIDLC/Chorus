@@ -1,6 +1,6 @@
 # Self-host Chorus on Linux
 
-[中文](SELF_HOST.zh.md) · [Docker image reference](DOCKER.md) · [Authentication](AUTH.md)
+[中文](SELF_HOST.zh.md) · [Docker image reference](DOCKER.md) · [Authentication](AUTH.md) · [PG16 → PG17 migration script](POSTGRES_UPGRADE.md)
 
 Run one Chorus app and PostgreSQL 17 on your own Linux host. Start with **local HTTP**: no domain, Cloudflare account, or tunnel token is needed. Optionally publish the same stack over HTTPS through a user-created Cloudflare Named Tunnel. This is a single-instance guide, not a multi-replica or workload-capacity guarantee. Any developer workstation used for validation is only a test fixture, not a deployment prerequisite.
 
@@ -109,6 +109,9 @@ checkout, or at `CHORUS_DEPLOY_CONFIG` (its parent directory must already exist)
 It saves project/private-directory/image-source metadata, not passwords. Existing
 scripts are never overwritten or reused as AWS scripts by local setup. The default
 wrapper is excluded from local image builds; older AWS wrappers can contain credentials.
+Both targets keep the same default filename. AWS setup now refuses a local or
+unmarked legacy wrapper before reuse/overwrite; select another `CHORUS_DEPLOY_CONFIG`
+path rather than executing the wrong deployment. New wrappers record their target.
 Before building, review the checkout and `.dockerignore`; keep other unrelated
 private files outside the build context too.
 

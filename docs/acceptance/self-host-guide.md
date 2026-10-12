@@ -1,5 +1,45 @@
 # Portable self-host guide — local validation
 
+## Follow-up: explicit PG16 to PG17 migration (2026-10-12)
+
+This follow-up uses disposable synthetic databases only, not the previously
+restored real dataset. New deployments still default to PG17; no automatic
+major-version selection or production cutover was added.
+
+- `CHORUS_TEST_PG_UPGRADE=1 pnpm exec vitest run src/lib/__tests__/postgres-upgrade.test.ts`
+  exercises the real isolated path as well as contract tests. Requires cached
+  PG16/PG17 Alpine images and a Chorus image with the Prisma migration CLI
+  (`CHORUS_TEST_MIGRATION_IMAGE`, default `chorus-local:chorus-local`). The real
+  test is opt-in; ordinary CI runs the mocked safeguard tests without it.
+- Created a disposable PG16 cluster, applied this checkout's Prisma migrations
+  using a cached local Chorus image's CLI and a read-only migration-directory
+  mount, then seeded JSONB/Unicode, arrays, bytea and a nontrivial sequence state.
+- PG17 failed to open a **throwaway copy** of the stopped PG16 volume with
+  `database files are incompatible with server`. No original volume was exposed
+  writable to that experiment.
+- The new script copied the original read-only, dumped from its isolated PG16
+  working copy and restored into a fresh isolated PG17 volume. Public table row
+  counts and sequence states matched. The fixture's full values and every Prisma
+  migration checksum matched; the next generated sequence ID was correct.
+- The original PG16 volume restarted successfully, retained its fixture values
+  and migration checksums, and reported major version 16. All test-owned helpers
+  and volumes were removed by test teardown; the migration script itself never
+  deletes volumes.
+- Safeguard tests cover active/missing/wrong-version sources, existing target or
+  helper resources, inventory errors, volume ownership changes, private-file
+  permissions, explicit offline acknowledgement, repeat refusal, unsupported
+  schema, restore failure and count/sequence mismatch. AWS reuse now rejects local
+  or unmarked wrappers without renaming `default_deploy.sh`.
+- Existing local app, PG17 database and independent Cloudflare connector retained
+  their pre-test start times; no deployment, source credentials, public route or
+  restored application data was changed.
+
+Scope: same-host official-image/default-layout, single public-schema database,
+explicit operator-maintained downtime. This is not a full app login/OIDC/public
+Tunnel test after upgrade, a zero-downtime migration, a custom-extension/role/ACL
+migration, or a general cross-version application rollback guarantee. See
+[migration and cutover instructions](../POSTGRES_UPGRADE.md).
+
 ## Result and scope
 
 **Local guide/configuration validation: PASS, 2026-10-11.** This is evidence for

@@ -112,3 +112,22 @@ Fresh local setup SHALL generate a secret-free mode-0700 `default_deploy.sh`, or
 - **WHEN** the operator runs the saved wrapper with `--dry-run`
 - **THEN** it reads and validates saved metadata and image references and reports the selected Compose files without invoking Docker, writing files, or regenerating credentials.
 - **AND** creating a wrapper and checking only its dry-run SHALL NOT be represented as rebuilding the existing runtime or executing a deployment.
+
+### Requirement: Explicit offline PostgreSQL major-version migration
+New deployments SHALL continue to default to PostgreSQL 17. A separate Linux migration helper SHALL support a stopped, trusted default-layout PostgreSQL 16 Alpine named volume and a single public-schema Chorus database. It SHALL require an explicit offline acknowledgement, read the source volume only, work on an isolated copy, protect dump/global/credential artifacts outside the checkout, restore without source ownership/ACLs into an unused PG17 volume, compare table counts and sequence states, and preserve original and recovery volumes. It SHALL NOT silently switch deployment configuration, migrate application schema, or claim that row counts certify application behavior. Other databases, custom roles/ACLs and non-default layouts SHALL be documented as outside scope; extra schemas/extensions, foreign tables and RLS SHALL be rejected.
+
+#### Scenario: Existing PG16 volume cannot start with PG17
+- **WHEN** an operator upgrades an existing PG16 installation
+- **THEN** documentation warns that image replacement cannot convert the on-disk format, gives the explicit migration command and root/local Compose cutover instructions, and retains PG17 as the new-deployment default.
+- **AND** isolated tests SHALL demonstrate PG17 rejecting a copied PG16 volume and the helper restoring Chorus schema, fixture data, migration records and sequence state while the original remains bootable on PG16.
+
+#### Scenario: Unsafe or repeated migration attempt
+- **WHEN** a source is active, the version is not 16, destination resources/backup already exist, ownership changes, or restore/validation fails
+- **THEN** the helper SHALL fail closed without overwriting the original, automatically cutting over, or deleting volumes; only helpers created by this invocation may be stopped.
+
+### Requirement: Preserve wrapper names without cross-target execution
+AWS and local installers MAY share the default wrapper filename. Generated wrappers SHALL mark their target. AWS setup SHALL refuse local or unmarked wrappers before offering reuse or writing configuration, with instructions to choose another saved-wrapper path.
+
+#### Scenario: AWS selected after local installation
+- **WHEN** a local or unmarked wrapper exists and the operator selects AWS
+- **THEN** setup SHALL fail before any AWS deployment, local rebuild, prompt to reuse the wrapper, or wrapper overwrite.

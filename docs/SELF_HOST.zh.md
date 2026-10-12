@@ -1,6 +1,6 @@
 # 在 Linux 上自托管 Chorus
 
-[English](SELF_HOST.md) · [Docker 镜像说明](DOCKER.md) · [认证说明](AUTH.md)
+[English](SELF_HOST.md) · [Docker 镜像说明](DOCKER.md) · [认证说明](AUTH.md) · [PG16 → PG17 迁移脚本](POSTGRES_UPGRADE.zh.md)
 
 在自己的 Linux 主机上运行单个 Chorus 应用和 PostgreSQL 17。建议先用**本地 HTTP**：不需要域名、Cloudflare 账号或 Tunnel token。之后可以通过用户自行创建的 Cloudflare Named Tunnel 提供 HTTPS。本指南面向单实例，不承诺多副本支持或特定并发容量；用于验证的开发工作站只是测试环境，不是读者部署的前提。
 
@@ -92,6 +92,8 @@ bash install.sh --target local --image-source build \
 `CHORUS_DEPLOY_CONFIG` 指定路径（父目录须已存在）。仅保存项目、私有目录和镜像来源等
 元数据，不含密码。本地安装既不覆盖已有脚本，也不复用 AWS 脚本。默认 wrapper 已从
 本地镜像构建上下文排除；旧 AWS wrapper 可能包含凭据。
+两种部署保留同一默认文件名。AWS 安装在复用或覆盖前会拒绝 local 或无类型标记的旧
+wrapper；请通过 `CHORUS_DEPLOY_CONFIG` 选择另一路径，避免误执行。新 wrapper 记录目标类型。
 编译前仍应检查检出目录和 `.dockerignore`，其他无关私密文件也应放在构建上下文之外。
 
 脚本成功后，**跳过第 2 节手工生成配置**：将 `REPO` 设为仓库目录，`PROJECT` 设为
