@@ -50,6 +50,18 @@ export const FORWARDED_ENV_KEYS = [
  * posture claims. Operators may append; they may also remove, because a task can
  * legitimately need one of these (writing deployment docs from `~/.aws/config`,
  * say) and overriding that judgement is not ours to make.
+ *
+ * READS ARE THE ONE BLACKLISTED DIMENSION, and this list is therefore incomplete
+ * by construction — it does not cover other projects' sources, browser profiles
+ * or system keychains. That is a limit of the host CLI, not a choice made here:
+ * Claude Code resolves read restrictions through `filesystem.read.denyOnly`, where
+ * deny wins and allow does not override. Verified: `deny:["Read(//**)"]` paired
+ * with `allow:["Read(//<project>/**)"]` blocks the project's own files too.
+ *
+ * `--restricted` *would* whitelist the file TOOLS to the working directory, but it
+ * ignores user settings including `enabledPlugins`, which drops the Chorus plugin
+ * (plugins 6→2, skills 95→16) and with it the checkin context the woken agent
+ * needs. It also leaves Bash reads unconfined either way. Not worth the trade.
  */
 export const DEFAULT_DENIED_READ_DIRS = [
   ".ssh",
