@@ -1444,6 +1444,15 @@ describe("buildArgs — workspace posture", () => {
     expect(tools).toEqual(WORKSPACE_MODE_TOOLS);
   });
 
+  it("auto-approves every tool it grants, or they exist but cannot be used", () => {
+    // --tools decides existence; --allowedTools decides whether a call needs asking.
+    // Granting only the first left Edit present and every call to it refused under
+    // dontAsk — observed on the first live workspace wake.
+    const args = ws({ settingsPath: "/s.json" });
+    const allowed = args.slice(args.indexOf("--allowedTools") + 1, args.indexOf("--permission-prompt-tool"));
+    expect(allowed).toEqual(["mcp__chorus__*", ...WORKSPACE_MODE_TOOLS]);
+  });
+
   it("keeps Bash and the writers: confinement is the sandbox's job, not a tool list", () => {
     const args = ws({ settingsPath: "/s.json" });
     expect(WORKSPACE_MODE_TOOLS).toContain("Bash");

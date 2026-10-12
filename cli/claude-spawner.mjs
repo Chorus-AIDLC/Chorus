@@ -343,10 +343,15 @@ export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "c
     // `--settings` also carries the forwarded credentials, because a sandboxed
     // wake cannot fall back on the operator's own settings for auth.
     if (settingsPath) args.push("--settings", settingsPath);
+    // Both lists are needed and they do different jobs: `--tools` decides which
+    // tools EXIST, `--allowedTools` decides which run without asking. Granting the
+    // first alone leaves a tool present but unusable — under `dontAsk` its
+    // permission request is refused outright, which is how the first live workspace
+    // wake ended up with Edit visible and every call to it denied.
     args.push(
       "--tools", ...WORKSPACE_MODE_TOOLS,
       "--strict-mcp-config",
-      "--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`,
+      "--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`, ...WORKSPACE_MODE_TOOLS,
       "--permission-prompt-tool", "stdio",
     );
   } else {
