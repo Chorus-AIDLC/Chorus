@@ -22,6 +22,7 @@ import {
   CHORUS_TOOL_DENY_MESSAGE,
   CHORUS_MODE_DENIED_TOOLS,
   CHORUS_MODE_FORBIDDEN_TOOLS,
+  WORKSPACE_MODE_TOOLS,
   describeToolEnforcement,
   UNSUPPORTED_CONTROL_ERROR,
   ClaudeControlChannel,
@@ -1429,6 +1430,90 @@ describe("ClaudeSpawner enforcement check on the init frame", () => {
     child.emit("close", 0);
     await promise;
     expect(log.warn.join("\n")).not.toMatch(/not being enforced|could not be verified/);
+  });
+});
+
+describe("buildArgs — workspace posture", () => {
+  const ws = (extra) => buildArgs({ sessionId: "s", isNew: true, permissionMode: "workspace", ...extra });
+
+  it("forwards the generated settings file and the enforcing tool allowlist", () => {
+    const args = ws({ settingsPath: "/run/ws/settings.json" });
+    expect(args[args.indexOf("--settings") + 1]).toBe("/run/ws/settings.json");
+    expect(args).toContain("--strict-mcp-config");
+    const tools = args.slice(args.indexOf("--tools") + 1, args.indexOf("--strict-mcp-config"));
+    expect(tools).toEqual(WORKSPACE_MODE_TOOLS);
+  });
+
+  it("keeps Bash and the writers: confinement is the sandbox's job, not a tool list", () => {
+    const args = ws({ settingsPath: "/s.json" });
+    expect(WORKSPACE_MODE_TOOLS).toContain("Bash");
+    const deny = args.slice(args.indexOf("--disallowedTools") + 1, args.indexOf("--settings"));
+    expect(deny).toEqual(["AskUserQuestion"]);
+    for (const tool of CHORUS_MODE_DENIED_TOOLS) expect(deny).not.toContain(tool);
+    expect(args).not.toContain("--dangerously-skip-permissions");
+  });
+
+  it("the variadic deny list is still terminated by a flag", () => {
+    const args = ws({ settingsPath: "/s.json" });
+    expect(args[args.indexOf("--disallowedTools") + 2]?.startsWith("--")).toBe(true);
+  });
+
+  it("chorus posture is unchanged by the new branch", () => {
+    const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: "chorus" });
+    expect(args[args.indexOf("--tools") + 1]).toBe("mcp__chorus__*");
+    expect(args).not.toContain("--settings");
+  });
+});
+
+describe("ClaudeSpawner — workspace settings lifecycle", () => {
+  function wsSpawner(write) {
+    const child = makeFakeChild();
+    const spawner = new ClaudeSpawner({
+      claudePath: "/usr/bin/claude", spawnImpl: () => child, logger: silent,
+      permissionMode: "workspace", platform: "linux", writeWorkspaceSettings: write,
+    });
+    return { child, spawner };
+  }
+
+  it("generates the settings once and reuses them across wakes", async () => {
+    const cleanup = vi.fn();
+    const write = vi.fn(() => ({ path: "/run/ws/settings.json", authSource: "extracted", cleanup }));
+    const { child, spawner } = wsSpawner(write);
+    for (const sid of [SID, SID]) {
+      const p = spawner.wake({ prompt: "P", sessionId: sid, isNew: true });
+      emitFrames(child, [{ type: "result", subtype: "success", session_id: sid }]);
+      child.emit("close", 0);
+      await p;
+    }
+    // The content depends on operator config and policy, never on the wake.
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispose removes the file, and is safe twice or when nothing was generated", () => {
+    const cleanup = vi.fn();
+    const { spawner } = wsSpawner(vi.fn(() => ({ path: "/p", authSource: "extracted", cleanup })));
+    spawner.dispose();
+    expect(cleanup).not.toHaveBeenCalled(); // nothing generated yet
+    spawner.wake; // no-op touch
+    const used = wsSpawner(vi.fn(() => ({ path: "/p", authSource: "extracted", cleanup })));
+    used.spawner.dispose();
+    used.spawner.dispose();
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it("fails the wake with the generator's reason instead of hanging on 403s", async () => {
+    // A workspace wake with no resolvable credentials retries 403 until killed.
+    const { log, logger } = recordingLogger();
+    const child = makeFakeChild();
+    const spawner = new ClaudeSpawner({
+      claudePath: "/usr/bin/claude", spawnImpl: () => child, logger,
+      permissionMode: "workspace", platform: "linux",
+      writeWorkspaceSettings: () => { throw new Error("no usable Claude Code credentials; point claudeSettingsPath at a settings file"); },
+    });
+    const res = await spawner.wake({ prompt: "P", sessionId: SID, isNew: true });
+    expect(res.exitCode).toBeNull();
+    expect(JSON.stringify(res.wakeError)).toMatch(/claudeSettingsPath/);
+    expect(log.warn.join("\n")).toMatch(/no usable Claude Code credentials/);
   });
 });
 

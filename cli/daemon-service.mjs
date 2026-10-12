@@ -94,6 +94,7 @@ export function buildServiceArgs(spec) {
   // for signature compatibility but ignored here.
   if (spec.agent) args.push("--agent", spec.agent);
   if (spec.chorusOnly) args.push("--chorus-only");
+  if (spec.workspace) args.push("--workspace");
   return args;
 }
 

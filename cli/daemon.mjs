@@ -953,6 +953,7 @@ export async function runDaemon(flags = {}, deps = {}) {
           browseRoot: flags.browseRoot,
           sigintTimeout: flags.sigintTimeout,
           chorusOnly: flags.chorusOnly,
+          workspace: flags.workspace,
           yolo: flags.yolo,
         },
         { env, readJson: deps.readJson, loginPath: deps.loginPath },
@@ -1230,7 +1231,8 @@ export async function preflight(ctx) {
   }
   log(`[Chorus] authenticated as ${identity.name} (${identity.uuid})`);
 
-  // Permission posture: default yolo. --chorus-only reclaims the restricted posture.
+  // Permission posture: default yolo. --workspace and --chorus-only reclaim the
+  // two tighter postures; --chorus-only wins if both are given.
   const decision = resolvePermissionMode(flags, env, { isTTY, hasAck: false });
 
   return { creds, identity, permissionMode: decision.mode };
@@ -1353,6 +1355,7 @@ export async function handleLifecycleAction(action, { log, errLog, lifecycle, se
       // by the daemon via resolveAgentType — mirroring how --cwd is handled. Baking
       // --agent into ExecStart too would let the two sources drift.
       chorusOnly: flags.chorusOnly === true,
+      workspace: flags.workspace === true,
       workingDir: process.cwd(),
       noLinger: flags.noLinger === true,
     };

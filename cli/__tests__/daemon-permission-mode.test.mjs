@@ -70,3 +70,32 @@ describe("yoloWarningLine", () => {
     expect(w.toUpperCase()).toContain("YOLO");
   });
 });
+
+describe("workspace posture", () => {
+  const mode = (flags, env = {}) => resolvePermissionMode(flags, env, { isTTY: false, hasAck: false }).mode;
+
+  it("is opt-in via flag or env, and never a default", () => {
+    expect(mode({ workspace: true })).toBe("workspace");
+    expect(mode({}, { CHORUS_WORKSPACE: "1" })).toBe("workspace");
+    expect(mode({}, { CHORUS_WORKSPACE: "true" })).toBe("workspace");
+    expect(mode({})).toBe("yolo");
+  });
+
+  it("yields to --chorus-only when both are asked for", () => {
+    // Honouring the tighter request can only cost capability; honouring the looser
+    // one would grant more than the operator asked for.
+    expect(mode({ workspace: true, chorusOnly: true })).toBe("chorus");
+    expect(mode({ workspace: true }, { CHORUS_CHORUS_ONLY: "1" })).toBe("chorus");
+    expect(mode({ workspace: true }, { CHORUS_YOLO: "0" })).toBe("chorus");
+  });
+
+  it("does not warn: the posture is restricted, so there is nothing to warn about", () => {
+    const d = resolvePermissionMode({ workspace: true }, {}, { isTTY: false, hasAck: false });
+    expect(d).toEqual({ mode: "workspace", needConfirm: false, warnUnattended: false });
+  });
+
+  it("the yolo warning names both tighter postures", () => {
+    expect(yoloWarningLine()).toContain("--workspace");
+    expect(yoloWarningLine()).toContain("--chorus-only");
+  });
+});

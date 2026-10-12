@@ -49,6 +49,7 @@ import { win32 as pathWin32, posix as pathPosix, join as pathJoin } from "node:p
 import { awaitChildSettled } from "./child-exit.mjs";
 import { registerProcessStopHook } from "./process-stop-hooks.mjs";
 import { createWakeErrorCollector, wakeErrorText } from "./wake-error.mjs";
+import { writeWorkspaceSettings } from "./workspace-settings.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -220,6 +221,14 @@ export const CHORUS_MODE_DENIED_TOOLS = ["Edit", "Write", "NotebookEdit"];
  * which is the failure that actually happened: `--allowedTools` quietly stopped
  * restricting and nothing noticed for a whole release line.
  */
+/**
+ * Built-ins a `workspace` wake is given. Bash is included on purpose: the posture
+ * exists so a wake can run tests and commit, and the confinement comes from the
+ * sandbox rather than from withholding the tool. `--tools` is an ENFORCING
+ * allowlist, so anything absent here is removed from the registry outright.
+ */
+export const WORKSPACE_MODE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"];
+
 export const CHORUS_MODE_FORBIDDEN_TOOLS = [
   "Bash", "BashOutput", "KillShell", "WebFetch", "mcp__ide__executeCode", ...CHORUS_MODE_DENIED_TOOLS,
 ];
@@ -247,6 +256,14 @@ export const CHORUS_MODE_FORBIDDEN_TOOLS = [
  */
 export function describeToolEnforcement(initFrame, permissionMode) {
   if (permissionMode === "yolo") return { verdict: "ok", message: null };
+  // `workspace` deliberately HAS Bash/Edit/Write, so the chorus tool list is not
+  // the thing to assert. Its guarantee rests on the OS sandbox, which the init
+  // frame does not report at all — `permissionMode`, `capabilities`,
+  // `slash_commands`, `--debug` and `claude doctor` were each checked and carry
+  // nothing about it. The daemon therefore verifies the sandbox once at startup by
+  // writing outside the served directory and stat-ing the result, and this
+  // per-wake hook stays a no-op rather than pretending to check something.
+  if (permissionMode === "workspace") return { verdict: "ok", message: null };
   if (!initFrame || !Array.isArray(initFrame.tools)) {
     return {
       verdict: "unverified",
@@ -300,19 +317,38 @@ export function describeToolEnforcement(initFrame, permissionMode) {
  * `--permission-prompt-tool stdio` (chorus mode) makes the CLI ask us, over the
  * control protocol, about every tool outside the allowlist; the spawner denies it
  * explicitly and visibly instead of the CLI denying it silently.
- * @param {{ sessionId: string, isNew: boolean, mcpConfigPath?: string, permissionMode?: PermissionMode }} o
+ * @param {{ sessionId: string, isNew: boolean, mcpConfigPath?: string,
+ *           permissionMode?: PermissionMode, settingsPath?: string }} o
  * @returns {string[]}
  */
-export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "chorus" }) {
+export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "chorus", settingsPath }) {
   const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
   if (isNew) args.push("--session-id", sessionId);
   else args.push("--resume", sessionId);
   if (mcpConfigPath) args.push("--mcp-config", mcpConfigPath);
   // Headless wakes have no human to answer AskUserQuestion — block it at the tool
   // layer in every mode (daemon-headless-interaction-guard).
-  args.push("--disallowedTools", "AskUserQuestion", ...(permissionMode === "yolo" ? [] : CHORUS_MODE_DENIED_TOOLS));
+  args.push(
+    "--disallowedTools",
+    "AskUserQuestion",
+    // Only the chorus posture denies the writers by name. A workspace wake needs
+    // them; its confinement comes from the OS sandbox instead.
+    ...(permissionMode === "chorus" ? CHORUS_MODE_DENIED_TOOLS : []),
+  );
   if (permissionMode === "yolo") {
     args.push("--dangerously-skip-permissions");
+  } else if (permissionMode === "workspace") {
+    // Enforcement here is the OS sandbox declared in the generated settings file,
+    // not a tool list: the woken agent NEEDS Bash, Edit and Write to deliver code.
+    // `--settings` also carries the forwarded credentials, because a sandboxed
+    // wake cannot fall back on the operator's own settings for auth.
+    if (settingsPath) args.push("--settings", settingsPath);
+    args.push(
+      "--tools", ...WORKSPACE_MODE_TOOLS,
+      "--strict-mcp-config",
+      "--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`,
+      "--permission-prompt-tool", "stdio",
+    );
   } else {
     // `--tools` is the ENFORCING allowlist: naming only this daemon's Chorus
     // server empties the built-in registry outright, and `--strict-mcp-config`
@@ -668,6 +704,9 @@ export function parseNdjsonChunk(buffer, chunk, onObject, onWarn = () => {}) {
 
 export class ClaudeSpawner {
   /** @param {ClaudeSpawnerOptions} [opts] */
+  /** @type {{ path: string, cleanup: () => void } | null} */
+  #workspaceSettings = null;
+
   constructor(opts = {}) {
     /** Backend source for generic reporting of exceptions before child launch. */
     this.wakeErrorSource = "claude";
@@ -679,6 +718,13 @@ export class ClaudeSpawner {
     this.spawnImpl = opts.spawnImpl ?? spawn;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.permissionMode = opts.permissionMode ?? "chorus";
+    // Workspace mode needs a generated settings file (sandbox policy + forwarded
+    // credentials). Its content depends on the operator's config and Chorus policy,
+    // never on the individual wake, so it is built ONCE per spawner and reused —
+    // and `dispose()` removes it, because it carries credential hooks.
+    this.writeWorkspaceSettings = opts.writeWorkspaceSettings ?? writeWorkspaceSettings;
+    this.workspaceSettingsOptions = opts.workspaceSettingsOptions ?? {};
+    this.#workspaceSettings = null;
     this.creds = opts.creds ?? null;
     // POSIX spawns `detached: true` (process-group leader) so the interrupt path
     // can group-kill the tree; Windows does not. Injectable so a POSIX test host
@@ -729,6 +775,29 @@ export class ClaudeSpawner {
     }
   }
 
+  /** Build the workspace settings file on first use and reuse it thereafter. */
+  #workspaceSettingsPath() {
+    if (!this.#workspaceSettings) {
+      this.#workspaceSettings = this.writeWorkspaceSettings(this.workspaceSettingsOptions);
+    }
+    return this.#workspaceSettings.path;
+  }
+
+  /**
+   * Remove the generated workspace settings file. The daemon calls this on
+   * shutdown; the file carries credential hooks and must not be left behind.
+   * Safe to call when nothing was generated, and safe to call twice.
+   */
+  dispose() {
+    const generated = this.#workspaceSettings;
+    this.#workspaceSettings = null;
+    try {
+      generated?.cleanup?.();
+    } catch (err) {
+      this.logger.warn(`[Chorus] could not remove the generated workspace settings: ${err}`);
+    }
+  }
+
   async #wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage, onChild }, diagnostics) {
     const id = sessionId;
 
@@ -751,7 +820,21 @@ export class ClaudeSpawner {
     }
 
     assertConfiguredShimArgs(claudePath, this.cliConfig.args, this.platform);
-    const args = [...buildArgs({ sessionId: id, isNew, mcpConfigPath, permissionMode: this.permissionMode }), ...this.cliConfig.args];
+    let settingsPath;
+    if (this.permissionMode === "workspace") {
+      try {
+        settingsPath = this.#workspaceSettingsPath();
+      } catch (err) {
+        // No credentials, or an unreadable override. Fail the wake with the
+        // reason: a workspace wake that cannot authenticate retries 403 until it
+        // is killed, which must not look like a hang.
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`[Chorus] ${message}`);
+        return { sessionId: typeof id === "string" ? id : "", backendSessionId: null, exitCode: null, isNew: Boolean(isNew),
+          wakeError: diagnostics.build({ kind: "startup", message }) };
+      }
+    }
+    const args = [...buildArgs({ sessionId: id, isNew, mcpConfigPath, permissionMode: this.permissionMode, settingsPath }), ...this.cliConfig.args];
     // On Windows, a .cmd/.bat shim must be run via cmd.exe /c (CreateProcess
     // can't exec a script directly). resolveSpawnCommand keeps shell:false and
     // passes argv as an array — no shell injection surface either way.
