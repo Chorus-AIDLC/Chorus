@@ -1,6 +1,11 @@
 // src/app/api/events/notifications/route.ts
 // User-scoped SSE endpoint for real-time notification delivery
-// Auth via cookie (EventSource automatically sends cookies)
+// Auth via getAuthContext, which accepts both paths:
+//  - Browser: session cookie. EventSource sends cookies automatically but cannot
+//    set custom headers, so the web UI relies on the cookie.
+//  - Agent daemon: `Authorization: Bearer cho_…` API key. The daemon reads the
+//    stream with fetch (cli/sse-listener.mjs), not EventSource, so it is not
+//    subject to that header limitation. This is its primary wake channel.
 
 import { getAuthContext } from "@/lib/auth";
 import { eventBus, controlEventName, type ProjectAccessChangedEvent } from "@/lib/event-bus";
