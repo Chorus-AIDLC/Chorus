@@ -49,6 +49,7 @@ import { win32 as pathWin32, posix as pathPosix, join as pathJoin } from "node:p
 import { awaitChildSettled } from "./child-exit.mjs";
 import { registerProcessStopHook } from "./process-stop-hooks.mjs";
 import { createWakeErrorCollector, wakeErrorText } from "./wake-error.mjs";
+import { writeWorkspaceSettings } from "./workspace-settings.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -201,15 +202,104 @@ export function resolveClaudePath(deps = {}) {
 export const CHORUS_MCP_SERVER_NAME = "chorus";
 
 /**
- * Permission posture for the spawned headless Claude. Headless `claude -p`
- * auto-DENIES any tool that isn't pre-approved (there's no interactive prompt to
- * answer), so without one of these the woken agent can't call a single chorus_*
- * tool and exits having done nothing. Verified against Claude Code 2.1.177.
+ * Writers denied by name on top of the `--tools` allowlist, so the "chorus"
+ * contract (Chorus MCP tools ONLY) does not rest on one flag's semantics holding.
+ * `Task` is deliberately absent: it cannot escalate — a subagent inherits the
+ * parent's registry — and Chorus swarm mode needs it.
+ * The init-frame assertion treats this list as the thing to verify, so a future
+ * CLI release that adds another writer fails the wake instead of leaking.
+ */
+export const CHORUS_MODE_DENIED_TOOLS = ["Edit", "Write", "NotebookEdit"];
+
+/**
+ * Tools that MUST be absent from a "chorus" wake's registry: the ones we deny by
+ * name, plus the code-running and fetching tools we rely on `--restricted` to
+ * drop. Asserted against the init frame on every wake.
  *
- * - "chorus" (default): `--allowedTools "mcp__chorus__*"` — the woken agent may
- *   use Chorus MCP tools (comment, claim, report, status) but NOT Bash / file
- *   edits. Safe default: covers comment/assign/elaboration wakes out of the box,
- *   minimal blast radius.
+ * This list cannot catch a writer introduced under a name we have never heard of
+ * — no static list can. What it does catch is the mechanism itself regressing,
+ * which is the failure that actually happened: `--allowedTools` quietly stopped
+ * restricting and nothing noticed for a whole release line.
+ */
+/**
+ * Built-ins a `workspace` wake is given. Bash is included on purpose: the posture
+ * exists so a wake can run tests and commit, and the confinement comes from the
+ * sandbox rather than from withholding the tool. `--tools` is an ENFORCING
+ * allowlist, so anything absent here is removed from the registry outright.
+ */
+export const WORKSPACE_MODE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"];
+
+export const CHORUS_MODE_FORBIDDEN_TOOLS = [
+  "Bash", "BashOutput", "KillShell", "WebFetch", "mcp__ide__executeCode", ...CHORUS_MODE_DENIED_TOOLS,
+];
+
+/**
+ * Classify a "chorus" wake's tool registry from the stream-json init frame, which
+ * the CLI emits before any model turn — so this costs no tokens and runs on EVERY
+ * wake rather than once at daemon startup. A CLI upgrade mid-daemon is caught.
+ *
+ * Three outcomes, deliberately distinct:
+ *   "ok"         — the registry is clean; proceed.
+ *   "violated"   — a forbidden tool is present. The restriction the operator asked
+ *                  for is not in force, so the wake must not continue.
+ *   "unverified" — the frame carries no readable tool list. Reported, never fatal:
+ *                  this is a check, not a gate, and an older CLI (or a capture that
+ *                  omits the field) must not take every wake down with it.
+ *
+ * Scope limit, stated plainly: nothing here fires if the CLI announces no registry
+ * at all. Gating prompt delivery on one optional line of CLI output would trade a
+ * silent weakening for a silent outage.
+ *
+ * @param {object|null} initFrame  The `{type:"system",subtype:"init"}` frame.
+ * @param {PermissionMode} permissionMode
+ * @returns {{ verdict: "ok"|"violated"|"unverified", message: string|null }}
+ */
+export function describeToolEnforcement(initFrame, permissionMode) {
+  if (permissionMode === "yolo") return { verdict: "ok", message: null };
+  // `workspace` deliberately HAS Bash/Edit/Write, so the chorus tool list is not
+  // the thing to assert. Its guarantee rests on the OS sandbox, which the init
+  // frame does not report at all — `permissionMode`, `capabilities`,
+  // `slash_commands`, `--debug` and `claude doctor` were each checked and carry
+  // nothing about it. The daemon therefore verifies the sandbox once at startup by
+  // writing outside the served directory and stat-ing the result, and this
+  // per-wake hook stays a no-op rather than pretending to check something.
+  if (permissionMode === "workspace") return { verdict: "ok", message: null };
+  if (!initFrame || !Array.isArray(initFrame.tools)) {
+    return {
+      verdict: "unverified",
+      message: "Claude reported no tool list, so --chorus-only could not be verified for this wake.",
+    };
+  }
+  const leaked = CHORUS_MODE_FORBIDDEN_TOOLS.filter((tool) => initFrame.tools.includes(tool));
+  if (leaked.length === 0) return { verdict: "ok", message: null };
+  return {
+    verdict: "violated",
+    message: `--chorus-only is not being enforced by this Claude Code build: ${leaked.join(", ")} `
+      + `${leaked.length === 1 ? "is" : "are"} still available to the woken agent. `
+      + "Restricted wakes cannot run. Use --yolo to accept full autonomy explicitly.",
+  };
+}
+
+/**
+ * Permission posture for the spawned headless Claude.
+ *
+ * `--allowedTools` is an auto-APPROVE allowlist, not a restriction: tools outside
+ * it still run. An earlier revision of this comment claimed headless `claude -p`
+ * auto-denies anything unlisted (verified against 2.1.177); that stopped being
+ * true, and `--chorus-only` silently became a no-op — a woken agent ran Bash 33
+ * times with zero denials under 2.1.295. Enforcement must therefore come from
+ * flags that REMOVE tools, never from the allowlist alone, and the init-frame
+ * assertion in this module checks the result on every wake rather than trusting
+ * this comment to stay true.
+ *
+ * - "chorus" (default): `--tools "mcp__chorus__*"` empties the built-in tool
+ *   registry — it is an allowlist that REMOVES, unlike `--allowedTools` — and
+ *   `--strict-mcp-config` keeps the operator's own MCP servers out, so the wake
+ *   sees this daemon's Chorus tools and nothing else. CHORUS_MODE_DENIED_TOOLS is
+ *   still denied by name: two independent mechanisms, because the whole reason
+ *   this code exists is that a single one quietly stopped working.
+ *   Subagent dispatch inherits the registry, so `Task` cannot be used to reach a
+ *   shell that the parent session does not have.
  * - "yolo": `--dangerously-skip-permissions` — full autonomy (Bash, file writes,
  *   everything). Needed for real code-writing AI-DLC work. Dangerous: the woken
  *   agent gets a full shell under the daemon's key, with a prompt that embeds
@@ -227,23 +317,61 @@ export const CHORUS_MCP_SERVER_NAME = "chorus";
  * `--permission-prompt-tool stdio` (chorus mode) makes the CLI ask us, over the
  * control protocol, about every tool outside the allowlist; the spawner denies it
  * explicitly and visibly instead of the CLI denying it silently.
- * @param {{ sessionId: string, isNew: boolean, mcpConfigPath?: string, permissionMode?: PermissionMode }} o
+ * @param {{ sessionId: string, isNew: boolean, mcpConfigPath?: string,
+ *           permissionMode?: PermissionMode, settingsPath?: string }} o
  * @returns {string[]}
  */
-export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "chorus" }) {
+export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "chorus", settingsPath }) {
   const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
   if (isNew) args.push("--session-id", sessionId);
   else args.push("--resume", sessionId);
   if (mcpConfigPath) args.push("--mcp-config", mcpConfigPath);
   // Headless wakes have no human to answer AskUserQuestion — block it at the tool
   // layer in every mode (daemon-headless-interaction-guard).
-  args.push("--disallowedTools", "AskUserQuestion");
+  args.push(
+    "--disallowedTools",
+    "AskUserQuestion",
+    // Only the chorus posture denies the writers by name. A workspace wake needs
+    // them; its confinement comes from the OS sandbox instead.
+    ...(permissionMode === "chorus" ? CHORUS_MODE_DENIED_TOOLS : []),
+  );
   if (permissionMode === "yolo") {
     args.push("--dangerously-skip-permissions");
+  } else if (permissionMode === "workspace") {
+    // Enforcement here is the OS sandbox declared in the generated settings file,
+    // not a tool list: the woken agent NEEDS Bash, Edit and Write to deliver code.
+    // `--settings` also carries the forwarded credentials, because a sandboxed
+    // wake cannot fall back on the operator's own settings for auth.
+    if (settingsPath) args.push("--settings", settingsPath);
+    // Both lists are needed and they do different jobs: `--tools` decides which
+    // tools EXIST, `--allowedTools` decides which run without asking. Granting the
+    // first alone leaves a tool present but unusable — under `dontAsk` its
+    // permission request is refused outright, which is how the first live workspace
+    // wake ended up with Edit visible and every call to it denied.
+    args.push(
+      "--tools", ...WORKSPACE_MODE_TOOLS,
+      "--strict-mcp-config",
+      "--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`, ...WORKSPACE_MODE_TOOLS,
+      "--permission-prompt-tool", "stdio",
+    );
   } else {
-    // Default: allow only this daemon's Chorus MCP tools through, and route every
-    // other tool's permission request to the spawner (which denies it explicitly).
-    args.push("--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`, "--permission-prompt-tool", "stdio");
+    // `--tools` is the ENFORCING allowlist: naming only this daemon's Chorus
+    // server empties the built-in registry outright, and `--strict-mcp-config`
+    // drops the operator's own MCP servers so nothing else rides in. Then
+    // `--allowedTools` auto-approves what is left, and any prompt that still
+    // happens is routed to the spawner so it is denied visibly.
+    //
+    // `--restricted` would also work and additionally confines file tools to the
+    // working directories, but it ignores user/project/local settings files — on a
+    // deployment whose credentials live in ~/.claude/settings.json the wake then
+    // fails authentication, and neither the per-agent `args` passthrough (settings
+    // is a managed control) nor any current config key can forward them back.
+    args.push(
+      "--tools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`,
+      "--strict-mcp-config",
+      "--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`,
+      "--permission-prompt-tool", "stdio",
+    );
   }
   return args;
 }
@@ -581,6 +709,9 @@ export function parseNdjsonChunk(buffer, chunk, onObject, onWarn = () => {}) {
 
 export class ClaudeSpawner {
   /** @param {ClaudeSpawnerOptions} [opts] */
+  /** @type {{ path: string, cleanup: () => void } | null} */
+  #workspaceSettings = null;
+
   constructor(opts = {}) {
     /** Backend source for generic reporting of exceptions before child launch. */
     this.wakeErrorSource = "claude";
@@ -592,6 +723,16 @@ export class ClaudeSpawner {
     this.spawnImpl = opts.spawnImpl ?? spawn;
     this.logger = opts.logger ?? NOOP_LOGGER;
     this.permissionMode = opts.permissionMode ?? "chorus";
+    // Workspace mode needs a generated settings file (sandbox policy + forwarded
+    // credentials). Its content depends on the operator's config and Chorus policy,
+    // never on the individual wake, so it is built ONCE per spawner and reused —
+    // and `dispose()` removes it, because it carries credential hooks.
+    this.writeWorkspaceSettings = opts.writeWorkspaceSettings ?? writeWorkspaceSettings;
+    // `claudeSettingsPath` on the agent entry is the documented override for builds
+    // whose credential hook the extractor cannot recognise.
+    this.workspaceSettingsOptions = opts.workspaceSettingsOptions
+      ?? (opts.claudeSettingsPath ? { authSettingsPath: opts.claudeSettingsPath } : {});
+    this.#workspaceSettings = null;
     this.creds = opts.creds ?? null;
     // POSIX spawns `detached: true` (process-group leader) so the interrupt path
     // can group-kill the tree; Windows does not. Injectable so a POSIX test host
@@ -642,6 +783,29 @@ export class ClaudeSpawner {
     }
   }
 
+  /** Build the workspace settings file on first use and reuse it thereafter. */
+  #workspaceSettingsPath() {
+    if (!this.#workspaceSettings) {
+      this.#workspaceSettings = this.writeWorkspaceSettings(this.workspaceSettingsOptions);
+    }
+    return this.#workspaceSettings.path;
+  }
+
+  /**
+   * Remove the generated workspace settings file. The daemon calls this on
+   * shutdown; the file carries credential hooks and must not be left behind.
+   * Safe to call when nothing was generated, and safe to call twice.
+   */
+  dispose() {
+    const generated = this.#workspaceSettings;
+    this.#workspaceSettings = null;
+    try {
+      generated?.cleanup?.();
+    } catch (err) {
+      this.logger.warn(`[Chorus] could not remove the generated workspace settings: ${err}`);
+    }
+  }
+
   async #wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage, onChild }, diagnostics) {
     const id = sessionId;
 
@@ -664,7 +828,21 @@ export class ClaudeSpawner {
     }
 
     assertConfiguredShimArgs(claudePath, this.cliConfig.args, this.platform);
-    const args = [...buildArgs({ sessionId: id, isNew, mcpConfigPath, permissionMode: this.permissionMode }), ...this.cliConfig.args];
+    let settingsPath;
+    if (this.permissionMode === "workspace") {
+      try {
+        settingsPath = this.#workspaceSettingsPath();
+      } catch (err) {
+        // No credentials, or an unreadable override. Fail the wake with the
+        // reason: a workspace wake that cannot authenticate retries 403 until it
+        // is killed, which must not look like a hang.
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`[Chorus] ${message}`);
+        return { sessionId: typeof id === "string" ? id : "", backendSessionId: null, exitCode: null, isNew: Boolean(isNew),
+          wakeError: diagnostics.build({ kind: "startup", message }) };
+      }
+    }
+    const args = [...buildArgs({ sessionId: id, isNew, mcpConfigPath, permissionMode: this.permissionMode, settingsPath }), ...this.cliConfig.args];
     // On Windows, a .cmd/.bat shim must be run via cmd.exe /c (CreateProcess
     // can't exec a script directly). resolveSpawnCommand keeps shell:false and
     // passes argv as an array — no shell injection surface either way.
@@ -750,6 +928,12 @@ export class ClaudeSpawner {
       let observedSessionId = id;
       let terminalSeen = false;
       let terminalFailed = false;
+      // Verify the tool registry the moment the CLI announces it. The init frame
+      // precedes any model turn, so an abort here lands before the woken agent can
+      // act — without reordering prompt delivery, which a dozen flows (interrupt,
+      // control frames, fixture replay) rely on happening right after spawn.
+      // Only "chorus" verifies; yolo has nothing to check.
+      let enforcementChecked = this.permissionMode === "yolo";
 
       child.stdout?.setEncoding?.("utf8");
       child.stdout?.on("data", (chunk) => {
@@ -758,6 +942,18 @@ export class ClaudeSpawner {
           String(chunk),
           (obj) => {
             if (obj && typeof obj.session_id === "string") observedSessionId = obj.session_id;
+            if (!enforcementChecked && obj?.type === "system" && obj?.subtype === "init") {
+              enforcementChecked = true;
+              const { verdict, message } = describeToolEnforcement(obj, this.permissionMode);
+              if (message) this.logger.warn(`[Chorus] ${message}`);
+              if (verdict === "violated" && !channel.stopping && !channel.exited) {
+                diagnostics.fail(message, "startup");
+                // Abort before the model's first turn: close stdin so the CLI ends
+                // the conversation, and drop the frame instead of forwarding it.
+                channel.closeStdin();
+                return;
+              }
+            }
             if (obj?.type === "result" && !terminalSeen) {
               terminalSeen = true;
               terminalFailed = obj.is_error === true || (typeof obj.subtype === "string" && obj.subtype.startsWith("error"));

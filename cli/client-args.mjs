@@ -65,6 +65,7 @@ export function parseClientFlags(argv) {
       if (typeof value === "string") (out.browseRoot ??= []).push(value);
     }
     else if (a === "--chorus-only") out.chorusOnly = true;
+    else if (a === "--workspace") out.workspace = true;
     else if (a === "--verbose") out.verbose = true;
     else if (a === "-d" || a === "--detach") out.detach = true;
     else if (a === "--force") out.force = true;
