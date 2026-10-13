@@ -1445,6 +1445,17 @@ describe("ClaudeSpawner enforcement check on the init frame", () => {
     expect(onMessage).not.toHaveBeenCalled();
   });
 
+  it("a synchronously throwing killer is logged, not thrown into the stdout handler", async () => {
+    const { log, logger } = recordingLogger();
+    const killProcessTreeFn = vi.fn(() => { throw new Error("boom"); });
+    const { child, onMessage, promise } = startWake({ logger, spawnerOpts: { killProcessTreeFn } });
+    expect(() => child.emitInit([...CHORUS_TOOLS, "Bash"])).not.toThrow();
+    child.emit("close", null);
+    await promise;
+    await vi.waitFor(() => expect(log.warn.join("\n")).toMatch(/killing the violating claude process failed: Error: boom/));
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
   it("POSIX: the real killer SIGKILLs the process group at once, skipping the protocol interrupt", async () => {
     const signals = [];
     const killImpl = vi.fn((pid, signal) => { signals.push({ pid, signal }); });

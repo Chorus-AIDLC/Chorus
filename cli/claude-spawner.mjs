@@ -881,11 +881,13 @@ export class ClaudeSpawner {
                 // Force-kill straight away: skip the stop hook (its interrupt
                 // request and graceful window would let the turn keep running) and
                 // SIGINT. POSIX: SIGKILL to the process group; Windows: taskkill /T /F.
-                this.killProcessTreeFn(child, {
+                // Promise.try-style: a synchronous or throwing killer must not
+                // escape into the stdout handler.
+                new Promise((resolveKill) => resolveKill(this.killProcessTreeFn(child, {
                   skipStopHook: true, forceOnly: true, sigintTimeoutMs: 0,
                   cleanupDeadline: Date.now() + VIOLATION_KILL_BUDGET_MS,
                   platform: this.platform, logger: this.logger,
-                }).then((outcome) => {
+                }))).then((outcome) => {
                   if (outcome?.cleanupFailed) this.logger.warn("[Chorus] could not confirm the violating claude process tree was killed");
                 }, (err) => this.logger.warn(`[Chorus] killing the violating claude process failed: ${err}`));
                 channel.closeStdin(); // no further input either way
