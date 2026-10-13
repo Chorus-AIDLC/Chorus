@@ -431,9 +431,9 @@ Never restore over the original project. Choose a **new unused** project name an
 RESTORE_PROJECT=chorus-restore-rehearsal
 RESTORE_ENV="$PRIVATE_DIR/restore.env"
 test ! -e "$RESTORE_ENV"
-cp "$BACKUP_DIR/env" "$RESTORE_ENV"
+umask 077
+sed 's/^CHORUS_PORT=.*/CHORUS_PORT=18637/' "$BACKUP_DIR/env" > "$RESTORE_ENV"
 chmod 600 "$RESTORE_ENV"
-sed -i 's/^CHORUS_PORT=.*/CHORUS_PORT=18637/' "$RESTORE_ENV"
 restore_dc() {
   docker compose --project-name "$RESTORE_PROJECT" --env-file "$RESTORE_ENV" \
     -f "$REPO/deploy/self-host/compose.yml" \

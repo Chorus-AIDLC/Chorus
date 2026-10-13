@@ -76,6 +76,12 @@ if [ -z "$NONINTERACTIVE" ]; then
     read -rp "Super admin email (required): " ADMIN_EMAIL
   fi
   if [ -z "$DRY_RUN" ]; then
+    terminal_settings="$(stty -g)"
+    trap 'stty "$terminal_settings"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    stty -echo
     if [ -z "$LOGIN_PASSWORD" ]; then
       IFS= read -rsp "Ordinary login password (hidden): " LOGIN_PASSWORD
       printf '\n'
@@ -91,6 +97,9 @@ if [ -z "$NONINTERACTIVE" ]; then
       [ "$ADMIN_PASSWORD_INPUT" = "$confirmed_password" ] || fail "Super admin password confirmation does not match"
     fi
     unset confirmed_password
+    stty "$terminal_settings"
+    trap - EXIT HUP INT TERM
+    unset terminal_settings
   fi
   if [ -z "$HTTPS_ENABLED" ]; then
     read -rp "Also enable self-signed LAN HTTPS? [y/N]: " https_answer

@@ -508,6 +508,13 @@ passed. Added macOS CI runs the installer/migration contract suites with system 
 OpenSSL and BSD tools; Docker calls there are mocked. Its result is tracked on the PR,
 not evidence of a full Docker Desktop deployment or migration rehearsal.
 
+The first native run used Bash **3.2.57** and LibreSSL **3.3.6** and exposed a
+password-prompt echo race in `read -s`. The installer now explicitly disables echo
+before presenting password prompts and restores the original terminal state on
+success, mismatch, EOF and HUP/INT/TERM. The expanded **145-test installer suite**
+passes on Linux, including four new interruption/restoration cases. The bilingual
+restore example also avoids GNU-only `sed -i`. Native CI is rerun on the fix.
+
 The explicit supported override list (`https.yml`, `pg17.yml`, `lan-https.yml`) and
 isolated `httpd:2.4-alpine` htpasswd dependency remain deliberate, bounded mechanisms;
 generic override discovery and a different bcrypt implementation are not part of

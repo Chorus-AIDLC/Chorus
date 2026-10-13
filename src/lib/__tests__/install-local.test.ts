@@ -80,9 +80,9 @@ if (command === 'aws') console.log(args[0] === 'configure' ? 'us-east-1' : '0000
     });
   }
 
-  function runInteractive(inputs: string[], overrides: Partial<NodeJS.ProcessEnv> = {}, args = [...localArgs(), "--image", image]) {
+  function runInteractive(inputs: (string | { signal: "SIGHUP" | "SIGINT" | "SIGTERM" } | { eof: true })[], overrides: Partial<NodeJS.ProcessEnv> = {}, args = [...localArgs(), "--image", image]) {
     const driver = `
-import json, os, pty, re, select, subprocess, sys, termios, time
+import json, os, pty, re, select, signal, subprocess, sys, termios, time
 inputs = json.load(sys.stdin)
 master, slave = pty.openpty()
 process = subprocess.Popen(["bash"] + sys.argv[1:], stdin=slave, stdout=slave, stderr=slave)
@@ -100,13 +100,20 @@ try:
                 if len(hidden) >= len(inputs):
                     raise RuntimeError("Unexpected extra credential prompt")
                 hidden.append(not bool(termios.tcgetattr(slave)[3] & termios.ECHO))
-                os.write(master, (inputs[len(hidden) - 1] + "\\n").encode())
+                response = inputs[len(hidden) - 1]
+                if isinstance(response, dict):
+                    if "signal" in response:
+                        os.kill(process.pid, getattr(signal, response["signal"]))
+                    else:
+                        os.write(master, b"\\x04")
+                else:
+                    os.write(master, (response + "\\n").encode())
                 pending = ""
         elif process.poll() is not None:
             break
     if process.poll() is None:
         raise RuntimeError("Interactive installer timed out")
-    print(json.dumps({"status": process.returncode, "output": output, "hidden": hidden}))
+    print(json.dumps({"status": process.returncode, "output": output, "hidden": hidden, "echoRestored": bool(termios.tcgetattr(slave)[3] & termios.ECHO)}))
 finally:
     if process.poll() is None:
         process.kill()
@@ -120,7 +127,9 @@ finally:
     });
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
-    return JSON.parse(result.stdout) as { status: number; output: string; hidden: boolean[] };
+    const parsed = JSON.parse(result.stdout) as { status: number; output: string; hidden: boolean[]; echoRestored: boolean };
+    expect(parsed.echoRestored, parsed.output).toBe(true);
+    return parsed;
   }
 
   function calls(): { command: string; args: string[]; secretOverride?: boolean; passwordOverride?: boolean; imageOverride?: boolean; adminOverride?: boolean }[] {
@@ -446,6 +455,18 @@ finally:
     expect(result.output).not.toContain(adminPassword);
     expect(readFileSync(envPath(), "utf8")).toContain(`DEFAULT_PASSWORD="${password}"\n`);
     expect(readFileSync(envPath(), "utf8")).toContain(adminHash);
+  });
+
+  it.skipIf(!canUsePty).each([
+    { eof: true } as const, { signal: "SIGHUP" } as const,
+    { signal: "SIGINT" } as const, { signal: "SIGTERM" } as const,
+  ])("restores terminal echo when password entry is interrupted (%j)", response => {
+    const result = runInteractive([response]);
+    expect(result.status).not.toBe(0);
+    expect(result.hidden).toEqual([true]);
+    expect(calls()).toEqual([]);
+    expect(existsSync(envPath())).toBe(false);
+    expect(existsSync(wrapperPath())).toBe(false);
   });
 
   it.skipIf(!canUsePty)("offers HTTPS in interactive setup and includes the selected proxy", () => {
