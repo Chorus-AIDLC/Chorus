@@ -2,7 +2,16 @@
 
 **`chorusaidlc/chorus-app`** — The official Docker image for [Chorus](https://github.com/Chorus-AIDLC/Chorus), an AI Agent & Human collaboration platform implementing the AI-DLC (AI-Driven Development Lifecycle) workflow.
 
+For a portable Linux or macOS + Docker Desktop deployment with PostgreSQL, private credentials, trusted-LAN HTTP, optional self-signed LAN HTTPS or a Cloudflare Named Tunnel, and backup/restore instructions, use the **[Self-host guide](SELF_HOST.md)** / **[中文自托管指南](SELF_HOST.zh.md)**. Those guides use the isolated `deploy/self-host/` Compose files; the examples below remain general image examples, not hardened public-deployment defaults.
+
 ## Quick Start
+
+**Existing PG16 volumes, including development `pnpm docker:db`:** migrate before
+starting the new PG17 default. Use the explicit [offline migration script and cutover
+instructions](POSTGRES_UPGRADE.md) / [中文](POSTGRES_UPGRADE.zh.md). The helper keeps
+the original volume intact; ordinary Compose startup does not convert it. The script
+supports GNU/Linux and macOS host tools (Bash 3.2, BSD stat and shasum). Native macOS
+CI mocks Docker; full Docker Desktop deployment/migration is not yet verified.
 
 ```bash
 docker pull chorusaidlc/chorus-app:latest
@@ -56,6 +65,8 @@ The embedded mode:
 
 For production with multiple replicas, use Docker Compose with external PostgreSQL and Redis.
 
+**Existing PostgreSQL 16 installations:** PostgreSQL 17 cannot open a PostgreSQL 16 data volume. Do not simply change the image and restart against the existing volume. Keep the source on PostgreSQL 16, take a logical backup with `pg_dump`, and restore with `pg_restore` into a fresh volume on PostgreSQL 17 in an isolated Compose project before validating and planning cutover. Preserve the original volume, app signing material, and private configuration for recovery; never run `docker compose down -v` as an upgrade step. See the [self-host backup and restore guide](SELF_HOST.md#6-back-up-and-restore-safely).
+
 Create a `docker-compose.yml`:
 
 ```yaml
@@ -93,7 +104,7 @@ services:
       retries: 5
 
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: chorus
       POSTGRES_PASSWORD: chorus

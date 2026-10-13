@@ -5,6 +5,8 @@ packages
 *.md
 .env
 .env.*
+default_deploy.sh
+default_deploy_local.sh
 !.env.example
 .pglite
 .chorus

@@ -126,7 +126,7 @@ Kanban 看板随 Agent 工作进度自动更新，任务卡片在 To Do → In P
 | 框架 | Next.js 15 (App Router, Turbopack) |
 | 语言 | TypeScript 5 (strict mode) |
 | 前端 | React 19, Tailwind CSS 4, shadcn/ui |
-| 数据 | PostgreSQL 16 + Prisma 7, Redis 7（可选） |
+| 数据 | PostgreSQL 17 + Prisma 7, Redis 7（可选） |
 | Agent 集成 | MCP SDK (HTTP Streamable Transport) |
 | 认证 | OIDC + PKCE / API Key / SuperAdmin |
 | i18n | next-intl (en, zh, ko, ja) |

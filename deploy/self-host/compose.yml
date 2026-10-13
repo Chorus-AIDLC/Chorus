@@ -1,0 +1,44 @@
+services:
+  app:
+    image: ${CHORUS_IMAGE:?Set CHORUS_IMAGE to a tested release tag or digest}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://chorus:${POSTGRES_PASSWORD:?Set a private URL-safe POSTGRES_PASSWORD}@db:5432/chorus?sslmode=disable
+      REDIS_URL: ""
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-}
+      NEXTAUTH_URL: http://localhost:8637
+      COOKIE_SECURE: "true"
+      DEFAULT_USER: ${DEFAULT_USER:?Set a bootstrap login email}
+      DEFAULT_PASSWORD: ${DEFAULT_PASSWORD:?Set a private bootstrap password}
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-}
+      SUPER_ADMIN_PASSWORD_HASH: ${SUPER_ADMIN_PASSWORD_HASH:-}
+    volumes:
+      - app-data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8637/api/health').then(response=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chorus
+      POSTGRES_DB: chorus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a private URL-safe POSTGRES_PASSWORD}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chorus -d chorus"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  app-data:
+  db-data:

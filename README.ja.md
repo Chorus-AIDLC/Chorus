@@ -120,7 +120,7 @@ API キーは **Settings → Agents → Create API Key** から作成します�
 | フレームワーク | Next.js 15 (App Router, Turbopack) |
 | 言語 | TypeScript 5 (strict mode) |
 | フロントエンド | React 19, Tailwind CSS 4, shadcn/ui |
-| データ | PostgreSQL 16 + Prisma 7, Redis 7 (任意) |
+| データ | PostgreSQL 17 + Prisma 7, Redis 7 (任意) |
 | エージェント連携 | MCP SDK (HTTP Streamable Transport) |
 | 認証 | OIDC + PKCE / API Key / SuperAdmin |
 | i18n | next-intl (en, zh, ko, ja) |

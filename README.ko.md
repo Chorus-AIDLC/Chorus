@@ -120,7 +120,7 @@ API 키는 **Settings → Agents → Create API Key**에서 만듭니다. 키는
 | 프레임워크 | Next.js 15 (App Router, Turbopack) |
 | 언어 | TypeScript 5 (strict mode) |
 | 프론트엔드 | React 19, Tailwind CSS 4, shadcn/ui |
-| 데이터 | PostgreSQL 16 + Prisma 7, Redis 7 (optional) |
+| 데이터 | PostgreSQL 17 + Prisma 7, Redis 7 (optional) |
 | 에이전트 연동 | MCP SDK (HTTP Streamable Transport) |
 | 인증 | OIDC + PKCE / API Key / SuperAdmin |
 | i18n | next-intl (en, zh, ko, ja) |
