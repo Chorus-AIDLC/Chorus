@@ -20,6 +20,9 @@ import {
   SESSION_CONFLICT_FAILURE,
   CONTROL_FRAME_TYPES,
   CHORUS_TOOL_DENY_MESSAGE,
+  CHORUS_MODE_DENIED_TOOLS,
+  CHORUS_MODE_EXTRA_TOOLS,
+  describeToolEnforcement,
   UNSUPPORTED_CONTROL_ERROR,
   ClaudeControlChannel,
 } from "../claude-spawner.mjs";
@@ -43,6 +46,9 @@ function makeFakeChild() {
   child.stdout.setEncoding = () => {};
   child.stderr = new EventEmitter();
   child.stderr.setEncoding = () => {};
+  /** Announce a tool registry the way the real CLI does, to exercise the enforcement check. */
+  child.emitInit = (tools) => child.stdout.emit(
+    "data", `${JSON.stringify({ type: "system", subtype: "init", tools })}\n`);
   return child;
 }
 
@@ -74,8 +80,14 @@ describe("buildArgs", () => {
       "/tmp/m.json",
       "--disallowedTools",
       "AskUserQuestion",
-      // default permission mode: allow only Chorus MCP tools through and route
-      // every other permission prompt to the spawner over the control protocol
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      // default permission mode: --tools empties the built-in registry, strict MCP
+      // config keeps the operator's servers out, --allowedTools auto-approves the rest
+      "--tools",
+      "mcp__chorus__*,Task,Agent",
+      "--strict-mcp-config",
       "--allowedTools",
       "mcp__chorus__*",
       "--permission-prompt-tool",
@@ -100,6 +112,47 @@ describe("buildArgs", () => {
     expect(args).not.toContain("--dangerously-skip-permissions");
   });
 
+  it("default permission mode REMOVES tools rather than relying on the allowlist", () => {
+    // The allowlist alone auto-approves; it never restricted. Enforcement has to
+    // come from --tools (which removes) plus an explicit deny of the writers.
+    const args = buildArgs({ sessionId: "s", isNew: true });
+    expect(args).toContain("--strict-mcp-config");
+    expect(args[args.indexOf("--tools") + 1]).toBe("mcp__chorus__*,Task,Agent");
+    const deny = args.slice(args.indexOf("--disallowedTools") + 1, args.indexOf("--tools"));
+    expect(deny).toEqual(["AskUserQuestion", ...CHORUS_MODE_DENIED_TOOLS]);
+  });
+
+  it("the variadic deny list is terminated by a flag, never by a bare value", () => {
+    // --disallowedTools is variadic: whatever follows the last tool name must be a
+    // flag, or it is swallowed as another tool name.
+    for (const mode of ["chorus", "yolo"]) {
+      const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: mode });
+      const after = args[args.indexOf("--disallowedTools") + 1 + (mode === "yolo" ? 1 : 1 + CHORUS_MODE_DENIED_TOOLS.length)];
+      expect(after?.startsWith("--"), `${mode}: ${after}`).toBe(true);
+    }
+  });
+
+  it("every denied tool is rejected by the init-frame allowlist", () => {
+    // Denying a tool and verifying it is gone must not drift apart.
+    for (const tool of CHORUS_MODE_DENIED_TOOLS) {
+      expect(describeToolEnforcement({ type: "system", subtype: "init", tools: [tool] }, "chorus").verdict).toBe("violated");
+    }
+  });
+
+  it("--tools keeps exactly the tools the init-frame allowlist accepts", () => {
+    const tools = buildArgs({ sessionId: "s", isNew: true }).find((a) => a.startsWith("mcp__chorus__*"));
+    expect(tools.split(",")).toEqual(["mcp__chorus__*", ...CHORUS_MODE_EXTRA_TOOLS]);
+    const frame = { type: "system", subtype: "init", tools: ["mcp__chorus__chorus_checkin", ...CHORUS_MODE_EXTRA_TOOLS] };
+    expect(describeToolEnforcement(frame, "chorus").verdict).toBe("ok");
+  });
+
+  it("yolo does not restrict and does not deny the writers", () => {
+    const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: "yolo" });
+    expect(args).not.toContain("--tools");
+    expect(args).not.toContain("--strict-mcp-config");
+    for (const tool of CHORUS_MODE_DENIED_TOOLS) expect(args).not.toContain(tool);
+  });
+
   it("yolo permission mode skips all permissions and drops the allowlist", () => {
     const args = buildArgs({ sessionId: "s", isNew: true, permissionMode: "yolo" });
     expect(args).toContain("--dangerously-skip-permissions");
@@ -121,7 +174,8 @@ describe("buildArgs", () => {
     expect(buildArgs({ sessionId: "sid-4", isNew: false })).toEqual([
       "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
       "--resume", "sid-4",
-      "--disallowedTools", "AskUserQuestion",
+      "--disallowedTools", "AskUserQuestion", "Edit", "Write", "NotebookEdit",
+      "--tools", "mcp__chorus__*,Task,Agent", "--strict-mcp-config",
       "--allowedTools", "mcp__chorus__*", "--permission-prompt-tool", "stdio",
     ]);
   });
@@ -796,10 +850,10 @@ function recordingLogger() {
   };
 }
 
-function startWake({ permissionMode = "chorus", logger = silent, prompt = "PROMPT" } = {}) {
+function startWake({ permissionMode = "chorus", logger = silent, prompt = "PROMPT", spawnerOpts = {} } = {}) {
   const child = makeFakeChild();
   const onMessage = vi.fn();
-  const spawner = new ClaudeSpawner({ claudePath: "/usr/bin/claude", spawnImpl: () => child, logger, permissionMode, platform: "linux" });
+  const spawner = new ClaudeSpawner({ claudePath: "/usr/bin/claude", spawnImpl: () => child, logger, permissionMode, platform: "linux", ...spawnerOpts });
   const promise = spawner.wake({ prompt, sessionId: SID, isNew: true, onMessage });
   return { child, onMessage, promise };
 }
@@ -1345,5 +1399,172 @@ describe("ClaudeSpawner protocol stop hook (interrupt)", () => {
     expect(log.warn).toEqual(["[Chorus] claude control request can_use_tool has no request_id; not answered"]);
     child.emit("close", 0);
     await promise;
+  });
+});
+
+describe("ClaudeSpawner enforcement check on the init frame", () => {
+  const CHORUS_TOOLS = ["Task", "mcp__chorus__chorus_checkin", "mcp__chorus__chorus_get_task"];
+
+  it("aborts a chorus wake whose registry still has Bash: kills it, forwards nothing, says why", async () => {
+    const { log, logger } = recordingLogger();
+    const killProcessTreeFn = vi.fn(async () => ({ killed: true }));
+    const { child, onMessage, promise } = startWake({ permissionMode: "chorus", logger, spawnerOpts: { killProcessTreeFn } });
+    child.emitInit([...CHORUS_TOOLS, "Bash"]);
+    // What the CLI would do next if nothing stopped it: run Bash and finish the turn.
+    emitFrames(child, [
+      { type: "assistant", session_id: SID, message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "echo leaked" } }] } },
+      { type: "user", session_id: SID, message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "leaked" }] } },
+      { type: "result", subtype: "success", session_id: SID, result: "done" },
+    ]);
+    child.emit("close", null);
+    const result = await promise;
+
+    expect(killProcessTreeFn).toHaveBeenCalledTimes(1);
+    expect(killProcessTreeFn.mock.calls[0][0]).toBe(child);
+    expect(killProcessTreeFn.mock.calls[0][1]).toMatchObject({ skipStopHook: true, forceOnly: true, sigintTimeoutMs: 0, platform: "linux" });
+    // Nothing from init onward reaches the daemon — not the tool_use, not the result.
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(child.stdin.end).toHaveBeenCalled();
+    expect(log.warn.join("\n")).toContain("Bash");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.wakeError?.kind).toBe("startup");
+    expect(result.wakeError?.message).toMatch(/not being enforced/);
+    expect(result.wakeError?.message).toContain("Bash");
+  });
+
+  it("drops frames that arrive in the same stdout chunk as a violating init", async () => {
+    const killProcessTreeFn = vi.fn(async () => ({ killed: true }));
+    const { child, onMessage, promise } = startWake({ spawnerOpts: { killProcessTreeFn } });
+    child.stdout.emit("data", [
+      { type: "system", subtype: "init", tools: [...CHORUS_TOOLS, "SendMessage"] },
+      { type: "assistant", session_id: SID, message: { content: [{ type: "tool_use", id: "t1", name: "SendMessage", input: {} }] } },
+    ].map((f) => `${JSON.stringify(f)}\n`).join(""));
+    child.emit("close", null);
+    await promise;
+    expect(killProcessTreeFn).toHaveBeenCalledTimes(1);
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it("a synchronously throwing killer is logged, not thrown into the stdout handler", async () => {
+    const { log, logger } = recordingLogger();
+    const killProcessTreeFn = vi.fn(() => { throw new Error("boom"); });
+    const { child, onMessage, promise } = startWake({ logger, spawnerOpts: { killProcessTreeFn } });
+    expect(() => child.emitInit([...CHORUS_TOOLS, "Bash"])).not.toThrow();
+    child.emit("close", null);
+    await promise;
+    await vi.waitFor(() => expect(log.warn.join("\n")).toMatch(/killing the violating claude process failed: Error: boom/));
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it("POSIX: the real killer SIGKILLs the process group at once, skipping the protocol interrupt", async () => {
+    const signals = [];
+    const killImpl = vi.fn((pid, signal) => { signals.push({ pid, signal }); });
+    const killProcessTreeFn = (c, o) => killProcessTree(c, { ...o, killImpl });
+    const { child, promise } = startWake({ spawnerOpts: { killProcessTreeFn } });
+    child.pid = 4242;
+    expect(getProcessStopHook(child)).toBeTypeOf("function"); // the protocol stop path exists, and is bypassed
+    const writesBefore = child.stdin.writes.length;
+    child.emitInit([...CHORUS_TOOLS, "Bash"]);
+    await vi.waitFor(() => expect(signals).toContainEqual({ pid: -4242, signal: "SIGKILL" }));
+    expect(signals.some((x) => x.signal === "SIGINT")).toBe(false);
+    const written = child.stdin.writes.slice(writesBefore).map((l) => JSON.parse(l));
+    expect(written.some((f) => f.type === "control_request" && f.request?.subtype === "interrupt")).toBe(false);
+    child.emit("close", null);
+    await promise;
+  });
+
+  it("Windows: the real killer runs taskkill /T /F even though a stop hook is registered", async () => {
+    const tkCalls = [];
+    const tkSpawn = vi.fn((cmd, args) => {
+      tkCalls.push([cmd, args]);
+      const tk = new EventEmitter();
+      queueMicrotask(() => tk.emit("exit", 0, null));
+      return tk;
+    });
+    const killProcessTreeFn = (c, o) => killProcessTree(c, { ...o, spawnImpl: tkSpawn });
+    const { child, promise } = startWake({ spawnerOpts: { killProcessTreeFn, platform: "win32" } });
+    child.pid = 777;
+    expect(getProcessStopHook(child)).toBeTypeOf("function");
+    child.emitInit([...CHORUS_TOOLS, "Bash"]);
+    await vi.waitFor(() => expect(tkCalls).toContainEqual(["taskkill", ["/PID", "777", "/T", "/F"]]));
+    child.emit("close", null);
+    await promise;
+  });
+
+  it("lets a clean chorus registry through and forwards the frame", async () => {
+    const { log, logger } = recordingLogger();
+    const killProcessTreeFn = vi.fn();
+    const { child, onMessage, promise } = startWake({ permissionMode: "chorus", logger, spawnerOpts: { killProcessTreeFn } });
+    child.emitInit(CHORUS_TOOLS);
+    emitFrames(child, [{ type: "result", subtype: "success", session_id: SID }]);
+    child.emit("close", 0);
+    await promise;
+
+    expect(killProcessTreeFn).not.toHaveBeenCalled();
+    expect(log.warn.join("\n")).not.toMatch(/not being enforced|could not be verified/);
+    expect(onMessage.mock.calls.flat().some((f) => f?.subtype === "init")).toBe(true);
+  });
+
+  it("does not check a yolo wake even when Bash is present", async () => {
+    const { log, logger } = recordingLogger();
+    const { child, promise } = startWake({ permissionMode: "yolo", logger });
+    child.emitInit(["Bash", "Write"]);
+    emitFrames(child, [{ type: "result", subtype: "success", session_id: SID }]);
+    child.emit("close", 0);
+    await promise;
+    expect(log.warn.join("\n")).not.toMatch(/not being enforced|could not be verified/);
+  });
+});
+
+describe("describeToolEnforcement", () => {
+  const chorusOnlyTools = ["Task", "Agent", "mcp__chorus__chorus_checkin", "mcp__chorus__chorus_get_task"];
+  const init = (tools) => ({ type: "system", subtype: "init", ...(tools === undefined ? {} : { tools }) });
+
+  it("passes a registry of only Chorus MCP tools plus subagent dispatch", () => {
+    expect(describeToolEnforcement(init(chorusOnlyTools), "chorus")).toEqual({ verdict: "ok", message: null });
+  });
+
+  it("names every leaked tool and points at the explicit yolo opt-in", () => {
+    const { verdict, message } = describeToolEnforcement(init([...chorusOnlyTools, "Bash", "Write"]), "chorus");
+    expect(verdict).toBe("violated");
+    expect(message).toContain("Bash");
+    expect(message).toContain("Write");
+    expect(message).not.toContain("mcp__chorus__");
+    expect(message).toContain("--yolo");
+  });
+
+  it("reports an unreadable registry without taking the wake down", () => {
+    // A check, not a gate: an older CLI that omits the field must still work.
+    for (const frame of [null, init(undefined), init("Bash")]) {
+      const { verdict, message } = describeToolEnforcement(frame, "chorus");
+      expect(verdict).toBe("unverified");
+      expect(message).toContain("could not be verified");
+    }
+  });
+
+  it("never blocks a yolo wake, whatever the registry says", () => {
+    for (const frame of [null, init(["Bash", "Write"]), init(undefined)]) {
+      expect(describeToolEnforcement(frame, "yolo")).toEqual({ verdict: "ok", message: null });
+    }
+  });
+
+  it("is an allowlist: any tool outside it is a violation, however harmless it looks", () => {
+    for (const tool of ["SendMessage", "EnterWorktree", "DesignSync", "mcp__other__x", "Read", "Glob", "ToolSearch", "mcp__chorusx__y"]) {
+      const { verdict, message } = describeToolEnforcement(init([...chorusOnlyTools, tool]), "chorus");
+      expect(verdict, tool).toBe("violated");
+      expect(message).toContain(tool);
+    }
+  });
+
+  it("counts a non-string registry entry as leaked", () => {
+    for (const entry of [42, null, { name: "Bash" }]) {
+      expect(describeToolEnforcement(init([...chorusOnlyTools, entry]), "chorus").verdict).toBe("violated");
+    }
+  });
+
+  it("catches the real-world regression: the allowlist present but Bash still there", () => {
+    // The exact shape observed under Claude Code 2.1.295 before the fix.
+    const observed = ["Task", "CronDelete", "CronList", "Edit", "Glob", "Grep", "Read", "Write", "Bash"];
+    expect(describeToolEnforcement(init(observed), "chorus").verdict).toBe("violated");
   });
 });
