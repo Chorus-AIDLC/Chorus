@@ -8,6 +8,7 @@ import { assertAccessConfirmation } from "@/services/project-access-preview.serv
 import { getGroupVisibilityPreview, getProjectGroupMovePreview } from "@/services/project-group-preview.service";
 import { auditGroup, groupAuth, lockGroups, lockProjects, materializeGroupGrants, publishGroupAccess } from "@/services/project-group-mutation.service";
 import { firstCompanyUser } from "@/services/project-group-implicit-admin.service";
+import { detachIdeaLineageForProjects } from "@/services/idea.service";
 export { getGroupVisibilityPreview, getProjectGroupMovePreview } from "@/services/project-group-preview.service";
 
 async function groupProjectWhere(companyUuid: string, auth?: AuthContext) {
@@ -199,8 +200,10 @@ export async function deleteProjectGroup(companyUuid: string, groupUuid: string,
       if (!deleteProjects) await materializeGroupGrants(tx, actor, groupUuid, project.uuid);
     }
     await auditGroup(tx, actor, groupUuid, projects.map((p) => p.uuid), "group_deleted", { deleteProjects });
-    if (deleteProjects) await tx.project.deleteMany({ where: { companyUuid, groupUuid } });
-    else await tx.project.updateMany({ where: { companyUuid, groupUuid }, data: { groupUuid: null } });
+    if (deleteProjects) {
+      await detachIdeaLineageForProjects(tx, companyUuid, projects.map((p) => p.uuid));
+      await tx.project.deleteMany({ where: { companyUuid, groupUuid } });
+    } else await tx.project.updateMany({ where: { companyUuid, groupUuid }, data: { groupUuid: null } });
     await tx.projectGroup.delete({ where: { uuid: groupUuid } });
     return projects.map((p) => p.uuid);
   });

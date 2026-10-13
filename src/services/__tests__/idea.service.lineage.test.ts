@@ -67,6 +67,7 @@ import {
   getDescendantUuids,
   moveIdea,
   deleteIdea,
+  detachIdeaLineageForProjects,
   rollupThemeDerivedStatus,
 } from "@/services/idea.service";
 
@@ -267,6 +268,26 @@ describe("getDescendantUuids", () => {
     mockPrisma.idea.findMany.mockResolvedValueOnce([]);
     const res = await getDescendantUuids("leaf", COMPANY);
     expect(res).toEqual([]);
+  });
+});
+
+describe("detachIdeaLineageForProjects", () => {
+  it("nulls parentUuid on every company-scoped child whose parent is in the given projects", async () => {
+    mockPrisma.idea.updateMany.mockResolvedValueOnce({ count: 4 });
+
+    expect(await detachIdeaLineageForProjects(mockPrisma as never, COMPANY, [PROJECT, "project-3333"])).toBe(4);
+
+    // Filtered by the parent's project, not the child's — a child in another
+    // project that points into a deleted project is detached too.
+    expect(mockPrisma.idea.updateMany).toHaveBeenCalledWith({
+      where: { companyUuid: COMPANY, parentUuid: { not: null }, parent: { projectUuid: { in: [PROJECT, "project-3333"] } } },
+      data: { parentUuid: null },
+    });
+  });
+
+  it("is a no-op without queries for an empty project list", async () => {
+    expect(await detachIdeaLineageForProjects(mockPrisma as never, COMPANY, [])).toBe(0);
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
   });
 });
 

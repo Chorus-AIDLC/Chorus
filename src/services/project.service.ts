@@ -5,6 +5,7 @@
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import * as activityService from "@/services/activity.service";
+import { detachIdeaLineageForProjects } from "@/services/idea.service";
 import {
   accessibleProjectWhere,
   accessibleProjectUuids,
@@ -302,6 +303,7 @@ export async function deleteProject(companyUuid: string, uuid: string, auth?: Au
   await prisma.$transaction(async (tx) => {
     await lockProjectManagement(tx, companyUuid, uuid, auth);
     const locked = await tx.project.findFirst({ where: { companyUuid, uuid }, select: { groupUuid: true } });
+    await detachIdeaLineageForProjects(tx, companyUuid, [project.uuid]);
     await tx.project.delete({ where: { uuid: project.uuid } });
     if (locked?.groupUuid) {
       await tx.projectGroup.update({ where: { uuid: locked.groupUuid }, data: { accessVersion: { increment: 1 } } });

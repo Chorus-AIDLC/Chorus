@@ -1024,6 +1024,27 @@ export async function deleteIdea(uuid: string) {
   return idea;
 }
 
+// Detach lineage ahead of a project-level delete. Project → Idea cascades, but
+// the IdeaLineage self-relation is Restrict (emulated by Prisma under
+// relationMode = "prisma"), so cascading into a parent idea that still has
+// children fails with P2014. Orphan every child whose parent lives in one of
+// the projects being deleted — wherever the child itself lives — mirroring
+// deleteIdea's weak-lineage semantics. Must run inside the caller's delete
+// transaction, after its permission checks, so a rejected/failed delete rolls
+// this back too.
+export async function detachIdeaLineageForProjects(
+  tx: Pick<typeof prisma, "idea">,
+  companyUuid: string,
+  projectUuids: string[],
+): Promise<number> {
+  if (projectUuids.length === 0) return 0;
+  const { count } = await tx.idea.updateMany({
+    where: { companyUuid, parentUuid: { not: null }, parent: { projectUuid: { in: projectUuids } } },
+    data: { parentUuid: null },
+  });
+  return count;
+}
+
 // Move Idea to a different project — performs the full AI-DLC cascade migration.
 //
 // One Prisma $transaction updates the entire pipeline tail in lock-step:
