@@ -99,6 +99,12 @@ Both CLIs install the **same** plugin package and the same `hooks.json`. A TRAE-
 
 *Alternative rejected:* patching the installed plugin cache under `~/.trae/plugins/cache`. A marketplace upgrade overwrites it.
 
+**Resolved (unknowns #3, #5 — probed on traecli 0.209.1 with an isolated `TRAE_HOME`):**
+- traecli exports **no** TRAE-specific env var to hook processes (no `TRAE_CLI`; `TRAE_HOME` is not exported either). It exports `PLUGIN_ROOT`, `PLUGIN_DATA`, `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`; `PLUGIN_ROOT` is the canonical (symlink-resolved) path `<trae-home>/plugins/cache/<marketplace>/chorus/<version>[+reinstall…]`. The marker is therefore: `PLUGIN_ROOT` (or the dispatcher's own parent dir when unset) resolves, via `pwd -P`, inside `${TRAE_HOME:-$HOME/.trae}/plugins/`. `CHORUS_HOOK_RUNTIME=trae|codex` forces the choice for tests/manual runs. Codex 0.162.1 was re-checked: it runs `run-hook.sh on-session-start` (command with an argument) and still selects the Codex script.
+- SessionStart stdin is Codex-shaped (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`, `permission_mode`, `source`). Hooks run only when trusted (or with `--dangerously-bypass-hook-trust`).
+- PostToolUse: `tool_name` is `mcp__chorus__<tool>`, so the existing matchers work. It fires only on success; failed calls raise `PostToolUseFailure`. The top-level `tool_response` is sometimes a **JSON-encoded string** (seen for code-mode/nested calls) and sometimes an object (direct calls). There is also a nested `post_tool_use.{tool_name,tool_input,tool_response}`. On the string shape the Codex `jq` filter errors out, and the error also kills the `tool_input` fallback. Result: submit_proposal / submit_for_verify lose the UUID, and verify-task exits silently. TRAE also has no `spawn_agent`; its sub-agent tool is `Agent` (plus `Skill` and `SendMessage`).
+- Copies: `hooks/trae/{on-session-start,on-post-submit-proposal,on-post-submit-for-verify,on-post-verify-task}.sh` plus the shared parser `hooks/trae/trae-event.sh`. `chorus-mcp-call.sh` works unchanged (the server ignores clientInfo), so there is no copy for it. Tests: `hooks/tests/test-run-hook.sh` and `hooks/tests/test-trae-hooks.sh`.
+
 ### D7. Docs and UI (public)
 
 - `AgentInstallGuide.tsx`: TRAE tab (`chorus agents add --agents trae`, `chorus daemon --agent trae`), using shadcn components and semantic tokens. Check light and dark.

@@ -26,6 +26,7 @@
 // transcript, and the snapshot build + serialized fire-and-forget chaining for both.
 
 import { createDaemonRestClient } from "./daemon-rest-client.mjs";
+import { codexFamilyProfile } from "./codex-family.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -238,6 +239,19 @@ export const CODEX_USAGE_SOURCE = "codex";
 export const DSH_USAGE_SOURCE = "dsh";
 
 /**
+ * The usage `source` for the Codex-dialect `turn.completed` frame emitted by the
+ * Codex App Server spawner, driven by the backend's Codex-family profile: Codex →
+ * "codex", TRAE CLI → "trae" (CODEX_FAMILY[agentType].clientType, which equals the
+ * daemon's self-reported clientType). Non-family / unknown types keep the Codex
+ * default, so existing callers that pass no agent type are unchanged.
+ * @param {string|undefined} agentType
+ * @returns {string}
+ */
+export function codexUsageSourceFor(agentType) {
+  return codexFamilyProfile(agentType)?.clientType ?? CODEX_USAGE_SOURCE;
+}
+
+/**
  * Coerce a value to a non-negative integer token count, or null. Guards against a
  * CLI that ever emits a string / float / negative — a garbled count becomes null
  * (renders no badge) rather than a bogus number. Never throws.
@@ -345,9 +359,14 @@ export function extractTurnUsage(obj) {
  * against CLI drift).
  *
  * @param {any} obj  One parsed stream NDJSON object.
+ * @param {{ source?: string }} [opts]  `source` = usage source tag (default
+ *   CODEX_USAGE_SOURCE); the transcript hooks pass the backend profile's value (see
+ *   codexUsageSourceFor). An options object (not a positional string) so
+ *   `frames.map(extractCodexTurnUsage)` keeps the default source.
  * @returns {TokenUsage | null}
  */
-export function extractCodexTurnUsage(obj) {
+export function extractCodexTurnUsage(obj, opts) {
+  const source = typeof opts?.source === "string" && opts.source ? opts.source : CODEX_USAGE_SOURCE;
   if (!obj || typeof obj !== "object" || obj.type !== "turn.completed") return null;
   const usage = obj.usage;
   if (!usage || typeof usage !== "object") return null;
@@ -360,7 +379,7 @@ export function extractCodexTurnUsage(obj) {
     cacheCreationTokens: toTokenInt(usage.cache_write_input_tokens),
     cacheReadTokens: toTokenInt(usage.cached_input_tokens),
     model: null, // Codex stream carries no model id on any event
-    source: CODEX_USAGE_SOURCE,
+    source,
   };
 }
 
@@ -543,6 +562,9 @@ export function extractTranscriptText(obj) {
  *                                 retry waits `retryBackoffMs * N`.
  *   sleepImpl?: (ms: number) => Promise<void>,  Injectable backoff sleep for tests (default
  *                                 a real setTimeout-based delay).
+ *   agentType?: string,           Daemon backend (claude-code | codex | trae | …). Drives
+ *                                 the usage source of Codex-dialect frames via its
+ *                                 Codex-family profile (trae → "trae"); default "codex".
  * }} opts
  * @returns {UploadHooks}
  */
@@ -572,6 +594,7 @@ export function createTranscriptUploadHooks(opts) {
 
 function createTurnTranscriptUploadHooks(opts) {
   const logger = opts.logger ?? NOOP_LOGGER;
+  const codexUsageSource = codexUsageSourceFor(opts.agentType);
   const batchDelayMs = opts.batchDelayMs ?? 50;
   const setTimeoutImpl = opts.setTimeoutImpl ?? setTimeout;
   const clearTimeoutImpl = opts.clearTimeoutImpl ?? clearTimeout;
@@ -729,7 +752,7 @@ function createTurnTranscriptUploadHooks(opts) {
       try {
         const usage =
           extractTurnUsage(message) ??
-          extractCodexTurnUsage(message) ??
+          extractCodexTurnUsage(message, { source: codexUsageSource }) ??
           extractDshTurnUsage(message);
         if (usage) lastUsage = usage;
       } catch (err) {

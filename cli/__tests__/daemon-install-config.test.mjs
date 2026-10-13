@@ -268,13 +268,13 @@ describe("resolveInstallAgent", () => {
 
   it("no longer offers the (de-listed) dsh backend in the interactive menu", async () => {
     // dsh daemon backend is temporarily offline: it is absent from AGENT_MENU.
-    // The numbered menu is [claude-code, codex, kiro, pi] (pi is a wakeable backend
-    // now, occupying slot 4), so slot "5" is out of range → falls back to the
+    // The numbered menu is [claude-code, codex, kiro, pi, trae] (pi and trae are
+    // wakeable backends, slots 4 and 5), so slot "6" is out of range → falls back to the
     // claude-code default, and the dsh probe is never consulted. (resolveDshPath is
     // retained dormant for when the backend is brought back online.)
     const findDsh = vi.fn(() => "/opt/dsh");
     const o = baseOpts({
-      prompt: vi.fn(async () => "5"),
+      prompt: vi.fn(async () => "6"),
       probes: {
         resolveClaudePath: () => "/bin/claude",
         resolveCodexPath: () => "/bin/codex",

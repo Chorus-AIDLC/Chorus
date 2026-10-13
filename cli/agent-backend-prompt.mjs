@@ -36,12 +36,16 @@ import { KNOWN_AGENTS } from "./daemon-agent.mjs";
  * pi IS advertised: it is a first-class wakeable backend (PiSpawner /
  * add-daemon-pi-backend), unlike the dormant dsh, so it sits in the numbered
  * menu alongside claude-code / codex / kiro.
+ *
+ * trae (TRAE CLI, a Codex fork driven through the same App Server spawner via
+ * CODEX_FAMILY.trae) is advertised last, after pi.
  */
 export const AGENT_MENU = [
   { value: "claude-code", label: "Claude Code (default)" },
   { value: "codex", label: "Codex CLI" },
   { value: "kiro", label: "Kiro CLI" },
   { value: "pi", label: "Pi" },
+  { value: "trae", label: "TRAE CLI" },
 ];
 
 /** A non-empty trimmed string, or undefined. */

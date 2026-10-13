@@ -36,13 +36,14 @@ export const TYPE_TO_BINARY = Object.freeze({
   codex: "codex",
   kiro: "kiro-cli",
   pi: "pi",
+  trae: "traecli",
   opencode: "opencode",
   openclaw: "openclaw",
   dsh: "dsh",
 });
 
 /** Human list of accepted --type values, for help + error text. */
-export const SUPPORTED_TYPES = "claude-code, codex, kiro, pi, opencode, openclaw, dsh";
+export const SUPPORTED_TYPES = "claude-code, codex, kiro, pi, trae, opencode, openclaw, dsh";
 
 /**
  * POSIX signal name → number, for the shell `128 + signum` exit convention when
