@@ -48,6 +48,7 @@ import { homedir } from "node:os";
 import { win32 as pathWin32, posix as pathPosix, join as pathJoin } from "node:path";
 import { awaitChildSettled } from "./child-exit.mjs";
 import { registerProcessStopHook } from "./process-stop-hooks.mjs";
+import { killProcessTree } from "./process-killer.mjs";
 import { createWakeErrorCollector, wakeErrorText } from "./wake-error.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
@@ -203,26 +204,36 @@ export const CHORUS_MCP_SERVER_NAME = "chorus";
 /**
  * Writers denied by name on top of the `--tools` allowlist, so the "chorus"
  * contract (Chorus MCP tools ONLY) does not rest on one flag's semantics holding.
- * `Task` is deliberately absent: it cannot escalate — a subagent inherits the
- * parent's registry — and Chorus swarm mode needs it.
- * The init-frame assertion treats this list as the thing to verify, so a future
- * CLI release that adds another writer fails the wake instead of leaking.
+ * Belt and braces only: the init-frame assertion below is an allowlist and would
+ * reject these anyway.
  */
 export const CHORUS_MODE_DENIED_TOOLS = ["Edit", "Write", "NotebookEdit"];
 
 /**
- * Tools that MUST be absent from a "chorus" wake's registry: the ones we deny by
- * name, plus the code-running and fetching tools we rely on `--restricted` to
- * drop. Asserted against the init frame on every wake.
- *
- * This list cannot catch a writer introduced under a name we have never heard of
- * — no static list can. What it does catch is the mechanism itself regressing,
- * which is the failure that actually happened: `--allowedTools` quietly stopped
- * restricting and nothing noticed for a whole release line.
+ * Built-in tools a "chorus" wake keeps besides this daemon's Chorus MCP tools:
+ * subagent dispatch, under its older (`Task`) and newer (`Agent`) name, so swarm
+ * mode still works. A subagent inherits the parent's registry, so it gets no shell
+ * either. Passed to `--tools` and asserted against the init frame.
  */
-export const CHORUS_MODE_FORBIDDEN_TOOLS = [
-  "Bash", "BashOutput", "KillShell", "WebFetch", "mcp__ide__executeCode", ...CHORUS_MODE_DENIED_TOOLS,
-];
+export const CHORUS_MODE_EXTRA_TOOLS = ["Task", "Agent"];
+
+/**
+ * True iff `tool` may appear in a "chorus" wake's registry. An allowlist, not a
+ * deny list: a tool we have never heard of (a new built-in, another MCP server)
+ * fails the wake instead of leaking — which is the failure that actually happened
+ * when `--allowedTools` quietly stopped restricting.
+ * @param {unknown} tool
+ */
+function isChorusModeTool(tool) {
+  return typeof tool === "string"
+    && (tool.startsWith(`mcp__${CHORUS_MCP_SERVER_NAME}__`) || CHORUS_MODE_EXTRA_TOOLS.includes(tool));
+}
+
+/**
+ * How long the forced kill of a violating wake may take to settle. Only Windows
+ * waits on it (for `taskkill /T /F` to report back); POSIX signals synchronously.
+ */
+export const VIOLATION_KILL_BUDGET_MS = 5_000;
 
 /**
  * Classify a "chorus" wake's tool registry from the stream-json init frame, which
@@ -231,8 +242,9 @@ export const CHORUS_MODE_FORBIDDEN_TOOLS = [
  *
  * Three outcomes, deliberately distinct:
  *   "ok"         — the registry is clean; proceed.
- *   "violated"   — a forbidden tool is present. The restriction the operator asked
- *                  for is not in force, so the wake must not continue.
+ *   "violated"   — a tool outside the allowlist is present. The restriction the
+ *                  operator asked for is not in force, so the wake must not
+ *                  continue: the spawner kills the process tree.
  *   "unverified" — the frame carries no readable tool list. Reported, never fatal:
  *                  this is a check, not a gate, and an older CLI (or a capture that
  *                  omits the field) must not take every wake down with it.
@@ -253,7 +265,7 @@ export function describeToolEnforcement(initFrame, permissionMode) {
       message: "Claude reported no tool list, so --chorus-only could not be verified for this wake.",
     };
   }
-  const leaked = CHORUS_MODE_FORBIDDEN_TOOLS.filter((tool) => initFrame.tools.includes(tool));
+  const leaked = initFrame.tools.filter((tool) => !isChorusModeTool(tool)).map(String);
   if (leaked.length === 0) return { verdict: "ok", message: null };
   return {
     verdict: "violated",
@@ -275,11 +287,12 @@ export function describeToolEnforcement(initFrame, permissionMode) {
  * assertion in this module checks the result on every wake rather than trusting
  * this comment to stay true.
  *
- * - "chorus" (default): `--tools "mcp__chorus__*"` empties the built-in tool
- *   registry — it is an allowlist that REMOVES, unlike `--allowedTools` — and
- *   `--strict-mcp-config` keeps the operator's own MCP servers out, so the wake
- *   sees this daemon's Chorus tools and nothing else. CHORUS_MODE_DENIED_TOOLS is
- *   still denied by name: two independent mechanisms, because the whole reason
+ * - "chorus" (default): `--tools "mcp__chorus__*,Task,Agent"` empties the
+ *   built-in tool registry except subagent dispatch — it is an allowlist that
+ *   REMOVES, unlike `--allowedTools` — and `--strict-mcp-config` keeps the
+ *   operator's own MCP servers out, so the wake sees this daemon's Chorus tools
+ *   (plus subagent dispatch) and nothing else. CHORUS_MODE_DENIED_TOOLS is still
+ *   denied by name: two independent mechanisms, because the whole reason
  *   this code exists is that a single one quietly stopped working.
  *   Subagent dispatch inherits the registry, so `Task` cannot be used to reach a
  *   shell that the parent session does not have.
@@ -315,8 +328,9 @@ export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "c
     args.push("--dangerously-skip-permissions");
   } else {
     // `--tools` is the ENFORCING allowlist: naming only this daemon's Chorus
-    // server empties the built-in registry outright, and `--strict-mcp-config`
-    // drops the operator's own MCP servers so nothing else rides in. Then
+    // server (plus subagent dispatch) empties the built-in registry outright, and
+    // `--strict-mcp-config` drops the operator's own MCP servers so nothing else
+    // rides in. Then
     // `--allowedTools` auto-approves what is left, and any prompt that still
     // happens is routed to the spawner so it is denied visibly.
     //
@@ -326,7 +340,7 @@ export function buildArgs({ sessionId, isNew, mcpConfigPath, permissionMode = "c
     // fails authentication, and neither the per-agent `args` passthrough (settings
     // is a managed control) nor any current config key can forward them back.
     args.push(
-      "--tools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`,
+      "--tools", [`mcp__${CHORUS_MCP_SERVER_NAME}__*`, ...CHORUS_MODE_EXTRA_TOOLS].join(","),
       "--strict-mcp-config",
       "--allowedTools", `mcp__${CHORUS_MCP_SERVER_NAME}__*`,
       "--permission-prompt-tool", "stdio",
@@ -663,6 +677,8 @@ export function parseNdjsonChunk(buffer, chunk, onObject, onWarn = () => {}) {
  * @property {PermissionMode} [permissionMode]  How much the woken Claude may do (default "chorus").
  * @property {{ url: string, apiKey: string }} [creds] Daemon credentials exported
  *   to the child for plugin hooks and shell-based Chorus tooling.
+ * @property {typeof killProcessTree} [killProcessTreeFn]  Injectable tree killer
+ *   used to abort a wake whose tool registry violates the chorus allowlist.
  * @property {NodeJS.Platform} [platform]  Injectable for tests; gates `detached` (POSIX-only).
  */
 
@@ -684,6 +700,7 @@ export class ClaudeSpawner {
     // can group-kill the tree; Windows does not. Injectable so a POSIX test host
     // can exercise the Windows branch and vice versa.
     this.platform = opts.platform ?? process.platform;
+    this.killProcessTreeFn = opts.killProcessTreeFn ?? killProcessTree;
     this.cliConfig = validateAgentCliConfig(opts.cliConfig, "claude-code", opts.label);
     this.env = overlayAgentEnv(opts.env ?? process.env, this.cliConfig.env, this.platform);
   }
@@ -837,11 +854,13 @@ export class ClaudeSpawner {
       let observedSessionId = id;
       let terminalSeen = false;
       let terminalFailed = false;
-      // Verify the tool registry the moment the CLI announces it. The init frame
-      // precedes any model turn, so an abort here lands before the woken agent can
-      // act — without reordering prompt delivery, which a dozen flows (interrupt,
-      // control frames, fixture replay) rely on happening right after spawn.
-      // Only "chorus" verifies; yolo has nothing to check.
+      // Verify the tool registry the moment the CLI announces it. The CLI only
+      // emits init AFTER it has read the prompt, so the prompt cannot be held back
+      // until the check passes; instead a violation kills the whole process tree
+      // at once. init precedes the model's first request, and once violated is
+      // latched no later frame is forwarded, so nothing the leaked tools do can
+      // reach the daemon. Only "chorus" verifies; yolo has nothing to check.
+      let enforcementViolated = false;
       let enforcementChecked = this.permissionMode === "yolo";
 
       child.stdout?.setEncoding?.("utf8");
@@ -850,16 +869,26 @@ export class ClaudeSpawner {
           stdoutBuf,
           String(chunk),
           (obj) => {
+            if (enforcementViolated) return; // the turn is being killed — forward nothing
             if (obj && typeof obj.session_id === "string") observedSessionId = obj.session_id;
             if (!enforcementChecked && obj?.type === "system" && obj?.subtype === "init") {
               enforcementChecked = true;
               const { verdict, message } = describeToolEnforcement(obj, this.permissionMode);
               if (message) this.logger.warn(`[Chorus] ${message}`);
               if (verdict === "violated" && !channel.stopping && !channel.exited) {
+                enforcementViolated = true;
                 diagnostics.fail(message, "startup");
-                // Abort before the model's first turn: close stdin so the CLI ends
-                // the conversation, and drop the frame instead of forwarding it.
-                channel.closeStdin();
+                // Force-kill straight away: skip the stop hook (its interrupt
+                // request and graceful window would let the turn keep running) and
+                // SIGINT. POSIX: SIGKILL to the process group; Windows: taskkill /T /F.
+                this.killProcessTreeFn(child, {
+                  skipStopHook: true, forceOnly: true, sigintTimeoutMs: 0,
+                  cleanupDeadline: Date.now() + VIOLATION_KILL_BUDGET_MS,
+                  platform: this.platform, logger: this.logger,
+                }).then((outcome) => {
+                  if (outcome?.cleanupFailed) this.logger.warn("[Chorus] could not confirm the violating claude process tree was killed");
+                }, (err) => this.logger.warn(`[Chorus] killing the violating claude process failed: ${err}`));
+                channel.closeStdin(); // no further input either way
                 return;
               }
             }
