@@ -21,8 +21,9 @@
 默认仍为 AWS。`bash install.sh --target local` 可直接选择本地；有终端时会询问
 `pull` / `build`、拉取所需镜像、普通登录邮箱/密码及独立的超级管理员邮箱/密码。
 密码输入及二次确认均隐藏显示。本地只需要 Docker/Compose 和
-OpenSSL，不需要主机安装 AWS CLI、Node.js 或 pnpm。脚本仅启动局域网 HTTP
-配置，可选 Cloudflare 仍按后文章节由用户配置。
+OpenSSL，不需要主机安装 AWS CLI、Node.js 或 pnpm。脚本默认仅启动局域网 HTTP；
+选中可选的自签 HTTPS 后，代理会加入同一次 Compose 启动。
+Cloudflare 仍按后文章节由用户单独配置。
 
 安装器会在读取前拒绝符号链接密码文件和检出目录内的密码文件，避免它们进入镜像构建上下文。
 

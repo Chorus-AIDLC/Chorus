@@ -22,8 +22,9 @@ AWS remains the default. `bash install.sh --target local` selects local directly
 on a terminal it asks for `pull` or `build`, the pull image when needed, ordinary
 login email/password and separate super admin email/password. Password prompts
 and confirmation are hidden. Local mode needs Docker/Compose and OpenSSL, not AWS CLI,
-host Node.js or pnpm. It starts the LAN-accessible HTTP configuration only; optional
-Cloudflare remains the separate, user-provisioned section below.
+host Node.js or pnpm. By default it starts LAN-accessible HTTP only; selecting
+optional self-signed HTTPS adds the proxy to the same Compose startup. Cloudflare
+remains the separate, user-provisioned section below.
 
 Choose **one** of these noninteractive examples, replacing the release placeholder
 with an existing image and password-file paths with protected local files outside
