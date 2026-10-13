@@ -64,6 +64,7 @@ if (command === 'aws') console.log(args[0] === 'configure' ? 'us-east-1' : '0000
       HOME: home,
       STUB_LOG: log,
       CHORUS_INSTALL_NONINTERACTIVE: "1",
+      CHORUS_LOCAL_HTTPS: "false",
       CHORUS_DEPLOY_CONFIG: join(fixture, "default_deploy.sh"),
       DEFAULT_USER: "owner@example.invalid",
       DEFAULT_PASSWORD: password,
@@ -95,7 +96,7 @@ try:
             chunk = os.read(master, 65536).decode("utf8", errors="replace")
             output += chunk
             pending += chunk
-            if re.search(r"(?:password|confirm)[^\\r\\n]*: *$", pending, re.I):
+            if re.search(r"(?:password|confirm|Also enable|HTTPS certificate)[^\\r\\n]*: *$", pending, re.I):
                 if len(hidden) >= len(inputs):
                     raise RuntimeError("Unexpected extra credential prompt")
                 hidden.append(not bool(termios.tcgetattr(slave)[3] & termios.ECHO))
@@ -132,6 +133,17 @@ finally:
 
   function envPath() { return join(home, ".config/chorus-self-host/fixture/env"); }
 
+  function addLanHttps() {
+    const privateDir = join(home, ".config/chorus-self-host/fixture");
+    const override = join(privateDir, "lan-https.yml");
+    writeFileSync(override, readFileSync(join(root, "deploy/self-host/compose.lan-https.yml")));
+    writeFileSync(join(privateDir, "server.crt"), "fixture-certificate", { mode: 0o600 });
+    writeFileSync(join(privateDir, "server.key"), "fixture-key", { mode: 0o600 });
+    writeFileSync(envPath(), readFileSync(envPath(), "utf8") +
+      `CHORUS_TLS_CERT_FILE=${join(privateDir, "server.crt")}\nCHORUS_TLS_KEY_FILE=${join(privateDir, "server.key")}\nCHORUS_HTTPS_PORT=28638\n`);
+    return override;
+  }
+
   it.each(["--password-file", "--admin-password-file"])("rejects %s inside the Docker build context before reading it", option => {
     const result = run([...localArgs(), "--image", image, option, join(root, "package.json")]);
     expect(result.status).not.toBe(0);
@@ -157,7 +169,7 @@ finally:
     expect(readFileSync(join(root, ".dockerignore"), "utf8").split("\n")).toContain("default_deploy.sh");
   });
 
-  it("pulls the selected app and PostgreSQL, then waits for loopback Compose without AWS", () => {
+  it("pulls the selected app and PostgreSQL, then waits for LAN Compose without AWS", () => {
     const result = run([...localArgs(), "--image", image]);
     expect(result.status, result.stderr).toBe(0);
     expect(calls().every(call => call.command === "docker")).toBe(true);
@@ -169,6 +181,9 @@ finally:
     expect(start.args).toContain(join(root, "deploy/self-host/compose.local.yml"));
     expect(start.args.slice(-7)).toEqual(["up", "-d", "--pull", "never", "--wait", "--wait-timeout", "180"]);
     expect(result.stdout).toContain("http://localhost:18638");
+    expect(result.stdout).toContain("listen=0.0.0.0:18638");
+    expect(result.stdout).toContain("http://<host-LAN-IP>:18638");
+    expect(result.stdout).toContain("restrict this port to trusted networks");
     expect(existsSync(wrapperPath())).toBe(true);
   });
 
@@ -185,6 +200,95 @@ finally:
     expect(readFileSync(envPath(), "utf8")).toContain("CHORUS_PORT=18638\n");
   });
 
+  it("keeps HTTPS disabled unless selected", () => {
+    const result = run([...localArgs(), "--image", image], { CHORUS_LOCAL_HTTPS: undefined });
+    expect(result.status, result.stderr).toBe(0);
+    const privateDir = join(home, ".config/chorus-self-host/fixture");
+    expect(existsSync(join(privateDir, "lan-https.yml"))).toBe(false);
+    expect(existsSync(join(privateDir, "lan-tls"))).toBe(false);
+    expect(calls().some(call => call.args.includes("lan-https"))).toBe(false);
+  });
+
+  it.each(["192.0.2.10", "chorus.example.invalid", `${"a".repeat(63)}.example.invalid`])("sets up optional HTTPS with a private certificate for %s", host => {
+    const result = run([...localArgs().slice(0, -2), "--image", image, "--https-host", host]);
+    expect(result.status, result.stderr).toBe(0);
+    const privateDir = join(home, ".config/chorus-self-host/fixture");
+    const certificate = join(privateDir, "lan-tls/server.crt");
+    const key = join(privateDir, "lan-tls/server.key");
+    const override = join(privateDir, "lan-https.yml");
+    expect(statSync(key).mode & 0o777).toBe(0o600);
+    expect(statSync(certificate).mode & 0o777).toBe(0o600);
+    expect(statSync(join(privateDir, "lan-tls")).mode & 0o777).toBe(0o700);
+    expect(statSync(override).mode & 0o777).toBe(0o600);
+    const certInfo = spawnSync("openssl", ["x509", "-in", certificate, "-noout", "-text"], { encoding: "utf8" });
+    expect(certInfo.status, certInfo.stderr).toBe(0);
+    expect(certInfo.stdout).toContain(host.includes("192.") ? `IP Address:${host}` : `DNS:${host}`);
+    expect(result.stdout).toContain(`https://${host}:18638/login/callback`);
+    expect(result.stdout).toContain("30-day self-signed certificate");
+    expect(result.stdout).toContain(override);
+    const start = calls().find(call => call.args.includes("up"))!;
+    expect(start.args).toContain(override);
+    expect(calls().some(call => call.args.slice(-2).join(" ") === "pull lan-https")).toBe(true);
+    if (canRender) {
+      const rendered = renderConfig([override]);
+      expect(rendered.status, rendered.stderr).toBe(0);
+      const config = JSON.parse(rendered.stdout);
+      expect(config.services["lan-https"].ports[0].published).toBe("18638");
+      expect(config.services["lan-https"].volumes[2].source).toBe(key);
+      expect(config.services.app.ports[0].published).toBe("18637");
+    }
+    const savedKey = readFileSync(key, "utf8");
+    const savedCertificate = readFileSync(certificate, "utf8");
+    expect(run([], {}, wrapperPath()).status).toBe(0);
+    expect(readFileSync(key, "utf8")).toBe(savedKey);
+    expect(readFileSync(certificate, "utf8")).toBe(savedCertificate);
+    expect(readFileSync(wrapperPath(), "utf8")).not.toContain("PRIVATE KEY");
+  });
+
+  it("previews environment-enabled HTTPS without generating keys or running Docker", () => {
+    const result = run([...localArgs(), "--image", image, "--dry-run"], {
+      CHORUS_LOCAL_HTTPS: undefined, CHORUS_HTTPS_HOST: "192.0.2.10", CHORUS_HTTPS_PORT: "28638",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("https://192.0.2.10:28638");
+    expect(result.stdout).toContain("add lan-https.yml to Compose");
+    expect(existsSync(join(home, ".config"))).toBe(false);
+    expect(calls()).toEqual([]);
+  });
+
+  it("lets --no-https override environment HTTPS selection", () => {
+    const result = run([...localArgs(), "--image", image, "--no-https", "--dry-run"], {
+      CHORUS_LOCAL_HTTPS: "true", CHORUS_HTTPS_HOST: "192.0.2.10",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain("Optional HTTPS:");
+  });
+
+  it("does not start services when the initial HTTPS proxy pull fails", () => {
+    const result = run([...localArgs().slice(0, -2), "--image", image, "--https-host", "192.0.2.10"], {
+      STUB_FAILURE: "pull lan-https",
+    });
+    expect(result.status).not.toBe(0);
+    expect(calls().some(call => call.args.includes("up"))).toBe(false);
+    expect(existsSync(wrapperPath())).toBe(true);
+    expect(existsSync(join(home, ".config/chorus-self-host/fixture/lan-tls/server.key"))).toBe(true);
+    expect(run([], {}, wrapperPath()).status).toBe(0);
+  });
+
+  it.each([
+    ["--https"], ["--https-host", "https://host.invalid"], ["--https-host", "192.0.2.999"],
+    ["--https-host", "192.0.2.010"], ["--https-host", "host..invalid"], ["--https-host", "bad/host"],
+    ["--https-host", "host.invalid,DNS:other.invalid"], ["--https-host", "host\n.invalid"],
+    ["--https-host", `${"a".repeat(64)}.invalid`],
+    ["--https-host", "::1"], ["--https-host", "-bad.invalid"], ["--https-host", "host.invalid", "--https-port", "0"],
+    ["--https-host", "host.invalid", "--https-port", "65536"], ["--https-host", "host.invalid", "--https-port", "18638"],
+  ])("rejects invalid or conflicting HTTPS input %j", (...args) => {
+    const result = run([...localArgs(), "--image", image, "--https-port", "28638", ...args]);
+    expect(result.status).not.toBe(0);
+    expect(calls()).toEqual([]);
+    expect(existsSync(join(home, ".config"))).toBe(false);
+  });
+
   it.skipIf(!canRender)("maps default host port 18637 to unchanged internal port 8637", () => {
     const result = run([...localArgs().slice(0, -2), "--image", image]);
     expect(result.status, result.stderr).toBe(0);
@@ -196,7 +300,7 @@ finally:
     expect(rendered.status, rendered.stderr).toBe(0);
     const config = JSON.parse(rendered.stdout);
     expect(config.services.app.ports).toEqual([
-      expect.objectContaining({ host_ip: "127.0.0.1", published: "18637", target: 8637 }),
+      expect.objectContaining({ host_ip: "0.0.0.0", published: "18637", target: 8637 }),
     ]);
     expect(config.services.app.environment.NEXTAUTH_URL).toBe("http://localhost:18637");
   });
@@ -338,6 +442,25 @@ finally:
     expect(result.output).not.toContain(adminPassword);
     expect(readFileSync(envPath(), "utf8")).toContain(`DEFAULT_PASSWORD="${password}"\n`);
     expect(readFileSync(envPath(), "utf8")).toContain(adminHash);
+  });
+
+  it.skipIf(!canUsePty)("offers HTTPS in interactive setup and includes the selected proxy", () => {
+    const result = runInteractive([password, password, adminPassword, adminPassword, "y", "192.0.2.10"], {
+      CHORUS_LOCAL_HTTPS: undefined, CHORUS_HTTPS_PORT: "28638",
+    });
+    expect(result.status, result.output).toBe(0);
+    expect(result.hidden).toEqual([true, true, true, true, false, false]);
+    expect(result.output).toContain("https://192.0.2.10:28638");
+    expect(calls().find(call => call.args.includes("up"))!.args).toContain(join(home, ".config/chorus-self-host/fixture/lan-https.yml"));
+  });
+
+  it.skipIf(!canUsePty)("defaults the interactive HTTPS choice to no", () => {
+    const result = runInteractive([password, password, adminPassword, adminPassword, ""], {
+      CHORUS_LOCAL_HTTPS: undefined,
+    });
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain("Also enable self-signed LAN HTTPS?");
+    expect(existsSync(join(home, ".config/chorus-self-host/fixture/lan-https.yml"))).toBe(false);
   });
 
   it.skipIf(!canUsePty).each([" ", "\t"])("preserves boundary whitespace in both interactive passwords (%j)", padding => {
@@ -676,9 +799,49 @@ finally:
     }
   });
 
-  it("runs wrapper dry-run with no Docker calls and no credential changes", () => {
+  it("prepares optional LAN HTTPS before redeploy, preserving private configuration", () => {
     const installed = run([...localArgs(), "--image", image]);
     expect(installed.status, installed.stderr).toBe(0);
+    const override = addLanHttps();
+    const saved = readFileSync(envPath(), "utf8");
+    writeFileSync(log, "");
+    const rerun = run([], {
+      ...(canRender ? { STUB_RENDERER: realDocker } : {}),
+      CHORUS_TLS_CERT_FILE: "", CHORUS_TLS_KEY_FILE: "", CHORUS_HTTPS_PORT: "invalid-port",
+      CHORUS_HTTPS_IMAGE: "invalid image",
+    }, wrapperPath());
+    expect(rerun.status, rerun.stderr).toBe(0);
+    const composeCalls = calls().filter(call => call.args.includes("--env-file"));
+    expect(composeCalls.map(call => call.args.slice(-2))).toContainEqual(["pull", "lan-https"]);
+    expect(composeCalls.findIndex(call => call.args.includes("pull")))
+      .toBeLessThan(composeCalls.findIndex(call => call.args.includes("up")));
+    for (const call of composeCalls) expect(call.args).toContain(override);
+    expect(readFileSync(envPath(), "utf8")).toBe(saved);
+    if (canRender) {
+      const rendered = renderConfig([override]);
+      expect(rendered.status, rendered.stderr).toBe(0);
+      const config = JSON.parse(rendered.stdout);
+      expect(config.services["lan-https"].ports[0].published).toBe("28638");
+      expect(config.services["lan-https"].volumes[0].source).toBe(join(root, "deploy/self-host/nginx.lan-https.conf"));
+      expect(config.services.app.environment.COOKIE_SECURE).toBe("false");
+    }
+  });
+
+  it("does not deploy if the optional HTTPS image pull fails", () => {
+    expect(run([...localArgs(), "--image", image]).status).toBe(0);
+    addLanHttps();
+    const saved = readFileSync(envPath(), "utf8");
+    writeFileSync(log, "");
+    const rerun = run([], { STUB_FAILURE: "pull lan-https" }, wrapperPath());
+    expect(rerun.status).not.toBe(0);
+    expect(calls().some(call => call.args.includes("up"))).toBe(false);
+    expect(readFileSync(envPath(), "utf8")).toBe(saved);
+  });
+
+  it.each([false, true])("runs wrapper dry-run with no Docker calls or credential changes (HTTPS=%s)", https => {
+    const installed = run([...localArgs(), "--image", image]);
+    expect(installed.status, installed.stderr).toBe(0);
+    const override = https ? addLanHttps() : undefined;
     const saved = readFileSync(envPath(), "utf8");
     const wrapper = readFileSync(wrapperPath(), "utf8");
     const envModified = statSync(envPath()).mtimeMs;
@@ -688,6 +851,7 @@ finally:
     }, wrapperPath());
     expect(rerun.status, rerun.stderr).toBe(0);
     expect(rerun.stdout).toMatch(/dry run/i);
+    if (override) expect(rerun.stdout).toContain(override);
     expect(calls()).toEqual([]);
     expect(readFileSync(envPath(), "utf8")).toBe(saved);
     expect(readFileSync(wrapperPath(), "utf8")).toBe(wrapper);

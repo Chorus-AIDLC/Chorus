@@ -12,7 +12,7 @@ The deployment example SHALL run a single Chorus instance with PostgreSQL 17 wit
 
 #### Scenario: Local HTTP deployment
 - **WHEN** a reader supplies private environment values and selects local mode
-- **THEN** the app is accessible only on a configurable loopback port, secure-cookie settings match HTTP, and database health gates app startup.
+- **THEN** the app is published on `0.0.0.0` at a configurable host port for trusted LAN access, secure-cookie settings match HTTP, the database remains unpublished, and database health gates app startup.
 
 #### Scenario: Optional public HTTPS deployment
 - **WHEN** a reader supplies a Named Tunnel token and routes their hostname to the app container
@@ -46,7 +46,7 @@ The change SHALL include separate local evidence with tested versions, commands/
 - **THEN** it uses fresh test data and project-scoped resources without stopping, deleting or reusing existing containers, volumes or databases.
 
 ### Requirement: Local installer with explicit image source
-The installer SHALL route a local deployment target before AWS prerequisites or saved AWS-config reuse, SHALL preserve the existing AWS ALB/CloudFront modes, and SHALL offer pulling an explicit application tag/digest or building the current checkout's production Docker image. Local deployment SHALL reuse the loopback-only PostgreSQL Compose configuration, default to PostgreSQL 17, and wait for health. Local setup SHALL NOT execute or overwrite an existing AWS deployment script.
+The installer SHALL route a local deployment target before AWS prerequisites or saved AWS-config reuse, SHALL preserve the existing AWS ALB/CloudFront modes, and SHALL offer pulling an explicit application tag/digest or building the current checkout's production Docker image. Local deployment SHALL reuse the LAN-accessible app and private PostgreSQL Compose configuration, default to PostgreSQL 17, and wait for health. The installer SHALL warn that HTTP access must be restricted to trusted networks. Local setup SHALL NOT execute or overwrite an existing AWS deployment script.
 
 #### Scenario: Pull or build
 - **WHEN** the operator selects local pull mode
@@ -57,7 +57,7 @@ The installer SHALL route a local deployment target before AWS prerequisites or 
 
 #### Scenario: Separate local deployment and test ports
 - **WHEN** the operator installs locally without specifying a host port
-- **THEN** the installer uses loopback host port 18637, distinct from test port 8637, while the container and Tunnel origin keep port 8637.
+- **THEN** the installer publishes `0.0.0.0:18637`, distinct from test port 8637, while the container and Tunnel origin keep port 8637.
 - **AND** an explicit `--port` overrides `CHORUS_PORT`, which overrides the installer default; manual Compose retains its existing fallback.
 
 #### Scenario: Noninteractive and dry-run safety
@@ -105,8 +105,27 @@ Fresh local setup SHALL generate a secret-free mode-0700 `default_deploy.sh`, or
 - **AND** idempotence means reuse of the same project, resources and credentials, not migration rollback or zero database writes; the guide SHALL warn that app startup can apply Prisma migrations and require database/signing-state backups before deploying new code.
 
 #### Scenario: Preserve private deployment overrides
-- **WHEN** the saved private directory contains `https.yml` or `pg17.yml`
-- **THEN** on every run the helper automatically appends each present file after the base/local Compose files, preserving both when both exist rather than reverting the existing HTTPS or PostgreSQL configuration.
+- **WHEN** the saved private directory contains `https.yml`, `pg17.yml` or `lan-https.yml`
+- **THEN** on every run the helper automatically appends each present file after the base/local Compose files, preserving existing HTTPS and PostgreSQL configuration.
+- **AND** when `lan-https.yml` exists it SHALL prepare the proxy image before startup, failing before Compose up if the pull fails, without rotating existing certificates or credentials.
+
+### Requirement: Optional self-signed LAN HTTPS
+Local installation SHALL offer HTTPS as an opt-in choice, disabled by default. When selected, it SHALL generate protected self-signed TLS material outside the checkout and include a separate proxy in the same Compose deployment. The proxy SHALL preserve internal `http://app:8637`, database isolation and existing Cloudflare configuration. No OIDC dependency patch or browser-wide security bypass SHALL be required.
+
+#### Scenario: Select HTTPS during setup
+- **WHEN** the operator selects HTTPS interactively or supplies `--https-host` with a DNS hostname or IPv4 address
+- **THEN** setup SHALL validate the host and distinct HTTP/HTTPS ports before side effects, generate a 30-day certificate with a matching SAN, and persist a private `lan-https.yml` override and TLS paths.
+- **AND** HTTPS SHALL default to port 18638; `--https-port` overrides it, and `--no-https` SHALL disable it even when enabled by environment.
+- **AND** noninteractive `--https` without a host SHALL fail without prompting or creating resources; dry-run SHALL not generate keys, write configuration or call Docker.
+
+#### Scenario: Leave HTTPS disabled
+- **WHEN** the operator declines HTTPS or performs noninteractive setup without enabling it
+- **THEN** no HTTPS service, certificate, proxy image pull or HTTPS listener SHALL be created.
+
+#### Scenario: Proxy authentication and streaming
+- **WHEN** the optional proxy receives HTTPS requests
+- **THEN** it SHALL use read-only certificate mounts, fail on missing mount files, mark response cookies Secure, preserve host/protocol and WebSocket headers, disable response buffering and resolve the app through Docker DNS.
+- **AND** the guide SHALL explain manual certificate warning acceptance, expiry/renewal, exact provider callback allowlisting, consistent HTTPS session use and rollback without deleting data.
 
 #### Scenario: Preview saved deployment
 - **WHEN** the operator runs the saved wrapper with `--dry-run`

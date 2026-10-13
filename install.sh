@@ -394,7 +394,7 @@ select_install_target() {
         DRY_RUN=1
         shift
         ;;
-      --image-source|--image|--project|--port|--email|--admin-email|--password-file|--admin-password-file)
+      --image-source|--image|--project|--port|--email|--admin-email|--password-file|--admin-password-file|--https-host|--https-port)
         [ "$#" -ge 2 ] || { error "$1 requires a value"; exit 1; }
         LOCAL_INSTALL_ARGS+=("$1" "$2")
         shift 2
@@ -407,7 +407,9 @@ select_install_target() {
           'Interactive local setup asks for both login accounts and hidden passwords; super admin bcrypt is computed automatically.' \
           'Local setup generates default_deploy.sh (CHORUS_DEPLOY_CONFIG override); rerun it to build/pull and apply saved Compose configuration.' \
           'Local host port defaults to 18637; --port or CHORUS_PORT overrides it. Container port remains 8637.' \
-          'Local installs use Docker Compose, loopback HTTP and a new private config under ~/.config/chorus-self-host/NAME/.' \
+          'Optional LAN HTTPS: choose it interactively or use --https-host HOST [--https-port PORT]. Default HTTPS port: 18638.' \
+          '--https prompts for the host interactively; --no-https skips HTTPS. Self-signed certificates expire after 30 days; configure your OIDC callback URL.' \
+          'Local installs use Docker Compose, LAN HTTP (0.0.0.0) and a new private config under ~/.config/chorus-self-host/NAME/.' \
           'pull requires an explicit image tag/digest; build defaults to chorus-local:NAME and uses the current checkout.' \
           'AWS remains the default; DEPLOY_MODE=alb|cloudfront and existing AWS environment inputs are unchanged.' \
           'Local --dry-run prints a plan only. AWS --dry-run retains its existing generated-config behavior.'

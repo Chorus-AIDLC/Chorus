@@ -9,7 +9,7 @@ Run one Chorus app and PostgreSQL 17 on your own Linux host. Start with **local 
 - A maintained Linux host with Docker Engine and the Docker Compose v2 plugin (`docker compose`), Bash, OpenSSL, curl, and sufficient disk for database growth and backups. The optional scripted login check uses `jq`. Check with `docker version` and `docker compose version`; use a Compose version supporting `up --wait`.
 - A checkout or release archive of this repository containing `deploy/self-host/`. Use configuration matching your selected application release. No Node.js toolchain is required on the server for container deployment; agent CLI checks run on a separate client with the Chorus CLI and its selected agent backend already installed.
 - Permission to use Docker is effectively host-root access. Protect the host and its Docker socket; do not mount the socket into Chorus. The app image may run as root; do not assume non-root isolation.
-- Outbound access to your image registry and, for Tunnel mode, Cloudflare's connector network. Keep inbound app/database ports closed in the host firewall. The local override binds only loopback; the tunnel override publishes no host ports. PostgreSQL is always internal at `db:5432`.
+- Outbound access to your image registry and, for Tunnel mode, Cloudflare's connector network. Local mode binds the app to `0.0.0.0` for LAN access: allow its published port only from trusted networks, never the public Internet. Docker-published ports can bypass UFW rules; enforce restrictions using Docker-aware firewall rules or an upstream firewall. The tunnel override publishes no host ports. PostgreSQL is always internal at `db:5432`.
 - Choose a unique Compose project name. Never point this example at an existing database/volume, use a fixed `container_name`, or run host-wide prune/cleanup commands.
 
 Host hardware/VPS, electricity, connectivity, storage, and an optional domain have their own costs. Cloudflare plan eligibility and limits can change; a tunnel does not make the host or domain free. R2 is optional **encrypted off-host backup storage**, never the live database disk. As documented on [R2 pricing](https://developers.cloudflare.com/r2/pricing/) (consulted October 2026), Standard storage includes monthly free allowances of 10 GB-month, 1 million Class A operations, and 10 million Class B operations. Egress is free, but storage/operation overages are not; other storage classes and services have different charges. Recheck current pricing and set billing alerts before use.
@@ -22,7 +22,7 @@ AWS remains the default. `bash install.sh --target local` selects local directly
 on a terminal it asks for `pull` or `build`, the pull image when needed, ordinary
 login email/password and separate super admin email/password. Password prompts
 and confirmation are hidden. Local mode needs Docker/Compose and OpenSSL, not AWS CLI,
-host Node.js or pnpm. It starts the loopback HTTP configuration only; optional
+host Node.js or pnpm. It starts the LAN-accessible HTTP configuration only; optional
 Cloudflare remains the separate, user-provisioned section below.
 
 Choose **one** of these noninteractive examples, replacing the release placeholder
@@ -51,7 +51,7 @@ bash install.sh --target local --image-source build \
   --port 18637 --non-interactive
 ```
 
-The installer defaults to `127.0.0.1:18637`, separate from test port `8637`;
+The installer defaults to `0.0.0.0:18637`, separate from test port `8637`;
 override it with `--port` or `CHORUS_PORT`. The internal container port and
 Tunnel origin `http://app:8637` stay unchanged. Later manual setup/health examples
 use `8637`; use `18637` instead for installer-managed instances. Restore rehearsals
@@ -134,8 +134,9 @@ database image **only if missing locally**, not as a database-upgrade step. It
 reads only explicit, **unquoted** saved `CHORUS_IMAGE` and `POSTGRES_IMAGE` tag/digest
 values for image selection and never sources the env file as shell code (Compose
 still consumes the private env for service configuration). It automatically
-appends private `https.yml` and `pg17.yml` when present on **each run**, preserving
-existing HTTPS and PostgreSQL overrides. It applies Compose idempotently with
+appends private `https.yml`, `pg17.yml` and `lan-https.yml` when present on **each run**, preserving
+existing HTTPS and PostgreSQL overrides. When the optional LAN HTTPS override is
+present, it also pulls that proxy's configured image before startup. It applies Compose idempotently with
 `up --pull never --wait`: no credential rotation, `down`, or volume removal.
 Here **idempotent** means reusing the same project, resources and credentials,
 not migration rollback or zero database writes: app startup can apply Prisma
@@ -199,7 +200,10 @@ Use a protected editor or password manager to retrieve the generated bootstrap p
 | `DEFAULT_USER`, `DEFAULT_PASSWORD` | Required ordinary bootstrap email/password at Compose render time. The installer saves double-quoted plaintext with backslashes/double quotes escaped and literal `$` encoded as `$$`; the manual example generates random hex. Development/demo login, not team SSO. |
 | `NEXTAUTH_SECRET` | Optional strong override. When empty, the app generates `/app/data/.secret`, persisted in `app-data`. Never delete it during routine upgrades. |
 | `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD_HASH` | Separate `/admin` account, required by fresh local installer setup but optional in manual Compose. Store only a bcrypt hash, quoted with single quotes in the env file to preserve `$` literally. |
-| `CHORUS_PORT` | Local mode only; installer default `18637`, manual Compose default `8637`; binds `127.0.0.1`. |
+| `CHORUS_PORT` | Local mode only; installer default `18637`, manual Compose default `8637`; binds `0.0.0.0` for LAN access. |
+| `CHORUS_LOCAL_HTTPS`, `CHORUS_HTTPS_HOST` | Installer-only opt-in: `true`/`false` and a DNS hostname or IPv4 address (not a URL). Setting only the host enables HTTPS. Interactive setup asks, defaulting to no; `--https-host` enables, `--no-https` disables. |
+| `CHORUS_HTTPS_PORT`, `CHORUS_HTTPS_IMAGE` | Optional proxy host port (default `18638`, distinct from HTTP) and image (template pins a tested Nginx digest). The installer saves the port; image overrides for redeployment belong in the private env. |
+| `CHORUS_TLS_CERT_FILE`, `CHORUS_TLS_KEY_FILE` | Required only with the HTTPS add-on: absolute paths to certificate/key outside the checkout. The installer generates and saves these when HTTPS is selected. |
 | `CHORUS_PUBLIC_URL` | Tunnel mode only: required actual external `https://` origin, without a trailing slash/path. Sets `NEXTAUTH_URL`. |
 | `CLOUDFLARED_IMAGE` | Tunnel mode only: required pinned version/digest supporting token files, version **2025.4.0 or newer**. |
 | `CLOUDFLARED_TOKEN_FILE` | Tunnel mode only: required absolute private host file path, not the token value. |
@@ -210,7 +214,7 @@ The example constructs `DATABASE_URL` with `sslmode=disable` only for PostgreSQL
 
 ## 3. Choose exactly one exposure mode
 
-The base `compose.yml` has **no published ports**. Always pair it with exactly one override; do not combine local and tunnel overrides. Keep the selected `dc` function for subsequent operations so every command uses the same project, private env file, and mode.
+The base `compose.yml` has **no published ports**. Choose either the local or tunnel primary override; do not combine those two. The optional LAN HTTPS add-on below can be layered separately without changing the primary origin. Keep the selected `dc` function for subsequent operations so every command uses the same project, private env file, and mode.
 
 ### A. Local HTTP (recommended first)
 
@@ -226,7 +230,35 @@ dc up -d --wait
 dc ps
 ```
 
-Open `http://localhost:8637` on the host (adjust if you changed `CHORUS_PORT`). This override sets `NEXTAUTH_URL=http://localhost:${CHORUS_PORT:-8637}` and `COOKIE_SECURE=false`. Do not expose this HTTP listener publicly. For a remote Linux host, use an SSH local forward, for example `ssh -N -L 8637:127.0.0.1:8637 user@your-host`, then open localhost on your workstation. Restrict SSH access; a tunnel is not required for this test.
+Open `http://localhost:8637` on the host or `http://<host-LAN-IP>:8637` from another LAN device (use `18637` for the installer default, or your chosen `CHORUS_PORT`). The listener binds `0.0.0.0`; use the host's actual LAN IP in the browser, not `0.0.0.0`. This override sets `NEXTAUTH_URL=http://localhost:${CHORUS_PORT:-8637}` and `COOKIE_SECURE=false`, allowing password-login cookies over LAN HTTP. For OIDC, configure the actual origin and matching provider callback URLs as described in [Authentication](AUTH.md). HTTP does not encrypt credentials or sessions: restrict access to trusted networks and use HTTPS for untrusted networks. Do not expose this HTTP listener publicly.
+
+Existing installs pick up the new binding when rerunning their saved deployment wrapper; accounts and volumes are retained. If a private `https.yml` override sets `COOKIE_SECURE=true`, LAN HTTP login needs that setting changed to `false`. This also removes the Secure flag from cookies issued through the HTTPS endpoint; prefer HTTPS-only access if that trade-off is unacceptable.
+
+#### Optional self-signed LAN HTTPS trial
+
+LAN HTTP password login does not establish OIDC compatibility: the unmodified OIDC client needs Web Crypto for PKCE, which browsers withhold from insecure LAN HTTP origins. **HTTPS is optional**, not a prerequisite for password-login deployment. Interactive `bash install.sh --target local` asks **Also enable self-signed LAN HTTPS? [y/N]** after the account prompts. Select yes and enter the hostname or IPv4 address clients will use. Leaving it at no creates no proxy, certificate or HTTPS listener.
+
+Alternatively, enable it with an argument (replace the documentation-only IP with the host's actual LAN IP, and use a new project for fresh setup):
+
+```bash
+bash install.sh --target local --image-source build --https-host 192.0.2.10
+```
+
+Use `--https-port` to change the default `18638`; it must differ from the HTTP port. `--https` enables the host prompt, while noninteractive usage requires `--https-host` or `CHORUS_HTTPS_HOST`. `--no-https` overrides environment selection. Host input supports DNS names and IPv4, not URL paths, wildcard names or IPv6 literals. Normal noninteractive account/password inputs still apply.
+
+The selected hostname must already resolve to this machine from client devices; setup does not change DNS, router rules or firewall policy. Restrict both published ports to trusted networks.
+
+When selected, setup generates a 30-day RSA self-signed certificate with the selected host in its SAN under the protected private `lan-tls/` directory. It saves the certificate/key paths and HTTPS port in the private env, copies `deploy/self-host/compose.lan-https.yml` to private `lan-https.yml`, and includes it in the **same Compose up** as the app/database. This opt-in proxy uses `deploy/self-host/nginx.lan-https.conf` and a pinned Nginx image. Existing `https.yml` and `pg17.yml` overrides are retained on repeat deployments, which do not regenerate the certificate or credentials.
+
+The HTTPS endpoint forwards to `http://app:8637` on the same Compose network. The existing HTTP listener remains available and the Cloudflare origin stays internal HTTP; the connector never sees the self-signed certificate. The proxy adds Secure to HTTPS response cookies without changing application-wide cookie settings, preserves forwarding/WebSocket headers and disables buffering for SSE. Its image is pulled only when the HTTPS option is installed. Certificate/key mounts are read-only and missing source files fail startup rather than becoming empty directories.
+
+The certificate must include the actual LAN IP or hostname in its SAN, and its private key must stay outside the checkout with restricted permissions. In the verified Chromium trial, clicking **Advanced → Proceed** on the certificate warning enabled `isSecureContext` and `crypto.subtle`; no browser flags, installed CA, or OIDC dependency patch were needed. Other browsers and managed-device policies may differ. This is a temporary exception, not trusted server authentication or a production recommendation. Mark cookies issued through the HTTPS proxy Secure, and keep forwarding headers, WebSocket upgrades and unbuffered streaming intact.
+
+Register the **exact** new callback (for example `https://<host-LAN-IP>:18638/login/callback`) in the identity provider while retaining existing public callbacks. A successful PKCE redirect can still fail with `redirect_uri_mismatch` until this is done. Use HTTPS consistently once logged in: cookies are host-scoped, not port-scoped, so the HTTP/HTTPS listeners on one host are not independent sessions. See the dated [acceptance record](acceptance/self-host-guide.md) for the local trial and its remaining provider-side prerequisite.
+
+This is a trial certificate, not automatic certificate management. Before its 30-day expiry (or a host/IP change), back up the protected TLS files, renew the certificate with the matching SAN and key, and recreate **only** `lan-https` using the same Compose arguments with `up -d --no-deps --force-recreate lan-https`. Replacing file-mounted certificates requires recreation, not just restarting Nginx. Browsers may ask for a new exception. For lasting deployments use a trusted certificate or install a local CA on client devices.
+
+To disable the add-on, use the complete Compose command printed by installation with `stop lan-https`, then `rm -f lan-https`; only after removing that service, move private `lan-https.yml` out of the active configuration. Keep certificates for rollback and leave app/database/Tunnel resources untouched. The saved wrapper no longer enables the proxy when that override is absent. Existing installs must not rerun the fresh installer: operators can instead generate private certificates with OpenSSL, set the TLS paths/port in their private env, copy the add-on template to `lan-https.yml`, and apply it with their existing Compose file list or saved wrapper (which also redeploys the app).
 
 If explicitly using a pre-existing local app image in an offline fixture, do not claim `dc pull` succeeded: document the pull failure/local image identity and fetch the database image separately as needed.
 
@@ -250,7 +282,7 @@ The enclosing directory must remain `0700`. Compose file-based secrets are **hos
 
 In the protected env file set `CHORUS_PUBLIC_URL=https://chorus.your-domain.example`, an existing pinned `CLOUDFLARED_IMAGE=cloudflare/cloudflared:<version>`, and `CLOUDFLARED_TOKEN_FILE` to the absolute path in `TOKEN_FILE`. The connector command is `tunnel --no-autoupdate run --token-file /run/secrets/tunnel_token`; [Cloudflare documents `--token-file` as requiring 2025.4.0 or newer](https://developers.cloudflare.com/tunnel/reference/run-parameters/#token-file). Never replace this with an inline `--token` argument.
 
-If switching an existing local stack, run `dc down` using the **old local function** first; this preserves volumes and removes the loopback-published container. Then select Tunnel mode:
+If switching an existing local stack, run `dc down` using the **old local function** first; this preserves volumes and removes the LAN-published container. Then select Tunnel mode:
 
 ```bash
 dc() {
@@ -388,7 +420,7 @@ Encrypt the complete backup set with your established backup tool before sending
 
 ### Restore rehearsal into an alternate project
 
-Never restore over the original project. Choose a **new unused** project name and unused loopback port; verify no containers or volumes already exist under that project. Use the matching pre-backup app image and PostgreSQL major version; do not start the app before importing the database and signing key. The commands assume the same configuration checkout and a complete backup above:
+Never restore over the original project. Choose a **new unused** project name and unused host port restricted to trusted networks; verify no containers or volumes already exist under that project. Use the matching pre-backup app image and PostgreSQL major version; do not start the app before importing the database and signing key. The commands assume the same configuration checkout and a complete backup above:
 
 ```bash
 RESTORE_PROJECT=chorus-restore-rehearsal

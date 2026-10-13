@@ -2,7 +2,7 @@
 
 **`chorusaidlc/chorus-app`** — The official Docker image for [Chorus](https://github.com/Chorus-AIDLC/Chorus), an AI Agent & Human collaboration platform implementing the AI-DLC (AI-Driven Development Lifecycle) workflow.
 
-For a portable Linux deployment with PostgreSQL, private credentials, loopback-only HTTP or an optional Cloudflare Named Tunnel, and backup/restore instructions, use the **[Self-host guide](SELF_HOST.md)** / **[中文自托管指南](SELF_HOST.zh.md)**. Those guides use the isolated `deploy/self-host/` Compose files; the examples below remain general image examples, not hardened public-deployment defaults.
+For a portable Linux deployment with PostgreSQL, private credentials, trusted-LAN HTTP or an optional Cloudflare Named Tunnel, and backup/restore instructions, use the **[Self-host guide](SELF_HOST.md)** / **[中文自托管指南](SELF_HOST.zh.md)**. Those guides use the isolated `deploy/self-host/` Compose files; the examples below remain general image examples, not hardened public-deployment defaults.
 
 ## Quick Start
 

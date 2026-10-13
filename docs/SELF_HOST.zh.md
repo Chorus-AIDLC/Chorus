@@ -9,7 +9,7 @@
 - 一台持续维护的 Linux 主机，已安装 Docker Engine、Docker Compose v2 插件（`docker compose`）、Bash、OpenSSL、curl，并预留数据库增长及备份空间。可选脚本登录检查需要 `jq`。用 `docker version`、`docker compose version` 检查环境；Compose 需支持 `up --wait`。
 - 一份包含 `deploy/self-host/` 的仓库检出或发行源码，配置与所选应用版本相匹配。容器部署不要求服务端安装 Node.js 开发工具链；Agent CLI 检查在已安装 Chorus CLI 和对应 Agent 后端的客户端进行。
 - Docker 操作权限基本等同于主机 root 权限。保护 Docker socket，不要将其挂载进 Chorus。应用镜像可能以 root 运行，不能假定它提供非 root 隔离。
-- 能访问镜像仓库；Tunnel 模式还需要访问 Cloudflare 连接器网络。主机防火墙保持应用和数据库入站端口关闭。本地模式只绑定回环地址，Tunnel 模式不发布任何主机端口；数据库始终只在内部 `db:5432` 可用。
+- 能访问镜像仓库；Tunnel 模式还需要访问 Cloudflare 连接器网络。本地模式将应用绑定到 `0.0.0.0` 供局域网访问：应用端口仅允许可信网络访问，不要暴露到公网。Docker 发布的端口可能绕过 UFW 规则，需使用适用于 Docker 的防火墙规则或上游防火墙限制访问。Tunnel 模式不发布任何主机端口；数据库始终只在内部 `db:5432` 可用。
 - 选择独一无二的 Compose 项目名，不连接已有数据库/卷，不设置固定 `container_name`，不运行全主机 prune/清理命令。
 
 主机/VPS、电力、网络、磁盘以及可选域名都可能产生费用。Cloudflare 套餐资格和限制会变化，Tunnel 并不让主机或域名免费。R2 仅作为可选的**加密异地备份存储**，不能作为数据库运行磁盘。[R2 官方价格](https://developers.cloudflare.com/r2/pricing/)（2026 年 10 月查阅）列出的 Standard 每月免费额度为 10 GB-month 存储、100 万次 Class A 操作、1,000 万次 Class B 操作。出口流量免费不等于全部免费：存储/操作超额仍收费，其他存储类型和产品的计费也不同。使用前重新确认价格并设置账单告警。
@@ -21,7 +21,7 @@
 默认仍为 AWS。`bash install.sh --target local` 可直接选择本地；有终端时会询问
 `pull` / `build`、拉取所需镜像、普通登录邮箱/密码及独立的超级管理员邮箱/密码。
 密码输入及二次确认均隐藏显示。本地只需要 Docker/Compose 和
-OpenSSL，不需要主机安装 AWS CLI、Node.js 或 pnpm。脚本仅启动 loopback HTTP
+OpenSSL，不需要主机安装 AWS CLI、Node.js 或 pnpm。脚本仅启动局域网 HTTP
 配置，可选 Cloudflare 仍按后文章节由用户配置。
 
 安装器会在读取前拒绝符号链接密码文件和检出目录内的密码文件，避免它们进入镜像构建上下文。
@@ -49,7 +49,7 @@ bash install.sh --target local --image-source build \
   --port 18637 --non-interactive
 ```
 
-安装脚本默认监听 `127.0.0.1:18637`，与测试用的 `8637` 区分；可用 `--port` 或
+安装脚本默认监听 `0.0.0.0:18637`，与测试用的 `8637` 区分；可用 `--port` 或
 `CHORUS_PORT` 覆盖。容器内部端口及 Tunnel 源站 `http://app:8637` 不变。
 后文手工部署/健康检查示例使用 `8637`，脚本安装的实例请相应改为 `18637`。
 恢复演练须选未占用的独立端口，不能复用正在运行的正式实例端口。
@@ -108,8 +108,9 @@ bash ./default_deploy.sh
 
 wrapper 调用 `deploy/self-host/deploy-local.sh`。build 模式重新编译当前检出源码；pull
 模式拉取已有私有 env 中 `CHORUS_IMAGE` 指定的应用镜像。从同一文件读取 `POSTGRES_IMAGE`，
-**仅在本地缺少该镜像时拉取**，不会借此升级数据库。私有目录中若存在 `https.yml` 和
-`pg17.yml`，会在**每次运行时**自动追加，保留现有 HTTPS 和 PostgreSQL 覆盖配置。
+**仅在本地缺少该镜像时拉取**，不会借此升级数据库。私有目录中若存在 `https.yml`、
+`pg17.yml` 或 `lan-https.yml`，会在**每次运行时**自动追加，保留现有 HTTPS 和 PostgreSQL 覆盖配置。
+存在可选的 `lan-https.yml` 时，也会在启动前拉取其中配置的代理镜像。
 镜像选择仅读取已保存的显式、**不加引号**的 `CHORUS_IMAGE` 和 `POSTGRES_IMAGE`
 标签/digest，绝不将 env 文件作为 shell 代码 source（Compose 仍用私有 env 配置服务）。通过
 `up --pull never --wait` 幂等应用 Compose，不轮换凭据、不执行 `down`、不删除卷。
@@ -170,7 +171,10 @@ unset POSTGRES_PASSWORD DEFAULT_PASSWORD
 | `DEFAULT_USER`、`DEFAULT_PASSWORD` | Compose 渲染时必填的普通初始化邮箱/密码。安装脚本以双引号包裹的明文保存密码，转义反斜杠/双引号，并用 `$$` 表示字面的 `$`；手工示例生成随机十六进制密码。用于开发/demo，不是团队 SSO。 |
 | `NEXTAUTH_SECRET` | 可选强随机覆盖值。为空时自动生成 `/app/data/.secret`，持久化于 `app-data`；常规升级不要删除它。 |
 | `SUPER_ADMIN_EMAIL`、`SUPER_ADMIN_PASSWORD_HASH` | 独立的 `/admin` 账号，全新本地安装脚本必填，手工 Compose 可选。只保存 bcrypt hash，在 env 中加单引号以保留字面的 `$`。 |
-| `CHORUS_PORT` | 仅本地模式使用；安装脚本默认 `18637`，手工 Compose 默认 `8637`，绑定 `127.0.0.1`。 |
+| `CHORUS_PORT` | 仅本地模式使用；安装脚本默认 `18637`，手工 Compose 默认 `8637`，绑定 `0.0.0.0` 供局域网访问。 |
+| `CHORUS_LOCAL_HTTPS`、`CHORUS_HTTPS_HOST` | 安装脚本的可选 HTTPS 开关（`true`/`false`）与 DNS 主机名或 IPv4 地址（不是 URL）。仅设置 host 也会开启 HTTPS；交互默认不启用，`--https-host` 启用，`--no-https` 禁用。 |
+| `CHORUS_HTTPS_PORT`、`CHORUS_HTTPS_IMAGE` | 可选代理端口（默认 `18638`，不能与 HTTP 相同）及镜像（模板固定已验证的 Nginx digest）。安装脚本保存端口；重新部署的镜像覆盖应写入私有 env。 |
+| `CHORUS_TLS_CERT_FILE`、`CHORUS_TLS_KEY_FILE` | 仅 HTTPS 附加配置必填：源码目录外证书/私钥的绝对路径。选中 HTTPS 后由安装脚本生成并保存。 |
 | `CHORUS_PUBLIC_URL` | 仅 Tunnel 模式必填，实际外部 `https://` origin，不带末尾斜杠/路径；用于设置 `NEXTAUTH_URL`。 |
 | `CLOUDFLARED_IMAGE` | 仅 Tunnel 模式必填，支持 token-file 的固定版本/digest，版本须为 **2025.4.0 或更新**。 |
 | `CLOUDFLARED_TOKEN_FILE` | 仅 Tunnel 模式必填，主机私有文件的绝对路径，不是 token 内容。 |
@@ -181,7 +185,7 @@ unset POSTGRES_PASSWORD DEFAULT_PASSWORD
 
 ## 3. 仅选择一种暴露模式
 
-基础 `compose.yml` **不发布端口**，始终只搭配一个模式覆盖文件，不要同时合并 local 和 tunnel。后续保留所选 `dc` 函数，确保每次使用一致的项目名、私有 env 和模式。
+基础 `compose.yml` **不发布端口**，local 和 tunnel 两个主模式只选一个，不要同时合并。下面的可选局域网 HTTPS 附加配置可单独叠加，不改变主模式的源站。后续保留所选 `dc` 函数，确保每次使用一致的项目名、私有 env 和模式。
 
 ### A. 本地 HTTP（推荐先验证）
 
@@ -197,7 +201,35 @@ dc up -d --wait
 dc ps
 ```
 
-在主机上打开 `http://localhost:8637`（如修改 `CHORUS_PORT`，相应调整）。该模式设置 `NEXTAUTH_URL=http://localhost:${CHORUS_PORT:-8637}`、`COOKIE_SECURE=false`。不要把 HTTP 端口直接公开。远程 Linux 主机可以使用 SSH 转发，例如 `ssh -N -L 8637:127.0.0.1:8637 user@your-host`，再在工作站打开 localhost；限制 SSH 访问即可，本地测试不需要 Cloudflare Tunnel。
+在主机上打开 `http://localhost:8637`，或在其他局域网设备上打开 `http://<主机局域网IP>:8637`（安装脚本默认端口为 `18637`，自定义时按 `CHORUS_PORT` 调整）。监听地址为 `0.0.0.0`，浏览器应使用主机实际局域网 IP，而不是 `0.0.0.0`。该模式设置 `NEXTAUTH_URL=http://localhost:${CHORUS_PORT:-8637}`、`COOKIE_SECURE=false`，支持局域网 HTTP 密码登录 Cookie。使用 OIDC 时，应按[认证指南](AUTH.md)配置实际访问地址和对应的提供商回调地址。HTTP 不加密凭据或会话，仅限可信网络；不可信网络应使用 HTTPS，不要把 HTTP 端口暴露到公网。
+
+已有安装重新运行保存的部署脚本后会应用新绑定，账号和数据卷不变。如果私有 `https.yml` 覆盖配置设置了 `COOKIE_SECURE=true`，局域网 HTTP 登录需改为 `false`；这也会去掉 HTTPS 入口所签发 Cookie 的 Secure 标记。如果不能接受这一取舍，应仅使用 HTTPS 入口。
+
+#### 可选：自签证书局域网 HTTPS 试用
+
+局域网 HTTP 密码登录可用，不代表 OIDC 可用：未修改的 OIDC 客户端需要 Web Crypto 计算 PKCE，而浏览器不会给不安全的局域网 HTTP 来源提供该能力。**HTTPS 是可选项**，不是密码登录部署的前提。交互式执行 `bash install.sh --target local`，填写账号后会询问 **Also enable self-signed LAN HTTPS? [y/N]**，选择 yes 后填写客户端实际使用的主机名或 IPv4 地址。默认选 no 时不创建代理、证书或 HTTPS 监听端口。
+
+也可通过参数启用（将文档示例 IP 替换为主机实际局域网 IP，全新安装须使用未占用的项目）：
+
+```bash
+bash install.sh --target local --image-source build --https-host 192.0.2.10
+```
+
+`--https-port` 可更改默认 `18638`，但不能与 HTTP 端口相同。`--https` 启用主机名交互提示；非交互模式需要 `--https-host` 或 `CHORUS_HTTPS_HOST`。`--no-https` 可覆盖环境中的启用设置。支持 DNS 名和 IPv4，不接受 URL 路径、通配主机名或 IPv6 字面地址。非交互模式仍需提供普通账号和管理员账号凭据。
+
+所选主机名须已能在客户端解析到本机；安装不会修改 DNS、路由器或防火墙策略。两个发布端口都应限制为可信网络访问。
+
+选中后，脚本在私有 `lan-tls/` 目录生成有效期 30 天、SAN 匹配所选主机的 RSA 自签证书，将证书/私钥路径及 HTTPS 端口保存到私有 env，并把 `deploy/self-host/compose.lan-https.yml` 复制为私有 `lan-https.yml`，和应用、数据库一起加入**同一次 Compose up**。代理使用 `deploy/self-host/nginx.lan-https.conf` 和固定 digest 的 Nginx 镜像。重复部署保留已有 `https.yml`、`pg17.yml`，不会重新生成证书或凭据。
+
+HTTPS 入口通过同一 Compose 网络转发到 `http://app:8637`，保留原 HTTP 监听，Cloudflare 源站继续使用内部 HTTP，不会接触自签证书。代理为 HTTPS 响应 Cookie 添加 Secure 标记，不修改应用全局 Cookie 设置，同时保留转发/WebSocket 头并关闭 SSE 缓冲。只有启用 HTTPS 时才拉取代理镜像。证书/私钥只读挂载，源文件缺失会启动失败，而不是自动创建空目录。
+
+证书 SAN 必须包含实际访问的局域网 IP 或主机名；私钥应放在源码目录外并限制访问权限。已验证的 Chromium 中，点击证书警告的**高级 → 继续前往**后，`isSecureContext` 和 `crypto.subtle` 均可用，不需要浏览器特殊参数、安装 CA 或修改 OIDC 依赖。其他浏览器及受管设备策略可能不同。这只是临时例外，不提供可信的服务器身份认证，也不建议用于生产。HTTPS 代理应为该入口签发的 Cookie 加上 Secure 标记，并保留转发头、WebSocket 升级和无缓冲流式响应。
+
+还需在身份提供商添加**完全匹配**的新回调地址，例如 `https://<主机局域网IP>:18638/login/callback`，并保留原公网回调。即使 PKCE 跳转成功，未配置白名单仍会出现 `redirect_uri_mismatch`。登录后请持续使用 HTTPS：Cookie 按主机隔离而不按端口隔离，同一主机的 HTTP/HTTPS 监听不是两个独立会话。本地试用结果及尚需配置的提供商白名单见[验收记录](acceptance/self-host-guide.md)。
+
+这是试用证书，不含自动证书管理。30 天到期前或 IP/主机名变化时，先备份受保护的 TLS 文件，再生成 SAN 匹配的新证书和私钥，用原完整 Compose 参数执行 `up -d --no-deps --force-recreate lan-https`，**仅重建代理**。文件挂载的证书替换后需要重建容器，仅重启 Nginx 不够。浏览器可能要求重新接受警告。长期部署请使用可信证书，或在客户端安装本地 CA。
+
+禁用时，先用安装输出的完整 Compose 命令执行 `stop lan-https`、`rm -f lan-https`，删除代理服务后再把私有 `lan-https.yml` 移出活动配置。保留证书以便回退，不操作应用、数据库或 Tunnel；覆盖文件不存在时，保存的部署脚本不再启用代理。已有安装不要重跑全新安装脚本：可以自行用 OpenSSL 生成私有证书，在原私有 env 配置 TLS 路径/端口，将附加模板复制为 `lan-https.yml`，再通过原 Compose 文件列表或保存的部署脚本应用（后者也会重新部署应用）。
 
 若离线测试明确使用已有本地镜像，不要声称 `dc pull` 成功：记录拉取失败和本地镜像身份，按需单独获取数据库镜像。
 
@@ -221,7 +253,7 @@ chmod 444 "$TOKEN_FILE"
 
 在私有 env 中设置 `CHORUS_PUBLIC_URL=https://chorus.your-domain.example`、确实存在的固定 `CLOUDFLARED_IMAGE=cloudflare/cloudflared:<version>`，以及指向 `TOKEN_FILE` 绝对路径的 `CLOUDFLARED_TOKEN_FILE`。连接器使用 `tunnel --no-autoupdate run --token-file /run/secrets/tunnel_token`；[官方说明 `--token-file` 要求 2025.4.0 或更新](https://developers.cloudflare.com/tunnel/reference/run-parameters/#token-file)。不要换成携带明文 token 的 `--token` 参数。
 
-从已有本地模式切换时，先用**旧的 local 函数**运行 `dc down`，保留卷并移除绑定回环端口的容器，再选择 Tunnel 模式：
+从已有本地模式切换时，先用**旧的 local 函数**运行 `dc down`，保留卷并移除发布局域网端口的容器，再选择 Tunnel 模式：
 
 ```bash
 dc() {
@@ -359,7 +391,7 @@ dc start app
 
 ### 在另一个项目中演练恢复
 
-绝不覆盖原项目。选择**全新未使用**项目名及空闲回环端口，确认该项目名下不存在旧容器或卷。使用备份时匹配的应用镜像和 PostgreSQL 大版本，在导入数据库/签名密钥前不要启动应用。以下假设使用相同配置源码和上述完整备份：
+绝不覆盖原项目。选择**全新未使用**项目名及仅允许可信网络访问的空闲主机端口，确认该项目名下不存在旧容器或卷。使用备份时匹配的应用镜像和 PostgreSQL 大版本，在导入数据库/签名密钥前不要启动应用。以下假设使用相同配置源码和上述完整备份：
 
 ```bash
 RESTORE_PROJECT=chorus-restore-rehearsal

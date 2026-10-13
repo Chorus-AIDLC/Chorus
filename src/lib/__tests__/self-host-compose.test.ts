@@ -68,17 +68,22 @@ describe.skipIf(!composeAvailable)("portable self-host Compose contract", () => 
     fixture = mkdtempSync(join(tmpdir(), "chorus-compose-contract-"));
     writeFileSync(join(fixture, "token"), "not-a-real-tunnel-token", { mode: 0o600 });
     values.CLOUDFLARED_TOKEN_FILE = join(fixture, "token");
+    values.CHORUS_TLS_CERT_FILE = join(fixture, "server.crt");
+    values.CHORUS_TLS_KEY_FILE = join(fixture, "server.key");
+    writeFileSync(values.CHORUS_TLS_CERT_FILE, "fixture-certificate", { mode: 0o600 });
+    writeFileSync(values.CHORUS_TLS_KEY_FILE, "fixture-private-key", { mode: 0o600 });
   });
 
   afterAll(() => rmSync(fixture, { recursive: true, force: true }));
 
-  function render(mode?: "local" | "tunnel", overrides: Record<string, string> = {}) {
+  function render(mode?: "local" | "tunnel", overrides: Record<string, string> = {}, lanHttps = false) {
     const envFile = join(fixture, "fixture.env");
     writeFileSync(envFile, Object.entries({ ...values, ...overrides })
       .map(([name, value]) => `${name}=${value}`).join("\n"), { mode: 0o600 });
     const args = ["compose", "--project-name", "chorus-contract", "--env-file", envFile,
       "-f", join(configDirectory, "compose.yml")];
     if (mode) args.push("-f", join(configDirectory, `compose.${mode}.yml`));
+    if (lanHttps) args.push("-f", join(configDirectory, "compose.lan-https.yml"));
     return JSON.parse(execFileSync("docker", [...args, "config", "--format", "json"], {
       env: environment,
       stdio: ["ignore", "pipe", "pipe"],
@@ -107,11 +112,11 @@ describe.skipIf(!composeAvailable)("portable self-host Compose contract", () => 
     expect(config.volumes["db-data"].name).toBe("chorus-contract_db-data");
   });
 
-  it("exposes only a configurable loopback HTTP origin in local mode", () => {
+  it("exposes a configurable LAN HTTP port on all IPv4 interfaces in local mode", () => {
     const config = render("local");
     expect(config.services.app.ports).toHaveLength(1);
     expect(config.services.app.ports[0]).toMatchObject({
-      host_ip: "127.0.0.1", published: "18637", target: 8637,
+      host_ip: "0.0.0.0", published: "18637", target: 8637,
     });
     expect(config.services.db.ports).toBeUndefined();
     expect(config.services.app.environment.COOKIE_SECURE).toBe("false");
@@ -121,13 +126,58 @@ describe.skipIf(!composeAvailable)("portable self-host Compose contract", () => 
   it("retains port 8637 for manual Compose rather than the installer default", () => {
     const config = render("local", { CHORUS_PORT: "" });
     expect(config.services.app.ports).toEqual([
-      expect.objectContaining({ host_ip: "127.0.0.1", published: "8637", target: 8637 }),
+      expect.objectContaining({ host_ip: "0.0.0.0", published: "8637", target: 8637 }),
     ]);
     expect(config.services.app.environment.NEXTAUTH_URL).toBe("http://localhost:8637");
   });
 
   it("allows an explicit tested PostgreSQL image override", () => {
     expect(render("local", { POSTGRES_IMAGE: "postgres:17.6-alpine" }).services.db.image).toBe("postgres:17.6-alpine");
+  });
+
+  it.each(["local", "tunnel"] as const)("adds HTTPS without changing the %s origin or database", mode => {
+    const original = render(mode);
+    const config = render(mode, {}, true);
+    expect(config.services.app).toEqual(original.services.app);
+    expect(config.services.db).toEqual(original.services.db);
+    if (mode === "tunnel") expect(config.services.cloudflared).toEqual(original.services.cloudflared);
+    const proxy = config.services["lan-https"];
+    expect(proxy.image).toMatch(/^nginx@sha256:[a-f0-9]{64}$/);
+    expect(proxy.ports).toEqual([
+      expect.objectContaining({ host_ip: "0.0.0.0", published: "18638", target: 8443 }),
+    ]);
+    expect(proxy.read_only).toBe(true);
+    expect(proxy.depends_on.app.condition).toBe("service_healthy");
+    expect(proxy.tmpfs).toEqual(["/var/cache/nginx", "/var/run"]);
+    expect(proxy.volumes.map((volume: { source: string }) => volume.source)).toEqual([
+      join(configDirectory, "nginx.lan-https.conf"), values.CHORUS_TLS_CERT_FILE, values.CHORUS_TLS_KEY_FILE,
+    ]);
+    for (const mount of proxy.volumes) {
+      expect(mount).toMatchObject({ type: "bind", read_only: true });
+      expect(mount.bind?.create_host_path).not.toBe(true);
+    }
+    expect(proxy.healthcheck.test.join(" ")).toContain("https://127.0.0.1:8443/api/health");
+  });
+
+  it("allows explicit HTTPS port and image selection", () => {
+    const config = render("local", { CHORUS_HTTPS_PORT: "28638", CHORUS_HTTPS_IMAGE: "nginx:test-fixture" }, true);
+    expect(config.services["lan-https"].ports[0].published).toBe("28638");
+    expect(config.services["lan-https"].image).toBe("nginx:test-fixture");
+  });
+
+  it.each(["CHORUS_TLS_CERT_FILE", "CHORUS_TLS_KEY_FILE"])("rejects HTTPS without %s", name => {
+    expect(() => render("local", { [name]: "" }, true)).toThrow();
+  });
+
+  it("preserves secure cookies, streaming, WebSocket headers and Docker DNS in the proxy", () => {
+    const config = readFileSync(join(configDirectory, "nginx.lan-https.conf"), "utf8");
+    for (const directive of [
+      "listen 8443 ssl;", "ssl_protocols TLSv1.2 TLSv1.3;", "set $chorus_origin http://app:8637;",
+      "resolver 127.0.0.11 valid=10s ipv6=off;", "proxy_pass $chorus_origin;", "proxy_cookie_flags ~ secure;",
+      "proxy_set_header Host $http_host;", "proxy_set_header X-Forwarded-Proto https;", "proxy_http_version 1.1;",
+      "proxy_set_header Upgrade $http_upgrade;", "proxy_set_header Connection $connection_upgrade;",
+      "proxy_buffering off;", "proxy_read_timeout 3600s;",
+    ]) expect(config).toContain(directive);
   });
 
   it("keeps Tunnel mode private and supplies the token through a file", () => {

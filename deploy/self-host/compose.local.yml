@@ -1,7 +1,7 @@
 services:
   app:
     ports:
-      - "127.0.0.1:${CHORUS_PORT:-8637}:8637"
+      - "0.0.0.0:${CHORUS_PORT:-8637}:8637"
     environment:
       NEXTAUTH_URL: http://localhost:${CHORUS_PORT:-8637}
       COOKIE_SECURE: "false"

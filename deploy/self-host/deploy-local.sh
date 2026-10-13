@@ -48,7 +48,7 @@ if [ "$IMAGE_SOURCE" = build ] && [[ "$IMAGE" == *@* ]]; then
   fail "Build mode requires a mutable local image tag"
 fi
 COMPOSE_FILES=(-f "$ROOT/deploy/self-host/compose.yml" -f "$ROOT/deploy/self-host/compose.local.yml")
-for override in https.yml pg17.yml; do
+for override in https.yml pg17.yml lan-https.yml; do
   if [ -f "$PRIVATE_DIR/$override" ]; then
     COMPOSE_FILES+=(-f "$PRIVATE_DIR/$override")
   fi
@@ -56,10 +56,12 @@ done
 compose() (
   unset CHORUS_IMAGE POSTGRES_IMAGE POSTGRES_PASSWORD DEFAULT_USER DEFAULT_PASSWORD
   unset CHORUS_PORT NEXTAUTH_SECRET SUPER_ADMIN_EMAIL SUPER_ADMIN_PASSWORD SUPER_ADMIN_PASSWORD_HASH COMPOSE_FILE COMPOSE_PROJECT_NAME
+  unset CHORUS_HTTPS_PORT CHORUS_HTTPS_IMAGE CHORUS_TLS_CERT_FILE CHORUS_TLS_KEY_FILE
   docker compose --project-name "$PROJECT" --env-file "$ENV_FILE" "${COMPOSE_FILES[@]}" "$@"
 )
 
 printf 'Redeploy project=%s source=%s image=%s using existing private configuration.\n' "$PROJECT" "$IMAGE_SOURCE" "$IMAGE"
+printf 'Local HTTP binds 0.0.0.0; restrict the published port to trusted networks.\n'
 if [ -n "$DRY_RUN" ]; then
   printf 'Dry run: would %s the application, ensure the saved database image, then Compose up --pull never --wait; no changes.\n' "$IMAGE_SOURCE"
   printf 'Compose files:'
@@ -77,6 +79,9 @@ else
 fi
 if ! docker image inspect "$POSTGRES_IMAGE" >/dev/null 2>&1; then
   docker pull "$POSTGRES_IMAGE"
+fi
+if [ -f "$PRIVATE_DIR/lan-https.yml" ]; then
+  compose pull lan-https
 fi
 compose up -d --pull never --wait --wait-timeout 180
 printf 'Deployment ready; existing credentials, volumes and private overrides retained.\n'

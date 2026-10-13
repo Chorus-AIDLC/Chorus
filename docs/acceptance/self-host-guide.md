@@ -388,3 +388,103 @@ No registry pull, full local Docker build, live AWS call/deploy, or new runtime
 installation was executed in this follow-up. Passing command-contract tests
 does not certify registry availability or a fresh image build. The initial
 runtime evidence and external-validation limitations above remain distinct.
+
+## 2026-10-13 — LAN listener follow-up
+
+At the operator's request, local Compose now publishes the app on `0.0.0.0`
+instead of loopback. The installer still defaults to host port `18637`; manual
+Compose still defaults to `8637`. Database and Tunnel-only topologies remain
+unpublished. Earlier loopback observations in this report are historical.
+
+- Focused installer and real Compose-rendering tests: **136/136 passed**.
+- Shell syntax checks and `git diff --check` passed.
+- Existing `chorus-local` app recreated with `--no-deps --pull never --wait`;
+  Docker reports `0.0.0.0:18637->8637/tcp` and healthy status. Application image
+  ID and mounts are unchanged; the PostgreSQL container ID is unchanged.
+- Host-side requests to both loopback and the host LAN address return health
+  HTTP 200. LAN-address password login issues an HTTP-compatible session cookie;
+  an authenticated `/api/projects` request returns HTTP 200. No credentials or
+  session tokens were printed. A second physical LAN device was not tested.
+- The private HTTPS override was backed up before setting `COOKIE_SECURE=false`
+  to permit LAN HTTP login. Its HTTPS origin and PG17 volume override are
+  retained. The global setting also removes Secure from HTTPS-issued cookies;
+  trusted-network restrictions are therefore required for this mixed mode.
+- The existing external HTTPS domain currently returns HTTP 530 / Cloudflare
+  error 1033. External availability is **not verified**; the Cloudflare connector
+  and its configuration were not changed by this update.
+
+## 2026-10-13 — Self-signed LAN HTTPS trial
+
+The operator selected a self-signed HTTPS proxy with manual browser warning
+acceptance instead of modifying the OIDC dependency. All attempted dependency
+patch changes to `Dockerfile`, `package.json` and `pnpm-lock.yaml` were reverted;
+the patch file was removed and a frozen offline install restored the original
+dependency. No patched app image was built or deployed. OIDC unit tests: 22/22.
+
+- Added only `chorus-local-lan-https-1`, publishing `0.0.0.0:18638` and forwarding
+  to `http://app:8637` on `chorus-local_default`. Nginx is pinned to pulled digest
+  `sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94`.
+- Existing app, database and Cloudflare container IDs, images and mounts were
+  unchanged. HTTP `18637` remains available; the Cloudflare origin remains
+  `http://app:8637`. No Tunnel or remote identity-provider settings were edited.
+- Private configuration lives under `~/.config/chorus-self-host/chorus-local/`:
+  `https.yml` includes the proxy; `lan-tls/` holds `nginx.conf`, `server.crt` and
+  `server.key`. The directory is mode 700 and these files mode 600. The prior
+  override is backed up as `https.yml.before-self-signed-20261013`. Existing
+  `compose.sh` and `default_deploy.sh` retain the proxy through that override.
+- Certificate SAN covers the fixture's LAN address, loopback, localhost and its
+  existing public hostname. Validity is 30 days. Machine-specific addresses,
+  certificates and private keys are not distributed with the reusable templates.
+- Nginx syntax, health checks via HTTPS with an explicit trusted certificate,
+  existing HTTP, and internal `http://app:8637` all pass. HTTPS password login
+  issues a Secure session cookie; authenticated `/api/projects` returns 200.
+  The proxy also retains WebSocket upgrade headers and disables buffering for
+  SSE. No credentials or tokens were printed.
+- Real Chromium navigation initially showed `ERR_CERT_AUTHORITY_INVALID`.
+  Clicking **Advanced → Proceed** manually loaded the page with
+  `isSecureContext=true` and `crypto.subtle` available. No ignore-certificate
+  launch flag, global trust-store change or browser security override was used.
+- With the operator's requested email and first workspace (Authing), the
+  browser generated `code_challenge_method=S256` and reached Authing. Authing
+  returned HTTP 400 **`redirect_uri_mismatch`**, explicitly requiring the new
+  callback `https://<host-LAN-IP>:18638/login/callback` in its login callback
+  allowlist. Full SSO login is **not verified** until the operator configures
+  that callback and authenticates. Existing public callbacks must be retained.
+- This verifies one local Chromium browser using the LAN address, not all
+  physical client devices or browser policies. Treat certificate exceptions as
+  a temporary trusted-LAN trial; IP changes/expiry need certificate updates.
+
+To stop only this trial proxy, run
+`bash ~/.config/chorus-self-host/chorus-local/compose.sh stop lan-https`.
+The app, database and Tunnel can remain running. To keep it disabled across
+future redeploys, restore the backed-up private HTTPS override as well.
+
+## 2026-10-13 — Portable optional HTTPS installer follow-up
+
+The runtime experiment is now represented by reusable, machine-independent
+`compose.lan-https.yml` and `nginx.lan-https.conf` templates. Interactive local
+setup offers self-signed HTTPS (default no); `--https-host` enables it for scripted
+setup and `--https-port` selects a separate port. Selection generates protected
+30-day TLS material outside the checkout and includes private `lan-https.yml`
+in the same Compose startup. The proxy waits for app health. Saved redeployment
+includes the optional override, prepares its image and reuses existing keys.
+
+Automated coverage includes real OpenSSL certificate generation/SAN checks,
+private file modes, PTY-based yes/no selection, malformed host/port rejection,
+side-effect-free dry-run, real Compose rendering, optional proxy image failure
+handling, and certificate reuse on redeploy. Installer Docker commands are
+stubbed; Compose rendering and certificate generation are real. These tests do
+not claim a fresh app image build or live identity-provider authentication.
+
+Validation for the PR follow-up: **325 passed, 1 skipped** across nine focused
+installer, Compose, PostgreSQL preflight, signing-secret, cookie and OIDC suites.
+The opt-in live PG migration test was not rerun in this update. TypeScript,
+targeted ESLint, Bash syntax, current OpenSpec validation and `git diff --check`
+pass. The portable Nginx configuration also passes `nginx -t` in an ephemeral,
+read-only container with no network and read-only test certificate mounts.
+
+The earlier independent browser/manual certificate-warning acceptance result
+remains runtime evidence, with the provider callback allowlist prerequisite
+explicitly outstanding. Preparing this PR update does not restart or alter the
+existing app, database, TLS proxy or Tunnel. No local env, wrapper, key, certificate
+or machine-specific Compose configuration is included in this PR.
