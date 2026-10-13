@@ -90,10 +90,12 @@ chorus agents add --agents codex \
 - **`URL must start with http:// or https://`** —— `CHORUS_URL` 缺了协议头，补上 `http://` 或 `https://`。
 - **Marketplace source conflict** —— 你之前用不同 URL 注册过 `chorus-plugins`。脚本会检测到并自动重新注册，留意它打印的 `!` 警告。
 - **Hook 在首次启动时没触发** —— 在 Codex 里打开 `/plugins`，确认 `chorus@chorus-plugins` 已安装并启用；再打开 `/hooks` review/trust Chorus 插件自带的 hooks。plugin cache 生成后，hook 会在后续工具调用时生效。
+- **插件升级后 hook 不再触发** —— 插件 `hooks.json` 中的命令现在会经过一个小型分发脚本（`hooks/run-hook.sh <name>`），以便同一个插件包也能服务 TRAE CLI。Codex 会把改动后的命令视为新的 hook 定义，所以升级后需要打开 `/hooks`，**重新信任一次 Chorus hooks**。Codex 脚本本身没有变化。
 
 ## 下一步
 
 - Skill 文档（工具参考）：`plugins/chorus/skills/chorus/SKILL.md`（Chorus 实例上 `/skill/chorus/SKILL.md` 提供的是独立版本，来自 `public/skill/chorus/SKILL.md`）
 - 工作流概览：在 Codex 里输入 `$chorus`
 - 要接入 Claude Code，见 [CONNECT_CLAUDE_CODE.zh.md](CONNECT_CLAUDE_CODE.zh.md)
+- TRAE CLI（Codex 的分支）使用同一个插件包，见 [CONNECT_TRAE.zh.md](CONNECT_TRAE.zh.md)
 - 其他 MCP 兼容的 agent（Cursor、Continue、自研等）见 [CONNECT_OTHER_AGENTS.zh.md](CONNECT_OTHER_AGENTS.zh.md)

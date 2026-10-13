@@ -23,7 +23,7 @@ Use this skill whenever the user asks a **product-usage** question about Chorus,
 
 - **UI workflow** — how the Idea → Proposal → Task → Verify pipeline works in the web app, what a control does, how statuses flow.
 - **Agent setup** — creating an API key, permissions and role presets, connecting an agent.
-- **Plugin setup** — installing/configuring the Claude Code / Codex / OpenClaw / Kiro / Pi plugin.
+- **Plugin setup** — installing/configuring the Claude Code / Codex / TRAE CLI / OpenClaw / Kiro / Pi plugin.
 - **API / MCP** — the REST API, the MCP tool surface, authentication, real-time events.
 - **Deployment** — self-hosting, the CDK stack, environment configuration.
 - **Operations / troubleshooting** — running Chorus, diagnosing connection or setup problems.

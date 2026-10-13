@@ -1240,6 +1240,7 @@
       "tabs": {
         "claudeCode": "Claude Code",
         "codex": "Codex",
+        "trae": "TRAE CLI",
         "kiro": "Kiro",
         "pi": "Pi",
         "dsh": "DeepSeek Harness",
@@ -1263,6 +1264,16 @@
         "step1Tip": "No need to persist these — chorus agents add (Step 2) writes them to ~/.codex/.env.",
         "step2Title": "Step 2: Run chorus agents add",
         "step2Tip": "chorus agents add installs the Chorus plugin and writes CHORUS_URL, CHORUS_API_KEY and CHORUS_AGENT_PROFILE to ~/.codex/.env — so interactive Codex needs no manual export."
+      },
+      "trae": {
+        "step1Title": "Step 1: Set environment variables",
+        "step1Tip": "No need to persist these — chorus agents add (Step 2) writes them to ~/.trae/.env (or $TRAE_HOME/.env).",
+        "step2Title": "Step 2: Run chorus agents add",
+        "step2Tip": "Requires traecli 0.209.1 or later, installed and logged in. chorus agents add installs the Chorus Codex plugin package through traecli's plugin CLI, writes a keyless [mcp_servers.chorus] entry into traecli.toml, and writes CHORUS_URL, CHORUS_API_KEY and CHORUS_AGENT_PROFILE to ~/.trae/.env — so interactive TRAE CLI needs no manual export.",
+        "step3Title": "Step 3: Trust the Chorus hooks",
+        "step3Desc": "traecli runs plugin hooks only after you trust them. Open traecli and accept the hook-trust review for chorus@chorus-plugins so the session check-in and reviewer reminders run.",
+        "step4Title": "Step 4 (optional): Let the daemon wake TRAE CLI",
+        "step4Tip": "Each wake starts an isolated traecli app-server. ~/.trae/.env overrides the credentials the daemon exports, so give each TRAE agent its own TRAE_HOME."
       },
       "kiro": {
         "step1Title": "Step 1: Set environment variables",

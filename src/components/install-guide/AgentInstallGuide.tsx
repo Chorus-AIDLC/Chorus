@@ -43,6 +43,9 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
             <TabsTrigger value="codex" className="shrink-0">
               {t("install.tabs.codex")}
             </TabsTrigger>
+            <TabsTrigger value="trae" className="shrink-0">
+              {t("install.tabs.trae")}
+            </TabsTrigger>
             <TabsTrigger value="kiro" className="shrink-0">
               {t("install.tabs.kiro")}
             </TabsTrigger>
@@ -123,6 +126,54 @@ export function AgentInstallGuide({ apiKey }: AgentInstallGuideProps) {
               </p>
             </div>
 
+          </TabsContent>
+
+          {/* TRAE CLI Tab */}
+          <TabsContent value="trae" className="mt-4 space-y-4">
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.trae.step1Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code={`export CHORUS_URL="${origin}"\nexport CHORUS_API_KEY="${displayKey}"`}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.trae.step1Tip")}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.trae.step2Title")}
+              </h3>
+              <CodeBlock
+                language="bash"
+                code={`npm install -g @chorus-aidlc/chorus\nchorus agents add --agents trae`}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.trae.step2Tip")}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.trae.step3Title")}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                {t("install.trae.step3Desc")}
+              </p>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-medium text-foreground">
+                {t("install.trae.step4Title")}
+              </h3>
+              <CodeBlock language="bash" code="chorus daemon --agent trae" />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {t("install.trae.step4Tip")}
+              </p>
+            </div>
           </TabsContent>
 
           {/* Kiro Tab */}

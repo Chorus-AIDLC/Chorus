@@ -73,7 +73,7 @@ chorus upgrade --plugins   # 同时刷新已配置 Agent 的 Chorus 插件
 
 自升级支持 Linux、macOS 和 Windows 上当前使用的 **npm 全局安装**：检查 npm prefix、查询最新稳定版本、避免降级，并在安装后验证版本。源码目录、链接、npx 和其他包管理器安装请使用各自的更新方式。CLI 检查、安装或版本验证失败后，不会继续更新插件。
 
-`--plugins` 读取 `~/.chorus/daemon.json`，兼容旧版单 Agent 配置。明确指定 Claude Code、Codex、Kiro、Pi 类型的记录都会处理，不受唤醒开关影响；按每条记录的 home、配置目录和 PATH 定位宿主，共享目标只更新一次。仅刷新 Chorus 及必需的集成依赖，保留已有凭证和无关设置，不安装宿主 CLI。Kiro 模板来自记录配置的 Chorus 实例（以该实例提供的版本为准，可能落后于 npm），共享目录对应不同实例时报告冲突。稳定版 Pi >=0.99.0 <2.0.0 使用原生 MCP，仅定向更新 Chorus；Pi 0.84.4–0.98.x 保留已验证的 `pi-mcp-adapter@5.0.0` 策略固定版本。未知版本不操作 adapter、不宣称 MCP 已完成；不支持的宿主不执行包命令。只做定向更新，绝不更新全部扩展；缺少能力或约束不兼容时报告未完成。保留用户 pins/ranges（验证过的 adapter 固定版本是预期策略，不算刷新未完成）。原生宿主已有 adapter 或 `-builtin:mcp` 时仅按作用域提示手动迁移，不自动卸载或改设置。详见 [Pi 接入](docs/CONNECT_PI.md)。
+`--plugins` 读取 `~/.chorus/daemon.json`，兼容旧版单 Agent 配置。明确指定 Claude Code、Codex、TRAE CLI、Kiro、Pi 类型的记录都会处理，不受唤醒开关影响；按每条记录的 home、配置目录和 PATH 定位宿主，共享目标只更新一次。仅刷新 Chorus 及必需的集成依赖，保留已有凭证和无关设置，不安装宿主 CLI。Kiro 模板来自记录配置的 Chorus 实例（以该实例提供的版本为准，可能落后于 npm），共享目录对应不同实例时报告冲突。稳定版 Pi >=0.99.0 <2.0.0 使用原生 MCP，仅定向更新 Chorus；Pi 0.84.4–0.98.x 保留已验证的 `pi-mcp-adapter@5.0.0` 策略固定版本。未知版本不操作 adapter、不宣称 MCP 已完成；不支持的宿主不执行包命令。只做定向更新，绝不更新全部扩展；缺少能力或约束不兼容时报告未完成。保留用户 pins/ranges（验证过的 adapter 固定版本是预期策略，不算刷新未完成）。原生宿主已有 adapter 或 `-builtin:mcp` 时仅按作用域提示手动迁移，不自动卸载或改设置。详见 [Pi 接入](docs/CONNECT_PI.md)。
 
 命令非交互执行并逐项汇总。退出码 **0** 表示请求全部完成（配置不存在或为空也算成功）；**1** 表示失败或未全部完成，包括 offline、未知或缺少类型的记录、宿主缺失及不支持定向更新。单个插件失败不影响后续目标，已完成的变更不回滚。更新后请开启新的 Agent 会话，并在方便时重启 daemon；命令本身不会重启进程或中断现有会话。
 
@@ -111,7 +111,7 @@ Kanban 看板随 Agent 工作进度自动更新，任务卡片在 To Do → In P
 
 ## 连接 Agent
 
-最快的方式是应用内的 setup 向导：打开 **Settings → Setup Guide**。它会创建 API Key，并给出适配你所用客户端的完整命令，无论是 Claude Code、Codex、Kiro、dsh、OpenCode、OpenClaw、Pi、Hermes，还是任何兼容 MCP 的 agent。
+最快的方式是应用内的 setup 向导：打开 **Settings → Setup Guide**。它会创建 API Key，并给出适配你所用客户端的完整命令，无论是 Claude Code、Codex、TRAE CLI、Kiro、dsh、OpenCode、OpenClaw、Pi、Hermes，还是任何兼容 MCP 的 agent。TRAE CLI 接入说明：[docs/CONNECT_TRAE.zh.md](docs/CONNECT_TRAE.zh.md)。
 
 按客户端分的完整接入指南 → **[Agent 接入平台](https://doc.chorus-ai.dev/zh/reference/agents/)**。
 

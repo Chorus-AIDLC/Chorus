@@ -35,6 +35,8 @@ See [CONNECT_CODEX.md](../../docs/CONNECT_CODEX.md) for the full walkthrough. (T
 
 Chorus lifecycle hooks are bundled in the Codex plugin manifest and loaded automatically after the plugin is installed and enabled. Use `/hooks` in Codex to review and trust newly installed or changed hook definitions.
 
+> **Upgrading:** `hooks.json` commands now go through the dispatcher `hooks/run-hook.sh <name>` (so the same package also serves TRAE CLI). Codex sees these as changed hook definitions, so **re-trust the Chorus hooks once in `/hooks` after upgrading**. Without the TRAE marker the dispatcher runs the original Codex scripts unchanged.
+
 Then finish with `/plugins` inside the Codex TUI.
 
 Re-run at any time to rotate the API key — `~/.codex/.env` and the `[mcp_servers.chorus]` block are refreshed idempotently (the key lives only in `~/.codex/.env`).
@@ -92,6 +94,10 @@ codex plugin marketplace add https://github.com/Chorus-AIDLC/Chorus
 codex   # plugin auto-installs on first launch; use /plugins to confirm
 ```
 
+## TRAE CLI
+
+[TRAE CLI](../../docs/CONNECT_TRAE.md) (`traecli`, a Codex fork; minimum tested 0.209.1) installs this **same** package. Run `chorus agents add --agents trae`. It installs the plugin with `traecli plugin install chorus@chorus-plugins --yes`, writes the keyless `[mcp_servers.chorus]` into `$TRAE_HOME/traecli.toml` and writes the credentials into `$TRAE_HOME/.env` (default `~/.trae`). Trust the Chorus hooks in traecli before they will run. `hooks/run-hook.sh` selects the `hooks/trae/` copies when the plugin lives under `$TRAE_HOME/plugins/`. In the skills, TRAE's sub-agent tool is `Agent` (not `spawn_agent`). For the daemon (`chorus daemon --agent trae`), give each TRAE agent its own `TRAE_HOME`, because `.env` overrides the daemon-exported credentials.
+
 ## What's different from the Claude Code version
 
 The Codex port uses its native plugin hooks and skill-mounted sub-agents rather
@@ -138,5 +144,6 @@ Both are invoked by the main agent via `spawn_agent({items:[{type:"skill", ...},
 | `chorus` is listed but tools don't work | URL or token wrong. Re-run `chorus agents add --agents codex` to update; it overwrites idempotently. |
 | Plugin (`/plugins` menu) is empty | The `marketplace add` step didn't run. Re-run `chorus agents add --agents codex`, or manually `codex plugin marketplace add https://github.com/Chorus-AIDLC/Chorus`. |
 | Skills don't show in `$<name>` autocomplete | Restart the Codex session. Skills are loaded at session start from `~/.codex/plugins/cache/chorus-plugins/chorus/*/skills/`. |
+| Hooks stopped firing after an upgrade | The hook commands changed to `hooks/run-hook.sh <name>`; open `/hooks` and re-trust the Chorus hooks once. |
 | Hooks don't fire | Check `grep '^hooks = true' ~/.codex/config.toml`, confirm the plugin is installed/enabled in `/plugins`, then open `/hooks` to review/trust Chorus plugin hooks. Re-run `chorus agents add --agents codex` to refresh MCP/plugin config. |
 | Need to rotate API key | Just re-run `chorus agents add --agents codex` and enter the new key when prompted. |

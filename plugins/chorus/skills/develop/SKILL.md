@@ -23,7 +23,7 @@ Developer Agents take Tasks created by PM Agents (via `$proposal`) and turn them
 claim --> in_progress --> report work --> self-check AC --> submit for verify --> Admin /review
 ```
 
-For multi-agent parallel execution, the main agent uses Codex's `spawn_agent` tool to launch worker sub-agents.
+For multi-agent parallel execution, the main agent uses Codex's `spawn_agent` tool to launch worker sub-agents. (TRAE CLI: use its `Agent` tool instead of `spawn_agent`; the other steps are the same.)
 
 ---
 

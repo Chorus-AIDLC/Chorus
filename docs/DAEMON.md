@@ -39,7 +39,7 @@ chorus agents run --name work --type codex -- resume # override the backend, the
   `chorus agents add`, so they are not re-handled here.
 - **Which binary.** The backend defaults to the agent's stored `agentType`;
   `--type <type>` overrides it. Types map to binaries: `claude-code`/`claude` →
-  `claude`, `codex` → `codex`, `kiro` → `kiro-cli`, `pi` → `pi`, `opencode` →
+  `claude`, `codex` → `codex`, `trae` → `traecli`, `kiro` → `kiro-cli`, `pi` → `pi`, `opencode` →
   `opencode`, `openclaw` → `openclaw`, `dsh` → `dsh`. Agents stored as
   `offline` have no concrete backend, so pass `--type` explicitly for them.
 - **Passthrough.** Everything after the first `--` is handed to the agent
@@ -392,8 +392,9 @@ per-wake detail.
 
 ## Agent backend (`--agent`)
 
-`--agent <type>` selects which local agent backend the daemon wakes. Three
-backends are available: `claude-code` (the default), `codex`, and `kiro`. (A `dsh`
+`--agent <type>` selects which local agent backend the daemon wakes. The
+backends are `claude-code` (the default), `codex`, `trae` (TRAE CLI, see
+[CONNECT_TRAE.md](CONNECT_TRAE.md)), `kiro`, and `pi`. (A `dsh`
 DeepSeek Harness backend exists in the codebase but is temporarily offline — not
 offered; see [CONNECT_DSH.md](CONNECT_DSH.md).) An unknown value is a hard error
 (no silent fallback).
@@ -408,6 +409,7 @@ The backend is resolved in this precedence (first defined source wins):
 ```bash
 chorus daemon --agent claude-code   # explicit (same as default)
 chorus daemon --agent codex         # wake a local Codex CLI
+chorus daemon --agent trae          # wake a local TRAE CLI (traecli)
 chorus daemon --agent kiro          # wake a local Kiro CLI
 ```
 
@@ -449,7 +451,7 @@ agent **overrides** it for that agent only. Per-agent fields:
 |-------|---------|
 | `apiKey` | *(required)* the agent's `cho_` key — determines its identity |
 | `url` | Chorus server (may differ per agent — different server/company) |
-| `agentType` | `claude-code` \| `codex` \| `kiro` \| `pi` \| `dsh` \| `offline` (backends may be mixed; `offline` is never woken) |
+| `agentType` | `claude-code` \| `codex` \| `trae` \| `kiro` \| `pi` \| `dsh` \| `offline` (backends may be mixed; `offline` is never woken) |
 | `cwds` | working directories this agent serves (one connection each) |
 | `permissionMode` | `yolo` \| `chorus` |
 | `maxConcurrency` | this agent's own wake-concurrency cap (default `4`) |
@@ -492,6 +494,17 @@ How each agent's Chorus key reaches its woken subprocess differs by backend:
   `bearer_token_env_var = "CHORUS_API_KEY"`. The key is delivered through the
   environment, never the App Server command line. Distinct config/plugin sets or
   Chorus URLs can use separate per-agent `CODEX_HOME` directories.
+  Note that Codex's `CODEX_HOME/.env` (written by `chorus agents add`) **overrides**
+  the daemon-exported values, so two Codex agents that share one home wake with the
+  identity stored in that file.
+- **TRAE CLI** — same model as Codex. `chorus agents add --agents trae` writes a
+  keyless `[mcp_servers.chorus]` (`bearer_token_env_var = "CHORUS_API_KEY"`) into
+  `$TRAE_HOME/traecli.toml` and the credentials into `$TRAE_HOME/.env` (default
+  `~/.trae`). traecli loads that `.env` at startup and it **overrides** the
+  daemon-exported `CHORUS_*` values, so **give each TRAE daemon agent its own
+  `TRAE_HOME`** (set it in the agent's `env`, and run `chorus agents add --agents trae`
+  once with that `TRAE_HOME` exported); otherwise every agent sharing the home wakes
+  as the identity stored in its `.env`.
 
 ### Claude Code daemon: stream-json transport
 
@@ -636,6 +649,29 @@ Protocol details and verification evidence are in
 [the protocol contract](verification/codex-app-server-protocol.md) and
 [the integration record](verification/codex-app-server-integration.md).
 
+### TRAE CLI daemon
+
+`chorus daemon --agent trae` (or `"agentType": "trae"` on an `agents[]` entry)
+wakes TRAE CLI through the **same** Codex App Server implementation. Each wake
+launches one isolated `traecli app-server --listen stdio://` process and uses
+the same thread resume, interruption, cleanup and permission-mode mapping
+described above. The **minimum tested version is traecli 0.209.1**. Earlier
+versions are unverified. Differences from Codex:
+
+- Binary `traecli` (override with `CHORUS_TRAE_PATH`); home `TRAE_HOME`
+  (default `~/.trae`; Chorus reads `TRAE_HOME` only, not `TRAECLI_HOME`);
+  config `traecli.toml`.
+- Thread IDs and usage are stored in `~/.chorus/trae-sessions.json` and
+  `~/.chorus/trae-usage.json`, separate from Codex, so threads never cross.
+- Wake errors and daemon connections report `trae` as their source and client type.
+- Per-agent `args` follow the Codex rules (`-m`, `-c key=value`, same protected
+  keys). `--permission-mode` is not used; the daemon applies posture over RPC.
+- traecli runs plugin hooks only after they are trusted. If the hooks are
+  untrusted, a woken TRAE process still runs but skips the SessionStart check-in.
+
+Setup, including the per-agent `TRAE_HOME` requirement, is in
+[CONNECT_TRAE.md](CONNECT_TRAE.md).
+
 ---
 
 ## Background mode & lifecycle
@@ -736,7 +772,7 @@ lingering enabled, since other user services may rely on it (turn it off yoursel
 with `loginctl disable-linger` if you want).
 
 On a terminal, `install` prompts interactively for the agent backend (Claude Code
-/ Codex / Kiro — Enter accepts the Claude Code default) unless you pass `--agent`
+/ Codex / TRAE CLI / Kiro / … — Enter accepts the Claude Code default) unless you pass `--agent`
 (or export `CHORUS_AGENT`, or already have one stored), then checks the selected
 CLI is on `PATH` and warns if it is missing. Pass `-y` / `--yes` — or run on a
 non-TTY — to skip the prompt and take the default.
@@ -860,7 +896,7 @@ unattended posture.
 | Restrict the woken agent | `--chorus-only` / `CHORUS_CHORUS_ONLY=1` |
 | Force full autonomy | `--yolo` / `CHORUS_YOLO=1` (also the default) |
 | Verbose per-wake logs | `--verbose` / `CHORUS_VERBOSE=1` |
-| Choose agent backend | `--agent claude-code|codex|kiro` / `CHORUS_AGENT` |
+| Choose agent backend | `--agent claude-code|codex|trae|kiro|pi` / `CHORUS_AGENT` |
 | Point at a `claude` binary | `CHORUS_CLAUDE_PATH=/path/to/claude` |
 | Save credentials | `chorus login` (or interactive on first `chorus daemon`) |
 | Call MCP tools directly | `chorus mcp call|whoami|list` — see [MCP_CLIENT.md](./MCP_CLIENT.md) (reuses these same credentials + `--agent`) |
