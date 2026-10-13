@@ -22,6 +22,7 @@ const mockPrisma = vi.hoisted(() => ({
   idea: {
     count: vi.fn(),
     groupBy: vi.fn(),
+    updateMany: vi.fn(async () => ({ count: 0 })),
   },
   document: {
     count: vi.fn(),
@@ -293,6 +294,41 @@ describe("deleteProject", () => {
     expect(mockPrisma.project.delete).toHaveBeenCalledWith({
       where: { uuid: projectUuid },
     });
+  });
+
+  it("detaches lineage of ideas whose parent is in the project before deleting it", async () => {
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof mockPrisma) => unknown) => cb(mockPrisma));
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid, groupUuid: null });
+    mockPrisma.idea.updateMany.mockResolvedValueOnce({ count: 3 });
+    mockPrisma.project.delete.mockResolvedValue(makeProject());
+
+    expect(await deleteProject(companyUuid, projectUuid)).toBe(true);
+
+    expect(mockPrisma.idea.updateMany).toHaveBeenCalledWith({
+      where: { companyUuid, parentUuid: { not: null }, parent: { projectUuid: { in: [projectUuid] } } },
+      data: { parentUuid: null },
+    });
+    expect(mockPrisma.idea.updateMany.mock.invocationCallOrder[0])
+      .toBeLessThan(mockPrisma.project.delete.mock.invocationCallOrder[0]);
+  });
+
+  it("does not detach lineage when the permission check rejects the delete", async () => {
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof mockPrisma) => unknown) => cb(mockPrisma));
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid });
+
+    await expect(deleteProject(companyUuid, projectUuid, { type: "user", companyUuid: "other-company", actorUuid: "u" }))
+      .rejects.toThrow();
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.project.delete).not.toHaveBeenCalled();
+  });
+
+  it("propagates a delete failure after detaching (transaction rolls back)", async () => {
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof mockPrisma) => unknown) => cb(mockPrisma));
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid, groupUuid: null });
+    mockPrisma.project.delete.mockRejectedValueOnce(new Error("delete failed"));
+
+    await expect(deleteProject(companyUuid, projectUuid)).rejects.toThrow("delete failed");
+    expect(mockPrisma.idea.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it("should return false when project not found", async () => {

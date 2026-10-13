@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fixture, events, auth, group, groupMember, project, localMember } from "./project-group.fixture";
+import { fixture, events, auth, group, groupMember, project, localMember, idea } from "./project-group.fixture";
 vi.mock("@/lib/prisma", async () => ({ prisma: (await import("./project-group.fixture")).fixture.prisma }));
 vi.mock("@/lib/event-bus", async () => ({ eventBus: (await import("./project-group.fixture")).events }));
 vi.mock("@/services/activity.service", () => ({ createActivityInTx: vi.fn(async () => ({ publish: vi.fn() })) }));
@@ -525,6 +525,48 @@ describe("protected moves and retained grants", () => {
     group(); project(); await deleteProjectGroup("c", "g", true, auth());
     expect(fixture.state.project).toEqual([]); expect(fixture.state.projectGroup).toEqual([]);
     expect(fixture.writes.filter((w) => w.data.delete).map((w) => w.table)).toEqual(["project", "projectGroup"]);
+  });
+  it("deleteProjects detaches idea lineage so projects with idea trees delete (no IdeaLineage P2014)", async () => {
+    group(); project("p1"); project("p2"); project("outside", null);
+    idea("a", "p1"); idea("b", "p1", "a"); idea("c", "p1", "b"); idea("flat", "p1");
+    idea("r", "p2"); idea("m", "p2", "r");
+    idea("cross", "outside", "a"); idea("keepRoot", "outside"); idea("keepChild", "outside", "keepRoot");
+    idea("fRoot", "foreign-project", null, "other-company"); idea("fChild", "foreign-project", "fRoot", "other-company");
+    expect(await deleteProjectGroup("c", "g", true, auth())).toBe(true);
+    expect(fixture.state.project.map((p) => p.uuid)).toEqual(["outside"]);
+    expect(fixture.state.idea.map((i) => [i.uuid, i.parentUuid])).toEqual([
+      ["cross", null], ["keepRoot", null], ["keepChild", "keepRoot"], ["fRoot", null], ["fChild", "fRoot"],
+    ]);
+    const detach = fixture.prisma.idea.updateMany.mock.invocationCallOrder[0];
+    expect(detach).toBeLessThan(fixture.prisma.project.deleteMany.mock.invocationCallOrder[0]);
+    expect(fixture.prisma.idea.updateMany).toHaveBeenCalledWith({
+      where: { companyUuid: "c", parentUuid: { not: null }, parent: { projectUuid: { in: ["p1", "p2"] } } },
+      data: { parentUuid: null },
+    });
+  });
+  it("keeping projects never touches idea lineage", async () => {
+    group(); project(); idea("a", "p"); idea("b", "p", "a");
+    expect(await deleteProjectGroup("c", "g", false, auth())).toBe(true);
+    expect(fixture.prisma.idea.updateMany).not.toHaveBeenCalled();
+    expect(fixture.state.idea.map((i) => [i.uuid, i.parentUuid])).toEqual([["a", null], ["b", "a"]]);
+    expect(fixture.state.project[0]).toMatchObject({ uuid: "p", groupUuid: null });
+  });
+  it("a failed group delete rolls back the lineage detach", async () => {
+    group(); project(); idea("a", "p"); idea("b", "p", "a");
+    fixture.failWrite = "projectGroup";
+    await expect(deleteProjectGroup("c", "g", true, auth())).rejects.toThrow("forced projectGroup failure");
+    expect(fixture.state.idea.map((i) => [i.uuid, i.parentUuid])).toEqual([["a", null], ["b", "a"]]);
+    expect(fixture.state.project).toHaveLength(1);
+  });
+  it("a rejected group delete performs no lineage detach", async () => {
+    group("g", "public"); project("p", "g", "public"); localMember("p", "local", "admin"); idea("a", "p"); idea("b", "p", "a");
+    await expect(deleteProjectGroup("c", "g", true, auth("local"))).rejects.toMatchObject({ status: 403 });
+    expect(fixture.prisma.idea.updateMany).not.toHaveBeenCalled();
+  });
+  it("project delete detaches lineage including cross-project children", async () => {
+    group(); project(); project("other"); idea("a", "p"); idea("b", "p", "a"); idea("cross", "other", "a");
+    expect(await deleteProject("c", "p", auth())).toBe(true);
+    expect(fixture.state.idea.map((i) => [i.uuid, i.parentUuid])).toEqual([["cross", null]]);
   });
 });
 

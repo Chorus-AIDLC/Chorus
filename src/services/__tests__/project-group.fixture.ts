@@ -33,6 +33,10 @@ function matches(table: Table, row: Row, where: Row = {}): boolean {
       const link = table === "project" ? "projectUuid" : "groupUuid";
       return matchesRelation(memberTable, fixture.state[memberTable].filter((m) => m[link] === row.uuid), expected);
     }
+    if (key === "parent" && table === "idea") {
+      const parent = fixture.state.idea.find((i) => i.uuid === row.parentUuid);
+      return !!parent && matches("idea", parent, expected);
+    }
     if (key === "projects") return matchesRelation("project", fixture.state.project.filter((p) => p.groupUuid === row.uuid), expected);
     if (key === "group") {
       const group = fixture.state.projectGroup.find((g) => g.uuid === row.groupUuid);
@@ -73,6 +77,15 @@ function write(table: Table, data: Row) {
   fixture.writes.push({ table, data: structuredClone(data) });
   if (fixture.failWrite === table) throw new Error(`forced ${table} failure`);
 }
+// Emulates relationMode="prisma": Project → Idea cascades, IdeaLineage is Restrict.
+function cascadeProjectDelete(deleted: Row[]) {
+  const projectUuids = new Set(deleted.map((p) => p.uuid));
+  const ideaUuids = new Set(fixture.state.idea.filter((i) => projectUuids.has(i.projectUuid)).map((i) => i.uuid));
+  if (fixture.state.idea.some((i) => i.parentUuid && ideaUuids.has(i.parentUuid))) {
+    throw Object.assign(new Error("The change you are trying to make would violate the required relation 'IdeaLineage' between the `Idea` and `Idea` models."), { code: "P2014" });
+  }
+  fixture.state.idea = fixture.state.idea.filter((i) => !ideaUuids.has(i.uuid));
+}
 function update(row: Row, data: Row) {
   for (const [key, value] of Object.entries(data)) row[key] = value && typeof value === "object" && "increment" in value ? row[key] + value.increment : value;
   row.updatedAt = new Date(); return structuredClone(row);
@@ -97,8 +110,8 @@ for (const table of tables) {
       write(table, data); const row = rows(where)[0]; if (!row) throw new Error("missing row"); return update(row, data);
     }),
     updateMany: vi.fn(async ({ where, data }: Row) => { write(table, data); const found = rows(where); found.forEach((r) => update(r, data)); return { count: found.length }; }),
-    delete: vi.fn(async ({ where }: Row) => { write(table, { delete: true }); const row = rows(where)[0]; fixture.state[table] = fixture.state[table].filter((r) => r !== row); return row; }),
-    deleteMany: vi.fn(async ({ where }: Row) => { write(table, { delete: true }); const found = rows(where); fixture.state[table] = fixture.state[table].filter((r) => !found.includes(r)); return { count: found.length }; }),
+    delete: vi.fn(async ({ where }: Row) => { write(table, { delete: true }); const row = rows(where)[0]; if (table === "project" && row) cascadeProjectDelete([row]); fixture.state[table] = fixture.state[table].filter((r) => r !== row); return row; }),
+    deleteMany: vi.fn(async ({ where }: Row) => { write(table, { delete: true }); const found = rows(where); if (table === "project") cascadeProjectDelete(found); fixture.state[table] = fixture.state[table].filter((r) => !found.includes(r)); return { count: found.length }; }),
     upsert: vi.fn(async ({ where, create, update: data }: Row) => {
       const existing = rows(where)[0];
       return existing ? fixture.prisma[table].update({ where, data }) : fixture.prisma[table].create({ data: create });
@@ -141,5 +154,9 @@ export function project(uuid = "p", groupUuid: string | null = "g", visibility =
 }
 export function localMember(projectUuid: string, userUuid: string, role: string) {
   fixture.state.projectMember.push({ uuid: `${projectUuid}-${userUuid}`, companyUuid: "c", projectUuid, userUuid, role, addedByUuid: "admin", createdAt: new Date(), updatedAt: new Date() });
+}
+export function idea(uuid: string, projectUuid: string, parentUuid: string | null = null, companyUuid = "c") {
+  fixture.state.idea.push({ id: 1, uuid, companyUuid, projectUuid, title: uuid, parentUuid, createdByUuid: "admin", createdAt: new Date(), updatedAt: new Date() });
+  return uuid;
 }
 export const auth = (actorUuid = "admin") => ({ type: "user" as const, companyUuid: "c", actorUuid });
