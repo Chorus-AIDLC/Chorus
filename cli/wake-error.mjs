@@ -119,7 +119,8 @@ function sanitize(text, secrets, truncated = false) {
     const merged = [];
     for (const [start, stop] of ranges) {
       const last = merged.at(-1);
-      if (last && start < last[1]) last[1] = Math.max(last[1], stop);
+      // Half-open ranges: touching spans share no gap, so emit one marker.
+      if (last && start <= last[1]) last[1] = Math.max(last[1], stop);
       else merged.push([start, stop]);
     }
     let redacted = "";

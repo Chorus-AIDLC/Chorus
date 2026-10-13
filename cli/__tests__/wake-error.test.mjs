@@ -148,6 +148,14 @@ describe("bounded wake diagnostics", () => {
         .toBe("[redacted] rest");
     });
 
+    it("collapses exactly adjacent occurrences into one marker but keeps separated ones apart", () => {
+      // Plain words only, so the later Bearer/cho_/key= passes cannot add markers.
+      const options = { secrets: ["alphaword-one1", "bravoword-two2"] };
+      expect(sanitizeWakeErrorText("x alphaword-one1bravoword-two2 y", options)).toBe("x [redacted] y");
+      expect(sanitizeWakeErrorText("x alphaword-one1/bravoword-two2 y", options))
+        .toBe("x [redacted]/[redacted] y");
+    });
+
     it("leaves sub-threshold residue alone instead of mis-redacting unrelated text", () => {
       // A 3-char tail collides with this credential's last bytes, but is below
       // WAKE_ERROR_MIN_TAIL_MATCH, so it is not evidence of a cut key.
