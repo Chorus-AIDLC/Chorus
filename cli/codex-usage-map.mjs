@@ -15,8 +15,16 @@ const FIELDS = [
   "reasoning_output_tokens",
 ];
 
-export function codexUsageMapPath() {
-  return join(homedir(), ".chorus", "codex-usage.json");
+export const CODEX_USAGE_MAP_FILE = "codex-usage.json";
+
+/**
+ * Absolute path to a Codex-family usage map in ~/.chorus. Each backend passes its
+ * profile's `usageMapFile` (codex-usage.json / trae-usage.json) so baselines from
+ * one backend's threads are never applied to another's.
+ * @param {string} [fileName]
+ */
+export function codexUsageMapPath(fileName = CODEX_USAGE_MAP_FILE) {
+  return join(homedir(), ".chorus", fileName);
 }
 
 function tokenInt(value) {
@@ -53,7 +61,7 @@ function readMap(path, read, logger) {
 
 export function getCodexUsageSnapshot(anchor, threadId, deps = {}) {
   if (!anchor || !threadId) return null;
-  const path = deps.path ?? codexUsageMapPath();
+  const path = deps.path ?? codexUsageMapPath(deps.fileName);
   const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
   const logger = deps.logger ?? NOOP_LOGGER;
   const entry = readMap(path, read, logger)[anchor];
@@ -64,7 +72,7 @@ export function getCodexUsageSnapshot(anchor, threadId, deps = {}) {
 export function setCodexUsageSnapshot(anchor, threadId, usage, deps = {}) {
   const clean = sanitizeUsage(usage);
   if (!anchor || !threadId || !clean) return;
-  const path = deps.path ?? codexUsageMapPath();
+  const path = deps.path ?? codexUsageMapPath(deps.fileName);
   const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
   const write = deps.write ?? writeFileSync;
   const mkdir = deps.mkdir ?? mkdirSync;

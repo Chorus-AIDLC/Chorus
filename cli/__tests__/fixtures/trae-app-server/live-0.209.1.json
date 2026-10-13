@@ -1,0 +1,260 @@
+{
+  "source": "Real traecli 0.209.1 `app-server --listen stdio://` probe, Linux, 2026-10-13, logged-in ~/.trae. The two thread/resume rejections came from a separate process with the same initialize; the thread/start + turn ran in yolo posture. Paths, userAgent platform and model metadata sanitized; thread/turn objects trimmed to the fields Chorus consumes; timestamps removed.",
+  "transcript": [
+    {
+      "direction": "client",
+      "message": {
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "chorus",
+            "version": "0.0.0"
+          },
+          "capabilities": {
+            "experimentalApi": false
+          }
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "id": 1,
+        "result": {
+          "userAgent": "chorus/0.209.1 (sanitized platform) unknown (chorus; 0.0.0)",
+          "codexHome": "/sanitized/trae-home",
+          "platformFamily": "unix",
+          "platformOs": "linux"
+        }
+      }
+    },
+    {
+      "direction": "client",
+      "message": {
+        "method": "initialized"
+      }
+    },
+    {
+      "direction": "client",
+      "message": {
+        "id": "r1",
+        "method": "thread/resume",
+        "params": {
+          "cwd": "/sanitized/workspace",
+          "approvalPolicy": "never",
+          "sandbox": "read-only",
+          "threadId": "00000000-0000-4000-8000-000000000001",
+          "excludeTurns": true
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "id": "r1",
+        "error": {
+          "code": -32600,
+          "message": "thread/resume.excludeTurns requires experimentalApi capability"
+        }
+      }
+    },
+    {
+      "direction": "client",
+      "message": {
+        "id": "r2",
+        "method": "thread/resume",
+        "params": {
+          "cwd": "/sanitized/workspace",
+          "approvalPolicy": "never",
+          "sandbox": "read-only",
+          "threadId": "00000000-0000-4000-8000-000000000001"
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "id": "r2",
+        "error": {
+          "code": -32600,
+          "message": "no rollout found for thread id 00000000-0000-4000-8000-000000000001"
+        }
+      }
+    },
+    {
+      "direction": "client",
+      "message": {
+        "id": 2,
+        "method": "thread/start",
+        "params": {
+          "cwd": "/sanitized/workspace",
+          "approvalPolicy": "never",
+          "sandbox": "danger-full-access"
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "id": 2,
+        "result": {
+          "thread": {
+            "id": "01a135e0-89f8-74d3-9ec8-03aa4714880d",
+            "sessionId": "01a135e0-89f8-74d3-9ec8-03aa4714880d",
+            "preview": "",
+            "ephemeral": false,
+            "status": {
+              "type": "idle"
+            },
+            "turns": [],
+            "cwd": "/sanitized/workspace"
+          },
+          "approvalPolicy": "never",
+          "sandbox": {
+            "type": "dangerFullAccess"
+          }
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "method": "thread/started",
+        "params": {
+          "thread": {
+            "id": "01a135e0-89f8-74d3-9ec8-03aa4714880d",
+            "sessionId": "01a135e0-89f8-74d3-9ec8-03aa4714880d",
+            "preview": "",
+            "ephemeral": false,
+            "status": {
+              "type": "idle"
+            },
+            "turns": [],
+            "cwd": "/sanitized/workspace"
+          }
+        }
+      }
+    },
+    {
+      "direction": "client",
+      "message": {
+        "id": 3,
+        "method": "turn/start",
+        "params": {
+          "threadId": "01a135e0-89f8-74d3-9ec8-03aa4714880d",
+          "cwd": "/sanitized/workspace",
+          "approvalPolicy": "never",
+          "sandboxPolicy": {
+            "type": "dangerFullAccess"
+          },
+          "input": [
+            {
+              "type": "text",
+              "text": "Reply with the single word OK. Do not use tools.",
+              "text_elements": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "method": "turn/started",
+        "params": {
+          "threadId": "01a135e0-89f8-74d3-9ec8-03aa4714880d",
+          "turn": {
+            "id": "01a135e0-8a23-7650-997b-f6facde495e9",
+            "items": [],
+            "status": "inProgress",
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "id": 3,
+        "result": {
+          "turn": {
+            "id": "01a135e0-8a23-7650-997b-f6facde495e9",
+            "items": [],
+            "status": "inProgress",
+            "error": null
+          }
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "01a135e0-89f8-74d3-9ec8-03aa4714880d",
+          "turnId": "01a135e0-8a23-7650-997b-f6facde495e9",
+          "item": {
+            "type": "agentMessage",
+            "id": "msg_07c9c91978e65d0088a7149b8578390b",
+            "text": "OK",
+            "phase": "final_answer"
+          }
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "method": "thread/tokenUsage/updated",
+        "params": {
+          "threadId": "01a135e0-89f8-74d3-9ec8-03aa4714880d",
+          "turnId": "01a135e0-8a23-7650-997b-f6facde495e9",
+          "tokenUsage": {
+            "total": {
+              "totalTokens": 8160,
+              "inputTokens": 8155,
+              "cacheCreationInputTokens": 8153,
+              "cachedInputTokens": 0,
+              "outputTokens": 5,
+              "reasoningOutputTokens": 0
+            },
+            "last": {
+              "totalTokens": 8160,
+              "inputTokens": 8155,
+              "cacheCreationInputTokens": 8153,
+              "cachedInputTokens": 0,
+              "outputTokens": 5,
+              "reasoningOutputTokens": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "message": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "01a135e0-89f8-74d3-9ec8-03aa4714880d",
+          "turn": {
+            "id": "01a135e0-8a23-7650-997b-f6facde495e9",
+            "items": [
+              {
+                "type": "agentMessage",
+                "id": "msg_07c9c91978e65d0088a7149b8578390b",
+                "text": "OK",
+                "phase": "final_answer",
+                "memoryCitation": null,
+                "delivery": null,
+                "questions": null
+              }
+            ],
+            "status": "completed",
+            "error": null
+          }
+        }
+      }
+    }
+  ]
+}

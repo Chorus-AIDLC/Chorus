@@ -1,6 +1,16 @@
 // Per-profile literal argv/env. No IO, interpolation, defaults shared across agents,
 // or attempt to sandbox an operator who controls their executable/config files.
 const canonicalType = (type) => type === "claude" ? "claude-code" : type;
+// TRAE CLI (traecli) is a Codex fork: it shares the Codex `-c key=value` parser,
+// managed-key denylist, singleton and subcommand rules. Flags verified against
+// `traecli --help`, `traecli exec --help` and `traecli app-server --help` 0.209.1
+// (docs/verification/trae-app-server-0.209.1.md).
+const CODEX_FAMILY_TYPES = new Set(["codex", "trae"]);
+const isCodexFamily = (type) => CODEX_FAMILY_TYPES.has(type);
+// Long/short controls TRAE adds on top of Codex's (posture, session, worktree,
+// transport and tool-permission switches); -y bypasses approvals, -w a worktree.
+const TRAE_PROTECTED_LONG = "permission-mode worktree worktree-base worktree-mode session-id session-source acp stdio no-daemon allowed-tool disallowed-tool disabled-tool";
+const TRAE_PROTECTED_SHORT = "yw";
 
 // Known controls owned by the headless adapters (also protected in persistent
 // foreground config). Short options match attached values and clusters as well.
@@ -75,6 +85,17 @@ const ARITIES = {
     one: "model thinking message to session-id agent channel reply-to reply-channel reply-account timeout verbose profile log-level",
     aliases: { "-m": "--message", "-t": "--to" },
   },
+};
+PROTECTED.trae = {
+  long: `${PROTECTED.codex.long} ${TRAE_PROTECTED_LONG}`,
+  short: `${PROTECTED.codex.short}${TRAE_PROTECTED_SHORT}`,
+};
+ARITIES.trae = {
+  zero: `${ARITIES.codex.zero} no-daemon acp stdio analytics-default-enabled`,
+  one: `${ARITIES.codex.one} permission-mode worktree-base worktree-mode session-id session-source shell-tool-timeout allowed-tool disallowed-tool disabled-tool listen`,
+  optional: "worktree resume",
+  many: "image",
+  aliases: { ...ARITIES.codex.aliases, "-y": "--dangerously-bypass-approvals-and-sandbox", "-w": "--worktree" },
 };
 const OPTION_ARITIES = Object.fromEntries(Object.entries(ARITIES).map(([type, spec]) => {
   const flags = { "--help": "zero", "--version": "zero" };
@@ -177,11 +198,12 @@ export function validateAgentCliConfig(config = {}, type, label = "agent") {
     if ((longs.has((option?.flag ?? tok.split("=", 1)[0]).replace(/^--/, ""))) ||
         (!option && /^-[^-]/.test(tok) && `${controls?.short ?? ""}hVv`.includes(tok[1])))
       invalid(label, `args[${i}]`, "conflicts with managed backend controls; use the dedicated Chorus settings or explicit foreground passthrough");
-    if (backend === "codex") {
+    if (isCodexFamily(backend)) {
       const c = codexConfigAt(args, i);
       if (c) {
-        if (!c.valid || /^(listen|code_mode_host[^.]*|mcp_servers|sandbox[^.]*|approval_policy|approvals_reviewer|cwd|permissions|developer_instructions|model_instructions_file|experimental_instructions_file|base_instructions)(\.|$)/.test(c.key))
-          invalid(label, `args[${i}]`, "has an invalid or managed Codex config key");
+        if (!c.valid || /^(listen|code_mode_host[^.]*|mcp_servers|sandbox[^.]*|approval_policy|approvals_reviewer|cwd|permissions|developer_instructions|model_instructions_file|experimental_instructions_file|base_instructions)(\.|$)/.test(c.key)
+            || (backend === "trae" && /^permission_mode(\.|$)/.test(c.key)))
+          invalid(label, `args[${i}]`, `has an invalid or managed ${backend === "trae" ? "TRAE CLI" : "Codex"} config key`);
       }
     }
     if (option?.missing) invalid(label, `args[${i}]`, "requires a value before managed launch arguments");
@@ -192,7 +214,7 @@ export function validateAgentCliConfig(config = {}, type, label = "agent") {
 
 // Daemon-only translation. Foreground retains its literal argument planner.
 // App Server accepts global -c overrides, but not exec's model switch.
-export function codexAppServerArgs(args, label = "agent") {
+export function codexAppServerArgs(args, label = "agent", type = "codex") {
   const translated = [];
   for (let i = 0; i < args.length;) {
     const config = codexConfigAt(args, i);
@@ -201,7 +223,7 @@ export function codexAppServerArgs(args, label = "agent") {
       i += config.size;
       continue;
     }
-    const option = optionAt("codex", args, i);
+    const option = optionAt(isCodexFamily(type) ? type : "codex", args, i);
     if (option?.flag === "--model" && !option.missing) {
       const token = args[i];
       const value = option.size === 2 ? args[i + 1]
@@ -211,7 +233,7 @@ export function codexAppServerArgs(args, label = "agent") {
       i += option.size;
       continue;
     }
-    invalid(label, `args[${i}]`, "is unsupported by Codex App Server; use model or permitted -c/--config settings, or explicit foreground passthrough");
+    invalid(label, `args[${i}]`, `is unsupported by ${type === "trae" ? "TRAE CLI" : "Codex"} App Server; use model or permitted -c/--config settings, or explicit foreground passthrough`);
   }
   return translated;
 }
@@ -250,13 +272,14 @@ export function overlayAgentEnv(base, overrides = {}, platform = process.platfor
 const SINGLETONS = {
   "claude-code": { "--model": "model", "--effort": "effort" },
   codex: { "--model": "model", "-m": "model" },
+  trae: { "--model": "model", "-m": "model" },
   kiro: { "--model": "model", "--effort": "effort" },
   pi: { "--model": "model", "--thinking": "thinking", "--provider": "provider" },
   opencode: { "--model": "model", "-m": "model" },
   openclaw: { "--model": "model", "--thinking": "thinking" },
 };
 function singletonAt(type, args, i) {
-  if (type === "codex") {
+  if (isCodexFamily(type)) {
     const c = codexConfigAt(args, i);
     if (c?.valid && ["model", "model_reasoning_effort"].includes(c.key)) return { key: c.key, size: c.size };
   }
@@ -270,6 +293,7 @@ function singletonAt(type, args, i) {
 // arities, never token-search: a value named "exec"/"resume" is not a command.
 const SUBCOMMANDS = {
   codex: { exec: { resume: {} }, resume: {} },
+  trae: { exec: { resume: {} }, resume: {} },
   kiro: { chat: {} },
   openclaw: { agent: {} },
 };
@@ -313,7 +337,7 @@ export function planAgentArgs(type, configured, explicit = []) {
     const option = singletonAt(type, scan, i);
     // Local root/parent options do not override options of the selected child
     // command. Codex --config/-c is global and applies across command scopes.
-    const globalConfig = type === "codex" && boundary?.flag === "--config";
+    const globalConfig = isCodexFamily(type) && boundary?.flag === "--config";
     if (option && (i >= start || globalConfig)) supplied.add(option.key);
     i += (boundary?.size ?? 1) - 1;
   }

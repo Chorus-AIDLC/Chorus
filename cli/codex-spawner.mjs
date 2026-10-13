@@ -1,17 +1,20 @@
-// One isolated Codex App Server stdio connection per daemon wake.
+// One isolated Codex App Server stdio connection per daemon wake. The same
+// implementation serves every Codex-family backend (Codex, TRAE CLI) through a
+// frozen profile from codex-family.mjs; the default profile is Codex.
 import { spawn } from "node:child_process";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, codexAppServerArgs, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, win32 as pathWin32, posix as pathPosix } from "node:path";
+import { join } from "node:path";
+import { CODEX_FAMILY, resolveFamilyPath } from "./codex-family.mjs";
 import { CodexAppServerClient, CodexAppServerError, isHistoryUnavailableError } from "./codex-app-server-client.mjs";
 import { CodexAppServerEvents } from "./codex-app-server-events.mjs";
 import { registerProcessStopHook } from "./process-stop-hooks.mjs";
 import { killProcessTree } from "./process-killer.mjs";
 import { awaitChildSettled } from "./child-exit.mjs";
 import { createWakeErrorCollector } from "./wake-error.mjs";
-import { getThreadId as defaultGetThreadId, setThreadId as defaultSetThreadId } from "./codex-session-map.mjs";
+import { familySessionMap } from "./codex-session-map.mjs";
 import {
   getCodexUsageSnapshot as defaultGetUsageSnapshot,
   setCodexUsageSnapshot as defaultSetUsageSnapshot,
@@ -21,17 +24,20 @@ const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 const CLIENT_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 /**
- * Check whether the user's Codex config declares the Chorus MCP server.
+ * Check whether the user's Codex-family config declares the Chorus MCP server
+ * (Codex: $CODEX_HOME|~/.codex/config.toml; TRAE: $TRAE_HOME|~/.trae/traecli.toml).
  * This is diagnostic only: a missing or unreadable config must never block a wake.
- * @param {{ env?: NodeJS.ProcessEnv, readFile?: typeof readFileSync, home?: string }} [deps]
+ * @param {{ env?: NodeJS.ProcessEnv, readFile?: typeof readFileSync, home?: string,
+ *           profile?: typeof CODEX_FAMILY.codex }} [deps]
  * @returns {boolean}
  */
 export function hasChorusMcpServer(deps = {}) {
   const env = deps.env ?? process.env;
   const readFile = deps.readFile ?? readFileSync;
   const platform = deps.platform ?? process.platform;
+  const profile = deps.profile ?? CODEX_FAMILY.codex;
   const home = deps.home ?? getAgentEnv(env, "HOME", platform) ?? getAgentEnv(env, "USERPROFILE", platform) ?? homedir();
-  const configPath = join(getAgentEnv(env, "CODEX_HOME", platform) || join(home, ".codex"), "config.toml");
+  const configPath = join(getAgentEnv(env, profile.homeEnv, platform) || join(home, profile.homeDir), profile.configFile);
   try {
     const config = readFile(configPath, "utf8");
     return /^\s*\[mcp_servers\.chorus\]\s*(?:#.*)?$/m.test(config);
@@ -52,49 +58,31 @@ export function hasChorusMcpServer(deps = {}) {
  *   implement it; the daemon injects one based on the resolved agent type.
  */
 
-/** App Server transport is daemon-owned; policy is applied by RPC. */
+/**
+ * App Server transport is daemon-owned; policy is applied by RPC. Identical argv
+ * shape for every Codex-family CLI (`traecli app-server --listen stdio://` was
+ * verified on 0.209.1); only `-c`/model translation is permitted.
+ */
+export function buildFamilyArgs(profile, { args = [] } = {}) {
+  return ["app-server", "--listen", "stdio://", ...codexAppServerArgs(args, "agent", profile.agentType)];
+}
+
+/** Codex-profile wrapper kept for existing imports. */
 export function buildCodexArgs({ args = [] } = {}) {
-  return ["app-server", "--listen", "stdio://", ...codexAppServerArgs(args)];
+  return buildFamilyArgs(CODEX_FAMILY.codex, { args });
 }
 
 /**
  * Resolve the real `codex` executable WITHOUT a shell — same approach as
  * resolveClaudePath. On Windows the bin may be `codex.cmd` (npm shim), which
  * `spawn` can't exec directly without shell:true; we walk PATH for the platform
- * candidates. `CHORUS_CODEX_PATH` overrides.
+ * candidates. `CHORUS_CODEX_PATH` overrides. Codex-profile wrapper over
+ * resolveFamilyPath (codex-family.mjs), kept for existing imports.
  * @param {{ env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, isFile?: (p: string) => boolean }} [deps]
  * @returns {string | null}
  */
 export function resolveCodexPath(deps = {}) {
-  const env = deps.env ?? process.env;
-  const platform = deps.platform ?? process.platform;
-  const isFile =
-    deps.isFile ??
-    ((p) => {
-      try {
-        return statSync(p).isFile();
-      } catch {
-        return false;
-      }
-    });
-
-  const override = getAgentEnv(env, "CHORUS_CODEX_PATH", platform);
-  if (override && isFile(override)) {
-    return override;
-  }
-
-  const isWin = platform === "win32";
-  const p = isWin ? pathWin32 : pathPosix;
-  const names = isWin ? ["codex.cmd", "codex.exe", "codex"] : ["codex"];
-  const pathVar = getAgentEnv(env, "PATH", platform) || env.Path || "";
-  const dirs = pathVar.split(p.delimiter).filter(Boolean);
-  for (const dir of dirs) {
-    for (const name of names) {
-      const candidate = p.join(dir, name);
-      if (isFile(candidate)) return candidate;
-    }
-  }
-  return null;
+  return resolveFamilyPath(CODEX_FAMILY.codex, deps);
 }
 
 /**
@@ -120,6 +108,8 @@ export function resolveSpawnCommand(codexPath, args, platform = process.platform
  * @property {string} [codexPath]   Resolved codex path (resolved lazily if omitted).
  * @property {(o: object) => any} [spawnImpl]   Injectable spawn (tests).
  * @property {{info(m:string):void,warn(m:string):void,error(m:string):void}} [logger]
+ * @property {typeof CODEX_FAMILY.codex} [profile]  Codex-family backend profile
+ *   (codex-family.mjs). Defaults to CODEX_FAMILY.codex; TRAE uses CODEX_FAMILY.trae.
  * @property {"chorus"|"yolo"} [permissionMode]  Maps to a Codex sandbox posture.
  * @property {{ url: string, apiKey: string }} [creds] Daemon creds exported into
  *   the child env for SessionStart hooks and the user-configured MCP bearer token.
@@ -134,8 +124,10 @@ export function resolveSpawnCommand(codexPath, args, platform = process.platform
 export class CodexSpawner {
   /** @param {CodexSpawnerOptions} [opts] */
   constructor(opts = {}) {
+    /** Codex-family profile: the only source of backend names/paths/labels. */
+    this.profile = opts.profile ?? CODEX_FAMILY.codex;
     /** Backend source for generic reporting of exceptions before child launch. */
-    this.wakeErrorSource = "codex";
+    this.wakeErrorSource = this.profile.wakeErrorSource;
     this.sessionDecision = { probeIsAuthoritative: false };
     this.codexPath = opts.codexPath ?? null;
     this.spawnImpl = opts.spawnImpl ?? spawn;
@@ -143,15 +135,18 @@ export class CodexSpawner {
     this.permissionMode = opts.permissionMode ?? "chorus";
     this.creds = opts.creds ?? null;
     this.platform = opts.platform ?? process.platform;
-    this.cliConfig = validateAgentCliConfig(opts.cliConfig, "codex", opts.label);
+    this.cliConfig = validateAgentCliConfig(opts.cliConfig, this.profile.agentType, opts.label);
     this.env = overlayAgentEnv(opts.env ?? process.env, this.cliConfig.env, this.platform);
-    const storeLogger = { warn: () => { throw new CodexAppServerError("STORE_IO_ERROR", "Codex local storage failed"); } };
-    this.getThreadIdFn = opts.getThreadIdFn ?? ((anchor) => defaultGetThreadId(anchor, { logger: storeLogger }));
-    this.setThreadIdFn = opts.setThreadIdFn ?? ((anchor, id) => defaultSetThreadId(anchor, id, { logger: storeLogger }));
-    this.getUsageSnapshotFn = opts.getUsageSnapshotFn ?? ((anchor, id) => defaultGetUsageSnapshot(anchor, id, { logger: storeLogger }));
-    this.setUsageSnapshotFn = opts.setUsageSnapshotFn ?? ((anchor, id, usage) => defaultSetUsageSnapshot(anchor, id, usage, { logger: storeLogger }));
-    this.resolveCodexPathFn = opts.resolveCodexPathFn ?? resolveCodexPath;
-    this.hasChorusMcpServerFn = opts.hasChorusMcpServerFn ?? hasChorusMcpServer;
+    const storeLogger = { warn: () => { throw new CodexAppServerError("STORE_IO_ERROR", `${this.profile.displayName} local storage failed`); } };
+    // Per-profile stores: a thread id or usage baseline is never shared across backends.
+    const sessions = familySessionMap(this.profile);
+    const fileName = this.profile.usageMapFile;
+    this.getThreadIdFn = opts.getThreadIdFn ?? ((anchor) => sessions.get(anchor, { logger: storeLogger }));
+    this.setThreadIdFn = opts.setThreadIdFn ?? ((anchor, id) => sessions.set(anchor, id, { logger: storeLogger }));
+    this.getUsageSnapshotFn = opts.getUsageSnapshotFn ?? ((anchor, id) => defaultGetUsageSnapshot(anchor, id, { logger: storeLogger, fileName }));
+    this.setUsageSnapshotFn = opts.setUsageSnapshotFn ?? ((anchor, id, usage) => defaultSetUsageSnapshot(anchor, id, usage, { logger: storeLogger, fileName }));
+    this.resolveCodexPathFn = opts.resolveCodexPathFn ?? ((deps) => resolveFamilyPath(this.profile, deps));
+    this.hasChorusMcpServerFn = opts.hasChorusMcpServerFn ?? ((deps) => hasChorusMcpServer({ ...deps, profile: this.profile }));
     this.mcpConfigChecked = false;
     this.rpcLimits = opts.rpcLimits;
     this.cleanupTimeoutMs = opts.cleanupTimeoutMs ?? 10_000;
@@ -164,6 +159,8 @@ export class CodexSpawner {
   /** One real stdio child and one authoritative turn per wake. */
   async wake({ prompt, sessionId, cwd = process.cwd(), onMessage, onChild }) {
     const diagnostics = createWakeErrorCollector({ source: this.wakeErrorSource, env: this.env, creds: this.creds });
+    const name = this.profile.displayName;
+    const appServer = `${name} App Server`;
     const anchor = typeof sessionId === "string" ? sessionId : "";
     let threadId = null;
     let isNew = true;
@@ -177,7 +174,7 @@ export class CodexSpawner {
     let wakeFault = null;
     let processFault = null;
     let unobserve;
-    const fault = (code) => new CodexAppServerError(code, `Codex App Server: ${code}`);
+    const fault = (code) => new CodexAppServerError(code, `${appServer}: ${code}`);
     // Diagnostic text is fixed, never provider errors, callbacks, paths or values.
     const log = (level, text) => { try { this.logger[level]?.(text); } catch {} };
     const result = (exitCode, failure = false) => ({
@@ -192,7 +189,7 @@ export class CodexSpawner {
       try { threadId = anchor ? this.getThreadIdFn(anchor) : null; }
       catch {
         threadId = null;
-        log("warn", "[Chorus] Codex session mapping could not be read; starting a fresh thread with Chorus context.");
+        log("warn", `[Chorus] ${name} session mapping could not be read; starting a fresh thread with Chorus context.`);
       }
       isNew = !threadId;
       const previousThreadId = threadId;
@@ -208,7 +205,7 @@ export class CodexSpawner {
         if (anchor) {
           try { this.setThreadIdFn(anchor, id); }
           catch {
-            log("warn", "[Chorus] Codex session mapping could not be saved; continuing this thread, but future wake continuity may be reduced.");
+            log("warn", `[Chorus] ${name} session mapping could not be saved; continuing this thread, but future wake continuity may be reduced.`);
           }
         }
       };
@@ -229,15 +226,15 @@ export class CodexSpawner {
       if (!this.mcpConfigChecked) {
         this.mcpConfigChecked = true;
         if (!this.hasChorusMcpServerFn({ env: this.env, platform: this.platform }))
-          log("warn", "[Chorus] Codex config has no [mcp_servers.chorus] entry; wake will continue without Chorus MCP tools");
+          log("warn", `[Chorus] ${name} config has no [mcp_servers.chorus] entry; wake will continue without Chorus MCP tools`);
       }
       try { assertConfiguredShimArgs(codexPath, this.cliConfig.args, this.platform); }
       catch {
-        log("error", "[Chorus] Codex Windows shim cannot safely carry configured arguments; configure a native executable.");
+        log("error", `[Chorus] ${name} Windows shim cannot safely carry configured arguments; configure a native executable.`);
         throw fault("UNSAFE_WINDOWS_SHIM_ARGS");
       }
       let args;
-      try { args = buildCodexArgs({ args: this.cliConfig.args }); }
+      try { args = buildFamilyArgs(this.profile, { args: this.cliConfig.args }); }
       catch { throw fault("UNSUPPORTED_DAEMON_ARGS"); }
       const { command, argv } = resolveSpawnCommand(codexPath, args, this.platform, this.env);
       const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
@@ -253,24 +250,25 @@ export class CodexSpawner {
           shell: false, detached: this.platform !== "win32", windowsHide: true,
         });
       } catch (error) {
-        log("error", `[Chorus] Codex startup: ${safeSpawnError(error)}`);
-        diagnostics.fail(`Cannot spawn codex: ${safeSpawnError(error)}`, "startup");
+        log("error", `[Chorus] ${name} startup: ${safeSpawnError(error)}`);
+        diagnostics.fail(`Cannot spawn ${this.profile.binaries.posix[0]}: ${safeSpawnError(error)}`, "startup");
         throw fault("SPAWN_FAILED");
       }
       unobserve = diagnostics.observeChild(child);
       child.stderr?.on("data", (chunk) => diagnostics.appendStderr(chunk));
       onProcessError = (error) => {
         processFault = safeSpawnError(error);
-        log("error", `[Chorus] Codex process: ${processFault}`);
+        log("error", `[Chorus] ${name} process: ${processFault}`);
       };
       child.on("error", onProcessError);
-      rawSettled = awaitChildSettled(child, { logger: this.logger, label: "codex", stdioGraceMs: this.stdioGraceMs })
+      rawSettled = awaitChildSettled(child, { logger: this.logger, label: this.profile.agentType, stdioGraceMs: this.stdioGraceMs })
         .then((code) => { rawDone = true; rawCode = code; return code; });
       client = new CodexAppServerClient(child, {
         limits: this.rpcLimits,
+        displayName: name,
         // CLOSED is emitted only by our explicit close(), including normal
         // completion. Keep real transport faults visible at warning severity.
-        onDiagnostic: (text) => log(text === "Codex App Server: CLOSED" ? "info" : "warn", `[Chorus] ${text}`),
+        onDiagnostic: (text) => log(text === `${appServer}: CLOSED` ? "info" : "warn", `[Chorus] ${text}`),
       });
       // Subscribe before setup, but don't feed setup/history snapshots to T3.
       unsubscribe = client.subscribe((message) => {
@@ -314,7 +312,7 @@ export class CodexSpawner {
         })();
         return stopWork;
       });
-      try { onChild?.(child); } catch { log("warn", "[Chorus] Codex onChild callback failed"); }
+      try { onChild?.(child); } catch { log("warn", `[Chorus] ${name} onChild callback failed`); }
       ensureRunning();
       await client.request("initialize", {
         clientInfo: { name: "chorus", version: CLIENT_VERSION }, capabilities: { experimentalApi: false },
@@ -327,7 +325,9 @@ export class CodexSpawner {
       let fallback = false;
       if (threadId) {
         try {
-          await establishThread("thread/resume", { ...setup, threadId, excludeTurns: true });
+          // TRAE CLI 0.209.1 rejects excludeTurns without experimentalApi (see profile).
+          await establishThread("thread/resume", this.profile.resumeExcludeTurns
+            ? { ...setup, threadId, excludeTurns: true } : { ...setup, threadId });
         } catch (error) {
           ensureRunning();
           if (!isHistoryUnavailableError(error, threadId)) throw error;
@@ -340,14 +340,14 @@ export class CodexSpawner {
         threadId, isNew, previousUsage: threadId === previousThreadId ? previousUsage : null,
         maxBufferedBytes: this.maxBufferedBytes,
         onMessage: (message) => {
-          try { onMessage?.(message); } catch { log("warn", "[Chorus] Codex onMessage callback failed"); }
+          try { onMessage?.(message); } catch { log("warn", `[Chorus] ${name} onMessage callback failed`); }
         },
         onUsageSnapshot: (snapshot) => {
           if (anchor) this.setUsageSnapshotFn(anchor, threadId, snapshot);
         },
       });
       if (fallback) {
-        const notice = "Previous Codex history could not be restored; continuing in a new thread with Chorus context.";
+        const notice = `Previous ${name} history could not be restored; continuing in a new thread with Chorus context.`;
         // Native IDs are UUIDs. Do not echo arbitrary provider-controlled strings.
         const displayId = (id) => /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)
           ? id : "(unavailable)";
@@ -372,14 +372,14 @@ export class CodexSpawner {
     } catch (error) {
       wakeFault = error;
       const code = error instanceof CodexAppServerError ? error.code : "SETUP_OR_STORE_ERROR";
-      log("error", `[Chorus] Codex App Server wake failed (${code}); check Codex 0.157.1+ installation, login, model/config and local session storage. Unsupported args must use model or permitted -c settings.`);
+      log("error", `[Chorus] ${appServer} wake failed (${code}); check ${name} ${this.profile.minVersion}+ installation, login, model/config and local session storage. Unsupported args must use model or permitted -c settings.`);
     } finally {
       if (adapter?.outcome?.status === "failed") {
-        diagnostics.fail(adapter.outcome.message || "Codex turn failed", "execution");
+        diagnostics.fail(adapter.outcome.message || `${name} turn failed`, "execution");
       }
       try { adapter?.finish(); } catch {
         wakeFault ??= fault("USAGE_STORE_ERROR");
-        log("error", "[Chorus] Codex usage persistence failed; check local session storage.");
+        log("error", `[Chorus] ${name} usage persistence failed; check local session storage.`);
       }
       if (child) {
         // Normal close never marks a user interrupt. Concurrent authorized stops
@@ -401,7 +401,7 @@ export class CodexSpawner {
           }
         } catch {
           wakeFault ??= fault("CLEANUP_ERROR");
-          log("error", "[Chorus] Codex process-tree cleanup failed; check process termination permissions.");
+          log("error", `[Chorus] ${name} process-tree cleanup failed; check process termination permissions.`);
         }
         client?.close();
         // Release descendant-held pipes after the bounded shared drain/cleanup.
@@ -421,16 +421,16 @@ export class CodexSpawner {
       const code = error instanceof CodexAppServerError ? error.code : "SETUP_OR_STORE_ERROR";
       const kind = !child || processFault ? "startup" : "protocol";
       const hint = code === "EXECUTABLE_MISSING"
-        ? "Cannot locate codex executable; check installation and PATH"
+        ? `Cannot locate ${this.profile.binaries.posix[0]} executable; check installation and PATH`
         : code === "UNSAFE_WINDOWS_SHIM_ARGS"
-          ? "Codex Windows shim cannot safely carry configured arguments; use a native executable"
-          : `Codex App Server: ${code}; check installation, login, model/config and local session storage`;
-      diagnostics.fail(processFault ? `Codex process error: ${processFault}`
+          ? `${name} Windows shim cannot safely carry configured arguments; use a native executable`
+          : `${appServer}: ${code}; check installation, login, model/config and local session storage`;
+      diagnostics.fail(processFault ? `${name} process error: ${processFault}`
         : error?.rpcMessage || hint, kind);
       return result(null, true);
     }
     if (adapter.outcome.status !== "completed") {
-      diagnostics.fail(adapter.outcome.message || `Codex turn ${adapter.outcome.status}`, "execution");
+      diagnostics.fail(adapter.outcome.message || `${name} turn ${adapter.outcome.status}`, "execution");
       return result(1, true);
     }
     return result(rawDone && rawCode === 0 ? 0 : null, !(rawDone && rawCode === 0));

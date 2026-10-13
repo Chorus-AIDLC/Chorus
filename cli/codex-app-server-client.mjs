@@ -79,6 +79,7 @@ export class CodexAppServerClient {
   #child;
   #limits;
   #diagnostic;
+  #label;
   #error = null;
   #pending = new Map();
   #subscribers = new Set();
@@ -94,7 +95,13 @@ export class CodexAppServerClient {
   #fatalReply = false;
   #resolveFailure;
 
-  constructor(child, { limits = {}, onDiagnostic = () => {} } = {}) {
+  /**
+   * @param {object} child  ChildProcess with piped stdio.
+   * @param {{ limits?: object, onDiagnostic?: (text: string) => void, displayName?: string }} [options]
+   *   `displayName` only brands fixed error/diagnostic prefixes (default "Codex",
+   *   e.g. "TRAE CLI App Server: CLOSED"); the wire protocol is identical.
+   */
+  constructor(child, { limits = {}, onDiagnostic = () => {}, displayName = "Codex" } = {}) {
     this.#limits = { ...APP_SERVER_DEFAULTS, ...limits };
     if (Object.values(this.#limits).some((value) => !positive(value))
       || !child?.stdin?.write || !child?.stdout?.on || !child?.stderr?.on) {
@@ -102,6 +109,7 @@ export class CodexAppServerClient {
     }
     this.#child = child;
     this.#diagnostic = onDiagnostic;
+    this.#label = `${typeof displayName === "string" && displayName.trim() ? displayName : "Codex"} App Server`;
     this.failure = new Promise((resolve) => { this.#resolveFailure = resolve; });
     for (const emitter of [child, child.stdin, child.stdout, child.stderr]) {
       this.#listen(emitter, "close", () => this.#closedEmitters.add(emitter));
@@ -344,7 +352,7 @@ export class CodexAppServerClient {
         this.#pending.delete(message.id);
         pending.cleanup();
         if (has(message, "error")) {
-          const error = new CodexAppServerError("RPC_ERROR", "Codex App Server RPC request failed", {
+          const error = new CodexAppServerError("RPC_ERROR", `${this.#label} RPC request failed`, {
             method: pending.method, rpcCode: message.error.code,
           });
           // Needed for the exact verified fallback; excluded from serialization/logging.
@@ -367,7 +375,7 @@ export class CodexAppServerClient {
 
   #diagnose(code) {
     try {
-      const result = this.#diagnostic(`Codex App Server: ${code}`);
+      const result = this.#diagnostic(`${this.#label}: ${code}`);
       if (result?.then) Promise.resolve(result).catch(() => {});
     } catch { /* Diagnostic callbacks cannot strand transport cleanup. */ }
   }

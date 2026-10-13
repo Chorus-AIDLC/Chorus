@@ -6,7 +6,7 @@ export const WAKE_ERROR_DETAILS_LIMIT = 8000;
 export const WAKE_ERROR_SIGNAL_LIMIT = 50;
 export const WAKE_ERROR_STDERR_LIMIT = 16_000;
 const REDACTED = "[redacted]";
-const SOURCES = new Set(["claude", "codex", "pi", "kiro", "dsh", "openclaw"]);
+const SOURCES = new Set(["claude", "codex", "trae", "pi", "kiro", "dsh", "openclaw"]);
 const KINDS = new Set(["startup", "execution", "protocol"]);
 
 function scalarErrorText(value) {
