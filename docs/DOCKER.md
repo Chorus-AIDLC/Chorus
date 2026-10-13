@@ -2,14 +2,16 @@
 
 **`chorusaidlc/chorus-app`** — The official Docker image for [Chorus](https://github.com/Chorus-AIDLC/Chorus), an AI Agent & Human collaboration platform implementing the AI-DLC (AI-Driven Development Lifecycle) workflow.
 
-For a portable Linux deployment with PostgreSQL, private credentials, trusted-LAN HTTP or an optional Cloudflare Named Tunnel, and backup/restore instructions, use the **[Self-host guide](SELF_HOST.md)** / **[中文自托管指南](SELF_HOST.zh.md)**. Those guides use the isolated `deploy/self-host/` Compose files; the examples below remain general image examples, not hardened public-deployment defaults.
+For a portable Linux or macOS + Docker Desktop deployment with PostgreSQL, private credentials, trusted-LAN HTTP, optional self-signed LAN HTTPS or a Cloudflare Named Tunnel, and backup/restore instructions, use the **[Self-host guide](SELF_HOST.md)** / **[中文自托管指南](SELF_HOST.zh.md)**. Those guides use the isolated `deploy/self-host/` Compose files; the examples below remain general image examples, not hardened public-deployment defaults.
 
 ## Quick Start
 
 **Existing PG16 volumes, including development `pnpm docker:db`:** migrate before
 starting the new PG17 default. Use the explicit [offline migration script and cutover
 instructions](POSTGRES_UPGRADE.md) / [中文](POSTGRES_UPGRADE.zh.md). The helper keeps
-the original volume intact; ordinary Compose startup does not convert it.
+the original volume intact; ordinary Compose startup does not convert it. The script
+supports GNU/Linux and macOS host tools (Bash 3.2, BSD stat and shasum). Native macOS
+CI mocks Docker; full Docker Desktop deployment/migration is not yet verified.
 
 ```bash
 docker pull chorusaidlc/chorus-app:latest

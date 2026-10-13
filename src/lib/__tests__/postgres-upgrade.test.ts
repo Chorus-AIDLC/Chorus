@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -14,7 +14,7 @@ describe("offline PostgreSQL upgrade safeguards", () => {
   let passwordFile: string;
   let log: string;
   beforeEach(() => {
-    fixture = mkdtempSync(join(tmpdir(), "chorus-pg-upgrade-contract-"));
+    fixture = realpathSync(mkdtempSync(join(tmpdir(), "chorus-pg-upgrade-contract-")));
     backup = join(fixture, "backup");
     passwordFile = join(fixture, "password");
     log = join(fixture, "docker.jsonl");
@@ -49,6 +49,68 @@ if (args.includes('psql')) {
   function calls(): string[][] {
     return existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line)) : [];
   }
+
+  function bsdOnlyTools(includeHash = true) {
+    for (const command of ["bash", "node", "dirname", "basename", "cat", "mkdir", "cp", "chmod", "cmp", "grep", "sleep"]) {
+      const binary = spawnSync("bash", ["-c", 'command -v "$1"', "test", command], { encoding: "utf8" }).stdout.trim();
+      expect(binary).not.toBe("");
+      symlinkSync(binary, join(fixture, command));
+    }
+    writeFileSync(join(fixture, "stat"), `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.STAT_LOG, JSON.stringify(args) + '\\n');
+if (process.env.STAT_FAIL || args[0] !== '-f' || args[1] !== '%Lp') process.exit(17);
+console.log(process.env.STAT_MODE || (fs.statSync(args[2]).mode & 0o7777).toString(8));
+`, { mode: 0o700 });
+    if (includeHash) {
+      const binary = spawnSync("bash", ["-c", "command -v shasum"], { encoding: "utf8" }).stdout.trim();
+      expect(binary).not.toBe("");
+      writeFileSync(join(fixture, "shasum"), `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.writeFileSync(process.env.HASH_LOG, JSON.stringify(args));
+if (process.env.HASH_FAIL) process.exit(17);
+const result = require('node:child_process').spawnSync(${JSON.stringify(binary)}, args, {stdio: 'inherit'});
+process.exit(result.status ?? 1);
+`, { mode: 0o700 });
+    }
+    return { PATH: fixture, STAT_LOG: join(fixture, "stat.log"), HASH_LOG: join(fixture, "hash.log") };
+  }
+
+  it("migrates with BSD stat and shasum when GNU tools are absent", () => {
+    const tools = bsdOnlyTools();
+    const result = run(tools);
+    expect(result.status, result.stderr).toBe(0);
+    const statCalls = readFileSync(tools.STAT_LOG, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(statCalls.map(args => args.slice(0, 2))).toEqual([["-c", "%a"], ["-f", "%Lp"]]);
+    expect(JSON.parse(readFileSync(tools.HASH_LOG, "utf8"))).toEqual(["-a", "256", "database.dump", "globals.sql"]);
+    const verification = spawnSync("shasum", ["-a", "256", "-c", "SHA256SUMS"], { cwd: backup, encoding: "utf8" });
+    expect(verification.status, verification.stderr).toBe(0);
+    expect(result.stdout).toContain("Working copy target-source16");
+  });
+
+  it.each([{ STAT_FAIL: "1" }, { STAT_MODE: "invalid" }, { STAT_MODE: "644" }])("fails closed on BSD stat errors or unsafe modes: %j", override => {
+    const result = run({ ...bsdOnlyTools(), ...override });
+    expect(result.status).not.toBe(0);
+    expect(calls()).toEqual([]);
+    expect(existsSync(backup)).toBe(false);
+  });
+
+  it("fails before Docker if neither checksum tool is available", () => {
+    const result = run(bsdOnlyTools(false));
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Install sha256sum or shasum");
+    expect(calls()).toEqual([]);
+  });
+
+  it("does not report successful migration when shasum fails", () => {
+    const result = run({ ...bsdOnlyTools(), HASH_FAIL: "1" });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("No cutover");
+    expect(result.stdout).not.toContain("Validated PG16");
+    expect(calls().filter(call => call[0] === "stop")).toHaveLength(2);
+  });
   it("dry-run has no Docker calls or filesystem writes", () => {
     expect(run({}, [...args(), "--dry-run"]).status).toBe(0);
     expect(calls()).toEqual([]);
@@ -118,7 +180,7 @@ describe.skipIf(process.env.CHORUS_TEST_PG_UPGRADE !== "1")("real isolated PG16 
     const target = `${prefix}-new`;
     const unsupportedTarget = `${prefix}-unsupported`;
     const incompatible = `${prefix}-incompatible`;
-    const fixture = mkdtempSync(join(tmpdir(), "chorus-pg-upgrade-live-"));
+    const fixture = realpathSync(mkdtempSync(join(tmpdir(), "chorus-pg-upgrade-live-")));
     const passwordFile = join(fixture, "password");
     const backup = join(fixture, "backup");
     writeFileSync(passwordFile, "fixture-only-password\n", { mode: 0o600 });

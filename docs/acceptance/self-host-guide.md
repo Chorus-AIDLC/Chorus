@@ -203,11 +203,10 @@ their downloaded custom-format dump and changing deployment recommendations to
 PostgreSQL 17. Earlier PostgreSQL 16 evidence below remains historical, not the
 current deployment state.
 
-Source: `chorus-20261012.dump`, 36,920,831 bytes, custom archive version 1.16,
-PostgreSQL 17.6 source and pg_dump 17.11. SHA256:
-`7fe51e3c70748c0d9d3d3f9ea9a03e35f0e89bdc59ce0645173d36a2ddcdcf95`.
-No source row contents, passwords, API keys or identity-provider details are
-included in this evidence.
+Source: an operator-supplied custom-format PostgreSQL dump. Dataset identifiers,
+sizes, checksums and private paths are retained only in protected operator records,
+not this public evidence. No source row contents, passwords, API keys or
+identity-provider details are included here.
 
 Restore and validation:
 
@@ -222,9 +221,8 @@ Restore and validation:
   `pg_restore --no-owner --no-privileges --exit-on-error --single-transaction`
   completed without errors. Source roles/ACLs were deliberately not imported.
 - Counted source COPY rows without displaying data and compared every restored
-  table: **34 tables, 105,238 rows** matched. Key counts: **169 projects, 825 ideas,
-  642 proposals, 2,983 tasks, 2,083 documents, 10 users and 3 companies**.
-- All **47** source migration checksums matched the running **Chorus 0.22.1**
+  table: all counts matched. Real dataset statistics are intentionally omitted.
+- All source migration checksums matched the running **Chorus 0.22.1**
   image; no pending/source-only migration or failed migration. The image's
   `prisma migrate status` passed against isolated PG17. All constraints validated
   and indexes valid; ANALYZE completed.
@@ -238,27 +236,25 @@ Restore and validation:
 
 Cutover and current state:
 
-- Recreated only `chorus-local` app/db; the fresh PG17 volume is
-  `chorus-local_db-data-pg17-20261012`. Original `chorus-local_db-data` remains
-  retained for rollback and was never opened with PG17.
+- Recreated only the selected local app/db with a fresh PG17 volume. The original
+  PG16 volume remains retained for rollback and was never opened with PG17.
 - A private `pg17.yml` selects that external volume; a private `compose.sh` wrapper
-  preserves base/local/HTTPS/PG17 overrides. Use
-  `bash ~/.config/chorus-self-host/chorus-local/compose.sh ps` for ongoing operations,
+  preserves base/local/HTTPS/PG17 overrides. Use the saved private wrapper for operations,
   not the earlier two/three-file commands. Do not remove the old volume merely
   because Compose warns that it is retained but no longer selected.
 - The database role uses a fresh private password; local bootstrap/admin settings,
   app image, signing key and app-data mount remain unchanged. Connector and
   unrelated container identities/start times were unchanged.
-- After startup all 34 table counts still matched the dump. Public health at
-  `https://app-dev.chorus-ai.dev/api/health` returned `ok`/`connected`; host binding
+- After startup all table counts still matched the dump. Public `/api/health`
+  returned `ok`/`connected`; host binding
   remains `127.0.0.1:18637`, HTTPS cookies and external URL remain configured.
 - Admin access without a session returned401; a 60-second synthetic local-admin
-  session returned200 and the three restored companies. No persistent test users,
+  session returned200 and the restored workspaces. No persistent test users,
   workspaces or other rows were created. This verifies signed-session reads,
   **not** actual admin-password login or source OIDC E2E.
 
-Protected rollback artifacts and exact rollback instructions are in
-`~/.local/state/chorus-pg17-restore-20261012/OPERATIONS.md`. Rollback was documented,
+Protected rollback artifacts and exact rollback instructions remain in private
+operator records outside the checkout. Rollback was documented,
 not executed; it restores the old local dataset, so first preserve/reconcile any
 new PG17 writes. Never use `down -v` or prune either volume.
 
@@ -273,9 +269,9 @@ browser E2E were not supplied or fully validated by this database restore.
 
 The operator created a standalone `chorus-cloudflare` connector on the existing
 `chorus-local_default` network, configured the hostname, and confirmed public
-reachability. The app was then configured for `https://app-dev.chorus-ai.dev`
+reachability. The app was then configured for the operator's public HTTPS hostname
 with `COOKIE_SECURE=true` using an additional private `https.yml` override in
-`$HOME/.config/chorus-self-host/chorus-local/`. The connector was not replaced or
+the saved private configuration directory. The connector was not replaced or
 restarted, its token was not inspected, and no DNS/Access settings were changed.
 
 Only the app was recreated with `--no-deps --pull never --force-recreate --wait`.
@@ -427,7 +423,7 @@ dependency. No patched app image was built or deployed. OIDC unit tests: 22/22.
 - Existing app, database and Cloudflare container IDs, images and mounts were
   unchanged. HTTP `18637` remains available; the Cloudflare origin remains
   `http://app:8637`. No Tunnel or remote identity-provider settings were edited.
-- Private configuration lives under `~/.config/chorus-self-host/chorus-local/`:
+- Private configuration lives outside the checkout in the saved private directory:
   `https.yml` includes the proxy; `lan-tls/` holds `nginx.conf`, `server.crt` and
   `server.key`. The directory is mode 700 and these files mode 600. The prior
   override is backed up as `https.yml.before-self-signed-20261013`. Existing
@@ -454,8 +450,8 @@ dependency. No patched app image was built or deployed. OIDC unit tests: 22/22.
   physical client devices or browser policies. Treat certificate exceptions as
   a temporary trusted-LAN trial; IP changes/expiry need certificate updates.
 
-To stop only this trial proxy, run
-`bash ~/.config/chorus-self-host/chorus-local/compose.sh stop lan-https`.
+To stop only this trial proxy, invoke the saved private Compose wrapper with
+`stop lan-https`.
 The app, database and Tunnel can remain running. To keep it disabled across
 future redeploys, restore the backed-up private HTTPS override as well.
 
@@ -488,3 +484,31 @@ remains runtime evidence, with the provider callback allowlist prerequisite
 explicitly outstanding. Preparing this PR update does not restart or alter the
 existing app, database, TLS proxy or Tunnel. No local env, wrapper, key, certificate
 or machine-specific Compose configuration is included in this PR.
+
+## 2026-10-13 — Legacy AWS reuse and macOS host-tool compatibility
+
+Restored the original reuse prompt for autogenerated AWS wrappers without a
+target marker; local markers/helper references still prevent cross-target execution,
+and unknown scripts remain refused. New local setups write `default_deploy_local.sh`
+without touching AWS `default_deploy.sh`. Existing/custom local wrapper paths remain
+supported and both default filenames are excluded from Git and Docker build contexts.
+
+Migration permissions accept GNU or BSD stat and validate the result; checksums use
+`sha256sum` or `shasum -a 256`. Missing/failed tools and unsafe permissions fail closed.
+Optional HTTPS generates real SAN certificates via a private OpenSSL configuration,
+without requiring `req -addext`. Documentation covers Docker Desktop bind paths/VM
+space and the complete working-copy volume's footprint and optional manual cleanup.
+Private dataset statistics, identifiers and operator-only paths were removed from
+this acceptance record. Existing services and credentials were not changed.
+
+Local Linux validation: **337 tests passed** across nine focused suites, including
+the opt-in real isolated PG16→17 migration with a still-bootable original PG16 source.
+TypeScript, targeted ESLint, shell syntax, OpenSpec validation and whitespace checks
+passed. Added macOS CI runs the installer/migration contract suites with system Bash,
+OpenSSL and BSD tools; Docker calls there are mocked. Its result is tracked on the PR,
+not evidence of a full Docker Desktop deployment or migration rehearsal.
+
+The explicit supported override list (`https.yml`, `pg17.yml`, `lan-https.yml`) and
+isolated `httpd:2.4-alpine` htpasswd dependency remain deliberate, bounded mechanisms;
+generic override discovery and a different bcrypt implementation are not part of
+this compatibility fix.

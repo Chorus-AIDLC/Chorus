@@ -1,7 +1,7 @@
 # portable-self-host-guide Specification
 
 ## Purpose
-Provide a portable single-instance Linux/Docker deployment guide for Chorus with
+Provide a portable single-instance Linux or macOS/Docker deployment guide for Chorus with
 PostgreSQL, optional Cloudflare Named Tunnel access, safe recovery operations and
 honest isolated validation evidence independent of the author's machine.
 
@@ -22,7 +22,7 @@ The deployment example SHALL run a single Chorus instance with PostgreSQL 17 wit
 The guide SHALL describe prerequisites and support limits, reproducible setup, authentication including team OIDC limitations of the test login, cost and cache boundaries, health/login/API/MCP/SSE/daemon validation, persistence, backup, isolated restore, upgrade and schema-aware rollback. R2 SHALL be optional encrypted backup storage only.
 
 #### Scenario: Different reader machine
-- **WHEN** a reader follows the guide on a qualifying Linux Docker host
+- **WHEN** a reader follows the guide on a qualifying Linux Docker host or macOS with Docker Desktop running Linux containers
 - **THEN** all host-specific values are replaceable, no access to the author's accounts or machine paths is needed, and local deployment is distinct from optional Cloudflare public access.
 
 #### Scenario: Restore rehearsal
@@ -94,7 +94,7 @@ Fresh local setup SHALL request ordinary login email/password and separate super
 - **AND** the database password is randomly generated, and existing signing-key behavior remains unchanged, including persistent automatic signing material when `NEXTAUTH_SECRET` is empty.
 
 ### Requirement: Saved local redeployment wrapper
-Fresh local setup SHALL generate a secret-free mode-0700 `default_deploy.sh`, or the path selected by `CHORUS_DEPLOY_CONFIG`, that invokes `deploy/self-host/deploy-local.sh` with saved project, private-directory and image-source metadata. Existing installations SHALL use their saved wrapper rather than rerunning setup; an older instance may receive a wrapper pointing to its existing private path without executing a deployment or regenerating configuration.
+Fresh local setup SHALL generate a secret-free mode-0700 `default_deploy_local.sh`, or the path selected by `CHORUS_DEPLOY_CONFIG`, that invokes `deploy/self-host/deploy-local.sh` with saved project, private-directory and image-source metadata. Existing installations SHALL use their saved wrapper (including legacy local `default_deploy.sh` and custom paths) rather than rerunning setup; an older instance may receive a wrapper pointing to its existing private path without executing a deployment or regenerating configuration.
 
 #### Scenario: Repeat build or pull deployment
 - **WHEN** the operator runs the saved wrapper
@@ -133,7 +133,17 @@ Local installation SHALL offer HTTPS as an opt-in choice, disabled by default. W
 - **AND** creating a wrapper and checking only its dry-run SHALL NOT be represented as rebuilding the existing runtime or executing a deployment.
 
 ### Requirement: Explicit offline PostgreSQL major-version migration
-New deployments SHALL continue to default to PostgreSQL 17. A separate Linux migration helper SHALL support a stopped, trusted default-layout PostgreSQL 16 Alpine named volume and a single public-schema Chorus database. It SHALL require an explicit offline acknowledgement, read the source volume only, work on an isolated copy, protect dump/global/credential artifacts outside the checkout, restore without source ownership/ACLs into an unused PG17 volume, compare table counts and sequence states, and preserve original and recovery volumes. It SHALL NOT silently switch deployment configuration, migrate application schema, or claim that row counts certify application behavior. Other databases, custom roles/ACLs and non-default layouts SHALL be documented as outside scope; extra schemas/extensions, foreign tables and RLS SHALL be rejected.
+New deployments SHALL continue to default to PostgreSQL 17. A separate Linux/macOS migration helper SHALL support a stopped, trusted default-layout PostgreSQL 16 Alpine named volume and a single public-schema Chorus database. It SHALL require an explicit offline acknowledgement, read the source volume only, work on an isolated copy, protect dump/global/credential artifacts outside the checkout, restore without source ownership/ACLs into an unused PG17 volume, compare table counts and sequence states, and preserve original and recovery volumes. It SHALL NOT silently switch deployment configuration, migrate application schema, or claim that row counts certify application behavior. Other databases, custom roles/ACLs and non-default layouts SHALL be documented as outside scope; extra schemas/extensions, foreign tables and RLS SHALL be rejected.
+
+#### Scenario: Native host tool portability
+- **WHEN** a reader installs or migrates on macOS with Docker Desktop
+- **THEN** scripts SHALL support Bash 3.2, GNU/BSD permission checks and SHA256 via `sha256sum` or `shasum -a 256`; failed permission/hash checks SHALL fail closed.
+- **AND** optional HTTPS SHALL generate SAN certificates through a private OpenSSL/LibreSSL configuration file without requiring `req -addext`; documentation SHALL distinguish native host-tool checks from full Docker Desktop integration validation.
+
+#### Scenario: Post-migration recovery resource cleanup
+- **WHEN** migration completes
+- **THEN** documentation SHALL explain the two stopped helpers and complete `TARGET-source16` working copy, its approximate extra source-cluster footprint, and host versus Docker VM disk requirements.
+- **AND** only after application validation/cutover and helper removal MAY the operator explicitly remove the working copy, preserving the original source, active target and recovery backups; scripts SHALL NOT perform automatic volume deletion.
 
 #### Scenario: Existing PG16 volume cannot start with PG17
 - **WHEN** an operator upgrades an existing PG16 installation
@@ -145,8 +155,12 @@ New deployments SHALL continue to default to PostgreSQL 17. A separate Linux mig
 - **THEN** the helper SHALL fail closed without overwriting the original, automatically cutting over, or deleting volumes; only helpers created by this invocation may be stopped.
 
 ### Requirement: Preserve wrapper names without cross-target execution
-AWS and local installers MAY share the default wrapper filename. Generated wrappers SHALL mark their target. AWS setup SHALL refuse local or unmarked wrappers before offering reuse or writing configuration, with instructions to choose another saved-wrapper path.
+AWS SHALL retain `default_deploy.sh`; new local installations SHALL default to `default_deploy_local.sh`. Generated wrappers SHALL mark their target. AWS setup SHALL accept legacy AWS templates with the `Auto-generated by install.sh` header even without an AWS marker. A local target marker or `deploy-local.sh` reference SHALL override that header and prevent reuse. Unknown scripts SHALL fail closed; explicit custom paths and existing local wrappers SHALL remain supported.
 
 #### Scenario: AWS selected after local installation
-- **WHEN** a local or unmarked wrapper exists and the operator selects AWS
+- **WHEN** a local or unknown wrapper exists at the AWS config path and the operator selects AWS
 - **THEN** setup SHALL fail before any AWS deployment, local rebuild, prompt to reuse the wrapper, or wrapper overwrite.
+
+#### Scenario: Legacy AWS reuse
+- **WHEN** an existing AWS autogenerated wrapper has no target marker and no local deployment reference
+- **THEN** AWS setup SHALL preserve the original reuse prompt and execute the unchanged saved wrapper if accepted.

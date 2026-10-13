@@ -18,7 +18,9 @@ or success. Row counts are a sanity check, not a complete content/application te
 
 ## Supported scope and prerequisites
 
-- Linux, Bash, Docker, standard core utilities; cached `postgres:16-alpine` and
+- Linux with Docker Engine, or macOS with Docker Desktop running Linux containers;
+  Bash 3.2+, GNU/BSD standard utilities, and `sha256sum` or `shasum -a 256`;
+  cached `postgres:16-alpine` and
   `postgres:17-alpine` images. Run `docker pull postgres:16-alpine` and
   `docker pull postgres:17-alpine` before scheduling downtime. The helper does not pull.
 - A trusted, default-layout official PG16 Alpine **named volume** at
@@ -30,8 +32,14 @@ or success. Row counts are a sanity check, not a complete content/application te
   are rejected. Custom roles, grants and ownership are **not restored**: objects
   become owned by `--db-user` (default `chorus`). `globals.sql` is retained for DBA
   review only, never executed. Use a DBA-assisted procedure if you need these features.
-- Enough disk for a full working copy of the cluster, logical dumps and a fresh
-  PG17 cluster. A dry-run does not check disk space or database compatibility.
+- Enough disk for the original cluster **plus** a full PG16 working copy, logical
+  dumps, a fresh PG17 cluster and temporary/WAL overhead; no fixed multiplier is
+  sufficient for every database. On Docker Desktop, named volumes occupy the VM
+  disk; backups occupy the host filesystem. Share password/backup bind paths with
+  Docker Desktop. A dry-run does not check disk space or database compatibility.
+- Native macOS CI exercises Bash and host tools with mocked Docker. Linux isolated
+  container migration is integration-tested; a full Docker Desktop migration
+  rehearsal has not yet been verified. Rehearse with disposable data first.
 - Back up the original deployment config and app signing material separately.
   Stop **all** app/CLI/dev-server/external writers and the source database. Disable
   anything that could restart them during migration. The script checks running
@@ -89,6 +97,25 @@ accidental future startup against an active target (the volumes remain):
 docker rm chorus-pg17-migrated-source16 chorus-pg17-migrated-target17
 ```
 
+The helper also leaves `TARGET-source16`, a **complete PG16 working-copy volume**
+roughly the size of the source cluster, not a small temporary log. All volumes
+remain after the container removal. To inspect this copy's usage without host
+Docker-data paths (also works with Docker Desktop), use the cached image read-only:
+
+```bash
+docker run --rm --network none --mount type=volume,src=chorus-pg17-migrated-source16,dst=/copy,readonly postgres:16-alpine du -sh /copy
+```
+
+After successful application validation/cutover, with recovery backups retained
+and both helpers removed, you may explicitly delete **only the working copy**:
+
+```bash
+docker volume rm chorus-pg17-migrated-source16
+```
+
+Substitute your actual target name. This is optional operator cleanup, never
+automatic. Do not delete the original source, active PG17 target or private backups.
+
 ### Root development Compose
 
 Create a private override outside Git, for example `/absolute/private/path/pg17.yml`:
@@ -123,7 +150,8 @@ Update private `env` to `POSTGRES_IMAGE=postgres:17-alpine`. Keep the DB passwor
 all app/login credentials, app-data volume, signing secret and HTTPS override unchanged.
 Use your saved Compose command including base/local, HTTPS if present, and this PG17
 override to start `db` and then the **same app image** for validation. Afterwards,
-`bash default_deploy.sh` automatically includes private `pg17.yml` on every deployment.
+`bash default_deploy_local.sh` (or the original wrapper path for an older install)
+automatically includes private `pg17.yml` on every deployment.
 It can build/pull new application code, so do not use it as a same-version DB-only test.
 
 ## Failure and rollback

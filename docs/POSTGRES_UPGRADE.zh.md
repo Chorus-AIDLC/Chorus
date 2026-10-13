@@ -15,7 +15,8 @@ PG16 的数据目录**。`prisma migrate deploy` 只升级应用表结构，不�
 
 ## 支持范围与前提
 
-- Linux、Bash、Docker 和标准核心工具；提前运行 `docker pull postgres:16-alpine`
+- Linux + Docker Engine，或 macOS + Docker Desktop（Linux 容器）；Bash 3.2+、
+  GNU/BSD 标准工具以及 `sha256sum` 或 `shasum -a 256`；提前运行 `docker pull postgres:16-alpine`
   与 `docker pull postgres:17-alpine`。脚本只使用已缓存镜像，不自动拉取。
 - 可信的官方 PG16 Alpine 默认布局**命名卷**，数据在 `/var/lib/postgresql/data`，
   使用默认本地 socket 认证，数据库超级用户可用。不支持 PGlite、远程/托管数据库、
@@ -24,8 +25,12 @@ PG16 的数据目录**。`prisma migrate deploy` 只升级应用表结构，不�
   额外 schema/扩展、外部表、RLS 会被拒绝。**不恢复自定义角色、授权或原所有权**，
   对象归属于 `--db-user`（默认 `chorus`）。`globals.sql` 仅供 DBA 审阅，不自动执行。
   需要这些能力时请走 DBA 辅助迁移流程。
-- 预留足够磁盘容纳完整工作副本、逻辑备份和全新 PG17 集群。dry-run 不检查容量或
-  数据库兼容性。
+- 除原集群外，还需容纳完整 PG16 工作副本、逻辑备份、全新 PG17 集群和临时/WAL
+  开销，没有适用于所有数据库的固定倍数。Docker Desktop 命名卷占 VM 磁盘，备份
+  占主机文件系统；密码/备份 bind 路径须允许 Docker Desktop 共享。dry-run 不检查
+  容量或数据库兼容性。
+- 原生 macOS CI 用模拟 Docker 验证 Bash 和主机工具；Linux 隔离容器迁移有集成
+  测试，尚未完成完整 Docker Desktop 迁移演练。先用可丢弃数据演练。
 - 单独备份原部署配置与应用签名材料。停止所有应用、CLI、开发服务器及外部写入方，
   再停止原数据库，防止其他管理程序在维护期间自动重启它们。脚本检查运行中容器的
   卷挂载，但无法代替操作者维护停写窗口。
@@ -74,7 +79,22 @@ bash deploy/self-host/migrate-pg16-to-17.sh \
 docker rm chorus-pg17-migrated-source16 chorus-pg17-migrated-target17
 ```
 
-所有卷仍保留。
+所有卷仍保留。其中 `TARGET-source16` 是**完整 PG16 工作副本**，大约占一份源集群
+的空间，不是小型临时日志。可用已缓存镜像只读检查其占用，无需访问主机 Docker
+数据路径（也适用于 Docker Desktop）：
+
+```bash
+docker run --rm --network none --mount type=volume,src=chorus-pg17-migrated-source16,dst=/copy,readonly postgres:16-alpine du -sh /copy
+```
+
+应用验证/切换成功、保留恢复备份且已移除两个辅助容器后，可显式**仅删除工作副本**：
+
+```bash
+docker volume rm chorus-pg17-migrated-source16
+```
+
+请替换为实际目标名称。这是可选的人工清理，脚本不会自动执行；不要删除原始源卷、
+正在使用的 PG17 目标卷或私有备份。
 
 ### 根目录开发 Compose
 
@@ -108,7 +128,7 @@ volumes:
 私有 `env` 改为 `POSTGRES_IMAGE=postgres:17-alpine`；数据库密码、应用/登录凭据、
 app-data 卷、签名密钥及 HTTPS 覆盖文件全部保留。用带 base/local、已有 HTTPS 和
 本 PG17 覆盖的原 Compose 命令启动 db，再启动**相同应用镜像**进行验证。
-之后 `bash default_deploy.sh` 会每次自动加载私有 `pg17.yml`；它可能构建/拉取新版
+之后 `bash default_deploy_local.sh`（旧安装使用原 wrapper 路径）会每次自动加载私有 `pg17.yml`；它可能构建/拉取新版
 代码，所以不要用它替代同版本的纯数据库升级验证。
 
 ## 失败处理与回滚

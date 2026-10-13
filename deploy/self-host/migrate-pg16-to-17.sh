@@ -63,8 +63,16 @@ for private_path in "$PASSWORD_FILE" "$BACKUP"; do
   [[ "$private_path" != *$'\n'* && "$private_path" != *,* ]] || fail "Private paths cannot contain newlines or commas"
 done
 [ ! -e "$BACKUP" ] && [ ! -L "$BACKUP" ] || fail "Backup directory already exists; nothing overwritten"
-permissions="$(stat -c %a "$PASSWORD_FILE")"
+permissions="$(stat -c %a "$PASSWORD_FILE" 2>/dev/null || stat -f %Lp "$PASSWORD_FILE")" || fail "Cannot read password file permissions"
+[[ "$permissions" =~ ^[0-7]{3,4}$ ]] || fail "Invalid password file permissions"
 (( (8#$permissions & 077) == 0 )) || fail "Password file must not grant group/other access (use chmod 600)"
+if command -v sha256sum >/dev/null 2>&1; then
+  CHECKSUM=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+  CHECKSUM=(shasum -a 256)
+else
+  fail "Install sha256sum or shasum before migration"
+fi
 password="$(cat "$PASSWORD_FILE")"
 [ -n "$password" ] && [[ "$password" != *$'\n'* && "$password" != *$'\r'* ]] || fail "Password must be nonempty and single-line"
 unset password
@@ -165,7 +173,8 @@ sql "$NEW_CONTAINER" >"$BACKUP/analyze.log" 2>&1 <<'SQL'
 ANALYZE;
 SQL
 assert_offline
-(cd "$BACKUP" && sha256sum database.dump globals.sql > SHA256SUMS)
+(cd "$BACKUP" && "${CHECKSUM[@]}" database.dump globals.sql > SHA256SUMS)
 printf 'Validated PG16 -> PG17: %s -> %s. Table counts and sequence states match.\n' "$SOURCE" "$TARGET"
 printf 'Backups: %s\nHelpers will be stopped; all volumes retained. No Compose switch performed.\n' "$BACKUP"
 printf 'Keep writers stopped; follow docs/POSTGRES_UPGRADE.md to validate the application and cut over.\n'
+printf 'Working copy %s retains approximately one full source cluster; remove it only after validation and helper removal (see the guide).\n' "$CLONE"

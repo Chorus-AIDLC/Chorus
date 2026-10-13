@@ -1,0 +1,36 @@
+name: Local deployment host compatibility
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'install.sh'
+      - 'deploy/self-host/**'
+      - 'src/lib/__tests__/install-local.test.ts'
+      - 'src/lib/__tests__/postgres-upgrade.test.ts'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/local-deployment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-host-tools:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - name: Native macOS host tools with mocked Docker
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          export PATH="/bin:/usr/bin:$PATH"
+          bash --version
+          openssl version
+          pnpm exec vitest run src/lib/__tests__/install-local.test.ts src/lib/__tests__/postgres-upgrade.test.ts

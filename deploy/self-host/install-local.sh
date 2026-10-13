@@ -19,7 +19,7 @@ ADMIN_EMAIL="${SUPER_ADMIN_EMAIL:-}"
 ADMIN_PASSWORD_INPUT="${SUPER_ADMIN_PASSWORD:-}"
 PASSWORD_FILE=""
 ADMIN_PASSWORD_FILE=""
-DEPLOY_CONFIG="${CHORUS_DEPLOY_CONFIG:-$ROOT/default_deploy.sh}"
+DEPLOY_CONFIG="${CHORUS_DEPLOY_CONFIG:-$ROOT/default_deploy_local.sh}"
 unset DEFAULT_PASSWORD SUPER_ADMIN_PASSWORD
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -163,7 +163,7 @@ fi
 PRIVATE_DIR="$(cd "$HOME" && pwd -P)/.config/chorus-self-host/$PROJECT"
 ENV_FILE="$PRIVATE_DIR/env"
 if [ -e "$PRIVATE_DIR" ] || [ -L "$PRIVATE_DIR" ]; then
-  fail "Private project directory already exists; rerun its saved default_deploy.sh or Compose config. Nothing overwritten."
+  fail "Private project directory already exists; rerun its saved deployment wrapper or Compose config. Nothing overwritten."
 fi
 if [ -e "$DEPLOY_CONFIG" ] || [ -L "$DEPLOY_CONFIG" ]; then
   fail "Deployment script already exists; rerun it or select a new CHORUS_DEPLOY_CONFIG path. Nothing overwritten."
@@ -262,10 +262,12 @@ unset database_password LOGIN_PASSWORD admin_hash
 COMPOSE_FILES=(-f "$ROOT/deploy/self-host/compose.yml" -f "$ROOT/deploy/self-host/compose.local.yml")
 if [ "$HTTPS_ENABLED" = true ]; then
   mkdir -m 700 "$PRIVATE_DIR/lan-tls"
+  printf '%s\n' '[req]' 'distinguished_name=subject' 'x509_extensions=server' 'prompt=no' \
+    '[subject]' 'CN=Chorus LAN' '[server]' "subjectAltName=$HTTPS_SAN" \
+    'extendedKeyUsage=serverAuth' 'basicConstraints=critical,CA:FALSE' > "$PRIVATE_DIR/lan-tls/openssl.cnf"
   openssl req -x509 -newkey rsa:3072 -sha256 -days 30 -nodes \
     -keyout "$PRIVATE_DIR/lan-tls/server.key" -out "$PRIVATE_DIR/lan-tls/server.crt" \
-    -subj '/CN=Chorus LAN' -addext "subjectAltName=$HTTPS_SAN" \
-    -addext 'extendedKeyUsage=serverAuth' -addext 'basicConstraints=critical,CA:FALSE'
+    -config "$PRIVATE_DIR/lan-tls/openssl.cnf"
   {
     printf 'CHORUS_HTTPS_HOST=%s\nCHORUS_HTTPS_PORT=%s\n' "$HTTPS_HOST" "$HTTPS_PORT"
     write_private_value CHORUS_TLS_CERT_FILE "$PRIVATE_DIR/lan-tls/server.crt"
