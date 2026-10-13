@@ -4,6 +4,14 @@ import { parseEnv } from "node:util";
 import { OUTCOME_ACTIONS, STEP_SCOPES } from "../contracts.mjs";
 import { runCommand } from "../run-command.mjs";
 import { resolveCodexEnvPath } from "./credential-seed.mjs";
+import { codexFamilyProfile } from "../../codex-family.mjs";
+
+// Codex-family App Server restart (codex + trae). VERIFIED traecli 0.209.1 with an isolated
+// TRAE_HOME: `traecli app-server daemon {start,version,restart,stop}` mirror Codex — `version`
+// prints `{"status":"running",…}` JSON while a daemon runs and `restart` prints
+// `{"status":"restarted",…}`. One difference: with no daemon, traecli `version` exits 1
+// ("failed to connect to …app-server-control.sock") instead of printing a stopped status, so
+// TRAE defers with "daemon state could not be determined" — still never starting a daemon.
 
 const MANAGED_KEYS = ["CHORUS_URL", "CHORUS_API_KEY", "CHORUS_AGENT_PROFILE"];
 const MAX_OUTPUT = 64 * 1024;
@@ -13,22 +21,29 @@ export const codexRestartStep = {
   order: 25,
   scope: STEP_SCOPES.PER_AGENT,
   async run(ctx) {
-    if (ctx.agentId !== "codex" || ctx.flags?.pluginOnly) return [];
+    const profile = codexFamilyProfile(ctx.agentId);
+    if (!profile || ctx.flags?.pluginOnly) return [];
 
+    const agentId = profile.agentType;
+    const bin = profile.binaries.posix[0];
+    const name = profile.displayName;
     const env = ctx.env ?? process.env;
-    const envPath = resolveCodexEnvPath(env);
-    const codexHome = dirname(envPath);
-    const guidance = `Configuration directory: ${JSON.stringify(codexHome)}. ` +
-      "For manual recovery, inspect `codex app-server daemon restart --help` for support first. " +
+    const envPath = resolveCodexEnvPath(env, profile);
+    const familyHome = dirname(envPath);
+    const guidance = `Configuration directory: ${JSON.stringify(familyHome)}. ` +
+      `For manual recovery, inspect \`${bin} app-server daemon restart --help\` for support first. ` +
       "Before restarting a running daemon, load CHORUS_URL, CHORUS_API_KEY and CHORUS_AGENT_PROFILE " +
-      "from that directory's .env as environment data (not shell code), using the same CODEX_HOME. " +
-      "Restarting can interrupt other Codex sessions; no daemon is started or upgraded by this step.";
-    const outcome = (action, detail) => ({ stepId: "codex-restart", agentId: "codex", action, detail });
-    const defer = (reason) => outcome(OUTCOME_ACTIONS.SKIPPED, `Codex App Server restart deferred: ${reason}. ${guidance}`);
+      `from that directory's .env as environment data (not shell code), using the same ${profile.homeEnv}. ` +
+      `Restarting can interrupt other ${name} sessions; no daemon is started or upgraded by this step.`;
+    const outcome = (action, detail) => ({ stepId: "codex-restart", agentId, action, detail });
+    const defer = (reason) => outcome(OUTCOME_ACTIONS.SKIPPED, `${name} App Server restart deferred: ${reason}. ${guidance}`);
     const prior = ctx.priorOutcomes ?? [];
+    // credential-seed tags its .env write with codexEnvAgentId; an untagged write is Codex's
+    // (the pre-TRAE outcome shape), so TRAE requires an explicit "trae" tag.
     const seeded = prior.some((entry) => entry.stepId === "credential-seed" &&
-      [OUTCOME_ACTIONS.SEEDED, OUTCOME_ACTIONS.SKIPPED].includes(entry.action) && entry.codexEnvWritten === true);
-    const configured = prior.some((entry) => entry.stepId === "plugin-install" && entry.agentId === "codex" &&
+      [OUTCOME_ACTIONS.SEEDED, OUTCOME_ACTIONS.SKIPPED].includes(entry.action) && entry.codexEnvWritten === true &&
+      (entry.codexEnvAgentId ?? "codex") === agentId);
+    const configured = prior.some((entry) => entry.stepId === "plugin-install" && entry.agentId === agentId &&
       [OUTCOME_ACTIONS.INSTALLED, OUTCOME_ACTIONS.REPAIRED, OUTCOME_ACTIONS.SKIPPED].includes(entry.action) &&
       entry.codexMcpWritten === true);
     if (!seeded || !configured) return defer("credential persistence or plugin configuration did not complete");
@@ -40,7 +55,7 @@ export const codexRestartStep = {
     try {
       const persisted = parseEnv(readFileSync(envPath, "utf8"));
       if (MANAGED_KEYS.some((key) => !persisted[key]?.trim())) return defer("saved environment is incomplete");
-      childEnv = { ...env, CODEX_HOME: codexHome };
+      childEnv = { ...env, [profile.homeEnv]: familyHome };
       for (const key of MANAGED_KEYS) childEnv[key] = persisted[key];
     } catch {
       return defer("saved environment could not be read");
@@ -49,7 +64,7 @@ export const codexRestartStep = {
     const run = ctx.run ?? runCommand;
     const command = async (args, timeoutMs = 5_000) => {
       try {
-        const result = await run("codex", ["app-server", "daemon", ...args], {
+        const result = await run(bin, ["app-server", "daemon", ...args], {
           env: childEnv, timeoutMs, maxBuffer: MAX_OUTPUT, killSignal: "SIGKILL",
         });
         if (!result?.ok || typeof result.stdout !== "string" || result.stdout.length > MAX_OUTPUT ||
@@ -60,7 +75,8 @@ export const codexRestartStep = {
       }
     };
     const help = await command(["restart", "--help"]);
-    if (!help || !/\bUsage:\s+codex app-server daemon restart\b/.test(help.stdout)) {
+    const usageRe = new RegExp(`\\bUsage:\\s+${bin} app-server daemon restart\\b`);
+    if (!help || !usageRe.test(help.stdout)) {
       return defer("restart support could not be confirmed (missing/older CLI or failed probe)");
     }
     const version = await command(["version"]);
@@ -76,8 +92,8 @@ export const codexRestartStep = {
     let answer;
     try {
       answer = await ctx.io.ask(
-        "Restart the running Codex App Server with the saved Chorus environment? " +
-        "This can interrupt other Codex sessions and active work. [y/N] ",
+        `Restart the running ${name} App Server with the saved Chorus environment? ` +
+        `This can interrupt other ${name} sessions and active work. [y/N] `,
       );
     } catch {
       return defer("confirmation was unavailable");
@@ -86,10 +102,10 @@ export const codexRestartStep = {
 
     const restarted = await command(["restart"], 30_000);
     if (!restarted) {
-      return outcome(OUTCOME_ACTIONS.FAILED, "Codex App Server restart command failed or timed out; " +
+      return outcome(OUTCOME_ACTIONS.FAILED, `${name} App Server restart command failed or timed out; ` +
         `saved configuration remains in place. ${guidance}`);
     }
     return outcome(OUTCOME_ACTIONS.REPAIRED,
-      "Codex App Server restart command succeeded with the saved environment; credentials and MCP connectivity were not verified.");
+      `${name} App Server restart command succeeded with the saved environment; credentials and MCP connectivity were not verified.`);
   },
 };

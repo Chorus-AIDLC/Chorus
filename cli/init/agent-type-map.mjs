@@ -1,7 +1,7 @@
 // cli/init/agent-type-map.mjs
 // The single translation between a `chorus init` adapter selection id (see
 // cli/init/adapters.mjs — "claude" | "codex" | "kiro" | "opencode" | "openclaw" |
-// "pi" | "dsh" | "hermes") and the daemon's agentType vocabulary (cli/daemon-agent.mjs
+// "pi" | "dsh" | "hermes" | "trae") and the daemon's agentType vocabulary (cli/daemon-agent.mjs
 // KNOWN_AGENTS). It lives in ONE place so the credential-seed step (which writes
 // each selected agent's daemon.json agents[] entry) and the daemon-setup step
 // (which gates auto-start on whether any selected agent is wakeable) can never
@@ -22,7 +22,7 @@
 // woken as claude-code.
 
 /**
- * Selection id → daemon agentType. claude/codex/kiro/pi are wakeable backends;
+ * Selection id → daemon agentType. claude/codex/kiro/pi/trae are wakeable backends;
  * everything else is classified offline. `dsh` maps to offline because the dsh
  * harness is de-advertised (offline) — re-map it here to bring it back online.
  * @type {Readonly<Record<string, string>>}
@@ -32,6 +32,7 @@ export const SELECTION_TO_AGENT_TYPE = Object.freeze({
   codex: "codex",
   kiro: "kiro",
   pi: "pi", // wakeable via PiSpawner (add-daemon-pi-backend)
+  trae: "trae", // wakeable via CodexSpawner({ profile: CODEX_FAMILY.trae }) (add-trae-cli-backend)
   opencode: "offline",
   openclaw: "offline",
   dsh: "offline",
@@ -45,7 +46,7 @@ export const SELECTION_TO_AGENT_TYPE = Object.freeze({
  * daemon.json `agents[]`. Unknown ids fail closed to "offline" (never a wakeable
  * default), so an agent is only ever woken when its backend is explicitly known.
  * @param {string} selectionId
- * @returns {string} a KNOWN_AGENTS agentType ("claude-code" | "codex" | "kiro" | "pi" | "offline")
+ * @returns {string} a KNOWN_AGENTS agentType ("claude-code" | "codex" | "kiro" | "pi" | "trae" | "offline")
  */
 export function agentTypeForSelection(selectionId) {
   return SELECTION_TO_AGENT_TYPE[selectionId] ?? "offline";
@@ -54,7 +55,7 @@ export function agentTypeForSelection(selectionId) {
 /**
  * Whether a daemon agentType is one the daemon can actually wake. "offline" is the
  * one non-wakeable classification; every other value the init mapping produces
- * (claude-code / codex / kiro / pi) is wakeable.
+ * (claude-code / codex / kiro / pi / trae) is wakeable.
  * @param {string} agentType
  * @returns {boolean}
  */
