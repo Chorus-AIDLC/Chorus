@@ -140,3 +140,21 @@ Both CLIs install the **same** plugin package and the same `hooks.json`. A TRAE-
 - **Hook marker ambiguity:** if no reliable marker exists, TRAE falls back to the shared Codex script (still functional, with Codex-worded routing). This is documented as a limitation rather than guessed.
 - **MCP auth form:** if env-var bearer is unsupported, the keyless guarantee may need a different mechanism. That is blocked on verification, never solved by writing the secret to `traecli.toml`.
 - **Refactor blast radius on Codex:** mitigated by keeping exported Codex names and running the full existing Codex test suite unchanged.
+
+## Live E2E findings (task 6, 2026-10-14)
+
+Details are in `docs/verification/trae-app-server-0.209.1.md` § "Live end-to-end checkpoint".
+
+- D1–D6 behaved as designed on traecli 0.209.1, with no code changes. That covers the
+  agents-add install, the keyless MCP plus `.env`, SessionStart through the dispatcher,
+  daemon wake, transcript upload, resume of the same thread, user interrupt, the yolo
+  write, upgrade-plugins refresh, and Codex regression.
+- **Gap shared with Codex (existing, out of scope here):** under `--chorus-only`, TRAE
+  and Codex both refuse Chorus MCP tool calls (`MCP tool call requires approval, but
+  approval policy is never`), because the read-only sandbox gates MCP tools on approval.
+  `default_tools_approval_mode = "approve"` on `[mcp_servers.chorus]` fixes it on TRAE
+  and keeps writes blocked. Fixing it in the daemon for chorus posture changes Codex
+  behavior, so it is a follow-up and not part of this change.
+- **Rollout order:** the server must include task 2 (`trae` in `DAEMON_CLIENT_TYPES`)
+  before `chorus daemon` runs with a `trae` agent. Against an older server the daemon
+  connects but is never registered, and it gives no warning.
