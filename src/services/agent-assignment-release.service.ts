@@ -78,7 +78,7 @@ export async function releaseAgentAssignments(
   const [taskCandidates, ideas] = await Promise.all([
     tx.task.findMany({
       where: { companyUuid, status: { in: [...RELEASABLE_TASK_STATUSES] }, OR: assigneeMatch },
-      select: { uuid: true, projectUuid: true, status: true },
+      select: { uuid: true, projectUuid: true },
     }),
     tx.idea.findMany({
       where: { companyUuid, OR: assigneeMatch },
@@ -94,15 +94,16 @@ export async function releaseAgentAssignments(
   );
   const ideaCandidates = ideas.filter((i) => derivedByIdea.get(i.uuid) !== "done");
 
-  // Every write re-checks the assignee and the status read above. Plain SELECTs
-  // take no locks, so a concurrent claim/assign may hand a row to someone else
-  // (or move its lifecycle) before we write; UPDATE re-evaluates its own WHERE
-  // against the latest row version, so such a row is left alone. Only rows that
-  // were actually updated count as released (activity + SSE).
+  // Every write re-checks the assignee: plain SELECTs take no locks, so a
+  // concurrent claim/assign may hand a row to someone else before we write.
+  // UPDATE re-evaluates its own WHERE against the latest row version, so such a
+  // row is left alone. A task only needs to still be unfinished; an idea must
+  // still have the status read above, since that decides whether elaboration is
+  // reset. Only rows actually updated count as released (activity + SSE).
   const tasks: { uuid: string; projectUuid: string }[] = [];
   for (const task of taskCandidates) {
     const { count } = await tx.task.updateMany({
-      where: { companyUuid, uuid: task.uuid, status: task.status, OR: assigneeMatch },
+      where: { companyUuid, uuid: task.uuid, status: { in: [...RELEASABLE_TASK_STATUSES] }, OR: assigneeMatch },
       data: TASK_RELEASE_DATA,
     });
     if (count > 0) tasks.push({ uuid: task.uuid, projectUuid: task.projectUuid });

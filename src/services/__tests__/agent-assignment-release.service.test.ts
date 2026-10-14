@@ -97,7 +97,7 @@ describe("releaseAgentAssignments", () => {
     ];
     expect(mockTx.task.findMany).toHaveBeenCalledWith({
       where: { companyUuid, status: { in: ["assigned", "in_progress"] }, OR: assigneeMatch },
-      select: { uuid: true, projectUuid: true, status: true },
+      select: { uuid: true, projectUuid: true },
     });
     expect(mockTx.idea.findMany).toHaveBeenNthCalledWith(1, {
       where: { companyUuid, OR: assigneeMatch },
@@ -137,11 +137,11 @@ describe("releaseAgentAssignments", () => {
     expect(result.releasedTaskUuids).toEqual(["t1", "t2"]);
     const OR = [{ assigneeType: "agent", assigneeUuid: agentUuid }];
     expect(mockTx.task.updateMany).toHaveBeenCalledWith({
-      where: { companyUuid, uuid: "t1", status: "assigned", OR },
+      where: { companyUuid, uuid: "t1", status: { in: ["assigned", "in_progress"] }, OR },
       data: TASK_CLEARED,
     });
     expect(mockTx.task.updateMany).toHaveBeenCalledWith({
-      where: { companyUuid, uuid: "t2", status: "in_progress", OR },
+      where: { companyUuid, uuid: "t2", status: { in: ["assigned", "in_progress"] }, OR },
       data: TASK_CLEARED,
     });
   });
@@ -316,7 +316,7 @@ describe("releaseAgentAssignments", () => {
     for (const call of [...mockTx.task.updateMany.mock.calls, ...mockTx.idea.updateMany.mock.calls]) {
       expect(call[0].where).toEqual(expect.objectContaining({
         OR: [{ assigneeType: "agent", assigneeUuid: agentUuid }],
-        status: expect.any(String),
+        status: expect.anything(),
       }));
     }
     expect(result.releasedTaskUuids).toEqual(["t-kept"]);
