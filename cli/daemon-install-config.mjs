@@ -206,7 +206,7 @@ export async function resolveInstallCredentials(flags = {}, env = {}, opts = {})
  *   processCwd?: string,
  *   log?: (m: string) => void,
  * }} [opts]
- * @returns {Promise<{ cwds: string[] }>}
+ * @returns {Promise<{ cwds: string[], source: "flag" | "interactive" | "existing" | "default" }>}
  */
 export async function resolveInstallCwds(flags = {}, opts = {}) {
   const isTTY = opts.isTTY ?? false;
@@ -224,7 +224,7 @@ export async function resolveInstallCwds(flags = {}, opts = {}) {
   const fromFlags = cleanCwdList(flagList, home);
   if (fromFlags.length > 0) {
     writeConfig({ cwds: fromFlags });
-    return { cwds: fromFlags };
+    return { cwds: fromFlags, source: "flag" };
   }
 
   // 2. Existing daemon.json `cwds` → configured; use as-is (re-persist is a no-op
@@ -232,7 +232,7 @@ export async function resolveInstallCwds(flags = {}, opts = {}) {
   const file = readJson(loginPath);
   const fromFile = file && Array.isArray(file.cwds) ? cleanCwdList(file.cwds, home) : [];
   if (fromFile.length > 0) {
-    return { cwds: fromFile };
+    return { cwds: fromFile, source: "existing" };
   }
 
   // 3. Unconfigured. On a non-TTY or in skip mode, fall back to the process cwd
@@ -241,7 +241,7 @@ export async function resolveInstallCwds(flags = {}, opts = {}) {
   if (!isTTY || skip) {
     const cwds = defaultCwd ? [defaultCwd] : [];
     if (cwds.length > 0) writeConfig({ cwds });
-    return { cwds };
+    return { cwds, source: "default" };
   }
 
   // 4. Unconfigured + TTY + !skip → interactive add-loop. Pre-seed the current
@@ -260,7 +260,7 @@ export async function resolveInstallCwds(flags = {}, opts = {}) {
   const cwds = cleanCwdList(collected, home);
   const finalCwds = cwds.length > 0 ? cwds : defaultCwd ? [defaultCwd] : [];
   if (finalCwds.length > 0) writeConfig({ cwds: finalCwds });
-  return { cwds: finalCwds };
+  return { cwds: finalCwds, source: "interactive" };
 }
 
 /** Persist explicit install-time browse roots without coupling them to `cwds`. */

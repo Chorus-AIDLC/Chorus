@@ -163,8 +163,9 @@ function nonEmpty(value) {
 export const UPDATABLE_AGENT_SETTINGS = ["daemonWake", "cwds"];
 
 /**
- * Apply setting-only changes to an agent that is already in `agents[]`, matched by
- * `apiKey`. This is the companion to {@link appendAgentConfig}, NOT a mode of it:
+ * Apply setting-only changes to an existing agent, matched by `apiKey`. A flat
+ * config is normalized into `agents[]` only for an explicit allowed setting.
+ * This is the companion to {@link appendAgentConfig}, NOT a mode of it:
  * `appendAgentConfig` refuses a duplicate key and writes nothing, which silently
  * dropped the `daemonWake` / `cwds` computed for that same run — so `chorus agents
  * add --daemon-wake <id>` could never switch waking on for an existing agent, while
@@ -173,7 +174,8 @@ export const UPDATABLE_AGENT_SETTINGS = ["daemonWake", "cwds"];
  *
  * Only {@link UPDATABLE_AGENT_SETTINGS} are touched. Every other field of the
  * matched entry, every other entry, and every unrelated top-level key are written
- * back unchanged.
+ * back unchanged. Flat normalization retains top-level defaults and moves
+ * per-agent args/env into the entry, following append's normalization conventions.
  *
  * @param {{ apiKey: string, daemonWake?: boolean, cwds?: string[] }} agentObj
  * @param {object} [deps]  Same injection surface as {@link updateDaemonConfig}.
@@ -196,29 +198,45 @@ export function updateAgentSettings(agentObj, deps = {}) {
   const agents = Array.isArray(current.agents)
     ? current.agents.filter((a) => a && typeof a === "object")
     : [];
-  // A flat single-agent config has no agents[] to update. Report it as absent
-  // rather than migrating here: folding the flat form is appendAgentConfig's
-  // documented job, and doing it in two places would let them drift.
+  const migratedFlat = !Array.isArray(current.agents)
+    && nonEmpty(current.apiKey) && current.apiKey === agentObj.apiKey;
+  if (migratedFlat) {
+    const flat = { apiKey: current.apiKey };
+    if (nonEmpty(current.url)) flat.url = current.url;
+    if (nonEmpty(current.agent)) flat.agentType = current.agent;
+    if (Array.isArray(current.cwds)) flat.cwds = current.cwds;
+    if (nonEmpty(current.agentName)) flat.agentName = current.agentName;
+    if (nonEmpty(current.agentUuid)) flat.agentUuid = current.agentUuid;
+    for (const field of ["daemonWake", "args", "env"]) {
+      if (Object.hasOwn(current, field)) flat[field] = current[field];
+    }
+    agents.push(flat);
+  }
   const index = agents.findIndex((a) => a.apiKey === agentObj.apiKey);
   if (index === -1) return { ok: false, reason: "absent" };
+
+  const requested = UPDATABLE_AGENT_SETTINGS.filter(
+    (field) => Object.hasOwn(agentObj, field) && agentObj[field] !== undefined,
+  );
+  if (requested.length === 0) return { ok: true, changed: false, index, applied: [] };
 
   const target = agents[index];
   const applied = [];
   const patched = { ...target };
-  for (const field of UPDATABLE_AGENT_SETTINGS) {
-    if (!Object.hasOwn(agentObj, field) || agentObj[field] === undefined) continue;
+  for (const field of requested) {
     const next = agentObj[field];
-    // Already at the requested value: report no change so the caller can say
-    // "already enabled" rather than claiming it just did something.
     if (JSON.stringify(target[field]) === JSON.stringify(next)) continue;
     patched[field] = next;
     applied.push(field);
   }
-  if (applied.length === 0) return { ok: true, changed: false, index, applied };
+  if (applied.length === 0 && !migratedFlat) return { ok: true, changed: false, index, applied };
 
   const nextAgents = agents.slice();
   nextAgents[index] = patched;
-  const writtenPath = updateDaemonConfig({ agents: nextAgents }, deps);
+  const writtenPath = updateDaemonConfig({
+    agents: nextAgents,
+    ...(migratedFlat ? { args: undefined, env: undefined } : {}),
+  }, deps);
   return { ok: true, changed: true, path: writtenPath, index, applied };
 }
 

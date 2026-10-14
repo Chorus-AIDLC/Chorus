@@ -5,8 +5,8 @@
 // as its own agents[] entry tagged with the mapped daemon agentType. Validation /
 // append / write are injected; two tests drive the REAL appendAgentConfig +
 // writeLoginFile against a temp file to prove agents[] shape + merge-safety.
-import { describe, it, expect, vi } from "vitest";
-import { existsSync, mkdtempSync, statSync, writeFileSync, readFileSync } from "node:fs";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
@@ -22,7 +22,8 @@ import {
   resolveHermesEnvPath,
 } from "../init/steps/credential-seed.mjs";
 import { writePiMcpServer } from "../init/pi-mcp-config.mjs";
-import { appendAgentConfig, writeLoginFile } from "../login.mjs";
+import { appendAgentConfig, updateAgentSettings, writeLoginFile } from "../login.mjs";
+import { resolveInstallCwds } from "../daemon-install-config.mjs";
 import { OUTCOME_ACTIONS } from "../init/contracts.mjs";
 
 const { SEEDED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
@@ -56,6 +57,7 @@ function baseCtx(over = {}) {
     validateCredentials: async ({ apiKey }) => identityFor(apiKey),
     appendAgent: fakeAppend(),
     writeLogin: vi.fn(),
+    updateAgentSettings: vi.fn(() => ({ ok: true, changed: false, index: 0, applied: [] })),
     // Default: no served cwds (per-agent cwds is opt-in via this resolver). Tests that
     // check per-agent cwds override it. Stubbed so the real resolveInstallCwds (which
     // reads process.cwd / daemon.json) never runs in unit tests.
@@ -88,6 +90,128 @@ describe("credentialSeedStep shape", () => {
   it("is a once-scoped step ordered before plugin-install", () => {
     expect(credentialSeedStep.scope).toBe("once");
     expect(credentialSeedStep.order).toBeLessThan(20);
+  });
+});
+
+describe("seedCredentials — real cwd resolver for existing agents", () => {
+  const tempDirs = [];
+  const existingAgent = {
+    apiKey: "cho_same", url: "https://c", agentType: "codex",
+    agentUuid: "saved-uuid", agentName: "Saved Agent", cwds: ["/repo"], daemonWake: true,
+  };
+
+  afterEach(() => {
+    for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true });
+  });
+
+  function setup(config, overrides = {}) {
+    const directory = mkdtempSync(join(tmpdir(), "chorus-cwd-intent-"));
+    tempDirs.push(directory);
+    const path = join(directory, "daemon.json");
+    writeFileSync(path, JSON.stringify(config));
+    const original = readFileSync(path, "utf8");
+    const readJson = () => JSON.parse(readFileSync(path, "utf8"));
+    const update = vi.fn((settings) => updateAgentSettings(settings, { path }));
+    const context = baseCtx({
+      flags: { url: "https://c", apiKey: "cho_same" },
+      loginPath: path,
+      readJson,
+      appendAgent: (agent) => appendAgentConfig(agent, { path }),
+      updateAgentSettings: update,
+      writeDshEnv: vi.fn(({ dshHome }) => join(dshHome, ".env")),
+      resolveInstallCwds: (flags, options) => resolveInstallCwds(flags, {
+        ...options, home: directory, processCwd: "/somewhere/else",
+      }),
+      ...overrides,
+    });
+    return { context, update, readJson, unchanged: () => expect(readFileSync(path, "utf8")).toBe(original) };
+  }
+
+  it.each([false, true])("does not overwrite existing cwds on non-TTY rerun (yes=%s)", async (yes) => {
+    const test = setup({ agents: [existingAgent] }, {
+      flags: { url: "https://c", apiKey: "cho_same", yes },
+    });
+    const result = await seedCredentials(test.context);
+    expect(result[0].action).toBe(SKIPPED);
+    expect(test.update).not.toHaveBeenCalled();
+    test.unchanged();
+  });
+
+  it("does not copy inherited top-level cwds into an existing agent", async () => {
+    const test = setup({ cwds: ["/legacy-default"], agents: [existingAgent] });
+    expect((await seedCredentials(test.context))[0].action).toBe(SKIPPED);
+    expect(test.update).not.toHaveBeenCalled();
+    test.unchanged();
+  });
+
+  it.each([undefined, ["/repo"]])("skips a flat config without explicit settings (cwds=%s)", async (cwds) => {
+    const test = setup({ apiKey: "cho_same", url: "https://c", agent: "codex", cwds });
+    expect((await seedCredentials(test.context))[0].action).toBe(SKIPPED);
+    expect(test.update).not.toHaveBeenCalled();
+    test.unchanged();
+  });
+
+  it("applies explicit cwd flags without changing identity, backend or wake settings", async () => {
+    const sibling = { apiKey: "cho_other", cwds: ["/sibling"] };
+    const test = setup({ agents: [existingAgent, sibling], custom: { keep: true } }, {
+      flags: { url: "https://c", apiKey: "cho_same", cwd: ["/new", "/new"] },
+    });
+    expect((await seedCredentials(test.context))[0].action).toBe(SEEDED);
+    expect(test.update).toHaveBeenCalledWith({ apiKey: "cho_same", cwds: ["/new"] });
+    expect(test.readJson()).toEqual({
+      agents: [{ ...existingAgent, cwds: ["/new"] }, sibling], custom: { keep: true },
+    });
+  });
+
+  it("applies an interactive cwd answer with real resolution", async () => {
+    const promptFn = vi.fn(async (question) => {
+      if (question.startsWith("Working directory")) return "/interactive";
+      if (question.startsWith("Enable daemon")) return "yes";
+      return "";
+    });
+    const test = setup({ agents: [existingAgent] }, {
+      io: { isTTY: true, log: () => {} }, promptFn,
+    });
+    expect((await seedCredentials(test.context))[0].action).toBe(SEEDED);
+    expect(test.update).toHaveBeenCalledWith({ apiKey: "cho_same", cwds: ["/interactive"], daemonWake: true });
+    expect(test.readJson().agents[0]).toEqual({ ...existingAgent, cwds: ["/interactive"] });
+  });
+
+  it("does not treat a --yes TTY default as an explicit cwd answer", async () => {
+    const promptFn = vi.fn(async () => "yes");
+    const test = setup({ agents: [existingAgent] }, {
+      flags: { url: "https://c", apiKey: "cho_same", yes: true },
+      io: { isTTY: true, log: () => {} }, promptFn,
+    });
+    expect((await seedCredentials(test.context))[0].action).toBe(SKIPPED);
+    expect(test.update).toHaveBeenCalledWith({ apiKey: "cho_same", daemonWake: true });
+    expect(promptFn.mock.calls.some(([question]) => question.startsWith("Working directory"))).toBe(false);
+    test.unchanged();
+  });
+
+  it("applies explicit daemon wake without forwarding a default cwd", async () => {
+    const test = setup({ agents: [{ ...existingAgent, daemonWake: false }] }, {
+      flags: { url: "https://c", apiKey: "cho_same", daemonWake: ["claude"] },
+    });
+    expect((await seedCredentials(test.context))[0].action).toBe(SEEDED);
+    expect(test.update).toHaveBeenCalledWith({ apiKey: "cho_same", daemonWake: true });
+    expect(test.readJson().agents[0]).toEqual(existingAgent);
+  });
+
+  it("still gives a new agent its default cwd", async () => {
+    const test = setup({ agents: [] });
+    expect((await seedCredentials(test.context))[0].action).toBe(SEEDED);
+    expect(test.readJson().agents[0].cwds).toEqual(["/somewhere/else"]);
+    expect(test.update).not.toHaveBeenCalled();
+  });
+
+  it("does not infer explicit intent from a resolver without provenance", async () => {
+    const test = setup({ agents: [existingAgent] }, {
+      resolveInstallCwds: async () => ({ cwds: ["/unknown"] }),
+    });
+    expect((await seedCredentials(test.context))[0].action).toBe(SKIPPED);
+    expect(test.update).not.toHaveBeenCalled();
+    test.unchanged();
   });
 });
 

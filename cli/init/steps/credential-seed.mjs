@@ -541,6 +541,7 @@ export async function seedCredentials(ctx) {
   // no-op here so we take only the resolved value, never a top-level write (daemon-setup
   // no longer writes it either). Failure degrades to no cwds (daemon defaults to cwd).
   let cwds = [];
+  let cwdsRequested = false;
   try {
     const resolved = await resolveCwds(flags, {
       isTTY,
@@ -552,6 +553,7 @@ export async function seedCredentials(ctx) {
       log: typeof io.log === "function" ? io.log : () => {},
     });
     cwds = Array.isArray(resolved?.cwds) ? resolved.cwds : [];
+    cwdsRequested = resolved?.source === "flag" || resolved?.source === "interactive";
   } catch {
     cwds = [];
   }
@@ -902,7 +904,7 @@ export async function seedCredentials(ctx) {
       // for an agent that was already configured, and still reported success.
       const requested = {
         ...(daemonWakeRequested ? { daemonWake } : {}),
-        ...(cwds.length ? { cwds } : {}),
+        ...(cwdsRequested && cwds.length ? { cwds } : {}),
       };
       // Identity is carried either way so the orchestrator can still print the
       // CHORUS_AGENT_PROFILE export hint on an idempotent re-run.

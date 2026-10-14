@@ -4,7 +4,10 @@
 // --add branch (validate-before-write, invalid/duplicate no-write), and the
 // install wizard loop adding more than one agent in a run.
 
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { appendAgentConfig, updateAgentSettings, UPDATABLE_AGENT_SETTINGS, runLogin } from "../login.mjs";
 import { resolveInstallCredentials } from "../daemon-install-config.mjs";
 
@@ -340,13 +343,11 @@ describe("updateAgentSettings", () => {
     expect(UPDATABLE_AGENT_SETTINGS).toEqual(["daemonWake", "cwds"]);
   });
 
-  it("reports absent for an unknown key, a flat config and a missing file", () => {
-    // A flat single-agent config has no agents[] to patch; folding it is append's job.
+  it("reports absent for an unknown key in modern or flat configs and a missing file", () => {
     const flat = JSON.stringify({ url: "https://a", apiKey: "cho_one", agent: "claude-code" });
     for (const content of [twoAgents(), flat, null]) {
       const { io, written } = mkIO(content);
-      const key = content === twoAgents() ? "cho_missing" : "cho_one";
-      expect(updateAgentSettings({ apiKey: key, daemonWake: true }, io)).toEqual({ ok: false, reason: "absent" });
+      expect(updateAgentSettings({ apiKey: "cho_missing", daemonWake: true }, io)).toEqual({ ok: false, reason: "absent" });
       expect(written.content).toBeUndefined();
     }
   });
@@ -356,5 +357,133 @@ describe("updateAgentSettings", () => {
     const { io, written } = mkIO(twoAgents());
     expect(appendAgentConfig({ apiKey: "cho_one", daemonWake: true }, io)).toEqual({ ok: false, reason: "duplicate" });
     expect(written.content).toBeUndefined();
+  });
+
+  describe("legacy flat settings migration", () => {
+    let directory;
+    let path;
+    let io;
+    const flatConfig = () => ({
+      url: "https://a",
+      apiKey: "cho_one",
+      agent: "kiro",
+      agentName: "dev",
+      agentUuid: "agent-1",
+      daemonWake: true,
+      cwds: ["/old", "/other"],
+      args: ["--model", "keep"],
+      env: { KEEP: "1" },
+      permissionMode: "chorus",
+      yoloAckAt: "2026-10-01T00:00:00.000Z",
+      sigintTimeoutMs: 7500,
+      maxConcurrency: 3,
+      browseRoots: ["/repos"],
+      custom: { nested: ["keep", 42] },
+    });
+
+    beforeEach(() => {
+      directory = mkdtempSync(join(tmpdir(), "chorus-flat-settings-"));
+      path = join(directory, "daemon.json");
+      io = {
+        path,
+        write: vi.fn(writeFileSync),
+        mkdir: vi.fn(mkdirSync),
+        rename: vi.fn(renameSync),
+      };
+    });
+
+    afterEach(() => {
+      rmSync(directory, { recursive: true, force: true });
+    });
+
+    it.each([
+      ["wake only", { daemonWake: false }, ["daemonWake"]],
+      ["cwd only", { cwds: ["/new"] }, ["cwds"]],
+      ["combined", { daemonWake: false, cwds: ["/new"] }, ["daemonWake", "cwds"]],
+      ["unchanged explicit wake", { daemonWake: true }, []],
+      ["unchanged explicit cwds", { cwds: ["/old", "/other"] }, []],
+    ])("migrates %s without changing unrelated settings", (_name, settings, applied) => {
+      const flat = flatConfig();
+      writeFileSync(path, JSON.stringify(flat));
+
+      const result = updateAgentSettings({
+        apiKey: flat.apiKey,
+        ...settings,
+        url: "https://ignored",
+        agentType: "codex",
+        agentName: "ignored",
+        agentUuid: "ignored",
+        custom: "ignored",
+        args: ["--ignored"],
+        env: { IGNORED: "1" },
+      }, io);
+
+      expect(result).toEqual({ ok: true, changed: true, path, index: 0, applied });
+      const { args, env, ...defaults } = flat;
+      expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+        ...defaults,
+        agents: [{
+          url: flat.url,
+          apiKey: flat.apiKey,
+          agentType: flat.agent,
+          agentName: flat.agentName,
+          agentUuid: flat.agentUuid,
+          daemonWake: flat.daemonWake,
+          cwds: flat.cwds,
+          args,
+          env,
+          ...settings,
+        }],
+      });
+      expect(io.write).toHaveBeenCalledTimes(1);
+      expect(io.write).toHaveBeenCalledWith(`${path}.tmp`, expect.any(String), { mode: 0o600 });
+      expect(io.rename).toHaveBeenCalledWith(`${path}.tmp`, path);
+    });
+
+    it.each([
+      ["no settings", {}],
+      ["undefined settings", { daemonWake: undefined, cwds: undefined }],
+      ["disallowed settings", { agentType: "codex", custom: "ignored" }],
+      ["inherited settings", Object.create({ daemonWake: false, cwds: ["/ignored"] })],
+    ])("does not write or migrate for %s", (_name, settings) => {
+      const content = JSON.stringify(flatConfig());
+      writeFileSync(path, content);
+      const request = Object.assign(Object.create(settings), settings, { apiKey: "cho_one" });
+
+      expect(updateAgentSettings(request, io)).toEqual({ ok: true, changed: false, index: 0, applied: [] });
+      expect(readFileSync(path, "utf8")).toBe(content);
+      expect(io.write).not.toHaveBeenCalled();
+      expect(io.mkdir).not.toHaveBeenCalled();
+      expect(io.rename).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["different identity", { ...flatConfig(), apiKey: "cho_other" }, "cho_one"],
+      ["missing identity", { url: "https://a" }, "cho_one"],
+      ["missing request identity", { url: "https://a" }, undefined],
+      ["empty identity", { url: "https://a", apiKey: " " }, " "],
+      ["modern array with a flat default", { ...flatConfig(), agents: [] }, "cho_one"],
+    ])("does not write or migrate for %s", (_name, config, apiKey) => {
+      const content = JSON.stringify(config);
+      writeFileSync(path, content);
+
+      expect(updateAgentSettings({ apiKey, daemonWake: false }, io)).toEqual({ ok: false, reason: "absent" });
+      expect(readFileSync(path, "utf8")).toBe(content);
+      expect(io.write).not.toHaveBeenCalled();
+      expect(io.mkdir).not.toHaveBeenCalled();
+      expect(io.rename).not.toHaveBeenCalled();
+    });
+
+    it("keeps flat duplicate appends append-only even with explicit settings", () => {
+      const content = JSON.stringify(flatConfig());
+      writeFileSync(path, content);
+
+      expect(appendAgentConfig({ apiKey: "cho_one", daemonWake: false, cwds: ["/new"] }, io))
+        .toEqual({ ok: false, reason: "duplicate" });
+      expect(readFileSync(path, "utf8")).toBe(content);
+      expect(io.write).not.toHaveBeenCalled();
+      expect(io.mkdir).not.toHaveBeenCalled();
+      expect(io.rename).not.toHaveBeenCalled();
+    });
   });
 });
