@@ -123,6 +123,8 @@ traecli app-server generate-json-schema --out /tmp/trae-schema
 
 ## Live end-to-end checkpoint (2026-10-14)
 
+> **Note (later in this change):** the `hooks/run-hook.sh` dispatcher and `hooks/trae/` copies referenced below were replaced by shared `hooks/*.sh` scripts using `hooks/hook-runtime.sh` (design D6), and `hooks.json` was restored to the pre-branch commands. The chorus-only MCP gap noted below is fixed by D8. This section records what was run on 2026-10-14.
+
 Tasks 1–4 of `add-trae-cli-backend` were exercised together on Linux x86_64 with
 **traecli 0.209.1** and **codex-cli 0.162.1**, from the branch source
 (`node chorus.mjs …` at `42f4f22f`). Everything was isolated from the real `~/.trae`,
@@ -196,9 +198,8 @@ served `--cwd` outside every browse root cannot be resumed with a stored runtime
   `AppToolApproval` value; others are `prompt` and `writes`) made `chorus_get_idea`
   succeed in read-only posture, while writes stayed blocked. This was tested only in the
   isolated `traecli.toml` and then reverted.
-- Follow-up: have the daemon pass this for the chorus posture, for example
-  `-c mcp_servers.chorus.default_tools_approval_mode="approve"`, only when
-  `[mcp_servers.chorus]` exists. Verify the same on Codex.
+- Follow-up: fixed in the daemon as a per-thread RPC override, not a `-c` flag. See
+  [Chorus-only MCP pre-approval (D8)](#chorus-only-mcp-pre-approval-d8) below.
 
 ### Plugin refresh
 
@@ -216,3 +217,66 @@ through an ad-hoc session: `backend started new session`, then `✓ wake done (e
 transcript was uploaded, and usage had `source:"codex"` and `cacheCreationTokens:16239`
 (the Codex `cacheWriteInputTokens` field is still read). Codex tests passed: 19 files /
 489 tests for `cli/__tests__/{codex-*,init-codex*,trae-*,init-trae*,spawner-select,upgrade*}`.
+
+## Chorus-only MCP pre-approval (D8)
+
+Verified 2026-10-14 on Linux x86_64 with **codex-cli 0.162.1** and **traecli 0.209.1**.
+Design: `openspec/changes/add-trae-cli-backend/design.md` D8. Extracted schema facts:
+`cli/__tests__/fixtures/codex-family-mcp-approval.json`.
+
+**Mechanism.** In chorus posture, and only when the family config declares
+`[mcp_servers.chorus]`, `thread/start` and `thread/resume` carry:
+
+```json
+"config": { "mcp_servers.chorus.default_tools_approval_mode": "approve" }
+```
+
+`turn/start`, the read-only sandbox and `approvalPolicy:"never"` are unchanged. Yolo
+sends no `config`. Nothing is written to `config.toml` or `traecli.toml`.
+
+### Schema (both `app-server generate-json-schema` outputs)
+
+| Fact | codex 0.162.1 | traecli 0.209.1 |
+| --- | --- | --- |
+| `ThreadStartParams.config` | `{type:[object,null], additionalProperties:true}` | same |
+| `ThreadResumeParams.config` | `{type:[object,null], additionalProperties:true}` | same |
+| `AppToolApproval` enum | `auto, prompt, writes, approve` | same |
+
+`config` is a free-form override map, so the schema does not type the key. The live
+runs below establish the key.
+
+### Live probes (raw App Server JSON-RPC, isolated `HOME`)
+
+Setup: `HOME=~/.cache/chorus-d8/home` with `CODEX_HOME=$HOME/.codex` and
+`TRAE_HOME=$HOME/.trae`. Only the model provider was copied from the real configs.
+Each config declares `[mcp_servers.chorus]` (`url = <local Chorus>/api/mcp`,
+`bearer_token_env_var = "CHORUS_API_KEY"`) and a control stdio server `[mcp_servers.echo]`
+that has one tool, `echo_ping`. Every turn ran with `sandbox:"read-only"`,
+`approvalPolicy:"never"` and `sandboxPolicy:{type:"readOnly",networkAccess:false}`. The
+prompt asked for `chorus_checkin`, then `echo_ping`, then `printf x > probe-write.txt`.
+
+| Probe | codex 0.162.1 | traecli 0.209.1 |
+| --- | --- | --- |
+| No `config` | `chorus_checkin` and `echo_ping` both `failed`: "MCP tool call requires approval, but approval policy is never". Write: read-only file system | same |
+| `config` with the dotted key | `chorus_checkin` **completed**. `echo_ping` still failed with the same message. Write: read-only file system, no file | same |
+| Key with value `bogus` | `thread/start` -32600 "unknown variant `bogus`, expected one of `auto`, `prompt`, `writes`, `approve` in `mcp_servers.chorus.default_tools_approval_mode`" | same (enum order differs) |
+| Key with **no** `[mcp_servers.chorus]` declared | `thread/start` -32600 "failed to load configuration: invalid transport in `mcp_servers.chorus`" | same |
+
+The last row is why the override is gated on the `[mcp_servers.chorus]` probe, and why
+chorus posture re-probes on every wake.
+
+### Live wakes through the branch `CodexSpawner`
+
+`selectSpawner(agent, {permissionMode:"chorus", creds, env})` was called. This is the
+construction `chorus daemon --chorus-only` uses. The key went only through `creds`, into
+the child env. There were two wakes on one anchor (new, then resume) per backend, with
+the same isolated `HOME`, so the session maps went to the isolated `~/.chorus`. The
+evidence comes from the backends' own rollout files:
+
+| Wake | codex | trae |
+| --- | --- | --- |
+| 1, new (`thread/start`) | `exit=0`. `chorus_checkin` output contains `checkinTime`. `echo_ping` was refused (approval). `exec_command printf x > live-write.txt` exited 1 with "read-only file system" | `exit=0`. Through code-mode `exec`: `chorus_checkin` succeeded and `echo_ping` was refused (approval). `Bash printf …` failed with "SandboxDenied … read-only file system" |
+| 2, resume (`thread/resume`, same thread id) | `isNew=false`. `chorus_get_notifications` returned `{"notifications": [] …}`. The write was refused again | `isNew=false`. `chorus_get_notifications` returned `{"notifications": [] …}`. The write was refused again |
+
+No file was created in either work dir. No Chorus entities were created. All probe
+processes exited, and the running daemon was not touched.

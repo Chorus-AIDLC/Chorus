@@ -611,26 +611,34 @@ Native approval/elicitation requests receive a negative response where the
 protocol supports one; requests without a safe negative response fail the wake.
 No terminal prompt is opened. Failed, interrupted, or missing terminal outcomes
 are never reported as a successful turn just because the process exits zero.
-The restricted mode remains read-only with interactive approvals disabled. On
-Codex 0.157.1, a Chorus MCP tool that requires approval is rejected under this
-policy; this was also observed for `chorus_checkin` with the previous `exec`
-backend. A successful turn exit alone does not mean its MCP calls succeeded.
+The restricted mode remains read-only with interactive approvals disabled. The
+read-only sandbox gates every MCP tool on approval, and approval policy `never`
+turns that into a refusal ("MCP tool call requires approval, but approval policy
+is never"). So in restricted mode the daemon pre-approves exactly one MCP
+server, the Chorus one, for the woken thread only. When your Codex config
+(`~/.codex/config.toml`, or the agent's `CODEX_HOME/config.toml`; for TRAE CLI,
+`traecli.toml` under `TRAE_HOME` or `~/.trae`) declares `[mcp_servers.chorus]`,
+`thread/start` and `thread/resume` carry this per-thread override:
 
-Operators can explicitly allow a selected tool in their Codex configuration
-(`~/.codex/config.toml`, or the agent's `CODEX_HOME/config.toml`):
-
-```toml
-[mcp_servers.chorus.tools.chorus_checkin]
-approval_mode = "approve"
+```json
+"config": { "mcp_servers.chorus.default_tools_approval_mode": "approve" }
 ```
 
-The exact override was verified with real new and resumed App Server threads:
-`chorus_checkin` completed while `approvalPolicy: never`, `sandbox: read-only`
-and the turn's `networkAccess: false` remained in effect. Without that tool
-allowance, both calls were denied. Other Chorus tools need their own operator
-choice and verification; this does not automatically allow comments or task
-updates. Put these rules in Codex configuration, not daemon `args` (which protect
-`mcp_servers` overrides). The daemon itself never approves native requests.
+The sandbox stays read-only, so writes and other side-effecting commands are
+still blocked. Tools of other MCP servers, and shell, file-change and permission
+approvals, are still refused. The override is never written to your config
+file. YOLO mode does not send it. Without a declared `[mcp_servers.chorus]`
+table it is omitted, because the App Server would reject it. Verified live on
+codex-cli 0.162.1 and traecli 0.209.1, for new and resumed threads
+([record](verification/trae-app-server-0.209.1.md#chorus-only-mcp-pre-approval-d8)).
+Two limits apply:
+- Every tool of the server named `chorus` is pre-approved, including write and admin tools. What the woken agent can change in Chorus is therefore bounded only by its API key's permissions, so give a restricted daemon an agent key with only the permissions it needs.
+- The daemon trusts whatever `[mcp_servers.chorus]` points at. Keep that entry pointed at your Chorus MCP endpoint, as `chorus agents add` writes it.
+
+Only the plain `[mcp_servers.chorus]` table header is detected. Inline-table or dotted-key forms are not detected, so for them the override is not sent.
+Put any other MCP rules in the Codex configuration, not in daemon `args`
+(which protect `mcp_servers` overrides). A successful turn exit alone does not mean its MCP
+calls succeeded.
 The verified YOLO-mode smoke also successfully ran Chorus check-in.
 
 Diagnostics report fixed failure classifications without provider payloads,

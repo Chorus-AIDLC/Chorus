@@ -37,12 +37,23 @@ The daemon SHALL persist the idea/task → TRAE thread-id mapping in a store tha
 
 ### Requirement: TRAE permission posture follows the daemon permission mode
 
-The `trae` backend SHALL map the daemon's resolved permission mode to App Server sandbox and approval fields exactly as the Codex backend does: yolo → full-access sandbox with a noninteractive approval policy; chorus → read-only sandbox with a noninteractive approval policy. Field names SHALL be verified against the schema produced by `traecli app-server generate-json-schema` for the supported traecli version. Stored thread policy or custom args SHALL NOT override the resolved posture.
+The `trae` backend SHALL map the daemon's resolved permission mode to App Server sandbox and approval fields exactly as the Codex backend does: yolo → full-access sandbox with a noninteractive approval policy; chorus → read-only sandbox with a noninteractive approval policy. Field names SHALL be verified against the schema produced by `traecli app-server generate-json-schema` for the supported traecli version. Stored thread policy or custom args SHALL NOT override the resolved posture. The Chorus MCP pre-approval of the `daemon-codex-backend` posture requirement SHALL apply unchanged: in chorus posture, and only when the user's `traecli.toml` (under `TRAE_HOME` or `~/.trae`, never the Codex config) declares `[mcp_servers.chorus]`, `thread/start` and `thread/resume` SHALL carry the per-thread `config` override `{"mcp_servers.chorus.default_tools_approval_mode": "approve"}`. No other MCP server, shell, file-change or other native approval SHALL be pre-approved, the override SHALL NOT be written to `traecli.toml`, and yolo posture SHALL NOT carry it.
 
 #### Scenario: Restricted posture on trae
 
 - **WHEN** the daemon wakes `trae` in chorus posture
 - **THEN** `thread/start`/`thread/resume` and `turn/start` carry the read-only sandbox and noninteractive approval policy, and the adapter grants no write or full-access permissions
+
+#### Scenario: Chorus-only TRAE wake can call Chorus MCP tools
+
+- **WHEN** the daemon wakes `trae` in chorus posture and `traecli.toml` declares `[mcp_servers.chorus]`
+- **THEN** `thread/start`/`thread/resume` carry `config: {"mcp_servers.chorus.default_tools_approval_mode": "approve"}` (and `thread/resume` still omits `excludeTurns`)
+- **AND** Chorus MCP tool calls succeed, while tools of any other MCP server are still refused and file writes stay blocked by the read-only sandbox
+
+#### Scenario: Chorus MCP declared only in the Codex config
+
+- **WHEN** the daemon wakes `trae` in chorus posture and only the Codex `config.toml` declares `[mcp_servers.chorus]`
+- **THEN** the TRAE setup requests carry no `config` override
 
 ### Requirement: TRAE MCP comes from the user config with the daemon key via env
 

@@ -29,6 +29,7 @@ Local evidence (traecli 0.209.1, verified 2026-10-13 on the requester's machine)
 
 - `daemon-agent-selection`: adds `trae` as a selectable backend.
 - `daemon-add-agent-type`: the shared backend menu advertises `trae`.
+- `daemon-codex-backend`: in chorus posture the Codex-family spawner pre-approves only the user-declared Chorus MCP server, per thread, so `--chorus-only` wakes can call Chorus tools while the sandbox stays read-only (design D8; applies to Codex and TRAE).
 
 ## Impact
 

@@ -8,3 +8,4 @@ Chorus task drafts are the source of truth; this list mirrors them.
 - [ ] 4. Hook dispatcher + TRAE-specific hook copies
 - [ ] 5. Public docs, landing, install guide UI and i18n
 - [ ] 6. Live end-to-end verification on real traecli
+- [ ] 7. Fix `--chorus-only` refusing Chorus MCP calls on Codex and TRAE (design D8)

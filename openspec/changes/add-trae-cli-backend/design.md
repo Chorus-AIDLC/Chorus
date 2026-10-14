@@ -94,22 +94,27 @@ export const CODEX_FAMILY = {
 - **#4 `traecli app-server daemon restart`: mirrors Codex.** `start`, `version` (`{"status":"running",…}`), `restart` (`{"status":"restarted",…}`) and `stop` all behave like Codex. `codex-restart.mjs` is generalized by profile (binary, `TRAE_HOME`, usage regex, display name). One difference: with no daemon running, `traecli … version` exits 1 ("failed to connect to …app-server-control.sock") instead of printing a stopped status. The step then defers ("daemon state could not be determined") and never starts a daemon.
 - **Plugin CLI (from `traecli plugin --help` plus live runs):** a second `marketplace add` on an already-registered marketplace is a no-op success. `plugin install … --yes` reinstalls into a fresh `<version>+reinstall…` cache dir. `marketplace upgrade chorus-plugins` exits 1 with "is not configured as a Git marketplace" for a local-path source. TRAE (only) treats that error as a no-op, so a dev/local `CHORUS_MARKETPLACE_SOURCE_TRAE` still refreshes. The Git source (`Chorus-AIDLC/Chorus`) upgrades normally.
 
-### D6. Hook compatibility (fork, do not alter Codex)
+### D6. Hook compatibility (shared scripts, runtime-detected wording)
 
-Both CLIs install the **same** plugin package and the same `hooks.json`. A TRAE-specific copy therefore needs a selection point that leaves Codex output byte-identical.
+Both CLIs install the **same** plugin package and the same `hooks.json`, and both run the **same** `hooks/*.sh` scripts. There are no TRAE copies and no dispatcher.
 
-- Change only the affected `hooks.json` commands to a tiny dispatcher, `hooks/run-hook.sh <name>`. The dispatcher `exec`s `hooks/trae/<name>.sh` when a TRAE runtime marker is present and that copy exists. Otherwise it `exec`s the original `hooks/<name>.sh` with the same stdin, args and env, so Codex stdout/stderr/exit code are unchanged. The original Codex scripts are **not edited**.
-- Runtime marker: resolve unknown #5 empirically, in this order: an env var traecli sets for hook processes (e.g. `TRAE_CLI`), then `PLUGIN_ROOT` living under `$TRAE_HOME|~/.trae/plugins/`. Bash 3.2 compatible.
-- Known copy needed: `on-session-start.sh` → `hooks/trae/on-session-start.sh`, with skill routing paths pointing at the installed TRAE plugin skills (`$PLUGIN_ROOT/skills/<name>/SKILL.md`) instead of `~/.codex/skills/...` and a "TRAE port" banner. `chorus-mcp-call.sh` clientInfo and `on-post-verify-task.sh` `tool_response` parsing get copies only if probes show they break.
-- Add shell tests: the dispatcher picks the TRAE copy under the marker, and Codex output is unchanged without it.
+- `hooks.json` commands stay byte-identical to the pre-change Codex commands (`${PLUGIN_ROOT}/hooks/<name>.sh`), so Codex users need no hook re-trust.
+- The shared helper `hooks/hook-runtime.sh` (sourced, Bash 3.2 compatible) provides:
+  - `chorus_hook_runtime <hooks-dir>`, which prints `trae` or `codex`. Marker: the plugin root (`PLUGIN_ROOT`, or `<hooks-dir>/..` when unset) resolves, via `pwd -P`, inside `${TRAE_HOME:-$HOME/.trae}/plugins/`. Otherwise the result is `codex`, the default. `CHORUS_HOOK_RUNTIME=trae|codex` forces the choice for tests and manual runs.
+  - `chorus_event_uuid <event> <field>`, which takes the entity UUID from the `tool_response` `content[0].text` JSON. `tool_response` may be an object or a JSON-encoded string, and the nested `post_tool_use.tool_response` is also accepted. It then falls back to `tool_input.<field>` and `post_tool_use.tool_input.<field>`. No input shape can abort the filter.
+- Wording that differs per runtime: the SessionStart banner ("Codex port" / "TRAE port"), the SessionStart skills/reviewer lines, and the reviewer spawn guidance in the three PostToolUse hooks (`spawn_agent` / `wait_agent` / `close_agent` on Codex; the `Agent` tool plus a Skill-load prompt on TRAE). Everything else is shared.
+- SessionStart skill routing uses `${PLUGIN_ROOT}/skills/<name>/SKILL.md` (falling back to the script's own plugin root), which is valid for both installs. This replaces the stale Codex `~/.codex/skills/...` paths.
+- Shared bug fixes that apply to Codex too: the object/string `tool_response` parsing above, and the unescaped `` `done` `` in the `on-post-verify-task.sh` Branch C heredoc. Under bash it ran as a command substitution and wrote a syntax error to stderr on every code-review reminder.
+- Two more shared fixes, found in the live probes: (1) `on-post-verify-task.sh` asked `chorus_list_tasks` / `chorus_get_documents` for `pageSize: 200`. The MCP maximum is 100, so every call failed and the code-review and completion-report reminders never fired on either CLI. It now asks for 100 and keeps the `total > returned` guard. (2) Codex 0.162.1 rejects a `spawn_agent` skill item without `name` (`missing field \`name\``). The SessionStart and Branch C examples lacked it and now include it.
+- Tests: `hooks/tests/test-shared-hooks.sh` covers runtime detection, and runs SessionStart and every PostToolUse hook under both runtimes and every `tool_response` shape, with a no-stderr check. The existing `test-session-start.sh`, `test-subagent-contract.sh` and `cli/__tests__/codex-session-start-hook.test.mjs` cover the Codex defaults.
 
-*Alternative rejected:* patching the installed plugin cache under `~/.trae/plugins/cache`. A marketplace upgrade overwrites it.
+*Alternatives rejected:* (1) patching the installed plugin cache under `~/.trae/plugins/cache`, because a marketplace upgrade overwrites it; (2) a `hooks/run-hook.sh` dispatcher plus `hooks/trae/` copies. That was the first implementation. It changed the `hooks.json` commands, which forced every Codex user to re-trust the hooks, and it duplicated about 500 lines of hook script that would drift.
 
 **Resolved (unknowns #3, #5 — probed on traecli 0.209.1 with an isolated `TRAE_HOME`):**
-- traecli exports **no** TRAE-specific env var to hook processes (no `TRAE_CLI`; `TRAE_HOME` is not exported either). It exports `PLUGIN_ROOT`, `PLUGIN_DATA`, `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PLUGIN_DATA`; `PLUGIN_ROOT` is the canonical (symlink-resolved) path `<trae-home>/plugins/cache/<marketplace>/chorus/<version>[+reinstall…]`. The marker is therefore: `PLUGIN_ROOT` (or the dispatcher's own parent dir when unset) resolves, via `pwd -P`, inside `${TRAE_HOME:-$HOME/.trae}/plugins/`. `CHORUS_HOOK_RUNTIME=trae|codex` forces the choice for tests/manual runs. Codex 0.162.1 was re-checked: it runs `run-hook.sh on-session-start` (command with an argument) and still selects the Codex script.
-- SessionStart stdin is Codex-shaped (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`, `permission_mode`, `source`). Hooks run only when trusted (or with `--dangerously-bypass-hook-trust`).
-- PostToolUse: `tool_name` is `mcp__chorus__<tool>`, so the existing matchers work. It fires only on success; failed calls raise `PostToolUseFailure`. The top-level `tool_response` is sometimes a **JSON-encoded string** (seen for code-mode/nested calls) and sometimes an object (direct calls). There is also a nested `post_tool_use.{tool_name,tool_input,tool_response}`. On the string shape the Codex `jq` filter errors out, and the error also kills the `tool_input` fallback. Result: submit_proposal / submit_for_verify lose the UUID, and verify-task exits silently. TRAE also has no `spawn_agent`; its sub-agent tool is `Agent` (plus `Skill` and `SendMessage`).
-- Copies: `hooks/trae/{on-session-start,on-post-submit-proposal,on-post-submit-for-verify,on-post-verify-task}.sh` plus the shared parser `hooks/trae/trae-event.sh`. `chorus-mcp-call.sh` works unchanged (the server ignores clientInfo), so there is no copy for it. Tests: `hooks/tests/test-run-hook.sh` and `hooks/tests/test-trae-hooks.sh`.
+- traecli exports **no** TRAE-specific env var to hook processes (no `TRAE_CLI`, and `TRAE_HOME` is not exported either). It exports `PLUGIN_ROOT`, `PLUGIN_DATA`, `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA`. `PLUGIN_ROOT` is the canonical (symlink-resolved) path `<trae-home>/plugins/cache/<marketplace>/chorus/<version>[+reinstall…]`, hence the marker above. Codex 0.162.1 also exports `PLUGIN_ROOT` to hook processes, pointing under `${CODEX_HOME:-~/.codex}/plugins/cache/`, so it never matches the TRAE marker.
+- SessionStart stdin is Codex-shaped (`session_id`, `transcript_path`, `cwd`, `hook_event_name`, `model`, `permission_mode`, `source`). Hooks run only when trusted, or with `--dangerously-bypass-hook-trust`.
+- PostToolUse: `tool_name` is `mcp__chorus__<tool>`, so the existing matchers work. The hook fires only on success; failed calls raise `PostToolUseFailure`. The top-level `tool_response` is sometimes a **JSON-encoded string** (seen for code-mode/nested calls) and sometimes an object (direct calls). There is also a nested `post_tool_use.{tool_name,tool_input,tool_response}`. With the old Codex `jq` filter, the string shape raised an error that also killed the `tool_input` fallback, so the UUID was lost. TRAE has no `spawn_agent`; its sub-agent tool is `Agent` (plus `Skill` and `SendMessage`).
+- `chorus-mcp-call.sh` works unchanged (the server ignores clientInfo).
 
 ### D7. Docs and UI (public)
 
@@ -117,6 +122,31 @@ Both CLIs install the **same** plugin package and the same `hooks.json`. A TRAE-
 - `messages/{en,zh}.json` (and the existing `ja`/`ko` files, to keep locale parity): `install.tabs.trae`, `install.trae.*`, `agentConnections.clientTrae`.
 - Add `docs/CONNECT_TRAE.md` and `.zh.md`; update `docs/DAEMON.md`, README / README.zh / ja / ko, landing `Integration.astro` plus translations, and the supported-agent lists in **both** `public/skill/` and `public/chorus-plugin/skills/chorus/` (including `public/chorus-plugin/skills/chorus-cli/SKILL.md`'s agent → binary list), plus `plugins/chorus/skills` where agents are listed.
 - `docs/design.pen`: updating the install-guide screen via Pencil MCP is **required** by CLAUDE.md. If the Pencil tools are unavailable in the implementing session, the task stays blocked and is escalated to the requester; it is not marked done.
+
+### D8. Chorus-only posture pre-approves only the Chorus MCP server (Codex and TRAE)
+
+**Problem (Live E2E findings).** In chorus posture both App Servers run `sandbox: "read-only"` with `approvalPolicy: "never"`. The read-only sandbox gates every MCP tool on approval, and `never` turns that into a refusal (`MCP tool call requires approval, but approval policy is never`). A `--chorus-only` wake could therefore do no Chorus work. This D8 supersedes the "follow-up" note in Live E2E findings: the fix lands in this change, for Codex and TRAE together, because they share one spawner.
+
+**Decision.** In chorus posture only, when the user's family config (`$CODEX_HOME|~/.codex/config.toml` or `$TRAE_HOME|~/.trae/traecli.toml`) declares `[mcp_servers.chorus]`, `CodexSpawner` adds one per-thread override to `thread/start` and `thread/resume` (including the history-unavailable fallback `thread/start`):
+
+```js
+config: { "mcp_servers.chorus.default_tools_approval_mode": "approve" }   // CHORUS_MCP_APPROVAL_CONFIG, codex-family.mjs
+```
+
+- `turn/start`, `sandbox`, `sandboxPolicy` and `approvalPolicy` are unchanged, so writes stay blocked. Server→client approval requests are still declined by `headlessResponseFor`.
+- Nothing else is approved. Other MCP servers keep the default approval mode and stay refused. Shell, file-change and permission approvals are unaffected.
+- The override is never written to the user's config file. It lives only in the RPC frame for that thread.
+- Yolo posture sends no `config`, so it is byte-identical to before.
+- The `[mcp_servers.chorus]` probe (`hasChorusMcpServer`, an exact-header regex) now gates the override. It was diagnostic only before. Yolo still probes once per spawner. Chorus posture re-probes on every wake, because an override under an undeclared server makes `thread/start` fail with `-32600 failed to load configuration: invalid transport in mcp_servers.chorus`. The missing-config warning is still logged once. A config that declares the server some other way (an inline table) is not detected. Such a wake gets no pre-approval and behaves as before, which fails safe.
+- The user cannot set this key through daemon `-c` args, because `mcp_servers*` is already on the managed-key denylist (D3).
+
+**Verification (2026-10-14, codex-cli 0.162.1 and traecli 0.209.1, isolated `HOME` under `~/.cache`).** The full record is in `docs/verification/trae-app-server-0.209.1.md` § "Chorus-only MCP pre-approval (D8)", and the extracted schema facts are in `cli/__tests__/fixtures/codex-family-mcp-approval.json`.
+- Schema: in both `generate-json-schema` outputs, `ThreadStartParams.config` and `ThreadResumeParams.config` are `{type: object|null, additionalProperties: true}`, so the key itself is not typed. The value enum `AppToolApproval` is `auto | prompt | writes | approve` in both.
+- Live: both servers validate the key. A bogus value fails `thread/start` with `unknown variant … in mcp_servers.chorus.default_tools_approval_mode`. The dotted key merges into the declared table rather than replacing it: the pre-approved `chorus_checkin` call reached the server through the configured `url` and env bearer.
+- Live A/B in read-only posture, with a second stdio MCP server `echo` as a control: without the override, both `chorus_checkin` and `echo_ping` are refused. With it, `chorus_checkin` succeeds, `echo_ping` is still refused and `printf x > file` fails on the read-only file system, on both CLIs.
+- Real `CodexSpawner` wakes (via `selectSpawner`, `permissionMode: "chorus"`, the same construction `chorus daemon --chorus-only` uses), for `codex` and `trae`: a new wake and then a resumed wake of the same thread. Both called Chorus tools successfully (`chorus_checkin`, then `chorus_get_notifications` after resume). The `echo` server was refused, and the write was refused in both wakes.
+
+*Alternatives rejected:* the `-c mcp_servers.chorus.default_tools_approval_mode=…` argv flag. It is process-wide rather than per-thread, it would have to bypass our own `-c` denylist, and it would also apply in yolo. Writing the key to the user's TOML is forbidden. `approvalPolicy: "on-request"` with auto-accepting MCP elicitations would let the adapter grant native approval requests and could reach other servers.
 
 ## Module Contracts
 
@@ -130,7 +160,7 @@ Both CLIs install the **same** plugin package and the same `hooks.json`. A TRAE-
 1. Profile + spawner + maps + cli-config (D1–D3), with Codex regression tests green.
 2. Agent-type registration CLI + server (D4).
 3. `agents add` TRAE adapter and upgrade-plugins wiring (D5), including verification of unknowns 1, 2 and 4.
-4. Hook dispatcher + TRAE copies (D6), including unknowns 3 and 5.
+4. Shared hook scripts with runtime-detected wording (D6), including unknowns 3 and 5. The first implementation used a dispatcher plus TRAE copies; it was replaced per the requester's decision.
 5. Docs/UI (D7).
 6. Live end-to-end checkpoint on a real `traecli` with an isolated `TRAE_HOME`.
 
@@ -146,15 +176,10 @@ Both CLIs install the **same** plugin package and the same `hooks.json`. A TRAE-
 Details are in `docs/verification/trae-app-server-0.209.1.md` § "Live end-to-end checkpoint".
 
 - D1–D6 behaved as designed on traecli 0.209.1, with no code changes. That covers the
-  agents-add install, the keyless MCP plus `.env`, SessionStart through the dispatcher,
+  agents-add install, the keyless MCP plus `.env`, SessionStart through the (since removed) dispatcher,
   daemon wake, transcript upload, resume of the same thread, user interrupt, the yolo
   write, upgrade-plugins refresh, and Codex regression.
-- **Gap shared with Codex (existing, out of scope here):** under `--chorus-only`, TRAE
-  and Codex both refuse Chorus MCP tool calls (`MCP tool call requires approval, but
-  approval policy is never`), because the read-only sandbox gates MCP tools on approval.
-  `default_tools_approval_mode = "approve"` on `[mcp_servers.chorus]` fixes it on TRAE
-  and keeps writes blocked. Fixing it in the daemon for chorus posture changes Codex
-  behavior, so it is a follow-up and not part of this change.
+- **Gap shared with Codex (existing):** under `--chorus-only`, TRAE and Codex both refused Chorus MCP tool calls (`MCP tool call requires approval, but approval policy is never`), because the read-only sandbox gates MCP tools on approval. **Fixed in this change by D8**, at the requester's request: in chorus posture the per-thread config pre-approves only the Chorus MCP server.
 - **Rollout order:** the server must include task 2 (`trae` in `DAEMON_CLIENT_TYPES`)
   before `chorus daemon` runs with a `trae` agent. Against an older server the daemon
   connects but is never registered, and it gives no warning.

@@ -1,7 +1,7 @@
 // TRAE CLI (traecli) backend: the shared CodexSpawner parameterized with the
 // CODEX_FAMILY.trae profile. Verified baseline: docs/verification/trae-app-server-0.209.1.md
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CODEX_FAMILY, codexFamilyProfile, resolveFamilyPath } from "../codex-family.mjs";
@@ -182,6 +182,66 @@ describe("TRAE App Server wake", () => {
     await wake(makeTrae(child, { permissionMode: "chorus", getThreadIdFn: () => resumed ? TID : null }));
     expect(child.requests[2].params).toMatchObject({ sandbox: "read-only", approvalPolicy: "never" });
     expect(child.requests[3].params).toMatchObject({ approvalPolicy: "never", sandboxPolicy: { type: "readOnly", networkAccess: false } });
+  });
+
+  describe("chorus posture pre-approves only the Chorus MCP server (D8)", () => {
+    const APPROVAL = { "mcp_servers.chorus.default_tools_approval_mode": "approve" };
+    const historyError = (req, c) => {
+      if (req.method === "thread/resume") {
+        c.send({ id: req.id, error: { code: -32600, message: "no rollout found for thread id old-thread" } }); return true;
+      }
+    };
+    it.each([
+      ["chorus", true, "new"], ["chorus", true, "resume"], ["chorus", true, "fallback"],
+      ["chorus", false, "new"], ["chorus", false, "resume"], ["chorus", false, "fallback"],
+      ["yolo", true, "new"], ["yolo", true, "resume"], ["yolo", true, "fallback"],
+      ["yolo", false, "new"], ["yolo", false, "resume"], ["yolo", false, "fallback"],
+    ])("%s posture, [mcp_servers.chorus]=%s, %s: exact TRAE setup and turn params", async (permissionMode, configured, mode) => {
+      const child = appServerChild(mode === "fallback" ? { handler: historyError } : {});
+      const stored = mode === "new" ? null : mode === "resume" ? TID : "old-thread";
+      await wake(makeTrae(child, { permissionMode, hasChorusMcpServerFn: () => configured, getThreadIdFn: () => stored }), { cwd: "/w" });
+      const chorus = permissionMode === "chorus";
+      const base = { cwd: "/w", approvalPolicy: "never", sandbox: chorus ? "read-only" : "danger-full-access" };
+      const setup = chorus && configured ? { ...base, config: APPROVAL } : base;
+      // TRAE never sends excludeTurns (experimental on 0.209.1).
+      const expected = mode === "new" ? [["thread/start", setup]]
+        : mode === "resume" ? [["thread/resume", { ...setup, threadId: TID }]]
+          : [["thread/resume", { ...setup, threadId: "old-thread" }], ["thread/start", setup]];
+      const setups = child.requests.filter((r) => r.method?.startsWith("thread/")).map((r) => [r.method, r.params]);
+      expect(setups).toEqual(expected);
+      for (const [method, params] of setups) {
+        const schema = SCHEMA.params[method === "thread/start" ? "ThreadStartParams" : "ThreadResumeParams"];
+        for (const key of Object.keys(params)) expect(schema.properties).toContain(key);
+      }
+      expect(child.requests.find((r) => r.method === "turn/start").params).toEqual({
+        threadId: TID, cwd: "/w", approvalPolicy: "never",
+        sandboxPolicy: chorus ? { type: "readOnly", networkAccess: false } : { type: "dangerFullAccess" },
+        input: [{ type: "text", text: "private prompt", text_elements: [] }],
+      });
+      expect(JSON.stringify(child.requests)).not.toMatch(/approvalsReviewer|on-request|on-failure|untrusted|workspace-write|workspaceWrite/);
+      expect((JSON.stringify(child.requests).match(/mcp_servers\./g) ?? []).length).toBe(chorus && configured ? setups.length : 0);
+    });
+
+    it("probes $TRAE_HOME/traecli.toml (not the Codex config) and never writes it", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "trae-d8-"));
+      const run = async (env) => {
+        const child = appServerChild();
+        await wake(makeTrae(child, { permissionMode: "chorus", hasChorusMcpServerFn: undefined, env: { PATH: "/bin", ...env } }));
+        return child.requests.find((r) => r.method === "thread/start").params.config;
+      };
+      try {
+        const trae = join(dir, "trae"); const codex = join(dir, "codex");
+        mkdirSync(trae); mkdirSync(codex);
+        const toml = '[mcp_servers.chorus]\nurl = "https://chorus.test/api/mcp"\nbearer_token_env_var = "CHORUS_API_KEY"\n';
+        writeFileSync(join(codex, "config.toml"), toml);
+        // Only Codex declares the server: TRAE must not pre-approve.
+        expect(await run({ TRAE_HOME: trae, CODEX_HOME: codex })).toBeUndefined();
+        writeFileSync(join(trae, "traecli.toml"), toml);
+        expect(await run({ TRAE_HOME: trae, CODEX_HOME: codex })).toEqual(APPROVAL);
+        expect(readFileSync(join(trae, "traecli.toml"), "utf8")).toBe(toml);
+        expect(readdirSync(trae)).toEqual(["traecli.toml"]);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
   });
 
   it("Codex resume still sends excludeTurns (unchanged)", async () => {

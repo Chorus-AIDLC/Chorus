@@ -60,6 +60,19 @@ export const CODEX_FAMILY = Object.freeze({
   }),
 });
 
+/**
+ * Per-thread `config` override (thread/start and thread/resume) that pre-approves
+ * the user's `[mcp_servers.chorus]` tools in chorus posture. Verified identical on
+ * codex-cli 0.162.1 and traecli 0.209.1: both schemas type `config` as a free-form
+ * map, the key accepts AppToolApproval (`auto|prompt|writes|approve`), and only the
+ * `chorus` server is affected (docs/verification/trae-app-server-0.209.1.md, D8).
+ * Send it ONLY when `[mcp_servers.chorus]` is declared: otherwise the override
+ * creates a transport-less server entry and thread/start fails.
+ */
+export const CHORUS_MCP_APPROVAL_CONFIG = Object.freeze({
+  "mcp_servers.chorus.default_tools_approval_mode": "approve",
+});
+
 /** Profile for an agent type, or null when it is not a Codex-family backend. */
 export function codexFamilyProfile(agentType) {
   return Object.hasOwn(CODEX_FAMILY, agentType) ? CODEX_FAMILY[agentType] : null;

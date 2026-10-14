@@ -7,7 +7,7 @@ import { validateAgentCliConfig, codexAppServerArgs, overlayAgentEnv, getAgentEn
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CODEX_FAMILY, resolveFamilyPath } from "./codex-family.mjs";
+import { CODEX_FAMILY, CHORUS_MCP_APPROVAL_CONFIG, resolveFamilyPath } from "./codex-family.mjs";
 import { CodexAppServerClient, CodexAppServerError, isHistoryUnavailableError } from "./codex-app-server-client.mjs";
 import { CodexAppServerEvents } from "./codex-app-server-events.mjs";
 import { registerProcessStopHook } from "./process-stop-hooks.mjs";
@@ -26,7 +26,10 @@ const CLIENT_VERSION = JSON.parse(readFileSync(new URL("../package.json", import
 /**
  * Check whether the user's Codex-family config declares the Chorus MCP server
  * (Codex: $CODEX_HOME|~/.codex/config.toml; TRAE: $TRAE_HOME|~/.trae/traecli.toml).
- * This is diagnostic only: a missing or unreadable config must never block a wake.
+ * A missing or unreadable config must never block a wake. In yolo posture the
+ * result is diagnostic only; in chorus posture it also gates the per-thread
+ * Chorus MCP pre-approval (D8), because overriding a key under an undeclared
+ * `[mcp_servers.chorus]` makes thread/start fail with "invalid transport".
  * @param {{ env?: NodeJS.ProcessEnv, readFile?: typeof readFileSync, home?: string,
  *           profile?: typeof CODEX_FAMILY.codex }} [deps]
  * @returns {boolean}
@@ -223,10 +226,17 @@ export class CodexSpawner {
       };
       const codexPath = this.codexPath ?? this.resolveCodexPathFn({ env: this.env, platform: this.platform });
       if (!codexPath) throw fault("EXECUTABLE_MISSING");
-      if (!this.mcpConfigChecked) {
-        this.mcpConfigChecked = true;
-        if (!this.hasChorusMcpServerFn({ env: this.env, platform: this.platform }))
-          log("warn", `[Chorus] ${name} config has no [mcp_servers.chorus] entry; wake will continue without Chorus MCP tools`);
+      const fullAccess = this.permissionMode === "yolo";
+      // Yolo probes once (diagnostic only). Chorus posture re-probes every wake,
+      // because the result decides whether the Chorus MCP server is pre-approved.
+      let chorusMcpConfigured = false;
+      if (!fullAccess || !this.mcpConfigChecked) {
+        chorusMcpConfigured = this.hasChorusMcpServerFn({ env: this.env, platform: this.platform }) === true;
+        if (!this.mcpConfigChecked) {
+          this.mcpConfigChecked = true;
+          if (!chorusMcpConfigured)
+            log("warn", `[Chorus] ${name} config has no [mcp_servers.chorus] entry; wake will continue without Chorus MCP tools`);
+        }
       }
       try { assertConfiguredShimArgs(codexPath, this.cliConfig.args, this.platform); }
       catch {
@@ -320,8 +330,13 @@ export class CodexSpawner {
       ensureRunning();
       await client.notify("initialized");
       ensureRunning();
-      const fullAccess = this.permissionMode === "yolo";
       const setup = { cwd, approvalPolicy: "never", sandbox: fullAccess ? "danger-full-access" : "read-only" };
+      // Chorus posture: the read-only sandbox gates every MCP tool on approval and
+      // approvalPolicy "never" turns that into a refusal. Pre-approve ONLY the
+      // user-declared Chorus MCP server, for this thread only (never written to the
+      // user's config). Other MCP servers, shell and file approvals stay refused,
+      // and the sandbox stays read-only. Yolo posture is unchanged.
+      if (!fullAccess && chorusMcpConfigured) setup.config = { ...CHORUS_MCP_APPROVAL_CONFIG };
       let fallback = false;
       if (threadId) {
         try {

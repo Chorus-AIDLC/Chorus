@@ -1,0 +1,63 @@
+{
+  "source": "Extracted on 2026-10-14 from `codex app-server generate-json-schema` (codex-cli 0.162.1) and `traecli app-server generate-json-schema` (traecli 0.209.1). The `config` override is a free-form map, so the key itself is not typed by the schema; it was verified live (see docs/verification/trae-app-server-0.209.1.md, section \"Chorus-only MCP pre-approval (D8)\").",
+  "key": "mcp_servers.chorus.default_tools_approval_mode",
+  "value": "approve",
+  "codex": {
+    "version": "0.162.1",
+    "ThreadStartParams": {
+      "config": {
+        "additionalProperties": true,
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    },
+    "ThreadResumeParams": {
+      "config": {
+        "additionalProperties": true,
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    },
+    "AppToolApproval": [
+      "auto",
+      "prompt",
+      "writes",
+      "approve"
+    ]
+  },
+  "trae": {
+    "version": "0.209.1",
+    "ThreadStartParams": {
+      "config": {
+        "additionalProperties": true,
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    },
+    "ThreadResumeParams": {
+      "config": {
+        "additionalProperties": true,
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    },
+    "AppToolApproval": [
+      "auto",
+      "prompt",
+      "writes",
+      "approve"
+    ]
+  },
+  "live": {
+    "withoutChorusServer": "thread/start -32600 \"failed to load configuration: invalid transport\\nin `mcp_servers.chorus`\\n\" (codex 0.162.1 and traecli 0.209.1)",
+    "invalidValue": "thread/start -32600 \"failed to load configuration: unknown variant `bogus`, expected one of ... `approve`\\nin `mcp_servers.chorus.default_tools_approval_mode`\\n\""
+  }
+}
