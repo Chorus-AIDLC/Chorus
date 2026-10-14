@@ -76,8 +76,8 @@ beforeEach(() => {
   mockTx.agentInstance.findMany.mockResolvedValue([]);
   mockTx.task.findMany.mockResolvedValue([]);
   mockTx.idea.findMany.mockResolvedValue([]);
-  mockTx.task.updateMany.mockResolvedValue({ count: 0 });
-  mockTx.idea.updateMany.mockResolvedValue({ count: 0 });
+  mockTx.task.updateMany.mockResolvedValue({ count: 1 });
+  mockTx.idea.updateMany.mockResolvedValue({ count: 1 });
   mockCreateActivityInTx.mockResolvedValue({ activity: { uuid: "act" }, publish: mockActivityPublish });
 });
 
@@ -97,7 +97,7 @@ describe("releaseAgentAssignments", () => {
     ];
     expect(mockTx.task.findMany).toHaveBeenCalledWith({
       where: { companyUuid, status: { in: ["assigned", "in_progress"] }, OR: assigneeMatch },
-      select: { uuid: true, projectUuid: true },
+      select: { uuid: true, projectUuid: true, status: true },
     });
     expect(mockTx.idea.findMany).toHaveBeenNthCalledWith(1, {
       where: { companyUuid, OR: assigneeMatch },
@@ -128,15 +128,20 @@ describe("releaseAgentAssignments", () => {
 
   it("returns assigned/in_progress tasks to open with the releaseTask field set", async () => {
     mockTx.task.findMany.mockResolvedValue([
-      { uuid: "t1", projectUuid: "p1" },
-      { uuid: "t2", projectUuid: "p2" },
+      { uuid: "t1", projectUuid: "p1", status: "assigned" },
+      { uuid: "t2", projectUuid: "p2", status: "in_progress" },
     ]);
 
     const result = await releaseAgentAssignments(companyUuid, agentUuid, actorUuid, tx);
 
     expect(result.releasedTaskUuids).toEqual(["t1", "t2"]);
+    const OR = [{ assigneeType: "agent", assigneeUuid: agentUuid }];
     expect(mockTx.task.updateMany).toHaveBeenCalledWith({
-      where: { companyUuid, uuid: { in: ["t1", "t2"] }, status: { in: ["assigned", "in_progress"] } },
+      where: { companyUuid, uuid: "t1", status: "assigned", OR },
+      data: TASK_CLEARED,
+    });
+    expect(mockTx.task.updateMany).toHaveBeenCalledWith({
+      where: { companyUuid, uuid: "t2", status: "in_progress", OR },
       data: TASK_CLEARED,
     });
   });
@@ -169,15 +174,18 @@ describe("releaseAgentAssignments", () => {
       where: { companyUuid, projectUuid: { in: ["p1", "p2"] }, status: { in: ["approved", "pending"] } },
     }));
     expect(result.releasedIdeaUuids).toEqual(["i-open", "i-elab", "i-legacy", "i-elaborated"]);
+    const OR = [{ assigneeType: "agent", assigneeUuid: agentUuid }];
     expect(mockTx.idea.updateMany).toHaveBeenCalledWith({
-      where: { companyUuid, uuid: { in: ["i-elaborated"] } },
+      where: { companyUuid, uuid: "i-elaborated", status: "elaborated", OR },
       data: IDEA_CLEARED,
     });
-    expect(mockTx.idea.updateMany).toHaveBeenCalledWith({
-      where: { companyUuid, uuid: { in: ["i-open", "i-elab", "i-legacy"] } },
-      data: { ...IDEA_CLEARED, status: "open", elaborationDepth: null, elaborationStatus: null },
-    });
-    const touched = mockTx.idea.updateMany.mock.calls.flatMap((c) => c[0].where.uuid.in);
+    for (const [uuid, status] of [["i-open", "open"], ["i-elab", "elaborating"], ["i-legacy", "in_progress"]]) {
+      expect(mockTx.idea.updateMany).toHaveBeenCalledWith({
+        where: { companyUuid, uuid, status, OR },
+        data: { ...IDEA_CLEARED, status: "open", elaborationDepth: null, elaborationStatus: null },
+      });
+    }
+    const touched = mockTx.idea.updateMany.mock.calls.map((c) => c[0].where.uuid);
     expect(touched).not.toContain("i-done");
   });
 
@@ -259,7 +267,7 @@ describe("releaseAgentAssignments", () => {
   });
 
   it("logs one released activity per entity attributed to the deleting user, publishing only on demand", async () => {
-    mockTx.task.findMany.mockResolvedValue([{ uuid: "t1", projectUuid: "p1" }]);
+    mockTx.task.findMany.mockResolvedValue([{ uuid: "t1", projectUuid: "p1", status: "assigned" }]);
     setIdeas([{ uuid: "i1", projectUuid: "p2", status: "open" }]);
 
     const result = await releaseAgentAssignments(companyUuid, agentUuid, actorUuid, tx);
@@ -285,5 +293,67 @@ describe("releaseAgentAssignments", () => {
     expect(mockEmitChange).toHaveBeenCalledWith({
       companyUuid, projectUuid: "p2", entityType: "idea", entityUuid: "i1", action: "updated",
     });
+  });
+
+  it("leaves rows reassigned or moved on between read and write untouched, with no activity or event", async () => {
+    // The guarded write matches nothing for t-stolen / i-stolen: another request
+    // claimed / reassigned them after our SELECT (UPDATE re-checks its WHERE).
+    mockTx.task.findMany.mockResolvedValue([
+      { uuid: "t-kept", projectUuid: "p1", status: "assigned" },
+      { uuid: "t-stolen", projectUuid: "p1", status: "assigned" },
+    ]);
+    setIdeas([
+      { uuid: "i-kept", projectUuid: "p1", status: "open" },
+      { uuid: "i-stolen", projectUuid: "p1", status: "elaborating" },
+    ]);
+    mockTx.task.updateMany.mockImplementation(async (args: { where: { uuid: string } }) =>
+      ({ count: args.where.uuid === "t-stolen" ? 0 : 1 }));
+    mockTx.idea.updateMany.mockImplementation(async (args: { where: { uuid: string } }) =>
+      ({ count: args.where.uuid === "i-stolen" ? 0 : 1 }));
+
+    const result = await releaseAgentAssignments(companyUuid, agentUuid, actorUuid, tx);
+
+    for (const call of [...mockTx.task.updateMany.mock.calls, ...mockTx.idea.updateMany.mock.calls]) {
+      expect(call[0].where).toEqual(expect.objectContaining({
+        OR: [{ assigneeType: "agent", assigneeUuid: agentUuid }],
+        status: expect.any(String),
+      }));
+    }
+    expect(result.releasedTaskUuids).toEqual(["t-kept"]);
+    expect(result.releasedIdeaUuids).toEqual(["i-kept"]);
+    const activityTargets = mockCreateActivityInTx.mock.calls.map((c) => c[1].targetUuid);
+    expect(activityTargets).toEqual(["t-kept", "i-kept"]);
+    result.publish();
+    expect(mockEmitChange.mock.calls.map((c) => c[0].entityUuid)).toEqual(["t-kept", "i-kept"]);
+  });
+
+  it("resolves a deep legal container chain without overflowing the call stack", async () => {
+    const depth = 6000;
+    const chain: IdeaRow[] = Array.from({ length: depth }, (_, i) => ({
+      uuid: `i${i}`, projectUuid: "p1", status: "open",
+      parentUuid: i === 0 ? null : `i${i - 1}`, isContainer: i < depth - 1,
+    }));
+    // Only the chain root is assigned to the deleted agent; its rollup walks the whole chain.
+    setIdeas([chain[0]], chain);
+
+    const result = await releaseAgentAssignments(companyUuid, agentUuid, actorUuid, tx);
+
+    expect(result.releasedIdeaUuids).toEqual(["i0"]);
+  });
+
+  it("keeps a deep chain's root when the leaf is done (rollup reaches the top)", async () => {
+    const depth = 6000;
+    const chain: IdeaRow[] = Array.from({ length: depth }, (_, i) => ({
+      uuid: `i${i}`, projectUuid: "p1", status: i === depth - 1 ? "elaborated" : "open",
+      parentUuid: i === 0 ? null : `i${i - 1}`, isContainer: i < depth - 1,
+    }));
+    setIdeas([chain[0]], chain);
+    setProposals([{ uuid: "prop-leaf", projectUuid: "p1", status: "approved", inputUuids: [`i${depth - 1}`] }]);
+    taskFindManyFor([{ proposalUuid: "prop-leaf", status: "done" }]);
+
+    const result = await releaseAgentAssignments(companyUuid, agentUuid, actorUuid, tx);
+
+    expect(result.releasedIdeaUuids).toEqual([]);
+    expect(mockTx.idea.updateMany).not.toHaveBeenCalled();
   });
 });

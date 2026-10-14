@@ -75,10 +75,10 @@ export async function releaseAgentAssignments(
       : []),
   ];
 
-  const [tasks, ideas] = await Promise.all([
+  const [taskCandidates, ideas] = await Promise.all([
     tx.task.findMany({
       where: { companyUuid, status: { in: [...RELEASABLE_TASK_STATUSES] }, OR: assigneeMatch },
-      select: { uuid: true, projectUuid: true },
+      select: { uuid: true, projectUuid: true, status: true },
     }),
     tx.idea.findMany({
       where: { companyUuid, OR: assigneeMatch },
@@ -92,49 +92,39 @@ export async function releaseAgentAssignments(
   const derivedByIdea = await computeDerivedStatusesInTx(
     tx, companyUuid, [...new Set(ideas.map((i) => i.projectUuid))],
   );
-  const ideasToRelease = ideas.filter((i) => derivedByIdea.get(i.uuid) !== "done");
+  const ideaCandidates = ideas.filter((i) => derivedByIdea.get(i.uuid) !== "done");
 
-  if (tasks.length > 0) {
-    await tx.task.updateMany({
-      where: {
-        companyUuid,
-        uuid: { in: tasks.map((t) => t.uuid) },
-        status: { in: [...RELEASABLE_TASK_STATUSES] },
-      },
+  // Every write re-checks the assignee and the status read above. Plain SELECTs
+  // take no locks, so a concurrent claim/assign may hand a row to someone else
+  // (or move its lifecycle) before we write; UPDATE re-evaluates its own WHERE
+  // against the latest row version, so such a row is left alone. Only rows that
+  // were actually updated count as released (activity + SSE).
+  const tasks: { uuid: string; projectUuid: string }[] = [];
+  for (const task of taskCandidates) {
+    const { count } = await tx.task.updateMany({
+      where: { companyUuid, uuid: task.uuid, status: task.status, OR: assigneeMatch },
       data: TASK_RELEASE_DATA,
     });
+    if (count > 0) tasks.push({ uuid: task.uuid, projectUuid: task.projectUuid });
   }
 
   // releaseIdea semantics: an elaborated Idea keeps its status; anything else
   // returns to open with elaboration state cleared.
-  const elaboratedUuids = ideasToRelease
-    .filter((i) => normalizeIdeaStatus(i.status) === "elaborated")
-    .map((i) => i.uuid);
-  const resetUuids = ideasToRelease
-    .filter((i) => normalizeIdeaStatus(i.status) !== "elaborated")
-    .map((i) => i.uuid);
-  if (elaboratedUuids.length > 0) {
-    await tx.idea.updateMany({
-      where: { companyUuid, uuid: { in: elaboratedUuids } },
-      data: IDEA_ASSIGNEE_CLEAR_DATA,
+  const ideasToRelease: { uuid: string; projectUuid: string }[] = [];
+  for (const idea of ideaCandidates) {
+    const { count } = await tx.idea.updateMany({
+      where: { companyUuid, uuid: idea.uuid, status: idea.status, OR: assigneeMatch },
+      data: normalizeIdeaStatus(idea.status) === "elaborated"
+        ? IDEA_ASSIGNEE_CLEAR_DATA
+        : { ...IDEA_ASSIGNEE_CLEAR_DATA, status: "open", elaborationDepth: null, elaborationStatus: null },
     });
-  }
-  if (resetUuids.length > 0) {
-    await tx.idea.updateMany({
-      where: { companyUuid, uuid: { in: resetUuids } },
-      data: {
-        ...IDEA_ASSIGNEE_CLEAR_DATA,
-        status: "open",
-        elaborationDepth: null,
-        elaborationStatus: null,
-      },
-    });
+    if (count > 0) ideasToRelease.push({ uuid: idea.uuid, projectUuid: idea.projectUuid });
   }
 
   const publishers: Array<() => void> = [];
   const released = [
     ...tasks.map((t) => ({ targetType: "task" as const, ...t })),
-    ...ideasToRelease.map((i) => ({ targetType: "idea" as const, uuid: i.uuid, projectUuid: i.projectUuid })),
+    ...ideasToRelease.map((i) => ({ targetType: "idea" as const, ...i })),
   ];
   for (const entity of released) {
     const { publish } = await activityService.createActivityInTx(tx, {
@@ -273,18 +263,36 @@ async function computeDerivedStatusesInTx(
   }
 
   // Theme rollup: a container with children takes its status from its direct
-  // children, resolved recursively (acyclic by construction above).
-  const resolve = (uuid: string): DerivedIdeaStatus => {
-    const cached = result.get(uuid);
-    if (cached) return cached;
-    const own = base.get(uuid)!;
-    const children = childrenByParent.get(uuid) ?? [];
-    const status = !byUuid.get(uuid)!.isContainer || children.length === 0 || cyclic.has(uuid)
-      ? own
-      : rollupThemeDerivedStatus(children.map(resolve)).derivedStatus;
-    result.set(uuid, status);
-    return status;
-  };
-  for (const idea of ideas) result.set(idea.uuid, resolve(idea.uuid));
+  // children (acyclic by construction above). Resolved with an explicit
+  // post-order stack rather than recursion: parent chains have no depth limit,
+  // and a deep legal tree must not overflow the call stack.
+  const rollsUp = (uuid: string) =>
+    byUuid.get(uuid)!.isContainer && (childrenByParent.get(uuid)?.length ?? 0) > 0 && !cyclic.has(uuid);
+  for (const idea of ideas) {
+    if (result.has(idea.uuid)) continue;
+    const stack: Array<{ uuid: string; expanded: boolean }> = [{ uuid: idea.uuid, expanded: false }];
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      if (result.has(frame.uuid)) {
+        stack.pop();
+        continue;
+      }
+      if (!rollsUp(frame.uuid)) {
+        result.set(frame.uuid, base.get(frame.uuid)!);
+        stack.pop();
+        continue;
+      }
+      const children = childrenByParent.get(frame.uuid)!;
+      if (!frame.expanded) {
+        frame.expanded = true;
+        for (const child of children) {
+          if (!result.has(child)) stack.push({ uuid: child, expanded: false });
+        }
+        continue;
+      }
+      result.set(frame.uuid, rollupThemeDerivedStatus(children.map((c) => result.get(c)!)).derivedStatus);
+      stack.pop();
+    }
+  }
   return result;
 }
