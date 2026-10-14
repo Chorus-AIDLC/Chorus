@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change daemon-add-agent-type-prompt. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Add / first-login flows offer an agent-backend selection
 
 The daemon credential commands that add or first-configure an agent SHALL let the operator choose the agent backend (agent type) for that agent, in addition to the Chorus URL and API key. This covers `chorus login` (single-agent), `chorus login --add` / `chorus daemon add` (append), and the `chorus install` "Add another agent?" loop. The selection MUST be offered both interactively (a numbered menu on a TTY) and non-interactively (the existing `--agent` flag).
@@ -57,7 +59,12 @@ The interactive backend menu presented by the add / login / install-add flows SH
 
 - **WHEN** the add / login backend menu is displayed
 - **THEN** it lists exactly the backends advertised by the install backend menu
-  (currently claude-code, codex, kiro; `dsh` de-advertised)
+  (currently claude-code, codex, kiro, pi, trae; `dsh` de-advertised)
 - **AND** re-advertising a backend in the shared list makes it appear in every
   prompt without a further code change
 
+#### Scenario: trae is selectable from the shared menu
+
+- **WHEN** the operator picks the TRAE CLI entry in the add / login / install backend menu
+- **THEN** the new agent is persisted with `agentType: "trae"`
+- **AND** the same entry appears in every prompt that uses the shared menu

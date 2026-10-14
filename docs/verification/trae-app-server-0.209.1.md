@@ -152,7 +152,8 @@ Tasks 1–4 of `add-trae-cli-backend` were exercised together on Linux x86_64 wi
 
 - The plugin was installed (`traecli plugin list` → `chorus@chorus-plugins`). The cache
   was `$TRAE_HOME/plugins/cache/chorus-plugins/chorus/0.22.1/`, and its `hooks.json`
-  commands use `run-hook.sh <name>`.
+  commands used `run-hook.sh <name>` at the time. The dispatcher has since been removed;
+  see the note above.
 - `[mcp_servers.chorus]` was written with `url` and
   `bearer_token_env_var = "CHORUS_API_KEY"`. There is no key in the toml, and
   `traecli.toml.chorus-bak` was created.
