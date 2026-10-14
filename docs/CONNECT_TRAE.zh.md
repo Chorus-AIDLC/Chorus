@@ -64,7 +64,7 @@ chorus agents add --agents trae \
 
 插件自带 Chorus 生命周期 hooks：SessionStart 自动签到，以及在 `chorus_pm_submit_proposal`、`chorus_submit_for_verify`、`chorus_admin_verify_task` 之后提醒运行 reviewer 的 PostToolUse hooks。**traecli 只会运行已被信任的插件 hooks。** 打开 `traecli`，在 hook 信任审核中接受 `chorus@chorus-plugins` 的 hooks。信任之前这些 hooks 不会运行，既不会自动签到，也不会有 reviewer 提醒。插件更新改动了 hook 定义后需要再信任一次。（`--dangerously-bypass-hook-trust` 可在单次调用中跳过审核，不推荐使用。）
 
-hooks 通过一个小型分发脚本 `hooks/run-hook.sh` 调用：插件安装在 `$TRAE_HOME/plugins/` 下时，它运行 `hooks/trae/` 中的 TRAE 专用副本，否则运行原 Codex 脚本。TRAE 副本会把 skill 路由指向已安装的 TRAE 插件，并兼容 TRAE 的 PostToolUse 负载格式。
+TRAE 与 Codex 运行同一套 hook 脚本。插件安装在 `$TRAE_HOME/plugins/` 下时，脚本会识别出 TRAE，并改用 TRAE 的措辞（"TRAE port" 标识，用 `Agent` 工具而不是 Codex 的 `spawn_agent` 启动子 agent）。skill 路由指向已安装插件自带的 skills（`$PLUGIN_ROOT/skills/<name>/SKILL.md`），PostToolUse hooks 也兼容 TRAE 以字符串编码的 `tool_response`。可设置 `CHORUS_HOOK_RUNTIME=trae` 或 `codex` 强制指定运行时。
 
 ## 第 4 步：可选的连接检查
 

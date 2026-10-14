@@ -114,7 +114,6 @@ chorus agents add --agents codex \
 - **`URL must start with http:// or https://`** — `CHORUS_URL` missing the scheme. Use `http://` or `https://`.
 - **Marketplace source conflict** — You previously registered `chorus-plugins` from a different URL. The installer detects this and auto-re-registers; check the `!` warnings it prints.
 - **Hook didn't fire on first launch** — Open `/plugins` inside Codex and confirm `chorus@chorus-plugins` is installed/enabled, then open `/hooks` to review/trust the bundled Chorus hooks. Hooks run after the plugin cache is materialized.
-- **Hooks stopped firing after a plugin upgrade** — The plugin's `hooks.json` commands now run through a small dispatcher (`hooks/run-hook.sh <name>`), which lets the same package serve TRAE CLI. Codex treats the changed commands as new hook definitions, so open `/hooks` and **re-trust the Chorus hooks once** after upgrading. The Codex scripts themselves are unchanged.
 
 ## Next
 

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${PLUGIN_ROOT}/hooks/run-hook.sh on-session-start",
+            "command": "${PLUGIN_ROOT}/hooks/on-session-start.sh",
             "timeout": 20,
             "additionalContextLimit": 5000,
             "statusMessage": "Chorus: checkin"
@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${PLUGIN_ROOT}/hooks/run-hook.sh on-post-submit-proposal",
+            "command": "${PLUGIN_ROOT}/hooks/on-post-submit-proposal.sh",
             "timeout": 10
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${PLUGIN_ROOT}/hooks/run-hook.sh on-post-submit-for-verify",
+            "command": "${PLUGIN_ROOT}/hooks/on-post-submit-for-verify.sh",
             "timeout": 10
           }
         ]
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${PLUGIN_ROOT}/hooks/run-hook.sh on-post-verify-task",
+            "command": "${PLUGIN_ROOT}/hooks/on-post-verify-task.sh",
             "timeout": 10
           }
         ]

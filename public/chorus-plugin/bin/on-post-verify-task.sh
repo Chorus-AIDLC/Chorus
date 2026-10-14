@@ -150,10 +150,10 @@ branch_openspec_archive() {
 
   # chorus_list_tasks (filtered by proposalUuid) -> verify every task is "done".
   # Pagination guard: if total > returned, exit silently (better safe than
-  # fire prematurely). pageSize=200 is far above the design expectation
+  # fire prematurely). pageSize=100 (the MCP maximum) is far above the design expectation
   # of ~10-20 tasks per proposal.
   local tasks_json
-  tasks_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":200}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
+  tasks_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":100}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
   if [ -z "$tasks_json" ]; then
     return 0
   fi
@@ -222,11 +222,11 @@ branch_idea_report_reminder() {
   fi
 
   # Check 1: all tasks of this proposal are terminal.
-  # pageSize=200 + a total>returned guard so a wide proposal can't fool the
+  # pageSize=100 (the MCP maximum) + a total>returned guard so a wide proposal can't fool the
   # check by happening to fit "done" tasks on page 1 while non-terminals
   # remain on later pages. (Same belt-and-suspenders pattern as Branch A.)
   local tasks_json non_terminal_count tasks_total tasks_returned
-  tasks_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":200}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
+  tasks_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":100}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
   [ -n "$tasks_json" ] || return 0
   tasks_total=$(printf '%s' "$tasks_json" | jq -r '.total // 0' 2>/dev/null) || return 0
   tasks_returned=$(printf '%s' "$tasks_json" | jq -r '(.tasks // []) | length' 2>/dev/null) || return 0
@@ -238,11 +238,11 @@ branch_idea_report_reminder() {
 
   # Check 2: no report Document on this proposal yet.
   # chorus_get_documents only filters by type server-side; we do the
-  # proposalUuid filter client-side. pageSize=200 + total>returned guard
+  # proposalUuid filter client-side. pageSize=100 (the MCP maximum) + total>returned guard
   # avoids a false "no report" when the proposal's existing report is on
   # a later page in a long-lived project.
   local docs_json existing_report_count docs_total docs_returned
-  docs_json=$("$API" mcp-tool chorus_get_documents "$(printf '{"projectUuid":"%s","type":"report","pageSize":200}' "$PROJECT_UUID")" 2>/dev/null) || return 0
+  docs_json=$("$API" mcp-tool chorus_get_documents "$(printf '{"projectUuid":"%s","type":"report","pageSize":100}' "$PROJECT_UUID")" 2>/dev/null) || return 0
   [ -n "$docs_json" ] || return 0
   docs_total=$(printf '%s' "$docs_json" | jq -r '.total // 0' 2>/dev/null) || return 0
   docs_returned=$(printf '%s' "$docs_json" | jq -r '(.documents // []) | length' 2>/dev/null) || return 0
@@ -292,10 +292,10 @@ branch_code_review() {
     return 0
   fi
 
-  # All tasks of this proposal must be terminal. Same pageSize=200 +
+  # All tasks of this proposal must be terminal. Same pageSize=100 (the MCP maximum) +
   # total>returned pagination guard as Branch B.
   local tasks_json non_terminal_count tasks_total tasks_returned
-  tasks_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":200}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
+  tasks_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":100}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
   [ -n "$tasks_json" ] || return 0
   tasks_total=$(printf '%s' "$tasks_json" | jq -r '.total // 0' 2>/dev/null) || return 0
   tasks_returned=$(printf '%s' "$tasks_json" | jq -r '(.tasks // []) | length' 2>/dev/null) || return 0

@@ -64,7 +64,7 @@ Like Codex, traecli lets `$TRAE_HOME/.env` **override** a conflicting value expo
 
 The plugin ships Chorus lifecycle hooks (SessionStart check-in plus PostToolUse reviewer nudges after `chorus_pm_submit_proposal`, `chorus_submit_for_verify` and `chorus_admin_verify_task`). **traecli runs plugin hooks only after you trust them.** Open `traecli` and accept the hook-trust review for the `chorus@chorus-plugins` hooks. Until you do, the hooks don't run: no automatic check-in and no reviewer reminders. Repeat this whenever a plugin update changes the hook definitions. (`--dangerously-bypass-hook-trust` skips the review for one invocation. It is not recommended.)
 
-The hooks use a small dispatcher, `hooks/run-hook.sh`. It runs TRAE-specific copies under `hooks/trae/` when the plugin is installed under `$TRAE_HOME/plugins/`, and otherwise runs the original Codex scripts. The TRAE copies point skill routing at the installed TRAE plugin and also handle TRAE's PostToolUse payload shape.
+TRAE and Codex run the same hook scripts. Each script detects TRAE when the plugin is installed under `$TRAE_HOME/plugins/` and then uses TRAE wording ("TRAE port" banner, sub-agents started with the `Agent` tool instead of Codex's `spawn_agent`). Skill routing points at the installed plugin's skills (`$PLUGIN_ROOT/skills/<name>/SKILL.md`), and the PostToolUse hooks accept TRAE's string-encoded `tool_response`. Set `CHORUS_HOOK_RUNTIME=trae` or `codex` to force the detection.
 
 ## Step 4: Optional connection check
 

@@ -90,7 +90,6 @@ chorus agents add --agents codex \
 - **`URL must start with http:// or https://`** —— `CHORUS_URL` 缺了协议头，补上 `http://` 或 `https://`。
 - **Marketplace source conflict** —— 你之前用不同 URL 注册过 `chorus-plugins`。脚本会检测到并自动重新注册，留意它打印的 `!` 警告。
 - **Hook 在首次启动时没触发** —— 在 Codex 里打开 `/plugins`，确认 `chorus@chorus-plugins` 已安装并启用；再打开 `/hooks` review/trust Chorus 插件自带的 hooks。plugin cache 生成后，hook 会在后续工具调用时生效。
-- **插件升级后 hook 不再触发** —— 插件 `hooks.json` 中的命令现在会经过一个小型分发脚本（`hooks/run-hook.sh <name>`），以便同一个插件包也能服务 TRAE CLI。Codex 会把改动后的命令视为新的 hook 定义，所以升级后需要打开 `/hooks`，**重新信任一次 Chorus hooks**。Codex 脚本本身没有变化。
 
 ## 下一步
 
