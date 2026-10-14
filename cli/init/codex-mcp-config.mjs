@@ -12,6 +12,12 @@
 // ON_INSTALL` is metadata only — verified codex-cli 0.150.1), so `chorus agents add` writes it
 // here, AFTER the plugin install (authoritative, no race).
 //
+// TRAE CLI (traecli, a Codex fork) uses the same writer against $TRAE_HOME|~/.trae/traecli.toml
+// (resolveFamilyConfigPath(env, CODEX_FAMILY.trae)). VERIFIED traecli 0.209.1: an
+// `[mcp_servers.chorus]` block with `bearer_token_env_var = "CHORUS_API_KEY"` authenticates
+// (mcpServerStatus/list lists the Chorus tools with the var set, none without it), and
+// traecli also loads $TRAE_HOME/.env into its process env, so the same keyless form applies.
+//
 // TARGETED TEXTUAL upsert — no TOML-parser dependency (the repo stays pure-JS / cross-platform),
 // preserving every other section, key, and comment verbatim. The secret is NEVER written here
 // (bearer_token_env_var is a variable NAME, not the key).
@@ -19,6 +25,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { CODEX_FAMILY } from "../codex-family.mjs";
 
 const BEARER_ENV_VAR = "CHORUS_API_KEY";
 
@@ -28,14 +35,26 @@ function nonEmpty(value) {
 }
 
 /**
+ * Resolve a Codex-family config path: `$<homeEnv>/<configFile>`, else
+ * `$HOME/<homeDir>/<configFile>`, else the OS home dir. For Codex that is
+ * `$CODEX_HOME|~/.codex/config.toml`; for TRAE CLI `$TRAE_HOME|~/.trae/traecli.toml`
+ * (names come from cli/codex-family.mjs). HOME is honored so tests can inject a temp home.
+ * @param {Record<string, string | undefined>} env
+ * @param {{ homeEnv: string, homeDir: string, configFile: string }} [profile] defaults to Codex
+ */
+export function resolveFamilyConfigPath(env, profile = CODEX_FAMILY.codex) {
+  const base = nonEmpty(env[profile.homeEnv]) ?? join(nonEmpty(env.HOME) ?? homedir(), profile.homeDir);
+  return join(base, profile.configFile);
+}
+
+/**
  * Resolve the Codex `~/.codex/config.toml` path. Honors `CODEX_HOME`, then `HOME` (so tests
  * can inject a temp home), else the OS home dir — matching cli/codex-spawner.mjs +
- * install-methods.mjs.
+ * install-methods.mjs. Codex-profile wrapper of {@link resolveFamilyConfigPath}.
  * @param {Record<string, string | undefined>} env
  */
 export function resolveCodexConfigPath(env) {
-  const base = nonEmpty(env.CODEX_HOME) ?? join(nonEmpty(env.HOME) ?? homedir(), ".codex");
-  return join(base, "config.toml");
+  return resolveFamilyConfigPath(env, CODEX_FAMILY.codex);
 }
 
 /**

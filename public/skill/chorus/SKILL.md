@@ -394,7 +394,7 @@ The table below shows default tool availability for each preset (no custom permi
 
 `chorus agents add` runs an ordered set of steps to wire this machine to Chorus. Its final step — **daemon-setup** — configures the local Chorus daemon and, opt-in, installs it as a boot-autostart service.
 
-- **What it configures.** Reusing the same preflight as `chorus daemon install`, it persists the served working directories (`cwds`) and the default backend agent into `~/.chorus/daemon.json`. Credentials are the **connection credentials only** — the Chorus URL + API key (`cho_…`) seeded earlier in the run. `chorus agents add` never collects or stores model-provider secrets (see the limitation below).
+- **What it configures.** Reusing the same preflight as `chorus daemon install`, it persists the served working directories (`cwds`) and the default backend agent (`claude-code`, `codex`, `trae` for TRAE CLI, `kiro` or `pi`) into `~/.chorus/daemon.json`. Credentials are the **connection credentials only** — the Chorus URL + API key (`cho_…`) seeded earlier in the run. `chorus agents add` never collects or stores model-provider secrets (see the limitation below).
 - **Opt-in auto-start.**
   - Interactive (TTY): it asks *"Install & enable the Chorus daemon to auto-start on boot?"* — **default No**. Answer yes to install.
   - Non-interactive (non-TTY, or `--yes`): it installs the boot service **only** when you pass `--daemon-autostart`; otherwise it writes `~/.chorus/daemon.json` and leaves starting the daemon to you (`chorus daemon`).
@@ -488,6 +488,7 @@ How you spawn the read-only sub-agent depends on your agent harness — give it 
 
 - **Claude Code** — use the Task / Agent tool to launch a sub-agent that loads `task-reviewer-chorus` (or `proposal-reviewer-chorus` / `code-reviewer-chorus`) and pass the `taskUuid` / `proposalUuid` / `ideaUuid`.
 - **Codex** — use `spawn_agent` with the reviewer skill and the target UUID.
+- **TRAE CLI** — use its `Agent` tool (TRAE has no `spawn_agent`) with the reviewer skill and the target UUID.
 - Other harnesses: use whatever sub-agent / sub-task primitive they expose.
 
 ### Inline Self-Review Fallback

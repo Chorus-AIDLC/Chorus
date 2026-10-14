@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# on-post-verify-task.sh — Codex PostToolUse hook for chorus_admin_verify_task.
+# on-post-verify-task.sh — Codex / TRAE CLI PostToolUse hook for
+# chorus_admin_verify_task. Shared by both runtimes: hook-runtime.sh parses
+# either tool_response shape (object, or TRAE's JSON-encoded string) and picks
+# Branch C's sub-agent wording (Codex spawn_agent vs TRAE Agent tool).
 #
 # Mirrors the Claude Code variant at
 # public/chorus-plugin/bin/on-post-verify-task.sh. Three independent
@@ -45,8 +48,11 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=./hook-output.sh
 source "${DIR}/hook-output.sh"
+# shellcheck source=./hook-runtime.sh
+source "${DIR}/hook-runtime.sh"
+RUNTIME=$(chorus_hook_runtime "$DIR")
 
-MCP="${DIR}/chorus-mcp-call.sh"
+MCP="${CHORUS_MCP_CALL:-${DIR}/chorus-mcp-call.sh}"
 
 # ===== Shared: event parse =====
 
@@ -60,17 +66,10 @@ if [ -z "$EVENT" ]; then
   exit 0
 fi
 
-# Extract taskUuid — Codex's tool_response is a content[0].text JSON
-# blob; fall back to tool_input.taskUuid (mirrors the existing
-# on-post-submit-for-verify.sh pattern).
-TASK_UUID=""
-if command -v jq >/dev/null 2>&1; then
-  TASK_UUID=$(printf '%s' "$EVENT" | jq -r '
-    (.tool_response.content[0].text // "") as $t
-    | ($t | fromjson? // {}) as $tj
-    | ($tj.taskUuid // $tj.uuid // .tool_input.taskUuid // empty)
-  ' 2>/dev/null) || true
-fi
+# Extract taskUuid from tool_response's content[0].text JSON blob — the
+# tool_response itself may be an object or a JSON-encoded string — falling
+# back to tool_input.taskUuid / post_tool_use.tool_input.taskUuid.
+TASK_UUID=$(chorus_event_uuid "$EVENT" taskUuid)
 
 # If taskUuid is empty -> exit 0 silently
 if [ -z "$TASK_UUID" ]; then
@@ -144,7 +143,7 @@ branch_openspec_archive() {
   # chorus_list_tasks (filtered by proposalUuid) -> verify every task is
   # "done". Pagination guard: if total > returned, exit silently.
   local tasks_json
-  tasks_json=$("$MCP" chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":200}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
+  tasks_json=$("$MCP" chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":100}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
   if [ -z "$tasks_json" ]; then
     return 0
   fi
@@ -211,11 +210,11 @@ branch_idea_report_reminder() {
   fi
 
   # Check 1: all tasks of this proposal are terminal.
-  # pageSize=200 + a total>returned guard so a wide proposal can't fool the
+  # pageSize=100 (the MCP maximum) + a total>returned guard so a wide proposal can't fool the
   # check by happening to fit "done" tasks on page 1 while non-terminals
   # remain on later pages. (Same belt-and-suspenders pattern as Branch A.)
   local tasks_json non_terminal_count tasks_total tasks_returned
-  tasks_json=$("$MCP" chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":200}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
+  tasks_json=$("$MCP" chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":100}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
   [ -n "$tasks_json" ] || return 0
   tasks_total=$(printf '%s' "$tasks_json" | jq -r '.total // 0' 2>/dev/null) || return 0
   tasks_returned=$(printf '%s' "$tasks_json" | jq -r '(.tasks // []) | length' 2>/dev/null) || return 0
@@ -227,11 +226,11 @@ branch_idea_report_reminder() {
 
   # Check 2: no report Document on this proposal yet.
   # chorus_get_documents only filters by type server-side; we do the
-  # proposalUuid filter client-side. pageSize=200 + total>returned guard
+  # proposalUuid filter client-side. pageSize=100 (the MCP maximum) + total>returned guard
   # avoids a false "no report" when the proposal's existing report is on
   # a later page in a long-lived project.
   local docs_json existing_report_count docs_total docs_returned
-  docs_json=$("$MCP" chorus_get_documents "$(printf '{"projectUuid":"%s","type":"report","pageSize":200}' "$PROJECT_UUID")" 2>/dev/null) || return 0
+  docs_json=$("$MCP" chorus_get_documents "$(printf '{"projectUuid":"%s","type":"report","pageSize":100}' "$PROJECT_UUID")" 2>/dev/null) || return 0
   [ -n "$docs_json" ] || return 0
   docs_total=$(printf '%s' "$docs_json" | jq -r '.total // 0' 2>/dev/null) || return 0
   docs_returned=$(printf '%s' "$docs_json" | jq -r '(.documents // []) | length' 2>/dev/null) || return 0
@@ -280,10 +279,10 @@ branch_code_review() {
     return 0
   fi
 
-  # All tasks of this proposal must be terminal. Same pageSize=200 +
+  # All tasks of this proposal must be terminal. Same pageSize=100 (the MCP maximum) +
   # total>returned pagination guard as Branch B.
   local tasks_json non_terminal_count tasks_total tasks_returned
-  tasks_json=$("$MCP" chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":200}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
+  tasks_json=$("$MCP" chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":100}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
   [ -n "$tasks_json" ] || return 0
   tasks_total=$(printf '%s' "$tasks_json" | jq -r '.total // 0' 2>/dev/null) || return 0
   tasks_returned=$(printf '%s' "$tasks_json" | jq -r '(.tasks // []) | length' 2>/dev/null) || return 0
@@ -297,13 +296,21 @@ branch_code_review() {
   non_terminal_count=$(printf '%s' "$tasks_json" | jq -r '[(.tasks // [])[] | select(.status != "done" and .status != "closed")] | length' 2>/dev/null) || return 0
   [ "$non_terminal_count" = "0" ] || return 0
 
+  # Sub-agent wording differs per runtime (TRAE has no spawn_agent).
+  local spawn_how
+  if [ "$RUNTIME" = "trae" ]; then
+    spawn_how='Start it with TRAE'"'"'s Agent tool and have it load the reviewer skill first: Agent({description:"Chorus code review", prompt:"Load the chorus:chorus-code-reviewer skill with the Skill tool, then review aggregate code for idea '"${idea_uuid}"'. Round: <N>. Post VERDICT.", run_in_background:false})'
+  else
+    spawn_how='Mount the chorus-code-reviewer skill explicitly with spawn_agent({items:[{type:"skill", name:"Chorus Code Reviewer", path:"chorus:chorus-code-reviewer"}, {type:"text", text:"Review aggregate code for idea '"${idea_uuid}"'. Round: <N>. Post VERDICT."}]})'
+  fi
+
   # Emit the reminder. The literal substring `spawn code-reviewer` is the
   # contract grep target asserted by the regression test.
   cat <<CTX
 [Chorus — Code-Review Gateway Trigger]
 All tasks of idea-rooted proposal ${PROPOSAL_UUID} are now done. This is the final ship-time gateway for idea ${idea_uuid}.
 
-ACTION REQUESTED: spawn code-reviewer for this idea — an independent, read-only review of the idea's AGGREGATE code change (the whole feature across all its tasks), not a single task. Mount the chorus-code-reviewer skill explicitly with spawn_agent({items:[{type:"skill", path:"chorus:chorus-code-reviewer"}, {type:"text", text:"Review aggregate code for idea ${idea_uuid}. Round: <N>. Post VERDICT."}]}), where the round number comes from prior code-review verdict comments on the idea. It reviews cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage, and overall code soundness, then posts ONE VERDICT comment on the idea. Read THIS round's VERDICT on the idea (chorus_get_comments targetType="idea") — the comment posted after your dispatch, not an earlier round's, and do not declare the feature shippable before you have read it: PASS / PASS WITH NOTES -> may ship; FAIL -> the orchestrator must invoke Quick Dev to create Proposal-linked fix tasks (group related small BLOCKERs; split only materially large or independently testable work; never reopen completed tasks or apply untracked fixes). Re-run only after every fix task passes AC self-check, independent task review, and admin verification to `done`; failed or cancelled fixes stop and escalate. Keep the maxCodeReviewRounds cap. Run the code-review gateway BEFORE writing any idea-completion report.
+ACTION REQUESTED: spawn code-reviewer for this idea — an independent, read-only review of the idea's AGGREGATE code change (the whole feature across all its tasks), not a single task. ${spawn_how}, where the round number comes from prior code-review verdict comments on the idea. It reviews cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage, and overall code soundness, then posts ONE VERDICT comment on the idea. Read THIS round's VERDICT on the idea (chorus_get_comments targetType="idea") — the comment posted after your dispatch, not an earlier round's, and do not declare the feature shippable before you have read it: PASS / PASS WITH NOTES -> may ship; FAIL -> the orchestrator must invoke Quick Dev to create Proposal-linked fix tasks (group related small BLOCKERs; split only materially large or independently testable work; never reopen completed tasks or apply untracked fixes). Re-run only after every fix task passes AC self-check, independent task review, and admin verification to \`done\`; failed or cancelled fixes stop and escalate. Keep the maxCodeReviewRounds cap. Run the code-review gateway BEFORE writing any idea-completion report.
 CTX
 }
 

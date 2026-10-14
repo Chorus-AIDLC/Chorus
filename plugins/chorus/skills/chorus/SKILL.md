@@ -285,6 +285,8 @@ CHORUS_API_KEY=cho_your_key_here
 
 Restart Codex CLI after configuration.
 
+> **TRAE CLI** (`traecli` ≥ 0.209.1) installs this same plugin. Run `chorus agents add --agents trae` to write the same keyless block into `$TRAE_HOME/traecli.toml` and the key into `$TRAE_HOME/.env` (default `~/.trae`). Trust the Chorus hooks in traecli before they will run. Sub-agents: wherever these skills say `spawn_agent`, TRAE uses its `Agent` tool instead.
+
 ### 3. Verify Connection
 
 ```

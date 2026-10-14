@@ -2,11 +2,12 @@ import { describe, it, expect, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexSpawner, buildCodexArgs, resolveCodexPath, hasChorusMcpServer } from "../codex-spawner.mjs";
 import { killProcessTree } from "../process-killer.mjs";
+import { CHORUS_MCP_APPROVAL_CONFIG } from "../codex-family.mjs";
 import { getProcessStopHook } from "../process-stop-hooks.mjs";
 import { getThreadId, setThreadId } from "../codex-session-map.mjs";
 import { appServerChild } from "./fixtures/codex-app-server-child.mjs";
@@ -244,6 +245,100 @@ describe("App Server lifecycle", () => {
     await wake(makeSpawner(child, { permissionMode: "chorus", getThreadIdFn: () => resumed ? TID : null }));
     expect(child.requests[2].params).toMatchObject({ sandbox: "read-only", approvalPolicy: "never" });
     expect(child.requests[3].params.sandboxPolicy).toEqual({ type: "readOnly", networkAccess: false });
+  });
+
+  describe("chorus posture pre-approves only the Chorus MCP server (D8)", () => {
+    const APPROVAL = { "mcp_servers.chorus.default_tools_approval_mode": "approve" };
+    const historyError = (req, c) => {
+      if (req.method === "thread/resume") {
+        c.send({ id: req.id, error: { code: -32600, message: "no rollout found for thread id old-thread" } }); return true;
+      }
+    };
+    it.each([
+      ["chorus", true, "new"], ["chorus", true, "resume"], ["chorus", true, "fallback"],
+      ["chorus", false, "new"], ["chorus", false, "resume"], ["chorus", false, "fallback"],
+      ["yolo", true, "new"], ["yolo", true, "resume"], ["yolo", true, "fallback"],
+      ["yolo", false, "new"], ["yolo", false, "resume"], ["yolo", false, "fallback"],
+    ])("%s posture, [mcp_servers.chorus]=%s, %s: exact setup and turn params", async (permissionMode, configured, mode) => {
+      const child = appServerChild(mode === "fallback" ? { handler: historyError } : {});
+      const stored = mode === "new" ? null : mode === "resume" ? TID : "old-thread";
+      await wake(makeSpawner(child, { permissionMode, hasChorusMcpServerFn: () => configured, getThreadIdFn: () => stored }));
+      const chorus = permissionMode === "chorus";
+      const base = { cwd: process.cwd(), approvalPolicy: "never", sandbox: chorus ? "read-only" : "danger-full-access" };
+      const setup = chorus && configured ? { ...base, config: APPROVAL } : base;
+      const expected = mode === "new" ? [["thread/start", setup]]
+        : mode === "resume" ? [["thread/resume", { ...setup, threadId: TID, excludeTurns: true }]]
+          : [["thread/resume", { ...setup, threadId: "old-thread", excludeTurns: true }], ["thread/start", setup]];
+      const setups = child.requests.filter((r) => r.method?.startsWith("thread/")).map((r) => [r.method, r.params]);
+      expect(setups).toEqual(expected);
+      const turn = child.requests.find((r) => r.method === "turn/start").params;
+      expect(turn).toEqual({
+        threadId: TID, cwd: process.cwd(), approvalPolicy: "never",
+        sandboxPolicy: chorus ? { type: "readOnly", networkAccess: false } : { type: "dangerFullAccess" },
+        input: [{ type: "text", text: "private prompt", text_elements: [] }],
+      });
+      // Nothing else approves anything: no other MCP server, no approvals reviewer,
+      // no approval policy other than "never", no sandbox broadening.
+      expect(JSON.stringify(child.requests)).not.toMatch(/approvalsReviewer|on-request|on-failure|untrusted|workspace-write|workspaceWrite/);
+      expect((JSON.stringify(child.requests).match(/mcp_servers\./g) ?? []).length).toBe(chorus && configured ? setups.length : 0);
+    });
+
+    it("re-probes the config on every chorus-posture wake and warns only once", async () => {
+      const { records, logger } = (() => {
+        const records = [];
+        return { records, logger: Object.fromEntries(["info", "warn", "error"].map((level) => [level, (message) => records.push({ level, message })])) };
+      })();
+      let configured = false;
+      const probe = vi.fn(() => configured);
+      const children = [];
+      const spawner = makeSpawner(undefined, {
+        permissionMode: "chorus", logger, hasChorusMcpServerFn: probe,
+        spawnImpl: () => { const c = appServerChild(); children.push(c); return c; },
+      });
+      await wake(spawner);
+      configured = true;
+      await wake(spawner);
+      configured = false;
+      await wake(spawner);
+      expect(probe).toHaveBeenCalledTimes(3);
+      expect(children.map((c) => c.requests.find((r) => r.method === "thread/start").params.config)).toEqual([undefined, APPROVAL, undefined]);
+      expect(records.filter((r) => r.level === "warn")).toHaveLength(1);
+    });
+
+    it("treats a non-boolean probe result as not configured", async () => {
+      const child = appServerChild();
+      await wake(makeSpawner(child, { permissionMode: "chorus", hasChorusMcpServerFn: () => "yes" }));
+      expect(child.requests.find((r) => r.method === "thread/start").params).not.toHaveProperty("config");
+    });
+
+    it("reads the user's real config without writing it", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "codex-d8-"));
+      try {
+        const file = join(dir, "config.toml");
+        const toml = '[mcp_servers.chorus]\nurl = "https://chorus.test/api/mcp"\nbearer_token_env_var = "CHORUS_API_KEY"\n\n[mcp_servers.other]\ncommand = "x"\n';
+        writeFileSync(file, toml);
+        const before = statSync(file).mtimeMs;
+        const child = appServerChild();
+        await wake(makeSpawner(child, { permissionMode: "chorus", hasChorusMcpServerFn: undefined, env: { PATH: "/bin", CODEX_HOME: dir } }));
+        expect(child.requests.find((r) => r.method === "thread/start").params.config).toEqual(APPROVAL);
+        expect(readFileSync(file, "utf8")).toBe(toml);
+        expect(statSync(file).mtimeMs).toBe(before);
+        expect(readdirSync(dir)).toEqual(["config.toml"]);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
+    it("pre-approval key and value match the verified App Server schemas", () => {
+      expect(CHORUS_MCP_APPROVAL_CONFIG).toEqual(APPROVAL);
+      expect(Object.isFrozen(CHORUS_MCP_APPROVAL_CONFIG)).toBe(true);
+      const facts = JSON.parse(readFileSync(new URL("./fixtures/codex-family-mcp-approval.json", import.meta.url), "utf8"));
+      expect(facts.key).toBe(Object.keys(APPROVAL)[0]);
+      for (const backend of ["codex", "trae"]) {
+        for (const params of ["ThreadStartParams", "ThreadResumeParams"]) {
+          expect(facts[backend][params].config).toEqual({ additionalProperties: true, type: ["object", "null"] });
+        }
+        expect(facts[backend].AppToolApproval).toContain(facts.value);
+      }
+    });
   });
 
   it("persists the authoritative setup response before turn/start", async () => {

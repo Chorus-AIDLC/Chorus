@@ -877,6 +877,49 @@ function fakeCodexWrite(overrideFn) {
   return fn;
 }
 
+describe("seedCredentials — TRAE CLI ~/.trae/.env sink (verified: traecli loads $TRAE_HOME/.env)", () => {
+  it("single trae: writes $TRAE_HOME/.env, maps to agentType trae, tags codexEnvAgentId, never leaks the key", async () => {
+    const write = fakeCodexWrite();
+    const append = fakeAppend();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["trae"],
+        env: { HOME: "/tmp/xyz-home", TRAE_HOME: "/tmp/xyz-trae-home", CODEX_HOME: "/tmp/not-this" },
+        flags: { url: "https://c", apiKey: "cho_secret" },
+        appendAgent: append,
+        writeCodexEnv: write,
+        validateCredentials: async () => ({ uuid: "u-trae", name: "Trae Agent" }),
+      }),
+    );
+    const o = [].concat(res)[0];
+    expect(o.action).toBe(SEEDED);
+    expect(append.calls[0]).toMatchObject({ agentType: "trae" });
+    expect(o).toMatchObject({ codexEnvWritten: true, codexEnvAgentId: "trae" });
+    expect(write.calls[0]).toMatchObject({ envPath: join("/tmp/xyz-trae-home", ".env"), apiKey: "cho_secret", agentProfile: "u-trae" });
+    expect(o.detail).toContain("new TRAE CLI processes load this environment");
+    expect(o.detail).not.toContain("cho_secret");
+  });
+  it("trae without TRAE_HOME falls back to ~/.trae/.env; codex outcome is tagged codex", async () => {
+    const write = fakeCodexWrite();
+    const res = await seedCredentials(
+      baseCtx({
+        selection: ["codex", "trae"],
+        env: { HOME: "/tmp/xyz-home" },
+        flags: { url: "https://c" },
+        promptFn: async () => "cho_k",
+        io: { log: () => {}, isTTY: true },
+        appendAgent: fakeAppend(),
+        writeCodexEnv: write,
+        resolveInstallCwds: async () => ({ cwds: [] }),
+        validateCredentials: async ({ apiKey }) => ({ uuid: `u-${apiKey}-${write.calls.length}`, name: "A" }),
+      }),
+    );
+    const outs = [].concat(res);
+    expect(write.calls.map((c) => c.envPath)).toEqual([join("/tmp/xyz-home", ".codex", ".env"), join("/tmp/xyz-home", ".trae", ".env")]);
+    expect(outs.map((o) => o.codexEnvAgentId)).toEqual(["codex", "trae"]);
+  });
+});
+
 describe("seedCredentials — Codex ~/.codex/.env sink", () => {
   it("single codex: writes ~/.codex/.env under CODEX_HOME, sets codexEnvWritten, never leaks the key", async () => {
     const write = fakeCodexWrite();

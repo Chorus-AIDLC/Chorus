@@ -18,6 +18,7 @@
 
 import { ClaudeSpawner } from "./claude-spawner.mjs";
 import { CodexSpawner } from "./codex-spawner.mjs";
+import { CODEX_FAMILY } from "./codex-family.mjs";
 import { DshSpawner } from "./dsh-spawner.mjs";
 import { KiroSpawner } from "./kiro-spawner.mjs";
 import { PiSpawner } from "./pi-spawner.mjs";
@@ -53,7 +54,7 @@ export class OfflineSpawner {
 
 /**
  * Construct the spawner backend for `agentType`.
- * @param {string} agentType  "claude-code" | "codex" | "kiro" | "dsh" | "pi" | "offline"
+ * @param {string} agentType  "claude-code" | "codex" | "trae" | "kiro" | "dsh" | "pi" | "offline"
  *   (already validated upstream). "offline" → OfflineSpawner (fail-closed no-op).
  * @param {{ logger?: any, permissionMode?: "chorus"|"yolo", creds?: { url: string, apiKey: string } }} [opts]
  * @returns {import("./codex-spawner.mjs").Spawner}
@@ -68,6 +69,11 @@ export function selectSpawner(agentType, opts = {}) {
   }
   if (agentType === "codex") {
     return new CodexSpawner(opts);
+  }
+  if (agentType === "trae") {
+    // TRAE CLI is a Codex fork speaking the same App Server protocol: the shared
+    // CodexSpawner with the TRAE profile (traecli, TRAE_HOME, trae-* local maps).
+    return new CodexSpawner({ ...opts, profile: CODEX_FAMILY.trae });
   }
   if (agentType === "kiro") {
     return new KiroSpawner(opts);

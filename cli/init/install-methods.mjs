@@ -20,7 +20,8 @@ import { binaryOnPath } from "./detect.mjs";
 import { installFileTemplate } from "./file-template.mjs";
 import { OUTCOME_ACTIONS } from "./contracts.mjs";
 import { CHORUS_PLUGIN_ID, CHORUS_MARKETPLACE_NAME, CHORUS_MARKETPLACE_SOURCE } from "./chorus-plugin-consts.mjs";
-import { writeCodexMcpServer } from "./codex-mcp-config.mjs";
+import { writeCodexMcpServer, resolveFamilyConfigPath } from "./codex-mcp-config.mjs";
+import { CODEX_FAMILY } from "../codex-family.mjs";
 import {
   writeHermesMcpServer,
   resolveHermesConfigPath,
@@ -128,24 +129,70 @@ export function installClaude(ctx) {
 // the Authorization header at connect time, so the API key stays only in ~/.codex/.env and a
 // daemon-woken Codex authenticates too. No secret is written into config.toml.
 // ---------------------------------------------------------------------------
-export function readCodexInstallState({ env = process.env } = {}) {
-  const home = env.HOME || homedir();
-  const codexHome = env.CODEX_HOME || join(home, ".codex");
-  const toml = readTextSafe(join(codexHome, "config.toml")) || "";
+//
+// TRAE CLI (traecli, a Codex fork) shares this implementation through its CODEX_FAMILY
+// profile — VERIFIED against `traecli plugin --help` + live runs on traecli 0.209.1 with an
+// isolated TRAE_HOME:
+//   `traecli plugin marketplace add <SOURCE>`          (local path | owner/repo | Git URL)
+//   `traecli plugin marketplace upgrade [MARKETPLACE]` (exit 1 "is not configured as a Git
+//                                                       marketplace" for a local-path source)
+//   `traecli plugin install <PLUGIN@MARKETPLACE> --yes` (re-run reinstalls into a fresh
+//                                                       `<version>+reinstall…` cache dir)
+// State lives in $TRAE_HOME|~/.trae/traecli.toml (`[marketplaces.chorus-plugins]`,
+// `[plugins."chorus@chorus-plugins"]`) — the same keys Codex writes into config.toml.
+// ---------------------------------------------------------------------------
+
+/** Per-family plugin-install argv (the only command shape that differs between forks). */
+const FAMILY_PLUGIN_INSTALL_ARGS = Object.freeze({
+  codex: Object.freeze(["plugin", "add", CHORUS_PLUGIN_ID, "--json"]),
+  trae: Object.freeze(["plugin", "install", CHORUS_PLUGIN_ID, "--yes"]),
+});
+
+// A local-path marketplace is read live from disk, so there is nothing to upgrade; traecli
+// reports that as an error. Treat it as a no-op so a dev/local source still refreshes.
+const LOCAL_MARKETPLACE_UPGRADE_RE = /not configured as a Git marketplace/i;
+
+/**
+ * Read a Codex-family install state from `$<homeEnv>|~/<homeDir>/<configFile>`.
+ * @param {typeof CODEX_FAMILY.codex} profile
+ * @param {{ env?: Record<string, string | undefined> }} [deps]
+ */
+export function readCodexFamilyInstallState(profile, { env = process.env } = {}) {
+  const toml = readTextSafe(resolveFamilyConfigPath(env, profile)) || "";
   return {
     marketplaceRegistered: toml.includes(`[marketplaces.${CHORUS_MARKETPLACE_NAME}]`),
     pluginInstalled: toml.includes(`[plugins."${CHORUS_PLUGIN_ID}"]`),
   };
 }
 
-export function installCodex(ctx) {
+export function readCodexInstallState(deps = {}) {
+  return readCodexFamilyInstallState(CODEX_FAMILY.codex, deps);
+}
+
+export function readTraeInstallState(deps = {}) {
+  return readCodexFamilyInstallState(CODEX_FAMILY.trae, deps);
+}
+
+/**
+ * Install / refresh the Chorus plugin for a Codex-family CLI, then write the keyless
+ * `[mcp_servers.chorus]` block into its config. Returns the adapter outcome shape
+ * `{ stepId, agentId, action, detail, codexMcpWritten }` (field name kept for compatibility;
+ * it means "family MCP block written").
+ * @param {typeof CODEX_FAMILY.codex} profile
+ * @param {object} ctx StepContext
+ */
+export function installCodexFamily(profile, ctx) {
   const run = ctx.run ?? runCommand;
   const env = ctx.env ?? process.env;
-  const home = env.HOME || homedir();
-  const codexHome = env.CODEX_HOME || join(home, ".codex");
-  const configPath = join(codexHome, "config.toml");
-  // Codex accepts owner/repo; allow an override, else the canonical repo slug.
-  const source = env.CHORUS_MARKETPLACE_SOURCE_CODEX || "Chorus-AIDLC/Chorus";
+  const agentId = profile.agentType;
+  const bin = profile.binaries.posix[0];
+  const configPath = resolveFamilyConfigPath(env, profile);
+  const configName = profile.configFile;
+  const installArgs = FAMILY_PLUGIN_INSTALL_ARGS[agentId];
+  if (!installArgs) throw new Error(`no plugin install command for ${agentId}`);
+  const installCmd = `${bin} ${installArgs.slice(0, 2).join(" ")}`;
+  // Both forks accept owner/repo; allow an override, else the canonical repo slug.
+  const source = env[profile.marketplaceSourceEnv] || "Chorus-AIDLC/Chorus";
   const state = safeState(ctx);
   const writeMcp = ctx.writeCodexMcpServer ?? writeCodexMcpServer;
   const resolveCreds = ctx.resolveCredentials ?? resolveCredentials;
@@ -166,7 +213,7 @@ export function installCodex(ctx) {
   // form. Idempotent; runs on both fresh install and re-run. Never writes a secret. A missing
   // URL is a non-fatal skip (the plugin surface is still installed). Returns a note suffix.
   let codexMcpWritten = false;
-  const codexOut = (action, detail) => ({ ...out("codex", action, detail), codexMcpWritten });
+  const familyOut = (action, detail) => ({ ...out(agentId, action, detail), codexMcpWritten });
   const ensureMcp = () => {
     if (ctx.flags?.pluginOnly) return ""; // Upgrade preserves existing connection settings.
     if (!chorusUrl) {
@@ -177,40 +224,58 @@ export function installCodex(ctx) {
       codexMcpWritten = true;
       return ' and wrote [mcp_servers.chorus] (bearer_token_env_var="CHORUS_API_KEY")';
     } catch {
-      return " (WARNING: could not write [mcp_servers.chorus]; check config.toml permissions and retry)";
+      return ` (WARNING: could not write [mcp_servers.chorus]; check ${configName} permissions and retry)`;
     }
+  };
+  const addMarketplace = () => {
+    const r = run(bin, ["plugin", "marketplace", "add", source], { env });
+    return r.ok ? null : out(agentId, FAILED, `${bin} plugin marketplace add failed: ${errText(r)}`);
+  };
+  const installPlugin = () => {
+    const r = run(bin, [...installArgs], { env });
+    return r.ok ? null : out(agentId, FAILED, `${installCmd} failed: ${errText(r)}`);
   };
 
   if (state.pluginInstalled) {
     ctx.backup?.(configPath); // back up before we normalize the MCP block
     if (ctx.flags?.updateInstalled) {
       if (!state.marketplaceRegistered) {
-        const ra = run("codex", ["plugin", "marketplace", "add", source], { env });
-        if (!ra.ok) return out("codex", FAILED, `codex plugin marketplace add failed: ${errText(ra)}`);
+        const fail = addMarketplace();
+        if (fail) return fail;
       }
-      const ru = run("codex", ["plugin", "marketplace", "upgrade", CHORUS_MARKETPLACE_NAME], { env });
-      if (!ru.ok) return out("codex", FAILED, `codex plugin marketplace upgrade failed: ${errText(ru)}`);
-      const rp = run("codex", ["plugin", "add", CHORUS_PLUGIN_ID, "--json"], { env });
-      if (!rp.ok) return out("codex", FAILED, `codex plugin add failed: ${errText(rp)}`);
-      return codexOut(
+      const ru = run(bin, ["plugin", "marketplace", "upgrade", CHORUS_MARKETPLACE_NAME], { env });
+      if (!ru.ok && !(agentId === "trae" && LOCAL_MARKETPLACE_UPGRADE_RE.test(`${ru.stderr ?? ""}\n${ru.stdout ?? ""}`))) {
+        return out(agentId, FAILED, `${bin} plugin marketplace upgrade failed: ${errText(ru)}`);
+      }
+      const fail = installPlugin();
+      if (fail) return fail;
+      return familyOut(
         REPAIRED,
         `refreshed ${CHORUS_MARKETPLACE_NAME} and reinstalled ${CHORUS_PLUGIN_ID}${ensureMcp()}`,
       );
     }
-    return codexOut(SKIPPED, `already installed (config.toml)${ensureMcp()}`);
+    return familyOut(SKIPPED, `already installed (${configName})${ensureMcp()}`);
   }
 
   ctx.backup?.(configPath); // back up before the CLI edits it
   if (!state.marketplaceRegistered) {
-    const r = run("codex", ["plugin", "marketplace", "add", source], { env });
-    if (!r.ok) return out("codex", FAILED, `codex plugin marketplace add failed: ${errText(r)}`);
+    const fail = addMarketplace();
+    if (fail) return fail;
   }
-  const r2 = run("codex", ["plugin", "add", CHORUS_PLUGIN_ID, "--json"], { env });
-  if (!r2.ok) return out("codex", FAILED, `codex plugin add failed: ${errText(r2)}`);
-  return codexOut(
+  const fail = installPlugin();
+  if (fail) return fail;
+  return familyOut(
     state.marketplaceRegistered ? REPAIRED : INSTALLED,
-    `installed ${CHORUS_PLUGIN_ID} via codex plugin CLI${ensureMcp()}`,
+    `installed ${CHORUS_PLUGIN_ID} via ${bin} plugin CLI${ensureMcp()}`,
   );
+}
+
+export function installCodex(ctx) {
+  return installCodexFamily(CODEX_FAMILY.codex, ctx);
+}
+
+export function installTrae(ctx) {
+  return installCodexFamily(CODEX_FAMILY.trae, ctx);
 }
 
 // ---------------------------------------------------------------------------

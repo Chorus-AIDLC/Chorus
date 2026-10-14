@@ -100,6 +100,8 @@ export function useClientTypeLabel() {
           return t("clientDsh");
         case "pi":
           return t("clientPi");
+        case "trae":
+          return t("clientTrae");
         case "hermes":
           return t("clientHermes");
         default:

@@ -120,4 +120,5 @@ chorus agents add --agents codex \
 - Skill docs (tools reference): `plugins/chorus/skills/chorus/SKILL.md` (the standalone version served as `/skill/chorus/SKILL.md` on your Chorus instance comes from `public/skill/chorus/SKILL.md`)
 - Workflow overview: run `$chorus` inside Codex
 - To connect Claude Code instead, see [CONNECT_CLAUDE_CODE.md](CONNECT_CLAUDE_CODE.md)
+- TRAE CLI (a Codex fork) uses this same plugin package, see [CONNECT_TRAE.md](CONNECT_TRAE.md)
 - For any other MCP-capable agent (Cursor, Continue, custom, etc.), see [CONNECT_OTHER_AGENTS.md](CONNECT_OTHER_AGENTS.md)

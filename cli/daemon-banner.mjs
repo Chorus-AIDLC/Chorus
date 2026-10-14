@@ -19,7 +19,7 @@ import { backendCli } from "./daemon-agent.mjs";
  * @property {string} agentUuid        authenticated agent uuid.
  * @property {"yolo"|"chorus"} permissionMode
  * @property {string} credentialSource resolved credential source (flag/env/login-file/…).
- * @property {string} agentType        local agent backend (claude-code | codex | kiro | dsh) — drives the CLI row label.
+ * @property {string} agentType        local agent backend (claude-code | codex | kiro | dsh | pi | trae) — drives the CLI row label.
  * @property {string|null} cliPath     resolved path of the SELECTED backend's CLI, or null when not found.
  * @property {string} [connection]     connection state line (default "connecting…").
  * @property {string} [configPath]     absolute path to the daemon.json the CLI reads.

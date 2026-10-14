@@ -41,7 +41,7 @@ Agent configuration lives in `~/.chorus/daemon.json`; `chorus agents` is the CRU
   the parent shell, and the key is never printed). Agent selection: single agent by default; else `--name`, else `CHORUS_AGENT_PROFILE`; ambiguous/none →
   error. Backend defaults to the agent's stored `agentType`, overridable with `--type`.
   Everything after `--` is passed to the agent **verbatim** (never inspected). Type → binary:
-  `claude-code`/`claude`→`claude`, `codex`→`codex`, `kiro`→`kiro-cli`, `pi`→`pi`,
+  `claude-code`/`claude`→`claude`, `codex`→`codex`, `trae`→`traecli`, `kiro`→`kiro-cli`, `pi`→`pi`,
   `opencode`→`opencode`, `openclaw`→`openclaw`, `dsh`→`dsh-jsonrpc-agent`. Agents added as
   opencode/openclaw/dsh are stored as `offline` → pass `--type` explicitly to launch them.
 

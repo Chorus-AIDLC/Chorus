@@ -8,8 +8,9 @@ import { AGENT_MENU, promptAgentBackend } from "../agent-backend-prompt.mjs";
 import { KNOWN_AGENTS } from "../daemon-agent.mjs";
 
 describe("AGENT_MENU", () => {
-  it("advertises claude-code / codex / kiro / pi (dsh de-advertised)", () => {
-    expect(AGENT_MENU.map((r) => r.value)).toEqual(["claude-code", "codex", "kiro", "pi"]);
+  it("advertises claude-code / codex / kiro / pi / trae (dsh de-advertised)", () => {
+    expect(AGENT_MENU.map((r) => r.value)).toEqual(["claude-code", "codex", "kiro", "pi", "trae"]);
+    expect(AGENT_MENU.at(-1)).toEqual({ value: "trae", label: "TRAE CLI" });
     // Every advertised value must be a KNOWN_AGENTS backend.
     for (const row of AGENT_MENU) expect(KNOWN_AGENTS).toContain(row.value);
     // pi is a first-class wakeable backend now → advertised in the numbered menu.

@@ -31,6 +31,12 @@ describe("daemon wake error boundary", () => {
     });
   });
 
+  it("accepts a trae-sourced wake error (TRAE CLI backend)", () => {
+    expect(normalizeWakeError({ ...diagnostic, source: "trae" })).toEqual({
+      ...diagnostic, source: "trae", details: null, exitCode: null, signal: null,
+    });
+  });
+
   it("accepts exact size boundaries and rejects oversized reports rather than truncating admission", () => {
     expect(wakeErrorSchema.safeParse({
       ...diagnostic, message: "x".repeat(500), details: "x".repeat(8000), signal: "s".repeat(50),

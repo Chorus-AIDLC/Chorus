@@ -266,6 +266,17 @@ describe("chorus agents remove", () => {
     expect(io.text()).toContain("clear them manually");
     expect(io.text()).not.toContain("cho_"); // key never printed
   });
+
+  it("prints the ~/.trae clear-manually note when removing a trae agent", () => {
+    const io = cap();
+    const file = { agents: [{ apiKey: "cho_t", url: "https://c", agentUuid: "u-t", agentName: "TRAE", agentType: "trae" }] };
+    expect(removeAgent(["u-t"], rmDeps(file, io).dep)).toBe(0);
+    expect(io.text()).toContain("~/.trae/.env");
+    expect(io.text()).toContain("~/.trae/traecli.toml");
+    expect(io.text()).toContain("clear them manually");
+    expect(io.text()).not.toContain("~/.codex");
+    expect(io.text()).not.toContain("cho_"); // key never printed
+  });
 });
 
 describe("runAgents — sub-verb dispatch", () => {

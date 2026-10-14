@@ -56,6 +56,7 @@ import { agentTypeForSelection, isWakeableAgentType } from "../agent-type-map.mj
 import { writePiMcpServer, resolvePiMcpConfigPath } from "../pi-mcp-config.mjs";
 import { probePiBackend } from "../pi-mcp-backend.mjs";
 import { binaryOnPath as defaultBinaryOnPath } from "../detect.mjs";
+import { CODEX_FAMILY } from "../../codex-family.mjs";
 
 const STEP_ID = "credential-seed";
 const { SEEDED, SKIPPED, FAILED } = OUTCOME_ACTIONS;
@@ -351,15 +352,30 @@ function isCodexSelection(id) {
 }
 
 /**
+ * The Codex-family profile for an init selection id, or null. `codex` → CODEX_FAMILY.codex,
+ * `trae` → CODEX_FAMILY.trae. TRAE CLI (a Codex fork) gets the same `.env` sink at
+ * `$TRAE_HOME|~/.trae/.env` — VERIFIED traecli 0.209.1 with an isolated TRAE_HOME: the file is
+ * loaded into the traecli process env at startup (resolving `bearer_token_env_var` for native
+ * MCP), reaches child processes (app-server `command/exec`), and OVERRIDES a conflicting shell
+ * export — exactly the Codex semantics.
+ * @param {string} id
+ */
+function codexFamilySelection(id) {
+  return isCodexSelection(id) ? CODEX_FAMILY.codex : id === "trae" ? CODEX_FAMILY.trae : null;
+}
+
+/**
  * Resolve the Codex `~/.codex/.env` dotenv path. Honors `CODEX_HOME` (Codex's own override,
  * same as cli/codex-spawner.mjs + install-methods.mjs), then `HOME` (so tests can inject a
  * temp home), else the OS home dir — matching how the Codex install/spawn code already
  * resolves `~/.codex`. This is the file Codex's arg0 loader reads into its process env; the
  * literal `[mcp_servers.chorus]` Bearer lives separately in `config.toml` and is untouched.
+ * Pass a CODEX_FAMILY profile to resolve another fork's dotenv (TRAE: `$TRAE_HOME|~/.trae/.env`).
  * @param {Record<string, string | undefined>} env
+ * @param {typeof CODEX_FAMILY.codex} [profile] defaults to Codex
  */
-export function resolveCodexEnvPath(env) {
-  const base = nonEmpty(env.CODEX_HOME) ?? join(nonEmpty(env.HOME) ?? homedir(), ".codex");
+export function resolveCodexEnvPath(env, profile = CODEX_FAMILY.codex) {
+  const base = nonEmpty(env[profile.homeEnv]) ?? join(nonEmpty(env.HOME) ?? homedir(), profile.homeDir);
   return join(base, ".env");
 }
 
@@ -726,8 +742,12 @@ export async function seedCredentials(ctx) {
     // profileInEnv / Claude Code's settingsEnvWritten). The key is only written into the 0600 file.
     let codexNote = "";
     let codexEnvWritten = false;
-    if (isCodexSelection(id)) {
-      const envPath = resolveCodexEnvPath(env);
+    const family = codexFamilySelection(id);
+    if (family) {
+      // Same sink for every Codex-family CLI (codex → ~/.codex/.env, trae → ~/.trae/.env).
+      const label = family.displayName;
+      const homeHint = `~/${family.homeDir}/.env`;
+      const envPath = resolveCodexEnvPath(env, family);
       const newProfile = identity.uuid;
       // Cross-run REPOINT detection (mirrors Claude Code): ~/.codex/.env carries ONE identity and
       // a single run configures `codex` at most once, so a DIFFERENT existing profile is a PRIOR
@@ -744,7 +764,7 @@ export async function seedCredentials(ctx) {
         if (isTTY && typeof ask === "function") {
           const ans = String(
             (await ask(
-              `Interactive Codex is currently configured as ${existingProfile}; ` +
+              `Interactive ${label} is currently configured as ${existingProfile}; ` +
                 `repoint it to ${identity.name} (${newProfile})? [y/N]: `,
             )) ?? "",
           ).trim();
@@ -753,7 +773,7 @@ export async function seedCredentials(ctx) {
             declined = true;
           }
         } else {
-          repointWarn = ` (WARNING: repointed interactive Codex from ${existingProfile} to ${newProfile})`;
+          repointWarn = ` (WARNING: repointed interactive ${label} from ${existingProfile} to ${newProfile})`;
         }
       }
       if (doWrite) {
@@ -765,15 +785,15 @@ export async function seedCredentials(ctx) {
           // "start codex from an exporting shell", no wrapper. Key never echoed.
           codexNote =
             `; wrote CHORUS_URL/CHORUS_API_KEY/CHORUS_AGENT_PROFILE into ${p} (0600)${repointWarn} — ` +
-            "new Codex processes load this environment for plugin hooks and shell-tool `chorus` calls; " +
+            `new ${label} processes load this environment for plugin hooks and shell-tool \`chorus\` calls; ` +
             "running App Server sessions may still use the old environment. Your cho_ key is not shown here.";
         } catch (err) {
           // Write failed (locked/unwritable). Emit an actionable, non-secret WARNING; the export
           // hint is still shown (codexEnvWritten stays false). No launcher wrapper.
           codexNote =
             `; WARNING: could not write ${envPath} (${err?.message ?? String(err)}). ` +
-            "Interactive Codex will not reach Chorus until CHORUS_URL, CHORUS_API_KEY and " +
-            `CHORUS_AGENT_PROFILE are in ~/.codex/.env — add them there (or export them). ` +
+            `Interactive ${label} will not reach Chorus until CHORUS_URL, CHORUS_API_KEY and ` +
+            `CHORUS_AGENT_PROFILE are in ${homeHint} — add them there (or export them). ` +
             "Your cho_ key is not shown here.";
         }
       } else if (declined) {
@@ -781,8 +801,8 @@ export async function seedCredentials(ctx) {
         // loader OVERRIDES the shell, a shell export would be ignored — direct the operator to the
         // FILE, do not suggest exporting.
         codexNote =
-          `; left interactive Codex as ${existingProfile} — edit ${envPath} to change it ` +
-          "(a shell export would be overridden by Codex's ~/.codex/.env loader).";
+          `; left interactive ${label} as ${existingProfile} — edit ${envPath} to change it ` +
+          `(a shell export would be overridden by ${label}'s ${homeHint} loader).`;
       }
     }
 
@@ -881,7 +901,9 @@ export async function seedCredentials(ctx) {
     const hintFlags = {
       ...(profileInEnv ? { profileInEnv: true } : {}),
       ...(settingsEnvWritten ? { settingsEnvWritten: true } : {}),
-      ...(codexEnvWritten ? { codexEnvWritten: true } : {}),
+      // codexEnvAgentId names WHICH Codex-family selection wrote its .env (codex | trae), so the
+      // per-agent restart step never mistakes one fork's write for the other's.
+      ...(codexEnvWritten ? { codexEnvWritten: true, codexEnvAgentId: id } : {}),
       ...(hermesEnvWritten ? { hermesEnvWritten: true } : {}),
       ...(piMcpWritten ? { piMcpWritten: true } : {}),
     };

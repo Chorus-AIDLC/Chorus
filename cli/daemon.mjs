@@ -41,11 +41,10 @@ import { EventRouter } from "./event-router.mjs";
 import { WakeQueue } from "./wake-queue.mjs";
 import { Waker } from "./waker.mjs";
 import { LineageResolver } from "./lineage.mjs";
-import { resolveClaudePath, isNewSession } from "./claude-spawner.mjs";
-import { resolveCodexPath } from "./codex-spawner.mjs";
+import { isNewSession } from "./claude-spawner.mjs";
+import { findAgentCli } from "./agent-cli-probe.mjs";
 import { resolveDshPath } from "./dsh-spawner.mjs";
 import { prepareManagedDshConfig } from "./dsh-managed-config.mjs";
-import { resolveKiroPath } from "./kiro-spawner.mjs";
 import { selectSpawner } from "./spawner-select.mjs";
 import { overlayAgentEnv } from "./agent-cli-config.mjs";
 import {
@@ -297,6 +296,7 @@ export function buildDaemon(creds, deps = {}) {
         createTranscriptUploadHooks({
           url: creds.url,
           apiKey: creds.apiKey,
+          agentType,
           logger,
           fetchImpl: deps.fetchImpl,
         }),
@@ -839,12 +839,18 @@ export async function runDaemon(flags = {}, deps = {}) {
   const writeCreds = deps.writeLoginFile ?? writeLoginFile;
   const version = deps.version ?? readVersion();
   // Backend executable resolvers — injectable for tests. The SELECTED backend's
-  // resolver runs below (claude-code → findClaude, codex → findCodex), so the
-  // banner shows the right binary instead of always probing for `claude`.
-  const findClaude = deps.resolveClaudePath ?? resolveClaudePath;
-  const findCodex = deps.resolveCodexPath ?? resolveCodexPath;
+  // resolver runs below via findAgentCli (claude-code → claude, codex → codex,
+  // trae → traecli, …), so the banner shows the right binary instead of always
+  // probing for `claude`. Undefined entries fall back to the real resolvers.
+  const cliResolvers = {
+    resolveClaudePath: deps.resolveClaudePath,
+    resolveCodexPath: deps.resolveCodexPath,
+    resolveDshPath: deps.resolveDshPath,
+    resolveKiroPath: deps.resolveKiroPath,
+    resolvePiPath: deps.resolvePiPath,
+    resolveTraePath: deps.resolveTraePath,
+  };
   const findDsh = deps.resolveDshPath ?? resolveDshPath;
-  const findKiro = deps.resolveKiroPath ?? resolveKiroPath;
   const verbose = flags.verbose === true || env.CHORUS_VERBOSE === "1";
 
   // Resolve the agent backend (default claude-code). An unknown --agent /
@@ -1055,14 +1061,7 @@ export async function runDaemon(flags = {}, deps = {}) {
   // backend probes its own binary, including the `dsh` CLI for dsh, so the
   // startup banner and warning report the selected runtime rather than Claude.
   const discoveryEnv = overlayAgentEnv(env, cliConfig.env);
-  const cliPath =
-    agentType === "codex"
-      ? findCodex({ env: discoveryEnv })
-      : agentType === "kiro"
-        ? findKiro({ env: discoveryEnv })
-        : agentType === "dsh"
-          ? findDsh({ env: discoveryEnv })
-          : findClaude({ env: discoveryEnv });
+  const cliPath = findAgentCli(agentType, { env: discoveryEnv }, cliResolvers);
 
   // The daemon.json the layered config readers (credentials, sigint timeout, cwds)
   // consult. Surfacing its absolute path + presence in the banner makes it obvious

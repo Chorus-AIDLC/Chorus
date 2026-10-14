@@ -45,3 +45,24 @@ export function getThreadId(anchor, deps = {}) {
 export function setThreadId(anchor, threadId, deps = {}) {
   map.set(anchor, threadId, deps);
 }
+
+// Codex-family (Codex App Server protocol) backends each get their OWN store, so
+// a Codex thread id can never be resumed on TRAE CLI or the reverse. The Codex
+// entry is the exact `map` above, keeping its behavior byte-identical.
+const familyMaps = new Map([["codex-sessions.json", map]]);
+
+/**
+ * Session map bound to a Codex-family profile's `sessionMapFile`
+ * (codex → ~/.chorus/codex-sessions.json, trae → ~/.chorus/trae-sessions.json).
+ * @param {{ sessionMapFile: string, agentType: string }} profile
+ * @returns {{ mapPath: () => string, get: (anchor: string, deps?: object) => string|null,
+ *             set: (anchor: string, threadId: string, deps?: object) => void }}
+ */
+export function familySessionMap(profile) {
+  let found = familyMaps.get(profile.sessionMapFile);
+  if (!found) {
+    found = createSessionMap({ filename: profile.sessionMapFile, logPrefix: `${profile.agentType}-session-map` });
+    familyMaps.set(profile.sessionMapFile, found);
+  }
+  return found;
+}

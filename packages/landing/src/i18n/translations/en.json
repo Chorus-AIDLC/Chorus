@@ -77,16 +77,16 @@
   "integration": {
     "label": "Native Integrations",
     "title": "Plug Into Your Agent Stack",
-    "subtitle": "First-class plugins for Claude Code, Codex, and OpenClaw — plus a universal skill for any MCP agent. No glue code, no wrappers.",
+    "subtitle": "First-class plugins for Claude Code, Codex, TRAE CLI, and OpenClaw — plus a universal skill for any MCP agent. No glue code, no wrappers.",
     "claudeCode": {
       "title": "Claude Code Plugin",
       "description": "13 lifecycle hooks, 9 workflow skills, and 3 independent review agents — a complete harness for Claude Code and Agent Teams.",
       "installComment": "# Install from Plugin Marketplace"
     },
     "codex": {
-      "title": "Codex Plugin",
-      "description": "A standalone Codex CLI plugin with the same AI-DLC skills (`$`-prefixed slash commands), 3 read-only reviewer subagents, and session-aware hooks. One-shot installer wires the Chorus MCP server into Codex.",
-      "installComment": "# One-shot install for Codex"
+      "title": "Codex & TRAE CLI Plugin",
+      "description": "A standalone Codex CLI plugin with the same AI-DLC skills (`$`-prefixed slash commands), 3 read-only reviewer subagents, and session-aware hooks. TRAE CLI (traecli 0.209.1+) installs the same package. One command per CLI wires in the Chorus MCP server.",
+      "installComment": "# One-shot install for Codex or TRAE CLI"
     },
     "openclaw": {
       "title": "OpenClaw Plugin",

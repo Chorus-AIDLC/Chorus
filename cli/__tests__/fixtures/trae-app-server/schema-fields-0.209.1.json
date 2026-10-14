@@ -1,0 +1,159 @@
+{
+  "source": "Extracted from `traecli app-server generate-json-schema --out <dir>` (traecli 0.209.1, 2026-10-13). Field sets only; regenerate and diff when bumping the minimum verified version.",
+  "version": "0.209.1",
+  "clientRequestsUsed": {
+    "initialize": true,
+    "thread/start": true,
+    "thread/resume": true,
+    "turn/start": true,
+    "turn/interrupt": true
+  },
+  "clientNotificationsUsed": {
+    "initialized": true
+  },
+  "serverNotificationsUsed": {
+    "thread/started": true,
+    "turn/started": true,
+    "item/completed": true,
+    "thread/tokenUsage/updated": true,
+    "turn/completed": true
+  },
+  "serverRequests": [
+    "item/commandExecution/requestApproval",
+    "item/fileChange/requestApproval",
+    "item/tool/requestUserInput",
+    "mcpServer/elicitation/request",
+    "item/permissions/requestApproval",
+    "item/tool/call",
+    "account/chatgptAuthTokens/refresh",
+    "attestation/generate",
+    "applyPatchApproval",
+    "execCommandApproval"
+  ],
+  "params": {
+    "ThreadStartParams": {
+      "properties": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "baseInstructions",
+        "config",
+        "cwd",
+        "developerInstructions",
+        "ephemeral",
+        "model",
+        "modelProvider",
+        "personality",
+        "sandbox",
+        "serviceName",
+        "serviceTier",
+        "sessionStartSource",
+        "threadSource"
+      ],
+      "required": []
+    },
+    "ThreadResumeParams": {
+      "properties": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "baseInstructions",
+        "config",
+        "cwd",
+        "developerInstructions",
+        "ephemeral",
+        "model",
+        "modelProvider",
+        "personality",
+        "sandbox",
+        "serviceTier",
+        "threadId"
+      ],
+      "required": [
+        "threadId"
+      ]
+    },
+    "TurnStartParams": {
+      "properties": [
+        "approvalPolicy",
+        "approvalsReviewer",
+        "cwd",
+        "effort",
+        "input",
+        "model",
+        "modelBackendVariant",
+        "modelProvider",
+        "modelVerbosity",
+        "outputSchema",
+        "personality",
+        "sandboxPolicy",
+        "serviceTier",
+        "summary",
+        "threadId",
+        "toolOutput"
+      ],
+      "required": [
+        "input",
+        "threadId"
+      ]
+    },
+    "TurnInterruptParams": {
+      "properties": [
+        "threadId",
+        "turnId"
+      ],
+      "required": [
+        "threadId",
+        "turnId"
+      ]
+    }
+  },
+  "enums": {
+    "SandboxMode": [
+      "read-only",
+      "workspace-write",
+      "danger-full-access"
+    ],
+    "AskForApproval": [
+      "untrusted",
+      "on-failure",
+      "on-request",
+      "never"
+    ],
+    "SandboxPolicyTypes": [
+      "dangerFullAccess",
+      "readOnly",
+      "externalSandbox",
+      "workspaceWrite"
+    ],
+    "ReadOnlySandboxPolicyProperties": [
+      "networkAccess",
+      "type"
+    ]
+  },
+  "TokenUsageBreakdown": {
+    "properties": [
+      "cacheCreationInputTokens",
+      "cachedInputTokens",
+      "inputTokens",
+      "outputTokens",
+      "reasoningOutputTokens",
+      "totalTokens"
+    ],
+    "required": [
+      "cachedInputTokens",
+      "inputTokens",
+      "outputTokens",
+      "reasoningOutputTokens",
+      "totalTokens"
+    ]
+  },
+  "InitializeParams": {
+    "properties": [
+      "capabilities",
+      "clientInfo"
+    ],
+    "clientInfoRequired": [
+      "name",
+      "version"
+    ]
+  }
+}

@@ -21,7 +21,7 @@ Full-auto AI-DLC pipeline. User provides a prompt; agent drives the entire lifec
 
 1. **Planning** -- create project, idea, self-elaboration, proposal with docs & tasks
 2. **Proposal Review** -- proposal-reviewer adversarial loop
-3. **Execution** -- wave-based parallel task dispatch via `spawn_agent`
+3. **Execution** -- wave-based parallel task dispatch via `spawn_agent` (TRAE CLI: use its `Agent` tool instead of `spawn_agent`; the other steps are the same.)
 4. **Verification** -- task-reviewer adversarial loop + admin verify
 5. **Report** -- completion summary
 

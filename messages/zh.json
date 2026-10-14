@@ -1246,6 +1246,7 @@
       "tabs": {
         "claudeCode": "Claude Code",
         "codex": "Codex",
+        "trae": "TRAE CLI",
         "kiro": "Kiro",
         "pi": "Pi",
         "dsh": "DeepSeek Harness",
@@ -1269,6 +1270,16 @@
         "step1Tip": "无需持久化——第 2 步的 chorus agents add 会将它们写入 ~/.codex/.env。",
         "step2Title": "第 2 步：运行 chorus agents add",
         "step2Tip": "chorus agents add 会安装 Chorus 插件，并将 CHORUS_URL、CHORUS_API_KEY、CHORUS_AGENT_PROFILE 写入 ~/.codex/.env——交互式 Codex 无需手动 export。"
+      },
+      "trae": {
+        "step1Title": "第 1 步：设置环境变量",
+        "step1Tip": "无需持久化——第 2 步的 chorus agents add 会将它们写入 ~/.trae/.env（或 $TRAE_HOME/.env）。",
+        "step2Title": "第 2 步：运行 chorus agents add",
+        "step2Tip": "需要已安装并登录 traecli 0.209.1 或更高版本。chorus agents add 会通过 traecli 的插件 CLI 安装 Chorus 的 Codex 插件包，在 traecli.toml 中写入不含密钥的 [mcp_servers.chorus] 配置，并将 CHORUS_URL、CHORUS_API_KEY、CHORUS_AGENT_PROFILE 写入 ~/.trae/.env——交互式 TRAE CLI 无需手动 export。",
+        "step3Title": "第 3 步：信任 Chorus hooks",
+        "step3Desc": "traecli 只会运行已被信任的插件 hooks。打开 traecli，在 hook 信任审核中接受 chorus@chorus-plugins，签到和 reviewer 提醒才会生效。",
+        "step4Title": "第 4 步（可选）：让 daemon 唤醒 TRAE CLI",
+        "step4Tip": "每次唤醒都会启动一个独立的 traecli app-server。~/.trae/.env 会覆盖 daemon 导出的凭证，因此请为每个 TRAE agent 配置独立的 TRAE_HOME。"
       },
       "kiro": {
         "step1Title": "第 1 步：设置环境变量",
@@ -1629,6 +1640,7 @@
     "clientKiro": "Kiro",
     "clientDsh": "DeepSeek Harness",
     "clientPi": "Pi",
+    "clientTrae": "TRAE CLI",
     "clientHermes": "Hermes",
     "clientUnknown": "未知客户端",
     "uptimeMonoDays": "{days}天 {time}",
