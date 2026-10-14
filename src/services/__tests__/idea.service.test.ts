@@ -42,6 +42,14 @@ const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedB
     agentInstance: {
       findFirst: vi.fn(),
     },
+    // User / Agent lookups back the move's live-assignee resolution
+    // (fix-idea-move-dangling-assignee D1). Defaults set in beforeEach.
+    user: {
+      findFirst: vi.fn(),
+    },
+    agent: {
+      findFirst: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
   mockEventBus: { emitChange: vi.fn() },
@@ -115,9 +123,16 @@ function makeIdeaRecord(overrides: Record<string, unknown> = {}) {
 
 // ===== Tests =====
 
+// Any uuid starting with "deleted-" has no row (a dangling assignee).
+const liveRow = (prefix: string) => async ({ where }: { where: { uuid: string } }) =>
+  where.uuid.startsWith("deleted-") ? null : { name: `${prefix} ${where.uuid}` };
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockCanActorAccessProject.mockResolvedValue(true);
+  mockPrisma.user.findFirst.mockImplementation(liveRow("User"));
+  mockPrisma.agent.findFirst.mockImplementation(liveRow("Agent"));
+  mockPrisma.agentInstance.findFirst.mockReset();
 });
 
 describe("createIdea", () => {
@@ -855,13 +870,13 @@ describe("moveIdea", () => {
   function setupCascadeMocks(opts: {
     proposals?: Array<{ uuid: string }>;
     documents?: Array<{ uuid: string }>;
-    tasks?: Array<{ uuid: string }>;
+    tasks?: Array<{ uuid: string; [k: string]: unknown }>;
     ideaCount?: number;
     proposalCount?: number;
     documentCount?: number;
     taskCount?: number;
     activityCount?: number;
-    descendants?: Array<{ uuid: string }>;
+    descendants?: Array<{ uuid: string; [k: string]: unknown }>;
   }) {
     const proposals = opts.proposals ?? [];
     const documents = opts.documents ?? [];
@@ -885,35 +900,55 @@ describe("moveIdea", () => {
     mockPrisma.activity.updateMany.mockResolvedValue({ count: opts.activityCount ?? 0 });
   }
 
+  const txPassthrough = () =>
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma));
+
+  async function expectAssigneeError(promise: Promise<unknown>): Promise<AssigneeAccessError> {
+    const err = await promise.then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(AssigneeAccessError);
+    return err as AssigneeAccessError;
+  }
+
   it("rejects the move when the current assignee cannot access the target project", async () => {
     const idea = makeIdeaRecord({ assigneeType: "agent", assigneeUuid: "agent-outsider" });
     mockPrisma.idea.findFirst.mockResolvedValueOnce(idea);
     mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Private Target" });
+    setupCascadeMocks({});
+    txPassthrough();
     mockCanActorAccessProject.mockResolvedValueOnce(false);
 
-    await expect(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user"))
-      .rejects.toThrow("Assignee does not have access to this project");
+    const err = await expectAssigneeError(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user"));
+    expect(err.status).toBe(403);
+    expect(err.message).toBe("Assignee does not have access to this project: Agent agent-outsider (1 idea)");
+    expect(err.details).toEqual({
+      blockedAssignees: [{
+        assigneeType: "agent", assigneeUuid: "agent-outsider", name: "Agent agent-outsider",
+        entities: [{ type: "idea", uuid: IDEA_UUID, title: "Test Idea" }],
+      }],
+    });
     expect(mockCanActorAccessProject).toHaveBeenCalledWith(
-      COMPANY_UUID, { type: "agent", uuid: "agent-outsider" }, TARGET_PROJECT_UUID, "editor",
+      COMPANY_UUID, { type: "agent", uuid: "agent-outsider" }, TARGET_PROJECT_UUID, "editor", mockPrisma,
     );
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    // Rejected before any write.
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
   });
 
   it("rejects the move when a descendant idea's assignee cannot access the target", async () => {
     const idea = makeIdeaRecord({ assigneeType: null, assigneeUuid: null });
     mockPrisma.idea.findFirst.mockResolvedValueOnce(idea);
     mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Private Target" });
-    mockPrisma.idea.findMany
-      .mockResolvedValueOnce([{ uuid: "child-1", assigneeType: "user", assigneeUuid: "u-outsider" }]) // BFS frontier
-      .mockResolvedValueOnce([]);                                                                 // BFS next hop
+    setupCascadeMocks({
+      descendants: [{ uuid: "child-1", title: "Child", assigneeType: "user", assigneeUuid: "u-outsider" } as { uuid: string }],
+    });
+    txPassthrough();
     mockCanActorAccessProject.mockResolvedValueOnce(false);
 
-    await expect(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user"))
-      .rejects.toThrow("Assignee does not have access to this project");
+    const err = await expectAssigneeError(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user"));
+    expect(err.message).toMatch(/^Assignee does not have access to this project/);
     expect(mockCanActorAccessProject).toHaveBeenCalledWith(
-      COMPANY_UUID, { type: "user", uuid: "u-outsider" }, TARGET_PROJECT_UUID, "editor",
+      COMPANY_UUID, { type: "user", uuid: "u-outsider" }, TARGET_PROJECT_UUID, "editor", mockPrisma,
     );
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
   });
 
   it("rolls the move back when a linked task's assignee cannot access the target", async () => {
@@ -922,18 +957,124 @@ describe("moveIdea", () => {
     mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Private Target" });
     setupCascadeMocks({
       proposals: [{ uuid: PROPOSAL_A }],
-      tasks: [{ uuid: TASK_UUID, assigneeType: "agent", assigneeUuid: "agent-outsider" } as { uuid: string }],
+      tasks: [{ uuid: TASK_UUID, title: "T", assigneeType: "agent", assigneeUuid: "agent-outsider" } as { uuid: string }],
     });
-    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma));
+    txPassthrough();
     mockCanActorAccessProject.mockResolvedValueOnce(false);
 
     await expect(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user"))
       .rejects.toThrow("Assignee does not have access to this project");
     expect(mockPrisma.task.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      select: { uuid: true, assigneeType: true, assigneeUuid: true },
+      select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
     }));
-    // Thrown inside $transaction → the move is rolled back (no task rows moved).
+    // Thrown inside $transaction before any write → nothing moved.
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.task.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("reports every blocked assignee once, with all their entities", async () => {
+    const idea = makeIdeaRecord({ assigneeType: "user", assigneeUuid: "u-leo" });
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Private Target" });
+    setupCascadeMocks({
+      proposals: [{ uuid: PROPOSAL_A }],
+      tasks: [
+        { uuid: "t-1", title: "T1", assigneeType: "agent", assigneeUuid: "agent-bob" },
+        { uuid: "t-2", title: "T2", assigneeType: "agent", assigneeUuid: "agent-bob" },
+        { uuid: "t-3", title: "T3", assigneeType: "user", assigneeUuid: "u-ok" },
+      ],
+    });
+    txPassthrough();
+    mockCanActorAccessProject.mockImplementation(async (_c: string, actor: { uuid: string }) => actor.uuid === "u-ok");
+
+    const err = await expectAssigneeError(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user"));
+    expect(err.message).toBe(
+      "Assignee does not have access to this project: User u-leo (1 idea), Agent agent-bob (2 tasks)",
+    );
+    expect(err.details).toEqual({
+      blockedAssignees: [
+        {
+          assigneeType: "user", assigneeUuid: "u-leo", name: "User u-leo",
+          entities: [{ type: "idea", uuid: IDEA_UUID, title: "Test Idea" }],
+        },
+        {
+          assigneeType: "agent", assigneeUuid: "agent-bob", name: "Agent agent-bob",
+          entities: [{ type: "task", uuid: "t-1", title: "T1" }, { type: "task", uuid: "t-2", title: "T2" }],
+        },
+      ],
+    });
+    // Deduplicated: one access check per distinct assignee.
+    expect(mockCanActorAccessProject).toHaveBeenCalledTimes(3);
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["root idea", "agent"], ["root idea", "agent_instance"], ["root idea", "user"],
+    ["descendant idea", "agent"], ["descendant idea", "agent_instance"], ["descendant idea", "user"],
+    ["task", "agent"], ["task", "agent_instance"], ["task", "user"],
+  ] as const)("skips a deleted %s assignee (%s) and completes the move", async (where, assigneeType) => {
+    const dangling = { assigneeType, assigneeUuid: `deleted-${assigneeType}` };
+    const idea = makeIdeaRecord(where === "root idea" ? dangling : {});
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Target" });
+    mockPrisma.agentInstance.findFirst.mockResolvedValue(null);
+    setupCascadeMocks({
+      descendants: where === "descendant idea" ? [{ uuid: "child-1", title: "C", ...dangling } as { uuid: string }] : [],
+      proposals: [{ uuid: PROPOSAL_A }],
+      tasks: [{ uuid: TASK_UUID, title: "T", ...(where === "task" ? dangling : {}) } as { uuid: string }],
+    });
+    txPassthrough();
+    mockCanActorAccessProject.mockResolvedValue(false); // would block any LIVE assignee
+
+    const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user");
+    expect(result.moved.tasks).toBe(1);
+    expect(mockCanActorAccessProject).not.toHaveBeenCalled();
+    // Assignee fields are never part of the cascade update.
+    for (const call of mockPrisma.task.updateMany.mock.calls) {
+      expect(call[0].data).toEqual({ projectUuid: TARGET_PROJECT_UUID });
+    }
+    for (const call of mockPrisma.idea.updateMany.mock.calls) {
+      expect(call[0].data).toEqual({ projectUuid: TARGET_PROJECT_UUID });
+    }
+  });
+
+  it("treats an agent_instance whose agent row is gone as dangling", async () => {
+    const idea = makeIdeaRecord({ assigneeType: "agent_instance", assigneeUuid: "inst-orphan" });
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Target" });
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "deleted-agent" });
+    setupCascadeMocks({});
+    txPassthrough();
+    mockCanActorAccessProject.mockResolvedValue(false);
+
+    await expect(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user")).resolves.toBeDefined();
+    expect(mockCanActorAccessProject).not.toHaveBeenCalled();
+  });
+
+  it("checks a live agent_instance assignee as its agent (owner inheritance)", async () => {
+    const idea = makeIdeaRecord({ assigneeType: "agent_instance", assigneeUuid: "inst-1" });
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Target" });
+    mockPrisma.agentInstance.findFirst.mockResolvedValue({ agentUuid: "agent-1" });
+    setupCascadeMocks({});
+    txPassthrough();
+
+    await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user");
+    expect(mockCanActorAccessProject).toHaveBeenCalledWith(
+      COMPANY_UUID, { type: "agent", uuid: "agent-1" }, TARGET_PROJECT_UUID, "editor", mockPrisma,
+    );
+  });
+
+  it("treats an unknown assignee type as dangling", async () => {
+    const idea = makeIdeaRecord({ assigneeType: "robot", assigneeUuid: "r-1" });
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Target" });
+    setupCascadeMocks({});
+    txPassthrough();
+    mockCanActorAccessProject.mockResolvedValue(false);
+
+    await expect(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user")).resolves.toBeDefined();
+    expect(mockCanActorAccessProject).not.toHaveBeenCalled();
   });
 
   it("skips the assignee check for an unassigned idea", async () => {
@@ -1244,6 +1385,7 @@ describe("moveIdeaPreview", () => {
 
     const preview = await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID);
     expect(preview.moved).toEqual({ ideas: 1, proposals: 1, documents: 1, tasks: 1, activities: 4 });
+    expect(preview.blockedAssignees).toEqual([]);
 
     // ----- real move (same fixture, no concurrent writes) -----
     mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(movedIdea);
@@ -1297,6 +1439,44 @@ describe("moveIdeaPreview", () => {
     // Multi-tenancy invariant: the calls that did run carry companyUuid.
     expect(mockPrisma.proposal.findMany.mock.calls[0][0].where.companyUuid).toBe(COMPANY_UUID);
     expect(mockPrisma.activity.count.mock.calls[0][0].where.companyUuid).toBe(COMPANY_UUID);
+  });
+
+  it("reports the same blocked assignees the move would, skipping dangling ones", async () => {
+    const idea = makeIdeaRecord({ assigneeType: "agent", assigneeUuid: "deleted-agent" });
+    const tasks = [
+      { uuid: "t-1", title: "T1", assigneeType: "agent", assigneeUuid: "agent-bob" },
+      { uuid: "t-2", title: "T2", assigneeType: "user", assigneeUuid: "deleted-user" },
+    ];
+    const descendants = [{ uuid: "child-1", title: "C", assigneeType: "user", assigneeUuid: "u-leo" }];
+    mockCanActorAccessProject.mockResolvedValue(false);
+
+    // ----- preview -----
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValueOnce({ uuid: TARGET_PROJECT_UUID, name: "T" });
+    mockPrisma.idea.findMany.mockResolvedValueOnce(descendants).mockResolvedValueOnce([]);
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([{ uuid: PROPOSAL_A }]);
+    mockPrisma.document.findMany.mockResolvedValueOnce([]);
+    mockPrisma.task.findMany.mockResolvedValueOnce(tasks);
+    mockPrisma.activity.count.mockResolvedValueOnce(0);
+    const preview = await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID);
+    expect(preview.blockedAssignees).toEqual([
+      { assigneeType: "user", assigneeUuid: "u-leo", name: "User u-leo", entities: [{ type: "idea", uuid: "child-1", title: "C" }] },
+      { assigneeType: "agent", assigneeUuid: "agent-bob", name: "Agent agent-bob", entities: [{ type: "task", uuid: "t-1", title: "T1" }] },
+    ]);
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.task.updateMany).not.toHaveBeenCalled();
+
+    // ----- the real move reports the identical list -----
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea);
+    mockPrisma.project.findFirst.mockResolvedValueOnce({ uuid: TARGET_PROJECT_UUID, name: "T" });
+    mockPrisma.idea.findMany.mockResolvedValueOnce(descendants).mockResolvedValueOnce([]);
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([{ uuid: PROPOSAL_A }]);
+    mockPrisma.document.findMany.mockResolvedValueOnce([]);
+    mockPrisma.task.findMany.mockResolvedValueOnce(tasks);
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma));
+    const err = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AssigneeAccessError);
+    expect((err as AssigneeAccessError).details).toEqual({ blockedAssignees: preview.blockedAssignees });
   });
 
   it("throws if idea not found", async () => {

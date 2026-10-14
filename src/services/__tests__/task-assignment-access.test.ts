@@ -27,7 +27,9 @@ const agents: Record<string, { ownerUuid: string | null }> = {
 const instances: Record<string, { agentUuid: string }> = {
   "inst-editor": { agentUuid: "agent-of-editor" },
   "inst-outsider": { agentUuid: "agent-of-outsider" },
+  "inst-orphan": { agentUuid: "agent-deleted" },
 };
+const users = new Set(["user-editor", "user-viewer", "user-admin", "user-outsider"]);
 
 let currentProject = PRIVATE;
 let inherited: Record<string, string> = {};
@@ -59,8 +61,8 @@ vi.mock("@/services/comment.service", () => ({ batchCommentCounts: vi.fn().mockR
 vi.mock("@/services/mention.service", () => ({ parseMentions: vi.fn().mockReturnValue([]), createMentions: vi.fn() }));
 vi.mock("@/services/activity.service", () => ({ createActivity: vi.fn() }));
 
-import { claimTask, AssigneeAccessError } from "@/services/task.service";
-import { claimIdea, assignIdea } from "@/services/idea.service";
+import { claimTask, AssigneeAccessError, resolveLiveAssignee } from "@/services/task.service";
+import { claimIdea, assignIdea, collectBlockedAssignees, type MoveAssigneeRow } from "@/services/idea.service";
 
 function row(projectUuid: string, extra: Record<string, unknown> = {}) {
   const now = new Date("2026-01-01T00:00:00Z");
@@ -118,7 +120,12 @@ beforeEach(() => {
       return role ? { role } : null;
     },
   );
-  mockPrisma.agent.findFirst.mockImplementation(async ({ where }: { where: { uuid: string } }) => agents[where.uuid] ?? null);
+  mockPrisma.agent.findFirst.mockImplementation(async ({ where }: { where: { uuid: string } }) =>
+    agents[where.uuid] ? { ...agents[where.uuid], name: `Agent ${where.uuid}` } : null);
+  // By-uuid lookups resolve known users (live-assignee resolution); the
+  // company-wide "first user" lookup still finds nobody (no implicit admin).
+  mockPrisma.user.findFirst.mockImplementation((async ({ where }: { where: { uuid?: string } }) =>
+    where.uuid && users.has(where.uuid) ? { name: `User ${where.uuid}` } : null) as never);
   mockPrisma.agentInstance.findFirst.mockImplementation(async ({ where }: { where: { uuid: string } }) =>
     instances[where.uuid] ? { uuid: where.uuid, agentUuid: instances[where.uuid].agentUuid } : null,
   );
@@ -216,5 +223,96 @@ describe.each(Object.keys(ops) as Array<keyof typeof ops>)("%s assignment access
       await expect(ops[op](assignee)).resolves.toBeDefined();
       expect(updateOf[op]()).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+// ===== Cascade-move assignee resolution (fix-idea-move-dangling-assignee D1/D2) =====
+
+describe("resolveLiveAssignee", () => {
+  it.each([
+    ["user", "user-editor", { type: "user", uuid: "user-editor", name: "User user-editor" }],
+    ["agent", "agent-of-editor", { type: "agent", uuid: "agent-of-editor", name: "Agent agent-of-editor" }],
+    ["agent_instance", "inst-editor", { type: "agent", uuid: "agent-of-editor", name: "Agent agent-of-editor" }],
+  ])("resolves a live %s assignee to its access actor", async (type, uuid, expected) => {
+    await expect(resolveLiveAssignee(COMPANY, { type, uuid })).resolves.toEqual(expected);
+  });
+
+  it.each([
+    ["deleted user", "user", "user-deleted"],
+    ["deleted agent", "agent", "agent-deleted"],
+    ["deleted agent instance", "agent_instance", "inst-deleted"],
+    ["instance whose agent was deleted", "agent_instance", "inst-orphan"],
+    ["unknown assignee type", "robot", "r-1"],
+  ])("returns null for a %s", async (_label, type, uuid) => {
+    await expect(resolveLiveAssignee(COMPANY, { type, uuid })).resolves.toBeNull();
+  });
+
+  it("is company-scoped", async () => {
+    await resolveLiveAssignee(COMPANY, { type: "agent", uuid: "agent-of-editor" });
+    expect(mockPrisma.agent.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uuid: "agent-of-editor", companyUuid: COMPANY },
+    }));
+  });
+});
+
+describe("collectBlockedAssignees (real project-access)", () => {
+  const r = (entityType: "idea" | "task", uuid: string, assigneeType: string | null, assigneeUuid: string | null): MoveAssigneeRow =>
+    ({ entityType, uuid, title: `${entityType} ${uuid}`, assigneeType, assigneeUuid });
+
+  it("skips dangling assignees and passes agents whose owner is an editor", async () => {
+    const blocked = await collectBlockedAssignees(COMPANY, [
+      r("idea", "i-root", "agent", "agent-deleted"),
+      r("idea", "i-child", "agent_instance", "inst-deleted"),
+      r("idea", "i-orphan", "agent_instance", "inst-orphan"),
+      r("task", "t-1", "user", "user-deleted"),
+      r("task", "t-2", "agent", "agent-of-editor"),
+      r("task", "t-3", "agent_instance", "inst-editor"),
+      r("task", "t-4", null, null),
+    ], PRIVATE);
+    expect(blocked).toEqual([]);
+  });
+
+  it("passes an agent whose owner inherits Editor from the project group", async () => {
+    inherited["user-viewer"] = "editor";
+    const blocked = await collectBlockedAssignees(COMPANY, [r("task", "t-1", "agent", "agent-of-viewer")], PRIVATE);
+    expect(blocked).toEqual([]);
+  });
+
+  it("reports every blocked live assignee once with all their entities", async () => {
+    const blocked = await collectBlockedAssignees(COMPANY, [
+      r("task", "t-1", "agent", "agent-of-outsider"),
+      r("idea", "i-1", "user", "user-viewer"),
+      r("task", "t-2", "agent", "agent-of-outsider"),
+      r("task", "t-3", "agent", "agent-of-editor"),
+      r("task", "t-4", "agent_instance", "inst-outsider"),
+      r("task", "t-5", "agent", "agent-ownerless"),
+    ], PRIVATE);
+    expect(blocked).toEqual([
+      {
+        assigneeType: "agent", assigneeUuid: "agent-of-outsider", name: "Agent agent-of-outsider",
+        entities: [{ type: "task", uuid: "t-1", title: "task t-1" }, { type: "task", uuid: "t-2", title: "task t-2" }],
+      },
+      {
+        assigneeType: "user", assigneeUuid: "user-viewer", name: "User user-viewer",
+        entities: [{ type: "idea", uuid: "i-1", title: "idea i-1" }],
+      },
+      {
+        assigneeType: "agent_instance", assigneeUuid: "inst-outsider", name: "Agent agent-of-outsider",
+        entities: [{ type: "task", uuid: "t-4", title: "task t-4" }],
+      },
+      {
+        assigneeType: "agent", assigneeUuid: "agent-ownerless", name: "Agent agent-ownerless",
+        entities: [{ type: "task", uuid: "t-5", title: "task t-5" }],
+      },
+    ]);
+  });
+
+  it("blocks nobody on a public target", async () => {
+    const blocked = await collectBlockedAssignees(COMPANY, [
+      r("task", "t-1", "agent", "agent-of-outsider"),
+      r("task", "t-2", "agent", "agent-ownerless"),
+      r("idea", "i-1", "user", "user-outsider"),
+    ], PUBLIC);
+    expect(blocked).toEqual([]);
   });
 });

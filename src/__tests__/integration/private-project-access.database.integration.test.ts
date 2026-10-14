@@ -305,6 +305,7 @@ describe.skipIf(!url)("Private project access — real database end-to-end", () 
       () => db.projectMember.deleteMany({ where: tenant }),
       () => db.projectAgentCwdPreference.deleteMany({ where: tenant }),
       () => db.project.deleteMany({ where: tenant }),
+      () => db.projectGroupMember.deleteMany({ where: tenant }),
       () => db.projectGroup.deleteMany({ where: tenant }),
       () => db.daemonExecution.deleteMany({ where: tenant }),
       () => db.daemonDirectoryRequest.deleteMany({ where: tenant }),
@@ -919,6 +920,143 @@ describe.skipIf(!url)("Private project access — real database end-to-end", () 
       expect(forE.map((i) => i.uuid).sort()).toEqual([pubIdea, priv.idea].sort());
       const forAgN = await access.filterRowsByProjectAccess(actors.agN(), ideas, (i) => i.projectUuid);
       expect(forAgN.map((i) => i.uuid)).toEqual([pubIdea]);
+    });
+  });
+
+  // ========================================================================
+  // fix-idea-move-dangling-assignee D1–D3: the cascade move skips assignees that
+  // no longer exist, and reports every live assignee lacking Editor on the target.
+  describe("Cascade move — dangling and blocked assignees", () => {
+    type Blocked = { assigneeType: string; assigneeUuid: string; name: string | null; entities: { type: string; uuid: string; title: string }[] };
+    const sortBlocked = (list: Blocked[]) => [...list]
+      .map((b) => ({ ...b, entities: [...b.entities].sort((x, y) => x.uuid.localeCompare(y.uuid)) }))
+      .sort((x, y) => x.assigneeUuid.localeCompare(y.assigneeUuid));
+
+    let moveRoute: typeof import("@/app/api/ideas/[uuid]/move/route");
+    let previewRoute: typeof import("@/app/api/ideas/[uuid]/move/preview/route");
+    const groupEditor = randomUUID();
+    const groupEditorAgent = randomUUID();
+
+    async function idea(title: string, data: Json = {}) {
+      return (await db.idea.create({ data: {
+        companyUuid, projectUuid: pub.uuid, title: `${token} ${title}`, content: "x", createdByUuid: U.A, ...data,
+      } })).uuid;
+    }
+    async function proposalFor(ideaUuid: string) {
+      return (await db.proposal.create({ data: {
+        companyUuid, projectUuid: pub.uuid, title: `${token} move proposal`, inputType: "idea", inputUuids: [ideaUuid],
+        status: "approved", createdByUuid: U.A, createdByType: "user",
+      } })).uuid;
+    }
+    const assigned = (type: string, uuid: string, proposalUuid?: string): Json => ({
+      assigneeType: type, assigneeUuid: uuid, status: "assigned", assignedAt: new Date(),
+      ...(proposalUuid ? { proposalUuid } : {}),
+    });
+    const preview = (ideaUuid: string, target: string) =>
+      call("A", previewRoute.GET, `/api/ideas/${ideaUuid}/move/preview?targetProjectUuid=${target}`, { uuid: ideaUuid });
+    const move = (ideaUuid: string, target: string) =>
+      call("A", moveRoute.PATCH, `/api/ideas/${ideaUuid}/move`, { uuid: ideaUuid }, "PATCH", { targetProjectUuid: target });
+
+    beforeAll(async () => {
+      moveRoute = await import("@/app/api/ideas/[uuid]/move/route");
+      previewRoute = await import("@/app/api/ideas/[uuid]/move/preview/route");
+      // A user who is an Editor on the private project only via its group.
+      await db.user.create({ data: {
+        uuid: groupEditor, companyUuid, oidcSub: `ppa-${groupEditor}`, email: `g-${token}@example.test`, name: `UserG ${token}`,
+      } });
+      await db.projectGroupMember.create({ data: { companyUuid, groupUuid, userUuid: groupEditor, role: "editor" } });
+      await db.agent.create({ data: {
+        uuid: groupEditorAgent, companyUuid, name: `AgentG ${token}`, roles: ["developer_agent"], ownerUuid: groupEditor,
+      } });
+    });
+
+    it("skips deleted agent / agent instance / user assignees on the root, a descendant and tasks", async () => {
+      // Live outsiders that WOULD block the move into the private project…
+      const deletedAgent = randomUUID();
+      await db.agent.create({ data: { uuid: deletedAgent, companyUuid, name: `${token} doomed agent`, roles: ["developer_agent"], ownerUuid: U.N } });
+      const deletedInstance = (await db.agentInstance.create({ data: { companyUuid, agentUuid: deletedAgent, host: "h", cwd: "/x" } })).uuid;
+      const deletedUser = randomUUID();
+      await db.user.create({ data: { uuid: deletedUser, companyUuid, oidcSub: `ppa-${deletedUser}`, email: `d-${token}@example.test`, name: "doomed" } });
+      // …and an instance row whose agent row is missing.
+      const orphanInstance = (await db.agentInstance.create({ data: { companyUuid, agentUuid: randomUUID(), host: "h", cwd: "/orphan" } })).uuid;
+
+      const root = await idea("dangling root", assigned("agent", deletedAgent));
+      const child = await idea("dangling child", { parentUuid: root, ...assigned("agent_instance", deletedInstance) });
+      const child2 = await idea("dangling child 2", { parentUuid: root, ...assigned("agent_instance", orphanInstance) });
+      const proposal = await proposalFor(root);
+      const taskUser = await extraTask(pub.uuid, "dangling user task", assigned("user", deletedUser, proposal));
+      const taskAgent = await extraTask(pub.uuid, "dangling agent task", assigned("agent", deletedAgent, proposal));
+      const taskInstance = await extraTask(pub.uuid, "dangling instance task", assigned("agent_instance", deletedInstance, proposal));
+
+      // Delete them (the agent's instance cascades with it).
+      await db.agent.delete({ where: { uuid: deletedAgent } });
+      await db.user.delete({ where: { uuid: deletedUser } });
+      expect(await db.agentInstance.findUnique({ where: { uuid: deletedInstance } })).toBeNull();
+
+      const pre = await preview(root, priv.uuid);
+      expect(pre.status).toBe(200);
+      expect((pre.json.data as Json).blockedAssignees).toEqual([]);
+
+      const res = await move(root, priv.uuid);
+      expect(res.status, JSON.stringify(res.json)).toBe(200);
+      expect(((res.json.data as Json).moved as Json).tasks).toBe(3);
+
+      const expectRow = async (row: { projectUuid: string; assigneeType: string | null; assigneeUuid: string | null } | null, type: string, uuid: string) =>
+        expect(row).toMatchObject({ projectUuid: priv.uuid, assigneeType: type, assigneeUuid: uuid });
+      await expectRow(await db.idea.findUnique({ where: { uuid: root } }), "agent", deletedAgent);
+      await expectRow(await db.idea.findUnique({ where: { uuid: child } }), "agent_instance", deletedInstance);
+      await expectRow(await db.idea.findUnique({ where: { uuid: child2 } }), "agent_instance", orphanInstance);
+      await expectRow(await db.task.findUnique({ where: { uuid: taskUser } }), "user", deletedUser);
+      await expectRow(await db.task.findUnique({ where: { uuid: taskAgent } }), "agent", deletedAgent);
+      await expectRow(await db.task.findUnique({ where: { uuid: taskInstance } }), "agent_instance", deletedInstance);
+    });
+
+    it("rejects with every blocked live assignee (preview parity), moves nothing, then passes owner-inherited agents", async () => {
+      const root = await idea("blocked root");
+      const child = await idea("blocked child", { parentUuid: root, ...assigned("user", U.N) });
+      const proposal = await proposalFor(root);
+      const tN1 = await extraTask(pub.uuid, "blocked agN task 1", assigned("agent", AG.N, proposal));
+      const tN2 = await extraTask(pub.uuid, "blocked agN task 2", assigned("agent", AG.N, proposal));
+      const tV = await extraTask(pub.uuid, "blocked agV task", assigned("agent", AG.V, proposal));
+      const tE = await extraTask(pub.uuid, "ok agE task", assigned("agent", AG.E, proposal));
+      const tG = await extraTask(pub.uuid, "ok group-editor agent task", assigned("agent", groupEditorAgent, proposal));
+
+      const title = async (uuid: string, kind: "idea" | "task") => kind === "idea"
+        ? (await db.idea.findUniqueOrThrow({ where: { uuid } })).title
+        : (await db.task.findUniqueOrThrow({ where: { uuid } })).title;
+      const expected = sortBlocked([
+        { assigneeType: "user", assigneeUuid: U.N, name: `UserN ${token}`, entities: [{ type: "idea", uuid: child, title: await title(child, "idea") }] },
+        { assigneeType: "agent", assigneeUuid: AG.N, name: `AgentN ${token}`, entities: [
+          { type: "task", uuid: tN1, title: await title(tN1, "task") }, { type: "task", uuid: tN2, title: await title(tN2, "task") },
+        ] },
+        { assigneeType: "agent", assigneeUuid: AG.V, name: `AgentV ${token}`, entities: [{ type: "task", uuid: tV, title: await title(tV, "task") }] },
+      ]);
+
+      const pre = await preview(root, priv.uuid);
+      expect(pre.status).toBe(200);
+      expect(sortBlocked((pre.json.data as Json).blockedAssignees as Blocked[])).toEqual(expected);
+
+      const res = await move(root, priv.uuid);
+      expect(res.status).toBe(403);
+      const error = res.json.error as Json;
+      expect(error.message as string).toMatch(/^Assignee does not have access to this project: /);
+      expect(sortBlocked((error.details as Json).blockedAssignees as Blocked[])).toEqual(expected);
+
+      // Nothing moved.
+      for (const uuid of [root, child]) expect((await db.idea.findUniqueOrThrow({ where: { uuid } })).projectUuid).toBe(pub.uuid);
+      expect((await db.proposal.findUniqueOrThrow({ where: { uuid: proposal } })).projectUuid).toBe(pub.uuid);
+      for (const uuid of [tN1, tN2, tV, tE, tG]) expect((await db.task.findUniqueOrThrow({ where: { uuid } })).projectUuid).toBe(pub.uuid);
+      expect(await db.activity.count({ where: { companyUuid, targetUuid: root, action: "moved" } })).toBe(0);
+
+      // Release the blockers: the local-Editor-owned and group-Editor-owned agents pass.
+      await db.idea.update({ where: { uuid: child }, data: { assigneeType: null, assigneeUuid: null } });
+      await db.task.updateMany({ where: { uuid: { in: [tN1, tN2, tV] } }, data: { assigneeType: null, assigneeUuid: null, status: "open" } });
+      expect((await preview(root, priv.uuid)).json.data).toMatchObject({ blockedAssignees: [] });
+      const ok = await move(root, priv.uuid);
+      expect(ok.status, JSON.stringify(ok.json)).toBe(200);
+      expect(await db.task.findUniqueOrThrow({ where: { uuid: tG } })).toMatchObject({
+        projectUuid: priv.uuid, assigneeType: "agent", assigneeUuid: groupEditorAgent,
+      });
     });
   });
 
