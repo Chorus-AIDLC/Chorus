@@ -129,7 +129,56 @@ Events are scoped by `companyUuid`. The SSE endpoint filters events using the au
 
 ## Agent Compatibility
 
-Agents connect via API Key + Authorization header through the MCP endpoint. They do **not** use SSE. SSE is exclusively for browser users authenticated via cookies. Agent mutations trigger events that are pushed to browser users watching the same project.
+Agents mutate data through the MCP endpoint (API Key + `Authorization` header), and those mutations trigger events pushed to browser users watching the same project.
+
+Agents also **consume** SSE. The project stream above (`GET /api/events`) is consumed only by the browser, but the agent daemon subscribes to the user-scoped notification stream `GET /api/events/notifications`, and this is its primary wake channel.
+
+### Two auth paths on the SSE endpoints
+
+Both SSE routes authenticate with `getAuthContext(request)`, which checks a Bearer token before falling back to cookies (`src/lib/auth.ts`):
+
+| Client | Transport | Auth |
+|--------|-----------|------|
+| Browser | `EventSource` | Session cookie, sent automatically |
+| Agent daemon | `fetch` with a streamed response body | `Authorization: Bearer cho_…` + `Accept: text/event-stream` (`SseListener` endpoint + `connect()` in `cli/sse-listener.mjs`) |
+
+`EventSource` cannot set custom request headers, which is why the browser relies on the cookie. That limitation applies only to `EventSource`. The daemon is a Node process reading the stream with `fetch`, so it sends the Bearer API key like any other request.
+
+### Pending-turns recovery (`GET /api/daemon/pending-turns`)
+
+`GET /api/daemon/pending-turns?connectionUuid=…` (Bearer agent key) returns the `pending` (unstarted) turns of sessions whose origin is that daemon connection (`src/app/api/daemon/pending-turns/route.ts`). It is a **recovery path, not a replacement** for SSE: every turn is persisted in the turn table when it is created, so a wake whose SSE delivery was lost can still be re-derived from that table.
+
+When the daemon reads it (`createDeliveryRecovery` in `cli/delivery-recovery.mjs`, wired per connection in `cli/daemon.mjs`):
+
+1. **On (re)registration.** Every time the SSE handshake delivers `connection_registered`, the daemon calls `recovery.register()` from the listener's `onConnectionId` callback (`cli/daemon.mjs`), which schedules an immediate sweep (`register()` in `cli/delivery-recovery.mjs`).
+2. **Periodically while connected.** After each sweep the next one is due 30s later (`intervalMs = 30_000` and `sweepAt = now() + intervalMs` in `run()`, `cli/delivery-recovery.mjs`), so lost deliveries are recovered even on a connection that never dropped (test: `cli/__tests__/delivery-recovery.test.mjs` "periodically reconciles protocol work on an otherwise healthy connection").
+3. **On a live `deliver_turn` control ping.** The ping triggers a targeted read of only the announced turn, through the same sweep function (`deliverTurn` → `recovery.deliver()` in `cli/daemon.mjs`; `backfill.pendingTurnsOnly` in `cli/backfill.mjs`).
+
+How it relates to SSE disconnects:
+
+- **Silent partition.** If the stream receives no bytes (data or the server's 30s `: heartbeat`) for 75s, the listener aborts it and reconnects (`WATCHDOG_TIMEOUT_MS = 75_000` and `#refreshWatchdog` in `cli/sse-listener.mjs`; test: `cli/__tests__/sse-silent-partition.integration.test.mjs`).
+- **During reconnect** recovery is suspended (`onReconnect` → `recovery.suspend()`, `cli/daemon.mjs`). It resumes, starting with a sweep, as soon as the new connection is registered (step 1).
+
+```mermaid
+sequenceDiagram
+    participant S as Chorus server
+    participant D as Agent daemon
+    D->>S: GET /api/events/notifications (Bearer cho_…)
+    S-->>D: connection_registered
+    D->>S: GET /api/daemon/pending-turns (sweep)
+    loop every 30s
+        D->>S: GET /api/daemon/pending-turns
+    end
+    S-->>D: new_notification / deliver_turn (primary path)
+    Note over D,S: no bytes for 75s → abort, suspend recovery, reconnect
+    D->>S: GET /api/events/notifications (reconnect)
+    S-->>D: connection_registered
+    D->>S: GET /api/daemon/pending-turns (catch-up sweep)
+```
+
+**Deduplication.** Each daemon connection keeps one in-process `seen` set, shared by its live SSE router and its recovery reads (`const seen = new Set()` in `cli/daemon.mjs`). Turns are keyed `turn:<turnUuid>` and notifications by their uuid. The router marks keys as seen and returns `duplicate` for any key it has already accepted (`EventRouter.#track` / `#accept` in `cli/event-router.mjs`). The recovery path only pre-checks the set and leaves marking to the router (`backfillNotifications` / `backfillPendingTurns` in `cli/backfill.mjs`). So within one daemon process, a turn that reaches both paths is dispatched once, whichever path sees it first (test: `cli/__tests__/backfill-pending-turns.test.mjs` "live deliver_turn (pendingTurnsOnly) then reconnect backfill share the seen set → turn handled at most once").
+
+The scope of that set is limited. It survives SSE reconnects, but not a daemon restart, and the router releases entries when an admission is rejected or cancelled so the turn can be retried (`EventRouter.releaseAccepted`). Starting a turn is separately gated by the server's admission claim, which only moves an unclaimed `pending` turn to `running` (`src/services/daemon-session.service.ts`). This section does not describe an end-to-end exactly-once guarantee.
 
 ## Scaling Considerations
 

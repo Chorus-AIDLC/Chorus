@@ -1,6 +1,7 @@
 // src/app/api/events/route.ts
 // SSE Endpoint — Push real-time change events to the browser
-// Auth via cookie (EventSource automatically sends cookies)
+// Auth via getAuthContext (Bearer API key or session cookie). The web UI uses the
+// cookie, since EventSource sends cookies automatically but cannot set headers.
 
 import { getAuthContext } from "@/lib/auth";
 import {
