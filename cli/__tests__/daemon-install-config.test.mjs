@@ -138,6 +138,7 @@ describe("resolveInstallCwds", () => {
     const r = await resolveInstallCwds({ cwd: ["/a", "/a", "~/b"] }, { isTTY: true, skip: false, ...d });
     expect(d.prompt).not.toHaveBeenCalled();
     expect(r.cwds).toEqual(["/a", "/home/u/b"]);
+    expect(r.source).toBe("flag");
     expect(d.writeConfig).toHaveBeenCalledWith(expect.objectContaining({ cwds: ["/a", "/home/u/b"] }));
   });
 
@@ -146,6 +147,8 @@ describe("resolveInstallCwds", () => {
     const r = await resolveInstallCwds({}, { isTTY: true, skip: false, ...d });
     expect(d.prompt).not.toHaveBeenCalled();
     expect(r.cwds).toEqual(["/x", "/y"]);
+    expect(r.source).toBe("existing");
+    expect(d.writeConfig).not.toHaveBeenCalled();
   });
 
   it("unconfigured + TTY (no skip): wizard pre-seeds cwd, loops until blank, dedups", async () => {
@@ -160,12 +163,14 @@ describe("resolveInstallCwds", () => {
     const d = deps({ prompt });
     const r = await resolveInstallCwds({}, { isTTY: true, skip: false, ...d });
     expect(r.cwds).toEqual(["/home/u/proj", "/b", "/home/u/c"]);
+    expect(r.source).toBe("interactive");
     expect(d.writeConfig).toHaveBeenCalledWith(expect.objectContaining({ cwds: ["/home/u/proj", "/b", "/home/u/c"] }));
   });
 
   it("unconfigured + skip: no prompt, falls back to process cwd, persists it", async () => {
     const d = deps();
     const r = await resolveInstallCwds({}, { isTTY: true, skip: true, ...d });
+    expect(r.source).toBe("default");
     expect(d.prompt).not.toHaveBeenCalled();
     expect(r.cwds).toEqual(["/home/u/proj"]);
   });
@@ -173,6 +178,7 @@ describe("resolveInstallCwds", () => {
   it("unconfigured + non-TTY: no prompt, falls back to process cwd", async () => {
     const d = deps();
     const r = await resolveInstallCwds({}, { isTTY: false, skip: false, ...d });
+    expect(r.source).toBe("default");
     expect(d.prompt).not.toHaveBeenCalled();
     expect(r.cwds).toEqual(["/home/u/proj"]);
   });
