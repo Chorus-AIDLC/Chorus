@@ -468,7 +468,13 @@
       "cancel": "取消",
       "error": "移动失败：{message}",
       "successToast": "已移动 {ideas} 个 idea — 更新 {proposals} 个提案、{documents} 个文档、{tasks} 个任务、{activities} 条活动。",
-      "viewMovedIdea": "查看"
+      "viewMovedIdea": "查看",
+      "blockedTitle": "部分负责人没有目标项目的访问权限",
+      "blockedCounts": "（{ideas} 个 idea，{tasks} 个任务）",
+      "blockedUnknownAssignee": "未知负责人",
+      "blockedEntityIdea": "Idea",
+      "blockedEntityTask": "任务",
+      "blockedHint": "请先重新分配或释放这些条目，然后再尝试移动。"
     }
   },
   "tasks": {

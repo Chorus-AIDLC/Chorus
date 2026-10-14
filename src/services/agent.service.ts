@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { generateApiKey } from "@/lib/api-key";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import type { Permission } from "@/lib/authz/types";
+import { releaseAgentAssignments } from "@/services/agent-assignment-release.service";
 
 export interface AgentListParams {
   companyUuid: string;
@@ -163,9 +164,26 @@ export async function syncApiKeyNames(agentUuid: string, name: string) {
   });
 }
 
-// Delete Agent (by UUID)
-export async function deleteAgent(uuid: string) {
-  return prisma.agent.delete({ where: { uuid } });
+// Delete Agent (company-scoped). In one transaction, releases the agent's
+// unfinished assignments (tasks/ideas assigned to the agent or any of its
+// AgentInstances) and then deletes the agent, cascading its API keys and
+// instances. Returns null when the agent is not in this company.
+export async function deleteAgent(companyUuid: string, agentUuid: string, actorUuid: string) {
+  const result = await prisma.$transaction(async (tx) => {
+    const agent = await tx.agent.findFirst({
+      where: { uuid: agentUuid, companyUuid },
+      select: { uuid: true },
+    });
+    if (!agent) return null;
+
+    const release = await releaseAgentAssignments(companyUuid, agent.uuid, actorUuid, tx);
+    const deleted = await tx.agent.delete({ where: { uuid: agent.uuid } });
+    return { deleted, release };
+  });
+
+  if (!result) return null;
+  result.release.publish();
+  return result.deleted;
 }
 
 // List API Keys

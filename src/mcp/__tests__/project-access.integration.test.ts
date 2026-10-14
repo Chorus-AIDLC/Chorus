@@ -83,6 +83,10 @@ const fixture = vi.hoisted(() => {
       getIdea: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
       getIdeaByUuid: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
       createIdea: vi.fn(async (params: Row) => ({ uuid: "new-idea", ...params })),
+      moveIdea: vi.fn(async (_company: string, uuid: string, targetProjectUuid: string) => ({
+        uuid, project: { uuid: targetProjectUuid, name: targetProjectUuid },
+        moved: { ideas: 1, proposals: 0, documents: 0, tasks: 0, activities: 0 },
+      })),
     },
     document: { getDocument: vi.fn(async (_company: string, uuid: string) => entity("document", uuid)) },
     proposal: {
@@ -835,6 +839,45 @@ describe("MCP central project access", () => {
       await client.close();
       await server.close();
     }
+  });
+
+  // fix-idea-move-dangling-assignee D4: caller Editor on source and target,
+  // gated by idea:write alone (no project:* bit).
+  describe("chorus_move_idea caller access", () => {
+    const ideaOnly = ["idea:read", "idea:write"] as AgentAuthContext["permissions"];
+
+    it("moves with only idea:write when the owner is Editor on source and target", async () => {
+      const { handlers } = register(auth("editor", ideaOnly));
+      const result = await handlers.chorus_move_idea({ ideaUuid: "idea-private", targetProjectUuid: "public" });
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      expect(fixture.services.idea.moveIdea).toHaveBeenCalledWith("company", "idea-private", "public", "agent", "agent");
+      expect(JSON.parse((result.content[0] as { text: string }).text).project.uuid).toBe("public");
+    });
+
+    it.each(["nonmember", "viewer"])("rejects a target the %s owner cannot edit without migrating", async (owner) => {
+      const { handlers } = register(auth(owner, ideaOnly));
+      const result = await handlers.chorus_move_idea({ ideaUuid: "idea-public", targetProjectUuid: "private" });
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as { text: string }).text).toBe(
+        owner === "nonmember" ? "Target project not found" : "Insufficient project access",
+      );
+      expect(fixture.services.idea.moveIdea).not.toHaveBeenCalled();
+    });
+
+    it("reports a hidden target exactly like a missing one", async () => {
+      const { handlers } = register(auth("nonmember", ideaOnly));
+      const hidden = await handlers.chorus_move_idea({ ideaUuid: "idea-public", targetProjectUuid: "private" });
+      const missing = await handlers.chorus_move_idea({ ideaUuid: "idea-public", targetProjectUuid: "missing" });
+      expect(hidden).toEqual(missing);
+      expect(fixture.services.idea.moveIdea).not.toHaveBeenCalled();
+    });
+
+    it("rejects moving an idea the owner can only view without migrating", async () => {
+      const { handlers } = register(auth("viewer", ideaOnly));
+      const result = await handlers.chorus_move_idea({ ideaUuid: "idea-private", targetProjectUuid: "public" });
+      expect(result).toEqual({ content: [{ type: "text", text: "Insufficient project access" }], isError: true });
+      expect(fixture.services.idea.moveIdea).not.toHaveBeenCalled();
+    });
   });
 
   it("passes auth and header project scopes to filtered service callers", async () => {

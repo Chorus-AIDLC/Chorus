@@ -8,6 +8,7 @@ import { withErrorHandler, parseBody } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser } from "@/lib/auth";
 import { isValidPermission, computeEffectivePermissions } from "@/lib/authz/permissions";
+import { deleteAgent } from "@/services/agent.service";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -200,19 +201,13 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
 
     const { uuid } = await context.params;
 
-    const agent = await prisma.agent.findFirst({
-      where: { uuid, companyUuid: auth.companyUuid },
-      select: { uuid: true },
-    });
+    // Releases unfinished assignments, then deletes the Agent (API Keys and
+    // AgentInstances cascade) in one company-scoped transaction.
+    const deleted = await deleteAgent(auth.companyUuid, uuid, auth.actorUuid);
 
-    if (!agent) {
+    if (!deleted) {
       return errors.notFound("Agent");
     }
-
-    // Delete Agent (API Keys will be cascade-deleted)
-    await prisma.agent.delete({
-      where: { uuid: agent.uuid },
-    });
 
     return success({ deleted: true });
   }

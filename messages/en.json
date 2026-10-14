@@ -468,7 +468,13 @@
       "cancel": "Cancel",
       "error": "Move failed: {message}",
       "successToast": "Moved {ideas} ideas — {proposals} proposals, {documents} documents, {tasks} tasks, {activities} activities updated.",
-      "viewMovedIdea": "View"
+      "viewMovedIdea": "View",
+      "blockedTitle": "Some assignees don't have access to the target project",
+      "blockedCounts": "({ideas} ideas, {tasks} tasks)",
+      "blockedUnknownAssignee": "Unknown assignee",
+      "blockedEntityIdea": "Idea",
+      "blockedEntityTask": "Task",
+      "blockedHint": "Reassign or release these items first, then try the move again."
     }
   },
   "tasks": {

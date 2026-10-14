@@ -468,7 +468,13 @@
       "cancel": "キャンセル",
       "error": "移動に失敗しました：{message}",
       "successToast": "着想 {ideas} 件を移動しました — 提案 {proposals} 件、文書 {documents} 件、課題 {tasks} 件、アクティビティ {activities} 件を更新しました。",
-      "viewMovedIdea": "表示"
+      "viewMovedIdea": "表示",
+      "blockedTitle": "一部の担当者は移動先プロジェクトへのアクセス権がありません",
+      "blockedCounts": "（Idea {ideas} 件、タスク {tasks} 件）",
+      "blockedUnknownAssignee": "不明な担当者",
+      "blockedEntityIdea": "Idea",
+      "blockedEntityTask": "タスク",
+      "blockedHint": "先にこれらの項目を再割り当てまたは解放してから、もう一度移動してください。"
     }
   },
   "tasks": {

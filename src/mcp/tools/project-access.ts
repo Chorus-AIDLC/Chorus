@@ -40,6 +40,9 @@ function notFound(toolName: string, entityType: string, entityUuid: string): nev
   if (toolName === "chorus_add_comment") text = `${entityType} not found`;
   if (toolName === "chorus_admin_move_project_to_group") text = "Project or project group not found";
   if (toolName === "chorus_admin_delete_project_group") text = "Project group not found";
+  // The only project chorus_move_idea names is its target; a hidden target
+  // reads exactly like a missing one (same text as the REST route).
+  if (toolName === "chorus_move_idea" && entityType === "project") text = "Target project not found";
   if (toolName === "chorus_add_reference") {
     text = `Failed to add reference: Target ${entityType} with UUID ${entityUuid} not found`;
   }

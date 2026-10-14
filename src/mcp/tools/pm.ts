@@ -21,6 +21,11 @@ import { getAgentByUuid } from "@/services/agent.service";
 import { getUserByUuid } from "@/services/user.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 import {
+  requireEntityAccess,
+  requireProjectAccess,
+  ProjectNotFoundError,
+} from "@/services/project-access.service";
+import {
   isAssignmentOwnedByActor,
   resolveAssigneeAgentUuid,
 } from "@/lib/uuid-resolver";
@@ -30,6 +35,20 @@ import { hasPermission } from "@/lib/auth";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import { enforceToolClassification } from "./collection-contract";
 import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
+
+// chorus_move_idea error text. A move blocked by assignees names every blocked
+// assignee (and what each holds) from the structured details, not just the
+// generic message, so the agent can act without a second call.
+function moveIdeaErrorText(error: unknown): string {
+  // Duck-typed on AssigneeAccessError's details so this stays independent of
+  // the task service's class identity.
+  const blocked = (error as { details?: { blockedAssignees?: ideaService.BlockedAssignee[] } } | null)
+    ?.details?.blockedAssignees;
+  if (Array.isArray(blocked) && blocked.length > 0) {
+    return ideaService.formatBlockedAssigneesMessage(blocked);
+  }
+  return error instanceof Error ? error.message : "Unknown error";
+}
 
 export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
   server = enforceToolClassification(server);
@@ -1209,6 +1228,20 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     },
     async ({ ideaUuid, targetProjectUuid }) => {
       try {
+        // Caller access parity with REST/UI (design D4): Editor on the idea's
+        // current project and on the target. An agent's level is its owner's
+        // effective level. No project:* permission bit is required.
+        await requireEntityAccess(auth, "idea", ideaUuid, "editor");
+        try {
+          await requireProjectAccess(auth, targetProjectUuid, "editor");
+        } catch (e) {
+          // A hidden target reads exactly like a missing one.
+          if (e instanceof ProjectNotFoundError) {
+            return { content: [{ type: "text", text: "Target project not found" }], isError: true };
+          }
+          throw e;
+        }
+
         const updated = await ideaService.moveIdea(
           auth.companyUuid,
           ideaUuid,
@@ -1225,7 +1258,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         };
       } catch (error) {
         return {
-          content: [{ type: "text", text: `Failed to move Idea: ${error instanceof Error ? error.message : "Unknown error"}` }],
+          content: [{ type: "text", text: `Failed to move Idea: ${moveIdeaErrorText(error)}` }],
           isError: true,
         };
       }

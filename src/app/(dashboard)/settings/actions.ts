@@ -144,7 +144,7 @@ export async function deleteApiKeyAction(uuid: string): Promise<{
       return { success: false, error: "API key not found" };
     }
 
-    await deleteAgent(apiKey.agentUuid);
+    await deleteAgent(auth.companyUuid, apiKey.agentUuid, auth.actorUuid);
     return { success: true };
   } catch (error) {
     logger.error({ err: error }, "Failed to delete API key");

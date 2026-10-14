@@ -8,10 +8,11 @@ import {
   getIdeaByUuid,
   setIdeaParent,
   listIdeas,
+  type BlockedAssignee,
 } from "@/services/idea.service";
 import { getProposalsByIdeaUuid } from "@/services/proposal.service";
 import { listDocumentsByProposalUuids } from "@/services/document.service";
-import { getTask, listTasks } from "@/services/task.service";
+import { getTask, listTasks, AssigneeAccessError } from "@/services/task.service";
 import { listProjects } from "@/services/project.service";
 import { listProjectGroups } from "@/services/project-group.service";
 import { getElaboration } from "@/services/elaboration.service";
@@ -75,6 +76,19 @@ export async function moveIdeaAction(ideaUuid: string, targetProjectUuid: string
     // generic confirmation.
     return { success: true as const, moved: result.moved };
   } catch (e) {
+    // A live assignee lacking Editor on the target blocks the move; hand the
+    // structured list to the dialog so it can name who/what to reassign
+    // (fix-idea-move-dangling-assignee D3).
+    if (e instanceof AssigneeAccessError) {
+      const details = e.details as { blockedAssignees?: BlockedAssignee[] } | undefined;
+      if (details?.blockedAssignees?.length) {
+        return {
+          success: false as const,
+          error: e.message,
+          blockedAssignees: details.blockedAssignees,
+        };
+      }
+    }
     return { success: false as const, error: e instanceof Error ? e.message : "Failed to move idea" };
   }
 }
@@ -104,7 +118,11 @@ export async function moveIdeaPreviewAction(ideaUuid: string, targetProjectUuid:
     }
 
     const result = await moveIdeaPreview(auth.companyUuid, ideaUuid, targetProjectUuid);
-    return { success: true as const, moved: result.moved };
+    return {
+      success: true as const,
+      moved: result.moved,
+      blockedAssignees: result.blockedAssignees,
+    };
   } catch (e) {
     logger.error({ err: e }, "Failed to preview idea move");
     return { success: false as const, error: e instanceof Error ? e.message : "Failed to preview move" };

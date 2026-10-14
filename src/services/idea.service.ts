@@ -12,7 +12,14 @@ import * as mentionService from "@/services/mention.service";
 import * as activityService from "@/services/activity.service";
 import * as documentService from "@/services/document.service";
 import * as proposalService from "@/services/proposal.service";
-import { assertAssigneeProjectAccess } from "@/services/task.service";
+import {
+  assertAssigneeProjectAccess,
+  resolveLiveAssignee,
+  AssigneeAccessError,
+  ASSIGNEE_ACCESS_DENIED_MESSAGE,
+  type AssigneeLookupClient,
+} from "@/services/task.service";
+import { canActorAccessProject, type ProjectAccessClient } from "@/services/project-access.service";
 import logger from "@/lib/logger";
 
 // ===== Derived Status =====
@@ -159,6 +166,31 @@ export interface MoveIdeaResponse extends IdeaResponse {
 
 export interface MoveIdeaPreviewResult {
   moved: MoveIdeaCounts;
+  blockedAssignees: BlockedAssignee[];
+}
+
+// A live assignee in the move cascade that lacks Editor on the target project,
+// with every moved entity it holds (fix-idea-move-dangling-assignee D2).
+export interface BlockedAssigneeEntity {
+  type: "idea" | "task";
+  uuid: string;
+  title: string;
+}
+
+export interface BlockedAssignee {
+  assigneeType: string; // as stored: "user" | "agent" | "agent_instance"
+  assigneeUuid: string;
+  name: string | null;
+  entities: BlockedAssigneeEntity[];
+}
+
+// One moved entity, tagged for the blocked-assignee report.
+export interface MoveAssigneeRow {
+  entityType: "idea" | "task";
+  uuid: string;
+  title: string;
+  assigneeType?: string | null;
+  assigneeUuid?: string | null;
 }
 
 // Idea status transition rules — simplified 3-state model
@@ -689,16 +721,18 @@ export async function getDescendantUuids(
 
 // Same BFS, also returning each descendant's assignee (used by moveIdea so the
 // subtree's assignees can be access-checked without an extra query).
+type DescendantRow = { uuid: string; title?: string; assigneeType?: string | null; assigneeUuid?: string | null };
+
 async function getDescendants(
   uuid: string,
   companyUuid: string,
-): Promise<{ uuid: string; assigneeType?: string | null; assigneeUuid?: string | null }[]> {
-  const descendants = new Map<string, { uuid: string; assigneeType?: string | null; assigneeUuid?: string | null }>();
+): Promise<DescendantRow[]> {
+  const descendants = new Map<string, DescendantRow>();
   let frontier = [uuid];
   while (frontier.length > 0) {
     const children = (await prisma.idea.findMany({
       where: { companyUuid, parentUuid: { in: frontier } },
-      select: { uuid: true, assigneeType: true, assigneeUuid: true },
+      select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
     })) ?? [];
     const next: string[] = [];
     for (const child of children) {
@@ -1064,20 +1098,85 @@ export async function detachIdeaLineageForProjects(
 //
 // Every where clause carries `companyUuid` so a same-uuid row in another
 // company cannot be touched (cross-company isolation scenario).
-// Check every distinct assignee in `rows` against the target project.
-async function assertAssigneesCanAccess(
+// Every distinct LIVE assignee in `rows` that lacks Editor on the target project,
+// each with the moved entities it holds (deduplicated by `type:uuid`, first-seen
+// order). A dangling assignee (deleted user / agent / agent instance) is treated
+// as unassigned and skipped — fix-idea-move-dangling-assignee D1/D2. Agents are
+// judged by their owner's effective access via canActorAccessProject.
+export async function collectBlockedAssignees(
   companyUuid: string,
-  rows: { assigneeType?: string | null; assigneeUuid?: string | null }[],
-  projectUuid: string,
-): Promise<void> {
-  const seen = new Set<string>();
+  rows: MoveAssigneeRow[],
+  targetProjectUuid: string,
+  client: ProjectAccessClient & AssigneeLookupClient = prisma,
+): Promise<BlockedAssignee[]> {
+  const groups = new Map<string, { assigneeType: string; assigneeUuid: string; entities: BlockedAssigneeEntity[] }>();
   for (const r of rows) {
     if (!r.assigneeType || !r.assigneeUuid) continue;
     const key = `${r.assigneeType}:${r.assigneeUuid}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    await assertAssigneeProjectAccess(companyUuid, { type: r.assigneeType, uuid: r.assigneeUuid }, projectUuid);
+    let group = groups.get(key);
+    if (!group) {
+      group = { assigneeType: r.assigneeType, assigneeUuid: r.assigneeUuid, entities: [] };
+      groups.set(key, group);
+    }
+    group.entities.push({ type: r.entityType, uuid: r.uuid, title: r.title });
   }
+
+  const blocked: BlockedAssignee[] = [];
+  for (const group of groups.values()) {
+    const live = await resolveLiveAssignee(
+      companyUuid, { type: group.assigneeType, uuid: group.assigneeUuid }, client,
+    );
+    if (!live) continue;
+    const allowed = await canActorAccessProject(
+      companyUuid, { type: live.type, uuid: live.uuid }, targetProjectUuid, "editor", client,
+    );
+    if (!allowed) blocked.push({ ...group, name: live.name });
+  }
+  return blocked;
+}
+
+function pluralize(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
+// "Assignee does not have access to this project: Bob (2 tasks), Leo (1 idea)".
+// Keeps the ASSIGNEE_ACCESS_DENIED_MESSAGE prefix for existing string matching.
+export function formatBlockedAssigneesMessage(blocked: BlockedAssignee[]): string {
+  const parts = blocked.map((b) => {
+    const ideas = b.entities.filter((e) => e.type === "idea").length;
+    const tasks = b.entities.length - ideas;
+    const counts = [
+      ...(ideas ? [pluralize(ideas, "idea")] : []),
+      ...(tasks ? [pluralize(tasks, "task")] : []),
+    ].join(" + ");
+    return `${b.name ?? b.assigneeUuid} (${counts})`;
+  });
+  return `${ASSIGNEE_ACCESS_DENIED_MESSAGE}: ${parts.join(", ")}`;
+}
+
+function ideaAssigneeRows(
+  root: { uuid: string; title: string; assigneeType: string | null; assigneeUuid: string | null },
+  descendants: DescendantRow[],
+): MoveAssigneeRow[] {
+  return [root, ...descendants].map((i) => ({
+    entityType: "idea" as const,
+    uuid: i.uuid,
+    title: i.title ?? "",
+    assigneeType: i.assigneeType,
+    assigneeUuid: i.assigneeUuid,
+  }));
+}
+
+function taskAssigneeRows(
+  tasks: { uuid: string; title?: string; assigneeType?: string | null; assigneeUuid?: string | null }[],
+): MoveAssigneeRow[] {
+  return tasks.map((t) => ({
+    entityType: "task" as const,
+    uuid: t.uuid,
+    title: t.title ?? "",
+    assigneeType: t.assigneeType,
+    assigneeUuid: t.assigneeUuid,
+  }));
 }
 
 export async function moveIdea(
@@ -1105,16 +1204,6 @@ export async function moveIdea(
     throw new ApiError("BAD_REQUEST", "Idea is already in the target project", 400);
   }
 
-  // The current assignee keeps the idea after a move, so they must have editor
-  // access to the target project (private project isolation).
-  if (idea.assigneeType && idea.assigneeUuid) {
-    await assertAssigneeProjectAccess(
-      companyUuid,
-      { type: idea.assigneeType, uuid: idea.assigneeUuid },
-      targetProjectUuid,
-    );
-  }
-
   const fromProjectUuid = idea.projectUuid;
 
   // Lineage: the move carries the whole subtree. Resolve the moved root's
@@ -1132,8 +1221,9 @@ export async function moveIdea(
   const descendantUuids = descendants.map((d) => d.uuid);
   const movedIdeaUuids = [ideaUuid, ...descendantUuids];
 
-  // Descendant ideas carry their assignees along too (root checked above).
-  await assertAssigneesCanAccess(companyUuid, descendants, targetProjectUuid);
+  // Moved ideas keep their assignees (root + descendants). Gathered here and
+  // access-checked together with the cascaded tasks inside the transaction.
+  const ideaRows = ideaAssigneeRows(idea, descendants);
 
   // Transaction: cascade-update the moved Idea subtree + their linked Proposals
   // + those Proposals' Documents/Tasks + the Activity stream that targets any of
@@ -1160,6 +1250,36 @@ export async function moveIdea(
     });
     const proposalUuids = proposals.map((p) => p.uuid);
 
+    // Resolve Document/Task UUIDs via proposalUuid (D2). Skipped when no
+    // proposals are linked (both lookups would return nothing).
+    let documentUuids: string[] = [];
+    let taskRows: { uuid: string; title: string; assigneeType: string | null; assigneeUuid: string | null }[] = [];
+    if (proposalUuids.length > 0) {
+      const [documentRows, tasks] = await Promise.all([
+        tx.document.findMany({
+          where: { companyUuid, proposalUuid: { in: proposalUuids } },
+          select: { uuid: true },
+        }),
+        tx.task.findMany({
+          where: { companyUuid, proposalUuid: { in: proposalUuids } },
+          select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
+        }),
+      ]);
+      documentUuids = documentRows.map((d) => d.uuid);
+      taskRows = tasks;
+    }
+    const taskUuids = taskRows.map((t) => t.uuid);
+
+    // Moved ideas and tasks keep their assignees: every LIVE one must be able to
+    // edit the target project (dangling ones are skipped). Checked once, on the
+    // tx snapshot, before any write; throwing rolls the whole move back.
+    const blockedAssignees = await collectBlockedAssignees(
+      companyUuid, [...ideaRows, ...taskAssigneeRows(taskRows)], targetProjectUuid, tx,
+    );
+    if (blockedAssignees.length > 0) {
+      throw new AssigneeAccessError(formatBlockedAssigneesMessage(blockedAssignees), { blockedAssignees });
+    }
+
     // Idea rows — move the whole subtree. Then detach the moved ROOT from a
     // parent that is NOT moving (a parent is always an ancestor, never in the
     // moved set), so no cross-project lineage edge survives. Descendants keep
@@ -1177,33 +1297,14 @@ export async function moveIdea(
     }
 
     // Short-circuit when no proposals are linked: skip the proposal/document/
-    // task lookups and updateMany calls that would all return count 0 anyway.
-    // Activity still runs because idea-targeting activity rows can exist
-    // independent of any proposal (e.g. created/assigned/released events).
+    // task updateMany calls that would all return count 0 anyway. Activity
+    // still runs because idea-targeting activity rows can exist independent of
+    // any proposal (e.g. created/assigned/released events).
     let proposalCount = 0;
     let documentCount = 0;
     let taskCount = 0;
-    let documentUuids: string[] = [];
-    let taskUuids: string[] = [];
 
     if (proposalUuids.length > 0) {
-      // Resolve Document/Task UUIDs via proposalUuid (D2).
-      const [documentRows, taskRows] = await Promise.all([
-        tx.document.findMany({
-          where: { companyUuid, proposalUuid: { in: proposalUuids } },
-          select: { uuid: true },
-        }),
-        tx.task.findMany({
-          where: { companyUuid, proposalUuid: { in: proposalUuids } },
-          select: { uuid: true, assigneeType: true, assigneeUuid: true },
-        }),
-      ]);
-      documentUuids = documentRows.map((d) => d.uuid);
-      taskUuids = taskRows.map((t) => t.uuid);
-      // Moved tasks keep their assignees: each must be able to edit the target
-      // project. Throwing here rolls the whole move back.
-      await assertAssigneesCanAccess(companyUuid, taskRows, targetProjectUuid);
-
       // Proposals — walk the uuid PK from step 1's result instead of rescanning
       // the JSON inputUuids column. `array_overlaps` cannot use a btree index
       // and forces a seq scan, while `uuid IN (...)` hits Proposal_uuid_key.
@@ -1301,7 +1402,7 @@ export async function moveIdeaPreview(
   // Validate idea exists and belongs to same company
   const idea = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
-    select: { uuid: true, projectUuid: true },
+    select: { uuid: true, projectUuid: true, title: true, assigneeType: true, assigneeUuid: true },
   });
   if (!idea) throw new ApiError("NOT_FOUND", "Idea not found", 404);
 
@@ -1318,8 +1419,8 @@ export async function moveIdeaPreview(
 
   // Mirror moveIdea's lineage cascade: the preview counts the whole moved
   // subtree (root + transitive descendants), not just the root idea.
-  const descendantUuids = await getDescendantUuids(ideaUuid, companyUuid);
-  const movedIdeaUuids = [ideaUuid, ...descendantUuids];
+  const descendants = await getDescendants(ideaUuid, companyUuid);
+  const movedIdeaUuids = [ideaUuid, ...descendants.map((d) => d.uuid)];
 
   // Same SELECT pipeline as moveIdea — proposals → documents/tasks → activity.
   // The single JSON-column scan is the proposal.findMany; everything downstream
@@ -1341,23 +1442,32 @@ export async function moveIdeaPreview(
   let taskCount = 0;
   let documentUuids: string[] = [];
   let taskUuids: string[] = [];
+  let taskRows: { uuid: string; title: string; assigneeType: string | null; assigneeUuid: string | null }[] = [];
 
   if (proposalUuids.length > 0) {
-    const [documentRows, taskRows] = await Promise.all([
+    const [documentRows, tasks] = await Promise.all([
       prisma.document.findMany({
         where: { companyUuid, proposalUuid: { in: proposalUuids } },
         select: { uuid: true },
       }),
       prisma.task.findMany({
         where: { companyUuid, proposalUuid: { in: proposalUuids } },
-        select: { uuid: true },
+        select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
       }),
     ]);
+    taskRows = tasks;
     documentUuids = documentRows.map((d) => d.uuid);
     taskUuids = taskRows.map((t) => t.uuid);
     documentCount = documentUuids.length;
     taskCount = taskUuids.length;
   }
+
+  // Same blocked-assignee rule as moveIdea (dangling assignees skipped).
+  const blockedAssignees = await collectBlockedAssignees(
+    companyUuid,
+    [...ideaAssigneeRows(idea, descendants), ...taskAssigneeRows(taskRows)],
+    targetProjectUuid,
+  );
 
   const activityCount = await prisma.activity.count({
     where: {
@@ -1379,6 +1489,7 @@ export async function moveIdeaPreview(
       tasks: taskCount,
       activities: activityCount,
     },
+    blockedAssignees,
   };
 }
 

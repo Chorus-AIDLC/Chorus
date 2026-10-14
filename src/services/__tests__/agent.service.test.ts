@@ -21,8 +21,16 @@ const mockPrisma = vi.hoisted(() => ({
   user: {
     findMany: vi.fn(),
   },
+  $transaction: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+
+// ===== Assignment release mock =====
+const mockPublish = vi.hoisted(() => vi.fn());
+const mockReleaseAgentAssignments = vi.hoisted(() => vi.fn());
+vi.mock("@/services/agent-assignment-release.service", () => ({
+  releaseAgentAssignments: (...args: unknown[]) => mockReleaseAgentAssignments(...args),
+}));
 
 // ===== API Key mock =====
 const mockGenerateApiKey = vi.fn();
@@ -301,14 +309,58 @@ describe("updateAgent", () => {
 
 // ===== deleteAgent =====
 describe("deleteAgent", () => {
-  it("should delete agent by uuid", async () => {
-    mockPrisma.agent.delete.mockResolvedValue(makeAgent());
+  const actorUuid = ownerUuid;
 
-    await deleteAgent(agentUuid);
-
-    expect(mockPrisma.agent.delete).toHaveBeenCalledWith({
-      where: { uuid: agentUuid },
+  beforeEach(() => {
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn(mockPrisma));
+    mockReleaseAgentAssignments.mockResolvedValue({
+      releasedTaskUuids: [],
+      releasedIdeaUuids: [],
+      publish: mockPublish,
     });
+  });
+
+  it("releases assignments then deletes the agent in one transaction, publishing after commit", async () => {
+    const order: string[] = [];
+    mockPrisma.agent.findFirst.mockResolvedValue({ uuid: agentUuid });
+    mockReleaseAgentAssignments.mockImplementation(async () => {
+      order.push("release");
+      return { releasedTaskUuids: [], releasedIdeaUuids: [], publish: () => { order.push("publish"); } };
+    });
+    mockPrisma.agent.delete.mockImplementation(async () => {
+      order.push("delete");
+      return makeAgent();
+    });
+
+    const result = await deleteAgent(companyUuid, agentUuid, actorUuid);
+
+    expect(result).toEqual(makeAgent());
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.agent.findFirst).toHaveBeenCalledWith({
+      where: { uuid: agentUuid, companyUuid },
+      select: { uuid: true },
+    });
+    expect(mockReleaseAgentAssignments).toHaveBeenCalledWith(companyUuid, agentUuid, actorUuid, mockPrisma);
+    expect(mockPrisma.agent.delete).toHaveBeenCalledWith({ where: { uuid: agentUuid } });
+    expect(order).toEqual(["release", "delete", "publish"]);
+  });
+
+  it("returns null without releasing or deleting when the agent is not in the company", async () => {
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+
+    const result = await deleteAgent(companyUuid, agentUuid, actorUuid);
+
+    expect(result).toBeNull();
+    expect(mockReleaseAgentAssignments).not.toHaveBeenCalled();
+    expect(mockPrisma.agent.delete).not.toHaveBeenCalled();
+  });
+
+  it("does not publish release events when the delete fails", async () => {
+    mockPrisma.agent.findFirst.mockResolvedValue({ uuid: agentUuid });
+    mockPrisma.agent.delete.mockRejectedValue(new Error("delete failed"));
+
+    await expect(deleteAgent(companyUuid, agentUuid, actorUuid)).rejects.toThrow("delete failed");
+    expect(mockPublish).not.toHaveBeenCalled();
   });
 });
 

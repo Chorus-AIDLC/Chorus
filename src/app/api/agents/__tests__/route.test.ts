@@ -13,6 +13,11 @@ const mockPrisma = vi.hoisted(() => ({
   },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+const mockDeleteAgent = vi.hoisted(() => vi.fn());
+vi.mock("@/services/agent.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/agent.service")>()),
+  deleteAgent: (...args: unknown[]) => mockDeleteAgent(...args),
+}));
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
   isUser: (auth: { type: string }) => auth?.type === "user",
@@ -23,6 +28,7 @@ import { GET, POST } from "@/app/api/agents/route";
 import {
   GET as GET_DETAIL,
   PATCH,
+  DELETE,
 } from "@/app/api/agents/[uuid]/route";
 
 const companyUuid = "company-0000-0000-0000-000000000001";
@@ -373,5 +379,35 @@ describe("PATCH /api/agents/[uuid]", () => {
         data: expect.objectContaining({ permissions: [] }),
       }),
     );
+  });
+});
+
+describe("DELETE /api/agents/[uuid]", () => {
+  it("deletes through the company-scoped deleteAgent service with the deleting user", async () => {
+    mockDeleteAgent.mockResolvedValue({ uuid: agentUuid });
+
+    const res = await DELETE(jsonRequest(`/api/agents/${agentUuid}`, { method: "DELETE" }), ctx(agentUuid));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, data: { deleted: true } });
+    expect(mockDeleteAgent).toHaveBeenCalledWith(companyUuid, agentUuid, userUuid);
+    expect(mockPrisma.agent.delete).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the agent is not in the caller's company", async () => {
+    mockDeleteAgent.mockResolvedValue(null);
+
+    const res = await DELETE(jsonRequest(`/api/agents/${agentUuid}`, { method: "DELETE" }), ctx(agentUuid));
+
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects non-user callers without deleting", async () => {
+    mockGetAuthContext.mockResolvedValue({ type: "agent", companyUuid, actorUuid: agentUuid });
+
+    const res = await DELETE(jsonRequest(`/api/agents/${agentUuid}`, { method: "DELETE" }), ctx(agentUuid));
+
+    expect(res.status).toBe(403);
+    expect(mockDeleteAgent).not.toHaveBeenCalled();
   });
 });
