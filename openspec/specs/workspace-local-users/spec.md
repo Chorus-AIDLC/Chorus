@@ -79,7 +79,15 @@ The system SHALL hash passwords with the existing cross-platform bcryptjs depend
 - **THEN** it fails without consuming the credential token
 
 ### Requirement: Unified identity discovery
-The login entry SHALL accept username or email, combine matching local accounts with existing SSO email-suffix/identity discovery, and preserve Superadmin/default-auth/OIDC variants. Multiple matching workspaces SHALL require explicit selection before authentication. Discovery SHALL NOT authorize access or expose account profile/role/status details.
+The login entry SHALL always begin with username or email discovery, combine matching local accounts with existing SSO email-suffix/identity discovery, and preserve Superadmin/default-auth/OIDC variants. Enabling DEFAULT_USER or a Superadmin collision SHALL NOT show a password, role picker or separate SSO entry before identification. Multiple matching workspaces SHALL require explicit selection before authentication; a single matching path SHALL proceed directly to its password step or SSO redirect. Returning from selection or a password step SHALL restore identifier discovery and clear the password. Discovery SHALL NOT authorize access or expose account profile/role/status details.
+
+#### Scenario: Default-auth deployment shares the login entry
+- **WHEN** an unauthenticated visitor opens login with DEFAULT_USER enabled, with or without a Superadmin collision
+- **THEN** only username/email discovery is offered, and the identified candidate determines password or SSO authentication
+
+#### Scenario: Single candidate skips workspace selection
+- **WHEN** discovery returns exactly one local, default-auth or SSO path
+- **THEN** its password step or SSO redirect starts without a workspace picker or authentication-method toggle
 
 #### Scenario: Shared identifier selects workspace
 - **WHEN** the input matches local accounts in two workspaces and an SSO suffix

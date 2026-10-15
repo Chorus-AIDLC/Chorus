@@ -67,6 +67,26 @@ describe("local unified login", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Sign in to Local One" }));
     expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("");
   });
+  it("waits for a mixed local/SSO workspace choice before showing credentials or redirecting", async () => {
+    identify = { type: "multi_role", roles: [
+      { kind: "local", company: { uuid: "local-1", name: "Local One" } },
+      { kind: "oidc", company: { uuid: "sso-1", name: "SSO One", oidcIssuer: "https://sso.example.com", oidcClientId: "client" } },
+    ] };
+    render(<LoginPage />); await identifyUser("alice@example.com");
+    expect(await screen.findByRole("button", { name: "Sign in to Local One" })).toBeTruthy();
+    expect(screen.queryByLabelText("Password")).toBeNull();
+    expect(signinRedirect).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Sign in with SSO One" }));
+    await waitFor(() => expect(signinRedirect).toHaveBeenCalledWith({ extraQueryParams: { login_hint: "alice@example.com" } }));
+    expect(requests.some((r) => r.url === "/api/auth/local/login")).toBe(false);
+  });
+  it("routes SSO-only multiple matches to workspace selection before redirecting", async () => {
+    identify = { type: "oidc_multi_match", candidates: [{ uuid: "sso-1", name: "SSO One" }, { uuid: "sso-2", name: "SSO Two" }] };
+    render(<LoginPage />); await identifyUser("alice@example.com");
+    expect(push).toHaveBeenCalledWith("/login/pick-workspace?email=alice%40example.com");
+    expect(signinRedirect).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Password")).toBeNull();
+  });
   it("shows rejected local credentials without navigating", async () => {
     mutation = { success: false, error: { message: "Invalid credentials" } };
     render(<LoginPage />); await identifyUser();

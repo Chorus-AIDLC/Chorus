@@ -1,20 +1,7 @@
 // @vitest-environment jsdom
-// Integration test for the login page role-picker (super-admin / default-auth /
-// OIDC collision handling). Covers both triggers and all three routing paths:
-//
-//   Trigger A — GET /api/auth/check-default returns superAdminCollision:true
-//     → picker shown up front (super_admin + default_auth), NOT the password form.
-//   Trigger B — POST /api/auth/identify returns type:"multi_role"
-//     → one button per roles[] entry.
-//
-// Routing per option:
-//   super_admin   → router.push("/login/admin?email=<encoded>"), no default-login POST.
-//   default_auth  → clears picker, shows the existing default-auth password form
-//                   (which submits to /api/auth/default-login).
-//   oidc          → storeOidcConfig + signinRedirect with login_hint=email.
-//
-// The page's network calls are stubbed at global.fetch (we assert on the calls
-// the page makes); next-intl uses the real en.json so we assert on visible copy.
+// Unified identifier-first entry and post-identification role/workspace routing.
+// Deployment defaults must not show passwords or role choices before discovery.
+// Fetch and OIDC are stubbed; visible copy uses the real en.json translations.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
@@ -167,30 +154,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("LoginPage role picker — Trigger A (check-default collision)", () => {
-  it("renders the picker up front and does NOT show the default-auth password form", async () => {
+describe("LoginPage identifier-first entry with deployment defaults", () => {
+  it.each([false, true])("requires discovery even when default auth is enabled (collision=%s)", async (superAdminCollision) => {
     installFetch({
       checkDefault: {
         success: true,
-        data: { enabled: true, superAdminCollision: true },
+        data: { enabled: true, superAdminCollision },
       },
     });
 
     render(<LoginPage />);
-
-    // Picker title and both fixed options are visible.
-    await waitFor(() => {
-      expect(
-        screen.getByText(
-          "This email can sign in more than one way. Choose how to continue."
-        )
-      ).toBeTruthy();
-    });
-    expect(screen.getByText("Sign in as Super Admin")).toBeTruthy();
-    expect(screen.getByText("Sign in with password")).toBeTruthy();
-
-    // The default-auth password form must NOT be present (no password field).
+    expect(await screen.findByLabelText("Username or email")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
+    expect(screen.queryByText("Sign in as Super Admin")).toBeNull();
+    expect(screen.queryByText("Sign in with password")).toBeNull();
+    expect(screen.queryByText("Sign in with SSO")).toBeNull();
     expect(screen.queryByLabelText("Password")).toBeNull();
+    expect(global.fetch).not.toHaveBeenCalledWith("/api/auth/check-default");
   });
 
   it("super_admin option routes to /login/admin and never POSTs default-login", async () => {
@@ -199,23 +179,19 @@ describe("LoginPage role picker — Trigger A (check-default collision)", () => 
         success: true,
         data: { enabled: true, superAdminCollision: true },
       },
+      identify: { success: true, data: { type: "multi_role", roles: [{ kind: "super_admin" }, { kind: "default_auth" }] } },
     });
 
     render(<LoginPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Sign in as Super Admin")).toBeTruthy();
-    });
+    await userEvent.type(await screen.findByLabelText("Username or email"), "root@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText("Sign in as Super Admin")).toBeTruthy();
 
     await userEvent.click(
       screen.getByText("Sign in as Super Admin").closest("button")!
     );
 
-    // In the up-front collision flow the page never learns the email
-    // (check-default does not echo it), so it routes to /login/admin with an
-    // empty email. The admin page then prompts for the email when no ?email=
-    // param is present — see admin/page.test.tsx for the recovery path.
-    expect(mockRouterPush).toHaveBeenCalledWith("/login/admin?email=");
+    expect(mockRouterPush).toHaveBeenCalledWith("/login/admin?email=root%40example.com");
 
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     expect(
@@ -231,14 +207,14 @@ describe("LoginPage role picker — Trigger A (check-default collision)", () => 
         success: true,
         data: { enabled: true, superAdminCollision: true },
       },
+      identify: { success: true, data: { type: "multi_role", roles: [{ kind: "super_admin" }, { kind: "default_auth" }] } },
       defaultLogin: { success: true, data: {} },
     });
 
     render(<LoginPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Sign in with password")).toBeTruthy();
-    });
+    await userEvent.type(await screen.findByLabelText("Username or email"), "root@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText("Sign in with password")).toBeTruthy();
 
     await userEvent.click(
       screen.getByText("Sign in with password").closest("button")!
@@ -250,7 +226,7 @@ describe("LoginPage role picker — Trigger A (check-default collision)", () => 
     expect(mockRouterPush).not.toHaveBeenCalled();
 
     // Submitting the form POSTs to /api/auth/default-login.
-    await userEvent.type(screen.getByLabelText("Email"), "root@example.com");
+    expect(screen.getByLabelText("Username or email").getAttribute("readonly")).not.toBeNull();
     await userEvent.type(passwordField, "hunter2");
     await userEvent.click(screen.getByRole("button", { name: "Sign In" }));
 
@@ -267,7 +243,49 @@ describe("LoginPage role picker — Trigger A (check-default collision)", () => 
   });
 });
 
-describe("LoginPage role picker — Trigger B (identify multi_role)", () => {
+describe("LoginPage single identified auth path", () => {
+  it("opens default password only after discovery and returns to identifier entry", async () => {
+    installFetch({
+      checkDefault: { success: true, data: { enabled: true } },
+      identify: { success: true, data: { type: "default_auth" } },
+    });
+    render(<LoginPage />);
+    await userEvent.type(await screen.findByLabelText("Username or email"), "dev@example.com");
+    expect(screen.queryByLabelText("Password")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await userEvent.type(await screen.findByLabelText("Password"), "discard-me");
+    expect(screen.queryByText("Sign in with password")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Use a different email" }));
+    expect(screen.queryByLabelText("Password")).toBeNull();
+    const identifier = screen.getByLabelText("Username or email") as HTMLInputElement;
+    expect(identifier.readOnly).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect((await screen.findByLabelText("Password") as HTMLInputElement).value).toBe("");
+  });
+
+  it("automatically redirects a single SSO workspace even with default auth enabled", async () => {
+    installFetch({
+      checkDefault: { success: true, data: { enabled: true } },
+      identify: { success: true, data: { type: "oidc", company: COMPANY_A } },
+    });
+    render(<LoginPage />);
+    await userEvent.type(await screen.findByLabelText("Username or email"), "alice@acme.com");
+    expect(mockSigninRedirect).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(mockSigninRedirect).toHaveBeenCalledWith({ extraQueryParams: { login_hint: "alice@acme.com" } }));
+    expect(screen.queryByLabelText("Password")).toBeNull();
+  });
+
+  it("routes a single superadmin match with the typed identifier", async () => {
+    installFetch({ checkDefault: { success: true, data: { enabled: false } }, identify: { success: true, data: { type: "super_admin" } } });
+    render(<LoginPage />);
+    await userEvent.type(await screen.findByLabelText("Username or email"), "root@example.com");
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(mockRouterPush).toHaveBeenCalledWith("/login/admin?email=root%40example.com");
+  });
+});
+
+describe("LoginPage role picker — identify multi_role", () => {
   it("renders one button per roles[] entry after email submit", async () => {
     installFetch({
       // No default auth → page starts on the OIDC email form.

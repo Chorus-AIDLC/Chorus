@@ -14,11 +14,6 @@ import { clientLogger } from "@/lib/logger-client";
 import type { IdentifyRoleOption } from "@/types/admin";
 import { isImeComposing } from "@/lib/ime";
 
-interface DefaultAuthInfo {
-  enabled: boolean;
-  superAdminCollision: boolean;
-}
-
 export default function LoginPage() {
   const router = useRouter();
   const t = useTranslations();
@@ -27,43 +22,17 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [defaultAuth, setDefaultAuth] = useState<DefaultAuthInfo | null>(null);
-  const [defaultAuthChecked, setDefaultAuthChecked] = useState(false);
+  const [defaultPasswordSelected, setDefaultPasswordSelected] = useState(false);
   // Until we've confirmed the visitor is NOT already logged in, hold the form back so an
   // already-authenticated user (e.g. bounced here after an iOS reopen) is redirected into
   // the app instead of being stranded on the login form. See the auth-check effect below.
   const [authChecked, setAuthChecked] = useState(false);
-  const [showSsoForm, setShowSsoForm] = useState(false);
   const [localCompany, setLocalCompany] = useState<{ uuid: string; name: string } | null>(null);
-  // When non-null, the role picker is shown instead of any auth form. Seeded by
-  // a check-default superAdminCollision (Trigger A) or an identify multi_role
-  // response (Trigger B). Each entry routes to its own existing auth flow.
+  // Only identify results can select an auth path or show the workspace/role
+  // picker. Deployment defaults must not bypass identifier discovery.
   const [roleChoices, setRoleChoices] = useState<IdentifyRoleOption[] | null>(
     null
   );
-
-  useEffect(() => {
-    async function checkDefaultAuth() {
-      try {
-        const response = await fetch("/api/auth/check-default");
-        const data = await response.json();
-        if (data.success && data.data?.enabled) {
-          setDefaultAuth(data.data);
-          // Trigger A — the default-auth user is also the super admin. Offer
-          // both up front instead of dropping into the default-auth form, so
-          // the super admin can still reach /login/admin.
-          if (data.data.superAdminCollision) {
-            setRoleChoices([{ kind: "super_admin" }, { kind: "default_auth" }]);
-          }
-        }
-      } catch {
-        // Default auth not available, show normal flow
-      } finally {
-        setDefaultAuthChecked(true);
-      }
-    }
-    checkDefaultAuth();
-  }, []);
 
   // If the visitor is ALREADY logged in, send them into the app instead of showing the
   // login form. This is the other half of the iOS-reopen fix: when a still-valid session
@@ -191,7 +160,7 @@ export default function LoginPage() {
     });
   };
 
-  const handleSsoSubmit = async (e: React.FormEvent) => {
+  const handleIdentifySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
@@ -217,7 +186,7 @@ export default function LoginPage() {
         setPassword("");
         setRoleChoices(null);
       } else if (result.type === "default_auth") {
-        setShowSsoForm(false);
+        setDefaultPasswordSelected(true);
         setRoleChoices(null);
       } else if (result.type === "super_admin") {
         router.push(`/login/admin?email=${encodeURIComponent(email)}`);
@@ -257,33 +226,35 @@ export default function LoginPage() {
     if (role.kind === "default_auth") {
       // Clear the picker and fall through to the default-auth password form.
       setRoleChoices(null);
-      setShowSsoForm(false);
+      setDefaultPasswordSelected(true);
       setPassword("");
       return;
     }
     if (role.kind === "oidc" && role.company) {
+      setLoading(true);
       try {
         await startOidcRedirect(role.company);
       } catch (err) {
         clientLogger.error("OIDC redirect error:", err);
         setError(t("login.networkError"));
+      } finally {
+        setLoading(false);
       }
     }
   };
 
-  // Leave the role picker and return to the email / default-auth entry point.
+  // Returning always restores identifier discovery, never a deployment default.
   const handleRolePickerBack = () => {
     setLocalCompany(null);
     setRoleChoices(null);
     setError("");
     setPassword("");
-    setShowSsoForm(false);
+    setShowPassword(false);
+    setDefaultPasswordSelected(false);
   };
 
-  // Hold the form until BOTH checks resolve: default-auth config AND the
-  // already-authenticated probe. This prevents the login form from flashing before an
-  // already-logged-in visitor is redirected into the app.
-  if (!defaultAuthChecked || !authChecked) {
+  // Hold the form until the already-authenticated probe resolves.
+  if (!authChecked) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-muted-foreground">{t("common.loading")}</div>
@@ -293,8 +264,7 @@ export default function LoginPage() {
 
   const showRolePicker = roleChoices !== null;
   const choices = roleChoices ?? [];
-  const showDefaultAuthForm =
-    !showRolePicker && defaultAuth?.enabled && !showSsoForm;
+  const showDefaultAuthForm = !showRolePicker && defaultPasswordSelected;
 
   // Human-readable label for a picker option. super_admin / default_auth use
   // fixed i18n strings; oidc options are labeled by their company name.
@@ -360,6 +330,7 @@ export default function LoginPage() {
                     <Button
                       type="button"
                       variant="ghost"
+                      disabled={loading}
                       onClick={() => handleRoleSelect(role)}
                       className="flex h-auto w-full items-center gap-3 px-4 py-3 text-left hover:bg-transparent"
                     >
@@ -396,15 +367,8 @@ export default function LoginPage() {
               {/* Default Auth Password Form */}
               <form onSubmit={handlePasswordLogin} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="email">{t("login.defaultAuth.email")}</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    disabled={loading}
-                  />
+                  <Label htmlFor="email">{t("login.email")}</Label>
+                  <Input id="email" value={email} readOnly autoComplete="username" />
                 </div>
 
                 <div className="space-y-2">
@@ -447,31 +411,16 @@ export default function LoginPage() {
                 </Button>
               </form>
 
-              {/* Divider and SSO link */}
-              <div className="mt-6 flex items-center gap-3">
-                <div className="h-px flex-1 bg-border" />
-                <span className="text-xs text-muted-foreground">{t("login.defaultAuth.orDivider")}</span>
-                <div className="h-px flex-1 bg-border" />
-              </div>
-
               <div className="mt-4 flex justify-center">
-                <Button
-                  variant="link"
-                  size="sm"
-                  onClick={() => {
-                    setShowSsoForm(true);
-                    setError("");
-                    setPassword("");
-                  }}
-                >
-                  {t("login.defaultAuth.ssoLink")}
+                <Button type="button" variant="link" size="sm" disabled={loading} onClick={handleRolePickerBack}>
+                  {t("login.rolePicker.back")}
                 </Button>
               </div>
             </>
           ) : (
             <>
-              {/* Original OIDC Email Identification Form */}
-              <form onSubmit={handleSsoSubmit} onKeyDown={(e) => {
+              {/* Shared username/email discovery for every login method */}
+              <form onSubmit={handleIdentifySubmit} onKeyDown={(e) => {
                 if (e.key === "Enter" && isImeComposing(e)) e.preventDefault();
               }} className="space-y-4">
                 <div className="space-y-2">
@@ -504,21 +453,6 @@ export default function LoginPage() {
                 {t("login.helpText")}
               </p>
 
-              {/* Back to default auth if available */}
-              {defaultAuth?.enabled && (
-                <div className="mt-4 flex justify-center">
-                  <Button
-                    variant="link"
-                    size="sm"
-                    onClick={() => {
-                      setShowSsoForm(false);
-                      setError("");
-                    }}
-                  >
-                    {t("login.backToLogin")}
-                  </Button>
-                </div>
-              )}
             </>
           )}
         </CardContent>
