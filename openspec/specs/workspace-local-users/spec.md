@@ -45,6 +45,11 @@ Admins SHALL list, invite, edit, enable/disable, reset credentials, grant/revoke
 - **WHEN** an admin removes a local account and invites the same normalized username or email in the same workspace
 - **THEN** a new account UUID and invitation are created without inheriting the old account's rights or history, and the old UUID's sessions, credential links and owned-Agent keys remain invalid even after the new account activates
 
+#### Scenario: Only live users receive new assignments or grants
+- **WHEN** a user is selected for a new task/Idea assignment, project/group membership or role promotion
+- **THEN** the server requires an active, undeleted user in the same workspace even for direct requests, and assignment pickers exclude invited, disabled and deleted users
+- **AND** inactive historical members may still be demoted or removed subject to existing automatic/last-admin protections, without transferring history or memberships to a replacement UUID
+
 #### Scenario: Disabled user re-enabled
 - **WHEN** an admin enables a previously established local account
 - **THEN** that account may log in again but its old revoked session generation does not become valid

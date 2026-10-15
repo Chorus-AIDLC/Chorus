@@ -56,6 +56,7 @@ const mockPrisma = vi.hoisted(() => {
     agentInstance: {
       findFirst: vi.fn(),
     },
+    user: { findFirst: vi.fn() },
     $queryRaw: vi.fn().mockResolvedValue([]),
     activity: { create: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
     proposal: { findFirst: vi.fn() },

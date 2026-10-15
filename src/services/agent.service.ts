@@ -343,10 +343,10 @@ export async function getAssignableAgents(
     }));
 }
 
-// Get all users in company (for assignment)
+// Get active users in company (for new assignment, not historical attribution).
 export async function getCompanyUsers(companyUuid: string) {
   return prisma.user.findMany({
-    where: { companyUuid },
+    where: { companyUuid, status: "active", deletedAt: null },
     select: {
       uuid: true,
       name: true,

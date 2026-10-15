@@ -44,6 +44,8 @@ export interface UserRow {
   companyUuid: string;
   name: string | null;
   email: string | null;
+  status?: string;
+  deletedAt?: Date | null;
 }
 
 export interface AgentRow {

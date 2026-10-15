@@ -256,7 +256,7 @@ export async function addMember(
       throw badRequest("Cannot remove or demote the automatic project Admin");
     }
     const user = await tx.user.findFirst({
-      where: { uuid: userUuid, companyUuid: auth.companyUuid },
+      where: { uuid: userUuid, companyUuid: auth.companyUuid, status: "active", deletedAt: null },
       select: { uuid: true },
     });
     if (!user) throw badRequest("User not found in this company");
@@ -304,6 +304,14 @@ export async function updateMemberRole(
     });
     if (!member) throw memberNotFound();
     if (member.role === role) return { result: { uuid: member.uuid, userUuid, role } };
+    // Inactive historical members can still be demoted or removed, not promoted.
+    if (!levelAtLeast(member.role as ProjectMemberRole, role)) {
+      const user = await tx.user.findFirst({
+        where: { uuid: userUuid, companyUuid: auth.companyUuid, status: "active", deletedAt: null },
+        select: { uuid: true },
+      });
+      if (!user) throw badRequest("User not found in this company");
+    }
 
     const updated = await tx.projectMember.update({
       where: { uuid: member.uuid },

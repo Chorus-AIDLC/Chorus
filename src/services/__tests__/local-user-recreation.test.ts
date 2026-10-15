@@ -5,13 +5,29 @@ import type { User } from "@/generated/prisma/client";
 import { localAuth, makeLocalUser, password, rawToken } from "./local-user.fixture";
 
 const db = vi.hoisted(() => ({
-  $transaction: vi.fn(), user: { findFirst: vi.fn() },
+  $transaction: vi.fn(), user: { findFirst: vi.fn(), findMany: vi.fn() },
   apiKey: { findUnique: vi.fn(), update: vi.fn() },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
 import { acceptLocalCredential, createLocalUser, removeLocalUser } from "@/services/local-user.service";
 import { createUserAccessToken, getUserSessionFromRequest } from "@/lib/user-session";
 import { validateApiKey } from "@/lib/api-key";
+import { getCompanyUsers } from "@/services/agent.service";
+import { assertAssigneeProjectAccess, resolveLiveAssignee } from "@/services/task.service";
+import { addMember, updateMemberRole, removeMember } from "@/services/project-member.service";
+import { addGroupMember, updateGroupMember, removeGroupMember } from "@/services/project-group-member.service";
+
+vi.mock("@/services/project-access.service", async importOriginal => ({
+  ...await importOriginal<typeof import("@/services/project-access.service")>(),
+  requireProjectOperation: vi.fn(),
+  computeProjectAccess: vi.fn(async () => ({ project: { visibility: "private" }, level: "admin" })),
+  canActorAccessProject: vi.fn(async () => true),
+}));
+vi.mock("@/services/project-access-preview.service", () => ({ lockProjectAccess: vi.fn() }));
+vi.mock("@/services/project-group-access.service", () => ({ requireGroupOperation: vi.fn() }));
+vi.mock("@/services/project-group-implicit-admin.service", () => ({ implicitGroupAdmin: vi.fn(), implicitProjectAdmin: vi.fn(), invalidateImplicitGroupAdminCache: vi.fn() }));
+vi.mock("@/services/project-group-mutation.service", () => ({ lockGroups: vi.fn(), auditGroup: vi.fn(), publishGroupAccess: vi.fn() }));
+vi.mock("@/services/activity.service", () => ({ createActivityInTx: vi.fn(async () => ({})) }));
 
 type Token = { uuid: string; companyUuid: string; userUuid: string; tokenHash: string; purpose: string; sessionVersion: number; expiresAt: Date; usedAt: Date | null };
 type Audit = { companyUuid: string; actorType: string; actorUuid: string; targetUuid: string; action: string };
@@ -40,6 +56,10 @@ const tx = {
   },
   userCredentialToken: { findUnique: vi.fn(), create: vi.fn(), deleteMany: vi.fn(), updateMany: vi.fn() },
   localUserAudit: { create: vi.fn() },
+  projectMember: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
+  projectGroupMember: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
+  projectGroup: { update: vi.fn() },
+  project: { findMany: vi.fn() },
 };
 
 beforeEach(() => {
@@ -98,9 +118,57 @@ beforeEach(() => {
   });
   db.apiKey.findUnique.mockResolvedValue({ uuid: "old-key", revokedAt: null, expiresAt: null, agent: { uuid: "old-agent", name: "Old agent", companyUuid: target.companyUuid, ownerUuid: target.uuid, roles: ["developer_agent"], permissions: [] } });
   db.apiKey.update.mockResolvedValue({});
+  db.user.findMany.mockImplementation(async ({ where }) => users.filter(user => matches(user, where)));
+  tx.project.findMany.mockResolvedValue([]);
+  for (const model of [tx.projectMember, tx.projectGroupMember]) {
+    model.findUnique.mockResolvedValue(null);
+    model.create.mockImplementation(async ({ data }) => ({ uuid: "member", createdAt: new Date(), updatedAt: new Date(), ...data }));
+    model.update.mockImplementation(async ({ data }) => ({ uuid: "member", createdAt: new Date(), updatedAt: new Date(), ...data }));
+    model.delete.mockResolvedValue({ uuid: "member", createdAt: new Date(), updatedAt: new Date() });
+  }
 });
 afterEach(() => vi.unstubAllEnvs());
 const invite = () => createLocalUser(localAuth, { username: " ALICE ", email: " ALICE@EXAMPLE.COM " });
+
+describe("live principal selection and new authorization", () => {
+  it("selects only the activated replacement and rejects new authorization of the deleted UUID", async () => {
+    await removeLocalUser(localAuth, target.uuid);
+    const fresh = await invite();
+    await acceptLocalCredential({ token: new URL(fresh.credentialLink!.url).searchParams.get("token")!, password });
+    const candidates = await getCompanyUsers(localAuth.companyUuid);
+    expect(candidates.map(user => user.uuid)).toEqual([localAuth.actorUuid, fresh.user.uuid]);
+    expect(users.find(user => user.uuid === target.uuid)).toMatchObject({ name: target.name, email: target.email, status: "deleted" });
+    // Historical attribution/cascade resolution is not a new authorization.
+    expect(await resolveLiveAssignee(localAuth.companyUuid, { type: "user", uuid: target.uuid })).toMatchObject({ uuid: target.uuid });
+    await expect(addMember(localAuth, "project", target.uuid, "editor")).rejects.toMatchObject({ status: 400 });
+    await expect(addGroupMember(localAuth, "group", target.uuid, "editor")).rejects.toMatchObject({ status: 404 });
+    await expect(assertAssigneeProjectAccess(localAuth.companyUuid, { type: "user", uuid: target.uuid }, "project")).rejects.toMatchObject({ status: 403 });
+    await expect(addMember(localAuth, "project", fresh.user.uuid, "editor")).resolves.toMatchObject({ userUuid: fresh.user.uuid });
+    await expect(addGroupMember(localAuth, "group", fresh.user.uuid, "editor")).resolves.toMatchObject({ userUuid: fresh.user.uuid });
+    await expect(assertAssigneeProjectAccess(localAuth.companyUuid, { type: "user", uuid: fresh.user.uuid }, "project")).resolves.toBeUndefined();
+  });
+
+  it.each(["invited", "disabled", "deleted", "foreign", "tombstone"])("rejects new grants and assignment for %s targets but permits membership cleanup", async state => {
+    if (state === "foreign") target.companyUuid = "other-company";
+    else if (state === "tombstone") target.deletedAt = new Date();
+    else target.status = state;
+    expect((await getCompanyUsers(localAuth.companyUuid)).map(user => user.uuid)).not.toContain(target.uuid);
+    await expect(addMember(localAuth, "project", target.uuid, "editor")).rejects.toMatchObject({ status: 400 });
+    await expect(addGroupMember(localAuth, "group", target.uuid, "editor")).rejects.toMatchObject({ status: 404 });
+    await expect(assertAssigneeProjectAccess(localAuth.companyUuid, { type: "user", uuid: target.uuid }, "project")).rejects.toMatchObject({ status: 403 });
+    tx.projectMember.findUnique.mockResolvedValue({ uuid: "member", role: "viewer" });
+    tx.projectGroupMember.findUnique.mockResolvedValue({ uuid: "member", role: "viewer" });
+    await expect(updateMemberRole(localAuth, "project", target.uuid, "editor")).rejects.toMatchObject({ status: 400 });
+    await expect(updateGroupMember(localAuth, "group", target.uuid, "editor")).rejects.toMatchObject({ status: 404 });
+    if (state === "foreign") return; // No foreign member cleanup is authorized.
+    tx.projectMember.findUnique.mockResolvedValue({ uuid: "member", role: "editor" });
+    tx.projectGroupMember.findUnique.mockResolvedValue({ uuid: "member", role: "editor" });
+    await expect(updateMemberRole(localAuth, "project", target.uuid, "viewer")).resolves.toBeDefined();
+    await expect(updateGroupMember(localAuth, "group", target.uuid, "viewer")).resolves.toBeDefined();
+    await expect(removeMember(localAuth, "project", target.uuid)).resolves.toBeDefined();
+    await expect(removeGroupMember(localAuth, "group", target.uuid)).resolves.toEqual({ removed: true });
+  });
+});
 
 describe("deleted local identity reuse without inheritance", () => {
   it("releases both identifiers while retaining tombstone UUID, attribution and a fresh non-admin invitation", async () => {
