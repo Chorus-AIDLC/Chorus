@@ -12,18 +12,21 @@ datasource db {
 
 // Tenant
 model Company {
-  id           Int      @id @default(autoincrement())
-  uuid         String   @unique @default(uuid())
-  name         String
+  id               Int      @id @default(autoincrement())
+  uuid             String   @unique @default(uuid())
+  name             String
   // Email domain matching (used to identify Company during login)
-  emailDomains String[] @default([]) // e.g., ["example.com", "example.org"]
+  emailDomains     String[] @default([]) // e.g., ["example.com", "example.org"]
   // OIDC configuration (per-Company login, PKCE only, no Client Secret)
-  oidcIssuer   String? // OIDC Provider URL
-  oidcClientId String? // Client ID
-  oidcEnabled  Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  oidcIssuer       String? // OIDC Provider URL
+  oidcClientId     String? // Client ID
+  oidcEnabled      Boolean  @default(false)
+  localAuthEnabled Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
+  userCredentialTokens       UserCredentialToken[]
+  localUserAudits            LocalUserAudit[]
   users                      User[]
   agents                     Agent[]
   apiKeys                    ApiKey[]
@@ -44,22 +47,66 @@ model Company {
 
 // User (human, OIDC login)
 model User {
-  id          Int      @id @default(autoincrement())
-  uuid        String   @unique @default(uuid())
-  companyUuid String
-  company     Company  @relation(fields: [companyUuid], references: [uuid])
-  oidcSub     String // OIDC subject
-  email       String?
-  name        String?
-  avatarUrl   String?
-  createdAt   DateTime @default(now())
+  id               Int                   @id @default(autoincrement())
+  uuid             String                @unique @default(uuid())
+  companyUuid      String
+  company          Company               @relation(fields: [companyUuid], references: [uuid])
+  oidcSub          String // OIDC subject
+  email            String?
+  name             String?
+  avatarUrl        String?
+  authType         String                @default("oidc")
+  username         String?
+  localEmail       String?
+  passwordHash     String?
+  status           String                @default("active")
+  workspaceAdmin   Boolean               @default(false)
+  sessionVersion   Int                   @default(0)
+  deletedAt        DateTime?
+  credentialTokens UserCredentialToken[]
+  createdAt        DateTime              @default(now())
 
   ownedAgents                Agent[]
   projectAgentCwdPreferences ProjectAgentCwdPreference[]
   daemonDirectoryRequests    DaemonDirectoryRequest[]
 
   @@unique([companyUuid, oidcSub])
+  @@unique([companyUuid, username])
+  @@unique([companyUuid, localEmail])
   @@index([companyUuid])
+}
+
+model UserCredentialToken {
+  uuid           String    @id @default(uuid())
+  companyUuid    String
+  company        Company   @relation(fields: [companyUuid], references: [uuid])
+  userUuid       String
+  user           User      @relation(fields: [userUuid], references: [uuid])
+  tokenHash      String    @unique
+  purpose        String
+  sessionVersion Int
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([companyUuid])
+  @@index([userUuid])
+}
+
+// Workspace lifecycle auditing is not project-scoped like Activity.
+// Historical actor/target UUIDs intentionally survive user tombstoning.
+model LocalUserAudit {
+  uuid        String   @id @default(uuid())
+  companyUuid String
+  company     Company  @relation(fields: [companyUuid], references: [uuid])
+  actorType   String
+  actorUuid   String
+  targetUuid  String
+  action      String
+  createdAt   DateTime @default(now())
+
+  @@index([companyUuid, createdAt])
+  @@index([targetUuid])
 }
 
 // Agent (e.g., Claude Code)

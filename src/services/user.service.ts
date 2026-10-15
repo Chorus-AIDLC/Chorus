@@ -3,6 +3,13 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
+import { ApiError } from "@/lib/api-handler";
+
+function rejectManagedAccount(user: { authType?: string; status?: string; deletedAt?: Date | null } | null) {
+  if (user && (user.authType === "local" || user.deletedAt || (user.status && user.status !== "active"))) {
+    throw new ApiError("UNAUTHORIZED", "Invalid credentials", 401);
+  }
+}
 
 // User creation/update input from OIDC
 export interface OidcUserInput {
@@ -15,6 +22,8 @@ export interface OidcUserInput {
 // Find or create user by OIDC subject
 export async function findOrCreateUserByOidc(input: OidcUserInput) {
   const { oidcSub, email, name, companyUuid } = input;
+  const companyState = await prisma.company.findFirst({ where: { uuid: companyUuid }, select: { localAuthEnabled: true } });
+  if (!companyState || companyState.localAuthEnabled) throw new ApiError("UNAUTHORIZED", "Invalid credentials", 401);
 
   // First try to find existing user by OIDC subject in this company
   let user = await prisma.user.findFirst({
@@ -29,6 +38,9 @@ export async function findOrCreateUserByOidc(input: OidcUserInput) {
       name: true,
       oidcSub: true,
       companyUuid: true,
+      authType: true,
+      status: true,
+      deletedAt: true,
       company: {
         select: {
           uuid: true,
@@ -39,6 +51,7 @@ export async function findOrCreateUserByOidc(input: OidcUserInput) {
   });
 
   if (user) {
+    rejectManagedAccount(user);
     // Update user info if changed
     if (user.email !== email || user.name !== name) {
       user = await prisma.user.update({
@@ -51,6 +64,9 @@ export async function findOrCreateUserByOidc(input: OidcUserInput) {
           name: true,
           oidcSub: true,
           companyUuid: true,
+          authType: true,
+          status: true,
+          deletedAt: true,
           company: {
             select: {
               uuid: true,
@@ -72,6 +88,7 @@ export async function findOrCreateUserByOidc(input: OidcUserInput) {
   });
 
   if (existingByEmail) {
+    rejectManagedAccount(existingByEmail);
     // Link OIDC subject to existing user
     return prisma.user.update({
       where: { id: existingByEmail.id },
@@ -108,6 +125,9 @@ export async function findOrCreateUserByOidc(input: OidcUserInput) {
       name: true,
       oidcSub: true,
       companyUuid: true,
+      authType: true,
+      status: true,
+      deletedAt: true,
       company: {
         select: {
           uuid: true,
@@ -136,8 +156,11 @@ export async function findOrCreateDefaultUser(email: string) {
       id: true,
       uuid: true,
       name: true,
+      localAuthEnabled: true,
     },
   });
+
+  if (company?.localAuthEnabled) throw new ApiError("UNAUTHORIZED", "Invalid credentials", 401);
 
   // If no company, create one
   if (!company) {
@@ -151,10 +174,13 @@ export async function findOrCreateDefaultUser(email: string) {
         id: true,
         uuid: true,
         name: true,
+        localAuthEnabled: true,
       },
     });
   }
 
+  const existing = await prisma.user.findFirst({ where: { companyUuid: company.uuid, OR: [{ email: { equals: email, mode: "insensitive" } }, { oidcSub: `default_${email.toLowerCase()}` }] } });
+  rejectManagedAccount(existing);
   const oidcSub = `default_${email.toLowerCase()}`;
   const userSelect = {
     id: true,
@@ -205,6 +231,9 @@ export async function getUserByUuid(userUuid: string) {
       name: true,
       oidcSub: true,
       companyUuid: true,
+      authType: true,
+      status: true,
+      deletedAt: true,
       company: {
         select: {
           uuid: true,
@@ -228,6 +257,7 @@ export async function getCompanyByUuid(uuid: string) {
       oidcIssuer: true,
       oidcClientId: true,
       oidcEnabled: true,
+      localAuthEnabled: true,
     },
   });
 }

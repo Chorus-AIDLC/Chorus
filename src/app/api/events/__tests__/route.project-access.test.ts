@@ -144,11 +144,16 @@ async function flush() {
   await new Promise((r) => setTimeout(r, 0));
 }
 
+const streamAuth = new WeakMap<NextRequest, object>();
 async function connect(auth: object, query = "") {
-  mockGetAuthContext.mockResolvedValue(auth);
+  // Each live connection retains its own credentials when several principals
+  // connect in one test; revalidation must not become the last caller's auth.
+  mockGetAuthContext.mockImplementation(async (request: NextRequest) => streamAuth.get(request) ?? null);
   const ac = new AbortController();
   const url = `http://localhost:3000/api/events${query ? `?${query}` : ""}`;
-  const res = await GET(new NextRequest(new URL(url), { signal: ac.signal }));
+  const request = new NextRequest(new URL(url), { signal: ac.signal });
+  streamAuth.set(request, auth);
+  const res = await GET(request);
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   const chunks: string[] = [];
@@ -196,6 +201,26 @@ function presence(projectUuid: string) {
     timestamp: 1,
   };
 }
+
+describe("GET /api/events — live authentication revocation", () => {
+  for (const [label, auth] of [["human", memberAuth], ["owned-agent", ownedAgentAuth]] as const) {
+    it(`closes an already-open ${label} stream when fresh authentication is rejected`, async () => {
+      const stream = await connect(auth);
+      try {
+        mockGetAuthContext.mockResolvedValue(null);
+        expect((await GET(new NextRequest("http://localhost:3000/api/events"))).status).toBe(401);
+        bus.emit("account_access_changed", { companyUuid: auth.companyUuid, userUuid: "ownerUuid" in auth ? auth.ownerUuid : auth.actorUuid });
+        bus.emit("change", change(PUBLIC_P));
+        bus.emit("presence", presence(PUBLIC_P));
+        bus.emit(`notification:${auth.type}:${auth.actorUuid}`, { type: "new_notification", message: "confidential" });
+        await flush();
+        expect(stream.dataEvents()).toEqual([]);
+        expect(bus.listenerCount("change")).toBe(0);
+        expect(bus.listenerCount("presence")).toBe(0);
+      } finally { stream.ac.abort(); }
+    });
+  }
+});
 
 describe("GET /api/events — private project isolation", () => {
   it("non-member receives no change/presence events for a private project", async () => {

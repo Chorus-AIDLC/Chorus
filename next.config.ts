@@ -5,6 +5,8 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Credential URLs must not enter Next's development request logs.
+  logging: { incomingRequests: { ignore: [/^\/login\/local\/accept(?:\?|$)/] } },
   // pino uses Node.js built-ins that webpack cannot resolve in Edge Runtime.
   serverExternalPackages: ["pino"],
   // remark-pdf → jpeg-exif requires 'fs' which is unavailable in browser.

@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { ArrowRight, Eye, EyeOff } from "lucide-react";
 import { clientLogger } from "@/lib/logger-client";
 import type { IdentifyRoleOption } from "@/types/admin";
+import { isImeComposing } from "@/lib/ime";
 
 interface DefaultAuthInfo {
   enabled: boolean;
@@ -33,6 +34,7 @@ export default function LoginPage() {
   // the app instead of being stranded on the login form. See the auth-check effect below.
   const [authChecked, setAuthChecked] = useState(false);
   const [showSsoForm, setShowSsoForm] = useState(false);
+  const [localCompany, setLocalCompany] = useState<{ uuid: string; name: string } | null>(null);
   // When non-null, the role picker is shown instead of any auth form. Seeded by
   // a check-default superAdminCollision (Trigger A) or an identify multi_role
   // response (Trigger B). Each entry routes to its own existing auth flow.
@@ -120,16 +122,20 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const response = await fetch("/api/auth/default-login", {
+      const response = await fetch(localCompany ? "/api/auth/local/login" : "/api/auth/default-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(localCompany
+          ? { companyUuid: localCompany.uuid, identifier: email, password }
+          : { email, password }),
       });
 
       const data = await response.json();
 
       if (!data.success) {
-        setError(data.error?.message || t("login.defaultAuth.error"));
+        setError(localCompany
+          ? t(response.status === 429 ? "login.local.rateLimited" : "login.local.invalidCredentials")
+          : data.error?.message || t("login.defaultAuth.error"));
         return;
       }
 
@@ -194,19 +200,26 @@ export default function LoginPage() {
       const response = await fetch("/api/auth/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify(email.includes("@") ? { email } : { identifier: email }),
       });
 
       const data = await response.json();
 
       if (!data.success) {
-        setError(data.error?.message || t("common.genericError"));
+        setError(t(response.status === 429 ? "login.local.rateLimited" : "login.noOrganizationFound"));
         return;
       }
 
       const result = data.data;
 
-      if (result.type === "super_admin") {
+      if (result.type === "local" && result.company) {
+        setLocalCompany(result.company);
+        setPassword("");
+        setRoleChoices(null);
+      } else if (result.type === "default_auth") {
+        setShowSsoForm(false);
+        setRoleChoices(null);
+      } else if (result.type === "super_admin") {
         router.push(`/login/admin?email=${encodeURIComponent(email)}`);
       } else if (result.type === "multi_role") {
         // Trigger B — the email resolves to multiple distinct auth paths.
@@ -217,7 +230,7 @@ export default function LoginPage() {
       } else if (result.type === "oidc" && result.company) {
         await startOidcRedirect(result.company);
       } else {
-        setError(result.message || t("login.noOrganizationFound"));
+        setError(t("login.noOrganizationFound"));
       }
     } catch (err) {
       clientLogger.error("Login error:", err);
@@ -231,6 +244,12 @@ export default function LoginPage() {
   // change how any flow authenticates — only which one the user lands in.
   const handleRoleSelect = async (role: IdentifyRoleOption) => {
     setError("");
+    if (role.kind === "local") {
+      setLocalCompany(role.company);
+      setRoleChoices(null);
+      setPassword("");
+      return;
+    }
     if (role.kind === "super_admin") {
       router.push(`/login/admin?email=${encodeURIComponent(email)}`);
       return;
@@ -254,6 +273,7 @@ export default function LoginPage() {
 
   // Leave the role picker and return to the email / default-auth entry point.
   const handleRolePickerBack = () => {
+    setLocalCompany(null);
     setRoleChoices(null);
     setError("");
     setPassword("");
@@ -281,6 +301,7 @@ export default function LoginPage() {
   const roleLabel = (role: IdentifyRoleOption): string => {
     if (role.kind === "super_admin") return t("login.rolePicker.superAdmin");
     if (role.kind === "default_auth") return t("login.rolePicker.regularUser");
+    if (role.kind === "local") return t("login.local.workspace", { company: role.company.name });
     return role.company
       ? t("login.rolePicker.oidcCompany", { company: role.company.name })
       : t("login.rolePicker.oidcCompanyFallback");
@@ -301,7 +322,26 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {showRolePicker ? (
+          {localCompany ? (
+            <form onSubmit={handlePasswordLogin} onKeyDown={(e) => {
+              if (e.key === "Enter" && isImeComposing(e)) e.preventDefault();
+            }} className="space-y-4">
+              <p className="text-sm text-muted-foreground">{t("login.local.workspace", { company: localCompany.name })}</p>
+              <div className="space-y-2">
+                <Label htmlFor="local-identifier">{t("login.email")}</Label>
+                <Input id="local-identifier" value={email} readOnly autoComplete="username" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="local-password">{t("login.defaultAuth.password")}</Label>
+                <Input id="local-password" type="password" value={password}
+                  onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
+                  required disabled={loading} autoFocus />
+              </div>
+              {error && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+              <Button type="submit" disabled={loading} className="w-full">{loading ? t("login.checking") : t("login.defaultAuth.submit")}</Button>
+              <Button type="button" variant="link" disabled={loading} onClick={handleRolePickerBack}>{t("login.rolePicker.back")}</Button>
+            </form>
+          ) : showRolePicker ? (
             <>
               {/* Role Picker — one button per resolvable auth path */}
               <p className="mb-4 text-center text-sm text-muted-foreground">
@@ -431,12 +471,15 @@ export default function LoginPage() {
           ) : (
             <>
               {/* Original OIDC Email Identification Form */}
-              <form onSubmit={handleSsoSubmit} className="space-y-4">
+              <form onSubmit={handleSsoSubmit} onKeyDown={(e) => {
+                if (e.key === "Enter" && isImeComposing(e)) e.preventDefault();
+              }} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="email">{t("login.email")}</Label>
                   <Input
                     id="email"
-                    type="email"
+                    type="text"
+                    autoComplete="username"
                     placeholder={t("login.emailPlaceholder")}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}

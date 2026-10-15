@@ -268,6 +268,11 @@ export class Service extends Construct {
         DB_HOST: props.database.dbEndpointAddress,
         DB_PORT: props.database.dbEndpointPort,
         NEXTAUTH_URL: this.endpoint,
+        // ECS ingress is restricted to the ALB. The private CloudFront origin
+        // listener still admits VPC traffic, so do not trust a two-hop chain
+        // until that bypass is closed by the deployment operator.
+        AUTH_TRUST_PROXY: isCloudFrontMode ? 'false' : 'true',
+        AUTH_TRUST_PROXY_HOPS: isCloudFrontMode ? '2' : '1',
         ...(props.cache ? {
           REDIS_HOST: props.cache.redisEndpoint,
           REDIS_PORT: props.cache.redisPort,

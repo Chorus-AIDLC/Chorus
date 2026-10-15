@@ -8,6 +8,7 @@
 //    subject to that header limitation. This is its primary wake channel.
 
 import { getAuthContext } from "@/lib/auth";
+import { createSseAuthGate } from "@/lib/sse-auth";
 import { eventBus, controlEventName, type ProjectAccessChangedEvent } from "@/lib/event-bus";
 import { canActorAccessProject, membershipPrincipal } from "@/services/project-access.service";
 import logger from "@/lib/logger";
@@ -55,17 +56,12 @@ export async function GET(request: NextRequest) {
   const conn = isConnectionConflict(registration) ? null : registration;
 
   const userKey = `${auth.type}:${auth.actorUuid}`;
-  const encoder = new TextEncoder();
-
-  const stream = new ReadableStream({
+  let closeStream: (() => void) | undefined;
+  const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (data: string) => {
-        try {
-          controller.enqueue(encoder.encode(data));
-        } catch {
-          // Stream closed
-        }
-      };
+      const delivery = createSseAuthGate(request, auth, controller, () => cleanup());
+      closeStream = delivery.close;
+      const send = delivery.send;
 
       // Send initial connection confirmation
       send(": connected\n\n");
@@ -107,11 +103,11 @@ export async function GET(request: NextRequest) {
       eventBus.on("project_access_changed", accessChanged);
       const deliverGuarded = (event: Record<string, unknown>, allowed: () => Promise<boolean>) => {
         deliveryChain = deliveryChain.then(async () => {
-          for (let attempt = 0; attempt < 3 && !request.signal.aborted; attempt++) {
+          for (let attempt = 0; attempt < 3 && !request.signal.aborted && !delivery.closed; attempt++) {
             const revision = accessRevision;
             const canDeliver = await allowed();
             if (revision !== accessRevision) continue;
-            if (canDeliver) send(`data: ${JSON.stringify(event)}\n\n`);
+            if (canDeliver) await send(`data: ${JSON.stringify(event)}\n\n`, undefined, () => revision === accessRevision);
             return;
           }
         }).catch((err) => {
@@ -184,14 +180,14 @@ export async function GET(request: NextRequest) {
 
       // Heartbeat every 30s to keep connection alive
       const heartbeat = setInterval(() => {
-        send(": heartbeat\n\n");
-        // Liveness safety net: bump lastSeenAt. Fire-and-forget — the service
-        // swallows + logs its own errors and never throws.
-        if (conn && !acknowledgmentAware) void touchConnection(auth.companyUuid, conn);
+        void send(": heartbeat\n\n", () => {
+          // Never maintain daemon liveness with revoked credentials.
+          if (conn && !acknowledgmentAware) void touchConnection(auth.companyUuid, conn);
+        });
       }, 30_000);
 
-      // Cleanup on abort (client disconnect)
-      request.signal.addEventListener("abort", () => {
+      // The same idempotent cleanup runs on revocation, abort, and reader cancel.
+      const cleanup = () => {
         eventBus.off(`notification:${userKey}`, handler);
         eventBus.off("project_access_changed", accessChanged);
         // Tear down the per-connection control subscription alongside the
@@ -200,11 +196,6 @@ export async function GET(request: NextRequest) {
           eventBus.off(controlEventName(conn.uuid), controlHandler);
         }
         clearInterval(heartbeat);
-        try {
-          controller.close();
-        } catch {
-          // Already closed
-        }
         // Primary disconnect signal: mark the registry row offline, then
         // reconcile its running/queued execution rows to the `ended` terminal
         // state (rows retained as history) and push the now-empty active set to
@@ -227,8 +218,10 @@ export async function GET(request: NextRequest) {
           }, STALE_THRESHOLD_MS);
           orphanTimer.unref?.();
         }
-      });
+      };
+      if (request.signal.aborted) delivery.close();
     },
+    cancel() { closeStream?.(); },
   });
 
   return new Response(stream, {

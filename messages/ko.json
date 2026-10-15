@@ -280,7 +280,28 @@
     "companyNamePlaceholder": "예: Acme Corporation",
     "emailDomainPlaceholder": "예: acme.com",
     "invalidCredentials": "잘못된 인증 정보입니다",
-    "createCompanyFailed": "회사를 만들지 못했습니다"
+    "createCompanyFailed": "회사를 만들지 못했습니다",
+    "localBootstrap": {
+      "authMode": "인증 방식",
+      "oidcMode": "OIDC / 싱글 사인온",
+      "localMode": "로컬 사용자 이름과 비밀번호",
+      "oidcHelp": "ID 공급자를 통해 워크스페이스에 로그인합니다.",
+      "localHelp": "로컬 워크스페이스를 만들고 첫 워크스페이스 관리자를 초대합니다. ID 공급자가 필요하지 않습니다.",
+      "initialAdmin": "초기 워크스페이스 관리자",
+      "initialAdminHelp": "관리자는 초대 링크를 통해 직접 비밀번호를 설정합니다. 생성 후 해당 관리자에게 링크를 공유해야 합니다.",
+      "username": "관리자 사용자 이름",
+      "usernameHelp": "@가 없는 사용자 이름을 사용하세요. 이 워크스페이스 내에서 고유해야 합니다.",
+      "email": "관리자 이메일",
+      "name": "관리자 표시 이름 (필수)",
+      "created": "로컬 워크스페이스 {name}을(를) 만들었습니다",
+      "shareHelp": "이 초대 링크를 복사하여 신뢰할 수 있는 경로로 초기 관리자에게 보내세요. 이메일은 자동으로 발송되지 않았습니다. 이 페이지를 떠나기 전에 링크를 저장하세요.",
+      "invitationLink": "관리자 초대 링크",
+      "expiresAt": "링크 만료 시간: {expiresAt}",
+      "copyLink": "초대 링크 복사",
+      "copied": "초대 링크를 복사했습니다. 지정된 관리자에게만 공유하세요.",
+      "copyFailed": "링크를 복사하지 못했습니다. 페이지를 떠나기 전에 위의 링크를 선택하여 직접 복사하세요.",
+      "continue": "워크스페이스로 이동"
+    }
   },
   "dashboard": {
     "title": "대시보드",
@@ -319,11 +340,23 @@
     "deleteTitle": "이 프로젝트 삭제",
     "deleteDescription": "이 프로젝트와 모든 데이터를 영구적으로 제거합니다. 이 작업은 되돌릴 수 없습니다.",
     "agentCwds": {
-      "title": "Agent 작업 디렉터리", "description": "이 프로젝트의 Agent마다 호스트와 디렉터리를 고정합니다.",
-      "loading": "작업 디렉터리를 불러오는 중...", "loadFailed": "작업 디렉터리를 불러올 수 없습니다.", "empty": "사용 가능한 Agent가 없습니다.", "emptyOnline": "온라인 Agent가 없습니다.",
-      "notConfigured": "작업마다 임시 디렉터리 사용", "configure": "작업 디렉터리 설정", "replace": "작업 디렉터리 변경",
-      "clear": "고정 작업 디렉터리 해제", "select": "디렉터리 선택", "createFailed": "Agent 작업 디렉터리를 저장할 수 없어 프로젝트가 생성되지 않았습니다.",
-      "status": { "valid": "사용 가능", "offline": "호스트 오프라인", "invalid": "디렉터리 사용 불가" }
+      "title": "Agent 작업 디렉터리",
+      "description": "이 프로젝트의 Agent마다 호스트와 디렉터리를 고정합니다.",
+      "loading": "작업 디렉터리를 불러오는 중...",
+      "loadFailed": "작업 디렉터리를 불러올 수 없습니다.",
+      "empty": "사용 가능한 Agent가 없습니다.",
+      "emptyOnline": "온라인 Agent가 없습니다.",
+      "notConfigured": "작업마다 임시 디렉터리 사용",
+      "configure": "작업 디렉터리 설정",
+      "replace": "작업 디렉터리 변경",
+      "clear": "고정 작업 디렉터리 해제",
+      "select": "디렉터리 선택",
+      "createFailed": "Agent 작업 디렉터리를 저장할 수 없어 프로젝트가 생성되지 않았습니다.",
+      "status": {
+        "valid": "사용 가능",
+        "offline": "호스트 오프라인",
+        "invalid": "디렉터리 사용 불가"
+      }
     }
   },
   "fixedCwdAnchor": {
@@ -824,11 +857,26 @@
   "login": {
     "title": "Chorus",
     "subtitle": "AI-인간 협업 플랫폼",
-    "email": "이메일",
+    "email": "사용자 이름 또는 이메일",
     "emailPlaceholder": "you@company.com",
     "continue": "계속",
     "checking": "확인 중...",
-    "helpText": "이메일을 입력해 로그인하거나 계정을 만드세요",
+    "helpText": "사용자 이름 또는 이메일을 입력하세요. SSO로 로그인하려면 업무용 이메일을 사용하세요.",
+    "local": {
+      "workspace": "{company}에 로그인",
+      "acceptTitle": "비밀번호 설정",
+      "password": "새 비밀번호",
+      "confirmation": "비밀번호 확인",
+      "passwordPolicy": "12자 이상이어야 하며 UTF-8 인코딩 기준 72바이트를 넘지 않아야 합니다.",
+      "mismatch": "비밀번호가 일치하지 않습니다.",
+      "invalidLink": "이 링크는 유효하지 않거나 만료되었거나 이미 사용되었습니다. 워크스페이스 관리자에게 새 링크를 요청하세요.",
+      "networkError": "네트워크 오류입니다. 다시 시도해 주세요.",
+      "saving": "저장 중...",
+      "acceptSubmit": "비밀번호 저장 후 로그인",
+      "back": "로그인으로 돌아가기",
+      "invalidCredentials": "사용자 이름 또는 비밀번호가 올바르지 않습니다.",
+      "rateLimited": "시도 횟수가 너무 많습니다. 1분 후 다시 시도해 주세요."
+    },
     "networkError": "네트워크 오류입니다. 다시 시도해 주세요.",
     "processingLogin": "로그인 처리 중...",
     "sessionExpired": "세션이 만료되었습니다. 다시 로그인해 주세요.",
@@ -837,31 +885,31 @@
     "loginSuccess": "로그인에 성공했습니다! 이동 중...",
     "authFailed": "인증에 실패했습니다",
     "backToLogin": "로그인으로 돌아가기",
-    "noOrganizationFound": "이 이메일에 해당하는 조직을 찾을 수 없습니다",
+    "noOrganizationFound": "이 사용자 이름 또는 이메일에 해당하는 워크스페이스를 찾을 수 없습니다. SSO에는 업무용 이메일을 사용하세요.",
     "defaultAuth": {
       "title": "로그인",
       "email": "이메일",
       "password": "비밀번호",
       "submit": "로그인",
       "error": "이메일 또는 비밀번호가 올바르지 않습니다",
-      "ssoLink": "SSO로 로그인",
+      "ssoLink": "SSO 또는 로컬 계정으로 로그인",
       "orDivider": "또는"
     },
     "pickWorkspace": {
       "title": "워크스페이스 선택",
       "subtitle": "회원님의 이메일은 {count}개의 워크스페이스에 등록되어 있습니다. 로그인할 워크스페이스를 선택하세요.",
-      "differentEmail": "다른 이메일 사용",
+      "differentEmail": "다른 사용자 이름 또는 이메일 사용",
       "loading": "워크스페이스를 불러오는 중...",
       "noCandidates": "이 이메일에 대한 워크스페이스를 찾을 수 없습니다.",
       "errorLoading": "워크스페이스를 불러오지 못했습니다. 다시 시도해 주세요."
     },
     "rolePicker": {
-      "title": "이 이메일은 여러 방법으로 로그인할 수 있습니다. 계속할 방법을 선택하세요.",
+      "title": "이 사용자 이름 또는 이메일로 여러 방법으로 로그인할 수 있습니다. 계속할 방법을 선택하세요.",
       "superAdmin": "슈퍼 관리자로 로그인",
       "regularUser": "비밀번호로 로그인",
       "oidcCompany": "{company}(으)로 로그인",
       "oidcCompanyFallback": "SSO로 로그인",
-      "back": "다른 이메일 사용"
+      "back": "다른 사용자 이름 또는 이메일 사용"
     }
   },
   "projectOverview": {
@@ -1880,16 +1928,38 @@
     "title": "실행할 작업 디렉터리를 선택하세요",
     "subtitle": "{name}은(는) 호스트 {hosts}대에서 인스턴스 {count}개로 온라인 상태입니다. 고정하고 깨울 인스턴스를 선택하세요.",
     "confirm": "고정하고 계속",
-    "cancel": "취소", "browseAnother": "다른 디렉터리 찾아보기", "registeredDirectories": "등록된 디렉터리", "useOnce": "이 작업에만 사용"
+    "cancel": "취소",
+    "browseAnother": "다른 디렉터리 찾아보기",
+    "registeredDirectories": "등록된 디렉터리",
+    "useOnce": "이 작업에만 사용"
   },
   "directoryBrowser": {
-    "chooseHost": "호스트 선택", "unknownHost": "알 수 없는 호스트", "chooseDirectorySource": "작업 디렉터리 소스 선택", "daemonCwd": "Daemon 작업 디렉터리", "configuredCwd": "Daemon 구성 디렉터리", "customCwd": "이 호스트의 다른 디렉터리", "pathPrefix": "디렉터리 경로 접두사", "pathPlaceholder": "/home/user/project",
-    "browseRoot": "탐색 루트", "loadingRoots": "허용된 루트를 불러오는 중…", "loadingCandidates": "디렉터리 제안을 불러오는 중", "parent": "상위 디렉터리로 이동",
-    "browse": "디렉터리 찾아보기", "noHosts": "이 Agent에 온라인 호스트가 없습니다.", "empty": "일치하는 디렉터리가 없습니다.", "selection": "선택한 디렉터리",
+    "chooseHost": "호스트 선택",
+    "unknownHost": "알 수 없는 호스트",
+    "chooseDirectorySource": "작업 디렉터리 소스 선택",
+    "daemonCwd": "Daemon 작업 디렉터리",
+    "configuredCwd": "Daemon 구성 디렉터리",
+    "customCwd": "이 호스트의 다른 디렉터리",
+    "pathPrefix": "디렉터리 경로 접두사",
+    "pathPlaceholder": "/home/user/project",
+    "browseRoot": "탐색 루트",
+    "loadingRoots": "허용된 루트를 불러오는 중…",
+    "loadingCandidates": "디렉터리 제안을 불러오는 중",
+    "parent": "상위 디렉터리로 이동",
+    "browse": "디렉터리 찾아보기",
+    "noHosts": "이 Agent에 온라인 호스트가 없습니다.",
+    "empty": "일치하는 디렉터리가 없습니다.",
+    "selection": "선택한 디렉터리",
     "errors": {
-      "HOST_OFFLINE": "선택한 호스트가 오프라인입니다. 다른 호스트를 선택하세요.", "TIMEOUT": "호스트가 응답하지 않았습니다. 다시 시도하세요.", "INVALID_PATH": "유효한 절대 경로를 입력하세요.",
-      "OUTSIDE_ROOT": "이 경로는 호스트에서 허용한 탐색 루트 밖에 있습니다.", "NOT_DIRECTORY": "선택한 경로가 디렉터리가 아닙니다.", "ACCESS_DENIED": "Daemon이 이 디렉터리에 접근할 수 없습니다.",
-      "STALE_TARGET": "선택이 만료되었습니다. 다시 찾아 선택하세요.", "LIMIT_EXCEEDED": "일치 항목이 너무 많습니다. 더 구체적인 접두사를 입력하세요.", "INTERNAL_ERROR": "디렉터리를 불러올 수 없습니다. 다시 시도하세요."
+      "HOST_OFFLINE": "선택한 호스트가 오프라인입니다. 다른 호스트를 선택하세요.",
+      "TIMEOUT": "호스트가 응답하지 않았습니다. 다시 시도하세요.",
+      "INVALID_PATH": "유효한 절대 경로를 입력하세요.",
+      "OUTSIDE_ROOT": "이 경로는 호스트에서 허용한 탐색 루트 밖에 있습니다.",
+      "NOT_DIRECTORY": "선택한 경로가 디렉터리가 아닙니다.",
+      "ACCESS_DENIED": "Daemon이 이 디렉터리에 접근할 수 없습니다.",
+      "STALE_TARGET": "선택이 만료되었습니다. 다시 찾아 선택하세요.",
+      "LIMIT_EXCEEDED": "일치 항목이 너무 많습니다. 더 구체적인 접두사를 입력하세요.",
+      "INTERNAL_ERROR": "디렉터리를 불러올 수 없습니다. 다시 시도하세요."
     }
   },
   "graph": {
@@ -2106,6 +2176,88 @@
       "opened": "회사 사용자는 그룹을 볼 수 있습니다. 비공개 하위 프로젝트는 비공개로 유지됩니다.",
       "closed": "그룹 표시는 명시적 구성원과 프로젝트 접근 권한이 있는 방문자로 제한됩니다.",
       "unchanged": "그룹 표시 범위는 변경되지 않습니다."
+    }
+  },
+  "workspaceUsers": {
+    "title": "워크스페이스 사용자",
+    "description": "로컬 계정과 워크스페이스 관리자 권한을 관리합니다. 사용자를 삭제해도 과거 소유자 정보는 유지됩니다.",
+    "deniedTitle": "사용자 관리를 사용할 수 없습니다",
+    "deniedDescription": "로컬 인증 워크스페이스에서는 활성 로컬 계정을 가진 워크스페이스 관리자만 사용자를 관리할 수 있습니다. 접근 권한이 필요하면 워크스페이스 관리자에게 문의하세요.",
+    "backToSettings": "설정으로 돌아가기",
+    "loading": "사용자 로딩 중…",
+    "retry": "다시 시도",
+    "empty": "이 워크스페이스에 사용자가 없습니다.",
+    "noName": "미설정",
+    "operationSucceeded": "사용자가 업데이트되었습니다.",
+    "actionsFor": "{username} 사용자 작업",
+    "fields": {
+      "username": "사용자 이름",
+      "name": "표시 이름",
+      "email": "이메일",
+      "role": "역할",
+      "status": "상태",
+      "actions": "작업"
+    },
+    "roles": {
+      "admin": "워크스페이스 관리자",
+      "member": "구성원"
+    },
+    "statuses": {
+      "invited": "초대됨",
+      "active": "활성",
+      "disabled": "비활성",
+      "deleted": "삭제됨"
+    },
+    "actions": {
+      "invite": "사용자 초대",
+      "edit": "사용자 수정",
+      "grant": "워크스페이스 관리자 권한 부여",
+      "revoke": "워크스페이스 관리자 권한 회수",
+      "disable": "사용자 비활성화",
+      "enable": "사용자 활성화",
+      "reset": "비밀번호 재설정",
+      "reinvite": "초대 재발급",
+      "remove": "사용자 삭제"
+    },
+    "confirmations": {
+      "grant": "{username} 사용자에게 워크스페이스의 모든 로컬 사용자를 관리할 권한을 부여하시겠습니까? 이 변경으로 해당 사용자의 기존 세션이 무효화됩니다.",
+      "revoke": "{username} 사용자의 워크스페이스 관리자 권한을 회수하시겠습니까? 이 변경으로 해당 사용자의 기존 세션이 무효화됩니다. 관리 권한을 행사할 수 있는 마지막 관리자의 권한은 회수할 수 없습니다.",
+      "disable": "{username} 사용자를 비활성화하시겠습니까? 해당 사용자의 세션, 인증 링크 및 소유한 에이전트 API 키를 통한 접근이 차단됩니다. 관리 권한을 행사할 수 있는 마지막 관리자는 비활성화할 수 없습니다.",
+      "enable": "{username} 사용자를 활성화하시겠습니까? 설정된 비밀번호로 로그인할 수 있지만, 이전에 무효화된 세션은 계속 유효하지 않습니다.",
+      "reset": "{username} 사용자의 비밀번호 재설정 링크를 발급하시겠습니까? 이전 링크와 세션은 무효화됩니다. 새 링크를 신뢰할 수 있는 경로로 전달하세요.",
+      "reinvite": "{username} 사용자에게 새 초대를 발급하시겠습니까? 이전 초대 링크는 더 이상 사용할 수 없습니다.",
+      "remove": "{username} 사용자를 삭제하시겠습니까? 로그인, 인증 링크 및 소유한 에이전트 API 키를 통한 접근이 차단됩니다. 과거 배정 내역과 활동은 유지됩니다. 이 작업은 되돌릴 수 없으며, 관리 권한을 행사할 수 있는 마지막 관리자는 삭제할 수 없습니다."
+    },
+    "inviteDescription": "초대 상태의 계정과 만료 기한이 있는 링크를 만듭니다. 링크는 직접 전달해야 하며 이메일은 자동으로 발송되지 않습니다.",
+    "editDescription": "계정 정보를 업데이트합니다. 초대된 사용자의 사용자 이름이나 이메일을 수정하면 초대 링크가 교체됩니다. 새 링크를 초대 대상자에게 공유하세요.",
+    "usernameHint": "ASCII 영문자, 숫자, 마침표, 밑줄 또는 하이픈으로 3~64자. @는 사용할 수 없습니다. 사용자 이름과 이메일은 이 워크스페이스 내에서 고유해야 합니다.",
+    "nameHint": "선택 사항입니다. 수정 시 비워 두면 기존 표시 이름이 유지됩니다.",
+    "pageSize": "페이지당 행 수",
+    "pagination": "{page} / {pages}페이지 · 사용자 {total}명",
+    "previous": "이전",
+    "next": "다음",
+    "cancel": "취소",
+    "saving": "저장 중…",
+    "save": "저장",
+    "confirm": "확인",
+    "close": "닫기",
+    "inviteLinkTitle": "초대 링크가 발급되었습니다",
+    "resetLinkTitle": "비밀번호 재설정 링크가 발급되었습니다",
+    "linkDescription": "이 일회용 링크를 복사하여 신뢰할 수 있는 경로로 전달하세요. 이메일은 발송되지 않았습니다. 링크를 재발급하면 이전 링크는 무효화됩니다.",
+    "issuedLink": "인증 링크",
+    "expiresAt": "만료: {date}",
+    "copyLink": "링크 복사",
+    "copied": "링크가 복사되었습니다.",
+    "copyFailed": "링크를 복사하지 못했습니다. 위의 링크를 선택하여 직접 복사하세요.",
+    "errors": {
+      "lastAdmin": "관리 권한을 행사할 수 있는 마지막 워크스페이스 관리자는 권한을 회수하거나 비활성화 또는 삭제할 수 없습니다. 먼저 다른 관리자를 활성화하세요.",
+      "duplicate": "해당 사용자 이름이나 이메일은 이 워크스페이스에서 이미 사용 중입니다. 다른 정보를 입력하세요.",
+      "acceptFirst": "이 사용자를 활성화하려면 먼저 초대를 수락하고 비밀번호를 설정해야 합니다.",
+      "notFound": "이 사용자는 더 이상 존재하지 않거나 사용할 수 없습니다. 목록을 새로 고친 후 다시 시도하세요.",
+      "invalidInput": "사용자 이름, 유효한 이메일 및 표시 이름(최대 200자)을 확인한 후 다시 시도하세요. 작업은 사용자의 현재 상태에 맞아야 합니다.",
+      "operationFailed": "작업을 완료하지 못했습니다. 연결을 확인하고 사용자 목록을 새로 고친 후 다시 시도하세요.",
+      "loadFailed": "사용자를 불러오지 못했습니다. 연결을 확인한 후 다시 시도하세요.",
+      "accessFailed": "사용자 관리 접근 권한을 확인하지 못했습니다. 연결을 확인한 후 다시 시도하세요."
     }
   }
 }

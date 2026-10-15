@@ -24,6 +24,8 @@ const mockGetCandidateCompaniesForEmail = vi.hoisted(() => vi.fn());
 const mockIsSuperAdminEmail = vi.hoisted(() => vi.fn());
 const mockIsDefaultAuthEnabled = vi.hoisted(() => vi.fn());
 const mockGetDefaultUserEmail = vi.hoisted(() => vi.fn());
+const mockLocalMatches = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+vi.mock("@/lib/prisma", () => ({ prisma: { user: { findMany: mockLocalMatches } } }));
 
 vi.mock("@/services/company.service", () => ({
   getCandidateCompaniesForEmail: mockGetCandidateCompaniesForEmail,
@@ -91,6 +93,7 @@ vi.mock("next-intl", async () => {
 import { POST as identifyPOST } from "@/app/api/auth/identify/route";
 import { GET as companyOidcGET } from "@/app/api/auth/company-oidc/route";
 import PickWorkspacePage from "@/app/login/pick-workspace/page";
+import { resetAuthThrottleForTests } from "@/lib/auth-throttle";
 
 const COMPANY_A = {
   uuid: "company-aaaa-0000-0000-000000000001",
@@ -154,6 +157,8 @@ function installFetchRouter() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetAuthThrottleForTests();
+  mockLocalMatches.mockResolvedValue([]);
   mockIsSuperAdminEmail.mockReturnValue(false);
   mockIsDefaultAuthEnabled.mockReturnValue(false);
   mockGetDefaultUserEmail.mockReturnValue(null);

@@ -10,32 +10,46 @@ import { parseHost } from "@/lib/oidc-utils";
 import * as companyService from "@/services/company.service";
 import { IdentifyResponse, IdentifyRoleOption } from "@/types/admin";
 
+import { prisma } from "@/lib/prisma";
+import { throttleAuth } from "@/lib/auth-throttle";
+
 interface IdentifyRequest {
-  email: string;
+  identifier?: string;
+  email?: string;
 }
 
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const body = await parseBody<IdentifyRequest>(request);
 
-  if (!body.email || typeof body.email !== "string") {
-    return errors.validationError({ email: "Email is required" });
+  const raw = body.identifier ?? body.email;
+  const email = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  const limited = throttleAuth(request, "identify", email);
+  if (limited) return limited;
+  // Preserve legacy email validation while new identifier callers receive a
+  // generic unknown-identity response for malformed usernames.
+  if (body.identifier === undefined && (!body.email || typeof body.email !== "string")) return errors.validationError({ email: "Email is required" });
+  if (body.identifier === undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return errors.validationError({ email: "Invalid email format" });
+  if (!email || email.length > 254 || /\s/.test(email)) {
+    return success({ type: "not_found", message: "No organization found for this identifier" });
   }
-
-  const email = body.email.trim().toLowerCase();
-
-  // Validate email format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    return errors.validationError({ email: "Invalid email format" });
-  }
+  const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
   // Exhaustively collect every login path this email can take, in a stable
   // order: super_admin first, then default_auth, then one oidc entry per
   // company in the order returned by getCandidateCompaniesForEmail.
-  const isSuperAdmin = isSuperAdminEmail(email);
+  const isSuperAdmin = isEmail && isSuperAdminEmail(email);
   const isDefaultAuth =
-    isDefaultAuthEnabled() && email === getDefaultUserEmail();
-  const candidates = await companyService.getCandidateCompaniesForEmail(email);
+    isEmail && isDefaultAuthEnabled() && email === getDefaultUserEmail();
+  const candidates = isEmail ? await companyService.getCandidateCompaniesForEmail(email) : [];
+  const localMatches = await prisma.user.findMany({
+    where: {
+      authType: "local", deletedAt: null, status: { not: "deleted" },
+      ...(email.includes("@") ? { localEmail: email } : { username: email }),
+      company: { localAuthEnabled: true, oidcEnabled: false },
+    },
+    select: { company: { select: { uuid: true, name: true } } },
+    orderBy: { companyUuid: "asc" },
+  });
 
   const roles: IdentifyRoleOption[] = [];
   if (isSuperAdmin) {
@@ -56,11 +70,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     });
   }
 
+  const localCompanies = new Map(localMatches.map(({ company }) => [company.uuid, company]));
+  for (const company of localCompanies.values()) roles.push({ kind: "local", company });
+
   // 0 roles → not_found.
   if (roles.length === 0) {
     const response: IdentifyResponse = {
       type: "not_found",
-      message: "No organization found for this email domain",
+      message: "No organization found for this identifier",
     };
     return success(response);
   }
@@ -76,16 +93,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       const response: IdentifyResponse = { type: "default_auth" };
       return success(response);
     }
-    // single oidc company
-    const response: IdentifyResponse = {
-      type: "oidc",
-      company: only.company,
-    };
+    const response: IdentifyResponse = only.kind === "local"
+      ? { type: "local", company: only.company }
+      : { type: "oidc", company: only.company! };
     return success(response);
   }
 
   // 2+ oidc companies and NO super_admin/default_auth → oidc_multi_match.
-  if (!isSuperAdmin && !isDefaultAuth) {
+  if (!isSuperAdmin && !isDefaultAuth && localCompanies.size === 0) {
     const response: IdentifyResponse = {
       type: "oidc_multi_match",
       candidates: candidates.map((c) => ({

@@ -12,6 +12,8 @@ import { SignJWT, jwtVerify } from "jose";
 import { NextRequest, NextResponse } from "next/server";
 import { UserAuthContext } from "@/types/auth";
 import { getCookieOptions } from "@/lib/cookie-utils";
+import { getUserAccountState } from "@/services/local-user.service";
+import { rememberStreamCredential, streamCredential } from "@/lib/stream-credentials";
 
 const COOKIE_NAME = "user_session";
 export const ACCESS_TOKEN_EXPIRY = "1h"; // Access token expiry
@@ -36,6 +38,8 @@ export interface UserSessionPayload {
   email: string;
   name?: string;
   oidcSub: string;
+  authType?: "local" | "oidc";
+  sessionVersion?: number;
   // OIDC tokens for external API calls
   oidcAccessToken?: string;
   oidcRefreshToken?: string;
@@ -63,23 +67,44 @@ export async function verifyAccessToken(
 ): Promise<UserSessionPayload | null> {
   try {
     const { payload } = await jwtVerify(token, getSecret());
-    if (payload.type === "user" && payload.tokenType === "access") {
-      return {
+    if (payload.type === "user" && payload.tokenType === "access" && typeof payload.userUuid === "string" && typeof payload.companyUuid === "string") {
+      const session: UserSessionPayload = {
         type: "user",
         userUuid: payload.userUuid as string,
         companyUuid: payload.companyUuid as string,
         email: payload.email as string,
         name: payload.name as string | undefined,
         oidcSub: payload.oidcSub as string,
+        authType: payload.authType as UserSessionPayload["authType"],
+        sessionVersion: payload.sessionVersion as number | undefined,
         oidcAccessToken: payload.oidcAccessToken as string | undefined,
         oidcRefreshToken: payload.oidcRefreshToken as string | undefined,
         oidcExpiresAt: payload.oidcExpiresAt as number | undefined,
       };
+      rememberStreamCredential(session, { kind: "session", authType: session.authType, sessionVersion: session.sessionVersion, expiresAt: typeof payload.exp === "number" ? payload.exp * 1000 : undefined });
+      return session;
     }
     return null;
   } catch {
     return null;
   }
+}
+
+// Resolve both REST and server-component sessions against current tenant state.
+export async function resolveUserSession(payload: UserSessionPayload): Promise<UserAuthContext | null> {
+  const user = await getUserAccountState(payload.companyUuid, payload.userUuid);
+  if (!user || user.companyUuid !== payload.companyUuid || user.deletedAt || user.status !== "active") return null;
+  const local = user.authType === "local";
+  if (local) {
+    if (!user.company.localAuthEnabled || user.company.oidcEnabled || payload.authType !== "local" ||
+        !Number.isInteger(payload.sessionVersion) || payload.sessionVersion !== user.sessionVersion) return null;
+  } else if (payload.authType === "local" || user.company.localAuthEnabled) return null;
+  const context: UserAuthContext = { type: "user", companyUuid: user.companyUuid, actorUuid: user.uuid,
+    email: user.email ?? undefined, name: user.name ?? undefined,
+    authType: local ? "local" : "oidc", workspaceAdmin: local && user.workspaceAdmin,
+    localAuthEnabled: user.company.localAuthEnabled };
+  rememberStreamCredential(context, streamCredential(payload) ?? { kind: "session", authType: payload.authType, sessionVersion: payload.sessionVersion });
+  return context;
 }
 
 // Get user session from request (Bearer token or cookies) - UUID-based
@@ -95,13 +120,7 @@ export async function getUserSessionFromRequest(
   if (bearerToken) {
     const payload = await verifyAccessToken(bearerToken);
     if (payload) {
-      return {
-        type: "user",
-        companyUuid: payload.companyUuid,
-        actorUuid: payload.userUuid,
-        email: payload.email,
-        name: payload.name,
-      };
+      return resolveUserSession(payload);
     }
   }
 
@@ -116,13 +135,7 @@ export async function getUserSessionFromRequest(
     return null;
   }
 
-  return {
-    type: "user",
-    companyUuid: payload.companyUuid,
-    actorUuid: payload.userUuid,
-    email: payload.email,
-    name: payload.name,
-  };
+  return resolveUserSession(payload);
 }
 
 // Clear user session cookies (also expires the legacy user_refresh cookie)

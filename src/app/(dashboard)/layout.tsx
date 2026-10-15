@@ -28,6 +28,7 @@ import { PixelActivityProvider } from "@/contexts/pixel-activity-context";
 import { AuthProvider } from "@/contexts/auth-context";
 import { DaemonPresenceEntry } from "@/components/daemon-presence-entry";
 import { SidebarPreferences } from "@/components/sidebar-preferences";
+import { WorkspaceUsersNavigation } from "@/components/workspace-users-navigation";
 import { AgentConnectionsModal } from "@/components/agent-presence";
 import { NotificationProvider } from "@/contexts/notification-context";
 import { DashboardEventProvider } from "@/contexts/dashboard-event-context";
@@ -151,7 +152,7 @@ export default function DashboardLayout({
   // Global pages: /projects, /settings
   const isGlobalPage =
     pathname === "/projects" ||
-    pathname === "/settings" ||
+    pathname === "/settings" || pathname.startsWith("/settings/") ||
     pathname.startsWith("/project-groups");
   const isProjectContext = currentProjectUuid && !isGlobalPage;
   // Pages that opt out of the centered max-w-[1200px] container and use the
@@ -535,6 +536,7 @@ export default function DashboardLayout({
             icon-triggers (theme glyph + locale code) so preferences read as
             low-key, not primary nav. Rendered in both the desktop aside and the
             mobile Sheet (both render SidebarContent). */}
+        <WorkspaceUsersNavigation pathname={pathname} mobile={mobile} />
         <SidebarPreferences mobile={mobile} />
 
         {/* User Profile */}

@@ -23,6 +23,7 @@ export const GET = withErrorHandler(
       name: c.name,
       emailDomains: c.emailDomains,
       oidcEnabled: c.oidcEnabled,
+      localAuthEnabled: c.localAuthEnabled,
       userCount: c._count.users,
       agentCount: c._count.agents,
       createdAt: c.createdAt.toISOString(),
