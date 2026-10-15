@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.22.2](https://chorus-ai.dev/blog/chorus-v0.22.2-release/)**: Host Chorus on your own Linux or macOS machine with Docker Compose and PostgreSQL 17, with repeatable deployment, optional LAN HTTPS, and Cloudflare Tunnel guidance. TRAE CLI joins the existing workflow through the shared Codex plugin. This release also fixes stale assignments, deletion failures, and daemon security and configuration issues.
+
 **[v0.22.0](https://chorus-ai.dev/blog/chorus-v0.22.0-release/)**: Hermes Agent now joins the existing Chorus workflow through its own gateway, with no separate Chorus daemon. Assign work in Chorus, run it in Hermes, and bring results and approval requests back to the project. Install through the Chorus CLI or directly with Hermes.
 
 **[v0.21.0](https://chorus-ai.dev/blog/chorus-v0.21.0-release/)**: Private projects and project groups provide Viewer, Editor, and Admin access with live permission inheritance. Agent startup and execution failures now include persistent diagnostics in conversations. This release also improves Linux daemon persistence and updates security dependencies.
@@ -70,6 +72,8 @@ chorus
 Chorus starts with an embedded PostgreSQL (PGlite), runs migrations, and opens at **http://localhost:8637**. Default login: `admin@chorus.local` / `chorus`.
 
 > Running multiple agents or deploying to production? Use an external PostgreSQL, Docker, or AWS → **[Deploy & self-host](https://doc.chorus-ai.dev/guides/deployment-overview/)**.
+
+> Hosting on your own machine or connecting a Cloudflare Tunnel? See **[Self-host on a local machine](https://doc.chorus-ai.dev/guides/deploy-local/)** for installation, LAN HTTPS, and Cloudflare Named Tunnel setup.
 
 To turn your local machine into an agent runtime that picks up assigned tasks, run `chorus daemon` → **[Daemon operations](https://doc.chorus-ai.dev/guides/daemon-operations/)** · **[Remote control](https://doc.chorus-ai.dev/guides/remote-control/)**.
 
@@ -153,6 +157,7 @@ API keys are created under **Settings → Agents → Create API Key**. They star
 - [Plugins & commands](https://doc.chorus-ai.dev/guides/plugin-commands/)
 - [MCP tools reference](https://doc.chorus-ai.dev/reference/mcp-tools/)
 - [Deploy & self-host](https://doc.chorus-ai.dev/guides/deployment-overview/)
+- [Local self-hosting & Cloudflare Tunnel](https://doc.chorus-ai.dev/guides/deploy-local/)
 
 ---
 

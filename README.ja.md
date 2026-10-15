@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.22.2](https://chorus-ai.dev/blog/chorus-v0.22.2-release/)**：Docker Compose と PostgreSQL 17 を使い、Linux または macOS の自分のマシンで Chorus をホストできます。再デプロイ手順、任意の LAN HTTPS、Cloudflare Tunnel の接続ガイドを用意しました。TRAE CLI バックエンドも追加し、Codex と共通のプラグインで既存のワークフローに参加できます。無効な担当者情報、削除エラー、daemon のセキュリティと設定に関する問題も修正しました。
+
 **[v0.22.0](https://chorus-ai.dev/blog/chorus-v0.22.0-release/)**：Hermes Agent に対応しました。Hermes 自身の gateway を通じて既存の Chorus ワークフローに参加でき、Chorus daemon を別途起動する必要はありません。Chorus で仕事を割り当て、Hermes が実行し、結果や承認リクエストをプロジェクトに返します。プラグインは Chorus CLI 経由でも、Hermes から直接でもインストールできます。
 
 **[v0.21.0](https://chorus-ai.dev/blog/chorus-v0.21.0-release/)**：非公開プロジェクトとプロジェクトグループを追加し、Viewer、Editor、Admin のアクセス権とグループ権限の即時継承に対応しました。エージェントの起動・実行エラーの診断情報を会話に保存します。Linux デーモンの継続稼働を改善し、セキュリティ関連の依存関係も更新しました。
@@ -70,6 +72,8 @@ chorus
 Chorus は組み込みの PostgreSQL（PGlite）で起動し、マイグレーションを自動実行して、**http://localhost:8637** で開きます。デフォルトのログイン情報：`admin@chorus.local` / `chorus`。
 
 > 複数のエージェントを動かしたり、本番環境にデプロイしたりする場合は？外部の PostgreSQL、Docker、または AWS を利用してください → **[デプロイとセルフホスト](https://doc.chorus-ai.dev/ja/guides/deployment-overview/)**。
+
+> 自分のマシンでホストしたり、Cloudflare Tunnel に接続したりする場合は、**[ローカルマシンでセルフホスト](https://doc.chorus-ai.dev/ja/guides/deploy-local/)**をご覧ください。インストール、LAN HTTPS、Cloudflare Named Tunnel の設定を説明しています。
 
 ローカルマシンを、割り当てられた課題を実行するエージェントランタイムにするには、`chorus daemon` を実行してください → **[デーモン運用](https://doc.chorus-ai.dev/ja/guides/daemon-operations/)** · **[リモートコントロール](https://doc.chorus-ai.dev/ja/guides/remote-control/)**。
 
@@ -138,6 +142,7 @@ API キーは **Settings → Agents → Create API Key** から作成します�
 - [プラグインとコマンド](https://doc.chorus-ai.dev/ja/guides/plugin-commands/)
 - [MCP ツールリファレンス](https://doc.chorus-ai.dev/ja/reference/mcp-tools/)
 - [デプロイとセルフホスト](https://doc.chorus-ai.dev/ja/guides/deployment-overview/)
+- [ローカルセルフホストと Cloudflare Tunnel](https://doc.chorus-ai.dev/ja/guides/deploy-local/)
 
 ---
 

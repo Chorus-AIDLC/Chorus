@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.22.2](https://chorus-ai.dev/zh/blog/chorus-v0.22.2-release/)**：支持在 Linux 或 macOS 主机上通过 Docker Compose 和 PostgreSQL 17 托管 Chorus，提供可重复部署、可选的局域网 HTTPS 和 Cloudflare Tunnel 接入指南。新增 TRAE CLI 后端，共用 Codex 插件参与现有工作流，并修复失效指派、删除失败及 daemon 安全与配置问题。
+
 **[v0.22.0](https://chorus-ai.dev/zh/blog/chorus-v0.22.0-release/)**：新增 Hermes Agent 接入，通过自身 gateway 参与 Chorus 现有工作流，无需另起 Chorus daemon。在 Chorus 分配工作，由 Hermes 执行，结果与审批请求回到项目中。支持通过 Chorus CLI 或直接使用 Hermes 安装插件。
 
 **[v0.21.0](https://chorus-ai.dev/zh/blog/chorus-v0.21.0-release/)**：新增私有项目与私有项目组，支持 Viewer、Editor、Admin 分级访问和实时权限继承。Agent 启动与执行失败的诊断信息会保存在会话中，同时改进 Linux daemon 持续运行并更新安全依赖。
@@ -61,6 +63,8 @@ chorus
 Chorus 会自动启动内嵌 PostgreSQL (PGlite)、执行数据库迁移，然后在 **http://localhost:8637** 提供服务。默认登录账号：`admin@chorus.local` / `chorus`。
 
 > 需要运行多个 agent，或部署到生产环境？可使用外部 PostgreSQL、Docker 或 AWS → **[部署与自托管](https://doc.chorus-ai.dev/zh/guides/deployment-overview/)**。
+
+> 想在自己的机器上部署，或接入 Cloudflare Tunnel？参阅 **[在本机自托管](https://doc.chorus-ai.dev/zh/guides/deploy-local/)**，了解安装、局域网 HTTPS 和 Cloudflare Named Tunnel 配置。
 
 想把本地机器变成领取任务的 agent 运行时，运行 `chorus daemon` → **[Daemon 运维](https://doc.chorus-ai.dev/zh/guides/daemon-operations/)** · **[远程控制](https://doc.chorus-ai.dev/zh/guides/remote-control/)**。
 
@@ -144,6 +148,7 @@ Kanban 看板随 Agent 工作进度自动更新，任务卡片在 To Do → In P
 - [插件与命令](https://doc.chorus-ai.dev/zh/guides/plugin-commands/)
 - [MCP 工具参考](https://doc.chorus-ai.dev/zh/reference/mcp-tools/)
 - [部署与自托管](https://doc.chorus-ai.dev/zh/guides/deployment-overview/)
+- [本机自托管与 Cloudflare Tunnel](https://doc.chorus-ai.dev/zh/guides/deploy-local/)
 
 ---
 

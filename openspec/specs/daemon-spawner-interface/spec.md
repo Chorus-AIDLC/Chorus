@@ -158,3 +158,24 @@ Every supported daemon backend SHALL expose an optional `wakeError` containing a
 #### Scenario: A failed wake has no textual reason
 - **WHEN** a failed wake provides no usable structured error or stderr
 - **THEN** its summary SHALL describe the known exit code, signal or launch failure without inventing an upstream reason
+
+### Requirement: Wake-error redaction is complete across retained-tail truncation
+
+When wake-error text is a bounded retained tail, the sanitizer SHALL redact a leading credential fragment by matching the longest suffix among all known credential forms. A shorter suffix match on a longer unrelated credential MUST NOT win over it. The sanitizer SHALL redact the union of the cut-tail range and every whole known-credential occurrence found in the same raw text. Ranges that overlap or exactly touch SHALL be emitted as a single `[redacted]` marker.
+
+#### Scenario: A retained tail starts inside a known credential
+- **WHEN** truncated stderr begins with the trailing part of a known credential, and another known credential shares a shorter suffix with that text
+- **THEN** the longest matching fragment SHALL be redacted
+- **AND** no character of the cut credential SHALL remain in the output
+
+#### Scenario: The cut tail overlaps a whole credential occurrence
+- **WHEN** the cut-tail range and a whole known-credential occurrence overlap
+- **THEN** the sanitizer SHALL redact their union as one span
+
+#### Scenario: Two redaction ranges are exactly adjacent
+- **WHEN** one redaction range ends at the exact index where the next one starts
+- **THEN** the output SHALL contain one `[redacted]` marker for both, not `[redacted][redacted]`
+
+#### Scenario: Two redaction ranges are separated by text
+- **WHEN** at least one character separates two redaction ranges
+- **THEN** each range SHALL produce its own `[redacted]` marker and the separating text SHALL be kept
