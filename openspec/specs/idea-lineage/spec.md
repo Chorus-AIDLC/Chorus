@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change add-idea-lineage. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Single-Parent Lineage Relation
 
 An Idea SHALL have an optional single parent Idea, recorded as a nullable `parentUuid` self-relation. An Idea with no parent is a top-level idea. The resulting structure across a project is a forest (each idea has at most one parent). The relation SHALL NOT distinguish "derivation" from "containment" — it is one undifferentiated edge whose meaning is carried by context.
@@ -218,3 +220,55 @@ the depth-first ordering or indentation of the forest.
 - **WHEN** the Lineage view groups trees with the added spacing
 - **THEN** the depth-first order of ideas is unchanged from before the grouping change
 
+### Requirement: Project Deletion Detaches Idea Lineage
+
+Deleting a project — directly, or by deleting a project group with `deleteProjects=true` — SHALL succeed even when the project contains ideas linked by lineage (`parentUuid`) at any depth. Within the same transaction, after permission checks and before the project rows are deleted, the system MUST set `parentUuid` to null on every idea in the same company whose parent idea belongs to a project being deleted, regardless of which project the child idea belongs to. Ideas outside the deleted projects SHALL survive as top-level ideas. Deleting a project group with `deleteProjects=false` SHALL NOT modify any idea or lineage. The `IdeaLineage` relation SHALL remain non-cascading.
+
+#### Scenario: Deleting a project with a multi-level idea tree
+
+- **WHEN** a project containing ideas A → B → C (C child of B, B child of A) is deleted by an authorized user
+- **THEN** the deletion succeeds without a `P2014` error and A, B and C are removed with the project
+
+#### Scenario: Deleting a project group together with its projects
+
+- **WHEN** a project group whose projects contain idea parent/child trees is deleted with `deleteProjects=true`
+- **THEN** the group and all of its projects, including their ideas, are deleted successfully
+
+#### Scenario: Deleting a project group but keeping its projects
+
+- **WHEN** a project group is deleted with `deleteProjects=false`
+- **THEN** its projects remain with `groupUuid` null, and all their ideas and `parentUuid` links are unchanged
+
+#### Scenario: Child idea outside the deleted project survives
+
+- **WHEN** a project is deleted and an idea in another project of the same company has its `parentUuid` pointing to an idea in the deleted project
+- **THEN** that idea still exists afterwards with `parentUuid` null
+
+#### Scenario: Unauthorized or failed delete leaves lineage intact
+
+- **WHEN** a project delete is rejected by the permission check, or the delete fails inside the transaction
+- **THEN** no idea's `parentUuid` is changed
+
+#### Scenario: Other tenants are unaffected
+
+- **WHEN** a project in company X is deleted
+- **THEN** no idea belonging to any other company is read or modified
+
+### Requirement: Company Deletion Detaches Idea Lineage
+
+Deleting a company SHALL succeed even when the company holds ideas linked by lineage (`parentUuid`) at any depth. Within the same transaction, before the company's ideas are deleted, the system MUST set `parentUuid` to null on every idea of that company that has a parent. The system SHALL NOT read or modify ideas belonging to any other company. The `IdeaLineage` relation SHALL remain non-cascading.
+
+#### Scenario: Deleting a company with a multi-level idea tree
+
+- **WHEN** a company whose project contains ideas A → B → C (C child of B, B child of A) is deleted
+- **THEN** the deletion succeeds without a `P2014` error and the company, its projects and all of its ideas are removed
+
+#### Scenario: Other tenants are unaffected
+
+- **WHEN** company X is deleted while company Y holds its own idea parent/child tree
+- **THEN** company Y's ideas still exist with their `parentUuid` links unchanged
+
+#### Scenario: Missing company performs no writes
+
+- **WHEN** `deleteCompany` is called for a company id that does not exist
+- **THEN** it fails with "Company not found" and no idea is modified

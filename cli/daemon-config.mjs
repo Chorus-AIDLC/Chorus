@@ -314,7 +314,7 @@ function positiveInt(value) {
  * @typedef {Object} AgentConfig  One fully-resolved agent runtime config.
  * @property {string} url                       Chorus server URL for this agent.
  * @property {string} apiKey                    This agent's `cho_` API key.
- * @property {string} agentType                 Backend: claude-code | codex | kiro | dsh | offline.
+ * @property {string} agentType                 Backend: claude-code | codex | kiro | dsh | pi | trae | offline.
  * @property {string[]} args                   Literal extra backend arguments (per-agent only).
  * @property {Record<string,string>} env       Literal child environment overrides (per-agent only).
  * @property {boolean} [daemonWake]             Wake opt-in for a wakeable backend; only

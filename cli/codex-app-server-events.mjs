@@ -10,6 +10,9 @@ const COUNTERS = {
   outputTokens: "output_tokens",
   reasoningOutputTokens: "reasoning_output_tokens",
 };
+// Codex-family forks may spell a counter differently; aliases apply only when the
+// primary Codex field is absent (TRAE CLI 0.209.1: cacheCreationInputTokens).
+const COUNTER_ALIASES = { cacheWriteInputTokens: ["cacheCreationInputTokens"] };
 const validCount = (v) => Number.isSafeInteger(v) && v >= 0;
 const nonempty = (v) => typeof v === "string" && v.trim().length > 0;
 const fail = (code) => new CodexAppServerError(code, `Codex App Server: ${code}`);
@@ -124,8 +127,9 @@ export class CodexAppServerEvents {
     if (!total || typeof total !== "object" || Array.isArray(total)) return;
     const snapshot = {};
     for (const [from, to] of Object.entries(COUNTERS)) {
-      if (!validCount(total[from])) continue;
-      snapshot[to] = total[from];
+      const source = [from, ...(COUNTER_ALIASES[from] ?? [])].find((key) => Object.hasOwn(total, key));
+      if (source === undefined || !validCount(total[source])) continue;
+      snapshot[to] = total[source];
       // Never turn a counter reset into a historical charge, including resets
       // between two notifications inside this wake.
       const before = this.#lastObserved[to];

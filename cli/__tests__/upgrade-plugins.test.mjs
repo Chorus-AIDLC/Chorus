@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { planPluginTargets, upgradePlugins } from "../upgrade-plugins.mjs";
+import { planPluginTargets, upgradePlugins, INSTALLERS, readHostInstallState } from "../upgrade-plugins.mjs";
 import { CHORUS_PLUGIN_ID } from "../init/chorus-plugin-consts.mjs";
+import { CODEX_FAMILY } from "../codex-family.mjs";
 
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -258,6 +259,61 @@ describe("configured plugin synchronization", () => {
     expect(fs.readdirSync(join(f.home, ".codex")).filter((path) => path.endsWith(".bak")))
       .toEqual(["config.toml.chorus-upgrade.bak"]);
     expect(fs.readFileSync(`${cfg}.chorus-upgrade.bak`, "utf8")).toBe(original);
+  });
+  it("refreshes an installed TRAE plugin via traecli (marketplace upgrade + reinstall), preserving traecli.toml", async () => {
+    const f = fixture({ agents: [{ agentType: "trae", url: "https://different.example" }] });
+    const cfg = join(f.home, ".trae", "traecli.toml");
+    const original = `[marketplaces.chorus-plugins]\n[plugins."${CHORUS_PLUGIN_ID}"]\nenabled = true\n[mcp_servers.chorus]\nurl="https://original.example"\nbearer_token_env_var="CHORUS_API_KEY"\n`;
+    f.write(cfg, original);
+    const result = (await upgradePlugins(f))[0];
+    expect(result).toMatchObject({ target: "trae (agents[0])", complete: true, changed: true });
+    expect(fs.readFileSync(cfg, "utf8")).toBe(original);
+    expect(f.run.mock.calls.map(([cmd, a, o]) => [cmd, ...a, o.env.TRAE_HOME])).toEqual([
+      ["traecli", "plugin", "marketplace", "upgrade", "chorus-plugins", join(f.home, ".trae")],
+      ["traecli", "plugin", "install", CHORUS_PLUGIN_ID, "--yes", join(f.home, ".trae")],
+    ]);
+    expect(fs.readFileSync(`${cfg}.chorus-upgrade.bak`, "utf8")).toBe(original);
+  });
+  it("honors a per-record TRAE_HOME override for the TRAE target", async () => {
+    const f = fixture();
+    const custom = join(f.home, "trae-custom");
+    f.write(f.configPath, { agents: [{ agentType: "trae", env: { TRAE_HOME: custom } }] });
+    f.write(join(custom, "traecli.toml"), `[marketplaces.chorus-plugins]\n[plugins."${CHORUS_PLUGIN_ID}"]\n`);
+    expect((await upgradePlugins(f))[0].complete).toBe(true);
+    expect(f.run.mock.calls.map(([, , o]) => o.env.TRAE_HOME)).toEqual([custom, custom]);
+  });
+  it("skips a TRAE record when traecli is not installed (no commands)", async () => {
+    const f = fixture({ agents: [{ agentType: "trae" }] });
+    const result = (await upgradePlugins({ ...f, resolveBinary: (bin) => (bin === "traecli" ? null : "/fake/host") }))[0];
+    expect(result).toMatchObject({ complete: false, detail: "Skipped: host executable missing from this record's PATH." });
+    expect(f.run).not.toHaveBeenCalled();
+  });
+  it("reports a failed TRAE refresh as incomplete", async () => {
+    const f = fixture({ agents: [{ agentType: "trae" }] });
+    f.write(join(f.home, ".trae", "traecli.toml"), `[marketplaces.chorus-plugins]\n[plugins."${CHORUS_PLUGIN_ID}"]\n`);
+    f.run.mockImplementation(() => ({ ok: false, code: 2, stderr: "network down" }));
+    const result = (await upgradePlugins(f))[0];
+    expect(result.complete).toBe(false);
+    expect(result.detail).toContain("traecli plugin marketplace upgrade failed");
+  });
+  it("routes trae to the Codex-family installer/state reader with the TRAE profile", () => {
+    const home = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "chorus-plugin-test-")));
+    roots.push(home);
+    fs.mkdirSync(join(home, ".trae"));
+    fs.writeFileSync(join(home, ".trae", "traecli.toml"), `[plugins."${CHORUS_PLUGIN_ID}"]\n`);
+    expect(readHostInstallState("trae", { HOME: home }, fs)).toEqual({ marketplaceRegistered: false, pluginInstalled: true });
+    // ~/.codex state is never consulted for trae.
+    expect(readHostInstallState("codex", { HOME: home }, fs)).toEqual({ marketplaceRegistered: false, pluginInstalled: false });
+    const calls = [];
+    const outcome = INSTALLERS.trae({ env: { HOME: home }, run: (cmd, args) => { calls.push([cmd, ...args]); return { ok: true }; },
+      flags: { updateInstalled: true, pluginOnly: true }, adapter: { readInstallState: () => ({ pluginInstalled: true, marketplaceRegistered: true }) } });
+    expect(outcome).toMatchObject({ agentId: "trae", action: "repaired" });
+    expect(calls[0][0]).toBe(CODEX_FAMILY.trae.binaries.posix[0]);
+  });
+  it("HOSTS.trae literals match CODEX_FAMILY.trae", () => {
+    const { targets } = planPluginTargets({ agents: [{ agentType: "trae" }] }, { env: { HOME: "/h" }, platform: "linux", fs: { realpathSync: (p) => p } });
+    expect(targets[0].host).toEqual({ binary: CODEX_FAMILY.trae.binaries.posix[0], variable: CODEX_FAMILY.trae.homeEnv, dir: [CODEX_FAMILY.trae.homeDir] });
+    expect(targets[0].destination).toBe("/h/.trae");
   });
   it("refreshes Kiro assets from its instance preserving existing MCP credentials/settings", async () => {
     const f = fixture({ agents: [{ agentType: "kiro", url: "https://instance.example/api/mcp" }] });

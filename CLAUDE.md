@@ -11,7 +11,7 @@ Core philosophy: **"Reversed Conversation"** — AI proposes, humans verify (not
 - **Framework**: Next.js 15 (App Router, Turbopack for dev)
 - **Language**: TypeScript 5 (strict mode)
 - **Frontend**: React 19, Tailwind CSS 4, shadcn/ui (Radix UI)
-- **Database**: PostgreSQL 16, Prisma ORM 7
+- **Database**: PostgreSQL 17, Prisma ORM 7
 - **Cache/Pub-Sub**: Redis 7 (ioredis, optional — falls back to in-memory)
 - **Testing**: Vitest 4
 - **Auth**: OIDC (users), API Keys with `cho_` prefix (agents), SuperAdmin (env-based bcrypt)
@@ -73,6 +73,13 @@ pnpm db:studio              # Prisma Studio GUI (:5555)
 pnpm docker:db              # Start PostgreSQL + Redis via Docker
 docker compose up -d db     # Start PostgreSQL only (:5433)
 ```
+
+Existing PG16 Docker volumes must be migrated before these PG17-default startup
+commands. Follow `docs/POSTGRES_UPGRADE.md`; keep the original volume and use the
+documented private Compose override after migration, not bare `pnpm docker:db`.
+The helper supports Linux and macOS + Docker Desktop (Linux containers), including
+Bash 3.2, BSD stat and shasum; allow Desktop to share private bind paths. Native
+macOS CI checks host tools with mocked Docker, not a full Desktop migration rehearsal.
 
 ## Architecture Patterns
 

@@ -4,7 +4,8 @@ import { join, posix, win32 } from "node:path";
 import { overlayAgentEnv, getAgentEnv, validateAgentCliConfig, rejectSharedCliConfig } from "./agent-cli-config.mjs";
 import { resolveBinaryPath } from "./agent-launcher.mjs";
 import { readClaudeInstallState } from "./init/adapters.mjs";
-import { installClaude, installCodex, installKiro, readCodexInstallState } from "./init/install-methods.mjs";
+import { installClaude, installCodex, installCodexFamily, installKiro, readCodexInstallState, readCodexFamilyInstallState } from "./init/install-methods.mjs";
+import { CODEX_FAMILY } from "./codex-family.mjs";
 import { normalizeAssetBase } from "./init/file-template.mjs";
 import { runUpgradeCommand, sanitizeUpgradeOutput, upgradeFailure } from "./upgrade-process.mjs";
 import { probePiBackend, inspectPiSettings, managePiPackages } from "./init/pi-mcp-backend.mjs";
@@ -14,7 +15,23 @@ const HOSTS = {
   codex: { binary: "codex", variable: "CODEX_HOME", dir: [".codex"] },
   kiro: { binary: "kiro-cli", variable: "KIRO_DIR", dir: [".kiro"] },
   pi: { binary: "pi", variable: "PI_CODING_AGENT_DIR", dir: [".pi", "agent"] },
+  // Literals must match CODEX_FAMILY.trae (binaries.posix[0] / homeEnv / homeDir) — asserted by test.
+  trae: { binary: "traecli", variable: "TRAE_HOME", dir: [".trae"] },
 };
+
+/** Default per-host installers + install-state readers (injectable via deps.installers). */
+export const INSTALLERS = Object.freeze({
+  claude: installClaude,
+  codex: installCodex,
+  kiro: installKiro,
+  trae: (ctx) => installCodexFamily(CODEX_FAMILY.trae, ctx),
+});
+export function readHostInstallState(type, env, io) {
+  if (type === "claude") return readClaudeInstallState({ env, home: env.HOME, readJson: (path) => readJson(path, io) });
+  if (type === "codex") return readCodexInstallState({ env });
+  if (type === "trae") return readCodexFamilyInstallState(CODEX_FAMILY.trae, { env });
+  return {};
+}
 const text = (v) => typeof v === "string" && v.trim() ? v.trim() : undefined;
 const object = (v) => v && typeof v === "object" && !Array.isArray(v);
 
@@ -136,10 +153,8 @@ export async function upgradePlugins(deps = {}) {
         results.push({ target: label, ...result, detail: safe([result.detail, ...failures].join("\n")) });
         continue;
       }
-      const state = target.type === "claude"
-        ? readClaudeInstallState({ env: target.env, home: target.env.HOME, readJson: (path) => readJson(path, io) })
-        : target.type === "codex" ? readCodexInstallState({ env: target.env }) : {};
-      const install = (deps.installers ?? { claude: installClaude, codex: installCodex, kiro: installKiro })[target.type];
+      const state = readHostInstallState(target.type, target.env, io);
+      const install = (deps.installers ?? INSTALLERS)[target.type];
       const outcome = await install({
         env: target.env, platform, run,
         flags: { updateInstalled: true, pluginOnly: true, url: target.source },

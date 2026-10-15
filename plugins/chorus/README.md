@@ -35,6 +35,8 @@ See [CONNECT_CODEX.md](../../docs/CONNECT_CODEX.md) for the full walkthrough. (T
 
 Chorus lifecycle hooks are bundled in the Codex plugin manifest and loaded automatically after the plugin is installed and enabled. Use `/hooks` in Codex to review and trust newly installed or changed hook definitions.
 
+> The same `hooks/*.sh` scripts serve Codex and TRAE CLI. `hooks.json` runs them directly (`${PLUGIN_ROOT}/hooks/<name>.sh`); the shared helper `hooks/hook-runtime.sh` detects the runtime inside each script and picks the matching wording (banner, `spawn_agent` on Codex vs `Agent` on TRAE). Skill routing uses `${PLUGIN_ROOT}/skills/<name>/SKILL.md`, which is valid for both installs.
+
 Then finish with `/plugins` inside the Codex TUI.
 
 Re-run at any time to rotate the API key — `~/.codex/.env` and the `[mcp_servers.chorus]` block are refreshed idempotently (the key lives only in `~/.codex/.env`).
@@ -91,6 +93,10 @@ Then register the marketplace and install:
 codex plugin marketplace add https://github.com/Chorus-AIDLC/Chorus
 codex   # plugin auto-installs on first launch; use /plugins to confirm
 ```
+
+## TRAE CLI
+
+[TRAE CLI](../../docs/CONNECT_TRAE.md) (`traecli`, a Codex fork; minimum tested 0.209.1) installs this **same** package. Run `chorus agents add --agents trae`. It installs the plugin with `traecli plugin install chorus@chorus-plugins --yes`, writes the keyless `[mcp_servers.chorus]` into `$TRAE_HOME/traecli.toml` and writes the credentials into `$TRAE_HOME/.env` (default `~/.trae`). Trust the Chorus hooks in traecli before they will run. The hooks are the same scripts Codex runs; they detect TRAE when the plugin lives under `$TRAE_HOME/plugins/` (`CHORUS_HOOK_RUNTIME=trae|codex` forces it) and switch their sub-agent wording to TRAE's `Agent` tool. In the skills, TRAE's sub-agent tool is `Agent` (not `spawn_agent`). For the daemon (`chorus daemon --agent trae`), give each TRAE agent its own `TRAE_HOME`, because `.env` overrides the daemon-exported credentials.
 
 ## What's different from the Claude Code version
 

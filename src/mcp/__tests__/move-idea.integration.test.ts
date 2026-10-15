@@ -75,8 +75,13 @@ vi.mock("@/services/proposal.service", () => ({}));
 vi.mock("@/services/document.service", () => ({}));
 vi.mock("@/services/task.service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/task.service")>();
-  // moveIdea now checks each retained assignee's destination access.
-  return { assertAssigneeProjectAccess: actual.assertAssigneeProjectAccess };
+  // moveIdea checks each retained (live) assignee's destination access.
+  return {
+    assertAssigneeProjectAccess: actual.assertAssigneeProjectAccess,
+    resolveLiveAssignee: actual.resolveLiveAssignee,
+    AssigneeAccessError: actual.AssigneeAccessError,
+    ASSIGNEE_ACCESS_DENIED_MESSAGE: actual.ASSIGNEE_ACCESS_DENIED_MESSAGE,
+  };
 });
 vi.mock("@/services/elaboration.service", () => ({}));
 vi.mock("@/services/agent.service", () => ({ getAgentByUuid: vi.fn() }));

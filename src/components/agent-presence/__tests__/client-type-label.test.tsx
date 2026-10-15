@@ -38,6 +38,18 @@ describe("useClientTypeLabel", () => {
     }
   });
 
+  it("renders the TRAE CLI label for the trae client type", () => {
+    const { result } = renderHook(() => useClientTypeLabel());
+
+    expect(result.current("trae")).toBe("TRAE CLI");
+  });
+
+  it("defines clientTrae in every supported locale", () => {
+    for (const messages of [en, zh, ja, ko]) {
+      expect(messages.agentConnections.clientTrae).toBe("TRAE CLI");
+    }
+  });
+
   it("defines clientDsh in every supported locale", () => {
     for (const messages of [en, zh, ja, ko]) {
       expect(messages.agentConnections.clientDsh).toBe("DeepSeek Harness");

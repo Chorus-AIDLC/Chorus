@@ -15,6 +15,7 @@
 //   - pi       : bin `pi`;       dir ~/.pi|~/.config/pi       (NOT independently verified — probe both; see NOTE)
 //   - dsh      : bin `dsh`;      dir $DSH_HOME|~/.dsh         ($DSH_HOME per dsh integration; see NOTE)
 //   - hermes   : bin `hermes`;   dir $HERMES_HOME|~/.hermes   (hermes_constants.get_hermes_home: HERMES_HOME env → ~/.hermes)
+//   - trae     : bin `traecli` (also `trae-cli`); dir $TRAE_HOME|~/.trae  (traecli 0.209.1: TRAE_HOME overrides ~/.trae)
 //
 // NOTE: openclaw / pi / dsh config-dir specifics were not verifiable on this
 // build host (their CLIs/config were not all present); the descriptors probe the
@@ -38,6 +39,7 @@ import {
   installKiro,
   installPi,
   installHermes,
+  installTrae,
   readCodexInstallState,
   readOpencodeInstallState,
   readDshInstallState,
@@ -45,6 +47,7 @@ import {
   readKiroInstallState,
   readPiInstallState,
   readHermesInstallState,
+  readTraeInstallState,
 } from "./install-methods.mjs";
 
 // Re-export the shared marketplace identifiers from their canonical home so
@@ -101,6 +104,7 @@ export const AGENT_DESCRIPTORS = [
   { id: "pi", displayName: "Pi", binaries: ["pi"], configDirs: ["~/.pi", "~/.config/pi"], readState: readPiInstallState, install: installPi },
   { id: "dsh", displayName: "DeepSeek Harness (dsh)", binaries: ["dsh"], configDirs: ["$DSH_HOME", "~/.dsh"], readState: readDshInstallState, install: installDsh },
   { id: "hermes", displayName: "Hermes", binaries: ["hermes"], configDirs: ["$HERMES_HOME", "~/.hermes"], readState: readHermesInstallState, install: installHermes },
+  { id: "trae", displayName: "TRAE CLI", binaries: ["traecli", "trae-cli"], configDirs: ["$TRAE_HOME", "~/.trae"], readState: readTraeInstallState, install: installTrae },
 ];
 
 /**

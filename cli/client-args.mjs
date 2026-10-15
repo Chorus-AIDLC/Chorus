@@ -13,11 +13,14 @@
  */
 export const DAEMON_ACTIONS = new Set(["stop", "status", "restart", "logs", "install", "uninstall"]);
 
-/** Known agent backends, kept in sync with the authoritative list in
- * daemon-agent.mjs (`claude-code`, `codex`, `kiro`, `dsh` — all implemented). This copy
- * is informational only: parsing here does not validate the value (the resolver
- * in daemon-agent.mjs is the single source of truth for validation). */
-export const KNOWN_AGENTS = new Set(["claude-code", "codex", "kiro", "dsh"]);
+/** Agent backends a user may pass to `--agent`, kept in sync with the wakeable
+ * entries of daemon-agent.mjs KNOWN_AGENTS. Deliberately an explicit list rather
+ * than an import of that array: daemon-agent's list also carries the non-wakeable
+ * `offline` classification, which is an agents[] config value, not a backend to
+ * pass on the command line. This copy is informational only: parsing here does not
+ * validate the value (the resolver in daemon-agent.mjs is the single source of
+ * truth for validation). */
+export const KNOWN_AGENTS = new Set(["claude-code", "codex", "kiro", "dsh", "pi", "trae"]);
 
 /**
  * Parse the client-subcommand flags out of an arg list. Recognizes the
@@ -125,7 +128,8 @@ OPTIONS
   --url <url>              Remote Chorus server URL            (env: CHORUS_URL)
   --api-key <cho_...>      Agent API key                       (env: CHORUS_API_KEY)
   --agent <type>           Local agent backend to wake         (env: CHORUS_AGENT)
-                           (claude-code | codex | kiro; default: claude-code)
+                           (claude-code | codex | kiro | pi | trae;
+                           default: claude-code)
                            (Also configurable as "agent":"…" in ~/.chorus/daemon.json;
                            'chorus daemon install' and 'chorus login' (incl. --add)
                            prompt for it interactively on a TTY.)
@@ -175,7 +179,7 @@ SERVICE (install)
   on restart. Before writing the unit, install resolves + persists + validates
   your credentials into ~/.chorus/daemon.json (so the clean boot environment can
   authenticate), configures the served working directories there too, and prompts
-  for the agent backend to wake (claude-code | codex | kiro — Enter accepts the
+  for the agent backend to wake (claude-code | codex | kiro | pi | trae — Enter accepts the
   claude-code default), then checks that backend's CLI is on PATH. Pass -y/--yes or
   run non-TTY to skip all prompts (credentials are still validated). The served
   cwds AND the chosen agent live in daemon.json — the unit captures only
@@ -190,6 +194,7 @@ SERVICE (install)
 EXAMPLES
   chorus daemon                        # Foreground, default yolo (TTY confirms once)
   chorus daemon --chorus-only          # Restrict the woken agent to Chorus tools
+  chorus daemon --agent trae           # Wake TRAE CLI (traecli) instead of Claude Code
   chorus daemon -d                     # Background; see 'chorus daemon logs'
   chorus daemon install --cwd ~/proj   # Install + start as a boot service (Linux)
   chorus daemon uninstall              # Remove the installed service
@@ -216,7 +221,7 @@ OPTIONS
   --add                    Add this key as an ADDITIONAL agent (multi-agent daemon)
                            instead of overwriting the single credential
   --agent <type>           Agent backend for THIS agent         (env: CHORUS_AGENT)
-                           (claude-code | codex | kiro). On a TTY, login (and
+                           (claude-code | codex | kiro | pi | trae). On a TTY, login (and
                            --add) prompt for it when omitted; Enter inherits the
                            daemon default (claude-code) and writes no backend.
   -h, --help               Show this help message

@@ -7,7 +7,7 @@ import { buildAdapter, readClaudeInstallState, CHORUS_PLUGIN_ID, CHORUS_MARKETPL
 import { guided } from "../init/install-methods.mjs";
 import { OUTCOME_ACTIONS } from "../init/contracts.mjs";
 
-const EXPECTED_IDS = ["claude", "codex", "kiro", "opencode", "openclaw", "pi", "dsh", "hermes"];
+const EXPECTED_IDS = ["claude", "codex", "kiro", "opencode", "openclaw", "pi", "dsh", "hermes", "trae"];
 
 describe("AGENT_REGISTRY", () => {
   it("contains one adapter per supported harness", () => {

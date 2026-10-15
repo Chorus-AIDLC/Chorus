@@ -4,7 +4,7 @@ description: Chorus Idea workflow — claim ideas, run elaboration rounds, and p
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.0"
+  version: "0.17.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -40,7 +40,7 @@ All post-elaboration progress (planning, building, verifying, done) is **derived
 | `chorus_claim_idea` | Claim an open idea (open -> elaborating) |
 | `chorus_release_idea` | Release a claimed idea (elaborating -> open) |
 | `chorus_pm_assign_idea` | Assign an idea to an agent (must hold `idea:write`) or a user, on a human's behalf — the counterpart to `chorus_claim_idea` (self-claim). Silently takes over any existing assignee; an `open` idea moves to `elaborating`, any other status is preserved. Optional `instanceUuid` pins an **agent** assignment to a specific AgentInstance (agent-only) — but a project-fixed cwd target configured for the owner takes precedence and supplies the instance automatically, overriding `instanceUuid`. Assigning a **new** owner wakes it best-effort (offline still persists the assignment); re-assigning the same owner may update its pin/cwd but is wake-deduplicated. Assigning to a user notifies them with no daemon wake. Requires `idea:admin`. |
-| `chorus_move_idea` | Move an Idea to a different Project. Cascade-migrates the Idea **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind), all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Returns `moved: { ideas, proposals, documents, tasks, activities }` counts. Requires `idea:write` only — no project-level checks. |
+| `chorus_move_idea` | Move an Idea to a different Project. Cascade-migrates the Idea **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind), all linked Proposals (any status), all materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Returns `moved: { ideas, proposals, documents, tasks, activities }` counts. Requires `idea:write` (no `project:*` bit) plus Editor access on both the source and target projects — for an agent, its owner's effective level; a target you cannot see returns `Target project not found`. Fails without moving anything if a live assignee in the moved set lacks Editor on the target; the error names every blocked assignee. |
 
 **Requirements Elaboration:**
 

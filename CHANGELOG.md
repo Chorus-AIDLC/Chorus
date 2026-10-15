@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.22.2] - 2026-10-15
+
+### Added
+
+- **Local self-hosting**: Added Linux/macOS installation with Docker Compose, PostgreSQL 17, repeatable redeployment, optional LAN HTTPS, and Cloudflare Tunnel guidance. (#616)
+- **TRAE CLI integration**: Added agent setup, daemon execution, shared Codex-family plugin support, and plugin upgrades for TRAE CLI. (#621)
+
+### Changed
+
+- **Deployment documentation**: Linked all four README translations to localized self-hosting and Cloudflare Tunnel guides.
+- **Realtime documentation**: Clarified daemon SSE authentication and pending-turn recovery. (#618)
+
+### Fixed
+
+- **Restricted agent tools**: Enforced `--chorus-only` tool restrictions with allowlist verification and termination on violations. (#614, #621)
+- **Credential redaction**: Prevented truncated wake-error output from leaking credential fragments. (#613)
+- **Daemon wake configuration**: Applied explicit `--daemon-wake` settings to already-configured agents. (#615)
+- **Idea moves and agent deletion**: Released deleted agents' unfinished assignments, ignored dangling assignees during moves, and explained access-related blockers. (#622)
+- **Deletion integrity**: Detached idea lineage before deleting companies, projects, or project groups to avoid Prisma relation errors. (#619, #620)
+
+### Plugin
+
+- **Versions**: Upgraded all seven plugins and four coordinated npm packages to `0.22.2`.
+
+---
+
 ## [0.22.1] - 2026-10-09
 
 ### Fixed

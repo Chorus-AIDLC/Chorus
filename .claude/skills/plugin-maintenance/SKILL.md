@@ -1,16 +1,18 @@
 ---
 name: plugin-maintenance
-description: Guide for modifying the Chorus plugin (Claude Code, Codex, OpenClaw, Kiro, Pi, dsh, and Hermes ports), updating skill documentation, and releasing new plugin versions.
+description: Guide for modifying the Chorus plugin (Claude Code, Codex/TRAE CLI, OpenClaw, Kiro, Pi, dsh, and Hermes ports), updating skill documentation, and releasing new plugin versions.
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.5.0"
+  version: "0.5.1"
   category: development
 ---
 
 # Chorus Plugin & Skill Maintenance
 
 How to modify the Chorus plugin, update skill documentation, and release new versions. **Seven plugin packages** are maintained in parallel — Claude Code, Codex, OpenClaw, Kiro, Pi, dsh (DeepSeek Harness), and Hermes Agent — plus the standalone skill surface. That is **eight skill surfaces total**; when you change skill content, sweep all eight (see [Skill Content Changes — Seven Surfaces](#skill-content-changes--seven-surfaces), which also lists the Hermes copy). The Hermes port has its own section: [Hermes Agent port](#hermes-agent-port).
+
+**TRAE CLI is not an eighth package.** TRAE CLI (`traecli`, a Codex fork) installs the **Codex package** `plugins/chorus/` unchanged: it reads `.agents/plugins/marketplace.json` and `.codex-plugin/plugin.json`. TRAE has no separate skill copy, version sequence, or installer. The one package serves **two runtimes**, so every Codex-package change must keep working under both. See [Codex/TRAE plugin hooks](#codex-plugin-hooks-pluginschorushooks).
 
 ## File Structure
 
@@ -30,14 +32,16 @@ public/chorus-plugin/           ← Claude Code plugin package
     proposal-reviewer.md
     task-reviewer.md
 
-plugins/chorus/                 ← Codex plugin package (separate from Claude Code)
+plugins/chorus/                 ← Codex plugin package (separate from Claude Code); also installed by TRAE CLI
   .codex-plugin/
-    plugin.json                 ← Plugin metadata (version here)
-  hooks.json
-  hooks/                        ← Hook scripts (bash) — intentionally stateless
+    plugin.json                 ← Plugin metadata (version here; shared by Codex + TRAE)
+  hooks.json                    ← NEVER change the command strings (forces users to re-trust hooks)
+  hooks/                        ← Hook scripts (bash) — intentionally stateless, shared by both runtimes
     on-session-start.sh
     on-post-submit-proposal.sh
     on-post-submit-for-verify.sh
+    on-post-verify-task.sh
+    hook-runtime.sh             ← Codex-vs-TRAE runtime detection + tool_response UUID parsing
     chorus-mcp-call.sh          ← MCP helper (has hardcoded clientInfo version)
     hook-output.sh
   skills/
@@ -117,6 +121,15 @@ public/skill/                   ← Standalone skill (any MCP-compatible agent)
 | Task execution | Agent Teams waves | `spawn_agent` | Main-agent waves | Kiro subagents | `subagent_spawn` workers |
 | Install | Marketplace | `install-codex.sh` | OpenClaw plugin manager | `install-kiro.sh` | npm (`pi install npm:@chorus-aidlc/chorus-pi`) |
 
+**TRAE CLI runtime of the Codex package.** Same column as Codex, except for these differences:
+- MCP config lives in `~/.trae/traecli.toml` (or `$TRAE_HOME`).
+- Sub-agents/reviewers are spawned with the `Agent` tool, not `spawn_agent`.
+- Skill routing uses `${PLUGIN_ROOT}/skills/<name>/SKILL.md`.
+- Plugin hooks run only after the user trusts them in traecli.
+- Hook processes do **not** receive `TRAE_HOME`. The only runtime marker is `PLUGIN_ROOT` resolving under `${TRAE_HOME:-$HOME/.trae}/plugins/`; `CHORUS_HOOK_RUNTIME=trae|codex` overrides it.
+- `tool_response` may arrive as a JSON-encoded string.
+- Install is `chorus agents add --agents trae`, which runs `traecli plugin marketplace add` + `traecli plugin install chorus@chorus-plugins --yes`. traecli has no npm plugin source.
+
 When porting a change between plugins, preserve these intentional differences. Don't add state files to the Codex/OpenClaw plugins, don't use `$`-prefix outside Codex, keep OpenClaw's `chorus__` names and manual-session/inline-detection wording, and preserve Kiro's `chorus-` skill prefix, `@chorus/<tool>` matchers, and `__CHORUS_BIN__` placeholder. For Pi, use `/skill:<name>`, `subagent_spawn`, native extension events, and plain-text interaction; do not introduce Claude hooks or Codex session wording.
 
 **dsh (DeepSeek Harness)** is a published npm bundle (`@chorus-aidlc/chorus-dsh`) added to a dsh profile via `dsh plugin --profile <name> add -w`. It is Cordis-based: `src/index.ts`'s `apply()` injects the `-chorus`-suffixed skills, persona, and a Node MCP wrapper. Skills use the `-chorus` **suffix** (like standalone) but it keeps a `chorus/SKILL.md` overview. Its version tracks the **app version** (0.16.3+), NOT the 0.9.x skill sequence. The dsh **daemon backend** (`cli/dsh-spawner.mjs` / `dsh-managed-config.mjs`) is currently **de-listed / offline** — kept dormant, not advertised; do NOT re-add it to the daemon install menu, CLI `--agent` help, or `DAEMON.md` / `MCP_TOOLS.md` without bringing the backend back online.
@@ -135,7 +148,7 @@ When porting a change between plugins, preserve these intentional differences. D
 | New execution rule | All six plugin overviews + standalone overview (softer wording) |
 | Permission model change | All six plugin overviews + affected stage skills + runtime checks where applicable |
 | Hook script change (Claude Code) | `public/chorus-plugin/bin/*.sh` + `hooks.json` if new hook. **Never copy hook changes blindly into `plugins/chorus/hooks/`** — Codex hooks are intentionally stateless and lack subagent events. OpenClaw has no bash hooks at all. |
-| Hook script change (Codex) | `plugins/chorus/hooks/*.sh` — rarely needed; session-start, post-submit-proposal, post-submit-for-verify are the only three. If bumping plugin version, also update the hardcoded `clientInfo.version` in `chorus-mcp-call.sh`. |
+| Hook script change (Codex / TRAE) | `plugins/chorus/hooks/*.sh` — four hooks (session-start, post-submit-proposal, post-submit-for-verify, post-verify-task), **shared by Codex and TRAE**. Put runtime-specific wording behind `hook-runtime.sh`, never in a forked copy. Keep `hooks.json` command strings unchanged. Run `plugins/chorus/hooks/tests/test-shared-hooks.sh` (both runtimes) and `public/chorus-plugin/bin/tests/test-on-post-verify-task.sh`. If bumping plugin version, also update the hardcoded `clientInfo.version` in `chorus-mcp-call.sh`. |
 | OpenClaw runtime change | `packages/openclaw-plugin/src/*.ts` (TS SSE/MCP runtime) + `npm run typecheck` + `npm run test`. Not bash hooks — this is a compiled TypeScript extension. |
 | Pi runtime change | `packages/chorus-pi/extensions/*.ts` + `lib/*.ts`; run `bash test/all.sh` from the package directory |
 | Any plugin change | Bump version in every file for that package (see Version Bump Checklist) |
@@ -250,6 +263,7 @@ Users update via:
 ```bash
 /plugin update chorus@chorus-plugins           # Claude Code
 codex plugin update chorus@chorus-plugins      # Codex
+traecli plugin marketplace upgrade chorus-plugins && traecli plugin install chorus@chorus-plugins --yes   # TRAE CLI (or: chorus upgrade --plugins)
 # OpenClaw: reinstall/update via the OpenClaw plugin manager (npm spec @chorus-aidlc/chorus-openclaw-plugin)
 # Kiro: re-run `chorus agents add --agents kiro` (idempotent; installs the .kiro/ tree via the file-template installer)
 # Pi: pi install npm:@chorus-aidlc/chorus-pi   (reinstall to pull the latest published extension)
@@ -291,7 +305,7 @@ Whenever you change content in one plugin, mirror it into the other plugin surfa
    - `diff public/chorus-plugin/skills/<skill>/SKILL.md packages/openclaw-plugin/skills/<skill>/SKILL.md`
    - `diff public/chorus-plugin/skills/<skill>/SKILL.md packages/chorus-pi/skills/<skill>/SKILL.md`
 3. Apply the same semantic change to every port, but **preserve** intentional phrasing:
-   - **Codex**: `.mcp.json` → `~/.codex/config.toml`, `Task tool` → `spawn_agent`, `/chorus:X` → `$X`, "sessions auto-managed" → "sessions are optional / stateless port"
+   - **Codex**: `.mcp.json` → `~/.codex/config.toml`, `Task tool` → `spawn_agent`, `/chorus:X` → `$X`, "sessions auto-managed" → "sessions are optional / stateless port". These skills are also read by TRAE CLI. Where an instruction names the sub-agent tool, add a short TRAE note (`Agent` tool) rather than forking the skill.
    - **OpenClaw**: tool names `chorus_<tool>` → `chorus__<tool>`, `AskUserQuestion` → plain-text prompt, reviewers via `sessions_spawn`, OpenSpec detection is inline (no SessionStart hook), sessions are manual
    - **Kiro**: `chorus-` skill prefix, native JSON subagents, `@chorus` tools, and hook-driven context
    - **Pi**: `/skill:X`, `subagent_spawn`, plain-text prompts, reviewer `.md` agents, extension-managed worker sessions
@@ -340,11 +354,20 @@ The plugin skill targets Claude Code specifically. The standalone skill targets 
 - `on-post-submit-proposal.sh`, `on-post-submit-for-verify.sh` — PostToolUse reviewer reminders
 
 ### Codex plugin hooks (`plugins/chorus/hooks/`)
+These scripts are shared by the Codex and TRAE CLI runtimes. There are no per-runtime copies or dispatcher.
 - `on-session-start.sh` — SessionStart hook (stateless; no caching)
 - `on-post-submit-proposal.sh` — PostToolUse for `chorus_pm_submit_proposal`
 - `on-post-submit-for-verify.sh` — PostToolUse for `chorus_submit_for_verify`
+- `on-post-verify-task.sh` — PostToolUse for `chorus_admin_verify_task` (archive / completion-report / code-review reminders)
+- `hook-runtime.sh` — sourced helper. It detects the runtime (Codex default; TRAE when `PLUGIN_ROOT` is under the TRAE plugins dir) and extracts UUIDs from object or string `tool_response`. Use it for any wording that must differ (banner, `spawn_agent` vs `Agent`).
 - `chorus-mcp-call.sh` — shared MCP-over-HTTP helper (bump `clientInfo.version` on release)
 - `hook-output.sh` — stdout-formatting helper
+
+Rules for these hooks:
+- Never change `hooks.json` command strings: every user would have to re-trust the hooks.
+- MCP list calls must use `pageSize` ≤ 100 (the server maximum). A larger value fails, and the hook exits silently.
+- Codex `spawn_agent` skill items need a `name`.
+- Escape backticks inside unquoted heredocs.
 
 **Codex has no SubagentStart/Stop events** — do not try to port lifecycle hooks from the Claude Code plugin. Instead, session management is documented as a main-agent responsibility in `plugins/chorus/skills/develop/SKILL.md` and `$yolo`.
 
@@ -398,7 +421,7 @@ After modifying the Pi package, run `cd packages/chorus-pi && bash test/all.sh`.
 
 After modifying:
 1. Run `/bin/bash public/chorus-plugin/bin/test-syntax.sh` (Claude Code + Codex hooks) and `/bin/bash public/kiro-plugin/bin/test-syntax.sh` (Kiro hooks) on macOS to verify Bash 3.2 compatibility — OpenClaw and Pi lifecycle code are TypeScript
-2. Test locally: `claude --plugin-dir public/chorus-plugin` (Claude Code), install via `codex plugin install` and reload (Codex), re-run `install-kiro.sh` (Kiro), or `pi install "$PWD/packages/chorus-pi"` from the Chorus checkout (Pi)
+2. Test locally: `claude --plugin-dir public/chorus-plugin` (Claude Code), install via `codex plugin install` and reload (Codex), for TRAE use an isolated `TRAE_HOME` under `~/.cache` (not `/tmp`; traecli refuses helper binaries there) with `traecli plugin marketplace add "$PWD"` + `traecli plugin install chorus@chorus-plugins --yes`, re-installing after each edit (TRAE CLI), re-run `install-kiro.sh` (Kiro), or `pi install "$PWD/packages/chorus-pi"` from the Chorus checkout (Pi)
 3. Bump plugin version for whichever packages changed (all affected packages)
 4. Users must restart the affected agent after updating (Kiro: re-run the installer; Pi: reinstall the package)
 
@@ -500,7 +523,7 @@ skill change:
 The test skips without `node`. CI/dev must have it.
 
 Also mirror changes in `cli/event-router.mjs` (`NOTIFICATION_ACTION_TO_TURN_TRIGGER`) into `router.py`
-`ACTION_TO_TURN_TRIGGER`. Reminder text mirrors `plugins/chorus/hooks/on-post-*.sh` (Codex parity).
+`ACTION_TO_TURN_TRIGGER`. Reminder text mirrors the **semantics** of `plugins/chorus/hooks/on-post-*.sh` under the Codex runtime (Codex parity), but uses Hermes `delegate_task` wording. When those hooks change, for example a new reminder branch or a fixed condition, update `reminders.py` to match. Ignore the TRAE-only wording.
 
 ### Release = the tag's SHA is the install ref
 

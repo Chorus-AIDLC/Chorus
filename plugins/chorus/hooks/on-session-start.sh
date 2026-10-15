@@ -1,14 +1,30 @@
 #!/usr/bin/env bash
-# on-session-start.sh — Codex SessionStart hook.
+# on-session-start.sh — Codex / TRAE CLI SessionStart hook.
 #
 # Calls chorus_checkin via MCP and injects bounded developer context.
+# Shared by both runtimes: skill routing points at the installed plugin's own
+# skills ($PLUGIN_ROOT/skills/<name>/SKILL.md, valid for both installs), and
+# hook-runtime.sh picks the runtime-specific wording (banner, how skills and
+# reviewer sub-agents are started). Bash 3.2 compatible (CLAUDE.md pitfall #10).
 
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=./hook-output.sh
 source "${DIR}/hook-output.sh"
+# shellcheck source=./hook-runtime.sh
+source "${DIR}/hook-runtime.sh"
+RUNTIME=$(chorus_hook_runtime "$DIR")
 MCP_CALL="${CHORUS_MCP_CALL:-${DIR}/chorus-mcp-call.sh}"
+
+# Installed plugin root. Codex and traecli both export PLUGIN_ROOT to hook
+# processes; fall back to this script's location (hooks/ -> plugin root).
+SKILLS_ROOT="${PLUGIN_ROOT:-$(cd "${DIR}/.." && pwd)}/skills"
+if [ "$RUNTIME" = "trae" ]; then
+  PORT_LABEL="TRAE port"
+else
+  PORT_LABEL="Codex port"
+fi
 
 # Consume stdin event JSON; the matcher handles the SessionStart source.
 if [ ! -t 0 ]; then cat > /dev/null; fi
@@ -36,12 +52,13 @@ CHECKIN=$("$MCP_CALL" chorus_checkin '{}' 2>/dev/null) || {
 # CHORUS_OPENSPEC_ACTIVE (1 only for a usable openspec). Rule: an explicit
 # CHORUS_SPEC_MODE wins; when unset, OpenSpec is the default whenever usable
 # (openspec/ dir + CLI, not disabled) and lite is the fallback. Codex has no
-# project-dir env var, so PROJECT_ROOT defaults to $PWD (Codex hooks run there).
+# project-dir env var, so PROJECT_ROOT defaults to $PWD (Codex and TRAE hooks
+# run in the session cwd).
 PROJECT_ROOT="$PWD"
 # shellcheck source=./resolve-spec-mode.sh
 . "${DIR}/resolve-spec-mode.sh"
 
-CTX="# Chorus Plugin — Active (Codex port)
+CTX="# Chorus Plugin — Active (${PORT_LABEL})
 
 Chorus is connected at ${CHORUS_URL}. MCP tools are available under the \`chorus\` server.
 
@@ -56,7 +73,7 @@ CHORUS_SPEC_MODE=${SPEC_MODE} (${SPEC_REASON})"
 if [ "$SPEC_MODE" = "lite" ]; then
   CTX="${CTX}
 
-Routing: lite → follow the spec-lite skill (\`~/.codex/skills/spec-lite/SKILL.md\`). A capability's durable spec is \`.chorus/specs/<slug>/spec.md\` (edited in place, **never synced**, git history is its record); each change is a dated folder \`.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/\` of Chorus-typed docs (\`prd.md\` required; \`tech_design.md\` / \`adr.md\` / \`guide.md\` / \`spec.md\` optional) that **are** mirrored 1:1 into persistent Chorus Documents via \`chorus mcp call … --arg-file content=<file>\` (fallback \`chorus-mcp-call.sh\`). Put a \`Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/\` locator line in the proposal description. Do NOT scaffold \`openspec/changes/\` or add an \`OpenSpec change slug:\` line."
+Routing: lite → follow the \`chorus:spec-lite\` skill (\`${SKILLS_ROOT}/spec-lite/SKILL.md\`). A capability's durable spec is \`.chorus/specs/<slug>/spec.md\` (edited in place, **never synced**, git history is its record); each change is a dated folder \`.chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/\` of Chorus-typed docs (\`prd.md\` required; \`tech_design.md\` / \`adr.md\` / \`guide.md\` / \`spec.md\` optional) that **are** mirrored 1:1 into persistent Chorus Documents via \`chorus mcp call … --arg-file content=<file>\` (fallback \`chorus-mcp-call.sh\`). Put a \`Spec-lite: .chorus/specs/<slug>/<YYYY-MM-DD>-<change-slug>/\` locator line in the proposal description. Do NOT scaffold \`openspec/changes/\` or add an \`OpenSpec change slug:\` line."
 elif [ "$SPEC_MODE" = "off" ]; then
   CTX="${CTX}
 
@@ -73,9 +90,17 @@ else
 
 CHORUS_OPENSPEC_ACTIVE=1 (${OPENSPEC_USABLE_REASON})
 
-Routing: openspec → load the openspec-aware skill at \`~/.codex/skills/openspec-aware/SKILL.md\` and follow §3 (OpenSpec authoring) — do NOT re-run the §1 detection block, the answer is already known.
+Routing: openspec → load the \`chorus:openspec-aware\` skill (\`${SKILLS_ROOT}/openspec-aware/SKILL.md\`) and follow §3 (OpenSpec authoring) — do NOT re-run the §1 detection block, the answer is already known.
 
 Critical rule (openspec-aware §2 Rule 1): document mirror calls (\`chorus_pm_add_document_draft\` / \`chorus_pm_update_document_draft\` / \`chorus_pm_update_document\`) MUST fill \`content\` from the local file — prefer \`chorus mcp call <tool> '<json>' --arg-file content=<file>\`, falling back to \`chorus-mcp-call.sh\` with \`json_encode_file\` when \`chorus\` is not on PATH. Do NOT invoke these MCP tools directly with hand-typed \`content\` in OpenSpec mode."
+fi
+
+if [ "$RUNTIME" = "trae" ]; then
+  AGENT_LINES="- **Skills**: load the stage-specific workflow with the Skill tool — \`chorus:chorus\`, \`chorus:idea\`, \`chorus:proposal\`, \`chorus:develop\`, \`chorus:review\`, \`chorus:quick-dev\`, or \`chorus:yolo\` (files under \`${SKILLS_ROOT}/<name>/SKILL.md\`). Where a skill shows Codex \`spawn_agent\` / \`wait_agent\` / \`close_agent\` calls, use TRAE's Agent tool instead.
+- **Reviewer sub-agents**: start a fresh sub-agent with the Agent tool and have it load the reviewer skill first — e.g. \`Agent({description: \"Chorus proposal review\", prompt: \"Load the chorus:chorus-proposal-reviewer skill with the Skill tool, then review proposal <proposal-uuid> and post VERDICT.\", run_in_background: false})\` after \`chorus_pm_submit_proposal\`; use \`chorus:chorus-task-reviewer\` with the task UUID after \`chorus_submit_for_verify\`. Run in the foreground only when the next gate depends on the verdict; use SendMessage to continue an existing sub-agent."
+else
+  AGENT_LINES="- **Skills**: use \`\$chorus\`, \`\$idea\`, \`\$proposal\`, \`\$develop\`, \`\$review\`, \`\$quick-dev\`, or \`\$yolo\` to load the stage-specific workflow.
+- **Reviewer sub-agents**: mount the reviewer skill explicitly — \`spawn_agent({items:[{type:\"skill\", name:\"Chorus Proposal Reviewer\", path:\"chorus:chorus-proposal-reviewer\"}, {type:\"text\", text:\"Review proposal <proposal-uuid> and post VERDICT.\"}]})\` after \`chorus_pm_submit_proposal\`; use \`chorus:chorus-task-reviewer\` with the task UUID after \`chorus_submit_for_verify\`. Wait only when the next gate depends on the verdict, then close the thread; use \`send_input\` for an active child and \`resume_agent\` only for a previously closed one. Routine entity-backed children use fresh context; \`fork_context: true\` is only for material parent-conversation state."
 fi
 
 CTX="${CTX}
@@ -84,10 +109,9 @@ CTX="${CTX}
 
 - **Long-horizon work**: follow AI-DLC via the Chorus skill (idea → proposal → task → verify) rather than coding ad hoc, and use chorus_search to locate the specific work the user refers to across ideas/proposals/tasks/docs.
 - **Notifications**: \`chorus_get_notifications()\` fetches and auto-marks read.
-- **Skills**: use \`\$chorus\`, \`\$idea\`, \`\$proposal\`, \`\$develop\`, \`\$review\`, \`\$quick-dev\`, or \`\$yolo\` to load the stage-specific workflow.
-- **Reviewer sub-agents**: mount the reviewer skill explicitly — \`spawn_agent({items:[{type:\"skill\", path:\"chorus:chorus-proposal-reviewer\"}, {type:\"text\", text:\"Review proposal <proposal-uuid> and post VERDICT.\"}]})\` after \`chorus_pm_submit_proposal\`; use \`chorus:chorus-task-reviewer\` with the task UUID after \`chorus_submit_for_verify\`. Wait only when the next gate depends on the verdict, then close the thread; use \`send_input\` for an active child and \`resume_agent\` only for a previously closed one. Routine entity-backed children use fresh context; \`fork_context: true\` is only for material parent-conversation state."
+${AGENT_LINES}"
 
-# User-visible status (mirrors the Claude Code hook; Codex skill prefix is $chorus).
+# User-visible status (mirrors the Claude Code hook).
 USER_MSG="Chorus connected at ${CHORUS_URL}"
 if [ -n "$SPEC_FAIL" ]; then
   USER_MSG="${USER_MSG} (Spec: openspec — not usable)"

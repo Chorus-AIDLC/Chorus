@@ -66,6 +66,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 CLAUDE_HOOK="$REPO_ROOT/public/chorus-plugin/bin/on-post-verify-task.sh"
 CODEX_HOOK="$REPO_ROOT/plugins/chorus/hooks/on-post-verify-task.sh"
 CODEX_HOOK_OUTPUT="$REPO_ROOT/plugins/chorus/hooks/hook-output.sh"
+CODEX_HOOK_RUNTIME="$REPO_ROOT/plugins/chorus/hooks/hook-runtime.sh"
 
 [ -x "$CLAUDE_HOOK" ] || { echo "FAIL: $CLAUDE_HOOK is not executable" >&2; exit 1; }
 [ -x "$CODEX_HOOK" ]  || { echo "FAIL: $CODEX_HOOK is not executable" >&2; exit 1; }
@@ -82,7 +83,7 @@ trap cleanup EXIT
 
 # Sandbox layout:
 #   $SANDBOX/claude/    — copy of Claude hook + shim chorus-api.sh
-#   $SANDBOX/codex/     — copy of Codex hook + shim chorus-mcp-call.sh + real hook-output.sh
+#   $SANDBOX/codex/     — copy of Codex hook + shim chorus-mcp-call.sh + real hook-output.sh + hook-runtime.sh
 #   $SANDBOX/bin/       — fake openspec CLI on PATH
 #   $SANDBOX/project/   — synthetic project root (contains openspec/ for fixtures
 #                         that need the folder signal to be present)
@@ -91,6 +92,7 @@ mkdir -p "$SANDBOX/claude" "$SANDBOX/codex" "$SANDBOX/bin" "$SANDBOX/project/ope
 cp "$CLAUDE_HOOK" "$SANDBOX/claude/on-post-verify-task.sh"
 cp "$CODEX_HOOK"  "$SANDBOX/codex/on-post-verify-task.sh"
 cp "$CODEX_HOOK_OUTPUT" "$SANDBOX/codex/hook-output.sh"
+cp "$CODEX_HOOK_RUNTIME" "$SANDBOX/codex/hook-runtime.sh"
 chmod +x "$SANDBOX/claude/on-post-verify-task.sh" "$SANDBOX/codex/on-post-verify-task.sh"
 
 # ----- Shim: chorus-api.sh (Claude Code shape) -----
@@ -137,7 +139,7 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-1","title":"P1","description":"Some intro line.\nOpenSpec change slug: my-feature\nMore body.","inputType":"idea","inputUuids":["idea-1"]}'
         ;;
       positive:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":100}'
         ;;
       not-last-task:chorus_get_task)
         echo '{"uuid":"task-2","title":"Task 2","status":"done","proposalUuid":"prop-1","project":{"uuid":"proj-1","name":"P"}}'
@@ -146,7 +148,7 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-1","title":"P1","description":"Intro.\nOpenSpec change slug: my-feature\nMore.","inputType":"idea","inputUuids":["idea-1"]}'
         ;;
       not-last-task:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"in_progress"}],"total":3,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"in_progress"}],"total":3,"page":1,"pageSize":100}'
         ;;
       no-slug:chorus_get_task)
         echo '{"uuid":"task-3","title":"Task 3","status":"done","proposalUuid":"prop-2","project":{"uuid":"proj-1","name":"P"}}'
@@ -155,7 +157,7 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-2","title":"P2","description":"Free-form proposal description with no slug marker.","inputType":"idea","inputUuids":["idea-2"]}'
         ;;
       no-slug:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":100}'
         ;;
 
       # ----- Branch B fixtures (idea-completion report reminder) -----
@@ -168,10 +170,10 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no OpenSpec slug here.","inputType":"idea","inputUuids":["idea-9"]}'
         ;;
       report-positive:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
         ;;
       report-positive:chorus_get_documents)
-        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
         ;;
 
       # report-existing: same as positive but a report Document already
@@ -183,10 +185,10 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
         ;;
       report-existing:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
         ;;
       report-existing:chorus_get_documents)
-        echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+        echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":100}'
         ;;
 
       # report-not-last: a task is still in_progress -> silent skip.
@@ -197,10 +199,10 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
         ;;
       report-not-last:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
         ;;
       report-not-last:chorus_get_documents)
-        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
         ;;
 
       # report-quick-task: proposal.inputType != "idea" -> Branch B must
@@ -212,10 +214,10 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"manual","inputUuids":[]}'
         ;;
       report-quick-task:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":100}'
         ;;
       report-quick-task:chorus_get_documents)
-        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
         ;;
 
       # report-task-overflow: chorus_list_tasks returns 5 done tasks but
@@ -228,10 +230,10 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
         ;;
       report-task-overflow:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"t1","status":"done","proposalUuid":"prop-9"},{"uuid":"t2","status":"done","proposalUuid":"prop-9"},{"uuid":"t3","status":"done","proposalUuid":"prop-9"},{"uuid":"t4","status":"done","proposalUuid":"prop-9"},{"uuid":"t5","status":"done","proposalUuid":"prop-9"}],"total":25,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"t1","status":"done","proposalUuid":"prop-9"},{"uuid":"t2","status":"done","proposalUuid":"prop-9"},{"uuid":"t3","status":"done","proposalUuid":"prop-9"},{"uuid":"t4","status":"done","proposalUuid":"prop-9"},{"uuid":"t5","status":"done","proposalUuid":"prop-9"}],"total":25,"page":1,"pageSize":100}'
         ;;
       report-task-overflow:chorus_get_documents)
-        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
         ;;
 
       # report-doc-overflow: chorus_get_documents returns 1 unrelated
@@ -244,10 +246,10 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
         ;;
       report-doc-overflow:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
         ;;
       report-doc-overflow:chorus_get_documents)
-        echo '{"documents":[{"uuid":"doc-other","type":"report","title":"Some other report","proposalUuid":"prop-OTHER"}],"total":25,"page":1,"pageSize":200}'
+        echo '{"documents":[{"uuid":"doc-other","type":"report","title":"Some other report","proposalUuid":"prop-OTHER"}],"total":25,"page":1,"pageSize":100}'
         ;;
 
       # ----- Branch C fixtures (code-review gateway reminder) -----
@@ -261,10 +263,10 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no OpenSpec slug.","inputType":"idea","inputUuids":["idea-9"]}'
         ;;
       codereview-positive:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
         ;;
       codereview-positive:chorus_get_documents)
-        echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+        echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":100}'
         ;;
 
       # codereview-not-idea: proposal.inputType != "idea" -> Branch C must
@@ -276,10 +278,10 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-9","title":"P9","description":"Manual proposal.","inputType":"manual","inputUuids":[]}'
         ;;
       codereview-not-idea:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":100}'
         ;;
       codereview-not-idea:chorus_get_documents)
-        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
         ;;
 
       # codereview-not-last: a task is still in_progress -> Branch C silent.
@@ -290,10 +292,10 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
         ;;
       codereview-not-last:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
         ;;
       codereview-not-last:chorus_get_documents)
-        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
         ;;
 
       # codereview-ordering: idea-rooted, all done, NO report Document ->
@@ -306,10 +308,10 @@ case "$cmd" in
         printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no slug.","inputType":"idea","inputUuids":["idea-9"]}'
         ;;
       codereview-ordering:chorus_list_tasks)
-        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+        echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
         ;;
       codereview-ordering:chorus_get_documents)
-        echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+        echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
         ;;
 
       *)
@@ -357,7 +359,7 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-1","title":"P1","description":"Some intro line.\nOpenSpec change slug: my-feature\nMore body.","inputType":"idea","inputUuids":["idea-1"]}'
     ;;
   positive:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":100}'
     ;;
   not-last-task:chorus_get_task)
     echo '{"uuid":"task-2","title":"Task 2","status":"done","proposalUuid":"prop-1","project":{"uuid":"proj-1","name":"P"}}'
@@ -366,7 +368,7 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-1","title":"P1","description":"Intro.\nOpenSpec change slug: my-feature\nMore.","inputType":"idea","inputUuids":["idea-1"]}'
     ;;
   not-last-task:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"in_progress"}],"total":3,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"in_progress"}],"total":3,"page":1,"pageSize":100}'
     ;;
   no-slug:chorus_get_task)
     echo '{"uuid":"task-3","title":"Task 3","status":"done","proposalUuid":"prop-2","project":{"uuid":"proj-1","name":"P"}}'
@@ -375,7 +377,7 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-2","title":"P2","description":"Free-form proposal description with no slug marker.","inputType":"idea","inputUuids":["idea-2"]}'
     ;;
   no-slug:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-1","status":"done"},{"uuid":"task-2","status":"done"},{"uuid":"task-3","status":"done"}],"total":3,"page":1,"pageSize":100}'
     ;;
 
   # ----- Branch B fixtures (idea-completion report reminder) -----
@@ -386,10 +388,10 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no OpenSpec slug here.","inputType":"idea","inputUuids":["idea-9"]}'
     ;;
   report-positive:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
     ;;
   report-positive:chorus_get_documents)
-    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
     ;;
 
   report-existing:chorus_get_task)
@@ -399,10 +401,10 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
     ;;
   report-existing:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
     ;;
   report-existing:chorus_get_documents)
-    echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+    echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":100}'
     ;;
 
   report-not-last:chorus_get_task)
@@ -412,10 +414,10 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
     ;;
   report-not-last:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
     ;;
   report-not-last:chorus_get_documents)
-    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
     ;;
 
   report-quick-task:chorus_get_task)
@@ -425,10 +427,10 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"manual","inputUuids":[]}'
     ;;
   report-quick-task:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":100}'
     ;;
   report-quick-task:chorus_get_documents)
-    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
     ;;
 
   # report-task-overflow: tasks total > returned -> silent skip.
@@ -439,10 +441,10 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
     ;;
   report-task-overflow:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"t1","status":"done","proposalUuid":"prop-9"},{"uuid":"t2","status":"done","proposalUuid":"prop-9"},{"uuid":"t3","status":"done","proposalUuid":"prop-9"},{"uuid":"t4","status":"done","proposalUuid":"prop-9"},{"uuid":"t5","status":"done","proposalUuid":"prop-9"}],"total":25,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"t1","status":"done","proposalUuid":"prop-9"},{"uuid":"t2","status":"done","proposalUuid":"prop-9"},{"uuid":"t3","status":"done","proposalUuid":"prop-9"},{"uuid":"t4","status":"done","proposalUuid":"prop-9"},{"uuid":"t5","status":"done","proposalUuid":"prop-9"}],"total":25,"page":1,"pageSize":100}'
     ;;
   report-task-overflow:chorus_get_documents)
-    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
     ;;
 
   # report-doc-overflow: docs total > returned -> silent skip.
@@ -453,10 +455,10 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
     ;;
   report-doc-overflow:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
     ;;
   report-doc-overflow:chorus_get_documents)
-    echo '{"documents":[{"uuid":"doc-other","type":"report","title":"Some other report","proposalUuid":"prop-OTHER"}],"total":25,"page":1,"pageSize":200}'
+    echo '{"documents":[{"uuid":"doc-other","type":"report","title":"Some other report","proposalUuid":"prop-OTHER"}],"total":25,"page":1,"pageSize":100}'
     ;;
 
   # ----- Branch C fixtures (code-review gateway reminder) -----
@@ -469,10 +471,10 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no OpenSpec slug.","inputType":"idea","inputUuids":["idea-9"]}'
     ;;
   codereview-positive:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
     ;;
   codereview-positive:chorus_get_documents)
-    echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+    echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":100}'
     ;;
 
   # codereview-not-idea: inputType != "idea" -> Branch C silent.
@@ -483,10 +485,10 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-9","title":"P9","description":"Manual proposal.","inputType":"manual","inputUuids":[]}'
     ;;
   codereview-not-idea:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":100}'
     ;;
   codereview-not-idea:chorus_get_documents)
-    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
     ;;
 
   # codereview-not-last: a task still in_progress -> Branch C silent.
@@ -497,10 +499,10 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-9"]}'
     ;;
   codereview-not-last:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"in_progress","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
     ;;
   codereview-not-last:chorus_get_documents)
-    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
     ;;
 
   # codereview-ordering: idea-rooted, all done, NO report -> BOTH C and B
@@ -512,10 +514,10 @@ case "${fixture}:${tool}" in
     printf '%s' '{"uuid":"prop-9","title":"P9","description":"Free-form proposal — no slug.","inputType":"idea","inputUuids":["idea-9"]}'
     ;;
   codereview-ordering:chorus_list_tasks)
-    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":200}'
+    echo '{"tasks":[{"uuid":"task-7","status":"done","proposalUuid":"prop-9"},{"uuid":"task-8","status":"closed","proposalUuid":"prop-9"},{"uuid":"task-9","status":"done","proposalUuid":"prop-9"}],"total":3,"page":1,"pageSize":100}'
     ;;
   codereview-ordering:chorus_get_documents)
-    echo '{"documents":[],"total":0,"page":1,"pageSize":200}'
+    echo '{"documents":[],"total":0,"page":1,"pageSize":100}'
     ;;
 
   *)

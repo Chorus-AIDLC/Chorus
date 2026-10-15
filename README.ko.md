@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.22.2](https://chorus-ai.dev/blog/chorus-v0.22.2-release/)**: Docker Compose와 PostgreSQL 17을 사용해 자신의 Linux 또는 macOS 머신에서 Chorus를 호스팅할 수 있습니다. 반복 가능한 배포, 선택적 LAN HTTPS, Cloudflare Tunnel 연결 가이드를 제공합니다. TRAE CLI 백엔드를 추가해 Codex와 공통 플러그인으로 기존 워크플로에 참여할 수 있으며, 유효하지 않은 담당자 정보, 삭제 실패, daemon 보안 및 설정 문제도 수정했습니다.
+
 **[v0.22.0](https://chorus-ai.dev/blog/chorus-v0.22.0-release/)**: Hermes Agent 연동을 추가했습니다. 별도의 Chorus daemon 없이 Hermes 자체 gateway를 통해 기존 Chorus 워크플로에 참여합니다. Chorus에서 작업을 할당하면 Hermes가 실행하고, 결과와 승인 요청을 프로젝트로 보냅니다. 플러그인은 Chorus CLI를 사용하거나 Hermes에서 직접 설치할 수 있습니다.
 
 **[v0.21.0](https://chorus-ai.dev/blog/chorus-v0.21.0-release/)**: 비공개 프로젝트와 프로젝트 그룹을 추가하고 Viewer, Editor, Admin 접근 권한과 그룹 권한의 즉시 상속을 지원합니다. 에이전트 시작 및 실행 실패의 진단 정보를 대화에 저장합니다. Linux 데몬의 지속 실행을 개선하고 보안 관련 의존성도 업데이트했습니다.
@@ -70,6 +72,8 @@ chorus
 Chorus는 내장 PostgreSQL(PGlite)로 시작해 마이그레이션을 실행하고 **http://localhost:8637** 에서 열립니다. 기본 로그인: `admin@chorus.local` / `chorus`.
 
 > 여러 에이전트를 실행하거나 프로덕션에 배포하시나요? 외부 PostgreSQL, Docker, 또는 AWS를 사용하세요 → **[배포 및 셀프 호스팅](https://doc.chorus-ai.dev/ko/guides/deployment-overview/)**.
+
+> 자신의 머신에서 호스팅하거나 Cloudflare Tunnel을 연결하려면 **[로컬 머신에서 셀프 호스팅](https://doc.chorus-ai.dev/ko/guides/deploy-local/)**을 참고하세요. 설치, LAN HTTPS, Cloudflare Named Tunnel 설정을 안내합니다.
 
 로컬 머신을 배정된 작업을 이어받는 에이전트 런타임으로 만들려면 `chorus daemon`을 실행하세요 → **[데몬 운영](https://doc.chorus-ai.dev/ko/guides/daemon-operations/)** · **[원격 제어](https://doc.chorus-ai.dev/ko/guides/remote-control/)**.
 
@@ -105,7 +109,7 @@ PM 에이전트가 요구사항을 분석해 PRD와 작업 DAG를 생성하며, 
 
 ## 에이전트 연결하기
 
-가장 빠른 방법은 앱 내 마법사입니다: **Settings → Setup Guide**를 여세요. 마법사가 API 키를 만들고, 사용하는 클라이언트(Claude Code, Codex, Kiro, dsh, OpenCode, OpenClaw, Pi, Hermes, 또는 그 밖의 MCP 호환 에이전트)에 맞는 정확한 명령을 보여줍니다.
+가장 빠른 방법은 앱 내 마법사입니다: **Settings → Setup Guide**를 여세요. 마법사가 API 키를 만들고, 사용하는 클라이언트(Claude Code, Codex, TRAE CLI, Kiro, dsh, OpenCode, OpenClaw, Pi, Hermes, 또는 그 밖의 MCP 호환 에이전트)에 맞는 정확한 명령을 보여줍니다. TRAE CLI 설정 안내: [docs/CONNECT_TRAE.md](docs/CONNECT_TRAE.md).
 
 클라이언트별 전체 가이드 → **[에이전트 플랫폼](https://doc.chorus-ai.dev/ko/reference/agents/)**.
 
@@ -120,7 +124,7 @@ API 키는 **Settings → Agents → Create API Key**에서 만듭니다. 키는
 | 프레임워크 | Next.js 15 (App Router, Turbopack) |
 | 언어 | TypeScript 5 (strict mode) |
 | 프론트엔드 | React 19, Tailwind CSS 4, shadcn/ui |
-| 데이터 | PostgreSQL 16 + Prisma 7, Redis 7 (optional) |
+| 데이터 | PostgreSQL 17 + Prisma 7, Redis 7 (optional) |
 | 에이전트 연동 | MCP SDK (HTTP Streamable Transport) |
 | 인증 | OIDC + PKCE / API Key / SuperAdmin |
 | i18n | next-intl (en, zh, ko, ja) |
@@ -138,6 +142,7 @@ API 키는 **Settings → Agents → Create API Key**에서 만듭니다. 키는
 - [플러그인 및 명령](https://doc.chorus-ai.dev/ko/guides/plugin-commands/)
 - [MCP 도구 레퍼런스](https://doc.chorus-ai.dev/ko/reference/mcp-tools/)
 - [배포 및 셀프 호스팅](https://doc.chorus-ai.dev/ko/guides/deployment-overview/)
+- [로컬 셀프 호스팅 및 Cloudflare Tunnel](https://doc.chorus-ai.dev/ko/guides/deploy-local/)
 
 ---
 

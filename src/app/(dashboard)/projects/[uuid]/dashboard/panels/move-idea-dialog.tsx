@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Loader2, AlertTriangle, Check, ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -34,6 +35,7 @@ import {
   getProjectsAndGroupsAction,
 } from "./actions";
 import { clientLogger } from "@/lib/logger-client";
+import type { BlockedAssignee } from "@/services/idea.service";
 
 interface MoveGroup {
   uuid: string;
@@ -46,6 +48,59 @@ interface MoveCounts {
   documents: number;
   tasks: number;
   activities: number;
+}
+
+/**
+ * Warning listing live assignees that lack Editor on the target project, with
+ * the ideas/tasks each holds. Rendered from the preview (before confirm) and
+ * from a confirm-time AssigneeAccessError (fix-idea-move-dangling-assignee D3).
+ */
+export function BlockedAssigneesWarning({ blockedAssignees }: { blockedAssignees: BlockedAssignee[] }) {
+  const t = useTranslations("ideas");
+  return (
+    <div
+      role="alert"
+      data-testid="move-blocked-assignees"
+      className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[13px] text-amber-900 dark:border-[#5a4718] dark:bg-[#332a12] dark:text-[#E0B44E]"
+    >
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <div className="min-w-0 flex-1 space-y-2">
+          <p className="font-medium">{t("moveDialog.blockedTitle")}</p>
+          <ul className="space-y-2">
+            {blockedAssignees.map((b) => {
+              const ideas = b.entities.filter((e) => e.type === "idea").length;
+              const tasks = b.entities.length - ideas;
+              return (
+                <li key={`${b.assigneeType}:${b.assigneeUuid}`} className="space-y-1">
+                  <p>
+                    <span className="font-medium">{b.name ?? t("moveDialog.blockedUnknownAssignee")}</span>{" "}
+                    <span className="text-[12px] opacity-80">
+                      {t("moveDialog.blockedCounts", { ideas, tasks })}
+                    </span>
+                  </p>
+                  <ul className="space-y-0.5 pl-1">
+                    {b.entities.map((e) => (
+                      <li key={`${e.type}:${e.uuid}`} className="flex min-w-0 items-center gap-1.5 text-[12px]">
+                        <Badge
+                          variant="outline"
+                          className="shrink-0 border-amber-300 px-1.5 py-0 text-[10px] text-amber-900 dark:border-[#5a4718] dark:text-[#E0B44E]"
+                        >
+                          {e.type === "idea" ? t("moveDialog.blockedEntityIdea") : t("moveDialog.blockedEntityTask")}
+                        </Badge>
+                        <span className="truncate">{e.title}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="text-[12px]">{t("moveDialog.blockedHint")}</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 interface MoveIdeaDialogProps {
@@ -94,6 +149,9 @@ export function MoveIdeaDialog({
 
   const [isMoving, setIsMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
+  // Assignees blocking the move: from the preview, or from a confirm-time
+  // AssigneeAccessError (server state may change between preview and confirm).
+  const [blockedAssignees, setBlockedAssignees] = useState<BlockedAssignee[]>([]);
 
   // Bump on each preview request to discard stale responses if the user picks
   // a different project before the previous fetch resolves.
@@ -113,6 +171,7 @@ export function MoveIdeaDialog({
     setPreview(null);
     setPreviewError(null);
     setMoveError(null);
+    setBlockedAssignees([]);
     setIsLoadingProjects(true);
     try {
       const result = await getProjectsAndGroupsAction();
@@ -172,6 +231,8 @@ export function MoveIdeaDialog({
   // When the user picks a target, fetch the cascade preview. Stale responses
   // from a previously-selected target are dropped via previewReqIdRef.
   useEffect(() => {
+    setBlockedAssignees([]);
+    setMoveError(null);
     if (!selectedProjectUuid) {
       setPreview(null);
       setPreviewError(null);
@@ -186,6 +247,7 @@ export function MoveIdeaDialog({
         if (reqId !== previewReqIdRef.current) return;
         if (result.success) {
           setPreview(result.moved);
+          setBlockedAssignees(result.blockedAssignees ?? []);
         } else {
           setPreviewError(result.error || t("moveDialog.error", { message: "" }));
         }
@@ -202,7 +264,7 @@ export function MoveIdeaDialog({
   }, [selectedProjectUuid, ideaUuid, t]);
 
   const handleMove = async () => {
-    if (!selectedProjectUuid || !preview || isMoving) return;
+    if (!selectedProjectUuid || !preview || isMoving || blockedAssignees.length > 0) return;
     setIsMoving(true);
     setMoveError(null);
 
@@ -225,6 +287,9 @@ export function MoveIdeaDialog({
         // already-moved data once it closes.
         router.refresh();
         onMoved(moved);
+      } else if ("blockedAssignees" in result && result.blockedAssignees?.length) {
+        // Render the structured list instead of the raw server message.
+        setBlockedAssignees(result.blockedAssignees);
       } else {
         setMoveError(t("moveDialog.error", { message: result.error || t("moveFailed") }));
       }
@@ -354,6 +419,10 @@ export function MoveIdeaDialog({
             </div>
           )}
 
+          {blockedAssignees.length > 0 && !isLoadingPreview && (
+            <BlockedAssigneesWarning blockedAssignees={blockedAssignees} />
+          )}
+
           {moveError && (
             <p className="text-xs text-destructive" role="alert">
               {moveError}
@@ -373,7 +442,13 @@ export function MoveIdeaDialog({
           <Button
             className="bg-primary hover:bg-[#B56A42] text-white"
             onClick={handleMove}
-            disabled={!selectedProjectUuid || !preview || isMoving || isLoadingPreview}
+            disabled={
+              !selectedProjectUuid ||
+              !preview ||
+              isMoving ||
+              isLoadingPreview ||
+              blockedAssignees.length > 0
+            }
           >
             {isMoving ? (
               <>

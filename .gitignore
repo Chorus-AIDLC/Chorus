@@ -55,6 +55,7 @@ next-env.d.ts
 # CDK
 packages/chorus-cdk/cdk.out/
 default_deploy.sh
+default_deploy_local.sh
 
 packages/chorus-cdk/lib/*.js
 packages/chorus-cdk/lib/*.d.ts

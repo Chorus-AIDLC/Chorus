@@ -43,6 +43,7 @@ import { AgentInstallGuide } from "../AgentInstallGuide";
 const TAB_NAMES = [
   "Claude Code",
   "Codex",
+  "TRAE CLI",
   "Kiro",
   "Pi",
   "DeepSeek Harness",
@@ -53,7 +54,7 @@ const TAB_NAMES = [
 ];
 
 describe("AgentInstallGuide dsh onboarding", () => {
-  it("renders nine ordered, non-shrinking tabs in a horizontally scrollable row", () => {
+  it("renders ten ordered, non-shrinking tabs in a horizontally scrollable row", () => {
     const { container } = render(<AgentInstallGuide apiKey={null} />);
     const tabList = container.querySelector<HTMLElement>('[data-slot="tabs-list"]');
 
@@ -172,6 +173,7 @@ describe("AgentInstallGuide dsh onboarding", () => {
     const initTabs = [
       { tab: "Claude Code", init: /chorus agents add --agents claude/ },
       { tab: "Codex", init: /chorus agents add --agents codex/ },
+      { tab: "TRAE CLI", init: /chorus agents add --agents trae/ },
       { tab: "Kiro", init: /chorus agents add --agents kiro/ },
       { tab: "DeepSeek Harness", init: /chorus agents add --agents dsh/ },
       { tab: "OpenCode", init: /chorus agents add --agents opencode/ },
@@ -244,6 +246,29 @@ describe("AgentInstallGuide dsh onboarding", () => {
     expect(screen.getByText(/--ref accepts only a full 40-character SHA/)).toBeTruthy();
     expect(screen.getByText(/approvals\.mode manual, so every flagged command reaches you/)).toBeTruthy();
     // Hermes is scheduled through its own gateway, not the Chorus CLI daemon profile.
+    expect(
+      screen.queryByText("Step 3 (optional): Set the default agent for the Chorus CLI"),
+    ).toBeNull();
+  });
+
+  it("renders the TRAE CLI tab: env, chorus agents add --agents trae, hook trust, and the daemon command", async () => {
+    const user = userEvent.setup();
+    render(<AgentInstallGuide apiKey="cho_live_test_key" />);
+
+    await user.click(screen.getByRole("tab", { name: "TRAE CLI" }));
+
+    expect(screen.getByText("Step 1: Set environment variables")).toBeTruthy();
+    expect(screen.getByText("Step 2: Run chorus agents add")).toBeTruthy();
+    expect(screen.getByText("Step 3: Trust the Chorus hooks")).toBeTruthy();
+    expect(screen.getByText("Step 4 (optional): Let the daemon wake TRAE CLI")).toBeTruthy();
+    expect(screen.getByText(/export CHORUS_API_KEY="cho_live_test_key"/)).toBeTruthy();
+    expect(
+      screen.getByText(/npm install -g @chorus-aidlc\/chorus chorus agents add --agents trae/),
+    ).toBeTruthy();
+    expect(screen.getByText("chorus daemon --agent trae")).toBeTruthy();
+    expect(screen.getByText(/traecli 0\.209\.1 or later/)).toBeTruthy();
+    expect(screen.getByText(/~\/\.trae\/\.env overrides the credentials/)).toBeTruthy();
+    // .env carries the profile, so (like Codex) no manual default-agent step.
     expect(
       screen.queryByText("Step 3 (optional): Set the default agent for the Chorus CLI"),
     ).toBeNull();

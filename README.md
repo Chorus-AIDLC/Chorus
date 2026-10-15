@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.22.2](https://chorus-ai.dev/blog/chorus-v0.22.2-release/)**: Host Chorus on your own Linux or macOS machine with Docker Compose and PostgreSQL 17, with repeatable deployment, optional LAN HTTPS, and Cloudflare Tunnel guidance. TRAE CLI joins the existing workflow through the shared Codex plugin. This release also fixes stale assignments, deletion failures, and daemon security and configuration issues.
+
 **[v0.22.0](https://chorus-ai.dev/blog/chorus-v0.22.0-release/)**: Hermes Agent now joins the existing Chorus workflow through its own gateway, with no separate Chorus daemon. Assign work in Chorus, run it in Hermes, and bring results and approval requests back to the project. Install through the Chorus CLI or directly with Hermes.
 
 **[v0.21.0](https://chorus-ai.dev/blog/chorus-v0.21.0-release/)**: Private projects and project groups provide Viewer, Editor, and Admin access with live permission inheritance. Agent startup and execution failures now include persistent diagnostics in conversations. This release also improves Linux daemon persistence and updates security dependencies.
@@ -71,6 +73,8 @@ Chorus starts with an embedded PostgreSQL (PGlite), runs migrations, and opens a
 
 > Running multiple agents or deploying to production? Use an external PostgreSQL, Docker, or AWS → **[Deploy & self-host](https://doc.chorus-ai.dev/guides/deployment-overview/)**.
 
+> Hosting on your own machine or connecting a Cloudflare Tunnel? See **[Self-host on a local machine](https://doc.chorus-ai.dev/guides/deploy-local/)** for installation, LAN HTTPS, and Cloudflare Named Tunnel setup.
+
 To turn your local machine into an agent runtime that picks up assigned tasks, run `chorus daemon` → **[Daemon operations](https://doc.chorus-ai.dev/guides/daemon-operations/)** · **[Remote control](https://doc.chorus-ai.dev/guides/remote-control/)**.
 
 ### Upgrade the CLI and plugins
@@ -82,7 +86,7 @@ chorus upgrade --plugins   # Also refresh configured agents' Chorus plugins
 
 Self-upgrade supports the active **npm global installation** on Linux, macOS and Windows. It checks npm's prefix, resolves the latest stable release, avoids downgrades and verifies the installed version. Source checkouts, links, npx and other package-manager installations must use their own update workflow. CLI discovery, installation or verification failure stops plugin work.
 
-`--plugins` reads `~/.chorus/daemon.json`, including legacy single-agent records. Explicit Claude Code, Codex, Kiro and Pi types are processed even with wake disabled. Each record's home, config directory and PATH are respected; shared destinations update once. Only Chorus and required integration packages are refreshed, with existing credentials and unrelated settings preserved. Host CLIs must already be installed. Kiro templates come from the record's configured Chorus instance (its served version, which may lag npm); conflicting instance URLs for one destination are reported. Stable Pi >=0.99.0 <2.0.0 uses native MCP and targets Chorus only; Pi 0.84.4–0.98.x retains the verified `pi-mcp-adapter@5.0.0` pin. Unknown versions do not trigger adapter changes or an MCP-complete claim; unsupported hosts run no package commands. Updates are targeted, never all-extension; missing capability or incompatible constraints report incomplete work. User pins/ranges are preserved (the verified adapter pin is intentional, not an incomplete latest refresh). Existing native-host adapters and `-builtin:mcp` filters produce scope-specific manual-migration warnings, never automatic removal. See [Pi setup](docs/CONNECT_PI.md).
+`--plugins` reads `~/.chorus/daemon.json`, including legacy single-agent records. Explicit Claude Code, Codex, TRAE CLI, Kiro and Pi types are processed even with wake disabled. Each record's home, config directory and PATH are respected; shared destinations update once. Only Chorus and required integration packages are refreshed, with existing credentials and unrelated settings preserved. Host CLIs must already be installed. Kiro templates come from the record's configured Chorus instance (its served version, which may lag npm); conflicting instance URLs for one destination are reported. Stable Pi >=0.99.0 <2.0.0 uses native MCP and targets Chorus only; Pi 0.84.4–0.98.x retains the verified `pi-mcp-adapter@5.0.0` pin. Unknown versions do not trigger adapter changes or an MCP-complete claim; unsupported hosts run no package commands. Updates are targeted, never all-extension; missing capability or incompatible constraints report incomplete work. User pins/ranges are preserved (the verified adapter pin is intentional, not an incomplete latest refresh). Existing native-host adapters and `-builtin:mcp` filters produce scope-specific manual-migration warnings, never automatic removal. See [Pi setup](docs/CONNECT_PI.md).
 
 The command is noninteractive and reports each target. Exit **0** means all requested work completed (missing/empty configuration is a successful no-op); exit **1** means failure or incomplete work, including offline/unknown/untyped records, missing hosts or unsupported targeted updates. Later targets still run after a plugin failure; completed changes are not rolled back. Start new agent sessions and restart the daemon when convenient to activate updates—the command does not restart processes or interrupt sessions.
 
@@ -120,7 +124,7 @@ Task cards flow between To Do → In Progress → To Verify as agents work, with
 
 ## Connect an Agent
 
-The fastest path is the in-app wizard: open **Settings → Setup Guide**. It creates the API key and shows the exact commands for your client — Claude Code, Codex, Kiro, dsh, OpenCode, OpenClaw, Pi, Hermes, or any MCP-compatible agent.
+The fastest path is the in-app wizard: open **Settings → Setup Guide**. It creates the API key and shows the exact commands for your client — Claude Code, Codex, TRAE CLI, Kiro, dsh, OpenCode, OpenClaw, Pi, Hermes, or any MCP-compatible agent. TRAE CLI setup: [docs/CONNECT_TRAE.md](docs/CONNECT_TRAE.md).
 
 Full per-client guides → **[Agent platforms](https://doc.chorus-ai.dev/reference/agents/)**.
 
@@ -135,7 +139,7 @@ API keys are created under **Settings → Agents → Create API Key**. They star
 | Framework | Next.js 15 (App Router, Turbopack) |
 | Language | TypeScript 5 (strict mode) |
 | Frontend | React 19, Tailwind CSS 4, shadcn/ui |
-| Data | PostgreSQL 16 + Prisma 7, Redis 7 (optional) |
+| Data | PostgreSQL 17 + Prisma 7, Redis 7 (optional) |
 | Agent Integration | MCP SDK (HTTP Streamable Transport) |
 | Auth | OIDC + PKCE / API Key / SuperAdmin |
 | i18n | next-intl (en, zh, ko, ja) |
@@ -153,6 +157,7 @@ API keys are created under **Settings → Agents → Create API Key**. They star
 - [Plugins & commands](https://doc.chorus-ai.dev/guides/plugin-commands/)
 - [MCP tools reference](https://doc.chorus-ai.dev/reference/mcp-tools/)
 - [Deploy & self-host](https://doc.chorus-ai.dev/guides/deployment-overview/)
+- [Local self-hosting & Cloudflare Tunnel](https://doc.chorus-ai.dev/guides/deploy-local/)
 
 ---
 

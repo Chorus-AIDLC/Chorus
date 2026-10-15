@@ -468,7 +468,13 @@
       "cancel": "キャンセル",
       "error": "移動に失敗しました：{message}",
       "successToast": "着想 {ideas} 件を移動しました — 提案 {proposals} 件、文書 {documents} 件、課題 {tasks} 件、アクティビティ {activities} 件を更新しました。",
-      "viewMovedIdea": "表示"
+      "viewMovedIdea": "表示",
+      "blockedTitle": "一部の担当者は移動先プロジェクトへのアクセス権がありません",
+      "blockedCounts": "（Idea {ideas} 件、タスク {tasks} 件）",
+      "blockedUnknownAssignee": "不明な担当者",
+      "blockedEntityIdea": "Idea",
+      "blockedEntityTask": "タスク",
+      "blockedHint": "先にこれらの項目を再割り当てまたは解放してから、もう一度移動してください。"
     }
   },
   "tasks": {
@@ -1240,6 +1246,7 @@
       "tabs": {
         "claudeCode": "Claude Code",
         "codex": "Codex",
+        "trae": "TRAE CLI",
         "kiro": "Kiro",
         "pi": "Pi",
         "dsh": "DeepSeek Harness",
@@ -1263,6 +1270,16 @@
         "step1Tip": "永続化は不要です。ステップ 2 の chorus agents add が ~/.codex/.env に書き込みます。",
         "step2Title": "ステップ 2：chorus agents add を実行",
         "step2Tip": "chorus agents add は Chorus プラグインをインストールし、CHORUS_URL・CHORUS_API_KEY・CHORUS_AGENT_PROFILE を ~/.codex/.env に書き込みます。そのため対話的な Codex では手動の export は不要です。"
+      },
+      "trae": {
+        "step1Title": "ステップ 1：環境変数を設定",
+        "step1Tip": "永続化は不要です。ステップ 2 の chorus agents add が ~/.trae/.env（または $TRAE_HOME/.env）に書き込みます。",
+        "step2Title": "ステップ 2：chorus agents add を実行",
+        "step2Tip": "traecli 0.209.1 以降がインストール済みでログイン済みである必要があります。chorus agents add は traecli のプラグイン CLI で Chorus の Codex プラグインパッケージをインストールし、キーを含まない [mcp_servers.chorus] を traecli.toml に書き込み、CHORUS_URL・CHORUS_API_KEY・CHORUS_AGENT_PROFILE を ~/.trae/.env に書き込みます。そのため対話的な TRAE CLI では手動の export は不要です。",
+        "step3Title": "ステップ 3：Chorus のフックを信頼",
+        "step3Desc": "traecli は信頼済みのプラグインフックだけを実行します。traecli を開き、chorus@chorus-plugins のフック信頼確認を承認すると、セッションのチェックインとレビュアーのリマインダーが動作します。",
+        "step4Title": "ステップ 4（任意）：デーモンで TRAE CLI を起動",
+        "step4Tip": "起動のたびに独立した traecli app-server が立ち上がります。~/.trae/.env はデーモンがエクスポートする認証情報より優先されるため、TRAE エージェントごとに別の TRAE_HOME を用意してください。"
       },
       "kiro": {
         "step1Title": "ステップ 1：環境変数を設定",
@@ -1623,6 +1640,7 @@
     "clientKiro": "Kiro",
     "clientDsh": "DeepSeek Harness",
     "clientPi": "Pi",
+    "clientTrae": "TRAE CLI",
     "clientHermes": "Hermes",
     "clientUnknown": "不明なクライアント",
     "uptimeMonoDays": "{days}日 {time}",

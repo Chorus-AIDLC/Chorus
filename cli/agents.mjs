@@ -290,6 +290,15 @@ export function removeAgent(argv = [], opts = {}) {
         "(and the keyless [mcp_servers.chorus] block in ~/.codex/config.toml, which references the key via bearer_token_env_var) were left untouched — clear them manually if needed.\n",
     );
   }
+  // TRAE CLI: same Codex-family install shape under $TRAE_HOME (default ~/.trae) —
+  // possibly CHORUS_* in ~/.trae/.env and the keyless [mcp_servers.chorus] block plus the
+  // chorus@chorus-plugins plugin entry in ~/.trae/traecli.toml. Left in place; tell the operator.
+  if (nonEmpty(removed.agentType) === "trae") {
+    out.write(
+      "Note: any CHORUS_* env written into ~/.trae/.env " +
+        "(and the keyless [mcp_servers.chorus] block and chorus@chorus-plugins plugin entry in ~/.trae/traecli.toml) were left untouched — clear them manually if needed.\n",
+    );
+  }
   return 0;
 }
 

@@ -164,6 +164,11 @@ export async function deleteCompany(id: number) {
     await tx.proposal.deleteMany({ where: { companyUuid } });
     await tx.task.deleteMany({ where: { companyUuid } });
     await tx.document.deleteMany({ where: { companyUuid } });
+    // IdeaLineage is Restrict: detach every parent link first, or Prisma raises P2014
+    await tx.idea.updateMany({
+      where: { companyUuid, parentUuid: { not: null } },
+      data: { parentUuid: null },
+    });
     await tx.idea.deleteMany({ where: { companyUuid } });
     await tx.project.deleteMany({ where: { companyUuid } });
     await tx.apiKey.deleteMany({ where: { companyUuid } });

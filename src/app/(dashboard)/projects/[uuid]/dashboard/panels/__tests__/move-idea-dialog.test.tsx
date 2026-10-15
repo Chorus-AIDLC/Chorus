@@ -293,4 +293,137 @@ describe("MoveIdeaDialog", () => {
       expect(confirm.disabled).toBe(true);
     });
   });
+  describe("blocked assignees (fix-idea-move-dangling-assignee D3)", () => {
+    const BLOCKED = [
+      {
+        assigneeType: "agent",
+        assigneeUuid: "agent-bob",
+        name: "Bob",
+        entities: [
+          { type: "task", uuid: "t1", title: "Wire the API" },
+          { type: "task", uuid: "t2", title: "Write the tests" },
+        ],
+      },
+      {
+        assigneeType: "user",
+        assigneeUuid: "user-leo",
+        name: "Leo",
+        entities: [{ type: "idea", uuid: "i1", title: "Root idea" }],
+      },
+    ];
+
+    async function pickTarget(name = "Target One") {
+      const user = userEvent.setup();
+      await user.click(await findSelectTrigger());
+      await user.click(await screen.findByRole("option", { name }));
+      return user;
+    }
+
+    it("preview with blocked assignees lists names + entity titles and disables Confirm", async () => {
+      moveIdeaPreviewActionMock.mockResolvedValueOnce({
+        success: true,
+        moved: { ideas: 1, proposals: 2, documents: 1, tasks: 3, activities: 7 },
+        blockedAssignees: BLOCKED,
+      });
+      renderDialog();
+      await pickTarget();
+
+      const warning = await screen.findByTestId("move-blocked-assignees");
+      expect(warning.textContent).toContain("Some assignees don't have access to the target project");
+      expect(warning.textContent).toContain("Bob");
+      expect(warning.textContent).toContain("(0 ideas, 2 tasks)");
+      expect(warning.textContent).toContain("Wire the API");
+      expect(warning.textContent).toContain("Write the tests");
+      expect(warning.textContent).toContain("Leo");
+      expect(warning.textContent).toContain("(1 ideas, 0 tasks)");
+      expect(warning.textContent).toContain("Root idea");
+      expect(warning.textContent).toContain("Reassign or release these items first");
+
+      // Counts still render, but Confirm stays disabled.
+      expect(
+        screen.getByText("Will move: 1 ideas (incl. derived), 2 proposals, 1 documents, 3 tasks, 7 activities."),
+      ).toBeTruthy();
+      const confirm = screen.getByRole("button", { name: "Confirm move" }) as HTMLButtonElement;
+      expect(confirm.disabled).toBe(true);
+    });
+
+    it("falls back to a generic label when a blocked assignee has no name", async () => {
+      moveIdeaPreviewActionMock.mockResolvedValueOnce({
+        success: true,
+        moved: { ideas: 1, proposals: 0, documents: 0, tasks: 0, activities: 0 },
+        blockedAssignees: [{ ...BLOCKED[1], name: null }],
+      });
+      renderDialog();
+      await pickTarget();
+      const warning = await screen.findByTestId("move-blocked-assignees");
+      expect(warning.textContent).toContain("Unknown assignee");
+    });
+
+    it("empty blockedAssignees (e.g. only dangling assignees) shows no warning and the move succeeds", async () => {
+      moveIdeaPreviewActionMock.mockResolvedValueOnce({
+        success: true,
+        moved: { ideas: 1, proposals: 2, documents: 1, tasks: 3, activities: 7 },
+        blockedAssignees: [],
+      });
+      const { onMoved } = renderDialog();
+      const user = await pickTarget();
+
+      await waitFor(() => {
+        const confirm = screen.getByRole("button", { name: "Confirm move" }) as HTMLButtonElement;
+        expect(confirm.disabled).toBe(false);
+      });
+      expect(screen.queryByTestId("move-blocked-assignees")).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Confirm move" }));
+      await waitFor(() => expect(onMoved).toHaveBeenCalled());
+    });
+
+    it("confirm-time AssigneeAccessError renders the server's list instead of the raw message", async () => {
+      moveIdeaActionMock.mockResolvedValueOnce({
+        success: false,
+        error: "Assignee does not have access to this project: Bob (2 tasks)",
+        blockedAssignees: [BLOCKED[0]],
+      });
+      const { onOpenChange } = renderDialog();
+      const user = await pickTarget();
+
+      await waitFor(() => {
+        const confirm = screen.getByRole("button", { name: "Confirm move" }) as HTMLButtonElement;
+        expect(confirm.disabled).toBe(false);
+      });
+      await user.click(screen.getByRole("button", { name: "Confirm move" }));
+
+      const warning = await screen.findByTestId("move-blocked-assignees");
+      expect(warning.textContent).toContain("Bob");
+      expect(warning.textContent).toContain("Wire the API");
+      expect(screen.queryByText(/Move failed:/)).toBeNull();
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+      const confirm = screen.getByRole("button", { name: "Confirm move" }) as HTMLButtonElement;
+      expect(confirm.disabled).toBe(true);
+    });
+
+    it("picking a different target clears a previous blocked list", async () => {
+      moveIdeaPreviewActionMock
+        .mockResolvedValueOnce({
+          success: true,
+          moved: { ideas: 1, proposals: 0, documents: 0, tasks: 2, activities: 0 },
+          blockedAssignees: BLOCKED,
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          moved: { ideas: 1, proposals: 0, documents: 0, tasks: 2, activities: 0 },
+          blockedAssignees: [],
+        });
+      renderDialog();
+      const user = await pickTarget("Target One");
+      await screen.findByTestId("move-blocked-assignees");
+
+      await user.click(await findSelectTrigger());
+      await user.click(await screen.findByRole("option", { name: "Target Two" }));
+      await waitFor(() => {
+        expect(screen.queryByTestId("move-blocked-assignees")).toBeNull();
+        const confirm = screen.getByRole("button", { name: "Confirm move" }) as HTMLButtonElement;
+        expect(confirm.disabled).toBe(false);
+      });
+    });
+  });
 });

@@ -210,6 +210,8 @@ export function summarize(outcomes, io, selectedIds = []) {
  * (outcome `settingsEnvWritten: true`) Claude Code injects it at session start; and when
  * it wrote the CHORUS_* env into `~/.codex/.env` (outcome `codexEnvWritten: true`) Codex
  * loads it into its process env at startup, reaching both its plugin hooks and shell tool;
+ * TRAE CLI (a Codex fork) gets the same flag for `$TRAE_HOME|~/.trae/.env`, which traecli
+ * loads the same way (verified traecli 0.209.1).
  * Hermes likewise loads `$HERMES_HOME/.env` (outcome `hermesEnvWritten: true`).
  * Either way a manual export is redundant — that agent is omitted from the hint. Every other
  * agent (Kiro, …) has no such file channel and still gets the hint.

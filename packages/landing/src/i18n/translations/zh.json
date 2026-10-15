@@ -77,16 +77,16 @@
   "integration": {
     "label": "原生集成",
     "title": "接入你的 Agent 技术栈",
-    "subtitle": "Claude Code、Codex、OpenClaw 开箱即用，外加一份兼容任意 MCP Agent 的通用 Skill —— 不需要胶水代码，不需要额外封装。",
+    "subtitle": "Claude Code、Codex、TRAE CLI、OpenClaw 开箱即用，外加一份兼容任意 MCP Agent 的通用 Skill —— 不需要胶水代码，不需要额外封装。",
     "claudeCode": {
       "title": "Claude Code 插件",
       "description": "13 个生命周期 Hook、9 套工作流 Skill、3 个独立 Review Agent —— Claude Code Agent Teams 的完整 Harness。",
       "installComment": "# 从插件市场安装"
     },
     "codex": {
-      "title": "Codex 插件",
-      "description": "独立的 Codex CLI 插件，提供同样的 AI-DLC Skill（`$` 前缀斜杠命令）、3 个只读 Reviewer 子 Agent，以及 Session 感知的 Hook。一键安装脚本把 Chorus MCP Server 接入 Codex。",
-      "installComment": "# Codex 一键安装"
+      "title": "Codex 与 TRAE CLI 插件",
+      "description": "独立的 Codex CLI 插件，提供同样的 AI-DLC Skill（`$` 前缀斜杠命令）、3 个只读 Reviewer 子 Agent，以及 Session 感知的 Hook。TRAE CLI（traecli 0.209.1+）安装的是同一个插件包。每个 CLI 一条命令即可接入 Chorus MCP Server。",
+      "installComment": "# Codex 或 TRAE CLI 一键安装"
     },
     "openclaw": {
       "title": "OpenClaw 插件",

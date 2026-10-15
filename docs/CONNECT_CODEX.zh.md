@@ -96,4 +96,5 @@ chorus agents add --agents codex \
 - Skill 文档（工具参考）：`plugins/chorus/skills/chorus/SKILL.md`（Chorus 实例上 `/skill/chorus/SKILL.md` 提供的是独立版本，来自 `public/skill/chorus/SKILL.md`）
 - 工作流概览：在 Codex 里输入 `$chorus`
 - 要接入 Claude Code，见 [CONNECT_CLAUDE_CODE.zh.md](CONNECT_CLAUDE_CODE.zh.md)
+- TRAE CLI（Codex 的分支）使用同一个插件包，见 [CONNECT_TRAE.zh.md](CONNECT_TRAE.zh.md)
 - 其他 MCP 兼容的 agent（Cursor、Continue、自研等）见 [CONNECT_OTHER_AGENTS.zh.md](CONNECT_OTHER_AGENTS.zh.md)

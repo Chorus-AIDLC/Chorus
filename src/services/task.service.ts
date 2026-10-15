@@ -219,11 +219,62 @@ export const ASSIGNEE_ACCESS_DENIED_MESSAGE = "Assignee does not have access to 
 // Thrown when an idea/task would be assigned to an actor without `editor`
 // access to its project. An ApiError (403 FORBIDDEN) so withErrorHandler
 // surfaces it on REST; MCP tools surface the message as an isError result.
+//
+// `details` (optional) is surfaced as `error.details` by withErrorHandler — the
+// cascade move uses it to report `{ blockedAssignees }` (fix-idea-move-dangling-assignee D2).
 export class AssigneeAccessError extends ApiError {
-  constructor(message = ASSIGNEE_ACCESS_DENIED_MESSAGE) {
-    super("FORBIDDEN", message, 403);
+  constructor(message = ASSIGNEE_ACCESS_DENIED_MESSAGE, details?: unknown) {
+    super("FORBIDDEN", message, 403, details);
     this.name = "AssigneeAccessError";
   }
+}
+
+// The access actor behind a stored assignee, plus its display name.
+export interface LiveAssignee {
+  type: "user" | "agent";
+  uuid: string;
+  name: string | null;
+}
+
+export type AssigneeLookupClient = Pick<typeof prisma, "user" | "agent" | "agentInstance">;
+
+// Resolve a stored (polymorphic) assignee to the actor whose project access
+// decides it — `agent_instance` maps to its agent. Returns null when the
+// assignee is DANGLING: no User / Agent / AgentInstance row in the company, the
+// instance's agent row is gone, or the type is unknown. Used by the cascade
+// move, which treats a dangling assignee as unassigned for the access check
+// only (fix-idea-move-dangling-assignee D1). Claim/assign keep rejecting a
+// non-existent assignee via assertAssigneeProjectAccess.
+export async function resolveLiveAssignee(
+  companyUuid: string,
+  assignee: { type: string; uuid: string },
+  client: AssigneeLookupClient = prisma,
+): Promise<LiveAssignee | null> {
+  if (assignee.type === "user") {
+    const user = await client.user.findFirst({
+      where: { uuid: assignee.uuid, companyUuid },
+      select: { name: true },
+    });
+    return user ? { type: "user", uuid: assignee.uuid, name: user.name ?? null } : null;
+  }
+  let agentUuid: string;
+  if (assignee.type === "agent") {
+    agentUuid = assignee.uuid;
+  } else if (assignee.type === "agent_instance") {
+    const instance = await client.agentInstance.findFirst({
+      where: { uuid: assignee.uuid, companyUuid },
+      select: { agentUuid: true },
+    });
+    if (!instance) return null;
+    agentUuid = instance.agentUuid;
+  } else {
+    return null;
+  }
+  const agent = await client.agent.findFirst({
+    where: { uuid: agentUuid, companyUuid },
+    select: { name: true },
+  });
+  return agent ? { type: "agent", uuid: agentUuid, name: agent.name } : null;
 }
 
 // Reject an assignment unless the ASSIGNEE (not the caller) has `editor`

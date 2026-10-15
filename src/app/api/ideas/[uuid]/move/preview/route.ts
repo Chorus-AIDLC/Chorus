@@ -76,6 +76,6 @@ export const GET = withErrorHandler<{ uuid: string }>(
     if (targetDenied) return targetDenied;
 
     const result = await moveIdeaPreview(auth.companyUuid, ideaUuid, targetProjectUuid);
-    return success({ moved: result.moved });
+    return success({ moved: result.moved, blockedAssignees: result.blockedAssignees });
   }
 );

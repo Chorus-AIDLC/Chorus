@@ -73,8 +73,13 @@ beforeEach(() => {
 
 describe("GET /api/ideas/[uuid]/move/preview", () => {
   it("returns the moved-counts shape on the happy path", async () => {
+    const blockedAssignees = [{
+      assigneeType: "agent", assigneeUuid: "agent-bob", name: "Bob",
+      entities: [{ type: "task", uuid: "task-1", title: "Task 1" }],
+    }];
     mockMoveIdeaPreview.mockResolvedValue({
       moved: { proposals: 3, documents: 1, tasks: 4, activities: 8 },
+      blockedAssignees,
     });
 
     const res = await GET(getRequest(TARGET_PROJECT_UUID), ctx());
@@ -84,6 +89,7 @@ describe("GET /api/ideas/[uuid]/move/preview", () => {
     expect(body.success).toBe(true);
     expect(body.data).toEqual({
       moved: { proposals: 3, documents: 1, tasks: 4, activities: 8 },
+      blockedAssignees,
     });
     // Service is called with the company-scoped tuple.
     expect(mockMoveIdeaPreview).toHaveBeenCalledWith(

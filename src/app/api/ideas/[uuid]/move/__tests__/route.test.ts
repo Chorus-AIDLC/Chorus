@@ -36,6 +36,7 @@ vi.mock("@/lib/auth", async () => {
 });
 
 import { PATCH } from "@/app/api/ideas/[uuid]/move/route";
+import { AssigneeAccessError } from "@/services/task.service";
 
 const COMPANY_UUID = "11111111-1111-1111-1111-111111111111";
 const USER_UUID = "22222222-2222-2222-2222-222222222222";
@@ -115,6 +116,24 @@ describe("PATCH /api/ideas/[uuid]/move — moved cascade counts", () => {
 
     expect(res.status).toBe(200);
     expect(body.data.moved).toEqual({ proposals: 0, documents: 0, tasks: 0, activities: 1 });
+  });
+
+  it("returns 403 with error.details.blockedAssignees when assignees block the move", async () => {
+    const blockedAssignees = [{
+      assigneeType: "agent", assigneeUuid: "agent-bob", name: "Bob",
+      entities: [{ type: "task", uuid: "task-1", title: "Task 1" }, { type: "task", uuid: "task-2", title: "Task 2" }],
+    }];
+    mockMoveIdea.mockRejectedValue(new AssigneeAccessError(
+      "Assignee does not have access to this project: Bob (2 tasks)", { blockedAssignees },
+    ));
+
+    const res = await PATCH(jsonRequest({ targetProjectUuid: TARGET_PROJECT_UUID }), ctx());
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.success).toBe(false);
+    expect(body.error.message).toMatch(/^Assignee does not have access to this project/);
+    expect(body.error.details).toEqual({ blockedAssignees });
   });
 
   it("returns 401 when there is no auth context", async () => {

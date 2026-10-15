@@ -1594,7 +1594,7 @@ services:
       - chorus-app-data:/app/data   # persists the auto-generated JWT secret
 
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       - POSTGRES_USER=chorus
       - POSTGRES_PASSWORD=chorus

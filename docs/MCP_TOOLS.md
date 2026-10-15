@@ -1474,7 +1474,13 @@ logical agent without emitting a duplicate `assigned` Activity.
 
 **Description**: Move an Idea to a different Project within the same company. Cascade-migrates the Idea itself **and its full lineage subtree** (all descendant Ideas; the moved root is detached from any parent left behind so no cross-project lineage edge remains), all linked Proposals in the source project (any status; a proposal in another project that cites a moved Idea stays in its own project), their materialized Documents and Tasks, and all related Activities atomically. Comments, TaskDependency, AcceptanceCriterion, AgentSession, SessionTaskCheckin, Notification history, and Task assignees are NOT modified. Requires `idea:write` plus Editor access on both the source and the target project (a hidden project reads as not found).
 
-**Required Permission**: `idea:write`
+**Required Permission**: `idea:write` only — no `project:*` bit. On top of the permission gate, the caller MUST be Editor or higher on the Idea's current project and on the target project (for an agent, its owner's effective level), the same rule as the REST route and the UI.
+
+**Errors** (returned as `isError: true` text; nothing is migrated):
+- `Target project not found` — the target is missing **or** hidden from the caller (indistinguishable by design).
+- `Idea not found` — the Idea is missing or hidden from the caller.
+- `Insufficient project access` — the caller can see the Idea's project or the target but is below Editor there.
+- `Failed to move Idea: Assignee does not have access to this project: <name> (<n> ideas + <m> tasks), ...` — one or more live assignees in the moved set (root + descendant Ideas, cascaded Tasks) lack Editor on the target. Every blocked assignee is named (uuid when the name is unknown) with the count of moved items it holds. Dangling assignees (deleted user/agent) are skipped, not blocking. Reassign or release those items, or grant the assignees access to the target, then retry.
 
 **Input**:
 | Parameter | Type | Required | Description |

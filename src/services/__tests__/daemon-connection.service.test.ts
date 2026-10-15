@@ -112,8 +112,8 @@ beforeEach(() => {
 
 // ===== Constants =====
 describe("constants", () => {
-  it("DAEMON_CLIENT_TYPES are claude_code + openclaw + codex + kiro + dsh + pi + hermes", () => {
-    expect(DAEMON_CLIENT_TYPES).toEqual(["claude_code", "openclaw", "codex", "kiro", "dsh", "pi", "hermes"]);
+  it("DAEMON_CLIENT_TYPES are claude_code + openclaw + codex + kiro + dsh + pi + trae + hermes", () => {
+    expect(DAEMON_CLIENT_TYPES).toEqual(["claude_code", "openclaw", "codex", "kiro", "dsh", "pi", "trae", "hermes"]);
   });
 
   it("STALE_THRESHOLD_MS is 90s (3x the 30s heartbeat)", () => {
@@ -287,6 +287,19 @@ describe("registerConnection", () => {
       });
       expect(result).toEqual({ uuid: connectionUuid, connectedAt });
       expect(mockPrisma.daemonConnection.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("registers a trae clientType (TRAE CLI daemon backend)", async () => {
+      mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+      const report = parseSelfReport(
+        new URLSearchParams({ clientType: "trae", livenessAck: "v1", host: "linux-box", cwd: "/srv/work" }),
+      );
+      expect(report.clientType).toBe("trae");
+      const result = await registerConnection(companyUuid, agentUuid, report);
+      expect(result).toEqual({ uuid: connectionUuid, connectedAt });
+      expect(mockPrisma.daemonConnection.upsert.mock.calls[0][0].where).toEqual({
+        agentUuid_clientType_host_cwd: { agentUuid, clientType: "trae", host: "linux-box", cwd: "/srv/work" },
+      });
     });
 
     it("registers a hermes clientType (Hermes gateway plugin connection)", async () => {

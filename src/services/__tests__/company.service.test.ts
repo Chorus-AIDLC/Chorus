@@ -560,7 +560,7 @@ describe("deleteCompany", () => {
       proposal: { deleteMany: vi.fn() },
       task: { deleteMany: vi.fn() },
       document: { deleteMany: vi.fn() },
-      idea: { deleteMany: vi.fn() },
+      idea: { updateMany: vi.fn(), deleteMany: vi.fn() },
       project: { deleteMany: vi.fn() },
       apiKey: { deleteMany: vi.fn() },
       agent: { deleteMany: vi.fn() },
@@ -587,11 +587,49 @@ describe("deleteCompany", () => {
     expect(txMock.company.delete).toHaveBeenCalledWith({ where: { id: 1 } });
   });
 
+  it("should detach idea lineage before deleting ideas", async () => {
+    const company = makeCompany();
+    const deleteMany = () => ({ deleteMany: vi.fn() });
+    const txMock = {
+      company: {
+        findUnique: vi.fn().mockResolvedValue(company),
+        delete: vi.fn().mockResolvedValue(company),
+      },
+      activity: deleteMany(),
+      comment: deleteMany(),
+      proposal: deleteMany(),
+      task: deleteMany(),
+      document: deleteMany(),
+      idea: { updateMany: vi.fn(), deleteMany: vi.fn() },
+      project: deleteMany(),
+      apiKey: deleteMany(),
+      agent: deleteMany(),
+      user: deleteMany(),
+    };
+
+    mockPrisma.$transaction.mockImplementation(async (callback) => {
+      return callback(txMock);
+    });
+
+    await deleteCompany(1);
+
+    expect(txMock.idea.updateMany).toHaveBeenCalledWith({
+      where: { companyUuid, parentUuid: { not: null } },
+      data: { parentUuid: null },
+    });
+    expect(txMock.idea.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      txMock.idea.deleteMany.mock.invocationCallOrder[0]
+    );
+  });
+
   it("should throw error when company not found", async () => {
     const txMock = {
       company: {
         findUnique: vi.fn().mockResolvedValue(null),
+        delete: vi.fn(),
       },
+      activity: { deleteMany: vi.fn() },
+      idea: { updateMany: vi.fn(), deleteMany: vi.fn() },
     };
 
     mockPrisma.$transaction.mockImplementation(async (callback) => {
@@ -599,6 +637,10 @@ describe("deleteCompany", () => {
     });
 
     await expect(deleteCompany(999)).rejects.toThrow("Company not found");
+    expect(txMock.activity.deleteMany).not.toHaveBeenCalled();
+    expect(txMock.idea.updateMany).not.toHaveBeenCalled();
+    expect(txMock.idea.deleteMany).not.toHaveBeenCalled();
+    expect(txMock.company.delete).not.toHaveBeenCalled();
   });
 });
 
