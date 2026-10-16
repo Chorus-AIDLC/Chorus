@@ -6,7 +6,8 @@ import userEvent from "@testing-library/user-event";
 import { NextRequest } from "next/server";
 import type { ApiHandler } from "@/lib/api-handler";
 
-const { mockPrisma } = vi.hoisted(() => ({
+const { mockPrisma, translate } = vi.hoisted(() => ({
+  translate: (key: string) => key,
   mockPrisma: {
     company: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
     $transaction: vi.fn(),
@@ -21,7 +22,7 @@ vi.mock("@/hooks/use-progress-router", () => ({ useRouter: () => ({ push: vi.fn(
 vi.mock("next/link", () => ({
   default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
 }));
-vi.mock("next-intl", () => ({ useTranslations: () => (key: string) => key }));
+vi.mock("next-intl", () => ({ useTranslations: () => translate, useLocale: () => "en" }));
 
 import CompanyDetailPage from "../page";
 import { GET, PATCH } from "@/app/api/admin/companies/[uuid]/route";
@@ -55,6 +56,9 @@ beforeEach(() => {
   });
   mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockPrisma));
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === `/api/admin/companies/${uuid}/initial-admin`) {
+      return new Response(JSON.stringify({ success: true, data: { user: null, manageable: true } }));
+    }
     const request = new NextRequest(`http://localhost${url}`, {
       method: init?.method, headers: init?.headers, body: init?.body,
     });
@@ -79,6 +83,31 @@ function patchBody() {
 }
 
 describe("Company detail UI → API → service", () => {
+  it("mounts the real initial-admin card only for local detail and loads its scoped invitation", async () => {
+    const user = await openEditor();
+    expect(await screen.findByText("noInvitation")).toBeTruthy();
+    expect(screen.getByText("title")).toBeTruthy();
+    expect(fetch).toHaveBeenCalledWith(`/api/admin/companies/${uuid}/initial-admin`, { cache: "no-store" });
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === `/api/admin/companies/${uuid}/initial-admin`)).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "invite" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.querySelector("#replacement-username")).toBeTruthy();
+    expect(dialog.querySelector("#replacement-email")).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+    expect(screen.getByLabelText("admin.companyName")).toBeTruthy();
+  });
+
+  it("does not mount or fetch the initial-admin card on OIDC detail", async () => {
+    company = makeCompany(false);
+    await openEditor();
+    expect(screen.queryByText("noInvitation")).toBeNull();
+    expect(screen.queryByText("title")).toBeNull();
+    expect(screen.queryByRole("button", { name: "invite" })).toBeNull();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/initial-admin"))).toBe(false);
+    expect(screen.getByLabelText("admin.oidcIssuerUrl")).toBeTruthy();
+  });
+
   it("hides domain and OIDC configuration on local workspaces", async () => {
     await openEditor();
     expect(screen.queryByLabelText("admin.emailDomains")).toBeNull();

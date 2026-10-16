@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { isImeComposing } from "@/lib/ime";
+import { credentialLinkUrl } from "@/lib/credential-link";
 import type { CredentialLink } from "@/types/local-user";
 import { Building2, Key, Plus, ArrowLeft, Copy } from "lucide-react";
 
@@ -35,7 +36,7 @@ export default function NewCompanyPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loading || bootstrap || (mode === "local" && !initialAdmin.name.trim())) return;
+    if (loading || bootstrap) return;
     setError("");
     setLoading(true);
 
@@ -48,7 +49,7 @@ export default function NewCompanyPage() {
           initialAdmin: {
             username: initialAdmin.username.trim(),
             email: initialAdmin.email.trim(),
-            name: initialAdmin.name.trim(),
+            ...(initialAdmin.name.trim() ? { name: initialAdmin.name.trim() } : {}),
           },
         } : {
           name: formData.name.trim(),
@@ -66,7 +67,7 @@ export default function NewCompanyPage() {
       }
 
       if (mode === "local") {
-        setBootstrap(data.data);
+        setBootstrap({ ...data.data, credentialLink: { ...data.data.credentialLink, url: credentialLinkUrl(data.data.credentialLink.url, window.location.origin) } });
       } else {
         router.push(`/admin/companies/${data.data.uuid}`);
       }
@@ -78,7 +79,7 @@ export default function NewCompanyPage() {
   };
 
   const copyLink = async () => {
-    if (!bootstrap) return;
+    if (!bootstrap?.credentialLink.url) return;
     setError("");
     try {
       await navigator.clipboard.writeText(bootstrap.credentialLink.url);
@@ -106,7 +107,7 @@ export default function NewCompanyPage() {
             <p className="text-sm text-muted-foreground">
               {t("admin.localBootstrap.expiresAt", { expiresAt: bootstrap.credentialLink.expiresAt })}
             </p>
-            <Button type="button" variant="outline" onClick={copyLink}>
+            <Button type="button" variant="outline" disabled={!bootstrap.credentialLink.url} onClick={copyLink}>
               <Copy className="mr-2 h-4 w-4" />
               {t("admin.localBootstrap.copyLink")}
             </Button>
@@ -240,7 +241,8 @@ export default function NewCompanyPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="adminName">{t("admin.localBootstrap.name")}</Label>
-              <Input id="adminName" value={initialAdmin.name} onChange={(e) => setInitialAdmin({ ...initialAdmin, name: e.target.value })} required disabled={loading} autoComplete="off" />
+              <Input id="adminName" value={initialAdmin.name} onChange={(e) => setInitialAdmin({ ...initialAdmin, name: e.target.value })} maxLength={200} disabled={loading} autoComplete="off" />
+              <p className="text-xs text-muted-foreground">{t("workspaceUsers.nameHint")}</p>
             </div>
           </CardContent>
         </Card>}
@@ -306,7 +308,7 @@ export default function NewCompanyPage() {
               loading ||
               !formData.name.trim() ||
               (mode === "local"
-                ? !initialAdmin.username.trim() || initialAdmin.username.includes("@") || !initialAdmin.email.trim() || !initialAdmin.name.trim()
+                ? !initialAdmin.username.trim() || initialAdmin.username.includes("@") || !initialAdmin.email.trim()
                 : !formData.emailDomain.trim() || !formData.oidcIssuer.trim() || !formData.oidcClientId.trim())
             }
           >

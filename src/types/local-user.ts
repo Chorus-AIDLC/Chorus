@@ -13,6 +13,7 @@ export interface LocalUserDto {
 }
 
 export interface CredentialLink {
+  /** Origin-independent path; resolve against the browser origin when sharing. */
   url: string;
   expiresAt: string;
   purpose: CredentialPurpose;
@@ -37,6 +38,12 @@ export interface UpdateLocalUserInput {
   workspaceAdmin?: boolean;
   status?: "active" | "disabled";
 }
+
+export interface InitialAdminState { user: LocalUserDto | null; manageable: boolean }
+export type InitialAdminManagementInput =
+  | { action: "reinvite" | "revoke"; expectedUserUuid: string }
+  | { action: "replace"; expectedUserUuid: string | null; initialAdmin: Omit<CreateLocalUserInput, "workspaceAdmin"> };
+export interface InitialAdminMutationResult { user: LocalUserDto | null; manageable: true; credentialLink?: CredentialLink }
 
 export interface IssueCredentialInput { purpose: CredentialPurpose }
 export interface AcceptLocalCredentialInput { token: string; password: string }

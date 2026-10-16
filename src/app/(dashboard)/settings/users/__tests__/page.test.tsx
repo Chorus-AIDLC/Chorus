@@ -15,7 +15,9 @@ import WorkspaceUsersPage from "../page";
 
 const identity = { user: { authType: "local", workspaceAdmin: true }, company: { localAuthEnabled: true } };
 const alice: LocalUserDto = { uuid: "alice-uuid", companyUuid: "company-uuid", username: "alice", email: "alice@example.com", name: "Alice", workspaceAdmin: false, status: "active", createdAt: "2026-10-15T00:00:00Z" };
-const link = { url: "http://localhost:8637/login/local/accept?token=test-opaque", purpose: "invite", expiresAt: "2026-10-16T00:00:00Z" };
+const relativeLink = `/login/local/accept?token=${"B".repeat(43)}`;
+const link = { url: relativeLink, purpose: "invite", expiresAt: "2026-10-16T00:00:00Z" };
+const browserLink = `${window.location.origin}${relativeLink}`;
 function ok(data: unknown, meta?: unknown) { return new Response(JSON.stringify({ success: true, data, meta })); }
 function fail(message: string, code = "CONFLICT", status = 409) { return new Response(JSON.stringify({ success: false, error: { code, message } }), { status }); }
 function mutations() { return authFetch.mock.calls.filter(([, init]) => init?.method && init.method !== "GET"); }
@@ -88,12 +90,26 @@ describe("workspace user administration interactions", () => {
     render(<WorkspaceUsersPage />); await loaded(); await user.click(screen.getByRole("button", { name: "actions.invite" })); fillInvite();
     await user.click(screen.getByRole("checkbox", { name: "roles.admin" }));
     await user.click(screen.getByRole("button", { name: "save" }));
-    expect(await screen.findByLabelText("issuedLink")).toHaveValue(link.url);
+    expect(await screen.findByLabelText("issuedLink")).toHaveValue(browserLink);
     expect(screen.getByText(/^expiresAt /)).toHaveTextContent(new Date(link.expiresAt).toLocaleString("en"));
     expect(mutations()).toEqual([["/api/workspace/users", expect.objectContaining({ method: "POST", body: JSON.stringify({ username: "bob", email: "bob@example.com", name: "Bob", workspaceAdmin: true }) })]]);
     await user.click(screen.getByRole("button", { name: "copyLink" }));
-    expect(copy).toHaveBeenCalledWith(link.url); expect(await screen.findByText("copied")).toBeInTheDocument();
+    expect(copy).toHaveBeenCalledWith(browserLink); expect(await screen.findByText("copied")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "close" })); expect(screen.queryByLabelText("issuedLink")).not.toBeInTheDocument();
+  });
+
+  it("discards a legacy backend origin when displaying and copying a credential link", async () => {
+    const user = setup(); const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    render(<WorkspaceUsersPage />); await loaded();
+    await user.click(screen.getByRole("button", { name: "actions.invite" })); fillInvite();
+    authFetch.mockImplementation(async (_url, init) => init?.method
+      ? ok({ user: alice, credentialLink: { ...link, url: `https://backend.example.com${relativeLink}` } })
+      : ok([alice], { total: 1 }));
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(await screen.findByLabelText("issuedLink")).toHaveValue(browserLink);
+    await user.click(screen.getByRole("button", { name: "copyLink" }));
+    expect(copy).toHaveBeenCalledWith(browserLink);
+    expect(copy.mock.calls[0][0]).not.toContain("backend.example.com");
   });
 
   it("preserves the issued link when clipboard or post-mutation refresh fails", async () => {
@@ -101,10 +117,10 @@ describe("workspace user administration interactions", () => {
     render(<WorkspaceUsersPage />); await loaded(); await user.click(screen.getByRole("button", { name: "actions.invite" })); fillInvite();
     authFetch.mockImplementation(async (_url, init) => { if (!init?.method) throw new Error("offline"); return ok({ user: alice, credentialLink: link }); });
     await user.click(screen.getByRole("button", { name: "save" }));
-    expect(await screen.findByLabelText("issuedLink")).toHaveValue(link.url);
+    expect(await screen.findByLabelText("issuedLink")).toHaveValue(browserLink);
     await user.click(screen.getByRole("button", { name: "copyLink" }));
     expect(await screen.findByText("copyFailed")).toBeInTheDocument();
-    expect(screen.getByLabelText("issuedLink")).toHaveValue(link.url);
+    expect(screen.getByLabelText("issuedLink")).toHaveValue(browserLink);
     await user.click(screen.getByRole("button", { name: "close" })); expect(screen.getByRole("alert")).toHaveTextContent("errors.loadFailed");
   });
 
@@ -115,7 +131,7 @@ describe("workspace user administration interactions", () => {
     fireEvent.change(screen.getByLabelText("fields.email"), { target: { value: "new@example.com" } });
     authFetch.mockImplementation(async (_url, init) => init?.method ? ok({ user: alice, credentialLink: link }) : ok([alice], { total: 1 }));
     await user.click(screen.getByRole("button", { name: "save" }));
-    expect(await screen.findByLabelText("issuedLink")).toHaveValue(link.url);
+    expect(await screen.findByLabelText("issuedLink")).toHaveValue(browserLink);
     expect(mutations()[0]).toEqual(["/api/workspace/users/alice-uuid", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ username: "alice", email: "new@example.com", name: "Alice" }) })]);
   });
 
@@ -135,7 +151,7 @@ describe("workspace user administration interactions", () => {
     await user.click(within(dialog).getByRole("button", { name: "confirm" }));
     await waitFor(() => expect(mutations()).toHaveLength(1));
     expect(mutations()[0]).toEqual([`/api/workspace/users/alice-uuid${suffix}`, expect.objectContaining({ method, ...(body ? { body: JSON.stringify(body) } : {}) })]);
-    if (method === "POST") expect(await screen.findByLabelText("issuedLink")).toHaveValue(link.url);
+    if (method === "POST") expect(await screen.findByLabelText("issuedLink")).toHaveValue(browserLink);
     else await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
@@ -174,7 +190,7 @@ describe("workspace user administration interactions", () => {
     expect(mutations()).toHaveLength(2);
     expect(JSON.parse(mutations()[1][1].body)).toEqual({ username: "unique-bob", email: "unique-bob@example.com", name: "Bob", ...(action === "invite" ? { workspaceAdmin: false } : {}) });
     expect(screen.queryByText("errors.duplicate")).not.toBeInTheDocument();
-    if (action === "invite") expect(await screen.findByLabelText("issuedLink")).toHaveValue(link.url);
+    if (action === "invite") expect(await screen.findByLabelText("issuedLink")).toHaveValue(browserLink);
     else expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -205,7 +221,7 @@ describe("workspace user administration interactions", () => {
     expect(screen.queryByLabelText("issuedLink")).not.toBeInTheDocument();
     expect(mutations()).toHaveLength(1);
     await user.click(within(dialog).getByRole("button", { name: "save" }));
-    expect(await screen.findByLabelText("issuedLink")).toHaveValue(link.url);
+    expect(await screen.findByLabelText("issuedLink")).toHaveValue(browserLink);
     expect(screen.getByText("operationSucceeded")).toBeInTheDocument();
     expect(screen.queryByText("errors.operationFailed")).not.toBeInTheDocument();
     expect(mutations()).toHaveLength(2);
@@ -227,7 +243,7 @@ describe("workspace user administration interactions", () => {
     expect(mutations()).toHaveLength(1); expect(screen.getByRole("button", { name: "saving" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "cancel" })).toBeDisabled();
     await act(async () => resolve(ok({ user: alice, credentialLink: link })));
-    expect(await screen.findByLabelText("issuedLink")).toHaveValue(link.url);
+    expect(await screen.findByLabelText("issuedLink")).toHaveValue(browserLink);
   });
 
   it("invites without an optional display name instead of submitting an invalid empty name", async () => {
@@ -235,7 +251,7 @@ describe("workspace user administration interactions", () => {
     await user.click(screen.getByRole("button", { name: "actions.invite" })); fillInvite();
     fireEvent.change(screen.getByLabelText("fields.name"), { target: { value: "   " } });
     await user.click(screen.getByRole("button", { name: "save" }));
-    expect(await screen.findByLabelText("issuedLink")).toHaveValue(link.url);
+    expect(await screen.findByLabelText("issuedLink")).toHaveValue(browserLink);
     expect(JSON.parse(mutations()[0][1].body)).toEqual({ username: "bob", email: "bob@example.com", workspaceAdmin: false });
   });
 
@@ -244,8 +260,8 @@ describe("workspace user administration interactions", () => {
     render(<WorkspaceUsersPage />); await loaded(); await choose(user, "reset");
     authFetch.mockImplementation(async (_url, init) => init?.method ? ok({ user: alice, credentialLink: { ...link, purpose: "reset" } }) : fail("Expired", "UNAUTHORIZED", 401));
     await user.click(screen.getByRole("button", { name: "confirm" }));
-    expect(await screen.findByLabelText("issuedLink")).toHaveValue(link.url);
-    await user.click(screen.getByRole("button", { name: "copyLink" })); expect(copy).toHaveBeenCalledWith(link.url);
+    expect(await screen.findByLabelText("issuedLink")).toHaveValue(browserLink);
+    await user.click(screen.getByRole("button", { name: "copyLink" })); expect(copy).toHaveBeenCalledWith(browserLink);
     await user.click(screen.getByRole("button", { name: "close" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("deniedDescription");
     expect(screen.queryByRole("button", { name: "actions.invite" })).not.toBeInTheDocument();

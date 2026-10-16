@@ -3,26 +3,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+const { push, translate } = vi.hoisted(() => ({
+  push: vi.fn(),
+  translate: (key: string, values?: Record<string, string>) =>
+    values ? `${key} ${Object.values(values).join(" ")}` : key,
+}));
 vi.mock("@/hooks/use-progress-router", () => ({ useRouter: () => ({ push }) }));
 vi.mock("next/link", () => ({
   default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
 }));
 // New translation keys are supplied to the parent separately; assert semantic
 // interactions against stable keys without depending on its concurrent JSON edit.
-vi.mock("next-intl", () => ({
-  useTranslations: () => (key: string, values?: Record<string, string>) =>
-    values ? `${key} ${Object.values(values).join(" ")}` : key,
-}));
+vi.mock("next-intl", () => ({ useTranslations: () => translate }));
 
 import NewCompanyPage from "../page";
 
-const link = "https://chorus.example/login/local/accept?token=opaque-fixture";
+const token = "A".repeat(43);
+const relativeLink = `/login/local/accept?token=${token}`;
+const link = `${window.location.origin}${relativeLink}`;
 const expiresAt = "2026-10-16T04:00:00.000Z";
 const bootstrapData = {
   company: { uuid: "company-uuid", name: "Local workspace", localAuthEnabled: true, oidcEnabled: false },
   user: { uuid: "user-uuid", username: "first-admin", email: "first@example.com" },
-  credentialLink: { url: link, expiresAt, purpose: "invite" },
+  credentialLink: { url: relativeLink, expiresAt, purpose: "invite" },
 };
 
 function mockResponse(body: unknown, ok = true) {
@@ -81,27 +84,33 @@ describe("NewCompanyPage local bootstrap", () => {
     expect(push).toHaveBeenCalledWith("/admin/companies/company-uuid");
   });
 
-  it.each(["", "   "])("rejects a missing or whitespace-only required administrator name: %j", async (name) => {
+  it.each(["", "   "])("accepts and omits an optional blank administrator name: %j", async (name) => {
     mockResponse({ success: true, data: bootstrapData });
     render(<NewCompanyPage />);
     const user = await fillLocal(false);
     const nameInput = screen.getByLabelText("admin.localBootstrap.name") as HTMLInputElement;
-    expect(nameInput.required).toBe(true);
+    expect(nameInput.required).toBe(false);
     fireEvent.change(nameInput, { target: { value: name } });
     const create = screen.getByRole("button", { name: "admin.createCompany" }) as HTMLButtonElement;
-    expect(create.disabled).toBe(true);
-    await user.click(create);
-    // Guard programmatic/Enter submissions as well as the disabled button.
-    fireEvent.submit(create.closest("form")!);
-    expect(fetch).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText("admin.localBootstrap.invitationLink")).toBeNull();
-    expect(push).not.toHaveBeenCalled();
-    await user.type(nameInput, "First Admin");
     expect(create.disabled).toBe(false);
     await user.click(create);
     await screen.findByLabelText("admin.localBootstrap.invitationLink");
     const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string);
-    expect(body.initialAdmin.name).toBe("First Admin");
+    expect(body).toEqual({ name: "Local workspace", initialAdmin: { username: "first-admin", email: "first@example.com" } });
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("rebases a legacy backend link to the current browser origin for display and copy", async () => {
+    mockResponse({ success: true, data: { ...bootstrapData, credentialLink: { ...bootstrapData.credentialLink, url: `https://backend.example.com${relativeLink}` } } });
+    render(<NewCompanyPage />);
+    const user = await fillLocal();
+    await user.click(screen.getByRole("button", { name: "admin.createCompany" }));
+    const input = await screen.findByLabelText("admin.localBootstrap.invitationLink") as HTMLInputElement;
+    expect(input.value).toBe(link);
+    expect(input.value).not.toContain("backend.example.com");
+    const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    await user.click(screen.getByRole("button", { name: "admin.localBootstrap.copyLink" }));
+    expect(copy).toHaveBeenCalledWith(link);
   });
 
   it.each([

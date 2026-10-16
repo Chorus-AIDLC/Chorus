@@ -292,7 +292,7 @@
       "username": "Admin username",
       "usernameHelp": "Use a username without @. It must be unique within this workspace.",
       "email": "Admin email",
-      "name": "Admin display name (required)",
+      "name": "Admin display name (optional)",
       "created": "Local workspace {name} created",
       "shareHelp": "Copy this invitation link and send it to the initial administrator through a trusted channel. No email was sent automatically. Save the link before leaving this page.",
       "invitationLink": "Administrator invitation link",
@@ -301,6 +301,23 @@
       "copied": "Invitation link copied. Share it only with the intended administrator.",
       "copyFailed": "Could not copy the link. Select the link above and copy it manually before leaving.",
       "continue": "Continue to workspace"
+    },
+    "initialAdminInvitation": {
+      "title": "Initial administrator invitation",
+      "description": "Manage the first administrator's invitation before activation. Links use the address currently open in your browser.",
+      "loadFailed": "Could not load the initial administrator invitation.",
+      "noInvitation": "No pending initial administrator invitation. Invite a replacement to complete workspace setup.",
+      "activated": "Setup is complete or this invitation is no longer manageable. User management now belongs to active Workspace Admins inside the workspace.",
+      "reinvite": "Reissue invitation",
+      "revoke": "Revoke invitation",
+      "replace": "Replace administrator",
+      "invite": "Invite initial administrator",
+      "reinviteHelp": "Issue a new single-use invitation for this administrator? The previous link will stop working. No email is sent automatically.",
+      "revokeHelp": "Revoke this invitation and remove the pending account? The old link will stop working. Invite a replacement afterward to complete setup.",
+      "replaceHelp": "Remove the pending account and invite a new administrator atomically. The old link will stop working. The replacement receives a new UUID and inherits no history or access, even if the username and email are reused.",
+      "stateChanged": "The invitation changed or was activated. Close this dialog and refresh before trying again.",
+      "revoked": "Invitation revoked. You can now invite a replacement administrator.",
+      "issued": "Invitation issued. Copy the link and share it only with the intended administrator."
     }
   },
   "dashboard": {

@@ -48,6 +48,7 @@ const NON_PROJECT_ROUTES: Record<string, string> = {
   "src/app/api/admin/companies/[uuid]/route.ts": "SuperAdmin panel (unchanged by design)",
   "src/app/api/admin/companies/route.ts": "SuperAdmin panel",
   "src/app/api/admin/companies/local/route.ts": "SuperAdmin-only atomic workspace and initial local admin bootstrap",
+  "src/app/api/admin/companies/[uuid]/initial-admin/route.ts": "SuperAdmin-only preactivation bootstrap recovery; tenant lock, persisted activation guard and expected principal revalidated in service",
   "src/app/api/auth/local/accept/route.ts": "single-use tenant-bound credential acceptance with throttling",
   "src/app/api/auth/local/login/route.ts": "tenant-bound local authentication with throttling",
   "src/app/api/workspace/users/route.ts": "local human Workspace Admin gate and tenant/state revalidation in service",

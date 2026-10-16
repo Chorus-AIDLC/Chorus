@@ -24,6 +24,7 @@ async function submit(page, path, button) {
   return response;
 }
 async function screenshot(page, name, mask = []) {
+  if (name.includes("initial-admin")) await page.getByRole("dialog").waitFor({ state: "hidden" });
   await page.screenshot({ path: `.playwright-mcp/local-users-${name}.png`, fullPage: true, mask });
 }
 try {
@@ -51,28 +52,85 @@ try {
     await page.locator("#name").fill(`local-user-${id}`);
     await page.locator("#adminUsername").fill(id);
     await page.locator("#adminEmail").fill(`${id}@integration.local`);
-    await page.locator("#adminName").fill(`Administrator ${id}`);
+    assert.equal(await page.locator("#adminName").getAttribute("required"), null, "first administrator display name is optional");
     await page.getByRole("button", { name: t("admin.createCompany"), exact: true }).waitFor();
     const invalidInputs = await page.locator("form input").evaluateAll((inputs) => inputs.filter((input) => !input.checkValidity()).map((input) => ({ id: input.id, reason: input.validationMessage })));
     assert.deepEqual(invalidInputs, [], "bootstrap native field validation");
     await screenshot(page, `${language}-${theme}-bootstrap-form`);
-    assert.equal((await submit(page, "/api/admin/companies/local", page.getByRole("button", { name: t("admin.createCompany"), exact: true }))).status(), 200);
+    const bootstrapResponse = await submit(page, "/api/admin/companies/local", page.getByRole("button", { name: t("admin.createCompany"), exact: true }));
+    assert.equal(bootstrapResponse.status(), 200);
+    const bootstrap = (await bootstrapResponse.json()).data;
+    assert.equal(bootstrap.user.name, null);
+    assert.match(bootstrap.credentialLink.url, /^\/login\/local\/accept\?token=/);
     const linkInput = page.getByLabel(t("admin.localBootstrap.invitationLink"));
     await linkInput.waitFor();
-    const link = await linkInput.inputValue();
+    let link = await linkInput.inputValue();
+    assert.equal(new URL(link).origin, new URL(base).origin);
     await page.getByRole("button", { name: t("admin.localBootstrap.copyLink"), exact: true }).click();
     await page.getByRole("status").filter({ hasText: t("admin.localBootstrap.copied") }).waitFor();
     await screenshot(page, `${language}-${theme}-bootstrap`, [linkInput]);
     checks++;
+    await page.getByRole("button", { name: t("admin.localBootstrap.continue"), exact: true }).click();
+    await page.waitForURL(`**/admin/companies/${bootstrap.company.uuid}`);
+    await page.getByText(t("admin.initialAdminInvitation.title"), { exact: true }).waitFor();
+    const managementPath = `/api/admin/companies/${bootstrap.company.uuid}/initial-admin`;
+    async function manage(action, expectedStatus = 200) {
+      await page.getByRole("button", { name: t(`admin.initialAdminInvitation.${action}`), exact: true }).click();
+      if (action === "replace") {
+        await page.locator("#replacement-username").fill(id);
+        await page.locator("#replacement-email").fill(`${id}@integration.local`);
+        assert.equal(await page.locator("#replacement-name").getAttribute("required"), null);
+      }
+      const response = await submit(page, managementPath, page.getByRole("button", { name: t("workspaceUsers.confirm"), exact: true }));
+      assert.equal(response.status(), expectedStatus);
+      return (await response.json()).data;
+    }
+    async function invalidLink(previous) {
+      const response = await context.request.post(`${base}/api/auth/local/accept`, { data: { token: new URL(previous).searchParams.get("token"), password } });
+      assert.equal(response.status(), 400, "previous invitation is no longer usable");
+    }
+    const reissued = await manage("reinvite");
+    assert.equal(reissued.user.uuid, bootstrap.user.uuid);
+    await invalidLink(link);
+    const managementLink = page.locator("#initial-admin-link");
+    await managementLink.waitFor();
+    link = await managementLink.inputValue();
+    assert.equal(new URL(link).origin, new URL(base).origin);
+    await page.getByRole("button", { name: t("workspaceUsers.copyLink"), exact: true }).click();
+    assert((await page.evaluate(() => navigator.clipboard.readText())) === link, "clipboard contains the current-origin invitation");
+    await screenshot(page, `${language}-${theme}-initial-admin-reinvite`, [managementLink]);
+    const replaced = await manage("replace");
+    assert.notEqual(replaced.user.uuid, reissued.user.uuid, "same identity replacement has a new UUID");
+    assert.equal(replaced.user.name, null);
+    await invalidLink(link);
+    link = await managementLink.inputValue();
+    await manage("revoke");
+    await invalidLink(link);
+    await page.getByText(t("admin.initialAdminInvitation.noInvitation"), { exact: true }).waitFor();
+    await page.getByRole("button", { name: t("admin.initialAdminInvitation.invite"), exact: true }).click();
+    await page.locator("#replacement-username").fill(id);
+    await page.locator("#replacement-email").fill(`${id}@integration.local`);
+    const restoredResponse = await submit(page, managementPath, page.getByRole("button", { name: t("workspaceUsers.confirm"), exact: true }));
+    assert.equal(restoredResponse.status(), 200);
+    const restored = (await restoredResponse.json()).data;
+    assert.notEqual(restored.user.uuid, replaced.user.uuid);
+    await managementLink.waitFor();
+    link = await managementLink.inputValue();
+    await screenshot(page, `${language}-${theme}-initial-admin-restored`, [managementLink]);
+    checks += 4;
     const secondWorkspace = await context.request.post(`${base}/api/admin/companies/local`, { data: {
       name: `local-user-${id}-second`, initialAdmin: { username: id, email: `${id}@integration.local`, name: `Administrator ${id}` },
     } });
     assert.equal(secondWorkspace.status(), 200);
+    const second = (await secondWorkspace.json()).data;
+    const crossIdentity = await context.request.post(`${base}/api/admin/companies/${second.company.uuid}/initial-admin`, { data: { action: "revoke", expectedUserUuid: restored.user.uuid } });
+    assert.equal(crossIdentity.status(), 409, "expected identity cannot target another tenant");
     // Superadmin and workspace user sessions are intentionally separate contexts.
     const userContext = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
     await userContext.addCookies([{ name: "chorus-locale", value: language, url: base }]);
     await userContext.addInitScript(({ theme, language }) => { localStorage.setItem("chorus-theme", theme); localStorage.setItem("chorus-locale", language); localStorage.setItem("chorus_onboarding_completed", "true"); }, { theme, language });
     const userPage = await userContext.newPage();
+    assert.equal((await userContext.request.get(`${base}${managementPath}`)).status(), 401, "unauthenticated visitors cannot inspect the initial administrator");
     await userPage.goto(link, { waitUntil: "networkidle" });
     assert.equal(await userPage.getByRole("status").textContent(), t("login.local.requirementsMet").replace("{count}", "0").replace("{total}", "2"));
     await userPage.locator("#password").fill("aaaaaaa");
@@ -92,6 +150,13 @@ try {
     await screenshot(userPage, `${language}-${theme}-accept`);
     assert.equal((await submit(userPage, "/api/auth/local/accept", userPage.getByRole("button", { name: t("login.local.acceptSubmit"), exact: true }))).status(), 200);
     await userPage.waitForURL("**/login");
+    await page.reload({ waitUntil: "networkidle" });
+    await page.getByText(t("admin.initialAdminInvitation.activated"), { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: t("admin.initialAdminInvitation.reinvite"), exact: true }).count(), 0);
+    const activatedMutation = await context.request.post(`${base}${managementPath}`, { data: { action: "reinvite", expectedUserUuid: restored.user.uuid } });
+    assert.equal(activatedMutation.status(), 409, "Superadmin cannot mutate an activated bootstrap administrator");
+    await screenshot(page, `${language}-${theme}-initial-admin-activated`);
+    checks++;
     await userPage.getByLabel(t("login.email"), { exact: true }).fill(id);
     assert.equal((await submit(userPage, "/api/auth/identify", userPage.getByRole("button", { name: t("login.continue"), exact: true }))).status(), 200);
     await userPage.getByRole("button", { name: t("login.local.workspace").replace("{company}", `local-user-${id}-second`), exact: true }).waitFor();
@@ -109,6 +174,7 @@ try {
     await screenshot(userPage, `${language}-${theme}-login`);
     assert.equal((await submit(userPage, "/api/auth/local/login", userPage.getByRole("button", { name: t("login.defaultAuth.submit"), exact: true }))).status(), 200);
     await userPage.waitForURL("**/projects");
+    assert.equal((await userContext.request.get(`${base}${managementPath}`)).status(), 401, "Workspace Admin session does not grant Superadmin setup access");
     await userPage.goto(`${base}/settings/users`, { waitUntil: "networkidle" });
     await userPage.getByRole("heading", { name: t("workspaceUsers.title"), exact: true }).waitFor();
     await userPage.getByRole("cell", { name: id, exact: true }).waitFor();
@@ -144,7 +210,7 @@ try {
     const resetResponse = await userContext.request.post(`${base}/api/workspace/users/${self.uuid}/credentials`, { data: { purpose: "reset" } });
     assert.equal(resetResponse.status(), 200);
     const resetLink = (await resetResponse.json()).data.credentialLink.url;
-    await userPage.goto(resetLink, { waitUntil: "networkidle" });
+    await userPage.goto(new URL(resetLink, base).href, { waitUntil: "networkidle" });
     await userPage.locator("#password").fill(password);
     await userPage.locator("#confirmation").fill(password);
     assert.equal(await userPage.getByRole("status").textContent(), t("login.local.requirementsMet").replace("{count}", "2").replace("{total}", "2"));

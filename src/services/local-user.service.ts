@@ -6,7 +6,7 @@ import { ApiError } from "@/lib/api-handler";
 import { publishAccountAccessChanged } from "@/lib/account-access-events";
 import type { User } from "@/generated/prisma/client";
 import type { AuthContext, SuperAdminAuthContext } from "@/types/auth";
-import type { CredentialLink, CredentialPurpose, LocalUserDto, LocalUserMutationResult, LocalUserStatus } from "@/types/local-user";
+import type { CredentialLink, CredentialPurpose, InitialAdminMutationResult, InitialAdminState, LocalUserDto, LocalUserMutationResult, LocalUserStatus } from "@/types/local-user";
 
 export const LOCAL_PASSWORD_WORK_FACTOR = 12;
 export const CREDENTIAL_LINK_TTL_MS = 24 * 60 * 60 * 1000;
@@ -45,7 +45,9 @@ export function publicLocalUser(user: User): LocalUserDto {
   };
 }
 const nameSchema = z.string().trim().min(1).max(200);
-const createSchema = z.object({ username: z.unknown(), email: z.unknown(), name: nameSchema.optional(), workspaceAdmin: z.boolean().optional() }).strict();
+const invitationNameSchema = z.string().trim().max(200).transform(value => value || undefined).optional();
+const initialAdminSchema = z.object({ username: z.unknown(), email: z.unknown(), name: invitationNameSchema }).strict();
+const createSchema = z.object({ username: z.unknown(), email: z.unknown(), name: invitationNameSchema, workspaceAdmin: z.boolean().optional() }).strict();
 const updateSchema = z.object({ username: z.string().optional(), email: z.string().optional(), name: nameSchema.optional(), workspaceAdmin: z.boolean().optional(), status: z.enum(["active", "disabled"]).optional() }).strict().refine(v => Object.keys(v).length > 0);
 function parse<T>(schema: z.ZodType<T>, input: unknown): T {
   const result = schema.safeParse(input);
@@ -99,14 +101,7 @@ async function targetUser(tx: Tx, companyUuid: string, uuid: string) {
 async function audit(tx: Tx, companyUuid: string, actorType: string, actorUuid: string, targetUuid: string, action: string) {
   await tx.localUserAudit.create({ data: { companyUuid, actorType, actorUuid, targetUuid, action } });
 }
-function trustedOrigin() {
-  // Same localhost development default as the application. Client Host is never trusted.
-  const url = new URL(process.env.APP_URL || "http://localhost:8637");
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw invalid("APP_URL must be a trusted HTTP(S) URL");
-  return url.origin;
-}
 async function issueToken(tx: Tx, user: User, purpose: CredentialPurpose): Promise<CredentialLink> {
-  const origin = trustedOrigin();
   await tx.userCredentialToken.deleteMany({ where: { companyUuid: user.companyUuid, userUuid: user.uuid } });
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + CREDENTIAL_LINK_TTL_MS);
@@ -114,7 +109,7 @@ async function issueToken(tx: Tx, user: User, purpose: CredentialPurpose): Promi
     companyUuid: user.companyUuid, userUuid: user.uuid, tokenHash: createHash("sha256").update(token).digest("hex"),
     purpose, sessionVersion: user.sessionVersion, expiresAt,
   } });
-  return { url: `${origin}/login/local/accept?token=${token}`, expiresAt: expiresAt.toISOString(), purpose };
+  return { url: `/login/local/accept?token=${token}`, expiresAt: expiresAt.toISOString(), purpose };
 }
 async function insertInvitedUser(tx: Tx, companyUuid: string, input: ReturnType<typeof createInput>) {
   return tx.user.create({ data: {
@@ -125,15 +120,89 @@ async function insertInvitedUser(tx: Tx, companyUuid: string, input: ReturnType<
 
 export async function bootstrapLocalCompany(auth: SuperAdminAuthContext, input: unknown) {
   if (auth.type !== "super_admin") throw new ApiError("FORBIDDEN", "Super Admin required", 403);
-  const body = parse(z.object({ name: nameSchema, initialAdmin: z.object({ username: z.unknown(), email: z.unknown(), name: nameSchema.optional() }).strict() }).strict(), input);
+  const body = parse(z.object({ name: nameSchema, initialAdmin: initialAdminSchema }).strict(), input);
   const admin = createInput({ ...body.initialAdmin, workspaceAdmin: true });
-  trustedOrigin();
   return safeTransaction(async tx => {
     const company = await tx.company.create({ data: { name: body.name, localAuthEnabled: true, oidcEnabled: false } });
     const user = await insertInvitedUser(tx, company.uuid, admin);
     const credentialLink = await issueToken(tx, user, "invite");
     await audit(tx, company.uuid, "super_admin", auth.email, user.uuid, "local_workspace_bootstrapped");
     return { company: { uuid: company.uuid, name: company.name, localAuthEnabled: true, oidcEnabled: false }, user: publicLocalUser(user), credentialLink };
+  });
+}
+
+const initialAdminMutationSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("reinvite"), expectedUserUuid: z.string().min(1) }).strict(),
+  z.object({ action: z.literal("revoke"), expectedUserUuid: z.string().min(1) }).strict(),
+  z.object({ action: z.literal("replace"), expectedUserUuid: z.string().min(1).nullable(), initialAdmin: initialAdminSchema }).strict(),
+]);
+const bootstrapActions = ["local_workspace_bootstrapped", "local_initial_admin_replaced"];
+const revokedAction = "local_initial_admin_revoked";
+function requireBootstrapSuperAdmin(auth: SuperAdminAuthContext) {
+  if (auth.type !== "super_admin") throw new ApiError("FORBIDDEN", "Super Admin required", 403);
+}
+const bootstrapConflict = () => new ApiError("CONFLICT", "Initial admin setup has changed or is no longer manageable", 409);
+async function initialAdminState(tx: Tx, companyUuid: string) {
+  // Do not infer bootstrap identity from roles or creation time. Revocations are
+  // durable even after tombstoning, and every replacement has a fresh identity.
+  const history = await tx.localUserAudit.findMany({ where: {
+    companyUuid, actorType: "super_admin", action: { in: [...bootstrapActions, revokedAction] },
+  } });
+  const principals = history.filter(entry => bootstrapActions.includes(entry.action)).map(entry => entry.targetUuid);
+  const revoked = new Set(history.filter(entry => entry.action === revokedAction).map(entry => entry.targetUuid));
+  const current = [...new Set(principals)].filter(uuid => !revoked.has(uuid));
+  const accepted = principals.length ? await tx.localUserAudit.findFirst({ where: {
+    companyUuid, targetUuid: { in: principals }, action: "local_invite_accepted",
+  } }) : null;
+  const user = current.length === 1 ? await tx.user.findFirst({ where: {
+    companyUuid, uuid: current[0], authType: "local",
+  } }) : null;
+  const liveUser = user && !user.deletedAt && user.status !== "deleted" ? user : null;
+  const bootstrapped = history.filter(entry => entry.action === "local_workspace_bootstrapped").length === 1;
+  const manageable = bootstrapped && !accepted && current.length <= 1 &&
+    (current.length === 0 || !!liveUser && liveUser.status === "invited" && !liveUser.passwordHash && liveUser.workspaceAdmin);
+  return { user: liveUser, manageable };
+}
+export async function getInitialAdmin(auth: SuperAdminAuthContext, companyUuid: string): Promise<InitialAdminState> {
+  requireBootstrapSuperAdmin(auth);
+  return safeTransaction(async tx => {
+    await lockCompany(tx, companyUuid);
+    const state = await initialAdminState(tx, companyUuid);
+    return { user: state.user ? publicLocalUser(state.user) : null, manageable: state.manageable };
+  });
+}
+export async function manageInitialAdmin(auth: SuperAdminAuthContext, companyUuid: string, input: unknown): Promise<InitialAdminMutationResult> {
+  requireBootstrapSuperAdmin(auth);
+  const body = parse(initialAdminMutationSchema, input);
+  const replacement = body.action === "replace" ? createInput({ ...body.initialAdmin, workspaceAdmin: true }) : null;
+  return safeTransaction(async tx => {
+    // Acceptance uses this same lock and writes local_invite_accepted before
+    // committing. No recovery operation can race activation or erase its marker.
+    await lockCompany(tx, companyUuid);
+    const state = await initialAdminState(tx, companyUuid);
+    if (!state.manageable || body.expectedUserUuid !== (state.user?.uuid ?? null)) throw bootstrapConflict();
+    if (body.action === "reinvite") {
+      if (!state.user) throw bootstrapConflict();
+      const user = await tx.user.update({ where: { uuid: state.user.uuid }, data: { sessionVersion: { increment: 1 } } });
+      const credentialLink = await issueToken(tx, user, "invite");
+      await audit(tx, companyUuid, "super_admin", auth.email, user.uuid, "local_initial_admin_reinvited");
+      return { user: publicLocalUser(user), manageable: true, credentialLink };
+    }
+    if (state.user) {
+      // Explicit preactivation setup recovery only: never bypass the ordinary
+      // last-admin guard for active users. History stays on the tombstone UUID.
+      await tx.user.update({ where: { uuid: state.user.uuid }, data: {
+        status: "deleted", deletedAt: new Date(), username: null, localEmail: null,
+        passwordHash: null, workspaceAdmin: false, sessionVersion: { increment: 1 },
+      } });
+      await tx.userCredentialToken.deleteMany({ where: { companyUuid, userUuid: state.user.uuid } });
+      await audit(tx, companyUuid, "super_admin", auth.email, state.user.uuid, revokedAction);
+    }
+    if (body.action === "revoke") return { user: null, manageable: true };
+    const user = await insertInvitedUser(tx, companyUuid, replacement!);
+    const credentialLink = await issueToken(tx, user, "invite");
+    await audit(tx, companyUuid, "super_admin", auth.email, user.uuid, "local_initial_admin_replaced");
+    return { user: publicLocalUser(user), manageable: true, credentialLink };
   });
 }
 

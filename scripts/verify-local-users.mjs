@@ -31,7 +31,7 @@ async function api(path, { method = "GET", body, cookie, key } = {}) {
   const cookies = response.headers.getSetCookie?.() ?? [];
   return { status: response.status, json, cookie: cookies.map((value) => value.split(";")[0]).join("; ") };
 }
-function token(link) { return new URL(link.url).searchParams.get("token"); }
+function token(link) { return new URL(link.url, base).searchParams.get("token"); }
 async function accept(link) { return api("/api/auth/local/accept", { method: "POST", body: { token: token(link), password } }); }
 async function login(companyUuid, identifier) {
   const result = await api("/api/auth/local/login", { method: "POST", body: { companyUuid, identifier, password } });

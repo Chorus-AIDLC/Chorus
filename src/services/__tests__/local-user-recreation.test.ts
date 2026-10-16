@@ -9,7 +9,7 @@ const db = vi.hoisted(() => ({
   apiKey: { findUnique: vi.fn(), update: vi.fn() },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
-import { acceptLocalCredential, createLocalUser, removeLocalUser } from "@/services/local-user.service";
+import { acceptLocalCredential, createLocalUser, getInitialAdmin, manageInitialAdmin, removeLocalUser } from "@/services/local-user.service";
 import { createUserAccessToken, getUserSessionFromRequest } from "@/lib/user-session";
 import { validateApiKey } from "@/lib/api-key";
 import { getCompanyUsers } from "@/services/agent.service";
@@ -42,6 +42,7 @@ function matches(row: object, where: Record<string, unknown>): boolean {
   return Object.entries(where).every(([key, value]) => {
     const actual = (row as Record<string, unknown>)[key];
     if (value && typeof value === "object") {
+      if ("in" in value) return (value.in as unknown[]).includes(actual);
       if ("not" in value) return actual !== value.not;
       if ("gt" in value) return actual instanceof Date && actual > (value.gt as Date);
     }
@@ -55,7 +56,7 @@ const tx = {
     findFirst: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn(),
   },
   userCredentialToken: { findUnique: vi.fn(), create: vi.fn(), deleteMany: vi.fn(), updateMany: vi.fn() },
-  localUserAudit: { create: vi.fn() },
+  localUserAudit: { create: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
   projectMember: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
   projectGroupMember: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
   projectGroup: { update: vi.fn() },
@@ -107,6 +108,8 @@ beforeEach(() => {
     return { count: selected.length };
   });
   tx.localUserAudit.create.mockImplementation(async ({ data }) => { audits.push(data); return data; });
+  tx.localUserAudit.findMany.mockImplementation(async ({ where }) => audits.filter(entry => matches(entry, where)));
+  tx.localUserAudit.findFirst.mockImplementation(async ({ where }) => audits.find(entry => matches(entry, where)) ?? null);
   db.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
     const before = structuredClone({ users, tokens, audits });
     try { return await fn(tx); }
@@ -130,11 +133,148 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 const invite = () => createLocalUser(localAuth, { username: " ALICE ", email: " ALICE@EXAMPLE.COM " });
 
+describe("preactivation first admin recovery", () => {
+  const root = { type: "super_admin" as const, email: "root@example.com" };
+  const company = localAuth.companyUuid;
+  const identity = { username: " ALICE ", email: " ALICE@EXAMPLE.COM " };
+  const raw = (link: { url: string }) => new URL(link.url, "https://browser.example").searchParams.get("token")!;
+  const recover = (action: "reinvite" | "revoke") => manageInitialAdmin(root, company, { action, expectedUserUuid: target.uuid });
+  beforeEach(() => {
+    Object.assign(target, { status: "invited", passwordHash: null });
+    tokens[0].purpose = "invite";
+    audits.push({ companyUuid: company, actorType: "super_admin", actorUuid: root.email, targetUuid: target.uuid, action: "local_workspace_bootstrapped" });
+  });
+  it("reads only the audited bootstrap principal under the company lock", async () => {
+    expect(await getInitialAdmin(root, company)).toEqual({ user: expect.objectContaining({ uuid: target.uuid }), manageable: true });
+    expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.localUserAudit.findMany.mock.invocationCallOrder[0]);
+    expect(tx.user.findFirst).toHaveBeenCalledWith({ where: { companyUuid: company, uuid: target.uuid, authType: "local" } });
+    expect(tx.localUserAudit.findFirst).toHaveBeenCalledWith({ where: { companyUuid: company, targetUuid: { in: [target.uuid] }, action: "local_invite_accepted" } });
+  });
+  it("reinvites with a fresh version, deletes old token and audits the superadmin", async () => {
+    vi.stubEnv("APP_URL", "broken");
+    const result = await recover("reinvite");
+    expect(result).toMatchObject({ manageable: true, user: { uuid: target.uuid }, credentialLink: { purpose: "invite" } });
+    expect(result.credentialLink!.url).toMatch(/^\/login\/local\/accept\?token=/);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].sessionVersion).toBe(target.sessionVersion);
+    await expect(acceptLocalCredential({ token: rawToken, password })).rejects.toMatchObject({ status: 400 });
+    await acceptLocalCredential({ token: raw(result.credentialLink!), password });
+    expect((await getInitialAdmin(root, company)).manageable).toBe(false);
+    await expect(recover("reinvite")).rejects.toMatchObject({ status: 409 });
+    expect(audits).toContainEqual({ companyUuid: company, actorType: "super_admin", actorUuid: root.email, targetUuid: target.uuid, action: "local_initial_admin_reinvited" });
+  });
+  it("revokes and re-enrolls the same identity with a new UUID, preserving the tombstone/history", async () => {
+    // No other effective admin: this narrow preactivation operation alone may bypass the guard.
+    users = [target];
+    expect(await recover("revoke")).toEqual({ user: null, manageable: true });
+    expect(target).toMatchObject({ status: "deleted", username: null, localEmail: null, workspaceAdmin: false, passwordHash: null });
+    expect(tokens).toEqual([]);
+    expect(await getInitialAdmin(root, company)).toEqual({ user: null, manageable: true });
+    await expect(acceptLocalCredential({ token: rawToken, password })).rejects.toMatchObject({ status: 400 });
+    const result = await manageInitialAdmin(root, company, { action: "replace", expectedUserUuid: null, initialAdmin: identity });
+    expect(result.user!.uuid).not.toBe(target.uuid);
+    expect(result.user).toMatchObject({ username: "alice", email: "alice@example.com", status: "invited", workspaceAdmin: true });
+    expect(users.find(user => user.uuid === target.uuid)).toEqual(target);
+    expect(users.find(user => user.uuid === result.user!.uuid)).toMatchObject({ passwordHash: null, sessionVersion: 0 });
+    expect((await getInitialAdmin(root, company)).user!.uuid).toBe(result.user!.uuid);
+    await expect(manageInitialAdmin(root, company, { action: "replace", expectedUserUuid: null, initialAdmin: identity })).rejects.toMatchObject({ status: 409 });
+  });
+  it("atomically replaces the same identity and leaves old credentials and ownership on the old UUID", async () => {
+    const oldUuid = target.uuid;
+    const result = await manageInitialAdmin(root, company, { action: "replace", expectedUserUuid: oldUuid, initialAdmin: { ...identity, name: "   " } });
+    expect(result.user!.uuid).not.toBe(oldUuid);
+    expect(tokens.map(token => token.userUuid)).toEqual([result.user!.uuid]);
+    expect((await db.apiKey.findUnique()).agent.ownerUuid).toBe(oldUuid);
+    expect(audits.map(entry => entry.action)).toEqual(["local_workspace_bootstrapped", "local_initial_admin_revoked", "local_initial_admin_replaced"]);
+    await expect(acceptLocalCredential({ token: rawToken, password })).rejects.toMatchObject({ status: 400 });
+    await expect(manageInitialAdmin(root, company, { action: "revoke", expectedUserUuid: oldUuid })).rejects.toMatchObject({ status: 409 });
+    await acceptLocalCredential({ token: raw(result.credentialLink!), password });
+    await expect(manageInitialAdmin(root, company, { action: "revoke", expectedUserUuid: result.user!.uuid })).rejects.toMatchObject({ status: 409 });
+  });
+  it("retains every revocation marker through repeated replacements and blocks recovery after activated account deletion", async () => {
+    const first = await manageInitialAdmin(root, company, { action: "replace", expectedUserUuid: target.uuid, initialAdmin: identity });
+    await manageInitialAdmin(root, company, { action: "revoke", expectedUserUuid: first.user!.uuid });
+    expect(await getInitialAdmin(root, company)).toEqual({ user: null, manageable: true });
+    const second = await manageInitialAdmin(root, company, { action: "replace", expectedUserUuid: null, initialAdmin: identity });
+    expect(new Set([target.uuid, first.user!.uuid, second.user!.uuid]).size).toBe(3);
+    expect(audits.filter(entry => entry.action === "local_initial_admin_revoked").map(entry => entry.targetUuid)).toEqual([target.uuid, first.user!.uuid]);
+    await expect(acceptLocalCredential({ token: raw(first.credentialLink!), password })).rejects.toMatchObject({ status: 400 });
+    await acceptLocalCredential({ token: raw(second.credentialLink!), password });
+    users = users.filter(user => user.uuid !== second.user!.uuid);
+    expect(await getInitialAdmin(root, company)).toEqual({ user: null, manageable: false });
+    await expect(manageInitialAdmin(root, company, { action: "replace", expectedUserUuid: null, initialAdmin: identity })).rejects.toMatchObject({ status: 409 });
+  });
+  it.each(["collision", "token", "audit"])("rolls back replacement tombstone, identifiers and token on %s failure", async stage => {
+    const before = structuredClone({ users, tokens, audits });
+    if (stage === "token") tx.userCredentialToken.create.mockRejectedValueOnce(new Error("fail"));
+    if (stage === "audit") tx.localUserAudit.create.mockImplementationOnce(async ({ data }) => { audits.push(data); return data; }).mockRejectedValueOnce(new Error("fail"));
+    const initialAdmin = stage === "collision" ? { username: "admin", email: "new@example.com" } : identity;
+    await expect(manageInitialAdmin(root, company, { action: "replace", expectedUserUuid: target.uuid, initialAdmin })).rejects.toMatchObject({ status: stage === "collision" ? 409 : 500 });
+    expect({ users, tokens, audits }).toEqual(before);
+    await expect(acceptLocalCredential({ token: rawToken, password })).resolves.toEqual({ accepted: true });
+  });
+  it.each(["reinvite", "revoke", "replace"])("rejects stale expected identity for %s without mutation", async action => {
+    const before = structuredClone({ users, tokens, audits });
+    await expect(manageInitialAdmin(root, company, { action, expectedUserUuid: "stale", ...(action === "replace" ? { initialAdmin: identity } : {}) })).rejects.toMatchObject({ status: 409 });
+    expect({ users, tokens, audits }).toEqual(before);
+    expect(tx.user.update).not.toHaveBeenCalled();
+  });
+  it.each(["active", "password", "accepted", "accepted-deleted", "accepted-revoked", "accepted-replacement"])("never manages %s bootstrap history", async state => {
+    if (state === "active") target.status = "active";
+    if (state === "password") target.passwordHash = "set";
+    if (state.startsWith("accepted")) audits.push({ companyUuid: company, actorType: "user", actorUuid: target.uuid, targetUuid: target.uuid, action: "local_invite_accepted" });
+    if (state === "accepted-deleted") users = users.filter(user => user.uuid !== target.uuid);
+    if (["accepted-revoked", "accepted-replacement"].includes(state)) {
+      audits.push({ companyUuid: company, actorType: "super_admin", actorUuid: root.email, targetUuid: target.uuid, action: "local_initial_admin_revoked" });
+      if (state === "accepted-replacement") {
+        const replacement = makeLocalUser({ uuid: "new-bootstrap", status: "invited", passwordHash: null, workspaceAdmin: true });
+        users.push(replacement);
+        audits.push({ companyUuid: company, actorType: "super_admin", actorUuid: root.email, targetUuid: replacement.uuid, action: "local_initial_admin_replaced" });
+      }
+    }
+    expect((await getInitialAdmin(root, company)).manageable).toBe(false);
+    for (const action of ["reinvite", "revoke", "replace"]) await expect(manageInitialAdmin(root, company, { action, expectedUserUuid: action === "replace" ? null : target.uuid, ...(action === "replace" ? { initialAdmin: identity } : {}) })).rejects.toMatchObject({ status: 409 });
+    expect(tx.user.update).not.toHaveBeenCalled();
+  });
+  it("rechecks accepted state after acquiring the lock", async () => {
+    tx.$queryRaw.mockImplementationOnce(async () => {
+      audits.push({ companyUuid: company, actorType: "user", actorUuid: target.uuid, targetUuid: target.uuid, action: "local_invite_accepted" });
+      return [];
+    });
+    await expect(recover("revoke")).rejects.toMatchObject({ status: 409 });
+    expect(tx.user.update).not.toHaveBeenCalled();
+  });
+  it.each(["user", "agent"])("rejects %s actors before opening a transaction", async type => {
+    const actor = { ...root, type } as typeof root;
+    await expect(getInitialAdmin(actor, company)).rejects.toMatchObject({ status: 403 });
+    await expect(manageInitialAdmin(actor, company, { action: "revoke", expectedUserUuid: target.uuid })).rejects.toMatchObject({ status: 403 });
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+  it.each([null, { localAuthEnabled: false, oidcEnabled: false }, { localAuthEnabled: true, oidcEnabled: true }])("rejects missing/nonlocal/OIDC tenant %j", async flags => {
+    tx.company.findUnique.mockResolvedValue(flags);
+    await expect(getInitialAdmin(root, company)).rejects.toMatchObject({ status: 403 });
+    await expect(recover("revoke")).rejects.toMatchObject({ status: 403 });
+    expect(tx.localUserAudit.findMany).not.toHaveBeenCalled();
+  });
+  it("does not select a bootstrap principal from another tenant or ordinary invitations", async () => {
+    expect(await getInitialAdmin(root, "foreign-company")).toEqual({ user: null, manageable: false });
+    await expect(manageInitialAdmin(root, "foreign-company", { action: "replace", expectedUserUuid: null, initialAdmin: identity })).rejects.toMatchObject({ status: 409 });
+    audits = [];
+    expect(await getInitialAdmin(root, company)).toEqual({ user: null, manageable: false });
+    await expect(recover("revoke")).rejects.toMatchObject({ status: 409 });
+    expect(tx.user.update).not.toHaveBeenCalled();
+  });
+  it.each([{ action: "reset", expectedUserUuid: "target-a" }, { action: "revoke" }, { action: "reinvite", expectedUserUuid: null }, { action: "replace", expectedUserUuid: "target-a", initialAdmin: { ...identity, workspaceAdmin: false } }, { action: "revoke", expectedUserUuid: "target-a", initialAdmin: identity }])("rejects malformed strict union %j before transactions", async body => {
+    await expect(manageInitialAdmin(root, company, body)).rejects.toMatchObject({ status: 400 });
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+});
+
 describe("live principal selection and new authorization", () => {
   it("selects only the activated replacement and rejects new authorization of the deleted UUID", async () => {
     await removeLocalUser(localAuth, target.uuid);
     const fresh = await invite();
-    await acceptLocalCredential({ token: new URL(fresh.credentialLink!.url).searchParams.get("token")!, password });
+    await acceptLocalCredential({ token: new URL(fresh.credentialLink!.url, "https://browser.example").searchParams.get("token")!, password });
     const candidates = await getCompanyUsers(localAuth.companyUuid);
     expect(candidates.map(user => user.uuid)).toEqual([localAuth.actorUuid, fresh.user.uuid]);
     expect(users.find(user => user.uuid === target.uuid)).toMatchObject({ name: target.name, email: target.email, status: "deleted" });
@@ -222,7 +362,7 @@ describe("deleted local identity reuse without inheritance", () => {
     expect((await validateApiKey("cho_old_key")).valid).toBe(true);
     await removeLocalUser(localAuth, target.uuid);
     const fresh = await invite();
-    const token = new URL(fresh.credentialLink!.url).searchParams.get("token")!;
+    const token = new URL(fresh.credentialLink!.url, "https://browser.example").searchParams.get("token")!;
     await acceptLocalCredential({ token, password });
     const active = users.find(user => user.uuid === fresh.user.uuid)!;
     expect(active.status).toBe("active");

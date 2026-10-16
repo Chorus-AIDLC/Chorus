@@ -65,7 +65,8 @@ describe("local workspace bootstrap route", () => {
     expect(mocks.superAdmin).toHaveBeenCalled();
     expect(mocks.db.$transaction).not.toHaveBeenCalled();
   });
-  it("returns usable secret-safe handoff from configured origin, never Host or forwarded headers", async () => {
+  it("returns a relative secret-safe handoff, independent of APP_URL, Host or forwarded headers", async () => {
+    vi.stubEnv("APP_URL", "invalid URL");
     mocks.superAdmin.mockResolvedValue({ type: "super_admin", email: "root@example.com" });
     const response = await bootstrap(request("POST", { name: "Workspace", initialAdmin: account }, "/api/admin/companies/local", { host: "evil.example", "x-forwarded-host": "evil.example", "x-forwarded-proto": "https" }), context);
     expect(response.status).toBe(200);
@@ -73,9 +74,9 @@ describe("local workspace bootstrap route", () => {
     const body = await response.json();
     expect(body.success).toBe(true);
     expect(body.data.user).toMatchObject({ username: "alice", email: "alice@example.com", workspaceAdmin: true, status: "invited" });
-    expect(body.data.credentialLink.url).toMatch(/^https:\/\/trusted\.example\/login\/local\/accept\?token=/);
+    expect(body.data.credentialLink.url).toMatch(/^\/login\/local\/accept\?token=/);
     expect(body.data.user).not.toHaveProperty("passwordHash");
-    const raw = new URL(body.data.credentialLink.url).searchParams.get("token")!;
+    const raw = new URL(body.data.credentialLink.url, "https://browser.example").searchParams.get("token")!;
     expect(JSON.stringify(fixture.tx.localUserAudit.create.mock.calls)).not.toContain(raw);
   });
   it("invalid bootstrap input creates no workspace", async () => {

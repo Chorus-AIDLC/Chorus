@@ -16,6 +16,25 @@ The system SHALL allow Superadmin to create an explicitly local-auth workspace a
 - **WHEN** any bootstrap persistence operation fails
 - **THEN** the transaction rolls back without an orphan local workspace
 
+#### Scenario: Optional initial administrator display name
+- **WHEN** Superadmin omits or leaves the initial administrator display name blank
+- **THEN** bootstrap succeeds with the same optional-name behavior as later local invitations
+
+### Requirement: Preactivation bootstrap invitation management
+Authenticated Superadmin SHALL view, reissue, revoke or atomically replace the initial administrator invitation from local workspace details only before initial activation. Operations SHALL lock the workspace consistently with acceptance, validate the expected current user UUID and record credential-free audit events. Revocation SHALL invalidate credentials and tombstone the pending account; replacement SHALL create a fresh UUID with no inherited history or access. Activation SHALL permanently end this setup-management authority, including if that account is later removed. Ordinary user and Agent credentials SHALL NOT authorize these operations.
+
+#### Scenario: Reissue and revoke
+- **WHEN** Superadmin confirms reissue or revocation of the current pending initial administrator
+- **THEN** the previous token becomes invalid, and revocation leaves setup awaiting a replacement invitation
+
+#### Scenario: Replace pending administrator
+- **WHEN** Superadmin replaces the current pending administrator, including reuse of the same identifiers
+- **THEN** deletion and new invitation commit atomically with a new UUID; failure rolls back without losing the existing invitation
+
+#### Scenario: Activation or stale selection wins
+- **WHEN** acceptance commits before a management operation, or the expected user UUID no longer matches the current pending identity
+- **THEN** management rejects without changing that user, and activation cannot be undone by Superadmin setup controls
+
 ### Requirement: Tenant-local identities
 Local usernames and emails SHALL be normalized and individually unique within their workspace. Across different workspaces they MAY repeat. Credentials SHALL always be scoped by company UUID. Legacy OIDC records SHALL NOT be made subject to new local email uniqueness or password elevation.
 
@@ -55,7 +74,7 @@ Admins SHALL list, invite, edit, enable/disable, reset credentials, grant/revoke
 - **THEN** that account may log in again but its old revoked session generation does not become valid
 
 ### Requirement: Last administrator protection
-The system SHALL prevent disabling, removing or demoting the last effective Workspace Admin, including concurrent mutations. Initial bootstrap's sole invited admin SHALL not be discarded before an effective replacement exists.
+The system SHALL prevent disabling, removing or demoting the last effective Workspace Admin, including concurrent mutations. Workspace Admin mutations SHALL protect the sole invited bootstrap administrator. The explicitly authorized Superadmin preactivation setup flow MAY revoke or replace that invitation, but SHALL NOT remove or reset an activated administrator.
 
 #### Scenario: Concurrent admin removal
 - **WHEN** two admins are concurrently removed or demoted such that both operations would leave no effective admin
@@ -74,7 +93,8 @@ The system SHALL store only hashes of cryptographically random tokens bound to a
 
 #### Scenario: Link handoff
 - **WHEN** an administrator issues an invite or reset
-- **THEN** the UI presents its usable link and expiry for explicit delivery through a trusted channel without depending on unconfigured email transport
+- **THEN** the server returns an origin-independent controlled acceptance path/token and expiry; every copy interface builds the usable link from the browser's current origin, supporting CNAME/reverse-proxy domains without depending on APP_URL, incoming Host headers or unconfigured email transport
+- **AND** the UI validates the exact acceptance path/token and does not copy an arbitrary server-provided external origin
 
 ### Requirement: Safe password credentials
 The system SHALL hash passwords with the existing cross-platform bcryptjs dependency, enforce a minimum of 8 Unicode characters without additional character-class requirements and reject inputs beyond bcrypt's safe 72-byte UTF-8 limit. Login SHALL use generic credential errors and bounded throttling.

@@ -25,6 +25,7 @@ import {
   Key,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/format-date";
+import { InitialAdminInvitation } from "@/components/initial-admin-invitation";
 
 interface CompanyDetail {
   uuid: string;
@@ -258,6 +259,8 @@ export default function CompanyDetailPage({
           </CardContent>
         </Card>
       </div>
+
+      {company.localAuthEnabled && <InitialAdminInvitation key={uuid} companyUuid={uuid} />}
 
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-6">

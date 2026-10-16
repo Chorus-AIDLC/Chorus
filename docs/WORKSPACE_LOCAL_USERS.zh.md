@@ -5,11 +5,13 @@ Chorus 支持显式启用的本地用户名/密码 Workspace，同时保留现�
 ## 初始化与管理
 
 1. 在 Superadmin 控制台创建 Workspace，选择「本地用户名和密码」。
-2. 输入 Workspace 名称及首位管理员的用户名、邮箱及显示名称。
+2. 输入 Workspace 名称及首位管理员的用户名、邮箱。显示名称与后续邀请一致，均为选填。
 3. **离开页面前复制邀请链接**，通过可信渠道仅发送给指定接收者。系统不会自动发送邮件，本流程不依赖 SMTP。
 4. 接收者打开一次性链接，设置并确认密码，然后返回普通登录页；接受邀请不会自动登录。
 5. 所有普通登录均先输入用户名或邮箱，即使部署启用了 `DEFAULT_USER`。匹配多个 Workspace/身份时先选择，单命中自动跳过选择；确定后才输入密码或进入所选 Workspace 的 SSO。没有独立 SSO 入口或密码优先 fallback。SSO 仍使用配置的工作邮箱后缀发现组织，IdP 继续管理身份和凭据。修改账号需返回识别步骤，返回时清空密码。
 6. 活跃本地 Workspace Admin 可通过「设置 → 工作区用户」邀请、编辑、启用/停用、重置密码、授予/撤销管理员、移除用户。
+
+首位管理员激活之前，Superadmin 的 Workspace 详情页显示待邀请身份，支持经确认后重新生成邀请、撤销邀请或原子换人。重邀使旧链接失效；撤销会删除待激活账号，初始化继续等待替代管理员。换人即使复用原用户名/邮箱，也创建新 UUID，不继承旧账号历史或权限。这些操作与接受邀请使用同一 Workspace 锁，并拒绝过时的身份选择。初始化一旦激活，此入口改为只读；以后删除该账号也不会重新开启 Superadmin 初始化恢复。这不是管理员密码绕过或跨 Workspace 日常用户管理。
 
 首版仅增加固定的 Workspace Admin 管理能力，不提供可配置 RBAC。普通用户保留现有项目/业务访问模型，Workspace Admin 不绕过私有项目或项目组边界。Superadmin 负责创建 Workspace 和初始化管理员，不增加跨 Workspace 的日常用户管理能力。
 
@@ -21,7 +23,7 @@ Chorus 支持显式启用的本地用户名/密码 Workspace，同时保留现�
 
 停用待接受邀请的账号会撤销其链接。重新启用尚未设置密码的账号时，状态恢复为「已邀请」并签发新链接，只有接受后才成为活跃账号。已设置密码的账号重新启用后可以重新登录，但旧会话不会恢复。停用账号不能靠接受重置链接自行恢复。请保留另一位活跃管理员用于恢复；本功能没有新增未认证恢复通道或 Superadmin 绕过最后管理员密码的机制。
 
-将 `APP_URL` 配置为可信且外部可达的应用 origin。未配置时开发默认使用 `http://localhost:8637`；不使用请求 Host 决定凭据链接 origin。接受页面使用 no-referrer 元数据，并在加载后移除地址栏中的 token 查询参数。不要将凭据链接放进公开工单、截图、日志或工作报告。Next 开发请求日志排除接受页面 URL；生产反向代理/访问日志也应省略或脱敏其 `token` 查询参数，前端 no-referrer 不会替基础设施日志脱敏。
+签发凭据只返回受控的 `/login/local/accept?token=…` 路径。所有邀请/重置复制界面使用 `window.location.origin` 生成完整链接，保留浏览器当前访问的域名/CNAME、协议及端口。签发不依赖 `APP_URL`，也不信任请求 Host/forwarded headers；前端校验路径和 token 后才附加当前 origin，不复制服务端提供的外部域名。只调用 API 的客户端需要自行将相对路径解析到指定的公开前端 origin。接受页面使用 no-referrer 元数据，并在加载后移除地址栏中的 token 查询参数。不要将凭据链接放进公开工单、截图、日志或工作报告。Next 开发请求日志排除接受页面 URL；生产反向代理/访问日志也应省略或脱敏其 `token` 查询参数，前端 no-referrer 不会替基础设施日志脱敏。
 
 ## 撤权、历史归属与安全
 
@@ -29,7 +31,7 @@ Chorus 支持显式启用的本地用户名/密码 Workspace，同时保留现�
 
 所属 Agent/API Key 的中央认证路径在 REST 与 MCP 中检查 owner 是否存在、是否同租户且活跃。停用或移除 owner 后密钥不能继续访问；密钥不会获得人类 Workspace Admin 能力。普通活跃 owner 的 Agent 保留已有 preset/custom 业务权限，私有项目/组访问仍受到现有 owner 授权上限约束。无 owner Agent 不变。停用 owner 是基于状态的撤权，因此重新启用已设置密码的 owner 可以恢复仍有效密钥的认证资格，但旧用户会话仍无效。
 
-生命周期事务锁定 Workspace 行并重新读取 actor/target，保护最后一位有效管理员；尚无活跃管理员时也保护 bootstrap 邀请账号。审计只记录 actor、action、target UUID，不记录凭据。服务端为最终授权依据，隐藏导航不是授权措施。
+生命周期事务锁定 Workspace 行并重新读取 actor/target，保护最后一位有效管理员；Workspace Admin 操作也保护唯一的 bootstrap 邀请账号。只有已认证的 Superadmin 初始化入口可以在激活之前撤销/替换该邀请，不能绕过对已激活管理员的保护。审计只记录 actor、action、target UUID，不记录凭据。服务端为最终授权依据，隐藏导航不是授权措施。
 
 账号发现仅显示适用的 Workspace 名称/UUID 和既有 OIDC 配置，不公开成员资料或管理员状态。发现、登录和接受链接使用有界进程内限流。没有可信客户端地址时，只按规范化发现标识、租户+登录标识或接受链接 token 的哈希限流；不会使用共用 unknown-address 桶阻塞无关用户。
 
@@ -56,6 +58,6 @@ LOCAL_USERS_TEST_ADMIN_PASSWORD='<测试管理员密码>' \
 node scripts/verify-local-users.mjs
 ```
 
-先在一次性数据库应用迁移，再使用相同数据库、测试 Superadmin 配置、`APP_URL` 和 `NEXTAUTH_SECRET` 启动 Next。PGlite 设置 `CHORUS_USE_PGLITE=1`，连接池有意只使用单连接。脚本创建带有明确测试前缀的 fixture 并保留供检查，不打印原始邀请凭据或密钥。断言真实 HTTP 响应及持久化状态，包括并发请求；PGlite 单连接执行**不是** PostgreSQL 多连接锁竞争的证据，部署锁行为需要另外在 PostgreSQL 上做并发验证。
+先在一次性数据库应用迁移，再使用相同数据库、测试 Superadmin 配置和 `NEXTAUTH_SECRET` 启动 Next。仅在一次性 HTTP 测试栈设置 `COOKIE_SECURE=false`；可以将 `APP_URL` 故意设为其他 origin，验证本地凭据复制链接不依赖它。PGlite 设置 `CHORUS_USE_PGLITE=1`，连接池有意只使用单连接。脚本创建带有明确测试前缀的 fixture 并保留供检查，不打印原始邀请凭据或密钥。断言真实 HTTP 响应及持久化状态，包括并发请求；PGlite 单连接执行**不是** PostgreSQL 多连接锁竞争的证据，部署锁行为需要另外在 PostgreSQL 上做并发验证。
 
-使用相同的隔离标记、应用 URL 和测试管理员配置执行 `node scripts/verify-local-users-browser.mjs`。若 Playwright 由外部提供，设置 `LOCAL_USERS_PLAYWRIGHT_MODULE=/path/to/playwright`。脚本同时设置语言 cookie 和 localStorage（客户端偏好为最终依据），覆盖中英文及明暗主题，截图仅保存到被忽略的 `.playwright-mcp/` 并遮蔽凭据字段。报告应记录真实执行结果。加密的 `docs/design.pen` 只能通过 Pencil MCP 更新；工具不可用时必须明确记录，不能直接编辑文件。
+使用相同的隔离标记、应用 URL 和测试管理员配置执行 `node scripts/verify-local-users-browser.mjs`。若 Playwright 由外部提供，设置 `LOCAL_USERS_PLAYWRIGHT_MODULE=/path/to/playwright`。脚本同时设置语言 cookie 和 localStorage（客户端偏好为最终依据），覆盖中英文及明暗主题，截图仅保存到被忽略的 `.playwright-mcp/` 并遮蔽凭据字段。浏览器脚本包含激活前重邀、替换、撤销及恢复、选填名称、旧链接失效和激活后权限终止。`node scripts/verify-local-users-cname.mjs` 使用相同的隔离配置（8640端口），只在测试浏览器内将 `chorus-cname.test` 映射至loopback，验证该别名上的真实复制链接和接受流程，不修改系统DNS/hosts；脚本依赖OpenSSL，在临时端口创建自签名HTTPS loopback代理，使剪贴板测试使用真正的安全上下文；证书忽略只用于测试，不是生产TLS验收，代理和临时证书目录在`finally`清理。PGlite上应顺序执行浏览器与HTTP脚本，避免独立数据库客户端交错使用其单连接协议。报告应记录真实执行结果。加密的 `docs/design.pen` 只能通过 Pencil MCP 更新；工具不可用时必须明确记录，不能直接编辑文件。

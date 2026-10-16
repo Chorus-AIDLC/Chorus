@@ -74,7 +74,7 @@ describe("suspended invitation recovery", () => {
     const recovered = await service.updateLocalUser(localAuth, target.uuid, { status: "active" });
     expect(recovered.user.status).toBe("invited");
     expect(target.passwordHash).toBeNull();
-    const freshToken = new URL(recovered.credentialLink!.url).searchParams.get("token")!;
+    const freshToken = new URL(recovered.credentialLink!.url, "https://browser.example").searchParams.get("token")!;
     expect(freshToken).not.toBe(rawToken);
     await expectStatus(accept(), 400);
     await expect(service.acceptLocalCredential({ token: freshToken, password })).resolves.toEqual({ accepted: true });
@@ -148,14 +148,29 @@ describe("eight-character credential acceptance", () => {
 });
 
 describe("bootstrap and tenant-scoped creation", () => {
-  it("atomically bootstraps invited first admin with explicit local-only flags and hashed trusted-origin link", async () => {
+  it.each([undefined, "", "   "])("accepts omitted/blank invitation name %j for bootstrap and ordinary invitations", async name => {
+    const initialAdmin = { username: account.username, email: account.email, ...(name === undefined ? {} : { name }) };
+    await service.bootstrapLocalCompany(root, { name: bootstrap.name, initialAdmin });
+    await service.createLocalUser(localAuth, initialAdmin);
+    for (const [args] of fixture.tx.user.create.mock.calls) expect(args.data.name).toBeUndefined();
+  });
+  it.each([undefined, "", "not a URL", "https://user:secret@example.com", "ftp://example.com"])("issues all credential links independently of APP_URL %j", async origin => {
+    if (origin === undefined) delete process.env.APP_URL;
+    else vi.stubEnv("APP_URL", origin);
+    const results = [await service.bootstrapLocalCompany(root, bootstrap), await service.createLocalUser(localAuth, account), await service.issueLocalUserCredential(localAuth, "target-a", { purpose: "reset" })];
+    Object.assign(fixture.target, { status: "invited", passwordHash: null });
+    results.push(await service.updateLocalUser(localAuth, "target-a", { name: "Changed" }));
+    for (const result of results) expect(result.credentialLink!.url).toMatch(/^\/login\/local\/accept\?token=[A-Za-z0-9_-]{43}$/);
+  });
+  it("atomically bootstraps invited first admin with explicit local-only flags and hashed relative link", async () => {
     const result = await service.bootstrapLocalCompany(root, bootstrap);
     const { tx } = fixture;
     expect(tx.company.create).toHaveBeenCalledWith({ data: { name: bootstrap.name, localAuthEnabled: true, oidcEnabled: false } });
     expect(tx.user.create).toHaveBeenCalledWith({ data: expect.objectContaining({ companyUuid: "tenant-new", authType: "local", username: "alice", email: "alice@example.com", localEmail: "alice@example.com", workspaceAdmin: true, status: "invited" }) });
-    const url = new URL(result.credentialLink.url);
+    const url = new URL(result.credentialLink.url, "https://browser.example");
     const raw = url.searchParams.get("token")!;
-    expect(url.origin).toBe("https://chorus.example.com");
+    expect(result.credentialLink.url).toMatch(/^\/login\/local\/accept\?token=/);
+    expect(url.origin).toBe("https://browser.example");
     expect(url.pathname).toBe("/login/local/accept");
     expect(raw).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(tx.userCredentialToken.create).toHaveBeenCalledWith({ data: {
@@ -170,8 +185,6 @@ describe("bootstrap and tenant-scoped creation", () => {
   it("rejects non-superadmin and invalid bootstrap before writes", async () => {
     await expectStatus(service.bootstrapLocalCompany({ ...root, type: "user" } as unknown as SuperAdminAuthContext, bootstrap), 403);
     await expectStatus(service.bootstrapLocalCompany(root, { ...bootstrap, initialAdmin: { username: "@bad", email: "bad" } }), 400);
-    vi.stubEnv("APP_URL", "https://user:secret@example.com");
-    await expectStatus(service.bootstrapLocalCompany(root, bootstrap), 400);
     expect(db.$transaction).not.toHaveBeenCalled();
   });
   it.each(["user", "token", "audit"])("%s failure rejects whole bootstrap transaction without a committed orphan or leaking error secrets", async stage => {

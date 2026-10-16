@@ -6,6 +6,7 @@ import Link from "next/link";
 import { MoreHorizontal } from "lucide-react";
 import { authFetch } from "@/lib/auth-client";
 import { isImeComposing } from "@/lib/ime";
+import { credentialLinkUrl } from "@/lib/credential-link";
 import { useWorkspaceUsersAccess } from "@/components/workspace-users-navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -122,7 +123,7 @@ export default function WorkspaceUsersPage() {
       const data = result.data as LocalUserMutationResult;
       setDialog(null);
       setNotice(t("operationSucceeded"));
-      if (data.credentialLink) { setCredentialLink(data.credentialLink); setCopyStatus(""); }
+      if (data.credentialLink) { setCredentialLink({ ...data.credentialLink, url: credentialLinkUrl(data.credentialLink.url, window.location.origin) }); setCopyStatus(""); }
       // Refresh errors are separate from mutation errors; never lose an issued link.
       void loadUsers();
     } catch {
@@ -134,7 +135,7 @@ export default function WorkspaceUsersPage() {
   }
 
   async function copyLink() {
-    if (!credentialLink || copying) return;
+    if (!credentialLink?.url || copying) return;
     setCopying(true);
     try { await navigator.clipboard.writeText(credentialLink.url); setCopyStatus("copied"); }
     catch { setCopyStatus("copyFailed"); }
@@ -147,7 +148,7 @@ export default function WorkspaceUsersPage() {
       <Label htmlFor="issued-credential-link">{t("issuedLink")}</Label><Input id="issued-credential-link" readOnly value={credentialLink?.url ?? ""} onFocus={(event) => event.target.select()} />
       <p className="text-sm text-muted-foreground">{t("expiresAt", { date: credentialLink ? new Date(credentialLink.expiresAt).toLocaleString(locale) : "" })}</p>
       {copyStatus && <p role={copyStatus === "copyFailed" ? "alert" : "status"} className={copyStatus === "copyFailed" ? "text-destructive" : "text-foreground"}>{t(copyStatus)}</p>}
-      <DialogFooter><Button variant="outline" onClick={() => setCredentialLink(null)}>{t("close")}</Button><Button disabled={copying} onClick={() => void copyLink()}>{t("copyLink")}</Button></DialogFooter>
+      <DialogFooter><Button variant="outline" onClick={() => setCredentialLink(null)}>{t("close")}</Button><Button disabled={copying || !credentialLink?.url} onClick={() => void copyLink()}>{t("copyLink")}</Button></DialogFooter>
     </DialogContent></Dialog>
   );
 
