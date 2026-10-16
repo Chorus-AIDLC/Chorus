@@ -310,7 +310,7 @@ describe("LoginPage role picker — identify multi_role", () => {
     await waitFor(() => {
       expect(screen.getByText("Sign in as Super Admin")).toBeTruthy();
     });
-    expect(screen.getByText("Sign in with Acme Inc")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign in with Acme Inc" })).toBeTruthy();
   });
 
   it("oidc option starts signinRedirect for that company with login_hint=email", async () => {
@@ -332,11 +332,11 @@ describe("LoginPage role picker — identify multi_role", () => {
     await userEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Sign in with Acme Inc")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Sign in with Acme Inc" })).toBeTruthy();
     });
 
     await userEvent.click(
-      screen.getByText("Sign in with Acme Inc").closest("button")!
+      screen.getByRole("button", { name: "Sign in with Acme Inc" }).closest("button")!
     );
 
     await waitFor(() => {

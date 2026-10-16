@@ -77,7 +77,11 @@ The system SHALL store only hashes of cryptographically random tokens bound to a
 - **THEN** the UI presents its usable link and expiry for explicit delivery through a trusted channel without depending on unconfigured email transport
 
 ### Requirement: Safe password credentials
-The system SHALL hash passwords with the existing cross-platform bcryptjs dependency, enforce a minimum password length and reject inputs beyond bcrypt's safe UTF-8 byte limit. Login SHALL use generic credential errors and bounded throttling.
+The system SHALL hash passwords with the existing cross-platform bcryptjs dependency, enforce a minimum of 8 Unicode characters without additional character-class requirements and reject inputs beyond bcrypt's safe 72-byte UTF-8 limit. Login SHALL use generic credential errors and bounded throttling.
+
+#### Scenario: Password feedback and visibility
+- **WHEN** an invite/reset recipient enters a new password
+- **THEN** live feedback shows how many length/byte requirements are met, and password/confirmation inputs have independent accessible show/hide controls matching Superadmin sign-in
 
 #### Scenario: Invalid password length
 - **WHEN** token acceptance submits an undersized password or one exceeding the safe byte length
@@ -96,7 +100,7 @@ The login entry SHALL always begin with username or email discovery, combine mat
 
 #### Scenario: Shared identifier selects workspace
 - **WHEN** the input matches local accounts in two workspaces and an SSO suffix
-- **THEN** applicable distinct candidates appear and the selected workspace determines the subsequent authentication method
+- **THEN** applicable distinct candidates appear using the existing Chorus workspace picker visual layout (440px card, colored initials icon, name and secondary line, identifier footer), and the selected workspace determines the subsequent authentication method
 
 #### Scenario: New SSO user
 - **WHEN** an email has no Chorus user record but matches existing SSO workspace suffix configuration

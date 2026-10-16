@@ -124,15 +124,26 @@ describe("local identity and password contracts", () => {
   it.each([null, "not-email", "a@", `${"a".repeat(250)}@example.com`])("rejects invalid email %j", value => {
     expect(() => service.normalizeLocalEmail(value)).toThrow();
   });
-  it.each([null, "a".repeat(11), "a".repeat(73), "界".repeat(25), "😀".repeat(19), "😀".repeat(11)])("rejects unsafe password %j", value => {
+  it.each([null, "a".repeat(7), "a".repeat(73), "界".repeat(25), "😀".repeat(19), "😀".repeat(7)])("rejects unsafe password %j", value => {
     expect(() => service.validateLocalPassword(value)).toThrow();
   });
-  it.each(["a".repeat(12), "a".repeat(72), "界".repeat(24), "😀".repeat(18)])("allows safe UTF-8 password boundaries %j", value => {
+  it.each(["a".repeat(8), "a".repeat(72), "界".repeat(8), "界".repeat(24), "😀".repeat(8), "😀".repeat(18)])("allows safe UTF-8 password boundaries %j", value => {
     expect(() => service.validateLocalPassword(value)).not.toThrow();
   });
   it.each([{}, { ...account, password }, { ...account, username: "bad@user" }, { ...account, workspaceAdmin: "true" }])("invalid create input never starts a transaction %j", async input => {
     await expectStatus(service.createLocalUser(localAuth, input), 400);
     expect(db.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("eight-character credential acceptance", () => {
+  it.each(["invite", "reset"])("accepts an eight-character password for %s without weakening token checks", async purpose => {
+    fixture.token.purpose = purpose;
+    if (purpose === "invite") Object.assign(fixture.target, { status: "invited", passwordHash: null });
+    await expect(service.acceptLocalCredential({ token: rawToken, password: "aaaaaaaa" })).resolves.toEqual({ accepted: true });
+    expect(fixture.tx.user.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "active", passwordHash: expect.any(String) }) }));
+    const hash = fixture.tx.user.update.mock.calls[0][0].data.passwordHash;
+    expect(await bcrypt.compare("aaaaaaaa", hash)).toBe(true);
   });
 });
 

@@ -13,6 +13,7 @@ import { ArrowRight, Eye, EyeOff } from "lucide-react";
 import { clientLogger } from "@/lib/logger-client";
 import type { IdentifyRoleOption } from "@/types/admin";
 import { isImeComposing } from "@/lib/ime";
+import { getProjectIconColor, getProjectInitials, projectIconStyle } from "@/lib/project-colors";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -277,18 +278,22 @@ export default function LoginPage() {
       : t("login.rolePicker.oidcCompanyFallback");
   };
 
+  const issuerHost = (issuer: string): string => {
+    try { return new URL(issuer).hostname; } catch { return issuer; }
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-[400px]">
+      <Card className={`w-full ${showRolePicker ? "max-w-[440px]" : "max-w-[400px]"}`}>
         <CardContent className="p-10">
           {/* Logo Section */}
-          <div className="mb-8 flex flex-col items-center gap-2">
+          <div className={`${showRolePicker ? "mb-6" : "mb-8"} flex flex-col items-center gap-2`}>
             <img src="/chorus-icon.png" alt="Chorus" className="h-12 w-12" />
-            <h1 className="text-[28px] font-semibold text-foreground">
-              {t("login.title")}
+            <h1 className={`${showRolePicker ? "text-[22px]" : "text-[28px]"} font-semibold text-foreground`}>
+              {t(showRolePicker ? "login.pickWorkspace.title" : "login.title")}
             </h1>
-            <p className="text-sm text-muted-foreground">
-              {t("login.subtitle")}
+            <p className="text-center text-sm text-muted-foreground">
+              {showRolePicker ? t("login.rolePicker.subtitle", { count: choices.length }) : t("login.subtitle")}
             </p>
           </div>
 
@@ -303,9 +308,16 @@ export default function LoginPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="local-password">{t("login.defaultAuth.password")}</Label>
-                <Input id="local-password" type="password" value={password}
-                  onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
-                  required disabled={loading} autoFocus />
+                <div className="relative">
+                  <Input id="local-password" type={showPassword ? "text" : "password"} value={password}
+                    onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
+                    required disabled={loading} autoFocus className="pr-10" />
+                  <Button type="button" variant="ghost" size="icon" disabled={loading}
+                    onClick={() => setShowPassword(!showPassword)} aria-label={t(showPassword ? "login.local.hidePassword" : "login.local.showPassword")}
+                    aria-pressed={showPassword} className="absolute right-0 top-0 h-full px-3 hover:bg-transparent">
+                    {showPassword ? <Eye className="h-5 w-5 text-muted-foreground" /> : <EyeOff className="h-5 w-5 text-muted-foreground" />}
+                  </Button>
+                </div>
               </div>
               {error && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
               <Button type="submit" disabled={loading} className="w-full">{loading ? t("login.checking") : t("login.defaultAuth.submit")}</Button>
@@ -314,9 +326,6 @@ export default function LoginPage() {
           ) : showRolePicker ? (
             <>
               {/* Role Picker — one button per resolvable auth path */}
-              <p className="mb-4 text-center text-sm text-muted-foreground">
-                {t("login.rolePicker.title")}
-              </p>
               <div className="flex flex-col gap-3">
                 {choices.map((role, index) => (
                   <Card
@@ -332,10 +341,18 @@ export default function LoginPage() {
                       variant="ghost"
                       disabled={loading}
                       onClick={() => handleRoleSelect(role)}
+                      aria-label={roleLabel(role)}
                       className="flex h-auto w-full items-center gap-3 px-4 py-3 text-left hover:bg-transparent"
                     >
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                        {roleLabel(role)}
+                      <span className="project-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-sm font-semibold"
+                        style={projectIconStyle(getProjectIconColor(role.company?.name ?? roleLabel(role)))} aria-hidden="true">
+                        {getProjectInitials(role.company?.name ?? roleLabel(role))}
+                      </span>
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-sm font-medium text-foreground">{role.company?.name ?? roleLabel(role)}</span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {role.kind === "oidc" ? issuerHost(role.company.oidcIssuer) : t("login.local.passwordSignIn")}
+                        </span>
                       </span>
                       <ArrowRight
                         className="h-4 w-4 shrink-0 text-muted-foreground"
@@ -352,10 +369,12 @@ export default function LoginPage() {
                 </div>
               )}
 
-              <div className="mt-6 flex justify-center">
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs text-muted-foreground">
+                <span className="truncate" title={email}>{email}</span>
                 <Button
                   variant="link"
                   size="sm"
+                  className="h-auto p-0 text-xs"
                   onClick={handleRolePickerBack}
                 >
                   {t("login.rolePicker.back")}

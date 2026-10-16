@@ -76,6 +76,12 @@ describe("local unified login", () => {
     expect(await screen.findByRole("button", { name: "Sign in to Local One" })).toBeTruthy();
     expect(screen.queryByLabelText("Password")).toBeNull();
     expect(signinRedirect).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Choose a workspace" })).toBeTruthy();
+    expect(screen.getByText("Local One")).toBeTruthy();
+    expect(screen.getByText("Password sign-in")).toBeTruthy();
+    expect(screen.getByText("sso.example.com")).toBeTruthy();
+    expect(document.querySelectorAll(".project-icon")).toHaveLength(2);
+    expect(screen.getByRole("heading").closest("[data-slot=card]")?.className).toContain("max-w-[440px]");
     await userEvent.click(screen.getByRole("button", { name: "Sign in with SSO One" }));
     await waitFor(() => expect(signinRedirect).toHaveBeenCalledWith({ extraQueryParams: { login_hint: "alice@example.com" } }));
     expect(requests.some((r) => r.url === "/api/auth/local/login")).toBe(false);
@@ -86,6 +92,17 @@ describe("local unified login", () => {
     expect(push).toHaveBeenCalledWith("/login/pick-workspace?email=alice%40example.com");
     expect(signinRedirect).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Password")).toBeNull();
+  });
+  it("toggles the local password using the existing visibility interaction", async () => {
+    render(<LoginPage />); await identifyUser();
+    const password = screen.getByLabelText("Password");
+    await userEvent.type(password, "aaaaaaaa");
+    await userEvent.click(screen.getByRole("button", { name: "Show password" }));
+    expect(password.getAttribute("type")).toBe("text");
+    await userEvent.click(screen.getByRole("button", { name: "Hide password" }));
+    expect(password.getAttribute("type")).toBe("password");
+    expect((password as HTMLInputElement).value).toBe("aaaaaaaa");
+    expect(requests.some(r => r.url === "/api/auth/local/login")).toBe(false);
   });
   it("shows rejected local credentials without navigating", async () => {
     mutation = { success: false, error: { message: "Invalid credentials" } };
@@ -142,7 +159,40 @@ describe("credential acceptance", () => {
     await userEvent.clear(screen.getByLabelText("Confirm password"));
     await userEvent.type(screen.getByLabelText("Confirm password"), "short");
     await userEvent.click(screen.getByRole("button", { name: "Save password and sign in" }));
-    expect(screen.getByRole("alert").textContent).toContain("12 characters");
+    expect(screen.getByRole("alert").textContent).toContain("8 characters");
+    expect(requests).toHaveLength(0);
+  });
+  it("shows live requirement progress and independent password visibility without submitting", async () => {
+    window.history.replaceState(null, "", "/login/local/accept?token=t");
+    render(<AcceptPage />);
+    const password = screen.getByLabelText("New password");
+    const confirmation = screen.getByLabelText("Confirm password");
+    expect(screen.getByRole("status").textContent).toContain("0 of 2");
+    await userEvent.type(password, "aaaaaaa");
+    expect(screen.getByRole("status").textContent).toContain("1 of 2");
+    await userEvent.type(password, "a");
+    expect(screen.getByRole("status").textContent).toContain("2 of 2");
+    await userEvent.click(screen.getByRole("button", { name: "Show password" }));
+    expect(password.getAttribute("type")).toBe("text");
+    expect(confirmation.getAttribute("type")).toBe("password");
+    await userEvent.click(screen.getByRole("button", { name: "Show confirmation password" }));
+    expect(confirmation.getAttribute("type")).toBe("text");
+    await userEvent.click(screen.getByRole("button", { name: "Hide password" }));
+    expect(password.getAttribute("type")).toBe("password");
+    expect(requests).toHaveLength(0);
+    await userEvent.clear(password);
+    await userEvent.type(password, "界".repeat(25));
+    expect(screen.getByRole("status").textContent).toContain("1 of 2");
+  });
+  it.each(["aaaaaaaa", "界".repeat(8)])("accepts an eight-character password %s", async password => {
+    window.history.replaceState(null, "", "/login/local/accept?token=t");
+    render(<AcceptPage />); await fill(password);
+    expect(requests[0]?.body).toEqual({ token: "t", password });
+  });
+  it.each(["aaaaaaa", "界".repeat(25)])("rejects invalid password boundary %s without a request", async password => {
+    window.history.replaceState(null, "", "/login/local/accept?token=t");
+    render(<AcceptPage />); await fill(password);
+    expect(screen.getByRole("alert").textContent).toContain("8 characters");
     expect(requests).toHaveLength(0);
   });
   it("surfaces expired or reused link errors and stays on page", async () => {

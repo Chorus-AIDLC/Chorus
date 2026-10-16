@@ -15,7 +15,7 @@ The first release has one fixed administrative capability, **Workspace Admin**, 
 
 ## Passwords and credential recovery
 
-Passwords use bcrypt with work factor 12, at least 12 Unicode characters and at most 72 UTF-8 bytes. Password hashes never appear in user DTOs. Invitation and password reset links expire after 24 hours. Links contain random opaque credentials, while only SHA-256 hashes are stored. Issuing a replacement invalidates the old link. Links bind to the account/workspace and credential generation; expired, consumed or superseded links fail generically.
+Passwords use bcrypt with work factor 12, at least 8 Unicode characters and at most 72 UTF-8 bytes, with no uppercase, digit or symbol requirement. The invitation/reset page shows live requirement progress; password and confirmation inputs have independent show/hide buttons matching the existing Superadmin sign-in interaction. Password hashes never appear in user DTOs. Invitation and password reset links expire after 24 hours. Links contain random opaque credentials, while only SHA-256 hashes are stored. Issuing a replacement invalidates the old link. Links bind to the account/workspace and credential generation; expired, consumed or superseded links fail generically.
 
 An administrator issues password reset links from the user list and delivers them through a trusted channel. Issuance and acceptance revoke existing local sessions. A password-only reset does not permanently destroy Agent API keys; active-owner keys remain subject to current owner eligibility and project access. No self-service registration or forgotten-password email flow is added.
 

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isImeComposing } from "@/lib/ime";
+import { Check, Circle, Eye, EyeOff } from "lucide-react";
 
 export default function AcceptCredentialPage() {
   const t = useTranslations("login.local");
@@ -18,6 +19,11 @@ export default function AcceptCredentialPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const tokenCaptured = useRef(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const lengthMet = [...password].length >= 8;
+  const bytesMet = password.length > 0 && new TextEncoder().encode(password).length <= 72;
+  const requirementsMet = Number(lengthMet) + Number(bytesMet);
 
   useEffect(() => {
     if (tokenCaptured.current) return;
@@ -32,7 +38,7 @@ export default function AcceptCredentialPage() {
     setError("");
     if (!token) { setError(t("invalidLink")); return; }
     if (password !== confirmation) { setError(t("mismatch")); return; }
-    if ([...password].length < 12 || new TextEncoder().encode(password).length > 72) {
+    if ([...password].length < 8 || new TextEncoder().encode(password).length > 72) {
       setError(t("passwordPolicy")); return;
     }
     setLoading(true);
@@ -49,6 +55,9 @@ export default function AcceptCredentialPage() {
       }
       setToken("");
       setPassword("");
+      setConfirmation("");
+      setShowPassword(false);
+      setShowConfirmation(false);
       router.push("/login");
     } catch { setError(t("networkError")); }
     finally { setLoading(false); }
@@ -64,13 +73,36 @@ export default function AcceptCredentialPage() {
         }} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="password">{t("password")}</Label>
-            <Input id="password" type="password" autoComplete="new-password" value={password}
-              onChange={(e) => setPassword(e.target.value)} required disabled={loading} />
+            <div className="relative">
+              <Input id="password" type={showPassword ? "text" : "password"} autoComplete="new-password" value={password}
+                onChange={(e) => setPassword(e.target.value)} required disabled={loading} className="pr-10" aria-describedby="password-requirements" />
+              <Button type="button" variant="ghost" size="icon" disabled={loading}
+                onClick={() => setShowPassword(!showPassword)} aria-label={t(showPassword ? "hidePassword" : "showPassword")}
+                aria-pressed={showPassword} className="absolute right-0 top-0 h-full px-3 hover:bg-transparent">
+                {showPassword ? <Eye className="h-5 w-5 text-muted-foreground" /> : <EyeOff className="h-5 w-5 text-muted-foreground" />}
+              </Button>
+            </div>
+            <div id="password-requirements" className="space-y-1 text-xs text-muted-foreground">
+              <p role="status" aria-live="polite">{t("requirementsMet", { count: requirementsMet, total: 2 })}</p>
+              {[{ key: "minimumLength", met: lengthMet }, { key: "maximumBytes", met: bytesMet }].map(({ key, met }) => (
+                <p key={key} className="flex items-center gap-2">
+                  {met ? <Check className="h-3.5 w-3.5 text-primary" aria-hidden="true" /> : <Circle className="h-3.5 w-3.5" aria-hidden="true" />}
+                  <span className="sr-only">{t(met ? "requirementMet" : "requirementUnmet")} </span>{t(key)}
+                </p>
+              ))}
+            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="confirmation">{t("confirmation")}</Label>
-            <Input id="confirmation" type="password" autoComplete="new-password" value={confirmation}
-              onChange={(e) => setConfirmation(e.target.value)} required disabled={loading} />
+            <div className="relative">
+              <Input id="confirmation" type={showConfirmation ? "text" : "password"} autoComplete="new-password" value={confirmation}
+                onChange={(e) => setConfirmation(e.target.value)} required disabled={loading} className="pr-10" />
+              <Button type="button" variant="ghost" size="icon" disabled={loading}
+                onClick={() => setShowConfirmation(!showConfirmation)} aria-label={t(showConfirmation ? "hideConfirmation" : "showConfirmation")}
+                aria-pressed={showConfirmation} className="absolute right-0 top-0 h-full px-3 hover:bg-transparent">
+                {showConfirmation ? <Eye className="h-5 w-5 text-muted-foreground" /> : <EyeOff className="h-5 w-5 text-muted-foreground" />}
+              </Button>
+            </div>
           </div>
           {error && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
           <Button type="submit" className="w-full" disabled={loading}>{loading ? t("saving") : t("acceptSubmit")}</Button>

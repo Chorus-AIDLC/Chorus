@@ -33,8 +33,8 @@ export function normalizeLocalEmail(value: unknown): string {
   return email;
 }
 export function validateLocalPassword(value: unknown): asserts value is string {
-  if (typeof value !== "string" || [...value].length < 12 || Buffer.byteLength(value, "utf8") > 72) {
-    throw invalid("Password must contain at least 12 characters and at most 72 UTF-8 bytes");
+  if (typeof value !== "string" || [...value].length < 8 || Buffer.byteLength(value, "utf8") > 72) {
+    throw invalid("Password must contain at least 8 characters and at most 72 UTF-8 bytes");
   }
 }
 export function publicLocalUser(user: User): LocalUserDto {
