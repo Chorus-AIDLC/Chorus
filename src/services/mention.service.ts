@@ -899,6 +899,7 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
         where: {
           companyUuid,
           ownerUuid: agentOwnerUuid,
+          owner: { is: { companyUuid, status: "active", deletedAt: null } },
         },
         select: {
           uuid: true,
@@ -949,10 +950,12 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
     }
     return sliced;
   }
-  // Search users (all company users are mentionable)
+  // Filter eligibility in the existing candidate query, before the result cap.
   const users = await prisma.user.findMany({
     where: {
       companyUuid,
+      status: "active",
+      deletedAt: null,
       ...(memberUuids ? { uuid: { in: memberUuids } } : {}),
       OR: [
         { name: { contains: query, mode: "insensitive" } },
@@ -984,9 +987,11 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
     companyUuid: string;
     name: { contains: string; mode: "insensitive" };
     ownerUuid?: string | { in: string[] };
+    OR: ({ ownerUuid: null } | { owner: { is: { companyUuid: string; status: string; deletedAt: null } } })[];
   } = {
     companyUuid,
     name: { contains: query, mode: "insensitive" as const },
+    OR: [{ ownerUuid: null }, { owner: { is: { companyUuid, status: "active", deletedAt: null } } }],
   };
 
   // Scope agents: user sees own agents, agent sees same-owner agents.

@@ -3,6 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
+import { ApiError } from "@/lib/api-handler";
 import { CompanyCreateInput, CompanyUpdateInput } from "@/types/admin";
 
 // ===== Pagination Params =====
@@ -23,6 +24,7 @@ export async function listCompanies({ skip, take }: PaginationParams) {
         name: true,
         emailDomains: true,
         oidcEnabled: true,
+        localAuthEnabled: true,
         createdAt: true,
         updatedAt: true,
         _count: {
@@ -51,6 +53,7 @@ export async function getCompanyByUuid(uuid: string) {
       oidcIssuer: true,
       oidcClientId: true,
       oidcEnabled: true,
+      localAuthEnabled: true,
       createdAt: true,
       updatedAt: true,
       _count: {
@@ -79,6 +82,7 @@ export async function getCompanyByEmailDomain(email: string) {
         has: domain,
       },
       oidcEnabled: true,
+      localAuthEnabled: false,
     },
     select: {
       uuid: true,
@@ -112,6 +116,7 @@ export async function createCompany(data: CompanyCreateInput) {
       oidcIssuer: true,
       oidcClientId: true,
       oidcEnabled: true,
+      localAuthEnabled: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -126,19 +131,24 @@ export async function updateCompany(id: number, data: CompanyUpdateInput) {
     updateData.emailDomains = data.emailDomains.map((d) => d.toLowerCase());
   }
 
-  return prisma.company.update({
-    where: { id },
-    data: updateData,
-    select: {
-      uuid: true,
-      name: true,
-      emailDomains: true,
-      oidcIssuer: true,
-      oidcClientId: true,
-      oidcEnabled: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+  if ("localAuthEnabled" in data) {
+    throw new ApiError("BAD_REQUEST", "Authentication mode cannot be changed through company editing", 400);
+  }
+  return prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT "uuid" FROM "Company" WHERE "id" = ${id} FOR UPDATE`;
+    const company = await tx.company.findUnique({ where: { id } });
+    if (!company) throw new ApiError("NOT_FOUND", "Company not found", 404);
+    if (company.localAuthEnabled && (data.oidcEnabled !== undefined || data.oidcIssuer !== undefined || data.oidcClientId !== undefined || data.emailDomains !== undefined)) {
+      throw new ApiError("BAD_REQUEST", "Local workspaces cannot be converted to OIDC", 400);
+    }
+    return tx.company.update({
+      where: { id }, data: updateData,
+      select: {
+        uuid: true, name: true, emailDomains: true, oidcIssuer: true,
+        oidcClientId: true, oidcEnabled: true, localAuthEnabled: true,
+        createdAt: true, updatedAt: true,
+      },
+    });
   });
 }
 
@@ -147,6 +157,8 @@ export async function deleteCompany(id: number) {
   // Note: this will delete the Company and all associated data
   // Since relationMode = "prisma" is used, cascade deletes must be handled manually
   return prisma.$transaction(async (tx) => {
+    // Serialize deletion with tenant-local account lifecycle operations.
+    await tx.$queryRaw`SELECT "uuid" FROM "Company" WHERE "id" = ${id} FOR UPDATE`;
     // Get company info
     const company = await tx.company.findUnique({
       where: { id },
@@ -173,6 +185,8 @@ export async function deleteCompany(id: number) {
     await tx.project.deleteMany({ where: { companyUuid } });
     await tx.apiKey.deleteMany({ where: { companyUuid } });
     await tx.agent.deleteMany({ where: { companyUuid } });
+    await tx.userCredentialToken.deleteMany({ where: { companyUuid } });
+    await tx.localUserAudit.deleteMany({ where: { companyUuid } });
     await tx.user.deleteMany({ where: { companyUuid } });
 
     // Finally delete the Company
@@ -293,6 +307,7 @@ export async function getCompanyByEmailDomainAny(email: string) {
       oidcIssuer: true,
       oidcClientId: true,
       oidcEnabled: true,
+      localAuthEnabled: true,
     },
   });
 }

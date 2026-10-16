@@ -12,11 +12,8 @@ import { Label } from "@/components/ui/label";
 import { ArrowRight, Eye, EyeOff } from "lucide-react";
 import { clientLogger } from "@/lib/logger-client";
 import type { IdentifyRoleOption } from "@/types/admin";
-
-interface DefaultAuthInfo {
-  enabled: boolean;
-  superAdminCollision: boolean;
-}
+import { isImeComposing } from "@/lib/ime";
+import { getProjectIconColor, getProjectInitials, projectIconStyle } from "@/lib/project-colors";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -26,42 +23,17 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [defaultAuth, setDefaultAuth] = useState<DefaultAuthInfo | null>(null);
-  const [defaultAuthChecked, setDefaultAuthChecked] = useState(false);
+  const [defaultPasswordSelected, setDefaultPasswordSelected] = useState(false);
   // Until we've confirmed the visitor is NOT already logged in, hold the form back so an
   // already-authenticated user (e.g. bounced here after an iOS reopen) is redirected into
   // the app instead of being stranded on the login form. See the auth-check effect below.
   const [authChecked, setAuthChecked] = useState(false);
-  const [showSsoForm, setShowSsoForm] = useState(false);
-  // When non-null, the role picker is shown instead of any auth form. Seeded by
-  // a check-default superAdminCollision (Trigger A) or an identify multi_role
-  // response (Trigger B). Each entry routes to its own existing auth flow.
+  const [localCompany, setLocalCompany] = useState<{ uuid: string; name: string } | null>(null);
+  // Only identify results can select an auth path or show the workspace/role
+  // picker. Deployment defaults must not bypass identifier discovery.
   const [roleChoices, setRoleChoices] = useState<IdentifyRoleOption[] | null>(
     null
   );
-
-  useEffect(() => {
-    async function checkDefaultAuth() {
-      try {
-        const response = await fetch("/api/auth/check-default");
-        const data = await response.json();
-        if (data.success && data.data?.enabled) {
-          setDefaultAuth(data.data);
-          // Trigger A — the default-auth user is also the super admin. Offer
-          // both up front instead of dropping into the default-auth form, so
-          // the super admin can still reach /login/admin.
-          if (data.data.superAdminCollision) {
-            setRoleChoices([{ kind: "super_admin" }, { kind: "default_auth" }]);
-          }
-        }
-      } catch {
-        // Default auth not available, show normal flow
-      } finally {
-        setDefaultAuthChecked(true);
-      }
-    }
-    checkDefaultAuth();
-  }, []);
 
   // If the visitor is ALREADY logged in, send them into the app instead of showing the
   // login form. This is the other half of the iOS-reopen fix: when a still-valid session
@@ -120,16 +92,20 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const response = await fetch("/api/auth/default-login", {
+      const response = await fetch(localCompany ? "/api/auth/local/login" : "/api/auth/default-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(localCompany
+          ? { companyUuid: localCompany.uuid, identifier: email, password }
+          : { email, password }),
       });
 
       const data = await response.json();
 
       if (!data.success) {
-        setError(data.error?.message || t("login.defaultAuth.error"));
+        setError(localCompany
+          ? t(response.status === 429 ? "login.local.rateLimited" : "login.local.invalidCredentials")
+          : data.error?.message || t("login.defaultAuth.error"));
         return;
       }
 
@@ -185,7 +161,7 @@ export default function LoginPage() {
     });
   };
 
-  const handleSsoSubmit = async (e: React.FormEvent) => {
+  const handleIdentifySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
@@ -194,19 +170,26 @@ export default function LoginPage() {
       const response = await fetch("/api/auth/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify(email.includes("@") ? { email } : { identifier: email }),
       });
 
       const data = await response.json();
 
       if (!data.success) {
-        setError(data.error?.message || t("common.genericError"));
+        setError(t(response.status === 429 ? "login.local.rateLimited" : "login.noOrganizationFound"));
         return;
       }
 
       const result = data.data;
 
-      if (result.type === "super_admin") {
+      if (result.type === "local" && result.company) {
+        setLocalCompany(result.company);
+        setPassword("");
+        setRoleChoices(null);
+      } else if (result.type === "default_auth") {
+        setDefaultPasswordSelected(true);
+        setRoleChoices(null);
+      } else if (result.type === "super_admin") {
         router.push(`/login/admin?email=${encodeURIComponent(email)}`);
       } else if (result.type === "multi_role") {
         // Trigger B — the email resolves to multiple distinct auth paths.
@@ -217,7 +200,7 @@ export default function LoginPage() {
       } else if (result.type === "oidc" && result.company) {
         await startOidcRedirect(result.company);
       } else {
-        setError(result.message || t("login.noOrganizationFound"));
+        setError(t("login.noOrganizationFound"));
       }
     } catch (err) {
       clientLogger.error("Login error:", err);
@@ -231,6 +214,12 @@ export default function LoginPage() {
   // change how any flow authenticates — only which one the user lands in.
   const handleRoleSelect = async (role: IdentifyRoleOption) => {
     setError("");
+    if (role.kind === "local") {
+      setLocalCompany(role.company);
+      setRoleChoices(null);
+      setPassword("");
+      return;
+    }
     if (role.kind === "super_admin") {
       router.push(`/login/admin?email=${encodeURIComponent(email)}`);
       return;
@@ -238,32 +227,35 @@ export default function LoginPage() {
     if (role.kind === "default_auth") {
       // Clear the picker and fall through to the default-auth password form.
       setRoleChoices(null);
-      setShowSsoForm(false);
+      setDefaultPasswordSelected(true);
       setPassword("");
       return;
     }
     if (role.kind === "oidc" && role.company) {
+      setLoading(true);
       try {
         await startOidcRedirect(role.company);
       } catch (err) {
         clientLogger.error("OIDC redirect error:", err);
         setError(t("login.networkError"));
+      } finally {
+        setLoading(false);
       }
     }
   };
 
-  // Leave the role picker and return to the email / default-auth entry point.
+  // Returning always restores identifier discovery, never a deployment default.
   const handleRolePickerBack = () => {
+    setLocalCompany(null);
     setRoleChoices(null);
     setError("");
     setPassword("");
-    setShowSsoForm(false);
+    setShowPassword(false);
+    setDefaultPasswordSelected(false);
   };
 
-  // Hold the form until BOTH checks resolve: default-auth config AND the
-  // already-authenticated probe. This prevents the login form from flashing before an
-  // already-logged-in visitor is redirected into the app.
-  if (!defaultAuthChecked || !authChecked) {
+  // Hold the form until the already-authenticated probe resolves.
+  if (!authChecked) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-muted-foreground">{t("common.loading")}</div>
@@ -273,40 +265,67 @@ export default function LoginPage() {
 
   const showRolePicker = roleChoices !== null;
   const choices = roleChoices ?? [];
-  const showDefaultAuthForm =
-    !showRolePicker && defaultAuth?.enabled && !showSsoForm;
+  const showDefaultAuthForm = !showRolePicker && defaultPasswordSelected;
 
   // Human-readable label for a picker option. super_admin / default_auth use
   // fixed i18n strings; oidc options are labeled by their company name.
   const roleLabel = (role: IdentifyRoleOption): string => {
     if (role.kind === "super_admin") return t("login.rolePicker.superAdmin");
     if (role.kind === "default_auth") return t("login.rolePicker.regularUser");
+    if (role.kind === "local") return t("login.local.workspace", { company: role.company.name });
     return role.company
       ? t("login.rolePicker.oidcCompany", { company: role.company.name })
       : t("login.rolePicker.oidcCompanyFallback");
   };
 
+  const issuerHost = (issuer: string): string => {
+    try { return new URL(issuer).hostname; } catch { return issuer; }
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-[400px]">
+      <Card className={`w-full ${showRolePicker ? "max-w-[440px]" : "max-w-[400px]"}`}>
         <CardContent className="p-10">
           {/* Logo Section */}
-          <div className="mb-8 flex flex-col items-center gap-2">
+          <div className={`${showRolePicker ? "mb-6" : "mb-8"} flex flex-col items-center gap-2`}>
             <img src="/chorus-icon.png" alt="Chorus" className="h-12 w-12" />
-            <h1 className="text-[28px] font-semibold text-foreground">
-              {t("login.title")}
+            <h1 className={`${showRolePicker ? "text-[22px]" : "text-[28px]"} font-semibold text-foreground`}>
+              {t(showRolePicker ? "login.pickWorkspace.title" : "login.title")}
             </h1>
-            <p className="text-sm text-muted-foreground">
-              {t("login.subtitle")}
+            <p className="text-center text-sm text-muted-foreground">
+              {showRolePicker ? t("login.rolePicker.subtitle", { count: choices.length }) : t("login.subtitle")}
             </p>
           </div>
 
-          {showRolePicker ? (
+          {localCompany ? (
+            <form onSubmit={handlePasswordLogin} onKeyDown={(e) => {
+              if (e.key === "Enter" && isImeComposing(e)) e.preventDefault();
+            }} className="space-y-4">
+              <p className="text-sm text-muted-foreground">{t("login.local.workspace", { company: localCompany.name })}</p>
+              <div className="space-y-2">
+                <Label htmlFor="local-identifier">{t("login.email")}</Label>
+                <Input id="local-identifier" value={email} readOnly autoComplete="username" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="local-password">{t("login.defaultAuth.password")}</Label>
+                <div className="relative">
+                  <Input id="local-password" type={showPassword ? "text" : "password"} value={password}
+                    onChange={(e) => setPassword(e.target.value)} autoComplete="current-password"
+                    required disabled={loading} autoFocus className="pr-10" />
+                  <Button type="button" variant="ghost" size="icon" disabled={loading}
+                    onClick={() => setShowPassword(!showPassword)} aria-label={t(showPassword ? "login.local.hidePassword" : "login.local.showPassword")}
+                    aria-pressed={showPassword} className="absolute right-0 top-0 h-full px-3 hover:bg-transparent">
+                    {showPassword ? <Eye className="h-5 w-5 text-muted-foreground" /> : <EyeOff className="h-5 w-5 text-muted-foreground" />}
+                  </Button>
+                </div>
+              </div>
+              {error && <div role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+              <Button type="submit" disabled={loading} className="w-full">{loading ? t("login.checking") : t("login.defaultAuth.submit")}</Button>
+              <Button type="button" variant="link" disabled={loading} onClick={handleRolePickerBack}>{t("login.rolePicker.back")}</Button>
+            </form>
+          ) : showRolePicker ? (
             <>
               {/* Role Picker — one button per resolvable auth path */}
-              <p className="mb-4 text-center text-sm text-muted-foreground">
-                {t("login.rolePicker.title")}
-              </p>
               <div className="flex flex-col gap-3">
                 {choices.map((role, index) => (
                   <Card
@@ -320,11 +339,20 @@ export default function LoginPage() {
                     <Button
                       type="button"
                       variant="ghost"
+                      disabled={loading}
                       onClick={() => handleRoleSelect(role)}
+                      aria-label={roleLabel(role)}
                       className="flex h-auto w-full items-center gap-3 px-4 py-3 text-left hover:bg-transparent"
                     >
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                        {roleLabel(role)}
+                      <span className="project-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-sm font-semibold"
+                        style={projectIconStyle(getProjectIconColor(role.company?.name ?? roleLabel(role)))} aria-hidden="true">
+                        {getProjectInitials(role.company?.name ?? roleLabel(role))}
+                      </span>
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-sm font-medium text-foreground">{role.company?.name ?? roleLabel(role)}</span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {role.kind === "oidc" ? issuerHost(role.company.oidcIssuer) : t("login.local.passwordSignIn")}
+                        </span>
                       </span>
                       <ArrowRight
                         className="h-4 w-4 shrink-0 text-muted-foreground"
@@ -341,10 +369,12 @@ export default function LoginPage() {
                 </div>
               )}
 
-              <div className="mt-6 flex justify-center">
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs text-muted-foreground">
+                <span className="truncate" title={email}>{email}</span>
                 <Button
                   variant="link"
                   size="sm"
+                  className="h-auto p-0 text-xs"
                   onClick={handleRolePickerBack}
                 >
                   {t("login.rolePicker.back")}
@@ -356,15 +386,8 @@ export default function LoginPage() {
               {/* Default Auth Password Form */}
               <form onSubmit={handlePasswordLogin} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="email">{t("login.defaultAuth.email")}</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    disabled={loading}
-                  />
+                  <Label htmlFor="email">{t("login.email")}</Label>
+                  <Input id="email" value={email} readOnly autoComplete="username" />
                 </div>
 
                 <div className="space-y-2">
@@ -407,36 +430,24 @@ export default function LoginPage() {
                 </Button>
               </form>
 
-              {/* Divider and SSO link */}
-              <div className="mt-6 flex items-center gap-3">
-                <div className="h-px flex-1 bg-border" />
-                <span className="text-xs text-muted-foreground">{t("login.defaultAuth.orDivider")}</span>
-                <div className="h-px flex-1 bg-border" />
-              </div>
-
               <div className="mt-4 flex justify-center">
-                <Button
-                  variant="link"
-                  size="sm"
-                  onClick={() => {
-                    setShowSsoForm(true);
-                    setError("");
-                    setPassword("");
-                  }}
-                >
-                  {t("login.defaultAuth.ssoLink")}
+                <Button type="button" variant="link" size="sm" disabled={loading} onClick={handleRolePickerBack}>
+                  {t("login.rolePicker.back")}
                 </Button>
               </div>
             </>
           ) : (
             <>
-              {/* Original OIDC Email Identification Form */}
-              <form onSubmit={handleSsoSubmit} className="space-y-4">
+              {/* Shared username/email discovery for every login method */}
+              <form onSubmit={handleIdentifySubmit} onKeyDown={(e) => {
+                if (e.key === "Enter" && isImeComposing(e)) e.preventDefault();
+              }} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="email">{t("login.email")}</Label>
                   <Input
                     id="email"
-                    type="email"
+                    type="text"
+                    autoComplete="username"
                     placeholder={t("login.emailPlaceholder")}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -461,21 +472,6 @@ export default function LoginPage() {
                 {t("login.helpText")}
               </p>
 
-              {/* Back to default auth if available */}
-              {defaultAuth?.enabled && (
-                <div className="mt-4 flex justify-center">
-                  <Button
-                    variant="link"
-                    size="sm"
-                    onClick={() => {
-                      setShowSsoForm(false);
-                      setError("");
-                    }}
-                  >
-                    {t("login.backToLogin")}
-                  </Button>
-                </div>
-              )}
             </>
           )}
         </CardContent>

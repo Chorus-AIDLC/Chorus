@@ -44,6 +44,7 @@ const mockPrisma = vi.hoisted(() => ({
   activity: {
     deleteMany: vi.fn(),
   },
+  $queryRaw: vi.fn(),
   $transaction: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -81,6 +82,8 @@ function makeCompany(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.$transaction.mockImplementation(async callback => callback(mockPrisma));
+  mockPrisma.company.findUnique.mockResolvedValue(makeCompany());
 });
 
 // ===== listCompanies =====
@@ -500,6 +503,46 @@ describe("createCompany", () => {
 
 // ===== updateCompany =====
 describe("updateCompany", () => {
+  it("renames local workspaces without altering authentication fields", async () => {
+    const local = makeCompany({ localAuthEnabled: true, emailDomains: [] });
+    mockPrisma.company.findUnique.mockResolvedValue(local);
+    mockPrisma.company.update.mockResolvedValue({ ...local, name: "Renamed local" });
+
+    await expect(updateCompany(1, { name: "Renamed local" })).resolves.toMatchObject({
+      name: "Renamed local", localAuthEnabled: true, oidcEnabled: false,
+    });
+    expect(mockPrisma.company.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 1 }, data: { name: "Renamed local" },
+    }));
+  });
+
+  it.each([
+    { emailDomains: [] },
+    { oidcIssuer: null },
+    { oidcClientId: null },
+    { oidcEnabled: false },
+    { name: "Renamed", emailDomains: [], oidcIssuer: null, oidcClientId: null, oidcEnabled: false },
+  ])("rejects even empty local OIDC configuration fields: %j", async (payload) => {
+    mockPrisma.company.findUnique.mockResolvedValue(makeCompany({ localAuthEnabled: true, emailDomains: [] }));
+    await expect(updateCompany(1, payload)).rejects.toMatchObject({ code: "BAD_REQUEST", status: 400 });
+    expect(mockPrisma.company.update).not.toHaveBeenCalled();
+  });
+
+  it("retains full OIDC update support", async () => {
+    const payload = { name: "Renamed SSO", emailDomains: ["EXAMPLE.COM"], oidcIssuer: "https://new-id.example.com", oidcClientId: "new-client", oidcEnabled: true };
+    mockPrisma.company.findUnique.mockResolvedValue(makeCompany({ localAuthEnabled: false, oidcEnabled: true }));
+    mockPrisma.company.update.mockResolvedValue(makeCompany({ ...payload, localAuthEnabled: false }));
+    await expect(updateCompany(1, payload)).resolves.toMatchObject({ name: "Renamed SSO", localAuthEnabled: false, oidcEnabled: true });
+    expect(mockPrisma.company.update).toHaveBeenCalledWith(expect.objectContaining({ data: { ...payload, emailDomains: ["example.com"] } }));
+  });
+
+  it("rejects authentication mode conversion and local OIDC edits", async () => {
+    await expect(updateCompany(1, { localAuthEnabled: true } as never)).rejects.toThrow("Authentication mode");
+    mockPrisma.company.findUnique.mockResolvedValue(makeCompany({ localAuthEnabled: true }));
+    await expect(updateCompany(1, { oidcEnabled: true })).rejects.toThrow("cannot be converted");
+    await expect(updateCompany(1, { oidcIssuer: "https://idp.example" })).rejects.toThrow("cannot be converted");
+    expect(mockPrisma.company.update).not.toHaveBeenCalled();
+  });
   it("should update company fields", async () => {
     const updated = makeCompany({ name: "Updated Name" });
     mockPrisma.company.update.mockResolvedValue(updated);
@@ -551,6 +594,9 @@ describe("deleteCompany", () => {
   it("should delete company and all related data in transaction", async () => {
     const company = makeCompany();
     const txMock = {
+      $queryRaw: vi.fn(),
+      userCredentialToken: { deleteMany: vi.fn() },
+      localUserAudit: { deleteMany: vi.fn() },
       company: {
         findUnique: vi.fn().mockResolvedValue(company),
         delete: vi.fn().mockResolvedValue(company),
@@ -591,6 +637,9 @@ describe("deleteCompany", () => {
     const company = makeCompany();
     const deleteMany = () => ({ deleteMany: vi.fn() });
     const txMock = {
+      $queryRaw: vi.fn(),
+      userCredentialToken: { deleteMany: vi.fn() },
+      localUserAudit: { deleteMany: vi.fn() },
       company: {
         findUnique: vi.fn().mockResolvedValue(company),
         delete: vi.fn().mockResolvedValue(company),
@@ -624,6 +673,9 @@ describe("deleteCompany", () => {
 
   it("should throw error when company not found", async () => {
     const txMock = {
+      $queryRaw: vi.fn(),
+      userCredentialToken: { deleteMany: vi.fn() },
+      localUserAudit: { deleteMany: vi.fn() },
       company: {
         findUnique: vi.fn().mockResolvedValue(null),
         delete: vi.fn(),

@@ -6,6 +6,8 @@ import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { prisma } from "./prisma";
 import type { ApiKeyValidationResult } from "@/types/auth";
 import logger from "@/lib/logger";
+import { getUserAccountState } from "@/services/local-user.service";
+import { rememberStreamCredential } from "@/lib/stream-credentials";
 
 // API Key prefix
 const KEY_PREFIX = "cho_";
@@ -49,7 +51,8 @@ export function extractApiKey(authHeader: string | null): string | null {
 
 // Validate API Key (UUID-based)
 export async function validateApiKey(
-  key: string
+  key: string,
+  options: { trackUsage?: boolean } = {},
 ): Promise<ApiKeyValidationResult> {
   try {
     // Check format
@@ -83,8 +86,16 @@ export async function validateApiKey(
       return { valid: false, error: "API key has expired" };
     }
 
+    if (apiKey.agent.ownerUuid) {
+      const owner = await getUserAccountState(apiKey.agent.companyUuid, apiKey.agent.ownerUuid);
+      if (!owner || owner.companyUuid !== apiKey.agent.companyUuid || owner.deletedAt || owner.status !== "active" ||
+          (owner.authType === "local" && (!owner.company.localAuthEnabled || owner.company.oidcEnabled))) {
+        return { valid: false, error: "Agent owner is not eligible" };
+      }
+    }
+
     // Update last used time (async, fire-and-forget) - use uuid
-    prisma.apiKey
+    if (options.trackUsage !== false) prisma.apiKey
       .update({
         where: { uuid: apiKey.uuid },
         data: { lastUsed: new Date() },
@@ -94,7 +105,7 @@ export async function validateApiKey(
       });
 
     // Return UUID-based result
-    return {
+    const result: ApiKeyValidationResult = {
       valid: true,
       agent: {
         uuid: apiKey.agent.uuid,
@@ -108,6 +119,8 @@ export async function validateApiKey(
         uuid: apiKey.uuid,
       },
     };
+    rememberStreamCredential(result, { kind: "key", keyUuid: apiKey.uuid, expiresAt: apiKey.expiresAt?.getTime() });
+    return result;
   } catch (error) {
     logger.error({ err: error }, "API key validation error");
     return { valid: false, error: "Internal validation error" };

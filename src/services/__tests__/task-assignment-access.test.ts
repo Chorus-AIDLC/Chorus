@@ -182,6 +182,18 @@ const publicAllowed: Array<[string, Assignee]> = [
 ];
 
 describe.each(Object.keys(ops) as Array<keyof typeof ops>)("%s assignment access", (op) => {
+  it.each([PRIVATE, PUBLIC])("rejects an ineligible user before the %s membership/public floor can authorize them", async projectUuid => {
+    currentProject = projectUuid;
+    // DB's active/undeleted company-scoped lookup finds no eligible principal,
+    // even when the old UUID still has an editor membership.
+    mockPrisma.user.findFirst.mockResolvedValueOnce(null);
+    await expect(ops[op]({ type: "user", uuid: "user-editor" })).rejects.toBeInstanceOf(AssigneeAccessError);
+    expect(mockPrisma.user.findFirst).toHaveBeenCalledWith({
+      where: { uuid: "user-editor", companyUuid: COMPANY, status: "active", deletedAt: null },
+      select: { uuid: true },
+    });
+    expect(updateOf[op]()).not.toHaveBeenCalled();
+  });
   describe("private project", () => {
     it.each(["user", "agent"])("allows a group Editor with a lower local Viewer role as %s", async (type) => {
       inherited["user-viewer"] = "editor";

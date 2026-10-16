@@ -63,7 +63,7 @@ const fixture = vi.hoisted(() => {
 });
 vi.mock("@/lib/prisma", () => ({ prisma: fixture.prisma }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: fixture.bus, controlEventName: (uuid: string) => `control:${uuid}` }));
-vi.mock("@/lib/auth", () => ({ getAuthContext: vi.fn(async () => ({ type: "agent", actorUuid: "agent", companyUuid: "company", ownerUuid: "owner" })) }));
+vi.mock("@/lib/auth", () => ({ getAuthContext: vi.fn(async () => ({ type: "agent", actorUuid: "agent", companyUuid: "company", ownerUuid: "owner", permissions: [] })) }));
 vi.mock("@/services/daemon-connection.service", () => ({
   STALE_THRESHOLD_MS: 90_000, parseSelfReport: () => ({}),
   registerConnection: async () => ({ uuid: "connection", connectedAt: new Date() }),

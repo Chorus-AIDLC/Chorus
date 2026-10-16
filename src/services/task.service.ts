@@ -286,6 +286,15 @@ export async function assertAssigneeProjectAccess(
   assignee: { type: string; uuid: string },
   projectUuid: string,
 ): Promise<void> {
+  // A public project's editor floor is not proof that this is a live user.
+  // Keep historical resolution separate from eligibility for a new assignment.
+  if (assignee.type === "user") {
+    const user = await prisma.user.findFirst({
+      where: { uuid: assignee.uuid, companyUuid, status: "active", deletedAt: null },
+      select: { uuid: true },
+    });
+    if (!user) throw new AssigneeAccessError();
+  }
   let actor = assignee;
   if (assignee.type === "agent_instance") {
     const instance = await prisma.agentInstance.findFirst({

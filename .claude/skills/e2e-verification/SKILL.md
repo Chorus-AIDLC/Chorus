@@ -40,17 +40,14 @@ grep -E "DEFAULT_USER|DEFAULT_PASSWORD" .env
 
 ## Step 2 — Log in (verified flow)
 
-When default-auth is enabled, `/login` shows the email+password form **directly** (no SSO redirect):
+All ordinary login paths share `/login`: **username/email → workspace (only if multiple candidates) → password or SSO**. DEFAULT_USER does not bypass discovery or add a separate SSO entry.
 
-1. `browser_navigate` → `http://localhost:8637/login`
-2. `browser_snapshot` → grab the `ref` of the Email box, Password box, and "Sign In" button.
-3. `browser_fill_form` with both fields:
-   ```
-   [{ name: "Email",    target: "<email-ref>",    type: "textbox", value: "admin@chorus.local" },
-    { name: "Password", target: "<password-ref>", type: "textbox", value: "chorus" }]
-   ```
-4. `browser_click` the "Sign In" button.
-5. **Success = URL becomes `/projects`.** The tool result echoes `Page URL` — confirm it changed. If it stays on `/login` with an error banner, the credentials or the server's default-auth config are wrong.
+1. `browser_navigate` → `http://localhost:8637/login`.
+2. `browser_snapshot` → grab the username/email input and "Continue" button; verify no password or SSO toggle is shown yet.
+3. `browser_fill_form` with the configured DEFAULT_USER email, then `browser_click` "Continue".
+4. If discovery yields multiple candidates (including a Superadmin collision), select the intended workspace/password path. A single default-auth match goes directly to the password step.
+5. Take a fresh snapshot, fill "Password" with DEFAULT_PASSWORD, then click "Sign In". The identified email is read-only; use the back control to change it.
+6. **Success = URL becomes `/projects` or the fresh user's onboarding page.** Confirm the observed destination. If login stays on `/login` with an error banner, check the server configuration and credentials.
 
 Already authenticated from a prior session? The browser keeps the session, so you can skip straight to Step 3. To test the login itself, sign out first: on any dashboard page click the **"Sign out"** button (bottom-left of the sidebar), which returns you to `/login`. (If `/login` already shows the email+password form, you're logged out — there's no "Sign out" button to find; just proceed with Step 2.)
 

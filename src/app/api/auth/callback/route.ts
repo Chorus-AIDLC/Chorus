@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       return errors.notFound("Company not found");
     }
 
-    if (!company.oidcEnabled) {
+    if (!company.oidcEnabled || company.localAuthEnabled) {
       return errors.badRequest("OIDC is not enabled for this company");
     }
 

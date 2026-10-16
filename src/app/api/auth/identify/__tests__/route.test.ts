@@ -17,6 +17,9 @@ vi.mock("@/lib/default-auth", () => ({
   getDefaultUserEmail: mockGetDefaultUserEmail,
 }));
 
+const mockLocalMatches = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/prisma', () => ({ prisma: { user: { findMany: mockLocalMatches } } }));
+import { resetAuthThrottleForTests } from '@/lib/auth-throttle';
 import { POST } from "@/app/api/auth/identify/route";
 
 function makeRequest(body: unknown): NextRequest {
@@ -44,12 +47,63 @@ const companyB = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetAuthThrottleForTests();
+  mockLocalMatches.mockResolvedValue([]);
   mockIsSuperAdminEmail.mockReturnValue(false);
   mockIsDefaultAuthEnabled.mockReturnValue(false);
   mockGetDefaultUserEmail.mockReturnValue(null);
 });
 
+describe("POST /api/auth/identify local discovery", () => {
+  it("normalizes username and returns only applicable company configuration", async () => {
+    mockLocalMatches.mockResolvedValue([{ company: { uuid: 'local-a', name: 'Local A' } }]);
+    const res = await POST(makeRequest({ identifier: ' ALICE ' }), emptyCtx);
+    expect((await res.json()).data).toEqual({ type: 'local', company: { uuid: 'local-a', name: 'Local A' } });
+    expect(mockLocalMatches).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ username: 'alice', authType: 'local', deletedAt: null, status: { not: 'deleted' }, company: { localAuthEnabled: true, oidcEnabled: false } }), select: { company: { select: { uuid: true, name: true } } } }));
+    expect(mockGetCandidateCompaniesForEmail).not.toHaveBeenCalled();
+  });
+  it("deduplicates local matches and combines them with all existing email login paths", async () => {
+    mockIsSuperAdminEmail.mockReturnValue(true);
+    mockIsDefaultAuthEnabled.mockReturnValue(true);
+    mockGetDefaultUserEmail.mockReturnValue('alice@example.com');
+    mockGetCandidateCompaniesForEmail.mockResolvedValue([companyA]);
+    mockLocalMatches.mockResolvedValue([{ company: { uuid: 'local-a', name: 'Local A' } }, { company: { uuid: 'local-a', name: 'Local A' } }, { company: { uuid: 'local-b', name: 'Local B' } }]);
+    const res = await POST(makeRequest({ identifier: 'ALICE@EXAMPLE.COM' }), emptyCtx);
+    const data = (await res.json()).data;
+    expect(data.type).toBe('multi_role');
+    expect(data.roles.map((r: { kind: string }) => r.kind)).toEqual(['super_admin', 'default_auth', 'oidc', 'local', 'local']);
+    expect(mockLocalMatches).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ localEmail: 'alice@example.com' }), orderBy: { companyUuid: 'asc' } }));
+    expect(JSON.stringify(data)).not.toMatch(/workspaceAdmin|sessionVersion|status|password|userUuid/);
+  });
+  it("uses multi_role for local-only multiple tenants", async () => {
+    mockLocalMatches.mockResolvedValue([{ company: { uuid: 'a', name: 'A' } }, { company: { uuid: 'b', name: 'B' } }]);
+    const res = await POST(makeRequest({ identifier: 'alice' }), emptyCtx);
+    expect((await res.json()).data).toEqual({ type: 'multi_role', roles: [{ kind: 'local', company: { uuid: 'a', name: 'A' } }, { kind: 'local', company: { uuid: 'b', name: 'B' } }] });
+  });
+  it.each(['unknown', 'bad identifier', '', 'x'.repeat(255)])("returns generic unknown response for %s without exposing an all-workspace directory", async identifier => {
+    const res = await POST(makeRequest({ identifier }), emptyCtx);
+    expect((await res.json()).data.type).toBe('not_found');
+    expect(mockGetCandidateCompaniesForEmail).not.toHaveBeenCalled();
+  });
+  it("throttles discovery at the route", async () => {
+    for (let i = 0; i < 30; i++) expect((await POST(makeRequest({ identifier: 'unknown' }), emptyCtx)).status).toBe(200);
+    expect((await POST(makeRequest({ identifier: 'unknown' }), emptyCtx)).status).toBe(429);
+    expect(mockLocalMatches).toHaveBeenCalledTimes(30);
+    expect((await POST(makeRequest({ identifier: 'other' }), emptyCtx)).status).toBe(200);
+  });
+});
+
 describe("POST /api/auth/identify", () => {
+  it.each(["oidc", "super_admin", "default_auth"])("unrelated default-mode discovery traffic cannot exhaust %s discovery", async kind => {
+    for (let i = 0; i < 35; i++) expect((await POST(makeRequest({ identifier: `unknown-${i}` }), emptyCtx)).status).toBe(200);
+    mockGetCandidateCompaniesForEmail.mockResolvedValue(kind === "oidc" ? [companyA] : []);
+    mockIsSuperAdminEmail.mockReturnValue(kind === "super_admin");
+    mockIsDefaultAuthEnabled.mockReturnValue(kind === "default_auth");
+    mockGetDefaultUserEmail.mockReturnValue("legitimate@example.com");
+    const res = await POST(makeRequest({ email: "legitimate@example.com" }), emptyCtx);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.type).toBe(kind);
+  });
   it("returns super_admin when the email is a Super Admin", async () => {
     mockIsSuperAdminEmail.mockReturnValue(true);
     mockGetCandidateCompaniesForEmail.mockResolvedValue([]);

@@ -21,6 +21,9 @@ vi.mock('jose', () => {
   };
 });
 
+vi.mock('@/services/local-user.service', () => ({ getUserAccountState: vi.fn() }));
+import { getUserAccountState } from '@/services/local-user.service';
+
 // Mock cookie-utils
 vi.mock('@/lib/cookie-utils', () => ({
   getCookieOptions: vi.fn((maxAge: number) => ({
@@ -212,6 +215,7 @@ describe('getUserSessionFromRequest', () => {
     process.env = { ...originalEnv };
     process.env.NEXTAUTH_SECRET = 'test-secret';
     vi.clearAllMocks();
+    vi.mocked(getUserAccountState).mockImplementation(async (companyUuid, uuid) => ({ uuid, companyUuid, email: 'user@example.com', name: 'Test User', authType: 'oidc', status: 'active', deletedAt: null, sessionVersion: 0, workspaceAdmin: false, company: { localAuthEnabled: false, oidcEnabled: true } }) as any);
   });
 
   afterEach(() => {
@@ -251,6 +255,7 @@ describe('getUserSessionFromRequest', () => {
       actorUuid: 'user-123',
       email: 'user@example.com',
       name: 'Test User',
+      authType: 'oidc', workspaceAdmin: false, localAuthEnabled: false,
     });
   });
 
@@ -274,7 +279,8 @@ describe('getUserSessionFromRequest', () => {
       companyUuid: 'company-456',
       actorUuid: 'user-123',
       email: 'user@example.com',
-      name: undefined,
+      name: 'Test User',
+      authType: 'oidc', workspaceAdmin: false, localAuthEnabled: false,
     });
   });
 

@@ -4,6 +4,7 @@
 // cookie, since EventSource sends cookies automatically but cannot set headers.
 
 import { getAuthContext } from "@/lib/auth";
+import { createSseAuthGate } from "@/lib/sse-auth";
 import {
   eventBus,
   type RealtimeEvent,
@@ -145,17 +146,12 @@ export async function GET(request: NextRequest) {
     throw err;
   }
 
-  const stream = new ReadableStream({
+  let closeStream: (() => void) | undefined;
+  const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const encoder = new TextEncoder();
-
-      const send = (data: string) => {
-        try {
-          controller.enqueue(encoder.encode(data));
-        } catch {
-          // Stream closed
-        }
-      };
+      const delivery = createSseAuthGate(request, auth, controller, () => cleanup());
+      closeStream = delivery.close;
+      const send = delivery.send;
 
       // Send initial connection confirmation
       send(": connected\n\n");
@@ -196,7 +192,7 @@ export async function GET(request: NextRequest) {
       const enqueueGate = (step: () => void | Promise<void>) => {
         gateOutstanding++;
         gateChain = gateChain
-          .then(step)
+          .then(() => { if (!delivery.closed) return step(); })
           .catch((err) => {
             sseLogger.error({ err }, "SSE project-access gate step failed");
           })
@@ -249,7 +245,7 @@ export async function GET(request: NextRequest) {
 
       const gateDeliver = (
         event: { projectUuid?: string; entityType?: string; entityUuid?: string },
-        deliver: () => void,
+        deliver: (allowed: () => boolean) => void,
       ) => {
         if (event.entityType === "project_group") {
           enqueueGate(async () => {
@@ -269,9 +265,9 @@ export async function GET(request: NextRequest) {
               // Consuming it on this serial gate also suppresses queued updates.
               if (access.group) {
                 knownGroups.add(event.entityUuid);
-                deliver();
+                deliver(() => revision === `${accessRevision}:${groupRevision}`);
               } else if (knownGroups.delete(event.entityUuid)) {
-                deliver();
+                deliver(() => revision === `${accessRevision}:${groupRevision}`);
               }
               return;
             }
@@ -280,7 +276,7 @@ export async function GET(request: NextRequest) {
         }
         const decide = () => {
           if (isProjectScoped(event) && (projectAccessClosed || !accessibleProjects.has(event.projectUuid!))) return;
-          deliver();
+          deliver(() => !isProjectScoped(event) || (!projectAccessClosed && accessibleProjects.has(event.projectUuid!)));
         };
         if (gateOutstanding === 0) decide();
         else enqueueGate(decide);
@@ -335,7 +331,7 @@ export async function GET(request: NextRequest) {
           entityUuid: event.entityUuid,
           action: event.action,
         } : event;
-        gateDeliver(event, () => send(`data: ${JSON.stringify(payload)}\n\n`));
+        gateDeliver(event, (allowed) => { void send(`data: ${JSON.stringify(payload)}\n\n`, undefined, allowed); });
       };
 
       eventBus.on("change", handler);
@@ -349,9 +345,9 @@ export async function GET(request: NextRequest) {
         // Filter by project
         if (projectUuid && event.projectUuid !== projectUuid) return;
 
-        gateDeliver(event, () =>
-          send(`data: ${JSON.stringify({ type: "presence", ...event })}\n\n`),
-        );
+        gateDeliver(event, (allowed) => {
+          void send(`data: ${JSON.stringify({ type: "presence", ...event })}\n\n`, undefined, allowed);
+        });
       };
 
       eventBus.on("presence", presenceHandler);
@@ -376,9 +372,9 @@ export async function GET(request: NextRequest) {
       // clients have a registered connection and keep using the dedicated
       // /api/events/notifications transport for registration/control/liveness.
       const notificationHandler = (event: Record<string, unknown>) => {
-        gateDeliver({ projectUuid: typeof event.projectUuid === "string" ? event.projectUuid : undefined }, () =>
-          send(`data: ${JSON.stringify(event)}\n\n`),
-        );
+        gateDeliver({ projectUuid: typeof event.projectUuid === "string" ? event.projectUuid : undefined }, (allowed) => {
+          void send(`data: ${JSON.stringify(event)}\n\n`, undefined, allowed);
+        });
       };
       if (notificationChannel) {
         eventBus.on(notificationChannel, notificationHandler);
@@ -406,7 +402,7 @@ export async function GET(request: NextRequest) {
             );
             if (revision !== accessRevision) continue;
             if (!request.signal.aborted) {
-              send(`data: ${JSON.stringify({ type: "execution", ...event, executions })}\n\n`);
+              await send(`data: ${JSON.stringify({ type: "execution", ...event, executions })}\n\n`, undefined, () => revision === accessRevision);
             }
             return;
           }
@@ -451,7 +447,8 @@ export async function GET(request: NextRequest) {
             bufferedActivityEvents.push(projected);
             return;
           }
-          send(`data: ${JSON.stringify(projected)}\n\n`);
+          const revision = accessRevision;
+          await send(`data: ${JSON.stringify(projected)}\n\n`, undefined, () => revision === accessRevision);
         });
       };
       eventBus.on(SESSION_ACTIVITY_EVENT_NAME, sessionActivityHandler);
@@ -474,10 +471,9 @@ export async function GET(request: NextRequest) {
       }
 
       // Heartbeat every 30s to keep connection alive
-      const heartbeat = setInterval(() => {
-        send(": heartbeat\n\n");
+      const refreshLiveness = () => {
         void firstCompanyUser(auth.companyUuid).then((current) => {
-          if (request.signal.aborted || (current === firstUser && !firstUserRefreshFailed)) return;
+          if (request.signal.aborted || delivery.closed || (current === firstUser && !firstUserRefreshFailed)) return;
           firstUserRefreshFailed = false;
           projectAccessClosed = false;
           firstUser = current;
@@ -515,10 +511,15 @@ export async function GET(request: NextRequest) {
         // Liveness safety net: bump lastSeenAt. Fire-and-forget — the service
         // swallows + logs its own errors and never throws.
         if (conn) void touchConnection(auth.companyUuid, conn);
+      };
+      const heartbeat = setInterval(() => {
+        void send(": heartbeat\n\n", refreshLiveness);
       }, 30_000);
 
-      // Cleanup on abort (client disconnect)
-      request.signal.addEventListener("abort", () => {
+      // The same idempotent cleanup runs on revocation, abort, and reader cancel.
+      const cleanup = () => {
+        closeProjectAccess();
+        bufferedActivityEvents.length = 0;
         eventBus.off("change", handler);
         eventBus.off("presence", presenceHandler);
         eventBus.off("project_access_changed", accessChangedHandler);
@@ -533,11 +534,6 @@ export async function GET(request: NextRequest) {
           eventBus.off(transcriptChannel, transcriptHandler);
         }
         clearInterval(heartbeat);
-        try {
-          controller.close();
-        } catch {
-          // Already closed
-        }
         // Primary disconnect signal: mark the registry row offline, then
         // reconcile its running/queued execution rows to the `ended` terminal
         // state (rows retained as history) and push the now-empty active set to
@@ -560,11 +556,17 @@ export async function GET(request: NextRequest) {
           }, STALE_THRESHOLD_MS);
           orphanTimer.unref?.();
         }
-      });
+      };
+      if (request.signal.aborted) delivery.close();
 
-      const runningActivities =
-        await listVisibleRunningSessionActivities(auth);
-      if (request.signal.aborted) return;
+      let runningActivities: SessionActivityEvent[];
+      try {
+        runningActivities = await listVisibleRunningSessionActivities(auth);
+      } catch (err) {
+        delivery.close();
+        throw err;
+      }
+      if (request.signal.aborted || delivery.closed) return;
       // Replay on the gate, AFTER any live events already queued during the
       // snapshot query (they were buffered), with the same project filter.
       enqueueGate(async () => {
@@ -574,7 +576,8 @@ export async function GET(request: NextRequest) {
           for (const event of runningActivities) {
             // A failed lookup hides that row (fail closed) instead of aborting the replay.
             if (await canSeeIdea(event.directIdeaUuid, memo).catch(() => false)) {
-              send(`data: ${JSON.stringify(event)}\n\n`);
+              const revision = accessRevision;
+              await send(`data: ${JSON.stringify(event)}\n\n`, undefined, () => revision === accessRevision);
             }
           }
         } finally {
@@ -586,12 +589,14 @@ export async function GET(request: NextRequest) {
           const flushMemo = new Map<string, Promise<string | null>>();
           for (const event of bufferedActivityEvents) {
             if (await canSeeIdea(event.directIdeaUuid, flushMemo).catch(() => false)) {
-              send(`data: ${JSON.stringify(event)}\n\n`);
+              const revision = accessRevision;
+              await send(`data: ${JSON.stringify(event)}\n\n`, undefined, () => revision === accessRevision);
             }
           }
         }
       });
     },
+    cancel() { closeStream?.(); },
   });
 
   return new Response(stream, {

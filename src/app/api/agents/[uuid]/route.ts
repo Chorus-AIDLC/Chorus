@@ -9,6 +9,7 @@ import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser } from "@/lib/auth";
 import { isValidPermission, computeEffectivePermissions } from "@/lib/authz/permissions";
 import { deleteAgent } from "@/services/agent.service";
+import { publishAccountAccessChanged } from "@/lib/account-access-events";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -169,6 +170,9 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       },
     });
 
+    if (updateData.roles !== undefined || updateData.permissions !== undefined) {
+      publishAccountAccessChanged({ companyUuid: auth.companyUuid, agentUuid: agent.uuid });
+    }
     return success({
       uuid: updated.uuid,
       name: updated.name,

@@ -308,6 +308,15 @@ describe("searchMentionables", () => {
       })
     );
 
+    expect(mockPrisma.user.findMany).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      where: expect.objectContaining({ companyUuid: COMPANY_UUID, status: "active", deletedAt: null }),
+    }));
+    expect(mockPrisma.agent.findMany).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: [{ ownerUuid: null }, { owner: { is: { companyUuid: COMPANY_UUID, status: "active", deletedAt: null } } }],
+      }),
+    }));
+
     // Verify agent query is scoped to actorUuid (owner)
     expect(mockPrisma.agent.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -334,6 +343,11 @@ describe("searchMentionables", () => {
     expect(results).toHaveLength(1);
     expect(results[0].type).toBe("agent");
     expect(mockPrisma.user.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.agent.findMany).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      where: expect.objectContaining({
+        owner: { is: { companyUuid: COMPANY_UUID, status: "active", deletedAt: null } },
+      }),
+    }));
   });
 
   it("should scope agents by ownerUuid for agent caller", async () => {

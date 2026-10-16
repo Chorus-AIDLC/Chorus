@@ -48,32 +48,16 @@ export interface IdentifyCandidate {
 // A single resolvable login path for an email, used in multi_role responses.
 // super_admin / default_auth entries carry no company (no secret material);
 // oidc entries carry the full company payload needed to start the OIDC flow.
-export interface IdentifyRoleOption {
-  kind: "super_admin" | "default_auth" | "oidc";
-  company?: {
-    uuid: string;
-    name: string;
-    oidcIssuer: string;
-    oidcClientId: string;
-  };
-}
+export type IdentifyRoleOption =
+  | { kind: "super_admin" | "default_auth"; company?: never }
+  | { kind: "local"; company: { uuid: string; name: string } }
+  | { kind: "oidc"; company: { uuid: string; name: string; oidcIssuer: string; oidcClientId: string } };
 
 // Email identification response
-export interface IdentifyResponse {
-  type:
-    | "super_admin"
-    | "oidc"
-    | "oidc_multi_match"
-    | "default_auth"
-    | "multi_role"
-    | "not_found";
-  company?: {
-    uuid: string;
-    name: string;
-    oidcIssuer: string;
-    oidcClientId: string;
-  };
-  candidates?: IdentifyCandidate[];
-  roles?: IdentifyRoleOption[];
-  message?: string;
-}
+export type IdentifyResponse =
+  | { type: "super_admin" | "default_auth"; company?: never; candidates?: never; roles?: never; message?: never }
+  | { type: "local"; company: { uuid: string; name: string }; candidates?: never; roles?: never; message?: never }
+  | { type: "oidc"; company: { uuid: string; name: string; oidcIssuer: string; oidcClientId: string }; candidates?: never; roles?: never; message?: never }
+  | { type: "oidc_multi_match"; candidates: IdentifyCandidate[]; company?: never; roles?: never; message?: never }
+  | { type: "multi_role"; roles: IdentifyRoleOption[]; company?: never; candidates?: never; message?: never }
+  | { type: "not_found"; message: string; company?: never; candidates?: never; roles?: never };

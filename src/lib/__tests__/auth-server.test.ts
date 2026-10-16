@@ -16,6 +16,7 @@ vi.mock('../oidc-auth', () => ({
 
 vi.mock('../user-session', () => ({
   verifyAccessToken: mockVerifyAccessToken,
+  resolveUserSession: vi.fn(async payload => ({ type: 'user', companyUuid: payload.companyUuid, actorUuid: payload.userUuid, email: payload.email, name: payload.name })),
 }));
 
 // Now import the module under test

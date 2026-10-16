@@ -264,7 +264,7 @@ describe("addMember", () => {
 
   it("rejects users from another company", async () => {
     await expect(addMember(user("u-a1"), P, "u-foreign", "viewer")).rejects.toMatchObject({ status: 400 });
-    expect(lastTx.tx!.user.findFirst).toHaveBeenCalledWith({ where: { uuid: "u-foreign", companyUuid: C }, select: { uuid: true } });
+    expect(lastTx.tx!.user.findFirst).toHaveBeenCalledWith({ where: { uuid: "u-foreign", companyUuid: C, status: "active", deletedAt: null }, select: { uuid: true } });
   });
 
   it("rejects duplicates with 409", async () => {
