@@ -122,6 +122,19 @@ describe("Redis absent", () => {
 });
 
 describe("Redis outage at runtime", () => {
+  it("does not report the initial connect as an outage, but does report Redis that never comes up", async () => {
+    vi.useFakeTimers();
+    fakeRedis.status = "connecting";
+    const { throttleAuth } = await newInstance();
+    expect(await throttleAuth(request(), "login", "first")).toBeNull();
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(5_001);
+    expect(await throttleAuth(request(), "login", "later")).toBeNull();
+    expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ action: "login" }), expect.stringMatching(/insurance limits/));
+    expect(mockLogger.warn.mock.calls.filter(([meta]) => meta?.status)).toHaveLength(0);
+  });
+
   it("degrades to per-instance insurance limits without touching Redis, then recovers", async () => {
     const { throttleAuth } = await newInstance();
     expect(await throttleAuth(request(), "login", "alice")).toBeNull();

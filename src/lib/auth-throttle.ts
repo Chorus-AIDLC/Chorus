@@ -50,8 +50,12 @@ type Limiter = RateLimiterRedis | RateLimiterMemory;
 type ActionLimiters = Record<"identity" | "address", Limiter>;
 
 let _limiters: Record<Action, ActionLimiters> | null = null;
-let _redisDegraded = false;
+// "unknown" until the client is first seen ready, so the initial connect on a
+// fresh process is not reported as an outage.
+let _redisHealth: "unknown" | "ready" | "degraded" = "unknown";
 let _insuranceWarnedAt = -Infinity;
+let _limitersBuiltAt = 0;
+const STARTUP_GRACE_MS = 5_000;
 
 // RateLimiterMemory has no size cap. Bound all in-memory counters together
 // (fallback and insurance) so rotating identities cannot grow memory without
@@ -90,6 +94,9 @@ function insuranceLimiter(action: Action, scope: keyof ActionLimiters): RateLimi
   return memoryLimiter(action, scope, () => {
     const now = Date.now();
     if (now - _insuranceWarnedAt < WINDOW_SEC * 1000) return;
+    // A request racing the very first connect is expected; a Redis that is
+    // still unreachable after the grace period is still reported.
+    if (_redisHealth === "unknown" && now - _limitersBuiltAt < STARTUP_GRACE_MS) return;
     _insuranceWarnedAt = now;
     authLogger.warn({ action, scope }, "Auth rate limiter: Redis command failed or not ready, using per-instance in-memory insurance limits");
   });
@@ -121,7 +128,7 @@ function buildLimiters(): Record<Action, ActionLimiters> {
 }
 
 function getLimiters(): Record<Action, ActionLimiters> {
-  if (!_limiters) _limiters = buildLimiters();
+  if (!_limiters) { _limiters = buildLimiters(); _limitersBuiltAt = Date.now(); }
   return _limiters;
 }
 
@@ -129,11 +136,13 @@ function getLimiters(): Record<Action, ActionLimiters> {
 function noteRedisHealth(): void {
   const client = getRedisGeneral();
   if (!client) return;
-  const degraded = client.status !== "ready";
-  if (degraded === _redisDegraded) return;
-  _redisDegraded = degraded;
-  if (degraded) authLogger.warn({ status: client.status }, "Auth rate limiter: Redis not ready, using per-instance in-memory insurance limits");
-  else authLogger.info("Auth rate limiter: Redis ready, distributed limits restored");
+  if (client.status === "ready") {
+    if (_redisHealth === "degraded") authLogger.info("Auth rate limiter: Redis ready, distributed limits restored");
+    _redisHealth = "ready";
+  } else if (_redisHealth === "ready") {
+    _redisHealth = "degraded";
+    authLogger.warn({ status: client.status }, "Auth rate limiter: Redis not ready, using per-instance in-memory insurance limits");
+  }
 }
 
 async function consume(limiter: Limiter, key: string, action: Action, scope: keyof ActionLimiters): Promise<NextResponse | null> {
@@ -184,7 +193,8 @@ function rateLimitResponse(msBeforeNext: number): NextResponse {
 // are not touched; they expire with the window.
 export function resetAuthThrottleForTests(): void {
   _limiters = null;
-  _redisDegraded = false;
+  _redisHealth = "unknown";
   _insuranceWarnedAt = -Infinity;
+  _limitersBuiltAt = 0;
   tracked.clear();
 }

@@ -82,7 +82,14 @@ export function getRedisSubscriber(): Redis | null {
  * Unlike pub/sub, request-path callers must never block on an unreachable
  * Redis: commands fail fast instead of queueing, and the client connects
  * eagerly so its `status` reflects reachability before the first command.
+ * A connection that stays open but stops answering is bounded too: each
+ * command rejects after REQUEST_COMMAND_TIMEOUT_MS, and a socket with pending
+ * commands and no reply for REQUEST_SOCKET_TIMEOUT_MS is torn down so the
+ * client reconnects instead of piling up a pending queue.
  */
+const REQUEST_COMMAND_TIMEOUT_MS = 500;
+const REQUEST_SOCKET_TIMEOUT_MS = 2_000;
+
 export function getRedisGeneral(): Redis | null {
   if (!isRedisEnabled()) return null;
   if (!globalForRedis.redisGeneral) {
@@ -90,6 +97,8 @@ export function getRedisGeneral(): Redis | null {
       lazyConnect: false,
       enableOfflineQueue: false,
       maxRetriesPerRequest: 1,
+      commandTimeout: REQUEST_COMMAND_TIMEOUT_MS,
+      socketTimeout: REQUEST_SOCKET_TIMEOUT_MS,
     });
   }
   return globalForRedis.redisGeneral;
