@@ -150,27 +150,27 @@ describe("central owned Agent key eligibility and permission preservation", () =
 });
 
 describe("bounded authentication throttling", () => {
-  it.each(["identify", "login", "accept"] as const)("limits repeated %s identities despite spoofed untrusted addresses", action => {
+  it.each(["identify", "login", "accept"] as const)("limits repeated %s identities despite spoofed untrusted addresses", async action => {
     const limit = action === "identify" ? 30 : 10;
-    for (let i = 0; i < limit; i++) expect(throttleAuth(request({}, { "x-forwarded-for": `spoof-${i}` }), action, "same-identity")).toBeNull();
-    const blocked = throttleAuth(request({}), action, "same-identity")!;
+    for (let i = 0; i < limit; i++) expect(await throttleAuth(request({}, { "x-forwarded-for": `spoof-${i}` }), action, "same-identity")).toBeNull();
+    const blocked = (await throttleAuth(request({}), action, "same-identity"))!;
     expect(blocked.status).toBe(429); expect(blocked.headers.get("Retry-After")).toBeTruthy();
-    expect(throttleAuth(request({}), action, "another-identity")).toBeNull();
+    expect(await throttleAuth(request({}), action, "another-identity")).toBeNull();
   });
-  it("expires buckets and allows independent trusted-proxy clients", () => {
+  it("expires buckets and allows independent trusted-proxy clients", async () => {
     vi.useFakeTimers(); vi.stubEnv("AUTH_TRUST_PROXY", "true");
     try {
       const a = request({}, { "x-forwarded-for": "198.51.100.1, 203.0.113.1" });
-      for (let i = 0; i < 10; i++) expect(throttleAuth(a, "login", "alice")).toBeNull();
-      expect(throttleAuth(a, "login", "alice")?.status).toBe(429);
-      expect(throttleAuth(request({}, { "x-forwarded-for": "198.51.100.1, 203.0.113.2" }), "login", "alice")).toBeNull();
+      for (let i = 0; i < 10; i++) expect(await throttleAuth(a, "login", "alice")).toBeNull();
+      expect((await throttleAuth(a, "login", "alice"))?.status).toBe(429);
+      expect(await throttleAuth(request({}, { "x-forwarded-for": "198.51.100.1, 203.0.113.2" }), "login", "alice")).toBeNull();
       vi.advanceTimersByTime(60_001);
-      expect(throttleAuth(a, "login", "alice")).toBeNull();
+      expect(await throttleAuth(a, "login", "alice")).toBeNull();
     } finally { vi.useRealTimers(); }
   });
-  it("bounds storage without denying unrelated trusted clients at capacity", () => {
+  it("bounds storage without denying unrelated trusted clients at capacity", async () => {
     vi.stubEnv("AUTH_TRUST_PROXY", "true");
-    for (let i = 0; i < 5000; i++) expect(throttleAuth(request({}, { "x-forwarded-for": `192.0.${Math.floor(i / 256)}.${i % 256}` }), "login", "alice")).toBeNull();
-    expect(throttleAuth(request({}, { "x-forwarded-for": "203.0.113.1" }), "login", "alice")).toBeNull();
+    for (let i = 0; i < 5000; i++) expect(await throttleAuth(request({}, { "x-forwarded-for": `192.0.${Math.floor(i / 256)}.${i % 256}` }), "login", "alice")).toBeNull();
+    expect(await throttleAuth(request({}, { "x-forwarded-for": "203.0.113.1" }), "login", "alice")).toBeNull();
   });
 });

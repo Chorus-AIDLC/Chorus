@@ -1,6 +1,6 @@
 // src/lib/redis.ts
 // Redis client singleton for Pub/Sub — lazy-initialized, graceful fallback
-import Redis from "ioredis";
+import Redis, { type RedisOptions } from "ioredis";
 import logger from "@/lib/logger";
 
 const redisLogger = logger.child({ module: "redis" });
@@ -35,12 +35,14 @@ export function isRedisEnabled(): boolean {
 const globalForRedis = globalThis as unknown as {
   redisPub: Redis | undefined;
   redisSub: Redis | undefined;
+  redisGeneral: Redis | undefined;
 };
 
-function createClient(name: string): Redis {
+function createClient(name: string, overrides: RedisOptions = {}): Redis {
   const client = new Redis(REDIS_URL!, {
     lazyConnect: true,
     maxRetriesPerRequest: null, // infinite retries for pub/sub
+    ...overrides,
     retryStrategy(times) {
       const delay = Math.min(times * 200, 5000);
       redisLogger.warn({ name, delay, attempt: times }, "Reconnecting");
@@ -70,4 +72,25 @@ export function getRedisSubscriber(): Redis | null {
     globalForRedis.redisSub = createClient("sub");
   }
   return globalForRedis.redisSub;
+}
+
+/**
+ * General-purpose Redis client for request-path use cases (e.g. rate limiting).
+ * Uses a separate connection so that pub/sub and rate-limiter traffic don't
+ * interfere with each other. Returns null when Redis is not configured.
+ *
+ * Unlike pub/sub, request-path callers must never block on an unreachable
+ * Redis: commands fail fast instead of queueing, and the client connects
+ * eagerly so its `status` reflects reachability before the first command.
+ */
+export function getRedisGeneral(): Redis | null {
+  if (!isRedisEnabled()) return null;
+  if (!globalForRedis.redisGeneral) {
+    globalForRedis.redisGeneral = createClient("general", {
+      lazyConnect: false,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+    });
+  }
+  return globalForRedis.redisGeneral;
 }

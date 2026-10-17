@@ -13,7 +13,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const body = await parseBody<unknown>(request);
   const parsed = schema.safeParse(body);
   if (!parsed.success) return errors.unauthorized("Invalid credentials");
-  const limited = throttleAuth(request, "login", `${parsed.data.companyUuid}:${parsed.data.identifier.trim().toLowerCase()}`);
+  const limited = await throttleAuth(request, "login", `${parsed.data.companyUuid}:${parsed.data.identifier.trim().toLowerCase()}`);
   if (limited) return limited;
   const account = await verifyLocalLoginCredentials(parsed.data.companyUuid, parsed.data.identifier, parsed.data.password);
   if (!account) return errors.unauthorized("Invalid credentials");

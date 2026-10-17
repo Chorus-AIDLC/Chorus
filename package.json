@@ -113,6 +113,7 @@
     "pino": "^10.3.1",
     "prisma": "7.10.0",
     "radix-ui": "^1.4.3",
+    "rate-limiter-flexible": "^11.2.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "remark-docx": "^0.3.29",
