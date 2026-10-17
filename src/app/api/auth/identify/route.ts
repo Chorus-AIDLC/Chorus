@@ -23,7 +23,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const raw = body.identifier ?? body.email;
   const email = typeof raw === "string" ? raw.trim().toLowerCase() : "";
-  const limited = throttleAuth(request, "identify", email);
+  const limited = await throttleAuth(request, "identify", email);
   if (limited) return limited;
   // Preserve legacy email validation while new identifier callers receive a
   // generic unknown-identity response for malformed usernames.
