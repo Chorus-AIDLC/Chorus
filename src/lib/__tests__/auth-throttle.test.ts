@@ -16,73 +16,88 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 describe("authentication throttle client isolation", () => {
-  it.each(["identify", "login", "accept"] as const)("does not globally exhaust %s when no address is trusted", action => {
+  it.each(["identify", "login", "accept"] as const)("does not globally exhaust %s when no address is trusted", async action => {
     const limit = action === "identify" ? 30 : 10;
     for (let i = 0; i < limit + 1; i++) {
-      expect(throttleAuth(request(`203.0.113.${i + 1}`), action, `identity-${i}`)).toBeNull();
+      expect(await throttleAuth(request(`203.0.113.${i + 1}`), action, `identity-${i}`)).toBeNull();
     }
-    for (let i = 1; i < limit; i++) expect(throttleAuth(request(), action, "identity-0")).toBeNull();
-    const blocked = throttleAuth(request("198.51.100.1"), action, "identity-0");
+    for (let i = 1; i < limit; i++) expect(await throttleAuth(request(), action, "identity-0")).toBeNull();
+    const blocked = await throttleAuth(request("198.51.100.1"), action, "identity-0");
     expect(blocked?.status).toBe(429);
     expect(blocked?.headers.get("Retry-After")).toBeTruthy();
-    expect(throttleAuth(request(), action, "unrelated-identity")).toBeNull();
+    expect(await throttleAuth(request(), action, "unrelated-identity")).toBeNull();
   });
 
-  it("keys fallback local login by tenant and identifier", () => {
-    for (let i = 0; i < 10; i++) expect(throttleAuth(request(), "login", "tenant-a:alice")).toBeNull();
-    expect(throttleAuth(request(), "login", "tenant-a:alice")?.status).toBe(429);
-    expect(throttleAuth(request(), "login", "tenant-b:alice")).toBeNull();
+  it("keys fallback local login by tenant and identifier", async () => {
+    for (let i = 0; i < 10; i++) expect(await throttleAuth(request(), "login", "tenant-a:alice")).toBeNull();
+    expect((await throttleAuth(request(), "login", "tenant-a:alice"))?.status).toBe(429);
+    expect(await throttleAuth(request(), "login", "tenant-b:alice")).toBeNull();
   });
 
-  it("uses the ALB-appended rightmost IP despite rotating forged prefixes", () => {
+  it("uses the ALB-appended rightmost IP despite rotating forged prefixes", async () => {
     vi.stubEnv("AUTH_TRUST_PROXY", "true");
     for (let i = 0; i < 10; i++) {
-      expect(throttleAuth(request(`198.51.100.${i + 1}, 203.0.113.10`), "login", `identity-${i}`)).toBeNull();
+      expect(await throttleAuth(request(`198.51.100.${i + 1}, 203.0.113.10`), "login", `identity-${i}`)).toBeNull();
     }
-    expect(throttleAuth(request("198.51.100.99, 203.0.113.10"), "login", "new-identity")?.status).toBe(429);
-    expect(throttleAuth(request("198.51.100.99, 203.0.113.11"), "login", "new-identity")).toBeNull();
+    expect((await throttleAuth(request("198.51.100.99, 203.0.113.10"), "login", "new-identity"))?.status).toBe(429);
+    expect(await throttleAuth(request("198.51.100.99, 203.0.113.11"), "login", "new-identity")).toBeNull();
   });
 
-  it("supports an explicitly configured trusted right-hand hop count", () => {
+  it("supports an explicitly configured trusted right-hand hop count", async () => {
     vi.stubEnv("AUTH_TRUST_PROXY", "true");
     vi.stubEnv("AUTH_TRUST_PROXY_HOPS", "2");
-    for (let i = 0; i < 10; i++) expect(throttleAuth(request(`198.51.100.${i + 1}, 203.0.113.10, 192.0.2.1`), "login", `a-${i}`)).toBeNull();
-    expect(throttleAuth(request("198.51.100.99, 203.0.113.10, 192.0.2.1"), "login", "new")?.status).toBe(429);
-    expect(throttleAuth(request("198.51.100.99, 203.0.113.11, 192.0.2.1"), "login", "new")).toBeNull();
+    for (let i = 0; i < 10; i++) expect(await throttleAuth(request(`198.51.100.${i + 1}, 203.0.113.10, 192.0.2.1`), "login", `a-${i}`)).toBeNull();
+    expect((await throttleAuth(request("198.51.100.99, 203.0.113.10, 192.0.2.1"), "login", "new"))?.status).toBe(429);
+    expect(await throttleAuth(request("198.51.100.99, 203.0.113.11, 192.0.2.1"), "login", "new")).toBeNull();
   });
 
-  it("normalizes equivalent IPv6 addresses into the same trusted bucket", () => {
+  it("normalizes equivalent IPv6 addresses into the same trusted bucket", async () => {
     vi.stubEnv("AUTH_TRUST_PROXY", "true");
-    for (let i = 0; i < 10; i++) expect(throttleAuth(request("2001:db8::1"), "login", `a-${i}`)).toBeNull();
-    expect(throttleAuth(request("2001:0db8:0:0:0:0:0:1"), "login", "new")?.status).toBe(429);
-    expect(throttleAuth(request("2001:db8::2"), "login", "new")).toBeNull();
+    for (let i = 0; i < 10; i++) expect(await throttleAuth(request("2001:db8::1"), "login", `a-${i}`)).toBeNull();
+    expect((await throttleAuth(request("2001:0db8:0:0:0:0:0:1"), "login", "new"))?.status).toBe(429);
+    expect(await throttleAuth(request("2001:db8::2"), "login", "new")).toBeNull();
   });
 
-  it.each([undefined, "garbage", "203.0.113.1, garbage", "", "unknown", "fe80::1%eth0"])("does not create a global bucket for invalid/missing XFF %s", address => {
+  it.each([undefined, "garbage", "203.0.113.1, garbage", "", "unknown", "fe80::1%eth0"])("does not create a global bucket for invalid/missing XFF %s", async address => {
     vi.stubEnv("AUTH_TRUST_PROXY", "true");
-    for (let i = 0; i < 11; i++) expect(throttleAuth(request(address), "accept", `token-${i}`)).toBeNull();
+    for (let i = 0; i < 11; i++) expect(await throttleAuth(request(address), "accept", `token-${i}`)).toBeNull();
   });
 
-  it.each(["0", "-1", "1.5", "abc", "17", "2"])("falls back to identity isolation for invalid/unavailable hop count %s", hops => {
+  it.each(["0", "-1", "1.5", "abc", "17", "2"])("falls back to identity isolation for invalid/unavailable hop count %s", async hops => {
     vi.stubEnv("AUTH_TRUST_PROXY", "true");
     vi.stubEnv("AUTH_TRUST_PROXY_HOPS", hops);
-    for (let i = 0; i < 11; i++) expect(throttleAuth(request("203.0.113.1"), "login", `identity-${i}`)).toBeNull();
+    for (let i = 0; i < 11; i++) expect(await throttleAuth(request("203.0.113.1"), "login", `identity-${i}`)).toBeNull();
   });
 
-  it.each(["203.0.113.1:12345", "[2001:db8::1]:12345"])("normalizes ALB client-port syntax %s", address => {
+  it.each(["203.0.113.1:12345", "[2001:db8::1]:12345"])("normalizes ALB client-port syntax %s", async address => {
     vi.stubEnv("AUTH_TRUST_PROXY", "true");
-    for (let i = 0; i < 10; i++) expect(throttleAuth(request(address), "login", `a-${i}`)).toBeNull();
+    for (let i = 0; i < 10; i++) expect(await throttleAuth(request(address), "login", `a-${i}`)).toBeNull();
     const bare = address.startsWith("[") ? "2001:db8::1" : "203.0.113.1";
-    expect(throttleAuth(request(bare), "login", "new")?.status).toBe(429);
+    expect((await throttleAuth(request(bare), "login", "new"))?.status).toBe(429);
   });
 
-  it("expires limits and preserves current identity at bounded-capacity eviction", () => {
+  it("expires limits after the window", async () => {
     vi.useFakeTimers();
-    for (let i = 0; i < 10001; i++) expect(throttleAuth(request(), "login", `identity-${i}`)).toBeNull();
-    for (let i = 1; i < 10; i++) expect(throttleAuth(request(), "login", "identity-10000")).toBeNull();
-    expect(throttleAuth(request(), "login", "identity-10000")?.status).toBe(429);
-    expect(throttleAuth(request(), "login", "identity-0")).toBeNull();
+    for (let i = 0; i < 10; i++) expect(await throttleAuth(request(), "login", "identity-expire")).toBeNull();
+    expect((await throttleAuth(request(), "login", "identity-expire"))?.status).toBe(429);
     vi.advanceTimersByTime(60001);
-    expect(throttleAuth(request(), "login", "identity-10000")).toBeNull();
+    expect(await throttleAuth(request(), "login", "identity-expire")).toBeNull();
+  });
+
+  it("preserves the current identity at bounded-capacity eviction", async () => {
+    for (let i = 0; i < 10001; i++) expect(await throttleAuth(request(), "login", `identity-${i}`)).toBeNull();
+    for (let i = 1; i < 10; i++) expect(await throttleAuth(request(), "login", "identity-10000")).toBeNull();
+    expect((await throttleAuth(request(), "login", "identity-10000"))?.status).toBe(429);
+    // The oldest key was evicted at capacity, so its count restarted.
+    expect(await throttleAuth(request(), "login", "identity-0")).toBeNull();
+  });
+
+  it("bounds in-memory counters under identity rotation", async () => {
+    const { RateLimiterMemory } = await import("rate-limiter-flexible");
+    const del = vi.spyOn(RateLimiterMemory.prototype, "delete");
+    try {
+      for (let i = 0; i < 10050; i++) await throttleAuth(request(), "identify", `spray-${i}@example.com`);
+      expect(del).toHaveBeenCalledTimes(50);
+    } finally { del.mockRestore(); }
   });
 });

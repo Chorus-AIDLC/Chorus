@@ -7,7 +7,7 @@ import { acceptLocalCredential } from "@/services/local-user.service";
 export const POST = withErrorHandler(async request => {
   const body = await parseBody<unknown>(request);
   const token = body && typeof body === "object" && "token" in body && typeof body.token === "string" ? body.token : "invalid";
-  const limited = throttleAuth(request, "accept", token);
+  const limited = await throttleAuth(request, "accept", token);
   if (limited) return limited;
   const response = success(await acceptLocalCredential(body));
   response.headers.set("Cache-Control", "no-store");
