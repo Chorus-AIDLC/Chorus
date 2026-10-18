@@ -50,6 +50,31 @@ describe("PATCH self avatar", () => {
     forged.headers.set("x-forwarded-host", "attacker.test");
     expect((await PATCH(forged, context)).status).toBe(403);
   });
+  it.each(["http://192.168.31.153:18637", "http://127.0.0.1:18637", "http://[::1]:18637", "https://192.168.31.153:18638"])("accepts the request Host origin with localhost configuration: %s", async origin => {
+    vi.stubEnv("NEXTAUTH_URL", "http://localhost:18637");
+    const url = new URL(origin);
+    const direct = new NextRequest(`${url.protocol}//internal:8637/api/users/me/avatar`, {
+      method: "PATCH",
+      headers: { host: url.host, origin, "content-type": "application/json", authorization: "Bearer invalid" },
+      body: JSON.stringify({ avatarSeed }),
+    });
+    expect((await PATCH(direct, context)).status).toBe(200);
+    expect(mocks.update).toHaveBeenCalledWith(auth, avatarSeed);
+  });
+  it.each([null, "null", "http://attacker.test:18637", "http://192.168.31.153:9999", "https://192.168.31.153:18637"])("rejects foreign, missing, wrong-port or wrong-protocol origins with Host: %s", async origin => {
+    vi.stubEnv("NEXTAUTH_URL", "http://localhost:18637");
+    const direct = request({ avatarSeed }, origin, "Bearer invalid");
+    direct.headers.set("host", "192.168.31.153:18637");
+    direct.headers.set("x-forwarded-host", origin ? new URL(origin === "null" ? "http://attacker.test" : origin).host : "attacker.test");
+    expect((await PATCH(direct, context)).status).toBe(403);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+  it.each(["", "attacker.test@192.168.31.153:18637", "192.168.31.153:18637/path", "192.168.31.153:18637?query", "192.168.31.153:18637#hash"])("rejects malformed Host without failing open: %s", async host => {
+    const direct = request({ avatarSeed }, "http://192.168.31.153:18637");
+    direct.headers.set("host", host);
+    expect((await PATCH(direct, context)).status).toBe(403);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
   it("uses the direct application origin without configured public URL", async () => {
     vi.stubEnv("NEXTAUTH_URL", "");
     expect((await PATCH(request({ avatarSeed }, "http://internal:8637"), context)).status).toBe(200);

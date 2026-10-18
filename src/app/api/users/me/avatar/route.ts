@@ -7,13 +7,26 @@ import { updateUserAvatar } from "@/services/user-avatar.service";
 
 const avatarInput = z.object({ avatarSeed: z.string().uuid() }).strict();
 
+function requestOrigin(request: NextRequest): string | null {
+  const host = request.headers.get("host");
+  if (host === null) return request.nextUrl.origin;
+  try {
+    const url = new URL(`${request.nextUrl.protocol}//${host}`);
+    if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
 export const PATCH = withErrorHandler(async (request: NextRequest) => {
   const auth = await getAuthContext(request);
   if (!auth) return errors.unauthorized();
   if (!isUser(auth)) return errors.forbidden("Only users can update their avatar");
 
-  const trustedOrigin = new URL(process.env.NEXTAUTH_URL || request.nextUrl.origin).origin;
-  if (request.headers.get("origin") !== trustedOrigin) {
+  const configuredOrigin = process.env.NEXTAUTH_URL ? new URL(process.env.NEXTAUTH_URL).origin : null;
+  const origin = request.headers.get("origin");
+  if (!origin || (origin !== configuredOrigin && origin !== requestOrigin(request))) {
     return errors.forbidden("A trusted Origin is required");
   }
 
