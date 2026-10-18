@@ -85,7 +85,10 @@ export function getRedisSubscriber(): Redis | null {
  * A connection that stays open but stops answering is bounded too: each
  * command rejects after REQUEST_COMMAND_TIMEOUT_MS, and a socket with pending
  * commands and no reply for REQUEST_SOCKET_TIMEOUT_MS is torn down so the
- * client reconnects instead of piling up a pending queue.
+ * client reconnects. A timed-out command stays in ioredis's queue, so resend
+ * on reconnect is disabled: otherwise the stalled backlog would be replayed on
+ * every recycle and counted again in Redis once it recovers, after the caller
+ * was already served by the in-memory fallback.
  */
 const REQUEST_COMMAND_TIMEOUT_MS = 500;
 const REQUEST_SOCKET_TIMEOUT_MS = 2_000;
@@ -99,6 +102,7 @@ export function getRedisGeneral(): Redis | null {
       maxRetriesPerRequest: 1,
       commandTimeout: REQUEST_COMMAND_TIMEOUT_MS,
       socketTimeout: REQUEST_SOCKET_TIMEOUT_MS,
+      autoResendUnfulfilledCommands: false,
     });
   }
   return globalForRedis.redisGeneral;

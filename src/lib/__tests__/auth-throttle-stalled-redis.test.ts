@@ -16,10 +16,14 @@ vi.mock("@/lib/logger", () => {
 
 let server: Server;
 const sockets = new Set<Socket>();
+// Rate-limit commands (EVALSHA/EVAL) received, one entry per accepted connection.
+let evalsPerConnection: number[] = [];
 
 beforeEach(async () => {
+  evalsPerConnection = [];
   server = createServer(socket => {
     sockets.add(socket);
+    const connection = evalsPerConnection.push(0) - 1;
     socket.on("data", chunk => {
       // Answer the connection handshake (CLIENT SETINFO / INFO ready check);
       // swallow everything else, so EVALSHA/EVAL never get a reply.
@@ -30,6 +34,8 @@ beforeEach(async () => {
           socket.write(`$${info.length}\r\n${info}\r\n`);
         } else if (name === "client" || name === "select") {
           socket.write("+OK\r\n");
+        } else if (name === "evalsha" || name === "eval") {
+          evalsPerConnection[connection]++;
         }
       }
     });
@@ -69,4 +75,22 @@ it("bounds auth latency and keeps limiting when a ready Redis stops replying", a
     expect.objectContaining({ action: "login" }),
     expect.stringMatching(/insurance limits/),
   );
+}, 10_000);
+
+it("recycles the stalled socket without replaying timed-out commands", async () => {
+  const { getRedisGeneral } = await import("../redis");
+  const { throttleAuth } = await import("../auth-throttle");
+  const client = getRedisGeneral()!;
+  await new Promise<void>(resolve => (client.status === "ready" ? resolve() : client.once("ready", () => resolve())));
+
+  await Promise.all(Array.from({ length: 12 }, (_, i) =>
+    throttleAuth(new NextRequest("http://localhost/api/auth/local/login"), "login", `tenant:user-${i}`)));
+  expect(evalsPerConnection[0]).toBe(12);
+
+  // socketTimeout tears the silent connection down; wait for the replacement to be ready.
+  await new Promise<void>(resolve => client.once("ready", () => resolve()));
+  await new Promise(resolve => setTimeout(resolve, 200));
+  expect(evalsPerConnection.length).toBeGreaterThanOrEqual(2);
+  // Callers were already served by the insurance limiter; nothing is resent.
+  expect(evalsPerConnection.slice(1).every(n => n === 0)).toBe(true);
 }, 10_000);
