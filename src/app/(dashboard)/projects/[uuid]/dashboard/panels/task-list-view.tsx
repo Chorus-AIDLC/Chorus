@@ -2,7 +2,8 @@
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useTranslations } from "next-intl";
-import { ChevronRight, ChevronLeft, ChevronDown, ListChecks, Check, User } from "lucide-react";
+import { ChevronRight, ChevronLeft, ChevronDown, ListChecks, Check } from "lucide-react";
+import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
 import Link from "next/link";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { getBatchWorkerCountsAction } from "@/app/(dashboard)/projects/[uuid]/tasks/session-actions";
@@ -205,7 +206,7 @@ export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }
                             {isAgentAssignee(task.assignee) ? (
                               <AgentAvatar name={task.assignee.name} size={14} className="shrink-0 rounded-full" />
                             ) : (
-                              <User className="h-2.5 w-2.5 shrink-0" />
+                              <UserAvatar userUuid={task.assignee.uuid} name={task.assignee.name} avatarSeed={task.assignee.avatarSeed} size={14} decorative />
                             )}
                             {task.assignee.name.split(/[@\s]/)[0]}
                           </span>

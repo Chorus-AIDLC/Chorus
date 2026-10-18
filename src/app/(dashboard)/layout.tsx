@@ -26,6 +26,7 @@ import { RealtimeProvider } from "@/contexts/realtime-context";
 import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
 import { PixelActivityProvider } from "@/contexts/pixel-activity-context";
 import { AuthProvider } from "@/contexts/auth-context";
+import { UserIdentityAvatar } from "@/components/user-identity-avatar";
 import { DaemonPresenceEntry } from "@/components/daemon-presence-entry";
 import { SidebarPreferences } from "@/components/sidebar-preferences";
 import { WorkspaceUsersNavigation } from "@/components/workspace-users-navigation";
@@ -50,6 +51,7 @@ interface User {
   uuid: string;
   email: string;
   name: string;
+  avatarSeed?: string | null;
 }
 
 interface Project {
@@ -245,6 +247,7 @@ export default function DashboardLayout({
           uuid: data.data.user.uuid,
           email: data.data.user.email,
           name: data.data.user.name || data.data.user.email,
+          avatarSeed: data.data.user.avatarSeed,
         });
       }
       // A non-success body without a 401 is treated as transient: don't bounce, just
@@ -542,9 +545,7 @@ export default function DashboardLayout({
         {/* User Profile */}
         <div className="px-2 pt-1">
           <div className="flex items-center gap-2">
-          <div className={`flex items-center justify-center rounded-full bg-primary font-medium text-primary-foreground ${mobile ? "h-10 w-10 text-base" : "h-9 w-9 text-sm"}`}>
-            {user?.name?.charAt(0) || "U"}
-          </div>
+          <UserIdentityAvatar userUuid={user?.uuid} name={user?.name} avatarSeed={user?.avatarSeed} size={mobile ? 40 : 36} decorative />
           <div className="min-w-0 flex-1">
             <div className={`truncate font-medium text-foreground ${profileNameSize}`}>
               {user?.name}

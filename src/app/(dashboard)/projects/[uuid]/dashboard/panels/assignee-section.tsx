@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { Label } from "@/components/ui/label";
 import {
@@ -18,6 +18,7 @@ interface AssigneeSectionProps {
     type: string;
     uuid: string;
     name: string;
+    avatarSeed?: string | null;
     // Present only when type === "agent_instance": the pinned (host, cwd) place.
     instance?: { agentUuid: string; host: string; cwd: string | null };
   } | null;
@@ -42,11 +43,7 @@ export function AssigneeSection({ assignee, onReassign, editable }: AssigneeSect
       {isAgentAssignee(assignee) ? (
         <AgentAvatar name={assignee.name} size={28} className="rounded-full" />
       ) : (
-        <Avatar className="h-7 w-7">
-          <AvatarFallback className="bg-border text-muted-foreground">
-            {assignee.name.charAt(0).toUpperCase()}
-          </AvatarFallback>
-        </Avatar>
+        <UserAvatar userUuid={assignee.uuid} name={assignee.name} avatarSeed={assignee.avatarSeed} size={28} decorative />
       )}
       <div className="min-w-0">
         <div className="text-sm font-medium text-foreground">{assignee.name}</div>

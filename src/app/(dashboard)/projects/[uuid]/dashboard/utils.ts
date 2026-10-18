@@ -17,7 +17,7 @@ export interface FlatTask {
   title: string;
   status: string;
   commentCount: number;
-  assignee?: { type: string; uuid: string; name: string } | null;
+  assignee?: { type: string; uuid: string; name: string; avatarSeed?: string | null } | null;
   acceptanceSummary?: {
     total: number;
     required: number;

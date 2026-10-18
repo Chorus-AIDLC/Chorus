@@ -69,6 +69,7 @@ const NON_PROJECT_ROUTES: Record<string, string> = {
   "src/app/api/auth/identify/route.ts": "auth",
   "src/app/api/auth/logout/route.ts": "auth",
   "src/app/api/auth/me/route.ts": "auth",
+  "src/app/api/users/me/avatar/route.ts": "authenticated human self only, tenant-scoped avatar update with same-origin enforcement",
   "src/app/api/auth/sync-token/route.ts": "auth",
   "src/app/api/daemon-directory-requests/[uuid]/route.ts": "daemon directory discovery (owner-scoped)",
   "src/app/api/daemon-directory-requests/route.ts": "daemon directory discovery",

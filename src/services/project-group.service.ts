@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { batchResolveActorIdentities } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import type { AuthContext } from "@/types/auth";
 import { accessibleProjectWhere, computeProjectAccess, isProjectMemberRole, isProjectVisibility, levelAtLeast, membershipPrincipal, ProjectAccessDeniedError, ProjectNotFoundError, type ProjectVisibility, type ProjectMemberRole } from "@/services/project-access.service";
@@ -100,6 +101,7 @@ export interface GroupDashboardResponse {
     value: unknown;
     actorType: string;
     actorUuid: string;
+    actorAvatarSeed?: string | null;
     createdAt: string;
   }[];
 }
@@ -470,6 +472,9 @@ export async function getGroupDashboard(
     orderBy: { createdAt: "desc" },
     take: 20,
   });
+  const actorIdentities = await batchResolveActorIdentities(companyUuid, recentActivity
+    .filter(activity => activity.actorType === "user")
+    .map(activity => ({ type: activity.actorType, uuid: activity.actorUuid })));
 
   // Resolve project names for activity
   const projectNameMap = new Map(projects.map((p) => [p.uuid, p.name]));
@@ -496,6 +501,7 @@ export async function getGroupDashboard(
       value: a.value,
       actorType: a.actorType,
       actorUuid: a.actorUuid,
+      ...(a.actorType === "user" ? { actorAvatarSeed: actorIdentities.get(`user:${a.actorUuid}`)?.avatarSeed ?? null } : {}),
       createdAt: a.createdAt.toISOString(),
     })),
   };

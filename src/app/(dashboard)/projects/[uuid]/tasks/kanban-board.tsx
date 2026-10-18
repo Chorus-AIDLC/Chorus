@@ -12,6 +12,7 @@ import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { Lock, TriangleAlert, Monitor } from "lucide-react";
 import { AssigneeInstanceLine } from "@/components/agent-presence";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
+import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
 import { isAgentAssignee } from "@/lib/assignee-identity";
 import { motion, LayoutGroup } from "framer-motion";
 import { ANIM } from "@/lib/animation";
@@ -45,6 +46,7 @@ interface Task {
     type: string;
     uuid: string;
     name: string;
+    avatarSeed?: string | null;
     assignedAt: string | null;
     assignedBy: { type: string; uuid: string; name: string } | null;
     // Present only when type === "agent_instance": the pinned (host, cwd) place.
@@ -472,25 +474,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
                                             className="shrink-0 rounded-full"
                                           />
                                         ) : (
-                                          <svg
-                                            xmlns="http://www.w3.org/2000/svg"
-                                            viewBox="0 0 24 24"
-                                            fill="none"
-                                            stroke="currentColor"
-                                            strokeWidth="2"
-                                            strokeLinecap="round"
-                                            strokeLinejoin="round"
-                                            className="h-3 w-3 shrink-0"
-                                          >
-                                            <path d="M12 8V4H8" />
-                                            <rect
-                                              width="16"
-                                              height="12"
-                                              x="4"
-                                              y="8"
-                                              rx="2"
-                                            />
-                                          </svg>
+                                          <UserAvatar userUuid={task.assignee.uuid} name={task.assignee.name} avatarSeed={task.assignee.avatarSeed} size={16} decorative />
                                         )}
                                         <span className="truncate">{task.assignee.name}</span>
                                       </span>

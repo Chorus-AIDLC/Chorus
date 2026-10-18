@@ -823,6 +823,21 @@
     "fetchingContent": "문서를 불러오는 중..."
   },
   "settings": {
+    "avatar": {
+      "title": "내 아바타",
+      "description": "아바타를 여러 번 무작위로 미리 보고 마음에 드는 모습을 저장하세요.",
+      "preview": "아바타 미리보기",
+      "randomize": "무작위 아바타 생성",
+      "save": "아바타 저장",
+      "cancel": "취소",
+      "saving": "저장 중…",
+      "loading": "아바타 불러오는 중…",
+      "saved": "아바타가 저장되었습니다.",
+      "failed": "저장하지 못했습니다. 미리보기는 유지됩니다. 다시 시도해 주세요.",
+      "unsaved": "저장되지 않은 미리보기입니다. 저장하기 전까지 현재 아바타는 바뀌지 않습니다.",
+      "hint": "무작위 생성은 미리보기만 변경합니다. 취소하거나 페이지를 떠나면 변경사항이 삭제됩니다.",
+      "attribution": "Personas 제작: <author>Draftbit</author> / 출처: <source>DiceBear</source> — <license>CC BY 4.0</license>"
+    },
     "title": "설정",
     "subtitle": "계정 및 에이전트 구성을 관리하세요",
     "breadcrumb": "Chorus / 설정",

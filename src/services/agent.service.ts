@@ -351,6 +351,7 @@ export async function getCompanyUsers(companyUuid: string) {
       uuid: true,
       name: true,
       email: true,
+      avatarSeed: true,
     },
     orderBy: { name: "asc" },
   });

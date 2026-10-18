@@ -6,7 +6,7 @@
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
-import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
+import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid, batchResolveActorIdentities, type ActorIdentityMap } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { accessibleProjectUuids } from "@/services/project-access.service";
 import type { AuthContext } from "@/types/auth";
@@ -105,10 +105,10 @@ export interface ProposalResponse {
   taskDrafts: TaskDraft[] | null;
   status: string;
   project?: { uuid: string; name: string };
-  createdBy: { type: string; uuid: string; name: string } | null;
+  createdBy: { type: string; uuid: string; name: string; avatarSeed?: string | null } | null;
   createdByType: string;
   review: {
-    reviewedBy: { type: string; uuid: string; name: string };
+    reviewedBy: { type: string; uuid: string; name: string; avatarSeed?: string | null };
     reviewNote: string | null;
     reviewedAt: string | null;
   } | null;
@@ -176,6 +176,7 @@ export type ProposalSectionResponse =
 // Format a single Proposal into API response format
 async function formatProposalResponse(
   proposal: {
+    companyUuid: string;
     uuid: string;
     title: string;
     description: string | null;
@@ -192,12 +193,13 @@ async function formatProposalResponse(
     createdAt: Date;
     updatedAt: Date;
     project?: { uuid: string; name: string };
-  }
+  },
+  identities?: ActorIdentityMap,
 ): Promise<ProposalResponse> {
   const creatorType = proposal.createdByType === "user" ? "user" : "agent";
   const [createdBy, review] = await Promise.all([
-    formatCreatedBy(proposal.createdByUuid, creatorType),
-    formatReview(proposal.reviewedByUuid, proposal.reviewNote, proposal.reviewedAt),
+    formatCreatedBy(proposal.createdByUuid, creatorType, proposal.companyUuid, identities),
+    formatReview(proposal.reviewedByUuid, proposal.reviewNote, proposal.reviewedAt, proposal.companyUuid, identities),
   ]);
 
   const response: ProposalResponse = {
@@ -221,6 +223,21 @@ async function formatProposalResponse(
   }
 
   return response;
+}
+
+async function formatProposalResponses(
+  companyUuid: string,
+  proposals: Array<Omit<Parameters<typeof formatProposalResponse>[0], "companyUuid">>,
+): Promise<ProposalResponse[]> {
+  const actors = proposals.flatMap(proposal => [
+    { type: proposal.createdByType === "user" ? "user" : "agent", uuid: proposal.createdByUuid },
+    ...(proposal.reviewedByUuid ? [
+      { type: "user", uuid: proposal.reviewedByUuid },
+      { type: "agent", uuid: proposal.reviewedByUuid },
+    ] : []),
+  ]);
+  const identities = await batchResolveActorIdentities(companyUuid, actors);
+  return Promise.all(proposals.map(proposal => formatProposalResponse({ ...proposal, companyUuid }, identities)));
 }
 
 // ===== Validation Functions =====
@@ -531,7 +548,7 @@ export async function getProposalsByIdeaUuid(
     (p) => Array.isArray(p.inputUuids) && (p.inputUuids as string[]).includes(ideaUuid),
   );
 
-  return Promise.all(matching.map((p) => formatProposalResponse(p)));
+  return formatProposalResponses(companyUuid, matching);
 }
 
 // List proposals query
@@ -575,9 +592,7 @@ export async function listProposals({
     prisma.proposal.count({ where }),
   ]);
 
-  const proposals = await Promise.all(
-    rawProposals.map((p) => formatProposalResponse(p))
-  );
+  const proposals = await formatProposalResponses(companyUuid, rawProposals);
   return { proposals, total };
 }
 
@@ -726,7 +741,7 @@ export async function createProposal(
 
   eventBus.emitChange({ companyUuid: params.companyUuid, projectUuid: params.projectUuid, entityType: "proposal", entityUuid: proposal.uuid, action: "created" });
 
-  return formatProposalResponse(proposal);
+  return formatProposalResponse({ ...proposal, companyUuid: params.companyUuid });
 }
 
 // Update Proposal content (add/modify document drafts and tasks)

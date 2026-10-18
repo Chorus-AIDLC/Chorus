@@ -418,7 +418,7 @@ describe('assignment provenance resolution', () => {
         { assignedByType: 'user', assignedByUuid: 'missing' },
       ]),
     ).resolves.toEqual([
-      { type: 'user', uuid: 'shared', name: 'Historical User' },
+      { type: 'user', uuid: 'shared', name: 'Historical User', avatarSeed: null },
       { type: 'agent', uuid: 'agent-2', name: 'Agent Two' },
       null,
     ]);

@@ -21,7 +21,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import {
   Tooltip,
@@ -68,6 +68,7 @@ interface Idea {
     type: string;
     uuid: string;
     name: string;
+    avatarSeed?: string | null;
     assignedAt: string | null;
     assignedBy: { type: string; uuid: string; name: string } | null;
     // Present only when type === "agent_instance": the pinned (host, cwd) place +
@@ -536,11 +537,7 @@ export function IdeaDetailPanel({
                         {isAgentAssignee(idea.assignee) ? (
                           <AgentAvatar name={idea.assignee.name} size={28} className="rounded-full" />
                         ) : (
-                          <Avatar className="h-7 w-7">
-                            <AvatarFallback className="bg-border text-muted-foreground">
-                              {idea.assignee.name.charAt(0).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
+                          <UserAvatar userUuid={idea.assignee.uuid} name={idea.assignee.name} avatarSeed={idea.assignee.avatarSeed} size={28} decorative />
                         )}
                         <div className="min-w-0">
                           <div className="text-sm font-medium text-foreground">

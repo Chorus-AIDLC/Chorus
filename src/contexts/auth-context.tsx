@@ -24,6 +24,7 @@ interface UserInfo {
   uuid: string;
   email: string;
   name?: string;
+  avatarSeed?: string | null;
 }
 
 // Company info from session
@@ -40,6 +41,7 @@ interface AuthContextState {
   error: string | null;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
+  applySavedAvatar: (userUuid: string, avatarSeed: string) => void;
 }
 
 const AuthContext = createContext<AuthContextState | null>(null);
@@ -50,6 +52,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [company, setCompany] = useState<CompanyInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const avatarSaveRevision = useRef(0);
+  const applySavedAvatar = useCallback((userUuid: string, avatarSeed: string) => {
+    if (user?.uuid !== userUuid) return;
+    avatarSaveRevision.current += 1;
+    setUser(current => current?.uuid === userUuid ? { ...current, avatarSeed } : current);
+  }, [user?.uuid]);
 
   // Handle a genuinely dead session: clear state and route to login.
   // Defined before fetchSession so the 401 path below can call it.
@@ -75,6 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // is a true re-login condition. A transient/network failure must NOT redirect (the
   // next request retries), so it leaves session state untouched.
   const fetchSession = useCallback(async () => {
+    const startingAvatarRevision = avatarSaveRevision.current;
     try {
       let response = await authFetch("/api/session");
 
@@ -104,7 +113,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await response.json();
 
       if (data.success) {
-        setUser(data.data.user);
+        setUser(current => (
+          startingAvatarRevision !== avatarSaveRevision.current && current && current.uuid === data.data.user.uuid
+            ? { ...data.data.user, avatarSeed: current.avatarSeed }
+            : data.data.user
+        ));
         setCompany(data.data.company);
         return true;
       }
@@ -221,6 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         error,
         logout,
         refreshSession,
+        applySavedAvatar,
       }}
     >
       {children}
@@ -235,6 +249,10 @@ export function useAuth() {
     throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;
+}
+
+export function useOptionalAuth() {
+  return useContext(AuthContext);
 }
 
 // Hook to require authentication
