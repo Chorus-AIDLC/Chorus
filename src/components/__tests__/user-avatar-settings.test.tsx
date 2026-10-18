@@ -55,9 +55,32 @@ beforeEach(() => {
   mocks.fetch.mockResolvedValue(response());
   vi.spyOn(crypto, "randomUUID").mockReturnValueOnce(firstDraft).mockReturnValue(secondDraft);
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("UserAvatarSettings", () => {
+  it("previews, cancels and saves a cryptographic UUIDv4 without secure-context randomUUID", async () => {
+    const getRandomValues = vi.fn((bytes: Uint8Array) => {
+      bytes.fill(0xff);
+      return bytes;
+    });
+    vi.stubGlobal("crypto", { getRandomValues });
+    mount(); await ready();
+    click("Randomize avatar");
+    const generated = seed();
+    expect(generated).toBe("ffffffff-ffff-4fff-bfff-ffffffffffff");
+    expect(getRandomValues).toHaveBeenCalledOnce();
+    expect(writes()).toHaveLength(0);
+    expect(screen.getAllByRole("img", { name: "official" }).every(avatar => avatar.getAttribute("data-seed") === original)).toBe(true);
+    click("Cancel");
+    expect(seed()).toBe(original);
+    click("Randomize avatar");
+    mocks.fetch.mockResolvedValueOnce(response(generated!));
+    click("Save avatar");
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Avatar saved."));
+    expect(JSON.parse(writes()[0][1].body)).toEqual({ avatarSeed: generated });
+    expect(screen.getAllByRole("img", { name: "official" }).every(avatar => avatar.getAttribute("data-seed") === generated)).toBe(true);
+  });
+
   it("keeps repeated random previews local, cancels and discards on unmount", async () => {
     const view = mount();
     await ready();
