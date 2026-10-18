@@ -2,8 +2,9 @@ import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { NextRequest } from "next/server";
 import bcrypt from "bcryptjs";
 import { decodeJwt } from "jose";
+import { legacyBcryptFixtures, legacyLocalFixtures } from "./bcrypt-compatibility.fixture";
 
-const db = vi.hoisted(() => ({ user: { findFirst: vi.fn() }, apiKey: { findUnique: vi.fn(), update: vi.fn() }, project: { findFirst: vi.fn() }, projectMember: { findUnique: vi.fn() } }));
+const db = vi.hoisted(() => ({ $transaction: vi.fn(), user: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() }, apiKey: { findUnique: vi.fn(), update: vi.fn() }, project: { findFirst: vi.fn() }, projectMember: { findUnique: vi.fn() } }));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
 import { POST as login } from "@/app/api/auth/local/login/route";
 import { createUserAccessToken, getUserSessionFromRequest, resolveUserSession } from "../user-session";
@@ -41,6 +42,37 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("local login credential and JWT integration", () => {
+  it.each(legacyLocalFixtures)("logs in with legacy $name without rewriting credentials and rejects a wrong password", async legacy => {
+    account.passwordHash = legacy.hash;
+    const response = await login(request({ companyUuid, identifier: "alice", password: legacy.password }), ctx);
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.user).toMatchObject({ uuid: userUuid, companyUuid });
+    const cookie = response.cookies.get("user_session")!;
+    expect(cookie).toMatchObject({ httpOnly: true, maxAge: 3600, sameSite: "lax" });
+    expect(decodeJwt(cookie.value)).toMatchObject({ userUuid, companyUuid, authType: "local", sessionVersion: 3 });
+
+    const rejected = await login(request({ companyUuid, identifier: "alice", password: "wrong-password-123" }), ctx);
+    expect(rejected.status).toBe(401);
+    expect((await rejected.json()).error.message).toBe("Invalid credentials");
+    expect(rejected.cookies.get("user_session")).toBeUndefined();
+    expect(account.passwordHash).toBe(legacy.hash);
+    expect(account.sessionVersion).toBe(3);
+    expect(db.user.update).not.toHaveBeenCalled();
+    expect(db.user.updateMany).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+  it("rejects a password exceeding the legacy UTF-8 byte boundary without issuing a session", async () => {
+    const legacy = legacyBcryptFixtures.localUtf8Boundary;
+    account.passwordHash = legacy.hash;
+    const response = await login(request({ companyUuid, identifier: "alice", password: `${legacy.password}a` }), ctx);
+
+    expect(response.status).toBe(401);
+    expect((await response.json()).error.message).toBe("Invalid credentials");
+    expect(response.cookies.get("user_session")).toBeUndefined();
+    expect(db.user.findFirst).not.toHaveBeenCalled();
+    expect(account.passwordHash).toBe(legacy.hash);
+  });
   it.each([" ALICE ", "ALICE@EXAMPLE.COM"])("normalizes %s and issues a bounded HttpOnly version-bound session", async identifier => {
     const res = await login(request({ companyUuid, identifier, password }), ctx);
     expect(res.status).toBe(200);

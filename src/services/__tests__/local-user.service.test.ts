@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SuperAdminAuthContext } from "@/types/auth";
+import { legacyBcryptFixtures, legacyLocalFixtures } from "@/lib/__tests__/bcrypt-compatibility.fixture";
 import { localAuth, makeLocalTx, makeLocalUser, password, rawToken } from "./local-user.fixture";
 
-const db = vi.hoisted(() => ({ $transaction: vi.fn(), user: { findFirst: vi.fn() } }));
+const db = vi.hoisted(() => ({ $transaction: vi.fn(), user: { findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() } }));
 vi.mock("@/lib/prisma", () => ({ prisma: db }));
 const publishAccess = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/account-access-events", () => ({ publishAccountAccessChanged: publishAccess }));
@@ -80,6 +81,7 @@ describe("suspended invitation recovery", () => {
     await expect(service.acceptLocalCredential({ token: freshToken, password })).resolves.toEqual({ accepted: true });
     expect(target.status).toBe("active");
     expect(await bcrypt.compare(password, target.passwordHash!)).toBe(true);
+    expect(bcrypt.getRounds(target.passwordHash!)).toBe(12);
     await expectStatus(service.acceptLocalCredential({ token: freshToken, password }), 400);
   });
 });
@@ -143,6 +145,7 @@ describe("eight-character credential acceptance", () => {
     await expect(service.acceptLocalCredential({ token: rawToken, password: "aaaaaaaa" })).resolves.toEqual({ accepted: true });
     expect(fixture.tx.user.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "active", passwordHash: expect.any(String) }) }));
     const hash = fixture.tx.user.update.mock.calls[0][0].data.passwordHash;
+    expect(bcrypt.getRounds(hash)).toBe(12);
     expect(await bcrypt.compare("aaaaaaaa", hash)).toBe(true);
   });
 });
@@ -390,6 +393,7 @@ describe("credential acceptance", () => {
     const data = fixture.tx.user.update.mock.calls[0][0].data;
     expect(data).toMatchObject({ status: "active", sessionVersion: { increment: 1 } });
     expect(data.passwordHash).toMatch(/^\$2[ab]\$12\$/);
+    expect(bcrypt.getRounds(data.passwordHash)).toBe(12);
     expect(await bcrypt.compare(password, data.passwordHash)).toBe(true);
     expect(fixture.tx.userCredentialToken.deleteMany).toHaveBeenCalledWith({ where: { companyUuid: "tenant-a", userUuid: "target-a", uuid: { not: "token-a" } } });
     expect(fixture.tx.localUserAudit.create).toHaveBeenCalledWith({ data: { companyUuid: "tenant-a", actorType: "user", actorUuid: "target-a", targetUuid: "target-a", action: `local_${purpose}_accepted` } });
@@ -401,6 +405,31 @@ describe("credential acceptance", () => {
 });
 
 describe("local credential verification", () => {
+  it.each(legacyLocalFixtures)("verifies legacy $name without rewriting credentials and rejects a wrong password", async legacy => {
+    const user = makeLocalUser({ passwordHash: legacy.hash });
+    db.user.findFirst.mockResolvedValue(user);
+
+    const result = await service.verifyLocalLoginCredentials("tenant-a", "alice", legacy.password);
+    expect(result).toMatchObject({ uuid: user.uuid, authType: "local", sessionVersion: 3 });
+    expect(result).not.toHaveProperty("passwordHash");
+    expect(await service.verifyLocalLoginCredentials("tenant-a", "alice", "wrong-password-123")).toBeNull();
+    expect(user.passwordHash).toBe(legacy.hash);
+    expect(user.sessionVersion).toBe(3);
+    expect(db.user.update).not.toHaveBeenCalled();
+    expect(db.user.updateMany).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(fixture.tx.user.update).not.toHaveBeenCalled();
+  });
+  it("rejects a 73-byte extension of a valid legacy 72-byte password before lookup", async () => {
+    const legacy = legacyBcryptFixtures.localUtf8Boundary;
+    const tooLong = `${legacy.password}a`;
+    db.user.findFirst.mockResolvedValue(makeLocalUser({ passwordHash: legacy.hash }));
+
+    expect(Buffer.byteLength(legacy.password, "utf8")).toBe(72);
+    expect(Buffer.byteLength(tooLong, "utf8")).toBe(73);
+    expect(await service.verifyLocalLoginCredentials("tenant-a", "alice", tooLong)).toBeNull();
+    expect(db.user.findFirst).not.toHaveBeenCalled();
+  });
   it("uses tenant/normalized identity and returns safe version-bound identity only for valid eligible user", async () => {
     const hash = await bcrypt.hash(password, 4);
     db.user.findFirst.mockResolvedValue(makeLocalUser({ passwordHash: hash }));
