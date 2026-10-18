@@ -13,7 +13,6 @@
     "verify:modes": "bash scripts/verify-deploy-modes.sh"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.11.0",
     "aws-cdk": "^2.1100.2",
     "ts-node": "^10.9.2",
@@ -21,7 +20,7 @@
   },
   "dependencies": {
     "aws-cdk-lib": "^2.233.0",
-    "bcryptjs": "^2.4.3",
+    "bcryptjs": "^3.0.3",
     "constructs": "^10.4.5"
   }
 }
