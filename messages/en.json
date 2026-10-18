@@ -823,6 +823,21 @@
     "fetchingContent": "Loading document..."
   },
   "settings": {
+    "avatar": {
+      "title": "Your avatar",
+      "description": "Generate a personal avatar. Preview as many as you like, then save your favorite.",
+      "preview": "Avatar preview",
+      "randomize": "Randomize avatar",
+      "save": "Save avatar",
+      "cancel": "Cancel",
+      "saving": "Saving…",
+      "loading": "Loading avatar…",
+      "saved": "Avatar saved.",
+      "failed": "Couldn't save your avatar. Your preview is kept — please try again.",
+      "unsaved": "Unsaved preview. Your current avatar stays unchanged until you save.",
+      "hint": "Randomizing only changes this preview. Cancel or leave to discard it.",
+      "attribution": "Personas by <author>Draftbit</author> / <source>DiceBear</source> — <license>CC BY 4.0</license>"
+    },
     "title": "Settings",
     "subtitle": "Manage your account and agent configurations",
     "breadcrumb": "Chorus / Settings",

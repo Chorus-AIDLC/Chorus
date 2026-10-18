@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
       uuid: user.uuid,
       email: user.email,
       name: user.name,
+      avatarSeed: user.avatarSeed,
     },
     company: {
       uuid: user.company.uuid,

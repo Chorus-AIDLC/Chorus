@@ -63,7 +63,10 @@ const fixture = vi.hoisted(() => {
     agentSession: model("session"),
     projectGroup: model("group"),
     projectGroupMember: model("projectGroupMember"),
-    agent: { findUnique: vi.fn(async () => ({ name: "Agent" })) },
+    agent: {
+      ...model("agent"),
+      findUnique: vi.fn(async () => ({ name: "Agent" })),
+    },
   };
   const entity = (name: string, uuid: string) => (rows[name] ?? []).find((r) => r.uuid === uuid) ?? null;
   const services = {
@@ -204,6 +207,7 @@ function register(actor: AgentAuthContext) {
 beforeEach(() => {
   vi.clearAllMocks();
   for (const key of Object.keys(fixture.rows)) delete fixture.rows[key];
+  fixture.rows.agent = [{ uuid: "agent", companyUuid: "company", name: "Agent" }];
   fixture.rows.project = [
     { uuid: "public", companyUuid: "company", visibility: "public", name: "Public", groupUuid: "group" },
     { uuid: "private", companyUuid: "company", visibility: "private", name: "Private", groupUuid: "group" },

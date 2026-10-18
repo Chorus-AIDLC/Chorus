@@ -14,6 +14,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createRef } from "react";
 import { createSuggestionPopupRenderer } from "@/components/mention-editor";
+import { getUserAvatarDataUri } from "@/components/ui/user-avatar";
 
 const labels = {
   online: "Online",
@@ -47,6 +48,26 @@ function presenceDot(c: HTMLElement) {
 }
 
 describe("mention dropdown row renderer — agent liveness", () => {
+  it("renders a user's saved Personas seed through the shared local generator", () => {
+    const images: HTMLImageElement[] = [];
+    const original = document.createElement.bind(document);
+    const spy = vi.spyOn(document, "createElement").mockImplementation((tagName: string, options?: ElementCreationOptions) => {
+      const element = original(tagName, options);
+      if (tagName === "img") images.push(element as HTMLImageElement);
+      return element;
+    });
+    try {
+      const avatarSeed = "639d12a3-0ee3-4561-8f8d-80c6f9c3b5bc";
+      const container = render([{ type: "user", uuid: "user-1", name: "Alice", avatarSeed }]);
+      expect(images).toHaveLength(1);
+      images[0].dispatchEvent(new Event("load"));
+      expect(container.querySelector("img")?.getAttribute("src")).toBe(getUserAvatarDataUri(avatarSeed));
+      expect(container.querySelector("img")?.alt).toBe("");
+      expect(presenceDot(container)).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
   it("online + busy agent: avatar-corner presence dot + 'N active' status text, no roles line", () => {
     const c = render([
       {

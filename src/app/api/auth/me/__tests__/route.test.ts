@@ -25,6 +25,14 @@ describe("authenticated current-user projection", () => {
     mocks.user.mockResolvedValue({ uuid: "a", authType: "oidc", workspaceAdmin: true, company: { uuid: "b", localAuthEnabled: false } });
     expect((await (await GET(request())).json()).data.user.workspaceAdmin).toBe(false);
   });
+  it("includes the saved avatar seed without exposing credentials", async () => {
+    mocks.auth.mockResolvedValue({ type: "user", actorUuid: "a", companyUuid: "b" });
+    mocks.user.mockResolvedValue({ uuid: "a", avatarSeed: "639d12a3-0ee3-4561-8f8d-80c6f9c3b5bc", passwordHash: "private", authType: "local", company: { uuid: "b" } });
+    const user = (await (await GET(request())).json()).data.user;
+    expect(user.avatarSeed).toBe("639d12a3-0ee3-4561-8f8d-80c6f9c3b5bc");
+    expect(user).not.toHaveProperty("passwordHash");
+    expect(mocks.user).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ avatarSeed: true }) }));
+  });
   it("rejects a disappeared user", async () => {
     mocks.auth.mockResolvedValue({ type: "user", actorUuid: "a", companyUuid: "b" });
     mocks.user.mockResolvedValue(null);

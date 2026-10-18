@@ -216,15 +216,19 @@ describe("listMembers", () => {
       { uuid: "m1", userUuid: "u-a1", role: "admin", createdAt: new Date("2026-10-01T00:00:00Z") },
       { uuid: "m2", userUuid: "u-gone", role: "bogus", createdAt: new Date("2026-10-01T00:00:00Z") },
     ]);
-    mockPrisma.user.findMany.mockResolvedValue([{ uuid: "u-a1", name: "Ada", email: "ada@x" }]);
+    mockPrisma.user.findMany.mockResolvedValue([{ uuid: "u-a1", name: "Ada", email: "ada@x", avatarSeed: "ada-current-seed" }]);
 
     const members = await listMembers(user("u-a1"), P);
 
     expect(mockAccess.requireProjectAccess).toHaveBeenCalledWith(user("u-a1"), P, "viewer");
     expect(members).toEqual([
-      { uuid: "m1", userUuid: "u-a1", name: "Ada", email: "ada@x", role: "admin", createdAt: "2026-10-01T00:00:00.000Z" },
-      { uuid: "m2", userUuid: "u-gone", name: null, email: null, role: "viewer", createdAt: "2026-10-01T00:00:00.000Z" },
+      { uuid: "m1", userUuid: "u-a1", name: "Ada", email: "ada@x", avatarSeed: "ada-current-seed", role: "admin", createdAt: "2026-10-01T00:00:00.000Z" },
+      { uuid: "m2", userUuid: "u-gone", name: null, email: null, avatarSeed: null, role: "viewer", createdAt: "2026-10-01T00:00:00.000Z" },
     ]);
+    expect(mockPrisma.user.findMany).toHaveBeenCalledExactlyOnceWith({
+      where: { companyUuid: C, uuid: { in: ["u-a1", "u-gone"] } },
+      select: { uuid: true, name: true, email: true, avatarSeed: true },
+    });
   });
 });
 

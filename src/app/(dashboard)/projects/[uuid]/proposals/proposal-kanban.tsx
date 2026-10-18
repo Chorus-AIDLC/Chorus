@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { User } from "lucide-react";
+import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { MarkdownContent } from "@/components/markdown-content";
 import type { DocumentDraft, TaskDraft } from "@/services/proposal.service";
@@ -23,7 +23,7 @@ interface Proposal {
   documentDrafts: DocumentDraft[] | null;
   taskDrafts: TaskDraft[] | null;
   status: string;
-  createdBy: { type: string; uuid: string; name: string } | null;
+  createdBy: { type: string; uuid: string; name: string; avatarSeed?: string | null } | null;
   createdByType: string;
   review: {
     reviewedBy: { type: string; uuid: string; name: string };
@@ -138,7 +138,7 @@ function ProposalCard({
               {proposal.createdByType === "agent" ? (
                 <AgentAvatar name={proposal.createdBy.name} size={16} className="rounded-full" />
               ) : (
-                <User className="h-3 w-3" />
+                <UserAvatar userUuid={proposal.createdBy.uuid} name={proposal.createdBy.name} avatarSeed={proposal.createdBy.avatarSeed} size={16} decorative />
               )}
               {proposal.createdBy.name}
             </span>

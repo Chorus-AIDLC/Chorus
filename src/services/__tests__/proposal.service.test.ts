@@ -79,6 +79,7 @@ vi.mock("@/services/project-access.service", async (importOriginal) => ({
   accessibleProjectUuids: mockAccessibleProjectUuids,
 }));
 vi.mock("@/lib/uuid-resolver", () => ({
+  batchResolveActorIdentities: vi.fn().mockResolvedValue(new Map()),
   formatCreatedBy: mockFormatCreatedBy,
   formatReview: mockFormatReview,
   resolveAssigneeAgentUuid: mockResolveAssigneeAgentUuid,

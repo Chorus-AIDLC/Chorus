@@ -16,12 +16,13 @@ export async function listGroupMembers(auth: AuthContext, groupUuid: string) {
     where: { companyUuid: auth.companyUuid, uuid: { in: [...new Set([
       ...members.map((m) => m.userUuid), ...(automaticAdmin ? [automaticAdmin] : []),
     ])] } },
-    select: { uuid: true, name: true, email: true },
+    select: { uuid: true, name: true, email: true, avatarSeed: true },
   });
   const byUuid = new Map(users.map((u) => [u.uuid, u]));
   const rows = members.map((m) => ({
     uuid: m.uuid, userUuid: m.userUuid, role: m.userUuid === automaticAdmin ? "admin" : m.role,
     name: byUuid.get(m.userUuid)?.name ?? null, email: byUuid.get(m.userUuid)?.email ?? "",
+    avatarSeed: byUuid.get(m.userUuid)?.avatarSeed ?? null,
     addedByUuid: m.addedByUuid, createdAt: m.createdAt.toISOString(), updatedAt: m.updatedAt.toISOString(),
     ...(m.userUuid === automaticAdmin ? {
       implicit: true, automaticAdmin: true, directRole: m.role as ProjectMemberRole | null, effectiveRole: "admin",
@@ -31,6 +32,7 @@ export async function listGroupMembers(auth: AuthContext, groupUuid: string) {
     rows.unshift({
       uuid: `implicit:${groupUuid}:${automaticAdmin}`, userUuid: automaticAdmin, role: "admin",
       name: byUuid.get(automaticAdmin)?.name ?? null, email: byUuid.get(automaticAdmin)?.email ?? "",
+      avatarSeed: byUuid.get(automaticAdmin)?.avatarSeed ?? null,
       addedByUuid: null, createdAt: group.createdAt.toISOString(), updatedAt: group.updatedAt.toISOString(),
       implicit: true, automaticAdmin: true, directRole: null, effectiveRole: "admin",
     });

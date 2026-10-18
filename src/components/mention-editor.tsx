@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { getAgentAvatarDataUri } from "@/components/ui/agent-avatar";
+import { getUserAvatarDataUri } from "@/components/ui/user-avatar";
 
 // Localized strings the (module-level, hook-less) popup renderer needs. Built in
 // the component via useTranslations and threaded through as plain strings.
@@ -97,6 +98,7 @@ export interface Mentionable {
   type: "user" | "agent";
   uuid: string;
   name: string;
+  avatarSeed?: string | null;
   email?: string;
   roles?: string[];
   // Agent liveness (agents only; see mention.service.ts). `online` drives the
@@ -545,11 +547,6 @@ export function createSuggestionPopupRenderer(
       const avatarWrap = document.createElement("div");
       avatarWrap.className = "relative shrink-0";
 
-      // Agents render the shared DiceBear Voxel Bot avatar (same seed = name as the
-      // React <AgentAvatar>). This is raw-DOM, so we mount the generated data URI
-      // on an <img>; on a generation failure we fall back to the Bot glyph. Users
-      // keep the plain User-icon avatar tile, unchanged. Reduced-motion is read
-      // synchronously here (client-only render path) to pick the static form.
       if (item.type === "agent") {
         const prefersReducedMotion =
           typeof window !== "undefined" &&
@@ -586,6 +583,15 @@ export function createSuggestionPopupRenderer(
           "flex h-6 w-6 items-center justify-center rounded-full bg-border text-muted-foreground";
         avatar.innerHTML =
           '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+        avatar.setAttribute("aria-hidden", "true");
+        const uri = getUserAvatarDataUri(item.avatarSeed);
+        if (uri) {
+          const image = document.createElement("img");
+          image.src = uri;
+          image.alt = "";
+          image.className = "h-6 w-6 rounded-full";
+          image.onload = () => avatar.replaceChildren(image);
+        }
         avatarWrap.appendChild(avatar);
       }
 

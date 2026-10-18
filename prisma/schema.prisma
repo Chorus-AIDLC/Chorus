@@ -55,6 +55,7 @@ model User {
   email            String?
   name             String?
   avatarUrl        String?
+  avatarSeed       String                @default(dbgenerated("(gen_random_uuid())::text"))
   authType         String                @default("oidc")
   username         String?
   localEmail       String?

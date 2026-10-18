@@ -18,6 +18,60 @@ export interface AssignmentActorInfo {
   type: AssignmentActorType;
   uuid: string;
   name: string;
+  avatarSeed?: string | null;
+}
+
+export interface ActorIdentity {
+  type: string;
+  uuid: string;
+  name: string;
+  avatarSeed?: string | null;
+}
+
+export type ActorIdentityMap = ReadonlyMap<string, ActorIdentity>;
+
+export async function batchResolveActorIdentities(
+  companyUuid: string,
+  actors: Array<{ type: string; uuid: string }>,
+): Promise<Map<string, ActorIdentity>> {
+  const identities = new Map<string, ActorIdentity>();
+  const uuids = (type: string) => [...new Set(actors.filter(actor => actor.type === type).map(actor => actor.uuid))];
+  const userUuids = uuids("user");
+  const agentUuids = uuids("agent");
+  const instanceUuids = uuids("agent_instance");
+  const [users, agents, instances] = await Promise.all([
+    userUuids.length ? prisma.user.findMany({
+      where: { companyUuid, uuid: { in: userUuids } },
+      select: { uuid: true, name: true, email: true, avatarSeed: true },
+    }) : [],
+    agentUuids.length ? prisma.agent.findMany({
+      where: { companyUuid, uuid: { in: agentUuids } },
+      select: { uuid: true, name: true },
+    }) : [],
+    instanceUuids.length ? prisma.agentInstance.findMany({
+      where: { companyUuid, uuid: { in: instanceUuids } },
+      select: { uuid: true, agent: { select: { name: true } } },
+    }) : [],
+  ]);
+  for (const user of users) {
+    identities.set(`user:${user.uuid}`, { type: "user", uuid: user.uuid, name: user.name || user.email || "Unknown", avatarSeed: user.avatarSeed ?? null });
+  }
+  for (const agent of agents) {
+    identities.set(`agent:${agent.uuid}`, { type: "agent", uuid: agent.uuid, name: agent.name });
+  }
+  for (const instance of instances) {
+    if (instance.agent) identities.set(`agent_instance:${instance.uuid}`, { type: "agent_instance", uuid: instance.uuid, name: instance.agent.name });
+  }
+  return identities;
+}
+
+async function resolveActorIdentity(type: string, uuid: string, companyUuid?: string, identities?: ActorIdentityMap): Promise<ActorIdentity | null> {
+  if (identities) return identities.get(`${type}:${uuid}`) ?? null;
+  if (companyUuid) {
+    return (await batchResolveActorIdentities(companyUuid, [{ type, uuid }])).get(`${type}:${uuid}`) ?? null;
+  }
+  const name = await getActorName(type, uuid);
+  return name ? { type, uuid, name } : null;
 }
 
 // Get Actor name by UUID (for display)
@@ -197,8 +251,15 @@ export async function formatAssignee(
 // If type is not specified, tries user first, then agent
 export async function formatCreatedBy(
   createdByUuid: string,
-  creatorType?: "user" | "agent"
-): Promise<{ type: string; uuid: string; name: string } | null> {
+  creatorType?: "user" | "agent",
+  companyUuid?: string,
+  identities?: ActorIdentityMap,
+): Promise<ActorIdentity | null> {
+  if (companyUuid) {
+    if (creatorType) return resolveActorIdentity(creatorType, createdByUuid, companyUuid, identities);
+    return await resolveActorIdentity("user", createdByUuid, companyUuid, identities)
+      ?? await resolveActorIdentity("agent", createdByUuid, companyUuid, identities);
+  }
   if (creatorType) {
     const name = await getActorName(creatorType, createdByUuid);
     if (!name) return null;
@@ -235,19 +296,34 @@ export async function resolveAssignmentActor(
   companyUuid: string,
   assignedByType: string | null,
   assignedByUuid: string | null,
+  identities?: ActorIdentityMap,
 ): Promise<AssignmentActorInfo | null> {
   if (!assignedByUuid) return null;
+
+  if (identities) {
+    if (assignedByType === "user" || assignedByType == null) {
+      const user = identities.get(`user:${assignedByUuid}`);
+      if (user) return { ...user, type: "user" };
+      if (assignedByType === "user") return null;
+    }
+    if (assignedByType === "agent" || assignedByType == null) {
+      const agent = identities.get(`agent:${assignedByUuid}`);
+      if (agent) return { ...agent, type: "agent" };
+    }
+    return null;
+  }
 
   if (assignedByType === "user" || assignedByType == null) {
     const user = await prisma.user.findFirst({
       where: { uuid: assignedByUuid, companyUuid },
-      select: { name: true, email: true },
+      select: { name: true, email: true, avatarSeed: true },
     });
     if (user) {
       return {
         type: "user",
         uuid: assignedByUuid,
         name: user.name || user.email || "Unknown",
+        avatarSeed: user.avatarSeed ?? null,
       };
     }
     if (assignedByType === "user") return null;
@@ -292,7 +368,7 @@ export async function batchResolveAssignmentActors(
     userUuids.length > 0
       ? prisma.user.findMany({
           where: { companyUuid, uuid: { in: userUuids } },
-          select: { uuid: true, name: true, email: true },
+          select: { uuid: true, name: true, email: true, avatarSeed: true },
         })
       : [],
     agentUuids.length > 0
@@ -314,6 +390,7 @@ export async function batchResolveAssignmentActors(
           type: "user",
           uuid: assignedByUuid,
           name: user.name || user.email || "Unknown",
+          avatarSeed: user.avatarSeed ?? null,
         };
       }
       if (assignedByType === "user") return null;
@@ -349,8 +426,9 @@ export interface AssigneeInfo {
   type: string;
   uuid: string;
   name: string;
+  avatarSeed?: string | null;
   assignedAt: string | null;
-  assignedBy: { type: string; uuid: string; name: string } | null;
+  assignedBy: ActorIdentity | null;
   // Present ONLY when type === "agent_instance" — the pinned (host, cwd) place and
   // owning agent uuid. The UI renders host/cwd and uses agentUuid for ownership.
   instance?: AssigneeInstanceInfo;
@@ -383,26 +461,25 @@ export async function formatAssigneeComplete(
   assignedByUuid: string | null,
   assignedByType: string | null = null,
   companyUuid?: string,
+  identities?: ActorIdentityMap,
 ): Promise<AssigneeInfo | null> {
   if (!assigneeType || !assigneeUuid) return null;
 
-  const [assigneeName, instanceInfo] = await Promise.all([
-    getActorName(assigneeType, assigneeUuid),
+  const [identity, instanceInfo] = await Promise.all([
+    resolveActorIdentity(assigneeType, assigneeUuid, companyUuid, identities),
     resolveAssigneeInstanceInfo(assigneeType, assigneeUuid),
   ]);
-  if (!assigneeName) return null;
+  if (!identity) return null;
 
   const assignedByInfo =
     assignedByUuid && companyUuid
-      ? await resolveAssignmentActor(companyUuid, assignedByType, assignedByUuid)
+      ? await resolveAssignmentActor(companyUuid, assignedByType, assignedByUuid, identities)
       : assignedByUuid
         ? await resolveLegacyAssignmentActorWithoutCompany(assignedByType, assignedByUuid)
         : null;
 
   return {
-    type: assigneeType,
-    uuid: assigneeUuid,
-    name: assigneeName,
+    ...identity,
     assignedAt: assignedAt?.toISOString() ?? null,
     assignedBy: assignedByInfo,
     ...(instanceInfo ? { instance: instanceInfo } : {}),
@@ -441,7 +518,7 @@ async function resolveLegacyAssignmentActorWithoutCompany(
 
 // Format Proposal review info
 export interface ReviewInfo {
-  reviewedBy: { type: string; uuid: string; name: string };
+  reviewedBy: ActorIdentity;
   reviewNote: string | null;
   reviewedAt: string | null;
 }
@@ -449,23 +526,25 @@ export interface ReviewInfo {
 export async function formatReview(
   reviewedByUuid: string | null,
   reviewNote: string | null,
-  reviewedAt: Date | null
+  reviewedAt: Date | null,
+  companyUuid?: string,
+  identities?: ActorIdentityMap,
 ): Promise<ReviewInfo | null> {
   if (!reviewedByUuid) return null;
 
-  const userName = await getActorName("user", reviewedByUuid);
-  if (userName && userName !== "Unknown") {
+  const user = await resolveActorIdentity("user", reviewedByUuid, companyUuid, identities);
+  if (user && user.name !== "Unknown") {
     return {
-      reviewedBy: { type: "user", uuid: reviewedByUuid, name: userName },
+      reviewedBy: user,
       reviewNote,
       reviewedAt: reviewedAt?.toISOString() ?? null,
     };
   }
 
-  const agentName = await getActorName("agent", reviewedByUuid);
-  if (agentName) {
+  const agent = await resolveActorIdentity("agent", reviewedByUuid, companyUuid, identities);
+  if (agent) {
     return {
-      reviewedBy: { type: "agent", uuid: reviewedByUuid, name: agentName },
+      reviewedBy: agent,
       reviewNote,
       reviewedAt: reviewedAt?.toISOString() ?? null,
     };
@@ -546,30 +625,31 @@ export async function batchGetAssigneeInstanceInfo(
 
 // Batch format createdBy - tries users first, then agents for unmatched UUIDs
 export async function batchFormatCreatedBy(
-  createdByUuids: string[]
-): Promise<Map<string, { type: string; uuid: string; name: string }>> {
-  const result = new Map<string, { type: string; uuid: string; name: string }>();
+  createdByUuids: string[],
+  companyUuid?: string,
+): Promise<Map<string, ActorIdentity>> {
+  const result = new Map<string, ActorIdentity>();
   if (createdByUuids.length === 0) return result;
 
   const unique = [...new Set(createdByUuids)];
 
   // Try users first
   const users = await prisma.user.findMany({
-    where: { uuid: { in: unique } },
-    select: { uuid: true, name: true, email: true },
+    where: { uuid: { in: unique }, ...(companyUuid ? { companyUuid } : {}) },
+    select: { uuid: true, name: true, email: true, ...(companyUuid ? { avatarSeed: true } : {}) },
   });
 
   const foundUuids = new Set<string>();
   for (const user of users) {
     foundUuids.add(user.uuid);
-    result.set(user.uuid, { type: "user", uuid: user.uuid, name: user.name || user.email || "Unknown" });
+    result.set(user.uuid, { type: "user", uuid: user.uuid, name: user.name || user.email || "Unknown", ...(companyUuid ? { avatarSeed: user.avatarSeed ?? null } : {}) });
   }
 
   // Then try agents for unmatched
   const remaining = unique.filter(uuid => !foundUuids.has(uuid));
   if (remaining.length > 0) {
     const agents = await prisma.agent.findMany({
-      where: { uuid: { in: remaining } },
+      where: { uuid: { in: remaining }, ...(companyUuid ? { companyUuid } : {}) },
       select: { uuid: true, name: true },
     });
     for (const agent of agents) {

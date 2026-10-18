@@ -51,6 +51,7 @@ function makeUser(overrides: Record<string, unknown> = {}) {
     uuid: userUuid,
     email: "user@test.com",
     name: "Test User",
+    avatarSeed: "639d12a3-0ee3-4561-8f8d-80c6f9c3b5bc",
     oidcSub: "oidc-sub-123",
     authType: "oidc", status: "active", deletedAt: null,
     companyUuid,
@@ -136,6 +137,7 @@ describe("findOrCreateUserByOidc", () => {
 
     expect(result.email).toBe("new@test.com");
     expect(result.name).toBe("New Name");
+    expect(result.avatarSeed).toBe(existingUser.avatarSeed);
     expect(mockPrisma.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 1 },
@@ -240,6 +242,11 @@ describe("findOrCreateDefaultUser", () => {
     const result = await findOrCreateDefaultUser("user@test.com");
 
     expect(result.uuid).toBe(userUuid);
+    expect(result.avatarSeed).toBe(user.avatarSeed);
+    expect(mockPrisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { email: "user@test.com" },
+      select: expect.objectContaining({ avatarSeed: true }),
+    }));
     expect(mockPrisma.company.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { emailDomains: { has: "test.com" } },

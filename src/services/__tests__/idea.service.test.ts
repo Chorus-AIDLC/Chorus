@@ -65,6 +65,7 @@ const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedB
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 vi.mock("@/lib/uuid-resolver", () => ({
+  batchResolveActorIdentities: vi.fn().mockResolvedValue(new Map()),
   formatAssigneeComplete: mockFormatAssigneeComplete,
   formatCreatedBy: mockFormatCreatedBy,
   formatReview: mockFormatReview,

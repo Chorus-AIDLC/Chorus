@@ -10,11 +10,12 @@ const handler = withErrorHandler(async (request: NextRequest) => {
   if (!auth || auth.type !== "user") return errors.unauthorized();
   const user = await prisma.user.findFirst({
     where: { uuid: auth.actorUuid, companyUuid: auth.companyUuid },
-    select: { uuid: true, email: true, name: true, authType: true, workspaceAdmin: true,
+    select: { uuid: true, email: true, name: true, avatarSeed: true, authType: true, workspaceAdmin: true,
       company: { select: { uuid: true, name: true, localAuthEnabled: true } } },
   });
   if (!user) return errors.unauthorized();
   return success({ user: { uuid: user.uuid, email: user.email, name: user.name,
+    avatarSeed: user.avatarSeed,
     authType: user.authType, workspaceAdmin: user.authType === "local" && user.workspaceAdmin }, company: user.company });
 });
 

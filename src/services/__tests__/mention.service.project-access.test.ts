@@ -71,12 +71,12 @@ const MEMBERS = new Set([ACTOR, MEMBER_USER]);
 let visibility: "public" | "private" = "private";
 let groupUuid: string | null = null;
 const groupMembers = new Set<string>();
-let userPool: { uuid: string; name: string; email: string; avatarUrl: null }[] = [];
+let userPool: { uuid: string; name: string; email: string; avatarUrl: null; avatarSeed?: string }[] = [];
 
 function setupPrisma() {
   userPool = [
-    { uuid: MEMBER_USER, name: "Member", email: "m@x.io", avatarUrl: null },
-    { uuid: OUTSIDER_USER, name: "Outsider", email: "o@x.io", avatarUrl: null },
+    { uuid: MEMBER_USER, name: "Member", email: "m@x.io", avatarUrl: null, avatarSeed: "member-seed" },
+    { uuid: OUTSIDER_USER, name: "Outsider", email: "o@x.io", avatarUrl: null, avatarSeed: "outsider-seed" },
   ];
   mockPrisma.project.findFirst.mockImplementation(
     async ({ where }: { where: { companyUuid: string; uuid: string } }) =>
@@ -311,6 +311,8 @@ describe("searchMentionables — entity-scoped private project filter", () => {
   it("with entity context in a private project returns only members + agents owned by members", async () => {
     const results = await search({ entityType: "task", entityUuid: TASK });
     expect(results.map((r) => r.uuid).sort()).toEqual([MEMBER_AGENT, MEMBER_USER].sort());
+    expect(results.find(result => result.type === "user")).toMatchObject({ uuid: MEMBER_USER, avatarSeed: "member-seed" });
+    expect(results.some(result => result.avatarSeed === "outsider-seed")).toBe(false);
     // Candidate queries are scoped to members in the database (before `take`).
     expect(mockPrisma.user.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ companyUuid: COMPANY, uuid: { in: expect.arrayContaining([MEMBER_USER]) } }),

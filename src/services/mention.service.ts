@@ -111,6 +111,7 @@ export interface Mentionable {
   name: string;
   email?: string | null;
   avatarUrl?: string | null;
+  avatarSeed?: string | null;
   roles?: string[];
   // Agent liveness, populated for `type: "agent"` candidates only (users never
   // carry these). `online` is true iff the agent has at least one effectively-
@@ -967,6 +968,7 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
       name: true,
       email: true,
       avatarUrl: true,
+      avatarSeed: true,
     },
     take: effectiveLimit,
   });
@@ -978,6 +980,7 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
       name: user.name ?? user.email ?? "Unknown",
       email: user.email,
       avatarUrl: user.avatarUrl,
+      avatarSeed: user.avatarSeed ?? null,
     });
   }
 

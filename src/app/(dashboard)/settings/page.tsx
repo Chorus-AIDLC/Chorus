@@ -17,6 +17,7 @@ import { Plus, Key, X, Globe, ChevronDown, ChevronRight, Activity, Bell, Pencil,
 import Link from "next/link";
 import { AgentCreateForm } from "@/components/AgentCreateForm";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
+import { UserAvatarSettings } from "@/components/user-avatar-settings";
 import { ResourceLinks } from "@/components/resource-links";
 import { AgentFormFields } from "@/components/AgentFormFields";
 import type { AgentPermissionPickerChange } from "@/components/AgentPermissionPicker";
@@ -273,6 +274,8 @@ export default function SettingsPage() {
         </div>
         <ResourceLinks variant="inline" />
       </div>
+
+      <UserAvatarSettings />
 
       {/* Language Section */}
       <div className="mb-8 space-y-4">

@@ -47,6 +47,7 @@ export interface ProjectMemberResponse {
   userUuid: string;
   name: string | null;
   email: string | null;
+  avatarSeed?: string | null;
   role: ProjectMemberRole;
   createdAt: string;
   source?: "project" | "group" | "both";
@@ -170,7 +171,7 @@ export async function listMembers(auth: AuthContext, projectUuid: string): Promi
     where: { companyUuid: auth.companyUuid, uuid: { in: [...new Set([
       ...members.map((m) => m.userUuid), ...(automaticProjectAdmin ? [automaticProjectAdmin] : []),
     ])] } },
-    select: { uuid: true, name: true, email: true },
+    select: { uuid: true, name: true, email: true, avatarSeed: true },
   });
   const byUuid = new Map(users.map((u) => [u.uuid, u]));
   const directRows: ProjectMemberResponse[] = members.map((m) => ({
@@ -178,6 +179,7 @@ export async function listMembers(auth: AuthContext, projectUuid: string): Promi
     userUuid: m.userUuid,
     name: byUuid.get(m.userUuid)?.name ?? null,
     email: byUuid.get(m.userUuid)?.email ?? null,
+    avatarSeed: byUuid.get(m.userUuid)?.avatarSeed ?? null,
     role: m.userUuid === automaticProjectAdmin ? "admin" : isProjectMemberRole(m.role) ? m.role : "viewer",
     createdAt: m.createdAt.toISOString(),
     ...(m.userUuid === automaticProjectAdmin ? {
@@ -189,6 +191,7 @@ export async function listMembers(auth: AuthContext, projectUuid: string): Promi
     directRows.unshift({
       uuid: `implicit:${projectUuid}:${automaticProjectAdmin}`, userUuid: automaticProjectAdmin,
       name: byUuid.get(automaticProjectAdmin)?.name ?? null, email: byUuid.get(automaticProjectAdmin)?.email ?? null,
+      avatarSeed: byUuid.get(automaticProjectAdmin)?.avatarSeed ?? null,
       role: "admin", createdAt: project.createdAt.toISOString(), source: "project",
       directRole: null, inheritedRole: null, effectiveRole: "admin", implicit: true, automaticAdmin: true,
     });
@@ -215,7 +218,7 @@ export async function listMembers(auth: AuthContext, projectUuid: string): Promi
   }
   const extraUsers = await prisma.user.findMany({
     where: { companyUuid: auth.companyUuid, uuid: { in: inherited.map((m) => m.userUuid) } },
-    select: { uuid: true, name: true, email: true },
+    select: { uuid: true, name: true, email: true, avatarSeed: true },
   });
   for (const user of extraUsers) byUuid.set(user.uuid, user);
   const byMember = new Map(directRows.map((m) => [m.userUuid, m]));
@@ -225,6 +228,7 @@ export async function listMembers(auth: AuthContext, projectUuid: string): Promi
       byMember.set(m.userUuid, {
         uuid: `inherited:${m.uuid}`, userUuid: m.userUuid,
         name: byUuid.get(m.userUuid)?.name ?? null, email: byUuid.get(m.userUuid)?.email ?? null,
+        avatarSeed: byUuid.get(m.userUuid)?.avatarSeed ?? null,
         role: isProjectMemberRole(m.role) ? m.role : "viewer", createdAt: m.createdAt.toISOString(),
       });
     }

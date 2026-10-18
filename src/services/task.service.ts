@@ -4,7 +4,7 @@
 
 import { prisma, TransactionClient } from "@/lib/prisma";
 import { lockResearchProject, EXECUTED_TASK_STATUSES, provesTaskExecution, type ResearchDb } from "@/services/research-eligibility.service";
-import { formatAssigneeComplete, formatCreatedBy, batchGetActorNames, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, batchResolveAssignmentActors, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
+import { formatAssigneeComplete, formatCreatedBy, batchResolveActorIdentities, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, batchResolveAssignmentActors, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
 import { ApiError } from "@/lib/api-handler";
@@ -124,15 +124,16 @@ export interface TaskResponse {
     type: string;
     uuid: string;
     name: string;
+    avatarSeed?: string | null;
     assignedAt: string | null;
-    assignedBy: { type: string; uuid: string; name: string } | null;
+    assignedBy: { type: string; uuid: string; name: string; avatarSeed?: string | null } | null;
     // Present only when type === "agent_instance": the pinned (host, cwd) place +
     // owning agent uuid, so the UI can render the instance and gate ownership.
     instance?: AssigneeInstanceInfo;
   } | null;
   proposalUuid: string | null;
   project?: { uuid: string; name: string };
-  createdBy: { type: string; uuid: string; name: string } | null;
+  createdBy: { type: string; uuid: string; name: string; avatarSeed?: string | null } | null;
   dependsOn: TaskDependencyInfo[];
   dependedBy: TaskDependencyInfo[];
   commentCount: number;
@@ -395,7 +396,7 @@ async function formatTaskResponse(
       task.assignedByType,
       task.companyUuid,
     ),
-    formatCreatedBy(task.createdByUuid),
+    formatCreatedBy(task.createdByUuid, undefined, task.companyUuid),
   ]);
 
   const dependsOn: TaskDependencyInfo[] = (task.dependsOn || []).map((d) => ({
@@ -488,8 +489,8 @@ async function formatTaskResponsesBatch(
 
   // Batch queries instead of N * (3-5) individual queries
   const [actorNames, createdByMap, instanceInfoMap, assignedByActors] = await Promise.all([
-    batchGetActorNames(actors),
-    batchFormatCreatedBy(createdByUuids),
+    batchResolveActorIdentities(tasks[0].companyUuid, actors),
+    batchFormatCreatedBy(createdByUuids, tasks[0].companyUuid),
     batchGetAssigneeInstanceInfo(instanceUuids),
     batchResolveAssignmentActors(
       tasks[0].companyUuid,
@@ -504,17 +505,15 @@ async function formatTaskResponsesBatch(
   return tasks.map((task, taskIndex) => {
     let assignee: TaskResponse["assignee"] = null;
     if (task.assigneeType && task.assigneeUuid) {
-      const assigneeName = actorNames.get(task.assigneeUuid);
-      if (assigneeName) {
+      const identity = actorNames.get(`${task.assigneeType}:${task.assigneeUuid}`);
+      if (identity) {
         const assignedBy = assignedByActors[taskIndex];
         const instanceInfo =
           task.assigneeType === "agent_instance"
             ? instanceInfoMap.get(task.assigneeUuid)
             : undefined;
         assignee = {
-          type: task.assigneeType,
-          uuid: task.assigneeUuid,
-          name: assigneeName,
+          ...identity,
           assignedAt: task.assignedAt?.toISOString() ?? null,
           assignedBy,
           ...(instanceInfo ? { instance: instanceInfo } : {}),
@@ -1006,7 +1005,7 @@ export async function createTasksFromProposal(
     }
   }
 
-  const formattedTasks = await Promise.all(rawTasks.map(formatTaskResponse));
+  const formattedTasks = await formatTaskResponsesBatch(rawTasks, {});
   return { tasks: formattedTasks, draftToTaskUuidMap };
 }
 
@@ -1548,7 +1547,7 @@ export interface BlockerInfo {
   uuid: string;
   title: string;
   status: string;
-  assignee: { type: string; uuid: string; name: string } | null;
+  assignee: { type: string; uuid: string; name: string; avatarSeed?: string | null } | null;
   sessionCheckin: { sessionUuid: string; sessionName: string } | null;
 }
 
@@ -1561,6 +1560,7 @@ export async function checkDependenciesResolved(
     select: {
       dependsOn: {
         select: {
+          companyUuid: true,
           uuid: true,
           title: true,
           status: true,
@@ -1598,7 +1598,7 @@ export async function checkDependenciesResolved(
         session: { select: { name: true } },
       },
     }),
-    batchGetActorNames(
+    batchResolveActorIdentities(unresolvedDeps[0].dependsOn.companyUuid,
       unresolvedDeps
         .filter((d) => d.dependsOn.assigneeType && d.dependsOn.assigneeUuid)
         .map((d) => ({ type: d.dependsOn.assigneeType!, uuid: d.dependsOn.assigneeUuid! }))
@@ -1615,9 +1615,9 @@ export async function checkDependenciesResolved(
     const task = d.dependsOn;
     let assignee: BlockerInfo["assignee"] = null;
     if (task.assigneeType && task.assigneeUuid) {
-      const name = actorNames.get(task.assigneeUuid);
-      if (name) {
-        assignee = { type: task.assigneeType, uuid: task.assigneeUuid, name };
+      const identity = actorNames.get(`${task.assigneeType}:${task.assigneeUuid}`);
+      if (identity) {
+        assignee = identity;
       }
     }
 

@@ -76,6 +76,7 @@ const mockUuidResolver = vi.hoisted(() => ({
   formatAssigneeComplete: vi.fn().mockResolvedValue(null),
   formatCreatedBy: vi.fn().mockResolvedValue({ type: "user", uuid: "u1", name: "Test User" }),
   batchGetActorNames: vi.fn().mockResolvedValue(new Map()),
+  batchResolveActorIdentities: vi.fn().mockResolvedValue(new Map()),
   batchFormatCreatedBy: vi.fn().mockResolvedValue(new Map()),
   // add-agent-instance-addressing: the batch path now also resolves the (host, cwd)
   // place of any agent_instance assignee. Default to an empty map (no instance pins
@@ -1633,7 +1634,7 @@ describe("checkDependenciesResolved", () => {
       { dependsOn: { uuid: "d1", title: "Blocker Task", status: "in_progress", assigneeType: "agent", assigneeUuid: "a1" } },
     ]);
     mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([]);
-    mockUuidResolver.batchGetActorNames.mockResolvedValue(new Map([["a1", "Agent 1"]]));
+    mockUuidResolver.batchResolveActorIdentities.mockResolvedValue(new Map([["agent:a1", { type: "agent", uuid: "a1", name: "Agent 1" }]]));
 
     const result = await (await import("@/services/task.service")).checkDependenciesResolved(
       TASK_UUID,

@@ -823,6 +823,21 @@
     "fetchingContent": "加载文档中..."
   },
   "settings": {
+    "avatar": {
+      "title": "我的头像",
+      "description": "生成专属头像，可多次随机预览，再保存喜欢的样式。",
+      "preview": "头像预览",
+      "randomize": "随机生成头像",
+      "save": "保存头像",
+      "cancel": "取消",
+      "saving": "保存中…",
+      "loading": "正在加载头像…",
+      "saved": "头像已保存。",
+      "failed": "头像保存失败，预览已保留，请重试。",
+      "unsaved": "预览尚未保存，其他位置仍显示当前头像。",
+      "hint": "随机生成仅改变此处预览，取消或离开页面会丢弃未保存的预览。",
+      "attribution": "Personas 作者：<author>Draftbit</author> / 来源：<source>DiceBear</source> — <license>CC BY 4.0</license>"
+    },
     "title": "设置",
     "subtitle": "管理您的账户和智能体配置",
     "breadcrumb": "Chorus / 设置",

@@ -823,6 +823,21 @@
     "fetchingContent": "文書を読み込み中..."
   },
   "settings": {
+    "avatar": {
+      "title": "自分のアバター",
+      "description": "アバターを何度でもランダムにプレビューして、お気に入りを保存できます。",
+      "preview": "アバターのプレビュー",
+      "randomize": "ランダムに生成",
+      "save": "アバターを保存",
+      "cancel": "キャンセル",
+      "saving": "保存中…",
+      "loading": "アバターを読み込み中…",
+      "saved": "アバターを保存しました。",
+      "failed": "保存できませんでした。プレビューは保持されています。もう一度お試しください。",
+      "unsaved": "未保存のプレビューです。保存するまで現在のアバターは変わりません。",
+      "hint": "生成はプレビューのみ変更します。キャンセルするかページを離れると破棄されます。",
+      "attribution": "Personas 作成：<author>Draftbit</author> / 提供：<source>DiceBear</source> — <license>CC BY 4.0</license>"
+    },
     "title": "設定",
     "subtitle": "アカウントとエージェントの設定を管理します",
     "breadcrumb": "Chorus / 設定",

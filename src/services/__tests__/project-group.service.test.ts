@@ -70,6 +70,7 @@ describe("group discovery and filtered aggregates", () => {
   });
   it("filters dashboard tasks, ideas, proposals and activities to the readable project", async () => {
     group(); project(); project("hidden"); localMember("p", "local", "viewer");
+    fixture.state.user.find(user => user.uuid === "admin")!.avatarSeed = "admin-current-seed";
     for (const p of ["p", "hidden"]) {
       fixture.state.task.push({ uuid: `task-${p}`, companyUuid: "c", projectUuid: p, status: p === "p" ? "done" : "open" });
       fixture.state.idea.push({ uuid: `idea-${p}`, companyUuid: "c", projectUuid: p, status: "open" });
@@ -79,6 +80,11 @@ describe("group discovery and filtered aggregates", () => {
     const dashboard = await getGroupDashboard("c", "g", auth("local"));
     expect(dashboard?.stats).toEqual({ projectCount: 1, totalTasks: 1, completedTasks: 1, completionRate: 100, openIdeas: 1, activeProposals: 1 });
     expect(dashboard?.recentActivity.map((a) => a.projectUuid)).toEqual(["p"]);
+    expect(dashboard?.recentActivity[0].actorAvatarSeed).toBe("admin-current-seed");
+    expect(fixture.prisma.user.findMany).toHaveBeenCalledWith({
+      where: { companyUuid: "c", uuid: { in: ["admin"] } },
+      select: { uuid: true, name: true, email: true, avatarSeed: true },
+    });
     expect(dashboard?.projects[0]).toMatchObject({ uuid: "p", visibility: "private", taskCount: 1, completionRate: 100 });
   });
   it("empty dashboard and ungrouped counts expose only public or granted projects", async () => {

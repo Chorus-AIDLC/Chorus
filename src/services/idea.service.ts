@@ -3,7 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
-import { formatAssigneeComplete, formatCreatedBy, buildAssigneeMatch, type AssigneeCondition, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
+import { formatAssigneeComplete, formatCreatedBy, buildAssigneeMatch, batchResolveActorIdentities, type ActorIdentityMap, type AssigneeCondition, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import type { AuthContext } from "@/types/auth";
 import { eventBus } from "@/lib/event-bus";
 import { AlreadyClaimedError, NotClaimedError, isPrismaNotFound } from "@/lib/errors";
@@ -110,8 +110,9 @@ export interface IdeaResponse {
     type: string;
     uuid: string;
     name: string;
+    avatarSeed?: string | null;
     assignedAt: string | null;
-    assignedBy: { type: string; uuid: string; name: string } | null;
+    assignedBy: { type: string; uuid: string; name: string; avatarSeed?: string | null } | null;
     // Present only when type === "agent_instance": the pinned (host, cwd) place +
     // owning agent uuid, so the UI can render the instance and gate ownership.
     instance?: AssigneeInstanceInfo;
@@ -119,7 +120,7 @@ export interface IdeaResponse {
   project?: { uuid: string; name: string };
   elaborationStatus?: string;
   elaborationDepth?: string;
-  createdBy: { type: string; uuid: string; name: string } | null;
+  createdBy: { type: string; uuid: string; name: string; avatarSeed?: string | null } | null;
   createdAt: string;
   updatedAt: string;
   // Number of completion-report Documents (type="report") under this idea's
@@ -296,7 +297,8 @@ async function formatIdeaResponse(
     createdAt: Date;
     updatedAt: Date;
     project?: { uuid: string; name: string };
-  }
+  },
+  identities?: ActorIdentityMap,
 ): Promise<IdeaResponse> {
   const [assignee, createdBy] = await Promise.all([
     formatAssigneeComplete(
@@ -306,8 +308,9 @@ async function formatIdeaResponse(
       idea.assignedByUuid,
       idea.assignedByType,
       idea.companyUuid,
+      identities,
     ),
-    formatCreatedBy(idea.createdByUuid),
+    formatCreatedBy(idea.createdByUuid, undefined, idea.companyUuid, identities),
   ]);
 
   return {
@@ -395,7 +398,22 @@ export async function listIdeas({
     prisma.idea.count({ where }),
   ]);
 
-  const ideas = await Promise.all(rawIdeas.map(formatIdeaResponse));
+  const actors = rawIdeas.flatMap(idea => {
+    const identities = [
+      { type: "user", uuid: idea.createdByUuid },
+      { type: "agent", uuid: idea.createdByUuid },
+    ];
+    if (idea.assigneeType && idea.assigneeUuid) {
+      identities.push({ type: idea.assigneeType, uuid: idea.assigneeUuid });
+      if (idea.assignedByUuid) {
+        const types = idea.assignedByType == null ? ["user", "agent"] : [idea.assignedByType];
+        identities.push(...types.map(type => ({ type, uuid: idea.assignedByUuid! })));
+      }
+    }
+    return identities;
+  });
+  const identities = await batchResolveActorIdentities(companyUuid, actors);
+  const ideas = await Promise.all(rawIdeas.map(idea => formatIdeaResponse(idea, identities)));
   // Carry the stored lineage edge onto every row so the client can build the
   // forest. (formatIdeaResponse omits it; set it from the raw row by index.)
   rawIdeas.forEach((raw, i) => {
