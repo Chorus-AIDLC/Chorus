@@ -19,6 +19,30 @@ export interface OidcUserInput {
   companyUuid: string;
 }
 
+const oidcUserSelect = {
+  id: true,
+  uuid: true,
+  email: true,
+  name: true,
+  avatarSeed: true,
+  oidcSub: true,
+  companyUuid: true,
+  authType: true,
+  status: true,
+  deletedAt: true,
+  company: { select: { uuid: true, name: true } },
+} as const;
+
+async function syncOidcName(userId: number, companyUuid: string, name: string | undefined) {
+  if (name !== undefined) {
+    await prisma.user.updateMany({
+      where: { id: userId, companyUuid, nameCustomized: false },
+      data: { name },
+    });
+  }
+  return prisma.user.findUniqueOrThrow({ where: { id: userId }, select: oidcUserSelect });
+}
+
 // Find or create user by OIDC subject
 export async function findOrCreateUserByOidc(input: OidcUserInput) {
   const { oidcSub, email, name, companyUuid } = input;
@@ -26,7 +50,7 @@ export async function findOrCreateUserByOidc(input: OidcUserInput) {
   if (!companyState || companyState.localAuthEnabled) throw new ApiError("UNAUTHORIZED", "Invalid credentials", 401);
 
   // First try to find existing user by OIDC subject in this company
-  let user = await prisma.user.findFirst({
+  const user = await prisma.user.findFirst({
     where: {
       oidcSub,
       companyUuid,
@@ -54,10 +78,10 @@ export async function findOrCreateUserByOidc(input: OidcUserInput) {
   if (user) {
     rejectManagedAccount(user);
     // Update user info if changed
-    if (user.email !== email || user.name !== name) {
-      user = await prisma.user.update({
+    if (user.email !== email) {
+      await prisma.user.update({
         where: { id: user.id },
-        data: { email, name },
+        data: { email },
         select: {
           id: true,
           uuid: true,
@@ -78,7 +102,7 @@ export async function findOrCreateUserByOidc(input: OidcUserInput) {
         },
       });
     }
-    return user;
+    return syncOidcName(user.id, companyUuid, name);
   }
 
   // Check if user exists by email (might have been pre-created)
@@ -92,9 +116,9 @@ export async function findOrCreateUserByOidc(input: OidcUserInput) {
   if (existingByEmail) {
     rejectManagedAccount(existingByEmail);
     // Link OIDC subject to existing user
-    return prisma.user.update({
+    await prisma.user.update({
       where: { id: existingByEmail.id },
-      data: { oidcSub, name },
+      data: { oidcSub },
       select: {
         id: true,
         uuid: true,
@@ -111,6 +135,7 @@ export async function findOrCreateUserByOidc(input: OidcUserInput) {
         },
       },
     });
+    return syncOidcName(existingByEmail.id, companyUuid, name);
   }
 
   // Create new user

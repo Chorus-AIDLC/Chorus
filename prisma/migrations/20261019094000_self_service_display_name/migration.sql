@@ -1,0 +1,1 @@
+ALTER TABLE "User" ADD COLUMN "nameCustomized" BOOLEAN NOT NULL DEFAULT false;

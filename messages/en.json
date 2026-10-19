@@ -823,6 +823,21 @@
     "fetchingContent": "Loading document..."
   },
   "settings": {
+    "displayName": {
+      "title": "Display name",
+      "description": "Choose how your name appears in Chorus. This does not change your sign-in details.",
+      "label": "Display name",
+      "hint": "Leading and trailing spaces are removed. Emoji made of multiple Unicode code points count as more than one.",
+      "count": "{count} / {max} code points",
+      "invalid": "Enter 1–{max} Unicode code points with no invalid characters. Your name cannot be blank.",
+      "save": "Save display name",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "loading": "Loading your display name…",
+      "saved": "Display name saved.",
+      "failed": "Could not save your display name. Your input is preserved; please try again.",
+      "unsaved": "You have unsaved changes."
+    },
     "avatar": {
       "title": "Your avatar",
       "description": "Generate a personal avatar. Preview as many as you like, then save your favorite.",

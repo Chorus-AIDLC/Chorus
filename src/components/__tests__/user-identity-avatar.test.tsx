@@ -22,9 +22,10 @@ function Controls() {
   const auth = useAuth();
   return <>
     <button onClick={() => auth.applySavedAvatar("self", "saved")}>Save self</button>
+    <button onClick={() => auth.applySavedName("self", "Renamed")}>Rename self</button>
     <button onClick={() => auth.applySavedAvatar("other", "tamper")}>Other result</button>
     <button onClick={() => auth.refreshSession()}>Refresh</button>
-    <UserIdentityAvatar userUuid="self" avatarSeed="old-snapshot" />
+    <UserIdentityAvatar userUuid="self" name="Old name snapshot" avatarSeed="old-snapshot" />
     <UserIdentityAvatar userUuid="self" avatarSeed="older-snapshot" />
     <UserIdentityAvatar userUuid="other" avatarSeed="other-seed" />
     <UserAvatar avatarSeed="unsaved-draft" />
@@ -40,6 +41,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("saved avatar state", () => {
+  it("uses the current name instead of stale avatar labels after renaming", async () => {
+    render(<AuthProvider><Controls /></AuthProvider>);
+    await waitFor(() => expect(screen.getAllByTestId("self").every(element => element.textContent === "Alice")).toBe(true));
+    fireEvent.click(screen.getByText("Rename self"));
+    expect(screen.getAllByTestId("self").every(element => element.textContent === "Renamed")).toBe(true);
+    expect(screen.getByTestId("other").textContent).toBe("");
+  });
+
   it("updates all mounted self avatars, not other identities or a draft preview", async () => {
     render(<AuthProvider><Controls /></AuthProvider>);
     await waitFor(() => expect(screen.getAllByTestId("self").every(element => element.dataset.seed === "initial")).toBe(true));

@@ -54,6 +54,7 @@ model User {
   oidcSub          String // OIDC subject
   email            String?
   name             String?
+  nameCustomized   Boolean               @default(false)
   avatarUrl        String?
   avatarSeed       String                @default(dbgenerated("(gen_random_uuid())::text"))
   authType         String                @default("oidc")

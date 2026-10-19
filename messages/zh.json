@@ -823,6 +823,21 @@
     "fetchingContent": "加载文档中..."
   },
   "settings": {
+    "displayName": {
+      "title": "显示名",
+      "description": "设置你在 Chorus 中显示的名称，不会更改登录信息。",
+      "label": "显示名",
+      "hint": "保存时去除首尾空白。由多个 Unicode 码点组成的 emoji 会计为多个。",
+      "count": "{count} / {max} 个码点",
+      "invalid": "请输入 1–{max} 个 Unicode 码点，不能包含无效字符，也不能为空。",
+      "save": "保存显示名",
+      "saving": "保存中…",
+      "cancel": "取消",
+      "loading": "正在加载显示名…",
+      "saved": "显示名已保存。",
+      "failed": "无法保存显示名，已保留输入，请重试。",
+      "unsaved": "你有尚未保存的修改。"
+    },
     "avatar": {
       "title": "我的头像",
       "description": "生成专属头像，可多次随机预览，再保存喜欢的样式。",
