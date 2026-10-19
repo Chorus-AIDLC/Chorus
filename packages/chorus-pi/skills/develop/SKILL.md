@@ -179,15 +179,20 @@ chorus_report_work({
 })
 ```
 
-Report with status update when complete:
+Report completion without changing the status:
 ```
 chorus_report_work({
   taskUuid: "<task-uuid>",
   report: "All implementation complete:\n- Files: ...\n- PR: https://github.com/org/repo/pull/42\n- All tests passing",
-  status: "to_verify",
   sessionUuid: "<session-uuid>"
 })
 ```
+
+> Do **not** pass `status: "to_verify"` here. `chorus_submit_for_verify` (Step 8) is the
+> `in_progress -> to_verify` transition; reporting `to_verify` first makes that submit fail
+> with `Can only submit for verification from in_progress status`. If a task already sits in
+> `to_verify` without having been submitted, move it back with
+> `chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress" })` before submitting.
 
 ### Step 7: Self-Check Acceptance Criteria
 
