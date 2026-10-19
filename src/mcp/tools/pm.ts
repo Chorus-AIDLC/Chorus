@@ -8,6 +8,7 @@ import type { AgentAuthContext } from "@/types/auth";
 import { projectExists } from "@/services/project.service";
 import * as ideaService from "@/services/idea.service";
 import * as proposalService from "@/services/proposal.service";
+import { TASK_DRAFT_KINDS, type TaskDraftKind } from "@/types/task-draft";
 import * as documentService from "@/services/document.service";
 import * as taskService from "@/services/task.service";
 import * as referenceArtifactService from "@/services/reference-artifact.service";
@@ -577,14 +578,15 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
         })).optional().describe("Structured acceptance criteria items (materialized on approval) — REQUIRED: at least one item with a non-blank description, or the call is rejected"),
         dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent taskDraft UUID list"),
+        kind: z.enum(TASK_DRAFT_KINDS).optional().describe("What this task is for: implementation | verification | docs | other. Drives the implementation-coverage check in validate."),
       }),
     },
-    async ({ proposalUuid, title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids }) => {
+    async ({ proposalUuid, title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids, kind }) => {
       try {
         const proposal = await proposalService.addTaskDraft(
           proposalUuid,
           auth.companyUuid,
-          { title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids }
+          { title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids, kind }
         );
         const taskDrafts = proposal.taskDrafts as Array<{ uuid: string; title: string }> | null;
         const newDraft = taskDrafts?.[taskDrafts.length - 1];
@@ -661,17 +663,19 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           required: z.boolean().optional().describe("Whether this criterion is required (default: true)"),
         })).optional().describe("Structured acceptance criteria items. If provided, replaces existing items and must be non-empty (at least one non-blank description); if omitted, existing items are preserved. Cannot be used to clear acceptance criteria."),
         dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent taskDraft UUID list"),
+        kind: z.enum(TASK_DRAFT_KINDS).optional().describe("What this task is for: implementation | verification | docs | other."),
       }),
     },
-    async ({ proposalUuid, draftUuid, title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids }) => {
+    async ({ proposalUuid, draftUuid, title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids, kind }) => {
       try {
-        const updates: { title?: string; description?: string; storyPoints?: number; priority?: string; acceptanceCriteriaItems?: Array<{ description: string; required?: boolean }>; dependsOnDraftUuids?: string[] } = {};
+        const updates: { title?: string; description?: string; storyPoints?: number; priority?: string; acceptanceCriteriaItems?: Array<{ description: string; required?: boolean }>; dependsOnDraftUuids?: string[]; kind?: TaskDraftKind } = {};
         if (title !== undefined) updates.title = title;
         if (description !== undefined) updates.description = description;
         if (storyPoints !== undefined) updates.storyPoints = storyPoints;
         if (priority !== undefined) updates.priority = priority;
         if (acceptanceCriteriaItems !== undefined) updates.acceptanceCriteriaItems = acceptanceCriteriaItems;
         if (dependsOnDraftUuids !== undefined) updates.dependsOnDraftUuids = dependsOnDraftUuids;
+        if (kind !== undefined) updates.kind = kind;
 
         const proposal = await proposalService.updateTaskDraft(
           proposalUuid,

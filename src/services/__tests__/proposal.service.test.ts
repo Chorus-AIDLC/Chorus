@@ -104,6 +104,7 @@ import {
   updateProposalContent,
   submitProposal,
   validateProposal,
+  findDependencyCycles,
   approveProposal,
   rejectProposal,
   closeProposal,
@@ -1143,6 +1144,98 @@ describe("validateProposal", () => {
 // ====================================================================
 // submitProposal
 // ====================================================================
+
+describe("validateProposal — dependency integrity and kind coverage", () => {
+  const twoDrafts = (overrides: Record<string, unknown>[] = []) => [
+    validTaskDraft({ uuid: "draft-a", title: "Implement parser" }),
+    validTaskDraft({ uuid: "draft-b", title: "Verify parser" }),
+  ].map((draft, index) => ({ ...draft, ...(overrides[index] ?? {}) }));
+
+  const run = async (taskDrafts: unknown[]) => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft({ type: "tech_design" })],
+      taskDrafts,
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    return validateProposal(COMPANY_UUID, proposal.uuid);
+  };
+
+  it("E-DEP-UNKNOWN: flags a dependency on a draft that is not in the proposal", async () => {
+    const result = await run(twoDrafts([{ dependsOnDraftUuids: ["draft-missing"] }]));
+    const issue = result.issues.find((i) => i.id === "E-DEP-UNKNOWN");
+    expect(issue).toBeDefined();
+    expect(issue!.level).toBe("error");
+    expect(issue!.message).toContain("draft-missing");
+    expect(result.valid).toBe(false);
+  });
+
+  it("E-DEP-SELF: flags a self-dependency", async () => {
+    const result = await run(twoDrafts([{ dependsOnDraftUuids: ["draft-a"] }]));
+    expect(result.issues.find((i) => i.id === "E-DEP-SELF")?.level).toBe("error");
+    expect(result.valid).toBe(false);
+  });
+
+  it("E-DEP-CYCLE: flags a cycle with the draft titles in order", async () => {
+    const result = await run(
+      twoDrafts([{ dependsOnDraftUuids: ["draft-b"] }, { dependsOnDraftUuids: ["draft-a"] }]),
+    );
+    const issue = result.issues.find((i) => i.id === "E-DEP-CYCLE");
+    expect(issue).toBeDefined();
+    expect(issue!.level).toBe("error");
+    expect(issue!.message).toContain("Implement parser");
+    expect(issue!.message).toContain("Verify parser");
+    expect(result.valid).toBe(false);
+  });
+
+  it("resolves a valid dependency graph without E-DEP issues", async () => {
+    const result = await run(twoDrafts([{}, { dependsOnDraftUuids: ["draft-a"] }]));
+    expect(result.issues.filter((i) => i.id.startsWith("E-DEP"))).toEqual([]);
+    expect(result.valid).toBe(true);
+  });
+
+  it("I-KIND: says the coverage check could not run when no draft declares a kind", async () => {
+    const result = await run(twoDrafts());
+    expect(result.issues.find((i) => i.id === "I-KIND")?.level).toBe("info");
+    expect(result.issues.find((i) => i.id === "W-IMPL")).toBeUndefined();
+    expect(result.valid).toBe(true); // advisory only, never blocks
+  });
+
+  it("W-IMPL: warns when kinds are declared but none is an implementation task", async () => {
+    const result = await run(twoDrafts([{ kind: "verification" }, { kind: "docs" }]));
+    const issue = result.issues.find((i) => i.id === "W-IMPL");
+    expect(issue).toBeDefined();
+    expect(issue!.level).toBe("warning");
+    expect(result.issues.find((i) => i.id === "I-KIND")).toBeUndefined();
+    expect(result.valid).toBe(true);
+  });
+
+  it("stays quiet when an implementation task is declared", async () => {
+    const result = await run(twoDrafts([{ kind: "implementation" }, { kind: "verification" }]));
+    expect(result.issues.find((i) => i.id === "W-IMPL")).toBeUndefined();
+    expect(result.issues.find((i) => i.id === "I-KIND")).toBeUndefined();
+  });
+});
+
+describe("findDependencyCycles", () => {
+  it("returns an empty list for a DAG and de-duplicates repeated cycles", () => {
+    expect(findDependencyCycles([])).toEqual([]);
+    const dag = [
+      { uuid: "a", title: "A" },
+      { uuid: "b", title: "B", dependsOnDraftUuids: ["a"] },
+    ] as Parameters<typeof findDependencyCycles>[0];
+    expect(findDependencyCycles(dag)).toEqual([]);
+  });
+
+  it("reports a self loop once", () => {
+    const cycles = findDependencyCycles([
+      { uuid: "a", title: "A", dependsOnDraftUuids: ["a"] },
+    ] as Parameters<typeof findDependencyCycles>[0]);
+    expect(cycles).toHaveLength(1);
+    expect(cycles[0]).toBe("A -> A");
+  });
+});
 
 describe("submitProposal", () => {
   it("should throw if proposal not found", async () => {

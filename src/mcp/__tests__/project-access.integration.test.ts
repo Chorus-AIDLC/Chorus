@@ -699,10 +699,15 @@ describe("MCP central project access", () => {
         expect(text).toContain("CONFIDENTIAL ACQUISITION");
         expect(text).toContain("status: pending");
         if (name === "chorus_pm_validate_proposal") {
-          expect(JSON.parse(text)).toMatchObject({
-            valid: false,
-            issues: [expect.objectContaining({ id: "E5", field: "CONFIDENTIAL ACQUISITION" })],
-          });
+          // Advisory issues (e.g. I-KIND) may accompany the error; assert the
+          // blocking issue is present rather than pinning the whole array.
+          const payload = JSON.parse(text) as { valid: boolean; issues: Array<{ id: string }> };
+          expect(payload.valid).toBe(false);
+          expect(payload.issues).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ id: "E5", field: "CONFIDENTIAL ACQUISITION" }),
+            ]),
+          );
         } else {
           expect(response.isError).toBe(true);
           expect(text).toContain("Proposal validation failed");
