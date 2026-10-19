@@ -1,45 +1,54 @@
 /**
- * submit-gate — optional pre-submit read-back checks (off by default).
+ * submit-gate — optional pre-submit call-order gate (off by default).
  *
- * Two failures are guaranteed by the current API contract, and both are hard to
- * diagnose from the error alone:
+ * Scope, stated honestly after review: this is a **call-order reminder**, not a
+ * validator. `submitProposal` already runs `validateProposal` and rejects
+ * `valid=false`; what it cannot see is whether the agent read the object it is
+ * about to submit. The gate only notices "you never looked, or your look predates
+ * your last change", and — when the tool result is parseable — "the read itself
+ * says the object is not in a submittable state".
  *
- *  1. `chorus_submit_for_verify` requires `in_progress`
- *     (src/mcp/tools/developer.ts: `if (task.status !== "in_progress")`), while
- *     `chorus_report_work` accepts `status: "to_verify"`. Reporting `to_verify`
- *     first therefore makes the submit fail with
- *     `Can only submit for verification from in_progress status`.
- *  2. `chorus_pm_validate_proposal` is documented as "call this before
- *     chorus_pm_submit_proposal", but `submitProposal` does not enforce it, so a
- *     proposal with a dangling dependency or a missing implementation task can be
- *     submitted as-is.
+ * Contract notes that shaped the rules (verified against this repo):
+ *  - `chorus_submit_for_verify` requires `in_progress`
+ *    (`src/mcp/tools/developer.ts`), while `chorus_report_work` accepts
+ *    `status: "to_verify"`. Reporting `to_verify` and then submitting is the
+ *    original failure this gate exists for, so a *status-changing* report counts
+ *    as a mutation; a progress-only report does not.
+ *  - Moving a task from `to_verify` back to `in_progress` resets acceptance marks
+ *    and evidence on both the developer and admin sides
+ *    (`src/services/task.service.ts`), so recovery means redoing the Step 7
+ *    self-check — the messages say that instead of "just resubmit".
+ *  - `chorus_get_my_tasks` / `chorus_claim` / `chorus_reopen_task` do not exist in
+ *    the tool catalog; only `chorus_get_task` proves anything about one task, and
+ *    list reads credit nothing (a list from another project/page would otherwise
+ *    unlock an unrelated task).
  *
- * This module only holds state + decisions; the extension decides whether to
- * block (`CHORUS_SUBMIT_GATE=block`) or just notify (`warn`). Default is `off`, so
- * enabling it is an explicit choice and no host changes behaviour silently.
- *
- * Nothing here reads or writes Chorus; it is a pure state machine so it can be
- * unit-tested without a session.
+ * Receipts are bound to the *request start* of the read, keyed by toolCallId, so
+ * a read that started before a mutation cannot certify the state after it — even
+ * if its result arrives later. Submitting consumes the receipt, so a second
+ * submit needs a fresh read.
  */
 
 export type GateMode = "off" | "warn" | "block";
 
 export const SUBMIT_GATE_ENV = "CHORUS_SUBMIT_GATE";
 
-/** Task tools. */
-const TASK_SUBMIT = "chorus_submit_for_verify";
-const TASK_READ = new Set(["chorus_get_task", "chorus_get_my_tasks", "chorus_list_tasks"]);
+/** Only an exact per-task read can certify one task. */
+const TASK_READ = new Set(["chorus_get_task"]);
+/** Transitions that move a task between statuses. */
 const TASK_MUTATE = new Set([
   "chorus_claim_task",
-  "chorus_claim",
   "chorus_update_task",
   "chorus_release_task",
-  "chorus_reopen_task",
+  "chorus_admin_reopen_task",
+  "chorus_admin_verify_task",
+  "chorus_admin_close_task",
 ]);
+const REPORT_WORK = "chorus_report_work";
+const TASK_SUBMIT = "chorus_submit_for_verify";
 
-/** Proposal tools. */
-const PROPOSAL_SUBMIT = "chorus_pm_submit_proposal";
 const PROPOSAL_VALIDATE = "chorus_pm_validate_proposal";
+const PROPOSAL_SUBMIT = "chorus_pm_submit_proposal";
 const PROPOSAL_DRAFT_MUTATE = new Set([
   "chorus_pm_add_document_draft",
   "chorus_pm_update_document_draft",
@@ -49,32 +58,48 @@ const PROPOSAL_DRAFT_MUTATE = new Set([
   "chorus_pm_remove_task_draft",
 ]);
 
+export interface TaskReceipt {
+  /** request-start sequence of the read that produced it */
+  seq: number;
+  /** status reported by that read, when the payload was parseable */
+  status?: string;
+}
+
+export interface ProposalReceipt {
+  seq: number;
+  /** `valid` reported by the validate call, when parseable */
+  valid?: boolean;
+  issues?: string[];
+}
+
+export interface PendingRead {
+  kind: "task" | "proposal";
+  uuid?: string;
+  startSeq: number;
+}
+
 export interface SubmitGateState {
   seq: number;
-  /** task uuid -> last state-changing call */
+  pendingReads: Map<string, PendingRead>;
+  taskReceipts: Map<string, TaskReceipt>;
+  proposalReceipts: Map<string, ProposalReceipt>;
+  /** last status-changing call per task */
   taskMutation: Map<string, { at: number; tool: string; status?: string }>;
-  /** task uuid -> seq of the last successful status read */
-  taskRead: Map<string, number>;
-  /** seq of the last successful task-list read (no uuid in the call) */
-  taskListRead: number;
-  /** proposal uuid -> last draft change */
-  draftMutation: Map<string, number>;
-  draftMutationAny: number;
-  /** proposal uuid -> last successful validate */
-  validateRead: Map<string, number>;
-  validateReadAny: number;
+  /** last draft change per proposal (only when the proposal uuid is known) */
+  proposalDraftMutation: Map<string, number>;
+  /** last draft change whose proposal could not be identified (conservative fallback) */
+  anyDraftMutation: number;
 }
 
 export function newSubmitGateState(): SubmitGateState {
   return {
     seq: 0,
+    pendingReads: new Map(),
+    taskReceipts: new Map(),
+    proposalReceipts: new Map(),
     taskMutation: new Map(),
-    taskRead: new Map(),
-    taskListRead: 0,
-    draftMutation: new Map(),
-    draftMutationAny: 0,
-    validateRead: new Map(),
-    validateReadAny: 0,
+    proposalDraftMutation: new Map(),
+    anyDraftMutation: 0,
   };
 }
 
@@ -84,70 +109,141 @@ export function resolveGateMode(env: Record<string, string | undefined> = proces
   return raw === "warn" || raw === "block" ? raw : "off";
 }
 
-function uuidOf(args: unknown, key: string): string | undefined {
-  if (!args || typeof args !== "object") return undefined;
-  const value = (args as Record<string, unknown>)[key];
-  return typeof value === "string" && value.length > 0 ? value.toLowerCase() : undefined;
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+function uuidOf(args: unknown, key: "taskUuid" | "proposalUuid"): string | undefined {
+  const value = asObject(args)?.[key];
+  if (typeof value !== "string") return undefined;
+  const m = value.match(UUID_RE);
+  return m ? m[0].toLowerCase() : undefined;
 }
 
 function statusOf(args: unknown): string | undefined {
-  if (!args || typeof args !== "object") return undefined;
-  const value = (args as Record<string, unknown>).status;
+  const value = asObject(args)?.status;
   return typeof value === "string" ? value.toLowerCase() : undefined;
+}
+
+/** Tolerant JSON extraction from a tool result's text blocks. */
+export function parseJsonPayload(text: string): Record<string, unknown> | undefined {
+  if (!text) return undefined;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return undefined;
+  try {
+    return asObject(JSON.parse(text.slice(start, end + 1)));
+  } catch {
+    return undefined;
+  }
 }
 
 export interface GateVerdict {
   reason: string;
 }
 
+const RECOVERY_NOTE =
+  "恢复时注意：把任务从 to_verify 改回 in_progress 会清空开发侧与管理侧的验收标记和证据" +
+  "（task.service.updateTask），所以要重做 Step 7 自检并恢复证据，再走提交。";
+
 /**
- * Decide at call time. Mutating calls are recorded here (before execution), so a
- * failed mutation still invalidates an older read — conservative on purpose.
+ * Decide at call time. Reads are only registered (their receipt is stamped when
+ * the result arrives, using the request-start sequence). Mutations are recorded
+ * here, before execution, so a failed mutation still invalidates older receipts.
  */
 export function evaluateGate(
   state: SubmitGateState,
   nativeTool: string,
   args: unknown,
+  toolCallId?: string,
 ): GateVerdict | undefined {
   state.seq += 1;
   const at = state.seq;
 
+  if (TASK_READ.has(nativeTool)) {
+    const uuid = uuidOf(args, "taskUuid");
+    if (toolCallId) state.pendingReads.set(toolCallId, { kind: "task", uuid, startSeq: at });
+    return undefined;
+  }
+
+  if (nativeTool === PROPOSAL_VALIDATE) {
+    const uuid = uuidOf(args, "proposalUuid");
+    if (toolCallId) state.pendingReads.set(toolCallId, { kind: "proposal", uuid, startSeq: at });
+    return undefined;
+  }
+
   if (nativeTool === TASK_SUBMIT) {
     const uuid = uuidOf(args, "taskUuid");
-    if (!uuid) return undefined; // unknown shape: do not guess
-    const mut = state.taskMutation.get(uuid);
-    const fresh = (state.taskRead.get(uuid) ?? 0) > (mut?.at ?? 0) || state.taskListRead > (mut?.at ?? 0);
-    if (fresh) return undefined;
-    if (mut?.status === "to_verify") {
+    if (!uuid) return undefined;
+    const mutation = state.taskMutation.get(uuid);
+    const receipt = state.taskReceipts.get(uuid);
+    if (!receipt || receipt.seq <= (mutation?.at ?? 0)) {
+      if (mutation?.status === "to_verify" || receipt?.status === "to_verify") {
+        return {
+          reason:
+            `task ${uuid} was reported with status "to_verify" and never read back afterwards. ` +
+            `chorus_submit_for_verify is the in_progress -> to_verify transition, so this submit will be ` +
+            `rejected with "Can only submit for verification from in_progress status". ` +
+            `Read it with chorus_get_task first; if it already sits in to_verify, move it back with ` +
+            `chorus_update_task({status: "in_progress"}) before submitting. ${RECOVERY_NOTE}`,
+        };
+      }
       return {
         reason:
-          `task ${uuid} was reported with status "to_verify" and never read back. ` +
-          `chorus_submit_for_verify is the in_progress -> to_verify transition, so this submit will be ` +
-          `rejected with "Can only submit for verification from in_progress status". ` +
-          `Read it first (chorus_get_task); if it already sits in to_verify, move it back with ` +
-          `chorus_update_task({status: "in_progress"}) before submitting.`,
+          `task ${uuid} has no fresh status read before submit. Call chorus_get_task and confirm ` +
+          `status is in_progress first; submitting from a stale assumption is what produces ` +
+          `"Can only submit for verification from in_progress status".`,
       };
     }
-    return {
-      reason:
-        `task ${uuid} has no fresh status read before submit. Call chorus_get_task (or chorus_get_my_tasks) ` +
-        `and confirm status is in_progress first; submitting from a stale assumption is what produces ` +
-        `"Can only submit for verification from in_progress status".`,
-    };
+    if (receipt.status && receipt.status !== "in_progress") {
+      return {
+        reason:
+          `chorus_get_task reported status "${receipt.status}" for task ${uuid}; submit requires ` +
+          `in_progress. Move it back with chorus_update_task({status: "in_progress"}) if that is the ` +
+          `intent. ${RECOVERY_NOTE}`,
+      };
+    }
+    state.taskReceipts.delete(uuid); // a submit consumes the receipt
+    return undefined;
   }
 
   if (nativeTool === PROPOSAL_SUBMIT) {
     const uuid = uuidOf(args, "proposalUuid");
-    const draftAt = uuid ? (state.draftMutation.get(uuid) ?? 0) : 0;
-    const freshForAny = state.validateReadAny > state.draftMutationAny;
-    const freshForUuid = !uuid || (state.validateRead.get(uuid) ?? 0) > draftAt;
-    if (freshForAny && freshForUuid) return undefined;
-    return {
-      reason:
-        `proposal ${uuid ?? "(unknown)"} has no validate receipt newer than its last draft change. ` +
-        `Call chorus_pm_validate_proposal first: errors must be fixed, warnings fixed or justified, ` +
-        `and any later draft edit invalidates the receipt and needs a re-validate.`,
-    };
+    const receipt = uuid
+      ? state.proposalReceipts.get(uuid)
+      : [...state.proposalReceipts.values()].sort((a, b) => b.seq - a.seq)[0];
+    if (!receipt) {
+      return {
+        reason:
+          `proposal ${uuid ?? "(unknown)"} has no chorus_pm_validate_proposal receipt. ` +
+          `Call validate first: errors block submission, warnings need a disposition, and any later ` +
+          `draft edit invalidates the receipt.`,
+      };
+    }
+    const draftAt = uuid ? (state.proposalDraftMutation.get(uuid) ?? 0) : 0;
+    if (receipt.seq <= draftAt || receipt.seq <= state.anyDraftMutation) {
+      return {
+        reason:
+          `proposal ${uuid ?? "(unknown)"} was edited after its last validate receipt; ` +
+          `re-run chorus_pm_validate_proposal before submitting.`,
+      };
+    }
+    if (receipt.valid === false) {
+      const detail = (receipt.issues ?? []).slice(0, 3).join("; ");
+      return {
+        reason:
+          `the last chorus_pm_validate_proposal reported valid:false` +
+          (detail ? ` (${detail})` : "") +
+          `; fix the issues and re-validate before submitting.`,
+      };
+    }
+    if (uuid) state.proposalReceipts.delete(uuid);
+    else state.proposalReceipts.clear();
+    return undefined;
   }
 
   if (TASK_MUTATE.has(nativeTool)) {
@@ -156,33 +252,68 @@ export function evaluateGate(
     return undefined;
   }
 
+  if (nativeTool === REPORT_WORK) {
+    // Only a report that asks for a status change moves the task; a progress
+    // report is not a mutation and must not invalidate a fresh read.
+    const uuid = uuidOf(args, "taskUuid");
+    const status = statusOf(args);
+    if (uuid && status) state.taskMutation.set(uuid, { at, tool: nativeTool, status });
+    return undefined;
+  }
+
   if (PROPOSAL_DRAFT_MUTATE.has(nativeTool)) {
     const uuid = uuidOf(args, "proposalUuid");
-    state.draftMutationAny = at;
-    if (uuid) state.draftMutation.set(uuid, at);
+    if (uuid) state.proposalDraftMutation.set(uuid, at);
+    else state.anyDraftMutation = at;
     return undefined;
   }
 
   return undefined;
 }
 
-/** Record successful reads at tool_result time. */
+/**
+ * Record a read receipt at tool_result time. The receipt carries the sequence the
+ * read *started* at, and is dropped when a mutation on the same object happened
+ * after that start — the result may describe the pre-mutation state.
+ */
 export function recordGateResult(
   state: SubmitGateState,
   nativeTool: string,
   args: unknown,
   isError: boolean,
+  toolCallId: string | undefined,
+  contentText: string,
 ): void {
+  if (!toolCallId) return;
+  const pending = state.pendingReads.get(toolCallId);
+  if (!pending) return;
+  state.pendingReads.delete(toolCallId);
   if (isError) return;
-  if (TASK_READ.has(nativeTool)) {
-    const uuid = uuidOf(args, "taskUuid");
-    if (uuid) state.taskRead.set(uuid, state.seq);
-    else state.taskListRead = state.seq;
+
+  if (pending.kind === "task") {
+    if (!pending.uuid) return;
+    const mutation = state.taskMutation.get(pending.uuid);
+    if (pending.startSeq <= (mutation?.at ?? 0)) return; // spanned a mutation
+    const payload = parseJsonPayload(contentText);
+    const status = typeof payload?.status === "string" ? payload.status.toLowerCase() : undefined;
+    state.taskReceipts.set(pending.uuid, { seq: pending.startSeq, status });
     return;
   }
-  if (nativeTool === PROPOSAL_VALIDATE) {
-    const uuid = uuidOf(args, "proposalUuid");
-    state.validateReadAny = state.seq;
-    if (uuid) state.validateRead.set(uuid, state.seq);
-  }
+
+  const payload = parseJsonPayload(contentText);
+  const valid = typeof payload?.valid === "boolean" ? payload.valid : undefined;
+  const rawIssues = Array.isArray(payload?.issues) ? payload.issues : [];
+  const issues = rawIssues
+    .slice(0, 3)
+    .map((issue) => {
+      const obj = asObject(issue);
+      if (!obj) return "";
+      const level = typeof obj.level === "string" ? obj.level : "";
+      const message = typeof obj.message === "string" ? obj.message : "";
+      return [level, message].filter(Boolean).join(": ");
+    })
+    .filter(Boolean);
+  const receipt: ProposalReceipt = { seq: pending.startSeq, valid, issues };
+  if (pending.uuid) state.proposalReceipts.set(pending.uuid, receipt);
+  else state.proposalReceipts.set(`__any__:${pending.startSeq}`, receipt);
 }

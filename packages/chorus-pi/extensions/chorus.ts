@@ -360,7 +360,7 @@ export default function (pi: ExtensionAPI) {
     // that recognition never touches arguments).
     const gateTool = submitGateMode === "off" ? null : resolveChorusToolName(event);
     if (gateTool) {
-      const verdict = evaluateGate(submitGate, gateTool, event.input);
+      const verdict = evaluateGate(submitGate, gateTool, event.input, event.toolCallId);
       if (verdict) {
         if (submitGateMode === "block") return { block: true, reason: verdict.reason };
         if (submitGateMode === "warn") ctx.ui.notify(verdict.reason, "warning");
@@ -423,7 +423,20 @@ export default function (pi: ExtensionAPI) {
     // keep one handler per event, so a second registration would shadow this one.
     if (submitGateMode !== "off") {
       const gateTool = resolveChorusToolName(event);
-      if (gateTool) recordGateResult(submitGate, gateTool, event.input, Boolean(event.isError));
+      if (gateTool) {
+        // Receipts are stamped from the read's start sequence, so the result text
+        // only needs the status/`valid` fields — never the whole payload.
+        const text = Array.isArray(event.content)
+          ? event.content
+              .map((block) =>
+                block && typeof block === "object" && "text" in block
+                  ? String((block as { text?: unknown }).text ?? "")
+                  : "",
+              )
+              .join("\n")
+          : "";
+        recordGateResult(submitGate, gateTool, event.input, Boolean(event.isError), event.toolCallId, text);
+      }
     }
 
     if (!CONFIGURED) return;
