@@ -5,8 +5,10 @@ const mockPrisma = vi.hoisted(() => ({
   user: {
     findFirst: vi.fn(),
     findUnique: vi.fn(),
+    findUniqueOrThrow: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
     upsert: vi.fn(),
   },
   company: {
@@ -51,6 +53,7 @@ function makeUser(overrides: Record<string, unknown> = {}) {
     uuid: userUuid,
     email: "user@test.com",
     name: "Test User",
+    nameCustomized: false,
     avatarSeed: "639d12a3-0ee3-4561-8f8d-80c6f9c3b5bc",
     oidcSub: "oidc-sub-123",
     authType: "oidc", status: "active", deletedAt: null,
@@ -68,6 +71,7 @@ function makeUser(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.resetAllMocks();
   mockPrisma.company.findFirst.mockResolvedValue(makeCompany());
+  mockPrisma.user.findUniqueOrThrow.mockResolvedValue(makeUser());
 });
 
 // ===== findOrCreateUserByOidc =====
@@ -127,6 +131,7 @@ describe("findOrCreateUserByOidc", () => {
     const updatedUser = makeUser({ email: "new@test.com", name: "New Name" });
     mockPrisma.user.findFirst.mockResolvedValue(existingUser);
     mockPrisma.user.update.mockResolvedValue(updatedUser);
+    mockPrisma.user.findUniqueOrThrow.mockResolvedValue(updatedUser);
 
     const result = await findOrCreateUserByOidc({
       oidcSub: "oidc-sub-123",
@@ -141,9 +146,13 @@ describe("findOrCreateUserByOidc", () => {
     expect(mockPrisma.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 1 },
-        data: { email: "new@test.com", name: "New Name" },
+        data: { email: "new@test.com" },
       })
     );
+    expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: 1, companyUuid, nameCustomized: false },
+      data: { name: "New Name" },
+    });
   });
 
   it("should not update when email and name are unchanged", async () => {
@@ -177,7 +186,7 @@ describe("findOrCreateUserByOidc", () => {
     expect(mockPrisma.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 1 },
-        data: { oidcSub: "new-oidc-sub", name: "Test User" },
+        data: { oidcSub: "new-oidc-sub" },
       })
     );
   });

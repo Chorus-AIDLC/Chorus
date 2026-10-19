@@ -8,7 +8,7 @@ export const rawToken = "A".repeat(43);
 export function makeLocalUser(overrides: Partial<User> = {}): User {
   return {
     id: 1, uuid: "target-a", companyUuid: "tenant-a", oidcSub: "local_subject",
-    email: "alice@example.com", name: "Alice", avatarUrl: null,
+    email: "alice@example.com", name: "Alice", nameCustomized: false, avatarUrl: null,
     avatarSeed: "a4cdd581-c331-4e46-a21c-b0e49a496a99",
     authType: "local", username: "alice", localEmail: "alice@example.com",
     passwordHash: "existing-secret-hash", status: "active", workspaceAdmin: false,

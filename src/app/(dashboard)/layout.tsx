@@ -27,6 +27,7 @@ import { AgentPresenceProvider } from "@/contexts/agent-presence-context";
 import { PixelActivityProvider } from "@/contexts/pixel-activity-context";
 import { AuthProvider } from "@/contexts/auth-context";
 import { UserIdentityAvatar } from "@/components/user-identity-avatar";
+import { UserIdentityName } from "@/components/user-identity-name";
 import { DaemonPresenceEntry } from "@/components/daemon-presence-entry";
 import { SidebarPreferences } from "@/components/sidebar-preferences";
 import { WorkspaceUsersNavigation } from "@/components/workspace-users-navigation";
@@ -548,7 +549,7 @@ export default function DashboardLayout({
           <UserIdentityAvatar userUuid={user?.uuid} name={user?.name} avatarSeed={user?.avatarSeed} size={mobile ? 40 : 36} decorative />
           <div className="min-w-0 flex-1">
             <div className={`truncate font-medium text-foreground ${profileNameSize}`}>
-              {user?.name}
+              <UserIdentityName userUuid={user?.uuid} name={user?.name} />
             </div>
             <div className={`truncate text-muted-foreground ${profileEmailSize}`}>
               {user?.email}

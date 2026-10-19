@@ -42,6 +42,7 @@ interface AuthContextState {
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
   applySavedAvatar: (userUuid: string, avatarSeed: string) => void;
+  applySavedName: (userUuid: string, name: string) => void;
 }
 
 const AuthContext = createContext<AuthContextState | null>(null);
@@ -53,6 +54,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const avatarSaveRevision = useRef(0);
+  const nameSaveRevision = useRef(0);
+  const applySavedName = useCallback((userUuid: string, name: string) => {
+    if (user?.uuid !== userUuid) return;
+    nameSaveRevision.current += 1;
+    setUser(current => current?.uuid === userUuid ? { ...current, name } : current);
+  }, [user?.uuid]);
   const applySavedAvatar = useCallback((userUuid: string, avatarSeed: string) => {
     if (user?.uuid !== userUuid) return;
     avatarSaveRevision.current += 1;
@@ -84,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // next request retries), so it leaves session state untouched.
   const fetchSession = useCallback(async () => {
     const startingAvatarRevision = avatarSaveRevision.current;
+    const startingNameRevision = nameSaveRevision.current;
     try {
       let response = await authFetch("/api/session");
 
@@ -113,11 +121,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await response.json();
 
       if (data.success) {
-        setUser(current => (
-          startingAvatarRevision !== avatarSaveRevision.current && current && current.uuid === data.data.user.uuid
-            ? { ...data.data.user, avatarSeed: current.avatarSeed }
-            : data.data.user
-        ));
+        setUser(current => {
+          if (!current || current.uuid !== data.data.user.uuid) return data.data.user;
+          return {
+            ...data.data.user,
+            ...(startingAvatarRevision !== avatarSaveRevision.current ? { avatarSeed: current.avatarSeed } : {}),
+            ...(startingNameRevision !== nameSaveRevision.current ? { name: current.name } : {}),
+          };
+        });
         setCompany(data.data.company);
         return true;
       }
@@ -235,6 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         refreshSession,
         applySavedAvatar,
+        applySavedName,
       }}
     >
       {children}

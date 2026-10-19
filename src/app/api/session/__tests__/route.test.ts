@@ -27,6 +27,14 @@ beforeEach(() => {
 });
 
 describe("GET /api/session", () => {
+  it("returns a freshly persisted customized name rather than a stale auth claim", async () => {
+    getAuthContext.mockResolvedValue({ type: "user", companyUuid: "c1", actorUuid: "u1", name: "Old provider name" });
+    getUserByUuid.mockResolvedValue({ uuid: "u1", name: "Saved custom name", nameCustomized: true, company: { uuid: "c1", name: "Co" } });
+    const response = await GET(makeRequest());
+    expect((await response.json()).data.user.name).toBe("Saved custom name");
+    expect(getUserByUuid).toHaveBeenCalledWith("u1");
+  });
+
   it("returns the session for an authenticated user", async () => {
     getAuthContext.mockResolvedValue({ type: "user", companyUuid: "c1", actorUuid: "u1" });
     getUserByUuid.mockResolvedValue({
