@@ -75,6 +75,12 @@ import {
   resolveChorusToolName,
   NUDGE_TOOL_NAMES,
 } from "../lib/lib.js";
+import {
+  evaluateGate,
+  newSubmitGateState,
+  recordGateResult,
+  resolveGateMode,
+} from "../lib/submit-gate.js";
 
 // ─── Config ────────────────────────────────────────────────────────────
 function resolveConnection(cwd: string, backend?: ReturnType<typeof chorusMcpBackend>) {
@@ -90,6 +96,10 @@ function resolveConnection(cwd: string, backend?: ReturnType<typeof chorusMcpBac
 const _mcp = resolveConnection(process.cwd());
 let CHORUS_URL = _mcp.url;
 let CHORUS_API_KEY = _mcp.apiKey;
+
+// Optional pre-submit read-back gate. Off unless CHORUS_SUBMIT_GATE=warn|block.
+const submitGateMode = resolveGateMode(process.env);
+const submitGate = newSubmitGateState();
 
 // A neutral SpecModeResult for the not-configured / connection-failed banners,
 // where buildSessionBanner returns before reading the spec fields.
@@ -342,6 +352,20 @@ export default function (pi: ExtensionAPI) {
   // and inject its UUID + the session workflow into that task. The ephemeral
   // child pi subprocess spawned for that task receives the UUID in its prompt.
   pi.on("tool_call", async (event, ctx) => {
+    // ── Optional pre-submit gate (CHORUS_SUBMIT_GATE=warn|block; default off) ──
+    // Runs before the subagent early-return so chorus_* submits are covered. The
+    // gate only looks at the call; it never mutates input and never calls Chorus.
+    // With the gate off nothing is read at all — not even event.input — so the
+    // default path stays byte-for-byte the old behaviour (the event tests assert
+    // that recognition never touches arguments).
+    const gateTool = submitGateMode === "off" ? null : resolveChorusToolName(event);
+    if (gateTool) {
+      const verdict = evaluateGate(submitGate, gateTool, event.input);
+      if (verdict) {
+        if (submitGateMode === "block") return { block: true, reason: verdict.reason };
+        if (submitGateMode === "warn") ctx.ui.notify(verdict.reason, "warning");
+      }
+    }
     if (!CONFIGURED || event.toolName !== "subagent") return;
     const items = subagentTaskItems(event.input);
     // Every Chorus agent this extension spawns needs ambient MCP tools: the
@@ -394,6 +418,14 @@ export default function (pi: ExtensionAPI) {
   //   "create on tool_call start, close on tool_result".
   // → Also fires reviewer nudges after the 3 chorus_* submit/verify tools.
   pi.on("tool_result", async (event, ctx) => {
+    // ── Feed the optional submit gate before any early return below ──
+    // Folded into this handler on purpose: hosts and test harnesses are free to
+    // keep one handler per event, so a second registration would shadow this one.
+    if (submitGateMode !== "off") {
+      const gateTool = resolveChorusToolName(event);
+      if (gateTool) recordGateResult(submitGate, gateTool, event.input, Boolean(event.isError));
+    }
+
     if (!CONFIGURED) return;
 
     // ── subagent tool finished → close the worker session(s) ───────────
