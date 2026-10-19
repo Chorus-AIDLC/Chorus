@@ -183,7 +183,11 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: `Cannot verify task: ${gate.reason}` }], isError: true };
       }
 
-      const updated = await taskService.updateTask(task.uuid, { status: "done" });
+      const updated = await taskService.updateTask(
+        task.uuid,
+        { status: "done" },
+        { actorType: auth.type, actorUuid: auth.actorUuid }
+      );
 
       await activityService.createActivity({
         companyUuid: auth.companyUuid,
@@ -242,7 +246,11 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         }
       }
 
-      const updated = await taskService.updateTask(task.uuid, { status: "in_progress" });
+      const updated = await taskService.updateTask(
+        task.uuid,
+        { status: "in_progress" },
+        { actorType: auth.type, actorUuid: auth.actorUuid }
+      );
 
       // Log force_status_change activity when force is used
       if (force === true) {
@@ -324,7 +332,11 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         return { content: [{ type: "text", text: "Task is already in closed status" }], isError: true };
       }
 
-      const updated = await taskService.updateTask(task.uuid, { status: "closed" });
+      const updated = await taskService.updateTask(
+        task.uuid,
+        { status: "closed" },
+        { actorType: auth.type, actorUuid: auth.actorUuid }
+      );
 
       await activityService.createActivity({
         companyUuid: auth.companyUuid,
