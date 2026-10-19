@@ -36,6 +36,7 @@ import {
   type RenderMentionArg,
 } from "@/components/mention-renderer";
 import { MentionBadge } from "@/components/agent-presence";
+import { UserMention, UserMentionProvider } from "@/components/user-mention";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { useCanEditProject } from "@/contexts/project-access-context";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
@@ -96,13 +97,6 @@ function useMobileCommentActions() {
   );
 }
 
-// React-native mention rendering for the COMMENT surface only (passed as the opt-in
-// `renderMention` prop to ContentWithMentions). AGENT mentions become an interactive
-// MentionBadge (online dot + identity popover + owner/online-gated "Open
-// conversation"); USER mentions keep the existing styled-text appearance unchanged
-// (q1 = agent mentions only). Module-level + stable identity so it never churns the
-// memoized Streamdown components map upstream. Every OTHER ContentWithMentions
-// surface omits this prop and keeps its byte-stable DOM-injection rendering.
 function renderCommentMention(mention: RenderMentionArg) {
   if (mention.type === "agent") {
     return (
@@ -113,15 +107,12 @@ function renderCommentMention(mention: RenderMentionArg) {
       />
     );
   }
-  // User mention — same styled text the legacy DOM-injection path produced.
   return (
-    <span
+    <UserMention
       key={mention.index}
-      className="text-blue-600 font-medium"
-      title={`${mention.type}: ${mention.uuid}`}
-    >
-      @{mention.displayName}
-    </span>
+      uuid={mention.uuid}
+      fallback={mention.displayName}
+    />
   );
 }
 
@@ -579,6 +570,7 @@ function UnifiedCommentsContent({
   );
 
   return (
+    <UserMentionProvider targetType={targetType} targetUuid={targetUuid} comments={comments}>
     <PresenceIndicator entityType={targetType} entityUuid={targetUuid} subEntityType="comment">
     <div className="flex flex-col gap-0">
       {/* Input at top (hidden for read-only Viewers) */}
@@ -691,6 +683,7 @@ function UnifiedCommentsContent({
       )}
     </div>
     </PresenceIndicator>
+    </UserMentionProvider>
   );
 }
 

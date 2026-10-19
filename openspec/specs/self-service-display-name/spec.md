@@ -54,3 +54,31 @@ The system SHALL provide a localized accessible name editor beside avatar settin
 #### Scenario: Legacy long name
 - **WHEN** an existing name exceeds 32 code points
 - **THEN** it remains visible without automatic truncation and a self-service save requires a valid replacement
+
+### Requirement: Comment user mentions display current visible identity
+Historical and newly created comment user mentions SHALL resolve the current user label by UUID, preferring a nonblank display name then email. Missing, deleted, inactive, inaccessible or unsuccessfully resolved users MUST retain the stored mention label. Resolution MUST NOT rewrite stored content, change notification recipients, or alter agent and pinned-agent mention behavior.
+
+#### Scenario: Historical mention after rename
+- **WHEN** a comment containing an old user label is loaded after that user changes their name
+- **THEN** the displayed mention uses the current name without changing the saved comment
+- **AND** a local self-name save updates already resolved self mentions without waiting for another lookup
+
+#### Scenario: Scoped batch lookup
+- **WHEN** comment user UUIDs are resolved
+- **THEN** the authenticated caller must have viewer access to the target entity
+- **AND** only active, undeleted same-company users allowed by that project's member visibility are returned
+- **AND** each strictly validated request contains at most 100 UUIDs with an explicit entity type and UUID
+
+#### Scenario: Safe fallback and isolation
+- **WHEN** lookup fails, a user cannot be resolved, or the viewer/entity changes
+- **THEN** the stored label remains available and no result from a previous viewer/entity is applied
+- **AND** current names are rendered as text, never interpreted as markup
+
+#### Scenario: Bounded rendering requests
+- **WHEN** loaded comments contain repeated user mentions or agent mentions
+- **THEN** user UUIDs are deduplicated and resolved in batches rather than one request per mention
+- **AND** agent references and pinned badge interactions remain unchanged
+
+## Follow-up design (2026-10-19)
+
+The user authorized this addition in the original Idea and PR #632 after initial delivery. A proposal-linked follow-up Task tracks it; the original archived change remains historical. `POST /api/mentionables/resolve` is a read-only, authenticated, no-store endpoint with mandatory entity scope. `UserMentionProvider` resolves deduplicated UUIDs across the loaded comment window, sequentially in batches of 100 with cancellation and a 15-second deadline. Results are component-local and bound to tenant, viewer, entity and current comment window. Failed lookup leaves stored text usable. `UserMention` is React-rendered text using the semantic primary token, so HTML-looking names cannot inject markup. Existing comment-agent render props and notification persistence are unchanged. Names of other users refresh on comment reload/live comment-window refresh; cross-client rename broadcast is not introduced. No new visible strings require localization. The existing design.pen waiver applies; both themes require browser verification.

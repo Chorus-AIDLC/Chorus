@@ -40,6 +40,7 @@ const PROJECT_OR_ENTITY_ROUTE = [
   /^src\/app\/api\/(comments|references)\/route\.ts$/,
   /^src\/app\/api\/entities\//,
   /^src\/app\/api\/mentionables\/route\.ts$/,
+  /^src\/app\/api\/mentionables\/resolve\/route\.ts$/,
 ];
 
 // Every other route must be listed here with the reason it needs no per-project

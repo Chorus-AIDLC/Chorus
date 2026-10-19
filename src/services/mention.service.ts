@@ -530,6 +530,39 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
 
 const DEFAULT_EMPTY_QUERY_LIMIT = 5;
 
+export async function resolveUserMentions(params: {
+  companyUuid: string;
+  userUuids: string[];
+  entityType: LineageEntityType;
+  entityUuid: string;
+}): Promise<Array<{ uuid: string; name: string }>> {
+  const { companyUuid, userUuids, entityType, entityUuid } = params;
+  if (userUuids.length === 0) return [];
+
+  const projectUuid = await resolveEntityProjectUuid(companyUuid, entityType, entityUuid);
+  if (!projectUuid) return [];
+
+  const memberUuids = await projectAccess.privateProjectMemberUuids(companyUuid, projectUuid);
+  const members = memberUuids === null ? null : new Set(memberUuids);
+  const visibleUuids = [...new Set(userUuids)].filter((uuid) => !members || members.has(uuid));
+  if (visibleUuids.length === 0) return [];
+
+  const users = await prisma.user.findMany({
+    where: {
+      companyUuid,
+      uuid: { in: visibleUuids },
+      status: "active",
+      deletedAt: null,
+    },
+    select: { uuid: true, name: true, email: true },
+  });
+
+  return users.flatMap((user) => {
+    const name = user.name?.trim() || user.email?.trim();
+    return name ? [{ uuid: user.uuid, name }] : [];
+  });
+}
+
 /**
  * Type rank for online-first ordering (ascending): online agent → offline agent → user.
  * Reads the `online` field that enrichAgentLiveness populates, so this must run AFTER

@@ -90,7 +90,15 @@ Fact record tracking who was mentioned where. Decoupled from Notification (notif
 | User renamed | Rendered with current name (UUID lookup), stored name as fallback |
 | Notification deep link | Comment mentions resolve to parent entity (task/idea/proposal/document) for correct navigation |
 
-## REST API Endpoint
+## REST API Endpoints
+
+### POST /api/mentionables/resolve
+
+Read-only lookup of current user labels for comment rendering. Requires authentication and viewer access to the supplied entity; responses use `Cache-Control: no-store`.
+
+Body: `{ "userUuids": ["<uuid>"], "entityType": "idea", "entityUuid": "<uuid>" }`. Entity types are `idea`, `proposal`, `task` and `document`; at most 100 UUIDs per request, with no extra fields. Returns `{ "success": true, "data": { "users": [{ "uuid": "<uuid>", "name": "Current name" }] } }`.
+
+Only active, undeleted users in the same company and allowed by the project's member visibility are returned. A blank display name falls back to email. Unknown/unavailable users are omitted. The comment renderer deduplicates UUIDs across loaded comments, falls back to the stored label on missing/failed lookup, and never rewrites comment bodies or notification targets. Agent/pinned-agent rendering is unchanged.
 
 ### GET /api/mentionables
 
