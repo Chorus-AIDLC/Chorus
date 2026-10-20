@@ -123,6 +123,24 @@ test("block: a successful read clears it, and the submit consumes the receipt", 
   expect(second?.block).toBe(true);
 });
 
+for (const scenario of [
+  { read: "chorus_get_task", submit: "chorus_submit_for_verify", input: { taskUuid: TASK }, text: '{"status":"in_progress"}' },
+  { read: "chorus_pm_validate_proposal", submit: "chorus_pm_submit_proposal", input: { proposalUuid: PROPOSAL }, text: '{"valid":true}' },
+]) {
+  test(`block: a delayed ${scenario.read} result cannot unlock a second submit`, async () => {
+    const h = await load("block");
+    await callWithResult(h, scenario.read, scenario.input, scenario.text);
+    const delayed = { toolName: scenario.read, toolCallId: `tc-${++idSeq}`, input: scenario.input };
+    await h.handlers["tool_call"](delayed, ctxFor(h.notifies));
+    expect(await callWithResult(h, scenario.submit, scenario.input, '{"status":"to_verify"}')).toBeUndefined();
+    await h.handlers["tool_result"](
+      { ...delayed, isError: false, content: [{ type: "text", text: scenario.text }] },
+      ctxFor(h.notifies),
+    );
+    expect(await call(h, scenario.submit, scenario.input)).toMatchObject({ block: true });
+  });
+}
+
 // The original failure: report_work(status=to_verify) after a read, then submit.
 test("block: a status-changing report_work invalidates the read receipt", async () => {
   const h = await load("block");

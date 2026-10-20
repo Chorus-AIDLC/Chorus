@@ -17,6 +17,41 @@ const PROPOSAL_B = "1fbaca69-97da-48ca-963f-3faf48ef704f";
 let idSeq = 0;
 const nextId = () => `tc-${++idSeq}`;
 
+for (const scenario of [
+  { kind: "task", read: "chorus_get_task", submit: "chorus_submit_for_verify", key: "taskUuid", uuid: TASK, other: TASK_B, before: { status: "in_progress" }, after: { status: "to_verify" } },
+  { kind: "proposal", read: "chorus_pm_validate_proposal", submit: "chorus_pm_submit_proposal", key: "proposalUuid", uuid: PROPOSAL, other: PROPOSAL_B, before: { valid: true }, after: { status: "pending" } },
+]) {
+  test(`${scenario.kind}: a delayed pre-submit read cannot restore the consumed receipt`, () => {
+    const s = newSubmitGateState();
+    const args = { [scenario.key]: scenario.uuid };
+    const otherArgs = { [scenario.key]: scenario.other };
+    const result = JSON.stringify(scenario.before);
+    const first = nextId();
+    evaluateGate(s, scenario.read, args, first);
+    recordGateResult(s, scenario.read, args, false, first, result);
+
+    const delayed = nextId();
+    const other = nextId();
+    evaluateGate(s, scenario.read, args, delayed);
+    evaluateGate(s, scenario.read, otherArgs, other);
+    const submit = nextId();
+    expect(evaluateGate(s, scenario.submit, args, submit)).toBeUndefined();
+    recordGateResult(s, scenario.submit, args, false, submit, JSON.stringify(scenario.after));
+    recordGateResult(s, scenario.read, args, false, delayed, result);
+    expect(evaluateGate(s, scenario.submit, args)).toBeDefined();
+
+    // Submitting A must leave an in-flight read for B usable.
+    recordGateResult(s, scenario.read, otherArgs, false, other, result);
+    expect(evaluateGate(s, scenario.submit, otherArgs)).toBeUndefined();
+
+    // A new read after the submit can certify the object again.
+    const fresh = nextId();
+    evaluateGate(s, scenario.read, args, fresh);
+    recordGateResult(s, scenario.read, args, false, fresh, result);
+    expect(evaluateGate(s, scenario.submit, args)).toBeUndefined();
+  });
+}
+
 /** Drive one successful read of a task and return its receipt in place. */
 function readTask(state: SubmitGateState, taskUuid: string, status = "in_progress"): void {
   const id = nextId();

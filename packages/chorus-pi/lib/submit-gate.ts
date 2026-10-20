@@ -25,8 +25,8 @@
  *
  * Receipts are bound to the *request start* of the read, keyed by toolCallId, so
  * a read that started before a mutation cannot certify the state after it — even
- * if its result arrives later. Submitting consumes the receipt, so a second
- * submit needs a fresh read.
+ * if its result arrives later. Submitting consumes the receipt and advances the
+ * object's mutation sequence, so a second submit needs a fresh read.
  */
 
 export type GateMode = "off" | "warn" | "block";
@@ -85,9 +85,9 @@ export interface SubmitGateState {
   proposalReceipts: Map<string, ProposalReceipt>;
   /** last status-changing call per task */
   taskMutation: Map<string, { at: number; tool: string; status?: string }>;
-  /** last draft change per proposal (only when the proposal uuid is known) */
+  /** last draft change or submit per proposal (when the proposal uuid is known) */
   proposalDraftMutation: Map<string, number>;
-  /** last draft change whose proposal could not be identified (conservative fallback) */
+  /** last draft change or submit whose proposal could not be identified */
   anyDraftMutation: number;
 }
 
@@ -208,6 +208,7 @@ export function evaluateGate(
       };
     }
     state.taskReceipts.delete(uuid); // a submit consumes the receipt
+    state.taskMutation.set(uuid, { at, tool: nativeTool });
     return undefined;
   }
 
@@ -241,8 +242,13 @@ export function evaluateGate(
           `; fix the issues and re-validate before submitting.`,
       };
     }
-    if (uuid) state.proposalReceipts.delete(uuid);
-    else state.proposalReceipts.clear();
+    if (uuid) {
+      state.proposalReceipts.delete(uuid);
+      state.proposalDraftMutation.set(uuid, at);
+    } else {
+      state.proposalReceipts.clear();
+      state.anyDraftMutation = at;
+    }
     return undefined;
   }
 
@@ -300,6 +306,8 @@ export function recordGateResult(
     return;
   }
 
+  const draftAt = pending.uuid ? (state.proposalDraftMutation.get(pending.uuid) ?? 0) : 0;
+  if (pending.startSeq <= draftAt || pending.startSeq <= state.anyDraftMutation) return;
   const payload = parseJsonPayload(contentText);
   const valid = typeof payload?.valid === "boolean" ? payload.valid : undefined;
   const rawIssues = Array.isArray(payload?.issues) ? payload.issues : [];
