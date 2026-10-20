@@ -276,7 +276,7 @@ export async function updateTaskStatusAction(taskUuid: string, newStatus: string
       return { success: false, error: "Task not found" };
     }
 
-    await updateTask(taskUuid, { status: newStatus });
+    await updateTask(taskUuid, { status: newStatus }, { actorType: auth.type, actorUuid: auth.actorUuid });
 
     // Record activity
     await createActivity({
