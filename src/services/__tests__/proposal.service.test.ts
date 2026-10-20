@@ -105,6 +105,7 @@ import {
   updateProposalContent,
   submitProposal,
   validateProposal,
+  findDependencyCycles,
   approveProposal,
   rejectProposal,
   closeProposal,
@@ -1144,6 +1145,110 @@ describe("validateProposal", () => {
 // ====================================================================
 // submitProposal
 // ====================================================================
+
+describe("validateProposal — dependency integrity and kind coverage", () => {
+  const twoDrafts = (overrides: Record<string, unknown>[] = []) => [
+    validTaskDraft({ uuid: "draft-a", title: "Implement parser" }),
+    validTaskDraft({ uuid: "draft-b", title: "Verify parser" }),
+  ].map((draft, index) => ({ ...draft, ...(overrides[index] ?? {}) }));
+
+  const run = async (taskDrafts: unknown[]) => {
+    const proposal = dbProposal({
+      documentDrafts: [validDocDraft({ type: "tech_design" })],
+      taskDrafts,
+      inputUuids: ["idea-1"],
+      description: "Has description",
+    });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    return validateProposal(COMPANY_UUID, proposal.uuid);
+  };
+
+  it("E-DEP-UNKNOWN: flags a dependency on a draft that is not in the proposal", async () => {
+    const result = await run(twoDrafts([{ dependsOnDraftUuids: ["draft-missing"] }]));
+    const issue = result.issues.find((i) => i.id === "E-DEP-UNKNOWN");
+    expect(issue).toBeDefined();
+    expect(issue!.level).toBe("error");
+    expect(issue!.message).toContain("draft-missing");
+    expect(result.valid).toBe(false);
+  });
+
+  it("E-DEP-SELF: flags a self-dependency", async () => {
+    const result = await run(twoDrafts([{ dependsOnDraftUuids: ["draft-a"] }]));
+    expect(result.issues.find((i) => i.id === "E-DEP-SELF")?.level).toBe("error");
+    expect(result.issues.some((i) => i.id === "E-DEP-CYCLE")).toBe(false);
+    expect(result.valid).toBe(false);
+  });
+
+  it("E-DEP-CYCLE: flags a cycle with the draft titles in order", async () => {
+    const result = await run(
+      twoDrafts([{ dependsOnDraftUuids: ["draft-b"] }, { dependsOnDraftUuids: ["draft-a"] }]),
+    );
+    const issue = result.issues.find((i) => i.id === "E-DEP-CYCLE");
+    expect(issue).toBeDefined();
+    expect(issue!.level).toBe("error");
+    expect(issue!.message).toContain("Implement parser");
+    expect(issue!.message).toContain("Verify parser");
+    expect(issue!.params).toEqual({ cycle: "Implement parser -> Verify parser -> Implement parser" });
+    expect(result.valid).toBe(false);
+  });
+
+  it("resolves a valid dependency graph without E-DEP issues", async () => {
+    const result = await run(twoDrafts([{}, { dependsOnDraftUuids: ["draft-a"] }]));
+    expect(result.issues.filter((i) => i.id.startsWith("E-DEP"))).toEqual([]);
+    expect(result.valid).toBe(true);
+  });
+
+  it("I-KIND: says the coverage check could not run when no draft declares a kind", async () => {
+    const result = await run(twoDrafts());
+    expect(result.issues.find((i) => i.id === "I-KIND")?.level).toBe("info");
+    expect(result.issues.find((i) => i.id === "W-IMPL")).toBeUndefined();
+    expect(result.valid).toBe(true); // advisory only, never blocks
+  });
+
+  it("W-IMPL: warns when kinds are declared but none is an implementation task", async () => {
+    const result = await run(twoDrafts([{ kind: "verification" }, { kind: "docs" }]));
+    const issue = result.issues.find((i) => i.id === "W-IMPL");
+    expect(issue).toBeDefined();
+    expect(issue!.level).toBe("warning");
+    expect(result.issues.find((i) => i.id === "I-KIND")).toBeUndefined();
+    expect(result.valid).toBe(true);
+  });
+
+  it("stays quiet when an implementation task is declared", async () => {
+    const result = await run(twoDrafts([{ kind: "implementation" }, { kind: "verification" }]));
+    expect(result.issues.find((i) => i.id === "W-IMPL")).toBeUndefined();
+    expect(result.issues.find((i) => i.id === "I-KIND")).toBeUndefined();
+  });
+});
+
+describe("findDependencyCycles", () => {
+  it("returns an empty list for a DAG and de-duplicates repeated cycles", () => {
+    expect(findDependencyCycles([])).toEqual([]);
+    const dag = [
+      { uuid: "a", title: "A" },
+      { uuid: "b", title: "B", dependsOnDraftUuids: ["a"] },
+    ] as Parameters<typeof findDependencyCycles>[0];
+    expect(findDependencyCycles(dag)).toEqual([]);
+  });
+
+  it("leaves self loops to the dedicated self-dependency check", () => {
+    const cycles = findDependencyCycles([
+      { uuid: "a", title: "A", dependsOnDraftUuids: ["a"] },
+    ] as Parameters<typeof findDependencyCycles>[0]);
+    expect(cycles).toEqual([]);
+  });
+});
+
+describe("dependency cycle identity", () => {
+  it("preserves distinct cycles with identical titles and deduplicates repeated edges", () => {
+    expect(findDependencyCycles([
+      { uuid: "a", title: "X", dependsOnDraftUuids: ["b", "b"] },
+      { uuid: "b", title: "X", dependsOnDraftUuids: ["a", "a"] },
+      { uuid: "c", title: "X", dependsOnDraftUuids: ["d"] },
+      { uuid: "d", title: "X", dependsOnDraftUuids: ["c"] },
+    ])).toEqual(["X -> X -> X", "X -> X -> X"]);
+  });
+});
 
 describe("submitProposal", () => {
   it("should throw if proposal not found", async () => {
@@ -2322,6 +2427,7 @@ describe("toTaskDraftIndex", () => {
     const entry = toTaskDraftIndex({
       uuid: "t1",
       title: "Task 1",
+      kind: "implementation",
       description: "a long description that must not leak",
       priority: "high",
       storyPoints: 5,
@@ -2334,6 +2440,7 @@ describe("toTaskDraftIndex", () => {
     expect(entry).toEqual({
       uuid: "t1",
       title: "Task 1",
+      kind: "implementation",
       priority: "high",
       storyPoints: 5,
       acceptanceCriteriaCount: 2,
@@ -2346,6 +2453,7 @@ describe("toTaskDraftIndex", () => {
   it("defaults acceptanceCriteriaCount to 0 and omits absent optional fields", () => {
     const entry = toTaskDraftIndex({ uuid: "t2", title: "Bare task" });
     expect(entry).toEqual({ uuid: "t2", title: "Bare task", acceptanceCriteriaCount: 0 });
+    expect("kind" in entry).toBe(false);
     expect("priority" in entry).toBe(false);
     expect("storyPoints" in entry).toBe(false);
     expect("dependsOnDraftUuids" in entry).toBe(false);
@@ -2369,6 +2477,7 @@ describe("getProposalSection", () => {
     {
       uuid: "td-2",
       title: "Wiring",
+      kind: "implementation",
       description: "Wire it up".repeat(20),
       priority: "medium",
       storyPoints: 2,
@@ -2413,6 +2522,7 @@ describe("getProposalSection", () => {
     expect(result.taskDraftIndex[1]).toEqual({
       uuid: "td-2",
       title: "Wiring",
+      kind: "implementation",
       priority: "medium",
       storyPoints: 2,
       acceptanceCriteriaCount: 2,

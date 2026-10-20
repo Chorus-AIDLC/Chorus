@@ -377,7 +377,7 @@ A project the caller cannot see returns the same `Project not found` error as a 
 | section | string | No | One of `basic` \| `documents` \| `tasks` \| `full`. Default `basic`. |
 
 **Sections**:
-- `basic` (default): proposal metadata + a lightweight index of the drafts — `documentDraftIndex` (`uuid`, `type`, `title`, `contentLength`), `taskDraftIndex` (`uuid`, `title`, `priority`, `storyPoints`, `acceptanceCriteriaCount`, `dependsOnDraftUuids`), and `documentDraftCount` / `taskDraftCount`. No document content or full task descriptions.
+- `basic` (default): proposal metadata + a lightweight index of the drafts — `documentDraftIndex` (`uuid`, `type`, `title`, `contentLength`), `taskDraftIndex` (`uuid`, `title`, `kind`, `priority`, `storyPoints`, `acceptanceCriteriaCount`, `dependsOnDraftUuids`), and `documentDraftCount` / `taskDraftCount`. No document content or full task descriptions.
 - `documents`: proposal metadata + the full `documentDrafts` (with `content`).
 - `tasks`: proposal metadata + the full `taskDrafts` (with descriptions and acceptance criteria).
 - `full`: the entire proposal — both `documentDrafts` and `taskDrafts` in one payload (the pre-`section` behavior).
@@ -1170,13 +1170,18 @@ logical agent without emitting a duplicate `assigned` Activity.
 | E3 | error | At least one task draft required |
 | E4 | error | inputUuids must be non-empty |
 | E5 | error | All input Ideas must have elaborationStatus = 'resolved' |
+| E-DEP-UNKNOWN | error | Every dependency UUID must reference a task draft in this proposal |
+| E-DEP-SELF | error | A task draft must not depend on itself |
+| E-DEP-CYCLE | error | Task draft dependencies must be acyclic; reports the cycle path |
 | W1 | warning | At least one tech_design document draft recommended |
 | W2 | warning | Every task draft should have a description |
 | W3 | warning | Every task draft should have acceptance criteria |
 | W4 | warning | When >= 2 tasks, at least one should declare dependencies |
 | W5 | warning | Proposal description should be non-empty |
+| W-IMPL | warning | Some drafts declare a kind, but none is `implementation` |
 | I1 | info | Every task draft should have priority set |
 | I2 | info | Every task draft should have storyPoints set |
+| I-KIND | info | No task draft declares a kind, so implementation coverage cannot be checked |
 
 **Usage**: Call before `chorus_pm_submit_proposal` to preview issues. Errors will block submission; warnings and info are advisory. `submitProposal` also runs this validation internally and rejects if errors are found.
 
@@ -1306,6 +1311,7 @@ logical agent without emitting a duplicate `assigned` Activity.
 |-----------|------|----------|-------------|
 | proposalUuid | string | Yes | Proposal UUID |
 | title | string | Yes | Task title |
+| kind | enum | No | Task purpose: `implementation`, `verification`, `docs`, or `other`. Omit for legacy drafts with unknown purpose. |
 | description | string | No | Task description |
 | storyPoints | number | No | Effort estimate (Agent hours) |
 | priority | enum | No | Priority: low, medium, high |
@@ -1345,6 +1351,7 @@ logical agent without emitting a duplicate `assigned` Activity.
 | proposalUuid | string | Yes | Proposal UUID |
 | draftUuid | string | Yes | Task draft UUID |
 | title | string | No | Task title |
+| kind | enum | No | Task purpose: `implementation`, `verification`, `docs`, or `other`. Omit to preserve the existing value. |
 | description | string | No | Task description |
 | storyPoints | number | No | Effort estimate |
 | priority | enum | No | Priority |

@@ -145,6 +145,7 @@ Add task drafts one at a time. The response returns the new draft's `draftUuid` 
 chorus_pm_add_task_draft({
   proposalUuid: "<proposal-uuid>",
   title: "Implement <component>",
+  kind: "implementation",
   description: "Detailed description of what to build...",
   priority: "high",
   storyPoints: 3,
@@ -158,6 +159,7 @@ chorus_pm_add_task_draft({
 chorus_pm_add_task_draft({
   proposalUuid: "<proposal-uuid>",
   title: "Write tests for <component>",
+  kind: "verification",
   description: "Unit and integration tests...",
   priority: "medium",
   storyPoints: 2,
@@ -171,6 +173,8 @@ chorus_pm_add_task_draft({
 > To edit a draft's criteria later via `chorus_pm_update_task_draft`, pass a non-empty `acceptanceCriteriaItems` to replace them; omit the field to leave them unchanged. The field cannot be used to clear criteria.
 
 **Task priority:** `low`, `medium`, `high`
+
+**Task kind:** `implementation`, `verification`, `docs`, or `other`. Set `kind` on each draft to describe its purpose. It is optional for compatibility with existing proposals and is visible in the default `basic` view's `taskDraftIndex`. Both `chorus_pm_add_task_draft` and `chorus_pm_update_task_draft` accept it; omit it on update to preserve the current value. Kind is draft metadata and is not copied to materialized tasks.
 
 ### Step 4: Review and Refine Drafts
 
@@ -192,6 +196,7 @@ chorus_pm_update_task_draft({
   proposalUuid: "<proposal-uuid>",
   draftUuid: "<draft-uuid>",
   description: "Updated description...",
+  kind: "implementation",
   dependsOnDraftUuids: ["<other-draft-uuid>"]
 })
 
@@ -211,6 +216,10 @@ chorus_pm_validate_proposal({ proposalUuid: "<proposal-uuid>" })
 ```
 
 Returns `{ valid, issues }` with error, warning, and info levels. Fix errors before submitting.
+
+Dependency errors block submission: `E-DEP-UNKNOWN` for a UUID outside this proposal, `E-DEP-SELF` for self-dependency, and `E-DEP-CYCLE` for a dependency cycle (with its path). Use draft UUIDs returned by the add call and keep the dependency graph acyclic.
+
+Kind checks are advisory: `I-KIND` means no draft declares a kind, so implementation coverage cannot be checked; `W-IMPL` means at least one kind is declared but none is `implementation`. Confirm that implementation work is covered before submitting. Neither advisory blocks submission.
 
 When validation passes:
 
