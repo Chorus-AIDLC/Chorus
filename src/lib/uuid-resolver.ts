@@ -62,6 +62,9 @@ export async function batchResolveActorIdentities(
   for (const instance of instances) {
     if (instance.agent) identities.set(`agent_instance:${instance.uuid}`, { type: "agent_instance", uuid: instance.uuid, name: instance.agent.name });
   }
+  for (const uuid of uuids("super_admin")) {
+    identities.set(`super_admin:${uuid}`, { type: "super_admin", uuid, name: "Admin" });
+  }
   return identities;
 }
 
@@ -79,6 +82,7 @@ export async function getActorName(
   actorType: string,
   actorUuid: string
 ): Promise<string | null> {
+  if (actorType === "super_admin") return "Admin";
   if (actorType === "user") {
     const user = await prisma.user.findUnique({
       where: { uuid: actorUuid },
@@ -596,6 +600,9 @@ export async function batchGetActorNames(
   // instance uuid (the assigneeUuid the caller looks up by).
   for (const instance of instances) {
     if (instance.agent?.name) result.set(instance.uuid, instance.agent.name);
+  }
+  for (const actor of actors) {
+    if (actor.type === "super_admin") result.set(actor.uuid, "Admin");
   }
 
   return result;

@@ -24,6 +24,46 @@ beforeEach(() => {
 });
 
 describe("activity current user avatar hydration", () => {
+  it("renders super admins as Admin without hydrating them as workspace users", async () => {
+    mocks.activities.mockResolvedValue({ activities: ["user", "agent", "super_admin", "system"].map((actorType) => ({
+      uuid: `activity-${actorType}`, actorUuid: "shared", actorType, targetType: "task", targetUuid: "task",
+      action: "execution_started", value: null, createdAt: new Date(),
+    })) });
+    mocks.users.mockResolvedValue([{ uuid: "shared", name: "Human owner", avatarSeed: "human-seed" }]);
+    mocks.agents.mockResolvedValue([{ uuid: "shared", name: "Agent worker" }]);
+
+    const { container } = render(await ActivityPage({ params: Promise.resolve({ uuid: "project" }) }));
+
+    expect(screen.getByText("Admin")).toBeTruthy();
+    expect(screen.getByText("Human owner")).toBeTruthy();
+    expect(screen.getByText("Agent worker")).toBeTruthy();
+    expect(screen.getByText("common.system")).toBeTruthy();
+    expect(screen.getAllByTestId("human-avatar")).toHaveLength(1);
+    expect(container.querySelectorAll(".lucide-settings")).toHaveLength(2);
+    expect(mocks.users).toHaveBeenCalledTimes(1);
+    expect(mocks.agents).toHaveBeenCalledTimes(1);
+  });
+
+  it("never queries administrator UUIDs from user or agent profiles", async () => {
+    mocks.activities.mockResolvedValue({ activities: [{
+      uuid: "admin-activity", actorUuid: "admin-only", actorType: "super_admin", targetType: "task", targetUuid: "task",
+      action: "execution_started", value: null, createdAt: new Date(),
+    }] });
+    mocks.users.mockResolvedValue([]);
+    mocks.agents.mockResolvedValue([]);
+
+    render(await ActivityPage({ params: Promise.resolve({ uuid: "project" }) }));
+
+    expect(screen.getByText("Admin")).toBeTruthy();
+    expect(screen.queryByText("common.system")).toBeNull();
+    expect(screen.queryByTestId("human-avatar")).toBeNull();
+    for (const lookup of [mocks.users, mocks.agents]) {
+      expect(lookup).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        where: { uuid: { in: [] }, companyUuid: "company" },
+      }));
+    }
+  });
+
   it("resolves historical actors in one tenant-scoped batch, retains agents, and safely falls back for missing actors", async () => {
     mocks.activities.mockResolvedValue({ activities: ["human", "human", "agent", "deleted"].map((actorUuid, index) => ({ uuid: `activity-${index}`, actorUuid, actorType: actorUuid === "agent" ? "agent" : "user", targetType: "task", targetUuid: "task", action: "created", value: { avatarSeed: "historical-seed" }, createdAt: new Date() })) });
     mocks.users.mockResolvedValue([{ uuid: "human", name: "Human", avatarSeed: "current-seed" }]);

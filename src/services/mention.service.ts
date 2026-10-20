@@ -270,6 +270,7 @@ export interface CreateMentionsParams {
   actorUuid: string;
   projectUuid: string;
   entityTitle: string;
+  excludeMentions?: Pick<MentionRef, "type" | "uuid">[];
 }
 
 export interface SearchMentionablesParams {
@@ -363,14 +364,17 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     actorUuid,
     projectUuid,
     entityTitle,
+    excludeMentions = [],
   } = params;
 
   const mentions = parseMentions(content);
   if (mentions.length === 0) return;
 
   // Filter out self-mentions
+  const excludedKeys = new Set(excludeMentions.map((mention) => `${mention.type}:${mention.uuid}`));
   const filteredMentions = mentions.filter(
-    (m) => !(m.type === actorType && m.uuid === actorUuid)
+    (mention) => !(mention.type === actorType && mention.uuid === actorUuid)
+      && !excludedKeys.has(`${mention.type}:${mention.uuid}`)
   );
   if (filteredMentions.length === 0) return;
 

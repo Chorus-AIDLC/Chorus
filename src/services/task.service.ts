@@ -1257,17 +1257,12 @@ async function processNewMentions(
 
   if (brandNewMentions.length === 0) return;
 
-  // Build content with only new mentions for createMentions to process
-  // We pass the full new content and let createMentions handle it, but we
-  // need to ensure only new mentions create records. We do this by calling
-  // createMentions with full new content (it deduplicates internally) and
-  // then the records are created. Since this is append-only, we only run
-  // when there are truly new mentions detected above.
   await mentionService.createMentions({
     companyUuid,
     sourceType,
     sourceUuid,
     content: newContent,
+    excludeMentions: oldMentions,
     actorType,
     actorUuid,
     projectUuid,
