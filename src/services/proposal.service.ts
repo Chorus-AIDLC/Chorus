@@ -146,6 +146,7 @@ export interface DocumentDraftIndexEntry {
 export interface TaskDraftIndexEntry {
   uuid: string;
   title: string;
+  kind?: TaskDraftKind;
   priority?: string;
   storyPoints?: number;
   acceptanceCriteriaCount: number; // count of acceptanceCriteriaItems (0 if none)
@@ -242,6 +243,7 @@ export interface ValidationIssue {
   level: "error" | "warning" | "info";
   message: string;  // Human-readable English message
   field?: string;   // Optional: which draft/field has the issue
+  params?: Record<string, string>; // Context for localized UI messages
 }
 
 /**
@@ -258,16 +260,16 @@ export function findDependencyCycles(taskDrafts: TaskDraft[]): string[] {
     if (state.get(uuid) === "done") return;
     if (state.get(uuid) === "visiting") {
       const from = stack.indexOf(uuid);
-      const path = [...stack.slice(from), uuid].map((id) => byUuid.get(id)?.title ?? id);
-      const key = [...path].sort().join("|");
+      const path = [...stack.slice(from), uuid];
+      const key = JSON.stringify([...path].sort());
       if (!seen.has(key)) {
         seen.add(key);
-        cycles.push(path.join(" -> "));
+        cycles.push(path.map((id) => byUuid.get(id)?.title ?? id).join(" -> "));
       }
       return;
     }
     state.set(uuid, "visiting");
-    const deps = (byUuid.get(uuid)?.dependsOnDraftUuids ?? []).filter((dep) => byUuid.has(dep));
+    const deps = (byUuid.get(uuid)?.dependsOnDraftUuids ?? []).filter((dep) => dep !== uuid && byUuid.has(dep));
     for (const dep of deps) visit(dep, [...stack, uuid]);
     state.set(uuid, "done");
   };
@@ -424,6 +426,7 @@ export async function validateProposal(
       id: "E-DEP-CYCLE",
       level: "error",
       message: `Task drafts form a dependency cycle: ${cycle}`,
+      params: { cycle },
     });
   }
 
@@ -719,6 +722,7 @@ export function toTaskDraftIndex(draft: TaskDraft): TaskDraftIndexEntry {
     acceptanceCriteriaCount: draft.acceptanceCriteriaItems?.length ?? 0,
   };
   if (draft.priority !== undefined) entry.priority = draft.priority;
+  if (draft.kind !== undefined) entry.kind = draft.kind;
   if (draft.storyPoints !== undefined) entry.storyPoints = draft.storyPoints;
   if (draft.dependsOnDraftUuids !== undefined) entry.dependsOnDraftUuids = draft.dependsOnDraftUuids;
   return entry;

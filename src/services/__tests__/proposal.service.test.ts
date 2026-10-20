@@ -1174,6 +1174,7 @@ describe("validateProposal — dependency integrity and kind coverage", () => {
   it("E-DEP-SELF: flags a self-dependency", async () => {
     const result = await run(twoDrafts([{ dependsOnDraftUuids: ["draft-a"] }]));
     expect(result.issues.find((i) => i.id === "E-DEP-SELF")?.level).toBe("error");
+    expect(result.issues.some((i) => i.id === "E-DEP-CYCLE")).toBe(false);
     expect(result.valid).toBe(false);
   });
 
@@ -1186,6 +1187,7 @@ describe("validateProposal — dependency integrity and kind coverage", () => {
     expect(issue!.level).toBe("error");
     expect(issue!.message).toContain("Implement parser");
     expect(issue!.message).toContain("Verify parser");
+    expect(issue!.params).toEqual({ cycle: "Implement parser -> Verify parser -> Implement parser" });
     expect(result.valid).toBe(false);
   });
 
@@ -1228,12 +1230,22 @@ describe("findDependencyCycles", () => {
     expect(findDependencyCycles(dag)).toEqual([]);
   });
 
-  it("reports a self loop once", () => {
+  it("leaves self loops to the dedicated self-dependency check", () => {
     const cycles = findDependencyCycles([
       { uuid: "a", title: "A", dependsOnDraftUuids: ["a"] },
     ] as Parameters<typeof findDependencyCycles>[0]);
-    expect(cycles).toHaveLength(1);
-    expect(cycles[0]).toBe("A -> A");
+    expect(cycles).toEqual([]);
+  });
+});
+
+describe("dependency cycle identity", () => {
+  it("preserves distinct cycles with identical titles and deduplicates repeated edges", () => {
+    expect(findDependencyCycles([
+      { uuid: "a", title: "X", dependsOnDraftUuids: ["b", "b"] },
+      { uuid: "b", title: "X", dependsOnDraftUuids: ["a", "a"] },
+      { uuid: "c", title: "X", dependsOnDraftUuids: ["d"] },
+      { uuid: "d", title: "X", dependsOnDraftUuids: ["c"] },
+    ])).toEqual(["X -> X -> X", "X -> X -> X"]);
   });
 });
 
@@ -2414,6 +2426,7 @@ describe("toTaskDraftIndex", () => {
     const entry = toTaskDraftIndex({
       uuid: "t1",
       title: "Task 1",
+      kind: "implementation",
       description: "a long description that must not leak",
       priority: "high",
       storyPoints: 5,
@@ -2426,6 +2439,7 @@ describe("toTaskDraftIndex", () => {
     expect(entry).toEqual({
       uuid: "t1",
       title: "Task 1",
+      kind: "implementation",
       priority: "high",
       storyPoints: 5,
       acceptanceCriteriaCount: 2,
@@ -2438,6 +2452,7 @@ describe("toTaskDraftIndex", () => {
   it("defaults acceptanceCriteriaCount to 0 and omits absent optional fields", () => {
     const entry = toTaskDraftIndex({ uuid: "t2", title: "Bare task" });
     expect(entry).toEqual({ uuid: "t2", title: "Bare task", acceptanceCriteriaCount: 0 });
+    expect("kind" in entry).toBe(false);
     expect("priority" in entry).toBe(false);
     expect("storyPoints" in entry).toBe(false);
     expect("dependsOnDraftUuids" in entry).toBe(false);
@@ -2461,6 +2476,7 @@ describe("getProposalSection", () => {
     {
       uuid: "td-2",
       title: "Wiring",
+      kind: "implementation",
       description: "Wire it up".repeat(20),
       priority: "medium",
       storyPoints: 2,
@@ -2505,6 +2521,7 @@ describe("getProposalSection", () => {
     expect(result.taskDraftIndex[1]).toEqual({
       uuid: "td-2",
       title: "Wiring",
+      kind: "implementation",
       priority: "medium",
       storyPoints: 2,
       acceptanceCriteriaCount: 2,

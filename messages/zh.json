@@ -684,7 +684,12 @@
     "W4": "存在多个任务但未定义依赖关系",
     "W5": "Proposal 缺少描述",
     "I1": "任务「{title}」未设置优先级",
-    "I2": "任务「{title}」未设置故事点"
+    "I2": "任务「{title}」未设置故事点",
+    "E-DEP-UNKNOWN": "任务「{title}」依赖的草稿不在此提案中",
+    "E-DEP-SELF": "任务「{title}」依赖自身",
+    "E-DEP-CYCLE": "任务草稿存在循环依赖：{cycle}",
+    "W-IMPL": "没有任务标记为实现工作。提交前请确认已有任务涵盖实现工作。",
+    "I-KIND": "尚无任务声明 kind，无法检查实现工作的覆盖情况。请将每个任务的 kind 设为 implementation、verification、docs 或 other。"
   },
   "documents": {
     "title": "文档",

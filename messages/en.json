@@ -684,7 +684,12 @@
     "W4": "Multiple tasks exist but no dependencies are defined",
     "W5": "Proposal is missing a description",
     "I1": "Task \"{title}\" has no priority set",
-    "I2": "Task \"{title}\" has no story points estimated"
+    "I2": "Task \"{title}\" has no story points estimated",
+    "E-DEP-UNKNOWN": "Task \"{title}\" depends on a draft that is not in this proposal",
+    "E-DEP-SELF": "Task \"{title}\" depends on itself",
+    "E-DEP-CYCLE": "Task drafts form a dependency cycle: {cycle}",
+    "W-IMPL": "No task is marked as implementation work. Confirm that implementation is covered by an existing task before submitting.",
+    "I-KIND": "No task has a declared kind; implementation coverage cannot be checked. Set each task's kind to implementation, verification, docs, or other."
   },
   "documents": {
     "title": "Documents",
