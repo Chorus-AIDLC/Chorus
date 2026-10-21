@@ -89,7 +89,26 @@ process = subprocess.Popen(["bash"] + sys.argv[1:], stdin=slave, stdout=slave, s
 output = ""
 pending = ""
 hidden = []
+signal_read_ready = []
 deadline = time.monotonic() + 12
+def wait_for_stdin_read():
+    if sys.platform != "linux":
+        return None
+    read_syscall = {"x86_64": "0", "aarch64": "63"}.get(os.uname().machine)
+    if read_syscall is None:
+        raise RuntimeError("Unsupported Linux architecture for input-read synchronization")
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError("Installer exited before entering password read")
+        try:
+            with open(f"/proc/{process.pid}/syscall") as syscall_file:
+                syscall = syscall_file.read().split()
+        except OSError as error:
+            raise RuntimeError("Linux input-read synchronization requires readable /proc/<pid>/syscall") from error
+        if len(syscall) > 1 and syscall[0] == read_syscall and syscall[1] == "0x0":
+            return True
+        time.sleep(0.001)
+    raise RuntimeError("Installer did not block reading stdin after password prompt")
 try:
     while time.monotonic() < deadline:
         if select.select([master], [], [], 0.05)[0]:
@@ -103,6 +122,7 @@ try:
                 response = inputs[len(hidden) - 1]
                 if isinstance(response, dict):
                     if "signal" in response:
+                        signal_read_ready.append(wait_for_stdin_read())
                         os.kill(process.pid, getattr(signal, response["signal"]))
                     else:
                         os.write(master, b"\\x04")
@@ -113,7 +133,7 @@ try:
             break
     if process.poll() is None:
         raise RuntimeError("Interactive installer timed out")
-    print(json.dumps({"status": process.returncode, "output": output, "hidden": hidden, "echoRestored": bool(termios.tcgetattr(slave)[3] & termios.ECHO)}))
+    print(json.dumps({"status": process.returncode, "output": output, "hidden": hidden, "signalReadReady": signal_read_ready, "echoRestored": bool(termios.tcgetattr(slave)[3] & termios.ECHO)}))
 finally:
     if process.poll() is None:
         process.kill()
@@ -127,7 +147,7 @@ finally:
     });
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
-    const parsed = JSON.parse(result.stdout) as { status: number; output: string; hidden: boolean[]; echoRestored: boolean };
+    const parsed = JSON.parse(result.stdout) as { status: number; output: string; hidden: boolean[]; signalReadReady: (boolean | null)[]; echoRestored: boolean };
     expect(parsed.echoRestored, parsed.output).toBe(true);
     return parsed;
   }
@@ -463,6 +483,12 @@ finally:
   ])("restores terminal echo when password entry is interrupted (%j)", response => {
     const result = runInteractive([response]);
     expect(result.status).not.toBe(0);
+    if ("signal" in response && response.signal) {
+      expect(result.status).toBe({ SIGHUP: 129, SIGINT: 130, SIGTERM: 143 }[response.signal]);
+      expect(result.signalReadReady).toEqual([process.platform === "linux" ? true : null]);
+    } else {
+      expect(result.signalReadReady).toEqual([]);
+    }
     expect(result.hidden).toEqual([true]);
     expect(calls()).toEqual([]);
     expect(existsSync(envPath())).toBe(false);
