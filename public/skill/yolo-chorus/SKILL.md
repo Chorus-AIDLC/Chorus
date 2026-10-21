@@ -246,6 +246,7 @@ In yolo mode you generate the elaboration questions AND answer them yourself —
    result1 = chorus_pm_add_task_draft({
      proposalUuid: "<proposal-uuid>",
      title: "<module name>",
+     kind: "implementation",
      description: "<what to build, referencing the tech design>",
      priority: "high",
      storyPoints: 3,
@@ -259,6 +260,7 @@ In yolo mode you generate the elaboration questions AND answer them yourself —
    chorus_pm_add_task_draft({
      proposalUuid: "<proposal-uuid>",
      title: "<dependent module>",
+     kind: "implementation",
      description: "...",
      priority: "medium",
      storyPoints: 2,
@@ -269,11 +271,34 @@ In yolo mode you generate the elaboration questions AND answer them yourself —
 
    > For a DAG of **4 or more tasks**, include at least one integration-checkpoint task whose AC requires end-to-end execution of the preceding modules together. The proposal reviewer treats a missing integration checkpoint as a BLOCKER, so add one up front.
 
+   **Task kind:** `implementation`, `verification`, `docs`, or `other`. Set `kind` on each draft to describe its actual purpose. Both `chorus_pm_add_task_draft` and `chorus_pm_update_task_draft` accept it; omitting `kind` on update preserves the existing value. It is optional for compatibility with older proposals. Kind is draft-only metadata, visible in `taskDraftIndex`, and is not copied to materialized Tasks; do not add it to `chorus_create_tasks` or `chorus_update_task`.
+
 4. **Validate** and fix any reported errors before submitting:
 
    ```
    chorus_pm_validate_proposal({ proposalUuid: "<proposal-uuid>" })
    ```
+
+   Dependency errors block submission. Repair drafts while the proposal is in `draft`; if it is pending, use the normal authorized `chorus_pm_reject_proposal` revision flow first.
+
+   - `E-DEP-UNKNOWN`: replace unknown or foreign dependencies with task-draft UUIDs returned by `chorus_pm_add_task_draft` in this same proposal (confirm with `chorus_get_proposal`, `section: "tasks"`), or remove invalid edges. Do not use materialized Task UUIDs.
+   - `E-DEP-SELF`: remove the current draft's own UUID from its `dependsOnDraftUuids`.
+   - `E-DEP-CYCLE`: inspect the reported cycle path and remove or redirect edges to match the real execution order; reordering the displayed task list does not break a cycle.
+
+   Replace the affected dependency list with `chorus_pm_update_task_draft`, retaining valid edges (use `[]` if none remain). This update deliberately omits `kind`, preserving its existing value:
+
+   ```
+   chorus_pm_update_task_draft({
+     proposalUuid: "<proposal-uuid>",
+     draftUuid: "<affected-draft-uuid>",
+     dependsOnDraftUuids: ["<valid-same-proposal-draft-uuid>"]
+   })
+   chorus_pm_validate_proposal({ proposalUuid: "<proposal-uuid>" })
+   ```
+
+   Revalidate after repairs and resolve all errors before `chorus_pm_submit_proposal`.
+
+   Kind checks are advisory: `I-KIND` means no draft declares a kind, so classification-based implementation coverage cannot be checked; `W-IMPL` means at least one kind is declared but none is `implementation`. Neither advisory blocks submission. Inspect the actual requested scope, existing repository work, task descriptions and AC rather than trusting labels alone. Add or correct real implementation coverage when required by that scope. A justified docs-only or verification-only proposal is valid: record why no new implementation is needed in its description or review context; never fabricate implementation tasks or relabel unrelated work merely to silence an advisory.
 
 5. **Submit** for review:
 
@@ -365,6 +390,8 @@ loop:
 ---
 
 ### Phase 3: Execution (Wave-Based)
+
+**Completion and recovery:** report completed work with `chorus_report_work` **without a status field**, then self-check AC with `chorus_report_criteria_self_check`, then call `chorus_submit_for_verify`. Submission owns the `in_progress -> to_verify` transition; reporting must not move the task early. If submission finds a task already at `to_verify`, fetch `chorus_get_task` and its work-report comments first. Leave a legitimately submitted task awaiting verification. Only after confirming a premature transition may the assignee call `chorus_update_task({ taskUuid: "<task-uuid>", status: "in_progress" })` with normal dependency checks (no force/bypass). This rollback clears **both developer and admin acceptance marks and evidence**; repeat the developer self-check with fresh evidence before submitting again. Do not mechanically roll back every task awaiting verification.
 
 After approval, tasks exist in `open`. Execute them in dependency-ordered waves. A wave is the current set of unblocked tasks; verifying a wave (Phase 4) unblocks the next.
 
