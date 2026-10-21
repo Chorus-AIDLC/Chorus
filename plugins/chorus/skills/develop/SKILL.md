@@ -152,14 +152,25 @@ chorus_report_work({
 })
 ```
 
-Report with status update when complete:
+Report completion without changing the status:
 ```
 chorus_report_work({
   taskUuid: "<task-uuid>",
-  report: "All implementation complete:\n- Files: ...\n- PR: https://github.com/org/repo/pull/42\n- All tests passing",
-  status: "to_verify"
+  report: "All implementation complete:\n- Files: ...\n- PR: https://github.com/org/repo/pull/42\n- All tests passing"
 })
 ```
+
+> Do **not** pass `status: "to_verify"` here. `chorus_submit_for_verify` (Step 8) is the
+> `in_progress -> to_verify` transition; reporting `to_verify` first makes that submit fail
+> with `Can only submit for verification from in_progress status`.
+>
+> **Recovering a task that was already moved this way** — do not simply resubmit:
+> 1. Confirm the task was moved prematurely, not legitimately submitted and awaiting verification.
+> 2. Have the assignee move it back to `in_progress` with `chorus_update_task`; the usual
+>    dependency checks apply.
+> 3. **Repeat Step 7.** Leaving `to_verify` clears the developer *and* admin acceptance marks and
+>    their evidence, so restore the self-check evidence and confirm the required criteria pass again.
+> 4. Submit through Step 8.
 
 ### Step 7: Self-Check Acceptance Criteria
 
