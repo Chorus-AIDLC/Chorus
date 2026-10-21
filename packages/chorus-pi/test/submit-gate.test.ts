@@ -65,6 +65,97 @@ function readProposal(state: SubmitGateState, proposalUuid: string, payload: obj
   recordGateResult(state, "chorus_pm_validate_proposal", { proposalUuid }, false, id, JSON.stringify(payload));
 }
 
+describe("submit-attempt invalidation", () => {
+  for (const scenario of [
+    { kind: "task", read: "chorus_get_task", submit: "chorus_submit_for_verify", mutate: "chorus_update_task", key: "taskUuid", uuid: TASK, other: TASK_B, good: { status: "in_progress" }, bad: { status: "done" }, missing: "no fresh status read", stale: "no fresh status read", invalid: 'reported status "done"' },
+    { kind: "proposal", read: "chorus_pm_validate_proposal", submit: "chorus_pm_submit_proposal", mutate: "chorus_pm_update_task_draft", key: "proposalUuid", uuid: PROPOSAL, other: PROPOSAL_B, good: { valid: true }, bad: { valid: false }, missing: "no chorus_pm_validate_proposal receipt", stale: "edited after its last validate", invalid: "valid:false" },
+  ]) {
+    for (const receiptState of ["missing", "stale", "invalid", "valid"] as const) {
+      test(`${scenario.kind}: ${receiptState} receipt cannot be revived after a submit attempt`, () => {
+        const state = newSubmitGateState();
+        const args = { [scenario.key]: scenario.uuid };
+        const otherArgs = { [scenario.key]: scenario.other };
+        const goodResult = JSON.stringify(scenario.good);
+        if (receiptState !== "missing") {
+          const initial = nextId();
+          evaluateGate(state, scenario.read, args, initial);
+          recordGateResult(state, scenario.read, args, false, initial,
+            JSON.stringify(receiptState === "invalid" ? scenario.bad : scenario.good));
+        }
+        if (receiptState === "missing" || receiptState === "stale") {
+          evaluateGate(state, scenario.mutate, { ...args, status: "in_progress" });
+        }
+        const delayed = nextId();
+        const other = nextId();
+        evaluateGate(state, scenario.read, args, delayed);
+        evaluateGate(state, scenario.read, otherArgs, other);
+
+        const verdict = evaluateGate(state, scenario.submit, args);
+        const submitSeq = state.seq;
+        if (receiptState === "valid") expect(verdict).toBeUndefined();
+        else expect(verdict?.reason).toContain(scenario[receiptState]);
+
+        recordGateResult(state, scenario.read, args, false, delayed, goodResult);
+        expect(evaluateGate(state, scenario.submit, args)).toBeDefined();
+        const receipts = scenario.kind === "task" ? state.taskReceipts : state.proposalReceipts;
+        expect(receipts.has(scenario.uuid)).toBe(false);
+        const mutationSeq = scenario.kind === "task"
+          ? state.taskMutation.get(scenario.uuid)?.at
+          : state.proposalDraftMutation.get(scenario.uuid);
+        expect(mutationSeq).toBe(state.seq);
+        expect(mutationSeq).toBeGreaterThan(submitSeq);
+
+        recordGateResult(state, scenario.read, otherArgs, false, other, goodResult);
+        expect(evaluateGate(state, scenario.submit, otherArgs)).toBeUndefined();
+        const fresh = nextId();
+        evaluateGate(state, scenario.read, args, fresh);
+        recordGateResult(state, scenario.read, args, false, fresh, goodResult);
+        expect(evaluateGate(state, scenario.submit, args)).toBeUndefined();
+        expect(evaluateGate(state, scenario.submit, args)).toBeDefined();
+      });
+    }
+  }
+
+  for (const receiptState of ["missing", "stale", "invalid", "valid"] as const) {
+    test(`proposal without UUID: ${receiptState} receipt still invalidates globally`, () => {
+      const state = newSubmitGateState();
+      if (receiptState !== "missing") {
+        readProposal(state, PROPOSAL, { valid: true });
+        readProposal(state, PROPOSAL_B, { valid: receiptState !== "invalid" });
+      }
+      if (receiptState === "stale") evaluateGate(state, "chorus_pm_update_task_draft", {});
+      readTask(state, TASK);
+      const pending = [{ proposalUuid: PROPOSAL }, { proposalUuid: PROPOSAL_B }, {}].map((args) => {
+        const callId = nextId();
+        evaluateGate(state, "chorus_pm_validate_proposal", args, callId);
+        return { args, callId };
+      });
+
+      const verdict = evaluateGate(state, "chorus_pm_submit_proposal", {});
+      if (receiptState === "valid") expect(verdict).toBeUndefined();
+      else expect(verdict?.reason).toContain({
+        missing: "no chorus_pm_validate_proposal receipt",
+        stale: "edited after its last validate",
+        invalid: "valid:false",
+      }[receiptState]);
+      expect(state.proposalReceipts.size).toBe(0);
+      expect(state.anyDraftMutation).toBe(state.seq);
+      for (const { args, callId } of pending) {
+        recordGateResult(state, "chorus_pm_validate_proposal", args, false, callId, '{"valid":true}');
+      }
+      expect(state.proposalReceipts.size).toBe(0);
+      expect(evaluateGate(state, "chorus_pm_submit_proposal", { proposalUuid: PROPOSAL })).toBeDefined();
+      expect(evaluateGate(state, "chorus_pm_submit_proposal", { proposalUuid: PROPOSAL_B })).toBeDefined();
+      expect(evaluateGate(state, "chorus_pm_submit_proposal", {})).toBeDefined();
+      expect(evaluateGate(state, "chorus_submit_for_verify", { taskUuid: TASK })).toBeUndefined();
+
+      readProposal(state, PROPOSAL, { valid: true });
+      expect(evaluateGate(state, "chorus_pm_submit_proposal", {})).toBeUndefined();
+      expect(evaluateGate(state, "chorus_pm_submit_proposal", {})).toBeDefined();
+    });
+  }
+});
+
 describe("mode", () => {
   test("off unless explicitly warn or block", () => {
     expect(resolveGateMode({})).toBe("off");
