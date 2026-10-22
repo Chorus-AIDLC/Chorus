@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.23.0](https://chorus-ai.dev/blog/chorus-v0.23.0-release/)**: Manage workspace-local accounts and personalize display names and avatars. Adds proposal dependency validation, optional Pi pre-submit checks, and shared Redis auth rate limits; fixes task actor attribution and duplicate mention notifications.
+
 **[v0.22.2](https://chorus-ai.dev/blog/chorus-v0.22.2-release/)**: Host Chorus on your own Linux or macOS machine with Docker Compose and PostgreSQL 17, with repeatable deployment, optional LAN HTTPS, and Cloudflare Tunnel guidance. TRAE CLI joins the existing workflow through the shared Codex plugin. This release also fixes stale assignments, deletion failures, and daemon security and configuration issues.
 
 **[v0.22.0](https://chorus-ai.dev/blog/chorus-v0.22.0-release/)**: Hermes Agent now joins the existing Chorus workflow through its own gateway, with no separate Chorus daemon. Assign work in Chorus, run it in Hermes, and bring results and approval requests back to the project. Install through the Chorus CLI or directly with Hermes.

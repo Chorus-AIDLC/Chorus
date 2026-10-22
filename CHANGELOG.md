@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.23.0] - 2026-10-22
+
+### Added
+
+- **Workspace-local users**: Added workspace bootstrap, local account management, unified identifier-first login, and bounded access revocation. (#624)
+- **Shared auth rate limits**: Added Redis-backed authentication throttling across instances with bounded timeouts and in-memory fallback. (#625)
+- **User profiles**: Added persistent Personas avatars with preview/save and customizable display names. (#628, #632)
+- **Proposal validation**: Added dependency validation for missing references, self-dependencies, and cycles, plus task-draft kinds and implementation-coverage guidance. (#634)
+- **Pi submission gate**: Added optional pre-submit read-back and validation reminders through `CHORUS_SUBMIT_GATE=warn|block`. (#631)
+
+### Changed
+
+- **Dependencies**: Upgraded bcryptjs across the application and CDK, and updated Vite. (#627, #638)
+
+### Fixed
+
+- **Auth recovery**: Prevented timed-out Redis rate-limit commands from replaying after connection recovery. (#626)
+- **Task activity attribution**: Preserved the actual acting user or agent across task transitions and Admin activity displays. (#633, #635)
+- **Mention notifications**: Avoided notifying existing mention recipients again when descriptions are edited. (#635)
+- **Workflow skills**: Corrected task verification submission ordering and aligned draft-validation guidance across hosts. (#630, #637)
+- **Installer tests**: Stabilized signal-handling regression tests. (#638)
+
+### Plugin
+
+- **Versions**: Upgraded all seven plugins and four coordinated npm packages to `0.23.0`.
+
+---
+
 ## [0.22.2] - 2026-10-15
 
 ### Added

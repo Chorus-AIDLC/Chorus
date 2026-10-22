@@ -4,7 +4,7 @@ description: Chorus Proposal workflow on Hermes — create proposals with docume
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.22.2"
+  version: "0.23.0"
   category: project-management
   mcp_server: chorus
 ---

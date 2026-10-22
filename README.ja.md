@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.23.0](https://chorus-ai.dev/blog/chorus-v0.23.0-release/)**：ワークスペース内のローカルアカウント管理と表示名・アバターの設定を追加しました。提案の依存関係検証、Pi の任意の提出前チェック、Redis による共有認証レート制限に対応し、タスクの操作者記録とメンション通知の重複を修正しました。
+
 **[v0.22.2](https://chorus-ai.dev/blog/chorus-v0.22.2-release/)**：Docker Compose と PostgreSQL 17 を使い、Linux または macOS の自分のマシンで Chorus をホストできます。再デプロイ手順、任意の LAN HTTPS、Cloudflare Tunnel の接続ガイドを用意しました。TRAE CLI バックエンドも追加し、Codex と共通のプラグインで既存のワークフローに参加できます。無効な担当者情報、削除エラー、daemon のセキュリティと設定に関する問題も修正しました。
 
 **[v0.22.0](https://chorus-ai.dev/blog/chorus-v0.22.0-release/)**：Hermes Agent に対応しました。Hermes 自身の gateway を通じて既存の Chorus ワークフローに参加でき、Chorus daemon を別途起動する必要はありません。Chorus で仕事を割り当て、Hermes が実行し、結果や承認リクエストをプロジェクトに返します。プラグインは Chorus CLI 経由でも、Hermes から直接でもインストールできます。
