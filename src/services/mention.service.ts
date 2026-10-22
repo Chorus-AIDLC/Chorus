@@ -111,6 +111,7 @@ export interface Mentionable {
   name: string;
   email?: string | null;
   avatarUrl?: string | null;
+  avatarSeed?: string | null;
   roles?: string[];
   // Agent liveness, populated for `type: "agent"` candidates only (users never
   // carry these). `online` is true iff the agent has at least one effectively-
@@ -269,6 +270,7 @@ export interface CreateMentionsParams {
   actorUuid: string;
   projectUuid: string;
   entityTitle: string;
+  excludeMentions?: Pick<MentionRef, "type" | "uuid">[];
 }
 
 export interface SearchMentionablesParams {
@@ -362,14 +364,17 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     actorUuid,
     projectUuid,
     entityTitle,
+    excludeMentions = [],
   } = params;
 
   const mentions = parseMentions(content);
   if (mentions.length === 0) return;
 
   // Filter out self-mentions
+  const excludedKeys = new Set(excludeMentions.map((mention) => `${mention.type}:${mention.uuid}`));
   const filteredMentions = mentions.filter(
-    (m) => !(m.type === actorType && m.uuid === actorUuid)
+    (mention) => !(mention.type === actorType && mention.uuid === actorUuid)
+      && !excludedKeys.has(`${mention.type}:${mention.uuid}`)
   );
   if (filteredMentions.length === 0) return;
 
@@ -528,6 +533,39 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
 }
 
 const DEFAULT_EMPTY_QUERY_LIMIT = 5;
+
+export async function resolveUserMentions(params: {
+  companyUuid: string;
+  userUuids: string[];
+  entityType: LineageEntityType;
+  entityUuid: string;
+}): Promise<Array<{ uuid: string; name: string }>> {
+  const { companyUuid, userUuids, entityType, entityUuid } = params;
+  if (userUuids.length === 0) return [];
+
+  const projectUuid = await resolveEntityProjectUuid(companyUuid, entityType, entityUuid);
+  if (!projectUuid) return [];
+
+  const memberUuids = await projectAccess.privateProjectMemberUuids(companyUuid, projectUuid);
+  const members = memberUuids === null ? null : new Set(memberUuids);
+  const visibleUuids = [...new Set(userUuids)].filter((uuid) => !members || members.has(uuid));
+  if (visibleUuids.length === 0) return [];
+
+  const users = await prisma.user.findMany({
+    where: {
+      companyUuid,
+      uuid: { in: visibleUuids },
+      status: "active",
+      deletedAt: null,
+    },
+    select: { uuid: true, name: true, email: true },
+  });
+
+  return users.flatMap((user) => {
+    const name = user.name?.trim() || user.email?.trim();
+    return name ? [{ uuid: user.uuid, name }] : [];
+  });
+}
 
 /**
  * Type rank for online-first ordering (ascending): online agent → offline agent → user.
@@ -899,6 +937,7 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
         where: {
           companyUuid,
           ownerUuid: agentOwnerUuid,
+          owner: { is: { companyUuid, status: "active", deletedAt: null } },
         },
         select: {
           uuid: true,
@@ -949,10 +988,12 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
     }
     return sliced;
   }
-  // Search users (all company users are mentionable)
+  // Filter eligibility in the existing candidate query, before the result cap.
   const users = await prisma.user.findMany({
     where: {
       companyUuid,
+      status: "active",
+      deletedAt: null,
       ...(memberUuids ? { uuid: { in: memberUuids } } : {}),
       OR: [
         { name: { contains: query, mode: "insensitive" } },
@@ -964,6 +1005,7 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
       name: true,
       email: true,
       avatarUrl: true,
+      avatarSeed: true,
     },
     take: effectiveLimit,
   });
@@ -975,6 +1017,7 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
       name: user.name ?? user.email ?? "Unknown",
       email: user.email,
       avatarUrl: user.avatarUrl,
+      avatarSeed: user.avatarSeed ?? null,
     });
   }
 
@@ -984,9 +1027,11 @@ export async function searchMentionables(params: SearchMentionablesParams): Prom
     companyUuid: string;
     name: { contains: string; mode: "insensitive" };
     ownerUuid?: string | { in: string[] };
+    OR: ({ ownerUuid: null } | { owner: { is: { companyUuid: string; status: string; deletedAt: null } } })[];
   } = {
     companyUuid,
     name: { contains: query, mode: "insensitive" as const },
+    OR: [{ ownerUuid: null }, { owner: { is: { companyUuid, status: "active", deletedAt: null } } }],
   };
 
   // Scope agents: user sees own agents, agent sees same-owner agents.

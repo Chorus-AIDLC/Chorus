@@ -47,6 +47,7 @@ vi.mock("@/lib/event-bus", () => ({
 const mockGetActorName = vi.fn();
 const mockValidateTargetExists = vi.fn();
 vi.mock("@/lib/uuid-resolver", () => ({
+  batchResolveActorIdentities: async (_companyUuid: string, actors: Array<{ type: string; uuid: string }>) => new Map(await Promise.all(actors.map(async actor => [`${actor.type}:${actor.uuid}`, { ...actor, name: await mockGetActorName(actor.type, actor.uuid) }] as const))),
   getActorName: (...args: unknown[]) => mockGetActorName(...args),
   validateTargetExists: (...args: unknown[]) => mockValidateTargetExists(...args),
 }));

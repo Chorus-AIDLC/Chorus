@@ -79,7 +79,8 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
-vi.mock("@/components/mention-renderer", () => ({
+vi.mock("@/components/mention-renderer", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/components/mention-renderer")>(),
   ContentWithMentions: ({ children }: { children: string }) => <span>{children}</span>,
 }));
 

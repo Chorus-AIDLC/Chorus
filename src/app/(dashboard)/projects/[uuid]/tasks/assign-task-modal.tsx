@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
-import { User, Loader2, Info } from "lucide-react";
+import { Loader2, Info } from "lucide-react";
+import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
 import { Button } from "@/components/ui/button";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import {
@@ -62,6 +63,7 @@ interface CompanyUser {
   uuid: string;
   name: string | null;
   email: string | null;
+  avatarSeed?: string | null;
 }
 
 interface AssignTaskModalProps {
@@ -443,7 +445,7 @@ export function AssignTaskModal({
                           users.map((user) => (
                             <SelectItem key={user.uuid} value={user.uuid}>
                               <div className="flex items-center gap-2">
-                                <User className="h-4 w-4 text-muted-foreground" />
+                                <UserAvatar userUuid={user.uuid} name={user.name} avatarSeed={user.avatarSeed} size={16} decorative />
                                 <span>{user.name || user.email}</span>
                               </div>
                             </SelectItem>

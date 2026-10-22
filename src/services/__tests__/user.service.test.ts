@@ -5,8 +5,10 @@ const mockPrisma = vi.hoisted(() => ({
   user: {
     findFirst: vi.fn(),
     findUnique: vi.fn(),
+    findUniqueOrThrow: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
     upsert: vi.fn(),
   },
   company: {
@@ -35,6 +37,7 @@ function makeCompany(overrides: Record<string, unknown> = {}) {
     name: "Test Company",
     emailDomains: ["test.com"],
     oidcEnabled: true,
+    localAuthEnabled: false,
     oidcIssuer: "https://auth.test.com",
     oidcClientId: "client123",
     oidcClientSecret: "secret",
@@ -50,7 +53,10 @@ function makeUser(overrides: Record<string, unknown> = {}) {
     uuid: userUuid,
     email: "user@test.com",
     name: "Test User",
+    nameCustomized: false,
+    avatarSeed: "639d12a3-0ee3-4561-8f8d-80c6f9c3b5bc",
     oidcSub: "oidc-sub-123",
+    authType: "oidc", status: "active", deletedAt: null,
     companyUuid,
     createdAt: now,
     updatedAt: now,
@@ -63,10 +69,41 @@ function makeUser(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
+  mockPrisma.company.findFirst.mockResolvedValue(makeCompany());
+  mockPrisma.user.findUniqueOrThrow.mockResolvedValue(makeUser());
 });
 
 // ===== findOrCreateUserByOidc =====
+describe("managed local/default/OIDC bypass protections", () => {
+  it("rejects an explicitly local company before OIDC user writes", async () => {
+    mockPrisma.company.findFirst.mockResolvedValue(makeCompany({ localAuthEnabled: true }));
+    await expect(findOrCreateUserByOidc({ oidcSub: 's', email: 'a@test.com', companyUuid })).rejects.toMatchObject({ status: 401 });
+    expect(mockPrisma.user.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+  });
+  it.each(['local', 'disabled', 'deleted'])("rejects existing %s OIDC subject without updating profile", async state => {
+    mockPrisma.user.findFirst.mockResolvedValue(makeUser(state === 'local' ? { authType: 'local' } : { status: state }));
+    await expect(findOrCreateUserByOidc({ oidcSub: 's', email: 'a@test.com', companyUuid })).rejects.toMatchObject({ status: 401 });
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+  it("never links a local account discovered by email into an OIDC subject", async () => {
+    mockPrisma.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(makeUser({ authType: 'local' }));
+    await expect(findOrCreateUserByOidc({ oidcSub: 's', email: 'a@test.com', companyUuid })).rejects.toMatchObject({ status: 401 });
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+  it("rejects default login routing into explicitly local company", async () => {
+    mockPrisma.company.findFirst.mockResolvedValue(makeCompany({ localAuthEnabled: true }));
+    await expect(findOrCreateDefaultUser('user@test.com')).rejects.toMatchObject({ status: 401 });
+    expect(mockPrisma.user.upsert).not.toHaveBeenCalled();
+  });
+  it.each(['local', 'invited', 'disabled', 'deleted'])("rejects default fallback over existing %s managed account", async state => {
+    mockPrisma.user.findFirst.mockResolvedValue(makeUser(state === 'local' ? { authType: 'local' } : { status: state }));
+    await expect(findOrCreateDefaultUser('user@test.com')).rejects.toMatchObject({ status: 401 });
+    expect(mockPrisma.user.upsert).not.toHaveBeenCalled();
+  });
+});
+
 describe("findOrCreateUserByOidc", () => {
   it("should return existing user by oidcSub", async () => {
     const user = makeUser();
@@ -94,6 +131,7 @@ describe("findOrCreateUserByOidc", () => {
     const updatedUser = makeUser({ email: "new@test.com", name: "New Name" });
     mockPrisma.user.findFirst.mockResolvedValue(existingUser);
     mockPrisma.user.update.mockResolvedValue(updatedUser);
+    mockPrisma.user.findUniqueOrThrow.mockResolvedValue(updatedUser);
 
     const result = await findOrCreateUserByOidc({
       oidcSub: "oidc-sub-123",
@@ -104,12 +142,17 @@ describe("findOrCreateUserByOidc", () => {
 
     expect(result.email).toBe("new@test.com");
     expect(result.name).toBe("New Name");
+    expect(result.avatarSeed).toBe(existingUser.avatarSeed);
     expect(mockPrisma.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 1 },
-        data: { email: "new@test.com", name: "New Name" },
+        data: { email: "new@test.com" },
       })
     );
+    expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
+      where: { id: 1, companyUuid, nameCustomized: false },
+      data: { name: "New Name" },
+    });
   });
 
   it("should not update when email and name are unchanged", async () => {
@@ -143,7 +186,7 @@ describe("findOrCreateUserByOidc", () => {
     expect(mockPrisma.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 1 },
-        data: { oidcSub: "new-oidc-sub", name: "Test User" },
+        data: { oidcSub: "new-oidc-sub" },
       })
     );
   });
@@ -208,6 +251,11 @@ describe("findOrCreateDefaultUser", () => {
     const result = await findOrCreateDefaultUser("user@test.com");
 
     expect(result.uuid).toBe(userUuid);
+    expect(result.avatarSeed).toBe(user.avatarSeed);
+    expect(mockPrisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { email: "user@test.com" },
+      select: expect.objectContaining({ avatarSeed: true }),
+    }));
     expect(mockPrisma.company.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { emailDomains: { has: "test.com" } },

@@ -211,6 +211,7 @@ vi.mock("@/lib/uuid-resolver", () => ({
   formatAssignee: vi.fn(async () => null),
   formatReview: vi.fn(async () => null),
   getActorName: vi.fn(async () => "Test Actor"),
+  batchResolveActorIdentities: vi.fn(async () => new Map()),
   batchGetActorNames: vi.fn(async () => new Map()),
   batchFormatCreatedBy: vi.fn(async () => new Map()),
   getSessionName: vi.fn(async () => null),

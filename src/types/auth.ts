@@ -21,6 +21,9 @@ export interface UserAuthContext extends AuthContext {
   type: "user";
   email?: string;
   name?: string;
+  authType?: "local" | "oidc";
+  workspaceAdmin?: boolean;
+  localAuthEnabled?: boolean;
 }
 
 // Agent authentication context

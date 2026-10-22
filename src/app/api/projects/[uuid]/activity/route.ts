@@ -8,6 +8,7 @@ import { withErrorHandler, parsePagination } from "@/lib/api-handler";
 import { paginated, errors } from "@/lib/api-response";
 import { getAuthContext, checkAgentPermission } from "@/lib/auth";
 import { requireProjectAccess } from "@/services/project-access.service";
+import { batchResolveActorIdentities } from "@/lib/uuid-resolver";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -52,6 +53,10 @@ export const GET = withErrorHandler<{ uuid: string }>(
       prisma.activity.count({ where }),
     ]);
 
+    const identities = await batchResolveActorIdentities(auth.companyUuid, activities
+      .filter(activity => activity.actorType === "user")
+      .map(activity => ({ type: activity.actorType, uuid: activity.actorUuid })));
+
     const data = activities.map((a) => ({
       uuid: a.uuid,
       targetType: a.targetType,
@@ -59,6 +64,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       actor: {
         type: a.actorType,
         uuid: a.actorUuid,
+        ...(a.actorType === "user" ? { avatarSeed: identities.get(`user:${a.actorUuid}`)?.avatarSeed ?? null } : {}),
       },
       action: a.action,
       value: a.value,

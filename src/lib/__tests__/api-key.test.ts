@@ -10,6 +10,8 @@ vi.mock('@/lib/prisma', () => ({
   },
 }));
 vi.mock('@/generated/prisma/client', () => ({ PrismaClient: vi.fn() }));
+vi.mock('@/services/local-user.service', () => ({ getUserAccountState: vi.fn() }));
+import { getUserAccountState } from '@/services/local-user.service';
 
 import { generateApiKey, hashApiKey, extractApiKey, secureCompare, validateApiKey } from '../api-key';
 import { prisma } from '@/lib/prisma';
@@ -113,6 +115,7 @@ describe('secureCompare', () => {
 describe('validateApiKey', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getUserAccountState).mockImplementation(async (companyUuid, uuid) => ({ uuid, companyUuid, authType: 'oidc', status: 'active', deletedAt: null, company: { localAuthEnabled: false, oidcEnabled: true } }) as any);
   });
 
   it('returns invalid for key without cho_ prefix', async () => {

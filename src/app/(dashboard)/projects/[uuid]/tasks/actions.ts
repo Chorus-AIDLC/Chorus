@@ -52,16 +52,16 @@ export async function moveTaskToColumnAction(
     // Done column should only be reached through verify action
     if (newStatus === "done" && task.status !== "to_verify") {
       // When dragging to done column, set to_verify instead
-      await updateTask(taskUuid, { status: "to_verify" });
+      await updateTask(taskUuid, { status: "to_verify" }, { actorType: auth.type, actorUuid: auth.actorUuid });
     } else if (newStatus === "done" && task.status === "to_verify") {
       // If task is in to_verify and dragged to done, verify it
       const gate = await checkAcceptanceCriteriaGate(taskUuid);
       if (!gate.allowed) {
         return { success: false, error: gate.reason || "Not all required acceptance criteria are passed", gateBlocked: true, unresolvedCriteria: gate.unresolvedCriteria || [] };
       }
-      await updateTask(taskUuid, { status: "done" });
+      await updateTask(taskUuid, { status: "done" }, { actorType: auth.type, actorUuid: auth.actorUuid });
     } else {
-      await updateTask(taskUuid, { status: newStatus });
+      await updateTask(taskUuid, { status: newStatus }, { actorType: auth.type, actorUuid: auth.actorUuid });
     }
 
     revalidatePath(`/projects/${projectUuid}/tasks`);
@@ -89,7 +89,7 @@ export async function forceMoveTaskToColumnAction(
       return { success: false, error: "Task not found" };
     }
 
-    await updateTask(taskUuid, { status });
+    await updateTask(taskUuid, { status }, { actorType: auth.type, actorUuid: auth.actorUuid });
 
     await createActivity({
       companyUuid: auth.companyUuid,

@@ -5,7 +5,7 @@
 import { prisma } from "@/lib/prisma";
 import { resolveEntityProjectUuid } from "@/services/project-access.service";
 import {
-  getActorName,
+  batchResolveActorIdentities,
   validateTargetExists,
   type TargetType,
 } from "@/lib/uuid-resolver";
@@ -62,11 +62,13 @@ type RawComment = {
 
 // Map raw Comment rows to the response format, resolving author display names.
 async function toCommentResponses(
-  rawComments: RawComment[]
+  rawComments: RawComment[],
+  companyUuid: string,
 ): Promise<CommentResponse[]> {
+  const identities = await batchResolveActorIdentities(companyUuid, rawComments.map(comment => ({ type: comment.authorType, uuid: comment.authorUuid })));
   return Promise.all(
     rawComments.map(async (c) => {
-      const authorName = await getActorName(c.authorType, c.authorUuid);
+      const author = identities.get(`${c.authorType}:${c.authorUuid}`);
       return {
         uuid: c.uuid,
         targetType: c.targetType,
@@ -75,7 +77,8 @@ async function toCommentResponses(
         author: {
           type: c.authorType,
           uuid: c.authorUuid,
-          name: authorName ?? "Unknown",
+          name: author?.name ?? "Unknown",
+          ...(c.authorType === "user" ? { avatarSeed: author?.avatarSeed ?? null } : {}),
         },
         createdAt: c.createdAt.toISOString(),
         updatedAt: c.updatedAt.toISOString(),
@@ -109,6 +112,7 @@ export interface CommentResponse {
     type: string;
     uuid: string;
     name: string;
+    avatarSeed?: string | null;
   };
   createdAt: string;
   updatedAt: string;
@@ -155,7 +159,7 @@ export async function listComments(
     prisma.comment.count({ where }),
   ]);
 
-  const comments = await toCommentResponses(rawComments);
+  const comments = await toCommentResponses(rawComments, companyUuid);
   return { comments, total };
 }
 
@@ -196,7 +200,7 @@ async function listCommentsCursor(
   const pageRows = hasMore ? rawComments.slice(0, limit) : rawComments;
   const nextCursor = hasMore ? pageRows[pageRows.length - 1].uuid : null;
 
-  const comments = await toCommentResponses(pageRows);
+  const comments = await toCommentResponses(pageRows, companyUuid);
   return { comments, total, nextCursor, hasMore };
 }
 
@@ -237,7 +241,7 @@ export async function createComment({
   });
 
   // Get author name
-  const authorName = await getActorName(comment.authorType, comment.authorUuid);
+  const [response] = await toCommentResponses([comment], companyUuid);
 
   // Emit SSE event for real-time comment updates (fire-and-forget)
   resolveProjectUuid(targetType, targetUuid, companyUuid).then((projectUuid) => {
@@ -264,19 +268,7 @@ export async function createComment({
     authorUuid,
   ).catch((err) => logger.error({ err }, "Failed to process comment mentions"));
 
-  return {
-    uuid: comment.uuid,
-    targetType: comment.targetType,
-    targetUuid: comment.targetUuid,
-    content: comment.content,
-    author: {
-      type: comment.authorType,
-      uuid: comment.authorUuid,
-      name: authorName ?? "Unknown",
-    },
-    createdAt: comment.createdAt.toISOString(),
-    updatedAt: comment.updatedAt.toISOString(),
-  };
+  return response;
 }
 
 /**
@@ -366,6 +358,7 @@ export interface CommentAuthor {
   type: string;
   uuid: string;
   name: string;
+  avatarSeed?: string | null;
   owner?: { uuid: string; name: string };
 }
 

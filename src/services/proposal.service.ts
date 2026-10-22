@@ -6,7 +6,7 @@
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
-import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
+import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid, batchResolveActorIdentities, type ActorIdentityMap } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import { accessibleProjectUuids } from "@/services/project-access.service";
 import type { AuthContext } from "@/types/auth";
@@ -66,6 +66,17 @@ export interface AcceptanceCriteriaItem {
 }
 
 // Task draft type (with UUID for tracking and modification)
+/**
+ * What a task draft is for. Optional on purpose: existing proposals predate the
+ * field, so validation treats a missing kind as "unknown" rather than an error.
+ * Declared in `@/types/task-draft` so tool schemas can import it without pulling
+ * in this service (tests mock the service module).
+ */
+export { TASK_DRAFT_KINDS };
+export type { TaskDraftKind };
+
+import { TASK_DRAFT_KINDS, type TaskDraftKind } from "@/types/task-draft";
+
 export interface TaskDraft {
   uuid: string;      // Draft UUID for tracking
   title: string;
@@ -75,6 +86,7 @@ export interface TaskDraft {
   acceptanceCriteria?: string;  // legacy Markdown (read-only, kept for backward-compatible viewing of old data)
   acceptanceCriteriaItems?: AcceptanceCriteriaItem[];  // structured acceptance criteria items (primary format)
   dependsOnDraftUuids?: string[];  // list of dependent taskDraft UUIDs
+  kind?: TaskDraftKind;  // optional role of the task; drives the implementation-coverage check
 }
 
 // Input types (uuid is optional, will be auto-generated)
@@ -105,10 +117,10 @@ export interface ProposalResponse {
   taskDrafts: TaskDraft[] | null;
   status: string;
   project?: { uuid: string; name: string };
-  createdBy: { type: string; uuid: string; name: string } | null;
+  createdBy: { type: string; uuid: string; name: string; avatarSeed?: string | null } | null;
   createdByType: string;
   review: {
-    reviewedBy: { type: string; uuid: string; name: string };
+    reviewedBy: { type: string; uuid: string; name: string; avatarSeed?: string | null };
     reviewNote: string | null;
     reviewedAt: string | null;
   } | null;
@@ -134,6 +146,7 @@ export interface DocumentDraftIndexEntry {
 export interface TaskDraftIndexEntry {
   uuid: string;
   title: string;
+  kind?: TaskDraftKind;
   priority?: string;
   storyPoints?: number;
   acceptanceCriteriaCount: number; // count of acceptanceCriteriaItems (0 if none)
@@ -176,6 +189,7 @@ export type ProposalSectionResponse =
 // Format a single Proposal into API response format
 async function formatProposalResponse(
   proposal: {
+    companyUuid: string;
     uuid: string;
     title: string;
     description: string | null;
@@ -192,12 +206,13 @@ async function formatProposalResponse(
     createdAt: Date;
     updatedAt: Date;
     project?: { uuid: string; name: string };
-  }
+  },
+  identities?: ActorIdentityMap,
 ): Promise<ProposalResponse> {
   const creatorType = proposal.createdByType === "user" ? "user" : "agent";
   const [createdBy, review] = await Promise.all([
-    formatCreatedBy(proposal.createdByUuid, creatorType),
-    formatReview(proposal.reviewedByUuid, proposal.reviewNote, proposal.reviewedAt),
+    formatCreatedBy(proposal.createdByUuid, creatorType, proposal.companyUuid, identities),
+    formatReview(proposal.reviewedByUuid, proposal.reviewNote, proposal.reviewedAt, proposal.companyUuid, identities),
   ]);
 
   const response: ProposalResponse = {
@@ -223,6 +238,21 @@ async function formatProposalResponse(
   return response;
 }
 
+async function formatProposalResponses(
+  companyUuid: string,
+  proposals: Array<Omit<Parameters<typeof formatProposalResponse>[0], "companyUuid">>,
+): Promise<ProposalResponse[]> {
+  const actors = proposals.flatMap(proposal => [
+    { type: proposal.createdByType === "user" ? "user" : "agent", uuid: proposal.createdByUuid },
+    ...(proposal.reviewedByUuid ? [
+      { type: "user", uuid: proposal.reviewedByUuid },
+      { type: "agent", uuid: proposal.reviewedByUuid },
+    ] : []),
+  ]);
+  const identities = await batchResolveActorIdentities(companyUuid, actors);
+  return Promise.all(proposals.map(proposal => formatProposalResponse({ ...proposal, companyUuid }, identities)));
+}
+
 // ===== Validation Functions =====
 
 export interface ValidationIssue {
@@ -230,6 +260,39 @@ export interface ValidationIssue {
   level: "error" | "warning" | "info";
   message: string;  // Human-readable English message
   field?: string;   // Optional: which draft/field has the issue
+  params?: Record<string, string>; // Context for localized UI messages
+}
+
+/**
+ * Return dependency cycles among task drafts, each rendered as "A -> B -> A".
+ * Deterministic DFS (draft order), reporting each cycle once.
+ */
+export function findDependencyCycles(taskDrafts: TaskDraft[]): string[] {
+  const byUuid = new Map(taskDrafts.map((d) => [d.uuid, d]));
+  const state = new Map<string, "visiting" | "done">();
+  const cycles: string[] = [];
+  const seen = new Set<string>();
+
+  const visit = (uuid: string, stack: string[]): void => {
+    if (state.get(uuid) === "done") return;
+    if (state.get(uuid) === "visiting") {
+      const from = stack.indexOf(uuid);
+      const path = [...stack.slice(from), uuid];
+      const key = JSON.stringify([...path].sort());
+      if (!seen.has(key)) {
+        seen.add(key);
+        cycles.push(path.map((id) => byUuid.get(id)?.title ?? id).join(" -> "));
+      }
+      return;
+    }
+    state.set(uuid, "visiting");
+    const deps = (byUuid.get(uuid)?.dependsOnDraftUuids ?? []).filter((dep) => dep !== uuid && byUuid.has(dep));
+    for (const dep of deps) visit(dep, [...stack, uuid]);
+    state.set(uuid, "done");
+  };
+
+  for (const draft of taskDrafts) visit(draft.uuid, []);
+  return cycles;
 }
 
 export interface ValidationResult {
@@ -349,6 +412,41 @@ export async function validateProposal(
     }
   }
 
+  // E-DEP: every declared dependency must resolve inside this proposal. A dangling
+  // uuid silently materializes as a task with no blocker, which is how "no
+  // implementation task" proposals reached review: the dependency that should have
+  // pointed at the missing work pointed nowhere.
+  const draftByUuid = new Map(taskDrafts.map((d) => [d.uuid, d]));
+  for (const draft of taskDrafts) {
+    for (const dep of draft.dependsOnDraftUuids ?? []) {
+      if (dep === draft.uuid) {
+        issues.push({
+          id: "E-DEP-SELF",
+          level: "error",
+          message: `Task draft "${draft.title}" depends on itself`,
+          field: draft.title,
+        });
+      } else if (!draftByUuid.has(dep)) {
+        issues.push({
+          id: "E-DEP-UNKNOWN",
+          level: "error",
+          message: `Task draft "${draft.title}" depends on unknown draft UUID "${dep}" (not in this proposal)`,
+          field: draft.title,
+        });
+      }
+    }
+  }
+
+  // E-DEP-CYCLE: a cycle can never be materialized into a runnable DAG.
+  for (const cycle of findDependencyCycles(taskDrafts)) {
+    issues.push({
+      id: "E-DEP-CYCLE",
+      level: "error",
+      message: `Task drafts form a dependency cycle: ${cycle}`,
+      params: { cycle },
+    });
+  }
+
   // W4: When >= 2 task drafts, at least one should have dependsOnDraftUuids
   if (taskDrafts.length >= 2) {
     const hasDeps = taskDrafts.some(
@@ -370,6 +468,30 @@ export async function validateProposal(
       level: "warning",
       message: "Proposal description should not be empty",
     });
+  }
+
+  // Kind coverage. There is no other way to tell an implementation task from a
+  // verification or docs task: without a declared kind the check cannot run, so it
+  // reports that it could not run instead of guessing from titles.
+  if (taskDrafts.length > 0) {
+    const withKind = taskDrafts.filter((d) => d.kind !== undefined);
+    if (withKind.length === 0) {
+      issues.push({
+        id: "I-KIND",
+        level: "info",
+        message:
+          "No task draft declares a kind; implementation coverage cannot be checked. " +
+          `Set kind to one of ${TASK_DRAFT_KINDS.join(", ")} on each task draft.`,
+      });
+    } else if (!withKind.some((d) => d.kind === "implementation")) {
+      issues.push({
+        id: "W-IMPL",
+        level: "warning",
+        message:
+          "No task draft is marked kind \"implementation\"; every task declares verification, docs or other work. " +
+          "Confirm the implementation work is covered by an existing task before submitting.",
+      });
+    }
   }
 
   // --- Info Level ---
@@ -531,7 +653,7 @@ export async function getProposalsByIdeaUuid(
     (p) => Array.isArray(p.inputUuids) && (p.inputUuids as string[]).includes(ideaUuid),
   );
 
-  return Promise.all(matching.map((p) => formatProposalResponse(p)));
+  return formatProposalResponses(companyUuid, matching);
 }
 
 // List proposals query
@@ -575,9 +697,7 @@ export async function listProposals({
     prisma.proposal.count({ where }),
   ]);
 
-  const proposals = await Promise.all(
-    rawProposals.map((p) => formatProposalResponse(p))
-  );
+  const proposals = await formatProposalResponses(companyUuid, rawProposals);
   return { proposals, total };
 }
 
@@ -617,6 +737,7 @@ export function toTaskDraftIndex(draft: TaskDraft): TaskDraftIndexEntry {
     acceptanceCriteriaCount: draft.acceptanceCriteriaItems?.length ?? 0,
   };
   if (draft.priority !== undefined) entry.priority = draft.priority;
+  if (draft.kind !== undefined) entry.kind = draft.kind;
   if (draft.storyPoints !== undefined) entry.storyPoints = draft.storyPoints;
   if (draft.dependsOnDraftUuids !== undefined) entry.dependsOnDraftUuids = draft.dependsOnDraftUuids;
   return entry;
@@ -726,7 +847,7 @@ export async function createProposal(
 
   eventBus.emitChange({ companyUuid: params.companyUuid, projectUuid: params.projectUuid, entityType: "proposal", entityUuid: proposal.uuid, action: "created" });
 
-  return formatProposalResponse(proposal);
+  return formatProposalResponse({ ...proposal, companyUuid: params.companyUuid });
 }
 
 // Update Proposal content (add/modify document drafts and tasks)

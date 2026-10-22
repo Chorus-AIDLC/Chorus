@@ -4,7 +4,7 @@ description: 'Read-only Chorus proposal reviewer. Fetches a proposal via MCP, au
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.22.2"
+  version: "0.23.0"
   category: project-management
   mcp_server: chorus
   short-description: Adversarial Chorus proposal reviewer
@@ -86,7 +86,8 @@ For each task draft, check:
 - **Granularity**: Each task cohesive, independently testable. 2-10 AC items is the sweet spot.
 - **AC quality**: Objectively verifiable by a different agent. "Shows details" is BAD. "Displays order ID, customer name, status badge" is GOOD.
 - **Coverage**: Any requirements with NO corresponding AC?
-- **Dependencies**: Is the DAG correct? Missing dependencies? Circular?
+- **Dependencies**: Inspect the actual `dependsOnDraftUuids` graph from the full task drafts: every UUID must belong to this proposal, no self edges, no cycles, and each task must be able to start once its dependencies finish. `E-DEP-UNKNOWN`, `E-DEP-SELF`, and `E-DEP-CYCLE` are blocking errors. Request that the author replace/remove foreign UUIDs, remove self edges, or repair the reported cycle with `chorus_pm_update_task_draft`, then rerun `chorus_pm_validate_proposal` before resubmission; do not edit drafts as the reviewer.
+- **Implementation coverage and kind**: Treat `kind` (`implementation`, `verification`, `docs`, `other`) as draft-only metadata, not proof of coverage or a materialized Task field. `I-KIND` (no kind declared) and `W-IMPL` (kinds declared but none implementation) are advisory, not automatic BLOCKERs. Inspect actual human-authorized scope, task descriptions/AC and existing repository work with read-only tools before declaring implementation missing. If the scope requires new implementation and no task covers it, raise a BLOCKER with the specific requirement and evidence. Allow justified docs-only or verification-only proposals when the scope needs no new implementation; cite the rationale/existing implementation. Never fabricate an implementation task, demand one solely to silence an advisory, or accept a misleading kind label as coverage.
 
 **Step 4: Cross-reference**
 

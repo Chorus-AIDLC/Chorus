@@ -54,9 +54,119 @@ import {
   batchGetAssigneeInstanceInfo,
   resolveAssignmentActor,
   batchResolveAssignmentActors,
+  batchResolveActorIdentities,
 } from '../uuid-resolver';
 import type { AuthContext } from '@/types/auth';
 import { makeUser, makeAgent } from '@/__test-utils__/fixtures';
+
+describe('super_admin display identity', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  function expectNoAccountLookups() {
+    for (const model of Object.values(prismaMock)) {
+      for (const query of Object.values(model)) {
+        expect(query).not.toHaveBeenCalled();
+      }
+    }
+  }
+
+  it('returns Admin for a single name without any account lookup', async () => {
+    expect(await getActorName('super_admin', 'admin-1')).toBe('Admin');
+    expectNoAccountLookups();
+  });
+
+  it('resolves duplicate and distinct admins without any account lookup', async () => {
+    const actors = [
+      { type: 'super_admin', uuid: 'admin-1' },
+      { type: 'super_admin', uuid: 'admin-2' },
+      { type: 'super_admin', uuid: 'admin-1' },
+      { type: 'unknown', uuid: 'unknown-1' },
+    ];
+
+    expect(await batchResolveActorIdentities('company-1', actors)).toEqual(new Map([
+      ['super_admin:admin-1', { type: 'super_admin', uuid: 'admin-1', name: 'Admin' }],
+      ['super_admin:admin-2', { type: 'super_admin', uuid: 'admin-2', name: 'Admin' }],
+    ]));
+    expect(await batchGetActorNames(actors)).toEqual(new Map([
+      ['admin-1', 'Admin'],
+      ['admin-2', 'Admin'],
+    ]));
+    expectNoAccountLookups();
+  });
+
+  it.each(['unscoped', 'scoped', 'preloaded'])(
+    'preserves type and UUID through %s identity formatting',
+    async (mode) => {
+      const identities = mode === 'preloaded'
+        ? await batchResolveActorIdentities('company-1', [{ type: 'super_admin', uuid: 'admin-1' }])
+        : undefined;
+
+      expect(await formatAssigneeComplete(
+        'super_admin', 'admin-1', null, null, null,
+        mode === 'unscoped' ? undefined : 'company-1', identities,
+      )).toEqual({
+        type: 'super_admin', uuid: 'admin-1', name: 'Admin', assignedAt: null, assignedBy: null,
+      });
+      expectNoAccountLookups();
+    },
+  );
+
+  it.each(['identities', 'names'])('preserves mixed actor compatibility in batch %s', async (mode) => {
+    prismaMock.user.findMany.mockResolvedValue([
+      { uuid: 'user-1', name: 'Alice', email: 'alice@test.com', avatarSeed: 'alice-avatar' },
+      { uuid: 'user-2', name: null, email: 'fallback@test.com' },
+      { uuid: 'user-3', name: null, email: null },
+    ]);
+    prismaMock.agent.findMany.mockResolvedValue([{ uuid: 'agent-1', name: 'Bot' }]);
+    prismaMock.agentInstance.findMany.mockResolvedValue([
+      { uuid: 'inst-1', agent: { name: 'Pinned Bot' } },
+      { uuid: 'inst-missing', agent: null },
+    ]);
+    const actors = [
+      { type: 'super_admin', uuid: 'admin-1' },
+      { type: 'user', uuid: 'user-1' },
+      { type: 'user', uuid: 'user-2' },
+      { type: 'user', uuid: 'user-3' },
+      { type: 'user', uuid: 'user-missing' },
+      { type: 'agent', uuid: 'agent-1' },
+      { type: 'agent', uuid: 'agent-missing' },
+      { type: 'agent_instance', uuid: 'inst-1' },
+      { type: 'agent_instance', uuid: 'inst-missing' },
+      { type: 'unknown', uuid: 'unknown-1' },
+    ];
+
+    if (mode === 'identities') {
+      expect(await batchResolveActorIdentities('company-1', actors)).toEqual(new Map([
+        ['super_admin:admin-1', { type: 'super_admin', uuid: 'admin-1', name: 'Admin' }],
+        ['user:user-1', { type: 'user', uuid: 'user-1', name: 'Alice', avatarSeed: 'alice-avatar' }],
+        ['user:user-2', { type: 'user', uuid: 'user-2', name: 'fallback@test.com', avatarSeed: null }],
+        ['user:user-3', { type: 'user', uuid: 'user-3', name: 'Unknown', avatarSeed: null }],
+        ['agent:agent-1', { type: 'agent', uuid: 'agent-1', name: 'Bot' }],
+        ['agent_instance:inst-1', { type: 'agent_instance', uuid: 'inst-1', name: 'Pinned Bot' }],
+      ]));
+    } else {
+      expect(await batchGetActorNames(actors)).toEqual(new Map([
+        ['admin-1', 'Admin'], ['user-1', 'Alice'], ['user-2', 'fallback@test.com'],
+        ['user-3', 'Unknown'], ['agent-1', 'Bot'], ['inst-1', 'Pinned Bot'],
+      ]));
+    }
+
+    const companyFilter = mode === 'identities' ? { companyUuid: 'company-1' } : {};
+    for (const [model, uuids] of [
+      [prismaMock.user, ['user-1', 'user-2', 'user-3', 'user-missing']],
+      [prismaMock.agent, ['agent-1', 'agent-missing']],
+      [prismaMock.agentInstance, ['inst-1', 'inst-missing']],
+    ] as const) {
+      expect(model.findMany).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        where: { ...companyFilter, uuid: { in: uuids } },
+      }));
+      expect(model.findUnique).not.toHaveBeenCalled();
+      expect(model.findFirst).not.toHaveBeenCalled();
+    }
+  });
+});
 
 describe('getActorName', () => {
   beforeEach(() => {
@@ -418,7 +528,7 @@ describe('assignment provenance resolution', () => {
         { assignedByType: 'user', assignedByUuid: 'missing' },
       ]),
     ).resolves.toEqual([
-      { type: 'user', uuid: 'shared', name: 'Historical User' },
+      { type: 'user', uuid: 'shared', name: 'Historical User', avatarSeed: null },
       { type: 'agent', uuid: 'agent-2', name: 'Agent Two' },
       null,
     ]);

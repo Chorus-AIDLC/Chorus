@@ -30,7 +30,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { AssigneeInstanceLine } from "@/components/agent-presence";
 import { isAssignedToActor, isAgentAssignee } from "@/lib/assignee-identity";
@@ -111,6 +111,7 @@ interface Task {
     type: string;
     uuid: string;
     name: string;
+    avatarSeed?: string | null;
     assignedAt: string | null;
     assignedBy: { type: string; uuid: string; name: string } | null;
     // Present only when type === "agent_instance": the pinned (host, cwd) place +
@@ -825,11 +826,7 @@ export function TaskDetailPanel({
                         {isAgentAssignee(task.assignee) ? (
                           <AgentAvatar name={task.assignee.name} size={28} className="rounded-full" />
                         ) : (
-                          <Avatar className="h-7 w-7">
-                            <AvatarFallback className="bg-border text-muted-foreground">
-                              {task.assignee.name.charAt(0).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
+                          <UserAvatar userUuid={task.assignee.uuid} name={task.assignee.name} avatarSeed={task.assignee.avatarSeed} size={28} decorative />
                         )}
                         <div className="min-w-0">
                           <div className="text-sm font-medium text-foreground">

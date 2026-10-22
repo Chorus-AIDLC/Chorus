@@ -4,7 +4,7 @@ description: Quick Task workflow — skip Idea→Proposal, create tasks directly
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.22.2"
+  version: "0.23.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -130,6 +130,13 @@ chorus_report_work({
   sessionUuid: "<session-uuid>"
 })
 ```
+
+> Keep completion reports status-free. `chorus_submit_for_verify` (Step 7), not
+> `chorus_report_work`, performs the `in_progress -> to_verify` transition. If a task
+> was moved prematurely, first confirm it is not legitimately awaiting verification.
+> The assignee can return it to `in_progress` with `chorus_update_task`, subject to
+> dependency checks. This clears developer and admin acceptance marks and evidence:
+> repeat Step 6 before submitting again. Do not mechanically roll back submitted tasks.
 
 ### Step 6: Self-Check Acceptance Criteria
 

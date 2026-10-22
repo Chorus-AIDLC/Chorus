@@ -63,7 +63,10 @@ const fixture = vi.hoisted(() => {
     agentSession: model("session"),
     projectGroup: model("group"),
     projectGroupMember: model("projectGroupMember"),
-    agent: { findUnique: vi.fn(async () => ({ name: "Agent" })) },
+    agent: {
+      ...model("agent"),
+      findUnique: vi.fn(async () => ({ name: "Agent" })),
+    },
   };
   const entity = (name: string, uuid: string) => (rows[name] ?? []).find((r) => r.uuid === uuid) ?? null;
   const services = {
@@ -204,6 +207,7 @@ function register(actor: AgentAuthContext) {
 beforeEach(() => {
   vi.clearAllMocks();
   for (const key of Object.keys(fixture.rows)) delete fixture.rows[key];
+  fixture.rows.agent = [{ uuid: "agent", companyUuid: "company", name: "Agent" }];
   fixture.rows.project = [
     { uuid: "public", companyUuid: "company", visibility: "public", name: "Public", groupUuid: "group" },
     { uuid: "private", companyUuid: "company", visibility: "private", name: "Private", groupUuid: "group" },
@@ -699,10 +703,15 @@ describe("MCP central project access", () => {
         expect(text).toContain("CONFIDENTIAL ACQUISITION");
         expect(text).toContain("status: pending");
         if (name === "chorus_pm_validate_proposal") {
-          expect(JSON.parse(text)).toMatchObject({
-            valid: false,
-            issues: [expect.objectContaining({ id: "E5", field: "CONFIDENTIAL ACQUISITION" })],
-          });
+          // Advisory issues (e.g. I-KIND) may accompany the error; assert the
+          // blocking issue is present rather than pinning the whole array.
+          const payload = JSON.parse(text) as { valid: boolean; issues: Array<{ id: string }> };
+          expect(payload.valid).toBe(false);
+          expect(payload.issues).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ id: "E5", field: "CONFIDENTIAL ACQUISITION" }),
+            ]),
+          );
         } else {
           expect(response.isError).toBe(true);
           expect(text).toContain("Proposal validation failed");

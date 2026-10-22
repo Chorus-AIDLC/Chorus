@@ -4,7 +4,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
-import { getActorName } from "@/lib/uuid-resolver";
+import { batchResolveActorIdentities } from "@/lib/uuid-resolver";
 import { lockResearchProject } from "@/services/research-eligibility.service";
 
 export type TargetType = "idea" | "task" | "proposal" | "document" | "project";
@@ -39,6 +39,8 @@ export interface ActivityResponse {
   action: string;
   actorType: string;
   actorName: string;
+  actorUuid: string;
+  actorAvatarSeed?: string | null;
   value: unknown;
   sessionUuid?: string | null;
   sessionName?: string | null;
@@ -91,18 +93,21 @@ export async function listActivitiesWithActorNames(
   params: ActivityListParams
 ): Promise<{ activities: ActivityResponse[]; total: number }> {
   const { activities: rawActivities, total } = await listActivities(params);
+  const identities = await batchResolveActorIdentities(params.companyUuid, rawActivities.map(activity => ({ type: activity.actorType, uuid: activity.actorUuid })));
 
   // Batch resolve actor names
   const activities: ActivityResponse[] = await Promise.all(
     rawActivities.map(async (activity) => {
-      const actorName = await getActorName(activity.actorType, activity.actorUuid);
+      const actor = identities.get(`${activity.actorType}:${activity.actorUuid}`);
       return {
         uuid: activity.uuid,
         targetType: activity.targetType,
         targetUuid: activity.targetUuid,
         action: activity.action,
         actorType: activity.actorType,
-        actorName: actorName || "Unknown",
+        actorName: actor?.name || "Unknown",
+        actorUuid: activity.actorUuid,
+        ...(activity.actorType === "user" ? { actorAvatarSeed: actor?.avatarSeed ?? null } : {}),
         value: activity.value,
         sessionUuid: activity.sessionUuid,
         sessionName: activity.sessionName,

@@ -28,6 +28,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       oidcIssuer: company.oidcIssuer,
       oidcClientId: company.oidcClientId,
       oidcEnabled: company.oidcEnabled,
+      localAuthEnabled: company.localAuthEnabled,
       userCount: company._count.users,
       agentCount: company._count.agents,
       projectCount: company._count.projects,
@@ -49,6 +50,9 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
     }
 
     const body = await parseBody<CompanyUpdateInput>(request);
+    if (!body || typeof body !== "object" || "localAuthEnabled" in body) {
+      return errors.badRequest("Authentication mode cannot be changed through company editing");
+    }
 
     // Validate name
     if (body.name !== undefined && body.name.trim() === "") {

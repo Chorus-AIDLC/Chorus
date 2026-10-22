@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext, isUser } from "@/lib/auth";
+import { publishAccountAccessChanged } from "@/lib/account-access-events";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -43,6 +44,7 @@ export const DELETE = withErrorHandler<{ uuid: string }>(
       data: { revokedAt: new Date() },
     });
 
+    publishAccountAccessChanged({ companyUuid: auth.companyUuid, keyUuid: apiKey.uuid });
     return success({ revoked: true });
   }
 );

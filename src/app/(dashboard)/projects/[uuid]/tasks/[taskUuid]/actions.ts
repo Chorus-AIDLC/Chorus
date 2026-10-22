@@ -276,7 +276,7 @@ export async function updateTaskStatusAction(taskUuid: string, newStatus: string
       return { success: false, error: "Task not found" };
     }
 
-    await updateTask(taskUuid, { status: newStatus });
+    await updateTask(taskUuid, { status: newStatus }, { actorType: auth.type, actorUuid: auth.actorUuid });
 
     // Record activity
     await createActivity({
@@ -325,7 +325,10 @@ export async function verifyTaskAction(taskUuid: string) {
       return { success: false, error: gate.reason || "Not all required acceptance criteria are passed" };
     }
 
-    await updateTask(taskUuid, { status: "done" });
+    await updateTask(taskUuid, { status: "done" }, {
+      actorType: auth.type,
+      actorUuid: auth.actorUuid,
+    });
 
     revalidatePath(`/projects/${task.projectUuid}/tasks/${taskUuid}`);
     revalidatePath(`/projects/${task.projectUuid}/tasks`);
@@ -468,6 +471,9 @@ export async function updateTaskFieldsAction(input: UpdateTaskFieldsInput) {
       priority: input.priority,
       storyPoints: input.storyPoints,
       acceptanceCriteria: input.acceptanceCriteria,
+    }, {
+      actorType: auth.type,
+      actorUuid: auth.actorUuid,
     });
 
     // Only replace structured acceptance criteria when the client explicitly

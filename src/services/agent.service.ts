@@ -7,6 +7,7 @@ import { generateApiKey } from "@/lib/api-key";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import type { Permission } from "@/lib/authz/types";
 import { releaseAgentAssignments } from "@/services/agent-assignment-release.service";
+import { publishAccountAccessChanged } from "@/lib/account-access-events";
 
 export interface AgentListParams {
   companyUuid: string;
@@ -139,10 +140,11 @@ export async function updateAgent(uuid: string, data: AgentUpdateParams, company
     }
   }
 
-  return prisma.agent.update({
+  const { companyUuid: tenant, ...agent } = await prisma.agent.update({
     where: { uuid },
     data,
     select: {
+      companyUuid: true,
       uuid: true,
       name: true,
       roles: true,
@@ -154,6 +156,10 @@ export async function updateAgent(uuid: string, data: AgentUpdateParams, company
       createdAt: true,
     },
   });
+  if (tenant && (data.roles !== undefined || data.permissions !== undefined)) {
+    publishAccountAccessChanged({ companyUuid: tenant, agentUuid: uuid });
+  }
+  return agent;
 }
 
 // Sync API key names when agent name changes
@@ -182,6 +188,7 @@ export async function deleteAgent(companyUuid: string, agentUuid: string, actorU
   });
 
   if (!result) return null;
+  publishAccountAccessChanged({ companyUuid, agentUuid });
   result.release.publish();
   return result.deleted;
 }
@@ -255,10 +262,12 @@ export async function getApiKey(companyUuid: string, uuid: string, ownerUuid?: s
 
 // Revoke API Key (by UUID)
 export async function revokeApiKey(uuid: string) {
-  return prisma.apiKey.update({
+  const key = await prisma.apiKey.update({
     where: { uuid },
     data: { revokedAt: new Date() },
   });
+  publishAccountAccessChanged({ companyUuid: key.companyUuid, keyUuid: key.uuid });
+  return key;
 }
 
 // Get Agents owned by user (for claim modal)
@@ -334,14 +343,15 @@ export async function getAssignableAgents(
     }));
 }
 
-// Get all users in company (for assignment)
+// Get active users in company (for new assignment, not historical attribution).
 export async function getCompanyUsers(companyUuid: string) {
   return prisma.user.findMany({
-    where: { companyUuid },
+    where: { companyUuid, status: "active", deletedAt: null },
     select: {
       uuid: true,
       name: true,
       email: true,
+      avatarSeed: true,
     },
     orderBy: { name: "asc" },
   });

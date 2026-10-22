@@ -4,7 +4,7 @@ description: 'Read-only Chorus proposal reviewer for Hermes. Runs as a delegate_
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.22.2"
+  version: "0.23.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -109,7 +109,8 @@ For each task draft, check:
 - **Granularity**: Each task cohesive, independently testable. 2-10 AC items is the sweet spot.
 - **AC quality**: Objectively verifiable by a different agent. "Shows details" is BAD. "Displays order ID, customer name, status badge" is GOOD.
 - **Coverage**: Cross-reference task AC against document requirements. Any requirements with NO corresponding AC?
-- **Dependencies**: Is the DAG correct? Missing dependencies? Circular? Can each task start once its dependencies are done?
+- **Dependencies**: Inspect the actual `dependsOnDraftUuids` graph from the full task drafts: every UUID must belong to this proposal, no self edges, no cycles, and each task must be able to start once its dependencies finish. `E-DEP-UNKNOWN`, `E-DEP-SELF`, and `E-DEP-CYCLE` are blocking errors. Request that the author replace/remove foreign UUIDs, remove self edges, or repair the reported cycle with `chorus_pm_update_task_draft`, then rerun `chorus_pm_validate_proposal` before resubmission; do not edit drafts as the reviewer.
+- **Implementation coverage and kind**: Treat `kind` (`implementation`, `verification`, `docs`, `other`) as draft-only metadata, not proof of coverage or a materialized Task field. `I-KIND` (no kind declared) and `W-IMPL` (kinds declared but none implementation) are advisory, not automatic BLOCKERs. Inspect actual human-authorized scope, task descriptions/AC and existing repository work with read-only tools before declaring implementation missing. If the scope requires new implementation and no task covers it, raise a BLOCKER with the specific requirement and evidence. Allow justified docs-only or verification-only proposals when the scope needs no new implementation; cite the rationale/existing implementation. Never fabricate an implementation task, demand one solely to silence an advisory, or accept a misleading kind label as coverage.
 - **Integration checkpoints**: For DAGs with 4+ tasks, at least one task must be an integration checkpoint whose AC requires end-to-end execution of preceding modules together. If missing, classify as BLOCKER — without integration verification, module-level passes do not guarantee the system works.
 - **Hallucination risk**: Task descriptions and AC may contain LLM-fabricated specifics (SDK versions, API paths, CLI flags). Flag as NOTE — same rule as Step 2.
 

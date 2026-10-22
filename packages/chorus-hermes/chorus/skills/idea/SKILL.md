@@ -4,7 +4,7 @@ description: Chorus Idea workflow on Hermes — claim ideas, run elaboration rou
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.22.2"
+  version: "0.23.0"
   category: project-management
   mcp_server: chorus
 ---

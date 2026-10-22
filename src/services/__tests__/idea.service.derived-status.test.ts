@@ -24,6 +24,7 @@ const { mockPrisma } = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: { emitChange: vi.fn() } }));
 vi.mock("@/lib/uuid-resolver", () => ({
+  batchResolveActorIdentities: vi.fn().mockResolvedValue(new Map()),
   formatAssigneeComplete: vi.fn().mockResolvedValue(null),
   formatCreatedBy: vi.fn().mockResolvedValue({ type: "user", uuid: "u", name: "U" }),
 }));

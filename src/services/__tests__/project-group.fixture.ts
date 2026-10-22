@@ -16,7 +16,7 @@ export const fixture = {
     this.state = empty(); this.locks = []; this.writes = []; this.events = [];
     this.inTransaction = false; this.onLock = null; this.failWrite = null; this.sequence = 0;
     for (const [index, uuid] of ["admin", "editor", "viewer", "local", "outside"].entries()) {
-      this.state.user.push({ id: index + 1, uuid, companyUuid: "c", name: uuid, email: `${uuid}@test.local`, createdAt: new Date("2025-01-01T00:00:00Z") });
+      this.state.user.push({ id: index + 1, uuid, companyUuid: "c", name: uuid, email: `${uuid}@test.local`, status: "active", deletedAt: null, createdAt: new Date("2025-01-01T00:00:00Z") });
     }
   },
 };

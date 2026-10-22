@@ -140,7 +140,7 @@ function seed(ideaOverrides: Partial<(typeof agentInstanceStore.ideas)[number]> 
   agentInstanceStore.users.push(
     { uuid: OWNER, companyUuid: COMPANY, name: "Owner", email: "owner@example.com" },
     { uuid: CREATOR, companyUuid: COMPANY, name: "Creator", email: "creator@example.com" },
-    { uuid: TARGET_USER, companyUuid: COMPANY, name: "Bob", email: "bob@example.com" },
+    { uuid: TARGET_USER, companyUuid: COMPANY, name: "Bob", email: "bob@example.com", status: "active", deletedAt: null },
   );
   agentInstanceStore.agents.push(
     { uuid: CALLER, companyUuid: COMPANY, name: "Admin Claude", ownerUuid: OWNER, roles: ["admin_agent"], permissions: [] },
@@ -494,6 +494,20 @@ describe("assign_idea end-to-end — agent_instance pin (AC#1)", () => {
 // =====================================================================================
 
 describe("assign_idea end-to-end — user target (AC#1)", () => {
+  it.each(["invited", "disabled", "deleted", "tombstone"])("rejects the %s UUID without assignment, Activity, notification or daemon wake", async state => {
+    seed();
+    const target = agentInstanceStore.users.find(user => user.uuid === TARGET_USER)!;
+    if (state === "tombstone") target.deletedAt = new Date();
+    else target.status = state;
+    const before = { ...ideaRow() };
+    await expect(assignAndNotify({ ideaUuid: IDEA, assigneeType: "user", assigneeUuid: TARGET_USER }))
+      .rejects.toMatchObject({ status: 403, message: "Assignee does not have access to this project" });
+    expect(ideaRow()).toEqual(before);
+    expect(assignedActivities()).toEqual([]);
+    expect(ideaClaimedNotifications()).toEqual([]);
+    expect(agentInstanceStore.daemonSessionTurns).toEqual([]);
+  });
+
   it("assigns to a same-company user, writes the Activity, notifies the user, and wakes NO daemon", async () => {
     seed();
     const { result } = await assignAndNotify({

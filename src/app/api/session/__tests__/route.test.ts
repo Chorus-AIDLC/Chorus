@@ -27,12 +27,21 @@ beforeEach(() => {
 });
 
 describe("GET /api/session", () => {
+  it("returns a freshly persisted customized name rather than a stale auth claim", async () => {
+    getAuthContext.mockResolvedValue({ type: "user", companyUuid: "c1", actorUuid: "u1", name: "Old provider name" });
+    getUserByUuid.mockResolvedValue({ uuid: "u1", name: "Saved custom name", nameCustomized: true, company: { uuid: "c1", name: "Co" } });
+    const response = await GET(makeRequest());
+    expect((await response.json()).data.user.name).toBe("Saved custom name");
+    expect(getUserByUuid).toHaveBeenCalledWith("u1");
+  });
+
   it("returns the session for an authenticated user", async () => {
     getAuthContext.mockResolvedValue({ type: "user", companyUuid: "c1", actorUuid: "u1" });
     getUserByUuid.mockResolvedValue({
       uuid: "u1",
       email: "a@b.c",
       name: "A",
+      avatarSeed: "639d12a3-0ee3-4561-8f8d-80c6f9c3b5bc",
       company: { uuid: "c1", name: "Co" },
     });
 
@@ -42,6 +51,7 @@ describe("GET /api/session", () => {
     expect(res.status).toBe(200);
     expect(json.success).toBe(true);
     expect(json.data.user.uuid).toBe("u1");
+    expect(json.data.user.avatarSeed).toBe("639d12a3-0ee3-4561-8f8d-80c6f9c3b5bc");
     expect(json.data.company.uuid).toBe("c1");
   });
 

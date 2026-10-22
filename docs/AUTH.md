@@ -1,6 +1,6 @@
 # Authentication Architecture
 
-Chorus supports four authentication methods, all converging into a single unified `AuthContext` through the `getAuthContext()` function in `src/lib/auth.ts`. This document explains each method, how they are resolved, and how token lifecycle is managed.
+Chorus supports five authentication methods, all converging into a single unified `AuthContext` through the `getAuthContext()` function in `src/lib/auth.ts`. This document explains each method, how they are resolved, and how token lifecycle is managed.
 
 ---
 
@@ -12,6 +12,7 @@ Chorus supports four authentication methods, all converging into a single unifie
    - [2.2 OIDC (User)](#22-oidc-user)
    - [2.3 Default Auth (User)](#23-default-auth-user)
    - [2.4 Super Admin](#24-super-admin)
+   - [2.5 Workspace Local Auth (User)](#25-workspace-local-auth-user)
 3. [Resolution Cascade](#3-resolution-cascade)
 4. [Token Lifecycle & Auto-Refresh](#4-token-lifecycle--auto-refresh)
 5. [Multi-Tenancy](#5-multi-tenancy)
@@ -22,7 +23,7 @@ Chorus supports four authentication methods, all converging into a single unifie
 
 ## 1. Unified AuthContext
 
-All four authentication methods produce one of three context types, defined in `src/types/auth.ts`:
+All five authentication methods produce one of three context types, defined in `src/types/auth.ts`:
 
 ```
 AuthContext = UserAuthContext | AgentAuthContext | SuperAdminAuthContext
@@ -30,7 +31,7 @@ AuthContext = UserAuthContext | AgentAuthContext | SuperAdminAuthContext
 
 | Context Type | `type` field | Key fields | Produced by |
 |---|---|---|---|
-| `UserAuthContext` | `"user"` | `companyUuid`, `actorUuid`, `email`, `name` | OIDC, Default Auth |
+| `UserAuthContext` | `"user"` | `companyUuid`, `actorUuid`, `email`, `name` | OIDC, Default Auth, Workspace Local Auth |
 | `AgentAuthContext` | `"agent"` | `companyUuid`, `actorUuid`, `roles[]` (preset selector), `permissions[]` (effective 15-bit set), `agentName`, `ownerUuid` | API Key |
 | `SuperAdminAuthContext` | `"super_admin"` | `email` (no companyUuid) | Super Admin cookie |
 
@@ -184,6 +185,16 @@ SUPER_ADMIN_PASSWORD_HASH="$2b$10$..."   # bcrypt hash
 **Restrictions**: `SuperAdminAuthContext` has no `companyUuid` — it operates across all tenants. Not subject to multi-tenancy scoping.
 
 ---
+
+### 2.5 Workspace Local Auth (User)
+
+**Purpose**: Tenant-local managed username/password accounts, distinct from the deployment-level default-auth fallback. Superadmin explicitly creates a local workspace and its first administrator; Workspace Admin then manages local accounts through `/settings/users`.
+
+**Key files**: `src/services/local-user.service.ts`, `src/lib/user-session.ts`, `src/app/api/auth/local/login/route.ts`, `src/app/api/workspace/users/route.ts`.
+
+The unified login discovers an existing local username/email, presents workspace choices when needed, and independently verifies the selected local company/account/password at login. Invitations/reset links let recipients establish their own bcrypt password. Successful local login issues an HttpOnly `user_session` JWT with a one-hour lifetime, `authType: "local"` and `sessionVersion`; it has no OIDC refresh arm. Each request reloads tenant-bound active account state and generation, so disable/remove/reset/privilege changes invalidate old sessions. Owned Agent keys also recheck current owner eligibility without changing existing project-access ceilings.
+
+For initialization, trusted-origin link handoff, last-admin recovery, tombstones, limits and isolated verification, see [Local workspace accounts](WORKSPACE_LOCAL_USERS.md) / [中文运维指南](WORKSPACE_LOCAL_USERS.zh.md).
 
 ## 3. Resolution Cascade
 

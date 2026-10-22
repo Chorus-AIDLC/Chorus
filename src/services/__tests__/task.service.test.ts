@@ -56,6 +56,7 @@ const mockPrisma = vi.hoisted(() => {
     agentInstance: {
       findFirst: vi.fn(),
     },
+    user: { findFirst: vi.fn() },
     $queryRaw: vi.fn().mockResolvedValue([]),
     activity: { create: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
     proposal: { findFirst: vi.fn() },
@@ -75,6 +76,7 @@ const mockUuidResolver = vi.hoisted(() => ({
   formatAssigneeComplete: vi.fn().mockResolvedValue(null),
   formatCreatedBy: vi.fn().mockResolvedValue({ type: "user", uuid: "u1", name: "Test User" }),
   batchGetActorNames: vi.fn().mockResolvedValue(new Map()),
+  batchResolveActorIdentities: vi.fn().mockResolvedValue(new Map()),
   batchFormatCreatedBy: vi.fn().mockResolvedValue(new Map()),
   // add-agent-instance-addressing: the batch path now also resolves the (host, cwd)
   // place of any agent_instance assignee. Default to an empty map (no instance pins
@@ -1632,7 +1634,7 @@ describe("checkDependenciesResolved", () => {
       { dependsOn: { uuid: "d1", title: "Blocker Task", status: "in_progress", assigneeType: "agent", assigneeUuid: "a1" } },
     ]);
     mockPrisma.sessionTaskCheckin.findMany.mockResolvedValue([]);
-    mockUuidResolver.batchGetActorNames.mockResolvedValue(new Map([["a1", "Agent 1"]]));
+    mockUuidResolver.batchResolveActorIdentities.mockResolvedValue(new Map([["agent:a1", { type: "agent", uuid: "a1", name: "Agent 1" }]]));
 
     const result = await (await import("@/services/task.service")).checkDependenciesResolved(
       TASK_UUID,
@@ -1925,7 +1927,65 @@ describe("updateTask", () => {
 
     expect(mockMentionService.parseMentions).toHaveBeenCalledWith(oldDesc);
     expect(mockMentionService.parseMentions).toHaveBeenCalledWith(newDesc);
-    expect(mockMentionService.createMentions).toHaveBeenCalled();
+    expect(mockMentionService.createMentions).toHaveBeenCalledWith(expect.objectContaining({
+      content: newDesc,
+      excludeMentions: [],
+      actorType: "agent",
+      actorUuid: "agent1",
+    }));
     expect(mockActivityService.createActivity).toHaveBeenCalled();
+  });
+});
+
+describe("task update actor and mention regression", () => {
+  it.each(["user", "agent", "super_admin"])("persists the supplied %s actor in execution history", async (actorType) => {
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask({ status: "to_verify", proposalUuid: null }));
+    mockPrisma.task.update.mockResolvedValue(rawTaskWithRelations({ status: "done" }));
+
+    await updateTask(TASK_UUID, { status: "done" }, { actorType, actorUuid: "acting-identity" });
+
+    expect(mockPrisma.activity.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      targetUuid: TASK_UUID,
+      action: "execution_started",
+      actorType,
+      actorUuid: "acting-identity",
+      value: { from: "to_verify", to: "done" },
+    }) });
+  });
+
+  it("excludes old recipients when an edit mixes old and new mentions", async () => {
+    const oldMention = { type: "user", uuid: "old-user", displayName: "Old user" };
+    const newMention = { type: "user", uuid: "new-user", displayName: "New user" };
+    const oldDescription = "@[Old user](user:old-user)";
+    const newDescription = `${oldDescription} @[New user](user:new-user)`;
+    mockPrisma.task.findUnique.mockResolvedValue({ description: oldDescription });
+    mockPrisma.task.update.mockResolvedValue(rawTaskWithRelations({ description: newDescription }));
+    mockMentionService.parseMentions.mockReset()
+      .mockReturnValueOnce([oldMention])
+      .mockReturnValueOnce([oldMention, newMention]);
+
+    await updateTask(TASK_UUID, { description: newDescription }, { actorType: "user", actorUuid: "editor" });
+
+    await vi.waitFor(() => expect(mockActivityService.createActivity).toHaveBeenCalledTimes(1));
+    expect(mockMentionService.createMentions).toHaveBeenCalledWith(expect.objectContaining({
+      content: newDescription, excludeMentions: [oldMention], actorType: "user", actorUuid: "editor",
+    }));
+    expect(mockActivityService.createActivity).toHaveBeenCalledWith(expect.objectContaining({
+      action: "mentioned", actorType: "user", actorUuid: "editor",
+      value: expect.objectContaining({ mentionedUuid: "new-user" }),
+    }));
+  });
+
+  it("does not deliver unchanged mentions", async () => {
+    const mention = { type: "user", uuid: "old-user", displayName: "Old user" };
+    mockPrisma.task.findUnique.mockResolvedValue({ description: "Old description" });
+    mockPrisma.task.update.mockResolvedValue(rawTaskWithRelations({ description: "Updated prose" }));
+    mockMentionService.parseMentions.mockReset().mockReturnValue([mention]);
+
+    await updateTask(TASK_UUID, { description: "Updated prose" }, { actorType: "user", actorUuid: "editor" });
+
+    expect(mockMentionService.parseMentions).toHaveBeenCalledTimes(2);
+    expect(mockMentionService.createMentions).not.toHaveBeenCalled();
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
   });
 });

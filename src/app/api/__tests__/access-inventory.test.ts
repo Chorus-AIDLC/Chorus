@@ -40,6 +40,7 @@ const PROJECT_OR_ENTITY_ROUTE = [
   /^src\/app\/api\/(comments|references)\/route\.ts$/,
   /^src\/app\/api\/entities\//,
   /^src\/app\/api\/mentionables\/route\.ts$/,
+  /^src\/app\/api\/mentionables\/resolve\/route\.ts$/,
 ];
 
 // Every other route must be listed here with the reason it needs no per-project
@@ -47,6 +48,13 @@ const PROJECT_OR_ENTITY_ROUTE = [
 const NON_PROJECT_ROUTES: Record<string, string> = {
   "src/app/api/admin/companies/[uuid]/route.ts": "SuperAdmin panel (unchanged by design)",
   "src/app/api/admin/companies/route.ts": "SuperAdmin panel",
+  "src/app/api/admin/companies/local/route.ts": "SuperAdmin-only atomic workspace and initial local admin bootstrap",
+  "src/app/api/admin/companies/[uuid]/initial-admin/route.ts": "SuperAdmin-only preactivation bootstrap recovery; tenant lock, persisted activation guard and expected principal revalidated in service",
+  "src/app/api/auth/local/accept/route.ts": "single-use tenant-bound credential acceptance with throttling",
+  "src/app/api/auth/local/login/route.ts": "tenant-bound local authentication with throttling",
+  "src/app/api/workspace/users/route.ts": "local human Workspace Admin gate and tenant/state revalidation in service",
+  "src/app/api/workspace/users/[uuid]/route.ts": "local human Workspace Admin gate, tenant-bound lifecycle transaction",
+  "src/app/api/workspace/users/[uuid]/credentials/route.ts": "local human Workspace Admin gate, tenant-bound credential issuance",
   "src/app/api/admin/login/route.ts": "SuperAdmin auth",
   "src/app/api/admin/session/route.ts": "SuperAdmin auth",
   "src/app/api/agent-connections/route.ts": "agent/daemon connection registry (owner-scoped)",
@@ -62,6 +70,8 @@ const NON_PROJECT_ROUTES: Record<string, string> = {
   "src/app/api/auth/identify/route.ts": "auth",
   "src/app/api/auth/logout/route.ts": "auth",
   "src/app/api/auth/me/route.ts": "auth",
+  "src/app/api/users/me/avatar/route.ts": "authenticated human self only, tenant-scoped avatar update with same-origin enforcement",
+  "src/app/api/users/me/name/route.ts": "authenticated human self only, tenant-scoped display-name update with same-origin enforcement",
   "src/app/api/auth/sync-token/route.ts": "auth",
   "src/app/api/daemon-directory-requests/[uuid]/route.ts": "daemon directory discovery (owner-scoped)",
   "src/app/api/daemon-directory-requests/route.ts": "daemon directory discovery",

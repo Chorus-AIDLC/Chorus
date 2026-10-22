@@ -100,6 +100,42 @@ beforeEach(() => {
 });
 
 describe("createMentions", () => {
+  it("excludes prior recipients from records and notifications while retaining full context", async () => {
+    const content = `Context: @[Alice](user:${USER_UUID}) and @[Bot](agent:${AGENT_UUID})`;
+    mockPrisma.agent.findFirst.mockResolvedValue({ uuid: AGENT_UUID });
+    mockPrisma.mention.createMany.mockResolvedValue({ count: 1 });
+    mockPrisma.project.findUnique.mockResolvedValue({ name: "Test Project" });
+
+    await createMentions({
+      companyUuid: COMPANY_UUID, sourceType: "task", sourceUuid: SOURCE_UUID,
+      content, actorType: "user", actorUuid: ACTOR_UUID, projectUuid: PROJECT_UUID,
+      entityTitle: "Task", excludeMentions: [{ type: "user", uuid: USER_UUID }],
+    });
+
+    expect(mockPrisma.user.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.mention.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({
+      mentionedType: "agent", mentionedUuid: AGENT_UUID, actorType: "user", actorUuid: ACTOR_UUID,
+    })] });
+    expect(mockCreateBatch).toHaveBeenCalledWith([expect.objectContaining({
+      recipientType: "agent", recipientUuid: AGENT_UUID, action: "mentioned",
+      actorType: "user", actorUuid: ACTOR_UUID,
+      message: expect.stringContaining('Context: @Alice and @Bot'),
+    })]);
+  });
+
+  it("does not validate or notify an entirely excluded recipient set", async () => {
+    await createMentions({
+      companyUuid: COMPANY_UUID, sourceType: "task", sourceUuid: SOURCE_UUID,
+      content: `@[Alice](user:${USER_UUID})`, actorType: "user", actorUuid: ACTOR_UUID,
+      projectUuid: PROJECT_UUID, entityTitle: "Task",
+      excludeMentions: [{ type: "user", uuid: USER_UUID }],
+    });
+
+    expect(mockPrisma.mention.createMany).not.toHaveBeenCalled();
+    expect(mockCreateBatch).not.toHaveBeenCalled();
+    expect(mockFilterRecipientsByProjectAccess).not.toHaveBeenCalled();
+  });
+
   it("should parse, validate, create records, and send notifications", async () => {
     const content = `Hello @[Alice](user:${USER_UUID}) and @[Bot](agent:${AGENT_UUID})!`;
 
@@ -308,6 +344,15 @@ describe("searchMentionables", () => {
       })
     );
 
+    expect(mockPrisma.user.findMany).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      where: expect.objectContaining({ companyUuid: COMPANY_UUID, status: "active", deletedAt: null }),
+    }));
+    expect(mockPrisma.agent.findMany).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: [{ ownerUuid: null }, { owner: { is: { companyUuid: COMPANY_UUID, status: "active", deletedAt: null } } }],
+      }),
+    }));
+
     // Verify agent query is scoped to actorUuid (owner)
     expect(mockPrisma.agent.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -334,6 +379,11 @@ describe("searchMentionables", () => {
     expect(results).toHaveLength(1);
     expect(results[0].type).toBe("agent");
     expect(mockPrisma.user.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.agent.findMany).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      where: expect.objectContaining({
+        owner: { is: { companyUuid: COMPANY_UUID, status: "active", deletedAt: null } },
+      }),
+    }));
   });
 
   it("should scope agents by ownerUuid for agent caller", async () => {

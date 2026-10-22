@@ -3,11 +3,13 @@
 
 import { getTranslations } from "next-intl/server";
 import { Card } from "@/components/ui/card";
-import { Monitor, User, Settings } from "lucide-react";
+import { Monitor, Settings } from "lucide-react";
+import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { listActivities } from "@/services/activity.service";
 import { requireProjectPageAccess } from "../access-guard";
 import { prisma } from "@/lib/prisma";
+import { batchResolveActorIdentities } from "@/lib/uuid-resolver";
 import { AnimatedEmptyState } from "@/components/animated-empty-state";
 
 interface ActivityWithActor {
@@ -18,6 +20,9 @@ interface ActivityWithActor {
   value: unknown;
   createdAt: Date;
   actorName: string;
+  actorType: string;
+  actorUuid: string | null;
+  avatarSeed?: string | null;
   isAgent: boolean;
 }
 
@@ -100,34 +105,49 @@ export default async function ActivityPage({ params }: PageProps) {
   });
 
   // Get Actor information
-  const actorUuids = [...new Set(rawActivities.map((a) => a.actorUuid))];
+  const userUuids = [...new Set(rawActivities.filter((activity) => activity.actorType === "user").map((activity) => activity.actorUuid))];
+  const agentUuids = [...new Set(rawActivities.filter((activity) => activity.actorType === "agent").map((activity) => activity.actorUuid))];
 
-  const [users, agents] = await Promise.all([
+  const [users, agents, adminIdentities] = await Promise.all([
     prisma.user.findMany({
-      where: { uuid: { in: actorUuids } },
-      select: { uuid: true, name: true },
+      where: { uuid: { in: userUuids }, companyUuid: auth.companyUuid },
+      select: { uuid: true, name: true, avatarSeed: true },
     }),
     prisma.agent.findMany({
-      where: { uuid: { in: actorUuids } },
+      where: { uuid: { in: agentUuids }, companyUuid: auth.companyUuid },
       select: { uuid: true, name: true },
     }),
+    batchResolveActorIdentities(auth.companyUuid, rawActivities
+      .filter((activity) => activity.actorType === "super_admin")
+      .map((activity) => ({ type: activity.actorType, uuid: activity.actorUuid }))),
   ]);
 
-  const userMap = new Map(users.map((u) => [u.uuid, { name: u.name || t("common.unknown"), isAgent: false }]));
-  const agentMap = new Map(agents.map((a) => [a.uuid, { name: a.name, isAgent: true }]));
+  const userMap = new Map(users.map((u) => [u.uuid, { uuid: u.uuid, name: u.name || t("common.unknown"), avatarSeed: u.avatarSeed, isAgent: false }]));
+  const agentMap = new Map(agents.map((a) => [a.uuid, { uuid: a.uuid, name: a.name, avatarSeed: null, isAgent: true }]));
+  const adminMap = new Map([...adminIdentities.values()].map((actor) => [actor.uuid, { ...actor, isAgent: false }]));
 
   // Format Activities
   const activities: ActivityWithActor[] = rawActivities.map((activity) => {
-    const actor = userMap.get(activity.actorUuid) || agentMap.get(activity.actorUuid) || { name: t("common.system"), isAgent: false };
+    const resolvedActor = activity.actorType === "user"
+      ? userMap.get(activity.actorUuid)
+      : activity.actorType === "agent"
+        ? agentMap.get(activity.actorUuid)
+        : activity.actorType === "super_admin"
+          ? adminMap.get(activity.actorUuid)
+          : undefined;
+    const actor = resolvedActor ?? { uuid: null, name: t("common.system"), avatarSeed: null, isAgent: false };
 
     return {
       uuid: activity.uuid,
+      actorType: activity.actorType,
       targetType: activity.targetType,
       targetUuid: activity.targetUuid,
       action: activity.action,
       value: activity.value,
       createdAt: activity.createdAt,
       actorName: actor.name,
+      actorUuid: actor.uuid,
+      avatarSeed: actor.avatarSeed,
       isAgent: actor.isAgent,
     };
   });
@@ -168,8 +188,10 @@ export default async function ActivityPage({ params }: PageProps) {
                       <div className={`mt-0.5 flex h-8 w-8 items-center justify-center rounded-full ${activity.isAgent ? "bg-[#E3F2FD] dark:bg-[#13253a]" : "bg-secondary"}`}>
                         {activity.isAgent ? (
                           <Monitor className="h-4 w-4 text-[#1976D2] dark:text-[#5AA9F0]" />
+                        ) : activity.actorType === "user" && activity.actorUuid ? (
+                          <UserAvatar userUuid={activity.actorUuid} name={activity.actorName} avatarSeed={activity.avatarSeed} size={32} decorative />
                         ) : (
-                          <User className="h-4 w-4 text-muted-foreground" />
+                          <Settings className="h-4 w-4 text-muted-foreground" aria-hidden />
                         )}
                       </div>
 

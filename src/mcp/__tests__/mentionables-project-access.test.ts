@@ -26,6 +26,10 @@ const fixture = vi.hoisted(() => {
         return (Array.isArray(value) ? value : [value]).every((item) => matches(row, item));
       }
       if (field === "projectUuid_userUuid") return matches(row, value as Row);
+      if (field === "owner") {
+        const owner = rows.user?.find(user => user.uuid === row.ownerUuid);
+        return !!owner && matches(owner, (value as { is: Row }).is);
+      }
       if (value === undefined) return true;
       if (value === null || typeof value !== "object") return row[field] === value;
       return Object.entries(value).every(([operator, operand]) => {
@@ -264,7 +268,7 @@ beforeEach(() => {
     { uuid: OUTSIDER, companyUuid: COMPANY, name: "Visible Outsider", email: "outsider@example.test" },
     { uuid: "quiet-user", companyUuid: COMPANY, name: "Unrelated", email: "quiet@example.test" },
     { uuid: "foreign-user", companyUuid: "other-company", name: "Visible Foreign", email: "foreign@example.test" },
-  ];
+  ].map(row => ({ ...row, status: "active", deletedAt: null }));
   fixture.rows.agent = [
     ...OWN_AGENTS.map((uuid) => ({ uuid, ownerUuid: VIEWER, name: `Visible ${uuid}` })),
     { uuid: "editor-agent", ownerUuid: EDITOR, name: "Visible Editor Agent" },
@@ -411,7 +415,7 @@ describe("chorus_search_mentionables central project gate", () => {
     fixture.rows.user = [
       ...Array.from({ length: 12 }, (_, index) => ({
         uuid: `crowding-user-${index}`, companyUuid: COMPANY,
-        name: "Member Match Outsider", email: `crowding-${index}@example.test`,
+        name: "Member Match Outsider", email: `crowding-${index}@example.test`, status: "active", deletedAt: null,
       })),
       ...fixture.rows.user.filter((row) => [VIEWER, EDITOR].includes(row.uuid as string))
         .map((row) => ({ ...row, name: `Member Match ${row.uuid}` })),
@@ -447,6 +451,25 @@ describe("chorus_search_mentionables central project gate", () => {
 });
 
 describe("real mention service recipient membership filtering", () => {
+  it.each(["disabled", "invited", "deleted"])("filters %s users and their agents in existing candidate SQL", async status => {
+    const owner = fixture.rows.user.find(row => row.uuid === VIEWER)!;
+    owner.status = status;
+    if (status === "deleted") owner.deletedAt = new Date();
+    const results = await mentionService.searchMentionables({
+      companyUuid: COMPANY, actorType: "agent", actorUuid: "calling-agent", query: "visible", limit: 20,
+    });
+    expect(ids(results)).toEqual([EDITOR, OUTSIDER, "editor-agent", "outsider-agent", "orphan-agent"].sort());
+    expect(fixture.prisma.user.findMany).toHaveBeenCalledTimes(1);
+    expect(fixture.prisma.agent.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("excludes tombstones even when their legacy status is active", async () => {
+    fixture.rows.user.find(row => row.uuid === VIEWER)!.deletedAt = new Date();
+    expect(await mentionService.searchMentionables({
+      companyUuid: COMPANY, actorType: "user", actorUuid: VIEWER, query: "",
+    })).toEqual([]);
+    expect(fixture.prisma.agent.findMany).toHaveBeenCalledTimes(1);
+  });
   it.each(ENTITY_TYPES)("filters a broad %s candidate pool by user membership and agent owner", async (entityType) => {
     const results = await mentionService.searchMentionables({
       companyUuid: COMPANY, actorType: "agent", actorUuid: "calling-agent",
@@ -456,6 +479,7 @@ describe("real mention service recipient membership filtering", () => {
     expect(fixture.prisma.agent.findMany).toHaveBeenCalledWith({
       where: {
         companyUuid: COMPANY, name: { contains: "visible", mode: "insensitive" },
+        OR: [{ ownerUuid: null }, { owner: { is: { companyUuid: COMPANY, status: "active", deletedAt: null } } }],
         ownerUuid: { in: [VIEWER, EDITOR] },
       },
       select: { uuid: true, name: true, roles: true },
@@ -485,7 +509,8 @@ describe("real mention service recipient membership filtering", () => {
   });
 
   it("returns member-owned agents even when outsider agents precede the query limit", async () => {
-    fixture.rows.user = [];
+    // Keep real owner rows; exclude user candidates via the search fields.
+    fixture.rows.user = fixture.rows.user.map(row => ({ ...row, name: "Unrelated", email: "unrelated@example.test" }));
     fixture.rows.agent.unshift(...Array.from({ length: 12 }, (_, index) => ({
       uuid: `crowding-agent-${index}`, companyUuid: COMPANY, ownerUuid: OUTSIDER,
       name: "Visible Outsider Agent", roles: [], createdAt: new Date(),
@@ -560,6 +585,7 @@ describe("chorus_search_mentionables public and legacy scope", () => {
     expect(fixture.prisma.agent.findMany).toHaveBeenCalledExactlyOnceWith({
       where: {
         companyUuid: COMPANY, name: { contains: "visible", mode: "insensitive" },
+        OR: [{ ownerUuid: null }, { owner: { is: { companyUuid: COMPANY, status: "active", deletedAt: null } } }],
         ...(owner ? { ownerUuid: owner } : {}),
       },
       select: { uuid: true, name: true, roles: true },

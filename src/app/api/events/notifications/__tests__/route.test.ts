@@ -99,7 +99,9 @@ async function startStream(res: Response) {
  * Microtask-only (no setTimeout) so it works under vi.useFakeTimers().
  */
 async function flush() {
-  for (let i = 0; i < 5; i++) await Promise.resolve();
+  // Auth is deliberately asynchronous on every final delivery, in addition to
+  // project/turn authorization and the serial delivery queue.
+  for (let i = 0; i < 30; i++) await Promise.resolve();
 }
 
 beforeEach(() => {
@@ -174,6 +176,31 @@ describe("wake recovery SSE wire", () => {
     expect(response.status).toBe(400);
     expect(mockRegisterConnection).not.toHaveBeenCalled();
   });
+});
+
+describe("GET /api/events/notifications — live authentication revocation", () => {
+  for (const auth of [
+    { type: "user", companyUuid, actorUuid: "human", permissions: [] },
+    { ...agentAuth, ownerUuid: "owner" },
+  ]) {
+    it(`closes an already-open ${auth.type} stream on revocation`, async () => {
+      mockGetAuthContext.mockResolvedValue(auth);
+      const ac = new AbortController();
+      const { chunks } = await startStream(await GET(makeRequest("", ac.signal)));
+      const handler = mockEventBus.on.mock.calls.find(([channel]) => channel === `notification:${auth.type}:${auth.actorUuid}`)![1];
+      mockGetAuthContext.mockResolvedValue(null);
+      expect((await GET(makeRequest())).status).toBe(401);
+      const invalidate = mockEventBus.on.mock.calls.find(([channel]) => channel === "account_access_changed")![1];
+      invalidate({ companyUuid, userUuid: "ownerUuid" in auth ? auth.ownerUuid : auth.actorUuid });
+      handler({ type: "new_notification", projectUuid: "public", message: "post-disable confidential message" });
+      handler({ type: "new_notification", message: "unscoped confidential message" });
+      await flush();
+      await flush();
+      expect(chunks.join("")).not.toContain("confidential message");
+      expect(mockEventBus.off).toHaveBeenCalledWith(`notification:${auth.type}:${auth.actorUuid}`, handler);
+      ac.abort();
+    });
+  }
 });
 
 describe("GET /api/events/notifications (notification SSE)", () => {

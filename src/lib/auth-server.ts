@@ -4,7 +4,7 @@
 
 import { cookies } from "next/headers";
 import { verifyOidcAccessToken } from "./oidc-auth";
-import { verifyAccessToken } from "./user-session";
+import { verifyAccessToken, resolveUserSession } from "./user-session";
 import type { UserAuthContext } from "@/types/auth";
 
 /**
@@ -26,13 +26,7 @@ export async function getServerAuthContext(): Promise<UserAuthContext | null> {
   if (userSessionToken) {
     const payload = await verifyAccessToken(userSessionToken);
     if (payload) {
-      return {
-        type: "user",
-        companyUuid: payload.companyUuid,
-        actorUuid: payload.userUuid,
-        email: payload.email,
-        name: payload.name,
-      };
+      return resolveUserSession(payload);
     }
   }
 

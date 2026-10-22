@@ -25,6 +25,7 @@ import {
   Key,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/format-date";
+import { InitialAdminInvitation } from "@/components/initial-admin-invitation";
 
 interface CompanyDetail {
   uuid: string;
@@ -33,6 +34,7 @@ interface CompanyDetail {
   oidcIssuer: string | null;
   oidcClientId: string | null;
   oidcEnabled: boolean;
+  localAuthEnabled: boolean;
   userCount: number;
   agentCount: number;
   projectCount: number;
@@ -107,10 +109,14 @@ export default function CompanyDetailPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name.trim(),
-          emailDomains: domains,
-          oidcIssuer: oidcIssuer.trim() || null,
-          oidcClientId: oidcClientId.trim() || null,
-          oidcEnabled,
+          // Local workspaces can be renamed, but their authentication mode is
+          // immutable. Even empty OIDC/domain fields are rejected by the API.
+          ...(!company?.localAuthEnabled && {
+            emailDomains: domains,
+            oidcIssuer: oidcIssuer.trim() || null,
+            oidcClientId: oidcClientId.trim() || null,
+            oidcEnabled,
+          }),
         }),
       });
 
@@ -254,6 +260,8 @@ export default function CompanyDetailPage({
         </Card>
       </div>
 
+      {company.localAuthEnabled && <InitialAdminInvitation key={uuid} companyUuid={uuid} />}
+
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Basic Information */}
@@ -278,73 +286,77 @@ export default function CompanyDetailPage({
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="emailDomains">{t("admin.emailDomains")}</Label>
-              <Input
-                id="emailDomains"
-                value={emailDomains}
-                onChange={(e) => setEmailDomains(e.target.value)}
-                placeholder={t("admin.emailDomainsPlaceholder")}
-                disabled={saving}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t("admin.emailDomainsHelp")}
-              </p>
-            </div>
+            {!company.localAuthEnabled && (
+              <div className="space-y-2">
+                <Label htmlFor="emailDomains">{t("admin.emailDomains")}</Label>
+                <Input
+                  id="emailDomains"
+                  value={emailDomains}
+                  onChange={(e) => setEmailDomains(e.target.value)}
+                  placeholder={t("admin.emailDomainsPlaceholder")}
+                  disabled={saving}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("admin.emailDomainsHelp")}
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
 
         {/* OIDC Configuration */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Key className="h-4 w-4" />
-                <CardTitle className="text-sm font-medium">
-                  {t("admin.oidcConfig")}
-                </CardTitle>
+        {!company.localAuthEnabled && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Key className="h-4 w-4" />
+                  <CardTitle className="text-sm font-medium">
+                    {t("admin.oidcConfig")}
+                  </CardTitle>
+                </div>
+                {company.oidcEnabled ? (
+                  <Badge variant="success">{t("admin.oidcEnabled")}</Badge>
+                ) : (
+                  <Badge variant="warning">{t("admin.oidcNotConfigured")}</Badge>
+                )}
               </div>
-              {company.oidcEnabled ? (
-                <Badge variant="success">{t("admin.oidcEnabled")}</Badge>
-              ) : (
-                <Badge variant="warning">{t("admin.oidcNotConfigured")}</Badge>
-              )}
-            </div>
-            <CardDescription>
-              {t("admin.oidcConfigDesc")}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="oidcIssuer">{t("admin.oidcIssuerUrl")}</Label>
-              <Input
-                id="oidcIssuer"
-                type="url"
-                value={oidcIssuer}
-                onChange={(e) => setOidcIssuer(e.target.value)}
-                placeholder={t("admin.oidcIssuerUrlPlaceholder")}
-                disabled={saving}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t("admin.oidcIssuerUrlHelp")}
-              </p>
-            </div>
+              <CardDescription>
+                {t("admin.oidcConfigDesc")}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="oidcIssuer">{t("admin.oidcIssuerUrl")}</Label>
+                <Input
+                  id="oidcIssuer"
+                  type="url"
+                  value={oidcIssuer}
+                  onChange={(e) => setOidcIssuer(e.target.value)}
+                  placeholder={t("admin.oidcIssuerUrlPlaceholder")}
+                  disabled={saving}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("admin.oidcIssuerUrlHelp")}
+                </p>
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="oidcClientId">{t("admin.clientId")}</Label>
-              <Input
-                id="oidcClientId"
-                value={oidcClientId}
-                onChange={(e) => setOidcClientId(e.target.value)}
-                placeholder={t("admin.clientIdPlaceholder")}
-                disabled={saving}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t("admin.clientIdHelp")}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+              <div className="space-y-2">
+                <Label htmlFor="oidcClientId">{t("admin.clientId")}</Label>
+                <Input
+                  id="oidcClientId"
+                  value={oidcClientId}
+                  onChange={(e) => setOidcClientId(e.target.value)}
+                  placeholder={t("admin.clientIdPlaceholder")}
+                  disabled={saving}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("admin.clientIdHelp")}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Messages */}
         {error && (

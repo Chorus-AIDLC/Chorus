@@ -177,7 +177,7 @@ export function ProposalValidationChecklist({ projectUuid, proposalUuid, status 
                   >
                     <Icon className={`h-3.5 w-3.5 shrink-0 ${colors.icon}`} />
                     <span className="flex-1 min-w-0 text-xs text-foreground">
-                      {issue.field ? t(issue.id, { title: issue.field }) : t(issue.id)}
+                      {t(issue.id, { title: issue.field ?? "", ...issue.params })}
                     </span>
                     <Badge className={`shrink-0 border-0 text-[10px] font-medium ${colors.badge}`}>
                       {t(issue.level)}

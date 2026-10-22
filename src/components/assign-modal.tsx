@@ -14,7 +14,8 @@ import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
-import { User, Loader2 } from "lucide-react";
+import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
+import { Loader2 } from "lucide-react";
 
 interface Agent {
   uuid: string;
@@ -27,6 +28,7 @@ interface CompanyUser {
   uuid: string;
   name: string | null;
   email: string | null;
+  avatarSeed?: string | null;
 }
 
 interface AssignModalProps {
@@ -60,6 +62,7 @@ export function AssignModal({
 
   // Filter out current user from the users list
   const otherUsers = users.filter((u) => u.uuid !== currentUserUuid);
+  const currentUser = users.find((user) => user.uuid === currentUserUuid);
 
   const handleAssign = () => {
     setError(null);
@@ -121,9 +124,7 @@ export function AssignModal({
               htmlFor="assign-self"
               className="flex flex-1 cursor-pointer items-center gap-3"
             >
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-                <User className="h-5 w-5 text-primary" />
-              </div>
+              <UserAvatar userUuid={currentUserUuid} name={currentUser?.name} avatarSeed={currentUser?.avatarSeed} size={40} decorative />
               <div className="flex-1">
                 <div className="font-medium">{t("assign.assignToMyself")}</div>
                 <div className="text-xs text-muted-foreground">
@@ -165,9 +166,7 @@ export function AssignModal({
                     htmlFor={`assign-user-${user.uuid}`}
                     className="flex flex-1 cursor-pointer items-center gap-3"
                   >
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100">
-                      <User className="h-5 w-5 text-blue-600" />
-                    </div>
+                    <UserAvatar userUuid={user.uuid} name={user.name} avatarSeed={user.avatarSeed} size={40} decorative />
                     <div className="flex-1">
                       <div className="font-medium">{user.name || user.email}</div>
                       <div className="text-xs text-muted-foreground">

@@ -12,14 +12,13 @@ import type { useTranslations as UseTranslationsType } from "next-intl";
 import {
   Send,
   Loader2,
-  User,
   AlertCircle,
   MoreHorizontal,
   Reply,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { UserIdentityAvatar } from "@/components/user-identity-avatar";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import {
   MentionEditor,
@@ -37,6 +36,7 @@ import {
   type RenderMentionArg,
 } from "@/components/mention-renderer";
 import { MentionBadge } from "@/components/agent-presence";
+import { UserMention, UserMentionProvider } from "@/components/user-mention";
 import { useRealtimeEntityEvent } from "@/contexts/realtime-context";
 import { useCanEditProject } from "@/contexts/project-access-context";
 import { PresenceIndicator } from "@/components/ui/presence-indicator";
@@ -97,13 +97,6 @@ function useMobileCommentActions() {
   );
 }
 
-// React-native mention rendering for the COMMENT surface only (passed as the opt-in
-// `renderMention` prop to ContentWithMentions). AGENT mentions become an interactive
-// MentionBadge (online dot + identity popover + owner/online-gated "Open
-// conversation"); USER mentions keep the existing styled-text appearance unchanged
-// (q1 = agent mentions only). Module-level + stable identity so it never churns the
-// memoized Streamdown components map upstream. Every OTHER ContentWithMentions
-// surface omits this prop and keeps its byte-stable DOM-injection rendering.
 function renderCommentMention(mention: RenderMentionArg) {
   if (mention.type === "agent") {
     return (
@@ -114,15 +107,12 @@ function renderCommentMention(mention: RenderMentionArg) {
       />
     );
   }
-  // User mention — same styled text the legacy DOM-injection path produced.
   return (
-    <span
+    <UserMention
       key={mention.index}
-      className="text-blue-600 font-medium"
-      title={`${mention.type}: ${mention.uuid}`}
-    >
-      @{mention.displayName}
-    </span>
+      uuid={mention.uuid}
+      fallback={mention.displayName}
+    />
   );
 }
 
@@ -580,16 +570,13 @@ function UnifiedCommentsContent({
   );
 
   return (
+    <UserMentionProvider targetType={targetType} targetUuid={targetUuid} comments={comments}>
     <PresenceIndicator entityType={targetType} entityUuid={targetUuid} subEntityType="comment">
     <div className="flex flex-col gap-0">
       {/* Input at top (hidden for read-only Viewers) */}
       {canComment ? (
       <div className={`flex items-center ${gap} pb-3 border-b border-[#F0EDE8] dark:border-[#26241f]`}>
-        <Avatar className={`${compact ? "h-6 w-6" : "h-7 w-7"} shrink-0`}>
-          <AvatarFallback className="bg-border text-muted-foreground">
-            <User className={`${compact ? "h-3 w-3" : "h-3.5 w-3.5"}`} />
-          </AvatarFallback>
-        </Avatar>
+        <UserIdentityAvatar userUuid={currentUserUuid} size={compact ? 24 : 28} decorative />
         <div className="flex-1 min-w-0">
           <MentionEditor
             ref={editorRef}
@@ -696,6 +683,7 @@ function UnifiedCommentsContent({
       )}
     </div>
     </PresenceIndicator>
+    </UserMentionProvider>
   );
 }
 
@@ -922,11 +910,7 @@ function CommentItem({
           className="shrink-0 rounded-full"
         />
       ) : (
-        <Avatar className={`${avatarSize} shrink-0`}>
-          <AvatarFallback className="bg-border text-muted-foreground text-[11px] font-medium">
-            {c.author.name.charAt(0).toUpperCase()}
-          </AvatarFallback>
-        </Avatar>
+        <UserIdentityAvatar userUuid={c.author.uuid} name={c.author.name} avatarSeed={c.author.avatarSeed} size={compact ? 24 : 30} className={avatarSize} decorative />
       )}
       <div className="flex-1 min-w-0">
         {/* Meta line */}

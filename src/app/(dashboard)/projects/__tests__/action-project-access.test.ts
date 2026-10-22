@@ -363,6 +363,12 @@ describe("public projects keep today's behaviour", () => {
     as("u-outsider");
     const result = await forceMoveTaskToColumnAction("t-pub", "done");
     expect(result).toEqual({ success: true });
-    expect(svc.updateTask).toHaveBeenCalledWith("t-pub", { status: "done" });
+    // The transition now carries the actor so the activity feed attributes it to
+    // the signed-in user instead of falling back to "Unknown".
+    expect(svc.updateTask).toHaveBeenCalledWith(
+      "t-pub",
+      { status: "done" },
+      { actorType: "user", actorUuid: "u-outsider" },
+    );
   });
 });

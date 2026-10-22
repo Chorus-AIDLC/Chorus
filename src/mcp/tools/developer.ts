@@ -192,7 +192,11 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
         return { content: [{ type: "text", text: "Can only submit for verification from in_progress status" }], isError: true };
       }
 
-      const updated = await taskService.updateTask(task.uuid, { status: "to_verify" });
+      const updated = await taskService.updateTask(
+        task.uuid,
+        { status: "to_verify" },
+        { actorType: auth.type, actorUuid: auth.actorUuid }
+      );
 
       // Log activity
       await activityService.createActivity({
@@ -287,7 +291,11 @@ export function registerDeveloperTools(server: McpServer, auth: AgentAuthContext
 
       // Update status if requested
       if (status && taskService.isValidTaskStatusTransition(task.status, status)) {
-        await taskService.updateTask(task.uuid, { status });
+        await taskService.updateTask(
+          task.uuid,
+          { status },
+          { actorType: auth.type, actorUuid: auth.actorUuid }
+        );
       }
 
       // Write comment

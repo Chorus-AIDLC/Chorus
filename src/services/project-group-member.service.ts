@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ApiError } from "@/lib/api-handler";
 import type { AuthContext } from "@/types/auth";
-import { isProjectMemberRole, membershipPrincipal, type ProjectMemberRole } from "@/services/project-access.service";
+import { isProjectMemberRole, levelAtLeast, membershipPrincipal, type ProjectMemberRole } from "@/services/project-access.service";
 import { requireGroupOperation } from "@/services/project-group-access.service";
 import { auditGroup, lockGroups, publishGroupAccess } from "@/services/project-group-mutation.service";
 import { implicitGroupAdmin } from "@/services/project-group-implicit-admin.service";
@@ -16,12 +16,13 @@ export async function listGroupMembers(auth: AuthContext, groupUuid: string) {
     where: { companyUuid: auth.companyUuid, uuid: { in: [...new Set([
       ...members.map((m) => m.userUuid), ...(automaticAdmin ? [automaticAdmin] : []),
     ])] } },
-    select: { uuid: true, name: true, email: true },
+    select: { uuid: true, name: true, email: true, avatarSeed: true },
   });
   const byUuid = new Map(users.map((u) => [u.uuid, u]));
   const rows = members.map((m) => ({
     uuid: m.uuid, userUuid: m.userUuid, role: m.userUuid === automaticAdmin ? "admin" : m.role,
     name: byUuid.get(m.userUuid)?.name ?? null, email: byUuid.get(m.userUuid)?.email ?? "",
+    avatarSeed: byUuid.get(m.userUuid)?.avatarSeed ?? null,
     addedByUuid: m.addedByUuid, createdAt: m.createdAt.toISOString(), updatedAt: m.updatedAt.toISOString(),
     ...(m.userUuid === automaticAdmin ? {
       implicit: true, automaticAdmin: true, directRole: m.role as ProjectMemberRole | null, effectiveRole: "admin",
@@ -31,6 +32,7 @@ export async function listGroupMembers(auth: AuthContext, groupUuid: string) {
     rows.unshift({
       uuid: `implicit:${groupUuid}:${automaticAdmin}`, userUuid: automaticAdmin, role: "admin",
       name: byUuid.get(automaticAdmin)?.name ?? null, email: byUuid.get(automaticAdmin)?.email ?? "",
+      avatarSeed: byUuid.get(automaticAdmin)?.avatarSeed ?? null,
       addedByUuid: null, createdAt: group.createdAt.toISOString(), updatedAt: group.updatedAt.toISOString(),
       implicit: true, automaticAdmin: true, directRole: null, effectiveRole: "admin",
     });
@@ -45,9 +47,14 @@ async function mutateMember(auth: AuthContext, groupUuid: string, userUuid: stri
     await lockGroups(tx, auth.companyUuid, [groupUuid]);
     await requireGroupOperation(auth, groupUuid, "manage_members", tx);
     const automaticAdmin = await implicitGroupAdmin(auth.companyUuid, groupUuid, tx);
-    const user = await tx.user.findFirst({ where: { uuid: userUuid, companyUuid: auth.companyUuid }, select: { uuid: true } });
-    if (!user) throw new ApiError("NOT_FOUND", "User not found in this company", 404);
     const existing = await tx.projectGroupMember.findUnique({ where: { groupUuid_userUuid: { groupUuid, userUuid } } });
+    // Preserve removal/demotion of historical members while rejecting new grants.
+    const grantsAccess = create || (role !== null && !!existing && !levelAtLeast(existing.role as ProjectMemberRole, role));
+    const user = await tx.user.findFirst({
+      where: { uuid: userUuid, companyUuid: auth.companyUuid, ...(grantsAccess ? { status: "active", deletedAt: null } : {}) },
+      select: { uuid: true },
+    });
+    if (!user) throw new ApiError("NOT_FOUND", "User not found in this company", 404);
     if (automaticAdmin === userUuid && role !== "admin") {
       throw new ApiError("BAD_REQUEST", "Cannot remove or demote the automatic group Admin", 400);
     }

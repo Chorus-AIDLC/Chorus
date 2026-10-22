@@ -6,6 +6,7 @@ import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose";
 import { prisma } from "./prisma";
 import { UserAuthContext } from "@/types/auth";
 import logger from "@/lib/logger";
+import { rememberStreamCredential } from "@/lib/stream-credentials";
 
 // Cache for JWKS
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
@@ -67,7 +68,7 @@ export async function verifyOidcAccessToken(
       },
     });
 
-    if (!company) {
+    if (!company || company.localAuthEnabled) {
       return null;
     }
 
@@ -79,18 +80,20 @@ export async function verifyOidcAccessToken(
       },
     });
 
-    if (!user) {
+    if (!user || user.authType === "local" || user.deletedAt || (user.status && user.status !== "active")) {
       // User not found - they need to complete registration first
       return null;
     }
 
-    return {
+    const context: UserAuthContext = {
       type: "user",
       companyUuid: company.uuid,
       actorUuid: user.uuid,
       email: user.email || oidcPayload.email,
       name: user.name || oidcPayload.name,
     };
+    rememberStreamCredential(context, { kind: "oidc", issuer, expiresAt: typeof payload.exp === "number" ? payload.exp * 1000 : undefined });
+    return context;
   } catch (error) {
     // Token verification failed
     logger.error({ err: error }, "OIDC token verification failed");
@@ -137,7 +140,7 @@ export async function verifyOidcAccessTokenAllowExpired(
     const company = await prisma.company.findFirst({
       where: { oidcEnabled: true, oidcIssuer: issuer },
     });
-    if (!company) return null;
+    if (!company || company.localAuthEnabled) return null;
 
     return { companyUuid: company.uuid, issuer, clientId: company.oidcClientId };
   } catch (error) {

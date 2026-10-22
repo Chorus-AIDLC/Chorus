@@ -164,7 +164,10 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       updateData.status = body.status;
     }
 
-    const updated = await updateTask(task.uuid, updateData);
+    const updated = await updateTask(task.uuid, updateData, {
+      actorType: auth.type,
+      actorUuid: auth.actorUuid,
+    });
     return success(updated);
   }
 );

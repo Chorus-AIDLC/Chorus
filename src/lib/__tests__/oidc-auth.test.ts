@@ -21,7 +21,7 @@ vi.mock('@/generated/prisma/client', () => ({ PrismaClient: vi.fn() }));
 
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { prisma } from '@/lib/prisma';
-import { verifyOidcAccessToken, isOidcToken } from '../oidc-auth';
+import { verifyOidcAccessToken, verifyOidcAccessTokenAllowExpired, isOidcToken } from '../oidc-auth';
 
 // Helper to create fake JWT tokens
 function createFakeJwt(header: object, payload: object): string {
@@ -51,6 +51,22 @@ describe('verifyOidcAccessToken', () => {
     vi.clearAllMocks();
     // Reset console.error mock to avoid noise in test output
     vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it.each(['local', 'invited', 'disabled', 'deleted'])('rejects %s account even with valid IdP token', async state => {
+    const token = createFakeJwt({ alg: 'RS256' }, { iss: mockIssuer, sub: 'user-sub-789' });
+    vi.mocked(jwtVerify).mockResolvedValue({ payload: { iss: mockIssuer, sub: 'user-sub-789' } } as any);
+    vi.mocked(prisma.company.findFirst).mockResolvedValue(mockCompany as any);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ ...mockUser, ...(state === 'local' ? { authType: 'local' } : { status: state }) } as any);
+    expect(await verifyOidcAccessToken(token)).toBeNull();
+  });
+  it('rejects explicitly local companies for token auth and expired-token recovery', async () => {
+    const token = createFakeJwt({ alg: 'RS256' }, { iss: mockIssuer, sub: 'user-sub-789' });
+    vi.mocked(jwtVerify).mockResolvedValue({ payload: { iss: mockIssuer, sub: 'user-sub-789' } } as any);
+    vi.mocked(prisma.company.findFirst).mockResolvedValue({ ...mockCompany, localAuthEnabled: true } as any);
+    expect(await verifyOidcAccessToken(token)).toBeNull();
+    expect(await verifyOidcAccessTokenAllowExpired(token, 3600)).toBeNull();
+    expect(prisma.user.findFirst).not.toHaveBeenCalled();
   });
 
   it('returns UserAuthContext for valid access token', async () => {

@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.22.2"
+  version: "0.23.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -191,15 +191,26 @@ chorus_report_work({
 })
 ```
 
-Report with status update when complete:
+Report completion without changing the status:
 ```
 chorus_report_work({
   taskUuid: "<task-uuid>",
   report: "All implementation complete:\n- Files: ...\n- PR: https://github.com/org/repo/pull/42\n- All tests passing",
-  status: "to_verify",
   sessionUuid: "<session-uuid>"
 })
 ```
+
+> Do **not** pass `status: "to_verify"` here. `chorus_submit_for_verify` (Step 8) is the
+> `in_progress -> to_verify` transition; reporting `to_verify` first makes that submit fail
+> with `Can only submit for verification from in_progress status`.
+>
+> **Recovering a task that was already moved this way** — do not simply resubmit:
+> 1. Confirm the task was moved prematurely, not legitimately submitted and awaiting verification.
+> 2. Have the assignee move it back to `in_progress` with `chorus_update_task`; the usual
+>    dependency checks apply.
+> 3. **Repeat Step 7.** Leaving `to_verify` clears the developer *and* admin acceptance marks and
+>    their evidence, so restore the self-check evidence and confirm the required criteria pass again.
+> 4. Submit through Step 8.
 
 ### Step 7: Self-Check Acceptance Criteria
 
@@ -323,7 +334,7 @@ loop:
     chorus_claim_task({ taskUuid: task.uuid })
     chorus_update_task({ taskUuid: task.uuid, status: "in_progress" })
     # ... read context, implement, run tests (Steps 4-7) ...
-    chorus_report_work({ taskUuid: task.uuid, report: "...", status: "to_verify" })
+    chorus_report_work({ taskUuid: task.uuid, report: "..." })
     chorus_report_criteria_self_check({ taskUuid: task.uuid, criteria: [...] })
     chorus_submit_for_verify({ taskUuid: task.uuid, summary: "..." })
     # Step 8.5: run the task-reviewer inline; act on its VERDICT

@@ -18,10 +18,12 @@ import { getSuperAdminFromRequest } from "./super-admin";
 import { getUserSessionFromRequest } from "./user-session";
 import { verifyOidcAccessToken, isOidcToken } from "./oidc-auth";
 import { isAssignmentOwnedByActor } from "./uuid-resolver";
+import { rememberStreamCredential, streamCredential } from "./stream-credentials";
 
 // Get auth context from request (UUID-based)
 export async function getAuthContext(
-  request: NextRequest
+  request: NextRequest,
+  options?: { trackUsage?: boolean },
 ): Promise<AuthContext | null> {
   const authHeader = request.headers.get("authorization");
 
@@ -31,7 +33,7 @@ export async function getAuthContext(
 
     // 1a. API Key authentication (Agent) - API Key starts with "cho_"
     if (token.startsWith("cho_")) {
-      const result = await validateApiKey(token);
+      const result = await (options ? validateApiKey(token, options) : validateApiKey(token));
       if (result.valid && result.agent) {
         const effective = computeEffectivePermissions(
           result.agent.roles,
@@ -46,6 +48,8 @@ export async function getAuthContext(
           ownerUuid: result.agent.ownerUuid ?? undefined,
           agentName: result.agent.name,
         };
+        const credential = streamCredential(result);
+        if (credential) rememberStreamCredential(agentContext, credential);
         return agentContext;
       }
     }

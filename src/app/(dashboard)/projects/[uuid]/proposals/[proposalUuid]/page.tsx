@@ -7,7 +7,6 @@ import { getTranslations } from "next-intl/server";
 import {
   ClipboardList,
   ChevronRight,
-  Monitor,
   Lightbulb,
   Pencil,
   AlertCircle,
@@ -18,6 +17,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
+import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
 import { Separator } from "@/components/ui/separator";
 import { MarkdownContent } from "@/components/markdown-content";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -180,7 +180,7 @@ export default async function ProposalDetailPage({ params }: PageProps) {
                     {proposal.createdByType === "agent" ? (
                       <AgentAvatar name={proposal.createdBy.name} size={16} className="rounded-full" />
                     ) : (
-                      <Monitor className="h-3 w-3" />
+                      <UserAvatar userUuid={proposal.createdBy.uuid} name={proposal.createdBy.name} avatarSeed={proposal.createdBy.avatarSeed} size={16} decorative />
                     )}
                     {proposal.createdBy.name}
                   </span>

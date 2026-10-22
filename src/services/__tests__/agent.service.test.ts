@@ -714,7 +714,7 @@ describe("getAssignableAgents", () => {
 
 // ===== getCompanyUsers =====
 describe("getCompanyUsers", () => {
-  it("should return all users in company", async () => {
+  it("should select only active undeleted users in company", async () => {
     const users = [
       { uuid: "user-1", name: "User 1", email: "user1@test.com" },
       { uuid: "user-2", name: "User 2", email: "user2@test.com" },
@@ -726,7 +726,7 @@ describe("getCompanyUsers", () => {
     expect(result).toHaveLength(2);
     expect(mockPrisma.user.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { companyUuid },
+        where: { companyUuid, status: "active", deletedAt: null },
         orderBy: { name: "asc" },
       })
     );
