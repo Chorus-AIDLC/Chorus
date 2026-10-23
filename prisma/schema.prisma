@@ -30,6 +30,7 @@ model Company {
   users                      User[]
   agents                     Agent[]
   agentTeams                 AgentTeam[]
+  projectAgentTeams          ProjectAgentTeam[]
   apiKeys                    ApiKey[]
   projects                   Project[]
   ideas                      Idea[]
@@ -71,6 +72,7 @@ model User {
 
   ownedAgents                Agent[]
   agentTeams                 AgentTeam[]
+  projectAgentTeams          ProjectAgentTeam[]
   projectAgentCwdPreferences ProjectAgentCwdPreference[]
   daemonDirectoryRequests    DaemonDirectoryRequest[]
 
@@ -155,9 +157,34 @@ model AgentTeam {
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
   members     AgentTeamMember[]
+  projectTeams ProjectAgentTeam[]
 
   @@index([companyUuid, ownerUuid])
   @@index([ownerUuid])
+}
+
+model ProjectAgentTeam {
+  uuid              String   @id @default(uuid())
+  companyUuid       String
+  company           Company  @relation(fields: [companyUuid], references: [uuid], onDelete: Cascade)
+  projectUuid       String
+  project           Project  @relation(fields: [projectUuid], references: [uuid], onDelete: Cascade)
+  ownerUuid         String
+  owner             User     @relation(fields: [ownerUuid], references: [uuid], onDelete: Cascade)
+  templateUuid      String?
+  template          AgentTeam? @relation(fields: [templateUuid], references: [uuid], onDelete: SetNull)
+  templateName      String
+  overrides         Json     @default("{}")
+  snapshot          Json     @default("{}")
+  revision          Int      @default(1)
+  lastLeadAgentUuid  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([projectUuid, ownerUuid])
+  @@index([companyUuid, ownerUuid])
+  @@index([ownerUuid])
+  @@index([templateUuid])
 }
 
 model AgentTeamMember {
@@ -265,6 +292,7 @@ model Project {
   proposals           Proposal[]
   activities          Activity[]
   agentCwdPreferences ProjectAgentCwdPreference[]
+  agentTeams          ProjectAgentTeam[]
   members             ProjectMember[]
 
   @@index([companyUuid])

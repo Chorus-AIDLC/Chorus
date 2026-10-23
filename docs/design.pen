@@ -3,6 +3,698 @@
   "children": [
     {
       "type": "frame",
+      "id": "projectTeamLight",
+      "name": "Personal Project Team — Light",
+      "x": 0,
+      "y": 29200,
+      "width": 900,
+      "height": 1330,
+      "layout": "vertical",
+      "gap": 20,
+      "padding": 32,
+      "fill": "#FAF8F4",
+      "children": [
+        {
+          "type": "text",
+          "id": "pt01",
+          "content": "My project team",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 26,
+          "fill": "#2C2C2C",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "text",
+          "id": "pt02",
+          "content": "Private to you and your agents · Saving never assigns work.",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 14,
+          "fill": "#77716B",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "pt05",
+          "name": "Template selector",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt03",
+              "content": "Personal template                 [My delivery team ▾]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt04",
+              "content": "Manage templates →",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt012",
+          "name": "Roles — inherited, overridden, empty, frozen",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt06",
+              "content": "Product · Inherited     ◉ Product Agent · Online · 1 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt07",
+              "content": "Development · Overridden     ◉ Developer · Offline · 0 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt08",
+              "content": "[Add agent ▾]   [Empty role]   [Reset inheritance]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt09",
+              "content": "Review · No members — assign this work manually.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt010",
+              "content": "Lead · ◉ Lead Agent · Offline · 0 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt011",
+              "content": "Ineligible members retain bindings; missing permissions / access are shown.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt015",
+          "name": "Frozen snapshot state",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt013",
+              "content": "Deleted template: members are frozen; edit here or choose another template.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt014",
+              "content": "Template deletion keeps latest effective roles + overrides; Ideas and Tasks unchanged.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt018",
+          "name": "Removed previous lead warning",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt016",
+              "content": "Previous handoff recipient removed from lead — even with an eligible replacement.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt017",
+              "content": "Existing assignments remain unchanged. Repair only by explicit preview + confirmation.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt025",
+          "name": "Explicit handoff — editor only",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt019",
+              "content": "Choose a lead explicitly… ▾     [Preview handoff]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt020",
+              "content": "2 Ideas · expires 14:30 · exact Idea titles and UUIDs",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt021",
+              "content": "Own unfinished Idea A    032146fe-…",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt022",
+              "content": "Own unfinished Idea B    728ca3e6-…",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt023",
+              "content": "[Refresh preview]       [Confirm Idea handoff]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt024",
+              "content": "Stale preview: no reassignment; refresh required. Inputs retained on errors.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt027",
+          "name": "Viewer state",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt026",
+              "content": "Viewers can configure their own team. Handoff requires Editor access.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt030",
+          "name": "Unbind confirmation",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt028",
+              "content": "Remove only your personal team? Templates, Ideas and Tasks remain unchanged.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt029",
+              "content": "[Cancel]     [Confirm unbind]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "pt031",
+          "content": "[Close]                                    [Unbind]    [Save team]",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 16,
+          "fill": "#2C2C2C",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "projectTeamDark",
+      "name": "Personal Project Team — Dark",
+      "x": 960,
+      "y": 29200,
+      "width": 900,
+      "height": 1330,
+      "layout": "vertical",
+      "gap": 20,
+      "padding": 32,
+      "fill": "#1C1B19",
+      "children": [
+        {
+          "type": "text",
+          "id": "pt11",
+          "content": "My project team",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 26,
+          "fill": "#E8E4DE",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "text",
+          "id": "pt12",
+          "content": "Private to you and your agents · Saving never assigns work.",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 14,
+          "fill": "#A6A09A",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "pt15",
+          "name": "Template selector",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt13",
+              "content": "Personal template                 [My delivery team ▾]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt14",
+              "content": "Manage templates →",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt112",
+          "name": "Roles — inherited, overridden, empty, frozen",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt16",
+              "content": "Product · Inherited     ◉ Product Agent · Online · 1 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt17",
+              "content": "Development · Overridden     ◉ Developer · Offline · 0 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt18",
+              "content": "[Add agent ▾]   [Empty role]   [Reset inheritance]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt19",
+              "content": "Review · No members — assign this work manually.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt110",
+              "content": "Lead · ◉ Lead Agent · Offline · 0 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt111",
+              "content": "Ineligible members retain bindings; missing permissions / access are shown.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt115",
+          "name": "Frozen snapshot state",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt113",
+              "content": "Deleted template: members are frozen; edit here or choose another template.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt114",
+              "content": "Template deletion keeps latest effective roles + overrides; Ideas and Tasks unchanged.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt118",
+          "name": "Removed previous lead warning",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt116",
+              "content": "Previous handoff recipient removed from lead — even with an eligible replacement.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt117",
+              "content": "Existing assignments remain unchanged. Repair only by explicit preview + confirmation.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt125",
+          "name": "Explicit handoff — editor only",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt119",
+              "content": "Choose a lead explicitly… ▾     [Preview handoff]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt120",
+              "content": "2 Ideas · expires 14:30 · exact Idea titles and UUIDs",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt121",
+              "content": "Own unfinished Idea A    032146fe-…",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt122",
+              "content": "Own unfinished Idea B    728ca3e6-…",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt123",
+              "content": "[Refresh preview]       [Confirm Idea handoff]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt124",
+              "content": "Stale preview: no reassignment; refresh required. Inputs retained on errors.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt127",
+          "name": "Viewer state",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt126",
+              "content": "Viewers can configure their own team. Handoff requires Editor access.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt130",
+          "name": "Unbind confirmation",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt128",
+              "content": "Remove only your personal team? Templates, Ideas and Tasks remain unchanged.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt129",
+              "content": "[Cancel]     [Confirm unbind]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "pt131",
+          "content": "[Close]                                    [Unbind]    [Save team]",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 16,
+          "fill": "#E8E4DE",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        }
+      ]
+    },
+    {
+      "type": "frame",
       "id": "XlN0Q",
       "x": 0,
       "y": 5400,

@@ -18,6 +18,8 @@ Agents may use a **role preset** (`developer_agent`, `pm_agent`, `admin_agent`) 
 
 Discovery and collaboration tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, session management, `chorus_create_tasks`, `chorus_update_task`) are **public** and registered for every preset — they are listed under "Public Tools" and "Session Tools" below without a Required Permission row. Commenting requires the target resource's `read` capability plus project `editor` access; answering elaboration similarly requires `idea:read` plus project `editor`. Thus `developer_agent` can participate without `idea:write`, `proposal:write`, or `document:write`. Public task creation/update still requires `task:write`, and reads/searches are filtered by resource read capabilities.
 
+Exception to the discovery-tool visibility shorthand: `chorus_get_project_team` requires `project:read`, plus project `viewer` access and personal-owner scoping at read time. Team membership never grants permissions or project access.
+
 > Note: `chorus_create_tasks` and `chorus_update_task` field edits are public because handler-level assignee / authorship guards enforce who can actually mutate state. Operational status transitions (`in_progress`, `to_verify`) still require the caller to be the task's assignee at the service layer — the permission gate is about tool visibility, not operation authorization.
 
 ### Gated Tool → Required Permission Matrix
@@ -26,6 +28,7 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 
 | Tool | Required Permission |
 |------|---------------------|
+| `chorus_get_project_team` | `project:read` |
 | `chorus_claim_idea` | `idea:write` |
 | `chorus_release_idea` | `idea:write` |
 | `chorus_move_idea` | `idea:write` |
@@ -104,7 +107,7 @@ Agents can filter results by project(s) using HTTP headers during MCP connection
 ### Affected Tools
 
 The following tools respect project filtering:
-- `chorus_checkin` - Returns filtered assignments
+- `chorus_checkin` - Returns filtered `activeProjects` counts and personal `projectTeams` for active/request-scoped projects
 - `chorus_get_my_assignments` - Returns filtered idea/task tracker (grouped by project)
 
 ### Usage Example
@@ -221,7 +224,7 @@ Tools available to all Agents.
 
 ### chorus_checkin
 
-**Description**: Agent check-in. Returns agent identity (including owner info), the resource-aggregated effective permission set, an `activeProjects` distribution (which projects the agent is advancing ideas in + an active-idea count per project — not a per-idea list), and a notification summary. Recommended at session start. Side effects: updates `agent.lastActiveAt`, emits the first-checkin notification to the owner once, and marks the 5 returned recent notifications as read.
+**Description**: Agent check-in. Returns agent identity (including owner info), the resource-aggregated effective permission set, an `activeProjects` distribution (which projects the agent is advancing ideas in + an active-idea count per project — not a per-idea list), a separate owner-private `projectTeams` map, and a notification summary. Recommended at session start. Side effects: updates `agent.lastActiveAt`, emits the first-checkin notification to the owner once, and marks the 5 returned recent notifications as read.
 
 **Project Filtering**: Results can be filtered by project using HTTP headers during MCP connection:
 - `X-Chorus-Project`: Single or multiple project UUIDs (comma-separated)
@@ -251,6 +254,9 @@ Tools available to all Agents.
   "activeProjects": {
     "<project-uuid>": { "name": "Project name", "activeIdeaCount": 2 }
   },
+  "projectTeams": {
+    "<project-uuid>": null
+  },
   "notifications": {
     "unread": 0,
     "recent": []
@@ -259,6 +265,8 @@ Tools available to all Agents.
 ```
 
 `activeProjects` is a location map — which projects the agent is advancing ideas in and how many active ideas each holds — NOT a per-idea list. "Active" = assigned to the agent (or its instance/owner), not `closed`, not rolled-up `done`; the count is derived uncapped from the same computation `chorus_get_my_assignments` uses. For per-idea detail (titles, UUIDs, derived status, `parentUuid`, proposal/task counts), call `chorus_get_my_assignments`. (Working-style guidance is injected by each harness's session-start hook, not returned in this payload.)
+
+`projectTeams` is a separate map keyed by project UUID, bounded to the union of `activeProjects` keys and request-scoped projects resolved from the headers above, subject to `project:read` and project `viewer` checks. Each value is the calling agent owner's `ProjectAgentTeamDto` or `null` when no personal configuration exists; it is not a `{team: ...}` wrapper. Request-scoped projects can appear even with no active Ideas. With no request scope, this does not enumerate every company project. Ownerless agents receive `{}`; no other user's configuration or template metadata is exposed. This addition leaves `activeProjects` counts and existing guidance unchanged. Use `chorus_get_project_team({projectUuid})` for a direct read outside this bounded set.
 
 > The legacy 0.6.x shape (`roles: ["developer"]`, `assignments`, `pending`) was replaced in 0.6.6 by a project-grouped idea tracker and in 0.7.0 by the resource-aggregated `permissions` object. In 0.17.0 the checkin idea surface became `activeProjects` (a project→count distribution) + `guidance`; the full per-idea list now lives only in `chorus_get_my_assignments`. The old fields are no longer returned.
 
@@ -291,6 +299,37 @@ Tools available to all Agents.
 | accessLevel | `"viewer"` \| `"editor"` \| `"admin"` | The caller's effective level on this project (for agents: the owner's level). Public projects return at least `"editor"`; `"admin"` only for explicit admin members |
 
 A project the caller cannot see returns the same `Project not found` error as a nonexistent UUID.
+
+### chorus_get_project_team
+
+**Description**: Read the calling agent owner's personal Team configuration for one project. This is a detail read, not a paginated collection, and may target a project outside checkin's active/request-scoped set.
+
+**Required Permission**: `project:read`, plus at least project `viewer` access. The owner is resolved from authenticated agent identity, never from an input parameter. Configuration is private to the `(projectUuid, ownerUuid)` pair within the company; project administrators cannot bypass ownership. Hidden projects use the normal not-found response without foreign metadata.
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| projectUuid | string | Yes | Project UUID |
+
+**Output**: `{ "team": ProjectAgentTeamDto | null }`. An accessible project with no personal binding returns `{ "team": null }`; ownerless agents also receive `{ "team": null }`, never another user's Team. Source of truth: `src/types/project-agent-team.ts`.
+
+| DTO field | Type | Description |
+|-----------|------|-------------|
+| projectUuid | string | Project UUID |
+| templateUuid | string \| null | Owned template UUID; null after template deletion |
+| templateName | string | Template display name, retained for a frozen configuration |
+| frozen | boolean | Template deletion froze the last effective memberships; current eligibility is still checked |
+| revision | number | Configuration revision; treat as opaque, not as assignment authority |
+| overrides | Partial<Record<Role, string[]>> | Whole-role overrides using agent UUIDs; an absent role inherits, `[]` explicitly empties it |
+| roles | Record<Role, ProjectTeamMember[]> | All four role arrays: `product`, `development`, `review`, `lead`; agents may hold multiple roles |
+| myRoles | Role[] | Only the calling agent's currently eligible memberships, not all bound roles |
+| handoffWarning | object \| null | Optional warning state: `{ agentUuid, agentName: string \| null, reason: "removed_from_lead" \| "ineligible" \| "deleted" }` for the previous confirmed recipient; null when there is no warning |
+
+Each `ProjectTeamMember` contains `agentUuid`, `agentName`, `eligible`, `missingPermissions: string[]`, `hasProjectAccess`, `online`, and `activeCount`. Eligibility requires same-company personal ownership, the role's minimum permissions and project collaboration access (`editor`, including reviewers). Retained members that lose permissions/access remain visible as ineligible with explanations; deleted/foreign agents are filtered out. `online` and `activeCount` describe connectivity/load, not eligibility: an offline agent can still be eligible.
+
+Team roles grant **no permissions or project access**. All roles may be empty, preserving the manual workflow. Saving, overriding, template changes/deletion and unbinding never automatically assign/reassign Ideas or Tasks or undo prior assignments. A `handoffWarning` remains relevant even if another eligible lead exists; it calls for explicit human repair, not automatic reassignment.
+
+**Human UI/REST only**: Binding, whole-role overrides/reset and unbinding use the personal project Team UI or human-session `PUT`/`DELETE /api/projects/:uuid/team`. Handoff uses human-session `POST /api/projects/:uuid/team/handoff`: select one owned eligible lead, preview with `{leadAgentUuid, preview: true}`, then confirm with `{leadAgentUuid, confirmationToken}`. It requires editor access and applicable assignment authority; viewer access suffices only for personal configuration. Only unfinished project Ideas currently assigned to the user or their owned agents/instances qualify, regardless of creator; unassigned, foreign-assigned and derived-done Ideas are excluded. Stale/tampered previews require a fresh preview with no partial changes. Handoff preserves lifecycle and Task execution/assignments. These are **not new MCP write tools**; agent keys cannot write Team configuration or confirm this handoff.
 
 ### chorus_get_ideas
 

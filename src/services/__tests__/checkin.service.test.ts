@@ -444,6 +444,7 @@ describe("buildCheckinResponse — empty state", () => {
         owner: { uuid: OWNER_UUID, name: "Owner User", email: "owner@example.com" },
       },
       activeProjects: {},
+      projectTeams: {},
       notifications: { unread: 0, recent: [] },
     });
   });

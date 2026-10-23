@@ -6,6 +6,7 @@ import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import type { AuthContext } from "@/types/auth";
 import type { AgentTeamCandidateDto, AgentTeamDto, AgentTeamMemberInput, AgentTeamRole } from "@/types/agent-team";
 import type { ErrorCodeType } from "@/lib/api-response";
+import { effectiveProjectTeamRoles, projectTeamRoles } from "@/lib/project-team-roles";
 
 export class AgentTeamError extends Error {
   constructor(public code: ErrorCodeType, message: string, public details?: unknown) {
@@ -54,7 +55,7 @@ function scopeFor(auth: AuthContext) {
 }
 
 type Scope = ReturnType<typeof scopeFor>;
-type TeamDb = Pick<typeof prisma, "agent" | "agentTeam" | "agentTeamMember">;
+type TeamDb = Pick<typeof prisma, "agent" | "agentTeam" | "agentTeamMember" | "projectAgentTeam">;
 
 const agentSelect = { uuid: true, name: true, roles: true, permissions: true } as const;
 
@@ -201,6 +202,14 @@ export async function deleteAgentTeam(auth: AuthContext, uuid: string) {
   const scope = scopeFor(auth);
   return serialTransaction(async (client) => {
     const team = await requireTeam(client, scope, uuid);
+    const configs = await client.projectAgentTeam.findMany({ where: { ...scope, templateUuid: team.uuid } });
+    for (const config of configs) {
+      await client.projectAgentTeam.update({
+        where: { uuid: config.uuid },
+        data: { templateUuid: null, templateName: team.name,
+          snapshot: effectiveProjectTeamRoles(projectTeamRoles(team.members), config.overrides), revision: { increment: 1 } },
+      });
+    }
     await client.agentTeam.delete({ where: { uuid: team.uuid, ...scope } });
     return { deleted: true };
   });

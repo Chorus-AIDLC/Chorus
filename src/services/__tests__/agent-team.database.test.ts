@@ -25,6 +25,7 @@ describe("agent teams against isolated in-memory PostgreSQL", () => {
   let pool: pg.Pool;
   let db: PrismaClient;
   let teams: typeof import("../agent-team.service");
+  let projectTeams: typeof import("../project-agent-team.service");
   let agents: typeof import("../agent.service");
   let auth: UserAuthContext;
   let otherOwner: UserAuthContext;
@@ -47,6 +48,7 @@ describe("agent teams against isolated in-memory PostgreSQL", () => {
     db = new PrismaClient({ adapter: new PrismaPg(pool) });
     state.db = db;
     teams = await import("../agent-team.service");
+    projectTeams = await import("../project-agent-team.service");
     agents = await import("../agent.service");
   }, 60_000);
 
@@ -287,6 +289,132 @@ describe("agent teams against isolated in-memory PostgreSQL", () => {
     expect((await teams.getAgentTeam(auth, first.uuid)).members).toMatchObject([binding(secondAgentUuid)]);
     expect((await teams.getAgentTeam(auth, second.uuid)).members).toEqual([]);
     expect(await db.agent.count({ where: { uuid: secondAgentUuid } })).toBe(1);
+  });
+
+  it("isolates personal project configs and rejects foreign templates, members and machine writes", async () => {
+    const project = await db.project.create({ data: { companyUuid: auth.companyUuid, name: "Shared" } });
+    const template = await teams.createAgentTeam(auth, { name: "Private", members: [binding(agentUuid, "lead")] });
+    const saved = await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid });
+    expect(saved?.roles.lead).toMatchObject([{ agentUuid, eligible: true, online: false, activeCount: 0 }]);
+    expect(await projectTeams.getProjectAgentTeam(otherOwner, project.uuid)).toBeNull();
+    await expect(projectTeams.getProjectAgentTeam(otherCompany, project.uuid)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(projectTeams.saveProjectAgentTeam(otherOwner, project.uuid, { templateUuid: template.uuid })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: { lead: [foreignAgentUuid] } })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    const agentAuth = { type: "agent" as const, actorUuid: agentUuid, companyUuid: auth.companyUuid, ownerUuid: auth.actorUuid };
+    expect((await projectTeams.getProjectAgentTeam(agentAuth, project.uuid))?.myRoles).toEqual(["lead"]);
+    expect(await projectTeams.getProjectAgentTeam({ ...agentAuth, ownerUuid: undefined }, project.uuid)).toBeNull();
+    await expect(projectTeams.saveProjectAgentTeam(agentAuth, project.uuid, { templateUuid: template.uuid })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await projectTeams.deleteProjectAgentTeam(otherOwner, project.uuid);
+    expect(await projectTeams.getProjectAgentTeam(auth, project.uuid)).not.toBeNull();
+  });
+
+  it("repairs a deleted frozen override member with an explicit empty role", async () => {
+    const project = await db.project.create({ data: { companyUuid: auth.companyUuid, name: "Frozen repair" } });
+    const template = await teams.createAgentTeam(auth, { name: "Frozen", members: [] });
+    await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: { development: [agentUuid] } });
+    await teams.deleteAgentTeam(auth, template.uuid);
+    await agents.deleteAgent(auth.companyUuid, agentUuid, auth.actorUuid);
+    const frozen = await projectTeams.getProjectAgentTeam(auth, project.uuid);
+    expect(frozen).toMatchObject({ frozen: true, templateUuid: null, roles: { development: [] }, overrides: { development: [agentUuid] } });
+    await expect(projectTeams.saveProjectAgentTeam(auth, project.uuid, {
+      templateUuid: null, overrides: { ...frozen?.overrides, product: [] },
+    })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: null, overrides: { development: [] } });
+    expect(await projectTeams.getProjectAgentTeam(auth, project.uuid)).toMatchObject({
+      frozen: true, templateUuid: null, roles: { development: [] }, overrides: { development: [] },
+    });
+  });
+
+  it.each(["deleted", "other-owner", "other-company"])("prunes %s frozen inherited members on unrelated saves without relaxing submitted overrides", async (change) => {
+    const project = await db.project.create({ data: { companyUuid: auth.companyUuid, name: "Frozen inheritance repair" } });
+    const template = await teams.createAgentTeam(auth, { name: "Frozen", members: [binding(agentUuid), binding(secondAgentUuid, "lead")] });
+    await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid });
+    await teams.deleteAgentTeam(auth, template.uuid);
+    if (change === "deleted") await agents.deleteAgent(auth.companyUuid, agentUuid, auth.actorUuid);
+    else await db.agent.update({ where: { uuid: agentUuid }, data: change === "other-owner"
+      ? { ownerUuid: otherOwner.actorUuid }
+      : { companyUuid: otherCompany.companyUuid, ownerUuid: otherCompany.actorUuid } });
+    await db.agent.update({ where: { uuid: secondAgentUuid }, data: { roles: ["developer_agent"] } });
+    const frozen = await projectTeams.getProjectAgentTeam(auth, project.uuid);
+    expect(frozen).toMatchObject({ frozen: true, overrides: {}, roles: { development: [], lead: [{ agentUuid: secondAgentUuid, eligible: false }] } });
+    await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: null, overrides: { ...frozen?.overrides, product: [] } });
+    expect(await projectTeams.getProjectAgentTeam(auth, project.uuid)).toMatchObject({
+      frozen: true, overrides: { product: [] }, roles: { development: [], lead: [{ agentUuid: secondAgentUuid, eligible: false }] },
+    });
+    expect((await db.projectAgentTeam.findUniqueOrThrow({ where: { projectUuid_ownerUuid: { projectUuid: project.uuid, ownerUuid: auth.actorUuid } } })).snapshot).toMatchObject({ development: [], lead: [secondAgentUuid] });
+    for (const invalidUuid of [agentUuid, foreignAgentUuid, foreignCompanyAgentUuid]) {
+      await expect(projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: null, overrides: { development: [invalidUuid] } })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    }
+  });
+
+  it("keeps whole-role empty overrides and freezes latest template state, not last read", async () => {
+    const project = await db.project.create({ data: { companyUuid: auth.companyUuid, name: "Inheritance" } });
+    const template = await teams.createAgentTeam(auth, { name: "Live", members: [binding(agentUuid, "lead"), binding(agentUuid)] });
+    await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: { development: [] } });
+    await teams.updateAgentTeam(auth, template.uuid, { name: "Latest", members: [binding(secondAgentUuid, "lead"), binding(secondAgentUuid)] });
+    await teams.deleteAgentTeam(auth, template.uuid);
+    const frozen = await projectTeams.getProjectAgentTeam(auth, project.uuid);
+    expect(frozen).toMatchObject({ frozen: true, templateUuid: null, templateName: "Latest", roles: { development: [], lead: [{ agentUuid: secondAgentUuid }] } });
+    const reset = await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: null, overrides: { lead: [] } });
+    expect(reset?.roles.lead).toEqual([]);
+    await projectTeams.deleteProjectAgentTeam(auth, project.uuid);
+    expect(await projectTeams.getProjectAgentTeam(auth, project.uuid)).toBeNull();
+  });
+
+  it("restores latest inheritance and shows removed-lead and permission warnings without assignments", async () => {
+    const project = await db.project.create({ data: { companyUuid: auth.companyUuid, name: "Drift" } });
+    const template = await teams.createAgentTeam(auth, { name: "Team", members: [binding(agentUuid, "lead")] });
+    await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: { lead: [] } });
+    await teams.updateAgentTeam(auth, template.uuid, { members: [binding(secondAgentUuid, "lead")] });
+    expect((await projectTeams.getProjectAgentTeam(auth, project.uuid))?.roles.lead).toEqual([]);
+    expect((await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: {} }))?.roles.lead[0].agentUuid).toBe(secondAgentUuid);
+    await db.projectAgentTeam.update({ where: { projectUuid_ownerUuid: { projectUuid: project.uuid, ownerUuid: auth.actorUuid } }, data: { lastLeadAgentUuid: agentUuid } });
+    expect((await projectTeams.getProjectAgentTeam(auth, project.uuid))?.handoffWarning).toMatchObject({ agentUuid, reason: "removed_from_lead" });
+    await db.agent.update({ where: { uuid: secondAgentUuid }, data: { roles: ["developer"] } });
+    const drift = await projectTeams.getProjectAgentTeam(auth, project.uuid);
+    expect(drift?.roles.lead[0].eligible).toBe(false);
+    expect(drift?.roles.lead[0].missingPermissions).toContain("idea:admin");
+    await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid });
+    await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: { lead: [] } });
+    await expect(projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("allows empty private viewer configs but does not grant member collaboration rights", async () => {
+    const project = await db.project.create({ data: { companyUuid: auth.companyUuid, name: "Private", visibility: "private", createdByUuid: otherOwner.actorUuid } });
+    await db.projectMember.create({ data: { companyUuid: auth.companyUuid, projectUuid: project.uuid, userUuid: otherOwner.actorUuid, role: "admin" } });
+    await db.projectMember.create({ data: { companyUuid: auth.companyUuid, projectUuid: project.uuid, userUuid: auth.actorUuid, role: "viewer" } });
+    const template = await teams.createAgentTeam(auth, { name: "Empty" });
+    expect((await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid }))?.roles.lead).toEqual([]);
+    await expect(projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: { lead: [agentUuid] } })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await db.projectMember.delete({ where: { projectUuid_userUuid: { projectUuid: project.uuid, userUuid: auth.actorUuid } } });
+    await expect(projectTeams.getProjectAgentTeam(auth, project.uuid)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("validates removed inherited tuples on re-add but retains current inherited drift", async () => {
+    const project = await db.project.create({ data: { companyUuid: auth.companyUuid, name: "Live retention" } });
+    const template = await teams.createAgentTeam(auth, { name: "Team", members: [binding(agentUuid, "lead")] });
+    await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid });
+    await teams.updateAgentTeam(auth, template.uuid, { members: [] });
+    await db.agent.update({ where: { uuid: agentUuid }, data: { roles: ["developer"] } });
+    await expect(projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: { lead: [agentUuid] } })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await teams.updateAgentTeam(auth, template.uuid, { members: [binding(secondAgentUuid, "lead")] });
+    await db.agent.update({ where: { uuid: secondAgentUuid }, data: { roles: ["developer"] } });
+    expect((await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: { development: [] } }))?.roles.lead).toMatchObject([{ agentUuid: secondAgentUuid, eligible: false }]);
+  });
+
+  it("freezes the full live union when valid template and override sets exceed 200 combined", async () => {
+    const project = await db.project.create({ data: { companyUuid: auth.companyUuid, name: "Large snapshot" } });
+    const memberUuids = Array.from({ length: 101 }, () => randomUUID());
+    await db.agent.createMany({ data: memberUuids.map((uuid) => ({ uuid, companyUuid: auth.companyUuid, ownerUuid: auth.actorUuid, name: "Member", roles: ["admin_agent"] })) });
+    const template = await teams.createAgentTeam(auth, { name: "Team", members: [] });
+    await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: { development: memberUuids } });
+    await teams.updateAgentTeam(auth, template.uuid, { members: memberUuids.map((uuid) => binding(uuid, "lead")) });
+    expect((await projectTeams.getProjectAgentTeam(auth, project.uuid))?.roles.lead).toHaveLength(101);
+    await teams.deleteAgentTeam(auth, template.uuid);
+    const frozen = await projectTeams.getProjectAgentTeam(auth, project.uuid);
+    expect(frozen?.roles.lead).toHaveLength(101);
+    expect(frozen?.roles.development).toHaveLength(101);
+    expect((await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: null, overrides: { development: memberUuids } }))?.roles.lead).toHaveLength(101);
   });
 
   it("deletes only the scoped template and its bindings, never agents or other teams", async () => {

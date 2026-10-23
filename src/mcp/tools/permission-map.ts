@@ -105,6 +105,7 @@ export type ManagedToolName = keyof typeof TOOL_PERMISSIONS;
 // never supply an agent capability that the API key does not have.
 export const TOOL_READ_PERMISSIONS: Record<string, Permission> = {
   chorus_get_project: "project:read",
+  chorus_get_project_team: "project:read",
   chorus_list_projects: "project:read",
   chorus_get_project_groups: "project:read",
   chorus_get_project_group: "project:read",
@@ -134,6 +135,7 @@ export type ToolProjectAccessPolicy =
 // Public tool names alone do not tell us whether a call reads or writes.
 export const TOOL_PROJECT_ACCESS_OVERRIDES = {
   chorus_get_project: { scope: "resource", required: "viewer" },
+  chorus_get_project_team: { scope: "resource", required: "viewer" },
   chorus_get_ideas: { scope: "resource", required: "viewer" },
   chorus_get_documents: { scope: "resource", required: "viewer" },
   chorus_get_document: { scope: "resource", required: "viewer" },

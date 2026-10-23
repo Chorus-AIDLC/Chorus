@@ -5,7 +5,9 @@
 // stays in lockstep with checkin (see Chorus 0.7.2).
 
 import { prisma } from "@/lib/prisma";
-import type { AuthContext } from "@/types/auth";
+import type { AgentAuthContext, AuthContext } from "@/types/auth";
+import type { ProjectAgentTeamDto } from "@/types/project-agent-team";
+import { getProjectAgentTeam, ProjectTeamError } from "@/services/project-agent-team.service";
 import {
   buildActiveProjectDistribution,
   type ActiveProjectDistributionEntry,
@@ -54,6 +56,7 @@ export interface CheckinResponse {
    * work. For the full per-idea list, call chorus_get_my_assignments.
    */
   activeProjects: Record<string, CheckinActiveProject>;
+  projectTeams: Record<string, ProjectAgentTeamDto | null>;
   notifications: {
     unread: number;
     recent: CheckinNotification[];
@@ -105,6 +108,18 @@ export async function buildCheckinResponse(auth: AuthContext): Promise<CheckinRe
     buildActiveProjectDistribution(auth),
     buildNotificationSummary(auth),
   ]);
+  const projectTeams: CheckinResponse["projectTeams"] = {};
+  if (auth.type === "agent" && agent.ownerUuid && effective.has("project:read")) {
+    const teamAuth = { ...auth, ownerUuid: agent.ownerUuid };
+    const projectUuids = new Set([...Object.keys(activeProjects), ...((auth as AgentAuthContext).projectUuids ?? [])]);
+    await Promise.all([...projectUuids].map(async (projectUuid) => {
+      try {
+        projectTeams[projectUuid] = await getProjectAgentTeam(teamAuth, projectUuid);
+      } catch (caught) {
+        if (!(caught instanceof ProjectTeamError && caught.code === "NOT_FOUND")) throw caught;
+      }
+    }));
+  }
 
   if (agent.ownerUuid) {
     notificationService.emitAgentCheckin({
@@ -127,6 +142,7 @@ export async function buildCheckinResponse(auth: AuthContext): Promise<CheckinRe
         : null,
     },
     activeProjects,
+    projectTeams,
     notifications,
   };
 }

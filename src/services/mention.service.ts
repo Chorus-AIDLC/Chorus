@@ -620,9 +620,10 @@ export function compareMentionables(a: Mentionable, b: Mentionable): number {
  *
  * Mutates the `online`/`activeCount` fields of the agent entries in `results`.
  */
-async function enrichAgentLiveness(
+export async function enrichAgentLiveness(
   companyUuid: string,
-  results: Mentionable[]
+  results: Mentionable[],
+  client: Pick<typeof prisma, "daemonConnection" | "daemonExecution"> = prisma,
 ): Promise<void> {
   const agentUuids = results
     .filter((r) => r.type === "agent")
@@ -634,7 +635,7 @@ async function enrichAgentLiveness(
 
   // 1. Online set — one batched, companyUuid-scoped connection query. An agent is
   //    online iff ANY of its connections is effectively online (registry rule).
-  const connections = await prisma.daemonConnection.findMany({
+  const connections = await client.daemonConnection.findMany({
     where: { companyUuid, agentUuid: { in: agentUuids } },
     select: { agentUuid: true, status: true, lastSeenAt: true },
   });
@@ -648,7 +649,7 @@ async function enrichAgentLiveness(
 
   // 2. Active counts — one batched, companyUuid-scoped aggregate over running/
   //    queued executions, grouped by agent.
-  const grouped = await prisma.daemonExecution.groupBy({
+  const grouped = await client.daemonExecution.groupBy({
     by: ["agentUuid"],
     where: {
       companyUuid,

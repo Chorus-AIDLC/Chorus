@@ -394,6 +394,7 @@ export const TOOL_COLLECTION_CLASSIFICATION = {
   chorus_get_my_assignments: "collection",
   chorus_get_notifications: "collection",
   chorus_get_project: "non-collection",
+  chorus_get_project_team: "non-collection",
   chorus_get_project_group: "non-collection",
   chorus_get_project_groups: "collection",
   chorus_get_proposal: "non-collection",
