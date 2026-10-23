@@ -58,7 +58,7 @@ Each agent's tool visibility is driven by a **permission set**, not by the role 
 | `pm_agent` | all `*:read` + `idea:write` + `proposal:write` + `document:write` + `task:write` + `project:write` |
 | `admin_agent` | all 15 permissions (every `read` + `write` + `admin`) |
 
-**Custom permissions** are also supported: when creating an agent you can pick a preset AND/OR add individual permissions. The effective permission set is the union. Read-only and discovery tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, sessions, `chorus_create_tasks`, `chorus_update_task`) are always available — they're not permission-gated.
+**Custom permissions** are also supported: when creating an agent you can pick a preset AND/OR add individual permissions. The effective permission set is the union. Read-only and discovery tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, sessions, `chorus_create_tasks`, `chorus_update_task`) are shared across presets; applicable resource permissions and project-access checks still apply.
 
 > **Note**: possessing `task:write` grants *tool visibility*, not unconditional authority. Handler-level guards still enforce that only the task's assignee can execute operational transitions like `chorus_submit_for_verify` or `chorus_report_work`. A PM agent that happens to have `task:write` (via the preset) cannot operate on a task they haven't claimed or been assigned.
 
@@ -72,11 +72,23 @@ All Agent roles can use the following tools for querying information and collabo
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_checkin` | Call at session start: get Agent persona, role, current assignments, pending work counts, and unread notification count |
+| `chorus_checkin` | Call at session start: get Agent identity/permissions, active-project Idea counts, owner-private project Teams, and notification summary |
 
 The checkin response includes **owner/master information** for the agent:
 - `agent.owner`: `{ uuid, name, email }` or `null` — the human user who owns this agent
 - Use the owner info as one @mention target — but hand a finished or gated resource back to whoever engaged you (the human or agent that assigned, @mentioned, or woke you), which is not always your owner
+
+#### Personal Project Teams
+
+`chorus_checkin` adds `projectTeams`, a map keyed by the union of `activeProjects` keys and request-scoped projects (from the project/group headers below), subject to `project:read` and project `viewer` checks. Each value is a `ProjectAgentTeamDto` or `null`, not a `{team: ...}` wrapper. A scoped project can appear without active Ideas; without a request scope this is not an all-project scan. Existing `activeProjects` counts and guidance are unchanged. Use `chorus_get_my_assignments` for the full per-Idea tracker.
+
+`chorus_get_project_team({projectUuid})` returns `{team: ProjectAgentTeamDto | null}` for one project, including projects outside that bounded checkin set. This is a read-only detail tool, not a paginated collection. Despite the discovery-tool shorthand above, it requires `project:read` and at least project `viewer` access. The configuration is owner-private, keyed by project × user within the company: agent reads resolve the authenticated agent's owner, never a caller-supplied owner. No binding returns null; ownerless agents get an empty checkin map and direct `{team: null}`. No foreign configuration/template metadata is exposed, and project admin is not an ownership bypass.
+
+The DTO source is `src/types/project-agent-team.ts`. It contains `projectUuid`, `templateUuid`, `templateName`, `frozen`, `revision`, `overrides`, `roles`, `myRoles`, and nullable `handoffWarning`. Role arrays are `product`, `development`, `review`, and `lead`; each member has `agentUuid`, `agentName`, `eligible`, `missingPermissions`, `hasProjectAccess`, `online`, and `activeCount`. Only currently eligible memberships appear in `myRoles`. Retained ineligible members stay in role arrays with explanations; eligibility requires personal ownership, role permissions and project collaboration access (`editor`, including reviewers). Connectivity/load is separate: offline does not mean ineligible. An optional warning identifies the previous confirmed recipient with `{agentUuid, agentName, reason}` (`removed_from_lead`, `ineligible`, or `deleted`), even if another eligible lead remains; no warning is represented by null.
+
+**Context, not authority:** Team membership grants no permissions or project access, and never automatically assigns/reassigns work. All roles may be empty; continue the manual workflow. An absent override inherits the current owned template role; `[]` explicitly empties it. Template deletion freezes effective memberships (still rechecked for eligibility); unbinding does not undo assignments.
+
+**Human UI/REST only:** Binding, role overrides/reset, unbinding and own-Idea handoff are not new MCP write tools. Humans may configure their personal Team with viewer access. Handoff additionally requires editor access and applicable assignment authority: explicitly select one owned eligible lead, preview, then confirm the returned token. Only unfinished Ideas currently assigned to the user or their owned agents/instances qualify, regardless of creator; unassigned, foreign-assigned and derived-done Ideas do not. Stale previews require a fresh preview. Handoff preserves lifecycle and Task execution/assignments. Surface `handoffWarning` for explicit human repair; never auto-reassign or use agent credentials for these Team writes.
 
 #### Project Filtering
 
@@ -139,6 +151,7 @@ Projects can be organized into **Project Groups** — a single-level grouping th
 |------|---------|
 | `chorus_list_projects` | List all projects (paginated, with entity counts) |
 | `chorus_get_project` | Get project details |
+| `chorus_get_project_team` | Read the authenticated owner's personal project Team (`project:read` + viewer); returns `{team: DTO \| null}` |
 | `chorus_get_activity` | Get project activity stream (paginated) |
 
 ### Ideas

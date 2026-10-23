@@ -129,6 +129,7 @@ const fixture = vi.hoisted(() => {
       getMyAssignments: vi.fn(async () => ({ ideaTracker: {}, taskTracker: {} })),
     },
     checkin: { buildCheckinResponse: vi.fn(async () => ({ activeProjects: {} })) },
+    projectTeam: { getProjectAgentTeam: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => null) },
     search: { search: vi.fn(async () => ({ results: [], counts: {} })) },
   };
   return { rows, prisma, services };
@@ -157,6 +158,7 @@ vi.mock("@/services/session.service", () => fixture.services.session);
 vi.mock("@/services/project-group.service", () => fixture.services.group);
 vi.mock("@/services/assignment.service", () => fixture.services.assignment);
 vi.mock("@/services/checkin.service", () => fixture.services.checkin);
+vi.mock("@/services/project-agent-team.service", () => fixture.services.projectTeam);
 vi.mock("@/services/search.service", () => fixture.services.search);
 vi.mock("@/services/notification.service", () => ({}));
 vi.mock("@/services/elaboration.service", () => fixture.services.elaboration);
@@ -297,6 +299,33 @@ describe("MCP central project access", () => {
       );
     },
   );
+
+  it("project Team read requires project:read and delegates personal scope from auth", async () => {
+    const actor = auth("editor");
+    const { handlers } = register(actor);
+    const team = { myRoles: ["lead"], handoffWarning: null, roles: { lead: [{ agentUuid: actor.actorUuid, eligible: true, online: false, activeCount: 0 }] } };
+    fixture.services.projectTeam.getProjectAgentTeam.mockResolvedValueOnce(team);
+    const response = await handlers.chorus_get_project_team({ projectUuid: "private" });
+    expect(fixture.services.projectTeam.getProjectAgentTeam).toHaveBeenCalledWith(actor, "private");
+    expect(response.content).toEqual([{ type: "text", text: JSON.stringify({ team }, null, 2) }]);
+    const restricted = register(auth("editor", [...ROLE_PRESETS.admin_agent].filter((permission) => permission !== "project:read")));
+    expect(restricted.handlers.chorus_get_project_team).toBeUndefined();
+  });
+
+  it("project Team read returns explicit null for unconfigured or ownerless callers", async () => {
+    const { handlers } = register(auth());
+    const response = await handlers.chorus_get_project_team({ projectUuid: "public" });
+    expect(response.content).toEqual([{ type: "text", text: JSON.stringify({ team: null }, null, 2) }]);
+  });
+
+  it("project Team read allows viewers and hides inaccessible projects before service access", async () => {
+    const denied = register(auth("nonmember"));
+    expect(await denied.handlers.chorus_get_project_team({ projectUuid: "private" })).toEqual({ content: [{ type: "text", text: "Project not found" }], isError: true });
+    expect(fixture.services.projectTeam.getProjectAgentTeam).not.toHaveBeenCalled();
+    const viewer = register(auth("viewer"));
+    expect((await viewer.handlers.chorus_get_project_team({ projectUuid: "private" })).isError).not.toBe(true);
+    expect(fixture.services.projectTeam.getProjectAgentTeam).toHaveBeenCalledWith(expect.objectContaining({ ownerUuid: "viewer" }), "private");
+  });
 
   it("developer_agent can answer elaboration when its owner is a project Editor", async () => {
     const { handlers } = register(auth("editor", [...ROLE_PRESETS.developer_agent]));

@@ -36,6 +36,7 @@ import * as mentionService from "@/services/mention.service";
 import * as searchService from "@/services/search.service";
 import * as sessionService from "@/services/session.service";
 import * as checkinService from "@/services/checkin.service";
+import { getProjectAgentTeam } from "@/services/project-agent-team.service";
 import { registerPermissionedTool } from "./register-helpers";
 import { isAssignmentOwnedByActor } from "@/lib/uuid-resolver";
 import {
@@ -138,6 +139,14 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       };
     }
   );
+
+  registerPermissionedTool(server, auth, "project:read", "chorus_get_project_team", {
+    description: "Read your owner's private Team for a project, including eligible caller roles, member eligibility, online/activeCount and handoff warnings. Returns team:null when unconfigured or ownerless. Does not grant permissions or assign work.",
+    inputSchema: z.object({ projectUuid: z.string().uuid().describe("Project UUID") }),
+    annotations: { readOnlyHint: true },
+  }, async ({ projectUuid }) => ({
+    content: [{ type: "text", text: JSON.stringify({ team: await getProjectAgentTeam(auth, projectUuid) }, null, 2) }],
+  }));
 
   // chorus_list_projects - List all projects
   server.registerTool(
@@ -495,7 +504,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     "chorus_checkin",
     collectionToolConfig({
       description:
-        "Agent check-in. Returns agent identity (owner, roles, persona), activeProjects — a per-project distribution of your active ideas (project name + active-idea count, NOT a per-idea list) — and up to 5 recent unread notifications (auto-marked read). Recommended at session start. For the full per-idea list, call chorus_get_my_assignments.",
+        "Agent check-in. Returns agent identity, activeProjects (project name + active-idea count, NOT an idea list), projectTeams (owner-private Team context for active/request-scoped projects), and up to 5 unread notifications (auto-marked read). Use chorus_get_project_team for another project and chorus_get_my_assignments for the full idea/task list.",
       inputSchema: z.object({}),
     }),
     async () => {

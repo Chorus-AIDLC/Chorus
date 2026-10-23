@@ -29,6 +29,8 @@ model Company {
   localUserAudits            LocalUserAudit[]
   users                      User[]
   agents                     Agent[]
+  agentTeams                 AgentTeam[]
+  projectAgentTeams          ProjectAgentTeam[]
   apiKeys                    ApiKey[]
   projects                   Project[]
   ideas                      Idea[]
@@ -69,6 +71,8 @@ model User {
   createdAt        DateTime              @default(now())
 
   ownedAgents                Agent[]
+  agentTeams                 AgentTeam[]
+  projectAgentTeams          ProjectAgentTeam[]
   projectAgentCwdPreferences ProjectAgentCwdPreference[]
   daemonDirectoryRequests    DaemonDirectoryRequest[]
 
@@ -130,6 +134,7 @@ model Agent {
 
   apiKeys                    ApiKey[]
   sessions                   AgentSession[]
+  teamMemberships            AgentTeamMember[]
   daemonConnections          DaemonConnection[]
   daemonExecutions           DaemonExecution[]
   daemonSessions             DaemonSession[]
@@ -139,6 +144,59 @@ model Agent {
 
   @@index([companyUuid])
   @@index([ownerUuid])
+}
+
+model AgentTeam {
+  uuid        String            @id @default(uuid())
+  companyUuid String
+  company     Company           @relation(fields: [companyUuid], references: [uuid], onDelete: Cascade)
+  ownerUuid   String
+  owner       User              @relation(fields: [ownerUuid], references: [uuid], onDelete: Cascade)
+  name        String
+  description String            @default("")
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  members     AgentTeamMember[]
+  projectTeams ProjectAgentTeam[]
+
+  @@index([companyUuid, ownerUuid])
+  @@index([ownerUuid])
+}
+
+model ProjectAgentTeam {
+  uuid              String   @id @default(uuid())
+  companyUuid       String
+  company           Company  @relation(fields: [companyUuid], references: [uuid], onDelete: Cascade)
+  projectUuid       String
+  project           Project  @relation(fields: [projectUuid], references: [uuid], onDelete: Cascade)
+  ownerUuid         String
+  owner             User     @relation(fields: [ownerUuid], references: [uuid], onDelete: Cascade)
+  templateUuid      String?
+  template          AgentTeam? @relation(fields: [templateUuid], references: [uuid], onDelete: SetNull)
+  templateName      String
+  overrides         Json     @default("{}")
+  snapshot          Json     @default("{}")
+  revision          Int      @default(1)
+  lastLeadAgentUuid  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([projectUuid, ownerUuid])
+  @@index([companyUuid, ownerUuid])
+  @@index([ownerUuid])
+  @@index([templateUuid])
+}
+
+model AgentTeamMember {
+  uuid      String    @id @default(uuid())
+  teamUuid  String
+  team      AgentTeam @relation(fields: [teamUuid], references: [uuid], onDelete: Cascade)
+  agentUuid String
+  agent     Agent     @relation(fields: [agentUuid], references: [uuid], onDelete: Cascade)
+  role      String
+
+  @@unique([teamUuid, role, agentUuid])
+  @@index([agentUuid])
 }
 
 // AgentInstance — a durable, addressable (agent, host, cwd) actor. Created by
@@ -234,6 +292,7 @@ model Project {
   proposals           Proposal[]
   activities          Activity[]
   agentCwdPreferences ProjectAgentCwdPreference[]
+  agentTeams          ProjectAgentTeam[]
   members             ProjectMember[]
 
   @@index([companyUuid])
