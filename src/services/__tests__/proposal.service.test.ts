@@ -11,6 +11,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+vi.mock("@/services/idea-team.service", () => ({
+  assertIdeaTeamGate: vi.fn(async () => {}),
+  assertIdeaTeamProductWork: vi.fn(async () => {}),
+  getProposalTeamIdeaUuids: vi.fn(async () => []),
+  resolveIdeaTeamInputs: vi.fn(async () => []),
+  isIdeaTeamProductDelegate: vi.fn(async () => false),
+}));
 
 // ===== Hoisted mocks (vi.mock factories are hoisted above all imports) =====
 
@@ -163,6 +170,7 @@ function validTaskDraft(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.$transaction.mockImplementation(async (work: (tx: unknown) => Promise<unknown>) => work(mockPrisma));
   // Restore default mock implementations that vi.clearAllMocks removes
   mockFormatCreatedBy.mockResolvedValue({ type: "agent", uuid: "actor-uuid", name: "Agent" });
   mockFormatReview.mockResolvedValue(null);
@@ -1360,7 +1368,7 @@ describe("approveProposal", () => {
 
     const updatedRow = dbProposal({ ...proposal, status: "approved" });
     const txMock = {
-      proposal: { update: vi.fn().mockResolvedValue(updatedRow) },
+      proposal: { findFirst: mockPrisma.proposal.findFirst, update: vi.fn().mockResolvedValue(updatedRow) },
       document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid-1", title: docDraft.title }]) },
       task: { createManyAndReturn: vi.fn() },
       taskDependency: { createMany: vi.fn() },
@@ -1392,7 +1400,7 @@ describe("approveProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
     const txMock = {
-      proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
+      proposal: { findFirst: mockPrisma.proposal.findFirst, update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
       document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "Doc" }]) },
       task: { createManyAndReturn: vi.fn().mockResolvedValue([
         { uuid: "real-task-1", title: "Task 1" },
@@ -1431,7 +1439,7 @@ describe("approveProposal", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
 
     const txMock = {
-      proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
+      proposal: { findFirst: mockPrisma.proposal.findFirst, update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
       document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "Doc" }]) },
       task: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "real-task-1", title: "Task 1" }]) },
       taskDependency: { createMany: vi.fn() },
@@ -1467,7 +1475,7 @@ describe("approveProposal", () => {
 
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
       const tx = {
-        proposal: { update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
+        proposal: { findFirst: mockPrisma.proposal.findFirst, update: vi.fn().mockResolvedValue(dbProposal({ ...proposal, status: "approved" })) },
         document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "Doc" }]) },
         task: { createManyAndReturn: vi.fn() },
         taskDependency: { createMany: vi.fn() },
@@ -1494,7 +1502,7 @@ describe("approveProposal", () => {
     const updatedRow = dbProposal({ ...proposal, status: "approved" });
     mockPrisma.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => {
       const tx = {
-        proposal: { update: vi.fn().mockResolvedValue(updatedRow) },
+        proposal: { findFirst: mockPrisma.proposal.findFirst, update: vi.fn().mockResolvedValue(updatedRow) },
         document: { createManyAndReturn: vi.fn() },
         task: { createManyAndReturn: vi.fn() },
         taskDependency: { createMany: vi.fn() },
@@ -2197,7 +2205,7 @@ describe("approveProposal - edge cases", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposalWithDeps);
 
     const txMock = {
-      proposal: { update: vi.fn().mockResolvedValue({ ...proposalWithDeps, status: "approved", project: { uuid: PROJECT_UUID, name: "Test" } }) },
+      proposal: { findFirst: mockPrisma.proposal.findFirst, update: vi.fn().mockResolvedValue({ ...proposalWithDeps, status: "approved", project: { uuid: PROJECT_UUID, name: "Test" } }) },
       document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "PRD" }]) },
       task: { createManyAndReturn: vi.fn().mockResolvedValue([
         { uuid: "real-task-1", title: "Task 1" },
@@ -2227,7 +2235,7 @@ describe("approveProposal - edge cases", () => {
     mockPrisma.proposal.findFirst.mockResolvedValue(proposalWithAC);
 
     const txMock = {
-      proposal: { update: vi.fn().mockResolvedValue({ ...proposalWithAC, status: "approved", project: { uuid: PROJECT_UUID, name: "Test" } }) },
+      proposal: { findFirst: mockPrisma.proposal.findFirst, update: vi.fn().mockResolvedValue({ ...proposalWithAC, status: "approved", project: { uuid: PROJECT_UUID, name: "Test" } }) },
       document: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "doc-uuid", title: "PRD" }]) },
       task: { createManyAndReturn: vi.fn().mockResolvedValue([{ uuid: "real-task-1", title: "Task 1" }]) },
       taskDependency: { createMany: vi.fn() },
@@ -2374,7 +2382,7 @@ describe("Idea reuse - approveProposal with completed Idea", () => {
 
     mockPrisma.$transaction.mockImplementation(async (callback) => {
       const txMock = {
-        proposal: { update: vi.fn().mockResolvedValue({
+        proposal: { findFirst: mockPrisma.proposal.findFirst, update: vi.fn().mockResolvedValue({
           ...proposal, status: "approved",
           reviewedByUuid: "reviewer-uuid", reviewNote: "Approved", reviewedAt: now,
           project: { uuid: PROJECT_UUID, name: "Test" },

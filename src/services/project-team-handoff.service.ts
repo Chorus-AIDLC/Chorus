@@ -244,6 +244,7 @@ export async function handoffProjectTeam(auth: AuthContext, projectUuid: string,
         where: { uuid: idea.uuid, companyUuid: auth.companyUuid, projectUuid, assigneeType: idea.assigneeType, assigneeUuid: idea.assigneeUuid, status: idea.status, updatedAt: idea.updatedAt },
         data: {
           assigneeType: instanceUuid ? "agent_instance" : "agent", assigneeUuid: instanceUuid ?? request.leadAgentUuid,
+          teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: request.leadAgentUuid, teamProductAgentUuid: null,
           status: idea.status === "open" ? "elaborating" : idea.status,
           assignedByType: "user", assignedByUuid: auth.actorUuid, assignedAt: new Date(),
           cwdSource: preference ? "project_fixed" : null, cwdHost: preference?.host ?? null, runtimeCwd: preference?.cwd ?? null,
@@ -261,6 +262,12 @@ export async function handoffProjectTeam(auth: AuthContext, projectUuid: string,
       });
       publish.push(activity.publish, () => eventBus.emitChange({ companyUuid: auth.companyUuid, projectUuid, entityType: "idea", entityUuid: idea.uuid, action: "updated" }));
     }
+    await client.idea.updateMany({
+      where: { companyUuid: auth.companyUuid, projectUuid, uuid: { in: state.candidates.filter((idea) => !changed.some((candidate) => candidate.uuid === idea.uuid)).map((idea) => idea.uuid) },
+        OR: [{ teamOwnerUuid: null }, { teamOwnerUuid: { not: auth.actorUuid } }, { teamLeadAgentUuid: null }, { teamLeadAgentUuid: { not: request.leadAgentUuid } }],
+      },
+      data: { teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: request.leadAgentUuid, teamProductAgentUuid: null },
+    });
     const saved = await client.projectAgentTeam.updateMany({
       where: { uuid: state.config.uuid, companyUuid: auth.companyUuid, ownerUuid: auth.actorUuid, projectUuid, revision: state.config.revision },
       data: { lastLeadAgentUuid: request.leadAgentUuid, revision: { increment: 1 } },

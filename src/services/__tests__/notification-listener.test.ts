@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+const teamRecipients = vi.hoisted(() => vi.fn(async (): Promise<{ type: string; uuid: string }[]> => []));
+vi.mock("@/services/idea-team.service", () => ({ getIdeaTeamLeadRecipients: teamRecipients }));
 
 // ===== Mock Setup =====
 // CRITICAL: All mock state must live inside the hoisted scope
@@ -651,6 +653,22 @@ describe("notification-listener", () => {
   });
 
   describe("recipient deduplication", () => {
+    it("routes lifecycle to the enrolled lead once without adding a reviewer", async () => {
+      teamRecipients.mockResolvedValueOnce([{ type: "agent", uuid: "assignee-uuid" }, { type: "agent", uuid: "lead-uuid" }]);
+      await handleActivity(makeEvent({ action: "verified" }));
+      const notifications = mockNotificationService.createBatch.mock.calls[0][0];
+      expect(notifications.filter((item: { recipientUuid: string }) => item.recipientUuid === "assignee-uuid")).toHaveLength(1);
+      expect(notifications.filter((item: { recipientUuid: string }) => item.recipientUuid === "lead-uuid")).toHaveLength(1);
+      expect(notifications).toHaveLength(2);
+      expect(teamRecipients).toHaveBeenCalledWith("company-uuid", "task", "task-uuid");
+    });
+
+    it("notifies the lead of a delegated product proposal submission", async () => {
+      teamRecipients.mockResolvedValueOnce([{ type: "agent", uuid: "lead-uuid" }]);
+      await handleActivity(makeEvent({ targetType: "proposal", targetUuid: "proposal-uuid", action: "submitted" }));
+      expect(mockNotificationService.createBatch).toHaveBeenCalledWith([expect.objectContaining({ recipientUuid: "lead-uuid", action: "team_lead_handoff", sourceActivityUuid: "activity-uuid" })]);
+    });
+
     it("should deduplicate same recipient appearing multiple times", async () => {
       mockPrisma.task.findUnique.mockResolvedValue({
         assigneeType: "user",

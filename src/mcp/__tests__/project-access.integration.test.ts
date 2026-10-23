@@ -28,6 +28,7 @@ const fixture = vi.hoisted(() => {
       (rows[name] ?? []).filter((row) => matches(row, where)).length),
   });
   const prisma = {
+    $transaction: vi.fn(async (work: (client: unknown) => Promise<unknown>): Promise<unknown> => work(prisma)),
     user: model("user"),
     project: model("project"),
     projectMember: {
@@ -102,7 +103,10 @@ const fixture = vi.hoisted(() => {
       createProposal: vi.fn<typeof import("@/services/proposal.service").createProposal>(),
       approveProposal: vi.fn(async (uuid: string) => ({ ...entity("proposal", uuid), status: "approved" })),
     },
-    activity: { createActivity: vi.fn(async () => undefined) },
+    activity: {
+      createActivity: vi.fn(async () => undefined),
+      createActivityInTx: vi.fn(async () => ({ publish: vi.fn() })),
+    },
     comment: { createComment: vi.fn(async () => ({ uuid: "new-comment" })), resolveProjectUuid: vi.fn(async () => "private") },
     elaboration: { answerElaboration: vi.fn(async () => ({ uuid: "round", status: "answered" })) },
     reference: {
@@ -715,7 +719,9 @@ describe("MCP central project access", () => {
           expect(JSON.parse((response.content[0] as { text: string }).text)).toEqual({
             uuid: proposal.uuid, status: "pending",
           });
-          expect(fixture.services.proposal.submitProposal).toHaveBeenCalledWith(proposal.uuid, "company");
+          expect(fixture.services.proposal.submitProposal).toHaveBeenCalledWith(proposal.uuid, "company", {
+            actorType: "agent", actorUuid: "agent",
+          });
           expect(fixture.prisma.proposal.update).toHaveBeenCalledOnce();
         }
         if (inputType === "document") expect(fixture.prisma.idea.findMany).not.toHaveBeenCalled();
@@ -789,7 +795,9 @@ describe("MCP central project access", () => {
           uuid: proposal.uuid, status: "approved",
         });
         expect(originals.chorus_admin_approve_proposal).toHaveBeenCalledOnce();
-        expect(fixture.services.proposal.approveProposal).toHaveBeenCalledWith(proposal.uuid, "company", "agent", null);
+        expect(fixture.services.proposal.approveProposal).toHaveBeenCalledWith(proposal.uuid, "company", "agent", null, {
+          actorType: "agent", actorUuid: "agent",
+        });
         expect(fixture.services.proposal.validateProposal).not.toHaveBeenCalled();
         expect(fixture.prisma[inputType].findFirst).not.toHaveBeenCalled();
         expect(fixture.prisma[inputType].findMany).not.toHaveBeenCalled();

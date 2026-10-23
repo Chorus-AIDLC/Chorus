@@ -270,6 +270,23 @@ function deferred() {
 }
 
 describe("event-router exact durable identity", () => {
+  it.each(["proposal", "task", "document"])("recovers a lead handoff for its original %s with task_assigned trigger", async (entityType) => {
+    const { router, enqueued, mcpClient } = wire([]);
+    const notification = mentionNotif({ action: "team_lead_handoff", entityType, entityUuid: "original-entity", message: "submitted" });
+    const pending = precise(notification, { trigger: "task_assigned" });
+    expect((await router.dispatchPendingTurn(pending)).status).toBe("accepted");
+    expect(enqueued[0].task.notification).toMatchObject(notification);
+    expect(mcpClient.callTool).not.toHaveBeenCalled();
+    expect((await router.dispatch(broadcast(pending))).status).not.toBe("blocked");
+    expect(enqueued).toHaveLength(1);
+  });
+
+  it("rejects an incorrectly triggered lead handoff", async () => {
+    const { router, enqueued } = wire([]);
+    expect((await router.dispatchPendingTurn(precise(mentionNotif({ action: "team_lead_handoff" })))).status).toBe("blocked");
+    expect(enqueued).toHaveLength(0);
+  });
+
   it.each(["mentioned", "task_assigned", "elaboration_verified", "start_development", "yolo_requested"])(
     "reconstructs %s without unread notification lookup", async (action) => {
       const { router, enqueued, mcpClient, seen } = wire([]);

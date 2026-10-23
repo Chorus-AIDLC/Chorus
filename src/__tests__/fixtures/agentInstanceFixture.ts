@@ -636,6 +636,7 @@ export function buildMockPrisma() {
     agentInstanceStore.agents.find((a) => a.uuid === uuid) ?? null;
 
   const mockPrisma = {
+    projectAgentTeam: { findFirst: vi.fn(async () => null) },
     user: makeModel<UserRow & Record<string, unknown>>(() => agentInstanceStore.users as (UserRow & Record<string, unknown>)[]),
     agent: makeModel<AgentRow & Record<string, unknown>>(() => agentInstanceStore.agents as (AgentRow & Record<string, unknown>)[]),
     agentInstance: makeModel<AgentInstanceRow & Record<string, unknown>>(
@@ -838,7 +839,7 @@ export function buildMockPrisma() {
 // ===== Scenario seed identifiers =====
 
 export const COMPANY = "company-ai-instance";
-export const PROJECT = "project-ai-instance";
+export const PROJECT = "ad67d2a3-4521-4cec-8d18-df9f5ae3b213";
 
 // Agent X with two instances A and B; agent Y with its own instance.
 export const AGENT_X = "agent-x-0001";

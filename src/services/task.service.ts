@@ -3,6 +3,8 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma, TransactionClient } from "@/lib/prisma";
+import { withTransactionRetry } from "@/lib/transaction-retry";
+import { assertIdeaTeamGate } from "./idea-team.service";
 import { lockResearchProject, EXECUTED_TASK_STATUSES, provesTaskExecution, type ResearchDb } from "@/services/research-eligibility.service";
 import { formatAssigneeComplete, formatCreatedBy, batchResolveActorIdentities, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, batchResolveAssignmentActors, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
@@ -759,19 +761,30 @@ export async function updateTask(
 
   // If moving FROM to_verify to any status EXCEPT done, reset acceptance criteria
   // Wrapped in transaction to prevent TOCTOU race condition
-  const task = await prisma.$transaction(async (tx) => {
+  const task = await withTransactionRetry(() => prisma.$transaction(async (tx) => {
+    let completionCompanyUuid: string | undefined;
     if (data.status) {
       const anchor = await tx.task.findUnique({ where: { uuid }, select: { companyUuid: true, projectUuid: true } });
+      if (data.status === "done" && !anchor) throw new ApiError("NOT_FOUND", "Task not found", 404);
       if (anchor) {
         await lockResearchProject(tx, anchor.companyUuid, anchor.projectUuid);
         const current = await tx.task.findUnique({ where: { uuid } });
+        if (data.status === "done") {
+          if (current?.status !== "to_verify") throw new ApiError("INVALID_STATUS_TRANSITION", "Only tasks in to_verify status can be verified", 409);
+          if (current.proposalUuid) await assertIdeaTeamGate(anchor.companyUuid, current.proposalUuid, "task", actorContext, tx);
+          const gate = await checkAcceptanceCriteriaGate(uuid, tx);
+          if (!gate.allowed) throw new ApiError("VALIDATION_ERROR", `Cannot verify task: ${gate.reason}`, 422);
+          completionCompanyUuid = anchor.companyUuid;
+        }
         // Route activity writes happen later: persist history atomically with execution.
         if (current && (EXECUTED_TASK_STATUSES.includes(data.status) || EXECUTED_TASK_STATUSES.includes(current.status))) {
           await tx.activity.create({ data: {
             companyUuid: anchor.companyUuid, projectUuid: anchor.projectUuid,
             targetType: "task", targetUuid: uuid, action: "execution_started",
             actorType: actorContext?.actorType ?? "system", actorUuid: actorContext?.actorUuid ?? "",
-            value: { from: current.status, to: data.status },
+            value: { from: current.status, to: data.status,
+              ...(current.status === "to_verify" && data.status === "in_progress" ? { originalAssigneeType: current.assigneeType, originalAssigneeUuid: current.assigneeUuid } : {}),
+            },
           } });
           await preserveIdeaExecution(tx, current, actorContext);
         }
@@ -799,13 +812,13 @@ export async function updateTask(
     }
 
     return tx.task.update({
-      where: { uuid },
+      where: { uuid, ...(data.status === "done" ? { companyUuid: completionCompanyUuid, status: "to_verify" } : {}) },
       data,
       include: {
         project: { select: { uuid: true, name: true } },
       },
     });
-  });
+  }, data.status === "done" ? { isolationLevel: "Serializable" } : undefined), data.status === "done" ? 3 : 0);
 
   eventBus.emitChange({ companyUuid: task.companyUuid, projectUuid: task.project.uuid, entityType: "task", entityUuid: task.uuid, action: "updated" });
 
@@ -1201,8 +1214,9 @@ export async function getAcceptanceStatus(
 // Check acceptance criteria gate for verify→done transition
 export async function checkAcceptanceCriteriaGate(
   taskUuid: string,
+  client: Pick<typeof prisma, "acceptanceCriterion"> = prisma,
 ): Promise<{ allowed: boolean; reason?: string; summary?: AcceptanceSummary; unresolvedCriteria?: AcceptanceCriterionResponse[] }> {
-  const rows = await prisma.acceptanceCriterion.findMany({
+  const rows = await client.acceptanceCriterion.findMany({
     where: { taskUuid },
     orderBy: { sortOrder: "asc" },
   });

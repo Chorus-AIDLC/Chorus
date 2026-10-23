@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { TEAM_ROUTING_GUIDANCE } from "../team-routing-guidance.js";
 import {
   OpenClawDaemonClient,
   extractBlockReplyText,
@@ -9,6 +10,8 @@ import {
   type WakeRequest,
 } from "../daemon-client.js";
 import type { DaemonRestClient, DaemonPendingTurn } from "../daemon-rest-client.js";
+import { createDaemonRestClient } from "../daemon-rest-client.js";
+import { ChorusEventRouter } from "../event-router.js";
 
 function makeLogger() {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -570,7 +573,7 @@ describe("session-key continuity", () => {
     const { client } = build({ redispatch });
     client.controlHooks.onResume("idea", "idea-9");
     expect(redispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: "idea", entityUuid: "idea-9", contextKey: "chorus:resume:idea-9" }),
+      expect.objectContaining({ entityType: "idea", entityUuid: "idea-9", contextKey: "chorus:resume:idea-9", prompt: expect.stringContaining(TEAM_ROUTING_GUIDANCE) }),
     );
   });
 });
@@ -580,6 +583,57 @@ describe("session-key continuity", () => {
 // ---------------------------------------------------------------------------
 
 describe("pending-turns backfill — at-most-once", () => {
+  it.each(["accepted", "denied", "missing", "mismatched"])("negotiates real recovery and fences handoff execution (%s)", async (admission) => {
+    const notification = { uuid: "lead-note", action: "team_lead_handoff", entityType: "proposal", entityUuid: "proposal-original", entityTitle: "Ready", projectUuid: "project-1", message: "Submitted" };
+    const requests: string[] = [];
+    const runEmbeddedAgent = vi.fn(async () => ({ meta: {} }));
+    const logger = makeLogger();
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      requests.push(url.href);
+      if (url.pathname.endsWith("pending-turns")) {
+        const turn = { turnUuid: "lead-turn", sessionId: "idea-1", directIdeaUuid: "idea-1", trigger: "task_assigned", promptText: null,
+          ...(url.searchParams.get("wakeRecoveryProtocol") === "1" ? { wakeContext: { version: 1, notificationUuid: notification.uuid, notification } } : {}) };
+        return new Response(JSON.stringify({ success: true, data: { turns: [turn] } }));
+      }
+      if (url.pathname.endsWith("turn-advance")) {
+        return new Response(JSON.stringify({ success: admission !== "denied", data: admission === "missing" ? {} : { turn: { uuid: admission === "mismatched" ? "wrong-turn" : "lead-turn" } } }), { status: admission === "denied" ? 403 : 200 });
+      }
+      return new Response(JSON.stringify({ success: true }));
+    }) as typeof fetch;
+    const restClient = createDaemonRestClient({ url: "https://chorus.example.com", apiKey: "test", getConnectionUuid: () => "connection-1", fetchImpl });
+    const executionState = vi.spyOn(restClient, "executionState");
+    const redispatch = vi.fn((request: WakeRequest) => { void client.runWake(request); });
+    const client = new OpenClawDaemonClient({ restClient, redispatch, resolveRunContext: () => makeRunContext({ runEmbeddedAgent }), buildTurnPrompt: () => "legacy", logger });
+    const broadcastWake = vi.fn();
+    const router = new ChorusEventRouter({ mcpClient: { callTool: async () => ({ notifications: [notification] }) } as never, wake: broadcastWake, logger });
+    for (const event of [
+      { suppressWake: true, targetConnectionUuid: null },
+      { suppressWake: false, targetConnectionUuid: "different-connection", turnUuid: "lead-turn" },
+      { suppressWake: false, targetConnectionUuid: "connection-1", turnUuid: "lead-turn" },
+    ]) router.dispatch({ type: "new_notification", notificationUuid: notification.uuid, ...event });
+    await client.deliverTurn("lead-turn");
+    await flush();
+    await client.onReconnect();
+    await flush();
+    expect(requests.filter((url) => url.includes("pending-turns"))).toEqual([
+      "https://chorus.example.com/api/daemon/pending-turns?connectionUuid=connection-1&wakeRecoveryProtocol=1",
+      "https://chorus.example.com/api/daemon/pending-turns?connectionUuid=connection-1&wakeRecoveryProtocol=1",
+    ]);
+    expect(broadcastWake).not.toHaveBeenCalled();
+    expect(runEmbeddedAgent).toHaveBeenCalledTimes(admission === "accepted" ? 1 : 0);
+    expect(redispatch.mock.calls[0][0]).toMatchObject({ turnUuid: "lead-turn", entityType: "proposal", entityUuid: "proposal-original" });
+    expect(redispatch.mock.calls[0][0].prompt).toContain("Team lead handoff for proposal");
+    expect(executionState).toHaveBeenLastCalledWith({ executions: [] });
+  });
+
+  it("retains legacy task-style recovery without a snapshot", async () => {
+    const redispatch = vi.fn();
+    const { client } = build({ rest: withTurns([{ ...TURN, trigger: "task_assigned", promptText: null }]), redispatch });
+    await client.deliverTurn();
+    expect(redispatch).toHaveBeenCalledTimes(1);
+  });
+
   const TURN: DaemonPendingTurn = {
     turnUuid: "turn-7",
     sessionId: "idea-9",
@@ -591,6 +645,62 @@ describe("pending-turns backfill — at-most-once", () => {
   function withTurns(turns: DaemonPendingTurn[]) {
     return makeRestClient({ readPendingTurns: vi.fn(async () => ({ ok: true, status: 200, data: { turns } })) });
   }
+
+  it("a delivered continuation resumes coordination for the original entity", async () => {
+    const redispatch = vi.fn();
+    const turn = { ...TURN, trigger: "resume", promptText: null, resume: { entityType: "proposal", entityUuid: "proposal-original" } };
+    const { client } = build({ rest: withTurns([turn]), redispatch });
+    await client.deliverTurn(turn.turnUuid);
+    expect(redispatch).toHaveBeenCalledWith(expect.objectContaining({ entityType: "proposal", entityUuid: "proposal-original", directIdeaUuid: "idea-9", turnUuid: "turn-7" }));
+    expect(redispatch.mock.calls[0][0].prompt).toContain("A resumed Team lead handoff must re-read the original entity");
+    expect(redispatch.mock.calls[0][0].prompt).not.toContain("A human sent");
+  });
+
+  it("a continuation without an original entity stays pending", async () => {
+    const redispatch = vi.fn();
+    const { client } = build({ rest: withTurns([{ ...TURN, trigger: "resume" }]), redispatch });
+    await client.deliverTurn();
+    expect(redispatch).not.toHaveBeenCalled();
+  });
+
+  it.each(["live", "reconnect"])("%s recovers the exact lead handoff entity instead of a human instruction", async (delivery) => {
+    const notification = { uuid: "lead-note", action: "team_lead_handoff", entityType: "proposal", entityUuid: "proposal-original", entityTitle: "Ready", projectUuid: "project-1", message: "Proposal submitted" };
+    const turn = { ...TURN, trigger: "task_assigned", promptText: null, wakeContext: { version: 1, notificationUuid: notification.uuid, notification } };
+    const redispatch = vi.fn();
+    const { client } = build({ rest: withTurns([turn]), redispatch });
+    if (delivery === "live") await client.deliverTurn(turn.turnUuid);
+    else await client.onReconnect();
+    await client.deliverTurn(turn.turnUuid);
+    expect(redispatch).toHaveBeenCalledTimes(1);
+    expect(redispatch).toHaveBeenCalledWith(expect.objectContaining({ entityType: "proposal", entityUuid: "proposal-original", directIdeaUuid: "idea-9", turnUuid: "turn-7" }));
+    const prompt = redispatch.mock.calls[0][0].prompt;
+    expect(prompt).toContain("Team lead handoff for proposal 'Ready'");
+    expect(prompt).toContain("Proposal submitted");
+    expect(prompt).toContain("Task verification belongs to the current lead");
+    expect(prompt).not.toContain("A human sent");
+    client.resume("proposal", "proposal-original");
+    expect(redispatch.mock.calls[1][0].prompt).toContain("A resumed Team lead handoff must re-read the original entity");
+  });
+
+  it.each(["proposal_submitted", "task_submitted_for_verify", "task_status_changed", "report_created"])("does not wake generic %s from a delivered snapshot", async (action) => {
+    const notification = { uuid: "generic-note", action, entityType: "task", entityUuid: "task-1", entityTitle: "T", projectUuid: "p", message: "notify only" };
+    const redispatch = vi.fn();
+    const { client } = build({ rest: withTurns([{ ...TURN, trigger: "task_assigned", wakeContext: { version: 1, notificationUuid: notification.uuid, notification } }]), redispatch });
+    await client.deliverTurn();
+    expect(redispatch).not.toHaveBeenCalled();
+  });
+
+  it("leaves malformed handoff snapshots pending for retry", async () => {
+    const notification = { uuid: "lead-note", action: "team_lead_handoff", entityType: "task", entityUuid: "task-1", entityTitle: "T", projectUuid: "p", message: "submitted" };
+    const turn = { ...TURN, trigger: "task_assigned", wakeContext: { version: 1, notificationUuid: "mismatch", notification } };
+    const redispatch = vi.fn();
+    const { client } = build({ rest: withTurns([turn]), redispatch });
+    await client.deliverTurn();
+    expect(redispatch).not.toHaveBeenCalled();
+    turn.wakeContext.notificationUuid = notification.uuid;
+    await client.deliverTurn();
+    expect(redispatch).toHaveBeenCalledTimes(1);
+  });
 
   it("deliverTurn(turnUuid) runs ONLY the named turn", async () => {
     const other: DaemonPendingTurn = { ...TURN, turnUuid: "turn-OTHER", promptText: "other" };
@@ -610,7 +720,7 @@ describe("pending-turns backfill — at-most-once", () => {
         directIdeaUuid: "idea-9",
         entityUuid: "idea-9",
         contextKey: "chorus:deliver_turn:turn-7",
-        prompt: "PROMPT:please do X",
+        prompt: `${TEAM_ROUTING_GUIDANCE}\n\nPROMPT:please do X`,
       }),
     );
   });

@@ -50,7 +50,8 @@ export const POST = withErrorHandler<{ uuid: string }>(
       proposal.uuid,
       auth.companyUuid,
       auth.actorUuid,
-      body.reviewNote
+      body.reviewNote,
+      { actorType: auth.type, actorUuid: auth.actorUuid }
     );
 
     await createActivity({

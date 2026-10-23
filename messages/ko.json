@@ -1,4 +1,21 @@
 {
+  "ideaTeamGates": {
+    "teamUnbound": "개인 프로젝트 Team을 더 이상 사용할 수 없습니다.",
+    "leadIneligible": "기록된 책임자가 더 이상 Team 책임자 자격을 충족하지 않습니다.",
+    "leadNotAssignee": "현재 Idea 담당자가 기록된 책임자와 일치하지 않습니다.",
+    "title": "Team 승인 단계",
+    "loading": "현재 승인 담당자를 확인하는 중…",
+    "error": "승인 상태를 불러올 수 없습니다. 작업 전에 새로 고치세요. 서버 검사는 계속 적용됩니다.",
+    "unmanaged": "수동 워크플로 · 이 Idea는 Team 자동화에 등록되지 않았습니다. 담당자는 자동 배정되지 않습니다.",
+    "unavailableLead": "책임자 확인 불가",
+    "human": "사람",
+    "lead": "Idea 책임자: {name}",
+    "proposal": "Proposal 승인: {name}",
+    "task": "Task 검증: {name}",
+    "yolo": "YOLO는 이 Idea에만 승인되었습니다. 기존 권한이 계속 적용됩니다.",
+    "nonYolo": "Proposal은 사람이 승인하고 책임자가 task를 검증합니다.",
+    "paused": "Team 또는 현재 책임자가 유효하지 않아 자동화가 일시 중지되었습니다. 책임자 배정이나 개인 Team 구성을 수정하세요. 사람의 관리 작업은 계속 가능합니다."
+  },
   "projectTeam": {
     "title": "내 프로젝트 팀",
     "description": "이 프로젝트의 개인 팀입니다. 저장해도 작업은 배정되지 않습니다.",

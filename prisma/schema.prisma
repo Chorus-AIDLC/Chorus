@@ -349,6 +349,9 @@ model Idea {
   status            String    @default("open") // open | elaborating | elaborated (3-state model; post-elaboration status derived from Proposal+Task)
   assigneeType      String? // user | agent
   assigneeUuid      String? // User or Agent UUID (polymorphic)
+  teamOwnerUuid     String?
+  teamLeadAgentUuid String?
+  teamProductAgentUuid String?
   cwdSource         String? // project_fixed when this anchor originated from a fixed preference
   cwdHost           String? // Host anchor for a discovered runtime cwd assignment
   runtimeCwd        String? // Runtime cwd executed through any online connection on cwdHost

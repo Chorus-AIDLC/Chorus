@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+vi.mock("@/services/idea-team.service", () => ({ ideaTeamEnrollment: vi.fn(async () => ({})) }));
 
 // ===== Mocks (hoisted so vi.mock factories can reference them) =====
 

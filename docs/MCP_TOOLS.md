@@ -18,7 +18,7 @@ Agents may use a **role preset** (`developer_agent`, `pm_agent`, `admin_agent`) 
 
 Discovery and collaboration tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, session management, `chorus_create_tasks`, `chorus_update_task`) are **public** and registered for every preset — they are listed under "Public Tools" and "Session Tools" below without a Required Permission row. Commenting requires the target resource's `read` capability plus project `editor` access; answering elaboration similarly requires `idea:read` plus project `editor`. Thus `developer_agent` can participate without `idea:write`, `proposal:write`, or `document:write`. Public task creation/update still requires `task:write`, and reads/searches are filtered by resource read capabilities.
 
-Exception to the discovery-tool visibility shorthand: `chorus_get_project_team` requires `project:read`, plus project `viewer` access and personal-owner scoping at read time. Team membership never grants permissions or project access.
+Exceptions to the discovery-tool visibility shorthand: `chorus_get_project_team` requires `project:read`, plus project `viewer` access and personal-owner scoping at read time. `chorus_get_idea_team_context` requires `idea:read` and project access; only the enrolled owner/their agents receive private routing context. `chorus_recommend_team_agent` also requires `idea:read` and is owner-private. Team membership never grants permissions or project access.
 
 > Note: `chorus_create_tasks` and `chorus_update_task` field edits are public because handler-level assignee / authorship guards enforce who can actually mutate state. Operational status transitions (`in_progress`, `to_verify`) still require the caller to be the task's assignee at the service layer — the permission gate is about tool visibility, not operation authorization.
 
@@ -29,6 +29,9 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | Tool | Required Permission |
 |------|---------------------|
 | `chorus_get_project_team` | `project:read` |
+| `chorus_get_idea_team_context` | `idea:read` |
+| `chorus_recommend_team_agent` | `idea:read` (owner-private at runtime) |
+| `chorus_delegate_team_product` | `idea:write` (current active lead at runtime) |
 | `chorus_claim_idea` | `idea:write` |
 | `chorus_release_idea` | `idea:write` |
 | `chorus_move_idea` | `idea:write` |
@@ -330,6 +333,43 @@ Each `ProjectTeamMember` contains `agentUuid`, `agentName`, `eligible`, `missing
 Team roles grant **no permissions or project access**. All roles may be empty, preserving the manual workflow. Saving, overriding, template changes/deletion and unbinding never automatically assign/reassign Ideas or Tasks or undo prior assignments. A `handoffWarning` remains relevant even if another eligible lead exists; it calls for explicit human repair, not automatic reassignment.
 
 **Human UI/REST only**: Binding, whole-role overrides/reset and unbinding use the personal project Team UI or human-session `PUT`/`DELETE /api/projects/:uuid/team`. Handoff uses human-session `POST /api/projects/:uuid/team/handoff`: select one owned eligible lead, preview with `{leadAgentUuid, preview: true}`, then confirm with `{leadAgentUuid, confirmationToken}`. It requires editor access and applicable assignment authority; viewer access suffices only for personal configuration. Only unfinished project Ideas currently assigned to the user or their owned agents/instances qualify, regardless of creator; unassigned, foreign-assigned and derived-done Ideas are excluded. Stale/tampered previews require a fresh preview with no partial changes. Handoff preserves lifecycle and Task execution/assignments. These are **not new MCP write tools**; agent keys cannot write Team configuration or confirm this handoff.
+
+### chorus_get_idea_team_context
+
+**Description**: Read authoritative Team enrollment and proposal/task gate responsibility for an Idea. Requires `idea:read` and project viewer access. The context reports whether the Idea is managed, its state (`active`, `paused`, or `unmanaged`), lead identity, server-confirmed YOLO status, proposal gate (`human`/`lead`), task gate and reason.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| ideaUuid | string (UUID) | Yes | Idea whose current gates should be read |
+
+**Privacy**: Shared viewers receive only safe gate responsibility. Private routing/delegation details are limited to the enrolled Team owner and their agents; project administration is not an ownership bypass. No caller-supplied owner selector exists. Team membership grants neither permissions nor project access.
+
+**Workflow**: Resolve the wake's root Idea through Task/Proposal/Document ancestry and read the context before acting; for multi-input proposals respect every linked Idea's gates. Missing/ambiguous ancestry or a failed read must not be treated as unmanaged. An unassigned Idea stays unassigned; a Team binding is not permission to auto-claim. Only explicit assignment to an eligible lead enrolls work. The lead remains the sole Idea assignee during product delegation. Lost eligibility, mismatched ownership or unbinding must not erase existing gates: paused enrollment requires explicit repair and stops automated Team actions. Legacy unmanaged Ideas and standalone Quick Tasks retain their existing workflow.
+
+**Approval/verification**: Non-YOLO managed proposals require human approval. Only a server-validated human `yolo_requested` activity for the exact Idea permits its current active lead to approve, with existing permissions. Managed task verification belongs to the current active lead, not a product delegate or worker; authorized humans retain control. Local YOLO flags, agent-created activities, mentions and wake wording cannot grant authority. Multiple inputs impose the intersection of their gates. A denial is not permission to retry through a different mutation tool.
+
+### chorus_recommend_team_agent
+
+**Description**: Read an advisory product/development routing recommendation. Requires `idea:read`, project access and owner-private access to the enrolled Team (owner or their agents). It does not assign, reserve capacity or wake anyone. Review is deliberately not a supported role.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| ideaUuid | string (UUID) | Yes | Enrolled Idea to route |
+| role | `product` \| `development` | Yes | Role to recommend |
+| taskUuid | string (UUID) | No | Related Task for development/reopen affinity; must belong to this Idea through its proposal, within the same tenant/project |
+
+**Output semantics**: Returns a decision (`recommended`, `lead_decision`, `manual`, `paused`), selected agent UUID when unique, candidates and a reason. Filter current eligibility first. Empty/all-ineligible roles return manual handling, not lead fallback. Eligible but all-offline members may fall back to an eligible online lead; otherwise handling is manual. Development reopens prefer the eligible online original assignee (resolving agent instances); otherwise minimize live `activeCount`, using same-proposal dependency-chain affinity only to break load ties. Remaining ties require the lead's decision. Do not invent candidates or expose private recommendations in shared comments. Eligibility is revalidated on mutation; load is advisory, not a reservation.
+
+### chorus_delegate_team_product
+
+**Description**: Delegate elaboration/proposal authoring without changing Idea ownership. Requires `idea:write`, existing project access, and the current active enrolled lead; generic admin permission is not an agent bypass.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| ideaUuid | string (UUID) | Yes | Managed Idea owned by the current lead |
+| agentUuid | string (UUID) | Yes | Product agent selected from current eligible Team routing |
+
+**Effects and limits**: Revalidates current role eligibility, persists one product delegate and records a directed instruction mentioning that agent for best-effort wake delivery. This does not assign the Idea to the product agent. A delegate may start elaboration and create/submit proposals subject to existing permissions/access, but must not claim/release/reassign the Idea, resolve elaboration, approve proposals or verify tasks. Removed/ineligible delegates lose authorization dynamically. Persistent delegation is not proof of successful wake delivery; report delivery failures and use the recorded state for recovery. Paused enrollment stops automatic delegation. No independent Reviewer auto-wake is introduced.
 
 ### chorus_get_ideas
 

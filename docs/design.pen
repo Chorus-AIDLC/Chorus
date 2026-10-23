@@ -3,6 +3,46 @@
   "children": [
     {
       "type": "frame",
+      "id": "ideaTeamGatesLight",
+      "name": "Idea Team approval gates — Light",
+      "x": 0,
+      "y": 30700,
+      "width": 520,
+      "height": 400,
+      "layout": "vertical",
+      "gap": 16,
+      "padding": 24,
+      "fill": "#FAF8F4",
+      "children": [
+        { "type": "text", "id": "itgLightTitle", "content": "Team approval gates", "fontFamily": "IBM Plex Sans", "fontSize": 18, "fill": "#2C2C2C" },
+        { "type": "text", "id": "itgLightLead", "content": "Idea lead: Clay\nProposal approval: Human\nTask verification: Clay", "fontFamily": "IBM Plex Sans", "fontSize": 14, "fill": "#2C2C2C" },
+        { "type": "text", "id": "itgLightYolo", "content": "YOLO: proposal + task gates → current eligible lead\nAuthorization applies to this Idea only.", "fontFamily": "IBM Plex Sans", "fontSize": 13, "fill": "#77716B" },
+        { "type": "text", "id": "itgLightPaused", "content": "Paused: repair explicit lead / personal Team configuration.\nHuman management remains available.", "fontFamily": "IBM Plex Sans", "fontSize": 13, "fill": "#A16207" },
+        { "type": "text", "id": "itgLightManual", "content": "Unmanaged: manual workflow. No owner assigned automatically.\nPrivate roster is never shown in this shared summary.", "fontFamily": "IBM Plex Sans", "fontSize": 13, "fill": "#77716B" }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "ideaTeamGatesDark",
+      "name": "Idea Team 审批关口 — Dark",
+      "x": 580,
+      "y": 30700,
+      "width": 520,
+      "height": 400,
+      "layout": "vertical",
+      "gap": 16,
+      "padding": 24,
+      "fill": "#1C1C1C",
+      "children": [
+        { "type": "text", "id": "itgDarkTitle", "content": "Team 审批关口", "fontFamily": "IBM Plex Sans", "fontSize": 18, "fill": "#F5F5F5" },
+        { "type": "text", "id": "itgDarkLead", "content": "Idea 项目负责：Clay\nProposal 审批：人工\nTask 验收：Clay", "fontFamily": "IBM Plex Sans", "fontSize": 14, "fill": "#F5F5F5" },
+        { "type": "text", "id": "itgDarkYolo", "content": "YOLO：当前合格 lead 代审批与验收\n仅对当前 Idea 授权，仍需既有权限。", "fontFamily": "IBM Plex Sans", "fontSize": 13, "fill": "#A3A3A3" },
+        { "type": "text", "id": "itgDarkPaused", "content": "自动化暂停：请修复显式 lead 指派或个人 Team。\n人工管理仍可用。", "fontFamily": "IBM Plex Sans", "fontSize": 13, "fill": "#FBBF24" },
+        { "type": "text", "id": "itgDarkManual", "content": "手动流程：不会自动补充 owner。\n共享关口信息不显示私人角色成员列表。", "fontFamily": "IBM Plex Sans", "fontSize": 13, "fill": "#A3A3A3" }
+      ]
+    },
+    {
+      "type": "frame",
       "id": "projectTeamLight",
       "name": "Personal Project Team — Light",
       "x": 0,

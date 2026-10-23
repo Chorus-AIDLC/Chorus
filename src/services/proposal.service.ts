@@ -5,9 +5,14 @@
 
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { withTransactionRetry } from "@/lib/transaction-retry";
+import { ApiError } from "@/lib/api-handler";
+import { assertIdeaTeamGate, assertIdeaTeamProductWork, getProposalTeamIdeaUuids, isIdeaTeamProductDelegate, resolveIdeaTeamInputs } from "./idea-team.service";
+import type { IdeaTeamActorContext } from "@/types/idea-team";
 import { Prisma } from "@/generated/prisma/client";
 import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid, batchResolveActorIdentities, type ActorIdentityMap } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
+import { createActivityInTx } from "./activity.service";
 import { accessibleProjectUuids } from "@/services/project-access.service";
 import type { AuthContext } from "@/types/auth";
 import { createDocumentFromProposal } from "./document.service";
@@ -303,9 +308,10 @@ export interface ValidationResult {
 // Validate Proposal completeness before submission
 export async function validateProposal(
   companyUuid: string,
-  proposalUuid: string
+  proposalUuid: string,
+  client: Pick<typeof prisma, "proposal" | "idea"> = prisma
 ): Promise<ValidationResult> {
-  const proposal = await prisma.proposal.findFirst({
+  const proposal = await client.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid },
   });
 
@@ -361,7 +367,7 @@ export async function validateProposal(
 
   // E5: All input Ideas must have elaborationStatus === "resolved"
   if (proposal.inputType === "idea" && inputUuids.length > 0) {
-    const ideas = await prisma.idea.findMany({
+    const ideas = await client.idea.findMany({
       where: { uuid: { in: inputUuids }, companyUuid },
       select: { uuid: true, title: true, elaborationStatus: true },
     });
@@ -607,6 +613,9 @@ export async function checkIdeasAssignee(
       isAssignee = ownerAgentUuid === actorUuid;
     }
 
+    if (!isAssignee && actorType === "agent") {
+      isAssignee = await isIdeaTeamProductDelegate(companyUuid, idea.uuid, actorUuid);
+    }
     if (!isAssignee) {
       unassignedIdeas.push(idea.uuid);
     }
@@ -793,6 +802,7 @@ export const CONTAINER_PROPOSAL_BLOCKED_MESSAGE =
 export async function createProposal(
   params: ProposalCreateParams
 ): Promise<ProposalResponse> {
+  await assertIdeaTeamProductWork(params.companyUuid, await resolveIdeaTeamInputs(params.companyUuid, params.inputType, params.inputUuids), { actorType: params.createdByType ?? "agent", actorUuid: params.createdByUuid });
   // Container guard (single authoritative choke point): a container idea may
   // elaborate but MUST NOT create a proposal. When the input is ideas, reject if
   // ANY input idea is flagged isContainer. This blocks ONLY new creation — it never
@@ -908,21 +918,19 @@ export async function approveProposal(
   proposalUuid: string,
   companyUuid: string,
   reviewedByUuid: string,
-  reviewNote?: string | null
+  reviewNote?: string | null,
+  actorContext?: IdeaTeamActorContext
 ): Promise<ApprovalResult> {
-  const proposal = await prisma.proposal.findFirst({
-    where: { uuid: proposalUuid, companyUuid },
-  });
-
-  if (!proposal) {
-    throw new Error("Proposal not found");
-  }
-
   // Start transaction
-  const { updatedProposal, materializedTasks, materializedDocuments } = await prisma.$transaction(async (tx) => {
+  const { updatedProposal, materializedTasks, materializedDocuments } = await withTransactionRetry(() => prisma.$transaction(async (tx) => {
+    const proposal = await tx.proposal.findFirst({ where: { uuid: proposalUuid, companyUuid } });
+    if (!proposal) throw new Error("Proposal not found");
+    if (proposal.status !== "pending") throw new Error("Only pending proposals can be approved");
+    if (actorContext && actorContext.actorUuid !== reviewedByUuid) throw new ApiError("FORBIDDEN", "Approval actor does not match reviewer", 403);
+    await assertIdeaTeamGate(companyUuid, proposalUuid, "proposal", actorContext, tx);
     // 1. Update Proposal status
     const updated = await tx.proposal.update({
-      where: { uuid: proposalUuid },
+      where: { uuid: proposalUuid, companyUuid, status: "pending" },
       data: {
         status: "approved",
         reviewedByUuid,
@@ -1029,9 +1037,9 @@ export async function approveProposal(
     }
 
     return { updatedProposal: updated, materializedTasks: matTasks, materializedDocuments: matDocs };
-  }, { timeout: 15000 });
+  }, { timeout: 15000, isolationLevel: "Serializable" }));
 
-  eventBus.emitChange({ companyUuid: proposal.companyUuid, projectUuid: proposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
+  eventBus.emitChange({ companyUuid: updatedProposal.companyUuid, projectUuid: updatedProposal.projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
 
   // Note: We do NOT auto-complete input Ideas here.
   // The Idea's derived status is computed from its linked Tasks' progress:
@@ -1222,39 +1230,32 @@ export async function deleteProposal(
 // Submit Proposal for review (draft -> pending)
 export async function submitProposal(
   proposalUuid: string,
-  companyUuid: string
+  companyUuid: string,
+  actorContext?: IdeaTeamActorContext
 ): Promise<ProposalResponse> {
-  const proposal = await prisma.proposal.findFirst({
-    where: { uuid: proposalUuid, companyUuid },
-  });
+  const { updated, activity } = await withTransactionRetry(() => prisma.$transaction(async (tx) => {
+    const proposal = await tx.proposal.findFirst({ where: { uuid: proposalUuid, companyUuid } });
+    if (!proposal) throw new Error("Proposal not found");
+    if (proposal.status !== "draft") throw new Error("Only draft proposals can be submitted for review");
+    await assertIdeaTeamProductWork(companyUuid, await getProposalTeamIdeaUuids(companyUuid, proposalUuid, tx), actorContext, tx);
+    const validation = await validateProposal(companyUuid, proposalUuid, tx);
+    if (!validation.valid) {
+      const lines = validation.issues.map((issue) => `[${issue.level}] ${issue.message}`);
+      throw new Error(`Proposal validation failed:\n${lines.join("\n")}`);
+    }
+    const updated = await tx.proposal.update({
+      where: { uuid: proposalUuid, companyUuid, status: "draft" },
+      data: { status: "pending" },
+      include: { project: { select: { uuid: true, name: true } } },
+    });
+    const activity = actorContext ? await createActivityInTx(tx, {
+      companyUuid, projectUuid: proposal.projectUuid, targetType: "proposal", targetUuid: proposalUuid,
+      actorType: actorContext.actorType, actorUuid: actorContext.actorUuid, action: "submitted",
+    }) : null;
+    return { updated, activity };
+  }, { isolationLevel: "Serializable", timeout: 15000 }));
 
-  if (!proposal) {
-    throw new Error("Proposal not found");
-  }
-
-  if (proposal.status !== "draft") {
-    throw new Error("Only draft proposals can be submitted for review");
-  }
-
-  // Run full validation (includes elaboration gate E5 and all other checks)
-  const validation = await validateProposal(companyUuid, proposalUuid);
-  if (!validation.valid) {
-    const lines = validation.issues.map(
-      (i) => `[${i.level}] ${i.message}`
-    );
-    throw new Error(`Proposal validation failed:\n${lines.join("\n")}`);
-  }
-
-  const updated = await prisma.proposal.update({
-    where: { uuid: proposalUuid },
-    data: {
-      status: "pending",
-    },
-    include: {
-      project: { select: { uuid: true, name: true } },
-    },
-  });
-
+  activity?.publish();
   eventBus.emitChange({ companyUuid: updated.companyUuid, projectUuid: updated.projectUuid, entityType: "proposal", entityUuid: updated.uuid, action: "updated" });
 
   return formatProposalResponse(updated);

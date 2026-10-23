@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ChorusEventRouter } from "../event-router.js";
+import { TEAM_ROUTING_GUIDANCE } from "../team-routing-guidance.js";
 import type { SseNotificationEvent } from "../sse-listener.js";
 
 function makeLogger() {
@@ -49,6 +50,34 @@ describe("ChorusEventRouter.dispatch", () => {
     return { router, mcpClient };
   }
 
+  it.each([
+    "task_assigned", "mentioned", "elaboration_requested", "elaboration_answered",
+    "elaboration_verified", "start_development", "yolo_requested", "proposal_rejected",
+    "proposal_approved", "idea_claimed", "task_reopened", "task_verified",
+  ])("guards %s with authoritative Team context", async (action) => {
+    const { router } = build({ chorus_get_notifications: { notifications: [makeNotification({ action })] } });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    expect(wake).toHaveBeenCalledTimes(1);
+    expect(wake.mock.calls[0][0]).toMatch(new RegExp("^\\[Chorus Team routing"));
+    expect(wake.mock.calls[0][0]).toContain(TEAM_ROUTING_GUIDANCE);
+  });
+
+  it.each(["proposal_submitted", "task_submitted_for_verify", "task_status_changed", "report_created"])(
+    "leaves %s and its dedicated handoff audit copy notify-only", async (action) => {
+      const notification = makeNotification({ action, entityType: "proposal", entityUuid: "proposal-original", message: action });
+      const { router } = build({ chorus_get_notifications: { notifications: [notification] } });
+      router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+      await flush();
+      expect(wake).not.toHaveBeenCalled();
+      notification.action = "team_lead_handoff";
+      notification.uuid = "n2";
+      router.dispatch({ type: "new_notification", notificationUuid: "n2" } as SseNotificationEvent);
+      await flush();
+      expect(wake).not.toHaveBeenCalled();
+    },
+  );
+
   it("ignores non new_notification event types", () => {
     const { router } = build({});
     router.dispatch({ type: "count_update" } as SseNotificationEvent);
@@ -56,7 +85,7 @@ describe("ChorusEventRouter.dispatch", () => {
     expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('"count_update" ignored'));
   });
 
-  it.each(["idea_creation_requested", "research_requested"])("ignores turn-delivered %s before lineage/wake", async (action) => {
+  it.each(["idea_creation_requested", "research_requested", "team_lead_handoff"])("ignores turn-delivered %s before lineage/wake", async (action) => {
     const mcpClient = makeMcpClient({
       chorus_get_notifications: { notifications: [makeNotification({ action })] },
     });
