@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import { Loader2, Info } from "lucide-react";
 import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-avatar";
 import { Button } from "@/components/ui/button";
-import { AgentAvatar } from "@/components/ui/agent-avatar";
+import { AgentSelect } from "@/components/agent-select";
 import {
   ScrollableDialog,
   ScrollableDialogTitle,
@@ -329,30 +329,13 @@ export function AssignIdeaModal({
 
                 {selectedOption === "agent" && (
                   <div className="mt-3 ml-6 space-y-3">
-                    <Select
+                    <AgentSelect
+                      agents={agents}
                       value={selectedAgentUuid}
                       onValueChange={setSelectedAgentUuid}
-                    >
-                      <SelectTrigger className="w-full border-border">
-                        <SelectValue placeholder={t("ideas.selectPmAgent")} />
-                      </SelectTrigger>
-                      <SelectContent className="z-[120]">
-                        {agents.length > 0 ? (
-                          agents.map((agent) => (
-                            <SelectItem key={agent.uuid} value={agent.uuid}>
-                              <div className="flex items-center gap-2">
-                                <AgentAvatar name={agent.name} size={16} className="rounded-full" />
-                                <span>{agent.name}</span>
-                              </div>
-                            </SelectItem>
-                          ))
-                        ) : (
-                          <div className="px-3 py-2 text-xs text-[#9A9A9A]">
-                            {t("ideas.noPmAgentsAvailable")}
-                          </div>
-                        )}
-                      </SelectContent>
-                    </Select>
+                      placeholder={t("ideas.selectPmAgent")}
+                      emptyLabel={t("ideas.noPmAgentsAvailable")}
+                    />
 
                     {/* Idea-root instance pin (the authoritative pin root for the
                         whole conversation). ONLINE-only: an offline instance is
