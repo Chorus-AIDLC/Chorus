@@ -7,6 +7,7 @@ const ACTION_TO_TURN_TRIGGER = {
   start_development: "start_development", yolo_requested: "yolo_requested",
   elaboration_requested: "elaboration", elaboration_answered: "elaboration",
   human_instruction: "human_instruction", task_assigned: "task_assigned",
+  team_lead_handoff: "task_assigned",
   idea_creation_requested: "idea_creation_requested", research_requested: "research_requested",
   task_reopened: "task_assigned", task_verified: "task_assigned", idea_claimed: "task_assigned",
   proposal_approved: "task_assigned", proposal_rejected: "task_assigned",

@@ -1,4 +1,21 @@
 {
+  "ideaTeamGates": {
+    "teamUnbound": "The personal project Team is no longer available.",
+    "leadIneligible": "The recorded lead is no longer an eligible Team lead.",
+    "leadNotAssignee": "The current Idea assignee does not match the recorded lead.",
+    "title": "Team approval gates",
+    "loading": "Checking current gate responsibility…",
+    "error": "Gate state is unavailable. Refresh before taking action; server checks still apply.",
+    "unmanaged": "Manual workflow · This Idea is not enrolled in Team automation. No owner is assigned automatically.",
+    "unavailableLead": "Lead unavailable",
+    "human": "Human",
+    "lead": "Idea lead: {name}",
+    "proposal": "Proposal approval: {name}",
+    "task": "Task verification: {name}",
+    "yolo": "YOLO is authorized for this Idea only. Existing permissions still apply.",
+    "nonYolo": "Proposal approval requires a human. The lead verifies tasks.",
+    "paused": "Team automation is paused: the Team or current lead is no longer valid. Repair the explicit lead assignment or personal Team configuration; human management remains available."
+  },
   "projectTeam": {
     "title": "My project team",
     "description": "Your private team for this project. Saving never assigns work.",

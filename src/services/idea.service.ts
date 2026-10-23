@@ -3,6 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
+import { ideaTeamEnrollment } from "./idea-team.service";
 import { formatAssigneeComplete, formatCreatedBy, buildAssigneeMatch, batchResolveActorIdentities, type ActorIdentityMap, type AssigneeCondition, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import type { AuthContext } from "@/types/auth";
 import { eventBus } from "@/lib/event-bus";
@@ -896,6 +897,7 @@ export async function claimIdea({
       status: "elaborating",
       assigneeType: resolved.assigneeType,
       assigneeUuid: resolved.assigneeUuid,
+      ...await ideaTeamEnrollment(companyUuid, existing.projectUuid, resolved.assigneeType, resolved.assigneeUuid),
       cwdSource: runtimeCwd && cwdSource?.trim() ? cwdSource : null,
       cwdHost: runtimeCwd ? cwdHost : null,
       runtimeCwd: runtimeCwd ?? null,
@@ -951,6 +953,7 @@ export async function assignIdea({
       status: newStatus,
       assigneeType: resolved.assigneeType,
       assigneeUuid: resolved.assigneeUuid,
+      ...await ideaTeamEnrollment(companyUuid, existing.projectUuid, resolved.assigneeType, resolved.assigneeUuid),
       cwdSource: runtimeCwd && cwdSource?.trim() ? cwdSource : null,
       cwdHost: runtimeCwd ? cwdHost : null,
       runtimeCwd: runtimeCwd ?? null,

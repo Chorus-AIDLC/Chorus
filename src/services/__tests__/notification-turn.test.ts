@@ -431,6 +431,7 @@ describe("triggerForAction / NOTIFICATION_ACTION_TO_TURN_TRIGGER", () => {
   it("maps every autonomous task-style dispatch to the task_assigned trigger", () => {
     for (const action of [
       "task_assigned",
+      "team_lead_handoff",
       "task_reopened",
       "task_verified",
       "idea_claimed",

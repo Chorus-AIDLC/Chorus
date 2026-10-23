@@ -44,6 +44,7 @@ import type { ElaborationResponse } from "@/types/elaboration";
 import { canVerifyElaboration } from "@/lib/elaboration-verify";
 import { IdeaActionsMenu } from "./idea-actions-menu";
 import { ReferencesSection } from "@/components/references-section";
+import { IdeaTeamGates } from "@/components/idea-team-gates";
 import { ActiveSessionIndicator } from "@/components/active-session-indicator";
 import { useAgentPresenceOptional } from "@/contexts/agent-presence-context";
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
@@ -863,6 +864,7 @@ function IdeaDetailPanelContent({
                   {verified && <p role="status" className="mb-4 text-xs text-muted-foreground">{t("elaboration.verifiedQueuedHint")}</p>}
                   {verifyError && <p role="alert" className="mb-4 text-xs text-destructive">{verifyError}</p>}
                   {isContainer && <p className="mb-4 text-xs text-muted-foreground">{tLineage("containerHint")}</p>}
+                  <div className="mb-4"><IdeaTeamGates ideaUuid={idea.uuid} revision={idea.updatedAt} /></div>
                   {/* Overview Tab */}
                   {visitedTabs.has("overview") && (
                     <div style={{ display: activeTab === "overview" ? "block" : "none" }}>

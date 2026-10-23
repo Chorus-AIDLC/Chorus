@@ -1,4 +1,21 @@
 {
+  "ideaTeamGates": {
+    "teamUnbound": "個人プロジェクト Team は利用できなくなりました。",
+    "leadIneligible": "記録された責任者は Team lead の資格を満たしていません。",
+    "leadNotAssignee": "現在の Idea 担当者と記録された lead が一致しません。",
+    "title": "Team 承認ゲート",
+    "loading": "現在の承認担当者を確認中…",
+    "error": "承認状態を取得できません。操作前に再読み込みしてください。サーバー側の検証は引き続き適用されます。",
+    "unmanaged": "手動ワークフロー · この Idea は Team 自動化に登録されていません。担当者は自動割り当てされません。",
+    "unavailableLead": "責任者を確認できません",
+    "human": "人間",
+    "lead": "Idea 責任者: {name}",
+    "proposal": "Proposal 承認: {name}",
+    "task": "Task 検証: {name}",
+    "yolo": "YOLO はこの Idea のみに承認されています。既存の権限は引き続き適用されます。",
+    "nonYolo": "Proposal は人間が承認し、責任者が task を検証します。",
+    "paused": "Team または現在の責任者が無効なため、自動化は一時停止中です。責任者の明示的な割り当てや個人 Team 設定を修正してください。人間による管理は引き続き可能です。"
+  },
   "projectTeam": {
     "title": "自分のプロジェクトチーム",
     "description": "このプロジェクト専用の個人チームです。保存しても作業は割り当てられません。",

@@ -533,6 +533,126 @@
   {
    "name": "no_action",
    "notification": {}
+  },
+  {
+   "name": "team_lead_handoff_proposal_submitted",
+   "notification": {
+    "uuid": "lead-note-0",
+    "projectUuid": "p-1111",
+    "entityType": "proposal",
+    "entityUuid": "original-0",
+    "entityTitle": "Original proposal_submitted",
+    "message": "proposal_submitted: current state requires coordination",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "team_lead_handoff"
+   }
+  },
+  {
+   "name": "team_lead_handoff_task_submitted_for_verify",
+   "notification": {
+    "uuid": "lead-note-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "original-1",
+    "entityTitle": "Original task_submitted_for_verify",
+    "message": "task_submitted_for_verify: current state requires coordination",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "team_lead_handoff"
+   }
+  },
+  {
+   "name": "team_lead_handoff_task_status_changed",
+   "notification": {
+    "uuid": "lead-note-2",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "original-2",
+    "entityTitle": "Original task_status_changed",
+    "message": "task_status_changed: current state requires coordination",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "team_lead_handoff"
+   }
+  },
+  {
+   "name": "team_lead_handoff_report_created",
+   "notification": {
+    "uuid": "lead-note-3",
+    "projectUuid": "p-1111",
+    "entityType": "document",
+    "entityUuid": "original-3",
+    "entityTitle": "Original report_created",
+    "message": "report_created: current state requires coordination",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "team_lead_handoff"
+   }
+  },
+  {
+   "name": "notify_only_proposal_submitted",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "proposal_submitted"
+   }
+  },
+  {
+   "name": "notify_only_task_submitted_for_verify",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "task_submitted_for_verify"
+   }
+  },
+  {
+   "name": "notify_only_task_status_changed",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "task_status_changed"
+   }
+  },
+  {
+   "name": "notify_only_report_created",
+   "notification": {
+    "uuid": "n-1",
+    "projectUuid": "p-1111",
+    "entityType": "task",
+    "entityUuid": "t-3333",
+    "entityTitle": "Fix the \"login\" bug — ünïcode 🚀",
+    "message": "Please take a look",
+    "actorType": "user",
+    "actorUuid": "u-9",
+    "actorName": "Felix",
+    "action": "report_created"
+   }
   }
  ],
  "batch": [
@@ -668,6 +788,59 @@
     {
      "action": "human_instruction",
      "instructionText": "b"
+    }
+   ]
+  },
+  {
+   "name": "team_lead_handoff_mixed_batch",
+   "notifications": [
+    {
+     "uuid": "lead-note-0",
+     "projectUuid": "p-1111",
+     "entityType": "proposal",
+     "entityUuid": "original-0",
+     "entityTitle": "Original proposal_submitted",
+     "message": "proposal_submitted: current state requires coordination",
+     "actorType": "user",
+     "actorUuid": "u-9",
+     "actorName": "Felix",
+     "action": "team_lead_handoff"
+    },
+    {
+     "uuid": "lead-note-1",
+     "projectUuid": "p-1111",
+     "entityType": "task",
+     "entityUuid": "original-1",
+     "entityTitle": "Original task_submitted_for_verify",
+     "message": "task_submitted_for_verify: current state requires coordination",
+     "actorType": "user",
+     "actorUuid": "u-9",
+     "actorName": "Felix",
+     "action": "team_lead_handoff"
+    },
+    {
+     "uuid": "lead-note-2",
+     "projectUuid": "p-1111",
+     "entityType": "task",
+     "entityUuid": "original-2",
+     "entityTitle": "Original task_status_changed",
+     "message": "task_status_changed: current state requires coordination",
+     "actorType": "user",
+     "actorUuid": "u-9",
+     "actorName": "Felix",
+     "action": "team_lead_handoff"
+    },
+    {
+     "uuid": "lead-note-3",
+     "projectUuid": "p-1111",
+     "entityType": "document",
+     "entityUuid": "original-3",
+     "entityTitle": "Original report_created",
+     "message": "report_created: current state requires coordination",
+     "actorType": "user",
+     "actorUuid": "u-9",
+     "actorName": "Felix",
+     "action": "team_lead_handoff"
     }
    ]
   }

@@ -1,5 +1,6 @@
 import { NON_OPERATION_TURN } from "@/services/daemon-operation";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+vi.mock("@/services/idea-team.service", () => ({ getIdeaTeamHandoffIdeaUuid: vi.fn(async () => null) }));
 
 // ===== Prisma mock =====
 const mockPrisma = vi.hoisted(() => {

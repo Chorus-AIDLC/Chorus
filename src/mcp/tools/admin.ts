@@ -85,7 +85,8 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         proposalUuid,
         auth.companyUuid,
         auth.actorUuid,  // Admin Agent as reviewer
-        reviewNote || null
+        reviewNote || null,
+        { actorType: auth.type, actorUuid: auth.actorUuid }
       );
 
       await activityService.createActivity({

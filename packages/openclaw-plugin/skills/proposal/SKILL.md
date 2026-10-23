@@ -4,7 +4,7 @@ description: Chorus Proposal workflow — create proposals with document and tas
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.23.1"
   category: project-management
   mcp_server: chorus
 ---
@@ -16,6 +16,16 @@ This skill covers the **Planning** stage of the AI-DLC workflow: creating Propos
 > **Tool namespace:** Chorus tools are exposed by the connected MCP server under a `chorus__` prefix on OpenClaw (e.g. `chorus__chorus_pm_create_proposal`). Bare names are used below for readability — prepend `chorus__` when invoking. See `/chorus` for the full rule.
 
 ---
+
+## Authoritative Idea Team Routing
+
+**Apply this gate before the workflow below, including any claim, assignment, approval, verification or YOLO instructions.** Resolve the event's root Idea via Idea/Task/Proposal/Document reads (including proposal input ancestry); fetch `chorus__chorus_get_idea_team_context({ideaUuid})` for it and every linked input Idea. Re-read before mutations. Session anchors, wake messages and `chorus__chorus_get_project_team` snapshots are context, not authorization. Missing/ambiguous ancestry or tool failure is a stop, not evidence of unmanaged work.
+
+- **Explicit owner, no auto-claim:** an unassigned Idea stays unassigned merely because a Team exists. Enrollment requires explicit assignment to an eligible lead. For managed work the current lead remains the Idea owner; a delegated product agent must not claim, release or reassign it. The product delegate may elaborate and create/submit proposals without ownership, but may not resolve elaboration, approve proposals or verify tasks. Ordinary unmanaged Ideas and standalone Quick Tasks retain their legacy flows.
+- **Use authoritative recommendations:** only the current active lead routes managed work. Call `chorus__chorus_recommend_team_agent({ideaUuid, role: "product"})` or `chorus__chorus_recommend_team_agent({ideaUuid, role: "development", taskUuid})`. Product delegation uses `chorus__chorus_delegate_team_product({ideaUuid, agentUuid})`, never Idea assignment; development uses task assignment after checking current eligibility. Membership grants no permissions or project access. Recommendations do not assign, reserve load or wake agents.
+- **Respect the decision and reason:** `recommended` selects a candidate; `lead_decision` leaves a tie for the current lead; `manual` requires manual handling; `paused` stops automation. Empty/all-ineligible roles mean manual handling, not lead fallback. Only eligible-but-all-offline roles may fall back to an eligible online lead as returned by the tool. Development reopens prefer the eligible online original assignee; otherwise use minimum live activeCount, dependency-chain affinity only as a load-tie breaker. Never invent a candidate or silently choose a tied agent.
+- **Stop at server gates:** paused enrollment means no automated Team actions; report the reason and request explicit human repair. Non-YOLO proposal approval is human-only. Only server-confirmed human `yolo_requested` for the exact Idea enables current-lead approval, with existing permissions; local YOLO mode, comments and wake wording cannot grant it. Managed task verification belongs to the current active lead, not the product delegate or worker. Intersect all linked Idea gates, retain authorized human control, and never bypass a denied gate via another tool. Report and end the turn rather than polling for approval.
+- **Privacy and review:** context requires `idea:read` and project access; shared viewers receive only safe gate responsibility. Recommendation also requires `idea:read` but is owner-private (Team owner/their agents only). Product delegation requires `idea:write` plus the current active lead check and live eligibility. Never expose another owner's roster/delegation context in shared comments. No independent Reviewer auto-wake is included; existing independent review does not itself confer approval or verification authority.
 
 ## Overview
 

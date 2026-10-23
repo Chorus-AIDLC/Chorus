@@ -3,6 +3,7 @@
 // All operations scoped by companyUuid for multi-tenancy
 
 import { prisma } from "@/lib/prisma";
+import { createHash } from "node:crypto";
 import { eventBus } from "@/lib/event-bus";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import { RESOURCES } from "@/lib/authz/types";
@@ -29,6 +30,7 @@ import {
 // ===== Type Definitions =====
 
 export interface NotificationCreateParams {
+  sourceActivityUuid?: string;
   companyUuid: string;
   projectUuid: string;
   recipientType: string;
@@ -607,9 +609,8 @@ export async function createBatch(
   if (notifications.length === 0) return [];
   // Create all notifications
   const created = await Promise.all(
-    notifications.map((params) =>
-      prisma.notification.create({
-        data: {
+    notifications.map((params) => {
+      const data = {
           companyUuid: params.companyUuid,
           projectUuid: params.projectUuid,
           recipientType: params.recipientType,
@@ -625,9 +626,14 @@ export async function createBatch(
           actorName: params.actorName,
           // Write-once denormalized copy (null for every non-instruction notification).
           instructionText: params.instructionText ?? null,
-        },
-      })
-    )
+      };
+      if (params.action === "team_lead_handoff" && params.sourceActivityUuid) {
+        const digest = createHash("sha256").update(JSON.stringify([params.companyUuid, params.sourceActivityUuid, params.recipientType, params.recipientUuid, params.action])).digest("hex");
+        const uuid = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+        return prisma.notification.upsert({ where: { uuid }, create: { ...data, uuid }, update: {} });
+      }
+      return prisma.notification.create({ data });
+    })
   );
 
   // Record a DaemonSessionTurn for each wake-triggering notification destined for a daemon

@@ -46,6 +46,63 @@ def event(uuid="n-1", **kw):
     return {"type": "new_notification", "notificationUuid": uuid, **kw}
 
 
+@pytest.mark.parametrize("source", ["proposal_submitted", "task_submitted_for_verify", "task_status_changed", "report_created"])
+def test_lead_handoff_wakes_but_source_event_stays_notify_only(setup, source):
+    fake, router, dispatched, _ = setup
+    fake.notifications = [notif(action=source)]
+    run(router.handle_notification(event()))
+    assert dispatched == []
+    handoff = notif("lead-note", action="team_lead_handoff", entityType="proposal", entityUuid="proposal-1", message=source)
+    fake.notifications = [handoff]
+    fake.lineage["proposal:proposal-1"] = ("idea-1", "idea-1")
+    run(router.handle_notification(event("lead-note")))
+    wake, = dispatched
+    assert wake.notification == handoff and wake.entity_uuid == "proposal-1"
+    assert source in wake.prompt and "must not wake a reviewer agent" in wake.prompt
+
+
+@pytest.mark.parametrize("snapshot", [True, False])
+def test_pending_lead_handoff_uses_canonical_trigger_and_original_entity(setup, snapshot):
+    fake, router, dispatched, _ = setup
+    handoff = notif("lead-note", action="team_lead_handoff", entityType="proposal", entityUuid="proposal-1", message="Submitted")
+    fake.lineage["proposal:proposal-1"] = ("idea-1", "idea-1")
+    turn = {"turnUuid": "lead-turn", "sessionId": "idea-1", "directIdeaUuid": "idea-1", "trigger": "task_assigned", "promptText": None}
+    if snapshot:
+        turn["wakeContext"] = {"version": 1, "notificationUuid": handoff["uuid"], "notification": handoff}
+    else:
+        fake.notifications = [handoff]
+    fake.pending = [turn]
+    run(router.sweep_pending_turns())
+    run(router.sweep_pending_turns())
+    wake, = dispatched
+    assert wake.entity_type == "proposal" and wake.entity_uuid == "proposal-1"
+    assert wake.turn_uuid == "lead-turn" and wake.session_id == "idea-1"
+    assert wake.prompt == build_prompt(handoff)
+    if snapshot:
+        assert fake.tool_calls("chorus_get_notifications") == []
+
+
+def test_bad_lead_handoff_snapshot_stays_pending_until_repaired(setup):
+    fake, router, dispatched, _ = setup
+    handoff = notif("lead-note", action="team_lead_handoff")
+    turn = {"turnUuid": "lead-turn", "sessionId": "idea-1", "directIdeaUuid": "idea-1", "trigger": "task_assigned",
+            "wakeContext": {"version": 1, "notificationUuid": "mismatch", "notification": handoff}}
+    run(router.dispatch_pending_turn(turn))
+    assert dispatched == [] and "turn:lead-turn" not in router.seen
+    turn["wakeContext"]["notificationUuid"] = "lead-note"
+    run(router.dispatch_pending_turn(turn))
+    assert len(dispatched) == 1
+
+
+def test_lead_handoff_resume_rechecks_current_phase(setup):
+    fake, router, dispatched, _ = setup
+    fake.lineage["task:t-1"] = ("idea-1", "idea-1")
+    run(router.dispatch_resume({"entityType": "task", "entityUuid": "t-1", "turnUuid": "resume-turn"}))
+    wake, = dispatched
+    assert wake.entity_uuid == "t-1"
+    assert "A resumed Team lead handoff must re-read the original entity" in wake.prompt
+
+
 def test_wake_dispatched_with_reread_and_prompt(setup):
     fake, router, dispatched, _ = setup
     fake.notifications = [notif()]

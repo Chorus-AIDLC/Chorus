@@ -3,6 +3,7 @@
 // service (only Prisma is mocked) so the full access matrix is covered:
 // users by membership, agents via owner, ownerless agents, agent_instance via agent.
 import { vi, describe, it, expect, beforeEach } from "vitest";
+vi.mock("@/services/idea-team.service", () => ({ ideaTeamEnrollment: vi.fn(async () => ({})) }));
 
 const COMPANY = "company-1";
 const PRIVATE = "project-private";

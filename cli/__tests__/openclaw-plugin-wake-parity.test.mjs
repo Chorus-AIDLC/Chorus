@@ -42,7 +42,7 @@ const PLUGIN_ROUTER = path.resolve(
 //     not the notification wake path.
 //   - idea_creation_requested / research_requested → canonical operations; audit notifications
 //     never execute independently of the origin-scoped turn. No wildcard exclusions.
-const CONTROL_OR_TURN_DELIVERED = new Set(["resource_resumed", "human_instruction", "idea_creation_requested", "research_requested"]);
+const CONTROL_OR_TURN_DELIVERED = new Set(["resource_resumed", "human_instruction", "idea_creation_requested", "research_requested", "team_lead_handoff"]);
 
 /** Parse the plugin router's handled notification actions from its `case "<action>":` labels. */
 function parsePluginHandledActions(source) {
@@ -75,15 +75,27 @@ describe("OpenClaw plugin ↔ daemon wake-action parity (lockstep guard)", () =>
     }
   });
 
-  it("excludes only the four named control/turn actions and still detects every missing wake", () => {
+  it("excludes only the five named control/turn actions and still detects every missing wake", () => {
     expect([...CONTROL_OR_TURN_DELIVERED].sort()).toEqual([
       "human_instruction", "idea_creation_requested", "research_requested", "resource_resumed",
+      "team_lead_handoff",
     ]);
     for (const action of [...WAKE_ACTIONS].filter((a) => !CONTROL_OR_TURN_DELIVERED.has(a))) {
       const mutated = parsePluginHandledActions(source.replaceAll(`case "${action}":`, ""));
       expect([...WAKE_ACTIONS].filter((a) => !CONTROL_OR_TURN_DELIVERED.has(a) && !mutated.has(a)))
         .toContain(action);
     }
+  });
+
+  it("keeps Team handoffs on negotiated turn delivery rather than the broadcast switch", () => {
+    const daemonSource = readFileSync(path.join(path.dirname(PLUGIN_ROUTER), "daemon-client.ts"), "utf8");
+    const restSource = readFileSync(path.join(path.dirname(PLUGIN_ROUTER), "daemon-rest-client.ts"), "utf8");
+    expect(pluginHandled.has("team_lead_handoff")).toBe(false);
+    expect(source).toMatch(/if \(\[[^\]]*"team_lead_handoff"[^\]]*\]\.includes\(notification\.action\)\) \{[\s\S]*?return;\s*\}/);
+    expect(daemonSource).toContain('notification?.action === "team_lead_handoff"');
+    expect(daemonSource).toContain("handoff ? buildTeamLeadHandoff(handoff)");
+    expect(daemonSource).toContain("req.turnUuid && runningTurnUuid !== req.turnUuid");
+    expect(restSource).toContain("&wakeRecoveryProtocol=1");
   });
 
   it("sanity: the parser found the pre-existing handled actions too", () => {

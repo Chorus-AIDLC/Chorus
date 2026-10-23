@@ -352,7 +352,9 @@ def test_turn_reporting_order_and_send_writes_transcript_only(hermes, tmp_path):
     assert ended == {"connectionUuid": "c-1", "sessionId": "i-1", "status": "ended", "turnUuid": "turn-1",
                      "entityType": "idea", "entityUuid": "i-1"}
     user, assistant = h.fake.bodies("/api/daemon/transcript")
-    assert user["messages"][0]["role"] == "user" and user["messages"][0]["text"].startswith("[Chorus] You were")
+    assert user["messages"][0]["role"] == "user"
+    assert user["messages"][0]["text"].startswith("[Chorus Team routing — authoritative before action]")
+    assert "[Chorus] You were" in user["messages"][0]["text"]
     assert assistant == {"messages": [{"role": "assistant", "text": "final answer"}], "turnUuid": "turn-1"}
     assert not any("comment" in p for p in h.fake.paths())
     assert h.fake.tool_calls("chorus_add_comment") == []

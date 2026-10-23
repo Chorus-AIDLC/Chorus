@@ -34,6 +34,8 @@ import { registerDeveloperTools } from "@/mcp/tools/developer";
 import { registerAdminTools } from "@/mcp/tools/admin";
 import { registerPublicTools } from "@/mcp/tools/public";
 import { registerSessionTools } from "@/mcp/tools/session";
+import { registerIdeaTeamTools } from "@/mcp/tools/idea-team";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   TOOL_PERMISSIONS,
   TOOL_PROJECT_ACCESS_OVERRIDES,
@@ -72,6 +74,7 @@ function registeredTools(): Array<{ name: string; collection: boolean }> {
   registerPublicTools(server as any, auth);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   registerSessionTools(server as any, auth);
+  registerIdeaTeamTools(server as unknown as McpServer, auth);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   registerPmTools(server as any, auth);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -111,6 +114,7 @@ function registeredFor(permissions: Permission[]): Set<string> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   registerPublicTools(server as any, auth);
   const gated = new Set(Object.keys(TOOL_PERMISSIONS));
+  registerIdeaTeamTools(server as unknown as McpServer, auth);
   return new Set(names.filter((n) => gated.has(n)));
 }
 
@@ -318,6 +322,7 @@ describe("MCP tool permission wiring", () => {
         ...OLD_ADMIN_TOOLS,
         ...OLD_PM_TOOLS,
         ...OLD_DEVELOPER_TOOLS,
+        "chorus_delegate_team_product",
         // 0.9.0: public-namespaced, document:write-gated. admin_agent carries
         // document:write so the tool is visible to admin presets.
         "chorus_create_report",
