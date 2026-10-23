@@ -52,6 +52,7 @@ ACTION_TO_TURN_TRIGGER = {
     "elaboration_answered": "elaboration",
     "human_instruction": "human_instruction",
     "task_assigned": "task_assigned",
+    "team_lead_handoff": "task_assigned",
     "task_reopened": "task_assigned",
     "task_verified": "task_assigned",
     "idea_claimed": "task_assigned",
@@ -477,6 +478,17 @@ class EventRouter:
         a later page); stops at an exact match, at a short page, or after ``NOTIFICATION_MAX_PAGES``.
         A turn without ``createdAt`` can never match exactly, so it stops at its first match.
         """
+        context = turn.get("wakeContext")
+        if context is not None:
+            notification = context.get("notification") if isinstance(context, Mapping) else None
+            if not isinstance(notification, Mapping) or context.get("version") != 1 \
+                    or not notification.get("uuid") or notification.get("uuid") != context.get("notificationUuid") \
+                    or ACTION_TO_TURN_TRIGGER.get(notification.get("action")) != trigger \
+                    or notification.get("entityType") not in {"idea", "proposal", "task", "document"} \
+                    or not notification.get("entityUuid"):
+                self._skip(f"turn:{turn.get('turnUuid')}", "invalid exact wake context (left pending)")
+                return None
+            return notification, True
         candidates: List[Mapping[str, Any]] = []
         match, exact = None, False
         timed = parse_time(turn.get("createdAt")) is not None

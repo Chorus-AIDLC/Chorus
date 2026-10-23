@@ -170,7 +170,7 @@ describe("createDaemonRestClient — payload shapes (single source of truth)", (
     const client = createDaemonRestClient({ ...BASE, getConnectionUuid: () => "conn-1", fetchImpl });
     const res = await client.readPendingTurns();
     expect(res.ok).toBe(true);
-    expect(calls[0].url).toBe("https://chorus.example.com/api/daemon/pending-turns?connectionUuid=conn-1");
+    expect(calls[0].url).toBe("https://chorus.example.com/api/daemon/pending-turns?connectionUuid=conn-1&wakeRecoveryProtocol=1");
     expect(res.data?.turns[0].turnUuid).toBe("t1");
   });
 });

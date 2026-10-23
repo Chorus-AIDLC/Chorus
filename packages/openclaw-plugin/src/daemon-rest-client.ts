@@ -97,6 +97,20 @@ export interface DaemonPendingTurn {
   directIdeaUuid: string | null;
   trigger: string;
   promptText: string | null;
+  resume?: { entityType: string; entityUuid: string; resumedFrom?: string };
+  wakeContext?: {
+    version: number;
+    notificationUuid: string;
+    notification: {
+      uuid: string;
+      action: string;
+      entityType: string;
+      entityUuid: string;
+      entityTitle: string;
+      projectUuid: string;
+      message: string;
+    };
+  };
 }
 
 /**
@@ -338,7 +352,7 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
       if (!connectionUuid) {
         return { ok: false, status: null, skipped: true };
       }
-      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}`;
+      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&wakeRecoveryProtocol=1`;
       let response: Response;
       try {
         response = await fetchImpl(endpoint, {

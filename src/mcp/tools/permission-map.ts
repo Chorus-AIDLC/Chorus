@@ -83,6 +83,7 @@ export const TOOL_PERMISSIONS = {
   chorus_admin_move_project_to_group: "project:write",
   // Proposal admin (approve + admin-only close)
   chorus_admin_approve_proposal: "proposal:admin",
+  chorus_delegate_team_product: "idea:write",
   chorus_admin_close_proposal: "proposal:admin",
   // Task admin (verify, reopen, close)
   chorus_admin_verify_task: "task:admin",
@@ -112,6 +113,8 @@ export const TOOL_READ_PERMISSIONS: Record<string, Permission> = {
   chorus_get_group_dashboard: "project:read",
   chorus_get_activity: "project:read",
   chorus_get_idea: "idea:read",
+  chorus_get_idea_team_context: "idea:read",
+  chorus_recommend_team_agent: "idea:read",
   chorus_get_ideas: "idea:read",
   chorus_get_available_ideas: "idea:read",
   chorus_get_elaboration: "idea:read",
@@ -136,6 +139,8 @@ export type ToolProjectAccessPolicy =
 export const TOOL_PROJECT_ACCESS_OVERRIDES = {
   chorus_get_project: { scope: "resource", required: "viewer" },
   chorus_get_project_team: { scope: "resource", required: "viewer" },
+  chorus_get_idea_team_context: { scope: "resource", required: "viewer" },
+  chorus_recommend_team_agent: { scope: "resource", required: "viewer" },
   chorus_get_ideas: { scope: "resource", required: "viewer" },
   chorus_get_documents: { scope: "resource", required: "viewer" },
   chorus_get_document: { scope: "resource", required: "viewer" },

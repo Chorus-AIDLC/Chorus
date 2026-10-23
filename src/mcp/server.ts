@@ -7,6 +7,7 @@ import { registerPmTools } from "./tools/pm";
 import { registerDeveloperTools } from "./tools/developer";
 import { registerAdminTools } from "./tools/admin";
 import { registerSessionTools } from "./tools/session";
+import { registerIdeaTeamTools } from "./tools/idea-team";
 import { enableToolCallLogging } from "./tools/tool-logger";
 import { enablePresence } from "./tools/presence";
 import type { AgentAuthContext } from "@/types/auth";
@@ -27,6 +28,7 @@ export function createMcpServer(auth: AgentAuthContext): McpServer {
   // Public tools — available to every authenticated agent (no permission gating)
   registerPublicTools(server, auth);
   registerSessionTools(server, auth);
+  registerIdeaTeamTools(server, auth);
 
   // Permission-gated tools. Each register function calls registerPermissionedTool
   // per tool, which checks auth.permissions.includes(required) before registering.

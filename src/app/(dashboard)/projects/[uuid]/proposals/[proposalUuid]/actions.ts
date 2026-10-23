@@ -43,7 +43,9 @@ export async function approveProposalAction(proposalUuid: string, reviewNote?: s
       return { success: false, error: "Proposal is not pending review" };
     }
 
-    await approveProposal(proposalUuid, auth.companyUuid, auth.actorUuid, reviewNote || null);
+    await approveProposal(proposalUuid, auth.companyUuid, auth.actorUuid, reviewNote || null, {
+      actorType: auth.type, actorUuid: auth.actorUuid,
+    });
 
     await createActivity({
       companyUuid: auth.companyUuid,
@@ -91,7 +93,9 @@ export async function submitProposalAction(proposalUuid: string) {
     const hiddenInput = await denyUnlessProposalInputsAccess(auth, proposalUuid);
     if (hiddenInput) return hiddenInput;
 
-    await submitProposal(proposalUuid, auth.companyUuid);
+    await submitProposal(proposalUuid, auth.companyUuid, {
+      actorType: auth.type, actorUuid: auth.actorUuid,
+    });
 
     revalidatePath(`/projects/${proposal.projectUuid}/proposals/${proposalUuid}`);
     revalidatePath(`/projects/${proposal.projectUuid}/proposals`);

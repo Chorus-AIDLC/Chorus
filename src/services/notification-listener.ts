@@ -9,6 +9,7 @@ import type { NotificationCreateParams } from "./notification.service";
 import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import { filterRecipientsByProjectAccess } from "./project-access.service";
 import logger from "@/lib/logger";
+import { getIdeaTeamLeadRecipients } from "./idea-team.service";
 
 const nlLogger = logger.child({ module: "notification-listener" });
 
@@ -25,6 +26,7 @@ function resolveNotificationType(action: string, targetType: string): string | n
     "task:reopened": "task_reopened",
     "idea:assigned": "idea_claimed",
     "proposal:approved": "proposal_approved",
+    "proposal:submitted": "proposal_submitted",
     "proposal:rejected_to_draft": "proposal_rejected",
     // comment_added is the same regardless of target type
     "task:comment_added": "comment_added",
@@ -85,8 +87,8 @@ interface ActivityEvent {
   actorUuid: string;
   action: string;
   value?: unknown;
-  sessionUuid?: string;
-  sessionName?: string;
+  sessionUuid?: string | null;
+  sessionName?: string | null;
 }
 
 interface Recipient {
@@ -601,6 +603,14 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
       event.actorType,
       event.actorUuid
     );
+    const handoffRecipients = new Set<string>();
+    if (["assigned", "status_changed", "submitted", "verified", "reopened", "approved", "rejected_to_draft", "elaboration_answered", "elaboration_resolved", "elaboration_skipped", "report_created"].includes(event.action)) {
+      const leads = await getIdeaTeamLeadRecipients(event.companyUuid, event.targetType, event.targetUuid);
+      resolvedRecipients.push(...leads);
+      if (["proposal_submitted", "task_submitted_for_verify", "task_status_changed", "report_created"].includes(notificationType)) {
+        for (const lead of leads) handoffRecipients.add(`${lead.type}:${lead.uuid}`);
+      }
+    }
 
     // Private project access (Tech Design D4): drop recipients who cannot see the
     // event's project — users by membership, agents via their owner. Covers every
@@ -666,7 +676,8 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
         entityUuid: event.targetUuid,
         entityTitle,
         projectName,
-        action: notificationType,
+        action: handoffRecipients.has(`${recipient.type}:${recipient.uuid}`) ? "team_lead_handoff" : notificationType,
+        ...(handoffRecipients.has(`${recipient.type}:${recipient.uuid}`) ? { sourceActivityUuid: event.uuid } : {}),
         message,
         actorType: event.actorType,
         actorUuid: event.actorUuid,

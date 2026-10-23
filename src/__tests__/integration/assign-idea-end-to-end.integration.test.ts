@@ -96,7 +96,7 @@ import type { AgentAuthContext } from "@/types/auth";
 // ===== Scenario identifiers =====
 
 const COMPANY = "co-assign-e2e";
-const PROJECT = "proj-assign-e2e";
+const PROJECT = "54ab2dc9-cf6a-4c86-9732-9777a74e3915";
 const OWNER = "user-owner-e2e";
 const CALLER = "agent-admin-claude"; // the assigner (idea:admin)
 const PM_AGENT = "agent-pm-bot"; // eligible target (idea:write)

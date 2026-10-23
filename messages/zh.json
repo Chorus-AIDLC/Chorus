@@ -1,4 +1,21 @@
 {
+  "ideaTeamGates": {
+    "teamUnbound": "个人项目 Team 已不可用。",
+    "leadIneligible": "已记录的项目负责不再符合 Team lead 资格。",
+    "leadNotAssignee": "当前 Idea assignee 与已记录的 lead 不一致。",
+    "title": "Team 审批关口",
+    "loading": "正在核对当前关口负责人…",
+    "error": "暂时无法读取关口状态，请刷新后再操作；服务端校验仍然生效。",
+    "unmanaged": "手动流程 · 此 Idea 尚未进入 Team 自动化，不会自动补充 owner。",
+    "unavailableLead": "项目负责不可用",
+    "human": "人工",
+    "lead": "Idea 项目负责：{name}",
+    "proposal": "Proposal 审批：{name}",
+    "task": "Task 验收：{name}",
+    "yolo": "YOLO 仅对当前 Idea 授权，仍需满足既有权限。",
+    "nonYolo": "Proposal 需要人工审批，task 由项目负责验收。",
+    "paused": "Team 自动化已暂停：Team 或当前项目负责已失效。请修复显式 lead 指派或个人 Team 配置；人工管理仍可用。"
+  },
   "projectTeam": {
     "title": "我的项目团队",
     "description": "仅属于你的项目团队。保存配置不会分配工作。",

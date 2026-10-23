@@ -28,6 +28,7 @@
 
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getIdeaTeamHandoffIdeaUuid } from "./idea-team.service";
 import { normalizeWakeError, type WakeError } from "@/lib/daemon-wake-error";
 import { parseWakeContext, type WakeContext } from "@/services/daemon-wake-context";
 import { recheckResearchTurn, getResearchEligibility, lockResearchProject } from "@/services/research-eligibility.service";
@@ -542,6 +543,7 @@ export async function resolveOrCreateSession(params: {
  * lose a wake.
  */
 export async function createPendingTurn(params: {
+  onCreated?: () => void;
   sessionUuid: string;
   trigger: TurnTrigger;
   promptText?: string | null;
@@ -645,6 +647,7 @@ export async function createPendingTurn(params: {
   });
 
   const view = toTurnView(row);
+  params.onCreated?.();
   // Trigger (1): turn created. Owned here because this IS the single turn-creation
   // chokepoint — emit happens for every caller.
   if (db === prisma) publishTranscriptEvent({
@@ -2685,6 +2688,10 @@ async function canAgentReceiveSessionTurn(
     const context = parseWakeContext(turn.wakeContext);
     if (!context || context.notification.recipientUuid !== agentUuid) return false;
     const notification = context.notification;
+    if (notification.action === "team_lead_handoff") {
+      const ideaUuid = await getIdeaTeamHandoffIdeaUuid(companyUuid, agentUuid, notification.entityType, notification.entityUuid, notification.projectUuid, db);
+      if (!ideaUuid || ideaUuid !== turn.session.directIdeaUuid) return false;
+    }
     if (notification.projectUuid) {
       const currentProject = await resolveEntityProjectUuid(companyUuid, notification.entityType, notification.entityUuid, db);
       if (!currentProject ||

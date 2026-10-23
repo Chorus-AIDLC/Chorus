@@ -216,7 +216,7 @@ describe("project team handoff against isolated PostgreSQL", () => {
     await expect(confirm(result)).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
-  it("preserves every field and old pins for same-logical-agent no-ops", async () => {
+  it("enrolls same-logical-agent assignments without changing lifecycle or old pins", async () => {
     const instance = await db.agentInstance.create({ data: { companyUuid: auth.companyUuid, agentUuid: leadUuid, host: "old", cwd: "/old" } });
     const pinned = await idea({ assigneeType: "agent_instance", assigneeUuid: instance.uuid, cwdSource: "project_fixed", cwdHost: "old", runtimeCwd: "/old" });
     const plain = await idea({ assigneeType: "agent", assigneeUuid: leadUuid, status: "open" });
@@ -224,8 +224,8 @@ describe("project team handoff against isolated PostgreSQL", () => {
       companyUuid: auth.companyUuid, userUuid: auth.actorUuid, projectUuid, agentUuid: leadUuid, host: "new", cwd: "/new",
     } });
     expect(await confirm(await preview())).toMatchObject({ count: 2, changedCount: 0 });
-    expect(await db.idea.findUnique({ where: { uuid: pinned.uuid } })).toEqual(pinned);
-    expect(await db.idea.findUnique({ where: { uuid: plain.uuid } })).toEqual(plain);
+    expect(await db.idea.findUnique({ where: { uuid: pinned.uuid } })).toEqual({ ...pinned, teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: leadUuid, updatedAt: expect.any(Date) });
+    expect(await db.idea.findUnique({ where: { uuid: plain.uuid } })).toEqual({ ...plain, teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: leadUuid, updatedAt: expect.any(Date) });
     expect(await db.agentInstance.count({ where: { agentUuid: leadUuid } })).toBe(1);
     expect(state.emit).not.toHaveBeenCalled();
     expect(await db.activity.count({ where: { projectUuid } })).toBe(0);

@@ -38,6 +38,7 @@ import type {
   DaemonPendingTurn,
 } from "./daemon-rest-client.js";
 import { createWakeError, type WakeError } from "./wake-error.js";
+import { buildResumePrompt, buildTeamLeadHandoff, withTeamRoutingGuidance } from "./team-routing-guidance.js";
 
 export interface DaemonClientLogger {
   info: (msg: string) => void;
@@ -244,9 +245,7 @@ export class OpenClawDaemonClient {
   resume(entityType: string, entityUuid: string): void {
     this.logger.info(`[Chorus] resume: re-dispatching wake for ${entityType}:${entityUuid}`);
     this.redispatch({
-      prompt:
-        `[Chorus] Your previous run for this ${entityType} was interrupted by a human and is now being resumed. ` +
-        `Continue where you left off (entityType: ${entityType}, entityUuid: ${entityUuid}).`,
+      prompt: buildResumePrompt(entityType, entityUuid),
       contextKey: `chorus:resume:${entityUuid}`,
       entityType,
       entityUuid,
@@ -272,6 +271,22 @@ export class OpenClawDaemonClient {
       if (onlyTurnUuid && turn.turnUuid !== onlyTurnUuid) continue;
       const seenKey = `turn:${turn.turnUuid}`;
       if (this.seenTurns.has(seenKey)) continue;
+      const notification = turn.wakeContext?.notification;
+      const handoff = notification?.action === "team_lead_handoff" ? notification : null;
+      const resume = turn.trigger === "resume" ? turn.resume : null;
+      if (turn.trigger === "resume" && (!resume || !["idea", "proposal", "task", "document"].includes(resume.entityType) || !resume.entityUuid)) {
+        this.logger.warn(`[Chorus] deliver: missing resume entity for ${turn.turnUuid}; left pending`);
+        continue;
+      }
+      if (notification && ["proposal_submitted", "task_submitted_for_verify", "task_status_changed", "report_created"].includes(notification.action)) continue;
+      if (handoff && (
+        turn.trigger !== "task_assigned" || turn.wakeContext?.version !== 1 ||
+        !handoff.uuid || turn.wakeContext.notificationUuid !== handoff.uuid ||
+        !["idea", "proposal", "task", "document"].includes(handoff.entityType) || !handoff.entityUuid
+      )) {
+        this.logger.warn(`[Chorus] deliver: invalid or missing Team lead handoff context for ${turn.turnUuid}; left pending`);
+        continue;
+      }
       this.seenTurns.add(seenKey);
       dispatched++;
       // Reconstruct the execution entity DIRECTLY from the turn's own ids (mirrors
@@ -285,10 +300,11 @@ export class OpenClawDaemonClient {
       const directIdeaUuid =
         typeof turn.directIdeaUuid === "string" ? turn.directIdeaUuid : null;
       this.redispatch({
-        prompt: this.buildTurnPrompt(turn),
+        prompt: resume ? buildResumePrompt(resume.entityType, resume.entityUuid)
+          : withTeamRoutingGuidance(handoff ? buildTeamLeadHandoff(handoff) : this.buildTurnPrompt(turn)),
         contextKey: `chorus:deliver_turn:${turn.turnUuid}`,
-        entityType: directIdeaUuid ? "idea" : "daemon_session",
-        entityUuid: directIdeaUuid ?? turn.sessionId,
+        entityType: resume?.entityType ?? handoff?.entityType ?? (directIdeaUuid ? "idea" : "daemon_session"),
+        entityUuid: resume?.entityUuid ?? handoff?.entityUuid ?? directIdeaUuid ?? turn.sessionId,
         directIdeaUuid,
         turnUuid: turn.turnUuid,
       });
@@ -407,6 +423,15 @@ export class OpenClawDaemonClient {
       this.emitExecutionSnapshot();
     }
     const runningTurnUuid = await this.advanceTurn(reportSessionId, "running", entity, req.turnUuid ?? null);
+    if (req.turnUuid && runningTurnUuid !== req.turnUuid) {
+      if (key) {
+        this.aborts.delete(key);
+        if (this.executions.delete(key)) this.emitExecutionSnapshot();
+      }
+      this.seenTurns.delete(`turn:${req.turnUuid}`);
+      this.logger.warn(`[Chorus] Wake DROPPED — exact turn admission denied (${req.turnUuid})`);
+      return;
+    }
 
     const runId = this.nextRunId(contextKey);
     this.logger.info(

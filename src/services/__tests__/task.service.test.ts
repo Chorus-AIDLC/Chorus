@@ -1888,6 +1888,7 @@ describe("updateTask", () => {
   });
 
   it("should NOT reset criteria when moving from to_verify to done", async () => {
+    mockPrisma.acceptanceCriterion.findMany.mockResolvedValue([]);
     mockPrisma.task.findUnique.mockResolvedValue(null);
     const updated = {
       ...rawTask({ status: "done" }),

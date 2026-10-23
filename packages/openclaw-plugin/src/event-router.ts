@@ -1,3 +1,4 @@
+import { withTeamRoutingGuidance } from "./team-routing-guidance.js";
 import type { ChorusMcpClient } from "./mcp-client.js";
 import type { SseNotificationEvent } from "./sse-listener.js";
 import type { LineageResolver } from "./lineage.js";
@@ -164,7 +165,7 @@ export class ChorusEventRouter {
 
     // Dedicated operations execute only via origin-scoped turn delivery. Their
     // audit notifications must never wake another instance or duplicate execution.
-    if (notification.action === "idea_creation_requested" || notification.action === "research_requested") {
+    if (["idea_creation_requested", "research_requested", "team_lead_handoff"].includes(notification.action)) {
       this.logger.info(`${notification.action} delivered via pending turns; ignoring notification`);
       return;
     }
@@ -309,7 +310,7 @@ export class ChorusEventRouter {
   ): void {
     const handoff = this.buildOrchestratorGuidance(n);
     const anchor = this.buildWakerSessionGuidance(n);
-    let msg = message;
+    let msg = withTeamRoutingGuidance(message);
     if (handoff) msg += `\n\n${handoff}`;
     if (anchor) msg += `\n\n${anchor}`;
     this.wake(msg, contextKey, attr);

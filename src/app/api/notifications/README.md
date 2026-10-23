@@ -101,6 +101,9 @@ Per-user/agent toggle for each notification type. All default to `true`.
 | proposal_rejected | Admin rejects proposal | Proposal creator |
 | idea_claimed | Agent claims an idea | Idea creator |
 | comment_added | Comment on idea/proposal/task/document | Entity assignee (excluding comment author) |
+| team_lead_handoff | Enrolled Team lifecycle handoff requiring lead coordination | Current active, eligible Idea lead only |
+
+`team_lead_handoff` is a directed automation notification, not a new permission grant. It retains the original entity and event message, maps to the `task_assigned` daemon-turn category, and asks the lead to inspect current state before coordinating. The lead must still respect human proposal approval unless the Idea has human YOLO authorization. Ordinary submission/status notifications remain notify-only for legacy recipients; paused or unmanaged Ideas do not gain this wake path. The server rechecks current lead eligibility and project access before creating its turn. Independent reviewer agents are not automatically woken.
 
 ## REST API Endpoints
 

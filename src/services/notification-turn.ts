@@ -52,6 +52,7 @@
 
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { getIdeaTeamHandoffIdeaUuid } from "./idea-team.service";
 import { parseWakeContext, type WakeContext } from "@/services/daemon-wake-context";
 import { canActorAccessProject } from "@/services/project-access.service";
 import {
@@ -141,6 +142,7 @@ export const NOTIFICATION_ACTION_TO_TURN_TRIGGER: Record<string, TurnTrigger> = 
   human_instruction: "human_instruction",
   // Autonomous task-style dispatches — all map to the task_assigned trigger.
   task_assigned: "task_assigned",
+  team_lead_handoff: "task_assigned",
   task_reopened: "task_assigned",
   task_verified: "task_assigned",
   idea_claimed: "task_assigned",
@@ -800,12 +802,20 @@ export async function createTurnAndResolveTarget(
   if (trigger === "idea_creation_requested" || trigger === "research_requested") return empty;
 
   // (2) Only agents can be daemons; a human recipient never owns a daemon session.
-  if (ctx.recipientType !== "agent") return empty;
+  if (ctx.recipientType !== "agent") return { ...empty, suppressWake: ctx.action === "team_lead_handoff" };
 
   try {
-    const canReceive = () => !ctx.projectUuid
-      ? Promise.resolve(true)
-      : canActorAccessProject(ctx.companyUuid, { type: "agent", uuid: ctx.recipientUuid }, ctx.projectUuid, "viewer");
+    let teamIdeaUuid: string | null = null;
+    const canReceive = async () => {
+      if (ctx.projectUuid && !await canActorAccessProject(ctx.companyUuid, { type: "agent", uuid: ctx.recipientUuid }, ctx.projectUuid, "viewer")) return false;
+      if (ctx.action !== "team_lead_handoff") return true;
+      const context = parseWakeContext(ctx.wakeContext);
+      if (!context || context.notification.action !== ctx.action || context.notification.entityUuid !== ctx.entityUuid || context.notification.entityType !== ctx.entityType || context.notification.recipientUuid !== ctx.recipientUuid || context.notification.projectUuid !== ctx.projectUuid) return false;
+      const current = await getIdeaTeamHandoffIdeaUuid(ctx.companyUuid, ctx.recipientUuid, ctx.entityType, ctx.entityUuid, ctx.projectUuid);
+      if (!current || (teamIdeaUuid && teamIdeaUuid !== current)) return false;
+      teamIdeaUuid = current;
+      return true;
+    };
     if (!await canReceive()) return { ...empty, suppressWake: true };
     // (3) Resolve the agent's connections, then select the ONLINE origin (cwd-bound
     // transcript owner) honoring any pinned target instance. listConnectionsForAgent is
@@ -818,7 +828,7 @@ export async function createTurnAndResolveTarget(
     // assignment-lineage resolver NEVER infers cwd from the project; the ONE project-
     // derived fallback — the agent-owner's fixed project cwd — is applied later in step 4a,
     // BELOW the session-origin upgrade, replacing only the online-first pick.
-    let pin = await resolvePinnedTarget(ctx, trigger);
+    let pin = ctx.action === "team_lead_handoff" ? await resolveIdeaInstancePin(ctx, teamIdeaUuid) : await resolvePinnedTarget(ctx, trigger);
     // Pin-aware selection, classified by HOW the origin was chosen (drives directed
     // delivery). A PINNED wake whose pin matched no online connection is `offline_pin` →
     // notify-only with NO online-first fallback (REVERSES #354).
@@ -828,8 +838,8 @@ export async function createTurnAndResolveTarget(
     // uuid for standalone project content (including comment sessions). Resolved
     // BEFORE the elaboration_verified upgrade because that origin
     // is keyed on the idea anchor.
-    let directIdeaUuid: string | null = null;
-    if (LINEAGE_ENTITY_TYPES.has(ctx.entityType)) {
+    let directIdeaUuid: string | null = teamIdeaUuid;
+    if (!directIdeaUuid && LINEAGE_ENTITY_TYPES.has(ctx.entityType)) {
       directIdeaUuid = await resolveDirectIdeaUuid(
         ctx.companyUuid,
         ctx.entityType as LineageEntityType,
@@ -1109,15 +1119,18 @@ export async function createTurnAndResolveTarget(
       });
       wakeContext = parseWakeContext(persisted?.wakeContext);
     }
+    let createdHandoffTurn = false;
     if (!turn) {
       turn = await createPendingTurn({
         sessionUuid: session.uuid,
         trigger,
         promptText,
         ...(wakeContext ? { wakeContext } : {}),
+        ...(ctx.action === "team_lead_handoff" ? { onCreated: () => { createdHandoffTurn = true; } } : {}),
         ...(pin ? { wakeTargetConnectionUuid: origin.uuid, wakeRuntimeCwd: directedRuntimeCwd } : {}),
       });
     }
+    if (ctx.action === "team_lead_handoff" && !createdHandoffTurn) return { ...empty, suppressWake: true };
 
     // (7) DIRECTED wake: deliver to ONLY the resolved target via the human_instruction
     // keystone — a `deliver_turn` control ping on control:{connectionUuid} carrying the
@@ -1158,7 +1171,7 @@ export async function createTurnAndResolveTarget(
       },
       "Failed to create DaemonSessionTurn for wake notification (notification was still created)",
     );
-    return empty;
+    return { ...empty, suppressWake: ctx.action === "team_lead_handoff" };
   }
 }
 
