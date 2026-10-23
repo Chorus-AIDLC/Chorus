@@ -279,6 +279,18 @@ export default function SettingsPage() {
       <UserAvatarSettings />
       <UserNameSettings />
 
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle>{t("settings.teams.title")}</CardTitle>
+          <CardDescription>{t("settings.teams.subtitle")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button variant="outline" asChild>
+            <Link href="/settings/teams">{t("settings.teams.manage")}</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* Language Section */}
       <div className="mb-8 space-y-4">
         <div className="flex items-center gap-2">
