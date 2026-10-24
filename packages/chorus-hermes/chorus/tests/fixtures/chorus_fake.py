@@ -55,6 +55,7 @@ class FakeChorus:
 
     def __init__(self) -> None:
         self.calls: List[tuple] = []
+        self.requests: List[httpx.Request] = []
         self.feeds: List[SseFeed] = []
         self.sse_status: List[int] = []  # statuses to answer successive SSE connects with
         self.notifications: List[Dict[str, Any]] = []
@@ -90,6 +91,7 @@ class FakeChorus:
     # -- handler -----------------------------------------------------------------
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
         url = urlsplit(str(request.url))
         path, query = url.path, {k: v[0] for k, v in parse_qs(url.query).items()}
         body = json.loads(request.content) if request.content else None
@@ -120,7 +122,8 @@ class FakeChorus:
             else:
                 self.turn_counter += 1
                 uuid = f"turn-{self.turn_counter}"
-            return envelope({"turn": {"uuid": uuid, "status": body["status"]}})
+            return envelope({"turn": {"uuid": uuid, "status": body["status"]},
+                             **({"ideaTeamProtocol": 1} if body.get("ideaTeamProtocol") == 1 else {})})
         if path == "/api/daemon/pending-turns":
             return envelope({"turns": list(self.pending)})
         if path.startswith("/api/entities/"):

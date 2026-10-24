@@ -1,20 +1,15 @@
 {
   "ideaTeamGates": {
     "teamUnbound": "个人项目 Team 已不可用。",
-    "leadIneligible": "已记录的项目负责不再符合 Team lead 资格。",
-    "leadNotAssignee": "当前 Idea assignee 与已记录的 lead 不一致。",
     "title": "Team 审批关口",
-    "loading": "正在核对当前关口负责人…",
-    "error": "暂时无法读取关口状态，请刷新后再操作；服务端校验仍然生效。",
-    "unmanaged": "手动流程 · 此 Idea 尚未进入 Team 自动化，不会自动补充 owner。",
-    "unavailableLead": "项目负责不可用",
+    "unavailableLead": "负责人不可用",
     "human": "人工",
-    "lead": "Idea 项目负责：{name}",
     "proposal": "Proposal 审批：{name}",
     "task": "Task 验收：{name}",
-    "yolo": "YOLO 仅对当前 Idea 授权，仍需满足既有权限。",
-    "nonYolo": "Proposal 需要人工审批，task 由项目负责验收。",
-    "paused": "Team 自动化已暂停：Team 或当前项目负责已失效。请修复显式 lead 指派或个人 Team 配置；人工管理仍可用。"
+    "paused": "Team 自动化已暂停。请修复授权、Idea 负责人或个人 Team；人类仍可管理。",
+    "orchestratorIneligible": "当前负责人缺少 Idea 写权限或项目访问权。",
+    "orchestratorNotAssignee": "自动化记录的负责人已与本 Idea 当前指派不一致。",
+    "humanAssignmentRequired": "需要新的人工指派或可验证授权，才能启动或恢复自动化。"
   },
   "projectTeam": {
     "title": "我的项目团队",
@@ -47,7 +42,7 @@
     "invalid": "请检查成员权限和项目访问权，输入已保留。",
     "denied": "你已无权执行此操作，输入已保留。",
     "stale": "预览已失效或过期，未进行任何重新分配。请重新预览后确认。",
-    "warning": "上次交接对象：{name}。现有归属保持不变；如需修复，请明确选择负责人并确认新的交接预览。",
+    "warning": "此前交接接收者：{name}。现有指派保持不变；须通过新的显式指派和确认修复。",
     "deletedAgent": "已删除的 Agent",
     "warningReasons": {
       "removed_from_lead": "该 Agent 已不在负责人角色中，即使已有其他合格负责人，也不会自动交接。",
@@ -55,10 +50,10 @@
       "deleted": "上次的负责人已删除。"
     },
     "handoff": "显式交接 Idea",
-    "handoffDescription": "选择一名合格负责人（允许离线），预览当前分配给你或你的 Agent 的未完成 Idea。不包含未分配或他人的 Idea，Task、会话及进行中的工作保持不变。",
+    "handoffDescription": "将预览中的未完成 Idea 显式分配给你具有 Idea 写权限的 agent；服务端重新校验访问权。不要求属于默认负责人角色。未指派及他人的 Idea 不纳入，现有 Task 和进行中的工作保持不变。",
     "viewer": "查看者可配置个人团队，但交接 Idea 需要项目编辑者权限。",
-    "chooseLead": "明确选择一名负责人…",
-    "noLead": "暂无负责人，请手动分配或更新团队。",
+    "chooseLead": "明确选择 Idea 负责人…",
+    "noLead": "暂无合格 agent。",
     "saveFirst": "请先保存团队修改，再预览交接。",
     "preview": "预览交接",
     "refreshPreview": "刷新预览",
@@ -945,10 +940,10 @@
         "invalid": "无法保存团队。请检查名称、描述和成员权限后重试，已保留你的输入。"
       },
       "roles": {
-        "product": { "name": "产品", "description": "细化 Idea，撰写提案和文档；管理员确认由负责人处理。" },
+        "product": { "name": "产品", "description": "细化 Idea 并撰写提案和文档；允许的管理动作由当前 Idea 负责人处理。" },
         "development": { "name": "开发", "description": "执行任务并提交验收。" },
         "review": { "name": "评审", "description": "提供独立的评审结论评论；实际评论仍需项目编辑者权限。" },
-        "lead": { "name": "负责人", "description": "分配和确认 Idea，委派任务，审核提案和任务，并撰写完成报告。" }
+        "lead": { "name": "默认负责人（可选）", "description": "仅作候选建议。每个 Idea 由其独立获得人工授权的负责人协调；此角色不会自动指派工作，也不授予权限。" }
       }
     },
     "displayName": {

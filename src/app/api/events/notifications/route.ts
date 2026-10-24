@@ -26,6 +26,7 @@ import {
 } from "@/services/daemon-execution.service";
 import { canAgentReceiveTurn, getWakeRecoveryDelivery, reconcileOrphanTurns } from "@/services/daemon-session.service";
 import { NextRequest } from "next/server";
+import { requiresFencedIdeaTeamResume } from "@/services/daemon-resume-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,8 @@ export async function GET(request: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
   const wakeRecoveryProtocol = request.nextUrl.searchParams.get("wakeRecoveryProtocol");
+  const ideaTeamProtocol = request.nextUrl.searchParams.get("ideaTeamProtocol");
+  if (ideaTeamProtocol !== null && (ideaTeamProtocol !== "1" || wakeRecoveryProtocol !== "1")) return new Response("Upgrade your Chorus client: Idea Team automation requires ideaTeamProtocol=1 and wakeRecoveryProtocol=1", { status: 400 });
   if (wakeRecoveryProtocol !== null && wakeRecoveryProtocol !== "1") return new Response("Unsupported wake recovery protocol", { status: 400 });
 
   // Self-report registry (auth is already settled above — these query params
@@ -86,6 +89,7 @@ export async function GET(request: NextRequest) {
             type: "connection_registered",
             connectionUuid: conn.uuid,
             ...(wakeRecoveryProtocol === "1" ? { wakeRecoveryProtocol: 1 } : {}),
+            ...(ideaTeamProtocol === "1" ? { ideaTeamProtocol: 1 } : { ideaTeamUpgradeHint: "Upgrade your Chorus client and enable ideaTeamProtocol=1 for Idea Team automation" }),
             ...(acknowledgmentAware ? { connectedAt: conn.connectedAt.toISOString() } : {}),
           })}\n\n`,
         );
@@ -118,6 +122,10 @@ export async function GET(request: NextRequest) {
       // Creation-time filtering is insufficient for delayed/Redis delivery.
       const handler = (event: Record<string, unknown>) => {
         const legacy = { ...event };
+        if (event.ideaTeamRequired && ideaTeamProtocol !== "1") {
+          legacy.suppressWake = true;
+          legacy.ideaTeamUpgradeHint = "Upgrade your Chorus client and enable ideaTeamProtocol=1";
+        }
         delete legacy.wakeContext;
         delete legacy.turnUuid;
         delete legacy.wakeRecoveryOnly;
@@ -126,7 +134,7 @@ export async function GET(request: NextRequest) {
           const delivery = { ...event, wakeRecoveryProtocol: 1, wakeContext: null, suppressWake: true } as Record<string, unknown>;
           if (typeof event.turnUuid === "string") {
             deliverGuarded(delivery, async () => {
-              const recovered = await getWakeRecoveryDelivery(auth.companyUuid, auth.actorUuid, conn.uuid, event.turnUuid as string);
+              const recovered = await getWakeRecoveryDelivery(auth.companyUuid, auth.actorUuid, conn.uuid, event.turnUuid as string, ideaTeamProtocol === "1" ? 1 : undefined);
               if (!recovered) return false;
               Object.assign(delivery, recovered, { suppressWake: event.suppressWake === true || !recovered.wakeContext });
               return true;
@@ -156,12 +164,12 @@ export async function GET(request: NextRequest) {
       // Browser clients have no `conn`, so they never subscribe and never receive it.
       const controlHandler = conn
         ? (event: Record<string, unknown>) => {
-            if (event.command === "deliver_turn") {
+            if (event.command === "deliver_turn" || (event.command === "resume" && typeof event.turnUuid === "string")) {
               if (typeof event.turnUuid !== "string") return;
               if (wakeRecoveryProtocol === "1") {
                 const delivery = { ...event, wakeRecoveryProtocol: 1 };
                 deliverGuarded(delivery, async () => {
-                  const recovered = await getWakeRecoveryDelivery(auth.companyUuid, auth.actorUuid, conn.uuid, event.turnUuid as string);
+                  const recovered = await getWakeRecoveryDelivery(auth.companyUuid, auth.actorUuid, conn.uuid, event.turnUuid as string, ideaTeamProtocol === "1" ? 1 : undefined);
                   if (!recovered) return false;
                   Object.assign(delivery, recovered);
                   return true;
@@ -169,6 +177,9 @@ export async function GET(request: NextRequest) {
                 return;
               }
               deliverGuarded(event, () => canAgentReceiveTurn(auth.companyUuid, auth.actorUuid, event.turnUuid as string, conn.uuid));
+            } else if (event.command === "resume") {
+              if (typeof event.entityType !== "string" || typeof event.entityUuid !== "string") return;
+              deliverGuarded(event, async () => !await requiresFencedIdeaTeamResume(auth.companyUuid, conn.uuid, event.entityType as string, event.entityUuid as string));
             } else {
               send(`data: ${JSON.stringify(event)}\n\n`);
             }

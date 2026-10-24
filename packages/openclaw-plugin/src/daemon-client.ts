@@ -31,6 +31,8 @@ import type {
   OpenClawRuntimeAgent,
   OpenClawBlockReplyPayload,
 } from "openclaw/plugin-sdk/plugin-entry";
+import { randomUUID } from "node:crypto";
+import { wakeContextSchema, withRunMcpConfig, type WakeContext } from "./idea-team-context.js";
 import type {
   DaemonRestClient,
   DaemonExecutionRow,
@@ -83,6 +85,7 @@ export interface WakeRunContext {
  * `contextKey` is the router's dedupe/log key. `turnUuid` is set for a delivered turn.
  */
 export interface WakeRequest {
+  sessionId?: string;
   prompt: string;
   contextKey: string;
   entityType?: string | null;
@@ -91,6 +94,7 @@ export interface WakeRequest {
   rootIdeaUuid?: string | null;
   /** When this wake runs a specific pending turn (deliver_turn / backfill). */
   turnUuid?: string | null;
+  wakeContext?: WakeContext | null;
 }
 
 interface ExecutionEntry {
@@ -177,6 +181,9 @@ export class OpenClawDaemonClient {
    * (mirrors the CLI host's `seen` set; backfill.mjs).
    */
   private readonly seenTurns = new Set<string>();
+  private readonly admissions = new Map<string, string>();
+  private readonly lanes = new Map<string, Promise<void>>();
+  private readonly activeBackendSessions = new Set<string>();
 
   private runCounter = 0;
 
@@ -236,20 +243,9 @@ export class OpenClawDaemonClient {
     }
   }
 
-  /**
-   * Re-dispatch a wake for the entity to continue the SAME session (the run is gone;
-   * resolveRunContext re-derives the same sessionKey → getSessionEntry resolves the
-   * existing sessionId). The control handler has no prompt; we synthesize a minimal
-   * resume prompt. Continues under the same business key (directIdea/entity).
-   */
   resume(entityType: string, entityUuid: string): void {
-    this.logger.info(`[Chorus] resume: re-dispatching wake for ${entityType}:${entityUuid}`);
-    this.redispatch({
-      prompt: buildResumePrompt(entityType, entityUuid),
-      contextKey: `chorus:resume:${entityUuid}`,
-      entityType,
-      entityUuid,
-    });
+    this.logger.info(`[Chorus] resume: recovering persisted turns for ${entityType}:${entityUuid}`);
+    void this.deliverTurn();
   }
 
   /**
@@ -271,6 +267,10 @@ export class OpenClawDaemonClient {
       if (onlyTurnUuid && turn.turnUuid !== onlyTurnUuid) continue;
       const seenKey = `turn:${turn.turnUuid}`;
       if (this.seenTurns.has(seenKey)) continue;
+      if (turn.wakeContext != null && !wakeContextSchema.safeParse(turn.wakeContext).success) {
+        this.logger.warn(`[Chorus] deliver: invalid wake context for ${turn.turnUuid}; left pending`);
+        continue;
+      }
       const notification = turn.wakeContext?.notification;
       const handoff = notification?.action === "team_lead_handoff" ? notification : null;
       const resume = turn.trigger === "resume" ? turn.resume : null;
@@ -280,11 +280,11 @@ export class OpenClawDaemonClient {
       }
       if (notification && ["proposal_submitted", "task_submitted_for_verify", "task_status_changed", "report_created"].includes(notification.action)) continue;
       if (handoff && (
-        turn.trigger !== "task_assigned" || turn.wakeContext?.version !== 1 ||
+        !["task_assigned", "resume"].includes(turn.trigger) || turn.wakeContext?.version !== 1 ||
         !handoff.uuid || turn.wakeContext.notificationUuid !== handoff.uuid ||
         !["idea", "proposal", "task", "document"].includes(handoff.entityType) || !handoff.entityUuid
       )) {
-        this.logger.warn(`[Chorus] deliver: invalid or missing Team lead handoff context for ${turn.turnUuid}; left pending`);
+        this.logger.warn(`[Chorus] deliver: invalid or missing Idea orchestrator handoff context for ${turn.turnUuid}; left pending`);
         continue;
       }
       this.seenTurns.add(seenKey);
@@ -303,10 +303,12 @@ export class OpenClawDaemonClient {
         prompt: resume ? buildResumePrompt(resume.entityType, resume.entityUuid)
           : withTeamRoutingGuidance(handoff ? buildTeamLeadHandoff(handoff) : this.buildTurnPrompt(turn)),
         contextKey: `chorus:deliver_turn:${turn.turnUuid}`,
-        entityType: resume?.entityType ?? handoff?.entityType ?? (directIdeaUuid ? "idea" : "daemon_session"),
-        entityUuid: resume?.entityUuid ?? handoff?.entityUuid ?? directIdeaUuid ?? turn.sessionId,
+        entityType: resume?.entityType ?? notification?.entityType ?? (directIdeaUuid ? "idea" : "daemon_session"),
+        entityUuid: resume?.entityUuid ?? notification?.entityUuid ?? directIdeaUuid ?? turn.sessionId,
+        sessionId: turn.sessionId,
         directIdeaUuid,
         turnUuid: turn.turnUuid,
+        wakeContext: turn.wakeContext,
       });
     }
     if (dispatched > 0) {
@@ -340,6 +342,18 @@ export class OpenClawDaemonClient {
    *   6. finally → deregister the controller + drop the execution row + snapshot.
    */
   async runWake(req: WakeRequest): Promise<void> {
+    const lane = deriveSessionId(req) ?? req.contextKey;
+    const previous = this.lanes.get(lane) ?? Promise.resolve();
+    const pending = previous.then(() => this.runWakeNow(req)).catch((error) => {
+      if (req.turnUuid) this.seenTurns.delete(`turn:${req.turnUuid}`);
+      this.logger.warn(`[Chorus] Wake failed: ${error}`);
+    });
+    this.lanes.set(lane, pending);
+    await pending;
+    if (this.lanes.get(lane) === pending) this.lanes.delete(lane);
+  }
+
+  private async runWakeNow(req: WakeRequest): Promise<void> {
     const { prompt, contextKey } = req;
     const entity = entityOf(req);
     const key = entity ? execKey(entity.entityType, entity.entityUuid) : null;
@@ -358,6 +372,11 @@ export class OpenClawDaemonClient {
       );
       return;
     }
+    if (req.wakeContext != null && (!req.turnUuid || !wakeContextSchema.safeParse(req.wakeContext).success)) {
+      this.logger.warn("[Chorus] Wake DROPPED — persisted context requires a valid exact turn");
+      return;
+    }
+    const admissionUuid = req.turnUuid ? this.admissionFor(req.turnUuid) : undefined;
 
     let ctx: WakeRunContext | null;
     try {
@@ -406,126 +425,143 @@ export class OpenClawDaemonClient {
       return;
     }
 
-    const controller = new AbortController();
-    const abortEntry: AbortEntry = { controller, interrupting: false };
-    if (key) this.aborts.set(key, abortEntry);
-
-    // Mark RUNNING + report turn-advance(running) + execution snapshot.
-    if (entity && key) {
-      this.executions.set(key, {
-        entityType: entity.entityType,
-        entityUuid: entity.entityUuid,
-        rootIdeaUuid,
-        directIdeaUuid,
-        status: "running",
-        startedAt: new Date().toISOString(),
-      });
-      this.emitExecutionSnapshot();
-    }
-    const runningTurnUuid = await this.advanceTurn(reportSessionId, "running", entity, req.turnUuid ?? null);
-    if (req.turnUuid && runningTurnUuid !== req.turnUuid) {
-      if (key) {
-        this.aborts.delete(key);
-        if (this.executions.delete(key)) this.emitExecutionSnapshot();
-      }
-      this.seenTurns.delete(`turn:${req.turnUuid}`);
-      this.logger.warn(`[Chorus] Wake DROPPED — exact turn admission denied (${req.turnUuid})`);
+    if (this.activeBackendSessions.has(sessionId)) {
+      if (req.turnUuid) this.seenTurns.delete(`turn:${req.turnUuid}`);
+      this.logger.warn(`[Chorus] Wake DROPPED — backend session already running (${sessionId})`);
       return;
     }
-
-    const runId = this.nextRunId(contextKey);
-    this.logger.info(
-      `[Chorus] Waking agent via embedded run (sessionKey=${sessionKey}, sessionId=${reportSessionId}, ` +
-        `model=${ctx.modelRef ? `${ctx.modelRef.provider}/${ctx.modelRef.model}` : "host-default"}, contextKey=${contextKey})`,
-    );
-
-    let aborted = false;
-    let crashed = false;
-    let wakeError: WakeError | null = null;
+    this.activeBackendSessions.add(sessionId);
     try {
-      const result = await ctx.agent.runEmbeddedAgent({
-        sessionId,
-        sessionKey,
-        agentId: ctx.agentId,
-        trigger: "manual",
-        sessionFile,
-        ...(ctx.agentDir ? { agentDir: ctx.agentDir } : {}),
-        workspaceDir: ctx.workspaceDir,
-        config: ctx.config,
-        prompt,
-        timeoutMs: ctx.timeoutMs,
-        runId,
-        disableMessageTool: true,
-        abortSignal: controller.signal,
-        // Streaming transcript: post ONLY finalized assistant visible text. Reasoning
-        // (onReasoningStream / isReasoning blocks) and tool internals (onToolResult) are
-        // intentionally NOT posted (match the CLI host's stream-json filter).
-        onBlockReply: (payload) => {
-          const msg = extractBlockReplyText(payload);
-          if (msg) void this.postTranscript(reportSessionId, [msg]);
-        },
-        ...(ctx.modelRef ? { provider: ctx.modelRef.provider, model: ctx.modelRef.model } : {}),
-      });
-      // result.meta.aborted distinguishes a clean abort from a normal completion
-      // (types.ts:140). An abort flagged here OR an interrupt requested → user-abort.
-      aborted = result?.meta?.aborted === true || abortEntry.interrupting;
-      // Final reply payloads are the host's documented result surface. Tool
-      // callbacks are separate and cannot turn an otherwise clean wake into a crash.
-      const failure = result?.meta?.error
-        ?? result?.payloads?.find((payload) => payload.isError === true);
-      if (!aborted && failure) {
-        crashed = true;
-        const text = "message" in failure ? failure.message : failure.text;
-        wakeError = createWakeError({ message: text, details: text });
+      let runConfig: unknown;
+      try {
+        runConfig = withRunMcpConfig(ctx.config, req.turnUuid && admissionUuid ? { turnUuid: req.turnUuid, admissionUuid } : undefined);
+      } catch (error) {
+        await this.failStartup(reportSessionId, entity, req.turnUuid ?? null, error);
+        return;
       }
-    } catch (err) {
-      // The run rejected. If an interrupt was requested, it's a user abort; otherwise
-      // it's an unexpected crash.
-      if (abortEntry.interrupting || controller.signal.aborted) {
-        aborted = true;
+      const controller = new AbortController();
+      const abortEntry: AbortEntry = { controller, interrupting: false };
+      if (key) this.aborts.set(key, abortEntry);
+
+      // Mark RUNNING + report turn-advance(running) + execution snapshot.
+      if (entity && key) {
+        this.executions.set(key, {
+          entityType: entity.entityType,
+          entityUuid: entity.entityUuid,
+          rootIdeaUuid,
+          directIdeaUuid,
+          status: "running",
+          startedAt: new Date().toISOString(),
+        });
+        this.emitExecutionSnapshot();
+      }
+      const runningTurnUuid = await this.advanceTurn(reportSessionId, "running", entity, req.turnUuid ?? null, null, null, admissionUuid);
+      if (!runningTurnUuid || (req.turnUuid && runningTurnUuid !== req.turnUuid)) {
+        if (key) {
+          this.aborts.delete(key);
+          if (this.executions.delete(key)) this.emitExecutionSnapshot();
+        }
+        this.seenTurns.delete(`turn:${req.turnUuid}`);
+        this.logger.warn(`[Chorus] Wake DROPPED — turn admission denied (${req.turnUuid ?? "legacy"}); check current assignment and client upgrade requirements`);
+        return;
+      }
+
+      const runId = this.nextRunId(contextKey);
+      this.logger.info(
+        `[Chorus] Waking agent via embedded run (sessionKey=${sessionKey}, sessionId=${reportSessionId}, ` +
+          `model=${ctx.modelRef ? `${ctx.modelRef.provider}/${ctx.modelRef.model}` : "host-default"}, contextKey=${contextKey})`,
+      );
+
+      let aborted = false;
+      let crashed = false;
+      let wakeError: WakeError | null = null;
+      try {
+        const result = await ctx.agent.runEmbeddedAgent({
+          sessionId,
+          sessionKey,
+          agentId: ctx.agentId,
+          trigger: "manual",
+          sessionFile,
+          ...(ctx.agentDir ? { agentDir: ctx.agentDir } : {}),
+          workspaceDir: ctx.workspaceDir,
+          config: runConfig,
+          prompt,
+          timeoutMs: ctx.timeoutMs,
+          runId,
+          disableMessageTool: true,
+          abortSignal: controller.signal,
+          // Streaming transcript: post ONLY finalized assistant visible text. Reasoning
+          // (onReasoningStream / isReasoning blocks) and tool internals (onToolResult) are
+          // intentionally NOT posted (match the CLI host's stream-json filter).
+          onBlockReply: (payload) => {
+            const msg = extractBlockReplyText(payload);
+            if (msg) void this.postTranscript(reportSessionId, [msg]);
+          },
+          ...(ctx.modelRef ? { provider: ctx.modelRef.provider, model: ctx.modelRef.model } : {}),
+        });
+        // result.meta.aborted distinguishes a clean abort from a normal completion
+        // (types.ts:140). An abort flagged here OR an interrupt requested → user-abort.
+        aborted = result?.meta?.aborted === true || abortEntry.interrupting;
+        // Final reply payloads are the host's documented result surface. Tool
+        // callbacks are separate and cannot turn an otherwise clean wake into a crash.
+        const failure = result?.meta?.error
+          ?? result?.payloads?.find((payload) => payload.isError === true);
+        if (!aborted && failure) {
+          crashed = true;
+          const text = "message" in failure ? failure.message : failure.text;
+          wakeError = createWakeError({ message: text, details: text });
+        }
+      } catch (err) {
+        // The run rejected. If an interrupt was requested, it's a user abort; otherwise
+        // it's an unexpected crash.
+        if (abortEntry.interrupting || controller.signal.aborted) {
+          aborted = true;
+        } else {
+          crashed = true;
+          wakeError = createWakeError({ message: err, details: err });
+        }
+        this.logger.warn(
+          `[Chorus] Wake turn ${crashed ? "crashed" : "aborted"} (sessionId=${reportSessionId}, ${contextKey}): ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      } finally {
+        // Deregister FIRST so a stale controller can never abort a later run for the
+        // same entity (spec: "A settled run deregisters its controller").
+        if (key) this.aborts.delete(key);
+      }
+
+      // A missing running correlation must never fall back to another turn's FIFO
+      // terminal report. User cancellation takes precedence over a diagnostic.
+      if (runningTurnUuid) {
+        await this.advanceTurn(reportSessionId, aborted || crashed ? "interrupted" : "ended",
+          entity, runningTurnUuid, aborted ? "user" : crashed ? "crash" : null,
+          aborted ? null : wakeError, admissionUuid);
       } else {
-        crashed = true;
-        wakeError = createWakeError({ message: err, details: err });
+        this.logger.warn(`[Chorus] terminal report skipped — no admitted turn UUID for session ${reportSessionId}`);
       }
-      this.logger.warn(
-        `[Chorus] Wake turn ${crashed ? "crashed" : "aborted"} (sessionId=${reportSessionId}, ${contextKey}): ` +
-          `${err instanceof Error ? err.message : String(err)}`,
+
+      // Interrupt-vs-crash reporting (entity-keyed — only for a reportable resource).
+      if (entity) {
+        if (aborted) {
+          await this.report(entity, "user");
+        } else if (crashed) {
+          await this.report(entity, "crash");
+        }
+        // A clean completion reports nothing (mirrors waker.mjs).
+      }
+
+      // Drop the execution row + emit a fresh snapshot (absence == ended server-side).
+      if (key && this.executions.delete(key)) {
+        this.emitExecutionSnapshot();
+      }
+
+      this.logger.info(
+        `[Chorus] Wake complete (sessionId=${reportSessionId}, contextKey=${contextKey}, ` +
+          `outcome=${aborted ? "interrupted" : crashed ? "crashed" : "completed"})`,
       );
     } finally {
-      // Deregister FIRST so a stale controller can never abort a later run for the
-      // same entity (spec: "A settled run deregisters its controller").
-      if (key) this.aborts.delete(key);
+      this.activeBackendSessions.delete(sessionId);
     }
-
-    // A missing running correlation must never fall back to another turn's FIFO
-    // terminal report. User cancellation takes precedence over a diagnostic.
-    if (runningTurnUuid) {
-      await this.advanceTurn(reportSessionId, aborted || crashed ? "interrupted" : "ended",
-        entity, runningTurnUuid, aborted ? "user" : crashed ? "crash" : null,
-        aborted ? null : wakeError);
-    } else {
-      this.logger.warn(`[Chorus] terminal report skipped — no admitted turn UUID for session ${reportSessionId}`);
-    }
-
-    // Interrupt-vs-crash reporting (entity-keyed — only for a reportable resource).
-    if (entity) {
-      if (aborted) {
-        await this.report(entity, "user");
-      } else if (crashed) {
-        await this.report(entity, "crash");
-      }
-      // A clean completion reports nothing (mirrors waker.mjs).
-    }
-
-    // Drop the execution row + emit a fresh snapshot (absence == ended server-side).
-    if (key && this.executions.delete(key)) {
-      this.emitExecutionSnapshot();
-    }
-
-    this.logger.info(
-      `[Chorus] Wake complete (sessionId=${reportSessionId}, contextKey=${contextKey}, ` +
-        `outcome=${aborted ? "interrupted" : crashed ? "crashed" : "completed"})`,
-    );
   }
 
   /**
@@ -578,11 +614,13 @@ export class OpenClawDaemonClient {
     turnUuid: string | null = null,
     interruptedReason: "user" | "crash" | null = null,
     wakeError: WakeError | null = null,
+    admissionUuid?: string,
   ): Promise<string | null> {
     try {
       const outcome = await this.restClient.turnAdvance({
         sessionId,
         ...(turnUuid ? { turnUuid } : {}),
+        ...(admissionUuid ? { admissionUuid, ...(status === "running" ? { turnUuids: [turnUuid!] } : {}) } : {}),
         status,
         entityType: entity?.entityType ?? null,
         entityUuid: entity?.entityUuid ?? null,
@@ -602,15 +640,18 @@ export class OpenClawDaemonClient {
     requestedTurnUuid: string | null,
     error: unknown,
   ): Promise<void> {
-    const turnUuid = await this.advanceTurn(sessionId, "running", entity, requestedTurnUuid);
-    if (turnUuid) {
+    const admissionUuid = requestedTurnUuid ? this.admissionFor(requestedTurnUuid) : undefined;
+    const turnUuid = await this.advanceTurn(sessionId, "running", entity, requestedTurnUuid, null, null, admissionUuid);
+    const admitted = turnUuid && (!requestedTurnUuid || turnUuid === requestedTurnUuid);
+    if (admitted) {
       const wakeError = createWakeError({ kind: "startup", message: error, details: error });
-      await this.advanceTurn(sessionId, "interrupted", entity, turnUuid, "crash", wakeError);
+      await this.advanceTurn(sessionId, "interrupted", entity, turnUuid, "crash", wakeError, admissionUuid);
     } else {
+      if (requestedTurnUuid) this.seenTurns.delete(`turn:${requestedTurnUuid}`);
       this.logger.warn(`[Chorus] startup failure report skipped — no admitted turn UUID for session ${sessionId}`);
     }
     if (entity) {
-      if (turnUuid) await this.report(entity, "crash");
+      if (admitted) await this.report(entity, "crash");
       if (this.executions.delete(execKey(entity.entityType, entity.entityUuid))) {
         this.emitExecutionSnapshot();
       }
@@ -645,6 +686,15 @@ export class OpenClawDaemonClient {
   private nextRunId(contextKey: string): string {
     this.runCounter += 1;
     return `chorus-wake-${this.runCounter}-${contextKey}`;
+  }
+
+  private admissionFor(turnUuid: string): string {
+    let admissionUuid = this.admissions.get(turnUuid);
+    if (!admissionUuid) {
+      admissionUuid = randomUUID();
+      this.admissions.set(turnUuid, admissionUuid);
+    }
+    return admissionUuid;
   }
 }
 
@@ -683,10 +733,11 @@ export function entityOf(req: {
  * the CLI host's `sessionId = directIdeaUuid ?? notification.entityUuid` (waker.mjs:286).
  */
 export function deriveSessionId(req: {
+  sessionId?: string;
   directIdeaUuid?: string | null;
   entityUuid?: string | null;
 }): string | null {
-  return req.directIdeaUuid ?? req.entityUuid ?? null;
+  return req.sessionId ?? req.directIdeaUuid ?? req.entityUuid ?? null;
 }
 
 /**

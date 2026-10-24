@@ -20,7 +20,7 @@
 //   - Derive-child mode (parentUuid set) is form-only: the template contract
 //     does not cover lineage, so the tabs are not rendered at all.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -93,9 +93,11 @@ export function NewIdeaDialog({
   const [decompose, setDecompose] = useState(false);
   const [researchFirst, setResearchFirst] = useState(false);
   const [isDispatching, setIsDispatching] = useState(false);
+  const creationRequest = useRef<{ fingerprint: string; uuid: string } | null>(null);
   useEffect(() => {
     // An explicit request belongs to this opening/project, not future Ideas.
     setResearchFirst(false);
+    creationRequest.current = null;
   }, [open, projectUuid]);
   const [hasProjectFixedTarget, setHasProjectFixedTarget] = useState(false);
   useEffect(() => {
@@ -267,10 +269,13 @@ export function NewIdeaDialog({
   }): Promise<SessionView> => {
     setIsDispatching(true);
     try {
+      const fingerprint = JSON.stringify([projectUuid, args.agentUuid, args.connectionUuid, args.userText, researchFirst, decompose]);
+      if (creationRequest.current?.fingerprint !== fingerprint) creationRequest.current = { fingerprint, uuid: crypto.randomUUID() };
       const res = await authFetch("/api/ideas/conversational", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          requestUuid: creationRequest.current.uuid,
           projectUuid,
           agentUuid: args.agentUuid,
           connectionUuid: args.connectionUuid,
@@ -305,6 +310,7 @@ export function NewIdeaDialog({
       if (!session) {
         throw new ConversationalDispatchError(res.status, null);
       }
+      creationRequest.current = null;
       return session;
     } finally {
       setIsDispatching(false);

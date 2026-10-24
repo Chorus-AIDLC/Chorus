@@ -32,6 +32,7 @@ import {
   RESUME_TURN_CLIENT_TYPES,
 } from "@/services/daemon-control.service";
 import { createResumeTurn } from "@/services/daemon-session.service";
+import { parseWakeContext } from "@/services/daemon-wake-context";
 import {
   resumeExecution,
   restoreInterruptedExecution,
@@ -40,6 +41,7 @@ import {
 } from "@/services/daemon-execution.service";
 import { prisma } from "@/lib/prisma";
 import { resolveResourceOrchestrator } from "@/services/orchestrator.service";
+import { requiresFencedIdeaTeamResume } from "@/services/daemon-resume-policy";
 
 const bodySchema = z.object({
   connectionUuid: z.string().min(1),
@@ -119,7 +121,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       agentUuid: authz.target.agentUuid,
       sessionId: execution?.directIdeaUuid ?? entityUuid,
     },
-    select: { uuid: true, runtimeCwd: true },
+    select: { uuid: true, runtimeCwd: true, directIdeaUuid: true },
   });
 
   // A client that admits every run by turn (Hermes) needs a pending continuation turn:
@@ -132,9 +134,22 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     where: { companyUuid: auth.companyUuid, uuid: connectionUuid },
     select: { clientType: true },
   });
-  if (connection && RESUME_TURN_CLIENT_TYPES.has(connection.clientType)) {
+  const ideaUuids = [...new Set([execution?.directIdeaUuid, resumedSession?.directIdeaUuid, entityType === "idea" ? entityUuid : null].filter((uuid): uuid is string => Boolean(uuid)))];
+  const ideas = await Promise.all(ideaUuids.map((uuid) => prisma.idea.findFirst({ where: { uuid, companyUuid: auth.companyUuid }, select: { teamEnrollmentVersion: true, teamOwnerUuid: true, teamLeadAgentUuid: true } })));
+  const priorTurn = resumedSession?.uuid && execution?.uuid ? await prisma.daemonSessionTurn.findFirst({ where: { sessionUuid: resumedSession.uuid, executionUuid: execution.uuid, status: "interrupted" }, orderBy: { seq: "desc" }, select: { wakeContext: true } }) : null;
+  let teamManaged: boolean;
+  try {
+    teamManaged = ideas.some((idea) => idea?.teamEnrollmentVersion === 1 && Boolean(idea.teamOwnerUuid || idea.teamLeadAgentUuid))
+      || await requiresFencedIdeaTeamResume(auth.companyUuid, connectionUuid, entityType, entityUuid);
+  } catch {
+    await restoreInterruptedExecution(auth.companyUuid, connectionUuid, entityType, entityUuid, result.resumedFrom);
+    await publishExecutionChange(auth.companyUuid, connectionUuid);
+    return errors.conflict("Could not verify the resumed run; the execution is still interrupted — try again.");
+  }
+  if (teamManaged || parseWakeContext(priorTurn?.wakeContext)?.ideaTeam || (connection && RESUME_TURN_CLIENT_TYPES.has(connection.clientType))) {
     try {
       if (!resumedSession?.uuid || !execution?.uuid) throw new Error("no session to resume");
+      if (teamManaged && (!resumedSession.directIdeaUuid || ideaUuids.length !== 1)) throw new Error("Idea Team resume anchor is missing or inconsistent");
       resumeTurnUuid = (await createResumeTurn({
         sessionUuid: resumedSession.uuid,
         executionUuid: execution.uuid,

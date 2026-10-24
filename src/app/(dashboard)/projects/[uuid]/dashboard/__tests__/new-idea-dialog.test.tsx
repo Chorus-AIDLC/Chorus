@@ -179,6 +179,9 @@ describe("NewIdeaDialog — mode gating", () => {
     await user.keyboard("{Enter}");
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(mockAuthFetch.mock.calls.filter(([url]) => url === "/api/ideas/conversational")).toHaveLength(2);
+    const requests = mockAuthFetch.mock.calls.filter(([url]) => url === "/api/ideas/conversational").map(([, init]) => JSON.parse((init as RequestInit).body as string));
+    expect(requests[0].requestUuid).toEqual(expect.any(String));
+    expect(requests[1].requestUuid).toBe(requests[0].requestUuid);
     expect(mockSuccess).toHaveBeenCalledExactlyOnceWith("Idea request submitted.");
     expect(mockSetModalOpen).not.toHaveBeenCalled();
     expect(onCreated).not.toHaveBeenCalled();
@@ -227,6 +230,7 @@ describe("NewIdeaDialog — mode gating", () => {
     const [url, init] = ideaCalls[0];
     expect(url).toBe("/api/ideas/conversational");
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      requestUuid: expect.any(String),
       projectUuid: "proj-1",
       agentUuid: "agent-1",
       connectionUuid: "c1",
@@ -263,6 +267,7 @@ describe("NewIdeaDialog — mode gating", () => {
     )!;
     expect(url).toBe("/api/ideas/conversational");
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      requestUuid: expect.any(String),
       projectUuid: "proj-1",
       agentUuid: "agent-1",
       connectionUuid: "c1",

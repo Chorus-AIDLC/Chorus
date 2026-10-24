@@ -12,6 +12,7 @@ from typing import Any, Mapping, Optional
 import httpx
 
 from .config import ChorusConfig
+from .turn_context import TurnProof
 
 DEFAULT_TIMEOUT = 20.0
 
@@ -53,28 +54,29 @@ class ChorusRest:
         self._async_transport = async_transport
         self._timeout = timeout
 
-    def _headers(self) -> dict:
-        return {"Authorization": f"Bearer {self.cfg.api_key}", "Accept": "application/json"}
+    def _headers(self, turn_proof: Optional[TurnProof] = None) -> dict:
+        return {"Authorization": f"Bearer {self.cfg.api_key}", "Accept": "application/json",
+                **(turn_proof.headers() if turn_proof else {})}
 
     def _url(self, path: str) -> str:
         return f"{self.cfg.url}/{path.lstrip('/')}"
 
     def request(self, method: str, path: str, *, json: Any = None,
-                params: Optional[Mapping[str, Any]] = None) -> Any:
+                params: Optional[Mapping[str, Any]] = None, turn_proof: Optional[TurnProof] = None) -> Any:
         try:
             with httpx.Client(transport=self._transport, timeout=self._timeout) as client:
                 response = client.request(method, self._url(path), json=json, params=params,
-                                          headers=self._headers())
+                                          headers=self._headers(turn_proof))
         except httpx.HTTPError as exc:
             raise ChorusRestError(0, f"request failed: {type(exc).__name__}", path) from exc
         return unwrap(response, path)
 
     async def arequest(self, method: str, path: str, *, json: Any = None,
-                       params: Optional[Mapping[str, Any]] = None) -> Any:
+                       params: Optional[Mapping[str, Any]] = None, turn_proof: Optional[TurnProof] = None) -> Any:
         try:
             async with httpx.AsyncClient(transport=self._async_transport, timeout=self._timeout) as client:
                 response = await client.request(method, self._url(path), json=json, params=params,
-                                                headers=self._headers())
+                                                headers=self._headers(turn_proof))
         except httpx.HTTPError as exc:
             raise ChorusRestError(0, f"request failed: {type(exc).__name__}", path) from exc
         return unwrap(response, path)

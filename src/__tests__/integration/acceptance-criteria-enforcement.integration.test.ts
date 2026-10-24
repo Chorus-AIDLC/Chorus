@@ -27,6 +27,7 @@ const acStore: AcRow[] = [];
 const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockIsAssignmentOwnedByActor, proposalStore } = vi.hoisted(() => {
   const proposalStore = { current: null as Record<string, unknown> | null };
   const mockPrisma = {
+    idea: { findFirst: vi.fn(async () => null) },
     proposal: {
       findFirst: vi.fn(),
       update: vi.fn(),

@@ -231,7 +231,7 @@ export function createDaemonRestClient(opts) {
      * only on interrupted crash/invalid_path reports. Requires the connectionUuid (the
      * server addresses the turn against a connection the agent owns).
      */
-    async turnAdvance({ connectionUuid = getConnectionUuid(), sessionId, turnUuid, turnUuids, admissionUuid, wakeRecoveryProtocol, signal, status, entityType, entityUuid, interruptedReason, transcriptRelayError, wakeError, usage, backendSessionId, coalescedCount }) {
+    async turnAdvance({ connectionUuid = getConnectionUuid(), sessionId, turnUuid, turnUuids, admissionUuid, wakeRecoveryProtocol, ideaTeamProtocol, signal, status, entityType, entityUuid, interruptedReason, transcriptRelayError, wakeError, usage, backendSessionId, coalescedCount }) {
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
         logger.warn(`[Chorus] ${error}`);
@@ -247,7 +247,7 @@ export function createDaemonRestClient(opts) {
         sessionId,
         status,
         ...(turnUuid ? { turnUuid } : {}),
-        ...(wakeRecoveryProtocol === 1 ? { wakeRecoveryProtocol, turnUuids, admissionUuid } : {}),
+        ...(wakeRecoveryProtocol === 1 ? { wakeRecoveryProtocol, ideaTeamProtocol: 1, turnUuids, admissionUuid } : {}),
         // Only sent when BOTH are present, so the server never gets a partial linkage.
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
         // Only meaningful alongside status=interrupted; never sent otherwise.
@@ -296,6 +296,9 @@ export function createDaemonRestClient(opts) {
       const resolvedTurnUuid =
         typeof result.data?.turn?.uuid === "string" ? result.data.turn.uuid : null;
       if (status !== "running") return result;
+      if (ideaTeamProtocol === 1 && result.ok && result.data?.ideaTeamProtocol !== 1) {
+        return { ok: false, status: result.status, retryable: false, error: "Idea Team admission proof unavailable; upgrade server" };
+      }
       if (wakeRecoveryProtocol === 1 && result.ok && resolvedTurnUuid !== turnUuid) {
         return { ok: false, status: result.status, retryable: true, error: "Exact admission response correlation unavailable" };
       }
@@ -419,7 +422,7 @@ export function createDaemonRestClient(opts) {
       }
       // Declare support for isolated Research turns. Legacy clients receive the
       // same requests and acknowledge them through their existing FIFO path.
-      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&researchProtocol=1&operationProtocol=1&wakeRecoveryProtocol=1`;
+      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&researchProtocol=1&operationProtocol=1&wakeRecoveryProtocol=1&ideaTeamProtocol=1`;
       let response;
       try {
         response = await deliveryRequest(async (requestSignal) => {

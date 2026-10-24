@@ -88,7 +88,7 @@ function mountProject(accessLevel: "viewer" | "editor" = "editor", locale: "en" 
 }
 
 async function selectProjectLead(user: ReturnType<typeof userEvent.setup>) {
-  const trigger = await screen.findByRole("combobox", { name: "Choose a lead explicitly…" });
+  const trigger = await screen.findByRole("combobox", { name: en.projectTeam.chooseLead });
   trigger.focus();
   await user.keyboard("{Enter}");
   await user.click(within(await screen.findByRole("listbox")).getByRole("option", { name: /Alice/ }));
@@ -101,7 +101,7 @@ describe("personal project team controls", () => {
     await user.click(screen.getByRole("button", { name: "My project team" }));
     expect(await screen.findByText(/Viewers can configure/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Preview handoff" })).not.toBeInTheDocument();
-    const lead = within(screen.getByRole("region", { name: "Lead" }));
+    const lead = within(screen.getByRole("region", { name: en.settings.teams.roles.lead.name }));
     await user.click(lead.getByRole("button", { name: "Empty role" }));
     expect(screen.getByRole("button", { name: "Save team" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Save team" }));
@@ -155,7 +155,7 @@ describe("personal project team controls", () => {
   it("retains failed-save edits, supports empty overrides and resets inheritance", async () => {
     const user = setupProject();
     mountProject();
-    const lead = within(await screen.findByRole("region", { name: "Lead" }));
+    const lead = within(await screen.findByRole("region", { name: en.settings.teams.roles.lead.name }));
     await user.click(lead.getByRole("button", { name: "Empty role" }));
     expect(lead.getByText("Overridden")).toBeInTheDocument();
     expect(lead.getByText(/No members/)).toBeInTheDocument();
@@ -202,7 +202,7 @@ describe("personal project team controls", () => {
     const user = setupProject({ ...projectTeam, templateUuid: null, frozen: true });
     mountProject();
     expect(await screen.findByText(/was deleted/)).toBeInTheDocument();
-    await user.click(within(screen.getByRole("region", { name: "Lead" })).getByRole("button", { name: "Empty role" }));
+    await user.click(within(screen.getByRole("region", { name: en.settings.teams.roles.lead.name })).getByRole("button", { name: "Empty role" }));
     await user.click(screen.getByRole("button", { name: "Save team" }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(JSON.parse(writes()[0][1].body)).toEqual({ templateUuid: null, overrides: { lead: [] } });
@@ -239,21 +239,24 @@ describe("personal project team controls", () => {
     await user.click(screen.getByRole("button", { name: "Confirm Idea handoff" }));
     expect(await screen.findByText(/This preview is stale/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm Idea handoff" })).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Choose a lead explicitly…" })).toHaveTextContent("Alice");
+    expect(screen.getByRole("combobox", { name: en.projectTeam.chooseLead })).toHaveTextContent("Alice");
     await user.click(screen.getByRole("button", { name: "Preview handoff" }));
     expect(await screen.findByRole("button", { name: "Confirm Idea handoff" })).toBeEnabled();
   });
 
-  it("shows eligibility separately from offline presence and prevents ineligible selection", async () => {
+  it("keeps optional default-role eligibility separate and allows a non-lead Idea assignee", async () => {
     const user = setupProject({ ...projectTeam, roles: { ...projectTeam.roles, lead: [{ ...projectTeam.roles.lead[0], eligible: false, missingPermissions: ["idea:admin"], activeCount: 2 }] } });
     mountProject();
     expect(await screen.findByText("Missing permissions: idea:admin")).toBeInTheDocument();
     expect(screen.getByText("Offline · 2 active / queued")).toBeInTheDocument();
-    screen.getByRole("combobox", { name: "Choose a lead explicitly…" }).focus();
+    screen.getByRole("combobox", { name: en.projectTeam.chooseLead }).focus();
     await user.keyboard("{Enter}");
-    expect(await screen.findByRole("option", { name: /Alice/ })).toHaveAttribute("aria-disabled", "true");
-    await user.keyboard("{Escape}");
-    expect(writes()).toHaveLength(0);
+    expect(await screen.findByRole("option", { name: /Alice/ })).not.toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: /Reader/ })).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("option", { name: /Bob/ }));
+    await user.click(screen.getByRole("button", { name: "Preview handoff" }));
+    await screen.findByRole("button", { name: "Confirm Idea handoff" });
+    expect(JSON.parse(writes()[0][1].body)).toEqual({ leadAgentUuid: second.uuid, preview: true });
   });
 
   it.each(["en", "zh", "ja", "ko"] as const)("renders %s and keeps catalog keys in parity", async (locale) => {
@@ -303,7 +306,7 @@ describe("personal team settings", () => {
     const dialog = await create(user);
     expect(dialog.getByText(/You have no agents yet/)).toBeInTheDocument();
     expect(dialog.getByRole("link", { name: "Manage your agents in Settings" })).toHaveAttribute("href", "/settings");
-    expect(dialog.getAllByRole("group", { name: /^(Product|Development|Review|Lead)$/ })).toHaveLength(4);
+    expect(dialog.getAllByRole("group", { name: /^(Product|Development|Review|Default assignee \(optional\))$/ })).toHaveLength(4);
     expect(dialog.getByRole("button", { name: "Save team" })).toBeDisabled();
     await user.type(dialog.getByLabelText("Team name"), "   ");
     expect(dialog.getByRole("button", { name: "Save team" })).toBeDisabled();

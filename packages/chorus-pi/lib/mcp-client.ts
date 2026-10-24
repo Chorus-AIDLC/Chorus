@@ -1,4 +1,5 @@
 import type { ChorusConnection } from "./lib.js";
+import { ideaTeamHeaders, ideaTeamProofFromEnv } from "../bin/idea-team-transport.mjs";
 
 export interface McpTool {
   name: string;
@@ -17,6 +18,7 @@ export interface McpResult {
 }
 
 export interface McpClientOptions extends ChorusConnection {
+  env?: Record<string, string | undefined>;
   version?: string;
   timeoutMs?: number;
   fetch?: typeof fetch;
@@ -34,7 +36,11 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 export class McpClient {
-  constructor(private readonly options: McpClientOptions) {}
+  private readonly turnHeaders: Record<string, string>;
+
+  constructor(private readonly options: McpClientOptions) {
+    this.turnHeaders = ideaTeamHeaders(ideaTeamProofFromEnv(options.env ?? process.env));
+  }
 
   private async operation<T>(
     signal: AbortSignal | undefined,
@@ -59,6 +65,7 @@ export class McpClient {
     });
     const headers: Record<string, string> = {
       Authorization: `Bearer ${apiKey}`,
+      ...this.turnHeaders,
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
     };

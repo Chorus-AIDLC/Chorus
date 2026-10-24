@@ -10,6 +10,9 @@
 // `@chorus`.
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   KiroSpawner,
   buildKiroArgs,
@@ -147,6 +150,28 @@ describe("resolveKiroPath", () => {
 
 describe("KiroSpawner.wake — spawn orchestration", () => {
   const creds = { url: "https://chorus.test", apiKey: "cho_secret" };
+
+  it("uses a unique fenced agent profile and removes it when the run exits", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "chorus-kiro-fence-"));
+    try {
+      const agents = join(cwd, ".kiro", "agents");
+      mkdirSync(agents, { recursive: true });
+      writeFileSync(join(agents, "chorus.json"), JSON.stringify({ name: "chorus", includeMcpJson: true }));
+      const child = makeFakeChild();
+      const { spawner, calls } = makeSpawner({ child });
+      const ideaTeamTurn = { turnUuid: ANCHOR, admissionUuid: SID };
+      const pending = spawner.wake({ prompt: "go", sessionId: ANCHOR, cwd, ideaTeamTurn });
+      const agentName = calls.argv[calls.argv.indexOf("--agent") + 1];
+      const path = join(agents, `${agentName}.json`);
+      expect(agentName).toMatch(/^chorus-turn-/);
+      expect(JSON.parse(readFileSync(path, "utf8")).mcpServers.chorus.headers["X-Chorus-Turn-Uuid"]).toBe(ANCHOR);
+      expect(calls.opts.env.CHORUS_ADMISSION_UUID).toBe(SID);
+      child.emit("close", 0);
+      await pending;
+      expect(existsSync(path)).toBe(false);
+      expect(JSON.parse(readFileSync(join(agents, "chorus.json"), "utf8"))).toEqual({ name: "chorus", includeMcpJson: true });
+    } finally { rmSync(cwd, { recursive: true, force: true }); }
+  });
 
   /** Build a spawner whose spawnImpl returns our fake child + records the call. */
   function makeSpawner({

@@ -1,9 +1,10 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { AuthContext } from "@/types/auth";
 import { AGENT_TEAM_ROLES } from "@/lib/agent-team-roles";
 import { eventBus } from "@/lib/event-bus";
-import { createActivityInTx } from "@/services/activity.service";
+import { assignIdeaWithAuthorityInTx } from "@/services/idea-assignment-authorization.service";
+import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import { computeDerivedStatus, rollupThemeDerivedStatus, type DerivedIdeaStatus } from "@/services/idea.service";
 import { computeProjectAccess, levelAtLeast } from "@/services/project-access.service";
 import { getProjectAgentTeam, ProjectTeamError, projectTeamTransaction, type ProjectTeamClient } from "@/services/project-agent-team.service";
@@ -156,8 +157,11 @@ async function readState(auth: AuthContext, projectUuid: string, leadAgentUuid: 
   const team = await getProjectAgentTeam(auth, projectUuid, client);
   const config = await client.projectAgentTeam.findFirst({ where: scope });
   if (!team || !config) throw new ProjectTeamError("NOT_FOUND", "Project team not found");
-  const lead = team.roles.lead.find((member) => member.agentUuid === leadAgentUuid && member.eligible);
-  if (!lead) throw new ProjectTeamError("CONFLICT", "Select a current eligible lead and preview again");
+  const lead = await client.agent.findFirst({ where: { uuid: leadAgentUuid, companyUuid: auth.companyUuid, ownerUuid: auth.actorUuid } });
+  if (!lead || !computeEffectivePermissions(lead.roles, lead.permissions).has("idea:write")
+    || !levelAtLeast((await computeProjectAccess({ type: "agent", companyUuid: auth.companyUuid, actorUuid: lead.uuid, ownerUuid: auth.actorUuid }, projectUuid, client)).level, "editor")) {
+    throw new ProjectTeamError("CONFLICT", "Select a current eligible Idea assignee and preview again");
+  }
   const agents = await client.agent.findMany({
     where: { companyUuid: auth.companyUuid, ownerUuid: auth.actorUuid }, select: { uuid: true }, orderBy: { uuid: "asc" },
   });
@@ -174,6 +178,7 @@ async function readState(auth: AuthContext, projectUuid: string, leadAgentUuid: 
       uuid: true, title: true, status: true, elaborationStatus: true, parentUuid: true, isContainer: true,
       assigneeType: true, assigneeUuid: true, assignedAt: true, updatedAt: true,
       cwdSource: true, cwdHost: true, runtimeCwd: true,
+      teamGeneration: true, teamEnrollmentVersion: true,
     }, orderBy: { uuid: "asc" },
   });
   const lifecycle = await derivedStatuses(client, auth.companyUuid, projectUuid, ideas);
@@ -192,7 +197,7 @@ async function readState(auth: AuthContext, projectUuid: string, leadAgentUuid: 
   });
   const fingerprint = createHash("sha256").update(stable({
     companyUuid: auth.companyUuid, actorUuid: auth.actorUuid, projectUuid, leadAgentUuid,
-    config, template, preference,
+    config, template, preference, lead: { uuid: lead.uuid, ownerUuid: lead.ownerUuid, roles: lead.roles, permissions: lead.permissions },
     roles: AGENT_TEAM_ROLES.map((role) => [role, team.roles[role].map((member) => ({
       agentUuid: member.agentUuid, eligible: member.eligible, hasProjectAccess: member.hasProjectAccess,
       missingPermissions: [...member.missingPermissions].sort(),
@@ -212,6 +217,7 @@ export async function handoffProjectTeam(auth: AuthContext, projectUuid: string,
   projectUuid = project.data;
   const request = parsed.data;
   const confirmed = "confirmationToken" in request ? readToken(request.confirmationToken) : null;
+  const operationUuids = new Map<string, string>();
   const committed = await projectTeamTransaction(async (client) => {
     const state = await readState(auth, projectUuid, request.leadAgentUuid, client);
     const candidates = state.candidates.map(({ uuid, title, status, assigneeType, assigneeUuid }) => ({
@@ -239,35 +245,25 @@ export async function handoffProjectTeam(auth: AuthContext, projectUuid: string,
       await client.projectAgentCwdPreference.update({ where: { uuid: preference.uuid }, data: { anchorAgentInstanceUuid: instanceUuid } });
     }
     const publish: (() => void)[] = [];
-    for (const idea of changed) {
+    for (const idea of state.candidates) {
+      const reassigned = changed.some((candidate) => candidate.uuid === idea.uuid);
       const updated = await client.idea.updateMany({
-        where: { uuid: idea.uuid, companyUuid: auth.companyUuid, projectUuid, assigneeType: idea.assigneeType, assigneeUuid: idea.assigneeUuid, status: idea.status, updatedAt: idea.updatedAt },
-        data: {
-          assigneeType: instanceUuid ? "agent_instance" : "agent", assigneeUuid: instanceUuid ?? request.leadAgentUuid,
-          teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: request.leadAgentUuid, teamProductAgentUuid: null,
-          status: idea.status === "open" ? "elaborating" : idea.status,
-          assignedByType: "user", assignedByUuid: auth.actorUuid, assignedAt: new Date(),
-          cwdSource: preference ? "project_fixed" : null, cwdHost: preference?.host ?? null, runtimeCwd: preference?.cwd ?? null,
-        },
+        where: { uuid: idea.uuid, companyUuid: auth.companyUuid, projectUuid, assigneeType: idea.assigneeType, assigneeUuid: idea.assigneeUuid, status: idea.status, updatedAt: idea.updatedAt, teamGeneration: idea.teamGeneration },
+        data: { updatedAt: idea.updatedAt },
       });
       if (updated.count !== 1) conflict();
-      const activity = await createActivityInTx(client, {
-        companyUuid: auth.companyUuid, projectUuid, targetType: "idea", targetUuid: idea.uuid,
-        actorType: "user", actorUuid: auth.actorUuid, action: "assigned",
-        value: {
-          assigneeType: "agent", assigneeUuid: request.leadAgentUuid,
-          ...(instanceUuid ? { instanceUuid } : {}),
-          ...(preference ? { resolvedCwdSource: "project_fixed", resolvedCwdHost: preference.host, resolvedRuntimeCwd: preference.cwd } : {}),
-        },
-      });
-      publish.push(activity.publish, () => eventBus.emitChange({ companyUuid: auth.companyUuid, projectUuid, entityType: "idea", entityUuid: idea.uuid, action: "updated" }));
+      const operationUuid = operationUuids.get(idea.uuid) ?? randomUUID();
+      operationUuids.set(idea.uuid, operationUuid);
+      const assignment = await assignIdeaWithAuthorityInTx(auth, {
+        ideaUuid: idea.uuid, assigneeType: "agent", assigneeUuid: request.leadAgentUuid, operationUuid,
+        instanceUuid: reassigned ? instanceUuid : idea.assigneeType === "agent_instance" ? idea.assigneeUuid : null,
+        cwdSource: reassigned ? preference ? "project_fixed" : null : idea.cwdSource,
+        cwdHost: reassigned ? preference?.host ?? null : idea.cwdHost,
+        runtimeCwd: reassigned ? preference?.cwd ?? null : idea.runtimeCwd,
+      }, client);
+      if (assignment.publish) publish.push(assignment.publish);
+      publish.push(() => eventBus.emitChange({ companyUuid: auth.companyUuid, projectUuid, entityType: "idea", entityUuid: idea.uuid, action: "updated" }));
     }
-    await client.idea.updateMany({
-      where: { companyUuid: auth.companyUuid, projectUuid, uuid: { in: state.candidates.filter((idea) => !changed.some((candidate) => candidate.uuid === idea.uuid)).map((idea) => idea.uuid) },
-        OR: [{ teamOwnerUuid: null }, { teamOwnerUuid: { not: auth.actorUuid } }, { teamLeadAgentUuid: null }, { teamLeadAgentUuid: { not: request.leadAgentUuid } }],
-      },
-      data: { teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: request.leadAgentUuid, teamProductAgentUuid: null },
-    });
     const saved = await client.projectAgentTeam.updateMany({
       where: { uuid: state.config.uuid, companyUuid: auth.companyUuid, ownerUuid: auth.actorUuid, projectUuid, revision: state.config.revision },
       data: { lastLeadAgentUuid: request.leadAgentUuid, revision: { increment: 1 } },

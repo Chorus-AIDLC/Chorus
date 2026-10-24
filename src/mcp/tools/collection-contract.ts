@@ -414,6 +414,7 @@ export const TOOL_COLLECTION_CLASSIFICATION = {
   chorus_pm_add_document_draft: "non-collection",
   chorus_pm_add_task_draft: "non-collection",
   chorus_pm_assign_idea: "non-collection",
+  chorus_prepare_idea_assignment: "non-collection",
   chorus_pm_assign_task: "non-collection",
   chorus_pm_create_document: "non-collection",
   chorus_pm_create_idea: "non-collection",

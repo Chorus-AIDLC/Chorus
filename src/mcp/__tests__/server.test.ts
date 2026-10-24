@@ -343,6 +343,7 @@ describe("MCP tool permission wiring", () => {
         // idea:admin-gated (a directed reassignment/takeover). admin_agent
         // carries idea:admin; pm_agent (idea:write only) does not.
         "chorus_pm_assign_idea",
+        "chorus_prepare_idea_assignment",
       ]);
       expect(registered).toEqual(expected);
     });

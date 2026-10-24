@@ -864,7 +864,7 @@ function IdeaDetailPanelContent({
                   {verified && <p role="status" className="mb-4 text-xs text-muted-foreground">{t("elaboration.verifiedQueuedHint")}</p>}
                   {verifyError && <p role="alert" className="mb-4 text-xs text-destructive">{verifyError}</p>}
                   {isContainer && <p className="mb-4 text-xs text-muted-foreground">{tLineage("containerHint")}</p>}
-                  <div className="mb-4"><IdeaTeamGates ideaUuid={idea.uuid} revision={idea.updatedAt} /></div>
+                  <IdeaTeamGates ideaUuid={idea.uuid} revision={idea.updatedAt} className="mt-0 mb-4" />
                   {/* Overview Tab */}
                   {visitedTabs.has("overview") && (
                     <div style={{ display: activeTab === "overview" ? "block" : "none" }}>

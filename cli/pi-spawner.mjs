@@ -32,6 +32,8 @@
 // Reuses claude-spawner's LF-only NDJSON parser (parseNdjsonChunk — pi requires
 // LF-only framing, i.e. NOT readline) and the shared stop-hook / settlement seams.
 
+import { ideaTeamRuntimeConfig } from "./idea-team-runtime-config.mjs";
+import { ideaTeamRunEnv } from "./idea-team-transport.mjs";
 import { spawn, execFile } from "node:child_process";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
@@ -582,17 +584,21 @@ export class PiSpawner {
    *   pre-spawn failure paths (no run started, nothing to resume).
    */
   async wake(params) {
+    let runtimeConfig;
     const diagnostics = createWakeErrorCollector({ source: this.wakeErrorSource, env: this.env, creds: this.creds });
     try {
-      return await this.#wake(params, diagnostics);
+      runtimeConfig = ideaTeamRuntimeConfig({ runtime: "pi", env: this.env, cwd: params.cwd, creds: this.creds, ideaTeamTurn: params.ideaTeamTurn });
+      return await this.#wake({ ...params, runtimeEnv: runtimeConfig.env }, diagnostics);
     } catch (error) {
       diagnostics.fail(error, "startup");
       return { sessionId: params.sessionId || "", backendSessionId: null, exitCode: null,
         isNew: Boolean(params.isNew), wakeError: diagnostics.build() };
+    } finally {
+      runtimeConfig?.cleanup();
     }
   }
 
-  async #wake({ prompt, sessionId, isNew, cwd, onMessage, onChild }, diagnostics) {
+  async #wake({ prompt, ideaTeamTurn, runtimeEnv, sessionId, isNew, cwd, onMessage, onChild }, diagnostics) {
     const anchor = typeof sessionId === "string" ? sessionId : "";
     const isNewFlag = Boolean(isNew);
 
@@ -621,7 +627,8 @@ export class PiSpawner {
     // Export the daemon's resolved connection pair for the chorus-pi extension's
     // Chorus tooling. Explicitly overwrite inherited values so the extension and the
     // daemon cannot disagree about which Chorus instance this wake belongs to.
-    const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
+    const childEnv = { ...ideaTeamRunEnv(this.env, ideaTeamTurn), CHORUS_DAEMON_HEADLESS: "1" };
+    Object.assign(childEnv, runtimeEnv);
     if (this.creds) {
       if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
       if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;

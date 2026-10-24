@@ -6,14 +6,16 @@
 //  - Agent target must hold idea:write (reuses the effective-permission gate);
 //    user target must be same-company; instanceUuid only valid for agent targets
 //    and a foreign/unknown pin is rejected.
-//  - Reuses ideaService.assignIdea (silent takeover; open→elaborating else
-//    status preserved) and — CRITICALLY — emits the actor-bearing `assigned`
-//    Activity that drives the existing idea_claimed wake.
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { randomUUID } from "node:crypto";
+import type { ZodType } from "zod";
+import { ApiError } from "@/lib/api-handler";
 
 const mockIdeaService = vi.hoisted(() => ({
   getIdeaByUuid: vi.fn(),
   assignIdea: vi.fn(),
+  claimIdea: vi.fn(),
+  releaseIdea: vi.fn(),
 }));
 
 const mockActivityService = vi.hoisted(() => ({
@@ -61,10 +63,12 @@ type ToolHandler = (params: Record<string, unknown>) => Promise<{
   isError?: boolean;
 }>;
 const toolHandlers: Record<string, ToolHandler> = {};
+const toolSchemas: Record<string, ZodType> = {};
 
 const fakeMcpServer = {
-  registerTool: (name: string, _meta: unknown, handler: ToolHandler) => {
+  registerTool: (name: string, meta: { inputSchema: ZodType }, handler: ToolHandler) => {
     toolHandlers[name] = handler;
+    toolSchemas[name] = meta.inputSchema;
   },
 };
 
@@ -157,7 +161,7 @@ describe("chorus_pm_assign_idea — permission gating (AC1)", () => {
 describe("chorus_pm_assign_idea — agent target (AC2/AC4)", () => {
   beforeEach(() => registerWith(buildAuth()));
 
-  it("assigns to an eligible agent and emits the actor-bearing assigned Activity", async () => {
+  it("assigns with the authenticated executor and leaves transactional audit publication to the service", async () => {
     const res = await toolHandlers["chorus_pm_assign_idea"]({
       ideaUuid,
       assigneeType: "agent",
@@ -173,27 +177,14 @@ describe("chorus_pm_assign_idea — agent target (AC2/AC4)", () => {
         assigneeUuid: targetAgentUuid,
         assignedByType: "agent",
         assignedByUuid: callerUuid,
+        auth: buildAuth(),
       }),
     );
-    // The critical wake trigger: assigned Activity, actorType agent, caller as actor.
-    expect(mockActivityService.createActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        companyUuid,
-        projectUuid,
-        targetType: "idea",
-        targetUuid: ideaUuid,
-        action: "assigned",
-        actorType: "agent",
-        actorUuid: callerUuid,
-        value: expect.objectContaining({
-          assigneeType: "agent",
-          assigneeUuid: targetAgentUuid,
-        }),
-      }),
-    );
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+    expect(JSON.parse(res.content[0].text).wakeRequested).toBe(false);
   });
 
-  it("does not forward instanceUuid to assignIdea nor the Activity when unpinned", async () => {
+  it("keeps an unpinned assignment unpinned without publishing a duplicate Activity", async () => {
     await toolHandlers["chorus_pm_assign_idea"]({
       ideaUuid,
       assigneeType: "agent",
@@ -201,8 +192,8 @@ describe("chorus_pm_assign_idea — agent target (AC2/AC4)", () => {
     });
     const assignArgs = mockIdeaService.assignIdea.mock.calls[0][0];
     expect(assignArgs).not.toHaveProperty("instanceUuid");
-    const activityValue = mockActivityService.createActivity.mock.calls[0][0].value;
-    expect(activityValue).not.toHaveProperty("instanceUuid");
+    expect(assignArgs.auth).toEqual(buildAuth());
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
   });
 
   it("resolves the target with the caller owner's project context", async () => {
@@ -278,7 +269,7 @@ describe("chorus_pm_assign_idea — agent target (AC2/AC4)", () => {
 describe("chorus_pm_assign_idea — instance pin (AC2)", () => {
   beforeEach(() => registerWith(buildAuth()));
 
-  it("forwards instanceUuid into assignIdea and the Activity value when provided", async () => {
+  it("forwards instanceUuid and authenticated executor into the audited service", async () => {
     await toolHandlers["chorus_pm_assign_idea"]({
       ideaUuid,
       assigneeType: "agent",
@@ -293,16 +284,8 @@ describe("chorus_pm_assign_idea — instance pin (AC2)", () => {
         instanceUuid,
       }),
     );
-    // Value mirrors the human path: raw agent identity + the pinned instance uuid.
-    expect(mockActivityService.createActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        value: expect.objectContaining({
-          assigneeType: "agent",
-          assigneeUuid: targetAgentUuid,
-          instanceUuid,
-        }),
-      }),
-    );
+    expect(mockIdeaService.assignIdea.mock.calls[0][0].auth).toEqual(buildAuth());
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
   });
 
   it("rejects a foreign/unknown instance pin surfaced by the service", async () => {
@@ -354,18 +337,8 @@ describe("chorus_pm_assign_idea — instance pin (AC2)", () => {
         runtimeCwd: "/fixed/project",
       }),
     );
-    expect(mockActivityService.createActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        value: {
-          assigneeType: "agent",
-          assigneeUuid: targetAgentUuid,
-          instanceUuid: "fixed-instance",
-          resolvedCwdSource: "project_fixed",
-          resolvedCwdHost: "fixed-host",
-          resolvedRuntimeCwd: "/fixed/project",
-        },
-      }),
-    );
+    expect(mockIdeaService.assignIdea.mock.calls[0][0].auth).toEqual(buildAuth());
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
     expect(JSON.parse(res.content[0].text)).toMatchObject({
       assignee: { type: "agent_instance", uuid: "fixed-instance" },
       target: {
@@ -431,7 +404,7 @@ describe("chorus_pm_assign_idea — instance pin (AC2)", () => {
 describe("chorus_pm_assign_idea — user target (AC2/AC4)", () => {
   beforeEach(() => registerWith(buildAuth()));
 
-  it("assigns to a same-company user and emits the assigned Activity (no instance)", async () => {
+  it("assigns to a same-company user through the audited service without a pin", async () => {
     mockIdeaService.assignIdea.mockResolvedValue({
       uuid: ideaUuid,
       status: "elaborating",
@@ -453,16 +426,8 @@ describe("chorus_pm_assign_idea — user target (AC2/AC4)", () => {
         assignedByUuid: callerUuid,
       }),
     );
-    expect(mockActivityService.createActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "assigned",
-        actorType: "agent",
-        value: expect.objectContaining({
-          assigneeType: "user",
-          assigneeUuid: targetUserUuid,
-        }),
-      }),
-    );
+    expect(mockIdeaService.assignIdea.mock.calls[0][0].auth).toEqual(buildAuth());
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
     // Agent-eligibility lookup must NOT be consulted for a user target.
     expect(mockAgentService.getAgentByUuid).not.toHaveBeenCalled();
   });
@@ -595,5 +560,83 @@ describe("chorus_pm_assign_idea — idea lookup", () => {
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toMatch(/not found/i);
     expect(mockIdeaService.assignIdea).not.toHaveBeenCalled();
+  });
+});
+
+describe("MCP assignment authority and operation identity", () => {
+  beforeEach(() => registerWith(buildAuth()));
+
+  it.each([true, false])("forwards proof with explicit operation key=%s and cannot forge the authenticated human origin", async (explicit) => {
+    const humanAuthorizationUuid = randomUUID();
+    const operationUuid = explicit ? randomUUID() : undefined;
+    const input = toolSchemas.chorus_pm_assign_idea.parse({
+      ideaUuid, assigneeType: "agent", assigneeUuid: targetAgentUuid, humanAuthorizationUuid, operationUuid,
+      auth: { type: "user", actorUuid: "forged-human" }, assignedByType: "user", assignedByUuid: "forged-human",
+    }) as Record<string, unknown>;
+    await toolHandlers.chorus_pm_assign_idea(input);
+    expect(mockIdeaService.assignIdea).toHaveBeenCalledWith(expect.objectContaining({
+      auth: buildAuth(), humanAuthorizationUuid, operationUuid: operationUuid ?? humanAuthorizationUuid,
+      assignedByType: "agent", assignedByUuid: callerUuid,
+    }));
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+  });
+
+  it.each(["humanAuthorizationUuid", "operationUuid"])("rejects malformed %s through the registered schema", (field) => {
+    expect(toolSchemas.chorus_pm_assign_idea.safeParse({
+      ideaUuid, assigneeType: "agent", assigneeUuid: targetAgentUuid, [field]: "not-a-uuid",
+    }).success).toBe(false);
+    expect(mockIdeaService.assignIdea).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false, undefined, "true"])("derives wakeRequested only from the service's exact boolean kickoff: %s", async (assignmentKickoff) => {
+    mockIdeaService.getIdeaByUuid.mockResolvedValue({ uuid: ideaUuid, projectUuid, assigneeType: "agent", assigneeUuid: targetAgentUuid });
+    mockUuidResolver.resolveAssigneeAgentUuid.mockResolvedValue(targetAgentUuid);
+    mockIdeaService.assignIdea.mockResolvedValue({ uuid: ideaUuid, status: "elaborating", assignmentKickoff });
+    const response = await toolHandlers.chorus_pm_assign_idea({
+      ideaUuid, assigneeType: "agent", assigneeUuid: targetAgentUuid, humanAuthorizationUuid: randomUUID(),
+    });
+    expect(JSON.parse(response.content[0].text).wakeRequested).toBe(assignmentKickoff === true);
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+  });
+
+  it("propagates invalid proof denial without an adapter-side audit or wake", async () => {
+    const error = new ApiError("FORBIDDEN", "Assignment authorization is invalid", 403);
+    mockIdeaService.assignIdea.mockRejectedValueOnce(error);
+    await expect(toolHandlers.chorus_pm_assign_idea({
+      ideaUuid, assigneeType: "agent", assigneeUuid: targetAgentUuid, humanAuthorizationUuid: randomUUID(),
+    })).rejects.toBe(error);
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe("MCP self-claim and release authenticated origin", () => {
+  beforeEach(() => registerWith(buildAuth(["idea:write"])));
+
+  it("self-claims as the authenticated agent without inheriting client-supplied human authority or a second audit", async () => {
+    mockIdeaService.claimIdea.mockResolvedValue({ uuid: ideaUuid, status: "elaborating" });
+    const input = toolSchemas.chorus_claim_idea.parse({
+      ideaUuid, auth: { type: "user", actorUuid: "forged-human" }, humanAuthorizationUuid: randomUUID(), assigneeUuid: targetAgentUuid,
+    }) as Record<string, unknown>;
+    await toolHandlers.chorus_claim_idea(input);
+    expect(mockIdeaService.claimIdea).toHaveBeenCalledWith({
+      auth: buildAuth(["idea:write"]), ideaUuid, companyUuid, assigneeType: "agent", assigneeUuid: callerUuid,
+    });
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+  });
+
+  it("passes current actor identity to release after checking assignment ownership", async () => {
+    mockUuidResolver.isAssignmentOwnedByActor.mockResolvedValue(true);
+    mockIdeaService.releaseIdea.mockResolvedValue({ uuid: ideaUuid, status: "open" });
+    await toolHandlers.chorus_release_idea({ ideaUuid });
+    expect(mockIdeaService.releaseIdea).toHaveBeenCalledWith(ideaUuid, buildAuth(["idea:write"]));
+    expect(mockUuidResolver.isAssignmentOwnedByActor).toHaveBeenCalledWith(buildAuth(["idea:write"]), null, null);
+  });
+
+  it("never releases another agent's assignment", async () => {
+    mockUuidResolver.isAssignmentOwnedByActor.mockResolvedValue(false);
+    const result = await toolHandlers.chorus_release_idea({ ideaUuid });
+    expect(result.isError).toBe(true);
+    expect(mockIdeaService.releaseIdea).not.toHaveBeenCalled();
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
   });
 });

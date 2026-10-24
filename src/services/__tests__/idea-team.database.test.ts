@@ -10,6 +10,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { PrismaClient, type Prisma } from "../../generated/prisma/client";
 import type { AgentAuthContext, AuthContext } from "@/types/auth";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { IdeaTeamActorContext, IdeaTeamTurnFence } from "@/types/idea-team";
+import { createWakeContext, parseWakeContext } from "../daemon-wake-context";
+import { readIdeaTeamTurnContext } from "@/lib/idea-team-turn-context";
 
 vi.mock("@/generated/prisma/client", async () => import("../../generated/prisma/client"));
 const state = vi.hoisted(() => ({ db: null as unknown, emit: vi.fn(), emitChange: vi.fn(), deliverActivities: false }));
@@ -96,6 +99,60 @@ describe("Idea Team routing and gates against isolated PostgreSQL", () => {
   }
 
   const actor = (identity: AuthContext) => ({ actorType: identity.type, actorUuid: identity.actorUuid });
+
+  async function versionedIdea() {
+    return idea({ assigneeUuid: developer.actorUuid, teamLeadAgentUuid: developer.actorUuid, teamEnrollmentVersion: 1, teamGeneration: 1, teamEnrolledAt: new Date(), teamEnrolledByUuid: auth.actorUuid });
+  }
+
+  async function teamTurn(ideaUuid: string, identity = developer, role: IdeaTeamTurnFence["role"] = "orchestrator", pending = false) {
+    const source = await db.idea.findUniqueOrThrow({ where: { uuid: ideaUuid } });
+    const fence: IdeaTeamTurnFence = { ideaUuid, generation: source.teamGeneration, ownerUuid: auth.actorUuid, agentUuid: identity.actorUuid, role };
+    const connection = await db.daemonConnection.create({ data: { companyUuid: auth.companyUuid, agentUuid: identity.actorUuid, clientType: "codex", host: randomUUID(), cwd: "/work", status: "online" } });
+    const session = await db.daemonSession.create({ data: { companyUuid: auth.companyUuid, agentUuid: identity.actorUuid, sessionId: `${ideaUuid}::${connection.uuid}`, directIdeaUuid: ideaUuid, originConnectionUuid: connection.uuid } });
+    const notification = await db.notification.create({ data: { companyUuid: auth.companyUuid, projectUuid, recipientType: "agent", recipientUuid: identity.actorUuid, entityType: "idea", entityUuid: ideaUuid, action: role === "product" ? "team_product_handoff" : "team_lead_handoff", actorType: "user", actorUuid: auth.actorUuid, message: "Continue", entityTitle: "Idea", projectName: "Project", actorName: "Owner" } });
+    const wakeContext = { ...createWakeContext(notification)!, ideaTeam: { ...fence } };
+    const admissionUuid = randomUUID();
+    const turn = await db.daemonSessionTurn.create({ data: { sessionUuid: session.uuid, seq: 1, trigger: "task_assigned", wakeNotificationUuid: notification.uuid, wakeContext, wakeTargetConnectionUuid: connection.uuid, status: pending ? "pending" : "running", ...(!pending ? { admissionUuid, admissionConnectionUuid: connection.uuid, startedAt: new Date() } : {}) } });
+    const context: IdeaTeamActorContext = { ...actor(identity), turnUuid: turn.uuid, admissionUuid };
+    return { turn, context, fence, connection, session, wakeContext, auth: { ...identity, ideaTeamTurn: { turnUuid: turn.uuid, admissionUuid } } };
+  }
+
+  it("exposes assignment confirmation only to the receiving human owner with project editor access", async () => {
+    const source = await versionedIdea();
+    expect((await service.getIdeaTeamContext(auth, source.uuid)).canAuthorizeAssignment).toBe(true);
+    expect((await service.getIdeaTeamContext(developer, source.uuid)).canAuthorizeAssignment).toBe(false);
+    const other = await db.user.create({ data: { companyUuid: auth.companyUuid, oidcSub: randomUUID() } });
+    expect(await service.getIdeaTeamContext({ type: "user", companyUuid: auth.companyUuid, actorUuid: other.uuid }, source.uuid)).toMatchObject({ canAuthorizeAssignment: false, routing: null });
+    await db.project.update({ where: { uuid: projectUuid }, data: { visibility: "private" } });
+    await db.projectMember.create({ data: { companyUuid: auth.companyUuid, projectUuid, userUuid: auth.actorUuid, role: "viewer" } });
+    await db.projectMember.create({ data: { companyUuid: auth.companyUuid, projectUuid, userUuid: other.uuid, role: "admin" } });
+    expect((await service.getIdeaTeamContext(auth, source.uuid)).canAuthorizeAssignment).toBe(false);
+  });
+
+  it("rejects every turnless control alias of a managed business session without session metadata", async () => {
+    const source = await versionedIdea();
+    const target = await pinnedConnection(developer, "resume-alias", "/resume-alias");
+    vi.doMock("@/lib/auth", () => ({ getAuthContext: async () => auth, hasPermission: () => false }));
+    try {
+      const { NextRequest } = await import("next/server");
+      const { POST } = await import("@/app/api/daemon/control/route");
+      for (const [entityType, entityUuid] of [
+        ...["idea", "daemon_session", "task", "proposal", "document"].map((kind) => [kind, source.uuid]),
+        ["daemon_session", `${source.uuid}::research`],
+        ["daemon_session", source.uuid.toUpperCase()],
+      ]) {
+        state.emit.mockClear();
+        const response = await POST(new NextRequest("http://localhost/api/daemon/control", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetConnectionUuid: target.connection.uuid, command: "resume", entityType, entityUuid }),
+        }), { params: Promise.resolve({}) });
+        expect(response.status).toBe(409);
+        expect(state.emit).not.toHaveBeenCalled();
+      }
+    } finally {
+      vi.doUnmock("@/lib/auth");
+    }
+  });
 
   it.each(["in_progress", "closed", "criteria_pending", "unchanged"])("MCP verification retry preserves competing %s state", async (change) => {
     const source = await idea();
@@ -319,7 +376,7 @@ describe("Idea Team routing and gates against isolated PostgreSQL", () => {
     const legacy = await idea({ assigneeType: "agent", assigneeUuid: lead.actorUuid }, false);
     expect((await service.getIdeaTeamContext(auth, legacy.uuid)).managed).toBe(false);
     const instance = await db.agentInstance.create({ data: { companyUuid: auth.companyUuid, agentUuid: lead.actorUuid, host: "host", cwd: "/work" } });
-    await ideas.assignIdea({ ideaUuid: unassigned.uuid, companyUuid: auth.companyUuid, assigneeType: "agent", assigneeUuid: lead.actorUuid, instanceUuid: instance.uuid, assignedByType: "user", assignedByUuid: auth.actorUuid });
+    await ideas.assignIdea({ ideaUuid: unassigned.uuid, companyUuid: auth.companyUuid, assigneeType: "agent", assigneeUuid: lead.actorUuid, instanceUuid: instance.uuid, assignedByType: "user", assignedByUuid: auth.actorUuid, auth });
     expect(await service.getIdeaTeamContext(auth, unassigned.uuid)).toMatchObject({ state: "active", lead: { agentUuid: lead.actorUuid } });
   });
 
@@ -690,6 +747,546 @@ describe("Idea Team routing and gates against isolated PostgreSQL", () => {
     await expect(service.recommendIdeaTeamRole(lead, managed.uuid, "development", randomUUID())).rejects.toMatchObject({ status: 403 });
     await db.projectAgentTeam.deleteMany({ where: { projectUuid } });
     expect(await service.recommendIdeaTeamRole(lead, managed.uuid, "development")).toMatchObject({ decision: "paused" });
+  });
+
+  it("v1 uses the current assignee outside lead roles and preserves action-specific eligibility", async () => {
+    const source = await versionedIdea();
+    await db.agent.update({ where: { uuid: developer.actorUuid }, data: { roles: [], permissions: ["idea:write"] } });
+    expect(await service.getIdeaTeamContext(developer, source.uuid)).toMatchObject({ state: "active", orchestrator: { agentUuid: developer.actorUuid }, enrollmentVersion: 1, generation: 1 });
+    const draft = await proposal([source.uuid]);
+    await yolo(source.uuid);
+    expect(await service.getIdeaTeamContext(developer, source.uuid)).toMatchObject({ proposalGate: "human", proposalGateReason: "proposal_permission_required", taskGate: "human", taskGateReason: "task_permission_required", state: "active" });
+    await expect(proposals.approveProposal(draft.uuid, auth.companyUuid, developer.actorUuid, null, actor(developer))).rejects.toThrow("Action permission required");
+    expect((await service.getIdeaTeamContext(developer, source.uuid)).state).toBe("active");
+    await db.agent.update({ where: { uuid: developer.actorUuid }, data: { ownerUuid: null } });
+    expect((await service.getIdeaTeamContext(auth, source.uuid)).state).toBe("paused");
+  });
+
+  it.each(["timestamp", "authorizer", "owner_mismatch"])("v1 retained guards without valid %s consent never reactivate", async (missing) => {
+    const source = await versionedIdea();
+    const admitted = await teamTurn(source.uuid);
+    await db.idea.update({ where: { uuid: source.uuid }, data: missing === "timestamp" ? { teamEnrolledAt: null } : { teamEnrolledByUuid: missing === "authorizer" ? null : randomUUID() } });
+    expect(await service.getIdeaTeamContext(developer, source.uuid)).toMatchObject({ managed: true, state: "paused", reason: "human_assignment_required", proposalGate: "human", taskGate: "human" });
+    expect(await service.canReceiveIdeaTeamFence(auth.companyUuid, developer.actorUuid, admitted.fence)).toBe(false);
+    expect(await service.getIdeaTeamLeadRecipients(auth.companyUuid, "idea", source.uuid)).toEqual([]);
+    expect((await service.recommendIdeaTeamRole(developer, source.uuid, "product")).decision).toBe("paused");
+    await expect(service.assertIdeaTeamCurrentTurn(auth.companyUuid, source.uuid, admitted.context)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("v1 verifies a non-YOLO task with task:admin and required AC without granting proposal approval", async () => {
+    const source = await versionedIdea();
+    const admitted = await teamTurn(source.uuid);
+    const approved = await proposal([source.uuid], "idea", "approved");
+    const task = await db.task.create({ data: { companyUuid: auth.companyUuid, projectUuid, title: "Verify", status: "to_verify", proposalUuid: approved.uuid, createdByUuid: auth.actorUuid } });
+    await db.acceptanceCriterion.create({ data: { taskUuid: task.uuid, description: "Required", required: true, status: "pending" } });
+    await expect(tasks.updateTask(task.uuid, { status: "done" }, admitted.context)).rejects.toMatchObject({ status: 422 });
+    await db.acceptanceCriterion.updateMany({ where: { taskUuid: task.uuid }, data: { status: "passed" } });
+    await tasks.updateTask(task.uuid, { status: "done" }, admitted.context);
+    expect((await db.task.findUniqueOrThrow({ where: { uuid: task.uuid } })).status).toBe("done");
+    const pending = await proposal([source.uuid]);
+    await expect(proposals.approveProposal(pending.uuid, auth.companyUuid, developer.actorUuid, null, admitted.context)).rejects.toThrow("Human approval required");
+  });
+
+  it("v1 retains exact historical human YOLO after A-to-B-to-A and rejects the old turn", async () => {
+    const source = await versionedIdea();
+    await yolo(source.uuid);
+    await db.activity.updateMany({ where: { targetUuid: source.uuid, action: "yolo_requested" }, data: { createdAt: new Date("2020-01-01") } });
+    const old = await teamTurn(source.uuid);
+    const assignment = await import("../idea-assignment-authorization.service");
+    for (const agentUuid of [lead.actorUuid, developer.actorUuid]) await assignment.assignIdeaWithAuthority(auth, { ideaUuid: source.uuid, assigneeType: "agent", assigneeUuid: agentUuid, operationUuid: randomUUID() });
+    expect((await service.getIdeaTeamContext(auth, source.uuid)).yolo).toBe(true);
+    const draft = await proposal([source.uuid]);
+    await expect(proposals.approveProposal(draft.uuid, auth.companyUuid, developer.actorUuid, null, old.context)).rejects.toMatchObject({ status: 403 });
+    const current = await teamTurn(source.uuid);
+    await proposals.approveProposal(draft.uuid, auth.companyUuid, developer.actorUuid, null, current.context);
+    expect((await db.proposal.findUniqueOrThrow({ where: { uuid: draft.uuid } })).status).toBe("approved");
+  });
+
+  it("v1 keeps recommendation ranking and uses current non-lead orchestrator only for offline role fallback", async () => {
+    const source = await versionedIdea();
+    await online(developer);
+    expect(await service.recommendIdeaTeamRole(developer, source.uuid, "product")).toMatchObject({ decision: "recommended", agentUuid: developer.actorUuid });
+    await db.agentTeamMember.deleteMany({ where: { teamUuid: templateUuid, role: "product" } });
+    expect((await service.recommendIdeaTeamRole(developer, source.uuid, "product")).decision).toBe("manual");
+  });
+
+  it.each(["product", "development"] as const)("v1 offline %s fallback checks current role permissions without invalidating enrollment", async (role) => {
+    const source = await idea({}, false);
+    const basicPermissions = ["idea:read", "proposal:read", "document:read", "task:read", "project:read", "idea:write"];
+    const missingPermissions = role === "product" ? ["proposal:write", "document:write"] : ["task:write"];
+    await db.agentTeamMember.updateMany({ where: { teamUuid: templateUuid, role: "development" }, data: { agentUuid: product.actorUuid } });
+    await db.agent.update({ where: { uuid: developer.actorUuid }, data: { roles: [], permissions: basicPermissions } });
+    const { assignIdeaWithAuthority } = await import("../idea-assignment-authorization.service");
+    await assignIdeaWithAuthority(auth, { ideaUuid: source.uuid, assigneeType: "agent", assigneeUuid: developer.actorUuid, operationUuid: randomUUID() });
+    await online(developer);
+    const limited = await service.recommendIdeaTeamRole(developer, source.uuid, role);
+    expect(limited).toMatchObject({ decision: "manual", reason: "role_offline_orchestrator_ineligible", agentUuid: null });
+    expect(limited.candidates.find((candidate) => candidate.agentUuid === developer.actorUuid)).toMatchObject({ eligible: false, missingPermissions });
+    expect(await service.getIdeaTeamContext(developer, source.uuid)).toMatchObject({ state: "active", enrollmentVersion: 1, generation: 1 });
+
+    const qualifiedPermissions = [...basicPermissions, ...missingPermissions];
+    await db.agent.update({ where: { uuid: developer.actorUuid }, data: { permissions: qualifiedPermissions } });
+    expect(await service.recommendIdeaTeamRole(developer, source.uuid, role)).toMatchObject({ decision: "recommended", agentUuid: developer.actorUuid, candidates: [expect.objectContaining({ eligible: true, missingPermissions: [] })] });
+    await db.agent.update({ where: { uuid: developer.actorUuid }, data: { permissions: qualifiedPermissions.filter((permission) => permission !== missingPermissions[0]) } });
+    const revoked = await service.recommendIdeaTeamRole(developer, source.uuid, role);
+    expect(revoked).toMatchObject({ decision: "manual", agentUuid: null });
+    expect(revoked.candidates.find((candidate) => candidate.agentUuid === developer.actorUuid)).toMatchObject({ eligible: false, missingPermissions: [missingPermissions[0]] });
+    expect(await service.getIdeaTeamContext(developer, source.uuid)).toMatchObject({ state: "active", generation: 1 });
+    await db.agent.update({ where: { uuid: developer.actorUuid }, data: { permissions: qualifiedPermissions } });
+    expect(await service.recommendIdeaTeamRole(developer, source.uuid, role)).toMatchObject({ decision: "recommended", agentUuid: developer.actorUuid });
+
+    await db.agent.update({ where: { uuid: product.actorUuid }, data: { roles: [], permissions: basicPermissions } });
+    expect(await service.recommendIdeaTeamRole(developer, source.uuid, role)).toMatchObject({ decision: "manual", reason: "role_empty_or_ineligible" });
+    await db.agent.update({ where: { uuid: product.actorUuid }, data: { roles: ["admin_agent"] } });
+    await online(product);
+    await db.agent.update({ where: { uuid: developer.actorUuid }, data: { permissions: basicPermissions } });
+    expect(await service.recommendIdeaTeamRole(developer, source.uuid, role)).toMatchObject({ decision: "recommended", agentUuid: product.actorUuid });
+    await db.agentTeamMember.deleteMany({ where: { teamUuid: templateUuid, role } });
+    expect(await service.recommendIdeaTeamRole(developer, source.uuid, role)).toMatchObject({ decision: "manual", reason: "role_empty_or_ineligible" });
+  });
+
+  async function coalescedTeamAdmission(mode = "fenced") {
+    const first = await versionedIdea();
+    const second = await versionedIdea();
+    const primary = await teamTurn(first.uuid, developer, "orchestrator", true);
+    const ordinary = { ...primary.wakeContext, notification: { ...primary.wakeContext.notification, action: "comment_added" } };
+    delete (ordinary as { ideaTeam?: IdeaTeamTurnFence }).ideaTeam;
+    const combined = { ...primary.wakeContext, ideaTeams: [primary.fence, { ...primary.fence, ideaUuid: second.uuid }] };
+    await db.daemonSessionTurn.update({ where: { uuid: primary.turn.uuid }, data: { wakeContext: mode === "ordinary-first" ? ordinary : mode === "ordinary-last" ? combined : primary.wakeContext } });
+    const secondary = await db.daemonSessionTurn.create({ data: {
+      sessionUuid: primary.session.uuid, seq: 2, trigger: "task_assigned", status: "pending",
+      wakeContext: mode === "ordinary-last" ? ordinary : combined, wakeTargetConnectionUuid: primary.connection.uuid,
+    } });
+    const sessions = await import("../daemon-session.service");
+    const admission = await sessions.advanceTurnForWake({
+      companyUuid: auth.companyUuid, agentUuid: developer.actorUuid,
+      connectionUuid: primary.connection.uuid, sessionId: primary.session.sessionId,
+      turnUuid: primary.turn.uuid, turnUuids: [primary.turn.uuid, secondary.uuid],
+      admissionUuid: primary.context.admissionUuid!, status: "running", wakeRecoveryProtocol: 1, ideaTeamProtocol: 1,
+    });
+    expect(admission.ok).toBe(true);
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: secondary.uuid } })).toMatchObject({ status: "merged", admissionUuid: null });
+    return { first, second, primary, secondary };
+  }
+
+  it.each(["fenced", "ordinary-first", "ordinary-last"])("v1 authorizes protected mutations from real coalesced %s admission", async (mode) => {
+    const { first, second, primary } = await coalescedTeamAdmission(mode);
+    const draft = await proposals.createProposal({ companyUuid: auth.companyUuid, projectUuid, title: "Coalesced authoring", inputType: "idea", inputUuids: [first.uuid, second.uuid], createdByUuid: developer.actorUuid, actorContext: primary.context });
+    await proposals.addDocumentDraft(draft.uuid, auth.companyUuid, { type: "prd", title: "Both admitted sources", content: "Current" }, primary.context);
+    await yolo(first.uuid);
+    await yolo(second.uuid);
+    const pending = await proposal([first.uuid, second.uuid]);
+    await proposals.approveProposal(pending.uuid, auth.companyUuid, developer.actorUuid, null, primary.context);
+    expect((await db.proposal.findUniqueOrThrow({ where: { uuid: pending.uuid } })).status).toBe("approved");
+  });
+
+  describe.each(["fenced", "ordinary-first", "ordinary-last"])("v1 coalesced %s public resume", (mode) => {
+    async function fixture() {
+      const admitted = await coalescedTeamAdmission(mode);
+      const { first, primary } = admitted;
+      await db.daemonSession.update({ where: { uuid: primary.session.uuid }, data: { sessionId: first.uuid } });
+      const execution = await db.daemonExecution.create({ data: {
+        companyUuid: auth.companyUuid, agentUuid: developer.actorUuid, connectionUuid: primary.connection.uuid,
+        entityType: "idea", entityUuid: first.uuid, directIdeaUuid: first.uuid, status: "running",
+      } });
+      await db.daemonSessionTurn.update({ where: { uuid: primary.turn.uuid }, data: { executionUuid: execution.uuid } });
+      const sessions = await import("../daemon-session.service");
+      const executions = await import("../daemon-execution.service");
+      const request = {
+        companyUuid: auth.companyUuid, agentUuid: developer.actorUuid, connectionUuid: primary.connection.uuid,
+        sessionId: first.uuid, entityType: "idea", entityUuid: first.uuid,
+        wakeRecoveryProtocol: 1 as const, ideaTeamProtocol: 1 as const,
+      };
+      async function interrupt(turnUuid = primary.turn.uuid, admissionUuid = primary.context.admissionUuid!, reason: "user" | "crash" = "user") {
+        expect(await sessions.advanceTurnForWake({ ...request, turnUuid, admissionUuid, status: "interrupted", interruptedReason: reason })).toMatchObject({ ok: true });
+        expect(await executions.reportExecutionInterrupt(auth.companyUuid, primary.connection.uuid, "idea", first.uuid, reason)).toBe(true);
+      }
+      async function resume() {
+        vi.doMock("@/lib/auth", () => ({ getAuthContext: async () => auth, hasPermission: () => false }));
+        try {
+          const { NextRequest } = await import("next/server");
+          const { POST } = await import("@/app/api/daemon/resume/route");
+          return await POST(new NextRequest("http://localhost/api/daemon/resume", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ connectionUuid: primary.connection.uuid, entityType: "idea", entityUuid: first.uuid }),
+          }), { params: Promise.resolve({}) });
+        } finally {
+          vi.doUnmock("@/lib/auth");
+        }
+      }
+      function create(context: IdeaTeamActorContext, title: string) {
+        return proposals.createProposal({ companyUuid: auth.companyUuid, projectUuid, title, inputType: "idea", inputUuids: [first.uuid, admitted.second.uuid], createdByUuid: developer.actorUuid, actorContext: context });
+      }
+      async function continuation() {
+        expect((await resume()).status).toBe(200);
+        return db.daemonSessionTurn.findFirstOrThrow({ where: { sessionUuid: primary.session.uuid, executionUuid: execution.uuid, trigger: "resume", status: "pending" }, orderBy: { seq: "desc" } });
+      }
+      async function admit(turnUuid: string) {
+        const admissionUuid = randomUUID();
+        expect(await sessions.advanceTurnForWake({ ...request, turnUuid, turnUuids: [turnUuid], admissionUuid, status: "running" })).toMatchObject({ ok: true });
+        return { ...actor(developer), turnUuid, admissionUuid };
+      }
+      return { ...admitted, execution, sessions, request, interrupt, resume, create, continuation, admit };
+    }
+
+    it("retains all source fences and protected multi-source authoring through repeated interruption and resume", async () => {
+      const run = await fixture();
+      await run.create(run.primary.context, "Before interruption");
+      let context = run.primary.context;
+      for (const reason of ["user", "crash"] as const) {
+        await run.interrupt(context.turnUuid, context.admissionUuid, reason);
+        state.emit.mockClear();
+        const resumed = await run.continuation();
+        expect(resumed.uuid).not.toBe(context.turnUuid);
+        expect(resumed.wakeTargetConnectionUuid).toBe(run.primary.connection.uuid);
+        expect(resumed.wakeContext).toMatchObject({ ideaTeam: run.primary.fence });
+        expect(parseWakeContext(resumed.wakeContext)?.ideaTeams).toEqual([
+          run.primary.fence, { ...run.primary.fence, ideaUuid: run.second.uuid },
+        ]);
+        expect(state.emit.mock.calls.filter(([name]) => name === `control:${run.primary.connection.uuid}`)).toEqual([
+          [expect.any(String), expect.objectContaining({ command: "resume", turnUuid: resumed.uuid, resumeReason: reason })],
+        ]);
+        expect(await db.daemonExecution.findUniqueOrThrow({ where: { uuid: run.execution.uuid } })).toMatchObject({ status: "running", interruptedReason: null });
+        expect((await run.sessions.getPendingTurnsForConnection(run.request)).map((turn) => turn.turnUuid)).toEqual([resumed.uuid]);
+        expect(await run.sessions.getWakeRecoveryDelivery(auth.companyUuid, developer.actorUuid, run.primary.connection.uuid, resumed.uuid, 1)).toMatchObject({ turnUuid: resumed.uuid });
+        context = await run.admit(resumed.uuid);
+        expect(await db.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: resumed.uuid } })).toMatchObject({ status: "running", admissionTurnUuids: [resumed.uuid], admissionUuid: context.admissionUuid });
+        const created = await run.create(context, `After ${reason} resume`);
+        expect(created.inputUuids).toEqual([run.first.uuid, run.second.uuid]);
+      }
+      expect(await db.daemonSessionTurn.count({ where: { sessionUuid: run.primary.session.uuid, trigger: "resume" } })).toBe(2);
+      expect(await db.proposal.count({ where: { companyUuid: auth.companyUuid } })).toBe(3);
+    });
+
+    it.each(["secondary-generation", "member-status", "member-admission", "member-missing"])("rejects %s before resume without continuation or control and restores interruption", async (failure) => {
+      const run = await fixture();
+      await run.interrupt();
+      if (failure === "secondary-generation") await db.idea.update({ where: { uuid: run.second.uuid }, data: { teamGeneration: { increment: 1 } } });
+      if (failure === "member-status") await db.daemonSessionTurn.update({ where: { uuid: run.secondary.uuid }, data: { status: "pending" } });
+      if (failure === "member-admission") await db.daemonSessionTurn.update({ where: { uuid: run.secondary.uuid }, data: { admissionUuid: randomUUID() } });
+      if (failure === "member-missing") await db.daemonSessionTurn.delete({ where: { uuid: run.secondary.uuid } });
+      const turnCount = await db.daemonSessionTurn.count({ where: { sessionUuid: run.primary.session.uuid } });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        state.emit.mockClear();
+        expect((await run.resume()).status).toBe(409);
+        expect(state.emit.mock.calls.filter(([name]) => name === `control:${run.primary.connection.uuid}`)).toEqual([]);
+        expect(await db.daemonExecution.findUniqueOrThrow({ where: { uuid: run.execution.uuid } })).toMatchObject({ status: "interrupted", interruptedReason: "user" });
+        expect(await db.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: run.primary.turn.uuid } })).toMatchObject({ status: "interrupted" });
+        expect(await db.daemonSessionTurn.count({ where: { sessionUuid: run.primary.session.uuid } })).toBe(turnCount);
+        expect(await db.daemonSessionTurn.count({ where: { sessionUuid: run.primary.session.uuid, trigger: "resume" } })).toBe(0);
+      }
+    });
+
+    it.each(["pending", "admitted", "repeated-resume"])("rejects secondary revocation after continuation creation at %s", async (phase) => {
+      const run = await fixture();
+      await run.interrupt();
+      let resumed = await run.continuation();
+      if (phase === "repeated-resume") {
+        const context = await run.admit(resumed.uuid);
+        await run.create(context, "Before repeated interruption");
+        await run.interrupt(context.turnUuid, context.admissionUuid, "crash");
+        resumed = await run.continuation();
+      }
+      const context = phase === "admitted" ? await run.admit(resumed.uuid) : { ...actor(developer), turnUuid: resumed.uuid, admissionUuid: randomUUID() };
+      await db.idea.update({ where: { uuid: run.second.uuid }, data: { teamGeneration: { increment: 1 } } });
+      expect(await run.sessions.getPendingTurnsForConnection(run.request)).toEqual([]);
+      expect(await run.sessions.getWakeRecoveryDelivery(auth.companyUuid, developer.actorUuid, run.primary.connection.uuid, resumed.uuid, 1)).toBeNull();
+      expect(await run.sessions.advanceTurnForWake({ ...run.request, turnUuid: resumed.uuid, turnUuids: [resumed.uuid], admissionUuid: context.admissionUuid, status: "running" })).toMatchObject({ ok: false });
+      await expect(run.create(context, "Revoked continuation must not author")).rejects.toMatchObject({ status: 403 });
+      expect(await db.proposal.count({ where: { companyUuid: auth.companyUuid, title: "Revoked continuation must not author" } })).toBe(0);
+      expect(await db.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: resumed.uuid } })).toMatchObject({ status: phase === "admitted" ? "running" : "pending", admissionUuid: phase === "admitted" ? context.admissionUuid : null });
+    });
+  });
+
+  it.each(["generation", "connection", "connection-replaced", "admission", "member-status", "member-admission"])("v1 rejects a coalesced bundle after %s changes", async (failure) => {
+    const { first, second, primary, secondary } = await coalescedTeamAdmission("ordinary-first");
+    if (failure === "generation") await db.idea.update({ where: { uuid: second.uuid }, data: { teamGeneration: { increment: 1 } } });
+    if (failure === "connection") await db.daemonConnection.update({ where: { uuid: primary.connection.uuid }, data: { status: "offline" } });
+    if (failure === "connection-replaced") await db.daemonConnection.update({ where: { uuid: primary.connection.uuid }, data: { connectedAt: new Date(Date.now() + 10000) } });
+    if (failure === "admission") await db.daemonSessionTurn.update({ where: { uuid: primary.turn.uuid }, data: { admissionUuid: randomUUID() } });
+    if (failure === "member-status") await db.daemonSessionTurn.update({ where: { uuid: secondary.uuid }, data: { status: "pending" } });
+    if (failure === "member-admission") await db.daemonSessionTurn.update({ where: { uuid: secondary.uuid }, data: { admissionUuid: randomUUID() } });
+    await expect(proposals.createProposal({ companyUuid: auth.companyUuid, projectUuid, title: "Must not persist", inputType: "idea", inputUuids: [first.uuid], createdByUuid: developer.actorUuid, actorContext: primary.context })).rejects.toMatchObject({ status: 403 });
+    expect(await db.proposal.count({ where: { companyUuid: auth.companyUuid, title: "Must not persist" } })).toBe(0);
+  });
+
+  it.each(["idea", "document"])("v1 permits multi-source %s authoring, approval and task verification with current supplementary proofs", async (inputType) => {
+    const first = await versionedIdea();
+    const second = await versionedIdea();
+    await yolo(first.uuid);
+    await yolo(second.uuid);
+    const primary = await teamTurn(first.uuid);
+    const secondary = await teamTurn(second.uuid);
+    const headers = new Headers({
+      "X-Chorus-Turn-Uuid": primary.turn.uuid,
+      "X-Chorus-Admission-Uuid": primary.context.admissionUuid!,
+      "X-Chorus-Idea-Team-Turns": JSON.stringify([{ turnUuid: secondary.turn.uuid, admissionUuid: secondary.context.admissionUuid }]),
+    });
+    const context = { ...actor(developer), ...readIdeaTeamTurnContext(headers).ideaTeamTurn };
+    let inputUuids = [first.uuid, second.uuid];
+    if (inputType === "document") {
+      const ancestor = await proposal(inputUuids, "idea", "approved");
+      const document = await db.document.create({ data: { companyUuid: auth.companyUuid, projectUuid, title: "Both sources", type: "prd", proposalUuid: ancestor.uuid, createdByUuid: auth.actorUuid } });
+      inputUuids = [document.uuid];
+    }
+    const draft = await proposals.createProposal({ companyUuid: auth.companyUuid, projectUuid, title: "Combined authoring", inputType, inputUuids, createdByUuid: developer.actorUuid, actorContext: context });
+    await proposals.addDocumentDraft(draft.uuid, auth.companyUuid, { type: "prd", title: "Both sources", content: "Combined requirements" }, context);
+    const pending = await proposal(inputUuids, inputType);
+    await expect(proposals.approveProposal(pending.uuid, auth.companyUuid, developer.actorUuid, null, primary.context)).rejects.toMatchObject({ status: 403 });
+    await proposals.approveProposal(pending.uuid, auth.companyUuid, developer.actorUuid, null, context);
+    const task = await db.task.create({ data: { companyUuid: auth.companyUuid, projectUuid, title: "Combined verification", status: "to_verify", proposalUuid: pending.uuid, createdByUuid: auth.actorUuid } });
+    await db.acceptanceCriterion.create({ data: { taskUuid: task.uuid, description: "Required", required: true, status: "passed", sortOrder: 0 } });
+    await tasks.updateTask(task.uuid, { status: "done" }, context);
+    expect((await db.task.findUniqueOrThrow({ where: { uuid: task.uuid } })).status).toBe("done");
+  });
+
+  it.each(["generation", "admission", "connection", "primary", "different_orchestrator"])("v1 rejects invalid multi-source %s proofs without partial authoring or approval", async (failure) => {
+    const first = await versionedIdea();
+    const second = await versionedIdea();
+    await yolo(first.uuid);
+    await yolo(second.uuid);
+    const primary = await teamTurn(first.uuid);
+    if (failure === "different_orchestrator") await db.idea.update({ where: { uuid: second.uuid }, data: { assigneeUuid: lead.actorUuid, teamLeadAgentUuid: lead.actorUuid } });
+    const secondary = await teamTurn(second.uuid, failure === "different_orchestrator" ? lead : developer);
+    const context = { ...primary.context, supplementaryTurns: [{ turnUuid: secondary.turn.uuid, admissionUuid: secondary.context.admissionUuid! }] };
+    if (failure === "generation" || failure === "primary") await db.idea.update({ where: { uuid: failure === "primary" ? first.uuid : second.uuid }, data: { teamGeneration: { increment: 1 } } });
+    if (failure === "admission") context.supplementaryTurns[0].admissionUuid = randomUUID();
+    if (failure === "connection") await db.daemonConnection.update({ where: { uuid: secondary.connection.uuid }, data: { status: "offline" } });
+    const pending = await proposal([first.uuid, second.uuid]);
+    await expect(proposals.approveProposal(pending.uuid, auth.companyUuid, developer.actorUuid, null, context)).rejects.toMatchObject({ status: 403 });
+    expect((await db.proposal.findUniqueOrThrow({ where: { uuid: pending.uuid } })).status).toBe("pending");
+    await expect(proposals.createProposal({ companyUuid: auth.companyUuid, projectUuid, title: "Rejected combined authoring", inputType: "idea", inputUuids: [first.uuid, second.uuid], createdByUuid: developer.actorUuid, actorContext: context })).rejects.toMatchObject({ status: 403 });
+    expect(await db.proposal.count({ where: { companyUuid: auth.companyUuid, title: "Rejected combined authoring" } })).toBe(0);
+  });
+
+  it("v1 fences multi-source delegated document authoring against stale secondary ancestry", async () => {
+    const first = await versionedIdea();
+    const second = await versionedIdea();
+    await db.idea.updateMany({ where: { uuid: { in: [first.uuid, second.uuid] } }, data: { teamProductAgentUuid: product.actorUuid } });
+    const primary = await teamTurn(first.uuid, product, "product");
+    const secondary = await teamTurn(second.uuid, product, "product");
+    const context = { ...primary.context, supplementaryTurns: [{ turnUuid: secondary.turn.uuid, admissionUuid: secondary.context.admissionUuid! }] };
+    const ancestor = await proposal([first.uuid, second.uuid], "idea", "approved");
+    const document = await db.document.create({ data: { companyUuid: auth.companyUuid, projectUuid, title: "Combined sources", type: "prd", proposalUuid: ancestor.uuid, createdByUuid: auth.actorUuid } });
+    const draft = await proposals.createProposal({ companyUuid: auth.companyUuid, projectUuid, title: "Delegated combined", inputType: "document", inputUuids: [document.uuid], createdByUuid: product.actorUuid, actorContext: context });
+    await proposals.addTaskDraft(draft.uuid, auth.companyUuid, { title: "Current", acceptanceCriteriaItems: [{ description: "Works" }] }, context);
+    await db.idea.update({ where: { uuid: second.uuid }, data: { teamGeneration: { increment: 1 } } });
+    await expect(proposals.addDocumentDraft(draft.uuid, auth.companyUuid, { type: "prd", title: "Stale", content: "Must not persist" }, context)).rejects.toMatchObject({ status: 403 });
+    expect((await db.proposal.findUniqueOrThrow({ where: { uuid: draft.uuid } })).documentDrafts).toBeNull();
+  });
+
+  it.each(["current", "schedule", "admission", "mutation"])("v1 persists every lifecycle source and fences secondary changes at %s", async (phase) => {
+    const first = await versionedIdea();
+    const second = await versionedIdea();
+    await yolo(first.uuid);
+    await yolo(second.uuid);
+    const target = await pinnedConnection(developer, "multi-host", "/multi");
+    const pending = await proposal([first.uuid, second.uuid]);
+    const { createActivity } = await import("../activity.service");
+    const { handleActivity } = await import("../notification-listener");
+    const sessions = await import("../daemon-session.service");
+    const activity = await createActivity({ companyUuid: auth.companyUuid, projectUuid, targetType: "proposal", targetUuid: pending.uuid, actorType: "agent", actorUuid: product.actorUuid, action: "submitted" });
+    if (phase === "schedule") await db.idea.update({ where: { uuid: second.uuid }, data: { teamGeneration: { increment: 1 } } });
+    await handleActivity(activity);
+    const turn = await db.daemonSessionTurn.findFirst({ where: { wakeNotification: { entityUuid: pending.uuid }, session: { agentUuid: developer.actorUuid } }, include: { session: true } });
+    if (phase === "schedule") {
+      expect(turn).toBeNull();
+      return;
+    }
+    expect(turn).not.toBeNull();
+    expect(turn!.wakeContext).toMatchObject({ ideaTeam: { ideaUuid: first.uuid }, ideaTeams: [{ ideaUuid: first.uuid, generation: 1 }, { ideaUuid: second.uuid, generation: 1 }] });
+    const admissionUuid = randomUUID();
+    const request = { companyUuid: auth.companyUuid, agentUuid: developer.actorUuid, connectionUuid: target.connection.uuid, sessionId: turn!.session.sessionId, turnUuid: turn!.uuid, status: "running" as const, wakeRecoveryProtocol: 1 as const, ideaTeamProtocol: 1 as const, admissionUuid, turnUuids: [turn!.uuid] };
+    if (phase === "admission") await db.idea.update({ where: { uuid: second.uuid }, data: { teamGeneration: { increment: 1 } } });
+    expect((await sessions.getPendingTurnsForConnection(request)).map((row) => row.turnUuid)).toEqual(phase === "admission" ? [] : [turn!.uuid]);
+    const result = await sessions.advanceTurnForWake(request);
+    expect(result.ok).toBe(phase !== "admission");
+    if (phase === "admission") {
+      expect(await sessions.getWakeRecoveryDelivery(auth.companyUuid, developer.actorUuid, target.connection.uuid, turn!.uuid, 1)).toBeNull();
+      return;
+    }
+    const context = { ...actor(developer), turnUuid: turn!.uuid, admissionUuid };
+    if (phase === "mutation") {
+      await db.idea.update({ where: { uuid: second.uuid }, data: { teamGeneration: { increment: 1 } } });
+      await expect(proposals.approveProposal(pending.uuid, auth.companyUuid, developer.actorUuid, null, context)).rejects.toMatchObject({ status: 403 });
+      expect((await db.proposal.findUniqueOrThrow({ where: { uuid: pending.uuid } })).status).toBe("pending");
+    } else {
+      await proposals.approveProposal(pending.uuid, auth.companyUuid, developer.actorUuid, null, context);
+      expect((await db.proposal.findUniqueOrThrow({ where: { uuid: pending.uuid } })).status).toBe("approved");
+    }
+  });
+
+  it("v1 re-delegation invalidates the same delegate's earlier authoring turn", async () => {
+    const source = await versionedIdea();
+    await service.delegateIdeaTeamProduct(auth, source.uuid, product.actorUuid);
+    const old = await teamTurn(source.uuid, product, "product");
+    const draft = await proposals.createProposal({ companyUuid: auth.companyUuid, projectUuid, title: "Delegated", inputType: "idea", inputUuids: [source.uuid], createdByUuid: product.actorUuid, actorContext: old.context });
+    await proposals.addDocumentDraft(draft.uuid, auth.companyUuid, { type: "prd", title: "PRD", content: "Requirement" }, old.context);
+    await service.delegateIdeaTeamProduct(auth, source.uuid, product.actorUuid);
+    expect((await db.idea.findUniqueOrThrow({ where: { uuid: source.uuid } })).teamGeneration).toBe(3);
+    await expect(proposals.addTaskDraft(draft.uuid, auth.companyUuid, { title: "Stale", acceptanceCriteriaItems: [{ description: "Fails" }] }, old.context)).rejects.toMatchObject({ status: 403 });
+    await expect(proposals.submitProposal(draft.uuid, auth.companyUuid, old.context)).rejects.toMatchObject({ status: 403 });
+    const current = await teamTurn(source.uuid, product, "product");
+    const elaboration = await import("../elaboration.service");
+    const questions = [{ id: "scope", text: "Scope?", category: "scope" as const, options: [{ id: "yes", label: "Yes" }, { id: "no", label: "No" }] }];
+    await expect(elaboration.startElaboration({ companyUuid: auth.companyUuid, ideaUuid: source.uuid, actorUuid: product.actorUuid, actorType: "agent", actorContext: old.context, depth: "minimal", questions })).rejects.toMatchObject({ status: 403 });
+    const round = await elaboration.startElaboration({ companyUuid: auth.companyUuid, ideaUuid: source.uuid, actorUuid: product.actorUuid, actorType: "agent", actorContext: current.context, depth: "minimal", questions });
+    await expect(elaboration.answerElaboration({ companyUuid: auth.companyUuid, ideaUuid: source.uuid, roundUuid: round.uuid, actorUuid: product.actorUuid, actorType: "agent", actorContext: old.context, answers: [{ questionId: "scope", selectedOptionId: "yes", customText: null }] })).rejects.toMatchObject({ status: 403 });
+    await expect(elaboration.skipElaboration({ companyUuid: auth.companyUuid, ideaUuid: source.uuid, actorUuid: product.actorUuid, actorType: "agent", actorContext: current.context, actorIsIdeaAdmin: true, reason: "Not the orchestrator" })).rejects.toMatchObject({ status: 403 });
+    await proposals.addTaskDraft(draft.uuid, auth.companyUuid, { title: "Current", acceptanceCriteriaItems: [{ description: "Works" }] }, current.context);
+    await expect(proposals.addDocumentDraft(draft.uuid, auth.companyUuid, { type: "prd", title: "Unfenced", content: "No" }, actor(product))).rejects.toThrow("Upgrade");
+  });
+
+  it("v1 schedules a fresh orchestrator turn when that same orchestrator delegates", async () => {
+    const source = await versionedIdea();
+    const admitted = await teamTurn(source.uuid);
+    await pinnedConnection(product, "product-host", "/product");
+    await service.delegateIdeaTeamProduct(admitted.auth, source.uuid, product.actorUuid);
+    await expect(service.assertIdeaTeamCurrentTurn(auth.companyUuid, source.uuid, admitted.context)).rejects.toMatchObject({ status: 403 });
+    const delegated = await db.activity.findFirstOrThrow({ where: { targetUuid: source.uuid, action: "product_delegated" } });
+    const { handleActivity } = await import("../notification-listener");
+    await handleActivity(delegated);
+    const notifications = await db.notification.findMany({ where: { entityUuid: source.uuid, action: { in: ["team_product_handoff", "team_lead_handoff"] }, uuid: { not: admitted.wakeContext.notificationUuid } } });
+    expect(notifications.map((notification) => notification.recipientUuid).sort()).toEqual([developer.actorUuid, product.actorUuid].sort());
+    const fresh = await db.daemonSessionTurn.findMany({ where: { wakeNotificationUuid: { in: notifications.map((notification) => notification.uuid) } } });
+    expect(fresh).toHaveLength(2);
+    for (const turn of fresh) expect(turn.wakeContext).toMatchObject({ ideaTeam: { generation: 2 } });
+  });
+
+  it("v1 keeps the authorized self-assignment kickoff despite actor-self notification exclusion", async () => {
+    const source = await idea({}, false);
+    await pinnedConnection(developer, "self-host", "/self");
+    const assignment = await import("../idea-assignment-authorization.service");
+    const proof = await assignment.issueIdeaAssignmentAuthorization(auth, { ideaUuid: source.uuid, agentUuid: developer.actorUuid, requestUuid: randomUUID() });
+    const result = await assignment.assignIdeaWithAuthority(developer, { ideaUuid: source.uuid, assigneeType: "agent", assigneeUuid: developer.actorUuid, humanAuthorizationUuid: proof.uuid, operationUuid: randomUUID() });
+    expect(result.kickoff).toBe(true);
+    const event = await db.activity.findUniqueOrThrow({ where: { uuid: result.activityUuid! } });
+    const { handleActivity } = await import("../notification-listener");
+    await handleActivity(event);
+    await handleActivity(event);
+    expect(await db.daemonSessionTurn.count({ where: { session: { directIdeaUuid: source.uuid } } })).toBe(1);
+  });
+
+  it.each(["legacy", "exact_without_team", "current", "stale"])("v1 admission and recovery fence %s clients", async (mode) => {
+    const source = await versionedIdea();
+    const pending = await teamTurn(source.uuid, developer, "orchestrator", true);
+    const sessions = await import("../daemon-session.service");
+    if (mode === "stale") await db.idea.update({ where: { uuid: source.uuid }, data: { teamGeneration: { increment: 2 } } });
+    const request = { companyUuid: auth.companyUuid, agentUuid: developer.actorUuid, connectionUuid: pending.connection.uuid, sessionId: pending.session.sessionId, turnUuid: pending.turn.uuid, status: "running" as const };
+    const supported = mode === "current" || mode === "stale";
+    const turns = await sessions.getPendingTurnsForConnection({ ...request, wakeRecoveryProtocol: 1, ...(supported ? { ideaTeamProtocol: 1 as const } : {}) });
+    expect(turns.map((turn) => turn.turnUuid)).toEqual(mode === "current" ? [pending.turn.uuid] : []);
+    const result = await sessions.advanceTurnForWake({ ...request, ...(mode !== "legacy" ? { wakeRecoveryProtocol: 1 as const, admissionUuid: pending.context.admissionUuid, turnUuids: [pending.turn.uuid] } : {}), ...(supported ? { ideaTeamProtocol: 1 as const } : {}) });
+    expect(result.ok).toBe(mode === "current");
+    expect((await db.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: pending.turn.uuid } })).status).toBe(mode === "current" ? "running" : "pending");
+  });
+
+  it("v1 rejects legacy unfenced handoff after opt-in without killing a running task", async () => {
+    const source = await versionedIdea();
+    const pending = await teamTurn(source.uuid, developer, "orchestrator", true);
+    const { ideaTeam: _fence, ...legacyContext } = pending.wakeContext;
+    await db.daemonSessionTurn.update({ where: { uuid: pending.turn.uuid }, data: { wakeContext: legacyContext } });
+    const execution = await db.daemonExecution.create({ data: { companyUuid: auth.companyUuid, agentUuid: developer.actorUuid, connectionUuid: pending.connection.uuid, entityType: "task", entityUuid: randomUUID(), status: "running" } });
+    const sessions = await import("../daemon-session.service");
+    expect(await sessions.getWakeRecoveryDelivery(auth.companyUuid, developer.actorUuid, pending.connection.uuid, pending.turn.uuid, 1)).toBeNull();
+    expect((await db.daemonExecution.findUniqueOrThrow({ where: { uuid: execution.uuid } })).status).toBe("running");
+  });
+
+  it("v1 fences creation turns even when the legacy trigger is human_instruction", async () => {
+    const source = await versionedIdea();
+    const pending = await teamTurn(source.uuid, developer, "orchestrator", true);
+    await db.daemonSessionTurn.update({ where: { uuid: pending.turn.uuid }, data: { trigger: "human_instruction" } });
+    const sessions = await import("../daemon-session.service");
+    expect(await sessions.getWakeRecoveryDelivery(auth.companyUuid, developer.actorUuid, pending.connection.uuid, pending.turn.uuid)).toBeNull();
+    expect(await sessions.getWakeRecoveryDelivery(auth.companyUuid, developer.actorUuid, pending.connection.uuid, pending.turn.uuid, 1)).toMatchObject({ turnUuid: pending.turn.uuid });
+    await db.idea.update({ where: { uuid: source.uuid }, data: { teamGeneration: { increment: 1 } } });
+    expect(await sessions.getWakeRecoveryDelivery(auth.companyUuid, developer.actorUuid, pending.connection.uuid, pending.turn.uuid, 1)).toBeNull();
+    await expect(sessions.createPendingTurn({ sessionUuid: pending.session.uuid, trigger: "human_instruction", wakeContext: pending.wakeContext })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("v1 resumes with the original generation and refuses stale recovery", async () => {
+    const source = await versionedIdea();
+    const admitted = await teamTurn(source.uuid);
+    const execution = await db.daemonExecution.create({ data: { companyUuid: auth.companyUuid, agentUuid: developer.actorUuid, connectionUuid: admitted.connection.uuid, entityType: "idea", entityUuid: source.uuid, status: "interrupted" } });
+    await db.daemonSessionTurn.update({ where: { uuid: admitted.turn.uuid }, data: { status: "interrupted", executionUuid: execution.uuid } });
+    const sessions = await import("../daemon-session.service");
+    const resumed = await sessions.createResumeTurn({ sessionUuid: admitted.session.uuid, executionUuid: execution.uuid, resumedFrom: "user" });
+    expect(resumed.uuid).not.toBe(admitted.turn.uuid);
+    expect((await db.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: resumed.uuid } })).wakeContext).toMatchObject({ ideaTeam: admitted.fence });
+    await db.idea.update({ where: { uuid: source.uuid }, data: { teamGeneration: { increment: 2 } } });
+    await expect(sessions.createResumeTurn({ sessionUuid: admitted.session.uuid, executionUuid: execution.uuid, resumedFrom: "crash" })).rejects.toMatchObject({ status: 403 });
+    expect(await sessions.getWakeRecoveryDelivery(auth.companyUuid, developer.actorUuid, admitted.connection.uuid, resumed.uuid, 1)).toBeNull();
+  });
+
+  it("v1 captures ordinary assignment generation before delayed notification scheduling", async () => {
+    const source = await idea({}, false);
+    await pinnedConnection(developer, "host", "/work");
+    const assignment = await import("../idea-assignment-authorization.service");
+    const first = await assignment.assignIdeaWithAuthority(auth, { ideaUuid: source.uuid, assigneeType: "agent", assigneeUuid: developer.actorUuid, operationUuid: randomUUID() });
+    const event = await db.activity.findUniqueOrThrow({ where: { uuid: first.activityUuid! } });
+    expect(event.value).toMatchObject({ ideaTeamFences: [{ ideaUuid: source.uuid, generation: 1, role: "orchestrator" }] });
+    await assignment.assignIdeaWithAuthority(auth, { ideaUuid: source.uuid, assigneeType: "agent", assigneeUuid: developer.actorUuid, operationUuid: randomUUID() });
+    const { handleActivity } = await import("../notification-listener");
+    await handleActivity(event);
+    expect(await db.daemonSessionTurn.count({ where: { session: { directIdeaUuid: source.uuid } } })).toBe(0);
+    const deliveries = state.emit.mock.calls.filter(([name]) => name === `notification:agent:${developer.actorUuid}`);
+    expect(deliveries.at(-1)?.[1]).toMatchObject({ suppressWake: true, ideaTeamRequired: true });
+    const latest = await db.activity.findFirstOrThrow({ where: { companyUuid: auth.companyUuid, targetUuid: source.uuid, action: "assigned" }, orderBy: { createdAt: "desc" } });
+    await handleActivity(latest);
+    const turn = await db.daemonSessionTurn.findFirstOrThrow({ where: { session: { directIdeaUuid: source.uuid } } });
+    expect(turn.wakeContext).toMatchObject({ ideaTeam: { generation: 2, agentUuid: developer.actorUuid, role: "orchestrator" } });
+  });
+
+  it("v1 marker alone keeps cleared/no-Team creation and assignment wakes unmanaged", async () => {
+    const source = await idea({ teamEnrollmentVersion: 1, teamGeneration: 1, assigneeType: "agent", assigneeUuid: developer.actorUuid }, false);
+    expect(await service.canReceiveIdeaTeamWake(auth.companyUuid, developer.actorUuid, null, source.uuid)).toBe(true);
+    const context = { version: 1 as const, notificationUuid: randomUUID(), notification: { uuid: "", action: "idea_claimed", entityType: "idea", entityUuid: source.uuid, projectUuid, projectName: "Project", recipientType: "agent" as const, recipientUuid: developer.actorUuid, actorType: "user", actorUuid: auth.actorUuid, actorName: "Owner", message: "Assigned", entityTitle: "Idea" } };
+    context.notification.uuid = context.notificationUuid;
+    expect(await service.canReceiveIdeaTeamWake(auth.companyUuid, developer.actorUuid, context, source.uuid)).toBe(true);
+    expect(await service.getIdeaTeamContext(developer, source.uuid)).toMatchObject({ managed: false, state: "unmanaged", routing: null });
+    expect(await service.getIdeaTeamContext(developer, source.uuid)).toMatchObject({ orchestrator: { agentUuid: developer.actorUuid }, reason: "human_assignment_required" });
+  });
+
+  it("v1 exposes safe receiver-owner confirmation without disclosing proof or private routing", async () => {
+    const source = await idea({}, false);
+    const receiver = await db.user.create({ data: { companyUuid: auth.companyUuid, oidcSub: randomUUID() } });
+    const other = await agent("Receiver agent", { type: "user", companyUuid: auth.companyUuid, actorUuid: receiver.uuid });
+    const assignment = await import("../idea-assignment-authorization.service");
+    await assignment.assignIdeaWithAuthority(auth, { ideaUuid: source.uuid, assigneeType: "agent", assigneeUuid: other.actorUuid, operationUuid: randomUUID() });
+    const context = await service.getIdeaTeamContext(auth, source.uuid);
+    expect(context).toMatchObject({ managed: false, state: "unmanaged", orchestrator: { agentUuid: other.actorUuid, agentName: "Receiver agent" }, reason: "owner_confirmation_required", routing: null });
+    expect(JSON.stringify(context)).not.toContain("humanAuthorizerUuid");
+    expect(JSON.stringify(context)).not.toContain(receiver.uuid);
+  });
+
+  it("v1 rechecks delegation generation after a draft transaction serialization rollback", async () => {
+    const source = await versionedIdea();
+    await service.delegateIdeaTeamProduct(auth, source.uuid, product.actorUuid);
+    const admitted = await teamTurn(source.uuid, product, "product");
+    const draft = await proposal([source.uuid], "idea", "draft");
+    const original = db.$transaction.bind(db);
+    let attempts = 0;
+    const transaction = vi.spyOn(db, "$transaction");
+    transaction.mockImplementation((async (work: (tx: Prisma.TransactionClient) => Promise<unknown>, options: Parameters<typeof db.$transaction>[1]) => {
+      attempts++;
+      try {
+        return await original(async (tx) => {
+          const result = await work(tx);
+          if (attempts === 1) throw { code: "P2034" };
+          return result;
+        }, options);
+      } catch (error) {
+        if (attempts === 1) await db.idea.update({ where: { uuid: source.uuid }, data: { teamGeneration: { increment: 1 } } });
+        throw error;
+      }
+    }) as typeof db.$transaction);
+    try {
+      await expect(proposals.addDocumentDraft(draft.uuid, auth.companyUuid, { type: "prd", title: "Must roll back", content: "No stale authoring" }, admitted.context)).rejects.toMatchObject({ status: 403 });
+      expect(attempts).toBe(2);
+      expect((await db.proposal.findUniqueOrThrow({ where: { uuid: draft.uuid } })).documentDrafts).toBeNull();
+    } finally {
+      transaction.mockRestore();
+    }
   });
 
   it("prefers load over dependency affinity, affinity over ties, and reopened instance assignee over load", async () => {

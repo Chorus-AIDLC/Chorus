@@ -9,6 +9,7 @@ import { withTransactionRetry } from "@/lib/transaction-retry";
 import { ApiError } from "@/lib/api-handler";
 import { assertIdeaTeamGate, assertIdeaTeamProductWork, getProposalTeamIdeaUuids, isIdeaTeamProductDelegate, resolveIdeaTeamInputs } from "./idea-team.service";
 import type { IdeaTeamActorContext } from "@/types/idea-team";
+import { projectTeamTransaction } from "./project-agent-team.service";
 import { Prisma } from "@/generated/prisma/client";
 import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid, batchResolveActorIdentities, type ActorIdentityMap } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
@@ -109,6 +110,7 @@ export interface ProposalCreateParams {
   taskDrafts?: TaskDraftInput[];          // Optional: used by frontend, not exposed via MCP
   createdByUuid: string;
   createdByType?: string;  // agent | user
+  actorContext?: IdeaTeamActorContext;
 }
 
 // API response format
@@ -582,7 +584,8 @@ export async function checkIdeasAssignee(
   companyUuid: string,
   ideaUuids: string[],
   actorUuid: string,
-  actorType: string
+  actorType: string,
+  actorContext?: IdeaTeamActorContext
 ): Promise<{ valid: boolean; unassignedIdeas: string[] }> {
   const ideas = await prisma.idea.findMany({
     where: {
@@ -614,7 +617,7 @@ export async function checkIdeasAssignee(
     }
 
     if (!isAssignee && actorType === "agent") {
-      isAssignee = await isIdeaTeamProductDelegate(companyUuid, idea.uuid, actorUuid);
+      isAssignee = await isIdeaTeamProductDelegate(companyUuid, idea.uuid, actorUuid, prisma, actorContext);
     }
     if (!isAssignee) {
       unassignedIdeas.push(idea.uuid);
@@ -802,57 +805,61 @@ export const CONTAINER_PROPOSAL_BLOCKED_MESSAGE =
 export async function createProposal(
   params: ProposalCreateParams
 ): Promise<ProposalResponse> {
-  await assertIdeaTeamProductWork(params.companyUuid, await resolveIdeaTeamInputs(params.companyUuid, params.inputType, params.inputUuids), { actorType: params.createdByType ?? "agent", actorUuid: params.createdByUuid });
-  // Container guard (single authoritative choke point): a container idea may
-  // elaborate but MUST NOT create a proposal. When the input is ideas, reject if
-  // ANY input idea is flagged isContainer. This blocks ONLY new creation — it never
-  // mutates or cascades over existing proposals/tasks (containers stay freely
-  // reversible). No Proposal row is written when the guard trips.
-  if (params.inputType === "idea" && params.inputUuids.length > 0) {
-    const inputIdeas = await prisma.idea.findMany({
-      where: { uuid: { in: params.inputUuids }, companyUuid: params.companyUuid },
-      select: { uuid: true, isContainer: true },
-    });
-    if (inputIdeas.some((idea) => idea.isContainer === true)) {
-      throw new Error(CONTAINER_PROPOSAL_BLOCKED_MESSAGE);
+  const proposal = await projectTeamTransaction(async (tx) => {
+    const actor = params.actorContext ?? { actorType: params.createdByType ?? "agent", actorUuid: params.createdByUuid };
+    if (actor.actorUuid !== params.createdByUuid || actor.actorType !== (params.createdByType ?? "agent")) throw new ApiError("FORBIDDEN", "Proposal author does not match actor", 403);
+    await assertIdeaTeamProductWork(params.companyUuid, await resolveIdeaTeamInputs(params.companyUuid, params.inputType, params.inputUuids, tx), actor, tx);
+    // Container guard (single authoritative choke point): a container idea may
+    // elaborate but MUST NOT create a proposal. When the input is ideas, reject if
+    // ANY input idea is flagged isContainer. This blocks ONLY new creation — it never
+    // mutates or cascades over existing proposals/tasks (containers stay freely
+    // reversible). No Proposal row is written when the guard trips.
+    if (params.inputType === "idea" && params.inputUuids.length > 0) {
+      const inputIdeas = await tx.idea.findMany({
+        where: { uuid: { in: params.inputUuids }, companyUuid: params.companyUuid },
+        select: { uuid: true, isContainer: true },
+      });
+      if (inputIdeas.some((idea) => idea.isContainer === true)) {
+        throw new Error(CONTAINER_PROPOSAL_BLOCKED_MESSAGE);
+      }
     }
-  }
 
-  // Ensure all drafts have UUIDs (frontend may still pass drafts at creation time)
-  const documentDraftsWithUuids = params.documentDrafts?.map(ensureDocumentDraftUuid);
-  const taskDraftsWithUuids = params.taskDrafts?.map(ensureTaskDraftUuid);
+    // Ensure all drafts have UUIDs (frontend may still pass drafts at creation time)
+    const documentDraftsWithUuids = params.documentDrafts?.map(ensureDocumentDraftUuid);
+    const taskDraftsWithUuids = params.taskDrafts?.map(ensureTaskDraftUuid);
 
-  const proposal = await prisma.proposal.create({
-    data: {
-      companyUuid: params.companyUuid,
-      projectUuid: params.projectUuid,
-      title: params.title,
-      description: params.description,
-      inputType: params.inputType,
-      inputUuids: params.inputUuids as unknown as Prisma.InputJsonValue,
-      ...(documentDraftsWithUuids && { documentDrafts: documentDraftsWithUuids as unknown as Prisma.InputJsonValue }),
-      ...(taskDraftsWithUuids && { taskDrafts: taskDraftsWithUuids as unknown as Prisma.InputJsonValue }),
-      status: "draft",
-      createdByUuid: params.createdByUuid,
-      createdByType: params.createdByType || "agent",
-    },
-    select: {
-      uuid: true,
-      title: true,
-      description: true,
-      inputType: true,
-      inputUuids: true,
-      documentDrafts: true,
-      taskDrafts: true,
-      status: true,
-      createdByUuid: true,
-      createdByType: true,
-      reviewedByUuid: true,
-      reviewNote: true,
-      reviewedAt: true,
-      createdAt: true,
-      updatedAt: true,
-    },
+    return tx.proposal.create({
+      data: {
+        companyUuid: params.companyUuid,
+        projectUuid: params.projectUuid,
+        title: params.title,
+        description: params.description,
+        inputType: params.inputType,
+        inputUuids: params.inputUuids as unknown as Prisma.InputJsonValue,
+        ...(documentDraftsWithUuids && { documentDrafts: documentDraftsWithUuids as unknown as Prisma.InputJsonValue }),
+        ...(taskDraftsWithUuids && { taskDrafts: taskDraftsWithUuids as unknown as Prisma.InputJsonValue }),
+        status: "draft",
+        createdByUuid: params.createdByUuid,
+        createdByType: params.createdByType || "agent",
+      },
+      select: {
+        uuid: true,
+        title: true,
+        description: true,
+        inputType: true,
+        inputUuids: true,
+        documentDrafts: true,
+        taskDrafts: true,
+        status: true,
+        createdByUuid: true,
+        createdByType: true,
+        reviewedByUuid: true,
+        reviewNote: true,
+        reviewedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
   });
 
   eventBus.emitChange({ companyUuid: params.companyUuid, projectUuid: params.projectUuid, entityType: "proposal", entityUuid: proposal.uuid, action: "created" });
@@ -869,7 +876,8 @@ export async function updateProposalContent(
     description?: string | null;
     documentDrafts?: DocumentDraft[] | null;
     taskDrafts?: TaskDraft[] | null;
-  }
+  },
+  actorContext?: IdeaTeamActorContext
 ): Promise<ProposalResponse> {
   // Build update data with proper JSON null handling
   const updateData: Prisma.ProposalUpdateInput = {};
@@ -891,12 +899,15 @@ export async function updateProposalContent(
       : (updates.taskDrafts as unknown as Prisma.InputJsonValue);
   }
 
-  const proposal = await prisma.proposal.update({
-    where: { uuid: proposalUuid, companyUuid },
-    data: updateData,
-    include: {
-      project: { select: { uuid: true, name: true } },
-    },
+  const proposal = await projectTeamTransaction(async (tx) => {
+    await assertIdeaTeamProductWork(companyUuid, await getProposalTeamIdeaUuids(companyUuid, proposalUuid, tx), actorContext, tx);
+    return tx.proposal.update({
+      where: { uuid: proposalUuid, companyUuid },
+      data: updateData,
+      include: {
+        project: { select: { uuid: true, name: true } },
+      },
+    });
   });
 
   return formatProposalResponse(proposal);
@@ -1275,9 +1286,10 @@ async function withLockedDraftProposal<T>(
   mutate: (
     tx: ExtendedTransactionClient,
     proposal: Prisma.ProposalGetPayload<Record<string, never>>
-  ) => Promise<T>
+  ) => Promise<T>,
+  actorContext?: IdeaTeamActorContext
 ): Promise<T> {
-  return prisma.$transaction(async (tx) => {
+  return projectTeamTransaction(async (tx) => {
     await tx.$queryRaw`SELECT "uuid" FROM "Proposal" WHERE "uuid" = ${proposalUuid} FOR UPDATE`;
     const proposal = await tx.proposal.findFirst({
       where: { uuid: proposalUuid, companyUuid, status: "draft" },
@@ -1285,6 +1297,9 @@ async function withLockedDraftProposal<T>(
     if (!proposal) {
       throw new Error("Proposal not found or not in draft status");
     }
+    const sources = await getProposalTeamIdeaUuids(companyUuid, proposalUuid, tx);
+    const newEnrollment = await tx.idea.findFirst({ where: { uuid: { in: sources }, companyUuid, teamEnrollmentVersion: 1, OR: [{ teamOwnerUuid: { not: null } }, { teamLeadAgentUuid: { not: null } }] } });
+    if (newEnrollment) await assertIdeaTeamProductWork(companyUuid, sources, actorContext, tx);
     return mutate(tx, proposal);
   });
 }
@@ -1293,7 +1308,8 @@ async function withLockedDraftProposal<T>(
 export async function addDocumentDraft(
   proposalUuid: string,
   companyUuid: string,
-  draft: Omit<DocumentDraft, "uuid"> & { uuid?: string }
+  draft: Omit<DocumentDraft, "uuid"> & { uuid?: string },
+  actorContext?: IdeaTeamActorContext
 ): Promise<ProposalResponse> {
   const { updated, projectUuid } = await withLockedDraftProposal(
     proposalUuid,
@@ -1312,7 +1328,7 @@ export async function addDocumentDraft(
         },
       });
       return { updated, projectUuid: proposal.projectUuid };
-    }
+    }, actorContext
   );
 
   eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
@@ -1323,7 +1339,8 @@ export async function addDocumentDraft(
 export async function addTaskDraft(
   proposalUuid: string,
   companyUuid: string,
-  draft: Omit<TaskDraft, "uuid"> & { uuid?: string }
+  draft: Omit<TaskDraft, "uuid"> & { uuid?: string },
+  actorContext?: IdeaTeamActorContext
 ): Promise<ProposalResponse> {
   const { updated, projectUuid } = await withLockedDraftProposal(
     proposalUuid,
@@ -1351,7 +1368,7 @@ export async function addTaskDraft(
         },
       });
       return { updated, projectUuid: proposal.projectUuid };
-    }
+    }, actorContext
   );
 
   eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
@@ -1363,7 +1380,8 @@ export async function updateDocumentDraft(
   proposalUuid: string,
   companyUuid: string,
   draftUuid: string,
-  updates: Partial<Omit<DocumentDraft, "uuid">>
+  updates: Partial<Omit<DocumentDraft, "uuid">>,
+  actorContext?: IdeaTeamActorContext
 ): Promise<ProposalResponse> {
   const { updated, projectUuid } = await withLockedDraftProposal(
     proposalUuid,
@@ -1387,7 +1405,7 @@ export async function updateDocumentDraft(
         },
       });
       return { updated, projectUuid: proposal.projectUuid };
-    }
+    }, actorContext
   );
 
   eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
@@ -1399,7 +1417,8 @@ export async function updateTaskDraft(
   proposalUuid: string,
   companyUuid: string,
   draftUuid: string,
-  updates: Partial<Omit<TaskDraft, "uuid">>
+  updates: Partial<Omit<TaskDraft, "uuid">>,
+  actorContext?: IdeaTeamActorContext
 ): Promise<ProposalResponse> {
   const { updated, projectUuid } = await withLockedDraftProposal(
     proposalUuid,
@@ -1434,7 +1453,7 @@ export async function updateTaskDraft(
         },
       });
       return { updated, projectUuid: proposal.projectUuid };
-    }
+    }, actorContext
   );
 
   eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
@@ -1445,7 +1464,8 @@ export async function updateTaskDraft(
 export async function removeDocumentDraft(
   proposalUuid: string,
   companyUuid: string,
-  draftUuid: string
+  draftUuid: string,
+  actorContext?: IdeaTeamActorContext
 ): Promise<ProposalResponse> {
   const { updated, projectUuid } = await withLockedDraftProposal(
     proposalUuid,
@@ -1465,7 +1485,7 @@ export async function removeDocumentDraft(
         },
       });
       return { updated, projectUuid: proposal.projectUuid };
-    }
+    }, actorContext
   );
 
   eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });
@@ -1476,7 +1496,8 @@ export async function removeDocumentDraft(
 export async function removeTaskDraft(
   proposalUuid: string,
   companyUuid: string,
-  draftUuid: string
+  draftUuid: string,
+  actorContext?: IdeaTeamActorContext
 ): Promise<ProposalResponse> {
   const { updated, projectUuid } = await withLockedDraftProposal(
     proposalUuid,
@@ -1501,7 +1522,7 @@ export async function removeTaskDraft(
         },
       });
       return { updated, projectUuid: proposal.projectUuid };
-    }
+    }, actorContext
   );
 
   eventBus.emitChange({ companyUuid, projectUuid, entityType: "proposal", entityUuid: proposalUuid, action: "updated" });

@@ -47,6 +47,7 @@
 //     so a fire-and-forget caller can `await` it safely.
 
 import { createWakeError, type WakeError } from "./wake-error.js";
+import type { WakeContext } from "./idea-team-context.js";
 
 export interface DaemonRestLogger {
   info: (msg: string) => void;
@@ -98,19 +99,7 @@ export interface DaemonPendingTurn {
   trigger: string;
   promptText: string | null;
   resume?: { entityType: string; entityUuid: string; resumedFrom?: string };
-  wakeContext?: {
-    version: number;
-    notificationUuid: string;
-    notification: {
-      uuid: string;
-      action: string;
-      entityType: string;
-      entityUuid: string;
-      entityTitle: string;
-      projectUuid: string;
-      message: string;
-    };
-  };
+  wakeContext?: WakeContext | null;
 }
 
 /**
@@ -150,6 +139,8 @@ export interface DaemonRestClient {
   turnAdvance(p: {
     sessionId: string;
     turnUuid?: string | null;
+    admissionUuid?: string;
+    turnUuids?: string[];
     status: "running" | "ended" | "interrupted";
     entityType?: string | null;
     entityUuid?: string | null;
@@ -243,7 +234,7 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
      * normalized `usage` (daemon-token-usage) — byte-for-byte the CLI client's shape.
      * Requires the connectionUuid.
      */
-    async turnAdvance({ sessionId, turnUuid, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage, wakeError }) {
+    async turnAdvance({ sessionId, turnUuid, admissionUuid, turnUuids, status, entityType, entityUuid, interruptedReason, transcriptRelayError, usage, wakeError }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot advance turn for session ${sessionId} → ${status} — no connection uuid yet`;
@@ -258,6 +249,10 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
         sessionId,
         status,
         ...(turnUuid ? { turnUuid } : {}),
+        ...(admissionUuid ? {
+          admissionUuid, wakeRecoveryProtocol: 1, ideaTeamProtocol: 1,
+          ...(status === "running" ? { turnUuids: turnUuids ?? [turnUuid] } : {}),
+        } : {}),
         // Only sent when BOTH are present, so the server never gets a partial linkage.
         ...(entityType && entityUuid ? { entityType, entityUuid } : {}),
         // Only meaningful alongside status=interrupted; never sent otherwise.
@@ -269,7 +264,7 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
         // The whole normalized TokenUsage object, nested under `usage`, only on a terminal edge.
         ...(usage && isTerminal ? { usage } : {}),
       };
-      const result = await post<{ turn?: { uuid?: unknown } }>(
+      const result = await post<{ turn?: { uuid?: unknown }; ideaTeamProtocol?: unknown }>(
         "turn-advance",
         "/api/daemon/turn-advance",
         body,
@@ -277,6 +272,11 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
         "",
         status === "running",
       );
+      if (result.ok && status === "running" && admissionUuid && result.data?.ideaTeamProtocol !== 1) {
+        const error = "Exact wake admission requires server acknowledgement ideaTeamProtocol=1; upgrade the Chorus server";
+        logger.warn(`[Chorus] ${error}`);
+        return { ok: false, status: result.status, error };
+      }
       const resolvedTurnUuid =
         typeof result.data?.turn?.uuid === "string" ? result.data.turn.uuid : null;
       if (status !== "running") {
@@ -352,7 +352,7 @@ export function createDaemonRestClient(opts: CreateDaemonRestClientOptions): Dae
       if (!connectionUuid) {
         return { ok: false, status: null, skipped: true };
       }
-      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&wakeRecoveryProtocol=1`;
+      const endpoint = `${url}/api/daemon/pending-turns?connectionUuid=${encodeURIComponent(connectionUuid)}&wakeRecoveryProtocol=1&ideaTeamProtocol=1`;
       let response: Response;
       try {
         response = await fetchImpl(endpoint, {

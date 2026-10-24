@@ -129,12 +129,29 @@ export default definePluginEntry({
     };
     const daemonClient = new OpenClawDaemonClient({
       restClient,
-      resolveRunContext: () => resolveWakeRunContext(api, logger),
+      resolveRunContext: () => {
+        const context = resolveWakeRunContext(api, logger);
+        if (!context) return null;
+        const snapshot = context.config as { mcp?: { servers?: Record<string, unknown> } };
+        return { ...context, config: {
+          ...snapshot,
+          mcp: { ...snapshot.mcp, servers: { ...snapshot.mcp?.servers, chorus: {
+            url: new URL("/api/mcp", chorusUrl).toString(),
+            transport: "streamable-http",
+            headers: { Authorization: `Bearer ${apiKey}` },
+          } } },
+        } };
+      },
       redispatch,
       // Build the prompt for a delivered human_instruction turn. The free-text body
       // lives only on the turn (promptText); fall back to a generic nudge if absent.
       buildTurnPrompt: (turn: DaemonPendingTurn) =>
-        turn.promptText && turn.promptText.trim()
+        turn.wakeContext?.notification
+          ? `[Chorus] ${turn.wakeContext.notification.action} for ${turn.wakeContext.notification.entityType} '${turn.wakeContext.notification.entityTitle}' ` +
+            `(entityUuid: ${turn.wakeContext.notification.entityUuid}, projectUuid: ${turn.wakeContext.notification.projectUuid}).\n` +
+            `${turn.wakeContext.notification.message}\nFetch the entity and current Idea Team context, then follow the applicable Chorus workflow for this event.\n` +
+            (turn.promptText ?? "")
+          : turn.promptText && turn.promptText.trim()
           ? `[Chorus] A human sent you an instruction in this conversation:\n\n${turn.promptText}`
           : `[Chorus] A human sent you a new instruction in this conversation (session ${turn.sessionId}). Review the latest comments and respond.`,
       logger,
@@ -162,6 +179,7 @@ export default definePluginEntry({
       });
     };
     const eventRouter = new ChorusEventRouter({
+      deliverTurn: (turnUuid) => daemonClient.deliverTurn(turnUuid),
       mcpClient,
       logger,
       lineage,

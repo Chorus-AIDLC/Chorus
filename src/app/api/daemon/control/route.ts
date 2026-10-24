@@ -48,6 +48,7 @@ import {
   resolveControlSessionId,
 } from "@/services/daemon-session.service";
 import logger from "@/lib/logger";
+import { requiresFencedIdeaTeamResume } from "@/services/daemon-resume-policy";
 
 // Request body schema. This PUBLIC endpoint accepts ONLY the entity-bearing control
 // verbs (`interrupt`/`resume`, 子3): they target a specific running/resumable resource,
@@ -111,6 +112,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // resulting state asynchronously. The validated body IS the entity-bearing dispatch
   // shape (interrupt/resume only — deliver_turn is service-internal, never accepted here),
   // so it threads through verbatim with the authenticated company.
+  if (body.command === "resume" && await requiresFencedIdeaTeamResume(auth.companyUuid, targetConnectionUuid, body.entityType, body.entityUuid)) {
+    return errors.conflict("Idea Team automation requires a fenced continuation; use /api/daemon/resume");
+  }
   dispatchControl({
     companyUuid: auth.companyUuid,
     targetConnectionUuid,

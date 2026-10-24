@@ -18,6 +18,8 @@ const mockReconcileOrphanTurns = vi.fn();
 const mockCanAgentReceiveTurn = vi.fn();
 const mockGetWakeRecoveryDelivery = vi.fn();
 const mockCanActorAccessProject = vi.fn();
+const mockRequiresFencedResume = vi.fn();
+vi.mock("@/services/daemon-resume-policy", () => ({ requiresFencedIdeaTeamResume: (...args: unknown[]) => mockRequiresFencedResume(...args) }));
 vi.mock("@/services/project-access.service", () => ({
   canActorAccessProject: (...args: unknown[]) => mockCanActorAccessProject(...args),
   membershipPrincipal: (auth: { ownerUuid?: string; actorUuid: string; type: string }) =>
@@ -106,6 +108,7 @@ async function flush() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockRequiresFencedResume.mockResolvedValue(false);
   mockGetAuthContext.mockResolvedValue(agentAuth);
   mockParseSelfReport.mockReturnValue({ clientType: "openclaw", host: "h" });
   mockRegisterConnection.mockResolvedValue(connHandle);
@@ -118,8 +121,50 @@ afterEach(() => {
 });
 
 describe("wake recovery SSE wire", () => {
+  it("drops a turnless managed resume even from a delayed control event", async () => {
+    const abort = new AbortController();
+    const { chunks } = await startStream(await GET(makeRequest("clientType=codex", abort.signal)));
+    mockRequiresFencedResume.mockResolvedValue(true);
+    const control = mockEventBus.on.mock.calls.find(([channel]) => channel === `control:${connectionUuid}`)![1];
+    control({ type: "control", command: "resume", entityType: "idea", entityUuid: "managed-idea" });
+    await flush();
+    await flush();
+    expect(mockRequiresFencedResume).toHaveBeenCalledWith(companyUuid, connectionUuid, "idea", "managed-idea");
+    expect(chunks.join("")).not.toContain('"command":"resume"');
+    abort.abort();
+  });
   const context = { version: 1, notificationUuid: "source", notification: { uuid: "source", action: "mentioned" } };
   const event = { type: "new_notification", turnUuid: "turn", notificationUuid: "source", wakeContext: context, projectUuid: "project" };
+  it("negotiates Idea Team v1 and revalidates resumed turns rather than forwarding control blindly", async () => {
+    const abort = new AbortController();
+    const response = await GET(makeRequest("clientType=codex&wakeRecoveryProtocol=1&ideaTeamProtocol=1", abort.signal));
+    const { chunks } = await startStream(response);
+    const control = mockEventBus.on.mock.calls.find(([channel]) => channel === `control:${connectionUuid}`)![1];
+    mockGetWakeRecoveryDelivery.mockResolvedValue(null);
+    control({ type: "control", command: "resume", turnUuid: "stale" });
+    await flush();
+    await flush();
+    expect(chunks.join("")).toContain('"ideaTeamProtocol":1');
+    expect(chunks.join("")).not.toContain('"turnUuid":"stale"');
+    expect(mockGetWakeRecoveryDelivery).toHaveBeenCalledWith(companyUuid, actorUuid, connectionUuid, "stale", 1);
+    abort.abort();
+  });
+  it("suppresses the ordinary broadcast copy for a client without Idea Team support", async () => {
+    const abort = new AbortController();
+    const { chunks } = await startStream(await GET(makeRequest("clientType=codex", abort.signal)));
+    const handler = mockEventBus.on.mock.calls.find(([channel]) => channel === `notification:agent:${actorUuid}`)![1];
+    handler({ ...event, ideaTeamRequired: true, suppressWake: false });
+    await flush();
+    await flush();
+    const events = chunks.join("").split("\n").filter((line) => line.startsWith("data: ")).map((line) => JSON.parse(line.slice(6)));
+    expect(events.at(-1)).toMatchObject({ suppressWake: true, ideaTeamRequired: true, ideaTeamUpgradeHint: expect.stringContaining("Upgrade") });
+    expect(events.at(-1)).not.toHaveProperty("turnUuid");
+    abort.abort();
+  });
+  it.each(["ideaTeamProtocol=2&wakeRecoveryProtocol=1", "ideaTeamProtocol=1"])("rejects incomplete or unsupported Team negotiation (%s)", async (query) => {
+    expect((await GET(makeRequest(`clientType=codex&${query}`))).status).toBe(400);
+    expect(mockRegisterConnection).not.toHaveBeenCalled();
+  });
   it("advertises v1 and projects freshly authorized persisted identity on both channels", async () => {
     const abort = new AbortController();
     const response = await GET(makeRequest("clientType=codex&wakeRecoveryProtocol=1", abort.signal));
@@ -135,7 +180,7 @@ describe("wake recovery SSE wire", () => {
     expect(events[0]).toMatchObject({ type: "connection_registered", wakeRecoveryProtocol: 1 });
     expect(events.slice(1)).toHaveLength(2);
     for (const delivered of events.slice(1)) expect(delivered).toMatchObject({ turnUuid: "turn", wakeContext: context, targetConnectionUuid: connectionUuid });
-    expect(mockGetWakeRecoveryDelivery).toHaveBeenCalledWith(companyUuid, actorUuid, connectionUuid, "turn");
+    expect(mockGetWakeRecoveryDelivery).toHaveBeenCalledWith(companyUuid, actorUuid, connectionUuid, "turn", undefined);
     abort.abort();
   });
 

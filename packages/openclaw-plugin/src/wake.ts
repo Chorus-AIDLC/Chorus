@@ -2,6 +2,7 @@ import type {
   OpenClawPluginApi,
   OpenClawRuntimeAgent,
 } from "openclaw/plugin-sdk/plugin-entry";
+import { withRunMcpConfig } from "./idea-team-context.js";
 import type { WakeRunContext } from "./daemon-client.js";
 
 /**
@@ -333,7 +334,7 @@ export function createWake(
           sessionFile,
           ...(agentDir ? { agentDir } : {}),
           workspaceDir,
-          config: cfg,
+          config: withRunMcpConfig(cfg),
           prompt: message,
           timeoutMs,
           runId,

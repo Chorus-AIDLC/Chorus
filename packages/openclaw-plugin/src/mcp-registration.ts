@@ -1,5 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import type { ChorusPluginConfig } from "./config.js";
+import { isTurnHeader } from "./idea-team-context.js";
 
 /**
  * Shape of the `mcp.servers.chorus` entry we write into OpenClaw config.
@@ -41,7 +42,8 @@ function entryMatches(existing: unknown, desired: ChorusMcpServerEntry): boolean
   return (
     e.url === desired.url &&
     e.transport === desired.transport &&
-    e.headers?.Authorization === desired.headers.Authorization
+    e.headers?.Authorization === desired.headers.Authorization &&
+    !Object.keys(e.headers ?? {}).some(isTurnHeader)
   );
 }
 

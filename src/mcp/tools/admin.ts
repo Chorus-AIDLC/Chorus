@@ -86,7 +86,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
         auth.companyUuid,
         auth.actorUuid,  // Admin Agent as reviewer
         reviewNote || null,
-        { actorType: auth.type, actorUuid: auth.actorUuid }
+        { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
       );
 
       await activityService.createActivity({
@@ -187,7 +187,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       const updated = await taskService.updateTask(
         task.uuid,
         { status: "done" },
-        { actorType: auth.type, actorUuid: auth.actorUuid }
+        { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
       );
 
       await activityService.createActivity({
@@ -250,7 +250,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       const updated = await taskService.updateTask(
         task.uuid,
         { status: "in_progress" },
-        { actorType: auth.type, actorUuid: auth.actorUuid }
+        { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
       );
 
       // Log force_status_change activity when force is used
@@ -336,7 +336,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
       const updated = await taskService.updateTask(
         task.uuid,
         { status: "closed" },
-        { actorType: auth.type, actorUuid: auth.actorUuid }
+        { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
       );
 
       await activityService.createActivity({

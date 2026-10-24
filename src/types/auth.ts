@@ -14,6 +14,7 @@ export interface AuthContext {
   actorUuid: string;    // User UUID or Agent UUID
   roles?: AgentRole[];  // Agent role list
   ownerUuid?: string;   // Agent's Owner User UUID
+  ideaTeamTurn?: import("./idea-team").IdeaTeamTurnContext;
 }
 
 // User authentication context

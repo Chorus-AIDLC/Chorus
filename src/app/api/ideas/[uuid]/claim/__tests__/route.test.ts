@@ -256,3 +256,51 @@ describe("POST /api/ideas/[uuid]/claim — agent self-claim", () => {
     expect(mockClaimIdea).not.toHaveBeenCalled();
   });
 });
+
+describe("POST /api/ideas/[uuid]/claim — authenticated assignment authority", () => {
+  it.each(["user", "agent"])("forwards the actual %s context and Idempotency-Key, never body-supplied authority", async (type) => {
+    const auth = { type, companyUuid, actorUuid: type === "user" ? userUuid : agentUuid, permissions: ["idea:read", "idea:write"] };
+    mockGetAuthContext.mockResolvedValue(auth);
+    mockClaimIdea.mockResolvedValue({ uuid: ideaUuid, status: "elaborating" });
+    const request = jsonRequest({
+      auth: { type: "user", actorUuid: "forged-human" }, assignedByType: "user", assignedByUuid: "forged-human",
+      humanAuthorizationUuid: "forged-proof", operationUuid: "body-operation",
+    });
+    request.headers.set("Idempotency-Key", "header-operation");
+    const response = await POST(request, ctx());
+    expect(response.status).toBe(200);
+    expect(mockClaimIdea).toHaveBeenCalledWith(expect.objectContaining({
+      auth, operationUuid: "header-operation", assigneeType: type, assigneeUuid: auth.actorUuid,
+      assignedByType: type === "user" ? "user" : null, assignedByUuid: type === "user" ? userUuid : null,
+    }));
+    const input = mockClaimIdea.mock.calls[0][0];
+    expect(input.auth).toBe(auth);
+    expect(input).not.toHaveProperty("humanAuthorizationUuid");
+  });
+
+  it("forwards human auth for selected-agent assignment without inventing a missing operation key", async () => {
+    const auth = { type: "user", companyUuid, actorUuid: userUuid };
+    mockGetAuthContext.mockResolvedValue(auth);
+    mockPrisma.agent.findFirst.mockResolvedValue({ uuid: agentUuid, roles: [], permissions: ["idea:write"] });
+    mockClaimIdea.mockResolvedValue({ uuid: ideaUuid });
+    expect((await POST(jsonRequest({ agentUuid }), ctx())).status).toBe(200);
+    expect(mockClaimIdea.mock.calls[0][0]).toMatchObject({ auth, assigneeType: "agent", assigneeUuid: agentUuid });
+    expect(mockClaimIdea.mock.calls[0][0].operationUuid).toBeUndefined();
+  });
+
+  it("rejects malformed JSON before claiming for a human", async () => {
+    const request = new NextRequest(`http://localhost/api/ideas/${ideaUuid}/claim`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{",
+    });
+    expect((await POST(request, ctx())).status).toBe(400);
+    expect(mockClaimIdea).not.toHaveBeenCalled();
+  });
+
+  it("rejects unauthenticated and unsupported actor contexts", async () => {
+    mockGetAuthContext.mockResolvedValue(null);
+    expect((await POST(jsonRequest({}), ctx())).status).toBe(401);
+    mockGetAuthContext.mockResolvedValue({ type: "super_admin", companyUuid, actorUuid: "admin" });
+    expect((await POST(jsonRequest({}), ctx())).status).toBe(403);
+    expect(mockClaimIdea).not.toHaveBeenCalled();
+  });
+});

@@ -361,7 +361,7 @@ describe("agent teams against isolated in-memory PostgreSQL", () => {
     expect(await projectTeams.getProjectAgentTeam(auth, project.uuid)).toBeNull();
   });
 
-  it("restores latest inheritance and shows removed-lead and permission warnings without assignments", async () => {
+  it("restores inheritance without treating optional-default removal as an assignment failure", async () => {
     const project = await db.project.create({ data: { companyUuid: auth.companyUuid, name: "Drift" } });
     const template = await teams.createAgentTeam(auth, { name: "Team", members: [binding(agentUuid, "lead")] });
     await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: { lead: [] } });
@@ -369,7 +369,9 @@ describe("agent teams against isolated in-memory PostgreSQL", () => {
     expect((await projectTeams.getProjectAgentTeam(auth, project.uuid))?.roles.lead).toEqual([]);
     expect((await projectTeams.saveProjectAgentTeam(auth, project.uuid, { templateUuid: template.uuid, overrides: {} }))?.roles.lead[0].agentUuid).toBe(secondAgentUuid);
     await db.projectAgentTeam.update({ where: { projectUuid_ownerUuid: { projectUuid: project.uuid, ownerUuid: auth.actorUuid } }, data: { lastLeadAgentUuid: agentUuid } });
-    expect((await projectTeams.getProjectAgentTeam(auth, project.uuid))?.handoffWarning).toMatchObject({ agentUuid, reason: "removed_from_lead" });
+    expect((await projectTeams.getProjectAgentTeam(auth, project.uuid))?.handoffWarning).toBeNull();
+    await db.agent.update({ where: { uuid: agentUuid }, data: { roles: [], permissions: ["idea:read"] } });
+    expect((await projectTeams.getProjectAgentTeam(auth, project.uuid))?.handoffWarning).toMatchObject({ agentUuid, reason: "ineligible" });
     await db.agent.update({ where: { uuid: secondAgentUuid }, data: { roles: ["developer"] } });
     const drift = await projectTeams.getProjectAgentTeam(auth, project.uuid);
     expect(drift?.roles.lead[0].eligible).toBe(false);

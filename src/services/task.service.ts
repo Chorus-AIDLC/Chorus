@@ -5,6 +5,7 @@
 import { prisma, TransactionClient } from "@/lib/prisma";
 import { withTransactionRetry } from "@/lib/transaction-retry";
 import { assertIdeaTeamGate } from "./idea-team.service";
+import type { IdeaTeamActorContext } from "@/types/idea-team";
 import { lockResearchProject, EXECUTED_TASK_STATUSES, provesTaskExecution, type ResearchDb } from "@/services/research-eligibility.service";
 import { formatAssigneeComplete, formatCreatedBy, batchResolveActorIdentities, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, batchResolveAssignmentActors, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
@@ -750,7 +751,7 @@ async function preserveIdeaExecution(
 export async function updateTask(
   uuid: string,
   data: TaskUpdateParams,
-  actorContext?: { actorType: string; actorUuid: string }
+  actorContext?: IdeaTeamActorContext
 ): Promise<TaskResponse> {
   // If description is being updated and we have actor context, capture old description for mention diffing
   let oldDescription: string | null = null;

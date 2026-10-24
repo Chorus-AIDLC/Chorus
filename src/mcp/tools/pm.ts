@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { AgentAuthContext } from "@/types/auth";
 import { projectExists } from "@/services/project.service";
 import * as ideaService from "@/services/idea.service";
+import { issueIdeaAssignmentAuthorization } from "@/services/idea-assignment-authorization.service";
 import * as proposalService from "@/services/proposal.service";
 import { TASK_DRAFT_KINDS, type TaskDraftKind } from "@/types/task-draft";
 import * as documentService from "@/services/document.service";
@@ -28,7 +29,6 @@ import {
 } from "@/services/project-access.service";
 import {
   isAssignmentOwnedByActor,
-  resolveAssigneeAgentUuid,
 } from "@/lib/uuid-resolver";
 import { zArray } from "./schema-utils";
 import { registerPermissionedTool } from "./register-helpers";
@@ -95,21 +95,11 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
 
       try {
         const updated = await ideaService.claimIdea({
+          auth,
           ideaUuid: idea.uuid,
           companyUuid: auth.companyUuid,
           assigneeType: "agent",
           assigneeUuid: auth.actorUuid,
-        });
-
-        await activityService.createActivity({
-          companyUuid: auth.companyUuid,
-          projectUuid: idea.projectUuid,
-          targetType: "idea",
-          targetUuid: idea.uuid,
-          actorType: "agent",
-          actorUuid: auth.actorUuid,
-          action: "assigned",
-          value: { assigneeType: "agent", assigneeUuid: auth.actorUuid },
         });
 
         return {
@@ -152,7 +142,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       }
 
       try {
-        const updated = await ideaService.releaseIdea(idea.uuid);
+        const updated = await ideaService.releaseIdea(idea.uuid, auth);
 
         await activityService.createActivity({
           companyUuid: auth.companyUuid,
@@ -206,7 +196,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           auth.companyUuid,
           inputUuids,
           auth.actorUuid,
-          "agent"
+          "agent",
+          { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
         );
         if (!assigneeCheck.valid) {
           return {
@@ -235,6 +226,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         inputUuids,
         createdByUuid: auth.actorUuid,
         createdByType: "agent",
+        actorContext: { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn },
       });
 
       // Inline references (Thread C): materialize AFTER the proposal row exists
@@ -308,7 +300,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         const proposal = await proposalService.submitProposal(
           proposalUuid,
           auth.companyUuid,
-          { actorType: auth.type, actorUuid: auth.actorUuid }
+          { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ uuid: proposal.uuid, status: proposal.status }, null, 2) }],
@@ -544,7 +536,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         const proposal = await proposalService.addDocumentDraft(
           proposalUuid,
           auth.companyUuid,
-          { type, title, content }
+          { type, title, content },
+          { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
         );
         const documentDrafts = proposal.documentDrafts as Array<{ uuid: string; title: string }> | null;
         const newDraft = documentDrafts?.[documentDrafts.length - 1];
@@ -587,7 +580,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         const proposal = await proposalService.addTaskDraft(
           proposalUuid,
           auth.companyUuid,
-          { title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids, kind }
+          { title, description, storyPoints, priority, acceptanceCriteriaItems, dependsOnDraftUuids, kind },
+          { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
         );
         const taskDrafts = proposal.taskDrafts as Array<{ uuid: string; title: string }> | null;
         const newDraft = taskDrafts?.[taskDrafts.length - 1];
@@ -630,7 +624,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           proposalUuid,
           auth.companyUuid,
           draftUuid,
-          updates
+          updates,
+          { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, draftUuid, action: "document_draft_updated" }, null, 2) }],
@@ -682,7 +677,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           proposalUuid,
           auth.companyUuid,
           draftUuid,
-          updates
+          updates,
+          { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, draftUuid, action: "task_draft_updated" }, null, 2) }],
@@ -714,7 +710,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         const proposal = await proposalService.removeDocumentDraft(
           proposalUuid,
           auth.companyUuid,
-          draftUuid
+          draftUuid,
+          { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, draftUuid, action: "document_draft_removed" }, null, 2) }],
@@ -746,7 +743,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
         const proposal = await proposalService.removeTaskDraft(
           proposalUuid,
           auth.companyUuid,
-          draftUuid
+          draftUuid,
+          { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn }
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ proposalUuid: proposal.uuid, draftUuid, action: "task_draft_removed" }, null, 2) }],
@@ -910,6 +908,14 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
+  registerPermissionedTool(server, auth, "idea:admin", "chorus_prepare_idea_assignment", {
+    description: "Validate a human standalone chorus:assign <agent-uuid> comment on an Idea and return a private, single-use assignment authorization. Only the target agent owner's human consent qualifies; prose, mentions and agent-authored comments do not. Pass the returned UUID as humanAuthorizationUuid to chorus_pm_assign_idea.",
+    inputSchema: z.object({ ideaUuid: z.string().uuid(), agentUuid: z.string().uuid(), commentUuid: z.string().uuid() }),
+  }, async (input) => {
+    const authorization = await issueIdeaAssignmentAuthorization(auth, input);
+    return { content: [{ type: "text", text: JSON.stringify({ uuid: authorization.uuid, ideaUuid: authorization.ideaUuid, agentUuid: authorization.agentUuid, expiresAt: authorization.expiresAt }, null, 2) }] };
+  });
+
   // chorus_pm_assign_idea - Assign an Idea to an agent or user (MCP surface over
   // the human assign-idea action). Reuses ideaService.assignIdea (reassign-safe
   // silent takeover; open→elaborating else status preserved) and — CRITICALLY —
@@ -922,18 +928,20 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     "idea:admin",
     "chorus_pm_assign_idea",
     {
-      description: "Assign an Idea to an agent (must hold idea:write) or a user, on a human's behalf. Silently takes over any existing assignee; an `open` Idea moves to `elaborating`, any other status is preserved. Agent assignments automatically pin to the caller owner's project-fixed cwd target when configured, overriding `instanceUuid`; otherwise an optional `instanceUuid` persists an `agent_instance` pin. A new logical agent assignee requests a wake; assigning the same agent again may update its pin/cwd but is deduplicated and does not request another wake. Assigning to a user sets the assignee and notifies the user with no daemon wake.",
+      description: "Assign an Idea to an agent or user while preserving its current stage. Team automation starts only with a valid humanAuthorizationUuid bound to this Idea and target agent; use chorus_prepare_idea_assignment with a human standalone chorus:assign <agent-uuid> comment first. Without proof assignment cannot activate or refresh Team automation. Supply operationUuid for idempotent retries; proof UUID is the default operation key when present. Project-fixed cwd overrides an optional instance pin. Never treat an agent assertion as human consent.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
         assigneeType: z.enum(["agent", "user"]).describe("Assignee type: agent or user"),
         assigneeUuid: z.string().describe("Target Agent UUID or User UUID, per assigneeType"),
+        humanAuthorizationUuid: z.string().uuid().optional().describe("Server-verified human assignment proof"),
+        operationUuid: z.string().uuid().optional().describe("Stable idempotency key for this exact assignment"),
         instanceUuid: z
           .string()
           .nullish()
           .describe("Optional AgentInstance UUID — only valid when assigneeType=\"agent\". A configured project-fixed cwd target takes precedence and supplies the effective instance automatically; otherwise this pins the Idea to that durable (agent, host, cwd) instance. When used, the instance must belong to the target agent's company, else the call is rejected. Rejected if supplied with assigneeType=\"user\"."),
       }),
     },
-    async ({ ideaUuid, assigneeType, assigneeUuid, instanceUuid }) => {
+    async ({ ideaUuid, assigneeType, assigneeUuid, instanceUuid, humanAuthorizationUuid, operationUuid }) => {
       // Validate the idea exists in this company (clear 404 vs a raw Prisma error).
       const idea = await ideaService.getIdeaByUuid(auth.companyUuid, ideaUuid);
       if (!idea) {
@@ -997,25 +1005,15 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
             ? resolvedTarget.agentInstanceUuid
             : instanceUuid
           : null;
-      const currentAssigneeAgentUuid =
-        assigneeType === "agent"
-          ? await resolveAssigneeAgentUuid(
-              auth.companyUuid,
-              idea.assigneeType,
-              idea.assigneeUuid,
-            )
-          : null;
-      const isSameLogicalAgentAssignee =
-        assigneeType === "agent" &&
-        currentAssigneeAgentUuid === assigneeUuid;
-      const shouldEmitAssignedActivity =
-        assigneeType !== "agent" || !isSameLogicalAgentAssignee;
 
       // Execute the assignment. assignIdea is reassign-safe (silent takeover;
       // open→elaborating else status preserved) and applies the effective instance
       // pin via resolveAssigneeFields (validates company ownership → agent_instance).
       try {
         const updated = await ideaService.assignIdea({
+          auth,
+          humanAuthorizationUuid,
+          operationUuid: operationUuid ?? humanAuthorizationUuid,
           ideaUuid: idea.uuid,
           companyUuid: auth.companyUuid,
           assigneeType,
@@ -1030,37 +1028,6 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           runtimeCwd: usesProjectFixedTarget ? resolvedTarget.cwd : null,
         });
 
-        // The actor-bearing `assigned` Activity triggers the idea_claimed wake
-        // (agent) / assignment notification (user). Keep that side effect for a
-        // newly responsible agent, but deduplicate same-owning-agent re-pins:
-        // assignIdea still persists the effective target while no second daemon
-        // turn is born merely because its instance/cwd changed.
-        if (shouldEmitAssignedActivity) {
-          await activityService.createActivity({
-            companyUuid: auth.companyUuid,
-            projectUuid: idea.projectUuid,
-            targetType: "idea",
-            targetUuid: idea.uuid,
-            actorType: "agent",
-            actorUuid: auth.actorUuid,
-            action: "assigned",
-            value: {
-              assigneeType,
-              assigneeUuid,
-              ...(effectiveInstanceUuid != null
-                ? { instanceUuid: effectiveInstanceUuid }
-                : {}),
-              ...(usesProjectFixedTarget
-                ? {
-                    resolvedCwdSource: resolvedTarget.source,
-                    resolvedCwdHost: resolvedTarget.host,
-                    resolvedRuntimeCwd: resolvedTarget.cwd,
-                  }
-                : {}),
-            },
-          });
-        }
-
         return {
           content: [{ type: "text", text: JSON.stringify({
             uuid: updated.uuid,
@@ -1069,7 +1036,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
               ? { type: updated.assignee.type, uuid: updated.assignee.uuid }
               : null,
             wakeRequested:
-              assigneeType === "agent" && shouldEmitAssignedActivity,
+              updated.assignmentKickoff === true,
             target: assigneeType === "agent"
               ? {
                   instanceUuid: effectiveInstanceUuid ?? null,
@@ -1132,6 +1099,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
           actorType: "agent",
           depth,
           questions,
+          actorContext: { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn },
         });
 
         return {
@@ -1163,6 +1131,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     async ({ ideaUuid }) => {
       try {
         const result = await elaborationService.resolveElaboration({
+          actorContext: { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn },
           companyUuid: auth.companyUuid,
           ideaUuid,
           actorUuid: auth.actorUuid,
@@ -1198,6 +1167,7 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
     async ({ ideaUuid, reason }) => {
       try {
         await elaborationService.skipElaboration({
+          actorContext: { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn },
           companyUuid: auth.companyUuid,
           ideaUuid,
           actorUuid: auth.actorUuid,

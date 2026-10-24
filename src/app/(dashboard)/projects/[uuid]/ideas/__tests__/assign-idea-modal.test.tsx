@@ -115,7 +115,7 @@ describe("AssignIdeaModal", () => {
     await waitFor(() => expect(mockGetInstances).toHaveBeenCalledWith("agent-pm", "project-1"));
     expect(trigger).toHaveTextContent("Planner");
     await user.click(screen.getByRole("button", { name: messages.common.assign }));
-    await waitFor(() => expect(mockAssignAgent).toHaveBeenCalledWith("idea-1", "agent-pm", undefined));
+    await waitFor(() => expect(mockAssignAgent).toHaveBeenCalledWith("idea-1", "agent-pm", undefined, expect.any(String)));
     expect(onClose).toHaveBeenCalledOnce();
     expect(onError).not.toHaveBeenCalled();
   });

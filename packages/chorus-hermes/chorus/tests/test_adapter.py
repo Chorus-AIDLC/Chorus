@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import json
 import enum
 import os
 import sys
@@ -14,6 +16,7 @@ import httpx
 import pytest
 
 from .fixtures.chorus_fake import FakeChorus, wait_for
+from .test_turn_context import TURN, OTHER, wake_context
 
 ENV = {"CHORUS_URL": "https://chorus.test", "CHORUS_API_KEY": "cho_test"}
 
@@ -238,11 +241,102 @@ def run(coro):
     return asyncio.run(coro)
 
 
+def test_fenced_tool_execution_uses_only_its_admitted_run(hermes, tmp_path):
+    harness = Harness(hermes, tmp_path)
+    captured = []
+    responses = []
+    harness.fake.tools["chorus_pm_create_proposal"] = lambda args: {"ok": True}
+
+    def forbidden_fallback(args):
+        raise AssertionError("fenced tool must not use the shared MCP transport")
+
+    async def handler(event):
+        session_id = event.message_id
+        contextvars.Context().run(hermes.HOOKS["pre_llm_call"], session_id="unrelated",
+                                  platform="chorus", user_message=event.text)
+        assert "unrelated" not in harness.adapter._hermes_session_to_chat
+        hermes.HOOKS["pre_llm_call"](session_id=session_id, platform="chorus", user_message=event.text)
+        hermes.HOOKS["pre_llm_call"](session_id="child", parent_session_id=session_id,
+                                    platform="chorus", user_message=event.text)
+        assert "child" not in harness.adapter._hermes_session_to_chat
+        captured.append((contextvars.copy_context(), session_id))
+        responses.append(await asyncio.to_thread(hermes._tool_execution,
+            tool_name="mcp__chorus__chorus_pm_create_proposal", args={}, session_id=session_id,
+            next_call=forbidden_fallback))
+        wrong = await asyncio.to_thread(hermes._tool_execution, tool_name="mcp__chorus__chorus_pm_create_proposal",
+            args={}, session_id="other-session", next_call=forbidden_fallback)
+        assert "error" in json.loads(wrong)
+        await asyncio.sleep(0.03)
+        return "done"
+
+    harness.adapter.set_message_handler(handler)
+
+    async def exercise():
+        await harness.connect()
+        for turn_uuid in (TURN, OTHER):
+            context = wake_context()
+            context["notificationUuid"] = context["notification"]["uuid"] = turn_uuid
+            await harness.adapter.router.dispatch_pending_turn({"turnUuid": turn_uuid, "sessionId": turn_uuid,
+                "directIdeaUuid": turn_uuid, "trigger": "task_assigned", "wakeContext": context})
+        await harness.idle()
+        for stale_context, session_id in captured:
+            stale = stale_context.run(hermes._tool_execution, tool_name="mcp__chorus__chorus_pm_create_proposal",
+                args={}, session_id=session_id, next_call=forbidden_fallback)
+            assert "error" in json.loads(stale)
+        await harness.adapter.disconnect()
+
+    run(exercise())
+    assert len(responses) == 2 and all("result" in json.loads(response) for response in responses)
+    calls = [request for request in harness.fake.requests if request.url.path == "/api/mcp"
+             and json.loads(request.content)["params"]["name"] == "chorus_pm_create_proposal"]
+    assert len(calls) == 2
+    admissions = {body["turnUuid"]: body["admissionUuid"] for body in harness.turn_bodies()}
+    assert {request.headers["X-Chorus-Turn-Uuid"] for request in calls} == {TURN, OTHER}
+    for request in calls:
+        assert request.headers["X-Chorus-Admission-Uuid"] == admissions[request.headers["X-Chorus-Turn-Uuid"]]
+    assert hermes._tool_execution(tool_name="mcp__chorus__chorus_get_task", args={}, session_id="outside",
+                                  next_call=lambda args: "unbound") == "unbound"
+
+
+@pytest.mark.parametrize("reason", ["finished", "connection", "replaced", "session", "interrupted", "shutdown"])
+def test_tool_middleware_rejects_stale_or_foreign_run_without_fallback(hermes, reason):
+    record = hermes.TurnRecord("session", ("idea", TURN), requested_turn_uuid=TURN,
+                               turn_uuid=TURN, connection_uuid="connection")
+    turn = types.SimpleNamespace(record=record, chat_id="chat", dispatched=True, interrupting=False,
+                                 shutdown=False, hermes_session_ids={"session"})
+    adapter = types.SimpleNamespace(_active={"chat": turn}, connection_uuid="connection",
+                                    turns=types.SimpleNamespace(secrets=()))
+    if reason == "finished":
+        record.finished = True
+    elif reason == "connection":
+        adapter.connection_uuid = "replacement-connection"
+    elif reason == "replaced":
+        adapter._active["chat"] = object()
+    elif reason == "session":
+        turn.hermes_session_ids = {"another-session"}
+    elif reason == "interrupted":
+        turn.interrupting = True
+    else:
+        turn.shutdown = True
+
+    def forbidden(args):
+        pytest.fail("stale run fell through to unscoped transport")
+
+    token = hermes.active_run.set((adapter, turn))
+    try:
+        result = hermes._tool_execution(tool_name="mcp__chorus__chorus_pm_create_proposal", args={},
+                                        session_id="session", next_call=forbidden)
+    finally:
+        hermes.active_run.reset(token)
+    assert "No current admitted Chorus run" in json.loads(result)["error"]
+
+
 # -- tests ---------------------------------------------------------------------------------
 
 
 def test_register_platform_and_hooks(hermes, fake_ctx):
     hermes.register(fake_ctx)
+    assert fake_ctx.middleware["tool_execution"] == [hermes._tool_execution]
     entry = fake_ctx.platforms["chorus"]
     assert entry["allowed_users_env"] == "CHORUS_ALLOWED_USERS"
     assert entry["required_env"] == ["CHORUS_URL", "CHORUS_API_KEY"]
@@ -602,7 +696,8 @@ def test_sweeps_pending_turns_on_register_and_reconnect(hermes, tmp_path):
 
     run(go())
     sweeps = [c for c in h.fake.calls if c[1] == "/api/daemon/pending-turns"]
-    assert len(sweeps) == 2 and sweeps[-1][2] == {"connectionUuid": "c-1"}
+    assert len(sweeps) == 2 and sweeps[-1][2] == {
+        "connectionUuid": "c-1", "wakeRecoveryProtocol": "1", "ideaTeamProtocol": "1"}
     assert h.delays == [1.0]
     assert h.turn_bodies()[0]["turnUuid"] == "tu-7"
 
@@ -689,6 +784,29 @@ def test_failed_admission_never_runs_the_model(hermes, tmp_path, case):
     assert h.fake.bodies("/api/daemon/report-interrupt") == []
     # unavailable → released for a later sweep / deliver_turn; rejected → stays handled (dropped)
     assert released is (expected == "unavailable")
+
+
+@pytest.mark.parametrize("acknowledgement", [True, False, None, "1", 0, 2])
+def test_malformed_team_acknowledgement_never_dispatches_model(hermes, tmp_path, acknowledgement):
+    from chorus_hermes import router as router_mod
+
+    harness = Harness(hermes, tmp_path)
+
+    async def exercise():
+        await harness.connect()
+        await harness.idle()
+        harness.fake.turn_advance_hook = lambda body: httpx.Response(200, json={"success": True,
+            "data": {"turn": {"uuid": TURN}, "ideaTeamProtocol": acknowledgement}})
+        request = _pending_wake(router_mod, TURN)
+        request.wake_context = wake_context()
+        await harness.adapter.dispatch(request)
+        await harness.idle()
+        await harness.adapter.disconnect()
+
+    run(exercise())
+    assert harness.handled == [] and harness.adapter.started_events == []
+    assert harness.fake.bodies("/api/daemon/transcript") == []
+    assert [body["status"] for body in harness.turn_bodies()] == ["running"]
 
 
 def test_rejected_live_wake_is_dropped_without_ending_the_other_consumers_turn(hermes, tmp_path):

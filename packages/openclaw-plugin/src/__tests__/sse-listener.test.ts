@@ -162,6 +162,8 @@ describe("ChorusSseListener", () => {
     const url = new URL(String(fetchSpy.mock.calls[0][0]));
     expect(url.origin + url.pathname).toBe("https://c.example.com/api/events/notifications");
     expect(url.searchParams.get("clientType")).toBe("openclaw");
+    expect(url.searchParams.get("wakeRecoveryProtocol")).toBe("1");
+    expect(url.searchParams.get("ideaTeamProtocol")).toBe("1");
     // Version is the plugin's real package version, not a hardcoded literal.
     expect(url.searchParams.get("clientVersion")).toBe(PLUGIN_VERSION);
     expect(url.searchParams.get("host")).toBe(hostname());
@@ -329,6 +331,8 @@ describe("ChorusSseListener", () => {
     expect(String(fetchSpy.mock.calls[1][0])).toBe(String(fetchSpy.mock.calls[0][0]));
     const u = new URL(String(fetchSpy.mock.calls[1][0]));
     expect(u.searchParams.get("clientType")).toBe("openclaw");
+    expect(u.searchParams.get("wakeRecoveryProtocol")).toBe("1");
+    expect(u.searchParams.get("ideaTeamProtocol")).toBe("1");
     expect(u.searchParams.get("clientVersion")).toBe(PLUGIN_VERSION);
 
     listener.disconnect();

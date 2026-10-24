@@ -10,6 +10,8 @@ const mockIsConnectionLive = vi.fn();
 const mockHasRunningExecution = vi.fn();
 const mockAdvanceTurnForWake = vi.fn();
 const mockResolveControlSessionId = vi.fn();
+const mockRequiresFencedResume = vi.fn();
+vi.mock("@/services/daemon-resume-policy", () => ({ requiresFencedIdeaTeamResume: (...args: unknown[]) => mockRequiresFencedResume(...args) }));
 
 vi.mock("@/lib/auth", () => ({
   getAuthContext: (...args: unknown[]) => mockGetAuthContext(...args),
@@ -97,6 +99,7 @@ function postRequest(body: unknown): NextRequest {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockRequiresFencedResume.mockResolvedValue(false);
   mockGetAuthContext.mockResolvedValue(ownerUserAuth);
   mockResolveConnectionOwner.mockResolvedValue(targetOwner);
   // hasPermission default: deny unless a test opts in. The route only calls it for
@@ -336,6 +339,13 @@ const interruptIdeaBody = {
 };
 
 describe("POST /api/daemon/control — settles a phantom running turn", () => {
+  it("rejects a turnless managed Idea resume before dispatch", async () => {
+    mockRequiresFencedResume.mockResolvedValue(true);
+    expect((await POST(postRequest({ ...interruptIdeaBody, command: "resume" }), emptyCtx)).status).toBe(409);
+    expect(mockRequiresFencedResume).toHaveBeenCalledWith(companyUuid, connectionUuid, "idea", ideaUuid);
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
   it("OFFLINE connection ⇒ settles interrupted/user and reports settled: true", async () => {
     mockIsConnectionLive.mockResolvedValue(false);
 

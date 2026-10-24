@@ -63,7 +63,9 @@ function makeRunContext(opts: {
     } as never,
     sessionKey: "agent:main:main",
     agentId: "main",
-    config: { fake: true },
+    config: { fake: true, mcp: { servers: { chorus: {
+      url: "https://chorus.example.com/api/mcp", transport: "streamable-http", headers: { Authorization: "Bearer test" },
+    } } } },
     workspaceDir: "/ws",
     agentDir: "/ws/agent",
     timeoutMs: 120000,
@@ -340,7 +342,8 @@ describe("runWake — interrupt (user) vs crash + controller lifecycle", () => {
     const { client, logger } = build({ rest, runContext: makeRunContext({ runEmbeddedAgent }) });
     await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3" });
     expect(turnAdvance).toHaveBeenCalledTimes(1);
-    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("no admitted turn UUID"));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("turn admission denied"));
+    expect(runEmbeddedAgent).not.toHaveBeenCalled();
   });
 
   it("a session-setup rejection admits and fails the requested exact turn without invoking the agent", async () => {
@@ -348,10 +351,10 @@ describe("runWake — interrupt (user) vs crash + controller lifecycle", () => {
     const runEmbeddedAgent = vi.fn();
     const getSessionEntry = vi.fn(() => { throw new Error("Session path unavailable"); });
     const { client } = build({ rest, runContext: makeRunContext({ runEmbeddedAgent, getSessionEntry }) });
-    await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3", turnUuid: "requested" });
+    await client.runWake({ prompt: "p", contextKey: "ctx", entityType: "task", entityUuid: "task-3", turnUuid: "turn-default" });
     expect(runEmbeddedAgent).not.toHaveBeenCalled();
     expect(rest.turnAdvance).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      status: "running", turnUuid: "requested",
+      status: "running", turnUuid: "turn-default",
     }));
     expect(rest.turnAdvance).toHaveBeenLastCalledWith(expect.objectContaining({
       status: "interrupted", turnUuid: "turn-default", interruptedReason: "crash",
@@ -568,13 +571,13 @@ describe("session-key continuity", () => {
     expect(runEmbeddedAgent.mock.calls[0][0].runId).toContain(":");
   });
 
-  it("onResume re-dispatches a wake for the entity (continues the same session via redispatch)", () => {
+  it("onResume recovers persisted turns without an unfenced synthetic wake", async () => {
     const redispatch = vi.fn();
-    const { client } = build({ redispatch });
+    const { client, rest } = build({ redispatch });
     client.controlHooks.onResume("idea", "idea-9");
-    expect(redispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: "idea", entityUuid: "idea-9", contextKey: "chorus:resume:idea-9", prompt: expect.stringContaining(TEAM_ROUTING_GUIDANCE) }),
-    );
+    await flush();
+    expect(rest.readPendingTurns).toHaveBeenCalledOnce();
+    expect(redispatch).not.toHaveBeenCalled();
   });
 });
 
@@ -592,12 +595,12 @@ describe("pending-turns backfill — at-most-once", () => {
       const url = new URL(String(input));
       requests.push(url.href);
       if (url.pathname.endsWith("pending-turns")) {
-        const turn = { turnUuid: "lead-turn", sessionId: "idea-1", directIdeaUuid: "idea-1", trigger: "task_assigned", promptText: null,
+        const turn = { turnUuid: "11111111-1111-4111-8111-111111111111", sessionId: "idea-1", directIdeaUuid: "idea-1", trigger: "task_assigned", promptText: null,
           ...(url.searchParams.get("wakeRecoveryProtocol") === "1" ? { wakeContext: { version: 1, notificationUuid: notification.uuid, notification } } : {}) };
         return new Response(JSON.stringify({ success: true, data: { turns: [turn] } }));
       }
       if (url.pathname.endsWith("turn-advance")) {
-        return new Response(JSON.stringify({ success: admission !== "denied", data: admission === "missing" ? {} : { turn: { uuid: admission === "mismatched" ? "wrong-turn" : "lead-turn" } } }), { status: admission === "denied" ? 403 : 200 });
+        return new Response(JSON.stringify({ success: admission !== "denied", data: admission === "missing" ? {} : { ideaTeamProtocol: 1, turn: { uuid: admission === "mismatched" ? "wrong-turn" : "11111111-1111-4111-8111-111111111111" } } }), { status: admission === "denied" ? 403 : 200 });
       }
       return new Response(JSON.stringify({ success: true }));
     }) as typeof fetch;
@@ -612,18 +615,18 @@ describe("pending-turns backfill — at-most-once", () => {
       { suppressWake: false, targetConnectionUuid: "different-connection", turnUuid: "lead-turn" },
       { suppressWake: false, targetConnectionUuid: "connection-1", turnUuid: "lead-turn" },
     ]) router.dispatch({ type: "new_notification", notificationUuid: notification.uuid, ...event });
-    await client.deliverTurn("lead-turn");
+    await client.deliverTurn("11111111-1111-4111-8111-111111111111");
     await flush();
     await client.onReconnect();
     await flush();
     expect(requests.filter((url) => url.includes("pending-turns"))).toEqual([
-      "https://chorus.example.com/api/daemon/pending-turns?connectionUuid=connection-1&wakeRecoveryProtocol=1",
-      "https://chorus.example.com/api/daemon/pending-turns?connectionUuid=connection-1&wakeRecoveryProtocol=1",
+      "https://chorus.example.com/api/daemon/pending-turns?connectionUuid=connection-1&wakeRecoveryProtocol=1&ideaTeamProtocol=1",
+      "https://chorus.example.com/api/daemon/pending-turns?connectionUuid=connection-1&wakeRecoveryProtocol=1&ideaTeamProtocol=1",
     ]);
     expect(broadcastWake).not.toHaveBeenCalled();
     expect(runEmbeddedAgent).toHaveBeenCalledTimes(admission === "accepted" ? 1 : 0);
-    expect(redispatch.mock.calls[0][0]).toMatchObject({ turnUuid: "lead-turn", entityType: "proposal", entityUuid: "proposal-original" });
-    expect(redispatch.mock.calls[0][0].prompt).toContain("Team lead handoff for proposal");
+    expect(redispatch.mock.calls[0][0]).toMatchObject({ turnUuid: "11111111-1111-4111-8111-111111111111", entityType: "proposal", entityUuid: "proposal-original" });
+    expect(redispatch.mock.calls[0][0].prompt).toContain("Idea orchestrator handoff for proposal");
     expect(executionState).toHaveBeenLastCalledWith({ executions: [] });
   });
 
@@ -652,7 +655,7 @@ describe("pending-turns backfill — at-most-once", () => {
     const { client } = build({ rest: withTurns([turn]), redispatch });
     await client.deliverTurn(turn.turnUuid);
     expect(redispatch).toHaveBeenCalledWith(expect.objectContaining({ entityType: "proposal", entityUuid: "proposal-original", directIdeaUuid: "idea-9", turnUuid: "turn-7" }));
-    expect(redispatch.mock.calls[0][0].prompt).toContain("A resumed Team lead handoff must re-read the original entity");
+    expect(redispatch.mock.calls[0][0].prompt).toContain("A resumed Team handoff must re-read the original entity");
     expect(redispatch.mock.calls[0][0].prompt).not.toContain("A human sent");
   });
 
@@ -674,12 +677,13 @@ describe("pending-turns backfill — at-most-once", () => {
     expect(redispatch).toHaveBeenCalledTimes(1);
     expect(redispatch).toHaveBeenCalledWith(expect.objectContaining({ entityType: "proposal", entityUuid: "proposal-original", directIdeaUuid: "idea-9", turnUuid: "turn-7" }));
     const prompt = redispatch.mock.calls[0][0].prompt;
-    expect(prompt).toContain("Team lead handoff for proposal 'Ready'");
+    expect(prompt).toContain("Idea orchestrator handoff for proposal 'Ready'");
     expect(prompt).toContain("Proposal submitted");
-    expect(prompt).toContain("Task verification belongs to the current lead");
+    expect(prompt).toContain("Task verification belongs to the current orchestrator");
     expect(prompt).not.toContain("A human sent");
     client.resume("proposal", "proposal-original");
-    expect(redispatch.mock.calls[1][0].prompt).toContain("A resumed Team lead handoff must re-read the original entity");
+    await flush();
+    expect(redispatch).toHaveBeenCalledTimes(1);
   });
 
   it.each(["proposal_submitted", "task_submitted_for_verify", "task_status_changed", "report_created"])("does not wake generic %s from a delivered snapshot", async (action) => {

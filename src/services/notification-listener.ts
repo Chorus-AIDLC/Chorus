@@ -10,6 +10,7 @@ import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import { filterRecipientsByProjectAccess } from "./project-access.service";
 import logger from "@/lib/logger";
 import { getIdeaTeamLeadRecipients } from "./idea-team.service";
+import type { IdeaTeamTurnFence } from "@/types/idea-team";
 
 const nlLogger = logger.child({ module: "notification-listener" });
 
@@ -25,6 +26,7 @@ function resolveNotificationType(action: string, targetType: string): string | n
     "task:verified": "task_verified",
     "task:reopened": "task_reopened",
     "idea:assigned": "idea_claimed",
+    "idea:product_delegated": "team_product_handoff",
     "proposal:approved": "proposal_approved",
     "proposal:submitted": "proposal_submitted",
     "proposal:rejected_to_draft": "proposal_rejected",
@@ -587,6 +589,8 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
   if (!notificationType) return; // Not a notifiable action
 
   try {
+    const eventValue = event.value && typeof event.value === "object" ? event.value as Record<string, unknown> : {};
+    const teamFences = Array.isArray(eventValue.ideaTeamFences) ? eventValue.ideaTeamFences as IdeaTeamTurnFence[] : [];
     // Resolve context in parallel
     const [entityTitle, actorName, projectName] = await Promise.all([
       resolveEntityTitle(event.targetType, event.targetUuid),
@@ -604,6 +608,9 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
       event.actorUuid
     );
     const handoffRecipients = new Set<string>();
+    if (notificationType === "team_product_handoff") {
+      for (const fence of teamFences) resolvedRecipients.push({ type: "agent", uuid: fence.agentUuid });
+    }
     if (["assigned", "status_changed", "submitted", "verified", "reopened", "approved", "rejected_to_draft", "elaboration_answered", "elaboration_resolved", "elaboration_skipped", "report_created"].includes(event.action)) {
       const leads = await getIdeaTeamLeadRecipients(event.companyUuid, event.targetType, event.targetUuid);
       resolvedRecipients.push(...leads);
@@ -635,7 +642,9 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
 
     // Don't notify the actor about their own action
     const filteredRecipients = uniqueRecipients.filter(
-      (r) => !(r.type === event.actorType && r.uuid === event.actorUuid)
+      (r) => !(r.type === event.actorType && r.uuid === event.actorUuid) ||
+        (event.action === "assigned" && typeof eventValue.humanAuthorizerUuid === "string") ||
+        (event.action === "product_delegated" && teamFences.some((fence) => fence.role === "orchestrator" && fence.agentUuid === r.uuid))
     );
 
     if (filteredRecipients.length === 0) return;
@@ -667,7 +676,10 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
           event.value && typeof event.value === "object"
             ? (event.value as Record<string, unknown>)
             : {};
+        const ideaTeams = teamFences.filter((fence) => fence.agentUuid === recipient.uuid && (notificationType === "team_product_handoff" || fence.role === "orchestrator"));
+        const ideaTeam = ideaTeams[0];
         return {
+        ...(ideaTeam ? { ideaTeam, ...(ideaTeams.length > 1 ? { ideaTeams } : {}), sourceActivityUuid: event.uuid } : {}),
         companyUuid: event.companyUuid,
         projectUuid: event.projectUuid,
         recipientType: recipient.type,
@@ -676,7 +688,7 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
         entityUuid: event.targetUuid,
         entityTitle,
         projectName,
-        action: handoffRecipients.has(`${recipient.type}:${recipient.uuid}`) ? "team_lead_handoff" : notificationType,
+        action: ideaTeam ? (ideaTeam.role === "product" ? "team_product_handoff" : "team_lead_handoff") : handoffRecipients.has(`${recipient.type}:${recipient.uuid}`) ? "team_lead_handoff" : notificationType,
         ...(handoffRecipients.has(`${recipient.type}:${recipient.uuid}`) ? { sourceActivityUuid: event.uuid } : {}),
         message,
         actorType: event.actorType,

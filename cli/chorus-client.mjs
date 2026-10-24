@@ -8,6 +8,7 @@
 // gets its chorus_* tools (that's wired via --mcp-config in the spawner task).
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { ideaTeamHeaders } from "./idea-team-transport.mjs";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
@@ -24,6 +25,7 @@ export class ChorusClient {
   constructor(opts) {
     this.url = opts.url;
     this.apiKey = opts.apiKey;
+    this.turnHeaders = ideaTeamHeaders(opts.ideaTeamTurn);
     this.logger = opts.logger ?? NOOP_LOGGER;
     /** @type {Client | null} */
     this.client = null;
@@ -38,7 +40,7 @@ export class ChorusClient {
     this.status = "connecting";
     try {
       this.transport = new StreamableHTTPClientTransport(new URL("/api/mcp", this.url), {
-        requestInit: { headers: { Authorization: `Bearer ${this.apiKey}` } },
+        requestInit: { headers: { Authorization: `Bearer ${this.apiKey}`, ...this.turnHeaders } },
       });
       this.client = new Client({ name: "chorus-cli-daemon", version: "0.1.0" });
       await this.client.connect(this.transport);

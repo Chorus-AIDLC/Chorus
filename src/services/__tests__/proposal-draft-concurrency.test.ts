@@ -16,6 +16,7 @@ const { mockPrisma, state, calls, mockEventBus } = vi.hoisted(() => {
   // callback starts only after the previous transaction finished.
   let chain: Promise<unknown> = Promise.resolve();
   const mockPrisma = {
+    idea: { findFirst: vi.fn(async () => null) },
     proposal: {
       findFirst: vi.fn(async () => {
         calls.push("findFirst");
@@ -69,6 +70,8 @@ const baseProposal = () => ({
   companyUuid: "company-1",
   projectUuid: "project-1",
   status: "draft",
+  inputType: "idea",
+  inputUuids: [],
   title: "Draft",
   documentDrafts: [
     { uuid: "doc-a", type: "spec", title: "A", content: "a" },

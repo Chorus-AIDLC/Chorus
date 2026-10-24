@@ -106,6 +106,8 @@ export class ChorusSseListener {
     // These params are display-only metadata; auth remains the Bearer header.
     const params = new URLSearchParams({
       clientType: "openclaw",
+      wakeRecoveryProtocol: "1",
+      ideaTeamProtocol: "1",
       clientVersion: PLUGIN_VERSION,
       host: hostname(),
       // Working directory this connection serves. OpenClaw is single-cwd today

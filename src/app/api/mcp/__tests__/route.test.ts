@@ -44,6 +44,27 @@ describe("Stateless MCP Endpoint", () => {
   });
 
   describe("POST - Stateless Request Handling", () => {
+    it("propagates supplementary turn proofs into the MCP actor context", async () => {
+      const { POST } = await import("@/app/api/mcp/route");
+      const { createMcpServer } = await import("@/mcp/server");
+      const supplementaryTurns = [{ turnUuid: "10000000-0000-4000-8000-000000000001", admissionUuid: "10000000-0000-4000-8000-000000000002" }];
+      const response = await POST(new NextRequest("http://localhost/api/mcp", {
+        method: "POST", headers: { authorization: "Bearer test-key", "X-Chorus-Turn-Uuid": "primary-turn", "X-Chorus-Admission-Uuid": "primary-admission", "X-Chorus-Idea-Team-Turns": JSON.stringify(supplementaryTurns) },
+      }));
+      expect(response.status).toBe(200);
+      expect(createMcpServer).toHaveBeenCalledWith(expect.objectContaining({ ideaTeamTurn: { turnUuid: "primary-turn", admissionUuid: "primary-admission", supplementaryTurns } }));
+    });
+
+    it("rejects malformed supplementary proofs before opening an MCP server", async () => {
+      const { POST } = await import("@/app/api/mcp/route");
+      const { createMcpServer } = await import("@/mcp/server");
+      const response = await POST(new NextRequest("http://localhost/api/mcp", {
+        method: "POST", headers: { authorization: "Bearer test-key", "X-Chorus-Idea-Team-Turns": "invalid" },
+      }));
+      expect(response.status).toBe(400);
+      expect(createMcpServer).not.toHaveBeenCalled();
+    });
+
     it("resolves a group header using owner discovery and only accessible children", async () => {
       const { POST } = await import("@/app/api/mcp/route");
       const { createMcpServer } = await import("@/mcp/server");

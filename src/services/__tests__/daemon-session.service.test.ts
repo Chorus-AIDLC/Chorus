@@ -1,6 +1,6 @@
 import { NON_OPERATION_TURN } from "@/services/daemon-operation";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-vi.mock("@/services/idea-team.service", () => ({ getIdeaTeamHandoffIdeaUuid: vi.fn(async () => null) }));
+vi.mock("@/services/idea-team.service", () => ({ getIdeaTeamHandoffIdeaUuid: vi.fn(async () => null), canReceiveIdeaTeamWake: vi.fn(async () => true) }));
 
 // ===== Prisma mock =====
 const mockPrisma = vi.hoisted(() => {
@@ -2650,7 +2650,7 @@ describe("advanceTurnForWake", () => {
     // Session resolved under the agent + company + business-key fence.
     expect(mockPrisma.daemonSession.findFirst).toHaveBeenCalledWith({
       where: { agentUuid, companyUuid, sessionId },
-      select: { uuid: true, originConnectionUuid: true },
+      select: { uuid: true, originConnectionUuid: true, directIdeaUuid: true },
     });
     // Execution row resolved for the weak link.
     expect(mockPrisma.daemonExecution.findFirst).toHaveBeenCalledWith({
@@ -2725,7 +2725,7 @@ describe("advanceTurnForWake", () => {
     expect(res).toMatchObject({ ok: true });
     expect(mockPrisma.daemonSession.findFirst).toHaveBeenCalledWith({
       where: { agentUuid, companyUuid, sessionId },
-      select: { uuid: true, originConnectionUuid: true },
+      select: { uuid: true, originConnectionUuid: true, directIdeaUuid: true },
     });
     expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
       where: {
@@ -3763,7 +3763,7 @@ describe("createResumeTurn", () => {
     ]);
     mockPrisma.daemonSessionTurn.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.daemonSession.findUnique.mockResolvedValue({ uuid: "s1", companyUuid, directIdeaUuid: null });
-    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValue({ seq: 3 });
+    mockPrisma.daemonSessionTurn.findFirst.mockResolvedValueOnce(null).mockResolvedValue({ seq: 3 });
     mockPrisma.daemonSessionTurn.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
       uuid: "turn-new", backendSessionId: null, startedAt: null, endedAt: null, createdAt: new Date(),
       interruptedReason: null, relayError: null, wakeError: null, usage: null, operationPayload: null, ...data,

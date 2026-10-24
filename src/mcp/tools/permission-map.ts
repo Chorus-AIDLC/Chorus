@@ -38,6 +38,7 @@ export const TOOL_PERMISSIONS = {
   // aligning with chorus_pm_validate_elaboration; the pm_agent preset (idea:write)
   // cannot see it, only admin_agent (idea:admin) can.
   chorus_pm_assign_idea: "idea:admin",
+  chorus_prepare_idea_assignment: "idea:admin",
   // Proposal writes
   chorus_pm_create_proposal: "proposal:write",
   chorus_pm_validate_proposal: "proposal:write",

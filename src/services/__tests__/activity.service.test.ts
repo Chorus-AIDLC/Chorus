@@ -62,6 +62,14 @@ beforeEach(() => {
 
 // ===== listActivities =====
 describe("listActivities", () => {
+  it("redacts internal Team wake fences without changing stored activity data", async () => {
+    const activity = makeActivity({ value: { teamGeneration: 2, ideaTeamFences: [{ ownerUuid: "private-owner", agentUuid: "private-delegate" }] } });
+    mockPrisma.activity.findMany.mockResolvedValue([activity]);
+    mockPrisma.activity.count.mockResolvedValue(1);
+    const result = await listActivities({ companyUuid, projectUuid, skip: 0, take: 20 });
+    expect(result.activities[0].value).toEqual({ teamGeneration: 2 });
+    expect(activity.value).toHaveProperty("ideaTeamFences");
+  });
   it("should return paginated activities", async () => {
     const activity = makeActivity();
     mockPrisma.activity.findMany.mockResolvedValue([activity]);

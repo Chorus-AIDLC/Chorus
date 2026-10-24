@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { publicActivityValue } from "@/lib/idea-team-activity";
 import { batchResolveActorIdentities } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
 import type { AuthContext } from "@/types/auth";
@@ -498,7 +499,7 @@ export async function getGroupDashboard(
       targetType: a.targetType,
       targetUuid: a.targetUuid,
       action: a.action,
-      value: a.value,
+      value: publicActivityValue(a.value),
       actorType: a.actorType,
       actorUuid: a.actorUuid,
       ...(a.actorType === "user" ? { actorAvatarSeed: actorIdentities.get(`user:${a.actorUuid}`)?.avatarSeed ?? null } : {}),

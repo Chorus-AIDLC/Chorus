@@ -1,6 +1,7 @@
 // One isolated Codex App Server stdio connection per daemon wake. The same
 // implementation serves every Codex-family backend (Codex, TRAE CLI) through a
 // frozen profile from codex-family.mjs; the default profile is Codex.
+import { ideaTeamRunEnv } from "./idea-team-transport.mjs";
 import { spawn } from "node:child_process";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, codexAppServerArgs, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
@@ -160,7 +161,7 @@ export class CodexSpawner {
   }
 
   /** One real stdio child and one authoritative turn per wake. */
-  async wake({ prompt, sessionId, cwd = process.cwd(), onMessage, onChild }) {
+  async wake({ prompt, ideaTeamTurn, sessionId, cwd = process.cwd(), onMessage, onChild }) {
     const diagnostics = createWakeErrorCollector({ source: this.wakeErrorSource, env: this.env, creds: this.creds });
     const name = this.profile.displayName;
     const appServer = `${name} App Server`;
@@ -247,7 +248,7 @@ export class CodexSpawner {
       try { args = buildFamilyArgs(this.profile, { args: this.cliConfig.args }); }
       catch { throw fault("UNSUPPORTED_DAEMON_ARGS"); }
       const { command, argv } = resolveSpawnCommand(codexPath, args, this.platform, this.env);
-      const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
+      const childEnv = { ...ideaTeamRunEnv(this.env, ideaTeamTurn), CHORUS_DAEMON_HEADLESS: "1" };
       if (this.creds) {
         if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
         if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;
@@ -337,6 +338,19 @@ export class CodexSpawner {
       // user's config). Other MCP servers, shell and file approvals stay refused,
       // and the sandbox stays read-only. Yolo posture is unchanged.
       if (!fullAccess && chorusMcpConfigured) setup.config = { ...CHORUS_MCP_APPROVAL_CONFIG };
+      if (ideaTeamTurn && (!this.creds?.url || !this.creds?.apiKey)) throw fault("IDEA_TEAM_CREDENTIALS_MISSING");
+      if (this.creds?.url && this.creds?.apiKey) {
+        setup.config = { ...setup.config,
+          "mcp_servers.chorus.url": `${this.creds.url.replace(/\/$/, "")}/api/mcp`,
+          "mcp_servers.chorus.bearer_token_env_var": "CHORUS_API_KEY",
+          "mcp_servers.chorus.http_headers": {},
+          "mcp_servers.chorus.env_http_headers": ideaTeamTurn ? {
+            "X-Chorus-Turn-Uuid": "CHORUS_TURN_UUID",
+            "X-Chorus-Admission-Uuid": "CHORUS_ADMISSION_UUID",
+            ...(ideaTeamTurn.supplementaryTurns ? { "X-Chorus-Idea-Team-Turns": "CHORUS_IDEA_TEAM_TURNS" } : {}),
+          } : {},
+        };
+      }
       let fallback = false;
       if (threadId) {
         try {

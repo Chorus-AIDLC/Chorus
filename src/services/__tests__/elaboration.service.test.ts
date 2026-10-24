@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { mockPrisma, mockEventBus, mockCreateActivity } = vi.hoisted(() => ({
   mockPrisma: {
+    $transaction: vi.fn(),
+    $queryRaw: vi.fn(async () => []),
     idea: {
       findFirst: vi.fn(),
       update: vi.fn(),
@@ -38,7 +40,7 @@ const { mockPrisma, mockEventBus, mockCreateActivity } = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 vi.mock("@/services", () => ({
-  activityService: { createActivity: mockCreateActivity },
+  activityService: { createActivity: mockCreateActivity, createActivityInTx: vi.fn(async (_tx, params) => ({ activity: params, publish: () => mockCreateActivity(params) })) },
 }));
 
 import {
@@ -151,6 +153,8 @@ function makeRound(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrisma.$transaction.mockImplementation(async (work) => work(mockPrisma));
+  mockPrisma.idea.findFirst.mockResolvedValue(makeIdea());
   mockPrisma.projectAgentCwdPreference.findFirst.mockResolvedValue(null);
   mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
 });

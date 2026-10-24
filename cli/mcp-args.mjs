@@ -262,6 +262,8 @@ ARGUMENT FLAGS (call)
                         (later --arg/--arg-file override earlier keys, in order)
 
 CREDENTIALS (all actions)
+  ideaTeamProtocol=1: admitted-run CHORUS_TURN_UUID / CHORUS_ADMISSION_UUID
+  and optional CHORUS_IDEA_TEAM_TURNS are forwarded as mutation proof headers.
   --url <url>           Chorus server URL          (env: CHORUS_URL)
   --api-key <cho_...>   Agent API key              (env: CHORUS_API_KEY)
   --agent <name|uuid>   Act as an agent from ~/.chorus/daemon.json agents[],

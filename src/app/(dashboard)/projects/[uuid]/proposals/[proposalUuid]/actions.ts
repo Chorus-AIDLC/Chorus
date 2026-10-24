@@ -299,7 +299,7 @@ export async function addDocumentDraftAction(
       return { success: false, error: "Proposal not found" };
     }
 
-    const updated = await addDocumentDraft(proposalUuid, auth.companyUuid, draft);
+    const updated = await addDocumentDraft(proposalUuid, auth.companyUuid, draft, { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn });
 
     revalidatePath(`/projects/${proposal.projectUuid}/proposals/${proposalUuid}`);
 
@@ -335,7 +335,7 @@ export async function addTaskDraftAction(
       return { success: false, error: "Proposal not found" };
     }
 
-    const updated = await addTaskDraft(proposalUuid, auth.companyUuid, draft);
+    const updated = await addTaskDraft(proposalUuid, auth.companyUuid, draft, { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn });
 
     revalidatePath(`/projects/${proposal.projectUuid}/proposals/${proposalUuid}`);
 
@@ -365,7 +365,7 @@ export async function updateDocumentDraftAction(
       return { success: false, error: "Proposal not found" };
     }
 
-    const updated = await updateDocumentDraft(proposalUuid, auth.companyUuid, draftUuid, updates);
+    const updated = await updateDocumentDraft(proposalUuid, auth.companyUuid, draftUuid, updates, { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn });
 
     revalidatePath(`/projects/${proposal.projectUuid}/proposals/${proposalUuid}`);
 
@@ -402,7 +402,7 @@ export async function updateTaskDraftAction(
       return { success: false, error: "Proposal not found" };
     }
 
-    const updated = await updateTaskDraft(proposalUuid, auth.companyUuid, draftUuid, updates);
+    const updated = await updateTaskDraft(proposalUuid, auth.companyUuid, draftUuid, updates, { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn });
 
     revalidatePath(`/projects/${proposal.projectUuid}/proposals/${proposalUuid}`);
 
@@ -428,7 +428,7 @@ export async function removeDocumentDraftAction(proposalUuid: string, draftUuid:
       return { success: false, error: "Proposal not found" };
     }
 
-    const updated = await removeDocumentDraft(proposalUuid, auth.companyUuid, draftUuid);
+    const updated = await removeDocumentDraft(proposalUuid, auth.companyUuid, draftUuid, { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn });
 
     revalidatePath(`/projects/${proposal.projectUuid}/proposals/${proposalUuid}`);
 
@@ -454,7 +454,7 @@ export async function removeTaskDraftAction(proposalUuid: string, draftUuid: str
       return { success: false, error: "Proposal not found" };
     }
 
-    const updated = await removeTaskDraft(proposalUuid, auth.companyUuid, draftUuid);
+    const updated = await removeTaskDraft(proposalUuid, auth.companyUuid, draftUuid, { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn });
 
     revalidatePath(`/projects/${proposal.projectUuid}/proposals/${proposalUuid}`);
 

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { validIdeaTeamContext } from "./idea-team-transport.mjs";
 import { OPERATION_ACTIONS, validateOperation } from "./operation.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
@@ -103,14 +104,15 @@ export class EventRouter {
   #context(source) {
     const context = source.wakeContext;
     const notification = context?.notification;
-    if (context?.version !== 1 || !nonempty(context.notificationUuid) ||
+    if (!validIdeaTeamContext(context) || (source.ideaTeamProtocol != null && source.ideaTeamProtocol !== 1) || context?.version !== 1 || !nonempty(context.notificationUuid) ||
         !nonempty(source.turnUuid) || !notification ||
         !nonempty(notification.action) || !nonempty(notification.entityType) ||
         !nonempty(notification.entityUuid) ||
         notification.uuid !== context.notificationUuid ||
         (source.notificationUuid != null && source.notificationUuid !== context.notificationUuid) ||
         (source.trigger != null && ACTION_TO_TURN_TRIGGER[notification.action] !== source.trigger)) return null;
-    return { ...notification, uuid: context.notificationUuid, turnUuid: source.turnUuid, wakeRecoveryProtocol: 1 };
+    return { ...notification, uuid: context.notificationUuid, turnUuid: source.turnUuid, wakeRecoveryProtocol: 1,
+      wakeContext: context, ...(context.ideaTeam ? { ideaTeamProtocol: 1 } : {}) };
   }
 
   #failure(error, label) {
@@ -171,12 +173,12 @@ export class EventRouter {
   dispatch(event, { signal } = {}) {
     if (event?.type !== "new_notification") return Promise.resolve({ status: "ignored", reason: "event_type" });
     if (!nonempty(event.notificationUuid)) return Promise.resolve({ status: "blocked", reason: "missing_notification" });
-    if (event.wakeRecoveryProtocol != null && event.wakeRecoveryProtocol !== 1) {
+    if ((event.ideaTeamProtocol != null && event.ideaTeamProtocol !== 1) || (event.wakeRecoveryProtocol != null && event.wakeRecoveryProtocol !== 1)) {
       return Promise.resolve({ status: "blocked", reason: "unsupported_wake_protocol" });
     }
     const scope = this.#scope(signal);
     const notification = event.wakeContext != null ? this.#context(event) : null;
-    if ((event.wakeContext != null || event.wakeRecoveryProtocol === 1) && !notification) {
+    if ((event.wakeContext != null || event.wakeRecoveryProtocol === 1 || event.ideaTeamProtocol === 1) && !notification) {
       return Promise.resolve({ status: "blocked", reason: "invalid_wake_context" });
     }
     const keys = [event.notificationUuid, ...(notification ? [`turn:${event.turnUuid}`] : [])];
@@ -241,11 +243,11 @@ export class EventRouter {
       this.logger.warn("[Chorus] pending-turn dispatch missing turnUuid/sessionId, skipping");
       return Promise.resolve({ status: "blocked", reason: "missing_turn_identity" });
     }
-    if (pending.wakeRecoveryProtocol != null && pending.wakeRecoveryProtocol !== 1) {
+    if ((pending.ideaTeamProtocol != null && pending.ideaTeamProtocol !== 1) || (pending.wakeRecoveryProtocol != null && pending.wakeRecoveryProtocol !== 1)) {
       return Promise.resolve({ status: "blocked", reason: "unsupported_wake_protocol" });
     }
     const notification = pending.wakeContext != null ? this.#context(pending) : null;
-    if (pending.wakeContext != null && !notification) {
+    if ((pending.wakeContext != null || pending.ideaTeamProtocol === 1) && !notification) {
       return Promise.resolve({ status: "blocked", reason: "invalid_wake_context" });
     }
     const keys = [`turn:${pending.turnUuid}`, ...(notification ? [notification.uuid] : [])];
@@ -259,6 +261,7 @@ export class EventRouter {
         }
         const directIdeaUuid = pending.directIdeaUuid ?? null;
         const detail = {
+          ...(notification ?? {}),
           action: "human_instruction", turnUuid: pending.turnUuid, wakeRecoveryProtocol: 1,
           sessionId: pending.sessionId,
           entityType: directIdeaUuid ? "idea" : "daemon_session",

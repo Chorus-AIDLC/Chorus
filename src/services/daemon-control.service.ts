@@ -193,7 +193,7 @@ export async function authorizeConnectionControl(params: {
  * best-effort without a turn, so it is deliberately absent and its resume path
  * stays unchanged.
  */
-export const RESUME_TURN_CLIENT_TYPES: ReadonlySet<string> = new Set(["hermes"]);
+export const RESUME_TURN_CLIENT_TYPES: ReadonlySet<string> = new Set(["hermes", "openclaw"]);
 
 export type DispatchControlParams =
   | {

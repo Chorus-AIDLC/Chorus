@@ -157,6 +157,7 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
     // it promotes the row to assigneeType="agent_instance".
     expect(mockAssignIdea).toHaveBeenCalledTimes(1);
     expect(mockAssignIdea).toHaveBeenCalledWith({
+      auth: humanAuth(),
       ideaUuid: IDEA_UUID,
       companyUuid: COMPANY_A,
       assigneeType: "agent",
@@ -222,6 +223,7 @@ describe("reassignIdeaInstanceNoWakeAction", () => {
 
     expect(result).toEqual({ success: true });
     expect(mockAssignIdea).toHaveBeenCalledWith({
+      auth: humanAuth(),
       ideaUuid: IDEA_UUID,
       companyUuid: COMPANY_A,
       assigneeType: "agent",
@@ -263,16 +265,15 @@ describe("elaborated Idea assignment actions", () => {
     mockResolveProjectAgentCwdTarget.mockResolvedValue({ source: "none" });
   });
 
-  it("allows self assignment and records the existing assignment activity", async () => {
+  it("passes authenticated self assignment to the shared service without duplicate audit", async () => {
     expect(await claimIdeaAction(IDEA_UUID)).toEqual({ success: true });
     expect(mockAssignIdea).toHaveBeenCalledWith(expect.objectContaining({
       ideaUuid: IDEA_UUID,
       assigneeType: "user",
       assigneeUuid: "user-1",
+      auth: humanAuth(),
     }));
-    expect(mockCreateActivity).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "assigned" }),
-    );
+    expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 
   it("allows agent assignment with existing target resolution", async () => {
@@ -281,6 +282,7 @@ describe("elaborated Idea assignment actions", () => {
     expect(mockAssignIdea).toHaveBeenCalledWith(expect.objectContaining({
       assigneeType: "agent",
       assigneeUuid: AGENT_UUID,
+      auth: humanAuth(),
     }));
   });
 
@@ -289,12 +291,13 @@ describe("elaborated Idea assignment actions", () => {
     expect(mockAssignIdea).toHaveBeenCalledWith(expect.objectContaining({
       assigneeType: "user",
       assigneeUuid: "user-2",
+      auth: humanAuth(),
     }));
   });
 
   it("allows release", async () => {
     expect(await releaseIdeaAction(IDEA_UUID)).toEqual({ success: true });
-    expect(mockReleaseIdea).toHaveBeenCalledWith(IDEA_UUID);
+    expect(mockReleaseIdea).toHaveBeenCalledWith(IDEA_UUID, humanAuth());
   });
 });
 
@@ -327,16 +330,8 @@ describe("claimIdeaToAgentAction fixed cwd", () => {
         runtimeCwd: "/discovered/project",
       }),
     );
-    expect(mockCreateActivity).toHaveBeenCalledWith(
-      expect.objectContaining({
-        value: expect.objectContaining({
-          instanceUuid: "fixed-instance",
-          resolvedCwdSource: "project_fixed",
-          resolvedCwdHost: "fixed-host",
-          resolvedRuntimeCwd: "/discovered/project",
-        }),
-      }),
-    );
+    expect(mockAssignIdea.mock.calls[0][0].auth).toEqual(humanAuth());
+    expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 
   it("restores the existing picker selection after the fixed preference is cleared", async () => {
@@ -354,5 +349,40 @@ describe("claimIdeaToAgentAction fixed cwd", () => {
     expect(mockAssignIdea).toHaveBeenCalledWith(
       expect.objectContaining({ instanceUuid: INSTANCE_UUID }),
     );
+  });
+});
+
+describe("UI assignment authority origin", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetServerAuthContext.mockResolvedValue(humanAuth());
+    mockGetIdeaByUuid.mockResolvedValue(makeIdeaRow());
+    mockAssignIdea.mockResolvedValue({ assignmentKickoff: false });
+    mockResolveProjectAgentCwdTarget.mockResolvedValue({ source: "unconfigured", agentInstanceUuid: null });
+  });
+
+  it("forwards the optional fourth operation UUID unchanged with the actual session identity", async () => {
+    const auth = humanAuth();
+    mockGetServerAuthContext.mockResolvedValue(auth);
+    const operationUuid = "f7bbd06d-1cff-47b7-b4c7-dae7fcaac3ab";
+    expect(await claimIdeaToAgentAction(IDEA_UUID, AGENT_UUID, INSTANCE_UUID, operationUuid)).toEqual({ success: true });
+    expect(mockAssignIdea).toHaveBeenCalledWith(expect.objectContaining({ operationUuid, instanceUuid: INSTANCE_UUID, auth }));
+    expect(mockAssignIdea.mock.calls[0][0].auth).toBe(auth);
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it.each(["agent", "user"])("an agent session cannot invoke human %s assignment", async (target) => {
+    mockGetServerAuthContext.mockResolvedValue(agentAuth());
+    const result = target === "agent" ? await claimIdeaToAgentAction(IDEA_UUID, AGENT_UUID) : await claimIdeaToUserAction(IDEA_UUID, "user-2");
+    expect(result).toEqual({ success: false, error: "Unauthorized" });
+    expect(mockAssignIdea).not.toHaveBeenCalled();
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("does not replace a rejected shared-service assignment with an adapter-side wake", async () => {
+    mockAssignIdea.mockRejectedValueOnce(new Error("Authority revoked"));
+    expect(await claimIdeaToAgentAction(IDEA_UUID, AGENT_UUID)).toEqual({ success: false, error: "Failed to claim idea" });
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+    expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
 });

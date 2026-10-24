@@ -7,6 +7,7 @@
 // OpenSpec document-mirror path has zero external system dependencies and runs
 // unchanged on Linux, macOS, and Windows.
 import { spawnSync } from "node:child_process";
+import { ideaTeamHeaders, ideaTeamProofFromEnv } from "./idea-team-transport.mjs";
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -42,6 +43,7 @@ try {
 
 const dshEnv =
   process.env.CHORUS_URL && process.env.CHORUS_API_KEY ? {} : readDshHomeEnv();
+const turnHeaders = ideaTeamHeaders(ideaTeamProofFromEnv(process.env));
 const url = process.env.CHORUS_URL || dshEnv.CHORUS_URL;
 const apiKey = process.env.CHORUS_API_KEY || dshEnv.CHORUS_API_KEY;
 // Profile identity (AWS-CLI style): CHORUS_AGENT_PROFILE names WHICH agent to act
@@ -134,6 +136,14 @@ if (!process.env.CHORUS_MCP_NO_CLI) {
       );
       process.exit(6);
     }
+    if (Object.keys(turnHeaders).length) {
+      const probe = buildChorusSpawn(chorusPath, ["mcp", "--help"], process.platform, process.env);
+      const result = spawnSync(probe.command, probe.argv, { encoding: "utf8" });
+      if (result.status !== 0 || !result.stdout?.includes("ideaTeamProtocol=1")) {
+        process.stderr.write("chorus-mcp-call: upgrade chorus CLI for Idea Team admission transport\n");
+        process.exit(6);
+      }
+    }
     // Prefer the profile (identity-by-name) — the CLI resolves the key itself, so
     // url/apiKey need not be present. Else pass the resolved url+key. If NEITHER is
     // available, fall through to the url+key requirement error below (nothing to
@@ -196,6 +206,7 @@ let sessionId = "";
 function headers() {
   const base = {
     Authorization: `Bearer ${apiKey}`,
+    ...turnHeaders,
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
   };

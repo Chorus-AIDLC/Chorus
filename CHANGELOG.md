@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.23.2] - Unreleased
+
+### Changed
+
+- **Idea Team automation**: Coordinate through each Idea's explicitly human-assigned agent, with verified assignment consent, Idea-scoped YOLO, and generation-fenced delegation and recovery across maintained clients and skills.
+
+### Plugin
+
+- **Local version alignment**: Align all seven plugins and four coordinated npm packages to `0.23.2`; independently patch-bump the eight changed standalone skills. This revision is unreleased.
+
+---
+
 ## [0.23.0] - 2026-10-22
 
 ### Added

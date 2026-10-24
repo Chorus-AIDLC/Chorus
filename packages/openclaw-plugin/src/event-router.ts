@@ -36,6 +36,7 @@ export type ChorusWakeFn = (
 ) => void;
 
 export interface ChorusEventRouterOptions {
+  deliverTurn?: (turnUuid?: string) => Promise<void>;
   mcpClient: ChorusMcpClient;
   wake: ChorusWakeFn;
   /**
@@ -85,12 +86,14 @@ interface NotificationDetail {
 }
 
 export class ChorusEventRouter {
+  private readonly deliverTurn?: ChorusEventRouterOptions["deliverTurn"];
   private readonly mcpClient: ChorusMcpClient;
   private readonly wake: ChorusWakeFn;
   private readonly lineage?: LineageResolver;
   private readonly logger: ChorusEventRouterOptions["logger"];
 
   constructor(opts: ChorusEventRouterOptions) {
+    this.deliverTurn = opts.deliverTurn;
     this.mcpClient = opts.mcpClient;
     this.wake = opts.wake;
     this.lineage = opts.lineage;
@@ -115,6 +118,17 @@ export class ChorusEventRouter {
     // Only handle new_notification events (ignore count_update, etc.)
     if (event.type !== "new_notification") {
       this.logger.info(`SSE event type "${event.type}" ignored`);
+      return;
+    }
+
+    if (this.deliverTurn) {
+      if (event.suppressWake === true) return;
+      void this.deliverTurn(typeof event.turnUuid === "string" ? event.turnUuid : undefined)
+        .catch((error) => this.logger.error(`Persisted wake recovery failed: ${error}`));
+      return;
+    }
+    if (event.wakeContext != null || event.turnUuid != null) {
+      this.logger.warn("Directed wake requires exact recovery support; upgrade the Chorus runtime");
       return;
     }
 

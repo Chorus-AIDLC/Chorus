@@ -52,7 +52,7 @@
 
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { getIdeaTeamHandoffIdeaUuid } from "./idea-team.service";
+import { getIdeaTeamHandoffIdeaUuid, canReceiveIdeaTeamWake } from "./idea-team.service";
 import { parseWakeContext, type WakeContext } from "@/services/daemon-wake-context";
 import { canActorAccessProject } from "@/services/project-access.service";
 import {
@@ -143,6 +143,7 @@ export const NOTIFICATION_ACTION_TO_TURN_TRIGGER: Record<string, TurnTrigger> = 
   // Autonomous task-style dispatches — all map to the task_assigned trigger.
   task_assigned: "task_assigned",
   team_lead_handoff: "task_assigned",
+  team_product_handoff: "mentioned",
   task_reopened: "task_assigned",
   task_verified: "task_assigned",
   idea_claimed: "task_assigned",
@@ -806,8 +807,15 @@ export async function createTurnAndResolveTarget(
 
   try {
     let teamIdeaUuid: string | null = null;
+    let deliveryIdeaUuid: string | null = null;
     const canReceive = async () => {
       if (ctx.projectUuid && !await canActorAccessProject(ctx.companyUuid, { type: "agent", uuid: ctx.recipientUuid }, ctx.projectUuid, "viewer")) return false;
+      const wake = parseWakeContext(ctx.wakeContext);
+      if (!await canReceiveIdeaTeamWake(ctx.companyUuid, ctx.recipientUuid, wake, teamIdeaUuid ?? deliveryIdeaUuid)) return false;
+      if (wake?.ideaTeam) {
+        teamIdeaUuid = wake.ideaTeam.ideaUuid;
+        return true;
+      }
       if (ctx.action !== "team_lead_handoff") return true;
       const context = parseWakeContext(ctx.wakeContext);
       if (!context || context.notification.action !== ctx.action || context.notification.entityUuid !== ctx.entityUuid || context.notification.entityType !== ctx.entityType || context.notification.recipientUuid !== ctx.recipientUuid || context.notification.projectUuid !== ctx.projectUuid) return false;
@@ -846,6 +854,7 @@ export async function createTurnAndResolveTarget(
         ctx.entityUuid,
       );
     }
+    deliveryIdeaUuid = directIdeaUuid;
 
     // (4) Idea-session-origin upgrade for AUTONOMOUS idea-anchored wakes (the family in
     // IDEA_SESSION_ORIGIN_UPGRADE_TRIGGERS: task_assigned — into which proposal_approved /
@@ -1012,7 +1021,7 @@ export async function createTurnAndResolveTarget(
     }
 
     const origin = selection.connection;
-    const directed = selection.kind === "directed";
+    const directed = selection.kind === "directed" || Boolean(parseWakeContext(ctx.wakeContext)?.ideaTeam);
     // The wake's spawn cwd. A pin that fixed an explicit runtime cwd (project_fixed /
     // temporary / a task instance carrying its own runtimeCwd) keeps it on `pin.runtimeCwd`.
     // For a DIRECTED wake resolved to a specific ONLINE connection by `(host, cwd)` — an
@@ -1126,11 +1135,11 @@ export async function createTurnAndResolveTarget(
         trigger,
         promptText,
         ...(wakeContext ? { wakeContext } : {}),
-        ...(ctx.action === "team_lead_handoff" ? { onCreated: () => { createdHandoffTurn = true; } } : {}),
-        ...(pin ? { wakeTargetConnectionUuid: origin.uuid, wakeRuntimeCwd: directedRuntimeCwd } : {}),
+        ...(ctx.action === "team_lead_handoff" || wakeContext?.ideaTeam ? { onCreated: () => { createdHandoffTurn = true; } } : {}),
+        ...(pin || wakeContext?.ideaTeam ? { wakeTargetConnectionUuid: origin.uuid, wakeRuntimeCwd: directedRuntimeCwd } : {}),
       });
     }
-    if (ctx.action === "team_lead_handoff" && !createdHandoffTurn) return { ...empty, suppressWake: true };
+    if ((ctx.action === "team_lead_handoff" || wakeContext?.ideaTeam) && !createdHandoffTurn) return { ...empty, suppressWake: true };
 
     // (7) DIRECTED wake: deliver to ONLY the resolved target via the human_instruction
     // keystone — a `deliver_turn` control ping on control:{connectionUuid} carrying the
@@ -1171,7 +1180,7 @@ export async function createTurnAndResolveTarget(
       },
       "Failed to create DaemonSessionTurn for wake notification (notification was still created)",
     );
-    return { ...empty, suppressWake: ctx.action === "team_lead_handoff" };
+    return { ...empty, suppressWake: true };
   }
 }
 

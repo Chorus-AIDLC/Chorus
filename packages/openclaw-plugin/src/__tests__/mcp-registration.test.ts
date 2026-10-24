@@ -52,6 +52,14 @@ function makeApi(initial: { mcp?: { servers?: Record<string, unknown> } } = {}) 
 }
 
 describe("ensureChorusMcpServer", () => {
+  it.each(["x-chorus-turn-uuid", "X-CHORUS-ADMISSION-UUID", "X-Chorus-Idea-Team-Turns"])("removes stale persisted %s instead of treating it as an idempotent match", async (header) => {
+    const { api, backing, mutateConfigFile } = makeApi({
+      mcp: { servers: { chorus: { ...EXPECTED_ENTRY, headers: { ...EXPECTED_ENTRY.headers, [header]: "stale" } } } },
+    });
+    await ensureChorusMcpServer(api, FULL_CFG);
+    expect(mutateConfigFile).toHaveBeenCalledOnce();
+    expect(backing.mcp?.servers?.chorus).toEqual(EXPECTED_ENTRY);
+  });
   it("writes the chorus MCP server entry on first activation", async () => {
     const { api, backing, mutateConfigFile, logger } = makeApi();
     await ensureChorusMcpServer(api, FULL_CFG);

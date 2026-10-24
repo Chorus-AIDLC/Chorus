@@ -133,7 +133,7 @@ const fixture = vi.hoisted(() => {
       getMyAssignments: vi.fn(async () => ({ ideaTracker: {}, taskTracker: {} })),
     },
     checkin: { buildCheckinResponse: vi.fn(async () => ({ activeProjects: {} })) },
-    projectTeam: { getProjectAgentTeam: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => null) },
+    projectTeam: { getProjectAgentTeam: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => null), projectTeamTransaction: vi.fn(async (work: (client: unknown) => Promise<unknown>) => prisma.$transaction(work)) },
     search: { search: vi.fn(async () => ({ results: [], counts: {} })) },
   };
   return { rows, prisma, services };

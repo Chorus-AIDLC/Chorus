@@ -352,6 +352,11 @@ model Idea {
   teamOwnerUuid     String?
   teamLeadAgentUuid String?
   teamProductAgentUuid String?
+  teamEnrollmentVersion Int @default(0)
+  teamGeneration Int @default(0)
+  teamEnrolledAt DateTime?
+  teamEnrolledByUuid String?
+  teamAssignmentChangedAt DateTime?
   cwdSource         String? // project_fixed when this anchor originated from a fixed preference
   cwdHost           String? // Host anchor for a discovered runtime cwd assignment
   runtimeCwd        String? // Runtime cwd executed through any online connection on cwdHost
@@ -375,6 +380,41 @@ model Idea {
   @@index([status])
   @@index([assigneeUuid])
   @@index([parentUuid])
+}
+
+model IdeaAssignmentAuthorization {
+  id Int @id @default(autoincrement())
+  uuid String @unique @default(uuid())
+  companyUuid String
+  projectUuid String
+  ideaUuid String
+  agentUuid String
+  humanUuid String
+  generation Int
+  sourceType String
+  sourceUuid String
+  sourceDigest String
+  expiresAt DateTime
+  consumedOperationUuid String?
+  createdAt DateTime @default(now())
+
+  @@unique([companyUuid, sourceType, sourceUuid])
+  @@index([companyUuid, ideaUuid])
+}
+
+model IdeaAssignmentOperation {
+  id Int @id @default(autoincrement())
+  uuid String @unique
+  companyUuid String
+  ideaUuid String
+  actorType String
+  actorUuid String
+  fingerprint String
+  generation Int
+  activityUuid String?
+  createdAt DateTime @default(now())
+
+  @@index([companyUuid, ideaUuid])
 }
 
 // Document (PRD, tech design, etc. — Proposal output)

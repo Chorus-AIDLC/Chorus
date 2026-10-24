@@ -61,6 +61,15 @@ const runningBody = { connectionUuid, sessionId, status: "running", entityType: 
 
 describe("exact admission HTTP contract", () => {
   const exact = { ...runningBody, wakeRecoveryProtocol: 1, admissionUuid: "64f4b968-c1b5-49fb-95f2-2f821361452c", turnUuid: "turn-1", turnUuids: ["turn-1", "turn-2"] };
+  it("forwards Idea Team capability for exact admission and rejects an unfenced opt-in", async () => {
+    const response = await POST(postRequest({ ...exact, ideaTeamProtocol: 1 }), emptyCtx);
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.ideaTeamProtocol).toBe(1);
+    expect(mockAdvanceTurnForWake).toHaveBeenCalledWith(expect.objectContaining({ ...exact, ideaTeamProtocol: 1 }));
+    mockAdvanceTurnForWake.mockClear();
+    expect((await POST(postRequest({ ...runningBody, ideaTeamProtocol: 1 }), emptyCtx)).status).toBe(422);
+    expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
+  });
   it("forwards the stable token and ordered membership, preserving the success envelope", async () => {
     const response = await POST(postRequest(exact), emptyCtx);
     expect(response.status).toBe(200);

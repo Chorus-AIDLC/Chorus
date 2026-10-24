@@ -37,6 +37,8 @@ export { composeConversationalIdeaInstruction } from "../../cli/operation-prompt
 const instructionLogger = logger.child({ module: "daemon-instruction.service" });
 
 import { randomUUID } from "crypto";
+import { createHash } from "node:crypto";
+import { ApiError } from "@/lib/api-handler";
 import { dedicatedOperationWrites, validateOperationPayload } from "@/services/daemon-operation";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -63,6 +65,9 @@ import {
 } from "@/services/daemon-execution.service";
 import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
 import { CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS } from "@/lib/conversational-idea";
+import { assignIdeaWithAuthorityInTx } from "@/services/idea-assignment-authorization.service";
+import type { WakeContext } from "@/services/daemon-wake-context";
+import { projectTeamTransaction, type ProjectTeamClient } from "@/services/project-agent-team.service";
 
 // ===== Constants =====
 
@@ -624,6 +629,35 @@ export interface ConversationalIdeaView {
   createdAt: string; // ISO-8601
 }
 
+async function readConversationalCreationRequest(
+  auth: { type: string; companyUuid: string; actorUuid: string },
+  requestUuid: string,
+  fingerprint: string,
+  projectUuid: string,
+  agentUuid: string,
+  client: ProjectTeamClient = prisma,
+) {
+  const operation = await client.ideaAssignmentOperation.findUnique({ where: { uuid: requestUuid } });
+  if (!operation) return null;
+  if (auth.type !== "user" || operation.companyUuid !== auth.companyUuid || operation.actorType !== auth.type || operation.actorUuid !== auth.actorUuid) {
+    throw new ApiError("CONFLICT", "Creation request does not match", 409);
+  }
+  const human = await client.user.findFirst({ where: { uuid: auth.actorUuid, companyUuid: auth.companyUuid, status: "active", deletedAt: null } });
+  if (!human) throw new ApiError("FORBIDDEN", "An active human identity is required", 403);
+  const activity = operation.activityUuid
+    ? await client.activity.findFirst({ where: { uuid: operation.activityUuid, companyUuid: auth.companyUuid } })
+    : null;
+  const value = activity?.value;
+  if (!value || typeof value !== "object" || Array.isArray(value) || value.creationRequestFingerprint !== fingerprint) {
+    throw new ApiError("CONFLICT", "Creation request does not match", 409);
+  }
+  const ideaRow = await client.idea.findFirst({ where: { uuid: operation.ideaUuid, companyUuid: auth.companyUuid } });
+  const sessionRow = await client.daemonSession.findFirst({ where: { companyUuid: auth.companyUuid, agentUuid, sessionId: operation.ideaUuid, directIdeaUuid: operation.ideaUuid } });
+  const turnRow = sessionRow ? await client.daemonSessionTurn.findFirst({ where: { sessionUuid: sessionRow.uuid, seq: 1 } }) : null;
+  if (!ideaRow || ideaRow.projectUuid !== projectUuid || !sessionRow || !turnRow) throw new ApiError("CONFLICT", "Creation request is no longer available", 409);
+  return { ideaRow, sessionRow, turnRow, publishAssignment: null, replayed: true };
+}
+
 /**
  * Conversational-idea dispatch: PRE-CREATE the Idea and its root daemon session, then
  * send the first dedicated operation turn — in ONE transaction (add-conversational-
@@ -667,10 +701,6 @@ export interface ConversationalIdeaView {
  *     origin-only `deliver_turn` ping with the precise turnUuid (fire-and-forget +
  *     non-fatal — the persisted turn + reconnect-backfill are the durability net).
  *
- *     Deliberately NO "assigned" Activity is recorded: that activity fans out an
- *     `idea_claimed` notification whose wake would create a SECOND turn on this very
- *     session. The dispatch is the wake — one turn, one ping.
- *
  * Returns `{ idea, session, turn }`. Throws the typed errors above (mapped by the
  * route). A query/write failure propagates (no silent swallow).
  */
@@ -688,9 +718,18 @@ export async function createConversationalIdeaSession(
     // elaboration round. Optional so existing callers keep their mode.
     mode?: ConversationalIdeaMode;
     researchFirst?: boolean;
+    requestUuid?: string;
   },
 ): Promise<{ idea: ConversationalIdeaView; session: SessionView; turn: TurnView }> {
   const mode: ConversationalIdeaMode = params.mode ?? "elaborate";
+  const requestUuid = params.requestUuid?.toLowerCase();
+  if (requestUuid !== undefined && (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(requestUuid) || auth.type !== "user")) {
+    throw new ApiError("VALIDATION_ERROR", "Human creation request UUID required", 400);
+  }
+  const descriptionText = validateInstructionText(params.descriptionText, CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS);
+  const requestFingerprint = createHash("sha256").update(JSON.stringify([
+    params.projectUuid, params.agentUuid, params.connectionUuid, descriptionText, mode, params.researchFirst ?? false,
+  ])).digest("hex");
   // (1) Visibility + ownership fence, identical posture to the ad-hoc path: either miss
   // collapses to ONE 404 non-disclosure verdict.
   const ownsAgent = await callerOwnsAgent(auth, params.agentUuid);
@@ -715,6 +754,7 @@ export async function createConversationalIdeaSession(
   if (!canEdit) {
     throw new ProjectNotVisibleError();
   }
+  const replay = requestUuid ? await readConversationalCreationRequest(auth, requestUuid, requestFingerprint, project.uuid, params.agentUuid) : null;
 
   // (3) A project-fixed cwd is authoritative for new work. Resolve it server-side so a
   // stale or crafted client connection cannot bypass the saved target. Without a fixed
@@ -730,7 +770,7 @@ export async function createConversationalIdeaSession(
         )?.ownerUuid;
   if (!actorUserUuid) throw new ConnectionNotVisibleError();
 
-  const projectTarget = await resolveProjectAgentCwdTarget({
+  const projectTarget = replay ? null : await resolveProjectAgentCwdTarget({
     companyUuid: auth.companyUuid,
     actorUserUuid,
     projectUuid: project.uuid,
@@ -743,7 +783,9 @@ export async function createConversationalIdeaSession(
   let cwdHost: string | null = null;
   let runtimeCwd: string | null = null;
 
-  if (projectTarget.source === "project_fixed") {
+  if (replay) {
+    originConnectionUuid = replay.sessionRow.originConnectionUuid;
+  } else if (projectTarget?.source === "project_fixed") {
     if (projectTarget.availability !== "ready" || !projectTarget.connectionUuid || !projectTarget.agentInstanceUuid) {
       throw new ProjectCwdTargetUnavailableError(
         projectTarget.availability === "offline" ? "offline" : "invalid",
@@ -778,11 +820,8 @@ export async function createConversationalIdeaSession(
   // against the same budget shown in the UI before adding the trusted server
   // template. Generated research/decomposition instructions do not consume the
   // user's budget; ordinary human instructions retain their separate 4000 cap.
-  const descriptionText = validateInstructionText(
-    params.descriptionText,
-    CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS,
-  );
   const ideaUuid = randomUUID();
+  const operationUuid = requestUuid ?? randomUUID();
   const instructionText = composeConversationalIdeaInstruction({
     ideaUuid,
     projectUuid: project.uuid,
@@ -799,7 +838,12 @@ export async function createConversationalIdeaSession(
   const dedicated = dedicatedOperationWrites();
 
   // (5) All-or-nothing: idea + idea-anchored session + first turn in one transaction.
-  const { ideaRow, sessionRow, turnRow } = await prisma.$transaction(async (tx) => {
+  const { ideaRow, sessionRow, turnRow, publishAssignment, replayed } = replay ?? await projectTeamTransaction(async (tx) => {
+    const existing = requestUuid ? await readConversationalCreationRequest(auth, requestUuid, requestFingerprint, project.uuid, params.agentUuid, tx) : null;
+    if (existing) return existing;
+    if (auth.type === "user" && !await tx.agent.count({ where: { uuid: params.agentUuid, companyUuid: auth.companyUuid, ownerUuid: auth.actorUuid } })) {
+      throw new ConnectionNotVisibleError();
+    }
     const ideaRow = await tx.idea.create({
       data: {
         uuid: ideaUuid,
@@ -835,6 +879,45 @@ export async function createConversationalIdeaSession(
       },
     });
 
+    const assignment = auth.type === "user"
+      ? await assignIdeaWithAuthorityInTx({ ...auth, type: "user" }, {
+          ideaUuid,
+          assigneeType: "agent",
+          assigneeUuid: params.agentUuid,
+          instanceUuid,
+          operationUuid,
+          cwdSource,
+          cwdHost,
+          runtimeCwd,
+          emitKickoff: false,
+        }, tx)
+      : null;
+    if (requestUuid && assignment?.activityUuid) {
+      const activity = await tx.activity.findUniqueOrThrow({ where: { uuid: assignment.activityUuid } });
+      const value = activity.value;
+      await tx.activity.update({ where: { uuid: activity.uuid }, data: {
+        value: { ...(value && typeof value === "object" && !Array.isArray(value) ? value : {}), creationRequestFingerprint: requestFingerprint },
+      } });
+    }
+    const enrolled = assignment?.idea;
+    const wakeContext: WakeContext | null = enrolled?.teamEnrollmentVersion === 1 && enrolled.teamOwnerUuid && enrolled.teamLeadAgentUuid && assignment?.activityUuid
+      ? {
+          version: 1,
+          ideaTeam: {
+            ideaUuid, generation: enrolled.teamGeneration, ownerUuid: enrolled.teamOwnerUuid,
+            agentUuid: enrolled.teamLeadAgentUuid, role: "orchestrator",
+          },
+          notificationUuid: assignment.activityUuid,
+          notification: {
+            uuid: assignment.activityUuid, action: "idea_creation_requested", entityType: "idea",
+            entityUuid: ideaUuid, projectUuid: project.uuid, recipientType: "agent",
+            recipientUuid: params.agentUuid, message: "", entityTitle: ideaRow.title,
+            projectName: project.name ?? "", actorType: auth.type, actorUuid: auth.actorUuid,
+            actorName: "", instructionText,
+          },
+        }
+      : null;
+
     // Idea-anchored from birth: sessionId === directIdeaUuid === ideaUuid. The
     // write-once origin/directIdeaUuid fields are written once, correctly, on create —
     // `resolveOrCreateSession` is not used because it runs on the global client.
@@ -858,13 +941,20 @@ export async function createConversationalIdeaSession(
         seq: 1,
         trigger: dedicated ? "idea_creation_requested" : "human_instruction",
         ...(dedicated ? { operationPayload } : {}),
+        ...(wakeContext ? { wakeContext } : {}),
         promptText: instructionText,
         status: "pending",
       },
     });
 
-    return { ideaRow, sessionRow, turnRow };
+    return { ideaRow: assignment?.idea ?? ideaRow, sessionRow, turnRow, publishAssignment: assignment?.publish, replayed: false };
+  }).catch(async (error: unknown) => {
+    const existing = requestUuid ? await readConversationalCreationRequest(auth, requestUuid, requestFingerprint, project.uuid, params.agentUuid) : null;
+    if (existing) return existing;
+    throw error;
   });
+
+  publishAssignment?.();
 
   const session: SessionView = {
     uuid: sessionRow.uuid,
@@ -911,6 +1001,7 @@ export async function createConversationalIdeaSession(
     projectUuid: ideaRow.projectUuid,
     createdAt: ideaRow.createdAt.toISOString(),
   };
+  if (replayed) return { idea, session, turn };
 
   // (6) Post-commit side effects, none of which may undo the committed writes:
   // transcript SSE (the chokepoint's turn_created trigger, emitted here because the turn

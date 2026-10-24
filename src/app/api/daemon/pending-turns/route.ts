@@ -31,6 +31,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 
   const connectionUuid = request.nextUrl.searchParams.get("connectionUuid");
   const wakeRecoveryProtocol = request.nextUrl.searchParams.get("wakeRecoveryProtocol");
+  const ideaTeamProtocol = request.nextUrl.searchParams.get("ideaTeamProtocol");
+  if (ideaTeamProtocol !== null && (ideaTeamProtocol !== "1" || wakeRecoveryProtocol !== "1")) return errors.badRequest("Idea Team automation requires ideaTeamProtocol=1 and wakeRecoveryProtocol=1; upgrade your Chorus client");
   if (wakeRecoveryProtocol !== null && wakeRecoveryProtocol !== "1") return errors.badRequest("Unsupported wake recovery protocol");
   if (!connectionUuid) {
     return errors.badRequest("connectionUuid is required");
@@ -51,8 +53,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     connectionUuid,
     operationProtocol: request.nextUrl.searchParams.get("operationProtocol") === "1",
     ...(wakeRecoveryProtocol === "1" ? { wakeRecoveryProtocol: 1 as const } : {}),
+    ...(ideaTeamProtocol === "1" ? { ideaTeamProtocol: 1 as const } : {}),
   });
 
   // Capability projection preserves the UUID of the persisted operation for every generation.
-  return success({ turns, ...(wakeRecoveryProtocol === "1" ? { wakeRecoveryProtocol: 1 } : {}) });
+  return success({ turns, ...(wakeRecoveryProtocol === "1" ? { wakeRecoveryProtocol: 1 } : {}), ...(ideaTeamProtocol === "1" ? { ideaTeamProtocol: 1 } : {}) });
 });

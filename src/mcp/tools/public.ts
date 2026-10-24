@@ -871,6 +871,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     async ({ ideaUuid, roundUuid, answers }) => {
       try {
         const round = await elaborationService.answerElaboration({
+          actorContext: { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn },
           companyUuid: auth.companyUuid,
           ideaUuid,
           roundUuid,
@@ -1357,6 +1358,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         const updated = await taskService.updateTask(task.uuid, updateData, {
           actorType: auth.type,
           actorUuid: auth.actorUuid,
+          ...auth.ideaTeamTurn,
         });
         updatedStatus = updated.status;
       }

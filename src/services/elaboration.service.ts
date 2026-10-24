@@ -2,7 +2,9 @@
 // Elaboration Service Layer — AI-DLC Stage 3 (Requirements Clarification)
 
 import { prisma } from "@/lib/prisma";
-import { isIdeaTeamProductDelegate } from "./idea-team.service";
+import { isIdeaTeamProductDelegate, assertIdeaTeamElaborationWork } from "./idea-team.service";
+import { projectTeamTransaction, type ProjectTeamClient } from "./project-agent-team.service";
+import type { IdeaTeamActorContext } from "@/types/idea-team";
 import { eventBus } from "@/lib/event-bus";
 import { activityService } from "@/services";
 import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
@@ -28,10 +30,12 @@ import {
 async function isIdeaAssignedToActor(
   companyUuid: string,
   idea: { assigneeType: string | null; assigneeUuid: string | null },
-  actorUuid: string
+  actorUuid: string,
+  client?: ProjectTeamClient
 ): Promise<boolean> {
   if (idea.assigneeUuid === actorUuid) return true;
   if (idea.assigneeType === "agent_instance") {
+    if (client) return (await client.agentInstance.findFirst({ where: { uuid: idea.assigneeUuid ?? "", companyUuid }, select: { agentUuid: true } }))?.agentUuid === actorUuid;
     const ownerAgentUuid = await resolveAssigneeAgentUuid(
       companyUuid,
       idea.assigneeType,
@@ -52,6 +56,7 @@ export async function startElaboration({
   depth,
   questions,
   projectUuid,
+  actorContext,
 }: {
   companyUuid: string;
   ideaUuid: string;
@@ -60,103 +65,111 @@ export async function startElaboration({
   depth: ElaborationDepth;
   questions: QuestionInput[];
   projectUuid?: string;
+  actorContext?: IdeaTeamActorContext;
 }): Promise<ElaborationRoundResponse> {
   // Validate questions format
   validateQuestionsFormat(questions);
 
-  // Load idea and verify ownership + status
-  const idea = await prisma.idea.findFirst({
-    where: { uuid: ideaUuid, companyUuid },
-  });
-  if (!idea) throw new Error("Idea not found");
-  if (!(await isIdeaAssignedToActor(companyUuid, idea, actorUuid)) && !(actorType === "agent" && await isIdeaTeamProductDelegate(companyUuid, ideaUuid, actorUuid))) {
-    throw new Error("Only the assigned agent can start elaboration");
-  }
-  if (idea.status !== "elaborating" && idea.status !== "elaborated") {
-    throw new Error(
-      `Cannot start elaboration from status '${idea.status}'. Idea must be in 'elaborating' or 'elaborated' status (claim it first).`
-    );
-  }
+  const committed = await projectTeamTransaction(async (tx) => {
 
-  // Appended round: the Idea's elaboration was already resolved at call time.
-  // Appended rounds are a pure supplement — they must NOT regress the Idea
-  // lifecycle (R2 decision): keep status `elaborated` and elaborationStatus
-  // `resolved` so an in-flight proposal is never re-blocked.
-  const isAppended = idea.status === "elaborated";
-
-  // Determine round number
-  const existingRounds = await prisma.elaborationRound.count({
-    where: { ideaUuid, companyUuid },
-  });
-  const roundNumber = existingRounds + 1;
-
-  if (roundNumber > 10) {
-    throw new Error("Maximum 10 elaboration rounds per Idea");
-  }
-
-  // Create round + questions
-  const created = await prisma.elaborationRound.create({
-    data: {
-      companyUuid,
-      ideaUuid,
-      roundNumber,
-      status: "pending_answers",
-      isAppended,
-      createdByType: actorType,
-      createdByUuid: actorUuid,
-      questions: {
-        create: questions.map((q) => ({
-          questionId: q.id,
-          text: q.text,
-          category: q.category,
-          options: JSON.parse(JSON.stringify(q.options)),
-          required: q.required ?? true,
-        })),
-      },
-    },
-  });
-
-  // Reload with questions for response formatting
-  const round = await prisma.elaborationRound.findUniqueOrThrow({
-    where: { uuid: created.uuid },
-    include: { questions: true },
-  });
-
-  // Update idea status + elaboration fields.
-  // For appended rounds, do NOT downgrade idea.status and do NOT overwrite a
-  // `resolved` elaborationStatus — only the new round sits at pending_answers.
-  if (isAppended) {
-    await prisma.idea.update({
-      where: { uuid: ideaUuid },
-      data: { elaborationDepth: depth },
+    // Load idea and verify ownership + status
+    const idea = await tx.idea.findFirst({
+      where: { uuid: ideaUuid, companyUuid },
     });
-  } else {
-    await prisma.idea.update({
-      where: { uuid: ideaUuid },
+    if (!idea) throw new Error("Idea not found");
+    const actor = { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid };
+    if (!(await isIdeaAssignedToActor(companyUuid, idea, actorUuid, tx)) && !(actorType === "agent" && await isIdeaTeamProductDelegate(companyUuid, ideaUuid, actorUuid, tx, actor))) {
+      throw new Error("Only the assigned agent can start elaboration");
+    }
+    await assertIdeaTeamElaborationWork(companyUuid, ideaUuid, actor, true, "idea:write", tx);
+    if (idea.status !== "elaborating" && idea.status !== "elaborated") {
+      throw new Error(
+        `Cannot start elaboration from status '${idea.status}'. Idea must be in 'elaborating' or 'elaborated' status (claim it first).`
+      );
+    }
+
+    // Appended round: the Idea's elaboration was already resolved at call time.
+    // Appended rounds are a pure supplement — they must NOT regress the Idea
+    // lifecycle (R2 decision): keep status `elaborated` and elaborationStatus
+    // `resolved` so an in-flight proposal is never re-blocked.
+    const isAppended = idea.status === "elaborated";
+
+    // Determine round number
+    const existingRounds = await tx.elaborationRound.count({
+      where: { ideaUuid, companyUuid },
+    });
+    const roundNumber = existingRounds + 1;
+
+    if (roundNumber > 10) {
+      throw new Error("Maximum 10 elaboration rounds per Idea");
+    }
+
+    // Create round + questions
+    const created = await tx.elaborationRound.create({
       data: {
-        status: "elaborating",
-        elaborationDepth: depth,
-        elaborationStatus: "pending_answers",
+        companyUuid,
+        ideaUuid,
+        roundNumber,
+        status: "pending_answers",
+        isAppended,
+        createdByType: actorType,
+        createdByUuid: actorUuid,
+        questions: {
+          create: questions.map((q) => ({
+            questionId: q.id,
+            text: q.text,
+            category: q.category,
+            options: JSON.parse(JSON.stringify(q.options)),
+            required: q.required ?? true,
+          })),
+        },
       },
     });
-  }
 
-  // Log activity
-  const resolvedProjectUuid = projectUuid || idea.projectUuid;
-  await activityService.createActivity({
-    companyUuid,
-    projectUuid: resolvedProjectUuid,
-    targetType: "idea",
-    targetUuid: ideaUuid,
-    actorType,
-    actorUuid,
-    action: "elaboration_started",
-    value: { depth, questionCount: questions.length, roundNumber },
+    // Reload with questions for response formatting
+    const round = await tx.elaborationRound.findUniqueOrThrow({
+      where: { uuid: created.uuid },
+      include: { questions: true },
+    });
+
+    // Update idea status + elaboration fields.
+    // For appended rounds, do NOT downgrade idea.status and do NOT overwrite a
+    // `resolved` elaborationStatus — only the new round sits at pending_answers.
+    if (isAppended) {
+      await tx.idea.update({
+        where: { uuid: ideaUuid },
+        data: { elaborationDepth: depth },
+      });
+    } else {
+      await tx.idea.update({
+        where: { uuid: ideaUuid },
+        data: {
+          status: "elaborating",
+          elaborationDepth: depth,
+          elaborationStatus: "pending_answers",
+        },
+      });
+    }
+
+    // Log activity
+    const resolvedProjectUuid = projectUuid || idea.projectUuid;
+    const activity = await activityService.createActivityInTx(tx, {
+      companyUuid,
+      projectUuid: resolvedProjectUuid,
+      targetType: "idea",
+      targetUuid: ideaUuid,
+      actorType,
+      actorUuid,
+      action: "elaboration_started",
+      value: { depth, questionCount: questions.length, roundNumber },
+    });
+    return { round, resolvedProjectUuid, activity };
   });
 
-  eventBus.emitChange({ companyUuid, projectUuid: resolvedProjectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
+  committed.activity.publish();
+  eventBus.emitChange({ companyUuid, projectUuid: committed.resolvedProjectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
 
-  return formatRoundResponse(round);
+  return formatRoundResponse(committed.round);
 }
 
 // ===== Answer Elaboration =====
@@ -168,6 +181,7 @@ export async function answerElaboration({
   actorUuid,
   actorType,
   answers,
+  actorContext,
 }: {
   companyUuid: string;
   ideaUuid: string;
@@ -175,127 +189,132 @@ export async function answerElaboration({
   actorUuid: string;
   actorType: string;
   answers: AnswerInput[];
+  actorContext?: IdeaTeamActorContext;
 }): Promise<ElaborationRoundResponse> {
-  // Resolve the target round. When roundUuid is omitted, auto-locate the
-  // Idea's single active (pending_answers) round.
-  let resolvedRoundUuid = roundUuid;
-  if (!resolvedRoundUuid) {
-    const activeRounds = await prisma.elaborationRound.findMany({
-      where: { ideaUuid, companyUuid, status: "pending_answers" },
-      select: { uuid: true },
+  const committed = await projectTeamTransaction(async (tx) => {
+    await assertIdeaTeamElaborationWork(companyUuid, ideaUuid, { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid }, true, "idea:write", tx);
+    // Resolve the target round. When roundUuid is omitted, auto-locate the
+    // Idea's single active (pending_answers) round.
+    let resolvedRoundUuid = roundUuid;
+    if (!resolvedRoundUuid) {
+      const activeRounds = await tx.elaborationRound.findMany({
+        where: { ideaUuid, companyUuid, status: "pending_answers" },
+        select: { uuid: true },
+      });
+      if (activeRounds.length === 0) {
+        throw new Error("no active round to answer");
+      }
+      if (activeRounds.length > 1) {
+        throw new Error("multiple active rounds; specify roundUuid");
+      }
+      resolvedRoundUuid = activeRounds[0].uuid;
+    }
+
+    // Load round with questions
+    const round = await tx.elaborationRound.findFirst({
+      where: { uuid: resolvedRoundUuid, ideaUuid, companyUuid },
+      include: { questions: true },
     });
-    if (activeRounds.length === 0) {
-      throw new Error("no active round to answer");
-    }
-    if (activeRounds.length > 1) {
-      throw new Error("multiple active rounds; specify roundUuid");
-    }
-    resolvedRoundUuid = activeRounds[0].uuid;
-  }
-
-  // Load round with questions
-  const round = await prisma.elaborationRound.findFirst({
-    where: { uuid: resolvedRoundUuid, ideaUuid, companyUuid },
-    include: { questions: true },
-  });
-  if (!round) throw new Error("Elaboration round not found");
-  if (round.status !== "pending_answers") {
-    throw new Error(`Round is '${round.status}', expected 'pending_answers'`);
-  }
-
-  // Apply answers to questions
-  const now = new Date();
-  for (const answer of answers) {
-    const question = round.questions.find(
-      (q) => q.questionId === answer.questionId
-    );
-    if (!question) {
-      throw new Error(`Question '${answer.questionId}' not found in round`);
+    if (!round) throw new Error("Elaboration round not found");
+    if (round.status !== "pending_answers") {
+      throw new Error(`Round is '${round.status}', expected 'pending_answers'`);
     }
 
-    // Validate answer: either a valid option or custom text ("Other")
-    if (answer.selectedOptionId !== null) {
-      const options = question.options as unknown as QuestionOption[];
-      const validOption = options.find(
-        (o) => o.id === answer.selectedOptionId
+    // Apply answers to questions
+    const now = new Date();
+    for (const answer of answers) {
+      const question = round.questions.find(
+        (q) => q.questionId === answer.questionId
       );
-      if (!validOption) {
+      if (!question) {
+        throw new Error(`Question '${answer.questionId}' not found in round`);
+      }
+
+      // Validate answer: either a valid option or custom text ("Other")
+      if (answer.selectedOptionId !== null) {
+        const options = question.options as unknown as QuestionOption[];
+        const validOption = options.find(
+          (o) => o.id === answer.selectedOptionId
+        );
+        if (!validOption) {
+          throw new Error(
+            `Invalid option '${answer.selectedOptionId}' for question '${answer.questionId}'`
+          );
+        }
+      } else if (!answer.customText?.trim()) {
+        // selectedOptionId is null → this is an "Other" answer, customText is required
         throw new Error(
-          `Invalid option '${answer.selectedOptionId}' for question '${answer.questionId}'`
+          `Question '${answer.questionId}': custom text is required when no option is selected`
         );
       }
-    } else if (!answer.customText?.trim()) {
-      // selectedOptionId is null → this is an "Other" answer, customText is required
-      throw new Error(
-        `Question '${answer.questionId}': custom text is required when no option is selected`
-      );
-    }
 
-    await prisma.elaborationQuestion.update({
-      where: { uuid: question.uuid },
-      data: {
-        selectedOptionId: answer.selectedOptionId,
-        customText: answer.customText,
-        answeredAt: now,
-        answeredByType: actorType,
-        answeredByUuid: actorUuid,
-      },
-    });
-  }
-
-  // Check if all required questions are answered
-  const updatedQuestions = await prisma.elaborationQuestion.findMany({
-    where: { roundUuid: resolvedRoundUuid },
-  });
-  const allRequiredAnswered = updatedQuestions
-    .filter((q) => q.required)
-    .every((q) => q.answeredAt !== null);
-
-  // Load idea (needed for project UUID and the resolved-state guard below)
-  const idea = await prisma.idea.findFirst({
-    where: { uuid: ideaUuid, companyUuid },
-  });
-
-  // Update round status if all answered
-  if (allRequiredAnswered) {
-    await prisma.elaborationRound.update({
-      where: { uuid: resolvedRoundUuid },
-      data: { status: "answered" },
-    });
-    // R2 guard: never flip a resolved Idea back to `validating`. Appended
-    // rounds keep the Idea at `resolved` so an in-flight proposal is not
-    // re-blocked — the round still moves to `answered` above.
-    if (idea?.elaborationStatus !== "resolved") {
-      await prisma.idea.update({
-        where: { uuid: ideaUuid },
-        data: { elaborationStatus: "validating" },
+      await tx.elaborationQuestion.update({
+        where: { uuid: question.uuid },
+        data: {
+          selectedOptionId: answer.selectedOptionId,
+          customText: answer.customText,
+          answeredAt: now,
+          answeredByType: actorType,
+          answeredByUuid: actorUuid,
+        },
       });
     }
-  }
 
-  // Log activity
-  await activityService.createActivity({
-    companyUuid,
-    projectUuid: idea!.projectUuid,
-    targetType: "idea",
-    targetUuid: ideaUuid,
-    actorType,
-    actorUuid,
-    action: "elaboration_answered",
-    value: {
-      roundNumber: round.roundNumber,
-      answeredCount: answers.length,
-    },
+    // Check if all required questions are answered
+    const updatedQuestions = await tx.elaborationQuestion.findMany({
+      where: { roundUuid: resolvedRoundUuid },
+    });
+    const allRequiredAnswered = updatedQuestions
+      .filter((q) => q.required)
+      .every((q) => q.answeredAt !== null);
+
+    // Load idea (needed for project UUID and the resolved-state guard below)
+    const idea = await tx.idea.findFirst({
+      where: { uuid: ideaUuid, companyUuid },
+    });
+
+    // Update round status if all answered
+    if (allRequiredAnswered) {
+      await tx.elaborationRound.update({
+        where: { uuid: resolvedRoundUuid },
+        data: { status: "answered" },
+      });
+      // R2 guard: never flip a resolved Idea back to `validating`. Appended
+      // rounds keep the Idea at `resolved` so an in-flight proposal is not
+      // re-blocked — the round still moves to `answered` above.
+      if (idea?.elaborationStatus !== "resolved") {
+        await tx.idea.update({
+          where: { uuid: ideaUuid },
+          data: { elaborationStatus: "validating" },
+        });
+      }
+    }
+
+    // Log activity
+    const activity = await activityService.createActivityInTx(tx, {
+      companyUuid,
+      projectUuid: idea!.projectUuid,
+      targetType: "idea",
+      targetUuid: ideaUuid,
+      actorType,
+      actorUuid,
+      action: "elaboration_answered",
+      value: {
+        roundNumber: round.roundNumber,
+        answeredCount: answers.length,
+      },
+    });
+
+    // Return updated round
+    const updatedRound = await tx.elaborationRound.findUnique({
+      where: { uuid: resolvedRoundUuid },
+      include: { questions: true },
+    });
+    return { round: updatedRound!, projectUuid: idea!.projectUuid, activity };
   });
-
-  eventBus.emitChange({ companyUuid, projectUuid: idea!.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
-
-  // Return updated round
-  const updatedRound = await prisma.elaborationRound.findUnique({
-    where: { uuid: resolvedRoundUuid },
-    include: { questions: true },
-  });
-  return formatRoundResponse(updatedRound!);
+  committed.activity.publish();
+  eventBus.emitChange({ companyUuid, projectUuid: committed.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
+  return formatRoundResponse(committed.round);
 }
 
 // ===== Resolve Elaboration =====
@@ -306,6 +325,7 @@ export async function resolveElaboration({
   actorUuid,
   actorType,
   actorIsIdeaAdmin = false,
+  actorContext,
 }: {
   companyUuid: string;
   ideaUuid: string;
@@ -317,66 +337,71 @@ export async function resolveElaboration({
   // `idea:admin`-gated, so this is effectively always true there; the in-service
   // check keeps the branch self-protecting and testable.
   actorIsIdeaAdmin?: boolean;
+  actorContext?: IdeaTeamActorContext;
 }): Promise<ElaborationResponse> {
-  // Verify the Idea exists and the actor may resolve it: either the assignee, or
-  // a non-assignee acting as an `idea:admin` gateway.
-  const idea = await prisma.idea.findFirst({
-    where: { uuid: ideaUuid, companyUuid },
-  });
-  if (!idea) throw new Error("Idea not found");
-  const isAssignee = await isIdeaAssignedToActor(companyUuid, idea, actorUuid);
-  if (!isAssignee && !actorIsIdeaAdmin) {
-    throw new Error(
-      "Only the assigned agent or an idea:admin gateway can resolve elaboration"
-    );
-  }
+  const committed = await projectTeamTransaction(async (tx) => {
+    // Verify the Idea exists and the actor may resolve it: either the assignee, or
+    // a non-assignee acting as an `idea:admin` gateway.
+    const idea = await tx.idea.findFirst({
+      where: { uuid: ideaUuid, companyUuid },
+    });
+    if (!idea) throw new Error("Idea not found");
+    const isAssignee = await isIdeaAssignedToActor(companyUuid, idea, actorUuid, tx);
+    await assertIdeaTeamElaborationWork(companyUuid, ideaUuid, { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid }, false, "idea:admin", tx);
+    if (!isAssignee && !actorIsIdeaAdmin) {
+      throw new Error(
+        "Only the assigned agent or an idea:admin gateway can resolve elaboration"
+      );
+    }
 
-  // Resolve operates on the whole Idea (not a single round). Precondition:
-  // there is at least one round and every round has been answered. A round
-  // counts as answered once it leaves `pending_answers` (legacy `validated`
-  // rounds are treated the same as `answered`).
-  const rounds = await prisma.elaborationRound.findMany({
-    where: { ideaUuid, companyUuid },
-  });
-  if (rounds.length === 0) {
-    throw new Error("Cannot resolve: the Idea has no elaboration rounds");
-  }
-  const unanswered = rounds.filter((r) => r.status === "pending_answers");
-  if (unanswered.length > 0) {
-    throw new Error(
-      `Cannot resolve: ${unanswered.length} round(s) still have unanswered questions`
-    );
-  }
+    // Resolve operates on the whole Idea (not a single round). Precondition:
+    // there is at least one round and every round has been answered. A round
+    // counts as answered once it leaves `pending_answers` (legacy `validated`
+    // rounds are treated the same as `answered`).
+    const rounds = await tx.elaborationRound.findMany({
+      where: { ideaUuid, companyUuid },
+    });
+    if (rounds.length === 0) {
+      throw new Error("Cannot resolve: the Idea has no elaboration rounds");
+    }
+    const unanswered = rounds.filter((r) => r.status === "pending_answers");
+    if (unanswered.length > 0) {
+      throw new Error(
+        `Cannot resolve: ${unanswered.length} round(s) still have unanswered questions`
+      );
+    }
 
-  // Mark the whole elaboration resolved (Idea-level; round statuses untouched).
-  await prisma.idea.update({
-    where: { uuid: ideaUuid },
-    data: { status: "elaborated", elaborationStatus: "resolved" },
-  });
+    // Mark the whole elaboration resolved (Idea-level; round statuses untouched).
+    await tx.idea.update({
+      where: { uuid: ideaUuid },
+      data: { status: "elaborated", elaborationStatus: "resolved" },
+    });
 
-  // Branch the emitted activity on WHO resolved (not on actor type):
-  // - Assignee self-validates → `elaboration_resolved`, no cross-wake (the
-  //   assignee is already live in-session).
-  // - Non-assignee `idea:admin` gateway → `elaboration_verified`, reusing the
-  //   existing wake pipeline. Its recipient resolution targets the Idea's
-  //   assignee agent (excluding the acting gateway via actor-exclusion), so the
-  //   assignee is woken to write the proposal — the MCP analogue of the human
-  //   Verify-Elaborate handoff. Offline is a queue: no liveness check here, so
-  //   resolution always succeeds and the wake is recovered on reconnect.
-  await activityService.createActivity({
-    companyUuid,
-    projectUuid: idea.projectUuid,
-    targetType: "idea",
-    targetUuid: ideaUuid,
-    actorType,
-    actorUuid,
-    action: isAssignee ? "elaboration_resolved" : "elaboration_verified",
-    value: {
-      totalRounds: rounds.length,
-    },
+    // Branch the emitted activity on WHO resolved (not on actor type):
+    // - Assignee self-validates → `elaboration_resolved`, no cross-wake (the
+    //   assignee is already live in-session).
+    // - Non-assignee `idea:admin` gateway → `elaboration_verified`, reusing the
+    //   existing wake pipeline. Its recipient resolution targets the Idea's
+    //   assignee agent (excluding the acting gateway via actor-exclusion), so the
+    //   assignee is woken to write the proposal — the MCP analogue of the human
+    //   Verify-Elaborate handoff. Offline is a queue: no liveness check here, so
+    //   resolution always succeeds and the wake is recovered on reconnect.
+    const activity = await activityService.createActivityInTx(tx, {
+      companyUuid,
+      projectUuid: idea.projectUuid,
+      targetType: "idea",
+      targetUuid: ideaUuid,
+      actorType,
+      actorUuid,
+      action: isAssignee ? "elaboration_resolved" : "elaboration_verified",
+      value: {
+        totalRounds: rounds.length,
+      },
+    });
+    return { activity, projectUuid: idea.projectUuid };
   });
-
-  eventBus.emitChange({ companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
+  committed.activity.publish();
+  eventBus.emitChange({ companyUuid, projectUuid: committed.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
 
   return getElaboration({ companyUuid, ideaUuid });
 }
@@ -467,6 +492,7 @@ export async function skipElaboration({
   actorType,
   reason,
   actorIsIdeaAdmin = false,
+  actorContext,
 }: {
   companyUuid: string;
   ideaUuid: string;
@@ -478,47 +504,52 @@ export async function skipElaboration({
   // flag is the load-bearing check that lets a non-assignee gateway skip an Idea
   // assigned to another agent (parity with the gateway resolve path).
   actorIsIdeaAdmin?: boolean;
+  actorContext?: IdeaTeamActorContext;
 }): Promise<void> {
-  const idea = await prisma.idea.findFirst({
-    where: { uuid: ideaUuid, companyUuid },
-  });
-  if (!idea) throw new Error("Idea not found");
-  const isAssignee = await isIdeaAssignedToActor(companyUuid, idea, actorUuid);
-  if (!isAssignee && !actorIsIdeaAdmin) {
-    throw new Error(
-      "Only the assigned agent or an idea:admin gateway can skip elaboration"
-    );
-  }
-  if (idea.status !== "elaborating") {
-    throw new Error(
-      `Cannot skip elaboration from status '${idea.status}'`
-    );
-  }
+  const committed = await projectTeamTransaction(async (tx) => {
+    const idea = await tx.idea.findFirst({
+      where: { uuid: ideaUuid, companyUuid },
+    });
+    if (!idea) throw new Error("Idea not found");
+    const isAssignee = await isIdeaAssignedToActor(companyUuid, idea, actorUuid, tx);
+    await assertIdeaTeamElaborationWork(companyUuid, ideaUuid, { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid }, false, "idea:write", tx);
+    if (!isAssignee && !actorIsIdeaAdmin) {
+      throw new Error(
+        "Only the assigned agent or an idea:admin gateway can skip elaboration"
+      );
+    }
+    if (idea.status !== "elaborating") {
+      throw new Error(
+        `Cannot skip elaboration from status '${idea.status}'`
+      );
+    }
 
-  await prisma.idea.update({
-    where: { uuid: ideaUuid },
-    data: {
-      status: "elaborated",
-      elaborationDepth: "minimal",
-      elaborationStatus: "resolved",
-    },
-  });
+    await tx.idea.update({
+      where: { uuid: ideaUuid },
+      data: {
+        status: "elaborated",
+        elaborationDepth: "minimal",
+        elaborationStatus: "resolved",
+      },
+    });
 
-  // Assignee self-skip → `elaboration_skipped`, no cross-wake. Non-assignee
-  // `idea:admin` gateway → `elaboration_verified` (carrying the skip reason) so
-  // the existing wake pipeline wakes the ASSIGNEE agent to write the proposal.
-  await activityService.createActivity({
-    companyUuid,
-    projectUuid: idea.projectUuid,
-    targetType: "idea",
-    targetUuid: ideaUuid,
-    actorType,
-    actorUuid,
-    action: isAssignee ? "elaboration_skipped" : "elaboration_verified",
-    value: isAssignee ? { reason } : { reason, viaSkip: true },
+    // Assignee self-skip → `elaboration_skipped`, no cross-wake. Non-assignee
+    // `idea:admin` gateway → `elaboration_verified` (carrying the skip reason) so
+    // the existing wake pipeline wakes the ASSIGNEE agent to write the proposal.
+    const activity = await activityService.createActivityInTx(tx, {
+      companyUuid,
+      projectUuid: idea.projectUuid,
+      targetType: "idea",
+      targetUuid: ideaUuid,
+      actorType,
+      actorUuid,
+      action: isAssignee ? "elaboration_skipped" : "elaboration_verified",
+      value: isAssignee ? { reason } : { reason, viaSkip: true },
+    });
+    return { activity, projectUuid: idea.projectUuid };
   });
-
-  eventBus.emitChange({ companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
+  committed.activity.publish();
+  eventBus.emitChange({ companyUuid, projectUuid: committed.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
 }
 
 // ===== Get Elaboration =====

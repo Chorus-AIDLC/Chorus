@@ -1,4 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
+import { ideaTeamHeaders, ideaTeamProofFromEnv } from "../bin/idea-team-transport.mjs";
 import type { Agent, PreStepDecision } from "@deepseek-ai/dsh-agent";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { UserMessage } from "@deepseek-ai/dsh-session";
@@ -105,6 +106,7 @@ export const Config: z<Config, ResolvedConfig> = z.object({
 });
 
 export interface ChorusConnectionConfig {
+  turnHeaders?: Record<string, string>;
   url: string;
   apiKey: string;
 }
@@ -154,7 +156,8 @@ export function resolveConnectionConfig(
       `${name}: apiKey is required (config.apiKey, CHORUS_API_KEY, or $DSH_HOME/.env)`,
     );
   }
-  return { url: url.replace(/\/+$/, ""), apiKey };
+  const turnHeaders = ideaTeamHeaders(ideaTeamProofFromEnv(env));
+  return { url: url.replace(/\/+$/, ""), apiKey, ...(Object.keys(turnHeaders).length ? { turnHeaders } : {}) };
 }
 
 interface AgentState {

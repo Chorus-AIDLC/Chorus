@@ -134,6 +134,19 @@ describe("POST /api/ideas/conversational", () => {
     expect(mockCreateConversational).not.toHaveBeenCalled();
   });
 
+  it("passes the stable human creation request key to the service", async () => {
+    const requestUuid = "4f0291e3-1c33-4544-9606-5b8f4122e623";
+    const response = await POST(makeRequest({ ...validBody, requestUuid }), emptyCtx);
+    expect(response.status).toBe(200);
+    expect(mockCreateConversational).toHaveBeenCalledWith(userAuth, expect.objectContaining({ requestUuid }));
+  });
+
+  it("rejects malformed creation request identities", async () => {
+    const response = await POST(makeRequest({ ...validBody, requestUuid: "not-a-uuid" }), emptyCtx);
+    expect(response.status).toBe(422);
+    expect(mockCreateConversational).not.toHaveBeenCalled();
+  });
+
   it("401 when unauthenticated", async () => {
     mockGetAuthContext.mockResolvedValue(null);
     const res = await POST(makeRequest(validBody), emptyCtx);

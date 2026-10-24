@@ -28,7 +28,8 @@
 
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { getIdeaTeamHandoffIdeaUuid } from "./idea-team.service";
+import { ApiError } from "@/lib/api-handler";
+import { getIdeaTeamHandoffIdeaUuid, canReceiveIdeaTeamWake, readIdeaTeamAdmittedWakeContexts } from "./idea-team.service";
 import { normalizeWakeError, type WakeError } from "@/lib/daemon-wake-error";
 import { parseWakeContext, type WakeContext } from "@/services/daemon-wake-context";
 import { recheckResearchTurn, getResearchEligibility, lockResearchProject } from "@/services/research-eligibility.service";
@@ -557,11 +558,12 @@ export async function createPendingTurn(params: {
   // caller — the notification chokepoint — has just resolved/created it.)
   const session = await db.daemonSession.findUnique({
     where: { uuid: params.sessionUuid },
-    select: { uuid: true, companyUuid: true, directIdeaUuid: true },
+    select: { uuid: true, companyUuid: true, directIdeaUuid: true, agentUuid: true },
   });
   if (!session) {
     throw new Error(`DaemonSession ${params.sessionUuid} not found`);
   }
+  if (params.wakeContext?.ideaTeam && !await canReceiveIdeaTeamWake(session.companyUuid, session.agentUuid, params.wakeContext, session.directIdeaUuid, db)) throw new ApiError("FORBIDDEN", "Cannot schedule a stale Idea Team turn", 403);
 
   if (isOperationTrigger(params.trigger)) {
     const idea = session.directIdeaUuid ? await db.idea.findFirst({
@@ -601,12 +603,12 @@ export async function createPendingTurn(params: {
         trigger: params.trigger,
         promptText: params.promptText ?? null,
         ...(params.operationPayload ? { operationPayload: params.operationPayload } : {}),
-        ...(params.wakeContext ? { wakeContext: params.wakeContext, wakeNotificationUuid: params.wakeContext.notificationUuid } : {}),
+        ...(params.wakeContext ? { wakeContext: params.wakeContext, ...(params.trigger !== "resume" ? { wakeNotificationUuid: params.wakeContext.notificationUuid } : {}) } : {}),
         ...(params.wakeTargetConnectionUuid ? { wakeTargetConnectionUuid: params.wakeTargetConnectionUuid, wakeRuntimeCwd: params.wakeRuntimeCwd ?? null } : {}),
         status: "pending" as const,
         executionUuid: params.executionUuid ?? null,
       };
-      if (params.wakeContext) {
+      if (params.wakeContext && params.trigger !== "resume") {
         const inserted = await db.daemonSessionTurn.createManyAndReturn({ data: [data], skipDuplicates: true });
         row = inserted[0];
         if (!row) {
@@ -2129,6 +2131,7 @@ export async function advanceTurnForWake(params: {
   operationProtocol?: boolean;
   turnUuid?: string | null;
   wakeRecoveryProtocol?: 1;
+  ideaTeamProtocol?: 1;
   turnUuids?: string[];
   admissionUuid?: string;
   backendSessionId?: string | null;
@@ -2160,7 +2163,7 @@ export async function advanceTurnForWake(params: {
       companyUuid: params.companyUuid,
       sessionId: params.sessionId,
     },
-    select: { uuid: true, originConnectionUuid: true },
+    select: { uuid: true, originConnectionUuid: true, directIdeaUuid: true },
   });
   if (!session) return { ok: false, reason: "not_found" }; // non-disclosure 404
 
@@ -2205,6 +2208,11 @@ export async function advanceTurnForWake(params: {
     orderBy: { seq: "asc" },
   });
   if (!turn) return { ok: false, reason: "not_found" };
+
+  if (params.status === "running") {
+    if (parseWakeContext(turn.wakeContext)?.ideaTeam) return { ok: false, reason: "invalid_transition", from: "upgrade_required_idea_team_protocol", to: params.status };
+    if (!await canReceiveIdeaTeamWake(params.companyUuid, params.agentUuid, parseWakeContext(turn.wakeContext), session.directIdeaUuid)) return { ok: false, reason: "not_found" };
+  }
 
   const isResearch = isResearchTurn(turn);
   const isOperation = isOperationTrigger(turn.trigger);
@@ -2470,6 +2478,24 @@ export async function createResumeTurn(params: {
   executionUuid: string;
   resumedFrom: "user" | "crash";
 }): Promise<TurnView> {
+  const source = await prisma.daemonSessionTurn.findFirst({
+    where: { sessionUuid: params.sessionUuid, executionUuid: params.executionUuid, status: "interrupted" },
+    orderBy: { seq: "desc" }, include: { session: true },
+  });
+  const contexts = source ? await readIdeaTeamAdmittedWakeContexts(source) : [];
+  if (source) {
+    for (const context of contexts) {
+      if (!await canReceiveIdeaTeamWake(source.session.companyUuid, source.session.agentUuid, context, source.session.directIdeaUuid)) throw new ApiError("FORBIDDEN", "Cannot resume a stale Idea Team turn", 403);
+    }
+  }
+  const fencedContext = contexts.find((context) => context?.ideaTeam);
+  const sourceFences = contexts.flatMap((context) => context?.ideaTeam ? context.ideaTeams ?? [context.ideaTeam] : []);
+  const uniqueFences = [...new Map(sourceFences.map((fence) => [JSON.stringify(fence), fence])).values()];
+  const wakeContext = fencedContext && uniqueFences.length > 1 ? { ...fencedContext, ideaTeams: uniqueFences } : fencedContext ?? contexts[0];
+  if (!source) {
+    const session = await prisma.daemonSession.findUnique({ where: { uuid: params.sessionUuid } });
+    if (session && !await canReceiveIdeaTeamWake(session.companyUuid, session.agentUuid, null, session.directIdeaUuid)) throw new ApiError("FORBIDDEN", "Cannot resume an unfenced Idea Team turn; upgrade your Chorus client", 403);
+  }
   const superseded = await prisma.daemonSessionTurn.findMany({
     where: { sessionUuid: params.sessionUuid, trigger: "resume", status: "pending" },
   });
@@ -2500,6 +2526,7 @@ export async function createResumeTurn(params: {
     trigger: "resume",
     executionUuid: params.executionUuid,
     promptText: RESUME_TURN_PROMPT_TEXT[params.resumedFrom],
+    ...(wakeContext ? { wakeContext, wakeTargetConnectionUuid: source?.wakeTargetConnectionUuid ?? undefined, wakeRuntimeCwd: source?.wakeRuntimeCwd ?? undefined } : {}),
   });
 }
 
@@ -2545,6 +2572,7 @@ async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]
       const rows = await tx.daemonSessionTurn.findMany({ where: { uuid: { in: members }, sessionUuid: session.uuid } });
       if (rows.length !== members.length) return { ok: false, reason: "not_found" };
       for (const row of rows) {
+        if (params.status === "running" && parseWakeContext(row.wakeContext)?.ideaTeam && params.ideaTeamProtocol !== 1) return conflict("upgrade_required_idea_team_protocol");
         if (params.status === "running" && (row.wakeTargetConnectionUuid ?? session.originConnectionUuid) !== params.connectionUuid) {
           return { ok: false, reason: "not_found" };
         }
@@ -2684,11 +2712,12 @@ async function canAgentReceiveSessionTurn(
   db: SessionTransactionClient = prisma,
 ): Promise<boolean> {
   const actor = { type: "agent", uuid: agentUuid };
+  if ((parseWakeContext(turn.wakeContext)?.ideaTeam || turn.trigger !== "human_instruction") && !await canReceiveIdeaTeamWake(companyUuid, agentUuid, parseWakeContext(turn.wakeContext), turn.session.directIdeaUuid, db)) return false;
   if (turn.wakeContext != null) {
     const context = parseWakeContext(turn.wakeContext);
     if (!context || context.notification.recipientUuid !== agentUuid) return false;
     const notification = context.notification;
-    if (notification.action === "team_lead_handoff") {
+    if (notification.action === "team_lead_handoff" && !context.ideaTeam) {
       const ideaUuid = await getIdeaTeamHandoffIdeaUuid(companyUuid, agentUuid, notification.entityType, notification.entityUuid, notification.projectUuid, db);
       if (!ideaUuid || ideaUuid !== turn.session.directIdeaUuid) return false;
     }
@@ -2756,16 +2785,17 @@ export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string
       session: { select: { sessionId: true, directIdeaUuid: true } },
     },
   });
-  return !!turn && canAgentReceiveSessionTurn(companyUuid, agentUuid, turn);
+  return !!turn && !parseWakeContext(turn.wakeContext)?.ideaTeam && canAgentReceiveSessionTurn(companyUuid, agentUuid, turn);
 }
 
-export async function getWakeRecoveryDelivery(companyUuid: string, agentUuid: string, connectionUuid: string, turnUuid: string) {
+export async function getWakeRecoveryDelivery(companyUuid: string, agentUuid: string, connectionUuid: string, turnUuid: string, ideaTeamProtocol?: 1) {
   const turn = await prisma.daemonSessionTurn.findFirst({
     where: { uuid: turnUuid, status: "pending", session: { companyUuid, agentUuid }, ...wakeTargetFilter(connectionUuid) },
     select: { uuid: true, sessionUuid: true, trigger: true, wakeContext: true, wakeTargetConnectionUuid: true, wakeRuntimeCwd: true, session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } } },
   });
   if (!turn || !await canAgentReceiveSessionTurn(companyUuid, agentUuid, turn)) return null;
   const wakeContext = parseWakeContext(turn.wakeContext);
+  if (wakeContext?.ideaTeam && ideaTeamProtocol !== 1) return null;
   return { turnUuid: turn.uuid, wakeContext, ...(wakeContext ? { notificationUuid: wakeContext.notificationUuid } : {}), runtimeCwd: turn.wakeTargetConnectionUuid ? turn.wakeRuntimeCwd : turn.session.runtimeCwd, targetConnectionUuid: connectionUuid };
 }
 
@@ -2796,6 +2826,7 @@ export async function getPendingTurnsForConnection(params: {
   connectionUuid: string;
   operationProtocol?: boolean;
   wakeRecoveryProtocol?: 1;
+  ideaTeamProtocol?: 1;
 }): Promise<PendingTurnView[]> {
   const rows = await prisma.daemonSessionTurn.findMany({
     where: {
@@ -2837,6 +2868,7 @@ export async function getPendingTurnsForConnection(params: {
   const deliverable = [];
   const accessBySession = new Map<string, Promise<boolean>>();
   for (const row of rows) {
+    if (parseWakeContext(row.wakeContext)?.ideaTeam && (params.ideaTeamProtocol !== 1 || params.wakeRecoveryProtocol !== 1)) continue;
     const key = row.wakeContext != null ? row.uuid : `${row.sessionUuid}:${row.trigger}`;
     if (!accessBySession.has(key)) {
       accessBySession.set(key, canAgentReceiveSessionTurn(params.companyUuid, params.agentUuid, row));

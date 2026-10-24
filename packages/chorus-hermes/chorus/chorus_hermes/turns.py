@@ -23,11 +23,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import uuid as uuidlib
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .rest import ChorusRest, ChorusRestError
+from .turn_context import valid_wake_context
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +150,9 @@ class TurnRecord:
     root_idea_uuid: Optional[str] = None
     direct_idea_uuid: Optional[str] = None
     requested_turn_uuid: Optional[str] = None
+    admission_uuid: str = field(default_factory=lambda: str(uuidlib.uuid4()))
+    wake_context: Optional[Mapping[str, Any]] = None
+    connection_uuid: Optional[str] = None
     turn_uuid: Optional[str] = None
     finished: bool = False
     usage: Usage = field(default_factory=Usage)
@@ -161,6 +167,7 @@ class TurnReporter:
         self.executions: Dict[str, Dict[str, Any]] = {}
         self.calls: List[tuple] = []  # (path, body) successfully attempted, for diagnostics
         self._lock = asyncio.Lock()
+        self._admissions = OrderedDict()
 
     # -- REST helpers ----------------------------------------------------------
 
@@ -228,9 +235,15 @@ class TurnReporter:
         if not conn:
             logger.warning("[Chorus] turn-advance %s skipped: no registered connection", status)
             return Admission(UNAVAILABLE, error="no registered connection")
+        if rec.connection_uuid and rec.connection_uuid != conn:
+            return Admission(REJECTED, error="admitted connection has changed")
         body: Dict[str, Any] = {"connectionUuid": conn, "sessionId": rec.session_id, "status": status}
         if turn_uuid:
             body["turnUuid"] = turn_uuid
+        if rec.requested_turn_uuid:
+            body.update(wakeRecoveryProtocol=1, ideaTeamProtocol=1, admissionUuid=rec.admission_uuid)
+            if status == "running":
+                body["turnUuids"] = [rec.requested_turn_uuid]
         if rec.entity:
             body["entityType"], body["entityUuid"] = rec.entity
         if status == "interrupted":
@@ -253,19 +266,34 @@ class TurnReporter:
         if turn_uuid and uuid != turn_uuid:
             logger.warning("[Chorus] turn-advance %s for %s answered for a different turn", status, turn_uuid)
             return Admission(REJECTED, http_status=200, error="turn-advance answered for a different turn")
+        if rec.wake_context and rec.wake_context.get("ideaTeam") and (
+                isinstance(data.get("ideaTeamProtocol"), bool) or data.get("ideaTeamProtocol") != 1):
+            return Admission(REJECTED, http_status=200, error="server lacks Idea Team admission acknowledgement; upgrade required")
         return Admission(ADMITTED, turn_uuid=uuid, http_status=200)
 
     async def start(self, rec: TurnRecord) -> Admission:
         """turn-advance running (the server's admission); only when admitted, mark the execution
         running + snapshot. A rejected/unavailable admission leaves ``rec.turn_uuid`` unset and
         reports nothing else."""
+        if rec.wake_context is not None and (not valid_wake_context(rec.wake_context) or not rec.requested_turn_uuid):
+            return Admission(REJECTED, error="invalid or unfenced wake context")
+        if rec.requested_turn_uuid:
+            key = (self.get_connection_uuid(), rec.requested_turn_uuid)
+            rec.admission_uuid = self._admissions.setdefault(key, rec.admission_uuid)
+            self._admissions.move_to_end(key)
+            while len(self._admissions) > 1024:
+                self._admissions.popitem(last=False)
+        connection_uuid = self.get_connection_uuid()
         admission = await self._advance_result(rec, "running", turn_uuid=rec.requested_turn_uuid)
         if not admission.admitted:
             logger.warning("[Chorus] turn admission %s for session %s%s: %s", admission.status, rec.session_id,
                            f" (HTTP {admission.http_status})" if admission.http_status else "",
                            admission.error or "")
             return admission
+        if connection_uuid != self.get_connection_uuid():
+            return Admission(REJECTED, error="connection changed during admission")
         rec.turn_uuid = admission.turn_uuid
+        rec.connection_uuid = connection_uuid
         if rec.entity:
             self.executions[self._key(rec.entity)] = {
                 "entityType": rec.entity[0], "entityUuid": rec.entity[1],
@@ -310,8 +338,8 @@ class TurnReporter:
 
     async def close_unstarted(self, rec: TurnRecord) -> None:
         """Admit and immediately end a turn without running the agent (approval replies)."""
-        rec.turn_uuid = await self._advance(rec, "running", turn_uuid=rec.requested_turn_uuid)
-        if rec.turn_uuid:
+        admission = await self.start(rec)
+        if admission.admitted:
             rec.finished = True
             await self._advance(rec, "ended", turn_uuid=rec.turn_uuid)
         await self.drop_execution(rec.entity)
@@ -325,7 +353,8 @@ class TurnReporter:
         if not conn:
             return []
         try:
-            data = await self.rest.aget("/api/daemon/pending-turns", params={"connectionUuid": conn})
+            data = await self.rest.aget("/api/daemon/pending-turns", params={"connectionUuid": conn,
+                                        "wakeRecoveryProtocol": 1, "ideaTeamProtocol": 1})
         except Exception as exc:
             logger.warning("[Chorus] pending-turns read failed: %s", sanitize(exc, self.secrets)[:300])
             return []

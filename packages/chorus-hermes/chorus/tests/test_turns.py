@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import pytest
 
 from chorus_hermes.rest import ChorusRest
 from chorus_hermes.turns import TurnRecord, TurnReporter, make_wake_error
 
 from .fixtures.chorus_fake import FakeChorus
+from .test_turn_context import TURN, wake_context
 
 
 def run(coro):
@@ -25,6 +27,55 @@ def rec(**kw):
     base = dict(session_id="i-1", entity=("task", "t-1"), root_idea_uuid="r-1", direct_idea_uuid="i-1")
     base.update(kw)
     return TurnRecord(**base)
+
+
+def test_exact_admission_and_terminal_share_protocol_and_proof(cfg):
+    fake = FakeChorus()
+    report = reporter(cfg, fake)
+    record = rec(requested_turn_uuid=TURN, wake_context=wake_context())
+
+    async def exercise():
+        assert (await report.start(record)).admitted
+        await report.finish(record, "ended")
+
+    run(exercise())
+    running, terminal = fake.bodies("/api/daemon/turn-advance")
+    for body in (running, terminal):
+        assert body["ideaTeamProtocol"] == body["wakeRecoveryProtocol"] == 1
+        assert body["admissionUuid"] == record.admission_uuid
+        assert body["turnUuid"] == TURN
+    assert running["turnUuids"] == [TURN] and "turnUuids" not in terminal
+
+
+def test_unavailable_admission_reuses_proof_on_recovery(cfg):
+    fake = FakeChorus()
+    report = reporter(cfg, fake)
+    fake.fail_paths.add("/api/daemon/turn-advance")
+    first = rec(requested_turn_uuid=TURN, wake_context=wake_context())
+    assert run(report.start(first)).status == "unavailable"
+    fake.fail_paths.clear()
+    recovered = rec(requested_turn_uuid=TURN, wake_context=wake_context())
+    assert run(report.start(recovered)).admitted
+    assert recovered.admission_uuid == first.admission_uuid
+
+
+@pytest.mark.parametrize("acknowledgement", [{}, {"ideaTeamProtocol": True}, {"ideaTeamProtocol": False},
+    {"ideaTeamProtocol": None}, {"ideaTeamProtocol": "1"}, {"ideaTeamProtocol": 0}, {"ideaTeamProtocol": 2}])
+def test_fenced_admission_rejects_old_server_acknowledgement(cfg, acknowledgement):
+    fake = FakeChorus()
+    fake.turn_advance_hook = lambda body: httpx.Response(200, json={"success": True,
+        "data": {"turn": {"uuid": TURN, "status": "running"}, **acknowledgement}})
+    report = reporter(cfg, fake)
+    record = rec(requested_turn_uuid=TURN, wake_context=wake_context())
+    assert run(report.start(record)).status == "rejected"
+    assert record.turn_uuid is None and not report.executions
+
+
+def test_fenced_context_never_admits_without_exact_turn(cfg):
+    fake = FakeChorus()
+    report = reporter(cfg, fake)
+    assert run(report.start(rec(wake_context=wake_context()))).status == "rejected"
+    assert not fake.calls
 
 
 def test_ended_turn_order_and_payloads(cfg):

@@ -11,6 +11,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { AgentAuthContext, AuthContext } from "@/types/auth";
 import { createTurnAndResolveTarget } from "@/services/notification-turn";
 import { createWakeContext } from "@/services/daemon-wake-context";
+
 import {
   resolveDirectIdeaUuid,
   type TurnView,
@@ -27,9 +28,16 @@ import {
   ProjectAccessDeniedError,
 } from "@/services/project-access.service";
 
+function teamWakeContext(notification: unknown, ideaTeam?: import("@/types/idea-team").IdeaTeamTurnFence, ideaTeams?: import("@/types/idea-team").IdeaTeamTurnFence[]) {
+  const context = createWakeContext(notification);
+  return context && ideaTeam ? { ...context, ideaTeam, ...(ideaTeams ? { ideaTeams } : {}) } : context;
+}
+
 // ===== Type Definitions =====
 
 export interface NotificationCreateParams {
+  ideaTeam?: import("@/types/idea-team").IdeaTeamTurnFence;
+  ideaTeams?: import("@/types/idea-team").IdeaTeamTurnFence[];
   sourceActivityUuid?: string;
   companyUuid: string;
   projectUuid: string;
@@ -538,7 +546,7 @@ export async function createReturningTurn(
   // failure-isolated (logs + swallows): a turn-creation/ping failure MUST NOT abort or
   // block this already-created notification.
   const { turn, targetConnectionUuid, runtimeCwd, suppressWake, wakeContext } =
-    await createTurnAndResolveTarget({ ...params, wakeContext: createWakeContext(notification) });
+    await createTurnAndResolveTarget({ ...params, wakeContext: teamWakeContext(notification, params.ideaTeam, params.ideaTeams) });
 
   // Emit SSE event for real-time notification delivery (includes details for toast).
   //
@@ -564,6 +572,7 @@ export async function createReturningTurn(
   // offline-pin is not silently re-woken as if it were un-pinned. It is `false` for every
   // other case (un-pinned, directed, fully-offline `none`).
   eventBus.emit(`notification:${params.recipientType}:${params.recipientUuid}`, {
+    ...(params.ideaTeam ? { ideaTeamRequired: true } : {}),
     type: "new_notification",
     notificationUuid: notification.uuid,
     ...(turn && wakeContext ? { turnUuid: turn.uuid, wakeContext } : {}),
@@ -627,7 +636,7 @@ export async function createBatch(
           // Write-once denormalized copy (null for every non-instruction notification).
           instructionText: params.instructionText ?? null,
       };
-      if (params.action === "team_lead_handoff" && params.sourceActivityUuid) {
+      if ((params.action === "team_lead_handoff" || params.ideaTeam) && params.sourceActivityUuid) {
         const digest = createHash("sha256").update(JSON.stringify([params.companyUuid, params.sourceActivityUuid, params.recipientType, params.recipientUuid, params.action])).digest("hex");
         const uuid = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
         return prisma.notification.upsert({ where: { uuid }, create: { ...data, uuid }, update: {} });
@@ -645,7 +654,7 @@ export async function createBatch(
   // and is swallowed, never aborting the notifications that were already created.
   const wakes: Awaited<ReturnType<typeof createTurnAndResolveTarget>>[] = [];
   for (const [index, params] of notifications.entries()) {
-    const result = await createTurnAndResolveTarget({ ...params, wakeContext: createWakeContext(created[index]) });
+    const result = await createTurnAndResolveTarget({ ...params, wakeContext: teamWakeContext(created[index], params.ideaTeam, params.ideaTeams) });
     wakes.push(result);
   }
 
@@ -663,6 +672,7 @@ export async function createBatch(
     emittedRecipients.add(recipientKey);
 
     eventBus.emit(`notification:${recipientType}:${recipientUuid}`, {
+      ...(matchParams?.ideaTeam ? { ideaTeamRequired: true } : {}),
       type: "new_notification",
       notificationUuid: match?.uuid,
       ...(wakeRecoveryOnly ? { wakeRecoveryOnly: true } : {}),

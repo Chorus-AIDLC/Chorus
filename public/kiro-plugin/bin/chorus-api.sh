@@ -15,6 +15,33 @@
 
 set -euo pipefail
 
+CHORUS_TURN_HEADERS=()
+if [ "${CHORUS_TURN_UUID+x}${CHORUS_ADMISSION_UUID+x}${CHORUS_IDEA_TEAM_TURNS+x}" != "" ]; then
+  _chorus_uuid='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+  if ! [[ "${CHORUS_TURN_UUID:-}" =~ $_chorus_uuid ]] || ! [[ "${CHORUS_ADMISSION_UUID:-}" =~ $_chorus_uuid ]]; then
+    echo 'Invalid Idea Team turn/admission UUID pair' >&2
+    exit 1
+  fi
+  CHORUS_TURN_HEADERS=(-H "X-Chorus-Turn-Uuid: $CHORUS_TURN_UUID" -H "X-Chorus-Admission-Uuid: $CHORUS_ADMISSION_UUID")
+  if [ "${CHORUS_IDEA_TEAM_TURNS+x}" != "" ]; then
+    if [ "$(printf '%s' "$CHORUS_IDEA_TEAM_TURNS" | wc -c)" -gt 4096 ] || ! printf '%s' "$CHORUS_IDEA_TEAM_TURNS" | jq -e --arg uuid "$_chorus_uuid" '
+      type == "array" and length <= 16 and all(.[];
+        type == "object" and keys == ["admissionUuid", "turnUuid"] and
+        (.turnUuid | type == "string" and test($uuid)) and
+        (.admissionUuid | type == "string" and test($uuid)))' >/dev/null; then
+      echo 'Invalid supplementary Idea Team proofs' >&2
+      exit 1
+    fi
+    CHORUS_TURN_HEADERS+=(-H "X-Chorus-Idea-Team-Turns: $(printf '%s' "$CHORUS_IDEA_TEAM_TURNS" | jq -c .)")
+  fi
+  if [ -z "${CHORUS_MCP_NO_CLI:-}" ] && command -v chorus >/dev/null 2>&1; then
+    if ! chorus mcp --help 2>/dev/null | grep -q 'ideaTeamProtocol=1'; then
+      echo 'Upgrade chorus CLI for Idea Team admission transport' >&2
+      exit 1
+    fi
+  fi
+fi
+
 # ===== Configuration =====
 
 CHORUS_URL="${CHORUS_URL:-}"
@@ -53,7 +80,7 @@ api_call() {
   fi
 
   local response
-  response=$(curl "${args[@]}" "${CHORUS_URL}${path}" 2>&1) || {
+  response=$(curl "${CHORUS_TURN_HEADERS[@]}" "${args[@]}" "${CHORUS_URL}${path}" 2>&1) || {
     echo "CURL_ERROR: Failed to reach ${CHORUS_URL}${path}" >&2
     return 1
   }
@@ -283,7 +310,7 @@ cmd_mcp_tool() {
     # Step 1: Initialize MCP session
     local init_payload
     init_payload=$(cat <<JSONEOF
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-hook","version":"0.23.1"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-hook","version":"0.23.2"}}}
 JSONEOF
 )
 
@@ -292,7 +319,7 @@ JSONEOF
     headers_file=$(mktemp "${STATE_DIR}/.mcp_headers.XXXXXX")
 
     local init_response
-    init_response=$(curl -s -S -X POST \
+    init_response=$(curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST \
       -H "$auth_header" \
       -H "Content-Type: application/json" \
       -H "Accept: application/json, text/event-stream" \
@@ -313,7 +340,7 @@ JSONEOF
     # Step 2: Send initialized notification
     local notif_payload='{"jsonrpc":"2.0","method":"notifications/initialized"}'
     if [ -n "$session_header" ]; then
-      curl -s -S -X POST \
+      curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST \
         -H "$auth_header" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
@@ -321,7 +348,7 @@ JSONEOF
         -d "$notif_payload" \
         "$mcp_url" >/dev/null 2>&1 || true
     else
-      curl -s -S -X POST \
+      curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST \
         -H "$auth_header" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
@@ -339,7 +366,7 @@ JSONEOF
     response_file=$(mktemp "${STATE_DIR}/.mcp_response.XXXXXX")
 
     if [ -n "$session_header" ]; then
-      http_code=$(curl -s -S -X POST \
+      http_code=$(curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST \
         -H "$auth_header" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
@@ -349,7 +376,7 @@ JSONEOF
         -o "$response_file" \
         "$mcp_url" 2>/dev/null) || http_code="000"
     else
-      http_code=$(curl -s -S -X POST \
+      http_code=$(curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST \
         -H "$auth_header" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
@@ -382,7 +409,7 @@ JSONEOF
 
   # Step 4: Close session (best effort, only for stateful servers)
   if [ -n "$session_id" ]; then
-    curl -s -S -X DELETE \
+    curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X DELETE \
       -H "$auth_header" \
       -H "mcp-session-id: $session_id" \
       "$mcp_url" >/dev/null 2>&1 || true

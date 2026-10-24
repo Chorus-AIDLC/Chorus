@@ -32,6 +32,7 @@ const { mockPrisma, mockEventBus, mockFormatCreatedBy, mockFormatReview, mockRes
       count: vi.fn(),
     },
     idea: {
+      findFirst: vi.fn(async () => null),
       findMany: vi.fn(),
       updateMany: vi.fn(),
     },

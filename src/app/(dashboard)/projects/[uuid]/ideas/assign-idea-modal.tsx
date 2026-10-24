@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
 import { Loader2, Info } from "lucide-react";
@@ -88,6 +88,8 @@ export function AssignIdeaModal({
   const [users, setUsers] = useState<CompanyUser[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const assignmentRequest = useRef<{ fingerprint: string; uuid: string } | null>(null);
+  const submitting = useRef(false);
 
   // The selected agent's ONLINE (host, cwd) daemon instances for the idea-root
   // pin. The idea is the authoritative pin ROOT — pinning it cascades to the
@@ -174,35 +176,32 @@ export function AssignIdeaModal({
   }
 
   const handleSubmit = async () => {
+    if (submitting.current) return;
+    submitting.current = true;
     setIsLoading(true);
     setError(null);
-    let result;
-
-    if (selectedOption === "self") {
-      result = await claimIdeaAction(idea.uuid);
-    } else if (selectedOption === "agent" && selectedAgentUuid) {
-      // Thread the DURABLE AgentInstance pin when the owner picked one — no pin
-      // (revert-to-plain-agent / inherit) → undefined assigns the plain agent.
-      result = await claimIdeaToAgentAction(
-        idea.uuid,
-        selectedAgentUuid,
-        pinnedInstance?.agentInstanceUuid ?? undefined,
-      );
-    } else if (selectedOption === "user" && selectedUserUuid) {
-      result = await claimIdeaToUserAction(idea.uuid, selectedUserUuid);
-    } else if (selectedOption === "release") {
-      result = await releaseIdeaAction(idea.uuid);
-    } else {
+    try {
+      let result;
+      if (selectedOption === "self") {
+        result = await claimIdeaAction(idea.uuid);
+      } else if (selectedOption === "agent" && selectedAgentUuid) {
+        const fingerprint = `${idea.uuid}:${selectedAgentUuid}:${pinnedInstance?.agentInstanceUuid ?? ""}`;
+        if (assignmentRequest.current?.fingerprint !== fingerprint) assignmentRequest.current = { fingerprint, uuid: crypto.randomUUID() };
+        result = await claimIdeaToAgentAction(idea.uuid, selectedAgentUuid, pinnedInstance?.agentInstanceUuid ?? undefined, assignmentRequest.current.uuid);
+      } else if (selectedOption === "user" && selectedUserUuid) {
+        result = await claimIdeaToUserAction(idea.uuid, selectedUserUuid);
+      } else if (selectedOption === "release") {
+        result = await releaseIdeaAction(idea.uuid);
+      } else return;
+      if (result?.success) {
+        router.refresh();
+        onClose();
+      } else if (result?.error) setError(result.error);
+    } catch {
+      setError(t("common.failedToAssign"));
+    } finally {
+      submitting.current = false;
       setIsLoading(false);
-      return;
-    }
-
-    setIsLoading(false);
-    if (result?.success) {
-      router.refresh();
-      onClose();
-    } else if (result?.error) {
-      setError(result.error);
     }
   };
 

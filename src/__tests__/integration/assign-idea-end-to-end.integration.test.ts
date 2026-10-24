@@ -6,17 +6,18 @@
 //
 //     chorus_pm_assign_idea (MCP tool handler)
 //       → idea.service.assignIdea            (persists assignee + status transition)
-//       → activity.service.createActivity    (writes the actor-bearing `assigned` Activity)
+//       → assignIdeaWithAuthorityInTx         (validates/consumes human proof atomically)
+//       → activity.service.createActivityInTx (records assignment or authorized kickoff)
 //       → [emitted activity event]
-//       → notification-listener.handleActivity  (idea:assigned → idea_claimed recipients)
+//       → notification-listener.handleActivity  (authorized assignment → ordinary/fenced wake)
 //       → notification.service.createBatch    (persists the wake notifications)
 //       → notification-turn.createTurnAndResolveTarget (records the DaemonSessionTurn wake)
 //
 // over the shared in-memory fixture prisma (agentInstanceFixture), so the tool, the
-// two idea.service assignment arms, the activity write, the notification recipient
+// authenticated assignment transition, the activity write, the notification recipient
 // resolution (incl. agent_instance → owning agent), the preference gate, and the wake
 // turn creation all run REAL against ONE store. Only external side effects are mocked:
-//   - @/lib/prisma                          → the in-memory store
+//   - @/lib/prisma                          → rollback-capable in-memory store + proof models
 //   - @/lib/event-bus                       → emit is captured (to re-feed the listener),
 //                                             emitChange is inert (no SSE), on is a no-op
 //   - @/services/daemon-instruction.service → deliverTurnPing (no control-channel ping)
@@ -46,11 +47,13 @@
 //        is documented as a manual verification step on the idea.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import {
   agentInstanceStore,
   resetAgentInstanceStore,
   buildMockPrisma,
+  matchesWhere,
 } from "@/__tests__/fixtures/agentInstanceFixture";
 
 // vi.mock factories hoist above imports, so their captured refs must come from vi.hoisted.
@@ -59,7 +62,54 @@ const { hoistedPrisma, emittedActivity } = vi.hoisted(() => ({
   emittedActivity: [] as Array<Record<string, unknown>>,
 }));
 
-const mockPrisma = buildMockPrisma();
+type StoredRow = Record<string, unknown>;
+const authorizations: StoredRow[] = [];
+const operations: StoredRow[] = [];
+const teams: StoredRow[] = [];
+
+function authorityModel(rows: StoredRow[]) {
+  const find = ({ where = {} }: { where?: StoredRow }) => {
+    const filter = (where.companyUuid_sourceType_sourceUuid ?? where) as StoredRow;
+    return structuredClone(rows.find((row) => matchesWhere(row, filter)) ?? null);
+  };
+  return {
+    findFirst: vi.fn(async (args: { where?: StoredRow }) => find(args)),
+    findUnique: vi.fn(async (args: { where?: StoredRow }) => find(args)),
+    create: vi.fn(async ({ data }: { data: StoredRow }) => {
+      const row = { uuid: randomUUID(), consumedOperationUuid: null, ...data };
+      if (rows.some((existing) => existing.uuid === row.uuid || (data.sourceUuid && existing.companyUuid === data.companyUuid && existing.sourceType === data.sourceType && existing.sourceUuid === data.sourceUuid))) {
+        throw Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+      }
+      rows.push(row);
+      return structuredClone(row);
+    }),
+    updateMany: vi.fn(async ({ where, data }: { where: StoredRow; data: StoredRow }) => {
+      const matching = rows.filter((row) => matchesWhere(row, where));
+      matching.forEach((row) => Object.assign(row, data));
+      return { count: matching.length };
+    }),
+  };
+}
+
+const mockPrisma = Object.assign(buildMockPrisma(), {
+  ideaAssignmentAuthorization: authorityModel(authorizations),
+  ideaAssignmentOperation: authorityModel(operations),
+  projectAgentTeam: authorityModel(teams),
+  daemonExecution: { groupBy: vi.fn(async () => []) },
+  $transaction: vi.fn(async (work: (client: unknown) => Promise<unknown>) => {
+    const snapshots = Object.values({ ...agentInstanceStore, authorizations, operations, teams })
+      .map((rows): [unknown[], unknown[]] => [rows, structuredClone(rows)]);
+    const eventCount = emittedActivity.length;
+    try {
+      const result = await work(mockPrisma);
+      expect(emittedActivity).toHaveLength(eventCount);
+      return result;
+    } catch (error) {
+      for (const [rows, snapshot] of snapshots) rows.splice(0, rows.length, ...snapshot);
+      throw error;
+    }
+  }),
+});
 hoistedPrisma.current = mockPrisma;
 
 vi.mock("@/lib/prisma", () => ({
@@ -90,16 +140,17 @@ vi.mock("@/services/orchestrator.service", async (importOriginal) => ({
 
 import { registerPmTools } from "@/mcp/tools/pm";
 import { handleActivity } from "@/services/notification-listener";
-import { canAgentReceiveTurn } from "@/services/daemon-session.service";
+import { canAgentReceiveTurn, getWakeRecoveryDelivery } from "@/services/daemon-session.service";
+import { issueIdeaAssignmentAuthorization } from "@/services/idea-assignment-authorization.service";
 import type { AgentAuthContext } from "@/types/auth";
 
 // ===== Scenario identifiers =====
 
 const COMPANY = "co-assign-e2e";
 const PROJECT = "54ab2dc9-cf6a-4c86-9732-9777a74e3915";
-const OWNER = "user-owner-e2e";
+const OWNER = "c284161e-9f67-4020-9a10-89bce1ba1191";
 const CALLER = "agent-admin-claude"; // the assigner (idea:admin)
-const PM_AGENT = "agent-pm-bot"; // eligible target (idea:write)
+const PM_AGENT = "169985db-d4df-45b4-ac36-228bb3a6c280"; // eligible target (idea:write)
 const RO_AGENT = "agent-readonly-bot"; // ineligible target (idea:read only)
 const CREATOR = "user-creator-e2e"; // idea creator (always an idea_claimed recipient)
 const TARGET_USER = "user-bob-e2e"; // eligible user target (same company)
@@ -107,7 +158,7 @@ const INSTANCE = "instance-pm-host1"; // durable instance owned by PM_AGENT
 const CONN = "conn-pm-host1";
 const CONFLICTING_INSTANCE = "instance-pm-host2";
 const CONFLICTING_CONN = "conn-pm-host2";
-const IDEA = "idea-assign-e2e";
+const IDEA = "ef76b2c7-47b4-442d-a31f-c7f44192bc48";
 
 // The caller's AuthContext — idea:admin is what registers chorus_pm_assign_idea.
 const auth: AgentAuthContext = {
@@ -138,8 +189,8 @@ function seed(ideaOverrides: Partial<(typeof agentInstanceStore.ideas)[number]> 
   const now = new Date();
   agentInstanceStore.projects.push({ uuid: PROJECT, companyUuid: COMPANY, name: "Assign E2E Project" });
   agentInstanceStore.users.push(
-    { uuid: OWNER, companyUuid: COMPANY, name: "Owner", email: "owner@example.com" },
-    { uuid: CREATOR, companyUuid: COMPANY, name: "Creator", email: "creator@example.com" },
+    { uuid: OWNER, companyUuid: COMPANY, name: "Owner", email: "owner@example.com", status: "active", deletedAt: null },
+    { uuid: CREATOR, companyUuid: COMPANY, name: "Creator", email: "creator@example.com", status: "active", deletedAt: null },
     { uuid: TARGET_USER, companyUuid: COMPANY, name: "Bob", email: "bob@example.com", status: "active", deletedAt: null },
   );
   agentInstanceStore.agents.push(
@@ -197,17 +248,26 @@ function seed(ideaOverrides: Partial<(typeof agentInstanceStore.ideas)[number]> 
     updatedAt: now,
     ...ideaOverrides,
   });
+  Object.assign(ideaRow(), {
+    teamGeneration: 0, teamEnrollmentVersion: 0, teamOwnerUuid: null, teamLeadAgentUuid: null,
+    teamProductAgentUuid: null, teamEnrolledByUuid: null, teamEnrolledAt: null, teamAssignmentChangedAt: null,
+  });
 }
 
-// Drive the real tool, then re-feed the emitted `assigned` activity into the real
+// Drive the real tool, then re-feed the emitted assignment activity into the real
 // listener. Returns the tool result plus the (single) captured activity event.
-async function assignAndNotify(params: Record<string, unknown>) {
+async function assignAndNotify(params: Record<string, unknown>, authorize = false) {
+  if (authorize) {
+    const proof = await issueIdeaAssignmentAuthorization({ type: "user", companyUuid: COMPANY, actorUuid: OWNER }, {
+      ideaUuid: params.ideaUuid as string, agentUuid: params.assigneeUuid as string,
+    });
+    params = { ...params, humanAuthorizationUuid: proof.uuid };
+  }
   const activityCount = emittedActivity.length;
   const result = await toolHandlers["chorus_pm_assign_idea"](params);
-  // The tool emits exactly one "activity" event on success (createActivity). On a
-  // rejection (idea/target invalid) none is emitted — handleActivity is then skipped.
+  // Fresh operations emit one activity; exact retries and rejected requests emit none.
   const activityEvent = emittedActivity.slice(activityCount).find(
-    (e) => e.targetType === "idea" && e.targetUuid === params.ideaUuid && e.action === "assigned",
+    (e) => e.targetType === "idea" && e.targetUuid === params.ideaUuid && ["assigned", "assignment_recorded"].includes(e.action as string),
   );
   if (activityEvent) {
     await handleActivity(activityEvent as unknown as Parameters<typeof handleActivity>[0]);
@@ -223,6 +283,21 @@ function assignedActivities() {
     (a) => a.targetType === "idea" && a.targetUuid === IDEA && a.action === "assigned",
   );
 }
+function recordedAssignments() {
+  return agentInstanceStore.activities.filter((activity) => activity.targetUuid === IDEA && activity.action === "assignment_recorded");
+}
+
+function bindTeam() {
+  teams.push({ uuid: randomUUID(), companyUuid: COMPANY, projectUuid: PROJECT, ownerUuid: OWNER,
+    templateUuid: null, templateName: "Private team", snapshot: {}, overrides: {}, revision: 1, lastLeadAgentUuid: null,
+  });
+}
+
+async function ownerProof() {
+  return issueIdeaAssignmentAuthorization({ type: "user", companyUuid: COMPANY, actorUuid: OWNER }, {
+    ideaUuid: IDEA, agentUuid: PM_AGENT,
+  });
+}
 function ideaClaimedNotifications() {
   return agentInstanceStore.notifications.filter(
     (n) => n.entityUuid === IDEA && n.action === "idea_claimed",
@@ -231,6 +306,9 @@ function ideaClaimedNotifications() {
 
 beforeEach(() => {
   resetAgentInstanceStore();
+  authorizations.length = 0;
+  operations.length = 0;
+  teams.length = 0;
   emittedActivity.length = 0;
   // Do NOT vi.clearAllMocks() — that would wipe the fixture prisma model fn impls.
   for (const k of Object.keys(toolHandlers)) delete toolHandlers[k];
@@ -245,13 +323,126 @@ beforeEach(() => {
 // =====================================================================================
 
 describe("assign_idea end-to-end — agent target (AC#1)", () => {
-  it("updates assignee/status, writes an actor-bearing `assigned` Activity, and resolves the wake recipient to the assignee agent", async () => {
+  it("records proofless MCP assignment without activating the receiving owner's bound Team", async () => {
+    seed();
+    bindTeam();
+    const params = { ideaUuid: IDEA, assigneeType: "agent", assigneeUuid: PM_AGENT, operationUuid: randomUUID() };
+    const { result, activityEvent } = await assignAndNotify(params);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ wakeRequested: false, assignee: { type: "agent", uuid: PM_AGENT } });
+    expect(ideaRow()).toMatchObject({ status: "elaborating", teamGeneration: 1, teamOwnerUuid: null, teamLeadAgentUuid: null, teamEnrolledByUuid: null });
+    expect(activityEvent).toMatchObject({ action: "assignment_recorded", actorType: "agent", actorUuid: CALLER,
+      value: { humanAuthorizerUuid: null },
+    });
+    expect(recordedAssignments()).toHaveLength(1);
+    expect(assignedActivities()).toHaveLength(0);
+    expect(operations).toHaveLength(1);
+    expect(agentInstanceStore.notifications).toHaveLength(0);
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(0);
+    const before = structuredClone(ideaRow());
+    const retry = await assignAndNotify(params);
+    expect(retry.result.isError).toBeFalsy();
+    expect(retry.activityEvent).toBeUndefined();
+    expect(ideaRow()).toEqual(before);
+    expect(recordedAssignments()).toHaveLength(1);
+    expect(operations).toHaveLength(1);
+  });
+
+  it("enrolls with verified owner proof and deduplicates exact MCP retries without a second generation or wake", async () => {
+    seed();
+    bindTeam();
+    const proof = await ownerProof();
+    const params = { ideaUuid: IDEA, assigneeType: "agent", assigneeUuid: PM_AGENT, humanAuthorizationUuid: proof.uuid, operationUuid: randomUUID() };
+    const first = await assignAndNotify(params);
+    expect(first.result.isError).toBeFalsy();
+    expect(JSON.parse(first.result.content[0].text).wakeRequested).toBe(true);
+    expect(ideaRow()).toMatchObject({ teamGeneration: 1, teamEnrollmentVersion: 1, teamOwnerUuid: OWNER, teamLeadAgentUuid: PM_AGENT, teamEnrolledByUuid: OWNER });
+    expect(authorizations[0]).toMatchObject({ consumedOperationUuid: params.operationUuid, humanUuid: OWNER, agentUuid: PM_AGENT, sourceType: "confirmation" });
+    expect(first.activityEvent).toMatchObject({ actorType: "agent", actorUuid: CALLER, value: { humanAuthorizerUuid: OWNER } });
+    const notification = agentInstanceStore.notifications.find((row) => row.recipientUuid === PM_AGENT)!;
+    expect(notification).toMatchObject({ action: "team_lead_handoff", entityUuid: IDEA });
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(1);
+    const turn = agentInstanceStore.daemonSessionTurns[0];
+    expect(turn).toMatchObject({ wakeNotificationUuid: notification.uuid,
+      wakeContext: { ideaTeam: { ideaUuid: IDEA, generation: 1, ownerUuid: OWNER, agentUuid: PM_AGENT, role: "orchestrator" } },
+    });
+    expect(await canAgentReceiveTurn(COMPANY, PM_AGENT, turn.uuid)).toBe(false);
+    expect(await getWakeRecoveryDelivery(COMPANY, PM_AGENT, CONN, turn.uuid, 1)).not.toBeNull();
+    const before = structuredClone(ideaRow());
+    const notificationCount = agentInstanceStore.notifications.length;
+    const replay = await assignAndNotify(params);
+    expect(JSON.parse(replay.result.content[0].text).wakeRequested).toBe(false);
+    expect(replay.activityEvent).toBeUndefined();
+    expect(ideaRow()).toEqual(before);
+    expect(operations).toHaveLength(1);
+    expect(assignedActivities()).toHaveLength(1);
+    expect(agentInstanceStore.notifications).toHaveLength(notificationCount);
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(1);
+    await expect(assignAndNotify({ ...params, instanceUuid: INSTANCE })).rejects.toMatchObject({ status: 403, message: "Assignment operation is stale or does not match" });
+    await expect(assignAndNotify({ ...params, operationUuid: randomUUID() })).rejects.toMatchObject({ status: 403, message: "Assignment authorization is invalid, stale or consumed" });
+    expect(ideaRow()).toEqual(before);
+    expect(assignedActivities()).toHaveLength(1);
+  });
+
+  it.each(["expired", "foreign-company", "wrong-target", "stale-generation"])("rejects %s proof without partial assignment, consumption or wake", async (invalid) => {
+    seed();
+    bindTeam();
+    const proof = await ownerProof();
+    if (invalid === "expired") authorizations[0].expiresAt = new Date(0);
+    if (invalid === "foreign-company") authorizations[0].companyUuid = "foreign-company";
+    if (invalid === "wrong-target") authorizations[0].agentUuid = RO_AGENT;
+    if (invalid === "stale-generation") authorizations[0].generation = 1;
+    const before = structuredClone(ideaRow());
+    await expect(assignAndNotify({ ideaUuid: IDEA, assigneeType: "agent", assigneeUuid: PM_AGENT, humanAuthorizationUuid: proof.uuid })).rejects.toMatchObject({ status: 403 });
+    expect(ideaRow()).toEqual(before);
+    expect(authorizations[0].consumedOperationUuid).toBeNull();
+    expect(operations).toHaveLength(0);
+    expect(agentInstanceStore.activities).toHaveLength(0);
+    expect(agentInstanceStore.notifications).toHaveLength(0);
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(0);
+  });
+
+  it("rolls back proof consumption, assignment and audit when operation persistence fails", async () => {
+    seed();
+    bindTeam();
+    const proof = await ownerProof();
+    const before = structuredClone(ideaRow());
+    const params = { ideaUuid: IDEA, assigneeType: "agent", assigneeUuid: PM_AGENT, humanAuthorizationUuid: proof.uuid };
+    mockPrisma.ideaAssignmentOperation.create.mockRejectedValueOnce(new Error("operation write failed"));
+    await expect(assignAndNotify(params)).rejects.toThrow("operation write failed");
+    expect(ideaRow()).toEqual(before);
+    expect(authorizations[0].consumedOperationUuid).toBeNull();
+    expect(agentInstanceStore.activities).toHaveLength(0);
+    expect(emittedActivity).toHaveLength(0);
+    expect(agentInstanceStore.notifications).toHaveLength(0);
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(0);
+    expect((await assignAndNotify(params)).result.isError).toBeFalsy();
+    expect(assignedActivities()).toHaveLength(1);
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(1);
+  });
+
+  it("revalidates the persisted executor's assignment permission rather than trusting cached MCP auth", async () => {
+    seed();
+    const proof = await ownerProof();
+    const caller = agentInstanceStore.agents.find((agent) => agent.uuid === CALLER)!;
+    caller.roles = [];
+    caller.permissions = ["idea:read", "idea:write"];
+    const before = structuredClone(ideaRow());
+    await expect(assignAndNotify({ ideaUuid: IDEA, assigneeType: "agent", assigneeUuid: PM_AGENT, humanAuthorizationUuid: proof.uuid }))
+      .rejects.toMatchObject({ status: 403, message: "Idea assignment permission required" });
+    expect(ideaRow()).toEqual(before);
+    expect(authorizations[0].consumedOperationUuid).toBeNull();
+    expect(agentInstanceStore.activities).toHaveLength(0);
+    expect(agentInstanceStore.notifications).toHaveLength(0);
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(0);
+  });
+
+  it("uses verified owner proof to update assignee/status and emit one actor-bearing assignment wake", async () => {
     seed();
     const { result, activityEvent } = await assignAndNotify({
       ideaUuid: IDEA,
       assigneeType: "agent",
       assigneeUuid: PM_AGENT,
-    });
+    }, true);
 
     // (a) tool succeeded.
     expect(result.isError).toBeFalsy();
@@ -336,7 +527,7 @@ describe("assign_idea end-to-end — agent_instance pin (AC#1)", () => {
       assigneeType: "agent",
       assigneeUuid: PM_AGENT,
       instanceUuid: INSTANCE,
-    });
+    }, true);
 
     expect(result.isError).toBeFalsy();
 
@@ -414,7 +605,7 @@ describe("assign_idea end-to-end — agent_instance pin (AC#1)", () => {
       assigneeType: "agent",
       assigneeUuid: PM_AGENT,
       instanceUuid: CONFLICTING_INSTANCE,
-    });
+    }, true);
 
     expect(result.isError).toBeFalsy();
     expect(ideaRow()).toMatchObject({
@@ -446,7 +637,7 @@ describe("assign_idea end-to-end — agent_instance pin (AC#1)", () => {
     expect(session?.originConnectionUuid).toBe(CONN);
   });
 
-  it("same-agent plain-to-project-fixed reassignment persists the pin without another activity or daemon turn", async () => {
+  it("proofless same-agent project repinning records the pin without authorizing or waking the Team", async () => {
     seed();
     const first = await assignAndNotify({
       ideaUuid: IDEA,
@@ -484,8 +675,10 @@ describe("assign_idea end-to-end — agent_instance pin (AC#1)", () => {
       runtimeCwd: "/work/pm",
     });
     expect(JSON.parse(second.result.content[0].text).wakeRequested).toBe(false);
-    expect(assignedActivities()).toHaveLength(1);
-    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(1);
+    expect(assignedActivities()).toHaveLength(0);
+    expect(recordedAssignments()).toHaveLength(2);
+    expect(ideaRow()).toMatchObject({ teamGeneration: 1, teamOwnerUuid: null });
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(0);
   });
 });
 
@@ -501,14 +694,14 @@ describe("assign_idea end-to-end — user target (AC#1)", () => {
     else target.status = state;
     const before = { ...ideaRow() };
     await expect(assignAndNotify({ ideaUuid: IDEA, assigneeType: "user", assigneeUuid: TARGET_USER }))
-      .rejects.toMatchObject({ status: 403, message: "Assignee does not have access to this project" });
+      .rejects.toMatchObject({ status: 403, message: "User not found" });
     expect(ideaRow()).toEqual(before);
     expect(assignedActivities()).toEqual([]);
     expect(ideaClaimedNotifications()).toEqual([]);
     expect(agentInstanceStore.daemonSessionTurns).toEqual([]);
   });
 
-  it("assigns to a same-company user, writes the Activity, notifies the user, and wakes NO daemon", async () => {
+  it("records a proofless same-company user assignment without an assignment kickoff", async () => {
     seed();
     const { result } = await assignAndNotify({
       ideaUuid: IDEA,
@@ -525,16 +718,14 @@ describe("assign_idea end-to-end — user target (AC#1)", () => {
     expect(idea.status).toBe("elaborating");
 
     // (b) Activity persisted with actorType agent + the user assignee.
-    const acts = assignedActivities();
+    const acts = recordedAssignments();
     expect(acts).toHaveLength(1);
     expect(acts[0].actorType).toBe("agent");
     expect(acts[0].value).toMatchObject({ assigneeType: "user", assigneeUuid: TARGET_USER });
 
-    // (c) the assignee USER is notified; recipients are all users (no agent daemon).
-    const userNotif = ideaClaimedNotifications().find((n) => n.recipientUuid === TARGET_USER);
-    expect(userNotif).toBeDefined();
-    expect(userNotif!.recipientType).toBe("user");
-    expect(ideaClaimedNotifications().every((n) => n.recipientType === "user")).toBe(true);
+    // (c) Proofless recording is not an assignment kickoff notification.
+    expect(ideaClaimedNotifications()).toHaveLength(0);
+    expect(JSON.parse(result.content[0].text).wakeRequested).toBe(false);
 
     // (d) no daemon wake — a user recipient never owns a daemon session
     // (createTurnAndResolveTarget early-returns for a non-agent recipient).
@@ -561,9 +752,10 @@ describe("assign_idea end-to-end — takeover & status (AC#1)", () => {
     // Takeover: the new assignee replaces the prior one.
     expect(idea.assigneeType).toBe("agent");
     expect(idea.assigneeUuid).toBe(PM_AGENT);
-    // The wake targets the NEW assignee.
-    const agentNotif = ideaClaimedNotifications().find((n) => n.recipientType === "agent");
-    expect(agentNotif!.recipientUuid).toBe(PM_AGENT);
+    // Taking over responsibility without proof does not authorize a wake.
+    expect(recordedAssignments()).toHaveLength(1);
+    expect(ideaClaimedNotifications()).toHaveLength(0);
+    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(0);
   });
 
   it("preserves a non-open status (elaborated) — backfill-safe, no open→elaborating override", async () => {
@@ -600,7 +792,7 @@ describe("assign_idea end-to-end — takeover & status (AC#1)", () => {
 describe("assign_idea end-to-end — idea_claimed preference gating (AC#2)", () => {
   it("with the default (ideaClaimed on) the assignee agent IS notified AND woken", async () => {
     seed();
-    await assignAndNotify({ ideaUuid: IDEA, assigneeType: "agent", assigneeUuid: PM_AGENT });
+    await assignAndNotify({ ideaUuid: IDEA, assigneeType: "agent", assigneeUuid: PM_AGENT }, true);
 
     // A default pref row was auto-created (fully enabled) → the assignee is a recipient.
     const agentNotif = ideaClaimedNotifications().find((n) => n.recipientUuid === PM_AGENT);
@@ -636,7 +828,7 @@ describe("assign_idea end-to-end — idea_claimed preference gating (AC#2)", () 
       ideaUuid: IDEA,
       assigneeType: "agent",
       assigneeUuid: PM_AGENT,
-    });
+    }, true);
 
     // The assignment itself still succeeds + persists (the pref only gates the wake).
     expect(result.isError).toBeFalsy();

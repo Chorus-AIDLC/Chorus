@@ -1,20 +1,15 @@
 {
   "ideaTeamGates": {
     "teamUnbound": "The personal project Team is no longer available.",
-    "leadIneligible": "The recorded lead is no longer an eligible Team lead.",
-    "leadNotAssignee": "The current Idea assignee does not match the recorded lead.",
     "title": "Team approval gates",
-    "loading": "Checking current gate responsibility…",
-    "error": "Gate state is unavailable. Refresh before taking action; server checks still apply.",
-    "unmanaged": "Manual workflow · This Idea is not enrolled in Team automation. No owner is assigned automatically.",
-    "unavailableLead": "Lead unavailable",
+    "unavailableLead": "Assignee unavailable",
     "human": "Human",
-    "lead": "Idea lead: {name}",
     "proposal": "Proposal approval: {name}",
     "task": "Task verification: {name}",
-    "yolo": "YOLO is authorized for this Idea only. Existing permissions still apply.",
-    "nonYolo": "Proposal approval requires a human. The lead verifies tasks.",
-    "paused": "Team automation is paused: the Team or current lead is no longer valid. Repair the explicit lead assignment or personal Team configuration; human management remains available."
+    "paused": "Team automation is paused. Repair the authorization, assignee or personal Team; human management remains available.",
+    "orchestratorIneligible": "The current assignee lacks Idea write permission or project access.",
+    "orchestratorNotAssignee": "The recorded automation responsibility no longer matches this Idea’s assignee.",
+    "humanAssignmentRequired": "A fresh human assignment or verified authorization is required to start or restore automation."
   },
   "projectTeam": {
     "title": "My project team",
@@ -47,7 +42,7 @@
     "invalid": "Check member permissions and project access. Your input is preserved.",
     "denied": "You no longer have permission for this action. Your input is preserved.",
     "stale": "This preview is stale or expired. Nothing was reassigned. Request a fresh preview before confirming.",
-    "warning": "Previous handoff recipient: {name}. Existing assignments remain unchanged; repair only by explicitly selecting a lead and confirming a new preview.",
+    "warning": "Previous handoff recipient: {name}. Existing assignments remain unchanged; repair with a new explicit assignment and confirmation.",
     "deletedAgent": "Deleted agent",
     "warningReasons": {
       "removed_from_lead": "This agent is no longer in the lead role, even if another eligible lead is available.",
@@ -55,10 +50,10 @@
       "deleted": "The previous lead has been deleted."
     },
     "handoff": "Explicit Idea handoff",
-    "handoffDescription": "Select one eligible lead (offline is allowed). Preview unfinished Ideas currently assigned to you or your agents. Unassigned and other people’s Ideas are excluded. Tasks, sessions and ongoing work are preserved.",
+    "handoffDescription": "Explicitly assign the previewed unfinished Ideas to your agent with Idea write permission. The server rechecks access; default-lead membership is not required. Unassigned and other people’s Ideas are excluded. Tasks and ongoing work are preserved.",
     "viewer": "Viewers can configure their personal team, but Idea handoff requires project Editor access.",
-    "chooseLead": "Choose a lead explicitly…",
-    "noLead": "No lead available. Assign manually or update your team.",
+    "chooseLead": "Choose an Idea assignee explicitly…",
+    "noLead": "No eligible agents.",
     "saveFirst": "Save your team changes before previewing a handoff.",
     "preview": "Preview handoff",
     "refreshPreview": "Refresh preview",
@@ -945,10 +940,10 @@
         "invalid": "The team could not be saved. Check the name, description, and member permissions, then try again. Your input is preserved."
       },
       "roles": {
-        "product": { "name": "Product", "description": "Elaborate ideas and author proposals and documents. The lead handles admin resolution." },
+        "product": { "name": "Product", "description": "Elaborate ideas and author proposals and documents. The current Idea assignee handles permitted admin actions." },
         "development": { "name": "Development", "description": "Execute tasks and submit them for verification." },
         "review": { "name": "Review", "description": "Provide independent verdict comments. Actual commenting still requires project Editor access." },
-        "lead": { "name": "Lead", "description": "Assign and resolve ideas, delegate tasks, gate proposals and tasks, and write completion reports." }
+        "lead": { "name": "Default assignee (optional)", "description": "Optional suggestion only. Each Idea is coordinated by its own human-authorized assignee; this role never automatically assigns work or grants authority." }
       }
     },
     "displayName": {

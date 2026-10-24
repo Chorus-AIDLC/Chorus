@@ -127,7 +127,7 @@ export function ProjectTeamEditor({ projectUuid, onClose }: { projectUuid: strin
   }
 
   function handoff(confirm: boolean) {
-    if (!canEdit || dirty || !team?.roles.lead.some((member) => member.agentUuid === leadUuid && member.eligible)) return;
+    if (!canEdit || dirty || !team || !agents.some((agent) => agent.uuid === leadUuid && agent.effectivePermissions.includes("idea:write"))) return;
     void run(async () => {
       const result = await request<HandoffPreview>(`${endpoint}/handoff`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -200,8 +200,8 @@ export function ProjectTeamEditor({ projectUuid, onClose }: { projectUuid: strin
           <h3 className="font-medium">{t("handoff")}</h3><p className="text-xs text-muted-foreground">{t("handoffDescription")}</p>
           {!canEdit ? <p className="text-sm text-muted-foreground">{t("viewer")}</p> : <>
             {dirty && <p className="text-sm text-muted-foreground">{t("saveFirst")}</p>}
-            <AgentSelect value={leadUuid} disabled={busy || dirty} ariaLabel={t("chooseLead")} placeholder={t("chooseLead")} emptyLabel={t("noLead")} agents={team.roles.lead.map((member) => ({ uuid: member.agentUuid, name: member.agentName, disabled: !member.eligible, description: !member.eligible ? t("ineligible") : t(member.online ? "online" : "offline", { count: member.activeCount }) }))} onValueChange={(uuid) => { setLeadUuid(uuid); setPreview(null); }} />
-            <Button variant="outline" disabled={busy || dirty || !leadUuid || !team.roles.lead.some((member) => member.agentUuid === leadUuid && member.eligible)} onClick={() => handoff(false)}>{t(preview ? "refreshPreview" : "preview")}</Button>
+            <AgentSelect value={leadUuid} disabled={busy || dirty} ariaLabel={t("chooseLead")} placeholder={t("chooseLead")} emptyLabel={t("noLead")} agents={agents.map((agent) => ({ uuid: agent.uuid, name: agent.name, disabled: !agent.effectivePermissions.includes("idea:write"), description: !agent.effectivePermissions.includes("idea:write") ? t("ineligible") : undefined }))} onValueChange={(uuid) => { setLeadUuid(uuid); setPreview(null); }} />
+            <Button variant="outline" disabled={busy || dirty || !leadUuid || !agents.some((agent) => agent.uuid === leadUuid && agent.effectivePermissions.includes("idea:write"))} onClick={() => handoff(false)}>{t(preview ? "refreshPreview" : "preview")}</Button>
             {preview && <div className="space-y-3 border-t border-border pt-3" role="region" aria-label={t("preview")}><p className="text-sm font-medium">{t("previewCount", { count: preview.count })}</p><p className="text-xs text-muted-foreground">{t("expires", { time: new Date(preview.expiresAt).toLocaleTimeString() })}</p><ul className="max-h-48 space-y-2 overflow-y-auto text-sm">{preview.candidates.map((idea) => <li key={idea.uuid}><Link className="underline" href={`/projects/${projectUuid}/dashboard/${idea.uuid}`} target="_blank" rel="noreferrer">{idea.title}</Link><span className="block break-all font-mono text-xs text-muted-foreground">{idea.uuid}</span></li>)}</ul><Button disabled={busy} onClick={() => handoff(true)}>{t("confirmHandoff")}</Button></div>}
           </>}
         </section>}

@@ -15,6 +15,7 @@ from typing import Any, Mapping, Optional
 import httpx
 
 from .config import ChorusConfig
+from .turn_context import TurnProof
 
 DEFAULT_TIMEOUT = 20.0
 _ids = itertools.count(1)
@@ -33,11 +34,12 @@ class McpToolError(McpError):
         self.text = text
 
 
-def _headers(cfg: ChorusConfig) -> dict:
+def _headers(cfg: ChorusConfig, turn_proof: Optional[TurnProof] = None) -> dict:
     return {
         "Authorization": f"Bearer {cfg.api_key}",
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
+        **(turn_proof.headers() if turn_proof else {}),
     }
 
 
@@ -112,20 +114,22 @@ class ChorusMcpClient:
         self._async_transport = async_transport
         self._timeout = timeout
 
-    def call_tool(self, name: str, arguments: Optional[Mapping[str, Any]] = None) -> Any:
+    def call_tool(self, name: str, arguments: Optional[Mapping[str, Any]] = None, *,
+                  turn_proof: Optional[TurnProof] = None) -> Any:
         req = build_request(name, arguments)
         try:
             with httpx.Client(transport=self._transport, timeout=self._timeout) as client:
-                response = client.post(self.cfg.mcp_url, json=req, headers=_headers(self.cfg))
+                response = client.post(self.cfg.mcp_url, json=req, headers=_headers(self.cfg, turn_proof))
         except httpx.HTTPError as exc:
             raise McpError(f"Chorus MCP request failed: {type(exc).__name__}") from exc
         return decode_result(name, parse_response(response, req["id"]))
 
-    async def acall_tool(self, name: str, arguments: Optional[Mapping[str, Any]] = None) -> Any:
+    async def acall_tool(self, name: str, arguments: Optional[Mapping[str, Any]] = None, *,
+                        turn_proof: Optional[TurnProof] = None) -> Any:
         req = build_request(name, arguments)
         try:
             async with httpx.AsyncClient(transport=self._async_transport, timeout=self._timeout) as client:
-                response = await client.post(self.cfg.mcp_url, json=req, headers=_headers(self.cfg))
+                response = await client.post(self.cfg.mcp_url, json=req, headers=_headers(self.cfg, turn_proof))
         except httpx.HTTPError as exc:
             raise McpError(f"Chorus MCP request failed: {type(exc).__name__}") from exc
         return decode_result(name, parse_response(response, req["id"]))

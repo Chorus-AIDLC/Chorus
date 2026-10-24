@@ -9,6 +9,7 @@ import { paginated, errors } from "@/lib/api-response";
 import { getAuthContext, checkAgentPermission } from "@/lib/auth";
 import { requireProjectAccess } from "@/services/project-access.service";
 import { batchResolveActorIdentities } from "@/lib/uuid-resolver";
+import { publicActivityValue } from "@/lib/idea-team-activity";
 
 type RouteContext = { params: Promise<{ uuid: string }> };
 
@@ -67,7 +68,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
         ...(a.actorType === "user" ? { avatarSeed: identities.get(`user:${a.actorUuid}`)?.avatarSeed ?? null } : {}),
       },
       action: a.action,
-      value: a.value,
+      value: publicActivityValue(a.value),
       createdAt: a.createdAt.toISOString(),
     }));
 

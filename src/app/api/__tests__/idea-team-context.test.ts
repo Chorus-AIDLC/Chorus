@@ -40,6 +40,11 @@ describe("safe Idea Team context API", () => {
     mocks.team.mockResolvedValue({ ...summary, state: "paused", reason: "team_unbound" });
     expect((await (await get()).json()).data).toMatchObject({ state: "paused", reason: "team_unbound" });
   });
+  it("allows only safe assignee and confirmation capability fields through", async () => {
+    const safe = { orchestrator: { agentUuid: "agent", agentName: "Assigned agent" }, enrollmentVersion: 1, generation: 4, canAuthorizeAssignment: false, proposalGateReason: "human_yolo_required", taskGateReason: null };
+    mocks.team.mockResolvedValue({ ...summary, ...safe, routing: { ownerUuid: "secret", roles: { lead: ["private"] } }, humanAuthorizationUuid: "private-proof" });
+    expect((await (await get()).json()).data).toEqual({ ...summary, ...safe });
+  });
   it("surfaces structured service denials", async () => {
     mocks.team.mockRejectedValue(new ApiError("FORBIDDEN", "Access revoked", 403));
     expect((await get()).status).toBe(403);

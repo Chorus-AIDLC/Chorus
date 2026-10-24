@@ -15,6 +15,7 @@ from chorus_hermes.router import (EventRouter, LineageResolver, WakeRequest, cha
 from chorus_hermes.turns import TurnReporter
 
 from .fixtures.chorus_fake import FakeChorus
+from .test_turn_context import TURN, wake_context
 
 
 def run(coro):
@@ -44,6 +45,56 @@ def setup(cfg):
 
 def event(uuid="n-1", **kw):
     return {"type": "new_notification", "notificationUuid": uuid, **kw}
+
+
+def test_exact_delivery_preserves_all_fences_and_ignores_broadcast_seen(setup):
+    fake, router, dispatched, _ = setup
+    context = wake_context()
+    fake.pending = [{"turnUuid": TURN, "sessionId": "idea", "directIdeaUuid": "idea",
+                     "trigger": "task_assigned", "wakeContext": context}]
+    router.seen.add("note")
+    run(router.sweep_pending_turns())
+    assert len(dispatched) == 1
+    assert dispatched[0].wake_context == context
+    assert dispatched[0].wake_context is not context
+    assert dispatched[0].turn_uuid == TURN
+
+
+@pytest.mark.parametrize("change", [{"suppressWake": True}, {"targetConnectionUuid": "elsewhere"},
+    {"turnUuid": None}, {"wakeContext": None}, {"ideaTeamUpgradeHint": "Upgrade client"}])
+def test_exact_broadcast_never_falls_back_to_unfenced_execution(setup, change):
+    fake, router, dispatched, _ = setup
+    context = wake_context()
+    fake.notifications = [context["notification"]]
+    delivery = event("note", targetConnectionUuid="c-me", turnUuid=TURN,
+                     wakeRecoveryProtocol=1, wakeContext=context)
+    run(router.handle_notification({**delivery, **change}))
+    assert not dispatched
+
+
+def test_exact_notification_and_resume_use_pending_admission_not_event_fallback(setup):
+    fake, router, dispatched, _ = setup
+    context = wake_context()
+    delivery = event("note", targetConnectionUuid="c-me", turnUuid=TURN,
+                     wakeRecoveryProtocol=1, wakeContext=context)
+    run(router.handle_notification(delivery))
+    assert not dispatched
+    fake.pending = [{"turnUuid": TURN, "sessionId": "idea", "directIdeaUuid": "idea",
+                     "trigger": "task_assigned", "wakeContext": context}]
+    run(router.handle_notification(delivery))
+    assert len(dispatched) == 1 and dispatched[0].wake_context == context
+    run(router.dispatch_resume({**delivery, "turnUuid": "missing", "entityType": "idea", "entityUuid": "idea"}))
+    assert len(dispatched) == 1
+
+
+@pytest.mark.parametrize("context", [None, {"version": 2}, {**wake_context(), "ideaTeams": []},
+    *[{**wake_context(), "version": version} for version in (True, False, None, "1", 0, 2)]])
+def test_invalid_recovery_context_does_not_search_legacy_notifications(setup, context):
+    fake, router, dispatched, _ = setup
+    fake.notifications = [wake_context()["notification"]]
+    run(router.dispatch_pending_turn({"turnUuid": TURN, "sessionId": "proposal", "trigger": "task_assigned",
+                                      "wakeContext": context}))
+    assert not dispatched and not fake.tool_calls("chorus_get_notifications")
 
 
 @pytest.mark.parametrize("source", ["proposal_submitted", "task_submitted_for_verify", "task_status_changed", "report_created"])
@@ -100,7 +151,7 @@ def test_lead_handoff_resume_rechecks_current_phase(setup):
     run(router.dispatch_resume({"entityType": "task", "entityUuid": "t-1", "turnUuid": "resume-turn"}))
     wake, = dispatched
     assert wake.entity_uuid == "t-1"
-    assert "A resumed Team lead handoff must re-read the original entity" in wake.prompt
+    assert "A resumed Team handoff must re-read the original entity" in wake.prompt
 
 
 def test_wake_dispatched_with_reread_and_prompt(setup):
@@ -240,7 +291,7 @@ def test_pending_human_instruction_uses_prompt_text_and_turn_uuid(setup):
                      "trigger": "human_instruction", "promptText": "  rebase please "}]
     run(router.sweep_pending_turns())
     (wake,) = dispatched
-    assert fake.calls[0][2] == {"connectionUuid": "c-me"}
+    assert fake.calls[0][2] == {"connectionUuid": "c-me", "wakeRecoveryProtocol": "1", "ideaTeamProtocol": "1"}
     assert wake.turn_uuid == "tu-1" and wake.chat_id == "idea:i-1" and wake.prompt_text == "  rebase please "
     assert "rebase please" in wake.prompt
     run(router.sweep_pending_turns())  # seen: not re-run

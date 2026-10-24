@@ -1,5 +1,21 @@
 # Agent Team routing and gates — verification
 
+## Current revision: per-Idea orchestrator (2026-10-24)
+
+The sections below this revision record are historical evidence for the original fixed-lead implementation. The latest human decisions and approved increment `6a038e45-9d9b-47da-812f-2484e58d257d` supersede the earlier unresolved D1 policy: each Idea's explicitly selected logical agent assignee orchestrates its work, without requiring the project's Team lead role. Creating an unassigned Idea does not start automation. Verified agent-mediated assignment remains supported; it cannot manufacture human consent or access another owner's private Team. Idea-scoped human YOLO survives reassignment, but current action permissions and generation fences still apply.
+
+The increment's nine tasks are verified done. Final post-deployment aggregate review Round 2 passed, closing the role-ineligible orchestrator fallback finding (Idea comment `bc753fdc-8855-4572-9a3f-8155fb6d7ff7`). The fallback now independently checks the requested product/development role permissions and project access; basic orchestration eligibility alone is insufficient. Completion report: `f6a14047-7fcf-43d1-a24a-fa03e3f205fd`.
+
+- Latest full root suite: **533 files passed / 11 skipped; 12,426 tests passed / 245 skipped**, 417.49 seconds on 2026-10-24 (`/tmp/chorus-role-fallback-root.log`). Opt-in skipped suites are not claimed as executed.
+- Root TypeScript checks passed, including independent non-incremental execution. The final fallback repair passed 289 focused tests; independent task review passed 291 tests including two additional permission/access probes. The final gateway reran 21 focused tests with a negative control reproducing the old-policy failure.
+- PR submission preflight reran non-incremental TypeScript and 139 tests across the Idea Team database, gate component and CLI transport suites; all passed. Staged whitespace checks passed. This focused rerun supplements, not replaces, the retained full-root evidence.
+- Isolated browser verification covered non-lead assignment, managed/unmanaged panel visibility, silent refresh, failure hiding, Team-unbinding pause, and light/dark themes. The normal assignment dialog remains the only required UI; no extra authorization controls were added. Temporary browser fixtures were removed.
+- OpenSpec archived at `openspec/changes/archive/2026-10-24-idea-assignee-team-automation/`; the cumulative `idea-team-orchestration` specification includes the final fallback regression and was mirrored byte-for-byte to Chorus Document `141b134e-c725-4cad-82db-e2d7032f0188` version 6.
+- Local app and daemon run **0.23.2**. Final application deployment completed at 21:05 CST with image `sha256:76e160f0781f3bed7270101ba0c4f95eb494c70dc01bca5f847bcb049590bae7`. HTTP 18637 and HTTPS 18638 health checks passed, all three containers were healthy, and all 54 migrations were applied. Backups and previous images remain available; no historical Ideas were automatically enrolled.
+- The daemon switch used a completed, one-shot local quiet-window helper. Its agent-authored continuation resumed verification, not human authorization. Private helper files, credentials, backups, logs and screenshots are not part of the PR. A stale Server Action request was observed after deployment; clients with old pages should refresh.
+
+Felix explicitly requested the PR to `develop` on 2026-10-24 (Idea comment `60ed32f8-664b-4436-8323-82f3f94c3f13`) and asked Clay to review the aggregate change. This authorizes submitting the revision, not merging or publishing a release. Unrelated release-docs OpenSpec artifacts remain excluded.
+
 ## Scope and environment
 
 Idea `1cd14b40-e4fc-4766-a5fd-8699835bed61`, proposal `8076e9c3-7748-40a4-ad1b-c4bbee4486aa`.

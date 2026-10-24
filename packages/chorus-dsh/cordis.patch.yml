@@ -11,8 +11,7 @@
         serverName: chorus
         transport: streamable-http
         url: !!js '`${chorusDshConfig.url}/api/mcp`'
-        headers:
-          Authorization: !!js '`Bearer ${chorusDshConfig.apiKey}`'
+        headers: !!js '({ Authorization: `Bearer ${chorusDshConfig.apiKey}`, ...chorusDshConfig.turnHeaders })'
         failOnStartupError: false
         reconnect:
           enabled: true

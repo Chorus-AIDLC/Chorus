@@ -5,6 +5,26 @@ const connection = { url: "http://localhost:9999", apiKey: "cho_private_fixture"
 const success = { content: [{ type: "text", text: '{"ok":true}' }] };
 type RpcRequest = { id?: number; method: string; params?: Record<string, unknown> };
 
+test("Idea Team proof is snapshotted per client and never leaks to another run", async () => {
+  const { fetch, requests } = fixture((body) => json({ jsonrpc: "2.0", id: body.id, result: success }));
+  const turnUuid = "11111111-1111-4111-8111-111111111111";
+  const admissionUuid = "22222222-2222-4222-8222-222222222222";
+  const env = { CHORUS_TURN_UUID: turnUuid, CHORUS_ADMISSION_UUID: admissionUuid,
+    CHORUS_IDEA_TEAM_TURNS: JSON.stringify([{ turnUuid: admissionUuid, admissionUuid }]) };
+  const client = new McpClient({ ...connection, fetch, env });
+  env.CHORUS_TURN_UUID = "stale";
+  await client.callTool("chorus_add_comment", { content: "done" });
+  for (const request of requests) {
+    expect(request.headers.get("X-Chorus-Turn-Uuid")).toBe(turnUuid);
+    expect(request.headers.get("X-Chorus-Admission-Uuid")).toBe(admissionUuid);
+    expect(request.headers.get("X-Chorus-Idea-Team-Turns")).toBe(env.CHORUS_IDEA_TEAM_TURNS);
+  }
+  requests.length = 0;
+  await new McpClient({ ...connection, fetch, env: {} }).callTool("chorus_checkin");
+  expect(requests.every((request) => !request.headers.has("X-Chorus-Turn-Uuid"))).toBe(true);
+  expect(() => new McpClient({ ...connection, fetch, env })).toThrow();
+});
+
 function json(body: unknown, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), { headers: { "content-type": "application/json", ...headers } });
 }

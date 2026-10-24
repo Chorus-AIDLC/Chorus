@@ -64,10 +64,11 @@ export async function getProjectAgentTeam(auth: AuthContext, projectUuid: string
   let handoffWarning: ProjectAgentTeamDto["handoffWarning"] = null;
   if (config.lastLeadAgentUuid) {
     const agent = agents.find((candidate) => candidate.uuid === config.lastLeadAgentUuid);
-    const lead = roles.lead.find((member) => member.agentUuid === config.lastLeadAgentUuid);
-    if (!lead?.eligible) handoffWarning = {
+    const eligible = agent && computeEffectivePermissions(agent.roles, agent.permissions).has("idea:write")
+      && levelAtLeast((await computeProjectAccess({ type: "agent", actorUuid: agent.uuid, ownerUuid: scope.ownerUuid, companyUuid: scope.companyUuid }, projectUuid, client)).level, "editor");
+    if (!eligible) handoffWarning = {
       agentUuid: config.lastLeadAgentUuid, agentName: agent?.name ?? null,
-      reason: !agent ? "deleted" : !lead ? "removed_from_lead" : "ineligible",
+      reason: !agent ? "deleted" : "ineligible",
     };
   }
   return {

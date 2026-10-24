@@ -159,11 +159,12 @@ describe("relocated red-lines landed in the right place", () => {
     expect(instanceUuid?.description).toMatch(/agent_instance/);
   });
 
-  it("pm_assign_idea: documents project-fixed auto-pinning and same-agent wake deduplication", () => {
+  it("pm_assign_idea: documents project-fixed pinning and proof-bound idempotent assignment", () => {
     expect(descOf("chorus_pm_assign_idea")).toMatch(/project-fixed/i);
-    expect(descOf("chorus_pm_assign_idea")).toMatch(/overriding `instanceUuid`/);
-    expect(descOf("chorus_pm_assign_idea")).toMatch(/deduplicated/i);
-    expect(descOf("chorus_pm_assign_idea")).toMatch(/same agent/i);
-    expect(descOf("chorus_pm_assign_idea")).toMatch(/does not request another wake/i);
+    expect(descOf("chorus_pm_assign_idea")).toMatch(/overrides an optional instance pin/i);
+    expect(descOf("chorus_pm_assign_idea")).toMatch(/humanAuthorizationUuid/);
+    expect(descOf("chorus_pm_assign_idea")).toMatch(/chorus_prepare_idea_assignment/);
+    expect(descOf("chorus_pm_assign_idea")).toMatch(/operationUuid for idempotent retries/);
+    expect(descOf("chorus_pm_assign_idea")).toMatch(/Without proof assignment cannot activate or refresh Team automation/);
   });
 });

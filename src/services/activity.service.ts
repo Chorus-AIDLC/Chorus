@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import { batchResolveActorIdentities } from "@/lib/uuid-resolver";
 import { lockResearchProject } from "@/services/research-eligibility.service";
+import { publicActivityValue } from "@/lib/idea-team-activity";
 
 export type TargetType = "idea" | "task" | "proposal" | "document" | "project";
 
@@ -85,7 +86,7 @@ export async function listActivities({
     prisma.activity.count({ where }),
   ]);
 
-  return { activities, total };
+  return { activities: activities.map((activity) => ({ ...activity, value: publicActivityValue(activity.value) })), total };
 }
 
 // List activities query (with actor name resolution)
@@ -167,6 +168,7 @@ function publishActivity(params: ActivityCreateParams, uuid: string) {
 
 // Create Activity
 export async function createActivity(params: ActivityCreateParams) {
+  params = await withTeamFences(prisma, params);
   const write = buildActivityWrite(params);
   // Publish after commit: downstream notification listeners use global Prisma.
   const activity = params.action === "start_development"
@@ -185,6 +187,16 @@ export async function createActivity(params: ActivityCreateParams) {
 // its audit row commit (or roll back) together. Call publish() AFTER the
 // transaction commits — listeners read through the global client.
 export async function createActivityInTx(tx: ActivityDb, params: ActivityCreateParams) {
+  params = await withTeamFences(tx, params);
   const activity = await tx.activity.create(buildActivityWrite(params));
   return { activity, publish: () => publishActivity(params, activity.uuid) };
+}
+
+async function withTeamFences(tx: ActivityDb, params: ActivityCreateParams): Promise<ActivityCreateParams> {
+  if (!["assigned", "status_changed", "submitted", "verified", "reopened", "approved", "rejected_to_draft", "elaboration_started", "elaboration_answered", "elaboration_verified", "elaboration_resolved", "elaboration_skipped", "report_created", "product_delegated", "start_development", "yolo_requested"].includes(params.action)) return params;
+  const { getIdeaTeamActivityFences } = await import("./idea-team.service");
+  const fences = await getIdeaTeamActivityFences(params.companyUuid, params.targetType, params.targetUuid, tx);
+  if (!fences.length) return params;
+  const value = params.value && typeof params.value === "object" && !Array.isArray(params.value) ? params.value : {};
+  return { ...params, value: { ...value, ideaTeamFences: fences } };
 }

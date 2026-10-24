@@ -34,11 +34,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Union
 
 from .prompts import OPERATION_ACTIONS, WAKE_ACTIONS, build_prompt
+from .turn_context import valid_wake_context
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +101,7 @@ class WakeRequest:
     # A pending turn's own ``sessionId``: the server-side session the turn belongs to. When set it
     # IS the session (never re-derived from a notification or lineage).
     canonical_session_id: Optional[str] = None
+    wake_context: Optional[Mapping[str, Any]] = None
 
     @property
     def action(self) -> Optional[str]:
@@ -275,6 +278,21 @@ class EventRouter:
             self.inflight.discard(nid)  # never leave a key in flight (it was settled, or it failed)
 
     async def _route_notification(self, event: Mapping[str, Any], nid: str) -> Optional[WakeRequest]:
+        if event.get("ideaTeamUpgradeHint"):
+            self._skip(nid, str(event["ideaTeamUpgradeHint"]))
+            return None
+        if event.get("wakeRecoveryProtocol") == 1 or "wakeContext" in event or event.get("ideaTeamRequired"):
+            if event.get("suppressWake") or not self.control_targets_me(event):
+                self._skip(nid, "exact wake suppressed or directed elsewhere")
+                return None
+            context = event.get("wakeContext")
+            if not event.get("turnUuid") or not valid_wake_context(context) \
+                    or context.get("notificationUuid") != nid:
+                self._skip(nid, "invalid exact wake; no broadcast fallback")
+                return None
+            self.inflight.discard(nid)
+            wakes = await self.sweep_pending_turns(event["turnUuid"])
+            return wakes[0] if wakes else None
         transport = {
             "targetConnectionUuid": event.get("targetConnectionUuid")
             if isinstance(event.get("targetConnectionUuid"), str) else None,
@@ -316,6 +334,12 @@ class EventRouter:
         return await self._resolve_and_dispatch(wake)
 
     async def _resolve_and_dispatch(self, wake: WakeRequest) -> Optional[WakeRequest]:
+        if wake.pending_turn is not None and "wakeContext" in wake.pending_turn:
+            context = wake.pending_turn["wakeContext"]
+            if context is not None and not valid_wake_context(context):
+                self._skip(wake.label, "invalid exact wake context; no fallback")
+                return None
+            wake.wake_context = deepcopy(context)
         if wake.canonical_session_id is not None:
             # A pending turn's session is fixed by the server: only fill in the root for attribution.
             if wake.root_idea_uuid is None:
@@ -479,9 +503,9 @@ class EventRouter:
         A turn without ``createdAt`` can never match exactly, so it stops at its first match.
         """
         context = turn.get("wakeContext")
-        if context is not None:
+        if "wakeContext" in turn:
             notification = context.get("notification") if isinstance(context, Mapping) else None
-            if not isinstance(notification, Mapping) or context.get("version") != 1 \
+            if not valid_wake_context(context) \
                     or not notification.get("uuid") or notification.get("uuid") != context.get("notificationUuid") \
                     or ACTION_TO_TURN_TRIGGER.get(notification.get("action")) != trigger \
                     or notification.get("entityType") not in {"idea", "proposal", "task", "document"} \
@@ -532,7 +556,7 @@ class EventRouter:
             # Its live copy is being routed right now; if that fails, a later sweep retries the turn.
             self._skip(label, f"live copy {match['uuid']} in flight")
             return None, False
-        if match["uuid"] in self.seen:
+        if match["uuid"] in self.seen and turn.get("wakeContext") is None:
             self._skip(label, f"broadcast copy {match['uuid']} already handled")
             return None, True
         self.seen.add(match["uuid"])
@@ -541,6 +565,14 @@ class EventRouter:
     # -- resume ----------------------------------------------------------------------
 
     async def dispatch_resume(self, event: Mapping[str, Any]) -> Optional[WakeRequest]:
+        if event.get("ideaTeamUpgradeHint") or event.get("suppressWake"):
+            self._skip("resume", "resume suppressed or requires a client upgrade")
+            return None
+        if event.get("wakeRecoveryProtocol") == 1 or "wakeContext" in event or event.get("ideaTeamRequired"):
+            if not event.get("turnUuid") or not self.control_targets_me(event):
+                return None
+            wakes = await self.sweep_pending_turns(event["turnUuid"])
+            return wakes[0] if wakes else None
         etype, euuid = event.get("entityType"), event.get("entityUuid")
         if not isinstance(etype, str) or not isinstance(euuid, str) or not euuid:
             logger.warning("[Chorus] resume missing entityType/entityUuid, skipping")

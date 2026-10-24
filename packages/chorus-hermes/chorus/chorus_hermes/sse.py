@@ -117,6 +117,8 @@ class SseClient:
             "cwd": cwd,
             "startedAt": started_at or _now_iso(),
             "livenessAck": "v1",
+            "wakeRecoveryProtocol": "1",
+            "ideaTeamProtocol": "1",
         }
         self.endpoint = f"{cfg.url}/api/events/notifications?{urlencode(self.params)}"
         self._transport = transport

@@ -31,13 +31,14 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 | `chorus_get_project_team` | `project:read` |
 | `chorus_get_idea_team_context` | `idea:read` |
 | `chorus_recommend_team_agent` | `idea:read` (owner-private at runtime) |
-| `chorus_delegate_team_product` | `idea:write` (current active lead at runtime) |
+| `chorus_delegate_team_product` | `idea:write` (current active Idea orchestrator at runtime) |
 | `chorus_claim_idea` | `idea:write` |
 | `chorus_release_idea` | `idea:write` |
 | `chorus_move_idea` | `idea:write` |
 | `chorus_pm_create_idea` | `idea:write` |
 | `chorus_edit_idea` | `idea:write` |
 | `chorus_pm_assign_idea` | `idea:admin` |
+| `chorus_prepare_idea_assignment` | `idea:admin` (validated receiving-owner human consent at runtime) |
 | `chorus_pm_start_elaboration` | `idea:write` |
 | `chorus_pm_validate_elaboration` | `idea:admin` |
 | `chorus_pm_skip_elaboration` | `idea:write` |
@@ -330,13 +331,13 @@ A project the caller cannot see returns the same `Project not found` error as a 
 
 Each `ProjectTeamMember` contains `agentUuid`, `agentName`, `eligible`, `missingPermissions: string[]`, `hasProjectAccess`, `online`, and `activeCount`. Eligibility requires same-company personal ownership, the role's minimum permissions and project collaboration access (`editor`, including reviewers). Retained members that lose permissions/access remain visible as ineligible with explanations; deleted/foreign agents are filtered out. `online` and `activeCount` describe connectivity/load, not eligibility: an offline agent can still be eligible.
 
-Team roles grant **no permissions or project access**. All roles may be empty, preserving the manual workflow. Saving, overriding, template changes/deletion and unbinding never automatically assign/reassign Ideas or Tasks or undo prior assignments. A `handoffWarning` remains relevant even if another eligible lead exists; it calls for explicit human repair, not automatic reassignment.
+Team roles grant **no permissions or project access**. The `lead` role is an optional default suggestion, not Idea ownership: new-version orchestration belongs to each Idea's current explicitly human-assigned agent, without requiring Team membership. All roles may be empty; empty routing roles require manual handling. Saving, overriding, template changes/deletion and unbinding never automatically assign/reassign Ideas or Tasks or undo prior assignments. A `handoffWarning` calls for explicit human repair, not automatic reassignment.
 
-**Human UI/REST only**: Binding, whole-role overrides/reset and unbinding use the personal project Team UI or human-session `PUT`/`DELETE /api/projects/:uuid/team`. Handoff uses human-session `POST /api/projects/:uuid/team/handoff`: select one owned eligible lead, preview with `{leadAgentUuid, preview: true}`, then confirm with `{leadAgentUuid, confirmationToken}`. It requires editor access and applicable assignment authority; viewer access suffices only for personal configuration. Only unfinished project Ideas currently assigned to the user or their owned agents/instances qualify, regardless of creator; unassigned, foreign-assigned and derived-done Ideas are excluded. Stale/tampered previews require a fresh preview with no partial changes. Handoff preserves lifecycle and Task execution/assignments. These are **not new MCP write tools**; agent keys cannot write Team configuration or confirm this handoff.
+**Human UI/REST only**: Binding, whole-role overrides/reset and unbinding use the personal project Team UI or human-session `PUT`/`DELETE /api/projects/:uuid/team`. Handoff uses human-session `POST /api/projects/:uuid/team/handoff`: select one owned eligible agent, preview with `{leadAgentUuid, preview: true}`, then confirm with `{leadAgentUuid, confirmationToken}`. The compatibility parameter name does not require fixed Team lead membership. It requires editor access and applicable assignment authority; viewer access suffices only for personal configuration. Only unfinished project Ideas currently assigned to the user or their owned agents/instances qualify, regardless of creator; unassigned, foreign-assigned and derived-done Ideas are excluded. Stale/tampered previews require a fresh preview with no partial changes. Handoff preserves lifecycle and Task execution/assignments. These are **not new MCP write tools**; agent keys cannot write Team configuration or confirm this handoff.
 
 ### chorus_get_idea_team_context
 
-**Description**: Read authoritative Team enrollment and proposal/task gate responsibility for an Idea. Requires `idea:read` and project viewer access. The context reports whether the Idea is managed, its state (`active`, `paused`, or `unmanaged`), lead identity, server-confirmed YOLO status, proposal gate (`human`/`lead`), task gate and reason.
+**Description**: Read authoritative Team enrollment and proposal/task gate responsibility for an Idea. Requires `idea:read` and project viewer access. The context reports whether the Idea is managed, its state (`active`, `paused`, or `unmanaged`), current `orchestrator` identity, `enrollmentVersion`, `generation`, server-confirmed YOLO status, proposal/task gates and per-action reasons. Compatibility fields/values such as `lead`, `proposalGate: "lead"` and `taskGate: "lead"` mean the current Idea orchestrator, not a fixed Team role. Legacy managed rows retain their existing guards until an explicitly authorized transition.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -344,9 +345,13 @@ Team roles grant **no permissions or project access**. All roles may be empty, p
 
 **Privacy**: Shared viewers receive only safe gate responsibility. Private routing/delegation details are limited to the enrolled Team owner and their agents; project administration is not an ownership bypass. No caller-supplied owner selector exists. Team membership grants neither permissions nor project access.
 
-**Workflow**: Resolve the wake's root Idea through Task/Proposal/Document ancestry and read the context before acting; for multi-input proposals respect every linked Idea's gates. Missing/ambiguous ancestry or a failed read must not be treated as unmanaged. An unassigned Idea stays unassigned; a Team binding is not permission to auto-claim. Only explicit assignment to an eligible lead enrolls work. The lead remains the sole Idea assignee during product delegation. Lost eligibility, mismatched ownership or unbinding must not erase existing gates: paused enrollment requires explicit repair and stops automated Team actions. Legacy unmanaged Ideas and standalone Quick Tasks retain their existing workflow.
+**Workflow**: Resolve the wake's root Idea through Task/Proposal/Document ancestry and read the context before acting; for multi-input proposals respect every source Idea's gates. Missing/ambiguous ancestry or a failed read must not be treated as unmanaged. New enrollment requires verified consent from the receiving agent's owner, a bound private Team, current project editor access and `idea:write`, not lead membership or a full admin permission bundle. The current explicitly human-assigned agent is the orchestrator and remains the sole assignee during product delegation. Bare creation, agent self-claim, template changes, presence, upgrades and instance repinning do not start automation. Explicit human selection during conversational creation DOES start it; child Ideas inherit no consent. Agent-mediated starts require the proof described under `chorus_prepare_idea_assignment`.
 
-**Approval/verification**: Non-YOLO managed proposals require human approval. Only a server-validated human `yolo_requested` activity for the exact Idea permits its current active lead to approve, with existing permissions. Managed task verification belongs to the current active lead, not a product delegate or worker; authorized humans retain control. Local YOLO flags, agent-created activities, mentions and wake wording cannot grant authority. Multiple inputs impose the intersection of their gates. A denial is not permission to retry through a different mutation tool.
+**State and repair**: Distinguish unassigned, assigned-but-not-authorized, legacy, active, paused and awaiting-human-action states; an assigned Idea is not “without owner.” Cross-owner assignment may persist, but the receiving owner's private Team cannot activate until that owner consents. Lost basic eligibility, mismatched ownership or unbinding must not erase existing gates: paused enrollment requires explicit human repair and stops automated Team actions. Missing only one action's permission blocks that action, not enrollment. Legacy unmanaged Ideas and standalone Quick Tasks retain their existing workflow.
+
+**Approval/verification**: Non-YOLO managed proposals require human approval. Server-validated human `yolo_requested` is scoped to the exact Idea and survives reassignment; its current active orchestrator still needs `proposal:admin` to approve. Task verification does **not** require YOLO, but requires the current active orchestrator, `task:admin`, valid task state and passed required acceptance criteria, not a product delegate or worker. Authorized humans retain control. Local YOLO flags, agent-created activities, mentions and wake wording cannot grant authority. Multiple inputs impose the intersection of their gates. A denial is not permission to retry through a different mutation tool. Existing independent reviewer/human gates remain; reviews grant no mutation authority and no automatic merge is introduced.
+
+**Directed-turn proof**: Supporting runtimes negotiate `ideaTeamProtocol=1` together with `wakeRecoveryProtocol=1`. Managed mutations carry the actual admitted `X-Chorus-Turn-Uuid` and `X-Chorus-Admission-Uuid`. Multi-source actions can additionally carry `X-Chorus-Idea-Team-Turns`: a JSON array of at most 16 strict `{turnUuid, admissionUuid}` UUID pairs (maximum header length 4096), requiring both primary headers. Preserve the server-provided primary `ideaTeam` and `ideaTeams` source snapshots; they are context, not substitutes for admission proofs. Never invent headers, reuse stale proofs, or bypass rejected directed turns through broadcasts. Reassignment/re-delegation fences apply at admission, resume, recovery and mutation. See [DAEMON.md](./DAEMON.md#idea-assignee-team-automation) for the runtime contract.
 
 ### chorus_recommend_team_agent
 
@@ -358,18 +363,18 @@ Team roles grant **no permissions or project access**. All roles may be empty, p
 | role | `product` \| `development` | Yes | Role to recommend |
 | taskUuid | string (UUID) | No | Related Task for development/reopen affinity; must belong to this Idea through its proposal, within the same tenant/project |
 
-**Output semantics**: Returns a decision (`recommended`, `lead_decision`, `manual`, `paused`), selected agent UUID when unique, candidates and a reason. Filter current eligibility first. Empty/all-ineligible roles return manual handling, not lead fallback. Eligible but all-offline members may fall back to an eligible online lead; otherwise handling is manual. Development reopens prefer the eligible online original assignee (resolving agent instances); otherwise minimize live `activeCount`, using same-proposal dependency-chain affinity only to break load ties. Remaining ties require the lead's decision. Do not invent candidates or expose private recommendations in shared comments. Eligibility is revalidated on mutation; load is advisory, not a reservation.
+**Output semantics**: Returns a decision (`recommended`, `lead_decision`, `manual`, `paused`), selected agent UUID when unique, candidates and a reason. The compatibility value `lead_decision` means the current orchestrator decides. Filter current eligibility first. Empty/all-ineligible roles return manual handling, not orchestrator fallback. Eligible but all-offline members may fall back to an eligible online current orchestrator; otherwise handling is manual. Development reopens prefer the eligible online original assignee (resolving agent instances); otherwise minimize live `activeCount`, using same-proposal dependency-chain affinity only to break load ties. Remaining ties require the orchestrator's decision. Do not invent candidates or expose private recommendations in shared comments. Eligibility is revalidated on mutation; load is advisory, not a reservation.
 
 ### chorus_delegate_team_product
 
-**Description**: Delegate elaboration/proposal authoring without changing Idea ownership. Requires `idea:write`, existing project access, and the current active enrolled lead; generic admin permission is not an agent bypass.
+**Description**: Delegate elaboration/proposal authoring without changing Idea ownership. Requires `idea:write`, existing project access, and the current active enrolled orchestrator; generic admin permission is not an agent bypass.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| ideaUuid | string (UUID) | Yes | Managed Idea owned by the current lead |
+| ideaUuid | string (UUID) | Yes | Managed Idea owned by the current orchestrator |
 | agentUuid | string (UUID) | Yes | Product agent selected from current eligible Team routing |
 
-**Effects and limits**: Revalidates current role eligibility, persists one product delegate and records a directed instruction mentioning that agent for best-effort wake delivery. This does not assign the Idea to the product agent. A delegate may start elaboration and create/submit proposals subject to existing permissions/access, but must not claim/release/reassign the Idea, resolve elaboration, approve proposals or verify tasks. Removed/ineligible delegates lose authorization dynamically. Persistent delegation is not proof of successful wake delivery; report delivery failures and use the recorded state for recovery. Paused enrollment stops automatic delegation. No independent Reviewer auto-wake is introduced.
+**Effects and limits**: Revalidates current role eligibility, persists one product delegate and records a directed instruction mentioning that agent for best-effort wake delivery. The orchestrator remains the Idea assignee. Re-delegation invalidates the old turn and produces fresh product **and orchestrator** turns, even when the delegate is the same agent; stop the obsolete run rather than continuing under stale authority. A delegate may start elaboration and create/submit proposals subject to existing permissions/access, but must not claim/release/reassign the Idea, resolve elaboration, approve proposals or verify tasks. Removed/ineligible delegates lose authorization dynamically. Persistent delegation is not proof of successful wake delivery; report delivery failures and use admitted current-generation state for recovery. Paused enrollment stops automatic delegation. No independent Reviewer auto-wake is introduced.
 
 ### chorus_get_ideas
 
@@ -1146,9 +1151,33 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 
 **Output**: Updated Idea JSON
 
+### chorus_prepare_idea_assignment
+
+**Description**: Validate a real human's standalone assignment command on an Idea and return a private, single-use authorization for `chorus_pm_assign_idea`. This prepares proof; it does not assign, enroll or wake an agent.
+
+**Required Permission**: `idea:admin`, plus current project access and receiving-owner authorization checks. Shared viewers and foreign owners cannot read private proof.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| ideaUuid | string (UUID) | Yes | Idea containing the human's instruction |
+| agentUuid | string (UUID) | Yes | Exact target logical agent selected by its human owner |
+| commentUuid | string (UUID) | Yes | Human-authored comment on that Idea, containing only the standalone command below |
+
+The receiving agent's owner must post this exact structured command (substitute the actual agent UUID):
+
+```text
+chorus:assign <agent-uuid>
+```
+
+Ordinary prose, an @mention, quoted instructions, agent-authored comments and caller-supplied human identity headers are not consent. Never post this command as an agent pretending to be the human. If the user has only expressed intent in ordinary chat, request the authenticated human confirmation control or this exact human comment instead. Explicit human selection in conversational Idea creation is a separate server-verified start path, not agent interpretation of prose.
+
+**Output**: `{ "uuid": "authorization UUID", "ideaUuid": "Idea UUID", "agentUuid": "target agent UUID", "expiresAt": "ISO timestamp" }`. Pass the returned `uuid` as `humanAuthorizationUuid` to the matching assignment. The authenticated human confirmation control can also mint bound proof; it is not this MCP tool and cannot be invoked using fabricated human headers.
+
+**Proof contract**: Binds company, project, Idea, target logical agent, real authorizing human/receiving owner, source and current assignment generation. Expires after 24 hours; assignment/release invalidates unused proof. Validation rechecks access, ownership and source integrity. Agent-authored, edited/deleted, foreign-Idea/tenant, wrong-target, expired, stale-generation or replayed proof is rejected without partial assignment or wake. Proof is consumed atomically with the assignment. An identical committed operation retry returns its recorded outcome, not another kickoff; never reuse that proof for a different operation.
+
 ### chorus_pm_assign_idea
 
-**Description**: Assign an Idea to an agent (must hold `idea:write`) or a user, on a human's behalf. Unlike `chorus_claim_idea` — which is a **self-claim** by the calling agent — this assigns the Idea to another actor. Silently takes over any existing assignee; an `open` Idea moves to `elaborating`, any other status is preserved. Agent assignments automatically use the caller owner's project-fixed cwd target when configured (overriding `instanceUuid`); otherwise `instanceUuid` can pin a specific **AgentInstance**. A new logical agent assignee emits the existing `idea_claimed` wake, while assigning the same owning agent again may update its pin/cwd but is wake-deduplicated. Assigning to a user sets the assignee and delivers an assignment notification with **no** daemon wake.
+**Description**: Assign an Idea to an agent (must hold `idea:write`) or a user while preserving its current stage. Unlike `chorus_claim_idea` — a **self-claim** by the calling agent — this assigns the Idea to another actor. It replaces any existing assignee; an `open` Idea moves to `elaborating`, any other status is preserved. Agent assignments automatically use the caller owner's project-fixed cwd target when configured (overriding `instanceUuid`); otherwise `instanceUuid` can pin a specific **AgentInstance**. New Team automation requires valid `humanAuthorizationUuid` bound to this Idea and target agent; without proof, permitted assignment cannot activate or refresh enrollment. Assigning to a user sets the assignee with no agent daemon wake.
 
 **Required Permission**: `idea:admin`
 
@@ -1159,6 +1188,8 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 | assigneeType | enum | Yes | Assignee type: `agent` or `user` |
 | assigneeUuid | string | Yes | Target Agent UUID or User UUID (per `assigneeType`) |
 | instanceUuid | string | No | AgentInstance UUID to pin an **agent** assignment to (the durable `(agent, host, cwd)` identity from the presence/daemon tools). A configured project-fixed cwd target takes precedence and supplies the effective instance automatically; otherwise this value is used. Rejected if supplied with `assigneeType = "user"`. |
+| humanAuthorizationUuid | string (UUID) | No | Server-verified receiving-owner human proof for this Idea and target agent; required for an agent-mediated Team start/repair |
+| operationUuid | string (UUID) | No | Idempotency key for the assignment; defaults to `humanAuthorizationUuid` when proof is supplied. Preserve it only for an identical retry. |
 
 **Validation rules**:
 - Idea must exist in the caller's company
@@ -1166,7 +1197,9 @@ Available to PM Agent and Admin Agent. Not available to Developer Agent.
 - `assigneeType = "user"`: the target User must exist and belong to the same company; `instanceUuid` must not be supplied
 - When no project-fixed target overrides it, `instanceUuid` must reference an AgentInstance in the same company, otherwise the call is rejected ("Agent instance not found")
 
-**Contrast with `chorus_claim_idea`**: `chorus_claim_idea` (gated `idea:write`) is how an agent claims an Idea **for itself** (open → elaborating). `chorus_pm_assign_idea` (gated `idea:admin`) is the MCP surface over the human "assign idea" action — it assigns to **any** eligible agent or user and emits the actor-bearing `assigned` Activity only when responsibility changes to a new logical assignee.
+**Start and reassignment**: A new authorized assignment, including deliberate same-agent reassignment, increments generation, invalidates prior delegation/queued orchestration turns and emits one generation-bound kickoff after commit; identical retries do not. Runtime-only repinning is not authorization or kickoff. Without proof, changing responsibility retains the managed guard in a paused state instead of clearing it as an approval bypass; an unauthorized same-agent repeat neither increments generation nor clears delegates. A legitimate cross-owner assignment can persist, but activating the receiving owner's private Team needs that owner's consent. Existing executing Tasks continue, and terminal Ideas do not automatically restart completed work. Idea-scoped human YOLO survives reassignment; action permissions still apply.
+
+**Contrast with `chorus_claim_idea`**: `chorus_claim_idea` (gated `idea:write`) is how an agent claims an Idea **for itself** (open → elaborating), not a human start signal. `chorus_pm_assign_idea` (gated `idea:admin`) records the real executor separately from verified human authority; neither agent assertions nor fake human headers can substitute for proof. Bare creation, self-claim and Team/template configuration changes never activate new-version Team automation.
 
 **Output**:
 ```json

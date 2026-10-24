@@ -3,7 +3,8 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
-import { ideaTeamEnrollment } from "./idea-team.service";
+import { assignIdeaWithAuthority } from "./idea-assignment-authorization.service";
+import { randomUUID } from "node:crypto";
 import { formatAssigneeComplete, formatCreatedBy, buildAssigneeMatch, batchResolveActorIdentities, type ActorIdentityMap, type AssigneeCondition, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import type { AuthContext } from "@/types/auth";
 import { eventBus } from "@/lib/event-bus";
@@ -69,6 +70,9 @@ export interface IdeaLineageChild {
 }
 
 export interface IdeaClaimParams {
+  auth?: AuthContext;
+  humanAuthorizationUuid?: string;
+  operationUuid?: string;
   ideaUuid: string;
   companyUuid: string;
   assigneeType: string;
@@ -102,6 +106,7 @@ export interface IdeaClaimParams {
 
 // API response format
 export interface IdeaResponse {
+  assignmentKickoff?: boolean;
   uuid: string;
   title: string;
   content: string | null;
@@ -867,18 +872,28 @@ export async function claimIdea({
   cwdSource,
   cwdHost,
   runtimeCwd,
+  auth,
+  operationUuid,
 }: IdeaClaimParams): Promise<IdeaResponse> {
   const existing = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!existing) throw new AlreadyClaimedError("Idea");
-  if (existing.assigneeUuid) {
+  if (existing.assigneeUuid && !auth) {
     throw new AlreadyClaimedError("Idea");
   }
   const normalizedStatus = normalizeIdeaStatus(existing.status);
   if (normalizedStatus === "elaborated") {
     throw new Error("Cannot claim an elaborated Idea");
   }
+
+  if (auth) {
+    if (auth.companyUuid !== companyUuid) throw new ApiError("FORBIDDEN", "Assignment identity scope mismatch", 403);
+    const result = await assignIdeaWithAuthority(auth, { ideaUuid, assigneeType: assigneeType as "agent" | "agent_instance" | "user", assigneeUuid, instanceUuid, operationUuid: operationUuid ?? randomUUID(), claimOnly: true, cwdSource, cwdHost, runtimeCwd });
+    eventBus.emitChange({ companyUuid, projectUuid: result.idea.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
+    return formatIdeaResponse(result.idea);
+  }
+  if (existing.teamEnrollmentVersion > 0) throw new ApiError("FORBIDDEN", "Authenticated assignment required", 403);
 
   // Resolve the polymorphic assignee, applying an optional durable instance pin
   // (validates company ownership and may promote to assigneeType="agent_instance").
@@ -897,7 +912,6 @@ export async function claimIdea({
       status: "elaborating",
       assigneeType: resolved.assigneeType,
       assigneeUuid: resolved.assigneeUuid,
-      ...await ideaTeamEnrollment(companyUuid, existing.projectUuid, resolved.assigneeType, resolved.assigneeUuid),
       cwdSource: runtimeCwd && cwdSource?.trim() ? cwdSource : null,
       cwdHost: runtimeCwd ? cwdHost : null,
       runtimeCwd: runtimeCwd ?? null,
@@ -926,11 +940,22 @@ export async function assignIdea({
   cwdSource,
   cwdHost,
   runtimeCwd,
+  auth,
+  operationUuid,
+  humanAuthorizationUuid,
+  allowElaboratedInstanceRepin,
 }: IdeaClaimParams): Promise<IdeaResponse> {
+  if (auth) {
+    if (auth.companyUuid !== companyUuid) throw new ApiError("FORBIDDEN", "Assignment identity scope mismatch", 403);
+    const result = await assignIdeaWithAuthority(auth, { ideaUuid, assigneeType: assigneeType as "agent" | "agent_instance" | "user", assigneeUuid, instanceUuid, operationUuid: operationUuid ?? randomUUID(), humanAuthorizationUuid, pinOnly: allowElaboratedInstanceRepin, cwdSource, cwdHost, runtimeCwd });
+    eventBus.emitChange({ companyUuid, projectUuid: result.idea.projectUuid, entityType: "idea", entityUuid: ideaUuid, action: "updated" });
+    return { ...await formatIdeaResponse(result.idea), assignmentKickoff: result.kickoff };
+  }
   const existing = await prisma.idea.findFirst({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!existing) throw new Error("Idea not found");
+  if (existing.teamEnrollmentVersion > 0) throw new ApiError("FORBIDDEN", "Authenticated assignment required", 403);
   // If currently open, move to elaborating; otherwise keep current status
   const newStatus = existing.status === "open" ? "elaborating" : existing.status;
 
@@ -953,7 +978,6 @@ export async function assignIdea({
       status: newStatus,
       assigneeType: resolved.assigneeType,
       assigneeUuid: resolved.assigneeUuid,
-      ...await ideaTeamEnrollment(companyUuid, existing.projectUuid, resolved.assigneeType, resolved.assigneeUuid),
       cwdSource: runtimeCwd && cwdSource?.trim() ? cwdSource : null,
       cwdHost: runtimeCwd ? cwdHost : null,
       runtimeCwd: runtimeCwd ?? null,
@@ -971,9 +995,15 @@ export async function assignIdea({
 }
 
 // Release Idea. Terminal lifecycle and elaboration state are preserved.
-export async function releaseIdea(uuid: string): Promise<IdeaResponse> {
+export async function releaseIdea(uuid: string, auth?: AuthContext, operationUuid: string = randomUUID()): Promise<IdeaResponse> {
+  if (auth) {
+    const result = await assignIdeaWithAuthority(auth, { ideaUuid: uuid, assigneeType: null, assigneeUuid: null, operationUuid, releaseOwn: auth.type === "agent" });
+    eventBus.emitChange({ companyUuid: auth.companyUuid, projectUuid: result.idea.projectUuid, entityType: "idea", entityUuid: uuid, action: "updated" });
+    return formatIdeaResponse(result.idea);
+  }
   const existing = await prisma.idea.findUnique({ where: { uuid } });
   if (!existing) throw new Error("Idea not found");
+  if (existing.teamEnrollmentVersion > 0) throw new ApiError("FORBIDDEN", "Authenticated assignment required", 403);
   const normalizedReleaseStatus = normalizeIdeaStatus(existing.status);
   const isElaborated = normalizedReleaseStatus === "elaborated";
 

@@ -106,6 +106,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       taskDrafts: body.taskDrafts,
       createdByUuid: auth.actorUuid,
       createdByType,
+      actorContext: { actorType: auth.type, actorUuid: auth.actorUuid, ...auth.ideaTeamTurn },
     });
 
     return success(proposal);

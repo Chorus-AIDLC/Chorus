@@ -37,6 +37,7 @@ import {
 // the shared user-description budget, before the server adds its template;
 // here the identifier fields are only required to be present.
 const bodySchema = z.object({
+  requestUuid: z.string().uuid().optional(),
   projectUuid: z.string().min(1),
   agentUuid: z.string().min(1),
   connectionUuid: z.string().min(1),

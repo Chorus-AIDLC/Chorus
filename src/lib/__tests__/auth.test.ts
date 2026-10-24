@@ -192,6 +192,11 @@ describe('getAuthContext', () => {
       agentName: 'Test Agent',
     });
     expect(validateApiKey).toHaveBeenCalledWith('cho_testkey123');
+    const fenced = await getAuthContext(makeRequest('/api/test', { authorization: 'Bearer cho_testkey123', 'x-chorus-turn-uuid': 'turn-uuid', 'x-chorus-admission-uuid': 'admission-uuid' }));
+    expect(fenced).toMatchObject({ ideaTeamTurn: { turnUuid: 'turn-uuid', admissionUuid: 'admission-uuid' } });
+    const supplementaryTurns = [{ turnUuid: '10000000-0000-4000-8000-000000000001', admissionUuid: '10000000-0000-4000-8000-000000000002' }];
+    const multiple = await getAuthContext(makeRequest('/api/test', { authorization: 'Bearer cho_testkey123', 'x-chorus-turn-uuid': 'turn-uuid', 'x-chorus-admission-uuid': 'admission-uuid', 'x-chorus-idea-team-turns': JSON.stringify(supplementaryTurns) }));
+    expect(multiple).toMatchObject({ ideaTeamTurn: { supplementaryTurns } });
   });
 
   it('returns user context when Bearer token is a valid OIDC token', async () => {

@@ -27,6 +27,8 @@
 // injected, feeds the reconstructed entries to `onMessage`; otherwise it is a
 // no-op here (this task owns spawn/resume/trust/interrupt + sessionId capture).
 
+import { ideaTeamRuntimeConfig } from "./idea-team-runtime-config.mjs";
+import { ideaTeamRunEnv } from "./idea-team-transport.mjs";
 import { spawn } from "node:child_process";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
@@ -261,17 +263,21 @@ export class KiroSpawner {
    * @returns {Promise<{ sessionId: string, exitCode: number|null, isNew: boolean }>}
    */
   async wake(params) {
+    let runtimeConfig;
     const diagnostics = createWakeErrorCollector({ source: this.wakeErrorSource, env: this.env, creds: this.creds });
     const startupResult = { sessionId: typeof params.sessionId === "string" ? params.sessionId : "", exitCode: null, isNew: true };
     try {
-      return await this.#wake(params, diagnostics, startupResult);
+      runtimeConfig = ideaTeamRuntimeConfig({ runtime: "kiro", env: this.env, cwd: params.cwd, creds: this.creds, ideaTeamTurn: params.ideaTeamTurn });
+      return await this.#wake({ ...params, runtimeEnv: runtimeConfig.env, agentName: runtimeConfig.agentName }, diagnostics, startupResult);
     } catch (error) {
       diagnostics.fail(error, "startup");
       return { ...startupResult, wakeError: diagnostics.build() };
+    } finally {
+      runtimeConfig?.cleanup();
     }
   }
 
-  async #wake({ prompt, sessionId, cwd, onMessage, onChild }, diagnostics, startupResult) {
+  async #wake({ prompt, ideaTeamTurn, runtimeEnv, agentName, sessionId, cwd, onMessage, onChild }, diagnostics, startupResult) {
     const anchor = typeof sessionId === "string" ? sessionId : "";
     const runCwd = cwd ?? process.cwd();
 
@@ -291,6 +297,7 @@ export class KiroSpawner {
 
     assertConfiguredShimArgs(kiroPath, this.cliConfig.args, this.platform);
     const args = [...buildKiroArgs({ isNew, sessionId: knownSessionId, permissionMode: this.permissionMode }), ...this.cliConfig.args];
+    if (agentName) args[args.indexOf("--agent") + 1] = agentName;
     const { command, argv } = resolveSpawnCommand(kiroPath, args, this.platform, this.env);
 
     // POSIX: detached process group so the interrupt path can group-kill the tree
@@ -300,7 +307,8 @@ export class KiroSpawner {
 
     // Export the daemon's authoritative connection pair. CHORUS_API_KEY is also
     // referenced by the plugin's MCP config; neither value is placed in argv.
-    const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
+    const childEnv = { ...ideaTeamRunEnv(this.env, ideaTeamTurn), CHORUS_DAEMON_HEADLESS: "1" };
+    Object.assign(childEnv, runtimeEnv);
     if (this.creds) {
       if (this.creds.url) childEnv.CHORUS_URL = this.creds.url;
       if (this.creds.apiKey) childEnv.CHORUS_API_KEY = this.creds.apiKey;

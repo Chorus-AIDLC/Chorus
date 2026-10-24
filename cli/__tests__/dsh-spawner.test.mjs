@@ -209,6 +209,15 @@ describe("dsh runtime discovery and usage", () => {
 });
 
 describe("DshSpawner.wake", () => {
+  it("uses only this run's admission proof in the native runtime environment", async () => {
+    const ideaTeamTurn = { turnUuid: "11111111-1111-4111-8111-111111111111", admissionUuid: "22222222-2222-4222-8222-222222222222" };
+    for (const proof of [ideaTeamTurn, undefined]) {
+      const { spawner, calls } = makeSpawner({ env: { PATH: "/bin", CHORUS_DSH_HOME: "/managed/home", CHORUS_TURN_UUID: "stale", CHORUS_ADMISSION_UUID: "stale" } });
+      await spawner.wake({ prompt: "go", sessionId: "anchor", ideaTeamTurn: proof });
+      expect(calls.opts.env.CHORUS_TURN_UUID).toBe(proof?.turnUuid);
+      expect(calls.opts.env.CHORUS_ADMISSION_UUID).toBe(proof?.admissionUuid);
+    }
+  });
   it("drives initialize → prompt → root idle → shutdown with protocol-only stdout", async () => {
     const { spawner, child, calls } = makeSpawner();
     const onMessage = vi.fn();

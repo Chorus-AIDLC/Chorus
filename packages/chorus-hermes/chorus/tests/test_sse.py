@@ -56,7 +56,8 @@ def test_subscribe_query_and_auth(cfg):
     method, path, query, _ = fake.calls[0]
     assert (method, path) == ("GET", "/api/events/notifications")
     assert query == {"clientType": "hermes", "clientVersion": "1.2.3", "host": "box", "cwd": "/repo",
-                     "startedAt": "2026-01-01T00:00:00.000Z", "livenessAck": "v1"}
+                     "startedAt": "2026-01-01T00:00:00.000Z", "livenessAck": "v1",
+                     "wakeRecoveryProtocol": "1", "ideaTeamProtocol": "1"}
 
 
 def test_event_forking_registration_and_heartbeat_ack(cfg):

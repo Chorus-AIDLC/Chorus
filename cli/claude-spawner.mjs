@@ -40,6 +40,7 @@
 // AskUserQuestion at the tool layer (`--disallowedTools AskUserQuestion`), since no
 // human can answer it in a daemon wake.
 
+import { ideaTeamRunEnv } from "./idea-team-transport.mjs";
 import { spawn } from "node:child_process";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
@@ -746,7 +747,7 @@ export class ClaudeSpawner {
     }
   }
 
-  async #wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage, onChild }, diagnostics) {
+  async #wake({ prompt, ideaTeamTurn, sessionId, isNew, mcpConfigPath, cwd, onMessage, onChild }, diagnostics) {
     const id = sessionId;
 
     // Pre-validate the session id BEFORE locating claude or spawning: a malformed
@@ -784,7 +785,7 @@ export class ClaudeSpawner {
     // stream and observe the exit. On Windows `detached` is NOT used: taskkill /T
     // walks the tree by pid, and detached there only spawns a new console window.
     const detached = (this.platform ?? process.platform) !== "win32";
-    const childEnv = { ...this.env, CHORUS_DAEMON_HEADLESS: "1" };
+    const childEnv = { ...ideaTeamRunEnv(this.env, ideaTeamTurn), CHORUS_DAEMON_HEADLESS: "1" };
     if (getAgentEnv(childEnv, "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS", this.platform) === undefined) {
       const override = getAgentEnv(childEnv, "CHORUS_CLAUDE_BG_WAIT_CEILING_MS", this.platform)?.trim();
       const valid = /^\d+$/.test(override ?? "") && Number.isSafeInteger(Number(override));

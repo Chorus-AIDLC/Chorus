@@ -45,6 +45,15 @@ beforeEach(() => {
 });
 
 describe("GET /api/daemon/pending-turns", () => {
+  it("forwards explicit Idea Team capability only with exact wake recovery", async () => {
+    const response = await GET(getRequest(`?connectionUuid=${connectionUuid}&wakeRecoveryProtocol=1&ideaTeamProtocol=1`), emptyCtx);
+    expect(response.status).toBe(200);
+    expect(mockGetPendingTurnsForConnection).toHaveBeenCalledWith({ companyUuid, agentUuid, connectionUuid, operationProtocol: false, wakeRecoveryProtocol: 1, ideaTeamProtocol: 1 });
+  });
+  it.each(["ideaTeamProtocol=1", "ideaTeamProtocol=2&wakeRecoveryProtocol=1"])("rejects unsafe Team recovery negotiation (%s)", async (query) => {
+    expect((await GET(getRequest(`?connectionUuid=${connectionUuid}&${query}`), emptyCtx)).status).toBe(400);
+    expect(mockGetPendingTurnsForConnection).not.toHaveBeenCalled();
+  });
   it("negotiates recovery capability without tagging legacy rows as safe", async () => {
     const response = await GET(getRequest(`?connectionUuid=${connectionUuid}&wakeRecoveryProtocol=1`), emptyCtx);
     expect(response.status).toBe(200);

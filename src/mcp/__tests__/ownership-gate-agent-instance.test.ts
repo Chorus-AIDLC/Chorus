@@ -180,7 +180,7 @@ describe("chorus_release_idea — agent_instance ownership", () => {
     const result = await toolHandlers["chorus_release_idea"]({ ideaUuid: "idea-1" });
 
     expect(isError(result)).toBe(false);
-    expect(mockIdeaService.releaseIdea).toHaveBeenCalledWith("idea-1");
+    expect(mockIdeaService.releaseIdea).toHaveBeenCalledWith("idea-1", AUTH);
   });
 
   it("rejects an agent that does not own the pinned instance", async () => {

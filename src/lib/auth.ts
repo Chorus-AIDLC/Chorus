@@ -19,6 +19,7 @@ import { getUserSessionFromRequest } from "./user-session";
 import { verifyOidcAccessToken, isOidcToken } from "./oidc-auth";
 import { isAssignmentOwnedByActor } from "./uuid-resolver";
 import { rememberStreamCredential, streamCredential } from "./stream-credentials";
+import { readIdeaTeamTurnContext } from "./idea-team-turn-context";
 
 // Get auth context from request (UUID-based)
 export async function getAuthContext(
@@ -47,6 +48,7 @@ export async function getAuthContext(
           permissions: Array.from(effective),
           ownerUuid: result.agent.ownerUuid ?? undefined,
           agentName: result.agent.name,
+          ...readIdeaTeamTurnContext(request.headers),
         };
         const credential = streamCredential(result);
         if (credential) rememberStreamCredential(agentContext, credential);

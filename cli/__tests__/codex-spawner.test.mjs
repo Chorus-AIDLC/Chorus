@@ -217,6 +217,22 @@ describe("early setup identity", () => {
 });
 
 describe("App Server lifecycle", () => {
+  it("threads admission through per-run env references and clears resumed-thread proof for the next run", async () => {
+    const children = [appServerChild(), appServerChild()];
+    const spawnImpl = vi.fn(() => children[spawnImpl.mock.calls.length - 1]);
+    const spawner = makeSpawner(undefined, { spawnImpl, creds: { url: "https://chorus.test", apiKey: "secret" },
+      env: { PATH: "/bin", CHORUS_TURN_UUID: "stale", CHORUS_ADMISSION_UUID: "stale", CHORUS_IDEA_TEAM_TURNS: "stale" } });
+    const proof = { turnUuid: ANCHOR, admissionUuid: "22222222-2222-4222-8222-222222222222" };
+    expect((await wake(spawner, { ideaTeamTurn: proof })).exitCode).toBe(0);
+    expect((await wake(spawner)).exitCode).toBe(0);
+    expect(spawnImpl.mock.calls[0][2].env.CHORUS_TURN_UUID).toBe(ANCHOR);
+    expect(spawnImpl.mock.calls[1][2].env.CHORUS_TURN_UUID).toBeUndefined();
+    const first = children[0].requests.find((request) => request.method === "thread/start").params.config;
+    expect(first["mcp_servers.chorus.env_http_headers"]).toEqual({ "X-Chorus-Turn-Uuid": "CHORUS_TURN_UUID", "X-Chorus-Admission-Uuid": "CHORUS_ADMISSION_UUID" });
+    const next = children[1].requests.find((request) => request.method === "thread/start").params.config;
+    expect(next["mcp_servers.chorus.env_http_headers"]).toEqual({});
+    expect(JSON.stringify(children.flatMap((child) => child.requests))).not.toContain(proof.admissionUuid);
+  });
   it.each([false, true])("fresh/resume=%s keeps identity, cwd, credentials, policy and ordered RPC", async (resumed) => {
     const child = appServerChild();
     const spawner = makeSpawner(child, { getThreadIdFn: () => resumed ? TID : null,

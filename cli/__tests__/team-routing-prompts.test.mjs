@@ -20,7 +20,7 @@ describe("authoritative Team wake guidance", () => {
       const handoff = { ...notification("team_lead_handoff", "proposal"), uuid: "notification-1", message: sourceAction };
       const prompt = buildPrompt(handoff);
       expect(prompt).toContain(buildTeamLeadHandoff(handoff));
-      expect(prompt).toContain("Only the current active eligible enrolled lead");
+      expect(prompt).toContain("Only the current active enrolled Idea assignee orchestrator");
       expect(prompt).toContain("must not wake a reviewer agent");
       expect(prompt).not.toContain("then chorus_claim_task to start work");
       expect(buildBatchPrompt([handoff, notification(sourceAction)])).toBe(prompt);
@@ -28,7 +28,7 @@ describe("authoritative Team wake guidance", () => {
   );
 
   it("resumed sessions re-check the coordination phase without takeover", () => {
-    expect(buildPrompt(notification("resource_resumed", "task"))).toContain("A resumed Team lead handoff must re-read the original entity");
+    expect(buildPrompt(notification("resource_resumed", "task"))).toContain("A resumed Team handoff must re-read the original entity");
   });
 
   it.each([...WAKE_ACTIONS])("guards %s before the legacy action", (action) => {
@@ -53,10 +53,12 @@ describe("authoritative Team wake guidance", () => {
     for (const clause of [
       "chorus_get_idea_team_context({ideaUuid})", 'role:"product"', 'role:"development",taskUuid',
       "chorus_delegate_team_product({ideaUuid,agentUuid})", "unassigned Idea stays unassigned",
-      "current lead remains the Idea owner", "must not claim, release or reassign",
-      "Empty/all-ineligible roles mean manual", "eligible online lead", "lead_decision",
+      "current logical agent assignee is its orchestrator", "must not claim, release or reassign",
+      "Empty/all-ineligible roles mean manual", "eligible online orchestrator", "lead_decision",
       "paused, stop all automated Team actions", "Non-YOLO proposal approval is human-only",
-      "Task verification belongs to the current active lead", "unmanaged work preserve legacy flows",
+      "Task verification belongs to the current active orchestrator", "unmanaged work preserve legacy flows",
+      "verified human authorization proof", "YOLO belongs to this exact Idea and survives reassignment",
+      "Redelegation invalidates the current turn and schedules a fresh turn",
       "Missing or ambiguous ancestry/context for Idea-backed work is a stop", "No independent Reviewer auto-wake",
     ]) expect(TEAM_ROUTING_GUIDANCE).toContain(clause);
     expect(WAKE_ACTIONS.has("task_submitted_for_verify")).toBe(false);

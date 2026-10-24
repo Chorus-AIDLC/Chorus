@@ -173,7 +173,9 @@ describe("TRAE App Server wake", () => {
     });
     if (resumed) {
       // traecli 0.209.1 rejects excludeTurns without experimentalApi; never sent.
-      expect(child.requests[2].params).toEqual({ cwd: "/work tree", approvalPolicy: "never", sandbox: "danger-full-access", threadId: TID });
+      expect(child.requests[2].params).toEqual({ cwd: "/work tree", approvalPolicy: "never", sandbox: "danger-full-access", threadId: TID,
+        config: { "mcp_servers.chorus.url": "https://chorus.test/api/mcp", "mcp_servers.chorus.bearer_token_env_var": "CHORUS_API_KEY",
+          "mcp_servers.chorus.http_headers": {}, "mcp_servers.chorus.env_http_headers": {} } });
     }
   });
 

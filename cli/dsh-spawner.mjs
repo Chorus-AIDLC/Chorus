@@ -1,6 +1,7 @@
 // External DeepSeek Harness SDK runtime bridge. One fresh JSON-RPC runtime and
 // session are created per wake; no dsh session state is persisted by Chorus.
 
+import { ideaTeamRunEnv } from "./idea-team-transport.mjs";
 import { spawn } from "node:child_process";
 import { safeSpawnError, redactedSetupError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
@@ -166,7 +167,7 @@ export class DshSpawner {
     }
   }
 
-  async #wake({ prompt, sessionId: anchor, cwd, onMessage, onChild }, diagnostics) {
+  async #wake({ prompt, ideaTeamTurn, sessionId: anchor, cwd, onMessage, onChild }, diagnostics) {
     const dshPath = this.dshPath ?? this.resolveDshPathFn({ env: this.env, platform: this.platform });
     let dshHome = resolveDshHome(this.env, this.platform);
     let patchPath = null;
@@ -211,7 +212,7 @@ export class DshSpawner {
       nonEmpty(getAgentEnv(this.env, "CHORUS_DSH_PROVIDER", this.platform)) ?? nonEmpty(getAgentEnv(this.env, "DSH_PROVIDER", this.platform)) ?? "deepseek-official";
     const model =
       nonEmpty(getAgentEnv(this.env, "CHORUS_DSH_MODEL", this.platform)) ?? nonEmpty(getAgentEnv(this.env, "DSH_MODEL", this.platform)) ?? "deepseek-v4-flash";
-    const childEnv = overlayAgentEnv(this.env, {
+    const childEnv = overlayAgentEnv(ideaTeamRunEnv(this.env, ideaTeamTurn), {
       CHORUS_DAEMON_HEADLESS: "1",
       DSH_HOME: dshHome,
       DSH_CWD: cwd || process.cwd(),

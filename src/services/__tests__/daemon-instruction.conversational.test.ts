@@ -15,6 +15,7 @@ import { composeResearchInstruction } from "@/services/research.service";
 
 // ===== Prisma mock (global client + the $transaction tx client) =====
 const mockTx = vi.hoisted(() => ({
+  agent: { count: vi.fn() },
   idea: { create: vi.fn() },
   daemonSession: { create: vi.fn() },
   daemonSessionTurn: { create: vi.fn() },
@@ -26,6 +27,11 @@ const mockPrisma = vi.hoisted(() => ({
   $transaction: vi.fn(),
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
+
+const assignment = vi.hoisted(() => ({ assign: vi.fn(), publish: vi.fn() }));
+vi.mock("@/services/idea-assignment-authorization.service", () => ({
+  assignIdeaWithAuthorityInTx: assignment.assign,
+}));
 
 // event-bus: assert the idea `created` change event fires post-commit.
 const mockEmitChange = vi.fn();
@@ -77,7 +83,10 @@ vi.mock("@/services/project-access.service", () => ({
 
 // Deterministic server-generated ideaUuid.
 const STUB_IDEA_UUID = "idea-0000-0000-0000-00000000gen1";
-vi.mock("crypto", () => ({ randomUUID: () => STUB_IDEA_UUID }));
+vi.mock("crypto", async (importOriginal) => ({
+  ...await importOriginal<typeof import("crypto")>(),
+  randomUUID: () => STUB_IDEA_UUID,
+}));
 
 import {
   createConversationalIdeaSession,
@@ -114,6 +123,7 @@ const validParams = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockTx.agent.count.mockResolvedValue(1);
   mockPrisma.agent.count.mockResolvedValue(1);
   mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid, name: "Chorus" });
   mockCanActorAccessProject.mockResolvedValue(true);
@@ -145,6 +155,13 @@ beforeEach(() => {
     status: data.status,
     projectUuid: data.projectUuid,
     createdAt: NOW,
+  }));
+  assignment.assign.mockImplementation(async () => ({
+    idea: await mockTx.idea.create.mock.results.at(-1)!.value,
+    replayed: false,
+    kickoff: false,
+    activityUuid: "assignment-activity",
+    publish: assignment.publish,
   }));
   mockTx.daemonSession.create.mockImplementation(async ({ data }) => ({
     uuid: sessionUuid,
@@ -377,6 +394,49 @@ describe("composeConversationalIdeaInstruction", () => {
 
 // ===== createConversationalIdeaSession — happy path =====
 describe("createConversationalIdeaSession", () => {
+  it.each(["elaborate", "decompose"] as const)("binds human selection only to the created %s Idea in the outer transaction", async (mode) => {
+    await createConversationalIdeaSession(userAuth, { ...validParams, mode });
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(assignment.assign).toHaveBeenCalledExactlyOnceWith(userAuth, {
+      ideaUuid: STUB_IDEA_UUID, assigneeType: "agent", assigneeUuid: agentUuid,
+      instanceUuid, operationUuid: STUB_IDEA_UUID, cwdSource: null, cwdHost: null,
+      runtimeCwd: null, emitKickoff: false,
+    }, mockTx);
+    expect(mockTx.idea.create).toHaveBeenCalledTimes(1);
+    expect(mockTx.daemonSessionTurn.create).toHaveBeenCalledTimes(1);
+    expect(assignment.publish).toHaveBeenCalledTimes(1);
+    expect(mockDispatchControl).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes assignment audit only after the outer commit", async () => {
+    mockPrisma.$transaction.mockImplementationOnce(async (work) => {
+      const result = await work(mockTx);
+      expect(assignment.publish).not.toHaveBeenCalled();
+      expect(mockDispatchControl).not.toHaveBeenCalled();
+      return result;
+    });
+    await createConversationalIdeaSession(userAuth, validParams);
+    expect(assignment.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not publish the assignment audit or kickoff when creation rolls back", async () => {
+    mockTx.daemonSessionTurn.create.mockRejectedValueOnce(new Error("turn write failed"));
+    await expect(createConversationalIdeaSession(userAuth, validParams)).rejects.toThrow("turn write failed");
+    expect(assignment.assign).toHaveBeenCalledTimes(1);
+    expect(assignment.publish).not.toHaveBeenCalled();
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+    expect(mockEmitChange).not.toHaveBeenCalled();
+  });
+
+  it("aborts the entire creation when human authority validation fails", async () => {
+    assignment.assign.mockRejectedValueOnce(new Error("Human identity invalid"));
+    await expect(createConversationalIdeaSession(userAuth, validParams)).rejects.toThrow("Human identity invalid");
+    expect(mockTx.daemonSession.create).not.toHaveBeenCalled();
+    expect(mockTx.daemonSessionTurn.create).not.toHaveBeenCalled();
+    expect(assignment.publish).not.toHaveBeenCalled();
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+  });
+
   it.each(["elaborate", "decompose"] as const)("accepts the full advertised 3000-character description in %s with every Research setting", async (mode) => {
     const descriptionText = "调研".repeat(1500);
     mockPrisma.project.findFirst.mockResolvedValue({ uuid: projectUuid, name: "研究项目".repeat(50) });

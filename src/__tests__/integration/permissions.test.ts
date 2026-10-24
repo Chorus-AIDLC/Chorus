@@ -495,6 +495,7 @@ describe("Scenario 2: preset parity with 0.6.x baseline (AC2)", () => {
       // 0.16.3 (add-assign-idea-mcp-tool): chorus_pm_assign_idea is idea:admin-
       // gated. admin_agent carries idea:admin; pm_agent (idea:write only) does not.
       "chorus_pm_assign_idea",
+      "chorus_prepare_idea_assignment",
     ]);
     expect(tools).toEqual(expected);
   });

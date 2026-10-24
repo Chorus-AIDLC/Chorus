@@ -38,7 +38,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
     }
 
     try {
-      const updated = await releaseIdea(idea.uuid);
+      const updated = await releaseIdea(idea.uuid, auth, request.headers.get("Idempotency-Key") ?? undefined);
       return success(updated);
     } catch (e) {
       if (e instanceof NotClaimedError) {

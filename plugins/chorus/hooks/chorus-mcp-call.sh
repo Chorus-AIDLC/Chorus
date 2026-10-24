@@ -16,6 +16,33 @@
 
 set -euo pipefail
 
+CHORUS_TURN_HEADERS=()
+if [ "${CHORUS_TURN_UUID+x}${CHORUS_ADMISSION_UUID+x}${CHORUS_IDEA_TEAM_TURNS+x}" != "" ]; then
+  _chorus_uuid='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+  if ! [[ "${CHORUS_TURN_UUID:-}" =~ $_chorus_uuid ]] || ! [[ "${CHORUS_ADMISSION_UUID:-}" =~ $_chorus_uuid ]]; then
+    echo 'Invalid Idea Team turn/admission UUID pair' >&2
+    exit 1
+  fi
+  CHORUS_TURN_HEADERS=(-H "X-Chorus-Turn-Uuid: $CHORUS_TURN_UUID" -H "X-Chorus-Admission-Uuid: $CHORUS_ADMISSION_UUID")
+  if [ "${CHORUS_IDEA_TEAM_TURNS+x}" != "" ]; then
+    if [ "$(printf '%s' "$CHORUS_IDEA_TEAM_TURNS" | wc -c)" -gt 4096 ] || ! printf '%s' "$CHORUS_IDEA_TEAM_TURNS" | jq -e --arg uuid "$_chorus_uuid" '
+      type == "array" and length <= 16 and all(.[];
+        type == "object" and keys == ["admissionUuid", "turnUuid"] and
+        (.turnUuid | type == "string" and test($uuid)) and
+        (.admissionUuid | type == "string" and test($uuid)))' >/dev/null; then
+      echo 'Invalid supplementary Idea Team proofs' >&2
+      exit 1
+    fi
+    CHORUS_TURN_HEADERS+=(-H "X-Chorus-Idea-Team-Turns: $(printf '%s' "$CHORUS_IDEA_TEAM_TURNS" | jq -c .)")
+  fi
+  if [ -z "${CHORUS_MCP_NO_CLI:-}" ] && command -v chorus >/dev/null 2>&1; then
+    if ! chorus mcp --help 2>/dev/null | grep -q 'ideaTeamProtocol=1'; then
+      echo 'Upgrade chorus CLI for Idea Team admission transport' >&2
+      exit 1
+    fi
+  fi
+fi
+
 TOOL_NAME="${1:?tool name required}"
 # NOTE: avoid `${2:-{}}` — bash mis-parses the literal `{}` inside the
 # parameter expansion and produces `{}}` (an extra `}`), which makes the
@@ -98,14 +125,14 @@ ACCEPT="Accept: application/json, text/event-stream"
 CT="Content-Type: application/json"
 
 INIT=$(cat <<JSON
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-codex-hook","version":"0.23.1"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"chorus-codex-hook","version":"0.23.2"}}}
 JSON
 )
 
 HEADERS_FILE=$(mktemp)
 trap 'rm -f "$HEADERS_FILE"' EXIT
 
-curl -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" -D "$HEADERS_FILE" \
+curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" -D "$HEADERS_FILE" \
   -d "$INIT" "$MCP_URL" >/dev/null || { echo "MCP initialize failed" >&2; exit 2; }
 
 SESSION_ID=$(grep -i '^mcp-session-id:' "$HEADERS_FILE" 2>/dev/null | tr -d '\r' | awk '{print $2}') || true
@@ -115,14 +142,14 @@ if [ -n "$SESSION_ID" ]; then
 fi
 
 # Fire 'initialized' notification (no reply expected)
-curl -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" "${SESSION_HEADER[@]}" \
+curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" "${SESSION_HEADER[@]}" \
   -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   "$MCP_URL" >/dev/null || true
 
 # Call the tool
 CALL=$(printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}' "$TOOL_NAME" "$ARGS")
 
-RAW=$(curl -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" "${SESSION_HEADER[@]}" \
+RAW=$(curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" "${SESSION_HEADER[@]}" \
   -d "$CALL" "$MCP_URL" 2>/dev/null) || { echo "MCP tool call failed" >&2; exit 3; }
 
 # Streamable transport may return SSE framing; strip 'data: ' prefix if present

@@ -46,6 +46,7 @@ const bodySchema = z
     sessionId: z.string().min(1),
     turnUuid: z.string().min(1).max(100).nullish(),
     wakeRecoveryProtocol: z.literal(1).optional(),
+    ideaTeamProtocol: z.literal(1).optional(),
     admissionUuid: z.string().uuid().optional(),
     turnUuids: z.array(z.string().min(1).max(100)).min(1).optional(),
     backendSessionId: z.string().trim().min(1).max(200).nullish(),
@@ -84,6 +85,9 @@ const bodySchema = z
       })
       .strict()
       .nullish(),
+  })
+  .refine((body) => body.ideaTeamProtocol !== 1 || body.wakeRecoveryProtocol === 1, {
+    message: "Idea Team automation requires exact wake recovery; upgrade your Chorus client",
   })
   .refine((b) => b.status === "interrupted" || b.interruptedReason == null, {
     message: "interruptedReason is only valid with status=interrupted",
@@ -130,6 +134,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     turnUuids,
     admissionUuid,
     wakeRecoveryProtocol,
+    ideaTeamProtocol,
     backendSessionId,
     status,
     coalescedCount,
@@ -161,6 +166,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     researchMode: request.nextUrl.searchParams.get("researchProtocol") === "1" ? "isolated" : "legacy",
     turnUuid: turnUuid ?? undefined,
     ...(wakeRecoveryProtocol === 1 ? { wakeRecoveryProtocol, admissionUuid, turnUuids } : {}),
+    ...(ideaTeamProtocol === 1 ? { ideaTeamProtocol } : {}),
     backendSessionId: backendSessionId ?? undefined,
     status,
     coalescedCount,
@@ -204,5 +210,5 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     return errors.notFound("Turn");
   }
 
-  return success({ turn: result.turn });
+  return success({ turn: result.turn, ...(ideaTeamProtocol === 1 ? { ideaTeamProtocol: 1 } : {}) });
 });

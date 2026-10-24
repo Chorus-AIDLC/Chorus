@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
+import json
 import uuid as uuidlib
 import weakref
 from dataclasses import dataclass, field
@@ -38,7 +39,8 @@ from .prompts import HEADLESS_PREAMBLE
 from .rest import ChorusRest
 from .router import EventRouter, LineageResolver, WakeRequest, entity_for_chat_id, spawn
 from .sse import Registration, SseClient
-from .turns import TurnRecord, TurnReporter, entity_of
+from .turns import TurnRecord, TurnReporter, entity_of, sanitize
+from .turn_context import TurnProof, active_run
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +179,7 @@ class ChorusAdapterCore:
 
         cfg = self.chorus_cfg
         self.rest = ChorusRest(cfg, async_transport=self._transport)
-        self.mcp = ChorusMcpClient(cfg, async_transport=self._transport)
+        self.mcp = ChorusMcpClient(cfg, transport=self._transport, async_transport=self._transport)
         try:
             checkin = await self.mcp.acall_tool("chorus_checkin", {})
         except Exception as exc:
@@ -350,7 +352,7 @@ class ChorusAdapterCore:
         try:
             rec = TurnRecord(session_id=wake.session_id, entity=entity_of(wake.entity_type, wake.entity_uuid),
                              root_idea_uuid=wake.root_idea_uuid, direct_idea_uuid=wake.direct_idea_uuid,
-                             requested_turn_uuid=wake.turn_uuid)
+                             requested_turn_uuid=wake.turn_uuid, wake_context=wake.wake_context)
             turn = ActiveTurn(wake=wake, record=rec, chat_id=chat_id)
             self._active[chat_id] = turn
         finally:
@@ -380,6 +382,7 @@ class ChorusAdapterCore:
         if turn.session_key:
             self.session_keys[turn.session_key] = self._mapping(turn)
         turn.dispatched = True
+        run_token = active_run.set((self, turn))
         try:
             await self.handle_message(event)
         except Exception as exc:
@@ -387,6 +390,8 @@ class ChorusAdapterCore:
             await self._finalize(turn, "interrupted", "crash",
                                  self.turns.wake_error(f"Hermes gateway rejected the wake: {exc}", kind="startup"))
             return
+        finally:
+            active_run.reset(run_token)
         if getattr(event, "_gateway_accepted", True) is False and self._active.get(chat_id) is turn:
             await self._finalize(turn, "interrupted", "crash",
                                  self.turns.wake_error("Hermes gateway did not accept the wake", kind="startup"))
@@ -548,18 +553,18 @@ class ChorusAdapterCore:
         return self._active.get(chat_id) if chat_id else None
 
     def observe_llm_call(self, session_id: Any, user_message: Any) -> None:
-        """Bind a Hermes ``session_id`` to the running Chorus turn whose prompt it is processing."""
-        if not isinstance(session_id, str) or not session_id or session_id in self._hermes_session_to_chat:
+        """Bind a Hermes session only through its captured gateway run context."""
+        bound = active_run.get()
+        if bound is None or bound[0] is not self or not isinstance(session_id, str) or not session_id:
             return
-        unbound = [t for t in self._active.values() if t.dispatched and not t.hermes_session_ids]
-        match = next((t for t in unbound if t.event is not None and t.event.text == user_message), None)
-        if match is None and len(unbound) == 1:
-            match = unbound[0]
-        if match is not None:
-            match.hermes_session_ids.add(session_id)
-            self._hermes_session_to_chat[session_id] = match.chat_id
-            if match.session_key and match.session_key in self.session_keys:
-                self.session_keys[match.session_key]["hermesSessionId"] = session_id
+        turn = bound[1]
+        if self._active.get(turn.chat_id) is not turn or not turn.dispatched or turn.record.finished \
+                or (turn.hermes_session_ids and session_id not in turn.hermes_session_ids):
+            return
+        turn.hermes_session_ids.add(session_id)
+        self._hermes_session_to_chat[session_id] = turn.chat_id
+        if turn.session_key in self.session_keys:
+            self.session_keys[turn.session_key]["hermesSessionId"] = session_id
 
     def observe_api_success(self, session_id: Any, usage: Any, model: Any) -> None:
         turn = self._turn_for_hermes_session(session_id)
@@ -626,10 +631,10 @@ def _for_chorus(platform: Any) -> bool:
     return not platform or str(getattr(platform, "value", platform)).lower() == PLATFORM_NAME
 
 
-def _hook_pre_llm_call(session_id=None, user_message=None, platform=None, **_: Any) -> None:
-    if _for_chorus(platform):
-        for adapter in live_adapters():
-            adapter.observe_llm_call(session_id, user_message)
+def _hook_pre_llm_call(session_id=None, user_message=None, platform=None, parent_session_id=None, **_: Any) -> None:
+    bound = active_run.get()
+    if bound is not None and not parent_session_id and _for_chorus(platform):
+        bound[0].observe_llm_call(session_id, user_message)
     return None
 
 
@@ -657,6 +662,35 @@ HOOKS = {
     "api_request_error": _hook_api_request_error,
     "agent_loop_stopped": _hook_agent_loop_stopped,
 }
+
+
+def _tool_execution(tool_name="", args=None, session_id=None, next_call=None, **_: Any):
+    prefix = "mcp__chorus__"
+    if not isinstance(tool_name, str) or not tool_name.startswith(prefix):
+        return next_call(args)
+    operation = tool_name[len(prefix):]
+    if not operation.startswith("chorus_"):
+        return next_call(args)
+    bound = active_run.get()
+    if bound is None:
+        if session_id and session_entity(hermes_session_id=session_id) is not None:
+            return json.dumps({"error": "Chorus tool session has no captured admitted run; await a fresh wake"})
+        return next_call(args)
+    try:
+        adapter, turn = bound
+        record = turn.record
+        if adapter._active.get(turn.chat_id) is not turn or record.finished or turn.interrupting \
+                or turn.shutdown or not turn.dispatched or session_id not in turn.hermes_session_ids \
+                or record.connection_uuid != adapter.connection_uuid:
+            raise ValueError("No current admitted Chorus run for this tool session; await a fresh wake")
+        proof = TurnProof(record.turn_uuid, record.admission_uuid) if record.requested_turn_uuid else None
+        if record.wake_context is not None and proof is None:
+            raise ValueError("Exact Idea Team admission required; upgrade your Chorus server")
+        result = adapter.mcp.call_tool(operation, args, turn_proof=proof)
+        return json.dumps({"result": json.dumps(result, ensure_ascii=False)}, ensure_ascii=False)
+    except Exception as exc:
+        message = sanitize(exc, bound[0].turns.secrets)[:500]
+        return json.dumps({"error": f"Chorus fenced tool call failed: {message}"})
 
 
 def check_requirements() -> bool:
@@ -689,3 +723,4 @@ def register(ctx) -> None:
             ctx.register_hook(name, fn)
         except Exception:
             logger.exception("[Chorus] failed to register hook %s", name)
+    ctx.register_middleware("tool_execution", _tool_execution)

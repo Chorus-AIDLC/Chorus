@@ -9,7 +9,6 @@ import {
   resolveProjectAgentCwdTarget,
   type ResolvedProjectAgentCwdTarget,
 } from "@/services/project-agent-cwd.service";
-import { createActivity } from "@/services/activity.service";
 import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 import logger from "@/lib/logger";
 import { denyUnlessEntityAccess, denyUnlessProjectAccess } from "@/lib/project-access-action";
@@ -31,22 +30,12 @@ export async function claimIdeaAction(ideaUuid: string) {
 
     await assignIdea({
       ideaUuid,
+      auth,
       companyUuid: auth.companyUuid,
       assigneeType: auth.type,
       assigneeUuid: auth.actorUuid,
       assignedByType: "user",
       assignedByUuid: auth.actorUuid,
-    });
-
-    await createActivity({
-      companyUuid: auth.companyUuid,
-      projectUuid: idea.projectUuid,
-      targetType: "idea",
-      targetUuid: ideaUuid,
-      actorType: auth.type,
-      actorUuid: auth.actorUuid,
-      action: "assigned",
-      value: { assigneeType: auth.type, assigneeUuid: auth.actorUuid },
     });
 
     revalidatePath(`/projects/${idea.projectUuid}/ideas/${ideaUuid}`);
@@ -71,6 +60,7 @@ export async function claimIdeaToAgentAction(
   ideaUuid: string,
   agentUuid: string,
   instanceUuid?: string | null,
+  operationUuid?: string,
 ) {
   const auth = await getServerAuthContext();
   if (!auth || auth.type !== "user") {
@@ -97,6 +87,8 @@ export async function claimIdeaToAgentAction(
         : instanceUuid;
 
     await assignIdea({
+      auth,
+      operationUuid,
       ideaUuid,
       companyUuid: auth.companyUuid,
       assigneeType: "agent",
@@ -107,28 +99,6 @@ export async function claimIdeaToAgentAction(
       cwdSource: target.source === "project_fixed" ? target.source : null,
       cwdHost: target.source === "project_fixed" ? target.host : null,
       runtimeCwd: target.source === "project_fixed" ? target.cwd : null,
-    });
-
-    await createActivity({
-      companyUuid: auth.companyUuid,
-      projectUuid: idea.projectUuid,
-      targetType: "idea",
-      targetUuid: ideaUuid,
-      actorType: "user",
-      actorUuid: auth.actorUuid,
-      action: "assigned",
-      value: {
-        assigneeType: "agent",
-        assigneeUuid: agentUuid,
-        ...(resolvedInstanceUuid ? { instanceUuid: resolvedInstanceUuid } : {}),
-        ...(target.source === "project_fixed"
-          ? {
-              resolvedCwdSource: target.source,
-              resolvedCwdHost: target.host,
-              resolvedRuntimeCwd: target.cwd,
-            }
-          : {}),
-      },
     });
 
     revalidatePath(`/projects/${idea.projectUuid}/ideas/${ideaUuid}`);
@@ -175,6 +145,7 @@ export async function reassignIdeaInstanceNoWakeAction(
     // throws) BEFORE any assignee write, so the assignee is left unchanged.
     await assignIdea({
       ideaUuid,
+      auth,
       companyUuid: auth.companyUuid,
       assigneeType: "agent",
       assigneeUuid: agentUuid,
@@ -214,6 +185,7 @@ export async function claimIdeaToUserAction(ideaUuid: string, userUuid: string) 
 
     await assignIdea({
       ideaUuid,
+      auth,
       companyUuid: auth.companyUuid,
       assigneeType: "user",
       assigneeUuid: userUuid,
@@ -246,7 +218,7 @@ export async function releaseIdeaAction(ideaUuid: string) {
       return { success: false, error: "Idea not found" };
     }
 
-    await releaseIdea(idea.uuid);
+    await releaseIdea(idea.uuid, auth);
 
     revalidatePath(`/projects/${idea.projectUuid}/ideas/${ideaUuid}`);
     revalidatePath(`/projects/${idea.projectUuid}/ideas`);

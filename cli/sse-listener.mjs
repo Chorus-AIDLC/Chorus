@@ -136,6 +136,7 @@ export class SseListener {
       startedAt: PROCESS_STARTED_AT.toISOString(),
       livenessAck: "v1",
       wakeRecoveryProtocol: "1",
+      ideaTeamProtocol: "1",
     });
     this.endpoint = `${this.url}/api/events/notifications?${params.toString()}`;
 

@@ -36,6 +36,7 @@ class FakeCtx:
     def __init__(self) -> None:
         self.calls: List[tuple] = []
         self.hooks: dict = {}
+        self.middleware: dict = {}
         self.platforms: dict = {}
         self.skills: dict = {}
         self.approval_transports: dict = {}
@@ -44,6 +45,10 @@ class FakeCtx:
     def register_hook(self, name: str, callback: Callable) -> None:
         self.calls.append(("hook", name))
         self.hooks.setdefault(name, []).append(callback)
+
+    def register_middleware(self, name: str, callback: Callable) -> None:
+        self.calls.append(("middleware", name))
+        self.middleware.setdefault(name, []).append(callback)
 
     def register_platform(self, name: str, label: str, adapter_factory: Callable, check_fn: Callable,
                           **kwargs: Any) -> None:

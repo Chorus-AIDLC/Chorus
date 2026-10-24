@@ -123,6 +123,45 @@ describe("project team handoff against isolated PostgreSQL", () => {
     return handoff(actor, project, { leadAgentUuid, confirmationToken: result.confirmationToken });
   }
 
+  it("authorizes an owned non-member with only idea:write, not the optional Team lead", async () => {
+    const candidate = await idea({ assigneeType: "agent", assigneeUuid: previousUuid, teamProductAgentUuid: leadUuid });
+    await db.agent.update({ where: { uuid: previousUuid }, data: { roles: [], permissions: ["idea:write"] } });
+    const result = await preview(previousUuid);
+    expect(await confirm(result, previousUuid)).toMatchObject({ count: 1, changedCount: 0 });
+    expect(await db.idea.findUnique({ where: { uuid: candidate.uuid } })).toMatchObject({
+      assigneeUuid: previousUuid, teamLeadAgentUuid: previousUuid, teamOwnerUuid: auth.actorUuid,
+      teamEnrollmentVersion: 1, teamGeneration: 1, teamEnrolledByUuid: auth.actorUuid,
+      teamProductAgentUuid: null,
+    });
+    expect(state.emit).toHaveBeenCalledExactlyOnceWith("activity", expect.objectContaining({
+      action: "assigned", targetUuid: candidate.uuid,
+      value: expect.objectContaining({ humanAuthorizerUuid: auth.actorUuid, teamGeneration: 1 }),
+    }));
+  });
+
+  it("does not authorize another owner's assignments or private Team", async () => {
+    const foreignAssignment = await idea({ assigneeType: "agent", assigneeUuid: otherAgentUuid });
+    await db.projectAgentTeam.create({ data: {
+      companyUuid: auth.companyUuid, projectUuid, ownerUuid: other.actorUuid,
+      templateName: "Other private Team", snapshot: {},
+    } });
+    await expect(preview(otherAgentUuid)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await confirm(await preview())).toMatchObject({ count: 0, changedCount: 0 });
+    expect(await db.idea.findUnique({ where: { uuid: foreignAssignment.uuid } })).toEqual(foreignAssignment);
+    expect(await db.ideaAssignmentOperation.count({ where: { ideaUuid: foreignAssignment.uuid } })).toBe(0);
+    expect(state.emit).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the authenticated human before any confirmed assignment commits", async () => {
+    const candidate = await idea();
+    const result = await preview();
+    await db.user.update({ where: { uuid: auth.actorUuid }, data: { status: "inactive" } });
+    await expect(confirm(result)).rejects.toBeDefined();
+    expect(await db.idea.findUnique({ where: { uuid: candidate.uuid } })).toEqual(candidate);
+    expect(await db.activity.count({ where: { projectUuid } })).toBe(0);
+    expect(state.emit).not.toHaveBeenCalled();
+  });
+
   it("previews all owned assignment kinds, not creators, and excludes foreign, dangling, unassigned and completed ideas", async () => {
     const instance = await db.agentInstance.create({ data: { companyUuid: auth.companyUuid, agentUuid: previousUuid, host: "host", cwd: "/work" } });
     const otherInstance = await db.agentInstance.create({ data: { companyUuid: auth.companyUuid, agentUuid: otherAgentUuid, host: "host", cwd: "/work" } });
@@ -198,6 +237,8 @@ describe("project team handoff against isolated PostgreSQL", () => {
         cwdSource: "project_fixed", cwdHost: "fixed-host", runtimeCwd: "/fixed/repo",
         status: row.status === "open" ? "elaborating" : row.status,
         elaborationStatus: row.elaborationStatus, elaborationDepth: row.elaborationDepth,
+        teamEnrollmentVersion: 1, teamGeneration: 1, teamOwnerUuid: auth.actorUuid,
+        teamLeadAgentUuid: leadUuid, teamEnrolledByUuid: auth.actorUuid, teamEnrolledAt: expect.any(Date),
       });
     }
     expect(await db.task.findUnique({ where: { uuid: task.uuid } })).toEqual(task);
@@ -208,27 +249,40 @@ describe("project team handoff against isolated PostgreSQL", () => {
     expect(state.emit).toHaveBeenCalledTimes(2);
     expect(state.emit).toHaveBeenCalledWith("activity", expect.objectContaining({
       actorType: "user", actorUuid: auth.actorUuid, action: "assigned",
-      value: { assigneeType: "agent", assigneeUuid: leadUuid, instanceUuid: target.uuid,
-        resolvedCwdSource: "project_fixed", resolvedCwdHost: "fixed-host", resolvedRuntimeCwd: "/fixed/repo" },
+      value: expect.objectContaining({ assigneeType: "agent", assigneeUuid: leadUuid, instanceUuid: target.uuid,
+        humanAuthorizerUuid: auth.actorUuid, teamGeneration: 1, teamEnrollmentVersion: 1,
+        resolvedCwdSource: "project_fixed", resolvedCwdHost: "fixed-host", resolvedRuntimeCwd: "/fixed/repo" }),
     }));
     expect(state.emitChange).toHaveBeenCalledTimes(2);
     expect(await db.projectAgentTeam.findUnique({ where: { uuid: configUuid } })).toMatchObject({ lastLeadAgentUuid: leadUuid, revision: 2 });
     await expect(confirm(result)).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
-  it("enrolls same-logical-agent assignments without changing lifecycle or old pins", async () => {
+  it("explicitly authorizes same-logical-agent assignments once while preserving old pins", async () => {
     const instance = await db.agentInstance.create({ data: { companyUuid: auth.companyUuid, agentUuid: leadUuid, host: "old", cwd: "/old" } });
     const pinned = await idea({ assigneeType: "agent_instance", assigneeUuid: instance.uuid, cwdSource: "project_fixed", cwdHost: "old", runtimeCwd: "/old" });
     const plain = await idea({ assigneeType: "agent", assigneeUuid: leadUuid, status: "open" });
     await db.projectAgentCwdPreference.create({ data: {
       companyUuid: auth.companyUuid, userUuid: auth.actorUuid, projectUuid, agentUuid: leadUuid, host: "new", cwd: "/new",
     } });
-    expect(await confirm(await preview())).toMatchObject({ count: 2, changedCount: 0 });
-    expect(await db.idea.findUnique({ where: { uuid: pinned.uuid } })).toEqual({ ...pinned, teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: leadUuid, updatedAt: expect.any(Date) });
-    expect(await db.idea.findUnique({ where: { uuid: plain.uuid } })).toEqual({ ...plain, teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: leadUuid, updatedAt: expect.any(Date) });
+    const confirmation = await preview();
+    expect(await db.idea.findUnique({ where: { uuid: pinned.uuid } })).toEqual(pinned);
+    expect(await confirm(confirmation)).toMatchObject({ count: 2, changedCount: 0 });
+    for (const row of [pinned, plain]) {
+      expect(await db.idea.findUnique({ where: { uuid: row.uuid } })).toEqual({
+        ...row, status: "elaborating", teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: leadUuid,
+        teamEnrollmentVersion: 1, teamGeneration: 1, teamEnrolledByUuid: auth.actorUuid,
+        teamEnrolledAt: expect.any(Date), teamAssignmentChangedAt: expect.any(Date),
+        assignedAt: expect.any(Date), assignedByType: "user", assignedByUuid: auth.actorUuid,
+        updatedAt: expect.any(Date),
+      });
+    }
     expect(await db.agentInstance.count({ where: { agentUuid: leadUuid } })).toBe(1);
-    expect(state.emit).not.toHaveBeenCalled();
-    expect(await db.activity.count({ where: { projectUuid } })).toBe(0);
+    expect(state.emit).toHaveBeenCalledTimes(2);
+    expect(await db.activity.count({ where: { projectUuid, action: "assigned" } })).toBe(2);
+    expect(await db.ideaAssignmentOperation.count({ where: { ideaUuid: { in: [pinned.uuid, plain.uuid] } } })).toBe(2);
+    await expect(confirm(confirmation)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(state.emit).toHaveBeenCalledTimes(2);
   });
 
   it("feeds the ordinary post-commit notification and directed wake pipeline", async () => {
@@ -248,13 +302,20 @@ describe("project team handoff against isolated PostgreSQL", () => {
     expect(await db.idea.findUnique({ where: { uuid: candidate.uuid } })).toMatchObject({ assigneeUuid: instance.uuid });
     const { handleActivity } = await import("../notification-listener");
     await handleActivity(activity);
-    const notification = await db.notification.findFirstOrThrow({ where: { projectUuid, recipientUuid: leadUuid, action: "idea_claimed" } });
+    const notification = await db.notification.findFirstOrThrow({ where: { projectUuid, recipientUuid: leadUuid, action: "team_lead_handoff" } });
     expect(notification).toMatchObject({ actorType: "user", actorUuid: auth.actorUuid, entityUuid: candidate.uuid });
     const turn = await db.daemonSessionTurn.findFirstOrThrow({ where: { wakeNotificationUuid: notification.uuid } });
-    expect(turn).toMatchObject({ status: "pending", wakeTargetConnectionUuid: connection.uuid, wakeRuntimeCwd: "/wake" });
+    expect(turn).toMatchObject({
+      status: "pending", wakeTargetConnectionUuid: connection.uuid, wakeRuntimeCwd: "/wake",
+      wakeContext: { ideaTeam: { ideaUuid: candidate.uuid, generation: 1, ownerUuid: auth.actorUuid, agentUuid: leadUuid, role: "orchestrator" } },
+    });
+    await handleActivity(activity);
+    expect(await db.notification.count({ where: { projectUuid, recipientUuid: leadUuid, action: "team_lead_handoff" } })).toBe(1);
+    expect(await db.notification.count({ where: { projectUuid, recipientUuid: leadUuid, action: "idea_claimed" } })).toBe(0);
     const calls = state.emit.mock.calls.filter(([name]) => name === "activity").length;
     expect(await confirm(await preview())).toMatchObject({ changedCount: 0 });
-    expect(state.emit.mock.calls.filter(([name]) => name === "activity")).toHaveLength(calls);
+    expect(state.emit.mock.calls.filter(([name]) => name === "activity")).toHaveLength(calls + 1);
+    expect(await db.idea.findUnique({ where: { uuid: candidate.uuid } })).toMatchObject({ teamGeneration: 2 });
     expect(await db.daemonSessionTurn.count({ where: { wakeNotificationUuid: notification.uuid } })).toBe(1);
   });
 
@@ -267,12 +328,12 @@ describe("project team handoff against isolated PostgreSQL", () => {
     expect(await confirm(result)).toMatchObject({ changedCount: 1 });
   });
 
-  it("allows explicit frozen-team handoff and rejects missing/empty configs", async () => {
+  it("allows explicit frozen or empty Team handoff but rejects missing configs", async () => {
     await idea();
     await db.projectAgentTeam.update({ where: { uuid: configUuid }, data: { templateUuid: null } });
     expect(await confirm(await preview())).toMatchObject({ changedCount: 1 });
     await db.projectAgentTeam.update({ where: { uuid: configUuid }, data: { snapshot: {} } });
-    await expect(preview()).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await confirm(await preview())).toMatchObject({ changedCount: 0 });
     await db.projectAgentTeam.delete({ where: { uuid: configUuid } });
     await expect(preview()).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
@@ -288,12 +349,13 @@ describe("project team handoff against isolated PostgreSQL", () => {
     expect(await db.idea.findUnique({ where: { uuid: theme.uuid } })).toEqual(theme);
   });
 
-  it.each(["assignment", "completion", "ownership", "config", "template", "eligibility", "cwd"])("rejects stale %s without partial writes", async (change) => {
+  it.each(["assignment", "generation", "completion", "ownership", "config", "template", "eligibility", "cwd"])("rejects stale %s without partial writes", async (change) => {
     const candidate = await idea({ status: "elaborated", assigneeType: "agent", assigneeUuid: previousUuid });
     await idea();
     const { task } = await chain(candidate.uuid, "in_progress");
     const result = await preview();
     if (change === "assignment") await db.idea.update({ where: { uuid: candidate.uuid }, data: { assigneeUuid: otherAgentUuid } });
+    if (change === "generation") await db.idea.update({ where: { uuid: candidate.uuid }, data: { teamGeneration: { increment: 1 }, updatedAt: candidate.updatedAt } });
     if (change === "completion") await db.task.update({ where: { uuid: task.uuid }, data: { status: "done" } });
     if (change === "ownership") await db.agent.update({ where: { uuid: previousUuid }, data: { ownerUuid: other.actorUuid } });
     if (change === "config") await db.projectAgentTeam.update({ where: { uuid: configUuid }, data: { revision: { increment: 1 } } });
@@ -349,7 +411,9 @@ describe("project team handoff against isolated PostgreSQL", () => {
 
   it("repairs last-lead warnings only on successful explicit confirmation, including zero candidates", async () => {
     await db.projectAgentTeam.update({ where: { uuid: configUuid }, data: { lastLeadAgentUuid: previousUuid } });
-    expect((await configService.getProjectAgentTeam(auth, projectUuid))?.handoffWarning).toMatchObject({ agentUuid: previousUuid, reason: "removed_from_lead" });
+    expect((await configService.getProjectAgentTeam(auth, projectUuid))?.handoffWarning).toBeNull();
+    await db.agent.update({ where: { uuid: previousUuid }, data: { roles: [], permissions: ["idea:read"] } });
+    expect((await configService.getProjectAgentTeam(auth, projectUuid))?.handoffWarning).toMatchObject({ agentUuid: previousUuid, reason: "ineligible" });
     const result = await preview();
     expect((await configService.getProjectAgentTeam(auth, projectUuid))?.handoffWarning).not.toBeNull();
     expect(await confirm(result)).toMatchObject({ count: 0, changedCount: 0 });
@@ -373,6 +437,7 @@ describe("project team handoff against isolated PostgreSQL", () => {
     expect(await db.idea.findMany({ where: { projectUuid } })).toEqual(before);
     expect(await db.activity.count({ where: { projectUuid } })).toBe(0);
     expect(await db.projectAgentTeam.findUnique({ where: { uuid: configUuid } })).toMatchObject({ revision: 1, lastLeadAgentUuid: null });
+    expect(await db.ideaAssignmentOperation.count({ where: { ideaUuid: { in: before.map((row) => row.uuid) } } })).toBe(0);
     expect(state.emit).not.toHaveBeenCalled();
   });
 

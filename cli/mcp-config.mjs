@@ -6,6 +6,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ideaTeamHeaders } from "./idea-team-transport.mjs";
 
 /**
  * Build the MCP config object that exposes the Chorus server to the spawned
@@ -13,13 +14,13 @@ import { join } from "node:path";
  * OpenClaw plugin writes — see mcp-registration.ts).
  * @param {{ url: string, apiKey: string }} creds
  */
-export function buildMcpConfig({ url, apiKey }) {
+export function buildMcpConfig({ url, apiKey, ideaTeamTurn }) {
   return {
     mcpServers: {
       chorus: {
         type: "http",
         url: `${url.replace(/\/$/, "")}/api/mcp`,
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: { Authorization: `Bearer ${apiKey}`, ...ideaTeamHeaders(ideaTeamTurn) },
       },
     },
   };

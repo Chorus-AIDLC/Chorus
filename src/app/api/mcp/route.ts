@@ -12,6 +12,8 @@ import { accessibleProjectUuids } from "@/services/project-access.service";
 import type { AgentAuthContext, AgentRole } from "@/types/auth";
 import { computeEffectivePermissions } from "@/lib/authz/permissions";
 import logger from "@/lib/logger";
+import { ApiError } from "@/lib/api-handler";
+import { readIdeaTeamTurnContext } from "@/lib/idea-team-turn-context";
 
 const mcpLogger = logger.child({ module: "mcp" });
 
@@ -61,6 +63,7 @@ export async function POST(request: NextRequest) {
       ownerUuid: validation.agent.ownerUuid ?? undefined,
       agentName: validation.agent.name,
       projectUuids,
+      ...readIdeaTeamTurnContext(request.headers),
     };
     if (projectGroupUuid) {
       const access = await getGroupAccess(auth, projectGroupUuid);
@@ -83,6 +86,7 @@ export async function POST(request: NextRequest) {
     const response = await transport.handleRequest(request);
     return response;
   } catch (error) {
+    if (error instanceof ApiError) return NextResponse.json({ error: error.message }, { status: error.status });
     mcpLogger.error({ err: error }, "MCP endpoint error");
     return NextResponse.json(
       { error: "Internal server error" },
@@ -103,7 +107,7 @@ export async function OPTIONS() {
     headers: {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id, mcp-protocol-version",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, mcp-session-id, mcp-protocol-version, X-Chorus-Turn-Uuid, X-Chorus-Admission-Uuid, X-Chorus-Idea-Team-Turns",
     },
   });
 }

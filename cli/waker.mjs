@@ -20,6 +20,7 @@
 // (no-silent-errors: visible log, no throw).
 
 import { randomUUID } from "node:crypto";
+import { ideaTeamHeaders, validIdeaTeamContext } from "./idea-team-transport.mjs";
 import { deliveryRequest, deliveryError } from "./delivery-request.mjs";
 import { OPERATION_ACTIONS, isExactOperation, validateOperation } from "./operation.mjs";
 import { buildBatchPrompt } from "./prompts.mjs";
@@ -502,6 +503,7 @@ export class Waker {
         .map((notification) => [notification.turnUuid, notification.admissionUuid])),
       turnUuid: turnUuids[0], turnUuids,
       admissionUuid: first.admissionUuid ?? randomUUID(), wakeRecoveryProtocol: 1,
+      ...(list.some((notification) => notification.wakeContext?.ideaTeam) ? { ideaTeamProtocol: 1 } : {}),
     } : null;
     const transcriptIdentity = admission?.turnUuid || operationRequestUuid
       ? { turnUuid: admission?.turnUuid ?? operationRequestUuid } : {};
@@ -669,7 +671,14 @@ export class Waker {
       if (!admission && !operations.length) {
         this.logger.info(`[Chorus] legacy wake admission for ${key}: exact turn identity unavailable`);
       }
-      cfg = this.writeMcpConfigFn(this.creds);
+      if (list.some((notification) => !validIdeaTeamContext(notification.wakeContext))) throw new Error("Invalid Idea Team wake context");
+      const fenced = list.some((notification) => notification.wakeContext?.ideaTeam);
+      if (fenced && (!admission || !turnAdvancedToRunning)) throw new Error("Idea Team wake requires exact admission");
+      const ideaTeamTurn = fenced ? {
+        turnUuid: admission.turnUuid, admissionUuid: admission.admissionUuid,
+      } : undefined;
+      ideaTeamHeaders(ideaTeamTurn);
+      cfg = this.writeMcpConfigFn({ ...this.creds, ...(ideaTeamTurn ? { ideaTeamTurn } : {}) });
 
       sessionStartAttempted = true;
       await this.hooks?.onSessionStart?.({ rootIdeaKey: key, sessionId: sessionId ?? "", isNew, ...transcriptIdentity });
@@ -715,6 +724,7 @@ export class Waker {
           .catch(() => {});
       };
       const wakeParams = {
+        ideaTeamTurn,
         prompt,
         sessionId,
         isNew,
@@ -1006,6 +1016,7 @@ export class Waker {
         if ([404, 409].includes(status) && report.turnUuids.length > 1) onRejected(report);
         return null;
       }
+      if (result?.retryable === false) return null;
       const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempt - 1, 5));
       this.logger.warn(`[Chorus] exact admission unconfirmed turn=${report.turnUuid} attempt=${attempt} status=${Number(status) || "unknown"} retryInMs=${delay}`);
       await new Promise((resolve) => {

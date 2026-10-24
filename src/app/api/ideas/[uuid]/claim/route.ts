@@ -115,6 +115,8 @@ export const POST = withErrorHandler<{ uuid: string }>(
       // when null it is byte-identical to a plain-agent claim. Pass it only when
       // set so an un-pinned claim's args are unchanged from before.
       const updated = await claimIdea({
+        auth,
+        operationUuid: request.headers.get("Idempotency-Key") ?? undefined,
         ideaUuid: idea.uuid,
         companyUuid: auth.companyUuid,
         assigneeType,

@@ -6,6 +6,7 @@
 // unit-testable with fakes. See openspec/changes/add-cli-mcp-native-client/.
 
 import { readFileSync } from "node:fs";
+import { ideaTeamProofFromEnv } from "./idea-team-transport.mjs";
 import { parseMcpArgs, assembleArgs, mcpHelpText, UsageError } from "./mcp-args.mjs";
 import { resolveMcpCredentials } from "./credentials.mjs";
 import { ChorusClient, validateAndFetchIdentity } from "./chorus-client.mjs";
@@ -79,8 +80,10 @@ export async function runMcp(argv, opts = {}) {
 
   // 2. Resolve credentials + acting identity.
   let creds;
+  let ideaTeamTurn;
   try {
     creds = resolveCreds(parsed.creds, opts.credsDeps ?? {});
+    ideaTeamTurn = ideaTeamProofFromEnv(opts.env ?? process.env);
   } catch (e) {
     err.write(`error: ${/** @type {Error} */ (e).message}\n`);
     return EXIT_USAGE;
@@ -98,7 +101,7 @@ export async function runMcp(argv, opts = {}) {
       }
       throw e;
     }
-    const client = makeClient({ url: creds.url, apiKey: creds.apiKey });
+    const client = makeClient({ url: creds.url, apiKey: creds.apiKey, ...(ideaTeamTurn ? { ideaTeamTurn } : {}) });
     try {
       const { isError, text } = await client.callToolRaw(parsed.tool, args);
       if (isError) {

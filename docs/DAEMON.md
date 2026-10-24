@@ -16,6 +16,93 @@ See `chorus daemon --help` and `chorus login --help` for the full flag list.
 
 ---
 
+## Idea-assignee Team automation
+
+Each Idea's current explicitly human-assigned agent is its orchestrator. A private
+project Team supplies collaborators; its optional default lead is a suggestion,
+not the Idea owner or a membership requirement. New enrollment requires the
+receiving agent owner's consent, a bound Team, project editor access and
+`idea:write`. Other permissions are checked per action, not granted by the Team.
+
+### What starts work
+
+- Explicit human assignment, confirmed human handoff, and explicit human selection
+  in conversational creation start authorized work once. Bare creation, agent
+  self-claim, template changes, presence, upgrades and instance repinning do not.
+  Derived Ideas inherit no start authority; completed Ideas do not restart.
+- For agent-mediated assignment, the receiving owner uses the human confirmation
+  control or posts the exact standalone human comment `chorus:assign <agent-uuid>`
+  on the Idea. Call `chorus_prepare_idea_assignment({ideaUuid, agentUuid, commentUuid})`
+  for the comment path, then pass its returned `uuid` as `humanAuthorizationUuid`
+  to `chorus_pm_assign_idea`. Both tools require `idea:admin`. Ordinary prose,
+  mentions, agent-written commands and fabricated human headers cannot authorize.
+- Proof is private, company/project/Idea/target/owner/generation-bound, single-use
+  and expires after 24 hours. Never invent or reuse stale proof. Without proof,
+  permitted agent assignment cannot activate or repair automation. A legitimate
+  cross-owner assignment may persist, but needs receiving-owner consent to use
+  that owner's private Team. See [MCP tools](./MCP_TOOLS.md#chorus_prepare_idea_assignment).
+- Distinguish unassigned, assigned-but-not-authorized, legacy, active, paused and
+  action-permission waits. Assigned-but-not-authorized is not “no owner.” A paused
+  guard needs explicit human repair; a missing action permission only blocks that
+  action. Do not poll, self-claim or reassign to bypass either condition.
+
+### Capability and admission contract
+
+Maintained CLI, OpenClaw and Hermes runtimes must negotiate **both**
+`ideaTeamProtocol=1` and `wakeRecoveryProtocol=1` on notification subscription,
+pending-turn recovery and turn admission. New-version directed automation is
+withheld from incompatible clients with an upgrade hint; there is no unfenced
+broadcast or legacy-resume fallback. Merely adding capability flags without
+enforcing admission, recovery and mutation fencing is not support.
+
+Wake context retains primary `ideaTeam` and, for multi-source work, `ideaTeams`
+snapshots. Each fence contains `ideaUuid`, `generation`, `ownerUuid`, `agentUuid`
+and `role` (`orchestrator` or `product`); the primary must match an entry in the
+source snapshots when that array is present. Preserve every source fence rather
+than reducing proposal/document ancestry to one Idea. These snapshots are context,
+not authority that an agent can fabricate.
+
+Managed mutation requests carry the actual admitted `X-Chorus-Turn-Uuid` and
+`X-Chorus-Admission-Uuid`. Multi-source actions may also carry
+`X-Chorus-Idea-Team-Turns`, a JSON array of at most **16** strict
+`{turnUuid, admissionUuid}` UUID pairs, maximum 4096 characters, requiring both
+primary headers. Only use real server-issued admissions for the current run;
+never synthesize proofs, reuse stale admissions, or expose them in shared comments.
+
+Coalesced notifications share one primary admission. Send that primary proof only;
+merged rows are not independent admissions. The server resolves the primary's
+persisted `admissionTurnUuids` and validates every source fence in that bundle,
+including when an ordinary notification is first. Supplementary headers are only
+for separately admitted runs, never merged members of the same run.
+Resume validates the interrupted admission's complete bundle and persists all of
+its source fences on the continuation. It never rebuilds authority from current
+assignments or drops secondary sources, including across repeated resumes.
+This protocol applies across the maintained skill surfaces without changing
+their platform-specific tool names, session lifecycle or reviewer invocation.
+
+### Reassignment, recovery and gates
+
+- Scheduling, admission, resume, recovery and later mutations recheck recipient,
+  current assignee/delegate, Team owner, active enrollment and generation. A→B→A
+  does not restore A's old turn. A rejected directed turn cannot become runnable
+  through an ordinary broadcast. Unrelated comments retain ordinary behavior.
+- Product delegation keeps the orchestrator as sole Idea assignee. Re-delegation
+  invalidates the old turn and produces fresh product **and orchestrator** turns,
+  even for the same delegate: stop the obsolete run. Products can elaborate and
+  author/submit proposals, not resolve elaboration, approve or verify.
+- Already executing Tasks are not killed by reassignment. Later approval,
+  verification and delegated authoring mutations still require current authority.
+  Resume/recovery is not permission to replay old work. Legacy managed rows retain
+  their existing guards until an authorized transition; upgrades never bulk-enroll.
+- Human `yolo_requested` stays with the exact Idea across reassignment. Non-YOLO
+  proposals require human approval; YOLO approval still requires the current active
+  orchestrator and `proposal:admin`. Task verification does **not** require YOLO,
+  but does require the current active orchestrator, `task:admin`, valid task state
+  and passed required acceptance criteria. Every source Idea's gate applies.
+- Shared viewers receive safe gate responsibility, not private rosters or proof.
+  Existing reviewer/human gates remain mandatory; no independent reviewer auto-wake,
+  automatic merge, package publication or deployment is implied by assignment.
+
 ## Launch an agent interactively (`chorus agents run`)
 
 The daemon wakes an agent **headlessly** on dispatch. When you instead want to

@@ -17,9 +17,15 @@ export const GET = withErrorHandler<{ uuid: string }>(async (request: NextReques
     managed: team.managed,
     state: team.state,
     lead: team.lead,
+    orchestrator: team.orchestrator,
+    enrollmentVersion: team.enrollmentVersion,
+    generation: team.generation,
+    canAuthorizeAssignment: team.canAuthorizeAssignment,
     yolo: team.yolo,
     proposalGate: team.proposalGate,
     taskGate: team.taskGate,
     reason: team.reason,
+    proposalGateReason: team.proposalGateReason,
+    taskGateReason: team.taskGateReason,
   });
 });
