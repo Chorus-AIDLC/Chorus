@@ -777,6 +777,11 @@ export async function updateTask(
           if (!gate.allowed) throw new ApiError("VALIDATION_ERROR", `Cannot verify task: ${gate.reason}`, 422);
           completionCompanyUuid = anchor.companyUuid;
         }
+        // Closing counts as completion for derived Idea status, so an agent must pass
+        // the same Team task gate as verification. Humans keep their existing control.
+        if (data.status === "closed" && current?.proposalUuid && actorContext?.actorType === "agent") {
+          await assertIdeaTeamGate(anchor.companyUuid, current.proposalUuid, "task", actorContext, tx);
+        }
         // Route activity writes happen later: persist history atomically with execution.
         if (current && (EXECUTED_TASK_STATUSES.includes(data.status) || EXECUTED_TASK_STATUSES.includes(current.status))) {
           await tx.activity.create({ data: {

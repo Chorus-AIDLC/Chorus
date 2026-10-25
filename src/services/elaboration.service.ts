@@ -77,7 +77,7 @@ export async function startElaboration({
       where: { uuid: ideaUuid, companyUuid },
     });
     if (!idea) throw new Error("Idea not found");
-    const actor = { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid };
+    const actor = { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid, supplementaryTurns: actorContext?.supplementaryTurns };
     if (!(await isIdeaAssignedToActor(companyUuid, idea, actorUuid, tx)) && !(actorType === "agent" && await isIdeaTeamProductDelegate(companyUuid, ideaUuid, actorUuid, tx, actor))) {
       throw new Error("Only the assigned agent can start elaboration");
     }
@@ -192,7 +192,7 @@ export async function answerElaboration({
   actorContext?: IdeaTeamActorContext;
 }): Promise<ElaborationRoundResponse> {
   const committed = await projectTeamTransaction(async (tx) => {
-    await assertIdeaTeamElaborationWork(companyUuid, ideaUuid, { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid }, true, "idea:write", tx);
+    await assertIdeaTeamElaborationWork(companyUuid, ideaUuid, { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid, supplementaryTurns: actorContext?.supplementaryTurns }, true, "idea:write", tx);
     // Resolve the target round. When roundUuid is omitted, auto-locate the
     // Idea's single active (pending_answers) round.
     let resolvedRoundUuid = roundUuid;
@@ -347,7 +347,7 @@ export async function resolveElaboration({
     });
     if (!idea) throw new Error("Idea not found");
     const isAssignee = await isIdeaAssignedToActor(companyUuid, idea, actorUuid, tx);
-    await assertIdeaTeamElaborationWork(companyUuid, ideaUuid, { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid }, false, "idea:admin", tx);
+    await assertIdeaTeamElaborationWork(companyUuid, ideaUuid, { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid, supplementaryTurns: actorContext?.supplementaryTurns }, false, "idea:admin", tx);
     if (!isAssignee && !actorIsIdeaAdmin) {
       throw new Error(
         "Only the assigned agent or an idea:admin gateway can resolve elaboration"
@@ -512,7 +512,7 @@ export async function skipElaboration({
     });
     if (!idea) throw new Error("Idea not found");
     const isAssignee = await isIdeaAssignedToActor(companyUuid, idea, actorUuid, tx);
-    await assertIdeaTeamElaborationWork(companyUuid, ideaUuid, { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid }, false, "idea:write", tx);
+    await assertIdeaTeamElaborationWork(companyUuid, ideaUuid, { actorType, actorUuid, turnUuid: actorContext?.turnUuid, admissionUuid: actorContext?.admissionUuid, supplementaryTurns: actorContext?.supplementaryTurns }, false, "idea:write", tx);
     if (!isAssignee && !actorIsIdeaAdmin) {
       throw new Error(
         "Only the assigned agent or an idea:admin gateway can skip elaboration"

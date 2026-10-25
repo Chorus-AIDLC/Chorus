@@ -7,7 +7,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { withTransactionRetry } from "@/lib/transaction-retry";
 import { ApiError } from "@/lib/api-handler";
-import { assertIdeaTeamGate, assertIdeaTeamProductWork, getProposalTeamIdeaUuids, isIdeaTeamProductDelegate, resolveIdeaTeamInputs } from "./idea-team.service";
+import { assertIdeaTeamGate, assertIdeaTeamProductWork, getProposalTeamIdeaUuids, isIdeaTeamProductDelegate, resolveIdeaTeamInputs, resolveIdeaTeamSourcesForActor } from "./idea-team.service";
 import type { IdeaTeamActorContext } from "@/types/idea-team";
 import { projectTeamTransaction } from "./project-agent-team.service";
 import { Prisma } from "@/generated/prisma/client";
@@ -808,7 +808,7 @@ export async function createProposal(
   const proposal = await projectTeamTransaction(async (tx) => {
     const actor = params.actorContext ?? { actorType: params.createdByType ?? "agent", actorUuid: params.createdByUuid };
     if (actor.actorUuid !== params.createdByUuid || actor.actorType !== (params.createdByType ?? "agent")) throw new ApiError("FORBIDDEN", "Proposal author does not match actor", 403);
-    await assertIdeaTeamProductWork(params.companyUuid, await resolveIdeaTeamInputs(params.companyUuid, params.inputType, params.inputUuids, tx), actor, tx);
+    await assertIdeaTeamProductWork(params.companyUuid, await resolveIdeaTeamSourcesForActor(params.companyUuid, () => resolveIdeaTeamInputs(params.companyUuid, params.inputType, params.inputUuids, tx), actor, params.projectUuid, tx), actor, tx);
     // Container guard (single authoritative choke point): a container idea may
     // elaborate but MUST NOT create a proposal. When the input is ideas, reject if
     // ANY input idea is flagged isContainer. This blocks ONLY new creation — it never
@@ -900,7 +900,8 @@ export async function updateProposalContent(
   }
 
   const proposal = await projectTeamTransaction(async (tx) => {
-    await assertIdeaTeamProductWork(companyUuid, await getProposalTeamIdeaUuids(companyUuid, proposalUuid, tx), actorContext, tx);
+    const current = await tx.proposal.findFirst({ where: { uuid: proposalUuid, companyUuid }, select: { projectUuid: true } });
+    if (current) await assertIdeaTeamProductWork(companyUuid, await resolveIdeaTeamSourcesForActor(companyUuid, () => getProposalTeamIdeaUuids(companyUuid, proposalUuid, tx), actorContext, current.projectUuid, tx), actorContext, tx);
     return tx.proposal.update({
       where: { uuid: proposalUuid, companyUuid },
       data: updateData,
@@ -1248,7 +1249,7 @@ export async function submitProposal(
     const proposal = await tx.proposal.findFirst({ where: { uuid: proposalUuid, companyUuid } });
     if (!proposal) throw new Error("Proposal not found");
     if (proposal.status !== "draft") throw new Error("Only draft proposals can be submitted for review");
-    await assertIdeaTeamProductWork(companyUuid, await getProposalTeamIdeaUuids(companyUuid, proposalUuid, tx), actorContext, tx);
+    await assertIdeaTeamProductWork(companyUuid, await resolveIdeaTeamSourcesForActor(companyUuid, () => getProposalTeamIdeaUuids(companyUuid, proposalUuid, tx), actorContext, proposal.projectUuid, tx), actorContext, tx);
     const validation = await validateProposal(companyUuid, proposalUuid, tx);
     if (!validation.valid) {
       const lines = validation.issues.map((issue) => `[${issue.level}] ${issue.message}`);
@@ -1297,7 +1298,7 @@ async function withLockedDraftProposal<T>(
     if (!proposal) {
       throw new Error("Proposal not found or not in draft status");
     }
-    const sources = await getProposalTeamIdeaUuids(companyUuid, proposalUuid, tx);
+    const sources = await resolveIdeaTeamSourcesForActor(companyUuid, () => getProposalTeamIdeaUuids(companyUuid, proposalUuid, tx), actorContext, proposal.projectUuid, tx);
     const newEnrollment = await tx.idea.findFirst({ where: { uuid: { in: sources }, companyUuid, teamEnrollmentVersion: 1, OR: [{ teamOwnerUuid: { not: null } }, { teamLeadAgentUuid: { not: null } }] } });
     if (newEnrollment) await assertIdeaTeamProductWork(companyUuid, sources, actorContext, tx);
     return mutate(tx, proposal);

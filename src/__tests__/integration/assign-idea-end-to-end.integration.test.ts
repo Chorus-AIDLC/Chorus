@@ -328,22 +328,23 @@ describe("assign_idea end-to-end — agent target (AC#1)", () => {
     bindTeam();
     const params = { ideaUuid: IDEA, assigneeType: "agent", assigneeUuid: PM_AGENT, operationUuid: randomUUID() };
     const { result, activityEvent } = await assignAndNotify(params);
-    expect(JSON.parse(result.content[0].text)).toMatchObject({ wakeRequested: false, assignee: { type: "agent", uuid: PM_AGENT } });
+    // Legacy delegation still wakes the assignee; only Team enrollment needs the owner's proof.
+    expect(JSON.parse(result.content[0].text)).toMatchObject({ wakeRequested: true, assignee: { type: "agent", uuid: PM_AGENT } });
     expect(ideaRow()).toMatchObject({ status: "elaborating", teamGeneration: 1, teamOwnerUuid: null, teamLeadAgentUuid: null, teamEnrolledByUuid: null });
-    expect(activityEvent).toMatchObject({ action: "assignment_recorded", actorType: "agent", actorUuid: CALLER,
+    expect(activityEvent).toMatchObject({ action: "assigned", actorType: "agent", actorUuid: CALLER,
       value: { humanAuthorizerUuid: null },
     });
-    expect(recordedAssignments()).toHaveLength(1);
-    expect(assignedActivities()).toHaveLength(0);
+    expect(recordedAssignments()).toHaveLength(0);
+    expect(assignedActivities()).toHaveLength(1);
     expect(operations).toHaveLength(1);
-    expect(agentInstanceStore.notifications).toHaveLength(0);
-    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(0);
+    expect(agentInstanceStore.notifications.filter((row) => row.recipientUuid === PM_AGENT).map((row) => row.action)).toEqual(["idea_claimed"]);
+    expect(agentInstanceStore.daemonSessionTurns.every((turn) => !(turn.wakeContext as { ideaTeam?: unknown } | null)?.ideaTeam)).toBe(true);
     const before = structuredClone(ideaRow());
     const retry = await assignAndNotify(params);
     expect(retry.result.isError).toBeFalsy();
     expect(retry.activityEvent).toBeUndefined();
     expect(ideaRow()).toEqual(before);
-    expect(recordedAssignments()).toHaveLength(1);
+    expect(assignedActivities()).toHaveLength(1);
     expect(operations).toHaveLength(1);
   });
 
@@ -674,11 +675,12 @@ describe("assign_idea end-to-end — agent_instance pin (AC#1)", () => {
       cwdHost: "host-1",
       runtimeCwd: "/work/pm",
     });
+    // Re-pinning the same agent is not a new assignment: no second wake.
     expect(JSON.parse(second.result.content[0].text).wakeRequested).toBe(false);
-    expect(assignedActivities()).toHaveLength(0);
-    expect(recordedAssignments()).toHaveLength(2);
+    expect(assignedActivities()).toHaveLength(1);
+    expect(recordedAssignments()).toHaveLength(1);
     expect(ideaRow()).toMatchObject({ teamGeneration: 1, teamOwnerUuid: null });
-    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(0);
+    expect(agentInstanceStore.daemonSessionTurns.every((turn) => !(turn.wakeContext as { ideaTeam?: unknown } | null)?.ideaTeam)).toBe(true);
   });
 });
 
@@ -718,14 +720,14 @@ describe("assign_idea end-to-end — user target (AC#1)", () => {
     expect(idea.status).toBe("elaborating");
 
     // (b) Activity persisted with actorType agent + the user assignee.
-    const acts = recordedAssignments();
+    const acts = assignedActivities();
     expect(acts).toHaveLength(1);
     expect(acts[0].actorType).toBe("agent");
     expect(acts[0].value).toMatchObject({ assigneeType: "user", assigneeUuid: TARGET_USER });
 
-    // (c) Proofless recording is not an assignment kickoff notification.
-    expect(ideaClaimedNotifications()).toHaveLength(0);
-    expect(JSON.parse(result.content[0].text).wakeRequested).toBe(false);
+    // (c) The assigned user is notified, as before Team automation existed.
+    expect(ideaClaimedNotifications().map((row) => row.recipientUuid)).toContain(TARGET_USER);
+    expect(JSON.parse(result.content[0].text).wakeRequested).toBe(true);
 
     // (d) no daemon wake — a user recipient never owns a daemon session
     // (createTurnAndResolveTarget early-returns for a non-agent recipient).
@@ -752,10 +754,11 @@ describe("assign_idea end-to-end — takeover & status (AC#1)", () => {
     // Takeover: the new assignee replaces the prior one.
     expect(idea.assigneeType).toBe("agent");
     expect(idea.assigneeUuid).toBe(PM_AGENT);
-    // Taking over responsibility without proof does not authorize a wake.
-    expect(recordedAssignments()).toHaveLength(1);
-    expect(ideaClaimedNotifications()).toHaveLength(0);
-    expect(agentInstanceStore.daemonSessionTurns).toHaveLength(0);
+    // Takeover without proof keeps the legacy wake but never enrolls a Team.
+    expect(assignedActivities()).toHaveLength(1);
+    expect(ideaClaimedNotifications().map((row) => row.recipientUuid)).toContain(PM_AGENT);
+    expect(agentInstanceStore.daemonSessionTurns.every((turn) => !(turn.wakeContext as { ideaTeam?: unknown } | null)?.ideaTeam)).toBe(true);
+    expect(ideaRow()).toMatchObject({ teamOwnerUuid: null, teamLeadAgentUuid: null });
   });
 
   it("preserves a non-open status (elaborated) — backfill-safe, no open→elaborating override", async () => {

@@ -65,6 +65,18 @@ describe("Idea Team run-scoped transport", () => {
     expect(existsSync(generatedPath)).toBe(false);
   });
 
+  it("never writes the credential-bearing Kiro turn profile into a project .kiro directory", () => {
+    const home = mkdtempSync(join(tmpdir(), "chorus-team-home-"));
+    const project = mkdtempSync(join(tmpdir(), "chorus-team-project-"));
+    cleanups.push(() => rmSync(home, { recursive: true, force: true }), () => rmSync(project, { recursive: true, force: true }));
+    mkdirSync(join(project, ".kiro", "agents"), { recursive: true });
+    writeFileSync(join(project, ".kiro", "agents", "chorus.json"), JSON.stringify({ name: "chorus" }));
+    const config = ideaTeamRuntimeConfig({ runtime: "kiro", env: { HOME: home }, cwd: project, creds, ideaTeamTurn: proof });
+    cleanups.push(config.cleanup);
+    expect(existsSync(join(home, ".kiro", "agents", `${config.agentName}.json`))).toBe(true);
+    expect(existsSync(join(project, ".kiro", "agents", `${config.agentName}.json`))).toBe(false);
+  });
+
   it.each([true, false])("requires upgraded server acknowledgement for fenced admission: %s", async (supported) => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ success: true, data: { turn: { uuid: turnUuid }, ...(supported ? { ideaTeamProtocol: 1 } : {}) } }), { status: 200 }));
     const client = createDaemonRestClient({ ...creds, fetchImpl, getConnectionUuid: () => otherUuid });

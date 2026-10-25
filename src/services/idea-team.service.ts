@@ -16,6 +16,34 @@ function forbidden(reason: string): never {
   throw new ApiError("FORBIDDEN", reason, 403);
 }
 
+// Broken/ambiguous proposal ancestry. Kept distinct so callers can fail closed for
+// agents while letting authorized humans keep control of orphaned legacy work.
+export class IdeaTeamAncestryError extends ApiError {
+  constructor(reason: string) {
+    super("FORBIDDEN", reason, 403);
+  }
+}
+
+function ancestryForbidden(reason: string): never {
+  throw new IdeaTeamAncestryError(reason);
+}
+
+/**
+ * Resolve an entity's Team source Ideas for a gated action. Unresolvable ancestry is
+ * never treated as unmanaged for agents; a project editor human proceeds with no Team
+ * sources (humans already pass every Team gate with editor access).
+ */
+export async function resolveIdeaTeamSourcesForActor(companyUuid: string, resolve: () => Promise<string[]>, actor: IdeaTeamActorContext | undefined, projectUuid: string, client: ProjectTeamClient = prisma): Promise<string[]> {
+  try {
+    return await resolve();
+  } catch (error) {
+    if (!(error instanceof IdeaTeamAncestryError)) throw error;
+    const identity = await actorAuth(companyUuid, actor, client);
+    if (identity?.type === "user" && levelAtLeast((await computeProjectAccess(identity, projectUuid, client)).level, "editor")) return [];
+    throw error;
+  }
+}
+
 async function actorAuth(companyUuid: string, actor: IdeaTeamActorContext | undefined, client: ProjectTeamClient): Promise<AuthContext | null> {
   if (!actor) return null;
   if (actor.actorType === "user") {
@@ -230,10 +258,17 @@ export async function canReceiveIdeaTeamWake(companyUuid: string, agentUuid: str
 
 export async function getIdeaTeamActivityFences(companyUuid: string, targetType: string, targetUuid: string, client: ProjectTeamClient = prisma): Promise<IdeaTeamTurnFence[]> {
   let ideaUuids = targetType === "idea" ? [targetUuid] : [];
-  if (targetType === "proposal") ideaUuids = await getProposalTeamIdeaUuids(companyUuid, targetUuid, client);
-  if (targetType === "task") {
-    const task = await client.task.findFirst({ where: { uuid: targetUuid, companyUuid } });
-    if (task?.proposalUuid) ideaUuids = await getProposalTeamIdeaUuids(companyUuid, task.proposalUuid, client);
+  try {
+    if (targetType === "proposal") ideaUuids = await getProposalTeamIdeaUuids(companyUuid, targetUuid, client);
+    if (targetType === "task") {
+      const task = await client.task.findFirst({ where: { uuid: targetUuid, companyUuid } });
+      if (task?.proposalUuid) ideaUuids = await getProposalTeamIdeaUuids(companyUuid, task.proposalUuid, client);
+    }
+  } catch (error) {
+    // Fences only scope Team wakes. Broken ancestry yields none (no Team wake),
+    // and must never fail an activity write for an already-committed change.
+    if (error instanceof IdeaTeamAncestryError) return [];
+    throw error;
   }
   const fences: IdeaTeamTurnFence[] = [];
   for (const ideaUuid of ideaUuids) {
@@ -291,7 +326,7 @@ export async function delegateIdeaTeamProduct(auth: AuthContext, ideaUuid: strin
 
 export async function getProposalTeamIdeaUuids(companyUuid: string, proposalUuid: string, client: ProjectTeamClient = prisma): Promise<string[]> {
   const proposal = await client.proposal.findFirst({ where: { uuid: proposalUuid, companyUuid } });
-  if (!proposal) forbidden("Proposal ancestry is missing");
+  if (!proposal) ancestryForbidden("Proposal ancestry is missing");
   return resolveIdeaTeamInputs(companyUuid, proposal.inputType, proposal.inputUuids, client, [proposalUuid]);
 }
 
@@ -300,37 +335,39 @@ export async function resolveIdeaTeamInputs(companyUuid: string, inputType: stri
   const visited = new Set<string>();
   const visiting = new Set(ancestors);
   async function visit(uuid: string) {
-    if (visiting.has(uuid)) forbidden("Proposal ancestry contains a cycle");
+    if (visiting.has(uuid)) ancestryForbidden("Proposal ancestry contains a cycle");
     if (visited.has(uuid)) return;
     const proposal = await client.proposal.findFirst({ where: { uuid, companyUuid } });
-    if (!proposal) forbidden("Proposal ancestry is missing");
+    if (!proposal) ancestryForbidden("Proposal ancestry is missing");
     visiting.add(uuid);
     await inputs(proposal.inputType, proposal.inputUuids);
     visiting.delete(uuid);
     visited.add(uuid);
   }
   async function inputs(type: string, uuids: unknown) {
-    if (!Array.isArray(uuids) || uuids.some((uuid) => typeof uuid !== "string")) forbidden("Proposal ancestry is ambiguous");
+    if (!Array.isArray(uuids) || uuids.some((uuid) => typeof uuid !== "string")) ancestryForbidden("Proposal ancestry is ambiguous");
     if (type === "idea") {
       for (const ideaUuid of uuids as string[]) {
         const idea = await client.idea.findFirst({ where: { uuid: ideaUuid, companyUuid } });
-        if (!idea) forbidden("Idea ancestry is missing");
+        if (!idea) ancestryForbidden("Idea ancestry is missing");
         ideas.add(ideaUuid);
       }
     } else if (type === "document") {
       for (const documentUuid of uuids as string[]) {
         const document = await client.document.findFirst({ where: { uuid: documentUuid, companyUuid } });
-        if (!document) forbidden("Document ancestry is missing");
+        if (!document) ancestryForbidden("Document ancestry is missing");
         if (document.proposalUuid) await visit(document.proposalUuid);
       }
-    } else forbidden("Proposal ancestry is ambiguous");
+    } else ancestryForbidden("Proposal ancestry is ambiguous");
   }
   await inputs(inputType, inputUuids);
   return [...ideas];
 }
 
 export async function assertIdeaTeamGate(companyUuid: string, proposalUuid: string, gate: "proposal" | "task", actor: IdeaTeamActorContext | undefined, client: ProjectTeamClient = prisma) {
-  const ideaUuids = await getProposalTeamIdeaUuids(companyUuid, proposalUuid, client);
+  const proposal = await client.proposal.findFirst({ where: { uuid: proposalUuid, companyUuid }, select: { projectUuid: true } });
+  if (!proposal) ancestryForbidden("Proposal ancestry is missing");
+  const ideaUuids = await resolveIdeaTeamSourcesForActor(companyUuid, () => getProposalTeamIdeaUuids(companyUuid, proposalUuid, client), actor, proposal.projectUuid, client);
   for (const ideaUuid of ideaUuids) {
     const state = await teamState(companyUuid, ideaUuid, client);
     if (!state.managed) continue;

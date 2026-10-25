@@ -141,7 +141,7 @@ export async function assignIdeaWithAuthorityInTx(auth: AuthContext, input: Assi
     const authorized = humanUuid !== null;
     const generation = idea.teamGeneration + (authorized || changed ? 1 : 0);
     const now = new Date();
-    const basicEligibility = agent && agent.ownerUuid === humanUuid && computeEffectivePermissions(agent.roles, agent.permissions).has("idea:write");
+    const basicEligibility = humanUuid !== null && agent && agent.ownerUuid === humanUuid && computeEffectivePermissions(agent.roles, agent.permissions).has("idea:write");
     const team = basicEligibility ? await getProjectAgentTeam({ type: "user", actorUuid: humanUuid!, companyUuid: auth.companyUuid }, idea.projectUuid, client) : null;
     const enroll = Boolean(basicEligibility && team);
     const clearing = authorized && !enroll;
@@ -149,6 +149,8 @@ export async function assignIdeaWithAuthorityInTx(auth: AuthContext, input: Assi
       assigneeType, assigneeUuid, assignedAt: assigneeUuid ? authorized || changed ? now : idea.assignedAt : null,
       assignedByType: input.pinOnly ? idea.assignedByType : assigneeUuid ? actor.type : null, assignedByUuid: input.pinOnly ? idea.assignedByUuid : assigneeUuid ? actor.actorUuid : null,
       status: !assigneeUuid && idea.status !== "elaborated" ? "open" : assigneeUuid && idea.status === "open" ? "elaborating" : idea.status,
+      // Release resets an unfinished elaboration, as before, so the next claimant starts clean.
+      ...(!assigneeUuid && idea.status !== "elaborated" ? { elaborationDepth: null, elaborationStatus: null } : {}),
       cwdSource: input.runtimeCwd ? input.cwdSource ?? null : null, cwdHost: input.runtimeCwd ? input.cwdHost ?? null : null, runtimeCwd: input.runtimeCwd ?? null,
       teamGeneration: generation,
       ...(authorized || changed ? { teamAssignmentChangedAt: now } : {}),
@@ -160,7 +162,9 @@ export async function assignIdeaWithAuthorityInTx(auth: AuthContext, input: Assi
     const proposals = await client.proposal.findMany({ where: { companyUuid: auth.companyUuid, projectUuid: idea.projectUuid, inputType: "idea", inputUuids: { array_contains: [idea.uuid] } }, select: { uuid: true, status: true } });
     const taskStates = proposals.length ? await client.task.findMany({ where: { companyUuid: auth.companyUuid, proposalUuid: { in: proposals.map((proposal) => proposal.uuid) } }, select: { status: true } }) : [];
     const done = taskStates.length > 0 && taskStates.every((task) => task.status === "done" || task.status === "closed") && proposals.every((proposal) => proposal.status === "approved" || proposal.status === "closed");
-    const kickoff = Boolean(basicEligibility) && !done && input.emitKickoff !== false;
+    // Team enrollment needs owner consent, but any real assignment keeps the legacy wake/notify:
+    // the woken agent re-reads Team context and stays fenced when it is not the enrolled orchestrator.
+    const kickoff = Boolean(assigneeUuid) && !input.pinOnly && (authorized || changed) && !done && input.emitKickoff !== false;
     const audit = await createActivityInTx(client, { companyUuid: auth.companyUuid, projectUuid: idea.projectUuid, targetType: "idea", targetUuid: idea.uuid,
       actorType: actor.type, actorUuid: actor.actorUuid, action: kickoff ? "assigned" : "assignment_recorded",
       value: { assigneeType: agentUuid ? "agent" : assigneeType, assigneeUuid: agentUuid ?? assigneeUuid, humanAuthorizerUuid: humanUuid, teamGeneration: generation, teamEnrollmentVersion: updated.teamEnrollmentVersion,

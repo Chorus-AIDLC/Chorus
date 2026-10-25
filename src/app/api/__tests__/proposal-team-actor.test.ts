@@ -20,6 +20,12 @@ describe("REST Team approval actor", () => {
     expect((await approve()).status).toBe(200);
     expect(mocks.approve).toHaveBeenCalledWith("proposal", "company", "actor", "Checked", { actorType: type, actorUuid: "actor" });
   });
+  it("forwards the agent's admitted Idea Team turn proof to the gate", async () => {
+    const ideaTeamTurn = { turnUuid: "turn", admissionUuid: "admission", supplementaryTurns: [{ turnUuid: "turn-2", admissionUuid: "admission" }] };
+    mocks.auth.mockResolvedValue({ type: "agent", companyUuid: "company", actorUuid: "actor", permissions: ["proposal:admin"], ideaTeamTurn });
+    expect((await approve()).status).toBe(200);
+    expect(mocks.approve).toHaveBeenCalledWith("proposal", "company", "actor", "Checked", { actorType: "agent", actorUuid: "actor", ...ideaTeamTurn });
+  });
   it("surfaces shared Team gate denial without approval activity", async () => {
     mocks.approve.mockRejectedValue(new ApiError("FORBIDDEN", "Human approval required", 403));
     expect((await approve()).status).toBe(403);

@@ -16,6 +16,7 @@ vi.mock("@/services/idea-team.service", () => ({
   assertIdeaTeamProductWork: vi.fn(async () => {}),
   getProposalTeamIdeaUuids: vi.fn(async () => []),
   resolveIdeaTeamInputs: vi.fn(async () => []),
+  resolveIdeaTeamSourcesForActor: vi.fn(async (_c: string, resolve: () => Promise<string[]>) => resolve()),
   isIdeaTeamProductDelegate: vi.fn(async () => false),
 }));
 

@@ -717,6 +717,22 @@ describe("Idea Team routing and gates against isolated PostgreSQL", () => {
     await expect(service.assertIdeaTeamGate(auth.companyUuid, child.uuid, "proposal", actor(lead))).rejects.toThrow("missing");
   });
 
+  it("orphaned ancestry stays closed for agents but keeps human control and activity writes", async () => {
+    const managed = await idea();
+    const approved = await proposal([managed.uuid], "idea", "approved");
+    const task = await db.task.create({ data: { companyUuid: auth.companyUuid, projectUuid, title: "Orphan", status: "to_verify", proposalUuid: approved.uuid, createdByUuid: auth.actorUuid } });
+    await db.idea.delete({ where: { uuid: managed.uuid } });
+    await expect(tasks.updateTask(task.uuid, { status: "done" }, actor(lead))).rejects.toThrow("Idea ancestry is missing");
+    await expect(tasks.updateTask(task.uuid, { status: "closed" }, actor(developer))).rejects.toThrow("Idea ancestry is missing");
+    expect((await db.task.findUniqueOrThrow({ where: { uuid: task.uuid } })).status).toBe("to_verify");
+    await tasks.updateTask(task.uuid, { status: "done" }, actor(auth));
+    expect((await db.task.findUniqueOrThrow({ where: { uuid: task.uuid } })).status).toBe("done");
+    const { createActivity } = await import("../activity.service");
+    await expect(createActivity({ companyUuid: auth.companyUuid, projectUuid, targetType: "task", targetUuid: task.uuid, action: "status_changed", ...actor(auth), value: { from: "to_verify", to: "done" } })).resolves.toBeTruthy();
+    const draft = await proposal([randomUUID()], "idea", "draft");
+    await expect(proposals.submitProposal(draft.uuid, auth.companyUuid, actor(lead))).rejects.toThrow("Idea ancestry is missing");
+  });
+
   it("protects the generic done mutation, including document ancestry, but leaves Quick Tasks compatible", async () => {
     const managed = await idea();
     const approved = await proposal([managed.uuid], "idea", "approved");
@@ -733,6 +749,23 @@ describe("Idea Team routing and gates against isolated PostgreSQL", () => {
     const legacy = await idea({}, false);
     const pending = await proposal([legacy.uuid]);
     await proposals.approveProposal(pending.uuid, auth.companyUuid, lead.actorUuid);
+  });
+
+  it("gates agent task close like verification, since closed counts as complete", async () => {
+    const managed = await idea();
+    const approved = await proposal([managed.uuid], "idea", "approved");
+    const task = await db.task.create({ data: { companyUuid: auth.companyUuid, projectUuid, title: "Close me", status: "in_progress", proposalUuid: approved.uuid, createdByUuid: auth.actorUuid } });
+    await expect(tasks.updateTask(task.uuid, { status: "closed" }, actor(developer))).rejects.toMatchObject({ status: 403 });
+    await expect(tasks.updateTask(task.uuid, { status: "closed" }, actor(product))).rejects.toMatchObject({ status: 403 });
+    expect((await db.task.findUniqueOrThrow({ where: { uuid: task.uuid } })).status).toBe("in_progress");
+    await tasks.updateTask(task.uuid, { status: "closed" }, actor(lead));
+    expect((await db.task.findUniqueOrThrow({ where: { uuid: task.uuid } })).status).toBe("closed");
+    const legacy = await idea({}, false);
+    const legacyProposal = await proposal([legacy.uuid], "idea", "approved");
+    const legacyTask = await db.task.create({ data: { companyUuid: auth.companyUuid, projectUuid, title: "Legacy", status: "in_progress", proposalUuid: legacyProposal.uuid, createdByUuid: auth.actorUuid } });
+    await tasks.updateTask(legacyTask.uuid, { status: "closed" }, actor(developer));
+    const quick = await db.task.create({ data: { companyUuid: auth.companyUuid, projectUuid, title: "Quick", status: "in_progress", createdByUuid: auth.actorUuid } });
+    await tasks.updateTask(quick.uuid, { status: "closed" }, actor(developer));
   });
 
   it("distinguishes empty/ineligible roles from offline fallback and rejects unrelated tasks", async () => {

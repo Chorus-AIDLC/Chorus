@@ -184,7 +184,7 @@ describe("Idea assignment authority against isolated PostgreSQL", () => {
     const source = await idea();
     await service.assignIdeaWithAuthority(auth, assignment(source.uuid));
     const result = await service.assignIdeaWithAuthority(auth, assignment(source.uuid, foreign.actorUuid));
-    expect(result).toMatchObject({ kickoff: false, idea: {
+    expect(result).toMatchObject({ kickoff: true, idea: {
       assigneeUuid: foreign.actorUuid, teamGeneration: 2, teamOwnerUuid: null, teamLeadAgentUuid: null, teamEnrolledAt: null, teamEnrolledByUuid: null,
     } });
     const confirmed = await service.assignIdeaWithAuthority(receiver, assignment(source.uuid, foreign.actorUuid));
@@ -194,13 +194,13 @@ describe("Idea assignment authority against isolated PostgreSQL", () => {
   it("allows unproven agent assignment without activating, refreshing, or clearing a managed guard", async () => {
     const source = await idea();
     const unproven = await service.assignIdeaWithAuthority(executor, assignment(source.uuid));
-    expect(unproven).toMatchObject({ kickoff: false, idea: { assigneeUuid: first.actorUuid, teamEnrollmentVersion: 0, teamOwnerUuid: null, teamEnrolledAt: null } });
+    expect(unproven).toMatchObject({ kickoff: true, idea: { assigneeUuid: first.actorUuid, teamEnrollmentVersion: 0, teamOwnerUuid: null, teamEnrolledAt: null } });
     const enrolled = await service.assignIdeaWithAuthority(auth, assignment(source.uuid));
     await db.idea.update({ where: { uuid: source.uuid }, data: { teamProductAgentUuid: second.actorUuid } });
     const repeated = await service.assignIdeaWithAuthority(executor, assignment(source.uuid));
     expect(repeated).toMatchObject({ kickoff: false, idea: { teamGeneration: enrolled.idea.teamGeneration, teamProductAgentUuid: second.actorUuid, teamEnrolledAt: enrolled.idea.teamEnrolledAt, teamAssignmentChangedAt: enrolled.idea.teamAssignmentChangedAt } });
     const changed = await service.assignIdeaWithAuthority(executor, assignment(source.uuid, second.actorUuid));
-    expect(changed).toMatchObject({ kickoff: false, idea: {
+    expect(changed).toMatchObject({ kickoff: true, idea: {
       assigneeUuid: second.actorUuid, teamGeneration: enrolled.idea.teamGeneration + 1, teamEnrollmentVersion: 1,
       teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: first.actorUuid, teamProductAgentUuid: null,
     } });
@@ -395,7 +395,7 @@ describe("Idea assignment authority against isolated PostgreSQL", () => {
     const result = await service.assignIdeaWithAuthority(auth, {
       ideaUuid: source.uuid, operationUuid: randomUUID(), assigneeType: kind === "user" ? "user" : null, assigneeUuid: kind === "user" ? auth.actorUuid : null,
     });
-    expect(result).toMatchObject({ kickoff: false, idea: { teamGeneration: 2, teamOwnerUuid: null, teamLeadAgentUuid: null, teamEnrolledAt: null, teamEnrolledByUuid: null } });
+    expect(result).toMatchObject({ kickoff: kind === "user", idea: { teamGeneration: 2, teamOwnerUuid: null, teamLeadAgentUuid: null, teamEnrolledAt: null, teamEnrolledByUuid: null } });
     await rejectsUnchanged(source.uuid, () => service.assignIdeaWithAuthority(executor, { ...assignment(source.uuid), humanAuthorizationUuid: authorization.uuid }));
   });
 
@@ -587,7 +587,7 @@ describe("Idea assignment authority against isolated PostgreSQL", () => {
     const source = await idea();
     const input = { ...assignment(source.uuid), claimOnly: true };
     const result = await service.assignIdeaWithAuthority(first, input);
-    expect(result).toMatchObject({ kickoff: false, idea: { assigneeUuid: first.actorUuid, teamOwnerUuid: null } });
+    expect(result).toMatchObject({ kickoff: true, idea: { assigneeUuid: first.actorUuid, teamOwnerUuid: null } });
     expect(await service.assignIdeaWithAuthority(first, input)).toMatchObject({ replayed: true });
     const other = await idea();
     await rejectsUnchanged(other.uuid, () => service.assignIdeaWithAuthority(first, { ...assignment(other.uuid, second.actorUuid), claimOnly: true }));
@@ -600,6 +600,17 @@ describe("Idea assignment authority against isolated PostgreSQL", () => {
     await rejectsUnchanged(source.uuid, () => service.assignIdeaWithAuthority(second, input));
     const result = await service.assignIdeaWithAuthority(first, input);
     expect(result).toMatchObject({ kickoff: false, idea: { assigneeUuid: null, teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: first.actorUuid } });
+  });
+
+  it("release resets an unfinished elaboration so the next claimant starts clean", async () => {
+    const source = await idea({ status: "elaborating", elaborationStatus: "pending_answers", elaborationDepth: "standard" });
+    await service.assignIdeaWithAuthority(auth, assignment(source.uuid));
+    const released = await service.assignIdeaWithAuthority(first, { ideaUuid: source.uuid, assigneeType: null, assigneeUuid: null, operationUuid: randomUUID(), releaseOwn: true });
+    expect(released.idea).toMatchObject({ status: "open", elaborationStatus: null, elaborationDepth: null });
+    const done = await idea({ status: "elaborated", elaborationStatus: "resolved", elaborationDepth: "standard" });
+    await service.assignIdeaWithAuthority(auth, assignment(done.uuid));
+    const kept = await service.assignIdeaWithAuthority(first, { ideaUuid: done.uuid, assigneeType: null, assigneeUuid: null, operationUuid: randomUUID(), releaseOwn: true });
+    expect(kept.idea).toMatchObject({ status: "elaborated", elaborationStatus: "resolved", elaborationDepth: "standard" });
   });
 
   it("runtime-only repinning preserves generation and consent and cannot change the logical owner", async () => {
@@ -648,7 +659,7 @@ describe("Idea assignment authority against isolated PostgreSQL", () => {
       await service.assignIdeaWithAuthority(executor, { ...assignment(source.uuid), assigneeUuid: executor.actorUuid });
     }
     const returned = await service.assignIdeaWithAuthority(mode === "self_claim" ? first : executor, { ...assignment(source.uuid), ...(mode === "self_claim" ? { claimOnly: true } : {}) });
-    expect(returned).toMatchObject({ kickoff: false, idea: { teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: first.actorUuid, teamEnrolledAt: null, teamEnrolledByUuid: null } });
+    expect(returned).toMatchObject({ kickoff: true, idea: { teamOwnerUuid: auth.actorUuid, teamLeadAgentUuid: first.actorUuid, teamEnrolledAt: null, teamEnrolledByUuid: null } });
     expect(await getIdeaTeamContext(auth, source.uuid)).toMatchObject({ managed: true, state: "paused", reason: "human_assignment_required" });
     const fence = { ideaUuid: source.uuid, generation: returned.idea.teamGeneration, ownerUuid: auth.actorUuid, agentUuid: first.actorUuid, role: "orchestrator" as const };
     expect(await canReceiveIdeaTeamFence(auth.companyUuid, first.actorUuid, fence)).toBe(false);

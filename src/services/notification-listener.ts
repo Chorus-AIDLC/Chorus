@@ -643,7 +643,7 @@ export async function handleActivity(event: ActivityEvent): Promise<void> {
     // Don't notify the actor about their own action
     const filteredRecipients = uniqueRecipients.filter(
       (r) => !(r.type === event.actorType && r.uuid === event.actorUuid) ||
-        (event.action === "assigned" && typeof eventValue.humanAuthorizerUuid === "string") ||
+        (event.action === "assigned" && typeof eventValue.humanAuthorizerUuid === "string" && r.type === "agent") ||
         (event.action === "product_delegated" && teamFences.some((fence) => fence.role === "orchestrator" && fence.agentUuid === r.uuid))
     );
 

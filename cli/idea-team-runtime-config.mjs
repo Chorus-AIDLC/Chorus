@@ -19,7 +19,11 @@ export function ideaTeamRuntimeConfig({ runtime, env, cwd = process.cwd(), creds
       if (existsSync(path)) servers = { ...servers, ...JSON.parse(readFileSync(path, "utf8")).mcpServers };
     }
     const agentName = `chorus-turn-${randomUUID()}`;
-    const path = join(source, "agents", `${agentName}.json`);
+    // Always write the per-turn profile (it embeds the API key) to the user-level Kiro
+    // dir, never into a project's .kiro/, so a crash can't leave credentials in a repo.
+    const agentsDir = join(env.HOME || homedir(), ".kiro", "agents");
+    mkdirSync(agentsDir, { recursive: true, mode: 0o700 });
+    const path = join(agentsDir, `${agentName}.json`);
     const chorus = buildMcpConfig({ ...creds, ideaTeamTurn }).mcpServers.chorus;
     writeFileSync(path, JSON.stringify({ ...agent, name: agentName, includeMcpJson: false,
       mcpServers: { ...servers, ...agent.mcpServers, chorus } }), { mode: 0o600, flag: "wx" });

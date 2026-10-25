@@ -167,6 +167,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
     const updated = await updateTask(task.uuid, updateData, {
       actorType: auth.type,
       actorUuid: auth.actorUuid,
+      ...auth.ideaTeamTurn,
     });
     return success(updated);
   }

@@ -158,7 +158,8 @@ describe("KiroSpawner.wake — spawn orchestration", () => {
       mkdirSync(agents, { recursive: true });
       writeFileSync(join(agents, "chorus.json"), JSON.stringify({ name: "chorus", includeMcpJson: true }));
       const child = makeFakeChild();
-      const { spawner, calls } = makeSpawner({ child });
+      // The credential-bearing per-turn profile goes to the user-level Kiro dir (HOME), never the project.
+      const { spawner, calls } = makeSpawner({ child, env: { ...process.env, HOME: cwd } });
       const ideaTeamTurn = { turnUuid: ANCHOR, admissionUuid: SID };
       const pending = spawner.wake({ prompt: "go", sessionId: ANCHOR, cwd, ideaTeamTurn });
       const agentName = calls.argv[calls.argv.indexOf("--agent") + 1];
@@ -181,6 +182,7 @@ describe("KiroSpawner.wake — spawn orchestration", () => {
     setSessionId,
     snapshots,
     kiroPath = "/usr/bin/kiro-cli",
+    env,
   } = {}) {
     const calls = {};
     const spawnImpl = vi.fn((command, argv, opts) => {
@@ -198,6 +200,7 @@ describe("KiroSpawner.wake — spawn orchestration", () => {
       kiroPath,
       spawnImpl,
       permissionMode,
+      ...(env ? { env } : {}),
       creds,
       platform: "linux",
       logger: { info() {}, warn() {}, error() {} },

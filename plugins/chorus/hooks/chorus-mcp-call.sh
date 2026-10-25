@@ -132,7 +132,7 @@ JSON
 HEADERS_FILE=$(mktemp)
 trap 'rm -f "$HEADERS_FILE"' EXIT
 
-curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" -D "$HEADERS_FILE" \
+curl ${CHORUS_TURN_HEADERS[@]+"${CHORUS_TURN_HEADERS[@]}"} -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" -D "$HEADERS_FILE" \
   -d "$INIT" "$MCP_URL" >/dev/null || { echo "MCP initialize failed" >&2; exit 2; }
 
 SESSION_ID=$(grep -i '^mcp-session-id:' "$HEADERS_FILE" 2>/dev/null | tr -d '\r' | awk '{print $2}') || true
@@ -142,14 +142,14 @@ if [ -n "$SESSION_ID" ]; then
 fi
 
 # Fire 'initialized' notification (no reply expected)
-curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" "${SESSION_HEADER[@]}" \
+curl ${CHORUS_TURN_HEADERS[@]+"${CHORUS_TURN_HEADERS[@]}"} -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" ${SESSION_HEADER[@]+"${SESSION_HEADER[@]}"} \
   -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   "$MCP_URL" >/dev/null || true
 
 # Call the tool
 CALL=$(printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}' "$TOOL_NAME" "$ARGS")
 
-RAW=$(curl "${CHORUS_TURN_HEADERS[@]}" -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" "${SESSION_HEADER[@]}" \
+RAW=$(curl ${CHORUS_TURN_HEADERS[@]+"${CHORUS_TURN_HEADERS[@]}"} -s -S -X POST -H "$AUTH" -H "$CT" -H "$ACCEPT" ${SESSION_HEADER[@]+"${SESSION_HEADER[@]}"} \
   -d "$CALL" "$MCP_URL" 2>/dev/null) || { echo "MCP tool call failed" >&2; exit 3; }
 
 # Streamable transport may return SSE framing; strip 'data: ' prefix if present
