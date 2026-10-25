@@ -25,6 +25,7 @@ import { computeProjectAccess, levelAtLeast } from "./project-access.service";
 import { getProjectAgentTeam, type ProjectTeamClient } from "./project-agent-team.service";
 import { createActivity } from "./activity.service";
 import { createComment } from "./comment.service";
+import { enrichAgentLiveness, type Mentionable } from "./mention.service";
 
 const MAX_LINEAGE_DEPTH = 10;
 
@@ -173,6 +174,9 @@ export async function assertIdeaTeamGate(companyUuid: string, proposalUuid: stri
   const sources = await proposalSourceIdeas(companyUuid, proposalUuid, client);
   if (!sources) forbidden("Idea Team gate: proposal ancestry is missing or ambiguous; a human must act");
   for (const ideaUuid of sources) {
+    // Inside the caller's transaction this serializes against a concurrent
+    // reassignment, so a stale orchestrator cannot commit after being replaced.
+    await client.$queryRaw`SELECT "uuid" FROM "Idea" WHERE "uuid" = ${ideaUuid} FOR UPDATE`;
     const state = await resolveState(companyUuid, ideaUuid, client);
     if (!state?.managed) continue;
     if (!identity) forbidden("Idea Team gate: an authenticated actor is required");
@@ -182,6 +186,17 @@ export async function assertIdeaTeamGate(companyUuid: string, proposalUuid: stri
     if (!agent || !computeEffectivePermissions(agent.roles, agent.permissions).has(gate === "proposal" ? "proposal:admin" : "task:admin")) forbidden("Idea Team gate: action permission required");
     if (gate === "proposal" && !state.yolo) forbidden("Idea Team gate: proposal approval requires a human unless a human requested YOLO for this Idea");
   }
+}
+
+/**
+ * A Team-managed Idea stays under human control: an agent may not reassign or
+ * release it, nor resolve/skip its elaboration as a non-assignee idea:admin
+ * gateway. Otherwise an agent could turn the Idea unmanaged (or finish the
+ * orchestrator's duties) and slip past the human/YOLO gates.
+ */
+export async function assertIdeaTeamHumanControl(companyUuid: string, ideaUuid: string, actor: IdeaTeamActor | undefined, action: string, client: ProjectTeamClient = prisma) {
+  if (actor?.actorType !== "agent") return;
+  if ((await resolveState(companyUuid, ideaUuid, client))?.managed) forbidden(`Idea Team: only a human can ${action} a Team-managed Idea`);
 }
 
 /** True when the agent is the current, eligible product delegate of an active managed Idea. */
@@ -277,10 +292,19 @@ export async function recommendIdeaTeamRole(auth: AuthContext, ideaUuid: string,
   const online = eligible.filter((member) => member.online);
   if (!online.length) {
     // Offline role members fall back to the orchestrator only when it is online and qualifies for the role.
+    // The orchestrator need not be in the Team roster; check its live presence directly.
     const orchestrator = state.orchestratorUuid ? await prisma.agent.findFirst({ where: { uuid: state.orchestratorUuid, companyUuid: auth.companyUuid } }) : null;
-    const qualifies = orchestrator && getAgentTeamRoleEligibility(role, computeEffectivePermissions(orchestrator.roles, orchestrator.permissions)).eligible;
-    const fallback = qualifies ? state.team.roles.lead.concat(state.team.roles[role]).find((member) => member.agentUuid === orchestrator!.uuid && member.online) : null;
-    return fallback ? result("recommended", "role_offline_orchestrator_fallback", [fallback], fallback.agentUuid) : result("manual", "role_offline", eligible);
+    const eligibility = orchestrator ? getAgentTeamRoleEligibility(role, computeEffectivePermissions(orchestrator.roles, orchestrator.permissions)) : null;
+    if (orchestrator && eligibility?.eligible) {
+      const presence: Mentionable[] = [{ uuid: orchestrator.uuid, name: orchestrator.name, type: "agent" }];
+      await enrichAgentLiveness(auth.companyUuid, presence);
+      if (presence[0].online) {
+        const fallback: ProjectTeamMember = { agentUuid: orchestrator.uuid, agentName: orchestrator.name, eligible: true, missingPermissions: [],
+          hasProjectAccess: true, online: true, activeCount: presence[0].activeCount ?? 0 };
+        return result("recommended", "role_offline_orchestrator_fallback", [fallback], fallback.agentUuid);
+      }
+    }
+    return result("manual", "role_offline", eligible);
   }
   if (role === "development" && task) {
     const reopened = await prisma.activity.findFirst({ where: { companyUuid: auth.companyUuid, targetType: "task", targetUuid: task.uuid, action: "reopened" } });

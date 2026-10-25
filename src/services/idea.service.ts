@@ -3,6 +3,7 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma } from "@/lib/prisma";
+import { assertIdeaTeamHumanControl } from "./idea-team.service";
 import { formatAssigneeComplete, formatCreatedBy, buildAssigneeMatch, batchResolveActorIdentities, type ActorIdentityMap, type AssigneeCondition, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import type { AuthContext } from "@/types/auth";
 import { eventBus } from "@/lib/event-bus";
@@ -938,6 +939,9 @@ export async function assignIdea({
   // the caller's `assigneeType`/`assigneeUuid` are persisted as-is when no pin.
   const resolved = await resolveAssigneeFields(companyUuid, assigneeType, assigneeUuid, instanceUuid);
   const provenance = normalizeAssignmentProvenance(assignedByType, assignedByUuid);
+  if (provenance.assignedByType === "agent" && provenance.assignedByUuid) {
+    await assertIdeaTeamHumanControl(companyUuid, ideaUuid, { actorType: "agent", actorUuid: provenance.assignedByUuid }, "reassign");
+  }
   // The assignee must have editor access to the idea's project (private project isolation).
   await assertAssigneeProjectAccess(
     companyUuid,

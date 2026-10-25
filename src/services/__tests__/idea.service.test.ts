@@ -62,6 +62,7 @@ const { mockPrisma, mockEventBus, mockFormatAssigneeComplete, mockFormatCreatedB
   mockCreateMentions: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/services/idea-team.service", () => ({ assertIdeaTeamHumanControl: vi.fn(async () => {}) }));
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/event-bus", () => ({ eventBus: mockEventBus }));
 vi.mock("@/lib/uuid-resolver", () => ({

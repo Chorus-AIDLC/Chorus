@@ -925,11 +925,12 @@ export async function approveProposal(
     throw new Error("Proposal not found");
   }
 
-  // Idea Team gate; callers that omit the actor are resolved from the reviewer UUID.
-  await assertIdeaTeamGate(companyUuid, proposalUuid, "proposal", actorContext ?? { actorType: "unknown", actorUuid: reviewedByUuid });
 
   // Start transaction
   const { updatedProposal, materializedTasks, materializedDocuments } = await prisma.$transaction(async (tx) => {
+    // Idea Team gate, inside the committing transaction (it locks the source Ideas);
+    // callers that omit the actor are resolved from the reviewer UUID.
+    await assertIdeaTeamGate(companyUuid, proposalUuid, "proposal", actorContext ?? { actorType: "unknown", actorUuid: reviewedByUuid }, tx);
     // 1. Update Proposal status
     const updated = await tx.proposal.update({
       where: { uuid: proposalUuid },

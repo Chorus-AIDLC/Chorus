@@ -25,6 +25,7 @@ describe("Idea Team (derived, zero-schema) against isolated PostgreSQL", () => {
   let proposals: typeof import("../proposal.service");
   let tasks: typeof import("../task.service");
   let elaboration: typeof import("../elaboration.service");
+  let ideas: typeof import("../idea.service");
   let owner: AuthContext;
   let lead: AuthContext;
   let product: AuthContext;
@@ -48,6 +49,7 @@ describe("Idea Team (derived, zero-schema) against isolated PostgreSQL", () => {
     proposals = await import("../proposal.service");
     tasks = await import("../task.service");
     elaboration = await import("../elaboration.service");
+    ideas = await import("../idea.service");
   }, 60_000);
 
   afterAll(async () => {
@@ -230,5 +232,44 @@ describe("Idea Team (derived, zero-schema) against isolated PostgreSQL", () => {
     await db.agentTeamMember.deleteMany({ where: { role: "product" } });
     expect(await service.recommendIdeaTeamRole(lead, managed.uuid, "product")).toMatchObject({ decision: "manual", reason: "role_empty_or_ineligible" });
     expect(await service.recommendIdeaTeamRole(lead, managed.uuid, "development")).toMatchObject({ decision: "manual", reason: "role_offline" });
+  });
+  it("keeps managed Ideas under human control: agents cannot reassign or release them to escape the gates", async () => {
+    const managed = await idea(lead);
+    await expect(ideas.assignIdea({ ideaUuid: managed.uuid, companyUuid: owner.companyUuid, assigneeType: "agent", assigneeUuid: product.actorUuid, assignedByType: "agent", assignedByUuid: product.actorUuid }))
+      .rejects.toThrow("only a human can reassign");
+    expect((await db.idea.findUniqueOrThrow({ where: { uuid: managed.uuid } })).assigneeUuid).toBe(lead.actorUuid);
+    await ideas.assignIdea({ ideaUuid: managed.uuid, companyUuid: owner.companyUuid, assigneeType: "agent", assigneeUuid: developer.actorUuid, assignedByType: "user", assignedByUuid: owner.actorUuid });
+    expect((await service.getIdeaTeamContext(owner, managed.uuid)).orchestrator?.agentUuid).toBe(developer.actorUuid);
+    await expect(service.assertIdeaTeamHumanControl(owner.companyUuid, managed.uuid, actor(developer), "release")).rejects.toThrow("only a human can release");
+    const legacy = await idea(lead, lead);
+    await ideas.assignIdea({ ideaUuid: legacy.uuid, companyUuid: owner.companyUuid, assigneeType: "agent", assigneeUuid: product.actorUuid, assignedByType: "agent", assignedByUuid: lead.actorUuid });
+  });
+
+  it("re-checks the current orchestrator inside the approval transaction", async () => {
+    const managed = await idea(lead);
+    const pending = await proposal([managed.uuid]);
+    await yolo(managed.uuid);
+    await ideas.assignIdea({ ideaUuid: managed.uuid, companyUuid: owner.companyUuid, assigneeType: "agent", assigneeUuid: developer.actorUuid, assignedByType: "user", assignedByUuid: owner.actorUuid });
+    await expect(proposals.approveProposal(pending.uuid, owner.companyUuid, lead.actorUuid, null)).rejects.toThrow("current assignee");
+    expect((await db.proposal.findUniqueOrThrow({ where: { uuid: pending.uuid } })).status).toBe("pending");
+    await proposals.approveProposal(pending.uuid, owner.companyUuid, developer.actorUuid, null);
+  });
+
+  it("a delegated product agent cannot resolve or skip elaboration as an idea:admin gateway", async () => {
+    const managed = await idea(lead);
+    await service.delegateIdeaTeamProduct(lead, managed.uuid, product.actorUuid);
+    await expect(elaboration.resolveElaboration({ companyUuid: owner.companyUuid, ideaUuid: managed.uuid, actorUuid: product.actorUuid, actorType: "agent", actorIsIdeaAdmin: true }))
+      .rejects.toThrow("only a human can resolve elaboration");
+    await expect(elaboration.skipElaboration({ companyUuid: owner.companyUuid, ideaUuid: managed.uuid, actorUuid: product.actorUuid, actorType: "agent", reason: "x", actorIsIdeaAdmin: true }))
+      .rejects.toThrow("only a human can skip elaboration");
+  });
+
+  it("falls back to a qualified online orchestrator even when it is outside the Team roster", async () => {
+    const outsiderOrchestrator = await agent("Assignee", owner);
+    const managed = await idea(outsiderOrchestrator);
+    expect(await service.recommendIdeaTeamRole(owner, managed.uuid, "development")).toMatchObject({ decision: "manual", reason: "role_offline" });
+    await db.daemonConnection.create({ data: { companyUuid: owner.companyUuid, agentUuid: outsiderOrchestrator.actorUuid, clientType: "codex", status: "online" } });
+    expect(await service.recommendIdeaTeamRole(owner, managed.uuid, "development"))
+      .toMatchObject({ decision: "recommended", reason: "role_offline_orchestrator_fallback", agentUuid: outsiderOrchestrator.actorUuid });
   });
 });

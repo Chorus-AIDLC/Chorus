@@ -2,6 +2,7 @@
 // Ideas API - Release Idea (PRD §4.1 F5)
 // UUID-Based Architecture: All operations use UUIDs
 
+import { assertIdeaTeamHumanControl } from "@/services/idea-team.service";
 import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
@@ -35,6 +36,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       if (!(await isAssignee(auth, idea.assigneeType, idea.assigneeUuid))) {
         return errors.permissionDenied("Only assignee can release this idea");
       }
+      await assertIdeaTeamHumanControl(auth.companyUuid, idea.uuid, { actorType: auth.type, actorUuid: auth.actorUuid }, "release");
     }
 
     try {

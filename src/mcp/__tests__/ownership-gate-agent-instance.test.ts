@@ -43,6 +43,7 @@ const mockPrisma = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("@/services/idea-team.service", () => ({ assertIdeaTeamHumanControl: vi.fn(async () => {}) }));
 vi.mock("@/lib/prisma", () => mockPrisma);
 vi.mock("@/services/task.service", () => mockTaskService);
 vi.mock("@/services/idea.service", () => mockIdeaService);
