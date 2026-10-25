@@ -73,7 +73,8 @@ describe.skipIf(!url)("Dedicated operations CLI / HTTP / real database", () => {
     const create = await import("../../app/api/ideas/conversational/route");
     const detail = await import("../../app/api/ideas/[uuid]/route");
     state.company = (await db.company.create({ data: { name: `T4 ${randomUUID()}` } })).uuid;
-    state.actor = randomUUID();
+    // Conversational creation now requires an active human identity for assignment authority.
+    state.actor = (await db.user.create({ data: { companyUuid: state.company, oidcSub: randomUUID() } })).uuid;
     project = (await db.project.create({ data: { companyUuid: state.company, name: "T4 HTTP" } })).uuid;
     state.agent = (await db.agent.create({ data: {
       companyUuid: state.company, name: "T4 process stub", roles: ["pm"], ownerUuid: state.actor,
@@ -171,6 +172,7 @@ describe.skipIf(!url)("Dedicated operations CLI / HTTP / real database", () => {
     await db.agentInstance.deleteMany({ where: tenant });
     await db.agent.deleteMany({ where: tenant });
     await db.project.deleteMany({ where: tenant });
+    await db.user.deleteMany({ where: tenant });
     await db.company.delete({ where: { uuid: state.company } });
     await db.$disconnect();
     await pool.end();

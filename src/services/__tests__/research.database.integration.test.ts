@@ -60,7 +60,8 @@ describe.skipIf(!url)("Research real database integration", () => {
     ({ updateTask, deleteTask } = await import("../task.service"));
     ({ researchIdeaAction } = await import("../../app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/research-actions"));
     state.company = (await db.company.create({ data: { name: `Research integration ${randomUUID()}` } })).uuid;
-    state.actor = randomUUID();
+    // Conversational creation now requires an active human identity for assignment authority.
+    state.actor = (await db.user.create({ data: { companyUuid: state.company, oidcSub: randomUUID() } })).uuid;
     project = (await db.project.create({ data: { companyUuid: state.company, name: "Research integration" } })).uuid;
     agent = (await db.agent.create({ data: { companyUuid: state.company, name: "Research test agent", ownerUuid: state.actor, roles: ["pm"] } })).uuid;
     state.agent = agent;
@@ -98,6 +99,7 @@ describe.skipIf(!url)("Research real database integration", () => {
     await db.agentInstance.deleteMany({ where: tenant });
     await db.agent.deleteMany({ where: tenant });
     await db.project.deleteMany({ where: tenant });
+    await db.user.deleteMany({ where: tenant });
     await db.company.delete({ where: { uuid: state.company } });
     await db.$disconnect();
     await pool.end();
