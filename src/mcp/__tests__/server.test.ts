@@ -328,6 +328,8 @@ describe("MCP tool permission wiring", () => {
         // 0.10.0 (add-idea-lineage): chorus_edit_idea is idea:write-gated.
         // Both pm_agent and admin_agent carry idea:write, so it is visible to both.
         "chorus_edit_idea",
+        // Agent Team ③: idea:write-gated product delegation by the Idea orchestrator.
+        "chorus_delegate_team_product",
         // 0.14.0 (reference-artifacts): three document:write-gated reference
         // write tools. admin_agent carries document:write, so all three are
         // visible; developer_agent (no document:write) sees none of them.

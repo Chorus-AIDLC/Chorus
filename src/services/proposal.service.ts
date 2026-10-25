@@ -5,6 +5,8 @@
 
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { assertIdeaTeamGate, isIdeaTeamProductDelegate, type IdeaTeamActor } from "./idea-team.service";
+import { createActivity } from "./activity.service";
 import { Prisma } from "@/generated/prisma/client";
 import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid, batchResolveActorIdentities, type ActorIdentityMap } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
@@ -607,6 +609,10 @@ export async function checkIdeasAssignee(
       isAssignee = ownerAgentUuid === actorUuid;
     }
 
+    // A Team product delegate authors the proposal while the orchestrator stays assignee.
+    if (!isAssignee && actorType === "agent") {
+      isAssignee = await isIdeaTeamProductDelegate(companyUuid, idea.uuid, actorUuid);
+    }
     if (!isAssignee) {
       unassignedIdeas.push(idea.uuid);
     }
@@ -908,7 +914,8 @@ export async function approveProposal(
   proposalUuid: string,
   companyUuid: string,
   reviewedByUuid: string,
-  reviewNote?: string | null
+  reviewNote?: string | null,
+  actorContext?: IdeaTeamActor
 ): Promise<ApprovalResult> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid },
@@ -917,6 +924,9 @@ export async function approveProposal(
   if (!proposal) {
     throw new Error("Proposal not found");
   }
+
+  // Idea Team gate; callers that omit the actor are resolved from the reviewer UUID.
+  await assertIdeaTeamGate(companyUuid, proposalUuid, "proposal", actorContext ?? { actorType: "unknown", actorUuid: reviewedByUuid });
 
   // Start transaction
   const { updatedProposal, materializedTasks, materializedDocuments } = await prisma.$transaction(async (tx) => {
@@ -1222,7 +1232,8 @@ export async function deleteProposal(
 // Submit Proposal for review (draft -> pending)
 export async function submitProposal(
   proposalUuid: string,
-  companyUuid: string
+  companyUuid: string,
+  actorContext?: IdeaTeamActor
 ): Promise<ProposalResponse> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid },
@@ -1256,6 +1267,12 @@ export async function submitProposal(
   });
 
   eventBus.emitChange({ companyUuid: updated.companyUuid, projectUuid: updated.projectUuid, entityType: "proposal", entityUuid: updated.uuid, action: "updated" });
+
+  // Audited submission; also the lifecycle event that hands a Team-managed Idea back to its orchestrator.
+  if (actorContext) {
+    await createActivity({ companyUuid, projectUuid: updated.projectUuid, targetType: "proposal", targetUuid: updated.uuid,
+      actorType: actorContext.actorType, actorUuid: actorContext.actorUuid, action: "submitted" });
+  }
 
   return formatProposalResponse(updated);
 }

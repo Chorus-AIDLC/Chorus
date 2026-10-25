@@ -84,6 +84,11 @@ vi.mock("@/lib/uuid-resolver", () => ({
   formatReview: mockFormatReview,
   resolveAssigneeAgentUuid: mockResolveAssigneeAgentUuid,
 }));
+vi.mock("@/services/idea-team.service", () => ({
+  assertIdeaTeamGate: vi.fn(async () => {}),
+  isIdeaTeamProductDelegate: vi.fn(async () => false),
+}));
+vi.mock("@/services/activity.service", () => ({ createActivity: vi.fn(async () => ({})) }));
 vi.mock("@/services/document.service", () => ({
   createDocumentFromProposal: mockCreateDoc,
 }));

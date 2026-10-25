@@ -1,4 +1,13 @@
 {
+  "ideaTeamGates": {
+    "title": "Team 승인 단계",
+    "unavailableLead": "담당자 사용 불가",
+    "human": "사람",
+    "proposal": "Proposal 승인: {name}",
+    "task": "Task 검증: {name}",
+    "paused": "Team 자동화가 일시 중지되었습니다. 사람의 조치가 필요합니다.",
+    "orchestratorIneligible": "현재 담당자에게 Idea 쓰기 권한이나 프로젝트 접근 권한이 없습니다."
+  },
   "projectTeam": {
     "title": "내 프로젝트 팀",
     "description": "이 프로젝트의 개인 팀입니다. 저장해도 작업은 배정되지 않습니다.",

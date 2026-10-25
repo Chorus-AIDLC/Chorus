@@ -9,6 +9,7 @@ import type { NotificationCreateParams } from "./notification.service";
 import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import { filterRecipientsByProjectAccess } from "./project-access.service";
 import logger from "@/lib/logger";
+import { getIdeaTeamOrchestrators } from "./idea-team.service";
 
 const nlLogger = logger.child({ module: "notification-listener" });
 
@@ -578,9 +579,57 @@ function buildMessage(
   }
 }
 
+// ===== Idea Team lifecycle handoff =====
+
+const TEAM_HANDOFF_LABELS: Record<string, string> = {
+  "proposal:submitted": "a proposal was submitted for review",
+  "proposal:approved": "a proposal was approved; assign development",
+  "task:submitted": "a task was submitted for verification",
+};
+
+/**
+ * Wake the orchestrator (current assignee) of every Team-managed Idea behind this
+ * event. Delivered as a `mentioned` notification so every daemon client (CLI,
+ * OpenClaw, Hermes) wakes with its existing mention handling — no new client action.
+ * Stale recipients are harmless: every gated action re-checks the current assignee.
+ */
+export async function notifyIdeaTeamHandoff(event: ActivityEvent): Promise<void> {
+  const key = `${event.targetType}:${event.action}`;
+  const value = (typeof event.value === "object" && event.value !== null ? event.value : {}) as Record<string, unknown>;
+  const label = TEAM_HANDOFF_LABELS[key]
+    ?? (key === "task:status_changed" && (value.status === "to_verify" || value.to === "to_verify") ? TEAM_HANDOFF_LABELS["task:submitted"] : null);
+  if (!label) return;
+  try {
+    const orchestrators = (await getIdeaTeamOrchestrators(event.companyUuid, event.targetType, event.targetUuid))
+      .filter((entry) => !(event.actorType === "agent" && entry.agentUuid === event.actorUuid));
+    const agentUuids = [...new Set(orchestrators.map((entry) => entry.agentUuid))];
+    if (!agentUuids.length) return;
+    const [entityTitle, actorName, projectName] = await Promise.all([
+      resolveEntityTitle(event.targetType, event.targetUuid),
+      resolveActorName(event.actorType, event.actorUuid),
+      resolveProjectName(event.companyUuid, event.projectUuid),
+    ]);
+    const recipients = await filterRecipientsByProjectAccess(event.companyUuid, event.projectUuid, agentUuids.map((uuid) => ({ type: "agent", uuid })));
+    if (!recipients.length) return;
+    const ideas = orchestrators.map((entry) => entry.ideaUuid).join(", ");
+    await notificationService.createBatch(recipients.map((recipient) => ({
+      companyUuid: event.companyUuid, projectUuid: event.projectUuid,
+      recipientType: recipient.type, recipientUuid: recipient.uuid,
+      entityType: event.targetType, entityUuid: event.targetUuid, entityTitle, projectName,
+      action: "mentioned",
+      message: `Idea Team handoff — ${label} by ${actorName}. You are the assignee of Team-managed Idea(s) ${ideas}: ` +
+        `call chorus_get_idea_team_context, then continue orchestration (review, approve only if the gate allows, verify, or assign next work).`,
+      actorType: event.actorType, actorUuid: event.actorUuid, actorName,
+    })));
+  } catch (error) {
+    nlLogger.error({ err: error }, "Failed to process Idea Team handoff");
+  }
+}
+
 // ===== Main listener =====
 
 export async function handleActivity(event: ActivityEvent): Promise<void> {
+  await notifyIdeaTeamHandoff(event);
   const notificationType = resolveNotificationType(event.action, event.targetType);
   if (!notificationType) return; // Not a notifiable action
 

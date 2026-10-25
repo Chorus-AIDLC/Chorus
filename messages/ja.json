@@ -1,4 +1,13 @@
 {
+  "ideaTeamGates": {
+    "title": "Team 承認ゲート",
+    "unavailableLead": "担当者を利用できません",
+    "human": "人間",
+    "proposal": "Proposal 承認: {name}",
+    "task": "Task 検証: {name}",
+    "paused": "Team 自動化は一時停止中です。人による対応が必要です。",
+    "orchestratorIneligible": "現在の担当者に Idea 書き込み権限またはプロジェクトアクセスがありません。"
+  },
   "projectTeam": {
     "title": "自分のプロジェクトチーム",
     "description": "このプロジェクト専用の個人チームです。保存しても作業は割り当てられません。",

@@ -715,7 +715,7 @@ describe("MCP central project access", () => {
           expect(JSON.parse((response.content[0] as { text: string }).text)).toEqual({
             uuid: proposal.uuid, status: "pending",
           });
-          expect(fixture.services.proposal.submitProposal).toHaveBeenCalledWith(proposal.uuid, "company");
+          expect(fixture.services.proposal.submitProposal).toHaveBeenCalledWith(proposal.uuid, "company", expect.objectContaining({ actorType: "agent" }));
           expect(fixture.prisma.proposal.update).toHaveBeenCalledOnce();
         }
         if (inputType === "document") expect(fixture.prisma.idea.findMany).not.toHaveBeenCalled();
