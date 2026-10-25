@@ -174,9 +174,6 @@ export async function assertIdeaTeamGate(companyUuid: string, proposalUuid: stri
   const sources = await proposalSourceIdeas(companyUuid, proposalUuid, client);
   if (!sources) forbidden("Idea Team gate: proposal ancestry is missing or ambiguous; a human must act");
   for (const ideaUuid of sources) {
-    // Inside the caller's transaction this serializes against a concurrent
-    // reassignment, so a stale orchestrator cannot commit after being replaced.
-    await client.$queryRaw`SELECT "uuid" FROM "Idea" WHERE "uuid" = ${ideaUuid} FOR UPDATE`;
     const state = await resolveState(companyUuid, ideaUuid, client);
     if (!state?.managed) continue;
     if (!identity) forbidden("Idea Team gate: an authenticated actor is required");
@@ -186,17 +183,6 @@ export async function assertIdeaTeamGate(companyUuid: string, proposalUuid: stri
     if (!agent || !computeEffectivePermissions(agent.roles, agent.permissions).has(gate === "proposal" ? "proposal:admin" : "task:admin")) forbidden("Idea Team gate: action permission required");
     if (gate === "proposal" && !state.yolo) forbidden("Idea Team gate: proposal approval requires a human unless a human requested YOLO for this Idea");
   }
-}
-
-/**
- * A Team-managed Idea stays under human control: an agent may not reassign or
- * release it, nor resolve/skip its elaboration as a non-assignee idea:admin
- * gateway. Otherwise an agent could turn the Idea unmanaged (or finish the
- * orchestrator's duties) and slip past the human/YOLO gates.
- */
-export async function assertIdeaTeamHumanControl(companyUuid: string, ideaUuid: string, actor: IdeaTeamActor | undefined, action: string, client: ProjectTeamClient = prisma) {
-  if (actor?.actorType !== "agent") return;
-  if ((await resolveState(companyUuid, ideaUuid, client))?.managed) forbidden(`Idea Team: only a human can ${action} a Team-managed Idea`);
 }
 
 /** True when the agent is the current, eligible product delegate of an active managed Idea. */

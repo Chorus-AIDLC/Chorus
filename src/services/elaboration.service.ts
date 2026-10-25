@@ -2,7 +2,7 @@
 // Elaboration Service Layer — AI-DLC Stage 3 (Requirements Clarification)
 
 import { prisma } from "@/lib/prisma";
-import { assertIdeaTeamHumanControl, isIdeaTeamProductDelegate } from "./idea-team.service";
+import { isIdeaTeamProductDelegate } from "./idea-team.service";
 import { eventBus } from "@/lib/event-bus";
 import { activityService } from "@/services";
 import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
@@ -330,7 +330,6 @@ export async function resolveElaboration({
       "Only the assigned agent or an idea:admin gateway can resolve elaboration"
     );
   }
-  if (!isAssignee) await assertIdeaTeamHumanControl(companyUuid, ideaUuid, { actorType, actorUuid }, "resolve elaboration of");
 
   // Resolve operates on the whole Idea (not a single round). Precondition:
   // there is at least one round and every round has been answered. A round
@@ -490,7 +489,6 @@ export async function skipElaboration({
       "Only the assigned agent or an idea:admin gateway can skip elaboration"
     );
   }
-  if (!isAssignee) await assertIdeaTeamHumanControl(companyUuid, ideaUuid, { actorType, actorUuid }, "skip elaboration of");
   if (idea.status !== "elaborating") {
     throw new Error(
       `Cannot skip elaboration from status '${idea.status}'`

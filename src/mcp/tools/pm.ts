@@ -2,7 +2,6 @@
 // PM Agent MCP Tools (ARCHITECTURE.md §5.2)
 // UUID-Based Architecture: All operations use UUIDs
 
-import { assertIdeaTeamHumanControl } from "@/services/idea-team.service";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { AgentAuthContext } from "@/types/auth";
@@ -153,7 +152,6 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       }
 
       try {
-        await assertIdeaTeamHumanControl(auth.companyUuid, idea.uuid, { actorType: auth.type, actorUuid: auth.actorUuid }, "release");
         const updated = await ideaService.releaseIdea(idea.uuid);
 
         await activityService.createActivity({
