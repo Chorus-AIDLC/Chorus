@@ -338,7 +338,7 @@ Team roles grant **no permissions or project access**. All roles may be empty, p
 
 Team management is **derived, not stored**: an Idea is Team-managed when its logical agent assignee A was assigned by A's owner (a human) after the owner bound a personal Team to the project, or — for a child Idea — by one of the owner's agents under a managed parent Idea of the same owner. A is that Idea's **orchestrator**; it does not need to be in the Team's lead role. Creation, self-claim, assignment by anyone else, assignment before the Team was bound, and unbinding all keep (or return to) the legacy workflow. Reassigning a parent does not stop already-assigned managed children.
 
-The Team only decides **who does which work**; it adds no approval gates. Approvals and verification follow the normal workflow and existing permissions: with human YOLO the orchestrator drives the Idea end to end, otherwise humans approve as usual.
+The Team only decides **who does which work** — product work to product agents, development tasks to development agents, reviews to review agents — the same with or without YOLO. It adds no approval gates; YOLO only decides whether approvals still need a human.
 
 Lifecycle handoffs (proposal submitted / approved, task submitted for verification) wake the orchestrator with a `mentioned` notification. Each wake should re-read `chorus_get_idea_team_context` before acting.
 
@@ -346,7 +346,7 @@ Lifecycle handoffs (proposal submitted / approved, task submitted for verificati
 **Input**: `{ ideaUuid }`. **Output**: `{ ideaUuid, managed, state: "active"|"paused"|"unmanaged", reason, orchestrator, yolo, routing }`. `routing` (owner, product delegate, Team roles) is returned only to the Team owner and the owner's agents.
 
 #### chorus_recommend_team_agent
-**Input**: `{ ideaUuid, role: "product"|"development", taskUuid? }`. **Output**: `{ decision: "recommended"|"lead_decision"|"manual"|"paused", agentUuid, candidates, reason }`. Excludes ineligible members, prefers online, then reopen affinity, minimum `activeCount`, then dependency affinity. Owner-private; does not assign or wake.
+**Input**: `{ ideaUuid, role: "product"|"development"|"review", taskUuid? }`. For `review`, the task's own developer is excluded. **Output**: `{ decision: "recommended"|"lead_decision"|"manual"|"paused", agentUuid, candidates, reason }`. Excludes ineligible members, prefers online, then reopen affinity, minimum `activeCount`, then dependency affinity. Owner-private; does not assign or wake.
 
 #### chorus_delegate_team_product
 **Input**: `{ ideaUuid, agentUuid }`. The current orchestrator (or the Team owner) delegates elaboration and proposal authoring to an eligible product member and @mentions it. The delegate may start elaboration and create/submit the Idea's proposal; it cannot claim/release/reassign the Idea, resolve elaboration, approve or verify. Reassigning the Idea revokes the delegation.
