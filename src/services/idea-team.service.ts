@@ -114,23 +114,6 @@ async function resolveState(companyUuid: string, ideaUuid: string, client: Proje
   };
 }
 
-async function actorIdentity(companyUuid: string, actor: IdeaTeamActor | undefined, client: ProjectTeamClient): Promise<AuthContext | null> {
-  if (!actor) return null;
-  if (actor.actorType === "unknown") {
-    const isAgent = await client.agent.findFirst({ where: { uuid: actor.actorUuid, companyUuid }, select: { uuid: true } });
-    return actorIdentity(companyUuid, { actorType: isAgent ? "agent" : "user", actorUuid: actor.actorUuid }, client);
-  }
-  if (actor.actorType === "user") {
-    const user = await client.user.findFirst({ where: { uuid: actor.actorUuid, companyUuid, status: "active", deletedAt: null }, select: { uuid: true } });
-    return user ? { type: "user", companyUuid, actorUuid: user.uuid } : null;
-  }
-  if (actor.actorType === "agent") {
-    const agent = await client.agent.findFirst({ where: { uuid: actor.actorUuid, companyUuid }, select: { uuid: true, ownerUuid: true } });
-    return agent ? { type: "agent", companyUuid, actorUuid: agent.uuid, ownerUuid: agent.ownerUuid ?? undefined } : null;
-  }
-  return null;
-}
-
 /**
  * The source Ideas behind a proposal, following document inputs back to the
  * proposals that produced them. Returns null when the ancestry is broken/ambiguous.
@@ -157,32 +140,6 @@ async function proposalSourceIdeas(companyUuid: string, proposalUuid: string, cl
     } else return null;
   }
   return [...ideas];
-}
-
-/**
- * Server-enforced Team gate for proposal approval and task verification/close.
- * Humans with editor access always pass (they keep existing control). For an agent,
- * every managed source Idea must be active and the agent must be its current
- * orchestrator with the action permission; proposal approval also needs human YOLO.
- */
-export async function assertIdeaTeamGate(companyUuid: string, proposalUuid: string, gate: "proposal" | "task", actor: IdeaTeamActor | undefined, client: ProjectTeamClient = prisma) {
-  const proposal = await client.proposal.findFirst({ where: { uuid: proposalUuid, companyUuid }, select: { projectUuid: true } });
-  if (!proposal || !await projectHasTeams(companyUuid, proposal.projectUuid, client)) return;
-  if (actor?.actorType === "super_admin") return;
-  const identity = await actorIdentity(companyUuid, actor, client);
-  if (identity?.type === "user") return;
-  const sources = await proposalSourceIdeas(companyUuid, proposalUuid, client);
-  if (!sources) forbidden("Idea Team gate: proposal ancestry is missing or ambiguous; a human must act");
-  for (const ideaUuid of sources) {
-    const state = await resolveState(companyUuid, ideaUuid, client);
-    if (!state?.managed) continue;
-    if (!identity) forbidden("Idea Team gate: an authenticated actor is required");
-    if (!state.active) forbidden(`Idea Team gate: automation is paused (${state.reason}); a human must act`);
-    if (identity.actorUuid !== state.orchestratorUuid) forbidden("Idea Team gate: only the Idea's current assignee can pass this gate");
-    const agent = await client.agent.findFirst({ where: { uuid: identity.actorUuid, companyUuid }, select: { roles: true, permissions: true } });
-    if (!agent || !computeEffectivePermissions(agent.roles, agent.permissions).has(gate === "proposal" ? "proposal:admin" : "task:admin")) forbidden("Idea Team gate: action permission required");
-    if (gate === "proposal" && !state.yolo) forbidden("Idea Team gate: proposal approval requires a human unless a human requested YOLO for this Idea");
-  }
 }
 
 /** True when the agent is the current, eligible product delegate of an active managed Idea. */
@@ -236,8 +193,6 @@ export async function getIdeaTeamContext(auth: AuthContext, ideaUuid: string): P
     reason: state.reason,
     orchestrator: orchestrator ? { agentUuid: orchestrator.uuid, agentName: orchestrator.name } : null,
     yolo: state.yolo,
-    proposalGate: state.managed && state.active && state.yolo ? "orchestrator" : "human",
-    taskGate: state.managed && state.active ? "orchestrator" : "human",
     routing: owner && state.team && state.ownerUuid ? { ownerUuid: state.ownerUuid, productAgentUuid: state.productAgentUuid, roles: state.team.roles } : null,
   };
 }

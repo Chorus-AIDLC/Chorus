@@ -1,13 +1,4 @@
 {
-  "ideaTeamGates": {
-    "title": "Team approval gates",
-    "unavailableLead": "Assignee unavailable",
-    "human": "Human",
-    "proposal": "Proposal approval: {name}",
-    "task": "Task verification: {name}",
-    "paused": "Team automation is paused; a human must act.",
-    "orchestratorIneligible": "The current assignee lacks Idea write permission or project access."
-  },
   "projectTeam": {
     "title": "My project team",
     "description": "Your private team for this project. Saving never assigns work.",

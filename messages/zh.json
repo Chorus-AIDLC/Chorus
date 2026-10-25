@@ -1,13 +1,4 @@
 {
-  "ideaTeamGates": {
-    "title": "Team 审批关口",
-    "unavailableLead": "负责人不可用",
-    "human": "人工",
-    "proposal": "Proposal 审批：{name}",
-    "task": "Task 验收：{name}",
-    "paused": "Team 自动化已暂停，需要人工处理。",
-    "orchestratorIneligible": "当前负责人缺少 Idea 写权限或项目访问权。"
-  },
   "projectTeam": {
     "title": "我的项目团队",
     "description": "仅属于你的项目团队。保存配置不会分配工作。",

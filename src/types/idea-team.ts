@@ -5,16 +5,15 @@ export type IdeaTeamRoutingRole = "product" | "development";
 
 export type IdeaTeamPauseReason = "orchestrator_ineligible";
 
-/** Safe, shareable Team gate summary for one Idea (no private roster unless `routing`). */
+/** Team state for one Idea (no private roster unless `routing`). */
 export interface IdeaTeamContextDto {
   ideaUuid: string;
   managed: boolean;
   state: "active" | "paused" | "unmanaged";
   reason: IdeaTeamPauseReason | null;
   orchestrator: { agentUuid: string; agentName: string } | null;
+  /** A human requested YOLO on this Idea: the orchestrator may drive it end to end. */
   yolo: boolean;
-  proposalGate: "human" | "orchestrator";
-  taskGate: "human" | "orchestrator";
   /** Owner-private: only the Team owner and the owner's own agents receive this. */
   routing: {
     ownerUuid: string;

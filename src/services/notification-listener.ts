@@ -618,7 +618,7 @@ export async function notifyIdeaTeamHandoff(event: ActivityEvent): Promise<void>
       entityType: event.targetType, entityUuid: event.targetUuid, entityTitle, projectName,
       action: "mentioned",
       message: `Idea Team handoff — ${label} by ${actorName}. You are the assignee of Team-managed Idea(s) ${ideas}: ` +
-        `call chorus_get_idea_team_context, then continue orchestration (review, approve only if the gate allows, verify, or assign next work).`,
+        `call chorus_get_idea_team_context, then continue orchestration (review, verify, or route the next work to the Team).`,
       actorType: event.actorType, actorUuid: event.actorUuid, actorName,
     })));
   } catch (error) {

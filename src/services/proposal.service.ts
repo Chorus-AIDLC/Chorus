@@ -5,7 +5,7 @@
 
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
-import { assertIdeaTeamGate, isIdeaTeamProductDelegate, type IdeaTeamActor } from "./idea-team.service";
+import { isIdeaTeamProductDelegate, type IdeaTeamActor } from "./idea-team.service";
 import { createActivity } from "./activity.service";
 import { Prisma } from "@/generated/prisma/client";
 import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid, batchResolveActorIdentities, type ActorIdentityMap } from "@/lib/uuid-resolver";
@@ -914,8 +914,7 @@ export async function approveProposal(
   proposalUuid: string,
   companyUuid: string,
   reviewedByUuid: string,
-  reviewNote?: string | null,
-  actorContext?: IdeaTeamActor
+  reviewNote?: string | null
 ): Promise<ApprovalResult> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid },
@@ -924,9 +923,6 @@ export async function approveProposal(
   if (!proposal) {
     throw new Error("Proposal not found");
   }
-
-  // Idea Team gate; callers that omit the actor are resolved from the reviewer UUID.
-  await assertIdeaTeamGate(companyUuid, proposalUuid, "proposal", actorContext ?? { actorType: "unknown", actorUuid: reviewedByUuid });
 
   // Start transaction
   const { updatedProposal, materializedTasks, materializedDocuments } = await prisma.$transaction(async (tx) => {

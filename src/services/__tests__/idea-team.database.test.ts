@@ -107,7 +107,7 @@ describe("Idea Team (derived, zero-schema) against isolated PostgreSQL", () => {
   it("manages an Idea the owner assigns to ANY of their agents, not only the Team lead", async () => {
     const managed = await idea(developer);
     expect(await service.getIdeaTeamContext(owner, managed.uuid)).toMatchObject({
-      managed: true, state: "active", orchestrator: { agentUuid: developer.actorUuid }, proposalGate: "human", taskGate: "orchestrator",
+      managed: true, state: "active", orchestrator: { agentUuid: developer.actorUuid },
     });
     const second = await idea(lead);
     expect((await service.getIdeaTeamContext(owner, second.uuid)).orchestrator?.agentUuid).toBe(lead.actorUuid);
@@ -144,44 +144,21 @@ describe("Idea Team (derived, zero-schema) against isolated PostgreSQL", () => {
     expect((await service.getIdeaTeamContext(owner, managed.uuid)).state).toBe("unmanaged");
   });
 
-  it("gates proposal approval: human always, the orchestrator only with human YOLO, never other agents", async () => {
+  it("pauses when the orchestrator loses eligibility, stopping Team routing", async () => {
+    const managed = await idea(lead);
+    await db.agent.update({ where: { uuid: lead.actorUuid }, data: { roles: [], permissions: ["task:admin"] } });
+    expect(await service.getIdeaTeamContext(owner, managed.uuid)).toMatchObject({ state: "paused", reason: "orchestrator_ineligible" });
+    expect(await service.recommendIdeaTeamRole(owner, managed.uuid, "development")).toMatchObject({ decision: "paused" });
+    await expect(service.delegateIdeaTeamProduct(owner, managed.uuid, product.actorUuid)).rejects.toThrow("paused");
+  });
+
+  it("adds no approval gates: any permitted agent approves and verifies as before", async () => {
     const managed = await idea(lead);
     const pending = await proposal([managed.uuid]);
-    await expect(service.assertIdeaTeamGate(owner.companyUuid, pending.uuid, "proposal", actor(lead))).rejects.toThrow("requires a human");
-    await expect(service.assertIdeaTeamGate(owner.companyUuid, pending.uuid, "proposal", actor(owner))).resolves.toBeUndefined();
-    await yolo(managed.uuid, lead);
-    await expect(service.assertIdeaTeamGate(owner.companyUuid, pending.uuid, "proposal", actor(lead))).rejects.toThrow("requires a human");
-    await yolo(managed.uuid);
-    await expect(service.assertIdeaTeamGate(owner.companyUuid, pending.uuid, "proposal", actor(product))).rejects.toThrow("current assignee");
-    await proposals.approveProposal(pending.uuid, owner.companyUuid, lead.actorUuid, null);
+    await proposals.approveProposal(pending.uuid, owner.companyUuid, product.actorUuid, null);
     expect((await db.proposal.findUniqueOrThrow({ where: { uuid: pending.uuid } })).status).toBe("approved");
-    const legacy = await idea(lead, lead);
-    const legacyProposal = await proposal([legacy.uuid]);
-    await proposals.approveProposal(legacyProposal.uuid, owner.companyUuid, product.actorUuid, null);
-  });
-
-  it("gates task verify and close to the orchestrator; humans and Quick Tasks keep legacy control", async () => {
-    const managed = await idea(lead);
-    const approved = await proposal([managed.uuid], "idea", "approved");
-    const make = (status = "to_verify", proposalUuid: string | null = approved.uuid) =>
-      db.task.create({ data: { companyUuid: owner.companyUuid, projectUuid, title: "Task", status, proposalUuid, createdByUuid: owner.actorUuid } });
-    const verify = await make();
-    await expect(tasks.updateTask(verify.uuid, { status: "done" }, actor(developer))).rejects.toThrow("current assignee");
-    await tasks.updateTask(verify.uuid, { status: "done" }, actor(lead));
-    const close = await make("in_progress");
-    await expect(tasks.updateTask(close.uuid, { status: "closed" }, actor(developer))).rejects.toThrow("current assignee");
-    await tasks.updateTask(close.uuid, { status: "closed" }, actor(owner));
-    const quick = await make("to_verify", null);
-    await tasks.updateTask(quick.uuid, { status: "done" }, actor(developer));
-  });
-
-  it("pauses when the orchestrator loses eligibility: agents stop, humans continue", async () => {
-    const managed = await idea(lead);
-    const approved = await proposal([managed.uuid], "idea", "approved");
-    await db.agent.update({ where: { uuid: lead.actorUuid }, data: { roles: [], permissions: ["task:admin"] } });
-    expect(await service.getIdeaTeamContext(owner, managed.uuid)).toMatchObject({ state: "paused", reason: "orchestrator_ineligible", taskGate: "human" });
-    await expect(service.assertIdeaTeamGate(owner.companyUuid, approved.uuid, "task", actor(lead))).rejects.toThrow("paused");
-    await expect(service.assertIdeaTeamGate(owner.companyUuid, approved.uuid, "task", actor(owner))).resolves.toBeUndefined();
+    const task = await db.task.create({ data: { companyUuid: owner.companyUuid, projectUuid, title: "Task", status: "to_verify", proposalUuid: pending.uuid, createdByUuid: owner.actorUuid } });
+    await tasks.updateTask(task.uuid, { status: "done" }, actor(developer));
   });
 
   it("product delegation lets the delegate author without owning the Idea; reassignment revokes it", async () => {
@@ -207,16 +184,6 @@ describe("Idea Team (derived, zero-schema) against isolated PostgreSQL", () => {
     const task = await db.task.create({ data: { companyUuid: owner.companyUuid, projectUuid, title: "Task", status: "to_verify", proposalUuid: child.uuid, createdByUuid: owner.actorUuid } });
     expect(await service.getIdeaTeamOrchestrators(owner.companyUuid, "task", task.uuid)).toEqual([{ ideaUuid: managed.uuid, agentUuid: lead.actorUuid }]);
     expect(await service.getIdeaTeamOrchestrators(owner.companyUuid, "proposal", child.uuid)).toEqual([{ ideaUuid: managed.uuid, agentUuid: lead.actorUuid }]);
-  });
-
-  it("broken ancestry stays closed for agents in Team projects, open for humans and Team-less projects", async () => {
-    const managed = await idea(lead);
-    const approved = await proposal([managed.uuid], "idea", "approved");
-    await db.idea.delete({ where: { uuid: managed.uuid } });
-    await expect(service.assertIdeaTeamGate(owner.companyUuid, approved.uuid, "task", actor(lead))).rejects.toThrow("ancestry");
-    await expect(service.assertIdeaTeamGate(owner.companyUuid, approved.uuid, "task", actor(owner))).resolves.toBeUndefined();
-    await db.projectAgentTeam.deleteMany({ where: { projectUuid } });
-    await expect(service.assertIdeaTeamGate(owner.companyUuid, approved.uuid, "task", actor(lead))).resolves.toBeUndefined();
   });
 
   it("returns the private roster only to the Team owner and their agents", async () => {

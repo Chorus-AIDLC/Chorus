@@ -46,7 +46,6 @@ import { clientLogger } from "@/lib/logger-client";
 import { StartDevelopmentButton } from "@/components/start-development-button";
 import { YoloButton } from "@/components/yolo-button";
 import { ReferencesSection } from "@/components/references-section";
-import { IdeaTeamGates } from "@/components/idea-team-gates";
 import { usePinThenWake } from "@/hooks/use-pin-then-wake";
 import { WakeCwdPickerDialog } from "@/components/agent-presence/wake-cwd-picker-dialog";
 import { FixedCwdAnchor } from "@/components/agent-presence/fixed-cwd-anchor";
@@ -64,7 +63,6 @@ interface Idea {
   title: string;
   content: string | null;
   status: string;
-  updatedAt?: string;
   elaborationStatus?: string;
   assignee: {
     type: string;
@@ -566,8 +564,6 @@ export function IdeaDetailPanel({
                     )}
                   </div>
                 </div>
-
-                <IdeaTeamGates ideaUuid={idea.uuid} revision={idea.updatedAt} />
 
                 {/* Elaboration Section */}
                 {!isLoadingElaboration && elaboration && elaboration.rounds.length > 0 && (

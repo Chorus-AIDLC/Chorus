@@ -150,7 +150,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   }));
 
   registerPermissionedTool(server, auth, "idea:read", "chorus_get_idea_team_context", {
-    description: "Read an Idea's Team state: managed/paused/unmanaged, its orchestrator (the Idea's current assignee), YOLO, and who passes the proposal/task gates. The private routing roster is returned only to the Team owner and the owner's agents. Unmanaged Ideas keep the legacy workflow; never claim an unassigned Idea because a Team exists.",
+    description: "Read an Idea's Team state: managed/paused/unmanaged, its orchestrator (the Idea's current assignee) and whether a human requested YOLO. The private routing roster (Team roles, product delegate) is returned only to the Team owner and the owner's agents. The Team only decides who does which work; approvals follow the normal workflow. Never claim an unassigned Idea because a Team exists.",
     inputSchema: z.object({ ideaUuid: z.string().uuid().describe("Idea UUID") }),
     annotations: { readOnlyHint: true },
   }, async ({ ideaUuid }) => ({

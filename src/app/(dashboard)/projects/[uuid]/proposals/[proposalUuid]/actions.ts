@@ -43,7 +43,7 @@ export async function approveProposalAction(proposalUuid: string, reviewNote?: s
       return { success: false, error: "Proposal is not pending review" };
     }
 
-    await approveProposal(proposalUuid, auth.companyUuid, auth.actorUuid, reviewNote || null, { actorType: auth.type, actorUuid: auth.actorUuid });
+    await approveProposal(proposalUuid, auth.companyUuid, auth.actorUuid, reviewNote || null);
 
     await createActivity({
       companyUuid: auth.companyUuid,

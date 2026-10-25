@@ -3,7 +3,6 @@
 // UUID-Based Architecture: All operations use UUIDs
 
 import { prisma, TransactionClient } from "@/lib/prisma";
-import { assertIdeaTeamGate } from "./idea-team.service";
 import { lockResearchProject, EXECUTED_TASK_STATUSES, provesTaskExecution, type ResearchDb } from "@/services/research-eligibility.service";
 import { formatAssigneeComplete, formatCreatedBy, batchResolveActorIdentities, batchFormatCreatedBy, batchGetAssigneeInstanceInfo, batchResolveAssignmentActors, type AssigneeInstanceInfo } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
@@ -766,11 +765,6 @@ export async function updateTask(
       if (anchor) {
         await lockResearchProject(tx, anchor.companyUuid, anchor.projectUuid);
         const current = await tx.task.findUnique({ where: { uuid } });
-        // Idea Team gate: verifying or closing a task (both count as complete) on a
-        // managed Idea is reserved to its orchestrator; humans keep their control.
-        if ((data.status === "done" || data.status === "closed") && current?.proposalUuid && actorContext) {
-          await assertIdeaTeamGate(anchor.companyUuid, current.proposalUuid, "task", actorContext, tx);
-        }
         // Route activity writes happen later: persist history atomically with execution.
         if (current && (EXECUTED_TASK_STATUSES.includes(data.status) || EXECUTED_TASK_STATUSES.includes(current.status))) {
           await tx.activity.create({ data: {
