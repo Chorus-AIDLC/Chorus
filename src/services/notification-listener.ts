@@ -582,9 +582,9 @@ function buildMessage(
 // ===== Idea Team lifecycle handoff =====
 
 const TEAM_HANDOFF_LABELS: Record<string, string> = {
-  "proposal:submitted": "a proposal was submitted; route its review",
+  "proposal:submitted": "a proposal was submitted for review",
   "proposal:approved": "a proposal was approved; assign development",
-  "task:submitted": "a task was submitted for verification; route its review",
+  "task:submitted": "a task was submitted for verification",
 };
 
 /**
@@ -618,9 +618,7 @@ export async function notifyIdeaTeamHandoff(event: ActivityEvent): Promise<void>
       entityType: event.targetType, entityUuid: event.targetUuid, entityTitle, projectName,
       action: "mentioned",
       message: `Idea Team handoff — ${label} by ${actorName}. You are the assignee of Team-managed Idea(s) ${ideas}: ` +
-        `call chorus_get_idea_team_context and route the next step to the Team: development via chorus_recommend_team_agent ` +
-        `(role "development") + task assignment, review via chorus_recommend_team_agent (role "review", taskUuid) and an @mention of the reviewer. ` +
-        `Approval stays with a human unless a human requested YOLO.`,
+        `call chorus_get_idea_team_context and route the next step to the Team (product delegation, or development via chorus_recommend_team_agent + task assignment). Approval follows the normal workflow (a human, unless a human requested YOLO).`,
       actorType: event.actorType, actorUuid: event.actorUuid, actorName,
     })));
   } catch (error) {

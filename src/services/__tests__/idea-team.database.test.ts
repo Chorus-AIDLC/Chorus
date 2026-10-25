@@ -206,15 +206,4 @@ describe("Idea Team (derived, zero-schema) against isolated PostgreSQL", () => {
     expect(await service.recommendIdeaTeamRole(owner, managed.uuid, "development"))
       .toMatchObject({ decision: "recommended", reason: "role_offline_orchestrator_fallback", agentUuid: outsiderOrchestrator.actorUuid });
   });
-  it("routes review to a review agent other than the task's own developer, with or without YOLO", async () => {
-    const managed = await idea(lead);
-    const approved = await proposal([managed.uuid], "idea", "approved");
-    const team = await db.projectAgentTeam.findFirstOrThrow({ where: { projectUuid } });
-    await db.agentTeamMember.createMany({ data: [{ teamUuid: team.templateUuid!, role: "review", agentUuid: developer.actorUuid }, { teamUuid: team.templateUuid!, role: "review", agentUuid: product.actorUuid }] });
-    for (const member of [developer, product]) await db.daemonConnection.create({ data: { companyUuid: owner.companyUuid, agentUuid: member.actorUuid, clientType: "codex", status: "online" } });
-    const task = await db.task.create({ data: { companyUuid: owner.companyUuid, projectUuid, title: "Task", status: "to_verify", proposalUuid: approved.uuid, createdByUuid: owner.actorUuid, assigneeType: "agent", assigneeUuid: developer.actorUuid } });
-    expect(await service.recommendIdeaTeamRole(lead, managed.uuid, "review", task.uuid)).toMatchObject({ decision: "recommended", agentUuid: product.actorUuid });
-    await yolo(managed.uuid);
-    expect(await service.recommendIdeaTeamRole(lead, managed.uuid, "review", task.uuid)).toMatchObject({ decision: "recommended", agentUuid: product.actorUuid });
-  });
 });

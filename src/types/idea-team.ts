@@ -1,7 +1,7 @@
 import type { AgentTeamRole } from "@/lib/agent-team-roles";
 import type { ProjectTeamMember } from "@/types/project-agent-team";
 
-export type IdeaTeamRoutingRole = "product" | "development" | "review";
+export type IdeaTeamRoutingRole = "product" | "development";
 
 export type IdeaTeamPauseReason = "orchestrator_ineligible";
 
@@ -12,7 +12,7 @@ export interface IdeaTeamContextDto {
   state: "active" | "paused" | "unmanaged";
   reason: IdeaTeamPauseReason | null;
   orchestrator: { agentUuid: string; agentName: string } | null;
-  /** A human requested YOLO on this Idea: the orchestrator may drive it end to end. */
+  /** A human requested YOLO on this Idea (only affects whether approvals need a human). */
   yolo: boolean;
   /** Owner-private: only the Team owner and the owner's own agents receive this. */
   routing: {

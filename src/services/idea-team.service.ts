@@ -228,9 +228,7 @@ export async function recommendIdeaTeamRole(auth: AuthContext, ideaUuid: string,
   const task = taskUuid ? await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid: auth.companyUuid, projectUuid: state.projectUuid } }) : null;
   if (taskUuid && (!task?.proposalUuid || !(await proposalSourceIdeas(auth.companyUuid, task.proposalUuid, prisma))?.includes(ideaUuid))) forbidden("Task does not belong to this Idea");
 
-  // An independent review never goes back to the task's own developer.
-  const author = role === "review" && task ? await logicalAgentUuid(auth.companyUuid, task.assigneeType, task.assigneeUuid, prisma) : null;
-  const eligible = state.team.roles[role].filter((member) => member.eligible && member.agentUuid !== author);
+  const eligible = state.team.roles[role].filter((member) => member.eligible);
   if (!eligible.length) return result("manual", "role_empty_or_ineligible");
   const online = eligible.filter((member) => member.online);
   if (!online.length) {
@@ -238,7 +236,7 @@ export async function recommendIdeaTeamRole(auth: AuthContext, ideaUuid: string,
     // The orchestrator need not be in the Team roster; check its live presence directly.
     const orchestrator = state.orchestratorUuid ? await prisma.agent.findFirst({ where: { uuid: state.orchestratorUuid, companyUuid: auth.companyUuid } }) : null;
     const eligibility = orchestrator ? getAgentTeamRoleEligibility(role, computeEffectivePermissions(orchestrator.roles, orchestrator.permissions)) : null;
-    if (orchestrator && eligibility?.eligible && orchestrator.uuid !== author) {
+    if (orchestrator && eligibility?.eligible) {
       const presence: Mentionable[] = [{ uuid: orchestrator.uuid, name: orchestrator.name, type: "agent" }];
       await enrichAgentLiveness(auth.companyUuid, presence);
       if (presence[0].online) {
