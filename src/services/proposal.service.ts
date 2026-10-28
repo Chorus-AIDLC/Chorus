@@ -5,7 +5,7 @@
 
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
-import { isIdeaTeamProductDelegate, type IdeaTeamActor } from "./idea-team.service";
+import { isIdeaTeamProductDelegate, projectHasTeams, type IdeaTeamActor } from "./idea-team.service";
 import { createActivity } from "./activity.service";
 import { Prisma } from "@/generated/prisma/client";
 import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid, batchResolveActorIdentities, type ActorIdentityMap } from "@/lib/uuid-resolver";
@@ -1264,8 +1264,9 @@ export async function submitProposal(
 
   eventBus.emitChange({ companyUuid: updated.companyUuid, projectUuid: updated.projectUuid, entityType: "proposal", entityUuid: updated.uuid, action: "updated" });
 
-  // Audited submission; also the lifecycle event that hands a Team-managed Idea back to its orchestrator.
-  if (actorContext) {
+  // Lifecycle event that hands a Team-managed Idea back to its orchestrator. Only
+  // emitted in projects with a bound Team, so projects without Teams are unchanged.
+  if (actorContext && await projectHasTeams(companyUuid, updated.projectUuid)) {
     await createActivity({ companyUuid, projectUuid: updated.projectUuid, targetType: "proposal", targetUuid: updated.uuid,
       actorType: actorContext.actorType, actorUuid: actorContext.actorUuid, action: "submitted" });
   }

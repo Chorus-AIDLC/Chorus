@@ -67,7 +67,7 @@ async function agentEligibleForIdea(companyUuid: string, agentUuid: string, proj
 }
 
 /** Cheap fast path: a project with no personal Team bindings has no managed Ideas. */
-async function projectHasTeams(companyUuid: string, projectUuid: string, client: ProjectTeamClient) {
+export async function projectHasTeams(companyUuid: string, projectUuid: string, client: ProjectTeamClient = prisma) {
   return (await client.projectAgentTeam.count({ where: { companyUuid, projectUuid } })) > 0;
 }
 

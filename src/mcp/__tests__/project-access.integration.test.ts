@@ -151,6 +151,7 @@ vi.mock("@/services/proposal.service", async (importOriginal) => {
   fixture.services.proposal.createProposal.mockImplementation(actual.createProposal);
   return fixture.services.proposal;
 });
+vi.mock("@/services/idea-team.service", async (importOriginal) => ({ ...await importOriginal<typeof import("@/services/idea-team.service")>(), projectHasTeams: vi.fn(async () => false), isIdeaTeamProductDelegate: vi.fn(async () => false) }));
 vi.mock("@/services/activity.service", () => fixture.services.activity);
 vi.mock("@/services/comment.service", () => fixture.services.comment);
 vi.mock("@/services/reference-artifact.service", () => fixture.services.reference);
