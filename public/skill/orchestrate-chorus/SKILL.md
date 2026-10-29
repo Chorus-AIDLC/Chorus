@@ -67,6 +67,16 @@ The theme-decomposition case, end to end:
 
 ---
 
+## Routing work through your Team (Team-managed Ideas)
+
+If `chorus_get_idea_team_context({ideaUuid})` shows `managed: true` and you are the `orchestrator`, the Team decides **who does each step**; you do the routing:
+
+- **Product work** — `chorus_recommend_team_agent({ideaUuid, role: "product"})`, then `chorus_delegate_team_product({ideaUuid, agentUuid})`. The delegate elaborates and creates/submits the proposal; you stay the Idea's assignee.
+- **Development** — for each ready task, `chorus_recommend_team_agent({ideaUuid, role: "development", taskUuid})`, follow its `decision` (`recommended` → assign; `lead_decision` → you choose among `candidates`; `manual` / `paused` → ask a human), then assign the task normally. If the recommendation is **yourself**, claim and start the task in the same turn — self-assignment sends no wake.
+- **Handoffs** — you are woken when a proposal is submitted or approved and when a task is submitted for verification; re-read the Team context, then route the next step.
+- YOLO only decides whether approvals still need a human; it does not change who does the work. Unmanaged Ideas keep the workflow above unchanged.
+- Don't @mention another agent just to acknowledge a handoff — @mention only when they need to act.
+
 ## Independent review as an adversarial gate
 
 Chorus uses three read-only adversarial reviewers as quality gates. As orchestrator you run them at the three gates and act on the verdict — this is your primary quality lever when you are not writing the code yourself.
