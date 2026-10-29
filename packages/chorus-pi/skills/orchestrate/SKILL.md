@@ -15,7 +15,7 @@ This skill is for an **orchestrator** (typically an Admin-preset agent) that coo
 
 It complements the other skills rather than replacing them:
 
-- `/skill:yolo` — **one** agent drives the whole pipeline solo. Orchestration is the opposite: **many** agents, each owning a piece, coordinated by you.
+- `/skill:yolo` — **one** agent drives the whole pipeline solo. (On a Team-managed Idea, yolo still routes product/development work to the Team — see below.) Orchestration is the opposite: **many** agents, each owning a piece, coordinated by you.
 - `/skill:idea`, `/skill:proposal`, `/skill:develop`, `/skill:review`, `/skill:quick-dev` — a single stage you execute yourself. Orchestration is the layer *above* those: you decide who runs each stage.
 
 ---
@@ -71,10 +71,10 @@ The theme-decomposition case, end to end:
 
 If `chorus_get_idea_team_context({ideaUuid})` shows `managed: true` and you are the `orchestrator`, the Team decides **who does each step**; you do the routing:
 
-- **Product work** — `chorus_recommend_team_agent({ideaUuid, role: "product"})`, then `chorus_delegate_team_product({ideaUuid, agentUuid})`. The delegate elaborates and creates/submits the proposal; you stay the Idea's assignee.
+- **Product work** — `chorus_recommend_team_agent({ideaUuid, role: "product"})`, then `chorus_delegate_team_product({ideaUuid, agentUuid})`. The delegate elaborates and creates/submits the proposal; you stay the Idea's assignee. If the recommendation is **yourself** (offline fallback), do the product work yourself — don't delegate to yourself.
 - **Development** — for each ready task, `chorus_recommend_team_agent({ideaUuid, role: "development", taskUuid})`, follow its `decision` (`recommended` → assign; `lead_decision` → you choose among `candidates`; `manual` / `paused` → ask a human), then assign the task normally. If the recommendation is **yourself**, claim and start the task in the same turn — self-assignment sends no wake.
 - **Handoffs** — you are woken when a proposal is submitted or approved and when a task is submitted for verification; re-read the Team context, then route the next step.
-- YOLO only decides whether approvals still need a human; it does not change who does the work. Unmanaged Ideas keep the workflow above unchanged.
+- YOLO only decides whether approvals still need a human; it does not change who does the work. With YOLO you approve/verify yourself (existing permissions) and keep routing to the Team; without YOLO the proposal gate below still applies. Unmanaged Ideas keep the workflow below unchanged.
 - Don't @mention another agent just to acknowledge a handoff — @mention only when they need to act.
 
 ## Independent review as an adversarial gate
@@ -126,8 +126,8 @@ This is **advisory, not routing.** There is no automatic server subscription and
 
 Chorus is **AI proposes, humans verify**. As orchestrator you enforce that, you do not bypass it:
 
-- **Proposal gate.** When a delegated owner submits a proposal, STOP. Run the proposal reviewer, then hand the approve/reject decision to the human owner. Do not self-approve just because you *can* (`proposal:admin`).
-- **Verify gate.** When a task reaches `to_verify`, STOP. Run the task reviewer, then let the human verify. Permission to verify is not authorization to rubber-stamp your own coordinated work.
+- **Proposal gate.** Unless a human requested YOLO on the Idea: when a delegated owner submits a proposal, STOP. Run the proposal reviewer, then hand the approve/reject decision to the human owner. Do not self-approve just because you *can* (`proposal:admin`).
+- **Verify gate.** (Unmanaged Ideas) When a task reaches `to_verify`, STOP. On a Team-managed Idea you are its orchestrator and verify the task yourself with your existing permissions after reviewing it. Run the task reviewer, then let the human verify. Permission to verify is not authorization to rubber-stamp your own coordinated work.
 - **Never merge or push.** The orchestrator drives work up to "PR ready" and hands it back to the human — it does not merge, push, or otherwise ship autonomously.
 
 @mention the owner at each gate so the handoff is explicit and auditable.

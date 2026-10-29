@@ -206,4 +206,14 @@ describe("Idea Team (derived, zero-schema) against isolated PostgreSQL", () => {
     expect(await service.recommendIdeaTeamRole(owner, managed.uuid, "development"))
       .toMatchObject({ decision: "recommended", reason: "role_offline_orchestrator_fallback", agentUuid: outsiderOrchestrator.actorUuid });
   });
+  it("product fallback to the orchestrator means it does the product work itself", async () => {
+    const managed = await idea(lead);
+    await db.daemonConnection.create({ data: { companyUuid: owner.companyUuid, agentUuid: lead.actorUuid, clientType: "codex", status: "online" } });
+    const recommendation = await service.recommendIdeaTeamRole(lead, managed.uuid, "product");
+    expect(recommendation).toMatchObject({ decision: "recommended", reason: "role_offline_orchestrator_fallback", agentUuid: lead.actorUuid });
+    await expect(service.delegateIdeaTeamProduct(lead, managed.uuid, recommendation.agentUuid!)).rejects.toThrow("does product work itself");
+    await elaboration.startElaboration({ companyUuid: owner.companyUuid, ideaUuid: managed.uuid, actorUuid: lead.actorUuid, actorType: "agent", depth: "minimal",
+      questions: [{ id: "q1", text: "Scope?", category: "scope", options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] }] });
+    expect((await db.elaborationRound.count({ where: { ideaUuid: managed.uuid } }))).toBe(1);
+  });
 });

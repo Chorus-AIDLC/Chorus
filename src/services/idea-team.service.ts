@@ -208,6 +208,9 @@ export async function delegateIdeaTeamProduct(auth: AuthContext, ideaUuid: strin
   if (!(auth.type === "agent" ? auth.actorUuid === state.orchestratorUuid : auth.type === "user" && auth.actorUuid === state.ownerUuid)) {
     forbidden("Only the Idea's current assignee or its Team owner can delegate product work");
   }
+  // A fallback recommendation of the orchestrator itself means "do the product work yourself" —
+  // the orchestrator already owns the Idea, so there is nothing to delegate.
+  if (agentUuid === state.orchestratorUuid) forbidden("The orchestrator does product work itself; no delegation needed (elaborate and author the proposal directly)");
   const member = state.team?.roles.product.find((candidate) => candidate.agentUuid === agentUuid && candidate.eligible);
   if (!member) forbidden("Product delegate must be an eligible product member of the owner's Team");
   if (state.productAgentUuid !== agentUuid) {
