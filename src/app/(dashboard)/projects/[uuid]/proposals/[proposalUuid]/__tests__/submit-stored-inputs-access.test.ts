@@ -32,6 +32,6 @@ describe("submitProposalAction — stored inputs that became hidden", () => {
   it("submits when every stored input is visible", async () => {
     mockInputs.mockResolvedValue(null);
     expect(await submitProposalAction("pr")).toEqual({ success: true });
-    expect(mockSubmit).toHaveBeenCalledWith("pr", "c");
+    expect(mockSubmit).toHaveBeenCalledWith("pr", "c", expect.objectContaining({ actorUuid: expect.any(String) }));
   });
 });
