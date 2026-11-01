@@ -2,6 +2,7 @@
 // Public MCP tools - available to all Agents (ARCHITECTURE.md §5.2)
 // UUID-Based Architecture: All operations use UUIDs
 
+import { getIdeaTeamContext, recommendIdeaTeamRole, delegateIdeaTeamProduct } from "@/services/idea-team.service";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
@@ -146,6 +147,36 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     annotations: { readOnlyHint: true },
   }, async ({ projectUuid }) => ({
     content: [{ type: "text", text: JSON.stringify({ team: await getProjectAgentTeam(auth, projectUuid) }, null, 2) }],
+  }));
+
+  registerPermissionedTool(server, auth, "idea:read", "chorus_get_idea_team_context", {
+    description: "Read an Idea's Team state: managed/paused/unmanaged, its orchestrator (the Idea's current assignee) and whether a human requested YOLO. The private routing roster (Team roles, product delegate) is returned only to the Team owner and the owner's agents. The Team only decides who does which work; approvals follow the normal workflow. Never claim an unassigned Idea because a Team exists.",
+    inputSchema: z.object({ ideaUuid: z.string().uuid().describe("Idea UUID") }),
+    annotations: { readOnlyHint: true },
+  }, async ({ ideaUuid }) => ({
+    content: [{ type: "text", text: JSON.stringify(await getIdeaTeamContext(auth, ideaUuid), null, 2) }],
+  }));
+
+  registerPermissionedTool(server, auth, "idea:read", "chorus_recommend_team_agent", {
+    description: "Recommend a product or development agent for a Team-managed Idea from live eligibility, online status, load and task affinity. Owner-private; does not assign or wake anyone. Follow recommended / lead_decision / manual / paused. Optional taskUuid must belong to the Idea.",
+    inputSchema: z.object({
+      ideaUuid: z.string().uuid().describe("Idea UUID"),
+      role: z.enum(["product", "development"]),
+      taskUuid: z.string().uuid().optional().describe("Related Task UUID for development affinity"),
+    }),
+    annotations: { readOnlyHint: true },
+  }, async ({ ideaUuid, role, taskUuid }) => ({
+    content: [{ type: "text", text: JSON.stringify(await recommendIdeaTeamRole(auth, ideaUuid, role, taskUuid), null, 2) }],
+  }));
+
+  registerPermissionedTool(server, auth, "idea:write", "chorus_delegate_team_product", {
+    description: "The current assignee of an active Team-managed Idea delegates elaboration and proposal authoring to an eligible product agent of the owner's Team, and @mentions it. The assignee stays the Idea's sole owner. Grants no permissions; the delegate cannot resolve elaboration, approve proposals or verify tasks.",
+    inputSchema: z.object({
+      ideaUuid: z.string().uuid().describe("Idea UUID"),
+      agentUuid: z.string().uuid().describe("Eligible product agent UUID"),
+    }),
+  }, async ({ ideaUuid, agentUuid }) => ({
+    content: [{ type: "text", text: JSON.stringify(await delegateIdeaTeamProduct(auth, ideaUuid, agentUuid), null, 2) }],
   }));
 
   // chorus_list_projects - List all projects

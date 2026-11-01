@@ -151,6 +151,7 @@ vi.mock("@/services/proposal.service", async (importOriginal) => {
   fixture.services.proposal.createProposal.mockImplementation(actual.createProposal);
   return fixture.services.proposal;
 });
+vi.mock("@/services/idea-team.service", async (importOriginal) => ({ ...await importOriginal<typeof import("@/services/idea-team.service")>(), projectHasTeams: vi.fn(async () => false), isIdeaTeamProductDelegate: vi.fn(async () => false) }));
 vi.mock("@/services/activity.service", () => fixture.services.activity);
 vi.mock("@/services/comment.service", () => fixture.services.comment);
 vi.mock("@/services/reference-artifact.service", () => fixture.services.reference);
@@ -715,7 +716,7 @@ describe("MCP central project access", () => {
           expect(JSON.parse((response.content[0] as { text: string }).text)).toEqual({
             uuid: proposal.uuid, status: "pending",
           });
-          expect(fixture.services.proposal.submitProposal).toHaveBeenCalledWith(proposal.uuid, "company");
+          expect(fixture.services.proposal.submitProposal).toHaveBeenCalledWith(proposal.uuid, "company", expect.objectContaining({ actorType: "agent" }));
           expect(fixture.prisma.proposal.update).toHaveBeenCalledOnce();
         }
         if (inputType === "document") expect(fixture.prisma.idea.findMany).not.toHaveBeenCalled();

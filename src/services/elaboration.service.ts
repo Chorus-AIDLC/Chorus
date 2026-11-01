@@ -2,6 +2,7 @@
 // Elaboration Service Layer — AI-DLC Stage 3 (Requirements Clarification)
 
 import { prisma } from "@/lib/prisma";
+import { isIdeaTeamProductDelegate } from "./idea-team.service";
 import { eventBus } from "@/lib/event-bus";
 import { activityService } from "@/services";
 import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
@@ -68,7 +69,7 @@ export async function startElaboration({
     where: { uuid: ideaUuid, companyUuid },
   });
   if (!idea) throw new Error("Idea not found");
-  if (!(await isIdeaAssignedToActor(companyUuid, idea, actorUuid))) {
+  if (!(await isIdeaAssignedToActor(companyUuid, idea, actorUuid)) && !(actorType === "agent" && await isIdeaTeamProductDelegate(companyUuid, ideaUuid, actorUuid))) {
     throw new Error("Only the assigned agent can start elaboration");
   }
   if (idea.status !== "elaborating" && idea.status !== "elaborated") {

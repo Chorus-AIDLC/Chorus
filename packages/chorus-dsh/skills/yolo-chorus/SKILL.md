@@ -97,6 +97,16 @@ for resource, actions in need:
 
 During planning, follow the Idea and Proposal routes to `research-chorus` ([shared rules](../research-chorus/SKILL.md)): Idea before formal clarification once focused, Proposal after reusing evidence and only for new gaps or an explicit request. Carry findings and the request context across wakes and brainstorm; do not restart the same investigation on resume. Preserve the existing yolo decision/review gates. A Tracker Research action is research-only even inside a yolo-associated conversation: use the Idea research-only branch, save/report, and return without advancing to elaboration, proposal submission, or development. A yolo request alone does not prove development started; use actual execution facts.
 
+## Team-managed Ideas (check first)
+
+Call `chorus_get_idea_team_context({ideaUuid})` before executing. If `managed: true` and you are the `orchestrator`, YOLO keeps the Team's division of labor — it only removes the need for a human to approve:
+
+- **Product work**: delegate via `chorus_recommend_team_agent({ideaUuid, role: "product"})` + `chorus_delegate_team_product`, instead of elaborating and writing the proposal yourself (if the recommendation is yourself, do it yourself).
+- **Approval**: you may approve the proposal yourself (existing `proposal:admin` permission) once it passes review.
+- **Development**: for each ready task use `chorus_recommend_team_agent({ideaUuid, role: "development", taskUuid})` and assign the recommended agent, instead of spawning sub-agents or implementing yourself. If the recommendation is yourself, claim and implement it in this turn.
+- **Verification**: verify each task yourself after review, then route the next ready task. You are woken on each handoff (proposal submitted, task submitted for verification).
+- Unmanaged Ideas (`managed: false`): follow the workflow below unchanged.
+
 ## Workflow
 
 ### Phase 1: Planning

@@ -62,6 +62,14 @@ When the current instruction is an explicit Tracker Research action, route direc
 
 ---
 
+## Team-managed Ideas (check first)
+
+Before the workflow below, call `chorus_get_idea_team_context({ideaUuid})`. If `managed: true` and you are the `orchestrator`, route the work instead of doing every stage yourself:
+
+- **Product work** (elaboration + proposal): `chorus_recommend_team_agent({ideaUuid, role: "product"})`, then `chorus_delegate_team_product({ideaUuid, agentUuid})`. If the recommendation is yourself, do it yourself with the workflow below.
+- If you are the **product delegate** (not the orchestrator): run elaboration and author/submit the proposal with the workflow below, but never claim, release or reassign the Idea; leave resolving elaboration to the orchestrator or a human.
+- Unmanaged Ideas (`managed: false`): follow the workflow below unchanged. See the orchestrate skill for the full Team routing contract.
+
 ## Workflow
 
 ### Step 1: Check In
