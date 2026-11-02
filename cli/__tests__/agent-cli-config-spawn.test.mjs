@@ -145,11 +145,12 @@ describe("actual daemon spawn customization", () => {
     await selectSpawner("offline", opts).wake(wake);
     expect(opts.spawnImpl).not.toHaveBeenCalled();
   });
-  it("Kiro session discovery and reconstruction use the child's home", async () => {
+  it("Kiro keeps the child's home without scanning unowned sessions", async () => {
     const snapshotSessionsFn = vi.fn(() => new Map()); const reconstructTranscript = vi.fn();
     const opts = backendOpts("kiro", { cliConfig: { env: { HOME: "/profile-home" } }, snapshotSessionsFn, reconstructTranscript });
     await selectSpawner("kiro", opts).wake(wake);
-    expect(snapshotSessionsFn.mock.calls[0][1].dir).toBe("/profile-home/.kiro/sessions/cli");
+    expect(snapshotSessionsFn).not.toHaveBeenCalled();
+    expect(reconstructTranscript.mock.calls[0][0].sessionId).toBe("");
     expect(reconstructTranscript.mock.calls[0][0].dir).toBe("/profile-home/.kiro/sessions/cli");
     expect(opts.spawnImpl.mock.calls[0][2].env.HOME).toBe("/profile-home");
   });
@@ -211,11 +212,12 @@ describe("actual daemon spawn customization", () => {
       expect(JSON.parse(child.stdin.write.mock.calls[0][0]).params).toMatchObject({ provider: "provider-x", model: "model-x" });
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
-  it.each(["home", "uSeRpRoFiLe"])("Windows Kiro discovery/reconstruction uses %s from child env", async (key) => {
+  it.each(["home", "uSeRpRoFiLe"])("Windows Kiro uses %s without scanning unowned sessions", async (key) => {
     const snapshotSessionsFn = vi.fn(() => new Map()); const reconstructTranscript = vi.fn();
     const opts = backendOpts("kiro", { platform: "win32", env: {}, cliConfig: { env: { [key]: "/profile-home" } }, snapshotSessionsFn, reconstructTranscript });
     await selectSpawner("kiro", opts).wake(wake);
-    expect(snapshotSessionsFn.mock.calls[0][1].dir).toBe(join("/profile-home", ".kiro", "sessions", "cli"));
+    expect(snapshotSessionsFn).not.toHaveBeenCalled();
+    expect(reconstructTranscript.mock.calls[0][0].sessionId).toBe("");
     expect(reconstructTranscript.mock.calls[0][0].dir).toBe(join("/profile-home", ".kiro", "sessions", "cli"));
     expect(opts.spawnImpl.mock.calls[0][2].env[key]).toBe("/profile-home");
   });

@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.23.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -59,6 +59,16 @@ Key responsibilities:
 **Shared tools** (checkin, query, comment, search, notifications): see `/chorus`
 
 ---
+
+## Team-managed review (check first)
+
+Resolve the entity's source Ideas, including proposal/document ancestry, and read each `chorus_get_idea_team_context` before reviewing or acting. For active managed work, follow [Team review routing](../orchestrate/SKILL.md#team-review-routing): only the current orchestrator dispatches through `role: "review"`; a woken Team reviewer posts the routed VERDICT and makes no lifecycle writes. Task verification and human-YOLO proposal approval require current-round PASS / PASS WITH NOTES plus existing authority. Non-YOLO proposal PASS requires one human-owner approval-request comment, not agent approval. Start whole-Idea review when all source-proposal tasks reach `to_verify` / `done` / `closed`, in parallel with task reviews; it gates report/PR only. Stop on paused or unresolved context. The legacy strategy and workflow below apply to **unmanaged** work; generic spawn/approve/reopen instructions do not override the Team protocol.
+
+**Direct Team review requests:** send the complete request envelope required by Team review routing: `Team review request — <kind>, round N`, target UUID, matching local reviewer protocol location, exactly one reviewer @mention, and expected PASS/FAIL recipient names/UUIDs (not mentions). A request must never start a line with `VERDICT:`.
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
 
 ## Review Strategy
 
@@ -145,6 +155,8 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 #### A3.5: Independent Review
 
+**Managed work:** use [Team review routing](../orchestrate/SKILL.md#team-review-routing) instead of the unmanaged dispatch/timing below.
+
 Spawn `chorus-proposal-reviewer` per the [Review Strategy](#review-strategy) above — spawn it with the `subagent` tool and wait for its VERDICT. Read its VERDICT comment before proceeding.
 
 #### A4: Approve or Reject
@@ -210,12 +222,16 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 
 #### B2.5: Independent Review
 
+**Managed work:** use [Team review routing](../orchestrate/SKILL.md#team-review-routing) instead of the unmanaged dispatch/timing below.
+
 Spawn `chorus-task-reviewer` per the [Review Strategy](#review-strategy) above — spawn it with the `subagent` tool and wait for its VERDICT. After it completes, read its VERDICT:
 
 - **VERDICT: PASS** or **PASS WITH NOTES** → proceed to B3 (mark AC) and B4 (verify).
 - **VERDICT: FAIL** → skip to B4 and **reopen** the task. Do NOT mark AC as passed.
 
 #### B2.6: Final Code-Review Gateway (after an Idea's LAST task is verified)
+
+**Managed work:** use [Team review routing](../orchestrate/SKILL.md#team-review-routing) instead of the unmanaged dispatch/timing below.
 
 When the task you just verified is the **last** task of its idea-rooted proposal, run the ship-time code-review gateway before the Idea's code is considered shipped. The the extension injects a reminder to spawn `chorus-code-reviewer` (gated by `enableCodeReviewer`, default on). Spawn it per the [Review Strategy](#review-strategy) — with the `subagent` tool, passing the `ideaUuid` + round number. It reviews the Idea's **aggregate** code change across all its tasks — cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage — dimensions a single-task review cannot see — and posts one `VERDICT` comment on the **idea**.
 

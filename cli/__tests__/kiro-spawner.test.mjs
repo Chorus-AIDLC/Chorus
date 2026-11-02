@@ -10,12 +10,13 @@
 // `@chorus`.
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { backendSessionKey } from "../backend-session-identity.mjs";
+import { reconstructTranscript } from "../kiro-transcript.mjs";
 import {
   KiroSpawner,
   buildKiroArgs,
   trustFlags,
   resolveKiroPath,
-  pickNewSessionId,
 } from "../kiro-spawner.mjs";
 
 const ANCHOR = "11111111-1111-4111-8111-111111111111";
@@ -38,6 +39,165 @@ function makeFakeChild() {
   child.pid = 4242;
   return child;
 }
+
+describe("Kiro agent session isolation", () => {
+  it.each(["orchestrator", "reviewer"])("rejects one foreign singleton during overlapping O/R wakes (%s closes first), including recreated spawners", async (firstToClose) => {
+    const store = new Map();
+    const sessions = new Map();
+    const snapshotSessionsFn = vi.fn(() => new Map(store));
+    const setSessionIdFn = vi.fn((key, value) => sessions.set(key, value));
+    const read = vi.fn(() => { throw new Error("unowned native transcript read"); });
+    const readdir = vi.fn(() => { throw new Error("unowned native store scan"); });
+    const start = (agentUuid) => {
+      const child = makeFakeChild();
+      const spawnImpl = vi.fn(() => child);
+      const onMessage = vi.fn();
+      const reconstruct = vi.fn((params) => reconstructTranscript({ ...params, read, readdir }));
+      const spawner = new KiroSpawner({
+        kiroPath: "/fake/kiro-cli", spawnImpl, creds: { agentUuid }, env: { HOME: "/shared/home" },
+        getSessionIdFn: (key) => sessions.get(key) ?? null, setSessionIdFn,
+        snapshotSessionsFn, reconstructTranscript: reconstruct,
+      });
+      const pending = spawner.wake({ prompt: agentUuid, sessionId: ANCHOR, cwd: "/shared/repo", onMessage });
+      child.stdout.emit("data", `${agentUuid} output`);
+      return { child, spawnImpl, pending, onMessage, reconstruct };
+    };
+    const orchestrator = start("orchestrator");
+    const reviewer = start("reviewer");
+    expect(orchestrator.spawnImpl).toHaveBeenCalledTimes(1);
+    expect(reviewer.spawnImpl).toHaveBeenCalledTimes(1);
+    expect(store.size).toBe(0);
+    store.set(SID, 1);
+    const active = { orchestrator, reviewer };
+    active[firstToClose].child.emit("close", 0);
+    await active[firstToClose].pending;
+    active[firstToClose === "orchestrator" ? "reviewer" : "orchestrator"].child.emit("close", 0);
+    for (const [agentUuid, run] of Object.entries(active)) {
+      expect(await run.pending).toMatchObject({ sessionId: ANCHOR, backendSessionId: null, isNew: true, exitCode: 0 });
+      expect(run.reconstruct).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "", stdout: `${agentUuid} output` }));
+      expect(JSON.stringify(run.onMessage.mock.calls)).toContain(`${agentUuid} output`);
+      expect(JSON.stringify(run.onMessage.mock.calls)).not.toContain(`${agentUuid === "orchestrator" ? "reviewer" : "orchestrator"} output`);
+      const recreated = start(agentUuid);
+      recreated.child.emit("close", 0);
+      expect(await recreated.pending).toMatchObject({ backendSessionId: null, isNew: true });
+      expect(recreated.spawnImpl.mock.calls[0][1]).not.toContain("--resume-id");
+      expect(recreated.reconstruct).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "" }));
+    }
+    expect([...store]).toEqual([[SID, 1]]);
+    expect(sessions.size).toBe(0);
+    expect(setSessionIdFn).not.toHaveBeenCalled();
+    expect(snapshotSessionsFn).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    expect(readdir).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("preserves and visibly refuses unverified legacy mappings after recreation (scoped: %s)", async (scoped) => {
+    const sessions = new Map(scoped
+      ? ["orchestrator", "reviewer"].map((agentUuid) => [backendSessionKey(ANCHOR, agentUuid), SID])
+      : [[ANCHOR, SID]]);
+    const original = [...sessions];
+    const setSessionIdFn = vi.fn();
+    for (const agentUuid of ["orchestrator", "reviewer", "orchestrator", "reviewer"]) {
+      const child = makeFakeChild();
+      const spawnImpl = vi.fn(() => child);
+      const logger = { info() {}, error() {}, warn: vi.fn() };
+      const reconstruct = vi.fn();
+      const spawner = new KiroSpawner({
+        kiroPath: "/fake/kiro-cli", spawnImpl, creds: { agentUuid }, env: {}, logger,
+        getSessionIdFn: (key) => sessions.get(key) ?? null, setSessionIdFn,
+        reconstructTranscript: reconstruct,
+      });
+      const pending = spawner.wake({ prompt: "continue", sessionId: ANCHOR, cwd: "/shared/repo" });
+      child.emit("close", 0);
+      expect(await pending).toMatchObject({ backendSessionId: null, isNew: true });
+      expect(spawnImpl.mock.calls[0][1]).not.toContain("--resume-id");
+      expect(reconstruct).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "" }));
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(SID));
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("ownership"));
+    }
+    expect([...sessions]).toEqual(original);
+    expect(setSessionIdFn).not.toHaveBeenCalled();
+  });
+
+  it("resumes and reconstructs only independently verified ownership across recreated spawners", async () => {
+    const sessions = new Map([
+      [backendSessionKey(ANCHOR, "orchestrator"), SID],
+      [backendSessionKey(ANCHOR, "reviewer"), SID2],
+      [backendSessionKey("other-idea", "reviewer"), SID2],
+    ]);
+    const verifySessionOwnershipFn = vi.fn(({ agentUuid, anchor, sessionId, cwd, dir }) =>
+      anchor === ANCHOR && cwd === "/shared/repo" && dir === "/shared/home/.kiro/sessions/cli" &&
+      ((agentUuid === "orchestrator" && sessionId === SID) || (agentUuid === "reviewer" && sessionId === SID2)));
+    for (const [agentUuid, anchor, cwd, expected] of [
+      ["orchestrator", ANCHOR, "/shared/repo", SID],
+      ["reviewer", ANCHOR, "/shared/repo", SID2],
+      ["orchestrator", ANCHOR, "/shared/repo", SID],
+      ["reviewer", ANCHOR, "/shared/repo", SID2],
+      ["reviewer", "other-idea", "/shared/repo", null],
+      ["reviewer", ANCHOR, "/other/repo", null],
+    ]) {
+      const child = makeFakeChild();
+      const spawnImpl = vi.fn(() => child);
+      const reconstruct = vi.fn();
+      const spawner = new KiroSpawner({
+        kiroPath: "/fake/kiro-cli", spawnImpl, creds: { agentUuid }, env: { HOME: "/shared/home" }, platform: "linux",
+        getSessionIdFn: (key) => sessions.get(key) ?? null, verifySessionOwnershipFn,
+        reconstructTranscript: reconstruct,
+      });
+      const pending = spawner.wake({ prompt: "continue", sessionId: anchor, cwd, isNew: true });
+      child.emit("close", 0);
+      expect(await pending).toMatchObject({ backendSessionId: expected, isNew: !expected });
+      expect(verifySessionOwnershipFn).toHaveBeenLastCalledWith({
+        agentUuid, anchor, sessionKey: backendSessionKey(anchor, agentUuid),
+        sessionId: sessions.get(backendSessionKey(anchor, agentUuid)), cwd, dir: "/shared/home/.kiro/sessions/cli",
+      });
+      const argv = spawnImpl.mock.calls[0][1];
+      if (expected) expect(argv[argv.indexOf("--resume-id") + 1]).toBe(expected);
+      else expect(argv).not.toContain("--resume-id");
+      expect(reconstruct).toHaveBeenCalledWith(expect.objectContaining({ sessionId: expected ?? "" }));
+    }
+  });
+
+  it.each([{ ids: [] }, { ids: [SID] }, { ids: [SID, SID2] }])("does not report the business anchor as native identity without ownership: $ids", async ({ ids }) => {
+    const child = makeFakeChild();
+    const setSessionIdFn = vi.fn();
+    const spawner = new KiroSpawner({
+      kiroPath: "/fake/kiro-cli", spawnImpl: () => child, creds: { agentUuid: "agent-one" },
+      getSessionIdFn: () => null, setSessionIdFn, reconstructTranscript: null,
+      snapshotSessionsFn: vi.fn().mockReturnValueOnce(new Map()).mockReturnValue(new Map(ids.map((id) => [id, 1]))),
+    });
+    const pending = spawner.wake({ prompt: "hello", sessionId: ANCHOR });
+    child.emit("close", 0);
+    expect(await pending).toMatchObject({ sessionId: ANCHOR, backendSessionId: null, exitCode: 0 });
+    expect(setSessionIdFn).not.toHaveBeenCalled();
+  });
+
+  it.each(["throws", "truthy", "promise", "missing-agent"])("fails closed when ownership verification is invalid: %s", async (mode) => {
+    const child = makeFakeChild();
+    const spawnImpl = vi.fn(() => child);
+    const reconstruct = vi.fn();
+    const verifySessionOwnershipFn = vi.fn(() => {
+      if (mode === "throws") throw new Error("proof unavailable");
+      if (mode === "truthy") return "true";
+      if (mode === "promise") return Promise.resolve(true);
+      return true;
+    });
+    const logger = { info() {}, error() {}, warn: vi.fn() };
+    const spawner = new KiroSpawner({
+      kiroPath: "/fake/kiro-cli", spawnImpl, creds: mode === "missing-agent" ? {} : { agentUuid: "reviewer" },
+      env: {}, logger, getSessionIdFn: () => SID, verifySessionOwnershipFn,
+      reconstructTranscript: reconstruct,
+    });
+    const pending = spawner.wake({ prompt: "continue", sessionId: ANCHOR, cwd: "/shared/repo" });
+    child.stdout.emit("data", "own output");
+    child.emit("close", 0);
+    expect(await pending).toMatchObject({ backendSessionId: null, isNew: true, exitCode: 0 });
+    expect(spawnImpl.mock.calls[0][1]).not.toContain("--resume-id");
+    expect(reconstruct).toHaveBeenCalledWith(expect.objectContaining({ sessionId: "", stdout: "own output" }));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("unverified ownership"));
+    if (mode === "missing-agent") expect(verifySessionOwnershipFn).not.toHaveBeenCalled();
+  });
+});
 
 describe("trustFlags — permission mode mapping", () => {
   it("yolo → --trust-all-tools", () => {
@@ -85,40 +245,6 @@ describe("buildKiroArgs — new vs resume", () => {
   });
 });
 
-describe("pickNewSessionId — UNAMBIGUOUS post-run capture (reviewer N1 hardening)", () => {
-  it("returns the id when EXACTLY ONE brand-new id appeared", () => {
-    const before = new Map([[SID, 100]]);
-    const after = new Map([
-      [SID, 100],
-      [SID2, 200],
-    ]);
-    expect(pickNewSessionId(before, after)).toBe(SID2);
-  });
-
-  it("returns null when SEVERAL new ids appear (concurrent same-cwd wake → refuse to guess)", () => {
-    // Two fresh runs raced in the same cwd; we must NOT mis-attribute one to the other.
-    const before = new Map();
-    const after = new Map([
-      [SID, 100],
-      [SID2, 300],
-    ]);
-    expect(pickNewSessionId(before, after)).toBeNull();
-  });
-
-  it("returns null when NO new id appeared (only an existing id's updated_at moved)", () => {
-    // No "updated_at advanced" fallback — a fresh run always creates a new id.
-    const before = new Map([[SID, 100]]);
-    const after = new Map([[SID, 250]]);
-    expect(pickNewSessionId(before, after)).toBeNull();
-  });
-
-  it("returns null when nothing changed", () => {
-    const before = new Map([[SID, 100]]);
-    const after = new Map([[SID, 100]]);
-    expect(pickNewSessionId(before, after)).toBeNull();
-  });
-});
-
 describe("resolveKiroPath", () => {
   const isFile = (set) => (p) => set.has(p);
 
@@ -146,13 +272,14 @@ describe("resolveKiroPath", () => {
 });
 
 describe("KiroSpawner.wake — spawn orchestration", () => {
-  const creds = { url: "https://chorus.test", apiKey: "cho_secret" };
+  const creds = { url: "https://chorus.test", apiKey: "cho_secret", agentUuid: "test-agent" };
 
   /** Build a spawner whose spawnImpl returns our fake child + records the call. */
   function makeSpawner({
     child,
     permissionMode = "yolo",
     getSessionId,
+    verifySessionOwnershipFn,
     setSessionId,
     snapshots,
     kiroPath = "/usr/bin/kiro-cli",
@@ -177,6 +304,7 @@ describe("KiroSpawner.wake — spawn orchestration", () => {
       platform: "linux",
       logger: { info() {}, warn() {}, error() {} },
       getSessionIdFn: getSessionId ?? (() => null),
+      verifySessionOwnershipFn,
       setSessionIdFn: setSessionId ?? (() => {}),
       snapshotSessionsFn,
       // Isolate spawn-orchestration tests from the real ~/.kiro store; the tests
@@ -213,12 +341,12 @@ describe("KiroSpawner.wake — spawn orchestration", () => {
     // onChild fired exactly once with the live child
     expect(onChild).toHaveBeenCalledTimes(1);
     expect(onChild).toHaveBeenCalledWith(child);
-    // returns the captured session id (from the store diff) as the session id
     expect(result.exitCode).toBe(0);
-    expect(result.sessionId).toBe(SID);
+    expect(result.sessionId).toBe(ANCHOR);
+    expect(result.backendSessionId).toBeNull();
   });
 
-  it("captures the new sessionId from the store diff and persists anchor→sessionId on a successful new run", async () => {
+  it("does not persist a singleton store delta even on a successful new run", async () => {
     const child = makeFakeChild();
     const setSessionId = vi.fn();
     const { spawner } = makeSpawner({
@@ -229,7 +357,7 @@ describe("KiroSpawner.wake — spawn orchestration", () => {
     const p = spawner.wake({ prompt: "x", sessionId: ANCHOR, isNew: true });
     child.emit("close", 0);
     await p;
-    expect(setSessionId).toHaveBeenCalledWith(ANCHOR, SID);
+    expect(setSessionId).not.toHaveBeenCalled();
   });
 
   it("does NOT persist on a non-zero exit (failed run)", async () => {
@@ -249,10 +377,13 @@ describe("KiroSpawner.wake — spawn orchestration", () => {
   it.each([
     "/workspaces/项目 alpha",
     "/workspaces/space only",
-  ])("resume wake: a known anchor ignores the shared new-session probe under cwd %s", async (cwd) => {
+  ])("resume wake: independently verified ownership ignores the shared new-session probe under cwd %s", async (cwd) => {
     const child = makeFakeChild();
     const setSessionId = vi.fn();
-    const { spawner, calls } = makeSpawner({ child, getSessionId: () => SID, setSessionId });
+    const { spawner, calls } = makeSpawner({
+      child, getSessionId: () => SID, setSessionId,
+      verifySessionOwnershipFn: (context) => context.agentUuid === creds.agentUuid && context.anchor === ANCHOR && context.sessionId === SID && context.cwd === cwd,
+    });
     // pass isNew:true (the shared Claude probe missed) but the map has a session
     // id → Kiro must resume independently and pass the cwd through verbatim.
     const p = spawner.wake({ prompt: "again", sessionId: ANCHOR, isNew: true, cwd });

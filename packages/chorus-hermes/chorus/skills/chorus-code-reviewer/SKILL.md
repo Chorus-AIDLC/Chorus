@@ -91,6 +91,18 @@ You know nothing of the parent conversation. If `Evidence:` is missing or a list
 - **Do not lower severity for lack of a shell.** A defect visible in the code as written is still a BLOCKER on file-and-line evidence; missing execution evidence never downgrades a finding you can point at.
 - A broken build or failing tests in the bundle is an automatic FAIL.
 
+## Team reviewer
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+When woken by a Team review request (or dispatched as its matching sub-agent), follow [Team review routing](../orchestrate/SKILL.md#team-review-routing). Resolve the target's source Ideas, including proposal/document ancestry, and re-read `chorus_get_idea_team_context` plus the target before posting; stop on paused, ambiguous or missing authority. Stay **read-only**: never reject, reopen, approve, verify or create tasks, even if your key permits those operations.
+
+Post **exactly one VERDICT comment per round** on the reviewed entity, with **exactly one @mention of only the routed target**: Every verdict → current Idea orchestrator. Start when all tasks across all source proposals are `to_verify`, `done` or `closed`; task reviews may still be running. Review the aggregate without assuming every task has already passed, and do not repeat their individual AC reviews. Place the mention before the final literal VERDICT line. Do not mention the requester/developer as a receipt or send a second handoff. Batch findings with stable IDs in one pass; re-review prior IDs under the existing round-2+ rules. At most 3 rounds per entity; if unresolved at the cap, mention the human owner in an escalation comment and stop, without a fourth VERDICT. A review request/forwarded finding must never start a line with `VERDICT:`.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
+
+These managed instructions override legacy dispatch timing and fix-handling text below; the reviewer never performs the orchestrator's lifecycle actions.
+
 === REVIEW PROCEDURE ===
 
 **Efficiency rule:** Gather ALL context in Step 1 before verifying. Batch your tool calls — do not alternate between fetching and writing conclusions.

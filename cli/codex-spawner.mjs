@@ -15,6 +15,7 @@ import { killProcessTree } from "./process-killer.mjs";
 import { awaitChildSettled } from "./child-exit.mjs";
 import { createWakeErrorCollector } from "./wake-error.mjs";
 import { familySessionMap } from "./codex-session-map.mjs";
+import { backendSessionKey } from "./backend-session-identity.mjs";
 import {
   getCodexUsageSnapshot as defaultGetUsageSnapshot,
   setCodexUsageSnapshot as defaultSetUsageSnapshot,
@@ -165,6 +166,7 @@ export class CodexSpawner {
     const name = this.profile.displayName;
     const appServer = `${name} App Server`;
     const anchor = typeof sessionId === "string" ? sessionId : "";
+    const sessionKey = backendSessionKey(anchor, this.creds?.agentUuid);
     let threadId = null;
     let isNew = true;
     let child, client, adapter, unsubscribe, unregister, onProcessError;
@@ -189,14 +191,22 @@ export class CodexSpawner {
       if (client?.closed) throw client.error;
     };
     try {
-      try { threadId = anchor ? this.getThreadIdFn(anchor) : null; }
+      try {
+        threadId = sessionKey ? this.getThreadIdFn(sessionKey) : null;
+        if (!threadId && sessionKey !== anchor) {
+          const legacyThreadId = this.getThreadIdFn(anchor);
+          if (legacyThreadId) {
+            log("warn", `[Chorus] ${name} legacy session mapping has unknown ownership; starting a new isolated session without copying old context. Legacy entry preserved; native manual resume handle: ${JSON.stringify(legacyThreadId)}.`);
+          }
+        }
+      }
       catch {
         threadId = null;
         log("warn", `[Chorus] ${name} session mapping could not be read; starting a fresh thread with Chorus context.`);
       }
       isNew = !threadId;
       const previousThreadId = threadId;
-      const previousUsage = threadId ? this.getUsageSnapshotFn(anchor, threadId) : null;
+      const previousUsage = threadId ? this.getUsageSnapshotFn(sessionKey, threadId) : null;
       let activeSetup = null;
       const captureThread = (id) => {
         activeSetup.observedId = id;
@@ -205,8 +215,8 @@ export class CodexSpawner {
         // retry a failed write or lose the in-memory identity on interruption.
         if (threadId === id) return;
         threadId = id;
-        if (anchor) {
-          try { this.setThreadIdFn(anchor, id); }
+        if (sessionKey) {
+          try { this.setThreadIdFn(sessionKey, id); }
           catch {
             log("warn", `[Chorus] ${name} session mapping could not be saved; continuing this thread, but future wake continuity may be reduced.`);
           }
@@ -358,7 +368,7 @@ export class CodexSpawner {
           try { onMessage?.(message); } catch { log("warn", `[Chorus] ${name} onMessage callback failed`); }
         },
         onUsageSnapshot: (snapshot) => {
-          if (anchor) this.setUsageSnapshotFn(anchor, threadId, snapshot);
+          if (sessionKey) this.setUsageSnapshotFn(sessionKey, threadId, snapshot);
         },
       });
       if (fallback) {

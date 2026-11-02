@@ -331,7 +331,10 @@ describe("durable wake recovery against isolated in-memory PostgreSQL", () => {
     expect(await db.daemonSessionTurn.count({ where: { sessionUuid, status: "merged" } })).toBe(100);
   }, 15_000);
 
-  it("binds the backend returned after execution and rolls terminal usage up only once", async () => {
+  it.each([false, true])("binds the backend and rolls usage up once (legacy anchor: %s)", async (legacyAnchor) => {
+    if (legacyAnchor) await db.daemonSession.update({
+      where: { uuid: sessionUuid }, data: { backendSessionId: ideaUuid },
+    });
     const params = request();
     await service.advanceTurnForWake(params);
     const terminal = { ...params, status: "ended" as const, backendSessionId: "backend-thread", usage: {
@@ -344,6 +347,34 @@ describe("durable wake recovery against isolated in-memory PostgreSQL", () => {
       backendSessionId: "backend-thread", totalInputTokens: 10, totalOutputTokens: 20, totalCacheReadTokens: 5, totalCacheCreationTokens: 7,
     });
     expect(await service.advanceTurnForWake({ ...terminal, backendSessionId: "different" })).toMatchObject({ ok: false, reason: "backend_session_conflict" });
+  });
+
+  it.each(["codex", "trae"])("exposes the current %s native handle without changing legacy history", async (backend) => {
+    const owner = await db.user.create({ data: { companyUuid, oidcSub: randomUUID() } });
+    await db.agent.update({ where: { uuid: agentUuid }, data: { ownerUuid: owner.uuid } });
+    const auth = { type: "user", companyUuid, actorUuid: owner.uuid };
+    const oldNativeId = `${backend}-legacy-native`;
+    const newNativeId = `${backend}-isolated-native`;
+    const oldRequest = request([turnUuids[0]]);
+    expect(await service.advanceTurnForWake(oldRequest)).toMatchObject({ ok: true });
+    const oldTerminal = { ...oldRequest, status: "ended" as const, backendSessionId: oldNativeId };
+    expect(await service.advanceTurnForWake(oldTerminal)).toMatchObject({ ok: true });
+    const newRequest = { ...request([turnUuids[1]]), admissionUuid: randomUUID() };
+    expect(await service.advanceTurnForWake(newRequest)).toMatchObject({ ok: true });
+    expect(await service.advanceTurnForWake({ ...newRequest, status: "ended", backendSessionId: newNativeId })).toMatchObject({ ok: true });
+    expect(await service.advanceTurnForWake(oldTerminal)).toMatchObject({ ok: true });
+    await db.daemonSessionTurn.update({
+      where: { uuid: turnUuids[3] },
+      data: { trigger: "research_requested", status: "ended", backendSessionId: "unrelated-research-native" },
+    });
+    expect(await db.daemonSession.findUnique({ where: { uuid: sessionUuid } })).toMatchObject({ backendSessionId: oldNativeId });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: turnUuids[0] } })).toMatchObject({ backendSessionId: oldNativeId });
+    expect((await service.getVisibleSessions(auth))[0]).toMatchObject({ sessionId: ideaUuid, backendSessionId: newNativeId });
+    expect((await service.getSessionsPageForAgent(auth, agentUuid)).sessions[0]).toMatchObject({ backendSessionId: newNativeId });
+    for (const opts of [{ limit: 1 }, { limit: 1, beforeTurnSeq: 2, beforeMsgSeq: 0 }]) {
+      expect((await service.getSessionDetail(auth, sessionUuid, opts))?.session).toMatchObject({ backendSessionId: newNativeId });
+    }
+    expect(await service.getSessionDetail({ ...auth, actorUuid: randomUUID() }, sessionUuid)).toBeNull();
   });
 
   it("serializes concurrent identical admission requests to one durable result", async () => {

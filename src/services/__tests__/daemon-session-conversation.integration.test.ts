@@ -681,7 +681,7 @@ beforeEach(() => {
 // ===== Thread 1 + 2: two wakes, one session, distinguished by trigger; lifecycle =====
 
 describe("integration: autonomous + human turns on ONE DaemonSession, distinguished by trigger", () => {
-  it("creates a task_assigned turn then a human_instruction turn on the SAME session, and the daemon advances each pending→running→ended", async () => {
+  it.each(["backend-A", IDEA])("advances two wakes on one session and migrates only a legacy bare-anchor backend (%s)", async (firstBackendId) => {
     const events: TranscriptEvent[] = [];
     const onEvent = (e: TranscriptEvent) => events.push(e);
 
@@ -732,14 +732,14 @@ describe("integration: autonomous + human turns on ONE DaemonSession, distinguis
         connectionUuid: ORIGIN_CONN,
         sessionId: IDEA,
         turnUuid: turn1Uuid,
-        backendSessionId: "backend-A",
+        backendSessionId: firstBackendId,
         status: "ended",
       }),
     );
     expect(end1.status).toBe(200);
     expect((store.data.daemonSessionTurn[0]).status).toBe("ended");
-    expect((store.data.daemonSessionTurn[0]).backendSessionId).toBe("backend-A");
-    expect(store.data.daemonSession[0].backendSessionId).toBe("backend-A");
+    expect((store.data.daemonSessionTurn[0]).backendSessionId).toBe(firstBackendId);
+    expect(store.data.daemonSession[0].backendSessionId).toBe(firstBackendId);
 
     // --- Thread 2: a human_instruction wake — notification carries instructionText ---
     const INSTRUCTION = "Please also update the changelog.";
@@ -783,7 +783,7 @@ describe("integration: autonomous + human turns on ONE DaemonSession, distinguis
         connectionUuid: ORIGIN_CONN,
         sessionId: IDEA,
         turnUuid: turn1Uuid,
-        backendSessionId: "backend-A",
+        backendSessionId: firstBackendId,
         status: "ended",
       }),
     );
@@ -803,7 +803,19 @@ describe("integration: autonomous + human turns on ONE DaemonSession, distinguis
     expect(end2.status).toBe(200);
     expect((store.data.daemonSessionTurn[1]).status).toBe("ended");
     expect(store.data.daemonSessionTurn[1].backendSessionId).toBe("backend-B");
-    expect(store.data.daemonSession[0].backendSessionId).toBe("backend-A");
+    expect(store.data.daemonSession[0].backendSessionId).toBe(firstBackendId === IDEA ? "backend-B" : firstBackendId);
+    expect(store.data.daemonSessionTurn[0].backendSessionId).toBe(firstBackendId);
+    const staleRetry = await turnAdvancePOST(
+      postReq("/api/daemon/turn-advance", {
+        connectionUuid: ORIGIN_CONN,
+        sessionId: IDEA,
+        turnUuid: turn1Uuid,
+        backendSessionId: firstBackendId,
+        status: "ended",
+      }),
+    );
+    expect(staleRetry.status).toBe(200);
+    expect(store.data.daemonSession[0].backendSessionId).toBe(firstBackendId === IDEA ? "backend-B" : firstBackendId);
 
     // SSE: turn_status_changed fired for the advances we captured (turn1 ended onward +
     // turn2 created/advances). At minimum we saw turn_created for turn 2 and

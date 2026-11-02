@@ -1,7 +1,7 @@
 import type { AgentTeamRole } from "@/lib/agent-team-roles";
 import type { ProjectTeamMember } from "@/types/project-agent-team";
 
-export type IdeaTeamRoutingRole = "product" | "development";
+export type IdeaTeamRoutingRole = "product" | "development" | "review";
 
 export type IdeaTeamPauseReason = "orchestrator_ineligible";
 

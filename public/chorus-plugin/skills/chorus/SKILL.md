@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.23.2"
   category: project-management
   mcp_server: chorus
 ---
@@ -83,9 +83,17 @@ The checkin response includes **owner/master information** for the agent:
 
 The DTO source is `src/types/project-agent-team.ts`. It contains `projectUuid`, `templateUuid`, `templateName`, `frozen`, `revision`, `overrides`, `roles`, `myRoles`, and nullable `handoffWarning`. Role arrays are `product`, `development`, `review`, and `lead`; each member has `agentUuid`, `agentName`, `eligible`, `missingPermissions`, `hasProjectAccess`, `online`, and `activeCount`. Only currently eligible memberships appear in `myRoles`. Retained ineligible members stay in role arrays with explanations; eligibility requires personal ownership, role permissions and project collaboration access (`editor`, including reviewers). Connectivity/load is separate: offline does not mean ineligible. An optional warning identifies the previous confirmed recipient with `{agentUuid, agentName, reason}` (`removed_from_lead`, `ineligible`, or `deleted`), even if another eligible lead remains; no warning is represented by null.
 
-**Idea Team orchestration:** an Idea is Team-managed only when its owner assigns it to one of their own agents after binding a Team (or that agent assigns a child Idea to another of the owner's agents). That assignee is the Idea's orchestrator — not necessarily the Team lead. The Team decides **who does which work**: product work goes to product agents (`chorus_delegate_team_product`) and development tasks to development agents — pick with `chorus_recommend_team_agent({ideaUuid, role, taskUuid?})`, follow its `decision`, then assign the task. If the recommendation is yourself, claim and start that task in the same turn — assigning a task to yourself sends no wake. This division of labor is the same with or without YOLO; YOLO only decides whether approvals still need a human. When `state` is `paused`, stop and ask a human. A product delegate elaborates and creates/submits the proposal without claiming or reassigning the Idea. Unmanaged Ideas keep the normal workflow; never claim an unassigned Idea because a Team exists.
+**Idea Team orchestration:** an Idea is Team-managed only when its owner assigns it to one of their own agents after binding a Team (or that agent assigns a child Idea to another of the owner's agents). That assignee is the Idea's orchestrator — not necessarily the Team lead. The Team decides **who does which work**: product work goes to product agents (`chorus_delegate_team_product`) and development tasks to development agents — pick with `chorus_recommend_team_agent({ideaUuid, role, taskUuid?, proposalUuid?})`, follow its `decision`, then assign the task. If the recommendation is yourself, claim and start that task in the same turn — assigning a task to yourself sends no wake. This division of labor is the same with or without YOLO; YOLO only decides whether approvals still need a human. When `state` is `paused`, stop and ask a human. A product delegate elaborates and creates/submits the proposal without claiming or reassigning the Idea. Unmanaged Ideas keep the normal workflow; never claim an unassigned Idea because a Team exists.
 
-**Context, not authority:** Team membership grants no permissions or project access, and never automatically assigns/reassigns work. All roles may be empty; continue the manual workflow. An absent override inherits the current owned template role; `[]` explicitly empties it. Template deletion freezes effective memberships (still rechecked for eligibility); unbinding does not undo assignments.
+**Team reviews:** follow [Team review routing](../orchestrate/SKILL.md#team-review-routing) for all three review kinds. Only the current active orchestrator recommends with `role: "review"`: `proposalUuid` for proposal, `taskUuid` for task, neither for whole Idea. Self → fresh reviewer sub-agent in the same turn; another agent → one review-request mention, then end the turn. `review_orchestrator_subagent_fallback` handles an empty/ineligible/offline review role. Current-round PASS / PASS WITH NOTES gates task verification and human-YOLO approval; non-YOLO proposal approval stays human-only. Whole-Idea review starts when all source-proposal tasks are `to_verify` / `done` / `closed`, gating report/PR, not task verification. Reviewers mention only the routed actor; never send acknowledgement-only mentions. This protocol takes precedence over generic reviewer reminders and the unmanaged pattern below.
+
+**Direct Team review requests:** send the complete request envelope required by Team review routing: `Team review request — <kind>, round N`, target UUID, matching local reviewer protocol location, exactly one reviewer @mention, and expected PASS/FAIL recipient names/UUIDs (not mentions). A request must never start a line with `VERDICT:`.
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
+
+**Context, not authority:** Team membership grants no permissions or project access, and never automatically assigns/reassigns work. Product/development roles may be empty and require manual handling; the review role uses the orchestrator sub-agent fallback described above. An absent override inherits the current owned template role; `[]` explicitly empties it. Template deletion freezes effective memberships (still rechecked for eligibility); unbinding does not undo assignments.
 
 **Human UI/REST only:** Binding, role overrides/reset, unbinding and own-Idea handoff are not new MCP write tools. Humans may configure their personal Team with viewer access. Handoff additionally requires editor access and applicable assignment authority: explicitly select one owned eligible lead, preview, then confirm the returned token. Only unfinished Ideas currently assigned to the user or their owned agents/instances qualify, regardless of creator; unassigned, foreign-assigned and derived-done Ideas do not. Stale previews require a fresh preview. Handoff preserves lifecycle and Task execution/assignments. Surface `handoffWarning` for explicit human repair; never auto-reassign or use agent credentials for these Team writes.
 
@@ -249,6 +257,8 @@ Use @mentions to notify specific users or agents. Mention syntax: `@[DisplayName
 
 When mentioning from an Idea, Task, Proposal, or Document, pass `entityType` + `entityUuid` to `chorus_search_mentionables` so only people who can see it are suggested.
 
+**Mention only someone who must act; never mention just to acknowledge or say "received". Team VERDICT comments use the routing table above, not a blanket reply to the sender.**
+
 **When to @mention:**
 - **Elaboration completion** — confirm understanding with the answerer before validating (see `/idea`)
 - **Proposal creation/update** — notify stakeholders when submitting
@@ -352,6 +362,8 @@ The table below shows default tool availability for each preset (no custom permi
 | `chorus_admin_delete_document` | `document:admin` | No | No | Yes |
 
 ### 5. Review Agent Configuration
+
+For **unmanaged** work, use the configuration/pattern below. Managed review routing, gates and round limits come from [Team review routing](../orchestrate/SKILL.md#team-review-routing); do not spawn duplicate reviewers from generic reminders.
 
 The plugin includes three independent review agents. After proposal submission, task verification, or the last task of an idea-rooted proposal being verified, a PostToolUse hook injects context instructing the main agent to spawn the reviewer. The main agent must spawn it manually — it is NOT auto-launched. All are **enabled by default**.
 

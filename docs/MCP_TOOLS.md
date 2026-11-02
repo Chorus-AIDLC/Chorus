@@ -334,11 +334,11 @@ Team roles grant **no permissions or project access**. All roles may be empty, p
 
 **Human UI/REST only**: Binding, whole-role overrides/reset and unbinding use the personal project Team UI or human-session `PUT`/`DELETE /api/projects/:uuid/team`. Handoff uses human-session `POST /api/projects/:uuid/team/handoff`: select one owned eligible lead, preview with `{leadAgentUuid, preview: true}`, then confirm with `{leadAgentUuid, confirmationToken}`. It requires editor access and applicable assignment authority; viewer access suffices only for personal configuration. Only unfinished project Ideas currently assigned to the user or their owned agents/instances qualify, regardless of creator; unassigned, foreign-assigned and derived-done Ideas are excluded. Stale/tampered previews require a fresh preview with no partial changes. Handoff preserves lifecycle and Task execution/assignments. These are **not new MCP write tools**; agent keys cannot write Team configuration or confirm this handoff.
 
-### Idea Team orchestration (Agent Team ③)
+### Idea Team orchestration (Agent Team ③–④)
 
 Team management is **derived, not stored**: an Idea is Team-managed when its logical agent assignee A was assigned by A's owner (a human) after the owner bound a personal Team to the project, or — for a child Idea — by one of the owner's agents under a managed parent Idea of the same owner. A is that Idea's **orchestrator**; it does not need to be in the Team's lead role. Creation, self-claim, assignment by anyone else, assignment before the Team was bound, and unbinding all keep (or return to) the legacy workflow. Reassigning a parent does not stop already-assigned managed children.
 
-The Team only decides **who does which work** (product work to product agents, development tasks to development agents), the same with or without YOLO. It adds no approval gates; YOLO only decides whether approvals still need a human.
+The Team decides **who does which work** (product, development and review), the same with or without YOLO. Existing action permissions and linked Idea gates still apply; human-confirmed YOLO only decides whether proposal approval needs a human. Team review PASS gates are a prompt-enforced protocol, not new server-side VERDICT enforcement.
 
 Lifecycle handoffs (proposal submitted / approved, task submitted for verification) wake the orchestrator with a `mentioned` notification. Each wake should re-read `chorus_get_idea_team_context` before acting.
 
@@ -346,7 +346,27 @@ Lifecycle handoffs (proposal submitted / approved, task submitted for verificati
 **Input**: `{ ideaUuid }`. **Output**: `{ ideaUuid, managed, state: "active"|"paused"|"unmanaged", reason, orchestrator, yolo, routing }`. `routing` (owner, product delegate, Team roles) is returned only to the Team owner and the owner's agents.
 
 #### chorus_recommend_team_agent
-**Input**: `{ ideaUuid, role: "product"|"development", taskUuid? }`. **Output**: `{ decision: "recommended"|"lead_decision"|"manual"|"paused", agentUuid, candidates, reason }`. Excludes ineligible members, prefers online, then reopen affinity, minimum `activeCount`, then dependency affinity. Owner-private; does not assign or wake.
+**Input**: `{ ideaUuid, role: "product"|"development"|"review", taskUuid?, proposalUuid? }`. **Output**: `{ decision: "recommended"|"lead_decision"|"manual"|"paused", agentUuid, candidates, reason }`. Owner-private; does not assign or wake. Only the current active orchestrator dispatches managed reviews; a recommendation grants no permissions.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| ideaUuid | string (UUID) | Yes | Source Idea whose live Team context governs routing |
+| role | enum | Yes | `product`, `development` or `review` |
+| taskUuid | string (UUID) | No | Related Task; for review, selects task review |
+| proposalUuid | string (UUID) | No | Related Proposal; for review, selects proposal review |
+
+**Review target resolution:** `taskUuid` only → that task; `proposalUuid` only → that proposal; neither → the Idea itself (whole-change review). Both targets return **400** (`Supply at most one of taskUuid and proposalUuid`). A task not belonging to the Idea returns **403** (`Task does not belong to this Idea`); a foreign/non-source proposal returns **403** (`Proposal does not belong to this Idea`). Membership follows all source Ideas through proposal inputs, including document-input ancestry, not just the first input.
+
+**Review recommendation order:**
+1. Unmanaged Ideas return `manual` with reason `unmanaged`; paused Ideas return `paused` with their current state reason. These paths are unchanged.
+2. Keep eligible review members, then online members. Nobody is excluded: the developer, proposal author and orchestrator can be recommended.
+3. No eligible online member (empty role, all ineligible or all offline) → `recommended`, `agentUuid` = current orchestrator, `candidates: []`, reason **`review_orchestrator_subagent_fallback`**. This differs deliberately from product/development: the orchestrator runs the matching reviewer sub-agent in the same turn, with no roster eligibility/liveness requirement for this fallback.
+4. Find the target's latest valid **agent-authored** comment with a line matching `/^VERDICT: (PASS WITH NOTES|PASS|FAIL)\b/m`. Human comments and mid-line forwarded verdicts do not count. If its author is an eligible online review member, recommend that agent with **`rereview_affinity`**; if the author is the current orchestrator outside the online roster, recommend the orchestrator with the same reason (its sub-agent reviewed previously).
+5. Otherwise choose minimum `activeCount`: a unique candidate returns `recommended` with `minimum_load`; a tie returns `lead_decision` with `equal_candidates`, for the current orchestrator to resolve among `candidates`.
+
+Product/development behavior is unchanged: eligible → online, development reopen affinity → minimum load → dependency affinity → `lead_decision` on ties. Their empty/ineligible and offline cases retain manual handling (`role_empty_or_ineligible`, `role_offline`) or their eligible-online orchestrator fallback; do not apply the review fallback to those roles.
+
+**Dispatch protocol:** self → fresh matching reviewer sub-agent now; another agent → one review-request comment on the target mentioning the reviewer, then end the turn. Requests/forwarded findings never start a line with `VERDICT:`. For VERDICT mention recipients, current-round approval/verification gates, last-task aggregate review, stable finding IDs, the 3-round cap and no acknowledgement-only mentions, see [Team review routing](../public/chorus-plugin/skills/orchestrate/SKILL.md#team-review-routing).
 
 #### chorus_delegate_team_product
 **Input**: `{ ideaUuid, agentUuid }`. The current orchestrator (or the Team owner) delegates elaboration and proposal authoring to an eligible product member and @mentions it. The delegate may start elaboration and create/submit the Idea's proposal; it cannot claim/release/reassign the Idea, resolve elaboration, approve or verify. Reassigning the Idea revokes the delegation.

@@ -380,13 +380,85 @@ surfaces the missing-binary error when one arrives.
 
 ```
 [Chorus] ▶ wake: task_assigned → task:<uuid>
-[Chorus] spawning new session <idea-uuid> — take over with: claude --resume <idea-uuid>
+[Chorus] spawning new session <backend-uuid> (Chorus anchor <idea-uuid>) — take over with: claude --resume <backend-uuid>
 [Chorus] ✓ wake done: task:<uuid> (exit=0, 1234ms)
 ```
 
-The `claude --resume <idea-uuid>` hint lets you attach to the session from the
+The `claude --resume <backend-uuid>` hint lets you attach to the agent's session from the
 daemon's working directory. Pass `--verbose` (or `CHORUS_VERBOSE=1`) for extra
 per-wake detail.
+
+### Backend session isolation
+
+Chorus keeps the **direct Idea UUID** (or ad-hoc entity/session UUID) as its
+conversation business anchor. Execution snapshots retain their direct/root Idea
+attribution, and turn/transcript uploads use that original anchor with the
+agent's credentials. The backend's native resume ID is a separate value reported
+as `backendSessionId`; use that value, not the Idea UUID, for takeover.
+
+For daemon agents with a resolved `agentUuid`, `cli/backend-session-identity.mjs`
+derives a stable UUIDv5 from the logical agent UUID and the business anchor.
+Different agents sharing one cwd/config therefore do not share a conversation.
+Repeated wakes of the same agent/anchor derive the same key across restarts:
+
+| Backend | Isolated identity |
+| --- | --- |
+| Claude | Derived UUID for `--session-id` / `--resume` and the transcript filename |
+| Codex / TRAE | Derived UUID as the key in their separate thread and usage maps; the stored native thread ID is reported for takeover |
+| Kiro | Fresh headless session by default; map entries cannot establish native ownership. Independently verified native handles may resume under the agent-scoped key |
+| Pi | Derived UUID passed to `--session-id` |
+| dsh | A fresh SDK-native session per wake; no old session is resumed |
+
+Unbound programmatic spawner callers without an agent UUID keep their existing
+key derivation; Kiro still refuses unverified native ownership. A configured
+daemon resolves the logical agent identity before creating its spawner. Do not
+strip `agentUuid` from daemon credentials.
+
+Kiro's shared native-store snapshots cannot prove which process created a session,
+even when exactly one new file appears. The default headless adapter therefore
+never captures a store delta or resumes/reconstructs a mapped session. It logs
+the limitation, relays only that process's stdout, reports a null native ID, and
+starts fresh on the next wake. Bare-anchor and older agent-scoped mappings remain
+available for explicit manual recovery, not automatic reuse. Programmatic
+integrations may supply `verifySessionOwnershipFn` only with independent proof
+of agent, anchor, cwd and native-store ownership; the daemon supplies no such
+verifier by default. This fail-closed restriction also prevents an older unsafe
+scoped mapping from reintroducing another agent's context after restart.
+
+**Upgrade and legacy recovery.** Older releases used the bare anchor as a
+transcript/session-map key. Those records contain no trustworthy ownership
+metadata and may already contain several agents' turns. The daemon does **not**
+automatically copy or resume that context under an isolated reviewer identity.
+It starts a new isolated conversation and leaves the original files/map entries
+untouched. When an old Claude transcript or mapped Codex/TRAE/Kiro handle is found
+without an isolated counterpart, a warning identifies the retained legacy
+conversation and the manual recovery path. Pi has no daemon session map to
+attribute old sessions; treat its existing bare-anchor sessions the same way.
+
+On the first reported isolated wake, a server session's legacy `backendSessionId`
+equal to its bare business anchor is replaced with the new native handle so the
+UI takeover/copy control does not point back to the mixed conversation. Historical
+turn IDs stay unchanged; same-turn conflict guards still apply, and a retry of an
+already completed old turn cannot revert the upgraded session metadata. This is
+metadata migration only, never a transcript copy or context import.
+
+Session list/detail APIs expose the newest ordinary turn's reported native ID
+as the current copy/takeover handle, independently of the stored first-wake
+compatibility value. This also covers Codex/TRAE legacy native thread IDs, which
+are not equal to the business anchor. Research and dedicated operation threads
+cannot replace this handle. Older transcript pages and delayed old-turn reports
+do not move it back to an older turn; retained maps and history are unchanged.
+
+Before upgrading, finish or interrupt active work and preserve the backend's
+config/session directory and `~/.chorus/*-sessions.json` files. After upgrading,
+inspect any required legacy conversation using the same cwd and backend config:
+Claude can still use `claude --resume <old-anchor>`; Codex/TRAE/Kiro can use their
+native resume command with the handle saved under the old key; Pi's native
+session selector can open the old session. Keep this manual recovery separate
+from the new daemon conversation. Summarize only the necessary verified work
+into Chorus or an explicit human instruction for the intended agent; never copy
+a mixed O/R/D transcript into a reviewer's isolated session. No legacy records
+are deleted, rewritten, or silently assigned to whichever agent wakes first.
 
 ---
 
@@ -513,8 +585,8 @@ its turn ends; processes are never reused across wakes. The daemon talks to it
 with the bidirectional stream-json protocol (`--input-format stream-json
 --output-format stream-json`): the prompt is sent as one message, and stdin stays
 open until the turn's result so the daemon can answer control requests. There is
-no plain-text fallback or switch. Session resume (`claude --resume <idea-uuid>`)
-and existing sessions are unaffected.
+no plain-text fallback or switch. Session resume uses the agent-scoped backend
+UUID; see [Backend session isolation](#backend-session-isolation) for legacy recovery.
 
 - **Interrupt.** An authorized interrupt from the UI is sent to Claude as a
   protocol interrupt, so the turn ends cleanly and can be resumed. If the process
@@ -541,7 +613,7 @@ not a live Windows run (the same limitation as the Codex backend).
 
 ### Pi daemon: RPC transport
 
-Each Pi wake launches one `pi --mode rpc --session-id <idea-uuid>` process, which
+Each Pi wake launches one `pi --mode rpc --session-id <backend-uuid>` process, which
 exits once the run is settled; processes are never reused across wakes. The
 prompt is sent as an RPC command and stdin stays open until pi reports the run is
 fully settled (after any automatic retry or compaction). There is no fallback to
