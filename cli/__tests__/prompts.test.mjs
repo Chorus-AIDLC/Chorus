@@ -17,7 +17,7 @@
 // assert the batch composition on top of them, so this file stays independent of the
 // modules (waker/event-router/wake-queue) that other tasks touch.
 import { describe, it, expect } from "vitest";
-import { buildPrompt, buildBatchPrompt, HEADLESS_PREAMBLE } from "../prompts.mjs";
+import { buildPrompt, buildBatchPrompt, HEADLESS_PREAMBLE, TEAM_REVIEW_MENTION_GUIDANCE } from "../prompts.mjs";
 
 /** A representative task_assigned notification; spread `mk({...})` to vary it. */
 const BASE = {
@@ -33,6 +33,54 @@ const BASE = {
   actorName: "Alice",
 };
 const mk = (o) => ({ ...BASE, ...o });
+
+describe("direct Team reviewer wake protocol", () => {
+  it.each(["proposal", "task", "idea"])("loads reviewer instructions on a fresh %s mention even with a truncated request", (entityType) => {
+    const prompt = buildPrompt(mk({ action: "mentioned", entityType, message: "Please review…" }));
+    expect(prompt).toContain(TEAM_REVIEW_MENTION_GUIDANCE);
+    expect(prompt).toContain("fetch the full comments");
+    expect(prompt).toContain("load and follow the current installed matching reviewer instructions BEFORE reviewing");
+    expect(prompt).toContain("proposal → proposal-reviewer, task → task-reviewer, code (whole-Idea) → code-reviewer");
+    expect(prompt).toContain("kind, target, current round and expected PASS/FAIL recipients");
+    expect(prompt).toContain("corrected request and stop without a verdict");
+    expect(prompt).toContain("exactly one final unformatted line starting at column 1: VERDICT: PASS, VERDICT: PASS WITH NOTES or VERDICT: FAIL");
+    expect(prompt).toContain("No bold, backticks, bullet, quote, indentation or code fence");
+    expect(prompt).toContain("exactly one actionable @mention");
+    expect(prompt).toContain("proposal FAIL → current product delegate, else orchestrator");
+    expect(prompt).toContain("task FAIL → current logical task developer");
+    expect(prompt).toContain("whole-Idea FAIL → current orchestrator");
+    expect(prompt).toContain("override generic sender/orchestrator reply guidance");
+    expect(prompt).toContain("no second completion handoff");
+    expect(prompt).not.toMatch(/^VERDICT:/m);
+  });
+
+  it("preserves dispatch and receiver rules in a coalesced mention wake", () => {
+    const prompt = buildBatchPrompt([
+      mk({ action: "task_assigned" }),
+      mk({ action: "mentioned", entityType: "proposal", entityUuid: "proposal-1" }),
+    ]);
+    expect(prompt).toContain(TEAM_REVIEW_MENTION_GUIDANCE);
+    expect(prompt).toContain("Team review request — <kind>, round N");
+    expect(prompt).toContain("target UUID and matching reviewer protocol location");
+    expect(prompt).toContain("expected PASS/FAIL recipient names and UUIDs without extra @mentions");
+    expect(prompt).toContain("never start a request/forwarding line with VERDICT:");
+  });
+
+  it("does not turn non-review work into a reviewer request", () => {
+    expect(buildPrompt(mk({ action: "task_assigned" }))).not.toContain(TEAM_REVIEW_MENTION_GUIDANCE);
+    expect(buildPrompt(mk({ action: "mentioned", message: "ordinary question" }))).toContain("For a Team review handoff or direct review request only (not ordinary mentions)");
+  });
+});
+
+describe("conditional sender mention guidance", () => {
+  it.each(["user", "agent"])("mentions a %s sender only when they must act, never to acknowledge", (actorType) => {
+    const prompt = buildPrompt(mk({ action: "mentioned", actorType }));
+    expect(prompt).toContain("Only if the sender must act on your result (a question, requested decision, or work handoff)");
+    expect(prompt).toContain(`post a comment on this task using chorus_add_comment with @mention: @[Alice](${actorType}:user-1)`);
+    expect(prompt).toContain('Never @mention only to acknowledge or say "received".');
+    expect(prompt).not.toContain("After completing your work, post a comment");
+  });
+});
 
 describe("headless background lifetime policy", () => {
   it("leaves background-agent waiting to runtime configuration, not a global foreground mandate", () => {

@@ -358,12 +358,21 @@ function toTokenUsageView(raw: unknown): TokenUsage | null {
 
 // ===== Helpers =====
 
-function toSessionView(row: DaemonSessionRow): SessionView {
+const CURRENT_BACKEND_INCLUDE = {
+  turns: {
+    where: { AND: [NON_OPERATION_TURN, { backendSessionId: { not: null } }] },
+    orderBy: { seq: "desc" },
+    take: 1,
+    select: { backendSessionId: true },
+  },
+} satisfies Prisma.DaemonSessionInclude;
+
+function toSessionView(row: DaemonSessionRow & { turns?: Array<{ backendSessionId: string | null }> }): SessionView {
   return {
     uuid: row.uuid,
     agentUuid: row.agentUuid,
     sessionId: row.sessionId,
-    backendSessionId: row.backendSessionId,
+    backendSessionId: row.turns?.[0]?.backendSessionId ?? row.backendSessionId,
     directIdeaUuid: row.directIdeaUuid,
     originConnectionUuid: row.originConnectionUuid,
     runtimeCwd: row.runtimeCwd ?? null,
@@ -1172,6 +1181,7 @@ export async function getVisibleSessions(auth: {
   const rows = await prisma.daemonSession.findMany({
     where: { companyUuid: auth.companyUuid, ...ownerScope(auth) },
     orderBy: { lastTurnAt: "desc" },
+    include: CURRENT_BACKEND_INCLUDE,
   });
   // Read-time orphan-turn fallback: converge running turns whose origin daemon is
   // stale-dead BEFORE the caller derives per-session running indicators. Best-effort
@@ -1275,6 +1285,7 @@ export async function getSessionsPageForAgent(
     orderBy: [{ lastTurnAt: "desc" }, { uuid: "desc" }],
     ...(before ? { cursor: { uuid: before }, skip: 1 } : {}),
     take: limit + 1,
+    include: CURRENT_BACKEND_INCLUDE,
   });
   const hasMore = rows.length > limit;
   const pageRows = hasMore ? rows.slice(0, limit) : rows;
@@ -1492,6 +1503,7 @@ export async function getSessionDetail(
 ): Promise<SessionDetailView | null> {
   const sessionRow = await prisma.daemonSession.findFirst({
     where: { uuid: sessionUuid, companyUuid: auth.companyUuid, ...ownerScope(auth) },
+    include: CURRENT_BACKEND_INCLUDE,
   });
   if (!sessionRow) return null; // not visible → 404 non-disclosure
 
@@ -2285,10 +2297,11 @@ export async function advanceTurnForWake(params: {
       return { ok: false, reason: "backend_session_conflict" };
     }
 
-    // Preserve the session column as the immutable first-wake compatibility anchor.
-    // A zero count is expected on later wakes and is never a conflict.
     await prisma.daemonSession.updateMany({
-      where: { uuid: session.uuid, backendSessionId: null },
+      where: {
+        uuid: session.uuid,
+        OR: [{ backendSessionId: null }, { backendSessionId: params.sessionId }],
+      },
       data: { backendSessionId: params.backendSessionId },
     });
   }
@@ -2627,7 +2640,10 @@ async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]
         } });
       }
       if (params.backendSessionId) await tx.daemonSession.updateMany({
-        where: { uuid: session.uuid, backendSessionId: null }, data: { backendSessionId: params.backendSessionId },
+        where: {
+          uuid: session.uuid,
+          OR: [{ backendSessionId: null }, { backendSessionId: params.sessionId }],
+        }, data: { backendSessionId: params.backendSessionId },
       });
       const updated = await tx.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: primary.uuid } });
       const view = toTurnView(updated);

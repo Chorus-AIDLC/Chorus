@@ -62,6 +62,16 @@ Key responsibilities:
 
 ---
 
+## Team-managed review (check first)
+
+Resolve the entity's source Ideas, including proposal/document ancestry, and read each `chorus_get_idea_team_context` before reviewing or acting. For active managed work, follow [Team review routing](../orchestrate-chorus/SKILL.md#team-review-routing): only the current orchestrator dispatches through `role: "review"`; a woken Team reviewer posts the routed VERDICT and makes no lifecycle writes. Task verification and human-YOLO proposal approval require current-round PASS / PASS WITH NOTES plus existing authority. Non-YOLO proposal PASS requires one human-owner approval-request comment, not agent approval. Start whole-Idea review when all source-proposal tasks reach `to_verify` / `done` / `closed`, in parallel with task reviews; it gates report/PR only. Stop on paused or unresolved context. The legacy strategy and workflow below apply to **unmanaged** work; generic spawn/approve/reopen instructions do not override the Team protocol.
+
+**Direct Team review requests:** send the complete request envelope required by Team review routing: `Team review request — <kind>, round N`, target UUID, matching local reviewer protocol location, exactly one reviewer @mention, and expected PASS/FAIL recipient names/UUIDs (not mentions). A request must never start a line with `VERDICT:`.
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
+
 ## Review Strategy
 
 When reviewing proposals, tasks, or an Idea's final aggregate code change, get an independent VERDICT before approving/verifying/shipping. On dsh there is **no PostToolUse hook** to remind you — invoke the review yourself, inline.
@@ -147,6 +157,8 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 #### A3.5: Independent Review
 
+**Managed work:** use [Team review routing](../orchestrate-chorus/SKILL.md#team-review-routing) instead of the unmanaged dispatch/timing below.
+
 Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `subagent` with `run_in_background: false` (foreground — the call waits for the reviewer to finish) and have it call the `skill` tool with `proposal-reviewer-chorus` and follow it, otherwise review yourself as a read-only pass and post the VERDICT. Read THIS round's VERDICT comment on the proposal — posted after your dispatch, not an older round's — before proceeding.
 
 #### A4: Approve or Reject
@@ -211,6 +223,8 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 ```
 
 #### B2.5: Independent Review
+
+**Managed work:** use [Team review routing](../orchestrate-chorus/SKILL.md#team-review-routing) instead of the unmanaged dispatch/timing below.
 
 Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `subagent` with `run_in_background: false` (foreground — the call waits for the reviewer to finish) and have it call the `skill` tool with `task-reviewer-chorus` and follow it, otherwise review yourself as a read-only pass and post the VERDICT. After it completes, read THIS round's VERDICT on the task — posted after your dispatch, not an older round's:
 

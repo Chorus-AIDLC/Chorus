@@ -100,6 +100,119 @@ describe("Idea Team (derived, zero-schema) against isolated PostgreSQL", () => {
     return db.proposal.create({ data: { companyUuid: owner.companyUuid, projectUuid, title: "Proposal", createdByUuid: product.actorUuid, createdByType: "agent", inputType, inputUuids, status } });
   }
 
+  async function reviewer(identity: AuthContext, online = true, activeCount = 0) {
+    const team = await db.agentTeam.findFirstOrThrow({ where: { companyUuid: owner.companyUuid } });
+    await db.agentTeamMember.create({ data: { teamUuid: team.uuid, agentUuid: identity.actorUuid, role: "review" } });
+    if (online) {
+      const connection = await db.daemonConnection.create({ data: { companyUuid: owner.companyUuid, agentUuid: identity.actorUuid, clientType: "codex", status: "online" } });
+      for (let index = 0; index < activeCount; index++) {
+        await db.daemonExecution.create({ data: { companyUuid: owner.companyUuid, agentUuid: identity.actorUuid, connectionUuid: connection.uuid, entityType: "task", entityUuid: randomUUID(), status: "running" } });
+      }
+    }
+  }
+
+  async function reviewTarget(targetType: "idea" | "proposal" | "task") {
+    const managed = await idea(lead);
+    const source = await proposal([managed.uuid]);
+    const task = await db.task.create({ data: { companyUuid: owner.companyUuid, projectUuid, title: "Review task", proposalUuid: source.uuid, createdByUuid: owner.actorUuid, assigneeType: "agent", assigneeUuid: developer.actorUuid } });
+    return {
+      targetUuid: targetType === "task" ? task.uuid : targetType === "proposal" ? source.uuid : managed.uuid,
+      recommend: () => service.recommendIdeaTeamRole(lead, managed.uuid, "review", targetType === "task" ? task.uuid : undefined, targetType === "proposal" ? source.uuid : undefined),
+    };
+  }
+
+  async function verdict(targetType: string, targetUuid: string, author: AuthContext, content = "VERDICT: PASS", createdAt = new Date()) {
+    await db.comment.create({ data: { companyUuid: owner.companyUuid, targetType, targetUuid, authorType: author.type, authorUuid: author.actorUuid, content, createdAt } });
+  }
+
+  describe("review recommendations", () => {
+    it.each(["empty", "ineligible", "offline"])("falls back to the orchestrator for %s review members", async (availability) => {
+      const managed = await idea(lead);
+      if (availability !== "empty") await reviewer(developer, availability !== "offline");
+      if (availability === "ineligible") await db.agent.update({ where: { uuid: developer.actorUuid }, data: { roles: [], permissions: [] } });
+      expect(await service.recommendIdeaTeamRole(lead, managed.uuid, "review")).toEqual({ decision: "recommended", reason: "review_orchestrator_subagent_fallback", agentUuid: lead.actorUuid, candidates: [] });
+    });
+
+    it("preserves unmanaged, paused and owner-private routing", async () => {
+      const unmanaged = await idea(null);
+      expect(await service.recommendIdeaTeamRole(owner, unmanaged.uuid, "review")).toMatchObject({ decision: "manual", reason: "unmanaged" });
+      const managed = await idea(lead);
+      await expect(service.recommendIdeaTeamRole(outsider, managed.uuid, "review")).rejects.toMatchObject({ status: 403 });
+      await db.agent.update({ where: { uuid: lead.actorUuid }, data: { roles: [], permissions: [] } });
+      expect(await service.recommendIdeaTeamRole(owner, managed.uuid, "review")).toMatchObject({ decision: "paused", reason: "orchestrator_ineligible" });
+    });
+
+    it("rejects ambiguous or unrelated targets and accepts document ancestry", async () => {
+      const managed = await idea(lead);
+      const unrelated = await proposal([(await idea(lead)).uuid]);
+      const task = await db.task.create({ data: { companyUuid: owner.companyUuid, projectUuid, title: "Other task", proposalUuid: unrelated.uuid, createdByUuid: owner.actorUuid } });
+      await expect(service.recommendIdeaTeamRole(lead, managed.uuid, "review", task.uuid, unrelated.uuid)).rejects.toMatchObject({ status: 400 });
+      await expect(service.recommendIdeaTeamRole(lead, managed.uuid, "review", task.uuid)).rejects.toMatchObject({ status: 403, message: "Task does not belong to this Idea" });
+      await expect(service.recommendIdeaTeamRole(lead, managed.uuid, "review", undefined, unrelated.uuid)).rejects.toMatchObject({ status: 403, message: "Proposal does not belong to this Idea" });
+      await expect(service.recommendIdeaTeamRole(lead, managed.uuid, "review", undefined, randomUUID())).rejects.toMatchObject({ status: 403 });
+      const source = await proposal([managed.uuid]);
+      const document = await db.document.create({ data: { companyUuid: owner.companyUuid, projectUuid, title: "PRD", type: "prd", proposalUuid: source.uuid, createdByUuid: owner.actorUuid } });
+      const derived = await proposal([document.uuid], "document");
+      expect(await service.recommendIdeaTeamRole(lead, managed.uuid, "review", undefined, derived.uuid)).toMatchObject({ decision: "recommended" });
+    });
+
+    it.each(["idea", "proposal", "task"] as const)("uses the latest agent verdict for %s, ahead of load and ignoring mid-line text", async (targetType) => {
+      await reviewer(developer, true, 2);
+      await reviewer(product);
+      const target = await reviewTarget(targetType);
+      const start = Date.now();
+      await verdict(targetType, target.targetUuid, product, "VERDICT: FAIL", new Date(start));
+      await verdict(targetType, target.targetUuid, developer, "Review round 2\nVERDICT: PASS WITH NOTES\nDetails", new Date(start + 1));
+      await verdict(targetType, target.targetUuid, product, "Forwarded VERDICT: PASS", new Date(start + 2));
+      await verdict(targetType, target.targetUuid, product, "VERDICT: PASSING", new Date(start + 3));
+      await verdict(targetType, target.targetUuid, owner, "VERDICT: FAIL", new Date(start + 4));
+      await verdict(targetType, randomUUID(), product, "VERDICT: PASS", new Date(start + 5));
+      expect(await target.recommend()).toMatchObject({ decision: "recommended", reason: "rereview_affinity", agentUuid: developer.actorUuid });
+    });
+
+    it.each(["PASS", "PASS WITH NOTES", "FAIL"])("recognizes a standalone %s verdict", async (outcome) => {
+      await reviewer(developer, true, 1);
+      await reviewer(product);
+      const target = await reviewTarget("idea");
+      await verdict("idea", target.targetUuid, developer, `VERDICT: ${outcome}`);
+      expect(await target.recommend()).toMatchObject({ reason: "rereview_affinity", agentUuid: developer.actorUuid });
+    });
+
+    it("preserves orchestrator sub-agent affinity outside the online roster", async () => {
+      await reviewer(developer);
+      const target = await reviewTarget("idea");
+      await verdict("idea", target.targetUuid, lead);
+      expect(await target.recommend()).toEqual({ decision: "recommended", reason: "rereview_affinity", agentUuid: lead.actorUuid, candidates: [] });
+    });
+
+    it.each(["offline", "ineligible", "removed"])("does not prefer a previous reviewer who is %s", async (availability) => {
+      await reviewer(product);
+      if (availability !== "removed") await reviewer(developer, availability !== "offline");
+      if (availability === "ineligible") await db.agent.update({ where: { uuid: developer.actorUuid }, data: { roles: [], permissions: [] } });
+      const target = await reviewTarget("proposal");
+      await verdict("proposal", target.targetUuid, product, "VERDICT: PASS", new Date(Date.now() - 1000));
+      await verdict("proposal", target.targetUuid, developer);
+      expect(await target.recommend()).toMatchObject({ reason: "minimum_load", agentUuid: product.actorUuid });
+    });
+
+    it("selects minimum load without excluding the proposal author and defers ties", async () => {
+      await reviewer(product);
+      await reviewer(developer, true, 1);
+      const target = await reviewTarget("proposal");
+      expect(await target.recommend()).toMatchObject({ decision: "recommended", reason: "minimum_load", agentUuid: product.actorUuid });
+      await db.daemonExecution.deleteMany({ where: { companyUuid: owner.companyUuid } });
+      const tied = await target.recommend();
+      expect(tied).toMatchObject({ decision: "lead_decision", reason: "equal_candidates", agentUuid: null });
+      expect(tied.candidates.map((candidate) => candidate.agentUuid).sort()).toEqual([product.actorUuid, developer.actorUuid].sort());
+    });
+
+    it("does not exclude the orchestrator from minimum-load selection", async () => {
+      await reviewer(lead);
+      const target = await reviewTarget("idea");
+      expect(await target.recommend()).toMatchObject({ reason: "minimum_load", agentUuid: lead.actorUuid });
+    });
+  });
+
   async function yolo(ideaUuid: string, by: AuthContext = owner) {
     await db.activity.create({ data: { companyUuid: owner.companyUuid, projectUuid, targetType: "idea", targetUuid: ideaUuid, action: "yolo_requested", actorType: by.type, actorUuid: by.actorUuid } });
   }

@@ -1062,6 +1062,12 @@ describe("getVisibleSessions", () => {
     expect(mockPrisma.daemonSession.findMany.mock.calls[0][0]).toEqual({
       where: { companyUuid, agent: { ownerUuid } },
       orderBy: { lastTurnAt: "desc" },
+      include: {
+        turns: {
+          where: expect.any(Object), orderBy: { seq: "desc" }, take: 1,
+          select: { backendSessionId: true },
+        },
+      },
     });
     expect(result).toHaveLength(1);
     expect(result[0].uuid).toBe(sessionUuid);
@@ -2734,7 +2740,7 @@ describe("advanceTurnForWake", () => {
       data: { backendSessionId: "thread-1" },
     });
     expect(mockPrisma.daemonSession.updateMany).toHaveBeenCalledWith({
-      where: { uuid: sessionUuid, backendSessionId: null },
+      where: { uuid: sessionUuid, OR: [{ backendSessionId: null }, { backendSessionId: sessionId }] },
       data: { backendSessionId: "thread-1" },
     });
   });

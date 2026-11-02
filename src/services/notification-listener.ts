@@ -585,7 +585,31 @@ const TEAM_HANDOFF_LABELS: Record<string, string> = {
   "proposal:submitted": "a proposal was submitted for review",
   "proposal:approved": "a proposal was approved; assign development",
   "task:submitted": "a task was submitted for verification",
+  "last_task_submitted": "also start the whole-Idea code review via chorus_recommend_team_agent({ideaUuid, role:'review'}) without a taskUuid or proposalUuid target",
 };
+
+async function ideaSourceProposalUuids(companyUuid: string, ideaUuid: string): Promise<string[]> {
+  const proposals = await prisma.proposal.findMany({
+    where: { companyUuid, inputType: "idea", inputUuids: { array_contains: [ideaUuid] } },
+    select: { uuid: true },
+  });
+  const uuids = new Set(proposals.map((proposal) => proposal.uuid));
+  let pending = [...uuids];
+  // Document-input proposals inherit their source Ideas, including review fix tasks.
+  while (pending.length) {
+    const documents = await prisma.document.findMany({
+      where: { companyUuid, proposalUuid: { in: pending } }, select: { uuid: true },
+    });
+    if (!documents.length) break;
+    const descendants = await prisma.proposal.findMany({
+      where: { companyUuid, inputType: "document", OR: documents.map((document) => ({ inputUuids: { array_contains: [document.uuid] } })) },
+      select: { uuid: true },
+    });
+    pending = descendants.filter((proposal) => !uuids.has(proposal.uuid)).map((proposal) => proposal.uuid);
+    for (const uuid of pending) uuids.add(uuid);
+  }
+  return [...uuids];
+}
 
 /**
  * Wake the orchestrator (current assignee) of every Team-managed Idea behind this
@@ -611,16 +635,35 @@ export async function notifyIdeaTeamHandoff(event: ActivityEvent): Promise<void>
     ]);
     const recipients = await filterRecipientsByProjectAccess(event.companyUuid, event.projectUuid, agentUuids.map((uuid) => ({ type: "agent", uuid })));
     if (!recipients.length) return;
-    const ideas = orchestrators.map((entry) => entry.ideaUuid).join(", ");
-    await notificationService.createBatch(recipients.map((recipient) => ({
-      companyUuid: event.companyUuid, projectUuid: event.projectUuid,
-      recipientType: recipient.type, recipientUuid: recipient.uuid,
-      entityType: event.targetType, entityUuid: event.targetUuid, entityTitle, projectName,
-      action: "mentioned",
-      message: `Idea Team handoff — ${label} by ${actorName}. You are the assignee of Team-managed Idea(s) ${ideas}: ` +
-        `call chorus_get_idea_team_context and route the next step to the Team (product delegation, or development via chorus_recommend_team_agent + task assignment). Approval follows the normal workflow (a human, unless a human requested YOLO).`,
-      actorType: event.actorType, actorUuid: event.actorUuid, actorName,
-    })));
+    let reviewGuidance = "";
+    if (key === "proposal:submitted") {
+      reviewGuidance = ` Route the proposal review via chorus_recommend_team_agent({ideaUuid, role:'review', proposalUuid:'${event.targetUuid}'}). ` +
+        `A human approves; only under human-requested YOLO for this Idea may you approve after a current-round PASS or PASS WITH NOTES VERDICT.`;
+    } else if (event.targetType === "task") {
+      reviewGuidance = ` Route the task review via chorus_recommend_team_agent({ideaUuid, role:'review', taskUuid:'${event.targetUuid}'}); ` +
+        `verify only after a current-round PASS or PASS WITH NOTES VERDICT.`;
+    }
+    const lastTaskIdeas = event.targetType === "task" ? (await Promise.all(orchestrators.map(async (entry) => {
+      const proposalUuids = await ideaSourceProposalUuids(event.companyUuid, entry.ideaUuid);
+      const remaining = await prisma.task.count({
+        where: { companyUuid: event.companyUuid, proposalUuid: { in: proposalUuids }, uuid: { not: event.targetUuid }, status: { notIn: ["to_verify", "done", "closed"] } },
+      });
+      return remaining === 0 ? entry.ideaUuid : null;
+    }))).filter((uuid) => uuid !== null) : [];
+    await notificationService.createBatch(recipients.map((recipient) => {
+      const ideas = orchestrators.filter((entry) => entry.agentUuid === recipient.uuid).map((entry) => entry.ideaUuid);
+      const lastIdeas = lastTaskIdeas.filter((ideaUuid) => ideas.includes(ideaUuid));
+      return {
+        companyUuid: event.companyUuid, projectUuid: event.projectUuid,
+        recipientType: recipient.type, recipientUuid: recipient.uuid,
+        entityType: event.targetType, entityUuid: event.targetUuid, entityTitle, projectName,
+        action: "mentioned",
+        message: `Idea Team handoff — ${label} by ${actorName}. You are the assignee of Team-managed Idea(s) ${ideas.join(", ")}: ` +
+          `call chorus_get_idea_team_context and route the next step to the Team (product delegation, or development via chorus_recommend_team_agent + task assignment). Approval follows the normal workflow (a human, unless a human requested YOLO).` +
+          reviewGuidance + (lastIdeas.length ? ` For Idea(s) ${lastIdeas.join(", ")}, ${TEAM_HANDOFF_LABELS.last_task_submitted}; run it in parallel with task reviews. Its PASS gates the completion report and PR, not individual task verification.` : ""),
+        actorType: event.actorType, actorUuid: event.actorUuid, actorName,
+      };
+    }));
   } catch (error) {
     nlLogger.error({ err: error }, "Failed to process Idea Team handoff");
   }

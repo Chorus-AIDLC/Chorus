@@ -474,11 +474,13 @@ describe("authoritative structured failures", () => {
     expect(spawnImpl).not.toHaveBeenCalled();
   });
 
-  it("Kiro retains its resume decision when startup configuration is rejected", async () => {
+  it("Kiro retains its verified resume decision when startup configuration is rejected", async () => {
     const spawnImpl = vi.fn();
     const result = await wake(makeSpawner("kiro", {
       kiroPath: "C:\\bin\\kiro.cmd", platform: "win32", spawnImpl,
       getSessionIdFn: () => "existing-kiro-session",
+      creds: { agentUuid: "verified-agent", apiKey: "authoritative-daemon-key" },
+      verifySessionOwnershipFn: () => true,
       cliConfig: { args: ["--custom=%UNSAFE%"] },
     }));
     expect(result).toMatchObject({ sessionId: ANCHOR, isNew: false, exitCode: null,

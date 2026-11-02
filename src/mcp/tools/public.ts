@@ -158,15 +158,16 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   }));
 
   registerPermissionedTool(server, auth, "idea:read", "chorus_recommend_team_agent", {
-    description: "Recommend a product or development agent for a Team-managed Idea from live eligibility, online status, load and task affinity. Owner-private; does not assign or wake anyone. Follow recommended / lead_decision / manual / paused. Optional taskUuid must belong to the Idea.",
+    description: "Recommend a product, development or review agent for a Team-managed Idea from live eligibility, online status, load and affinity. Review prefers the previous reviewer and falls back to the orchestrator's sub-agent when no eligible reviewer is online. Owner-private; does not assign or wake anyone. Follow recommended / lead_decision / manual / paused. Optional taskUuid or proposalUuid must belong to the Idea; supply at most one. Review without a target reviews the whole Idea.",
     inputSchema: z.object({
       ideaUuid: z.string().uuid().describe("Idea UUID"),
-      role: z.enum(["product", "development"]),
-      taskUuid: z.string().uuid().optional().describe("Related Task UUID for development affinity"),
+      role: z.enum(["product", "development", "review"]),
+      taskUuid: z.string().uuid().optional().describe("Related Task UUID for development affinity or task review"),
+      proposalUuid: z.string().uuid().optional().describe("Related Proposal UUID for proposal review"),
     }),
     annotations: { readOnlyHint: true },
-  }, async ({ ideaUuid, role, taskUuid }) => ({
-    content: [{ type: "text", text: JSON.stringify(await recommendIdeaTeamRole(auth, ideaUuid, role, taskUuid), null, 2) }],
+  }, async ({ ideaUuid, role, taskUuid, proposalUuid }) => ({
+    content: [{ type: "text", text: JSON.stringify(await recommendIdeaTeamRole(auth, ideaUuid, role, taskUuid, proposalUuid), null, 2) }],
   }));
 
   registerPermissionedTool(server, auth, "idea:write", "chorus_delegate_team_product", {

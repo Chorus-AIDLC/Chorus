@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexSpawner, buildCodexArgs, resolveCodexPath, hasChorusMcpServer } from "../codex-spawner.mjs";
 import { killProcessTree } from "../process-killer.mjs";
-import { CHORUS_MCP_APPROVAL_CONFIG } from "../codex-family.mjs";
+import { CHORUS_MCP_APPROVAL_CONFIG, CODEX_FAMILY } from "../codex-family.mjs";
+import { backendSessionKey } from "../backend-session-identity.mjs";
 import { getProcessStopHook } from "../process-stop-hooks.mjs";
 import { getThreadId, setThreadId } from "../codex-session-map.mjs";
 import { appServerChild } from "./fixtures/codex-app-server-child.mjs";
@@ -36,6 +37,64 @@ function makeSpawner(child = appServerChild(), opts = {}) {
 }
 const wake = (spawner, extra = {}) => spawner.wake({ prompt: "private prompt", sessionId: ANCHOR, ...extra });
 async function until(fn) { await vi.waitFor(() => expect(fn()).toBeTruthy(), { timeout: 1000, interval: 1 }); }
+
+describe.each([CODEX_FAMILY.codex, CODEX_FAMILY.trae])("$displayName agent session isolation", (profile) => {
+  it.each([false, true])("isolates threads and usage across agents, resumes only owned threads (legacy: %s)", async (legacy) => {
+    const oldThread = "99999999-9999-4999-8999-999999999999";
+    const threads = new Map(legacy ? [[ANCHOR, oldThread]] : []);
+    const oldUsage = { input_tokens: 999, cached_input_tokens: 0, output_tokens: 99 };
+    const usage = new Map(legacy ? [[ANCHOR, oldUsage]] : []);
+    const getUsage = vi.fn((key) => usage.get(key) ?? null);
+    const setUsage = vi.fn((key, threadId, snapshot) => usage.set(key, snapshot));
+    const agents = ["agent-one", "agent-two"];
+    const run = async (agentUuid, index, resumed) => {
+      const threadId = `thread-agent-${index}`;
+      const child = appServerChild({ threadId, handler(request, runtime) {
+        if (request.method !== "turn/start") return;
+        runtime.reply(request, { turn: { id: "turn-1" } });
+        runtime.send({ method: "thread/tokenUsage/updated", params: {
+          threadId, turnId: "turn-1", tokenUsage: { total: { inputTokens: 10 + index, cachedInputTokens: 0, outputTokens: 2 } },
+        } });
+        runtime.terminal();
+        return true;
+      } });
+      const logger = { ...silent, warn: vi.fn() };
+      const getThread = vi.fn((key) => threads.get(key) ?? null);
+      const spawner = makeSpawner(child, {
+        profile, creds: { agentUuid }, logger,
+        getThreadIdFn: getThread, setThreadIdFn: (key, value) => threads.set(key, value),
+        getUsageSnapshotFn: getUsage, setUsageSnapshotFn: setUsage,
+      });
+      expect(await wake(spawner, { cwd: "/shared/repo", isNew: true })).toMatchObject({
+        sessionId: ANCHOR, backendSessionId: threadId, isNew: !resumed, exitCode: 0,
+      });
+      const key = backendSessionKey(ANCHOR, agentUuid);
+      expect(getThread.mock.calls[0]).toEqual([key]);
+      expect(threads.get(key)).toBe(threadId);
+      expect(methods(child)).toContain(resumed ? "thread/resume" : "thread/start");
+      expect(methods(child)).not.toContain(resumed ? "thread/start" : "thread/resume");
+      if (resumed) {
+        expect(child.requests.find((request) => request.method === "thread/resume").params.threadId).toBe(threadId);
+        expect(getThread).toHaveBeenCalledTimes(1);
+        expect(getUsage).toHaveBeenCalledWith(key, threadId);
+      }
+      expect(setUsage).toHaveBeenCalledWith(key, threadId, { input_tokens: 10 + index, cached_input_tokens: 0, output_tokens: 2 });
+      if (legacy && !resumed) {
+        expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(oldThread));
+        expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("new isolated session"));
+      } else expect(logger.warn).not.toHaveBeenCalled();
+    };
+    await Promise.all(agents.map((agent, index) => run(agent, index, false)));
+    expect(getUsage).not.toHaveBeenCalled();
+    await Promise.all(agents.map((agent, index) => run(agent, index, true)));
+    expect(threads.size).toBe(legacy ? 3 : 2);
+    expect(usage.size).toBe(legacy ? 3 : 2);
+    if (legacy) {
+      expect(threads.get(ANCHOR)).toBe(oldThread);
+      expect(usage.get(ANCHOR)).toBe(oldUsage);
+    }
+  });
+});
 
 describe("resolveCodexPath", () => {
   const isFile = (set) => (p) => set.has(p);

@@ -14,6 +14,7 @@ import { EventEmitter } from "node:events";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { backendSessionKey } from "../backend-session-identity.mjs";
 import {
   PiSpawner,
   PiRpcChannel,
@@ -77,6 +78,46 @@ function makeSpawner({ child, piPath = "/usr/bin/pi", creds, logger = QUIET, ver
   });
   return { spawner, spawnImpl, calls, spawned, versionProbeFn };
 }
+
+describe("Pi agent session isolation", () => {
+  it.each([false, true])("uses stable per-agent UUIDs and preserves legacy sessions (legacy: %s)", async (legacy) => {
+    const files = legacy ? [`old_${ANCHOR}.jsonl`] : [];
+    const originalFiles = [...files];
+    const identities = [];
+    for (const [index, agentUuid] of ["agent-one", "agent-two", "agent-one", "agent-two"].entries()) {
+      const resumed = index >= 2;
+      const sessionKey = backendSessionKey(ANCHOR, agentUuid);
+      const child = makeFakeChild();
+      const logger = { ...QUIET, warn: vi.fn() };
+      const onMessage = vi.fn();
+      const { spawner, calls, spawned } = makeSpawner({
+        child, creds: { agentUuid }, logger, readdirImpl: () => files,
+      });
+      const pending = spawner.wake({ prompt: "continue", sessionId: ANCHOR, cwd: "/shared/repo", isNew: true, onMessage });
+      await spawned;
+      expect(calls.argv).toEqual(["--mode", "rpc", "--session-id", sessionKey]);
+      expect(sessionKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      expect(sessionKey).not.toBe(ANCHOR);
+      child.frame(stateResponse("chorus-state-1", { messageCount: resumed ? 2 : 0, sessionFile: `/shared/sessions/new_${sessionKey}.jsonl` }));
+      child.frame(promptOk);
+      child.frame({ type: "agent_settled" });
+      child.emit("close", 0);
+      const result = await pending;
+      expect(result).toMatchObject({ sessionId: ANCHOR, backendSessionId: sessionKey, isNew: !resumed, exitCode: 0 });
+      identities.push(result.backendSessionId);
+      if (!resumed) {
+        expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(`native manual resume handle: "${ANCHOR}"`));
+        expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Any original session is preserved"));
+        expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+          message: expect.objectContaining({ content: [expect.objectContaining({ text: expect.stringContaining("new isolated session") })] }),
+        }));
+      } else expect(logger.warn).not.toHaveBeenCalled();
+    }
+    expect(identities[0]).not.toBe(identities[1]);
+    expect(identities.slice(2)).toEqual(identities.slice(0, 2));
+    expect(files).toEqual(originalFiles);
+  });
+});
 
 describe("buildPiArgs — RPC mode with the client-owned session-id anchor", () => {
   it("builds `--mode rpc --session-id <anchor>` with no -p, json mode or --no-session", () => {

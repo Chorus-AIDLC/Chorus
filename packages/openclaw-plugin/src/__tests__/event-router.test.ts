@@ -135,6 +135,45 @@ describe("ChorusEventRouter.dispatch", () => {
     expect(wake.mock.calls[0][1]).toBe(`chorus:${action}:task-1`);
   });
 
+  it.each(["proposal", "task", "idea"])("direct %s review mention loads the matching protocol without depending on the excerpt", async (entityType) => {
+    const { router } = build({
+      chorus_get_notifications: { notifications: [makeNotification({ action: "mentioned", entityType, message: "Please review…" })] },
+    });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    expect(wake).toHaveBeenCalledOnce();
+    const prompt = wake.mock.calls[0][0];
+    expect(prompt).toContain("For a Team review handoff or direct review request only (not ordinary mentions)");
+    expect(prompt).toContain("fetch the full comments");
+    expect(prompt).toContain("Team review request — <kind>, round N");
+    expect(prompt).toContain("expected PASS/FAIL recipient names and UUIDs without extra @mentions");
+    expect(prompt).toContain("load and follow the current installed matching reviewer instructions BEFORE reviewing");
+    expect(prompt).toContain("proposal → proposal-reviewer, task → task-reviewer, code (whole-Idea) → code-reviewer");
+    expect(prompt).toContain("corrected request and stop without a verdict");
+    expect(prompt).toContain("exactly one final unformatted line starting at column 1: VERDICT: PASS, VERDICT: PASS WITH NOTES or VERDICT: FAIL");
+    expect(prompt).toContain("No bold, backticks, bullet, quote, indentation or code fence");
+    expect(prompt).toContain("exactly one actionable @mention");
+    expect(prompt).toContain("proposal FAIL → current product delegate, else orchestrator");
+    expect(prompt).toContain("task FAIL → current logical task developer");
+    expect(prompt).toContain("whole-Idea FAIL → current orchestrator");
+    expect(prompt).toContain("override generic sender/orchestrator reply guidance");
+    expect(prompt).toContain("no second completion handoff");
+    expect(prompt).not.toMatch(/^VERDICT:/m);
+  });
+
+  it.each(["user", "agent"])("mention guidance only mentions a %s sender who must act, never to acknowledge", async (actorType) => {
+    const { router } = build({
+      chorus_get_notifications: { notifications: [makeNotification({ action: "mentioned", actorType })] },
+    });
+    router.dispatch({ type: "new_notification", notificationUuid: "n1" } as SseNotificationEvent);
+    await flush();
+    const prompt = wake.mock.calls[0][0];
+    expect(prompt).toContain("Only if the sender must act on your result (a question, requested decision, or work handoff)");
+    expect(prompt).toContain(`Use this exact mention format: @[Alice](${actorType}:user-1)`);
+    expect(prompt).toContain('Never @mention only to acknowledge or say "received".');
+    expect(prompt).not.toContain("After completing your work, post a comment");
+  });
+
   it("idea_claimed: names the assigner (agent + user actor) and does NOT instruct chorus_claim_idea", async () => {
     // Mirrors the daemon's cli/prompts.mjs idea_claimed rework: the assignment already set
     // the assignee, so the prose names WHO assigned it and tells the agent to advance from

@@ -222,16 +222,36 @@ export async function delegateIdeaTeamProduct(auth: AuthContext, ideaUuid: strin
   return getIdeaTeamContext(auth, ideaUuid);
 }
 
-export async function recommendIdeaTeamRole(auth: AuthContext, ideaUuid: string, role: IdeaTeamRoutingRole, taskUuid?: string): Promise<IdeaTeamRecommendationDto> {
+export async function recommendIdeaTeamRole(auth: AuthContext, ideaUuid: string, role: IdeaTeamRoutingRole, taskUuid?: string, proposalUuid?: string): Promise<IdeaTeamRecommendationDto> {
   const state = await readableState(auth, ideaUuid);
+  if (taskUuid && proposalUuid) throw new ApiError("VALIDATION_ERROR", "Supply at most one of taskUuid and proposalUuid", 400);
   const result = (decision: IdeaTeamRecommendationDto["decision"], reason: string, candidates: ProjectTeamMember[] = [], agentUuid: string | null = null) => ({ decision, reason, candidates, agentUuid });
   if (!state.managed) return result("manual", "unmanaged");
   if (callerOwnerUuid(auth) !== state.ownerUuid) forbidden("Private Team routing is owner-only");
   if (!state.active || !state.team) return result("paused", state.reason ?? "paused");
   const task = taskUuid ? await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid: auth.companyUuid, projectUuid: state.projectUuid } }) : null;
   if (taskUuid && (!task?.proposalUuid || !(await proposalSourceIdeas(auth.companyUuid, task.proposalUuid, prisma))?.includes(ideaUuid))) forbidden("Task does not belong to this Idea");
+  if (proposalUuid && !(await proposalSourceIdeas(auth.companyUuid, proposalUuid, prisma))?.includes(ideaUuid)) forbidden("Proposal does not belong to this Idea");
 
   const eligible = state.team.roles[role].filter((member) => member.eligible);
+  if (role === "review") {
+    const online = eligible.filter((member) => member.online);
+    if (!online.length) return result("recommended", "review_orchestrator_subagent_fallback", [], state.orchestratorUuid);
+    const comments = await prisma.comment.findMany({
+      where: { companyUuid: auth.companyUuid, targetType: taskUuid ? "task" : proposalUuid ? "proposal" : "idea", targetUuid: taskUuid ?? proposalUuid ?? ideaUuid, authorType: "agent", content: { contains: "VERDICT:" } },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: { authorUuid: true, content: true },
+    });
+    const previousReviewer = comments.find((comment) => /^VERDICT: (PASS WITH NOTES|PASS|FAIL)\b/m.test(comment.content))?.authorUuid;
+    const preferred = online.find((member) => member.agentUuid === previousReviewer);
+    if (preferred) return result("recommended", "rereview_affinity", [preferred], preferred.agentUuid);
+    if (previousReviewer && previousReviewer === state.orchestratorUuid) return result("recommended", "rereview_affinity", [], previousReviewer);
+    const minimumLoad = Math.min(...online.map((member) => member.activeCount));
+    const candidates = online.filter((member) => member.activeCount === minimumLoad);
+    return candidates.length === 1
+      ? result("recommended", "minimum_load", candidates, candidates[0].agentUuid)
+      : result("lead_decision", "equal_candidates", candidates);
+  }
   if (!eligible.length) return result("manual", "role_empty_or_ineligible");
   const online = eligible.filter((member) => member.online);
   if (!online.length) {

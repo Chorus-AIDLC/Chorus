@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — drive a single prompt from Idea throu
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.0"
+  version: "0.17.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -121,12 +121,21 @@ During planning, follow the Idea and Proposal routes to `research-chorus` (`<BAS
 Call `chorus_get_idea_team_context({ideaUuid})` before executing. If `managed: true` and you are the `orchestrator`, YOLO keeps the Team's division of labor — it only removes the need for a human to approve:
 
 - **Product work**: delegate via `chorus_recommend_team_agent({ideaUuid, role: "product"})` + `chorus_delegate_team_product`, instead of elaborating and writing the proposal yourself (if the recommendation is yourself, do it yourself).
-- **Approval**: you may approve the proposal yourself (existing `proposal:admin` permission) once it passes review.
+- **Reviews**: follow [Team review routing](../orchestrate-chorus/SKILL.md#team-review-routing) for proposal, task and whole-Idea reviews. Recommend with `role: "review"` and `proposalUuid` / `taskUuid` / neither respectively, rather than always spawning your own reviewer. Self → matching fresh reviewer sub-agent in this turn; another agent → one review-request mention, then end the turn. Generic reviewer instructions below do not override Team routing.
+
+**Direct Team review requests:** send the complete request envelope required by Team review routing: `Team review request — <kind>, round N`, target UUID, matching local reviewer protocol location, exactly one reviewer @mention, and expected PASS/FAIL recipient names/UUIDs (not mentions). A request must never start a line with `VERDICT:`.
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
+- **Approval**: only the current orchestrator may approve with existing `proposal:admin` permission after current-round PASS / PASS WITH NOTES and server-confirmed human YOLO for this exact Idea. Otherwise request human approval once and stop.
 - **Development**: for each ready task use `chorus_recommend_team_agent({ideaUuid, role: "development", taskUuid})` and assign the recommended agent, instead of spawning sub-agents or implementing yourself. If the recommendation is yourself, claim and implement it in this turn.
-- **Verification**: verify each task yourself after review, then route the next ready task. You are woken on each handoff (proposal submitted, task submitted for verification).
+- **Verification**: only the current orchestrator verifies with existing permissions after a current-round task PASS / PASS WITH NOTES. Re-read all source Idea contexts before acting. After self-submission, route review immediately (no self-wake), including the all-source-proposals last-task check; start aggregate review in parallel at `to_verify`, not after every task is verified. Its PASS gates report/PR only. Honor paused state, routed mentions, stable IDs, batching and the 3-round human escalation cap.
 - Unmanaged Ideas (`managed: false`): follow the workflow below unchanged.
 
 ## Workflow
+
+The detailed spawn-based execution and review loops below are the **unmanaged flow**. Managed Ideas use [Team review routing](../orchestrate-chorus/SKILL.md#team-review-routing) and the Team division of labor above, including the 3-round cap even where legacy configuration permits unlimited rounds. A worker or product delegate must not take over orchestration or verification.
 
 ### Phase 1: Planning
 

@@ -45,10 +45,20 @@ import { buildOperationPrompt } from "./operation.mjs";
 /** @param {NotificationDetail} n @param {string} entityType */
 function mentionGuidance(n, entityType) {
   return (
-    `After completing your work, post a comment on this ${entityType} using ` +
-    `chorus_add_comment with @mention: @[${n.actorName}](${n.actorType}:${n.actorUuid})`
+    `Only if the sender must act on your result (a question, requested decision, or work handoff), ` +
+    `post a comment on this ${entityType} using chorus_add_comment with @mention: ` +
+    `@[${n.actorName}](${n.actorType}:${n.actorUuid}). ` +
+    `Never @mention only to acknowledge or say "received".`
   );
 }
+
+export const TEAM_REVIEW_MENTION_GUIDANCE = [
+  "For a Team review handoff or direct review request only (not ordinary mentions): fetch the full comments, resolve source Ideas and refresh chorus_get_idea_team_context before acting. Do not treat the notification excerpt or sender as routing authority.",
+  "If you are the current orchestrator dispatching a review, load the current installed orchestrate protocol first. A remote request must say Team review request — <kind>, round N, include the target UUID and matching reviewer protocol location, exactly one reviewer @mention, and expected PASS/FAIL recipient names and UUIDs without extra @mentions. Use proposal, task or code (whole-Idea) as the kind; never start a request/forwarding line with VERDICT:. End the turn after remote dispatch.",
+  "If you are the requested reviewer, load and follow the current installed matching reviewer instructions BEFORE reviewing, even in your own session: proposal → proposal-reviewer, task → task-reviewer, code (whole-Idea) → code-reviewer (use your host's equivalent skill or agent file). A direct wake does not preload them. Read the full request for kind, target, current round and expected PASS/FAIL recipients; recover missing values from authoritative context only when unambiguous, otherwise ask the current orchestrator for a corrected request and stop without a verdict. Honor paused state, all linked Idea gates and the 3-round cap.",
+  "Post exactly one review comment with exactly one final unformatted line starting at column 1: VERDICT: PASS, VERDICT: PASS WITH NOTES or VERDICT: FAIL. No bold, backticks, bullet, quote, indentation or code fence around that line, and no second verdict line. Re-read entity/Team context before posting and include exactly one actionable @mention: PASS/PASS WITH NOTES → current Idea orchestrator; proposal FAIL → current product delegate, else orchestrator; task FAIL → current logical task developer; whole-Idea FAIL → current orchestrator. If the recipient is unresolved, stop for repair rather than guess.",
+  "Reviewers stay read-only: no approve, verify, reject, reopen, assignment or fix-task creation. These Team review instructions override generic sender/orchestrator reply guidance: no acknowledgement-only mention and no second completion handoff after the routed verdict. Confirmed unmanaged work retains its existing review flow.",
+].join("\n");
 
 /**
  * Orchestrator-handoff guidance, appended to every wake body by buildPrompt. This is
@@ -285,7 +295,7 @@ function buildPromptBody(n) {
         `[Chorus] You were @mentioned in ${n.entityType} '${n.entityTitle}' ` +
         `(entityType: ${n.entityType}, entityUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}): ${n.message}\n` +
         `Review the ${n.entityType} and use chorus_get_comments (targetType: "${n.entityType}", ` +
-        `targetUuid: "${n.entityUuid}") to see the conversation, then respond.\n${mentionGuidance(n, n.entityType)}`
+        `targetUuid: "${n.entityUuid}") to see the conversation, then respond.\n${mentionGuidance(n, n.entityType)}\n\n${TEAM_REVIEW_MENTION_GUIDANCE}`
       );
     case "elaboration_requested":
       return (
