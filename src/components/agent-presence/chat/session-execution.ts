@@ -11,6 +11,7 @@
 //
 // Pure + dependency-free so they are trivially unit-testable.
 
+import { parseSessionAnchor } from "@/lib/session-anchor";
 import type { ExecutionView } from "../types";
 
 // The per-conversation display status, derived from its matching live executions.
@@ -20,28 +21,22 @@ import type { ExecutionView } from "../types";
 //   null        → idle (no live execution for this conversation)
 export type SessionExecStatus = "running" | "interrupted" | "error" | null;
 
-// Does this execution belong to the given conversation?
-//  - Ad-hoc conversation → matches its own `daemon_session:<sessionId>` execution.
-//  - Idea-anchored conversation → matches BOTH (a) a direct wake ON the idea
-//    (`idea:<directIdeaUuid>`), AND (b) an autonomous wake on a child resource of that
-//    idea (e.g. `task_assigned` → `task:<taskUuid>`), matched by the execution's
-//    `directIdeaUuid` (the entity's directly-attached idea — the daemon's session anchor).
-//    A task/proposal wake IS the conversation's work on that idea, so it must surface the
-//    conversation's running/interrupt state.
-//
-//    We match on `directIdeaUuid`, NOT `rootIdeaUuid`: for a DERIVED (child) idea a
-//    child-resource wake resolves `directIdeaUuid = child` (this conversation) but
-//    `rootIdeaUuid = parent`. Matching by root would light up the PARENT conversation and
-//    leave the child (which actually owns the woken session) idle — the exact bug this
-//    fixes. Matching by the direct idea anchors the run on the child only; the parent
-//    shows nothing about the child's run.
+// Scoped task/review conversations match only their execution discriminator.
+// Idea/ad-hoc conversations accept only legacy (empty or missing) discriminators;
+// Idea work still matches its DIRECT Idea, never a derived Idea's root.
 export function executionMatchesSession(
-  exec: Pick<ExecutionView, "entityType" | "entityUuid" | "directIdeaUuid">,
+  exec: Pick<ExecutionView, "entityType" | "entityUuid" | "directIdeaUuid"> & { sessionId?: string },
   session: { sessionId: string; directIdeaUuid: string | null },
 ): boolean {
   // The key this conversation's work is addressed by — the SINGLE derivation shared with
   // the composer's stuck-turn control (see `sessionControlTarget`), so the entity the UI
   // sends and the entity the matcher accepts can never drift.
+  const anchor = parseSessionAnchor(session.sessionId, session.directIdeaUuid);
+  if (anchor.kind === "task" || anchor.kind === "review") {
+    return exec.sessionId === session.sessionId;
+  }
+  // Old snapshots omit the discriminator; both missing and empty mean the legacy lane.
+  if (exec.sessionId) return false;
   const target = sessionControlTarget(session);
 
   if (target.entityType === "idea") {
@@ -80,7 +75,11 @@ export function executionMatchesSession(
 export function sessionControlTarget(session: {
   sessionId: string;
   directIdeaUuid: string | null;
-}): { entityType: "idea" | "daemon_session"; entityUuid: string } {
+}): { entityType: "idea" | "task" | "proposal" | "daemon_session"; entityUuid: string; sessionId?: string } {
+  const anchor = parseSessionAnchor(session.sessionId, session.directIdeaUuid);
+  if (anchor.kind === "task" || anchor.kind === "review") {
+    return { entityType: anchor.entityType, entityUuid: anchor.entityUuid, sessionId: session.sessionId };
+  }
   const ideaUuid =
     session.directIdeaUuid ??
     (session.sessionId.includes("::") ? session.sessionId.split("::")[0] : null);

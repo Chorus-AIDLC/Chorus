@@ -1947,6 +1947,11 @@
     "mobileBack": "对话",
     "conversationAdHoc": "对话 {id}",
     "conversationIdea": "想法 {id}",
+    "childSession": {
+      "task": "任务：{title}",
+      "review": "评审：{title}",
+      "instructionNote": "请在想法对话中发送指令。此子对话用于任务开发或评审。"
+    },
     "badgeIdea": "想法",
     "running": "运行中",
     "runningElapsedLabel": "本次运行已用时",

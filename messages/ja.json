@@ -1947,6 +1947,11 @@
     "mobileBack": "会話",
     "conversationAdHoc": "会話 {id}",
     "conversationIdea": "着想 {id}",
+    "childSession": {
+      "task": "タスク: {title}",
+      "review": "レビュー: {title}",
+      "instructionNote": "指示は着想の会話から送信してください。この子会話はタスク作業またはレビュー用です。"
+    },
     "badgeIdea": "着想",
     "running": "実行中",
     "runningElapsedLabel": "この実行の開始からの経過時間",

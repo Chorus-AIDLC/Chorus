@@ -190,3 +190,42 @@ describe("sessionControlTarget", () => {
     }
   });
 });
+
+describe("purpose-scoped execution ownership", () => {
+  const task = { ...ideaSession, sessionId: "task:T" };
+  const review = { ...ideaSession, sessionId: "review:task:T" };
+  const lanes = [
+    exec({ connectionUuid: "conn-origin", entityType: "task", entityUuid: "T", sessionId: "task:T" }),
+    exec({ connectionUuid: "conn-origin", entityType: "task", entityUuid: "T", sessionId: "review:task:T", status: "interrupted", interruptedReason: "user" }),
+    exec({ connectionUuid: "conn-origin", entityType: "task", entityUuid: "T", sessionId: "", status: "queued" }),
+  ];
+
+  it("same-entity task/review/Idea lanes show independent state", () => {
+    expect(sessionExecStatus(lanes, task)).toBe("running");
+    expect(sessionExecStatus(lanes, review)).toBe("interrupted");
+    expect(sessionExecStatus(lanes, ideaSession)).toBeNull();
+    expect(sessionExecutionsForComposer({ "conn-origin": lanes }, task)).toEqual([lanes[0]]);
+    expect(sessionExecutionsForComposer({ "conn-origin": lanes }, review)).toEqual([lanes[1]]);
+  });
+
+  it("legacy Idea lanes cannot borrow task or review executions, including review:idea", () => {
+    for (const sessionId of ["task:T", "review:task:T", "review:idea:idea-A"]) {
+      const scoped = exec({ connectionUuid: "other", sessionId });
+      expect(executionMatchesSession(scoped, ideaSession)).toBe(false);
+    }
+    expect(executionMatchesSession(exec({ connectionUuid: "other", sessionId: "" }), ideaSession)).toBe(true);
+    expect(executionMatchesSession(exec({ connectionUuid: "other" }), ideaSession)).toBe(true);
+  });
+
+  it("scoped fallback searches other connections without borrowing siblings", () => {
+    expect(sessionExecutionsForComposer({ sibling: [lanes[0]], other: [lanes[1]] }, review)).toEqual([lanes[1]]);
+    expect(sessionExecStatusForRow({ other: [lanes[0]] }, review)).toBeNull();
+  });
+
+  it.each([
+    ["task:T", "task", "T"], ["review:task:T", "task", "T"],
+    ["review:proposal:P", "proposal", "P"], ["review:idea:idea-A", "idea", "idea-A"],
+  ])("derives scoped phantom-control target %s", (sessionId, entityType, entityUuid) => {
+    expect(sessionControlTarget({ ...ideaSession, sessionId })).toEqual({ sessionId, entityType, entityUuid });
+  });
+});

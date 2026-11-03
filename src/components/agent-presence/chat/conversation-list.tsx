@@ -32,6 +32,7 @@ import {
 import { useNowTick, useRelativeTime } from "../hooks";
 import type { SessionTarget } from "../send-instruction-box";
 import type { SessionExecStatus } from "./session-execution";
+import { conversationKey, groupConversationRows } from "./conversation-groups";
 
 // One selectable agent for the Select: its uuid + a display name resolved from the
 // connection list (the session list carries no agentName).
@@ -65,13 +66,13 @@ function SessionStatusIndicator({ status }: { status: SessionExecStatus }) {
     );
   }
   if (status === "interrupted") {
-    return <PauseCircle aria-hidden className="h-3.5 w-3.5 text-[#B45309] dark:text-[#E0A34E]" />;
+    return <PauseCircle aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />;
   }
   if (status === "error") {
-    return <TriangleAlert aria-hidden className="h-3.5 w-3.5 text-[#DC2626] dark:text-[#F08078]" />;
+    return <TriangleAlert aria-hidden className="h-3.5 w-3.5 text-destructive" />;
   }
   // Idle: a quiet flat dot (no pulse) so the row still has a leading marker.
-  return <span aria-hidden className="h-2 w-2 rounded-full bg-[#D7D2C9] dark:bg-[#2a2822]" />;
+  return <span aria-hidden className="h-2 w-2 rounded-full bg-muted-foreground/40" />;
 }
 
 function Row({
@@ -79,11 +80,13 @@ function Row({
   selected,
   onSelect,
   nowMs,
+  child = false,
 }: {
   row: ConversationRow;
   selected: boolean;
   onSelect: () => void;
   nowMs: number;
+  child?: boolean;
 }) {
   const t = useTranslations("daemonChat");
   const formatRelative = useRelativeTime();
@@ -102,9 +105,11 @@ function Row({
       variant="ghost"
       onClick={onSelect}
       aria-current={selected ? "true" : undefined}
+      data-conversation-key={conversationKey(row.session)}
+      data-session-status={row.status ?? "idle"}
       className={`relative h-auto w-full justify-start gap-0 rounded-none px-0 py-0 text-left transition-colors ${
         selected
-          ? "bg-[#FBF4EF] dark:bg-[#221e1b] hover:bg-[#FBF4EF] dark:hover:bg-[#26241f]"
+          ? "bg-accent hover:bg-accent"
           : "bg-card hover:bg-background"
       }`}
     >
@@ -114,7 +119,7 @@ function Row({
           className="absolute inset-y-0 left-0 w-[3px] bg-primary"
         />
       )}
-      <span className="flex w-full items-center gap-3 px-4 py-3.5">
+      <span className={`flex w-full items-center gap-3 py-3.5 ${child ? "pl-8 pr-4" : "px-4"}`}>
         <span className="flex w-2.5 shrink-0 justify-center">
           <SessionStatusIndicator status={row.status} />
         </span>
@@ -123,7 +128,7 @@ function Row({
             {row.ideaAnchored && (
               <Badge
                 variant="secondary"
-                className="shrink-0 gap-1 border-0 bg-[#F3ECFB] dark:bg-[#221a30] px-1.5 py-0 text-[10px] font-medium text-[#7C5BC0] dark:text-[#B79AF0]"
+                className="shrink-0 gap-1 border-0 bg-secondary px-1.5 py-0 text-[10px] font-medium text-secondary-foreground"
               >
                 <Sparkles className="h-2.5 w-2.5" aria-hidden />
                 {t("badgeIdea")}
@@ -140,8 +145,8 @@ function Row({
                   row.status === "running"
                     ? "text-primary"
                     : row.status === "error"
-                      ? "text-[#DC2626] dark:text-[#F08078]"
-                      : "text-[#B45309] dark:text-[#E0A34E]"
+                      ? "text-destructive"
+                      : "text-muted-foreground"
                 }`}
               >
                 {statusLabel}
@@ -268,8 +273,8 @@ export function ConversationList({
           aria-current={composing ? "true" : undefined}
           className={`h-9 w-full justify-center gap-1.5 rounded-lg text-[13px] font-medium ${
             composing
-              ? "bg-primary text-white hover:bg-[#B56A44]"
-              : "border border-[#E5D2C2] dark:border-[#33302a] bg-[#FBF4EF] dark:bg-[#221e1b] text-primary hover:bg-[#F6E9DF] dark:hover:bg-[#26241f]"
+              ? "bg-primary text-primary-foreground hover:bg-primary/90"
+              : "border border-border bg-accent text-primary hover:bg-accent/80"
           }`}
         >
           <MessageCirclePlus className="h-4 w-4" aria-hidden />
@@ -296,7 +301,7 @@ export function ConversationList({
             </span>
           )}
         </div>
-        <div className="h-px w-full bg-[#EFEBE4] dark:bg-[#201e1b]" />
+        <div className="h-px w-full bg-border" />
         {loading ? (
           // Loading: skeleton placeholder rows, shaped like real rows, INSTEAD of the
           // empty state — so an in-flight load is never mistaken for an empty list.
@@ -308,7 +313,7 @@ export function ConversationList({
               <div key={idx}>
                 <SkeletonRow />
                 {idx < SKELETON_ROW_COUNT - 1 && (
-                  <div className="h-px w-full bg-[#F2EEE7] dark:bg-[#201e1a]" />
+                  <div className="h-px w-full bg-border" />
                 )}
               </div>
             ))}
@@ -324,16 +329,36 @@ export function ConversationList({
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-            {rows.map((row, idx) => (
-              <div key={row.session.uuid}>
-                <Row
-                  row={row}
-                  selected={selectedSessionUuid === row.session.uuid}
-                  onSelect={() => onSelectSession(row.session.uuid)}
-                  nowMs={nowMs}
-                />
-                {idx < rows.length - 1 && (
-                  <div className="h-px w-full bg-[#F2EEE7] dark:bg-[#201e1a]" />
+            {groupConversationRows(rows).map((group) => (
+              <div key={group.key} data-idea-group={group.ideaUuid ?? undefined} className="border-b border-border last:border-b-0">
+                {group.parents.length === 0 && group.ideaUuid && (
+                  <div className="flex items-center gap-2 bg-muted/50 px-4 py-3 text-[13px] font-semibold text-foreground">
+                    <Sparkles className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                    <span className="truncate">{group.ideaTitle ?? t("conversationIdea", { id: group.ideaUuid.slice(0, 8) })}</span>
+                  </div>
+                )}
+                {group.parents.map((row) => (
+                  <Row
+                    key={row.session.uuid}
+                    row={row}
+                    selected={selectedSessionUuid === row.session.uuid}
+                    onSelect={() => onSelectSession(row.session.uuid)}
+                    nowMs={nowMs}
+                  />
+                ))}
+                {group.children.length > 0 && (
+                  <div className="ml-4 border-l border-border" data-testid="child-conversations">
+                    {group.children.map((row) => (
+                      <Row
+                        key={conversationKey(row.session)}
+                        row={row}
+                        child
+                        selected={selectedSessionUuid === row.session.uuid}
+                        onSelect={() => onSelectSession(row.session.uuid)}
+                        nowMs={nowMs}
+                      />
+                    ))}
+                  </div>
                 )}
               </div>
             ))}
@@ -344,7 +369,7 @@ export function ConversationList({
                   size="sm"
                   onClick={onLoadMore}
                   disabled={loadingMore}
-                  className="h-8 w-full rounded-lg text-[12px] font-medium text-primary hover:bg-[#FBF4EF] dark:hover:bg-[#26241f] hover:text-primary"
+                  className="h-8 w-full rounded-lg text-[12px] font-medium text-primary hover:bg-accent hover:text-primary"
                 >
                   {loadingMore ? t("loadingMore") : t("loadMore")}
                 </Button>
