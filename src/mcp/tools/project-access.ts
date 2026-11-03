@@ -37,7 +37,7 @@ export class McpResourceNotFoundError extends Error {}
 
 function notFound(toolName: string, entityType: string, entityUuid: string): never {
   let text = `${entityType[0].toUpperCase()}${entityType.slice(1)} not found`;
-  if (toolName === "chorus_add_comment") text = `${entityType} not found`;
+  if (toolName === "chorus_add_comment" || toolName === "chorus_request_review") text = `${entityType} not found`;
   if (toolName === "chorus_admin_move_project_to_group") text = "Project or project group not found";
   if (toolName === "chorus_admin_delete_project_group") text = "Project group not found";
   // The only project chorus_move_idea names is its target; a hidden target
@@ -83,7 +83,7 @@ export async function authorizeToolProjectAccess(
 ): Promise<AuthorizedResource[]> {
   let capability: Permission | undefined = TOOL_READ_PERMISSIONS[toolName] ??
     TOOL_PERMISSIONS[toolName as ManagedToolName];
-  if (["chorus_get_comments", "chorus_add_comment", "chorus_search_mentionables"].includes(toolName) &&
+  if (["chorus_get_comments", "chorus_add_comment", "chorus_request_review", "chorus_search_mentionables"].includes(toolName) &&
       isEntityType(params.targetType ?? params.entityType)) {
     const entity = params.targetType ?? params.entityType;
     const resource = entity === "comment" ? "document" : entity;

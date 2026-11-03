@@ -84,7 +84,7 @@ describe("Team review protocol host parity", () => {
         expect(text).toContain("PASS / PASS WITH NOTES");
         expect(text).toContain(receiverContract);
         expect(text).toContain(literalContract);
-        expect(text).toContain("expected PASS/FAIL recipient names/UUIDs (not mentions)");
+        expect(text).toContain("send them with `chorus_request_review` (target, reviewer, round)");
         expect(text).toContain("A request must never start a line with `VERDICT:`");
       }
       expect(read(skill("yolo"))).toContain("3-round cap");

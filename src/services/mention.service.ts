@@ -18,20 +18,7 @@ import * as notificationService from "@/services/notification.service";
 // Pure mention-markup codec, shared with the client editor so producer and
 // parser of the on-disk markup cannot drift (cwd-addressable instances, T3).
 import { decodePinSuffix } from "@/lib/mention-format";
-import logger from "@/lib/logger";
-import { formatSessionAnchor, type SessionAnchorEntityType } from "@/lib/session-anchor";
 
-export function reviewSessionAnchorHint(content: string, targetType: string, targetUuid: string): string | undefined {
-  if (/^VERDICT:/m.test(content)) return undefined;
-  const envelope = /^Team review request\s+[—-]\s+(proposal|task|code)\b/m.exec(content);
-  if (!envelope) return undefined;
-  const expected = envelope[1] === "code" ? "idea" : envelope[1];
-  if (expected !== targetType) {
-    logger.warn({ targetType, targetUuid, kind: envelope[1] }, "Team review request kind does not match comment target");
-    return undefined;
-  }
-  return formatSessionAnchor("review", targetType as SessionAnchorEntityType, targetUuid);
-}
 // Re-exported for callers that build pinned markers (kept here so existing
 // imports of these symbols from the service keep resolving).
 export {
@@ -285,6 +272,11 @@ export interface CreateMentionsParams {
   projectUuid: string;
   entityTitle: string;
   excludeMentions?: Pick<MentionRef, "type" | "uuid">[];
+  /**
+   * Structured review request (chorus_request_review): the review session anchor
+   * applies ONLY to this agent's wake. Free comment text never selects a review anchor.
+   */
+  reviewAnchor?: { agentUuid: string; sessionAnchorHint: string };
 }
 
 export interface SearchMentionablesParams {
@@ -368,7 +360,8 @@ export function parseMentions(content: string): MentionRef[] {
  * - Batch creates Mention records
  * - Creates Notification for each valid mention (respecting preferences)
  */
-export async function createMentions(params: CreateMentionsParams): Promise<void> {
+/** Returns the recipient UUIDs whose notification was actually created. */
+export async function createMentions(params: CreateMentionsParams): Promise<string[]> {
   const {
     companyUuid,
     sourceType,
@@ -379,10 +372,11 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     projectUuid,
     entityTitle,
     excludeMentions = [],
+    reviewAnchor,
   } = params;
 
   const mentions = parseMentions(content);
-  if (mentions.length === 0) return;
+  if (mentions.length === 0) return [];
 
   // Filter out self-mentions
   const excludedKeys = new Set(excludeMentions.map((mention) => `${mention.type}:${mention.uuid}`));
@@ -390,7 +384,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     (mention) => !(mention.type === actorType && mention.uuid === actorUuid)
       && !excludedKeys.has(`${mention.type}:${mention.uuid}`)
   );
-  if (filteredMentions.length === 0) return;
+  if (filteredMentions.length === 0) return [];
 
   // Validate that mentioned targets exist in this company
   const existingMentions: MentionRef[] = [];
@@ -402,7 +396,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     }
   }
 
-  if (existingMentions.length === 0) return;
+  if (existingMentions.length === 0) return [];
 
   // Private-project isolation: drop targets without viewer access to the
   // entity's project (users must be members; agents need a member owner). Like
@@ -414,7 +408,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     projectUuid,
     existingMentions,
   );
-  if (validMentions.length === 0) return;
+  if (validMentions.length === 0) return [];
 
   // Batch create Mention records
   await prisma.mention.createMany({
@@ -459,8 +453,6 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     }
   }
 
-  const sessionAnchorHint = sourceType === "comment"
-    ? reviewSessionAnchorHint(content, notifEntityType, notifEntityUuid) : undefined;
 
   // Create notifications for each mentioned user/agent (respecting preferences)
   const notifications: notificationService.NotificationCreateParams[] = [];
@@ -472,7 +464,10 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
       mention.type,
       mention.uuid
     );
-    if (!prefs.mentioned) continue;
+    // An explicit structured review dispatch is delivered to its named reviewer even
+    // when casual @mention notifications are muted; ordinary mentions respect prefs.
+    const isNamedReviewer = mention.type === "agent" && reviewAnchor?.agentUuid === mention.uuid;
+    if (!prefs.mentioned && !isNamedReviewer) continue;
 
     const message = `${actorName} mentioned you: "${snippet}"`;
     const hasExplicitPin =
@@ -526,7 +521,8 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
       // pinned (parseMentions attaches pinnedHost/pinnedCwd only for a pinned ref); an
       // un-pinned mention omits them → online-first selection, exactly as before. The
       // pin is transport-only here — it is NOT persisted on the Notification row.
-      ...(mention.type === "agent" && sessionAnchorHint ? { sessionAnchorHint } : {}),
+      ...(mention.type === "agent" && reviewAnchor && mention.uuid === reviewAnchor.agentUuid
+        ? { sessionAnchorHint: reviewAnchor.sessionAnchorHint } : {}),
       pinnedHost: mention.pinnedHost,
       pinnedCwd: mention.pinnedCwd,
       ...(resolvedTarget?.source === "project_fixed"
@@ -545,9 +541,9 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     });
   }
 
-  if (notifications.length > 0) {
-    await notificationService.createBatch(notifications);
-  }
+  if (notifications.length === 0) return [];
+  const created = await notificationService.createBatch(notifications);
+  return (created ?? []).map((notification) => notification.recipientUuid);
 }
 
 const DEFAULT_EMPTY_QUERY_LIMIT = 5;

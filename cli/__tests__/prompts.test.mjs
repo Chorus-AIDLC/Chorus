@@ -61,9 +61,9 @@ describe("direct Team reviewer wake protocol", () => {
     ]);
     expect(prompt).toContain(TEAM_REVIEW_MENTION_GUIDANCE);
     expect(prompt).toContain("Team review request — <kind>, round N");
-    expect(prompt).toContain("target UUID and matching reviewer protocol location");
-    expect(prompt).toContain("expected PASS/FAIL recipient names and UUIDs without extra @mentions");
-    expect(prompt).toContain("never start a request/forwarding line with VERDICT:");
+    expect(prompt).toContain("Send a remote request with chorus_request_review");
+    expect(prompt).toContain("a hand-written comment never opens a review session");
+    expect(prompt).toContain("Never start a forwarding line with VERDICT:");
   });
 
   it("does not turn non-review work into a reviewer request", () => {

@@ -35,7 +35,7 @@ const rules = [
   "may share the working directory",
   "Before editing when siblings share the cwd, work in your own git worktree",
   "the daemon does not create one for you",
-  "a Team review request uses `review:<type>:<uuid>`",
+  "a Team review request sent with `chorus_request_review` uses `review:<type>:<uuid>`",
   "type is `proposal`, `task`, or `idea` (a code review targets the Idea)",
   "read-only review-scoped session with no development-session memory",
   "Fetch the target and current reviewer protocol/context before reviewing",
