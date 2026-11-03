@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Prisma is mocked via vi.hoisted(); createBatch is captured so we can assert
 // the exact pin payload that flows toward the wake-turn chokepoint.
 
-const { mockPrisma, mockGetActorName, mockGetPreferences, mockCreateBatch, mockResolveCwd } =
+const { mockPrisma, mockGetActorName, mockGetPreferences, mockCreateBatch, mockCreateBatchWithTurns, mockResolveCwd } =
   vi.hoisted(() => ({
     mockPrisma: {
       mention: { createMany: vi.fn() },
@@ -31,6 +31,7 @@ const { mockPrisma, mockGetActorName, mockGetPreferences, mockCreateBatch, mockR
     mockGetActorName: vi.fn().mockResolvedValue("Test Actor"),
     mockGetPreferences: vi.fn().mockResolvedValue({ mentioned: true }),
     mockCreateBatch: vi.fn().mockResolvedValue([]),
+    mockCreateBatchWithTurns: vi.fn().mockResolvedValue([]),
     mockResolveCwd: vi.fn(),
   }));
 
@@ -50,6 +51,7 @@ vi.mock("@/lib/uuid-resolver", () => ({ getActorName: mockGetActorName }));
 vi.mock("@/services/notification.service", () => ({
   getPreferences: (...args: unknown[]) => mockGetPreferences(...args),
   createBatch: (...args: unknown[]) => mockCreateBatch(...args),
+  createBatchWithTurns: (...args: unknown[]) => mockCreateBatchWithTurns(...args),
 }));
 vi.mock("@/services/lineage.service", () => ({
   resolveRootIdea: vi.fn().mockResolvedValue({
@@ -352,7 +354,8 @@ it("applies a structured review anchor only to the named reviewer", async () => 
     content: `Team review request — task, round 1\nReviewer: ${buildMentionMarker("DevBot", "agent", AGENT_UUID)}\ncc ${buildMentionMarker("Other", "agent", OTHER_AGENT_UUID)}`,
     reviewAnchor: { agentUuid: AGENT_UUID, sessionAnchorHint: `review:task:${SOURCE_UUID}` },
   });
-  const batch = mockCreateBatch.mock.calls[0][0] as Record<string, unknown>[];
+  expect(mockCreateBatch).not.toHaveBeenCalled();
+  const batch = mockCreateBatchWithTurns.mock.calls[0][0] as Record<string, unknown>[];
   expect(batch.find((p) => p.recipientUuid === AGENT_UUID)!.sessionAnchorHint).toBe(`review:task:${SOURCE_UUID}`);
   expect(batch.find((p) => p.recipientUuid === OTHER_AGENT_UUID)).not.toHaveProperty("sessionAnchorHint");
   expect(mockPrisma.mention.createMany.mock.calls[0][0].data[0]).not.toHaveProperty("sessionAnchorHint");
@@ -361,12 +364,16 @@ it("applies a structured review anchor only to the named reviewer", async () => 
 it("delivers a structured review to its reviewer even with casual mentions muted, and reports who was notified", async () => {
   mockPrisma.comment.findUnique.mockResolvedValue({ targetType: "task", targetUuid: SOURCE_UUID });
   mockGetPreferences.mockResolvedValue({ mentioned: false });
-  mockCreateBatch.mockImplementation(async (rows: Record<string, unknown>[]) => rows.map((row) => ({ recipientUuid: row.recipientUuid })));
+  mockCreateBatchWithTurns.mockImplementation(async (rows: Record<string, unknown>[]) => rows.map((row) => ({
+    notification: { recipientUuid: row.recipientUuid },
+    turnUuid: row.sessionAnchorHint ? "turn-r" : null,
+    sessionId: (row.sessionAnchorHint as string | undefined) ?? null,
+  })));
   const notified = await createMentions({ companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, sourceType: "comment", sourceUuid: SOURCE_UUID,
     actorType: "agent", actorUuid: ACTOR_UUID, entityTitle: "Review target",
     content: `Reviewer: ${buildMentionMarker("DevBot", "agent", AGENT_UUID)} cc ${buildMentionMarker("Other", "agent", OTHER_AGENT_UUID)}`,
     reviewAnchor: { agentUuid: AGENT_UUID, sessionAnchorHint: `review:task:${SOURCE_UUID}` },
   });
-  expect(notified).toEqual([AGENT_UUID]);
-  mockCreateBatch.mockResolvedValue([]);
+  expect(notified).toEqual([{ recipientUuid: AGENT_UUID, turnUuid: "turn-r", sessionId: `review:task:${SOURCE_UUID}` }]);
+  mockCreateBatchWithTurns.mockResolvedValue([]);
 });

@@ -852,9 +852,9 @@ Recipients come from the current assignments:
 - **FAIL on a proposal:** goes to the current product delegate, or the orchestrator if there is none.
 - **Missing assignee:** if a required assignee is missing, the request is rejected; no recipient is invented.
 
-The named reviewer is notified even if they have muted casual @mention notifications. If that notification can't be created anyway, the call returns an error and never reports success.
+The named reviewer is notified even if they have muted casual @mention notifications. Success means a pending wake turn has been queued on the reviewer's `review:<type>:<uuid>` session, and the result includes its `turnUuid`. If the notification can't be created, or no review turn is queued, the call returns an error and never reports success. A review turn can fail to be queued because the reviewer is offline or notify-only, or because creating the wake failed. Retry when the reviewer is online.
 
-**Output**: `{ commentUuid, targetType, targetUuid, reviewerUuid, round, sessionId }`. An invalid request returns an `isError` result, and no comment is posted.
+**Output**: `{ commentUuid, targetType, targetUuid, reviewerUuid, round, sessionId, turnUuid }`. An invalid request returns an `isError` result, and no comment is posted.
 
 ### chorus_get_comments
 

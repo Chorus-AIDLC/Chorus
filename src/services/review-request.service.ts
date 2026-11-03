@@ -95,13 +95,17 @@ export async function requestReview(params: RequestReviewParams) {
     companyUuid, targetType, targetUuid, content, authorType: "agent", authorUuid: actorUuid,
     reviewAnchor: { agentUuid: reviewer.uuid, sessionAnchorHint },
   });
-  if (!comment.reviewDelivered) {
+  const dispatch = comment.reviewDispatch;
+  if (!dispatch) {
     throw new ReviewRequestError(`request comment ${comment.uuid} was posted but reviewer ${reviewer.name} could not be notified; no review was dispatched`);
+  }
+  if (!dispatch.turnUuid || dispatch.sessionId !== sessionAnchorHint) {
+    throw new ReviewRequestError(`request comment ${comment.uuid} was posted but no review wake was queued for ${reviewer.name} (reviewer offline, notify-only, or wake creation failed); no review was dispatched — retry when the reviewer is online`);
   }
   await activityService.createActivity({
     companyUuid, projectUuid: target.projectUuid, targetType, targetUuid,
     actorType: "agent", actorUuid, action: "review_requested",
-    value: { kind, round, reviewerUuid: reviewer.uuid, commentUuid: comment.uuid, sessionId: sessionAnchorHint },
+    value: { kind, round, reviewerUuid: reviewer.uuid, commentUuid: comment.uuid, sessionId: sessionAnchorHint, turnUuid: dispatch.turnUuid },
   });
-  return { commentUuid: comment.uuid, targetType, targetUuid, reviewerUuid: reviewer.uuid, round, sessionId: sessionAnchorHint };
+  return { commentUuid: comment.uuid, targetType, targetUuid, reviewerUuid: reviewer.uuid, round, sessionId: sessionAnchorHint, turnUuid: dispatch.turnUuid };
 }

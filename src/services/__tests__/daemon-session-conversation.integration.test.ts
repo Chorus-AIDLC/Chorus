@@ -1074,6 +1074,24 @@ describe("purpose-scoped session integration", () => {
     } finally { eventBus.off(channel, capture); }
   });
 
+  it("reports the queued scoped turn per recipient, and none when the wake bridge fails", async () => {
+    Object.assign(store.data.task[0], { assigneeType: "agent", assigneeUuid: AGENT, title: "Build feature" });
+    const hint = `review:task:${TASK}`;
+    const [ok] = await notificationService.createBatchWithTurns([{ ...baseNotif, action: "mentioned", message: "Review request", sessionAnchorHint: hint }]);
+    expect(ok.turnUuid).toEqual(expect.any(String));
+    expect(ok.sessionId).toBe(hint);
+    mockListConnectionsForAgent.mockRejectedValueOnce(new Error("injected connection lookup failure"));
+    const [failed] = await notificationService.createBatchWithTurns([{ ...baseNotif, action: "mentioned", message: "Review request", sessionAnchorHint: hint }]);
+    expect(failed.notification.uuid).toEqual(expect.any(String));
+    expect(failed.turnUuid).toBeNull();
+    expect(failed.sessionId).toBeNull();
+    // Fully offline reviewer: the notification is created but no wake turn is queued.
+    mockListConnectionsForAgent.mockResolvedValueOnce([]);
+    const [offline] = await notificationService.createBatchWithTurns([{ ...baseNotif, action: "mentioned", message: "Review request", sessionAnchorHint: hint }]);
+    expect(offline.notification.uuid).toEqual(expect.any(String));
+    expect(offline.turnUuid).toBeNull();
+  });
+
   it("settles an anchored turn and accepts its transcript from an old daemon reporting the Idea key", async () => {
     Object.assign(store.data.task[0], { assigneeType: "agent", assigneeUuid: AGENT, title: "Build feature" });
     const { turn } = await notificationService.createReturningTurn({ ...baseNotif, action: "task_assigned", message: "Task assigned" });

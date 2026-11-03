@@ -118,8 +118,11 @@ export interface CommentResponse {
   };
   createdAt: string;
   updatedAt: string;
-  /** Present only for structured review requests: whether the named reviewer was notified. */
-  reviewDelivered?: boolean;
+  /**
+   * Present only for structured review requests: the named reviewer's notification
+   * and queued wake turn, or null when the reviewer was not notified.
+   */
+  reviewDispatch?: { turnUuid: string | null; sessionId: string | null } | null;
 }
 
 // List comments.
@@ -264,7 +267,7 @@ export async function createComment({
 
   // Process @mentions in comment content. Fire-and-forget for ordinary comments;
   // a structured review request awaits so a failed reviewer wake is not silent.
-  const mentionWork: Promise<string[]> = processCommentMentions(
+  const mentionWork: Promise<mentionService.MentionDelivery[]> = processCommentMentions(
     companyUuid,
     targetType,
     targetUuid,
@@ -275,8 +278,8 @@ export async function createComment({
     reviewAnchor,
   );
   if (reviewAnchor) {
-    const notified = await mentionWork;
-    return { ...response, reviewDelivered: notified.includes(reviewAnchor.agentUuid) };
+    const delivery = (await mentionWork).find((entry) => entry.recipientUuid === reviewAnchor.agentUuid);
+    return { ...response, reviewDispatch: delivery ? { turnUuid: delivery.turnUuid, sessionId: delivery.sessionId } : null };
   }
   mentionWork.catch((err) => logger.error({ err }, "Failed to process comment mentions"));
 
@@ -487,7 +490,7 @@ async function processCommentMentions(
   authorType: string,
   authorUuid: string,
   reviewAnchor?: { agentUuid: string; sessionAnchorHint: string },
-): Promise<string[]> {
+): Promise<mentionService.MentionDelivery[]> {
   const mentions = mentionService.parseMentions(content);
   if (mentions.length === 0) return [];
 
