@@ -1842,6 +1842,90 @@ function filterPersistableMessages(
   );
 }
 
+// Bare-Idea reports from pre-recovery clients lack a purpose/turn identifier. Once
+// scoped sessions exist, resolve across the owned Idea family rather than silently
+// writing/advancing the Idea FIFO. Multiple matching purposes fail closed: entity T
+// cannot distinguish task:T from review:task:T. Within one purpose FIFO is retained;
+// attributable Idea reports without a scoped match keep the original mode/origin FIFO.
+// Transcripts have no entity at all: only a unique running conversation (or a unique
+// settled conversation for a late flush) is safe. Exact IDs bypass this compatibility
+// resolver, and families without scoped sessions retain their original paths.
+async function resolveLegacyIdeaTurn(params: {
+  companyUuid: string;
+  agentUuid: string;
+  sessionId: string;
+  connectionUuid?: string;
+  status?: TurnStatus;
+  entityType?: string | null;
+  entityUuid?: string | null;
+}): Promise<{ handled: false } | { handled: true; turnUuid: string | null }> {
+  const sessions = await prisma.daemonSession.findMany({
+    where: {
+      companyUuid: params.companyUuid, agentUuid: params.agentUuid,
+      directIdeaUuid: params.sessionId,
+    },
+    select: { uuid: true, sessionId: true },
+  });
+  const scoped = sessions.filter((session) => {
+    const anchor = parseSessionAnchor(session.sessionId ?? "");
+    return anchor.kind === "task" || anchor.kind === "review";
+  });
+  if (scoped.length === 0) return { handled: false };
+
+  const candidates = sessions.filter((session) => {
+    if (session.sessionId === params.sessionId) return true;
+    return scoped.some((candidate) => candidate.uuid === session.uuid);
+  });
+  const turns = await prisma.daemonSessionTurn.findMany({
+    where: {
+      sessionUuid: { in: candidates.map((session) => session.uuid) },
+      ...(params.status ? {
+        // Dedicated operations must never be admitted through legacy purpose inference.
+        AND: [NON_OPERATION_TURN],
+        status: params.status === "running" ? "pending" : "running",
+        OR: [{ wakeTargetConnectionUuid: null }, { wakeTargetConnectionUuid: params.connectionUuid }],
+      } : { status: { in: ["running", "ended", "interrupted"] } }),
+    },
+    orderBy: { seq: "asc" },
+    select: { uuid: true, sessionUuid: true, status: true, wakeContext: true },
+  });
+  let matching = turns;
+  if (params.status) {
+    if (!params.entityType || !params.entityUuid) return { handled: true, turnUuid: null };
+    matching = turns.filter((turn) => {
+      const session = candidates.find((candidate) => candidate.uuid === turn.sessionUuid)!;
+      const anchor = parseSessionAnchor(session.sessionId ?? "", params.sessionId);
+      const notification = parseWakeContext(turn.wakeContext)?.notification;
+      const entityMatches = notification?.entityType === params.entityType && notification?.entityUuid === params.entityUuid;
+      if (anchor.kind === "task" || anchor.kind === "review") {
+        return anchor.entityType === params.entityType && anchor.entityUuid === params.entityUuid &&
+          (!notification || entityMatches);
+      }
+      return entityMatches || (!notification && params.entityType === "idea" && params.entityUuid === params.sessionId);
+    });
+    const scopedMatches = matching.filter((turn) => scoped.some((session) => session.uuid === turn.sessionUuid));
+    if (scopedMatches.length === 0) {
+      // Do not select an Idea turn using the scoped-purpose filter above: legacy
+      // Idea FIFO may include research and operations according to client mode and
+      // origin. Defer attributable Idea reports to that unchanged path, even when
+      // no ordinary Idea turn is available (e.g. the research turn alone is running).
+      if (matching.length > 0 || (params.entityType === "idea" && params.entityUuid === params.sessionId)) {
+        return { handled: false };
+      }
+      return { handled: true, turnUuid: null };
+    }
+    matching = scopedMatches;
+  } else {
+    const running = turns.filter((turn) => turn.status === "running");
+    // Pending siblings do not steal output from the conversation producing it.
+    matching = running.length > 0 ? running : turns;
+  }
+  const sessionUuids = new Set(matching.map((turn) => turn.sessionUuid));
+  if (sessionUuids.size !== 1) return { handled: true, turnUuid: null };
+  return { handled: true, turnUuid: params.status || matching[0].status === "running"
+    ? matching[0].uuid : matching[matching.length - 1].uuid };
+}
+
 /**
  * Append transcript messages to one turn of a session the authenticated agent owns.
  *
@@ -1851,7 +1935,8 @@ function filterPersistableMessages(
  *    within its company; or
  *  - `sessionId` (the conversation business key — `directIdeaUuid` or the ad-hoc uuid,
  *    NOT the session's `uuid`) resolves the agent's `(agentUuid, sessionId)` session
- *    and appends to its most-recent turn (highest `seq`).
+ *    and appends to its running turn, falling back to its most-recent turn.
+ *    Bare Idea keys with scoped conversations use resolveLegacyIdeaTurn instead.
  * Every negative case (unknown turn/session, foreign agent, cross-company, or a session
  * with no turn yet) yields the SAME `not_found` so the route is non-disclosing.
  *
@@ -1877,6 +1962,13 @@ export async function appendTranscriptMessages(params: {
   sessionId?: string | null;
   messages: InboundTranscriptMessage[];
 }): Promise<AppendTranscriptResult> {
+  if (!params.turnUuid && params.sessionId) {
+    const resolved = await resolveLegacyIdeaTurn({ ...params, sessionId: params.sessionId });
+    if (resolved.handled) {
+      if (!resolved.turnUuid) return { ok: false, reason: "not_found" };
+      return appendTranscriptMessages({ ...params, turnUuid: resolved.turnUuid });
+    }
+  }
   // Resolve the target turn under the caller's ownership scope. Both paths fence on
   // the authenticated company + agent so a turn/session of another agent (or another
   // company) is indistinguishable from a non-existent one.
@@ -2179,6 +2271,13 @@ export async function advanceTurnForWake(params: {
   coalescedCount?: number;
 }): Promise<AdvanceTurnForWakeResult> {
   if (params.wakeRecoveryProtocol === 1) return advanceExactWake(params);
+  if (!params.turnUuid) {
+    const resolved = await resolveLegacyIdeaTurn(params);
+    if (resolved.handled) {
+      if (!resolved.turnUuid) return { ok: false, reason: "not_found" };
+      return advanceTurnForWake({ ...params, turnUuid: resolved.turnUuid });
+    }
+  }
   // Resolve the agent's OWN session by its business key (company + agent fenced).
   const session = await prisma.daemonSession.findFirst({
     where: {

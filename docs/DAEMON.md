@@ -445,6 +445,33 @@ dsh integrations) are not upgraded by this change and may retain their previous
 session behavior. This documents CLI-host routing, not new non-CLI support or a
 reactivation of the de-listed dsh daemon backend.
 
+**Legacy report settlement.** A client without `turnUuid` may still report a bare
+Idea `sessionId` after the server creates a task/review turn. The server searches
+only that agent's, company-scoped direct-Idea family. Turn reports match the wake
+entity and lifecycle edge (pending for running; running for ended/interrupted),
+prefer a matching scoped anchor, and fall back to the original Idea-session FIFO
+only when no scoped turn matches and the report is attributable to the Idea (the
+Idea entity itself or an entity-matching Idea wake). That fallback retains the
+existing research/operation protocol and origin filters: an unrelated scoped
+sibling must not skip a legacy research/operation turn or admit an isolated one.
+FIFO applies within a single matching conversation, not across purposes. When an
+Idea wake and `review:idea:I` both match entity idea/I, the scoped review wins;
+legacy reports cannot distinguish those two purposes, so an Idea mention can be
+attributed to review. Use exact-turn reporting to disambiguate. If both `task:T` and `review:task:T` match, the server returns the usual
+non-disclosing 404 and changes neither: entity T alone cannot identify the purpose.
+Reports missing the entity also fail closed when scoped conversations exist.
+
+Legacy transcript bodies have neither entity nor purpose. A bare-Idea upload goes
+to the **sole running conversation** in the same owned family; newer pending turns
+do not steal its output. A late flush with no running turn is accepted only if
+settled turns belong to one conversation, targeting its latest settled turn.
+Multiple running/settled conversations are ambiguous and return 404 without
+writing into the Idea conversation. Clients should use the `turnUuid` returned by
+the running report (or upgrade to exact-turn reporting) for ambiguous uploads and
+reports. Exact-turn reports, explicit scoped keys, and families with no scoped
+sessions retain their existing behavior. Successfully settled scoped turns are no
+longer pending and therefore are not replayed by reconnect backfill.
+
 For daemon agents with a resolved `agentUuid`, `cli/backend-session-identity.mjs`
 derives a stable UUIDv5 from the logical agent UUID and the business anchor.
 Different agents sharing one cwd/config therefore do not share a conversation.

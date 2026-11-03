@@ -110,6 +110,132 @@ describe("durable wake recovery against isolated in-memory PostgreSQL", () => {
     expect(await db.daemonSessionTurn.findUnique({ where: { uuid: params.turnUuid } })).toMatchObject({ status: "ended" });
   });
 
+  const legacyAnchor = async (anchor: string, entityType: string, entityUuid: string, owner = { companyUuid, agentUuid }) => {
+    const session = await service.resolveOrCreateSession({ ...owner, sessionId: anchor, directIdeaUuid: ideaUuid, originConnectionUuid: connectionUuid });
+    const notificationUuid = randomUUID();
+    const turn = await service.createPendingTurn({ sessionUuid: session.uuid, trigger: "mentioned", wakeContext: {
+      version: 1, notificationUuid, notification: {
+        uuid: notificationUuid, action: "mentioned", entityType, entityUuid,
+        recipientType: "agent", recipientUuid: owner.agentUuid, projectUuid, projectName: "fixture", entityTitle: "fixture",
+        actorType: "user", actorUuid: "fixture-user", actorName: "Fixture", message: "legacy wake",
+      },
+    } });
+    return turn.uuid;
+  };
+  const legacyRequest = (entityType: string, entityUuid: string) => ({
+    companyUuid, agentUuid, connectionUuid, sessionId: ideaUuid, entityType, entityUuid, status: "running" as const,
+  });
+
+  it.each(["task", "review:task", "review:proposal", "review:idea"])("settles legacy %s reports and routes bare-Idea transcripts without touching Idea FIFO", async (purpose) => {
+    const entityType = purpose.split(":").at(-1)!;
+    const entityUuid = entityType === "idea" ? ideaUuid : randomUUID();
+    if (entityType === "task") await db.task.create({ data: { uuid: entityUuid, companyUuid, projectUuid, title: "legacy task", createdByUuid: agentUuid } });
+    if (entityType === "proposal") await db.proposal.create({ data: { uuid: entityUuid, companyUuid, projectUuid, title: "legacy proposal", createdByUuid: agentUuid, inputType: "idea", inputUuids: [ideaUuid] } });
+    const turnUuid = await legacyAnchor(`${purpose}:${entityUuid}`, entityType, entityUuid);
+    const before = await rows();
+    expect((await service.getPendingTurnsForConnection({ companyUuid, agentUuid, connectionUuid, wakeRecoveryProtocol: 1 })).some((turn) => turn.turnUuid === turnUuid)).toBe(true);
+    const params = legacyRequest(entityType, entityUuid);
+    expect(await service.advanceTurnForWake(params)).toMatchObject({ ok: true, turn: { uuid: turnUuid, status: "running" } });
+    // A newer pending sibling must not receive the active turn's output.
+    await legacyAnchor(`${purpose}:${entityUuid}`, entityType, entityUuid);
+    expect(await service.appendTranscriptMessages({ companyUuid, agentUuid, sessionId: ideaUuid, messages: [{ role: "assistant", text: "scoped legacy output" }] }))
+      .toMatchObject({ ok: true, messages: [{ turnUuid, text: "scoped legacy output" }] });
+    expect(await service.advanceTurnForWake({ ...params, status: "ended" })).toMatchObject({ ok: true, turn: { uuid: turnUuid, status: "ended" } });
+    expect(await service.appendTranscriptMessages({ companyUuid, agentUuid, sessionId: ideaUuid, messages: [{ role: "assistant", text: "late flush" }] }))
+      .toMatchObject({ ok: true, messages: [{ turnUuid, text: "late flush" }] });
+    expect(await rows()).toEqual(before);
+    const pending = await service.getPendingTurnsForConnection({ companyUuid, agentUuid, connectionUuid, wakeRecoveryProtocol: 1 });
+    expect(pending.some((turn) => turn.turnUuid === turnUuid)).toBe(false);
+    // An uncorrelated terminal retry must not consume the next pending sibling.
+    expect(await service.advanceTurnForWake({ ...params, status: "ended" })).toEqual({ ok: false, reason: "not_found" });
+  });
+
+  it("fails closed when task and review purposes match the same legacy entity", async () => {
+    const taskUuid = randomUUID();
+    const development = await legacyAnchor(`task:${taskUuid}`, "task", taskUuid);
+    const review = await legacyAnchor(`review:task:${taskUuid}`, "task", taskUuid);
+    const params = legacyRequest("task", taskUuid);
+    const before = await db.daemonSessionTurn.findMany();
+    const emitted = state.emit.mock.calls.length;
+    expect(await service.advanceTurnForWake(params)).toEqual({ ok: false, reason: "not_found" });
+    expect(await db.daemonSessionTurn.findMany()).toEqual(before);
+    expect(state.emit.mock.calls.length).toBe(emitted);
+    await service.advanceTurnForWake({ ...params, turnUuid: development });
+    await service.advanceTurnForWake({ ...params, turnUuid: review });
+    expect(await service.advanceTurnForWake({ ...params, status: "ended" })).toEqual({ ok: false, reason: "not_found" });
+    expect(await service.appendTranscriptMessages({ companyUuid, agentUuid, sessionId: ideaUuid, messages: [{ role: "assistant", text: "ambiguous" }] }))
+      .toEqual({ ok: false, reason: "not_found" });
+    expect(await db.daemonTranscriptMessage.count({ where: { turnUuid: { in: [development, review] } } })).toBe(0);
+  });
+
+  it("fences legacy resolution by company, agent, delivery and reported entity", async () => {
+    const taskUuid = randomUUID();
+    const turnUuid = await legacyAnchor(`task:${taskUuid}`, "task", taskUuid);
+    const otherAgent = await db.agent.create({ data: { companyUuid, name: "other legacy owner" } });
+    await legacyAnchor(`task:${taskUuid}`, "task", taskUuid, { companyUuid, agentUuid: otherAgent.uuid });
+    const params = legacyRequest("task", taskUuid);
+    expect(await service.advanceTurnForWake({ ...params, entityUuid: randomUUID() })).toEqual({ ok: false, reason: "not_found" });
+    expect(await service.advanceTurnForWake({ ...params, entityType: undefined, entityUuid: undefined })).toEqual({ ok: false, reason: "not_found" });
+    await db.daemonSessionTurn.update({ where: { uuid: turnUuid }, data: { wakeTargetConnectionUuid: randomUUID() } });
+    expect(await service.advanceTurnForWake(params)).toEqual({ ok: false, reason: "not_found" });
+    await db.daemonSessionTurn.update({ where: { uuid: turnUuid }, data: { wakeTargetConnectionUuid: connectionUuid } });
+    expect(await service.advanceTurnForWake(params)).toMatchObject({ ok: true, turn: { uuid: turnUuid } });
+    expect(await service.appendTranscriptMessages({ companyUuid: randomUUID(), agentUuid, sessionId: ideaUuid, messages: [{ role: "assistant", text: "foreign" }] }))
+      .toEqual({ ok: false, reason: "not_found" });
+  });
+
+  it("falls back only to an entity-matching Idea turn when no scoped turn matches", async () => {
+    await legacyAnchor(`task:${randomUUID()}`, "task", randomUUID());
+    const params = legacyRequest("idea", ideaUuid);
+    expect(await service.advanceTurnForWake(params)).toMatchObject({ ok: true, turn: { uuid: turnUuids[0] } });
+    expect(await service.appendTranscriptMessages({ companyUuid, agentUuid, sessionId: ideaUuid, messages: [{ role: "assistant", text: "Idea output" }] }))
+      .toMatchObject({ ok: true, messages: [{ turnUuid: turnUuids[0] }] });
+    expect(await service.advanceTurnForWake({ ...params, status: "ended" })).toMatchObject({ ok: true, turn: { uuid: turnUuids[0] } });
+  });
+
+  it.each((["research_requested", "legacy_research", "idea_creation_requested"] as const).flatMap((format) =>
+    ["legacy", "isolated_research", "isolated_operations", "foreign_origin"].flatMap((mode) =>
+      [false, true].map((sibling) => ({ format, mode, sibling }))),
+  ))("retains Idea FIFO for $format ($mode, scoped sibling=$sibling)", async ({ format, mode, sibling }) => {
+    await db.daemonSessionTurn.deleteMany({ where: { sessionUuid } });
+    const operation = await service.createPendingTurn({
+      sessionUuid,
+      trigger: format === "legacy_research" ? "human_instruction" : format,
+      promptText: format === "legacy_research" ? "[Chorus Tracker Research] Research only" : null,
+      ...(format === "legacy_research" ? {} : { operationPayload: format === "research_requested"
+        ? { version: 1, kind: "research", ideaUuid }
+        : { version: 1, kind: "idea_creation", ideaUuid, projectUuid, mode: "elaborate", researchFirst: false, descriptionText: "fixture operation" } }),
+    });
+    const laterUuid = await legacyAnchor(ideaUuid, "idea", ideaUuid);
+    if (sibling) await legacyAnchor(`review:proposal:${randomUUID()}`, "proposal", randomUUID());
+    if (mode === "foreign_origin") await repointOrigin();
+    const params = {
+      ...legacyRequest("idea", ideaUuid),
+      researchMode: mode === "isolated_research" ? "isolated" as const : "legacy" as const,
+      operationProtocol: mode === "isolated_operations",
+    };
+    const admitOperation = mode === "legacy" || (mode === "isolated_research" && format === "idea_creation_requested");
+    const expectedUuid = admitOperation ? operation.uuid : laterUuid;
+    expect(await service.advanceTurnForWake(params)).toMatchObject({ ok: true, turn: { uuid: expectedUuid, status: "running" } });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: admitOperation ? laterUuid : operation.uuid } })).toMatchObject({ status: "pending" });
+    expect(await service.appendTranscriptMessages({ companyUuid, agentUuid, sessionId: ideaUuid, messages: [{ role: "assistant", text: "FIFO output" }] }))
+      .toMatchObject({ ok: true, messages: [{ turnUuid: expectedUuid, text: "FIFO output" }] });
+    expect(await service.advanceTurnForWake({ ...params, status: "ended" })).toMatchObject({ ok: true, turn: { uuid: expectedUuid, status: "ended" } });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: admitOperation ? laterUuid : operation.uuid } })).toMatchObject({ status: "pending" });
+  });
+
+  it.each(["research_requested", "human_instruction"] as const)("settles a lone legacy %s turn with an unrelated scoped sibling", async (trigger) => {
+    await db.daemonSessionTurn.deleteMany({ where: { sessionUuid } });
+    const research = await service.createPendingTurn({
+      sessionUuid, trigger, promptText: "[Chorus Tracker Research] Research only",
+      ...(trigger === "research_requested" ? { operationPayload: { version: 1, kind: "research", ideaUuid } } : {}),
+    });
+    await legacyAnchor(`task:${randomUUID()}`, "task", randomUUID());
+    const params = { ...legacyRequest("idea", ideaUuid), researchMode: "legacy" as const };
+    expect(await service.advanceTurnForWake(params)).toMatchObject({ ok: true, turn: { uuid: research.uuid, status: "running" } });
+    expect(await service.advanceTurnForWake({ ...params, status: "ended" })).toMatchObject({ ok: true, turn: { uuid: research.uuid, status: "ended" } });
+  });
+
   it("migrates historical rows to null without guessing source or admission", async () => {
     expect(await db.daemonSessionTurn.findUnique({ where: { uuid: legacyUuid } })).toMatchObject({
       status: "pending", wakeContext: null, admissionUuid: null, admissionTurnUuids: null, admissionConnectionUuid: null,
