@@ -74,6 +74,7 @@ vi.mock("../turn-band", () => ({ TurnBand: () => <div data-testid="turn-band" />
 vi.mock("../token-usage-badge", () => ({ SessionUsageBadge: () => null }));
 
 import { TranscriptView } from "../transcript-view";
+import { sessionExecutionsForComposer } from "../session-execution";
 import type { ConnectionView, ExecutionView } from "../../types";
 import type {
   SessionView,
@@ -211,6 +212,23 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("a running turn always offers an interrupt control", () => {
+  it.each([
+    ["task:task-1", "running"], ["task:task-1", "interrupted"],
+    ["review:task:task-1", "running"], ["review:task:task-1", "interrupted"],
+  ])("idle %s does not expose controls for another agent's %s execution", (sessionId, status) => {
+    const viewed = session({ sessionId });
+    const foreign = {
+      ...runningExecution(), agentUuid: "other-agent", connectionUuid: "other-connection", sessionId, status,
+      interruptedReason: status === "interrupted" ? "user" : null,
+    };
+    renderView({
+      session: viewed, turns: [turn("ended")],
+      sessionExecutions: sessionExecutionsForComposer({ "other-connection": [foreign] }, viewed),
+    });
+    expect(screen.queryByRole("button", { name: /resume|interrupt|clear this stuck turn/i })).toBeNull();
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
   it.each([IDEA, "task:task-1", "review:task:task-1"])(
     "%s shows the same crash label and resume control in its footer",
     async (sessionId) => {
