@@ -105,17 +105,20 @@ export function executionsForSession(
 // this conversation's work). But when the origin slice has NO matching execution — the
 // idea's running turn lives on a DIFFERENT connection after a cwd switch (a re-pointed or
 // legacy-residual session) or an agent switch (another agent's `(agentUuid, idea)` row) —
-// we fall back to searching EVERY slice for this conversation's idea. Because the
+// legacy Idea/ad-hoc sessions search every slice; scoped sessions stay within their agent. Because the
 // InterruptButton targets each matched execution's own connectionUuid/entityType/entityUuid,
 // a cross-connection match still stops the correct subprocess.
 export function sessionExecutionsForComposer(
   executionsByConnection: Record<string, ExecutionView[]>,
-  session: { sessionId: string; directIdeaUuid: string | null; originConnectionUuid: string },
+  session: { sessionId: string; directIdeaUuid: string | null; originConnectionUuid: string; agentUuid: string },
 ): ExecutionView[] {
-  const ownSlice = executionsByConnection[session.originConnectionUuid] ?? [];
+  const anchor = parseSessionAnchor(session.sessionId, session.directIdeaUuid);
+  const scoped = anchor.kind === "task" || anchor.kind === "review";
+  const matchesAgent = (execution: ExecutionView) => !scoped || execution.agentUuid === session.agentUuid;
+  const ownSlice = (executionsByConnection[session.originConnectionUuid] ?? []).filter(matchesAgent);
   const matched = executionsForSession(ownSlice, session);
   if (matched.length > 0) return matched;
-  const allExecutions = Object.values(executionsByConnection).flat();
+  const allExecutions = Object.values(executionsByConnection).flat().filter(matchesAgent);
   return executionsForSession(allExecutions, session);
 }
 
@@ -150,7 +153,7 @@ export function sessionExecStatus(
 // executions to one status" — the match rule and the reduce rule each live in one place.
 export function sessionExecStatusForRow(
   executionsByConnection: Record<string, ExecutionView[]>,
-  session: { sessionId: string; directIdeaUuid: string | null; originConnectionUuid: string },
+  session: { sessionId: string; directIdeaUuid: string | null; originConnectionUuid: string; agentUuid: string },
 ): SessionExecStatus {
   const execs = sessionExecutionsForComposer(executionsByConnection, session);
   return sessionExecStatus(execs, session);

@@ -66,7 +66,7 @@ function SessionStatusIndicator({ status }: { status: SessionExecStatus }) {
     );
   }
   if (status === "interrupted") {
-    return <PauseCircle aria-hidden className="h-3.5 w-3.5 text-muted-foreground" />;
+    return <PauseCircle aria-hidden className="h-3.5 w-3.5 text-[#B45309] dark:text-[#E0A34E]" />;
   }
   if (status === "error") {
     return <TriangleAlert aria-hidden className="h-3.5 w-3.5 text-destructive" />;
@@ -128,7 +128,7 @@ function Row({
             {row.ideaAnchored && (
               <Badge
                 variant="secondary"
-                className="shrink-0 gap-1 border-0 bg-secondary px-1.5 py-0 text-[10px] font-medium text-secondary-foreground"
+                className="shrink-0 gap-1 border-0 bg-[#F3ECFB] dark:bg-[#221a30] px-1.5 py-0 text-[10px] font-medium text-[#7C5BC0] dark:text-[#B79AF0]"
               >
                 <Sparkles className="h-2.5 w-2.5" aria-hidden />
                 {t("badgeIdea")}
@@ -146,7 +146,7 @@ function Row({
                     ? "text-primary"
                     : row.status === "error"
                       ? "text-destructive"
-                      : "text-muted-foreground"
+                      : "text-[#B45309] dark:text-[#E0A34E]"
                 }`}
               >
                 {statusLabel}

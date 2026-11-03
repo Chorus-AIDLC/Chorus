@@ -52,7 +52,7 @@ import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
 import { SessionUsageBadge } from "./token-usage-badge";
 import { IdentityBlock } from "../identity-block";
 import { ConversationReplyBox } from "../send-instruction-box";
-import { InterruptButton, ResumeButton } from "../execution-row";
+import { ConversationExecutionControl } from "../conversation-execution-control";
 import { parseSessionAnchor } from "@/lib/session-anchor";
 import {
   useElapsedMono,
@@ -640,13 +640,9 @@ export function TranscriptView({
           {scoped ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-[12px] text-muted-foreground">{t("childSession.instructionNote")}</p>
-              {stuckTurnTarget ? (
-                <InterruptButton target={stuckTurnTarget} variant="stuckTurn" />
-              ) : composerExecution?.status === "running" ? (
-                <InterruptButton target={composerExecution} />
-              ) : composerExecution?.status === "interrupted" ? (
-                <ResumeButton exec={composerExecution} />
-              ) : null}
+              <div className="flex shrink-0 items-center gap-2">
+                <ConversationExecutionControl execution={composerExecution} stuckTurnTarget={stuckTurnTarget} />
+              </div>
             </div>
           ) : (
             <ConversationReplyBox
