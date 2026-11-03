@@ -11,6 +11,13 @@ function row(sessionId: string, directIdeaUuid: string | null, ideaTitle: string
 }
 
 describe("conversation grouping", () => {
+  it.each(["adhoc", "task:T", "review:task:T"])("uses the business sessionId rather than the row UUID for orphan %s", (sessionId) => {
+    const conversation = row(sessionId, null);
+    conversation.session.uuid = "database-row-uuid";
+    expect(groupConversationRows([conversation])[0].key).toBe(conversationKey(conversation.session));
+    expect(groupConversationRows([conversation])[0].key).toBe(`daemon_session:${sessionId}`);
+  });
+
   it("uses scoped business keys and preserves Idea/ad-hoc keys", () => {
     expect(conversationKey(row("I", "I").session)).toBe("idea:I");
     expect(conversationKey(row("task:T", "I").session)).toBe("daemon_session:task:T");

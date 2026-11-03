@@ -211,6 +211,24 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("a running turn always offers an interrupt control", () => {
+  it.each([IDEA, "task:task-1", "review:task:task-1"])(
+    "%s shows the same crash label and resume control in its footer",
+    async (sessionId) => {
+      const execution = { ...staleInterruptedExecution("crash"), sessionId };
+      renderView({
+        session: session({ sessionId }),
+        turns: [turn("ended")],
+        sessionExecutions: [execution],
+      });
+      expect(screen.getByText(/exited with error/i)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /resume/i }));
+      await waitFor(() => expect(mockAuthFetch).toHaveBeenCalledWith(
+        "/api/daemon/resume",
+        expect.objectContaining({ body: expect.stringContaining(`"sessionId":"${sessionId}"`) }),
+      ));
+    },
+  );
+
   it("running turn with NO matching execution → control renders and targets the session's own key on its origin connection", async () => {
     renderView({ turns: [turn("running")] });
 

@@ -92,6 +92,24 @@ afterEach(() => cleanup());
 beforeEach(() => vi.clearAllMocks());
 
 describe("ConversationList body state", () => {
+  it("preserves interrupted amber and Idea purple colours with their dark variants", () => {
+    const row = makeRow("idea-1", "Warning conversation");
+    row.ideaAnchored = true;
+    row.status = "interrupted";
+    renderList({ loading: false, rows: [row] });
+    const button = screen.getByRole("button", { name: /Warning conversation/ });
+    const indicator = button.querySelector("svg");
+    expect(indicator?.classList.contains("text-[#B45309]")).toBe(true);
+    expect(indicator?.classList.contains("dark:text-[#E0A34E]")).toBe(true);
+    const badge = screen.getByText("Idea");
+    for (const className of ["bg-[#F3ECFB]", "dark:bg-[#221a30]", "text-[#7C5BC0]", "dark:text-[#B79AF0]"]) {
+      expect(badge.classList.contains(className)).toBe(true);
+    }
+    const status = screen.getByText("Interrupted");
+    expect(status.classList.contains("text-[#B45309]")).toBe(true);
+    expect(status.classList.contains("dark:text-[#E0A34E]")).toBe(true);
+  });
+
   it("loading=true → renders skeleton rows, NOT the empty state", () => {
     renderList({ loading: true, rows: [] });
     // Skeleton container present.

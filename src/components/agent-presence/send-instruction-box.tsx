@@ -45,7 +45,8 @@ import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
 import { isImeComposing } from "@/lib/ime";
 import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
-import { InterruptButton, ResumeButton, type InterruptTarget } from "./execution-row";
+import type { InterruptTarget } from "./execution-row";
+import { ConversationExecutionControl } from "./conversation-execution-control";
 import { InstancePicker, type InstanceCandidate } from "./instance-picker";
 import type { ConnectionView, ExecutionView } from "./types";
 import type { SessionView } from "@/services/daemon-session.service";
@@ -157,7 +158,6 @@ function ComposeField({
   // `controllableExecution` is absent — a real row always wins.
   stuckTurnTarget?: InterruptTarget | null;
 }) {
-  const tc = useTranslations("agentConnections");
   const empty = value.trim().length === 0;
   // The Send control is inert only when hard-disabled, mid-flight, or empty. There is
   // no client-side char cap UI — the server cap stays authoritative and a rejected
@@ -209,25 +209,9 @@ function ComposeField({
   // the turn permanently unclearable — the exact symptom this change exists to fix. Clearing
   // the turn is the honest primary action; once cleared, the turn is no longer `running`, the
   // target goes away, and the row's Resume comes back on the next render.
-  const exec = controllableExecution ?? null;
-  const execControl = stuckTurnTarget
-    ? <InterruptButton target={stuckTurnTarget} variant="stuckTurn" />
-    : exec
-      ? exec.status === "running"
-        ? <InterruptButton target={exec} />
-        : exec.status === "interrupted" && exec.interruptedReason === "user"
-          ? <ResumeButton exec={exec} />
-          : exec.status === "interrupted" && exec.interruptedReason === "crash"
-            ? (
-                <>
-                  <span className="text-[11px] font-medium text-[#B45309] dark:text-[#E0A34E]">
-                    {tc("execCrashExited")}
-                  </span>
-                  <ResumeButton exec={exec} />
-                </>
-              )
-            : null
-      : null;
+  const execControl = (
+    <ConversationExecutionControl execution={controllableExecution} stuckTurnTarget={stuckTurnTarget} />
+  );
 
   // Action group: the state-driven control (if any) beside the always-present
   // Send. OVERLAID in the input's bottom-right corner (see the return) — the same

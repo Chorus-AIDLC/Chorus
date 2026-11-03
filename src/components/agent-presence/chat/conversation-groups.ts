@@ -21,7 +21,7 @@ export function groupConversationRows(rows: ConversationRow[]): ConversationGrou
   const groups = new Map<string, ConversationGroup>();
   for (const row of rows) {
     const ideaUuid = row.session.directIdeaUuid;
-    const key = ideaUuid ? `idea:${ideaUuid}` : `daemon_session:${row.session.uuid}`;
+    const key = ideaUuid ? `idea:${ideaUuid}` : conversationKey(row.session);
     let group = groups.get(key);
     if (!group) {
       group = { key, ideaUuid, ideaTitle: null, parents: [], children: [] };
