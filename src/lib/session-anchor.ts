@@ -16,9 +16,9 @@ export function formatSessionAnchor(
 }
 
 export function parseSessionAnchor(sessionId: string, directIdeaUuid?: string | null): SessionAnchor {
-  const task = /^task:([^:]+)$/.exec(sessionId);
+  const task = /^task:([^:\s]+)$/.exec(sessionId);
   if (task) return { kind: "task", sessionId, entityType: "task", entityUuid: task[1] };
-  const review = /^review:(task|proposal|idea):([^:]+)$/.exec(sessionId);
+  const review = /^review:(task|proposal|idea):([^:\s]+)$/.exec(sessionId);
   if (review) return { kind: "review", sessionId, entityType: review[1] as SessionAnchorEntityType, entityUuid: review[2] };
   return { kind: sessionId === directIdeaUuid ? "idea" : "adhoc", sessionId };
 }

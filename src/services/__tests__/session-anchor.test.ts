@@ -33,7 +33,10 @@ describe("session anchor codec", () => {
     expect(formatSessionAnchor(kind, type, uuid)).toBe(expected);
     expect(parseSessionAnchor(expected, "I").kind).toBe(kind);
   });
-  it.each(["task:", "review:document:X", "review:task:", "review:task:T:extra", "adhoc"])("leaves malformed/non-anchor %s ad hoc", (id) => {
+  it.each([
+    "task:", "review:document:X", "review:task:", "review:task:T:extra", "adhoc",
+    "task: ", "task:T X", "task:T\tX", "review:task: ", "review:task:T X", "review:task:T\tX",
+  ])("leaves malformed/non-anchor %s ad hoc", (id) => {
     expect(parseSessionAnchor(id, "I").kind).toBe("adhoc");
   });
 });
