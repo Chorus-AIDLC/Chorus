@@ -40,6 +40,7 @@ import { createDeliveryRecovery } from "./delivery-recovery.mjs";
 import { EventRouter } from "./event-router.mjs";
 import { WakeQueue } from "./wake-queue.mjs";
 import { Waker } from "./waker.mjs";
+import { executionKey } from "./session-anchor.mjs";
 import { LineageResolver } from "./lineage.mjs";
 import { isNewSession } from "./claude-spawner.mjs";
 import { findAgentCli } from "./agent-cli-probe.mjs";
@@ -376,10 +377,10 @@ export function buildDaemon(creds, deps = {}) {
       // waker selected by the first item's runtimeCwd.
       wakeBatch: (notifications, key, attribution) =>
         selectWaker(notifications[0]).wakeBatch(notifications, key, attribution),
-      markInterrupting(entityType, entityUuid) {
+      markInterrupting(entityType, entityUuid, sessionId = "") {
         for (const candidate of runtimeWakers.values()) {
-          if (candidate.executions.has(`${entityType}:${entityUuid}`)) {
-            candidate.markInterrupting(entityType, entityUuid);
+          if (candidate.executions.has(executionKey(entityType, entityUuid, sessionId))) {
+            candidate.markInterrupting(entityType, entityUuid, sessionId);
           }
         }
       },
