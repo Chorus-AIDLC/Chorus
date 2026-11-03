@@ -194,7 +194,7 @@ describe("directIdeaUuid end-to-end wire contract (integration checkpoint)", () 
     expect(executionMatchesSession(view, { sessionId: parentIdea, directIdeaUuid: parentIdea })).toBe(false);
   });
 
-  it("cross-host parity: the CLI and OpenClaw snapshot emitters expose the SAME field set (incl. directIdeaUuid)", () => {
+  it("cross-host parity: legacy fields match while only CLI adds scoped sessionId", () => {
     // CLI keys: from the LIVE emitter (runtime truth).
     const cliKeys = Object.keys(cliEmittedChildIdeaEntry()).sort();
 
@@ -214,8 +214,8 @@ describe("directIdeaUuid end-to-end wire contract (integration checkpoint)", () 
     // Both hosts MUST include directIdeaUuid...
     expect(cliKeys).toContain("directIdeaUuid");
     expect(openclawKeys).toContain("directIdeaUuid");
-    // ...and expose the identical field set, so one host adding/renaming a field without the
-    // other fails this guard (the server zod is nullish-tolerant and would not catch it).
-    expect(openclawKeys).toEqual(cliKeys);
+    expect(cliEmittedChildIdeaEntry().sessionId).toBe("");
+    expect(openclawKeys).not.toContain("sessionId");
+    expect(openclawKeys).toEqual(cliKeys.filter((key) => key !== "sessionId"));
   });
 });

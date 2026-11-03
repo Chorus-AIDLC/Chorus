@@ -28,6 +28,22 @@ function makeReporter(overrides = {}) {
 }
 
 describe("createInterruptReporter", () => {
+  it.each(["task:task-9", "review:task:task-9"])("forwards scoped sessionId %s to the server", async (sessionId) => {
+    const fetchImpl = okFetch();
+    const report = makeReporter({ fetchImpl });
+
+    await report("task", "task-9", "user", sessionId);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      connectionUuid: "conn-1",
+      entityType: "task",
+      entityUuid: "task-9",
+      reason: "user",
+      sessionId,
+    });
+  });
+
   it("POSTs reason=user to /api/daemon/report-interrupt with connection + entity + Bearer key", async () => {
     const fetchImpl = okFetch();
     const report = makeReporter({ fetchImpl });

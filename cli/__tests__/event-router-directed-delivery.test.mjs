@@ -76,6 +76,55 @@ function wire(notifications, { getConnectionUuid = () => MY_CONN, seen = new Set
 
 const flush = () => new Promise((res) => setTimeout(res, 0));
 
+describe("event-router — scoped session forwarding", () => {
+  it.each(["task:task-A", "review:task:task-A", "review:proposal:proposal-A", "review:idea:idea-A"])(
+    "forwards live SSE anchor %s through legacy notification lookup", async (sessionId) => {
+      const { router, waker, enqueued } = wire([mentionNotif({ sessionId: DIRECT_IDEA })]);
+      expect(await router.dispatch({ type: "new_notification", notificationUuid: "ni-mention", sessionId }))
+        .toEqual({ status: "accepted" });
+      expect(waker.keyFor).toHaveBeenCalledWith(expect.objectContaining({ sessionId }));
+      expect(enqueued[0].task.notification.sessionId).toBe(sessionId);
+    },
+  );
+
+  it.each(["task:task-A", "review:task:task-A"])("forwards exact live wake-context anchor %s", async (sessionId) => {
+    const { router, waker, enqueued, mcpClient } = wire([]);
+    expect(await router.dispatch({
+      type: "new_notification", notificationUuid: "ni-mention", sessionId,
+      turnUuid: "turn-scoped", wakeRecoveryProtocol: 1,
+      wakeContext: { version: 1, notificationUuid: "ni-mention", notification: mentionNotif() },
+    })).toEqual({ status: "accepted" });
+    expect(mcpClient.callTool).not.toHaveBeenCalled();
+    expect(waker.keyFor).toHaveBeenCalledWith(expect.objectContaining({ sessionId, turnUuid: "turn-scoped" }));
+    expect(enqueued[0].task.notification.sessionId).toBe(sessionId);
+  });
+
+  it.each([undefined, "task:task-A", "review:task:task-A", "review:idea:idea-A"])(
+    "preserves resume attribution and optional sessionId %s", async (sessionId) => {
+      const { router, waker, enqueued } = wire([]);
+      const target = {
+        entityType: "task", entityUuid: "task-A", resumeReason: "user", runtimeCwd: "/worktree/task-A",
+        orchestrator: { type: "agent", uuid: "agent-1", name: "Lead" },
+        ...(sessionId === undefined ? {} : { sessionId }),
+      };
+      expect(await router.dispatchResume(target)).toEqual({ status: "accepted" });
+      const expected = {
+        action: "resource_resumed", entityType: target.entityType, entityUuid: target.entityUuid,
+        resumedFrom: "user", runtimeCwd: target.runtimeCwd, orchestrator: target.orchestrator,
+        ...(sessionId === undefined ? {} : { sessionId }),
+      };
+      expect(waker.keyFor).toHaveBeenCalledWith(expected);
+      expect(enqueued[0].task.notification).toEqual(expected);
+    },
+  );
+
+  it("does not add sessionId to legacy live notification delivery", async () => {
+    const { router, enqueued } = wire([mentionNotif()]);
+    await router.dispatch({ type: "new_notification", notificationUuid: "ni-mention" });
+    expect(enqueued[0].task.notification).toEqual(mentionNotif());
+  });
+});
+
 // ===== A. broadcast suppression =====
 describe("event-router — directed-wake broadcast suppression (#fetchAndRoute)", () => {
   it("AC-1a: a wake whose targetConnectionUuid != this daemon's uuid is SUPPRESSED (no wake)", async () => {

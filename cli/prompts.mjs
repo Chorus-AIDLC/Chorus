@@ -14,6 +14,7 @@
 // also names the CHORUS_DAEMON_HEADLESS=1 env signal the spawner sets.
 
 import { buildOperationPrompt } from "./operation.mjs";
+import { parseScopedAnchor } from "./session-anchor.mjs";
 
 /**
  * @typedef {Object} NotificationDetail
@@ -158,6 +159,19 @@ export const HEADLESS_PREAMBLE = [
   "elaboration answer wakes a fresh turn that continues the work.",
 ].join("\n");
 
+function scopeHeader(sessionId) {
+  const scope = parseScopedAnchor(sessionId);
+  if (!scope) return "";
+  if (scope.kind === "task") {
+    return `This wake runs in a task-scoped session for task ${scope.entityUuid}; ` +
+      "it has no memory of the Idea session — read the task, its proposal and the Idea first. " +
+      "Other tasks of the same Idea may run concurrently in this working directory: " +
+      "before editing files, work in your own git worktree (e.g. EnterWorktree / `git worktree add`).";
+  }
+  return `This is a review-scoped session for ${scope.entityType} ${scope.entityUuid}; ` +
+    "it never carries development memory. Stay read-only.";
+}
+
 /**
  * Build the wake prompt for a notification, or null if the action has no
  * wake (caller ignores those). Prepends HEADLESS_PREAMBLE to every non-null body
@@ -172,8 +186,9 @@ export function buildPrompt(n) {
   if (body == null) return null;
   const handoff = orchestratorGuidance(n);
   const anchor = wakerSessionGuidance(n);
+  const scope = scopeHeader(n.sessionId);
   return (
-    `${HEADLESS_PREAMBLE}\n\n${body}` +
+    `${HEADLESS_PREAMBLE}\n\n` + (scope ? `${scope}\n\n` : "") + body +
     (handoff ? `\n\n${handoff}` : "") +
     (anchor ? `\n\n${anchor}` : "")
   );
@@ -273,7 +288,8 @@ export function buildBatchPrompt(notifications) {
     return `${header}${collapseNote}\n\n${g.body}${anchorBlock}`;
   });
 
-  return [HEADLESS_PREAMBLE, backlogPreamble, ...rendered].join("\n\n");
+  const scope = scopeHeader(notifications[0].sessionId);
+  return [HEADLESS_PREAMBLE, ...(scope ? [scope] : []), backlogPreamble, ...rendered].join("\n\n");
 }
 
 /**

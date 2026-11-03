@@ -202,6 +202,7 @@ export class EventRouter {
 
   #transport(source) {
     return {
+      ...(typeof source.sessionId === "string" ? { sessionId: source.sessionId } : {}),
       ...(typeof source.runtimeCwd === "string" ? { runtimeCwd: source.runtimeCwd } : {}),
       ...(typeof source.targetConnectionUuid === "string" ? { targetConnectionUuid: source.targetConnectionUuid } : {}),
       ...(source.suppressWake === true ? { suppressWake: true } : {}),
