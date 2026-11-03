@@ -380,7 +380,7 @@ surfaces the missing-binary error when one arrives.
 
 ```
 [Chorus] ▶ wake: task_assigned → task:<uuid>
-[Chorus] spawning new session <backend-uuid> (Chorus anchor <idea-uuid>) — take over with: claude --resume <backend-uuid>
+[Chorus] spawning new session <backend-uuid> (Chorus anchor task:<uuid>) — take over with: claude --resume <backend-uuid>
 [Chorus] ✓ wake done: task:<uuid> (exit=0, 1234ms)
 ```
 
@@ -390,11 +390,55 @@ per-wake detail.
 
 ### Backend session isolation
 
-Chorus keeps the **direct Idea UUID** (or ad-hoc entity/session UUID) as its
-conversation business anchor. Execution snapshots retain their direct/root Idea
-attribution, and turn/transcript uploads use that original anchor with the
-agent's credentials. The backend's native resume ID is a separate value reported
-as `backendSessionId`; use that value, not the Idea UUID, for takeover.
+The upgraded **CLI daemon** separates conversation purpose from Idea attribution.
+The server chooses the conversation business anchor at wake creation and delivers
+it as `sessionId`; it is not the Agent Session `sessionUuid` used by check-in tools.
+
+| Purpose | Business anchor (`sessionId`) |
+| --- | --- |
+| Idea orchestration | Bare direct Idea UUID |
+| Development of an Idea-backed task | `task:<taskUuid>` |
+| Task review | `review:task:<taskUuid>` |
+| Proposal review | `review:proposal:<proposalUuid>` |
+| Whole-Idea code review | `review:idea:<ideaUuid>` |
+| Quick task without an Idea / ad-hoc conversation | Existing entity/session UUID, unchanged |
+
+Task assignment and reopening use the task anchor even when the developer is also
+the Idea orchestrator. Ordinary task mentions to its developer use the task anchor;
+ordinary mentions to the orchestrator stay in the Idea conversation. A matching
+`Team review request — task|proposal|code` comment envelope selects a review anchor
+before task ownership routing, including when the developer is also the reviewer.
+A comment containing a line beginning `VERDICT:` is a review result, not a new
+review request. Re-review resumes the same review anchor. Idea-stage actions remain
+in the Idea session; ordinary non-owner notifications retain Idea routing.
+
+Live SSE notifications and reconnect backfill carry the resolved `sessionId`.
+The CLI consumes a nonempty delivered anchor before attempting lineage lookup:
+queue serialization, native backend identity, transcripts, turn reports, execution
+tracking and targeted interrupts all use that same anchor. Sibling task anchors can
+run concurrently up to the daemon's concurrency limit; wakes of one anchor remain
+serialized. Execution identity includes `(connectionUuid, entityType, entityUuid,
+sessionId)`, so development and review of the same task cannot overwrite each other.
+Legacy execution rows retain `sessionId=""`; a scoped interrupt never falls back to
+that legacy row or another purpose's execution.
+
+Task and review sessions have no Idea-session development memory. Fetch the task,
+proposal, source Ideas and comments explicitly. Review sessions are read-only.
+Orchestration keeps its Idea conversation. Session separation does **not** isolate
+files: when sibling sessions share a cwd, create your own git worktree before editing.
+Direct/root Idea UUIDs remain attribution and grouping fields, not queue keys.
+The native resume ID is separately reported as `backendSessionId`; use that value,
+not a business anchor, for takeover.
+
+**Compatibility boundary.** When `sessionId` is absent or empty (for example an old
+server), the upgraded CLI falls back to its existing direct-Idea/entity resolution.
+An old daemon ignores the new field and keeps its previous Idea-based queue/session
+behavior; upgrading only the server does not provide purpose isolation. Existing
+Idea conversations remain intact, but newly scoped task/review conversations do not
+import their transcripts. Native non-CLI consumers (including OpenClaw, Hermes and
+dsh integrations) are not upgraded by this change and may retain their previous
+session behavior. This documents CLI-host routing, not new non-CLI support or a
+reactivation of the de-listed dsh daemon backend.
 
 For daemon agents with a resolved `agentUuid`, `cli/backend-session-identity.mjs`
 derives a stable UUIDv5 from the logical agent UUID and the business anchor.

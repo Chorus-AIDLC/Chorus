@@ -21,6 +21,16 @@ This is the **core skill** — it covers the platform overview, shared tools, an
 
 ---
 
+## Session scope for CLI daemon wakes
+
+These rules apply only to wakes handled by an updated Chorus CLI daemon that honors the server-delivered SSE `sessionId`. They do not upgrade OpenClaw, Hermes, or dsh-native session routing; those native runtimes retain their existing behavior. Older daemons may fall back to legacy entity/Idea routing, so do not assume task/review isolation there.
+
+- **Task work:** `task:<uuid>` is a task-scoped session with no Idea-session memory. Fetch the current task, its proposal and documents, and its direct Idea from Chorus before starting work; do not rely on the orchestrator's conversation. Sibling tasks of the same Idea can run concurrently for one agent and may share the working directory. Before editing when siblings share the cwd, work in your own git worktree; the daemon does not create one for you.
+- **Review work:** a Team review request uses `review:<type>:<uuid>`, where type is `proposal`, `task`, or `idea` (a code review targets the Idea). It is a read-only review-scoped session with no development-session memory. Fetch the target and current reviewer protocol/context before reviewing; do not implement fixes or perform lifecycle writes. A re-review by the same reviewer of the same target resumes the same review session, preserving review history rather than development memory.
+- **Orchestration:** elaboration, proposal work, Start Development, Yolo, and orchestration stay in the bare direct-Idea UUID session (`<directIdeaUuid>`, not `idea:<uuid>`). An orchestrator also assigned a task uses `task:<uuid>` for task-start/reopen work, but orchestration replies and handoffs stay in the Idea session.
+
+These are backend conversation and wake-queue anchors, not the Chorus Agent Session `sessionUuid` used by session check-in tools. Session separation does not isolate files or change the host's existing session check-in lifecycle.
+
 ## Overview
 
 ### AI-DLC Workflow
