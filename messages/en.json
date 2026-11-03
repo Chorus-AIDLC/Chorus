@@ -1947,6 +1947,11 @@
     "mobileBack": "Conversations",
     "conversationAdHoc": "Conversation {id}",
     "conversationIdea": "Idea {id}",
+    "childSession": {
+      "task": "Task: {title}",
+      "review": "Review: {title}",
+      "instructionNote": "Send instructions from the Idea conversation. This child conversation is for task work or review."
+    },
     "badgeIdea": "Idea",
     "running": "Running",
     "runningElapsedLabel": "Elapsed since this run started",

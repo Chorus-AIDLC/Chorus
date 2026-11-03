@@ -79,6 +79,7 @@ export type InterruptTarget = {
   entityType: string;
   entityUuid: string;
   entityTitle?: string | null;
+  sessionId?: string;
 };
 
 export function InterruptButton({
@@ -111,6 +112,7 @@ export function InterruptButton({
           targetConnectionUuid: target.connectionUuid,
           entityType: target.entityType,
           entityUuid: target.entityUuid,
+          sessionId: target.sessionId,
         }),
       });
       if (!res.ok) {
@@ -234,6 +236,7 @@ export function ResumeButton({ exec }: { exec: ExecutionView }) {
           connectionUuid: exec.connectionUuid,
           entityType: exec.entityType,
           entityUuid: exec.entityUuid,
+          sessionId: exec.sessionId,
         }),
       });
       if (!res.ok) {

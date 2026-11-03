@@ -52,6 +52,8 @@ import { formatCwd, formatHost } from "@/lib/daemon-instance-format";
 import { SessionUsageBadge } from "./token-usage-badge";
 import { IdentityBlock } from "../identity-block";
 import { ConversationReplyBox } from "../send-instruction-box";
+import { InterruptButton, ResumeButton } from "../execution-row";
+import { parseSessionAnchor } from "@/lib/session-anchor";
 import {
   useElapsedMono,
   useNowTick,
@@ -299,6 +301,8 @@ export function TranscriptView({
   const formatUptime = useUptimeMono();
   const formatElapsed = useElapsedMono();
 
+  const anchor = session ? parseSessionAnchor(session.sessionId, session.directIdeaUuid) : null;
+  const scoped = anchor?.kind === "task" || anchor?.kind === "review";
   const agentName =
     originConnection?.agentName?.trim() || t("roleAgent");
   const displayConnection =
@@ -383,11 +387,9 @@ export function TranscriptView({
   // not live. Once the turn is cleared this returns null and the row's Resume comes back.
   const stuckTurnTarget = useMemo(() => {
     if (runningExecution || !hasRunningTurn || !session) return null;
-    const { entityType, entityUuid } = sessionControlTarget(session);
     return {
       connectionUuid: session.originConnectionUuid,
-      entityType,
-      entityUuid,
+      ...sessionControlTarget(session),
       entityTitle: title,
     };
   }, [runningExecution, hasRunningTurn, session, title]);
@@ -634,17 +636,30 @@ export function TranscriptView({
           here". The reply box self-gates on origin-online and shows the read-only
           reason when the daemon is offline; while running the textarea stays usable. */}
       {!error && session && (
-        <div className="flex flex-col gap-3 border-t border-[#EFEBE4] dark:border-[#2a2a2e] bg-background px-6 py-2.5 lg:py-4">
-          <ConversationReplyBox
-            sessionUuid={session.uuid}
-            originOnline={originOnline}
-            layout={footerLayout}
-            controllableExecution={composerExecution}
-            stuckTurnTarget={stuckTurnTarget}
-            agentUuid={originConnection?.agentUuid ?? null}
-            onlineConnections={originAgentOnlineConnections}
-            onSessionStarted={onSessionStarted}
-          />
+        <div className="flex flex-col gap-3 border-t border-border bg-background px-6 py-2.5 lg:py-4">
+          {scoped ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-[12px] text-muted-foreground">{t("childSession.instructionNote")}</p>
+              {stuckTurnTarget ? (
+                <InterruptButton target={stuckTurnTarget} variant="stuckTurn" />
+              ) : composerExecution?.status === "running" ? (
+                <InterruptButton target={composerExecution} />
+              ) : composerExecution?.status === "interrupted" ? (
+                <ResumeButton exec={composerExecution} />
+              ) : null}
+            </div>
+          ) : (
+            <ConversationReplyBox
+              sessionUuid={session.uuid}
+              originOnline={originOnline}
+              layout={footerLayout}
+              controllableExecution={composerExecution}
+              stuckTurnTarget={stuckTurnTarget}
+              agentUuid={originConnection?.agentUuid ?? null}
+              onlineConnections={originAgentOnlineConnections}
+              onSessionStarted={onSessionStarted}
+            />
+          )}
         </div>
       )}
     </div>

@@ -36,6 +36,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { authFetch } from "@/lib/auth-client";
 import { clientLogger } from "@/lib/logger-client";
+import { parseSessionAnchor } from "@/lib/session-anchor";
 import { useAgentPresence } from "@/contexts/agent-presence-context";
 import type { ExecutionView } from "../types";
 import type { SessionTarget } from "../send-instruction-box";
@@ -447,6 +448,11 @@ export function DaemonChat() {
       firstInstruction?: string | null;
       ideaTitle?: string | null;
     }): string => {
+      const anchor = parseSessionAnchor(s.sessionId, s.directIdeaUuid);
+      if (anchor.kind === "task" || anchor.kind === "review") {
+        const title = s.title?.trim().replace(/^(Task|Review):\s*/, "") || anchor.entityUuid.slice(0, 8);
+        return t(`childSession.${anchor.kind}`, { title });
+      }
       if (s.title?.trim()) return s.title.trim();
       if (s.directIdeaUuid) {
         if (s.ideaTitle?.trim()) return s.ideaTitle.trim();
@@ -469,7 +475,8 @@ export function DaemonChat() {
         title: conversationName(session),
         // An idea-anchored conversation gets a resource badge before its name; an ad-hoc
         // one (named by the human's opening message) does not.
-        ideaAnchored: session.directIdeaUuid != null,
+        ideaAnchored: session.directIdeaUuid != null &&
+          !["task", "review"].includes(parseSessionAnchor(session.sessionId, session.directIdeaUuid).kind),
         // This conversation's own live status — resolved from the SAME cross-connection
         // match the composer's Interrupt uses (origin slice preferred, all-slice fallback),
         // so the row's dot and the composer's Interrupt button can never disagree after a

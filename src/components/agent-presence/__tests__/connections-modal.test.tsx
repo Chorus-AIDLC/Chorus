@@ -1381,3 +1381,87 @@ describe("Daemon chat modal — transcript pagination (load earlier)", () => {
     expect(screen.getAllByText(PROMPT).length).toBe(2);
   });
 });
+
+describe("purpose-scoped child conversations", () => {
+  const idea = session({ uuid: "s-idea", sessionId: "I", directIdeaUuid: "I", title: null, ideaTitle: "Anchor feature" });
+  const task = session({ uuid: "s-task", sessionId: "task:T", directIdeaUuid: "I", title: "Task: Build anchors", ideaTitle: "Anchor feature" });
+  const review = session({ uuid: "s-review", sessionId: "review:task:T", directIdeaUuid: "I", title: "Review: Build anchors", ideaTitle: "Anchor feature" });
+  const exec = (sessionId: string, status = "running") => ({
+    uuid: `exec-${sessionId}`, connectionUuid: "1", agentUuid: "agent-1", entityType: "task", entityUuid: "T",
+    sessionId, directIdeaUuid: "I", rootIdeaUuid: "I", entityTitle: "Build anchors", status,
+    interruptedReason: status === "interrupted" ? "user" : null, startedAt: "2026-06-16T11:00:00.000Z",
+    createdAt: "2026-06-16T11:00:00.000Z", updatedAt: "2026-06-16T11:00:00.000Z",
+  });
+  const detail = (s: Session, running = false) => ({
+    session: { ...s, backendSessionId: `native-${s.uuid}`, runtimeCwd: "/workspace/chorus", totalInputTokens: 0, totalOutputTokens: 0,
+      totalCacheReadTokens: 0, totalCacheCreationTokens: 0, createdAt: s.lastTurnAt, updatedAt: s.lastTurnAt },
+    turns: running ? [{ uuid: `turn-${s.uuid}`, sessionUuid: s.uuid, seq: 1, trigger: "mentioned", status: "running",
+      promptText: "Scoped wake", messages: [], createdAt: s.lastTurnAt, startedAt: s.lastTurnAt, endedAt: null }] : [],
+    hasMore: false, oldestTurnSeq: null, oldestMsgSeq: null,
+  });
+
+  it("groups Idea, task and review sessions with independent statuses and preserves ad-hoc rows", async () => {
+    respondWith({ connections: [conn({ uuid: "1", agentUuid: "agent-1" })],
+      sessions: [review, task, idea, session({ uuid: "adhoc", title: "Ad-hoc chat" })],
+      executions: [exec("task:T"), exec("review:task:T", "interrupted")] });
+    await renderAndOpenModal();
+    await screen.findAllByText("Task: Build anchors");
+    const group = document.querySelector('[data-idea-group="I"]')!;
+    expect(group.querySelectorAll('[data-testid="child-conversations"] button')).toHaveLength(2);
+    expect(group.querySelector('[data-conversation-key="idea:I"]')?.getAttribute("data-session-status")).toBe("idle");
+    expect(group.querySelector('[data-conversation-key="daemon_session:task:T"]')?.getAttribute("data-session-status")).toBe("running");
+    expect(group.querySelector('[data-conversation-key="daemon_session:review:task:T"]')?.getAttribute("data-session-status")).toBe("interrupted");
+    expect(screen.getAllByText("Ad-hoc chat").length).toBeGreaterThan(0);
+  });
+
+  it("keeps an Idea header when only child sessions are loaded", async () => {
+    respondWith({ connections: [conn({ uuid: "1", agentUuid: "agent-1" })], sessions: [task, review] });
+    await renderAndOpenModal();
+    await screen.findAllByText("Anchor feature");
+    const group = document.querySelector('[data-idea-group="I"]')!;
+    expect(group.querySelectorAll('button')).toHaveLength(2);
+  });
+
+  it.each([task, review])("interrupt and takeover use $sessionId, with no child instruction composer", async (s) => {
+    respondWith({ connections: [conn({ uuid: "1", agentUuid: "agent-1" })], sessions: [idea, task, review],
+      executions: [exec("task:T"), exec("review:task:T")], detail: detail(s, true) });
+    const { user } = await renderAndOpenModal();
+    await user.click((await screen.findAllByText(s.title!))[0].closest("button")!);
+    await screen.findAllByText("Send instructions from the Idea conversation. This child conversation is for task work or review.");
+    expect(screen.queryByPlaceholderText("Reply in this conversation…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+    const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    await user.click(screen.getAllByRole("button", { name: "Copy session ID" })[0]);
+    expect(write).toHaveBeenCalledWith(`native-${s.uuid}`);
+    await user.click(screen.getAllByRole("button", { name: "Interrupt this running execution" })[0]);
+    await user.click(await screen.findByRole("button", { name: "Interrupt" }));
+    await waitFor(() => {
+      const call = mockAuthFetch.mock.calls.find(([url]) => url === "/api/daemon/control");
+      expect(JSON.parse((call![1] as RequestInit).body as string)).toMatchObject({ entityType: "task", entityUuid: "T", sessionId: s.sessionId });
+    });
+  });
+
+  it("resume preserves the review discriminator for a same-entity sibling", async () => {
+    respondWith({ connections: [conn({ uuid: "1", agentUuid: "agent-1" })], sessions: [task, review],
+      executions: [exec("task:T"), exec("review:task:T", "interrupted")], detail: detail(review) });
+    const { user } = await renderAndOpenModal();
+    await user.click((await screen.findAllByText(review.title!))[0].closest("button")!);
+    await user.click((await screen.findAllByRole("button", { name: "Resume this interrupted execution" }))[0]);
+    await waitFor(() => {
+      const call = mockAuthFetch.mock.calls.find(([url]) => url === "/api/daemon/resume");
+      expect(JSON.parse((call![1] as RequestInit).body as string)).toMatchObject({ entityType: "task", entityUuid: "T", sessionId: "review:task:T" });
+    });
+  });
+
+  it("a phantom child turn sends its anchor even without an execution row", async () => {
+    respondWith({ connections: [conn({ uuid: "1", agentUuid: "agent-1" })], sessions: [review], detail: detail(review, true) });
+    const { user } = await renderAndOpenModal();
+    await user.click((await screen.findAllByText(review.title!))[0].closest("button")!);
+    await user.click((await screen.findAllByRole("button", { name: "Clear this stuck turn" }))[0]);
+    await user.click(await screen.findByRole("button", { name: "Clear the turn" }));
+    await waitFor(() => {
+      const call = mockAuthFetch.mock.calls.find(([url]) => url === "/api/daemon/control");
+      expect(JSON.parse((call![1] as RequestInit).body as string)).toMatchObject({ entityType: "task", entityUuid: "T", sessionId: "review:task:T" });
+    });
+  });
+});
