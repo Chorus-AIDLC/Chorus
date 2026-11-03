@@ -658,6 +658,7 @@ export async function notifyIdeaTeamHandoff(event: ActivityEvent): Promise<void>
         recipientType: recipient.type, recipientUuid: recipient.uuid,
         entityType: event.targetType, entityUuid: event.targetUuid, entityTitle, projectName,
         action: "mentioned",
+        sessionAnchorHint: "idea",
         message: `Idea Team handoff — ${label} by ${actorName}. You are the assignee of Team-managed Idea(s) ${ideas.join(", ")}: ` +
           `call chorus_get_idea_team_context and route the next step to the Team (product delegation, or development via chorus_recommend_team_agent + task assignment). Approval follows the normal workflow (a human, unless a human requested YOLO).` +
           reviewGuidance + (lastIdeas.length ? ` For Idea(s) ${lastIdeas.join(", ")}, ${TEAM_HANDOFF_LABELS.last_task_submitted}; run it in parallel with task reviews. Its PASS gates the completion report and PR, not individual task verification.` : ""),

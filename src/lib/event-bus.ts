@@ -83,6 +83,7 @@ export interface ControlEvent {
   // behind it, keyed by the session business id.
   entityType?: "task" | "idea" | "proposal" | "document" | "daemon_session";
   entityUuid?: string;
+  sessionId?: string;
   turnUuid?: string;
   runtimeCwd?: string;
   // Present ONLY on a `resume`: the row's PRIOR interruptedReason, so the daemon can

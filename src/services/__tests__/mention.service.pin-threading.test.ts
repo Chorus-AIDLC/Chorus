@@ -325,3 +325,14 @@ describe("createMentions — threads the mention pin into the wake notification 
     expect(userP.pinnedCwd).toBeUndefined();
   });
 });
+
+
+it.each([["task", "task"], ["proposal", "proposal"], ["code", "idea"]])("threads the %s review envelope from the full comment into agent notifications", async (kind, targetType) => {
+  mockPrisma.comment.findUnique.mockResolvedValue({ targetType, targetUuid: SOURCE_UUID });
+  await createMentions({ companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, sourceType: "comment", sourceUuid: SOURCE_UUID,
+    actorType: "user", actorUuid: ACTOR_UUID, entityTitle: "Review target",
+    content: `${"Long preface ".repeat(30)}\nTeam review request — ${kind}, round 2\n${buildMentionMarker("DevBot", "agent", AGENT_UUID)}`,
+  });
+  expect(notifiedParams().sessionAnchorHint).toBe(`review:${targetType}:${SOURCE_UUID}`);
+  expect(mockPrisma.mention.createMany.mock.calls[0][0].data[0]).not.toHaveProperty("sessionAnchorHint");
+});
