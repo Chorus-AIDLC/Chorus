@@ -833,6 +833,21 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 **Output**: Created comment JSON
 
+### chorus_request_review
+
+**Description**: Request a Team review from one reviewer agent. The server checks the request, then posts a `Team review request — <kind>, round N` comment on the target. The comment lists the target, the reviewer protocol, one reviewer @mention, and who receives the result on PASS and on FAIL. Only that reviewer is woken, in an isolated review session (`review:<type>:<uuid>`); a re-review of the same target resumes that session. This is the only way to open a review session: plain comments never do, whatever their text. A `review_requested` activity is logged. Uses the same permission gate as `chorus_add_comment`.
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| targetType | enum | Yes | `task`, `proposal`, or `idea` (whole-Idea code review) |
+| targetUuid | string | Yes | Target UUID (it must belong to an Idea) |
+| reviewerUuid | string | Yes | Reviewer agent UUID; must have project access and differ from the caller |
+| round | integer | Yes | Current review round, 1–3 |
+| note | string | No | Extra instructions appended to the request |
+
+**Output**: `{ commentUuid, targetType, targetUuid, reviewerUuid, round, sessionId }`. An invalid request returns an `isError` result, and no comment is posted.
+
 ### chorus_get_comments
 
 **Description**: Get paginated comments for an Idea/Proposal/Task/Document, newest first. There is no single-comment get tool, so each row includes the full `content` and resolved `author`.

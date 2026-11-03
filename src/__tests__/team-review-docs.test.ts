@@ -35,13 +35,12 @@ const routingRules = [
   "3 rounds per entity",
   "stop automation",
   "No acknowledgement mentions",
-  "sender MUST include `Team review request — <kind>, round N`",
-  "kind is `proposal`, `task` or `code`",
-  "the target UUID",
-  "matching local reviewer protocol location",
+  "call `chorus_request_review({ targetType, targetUuid, reviewerUuid, round })` once",
+  "`targetType` is `proposal`, `task` or `idea` (the whole-Idea code review)",
+  "posts the `Team review request — <kind>, round N` comment",
   "exactly one reviewer @mention",
-  "expected PASS / PASS WITH NOTES and FAIL recipient names/UUIDs",
-  "(not mentions)",
+  "wakes only that reviewer in its review session",
+  "a plain comment never opens a review session",
 ];
 
 const receiverRules = [
@@ -91,7 +90,7 @@ describe("Claude Code and standalone Team review documentation", () => {
         expect(read(skill(name))).toContain(`../orchestrate${surface.suffix}/SKILL.md#team-review-routing`);
         expect(read(skill(name))).toContain('role: "review"');
         for (const rule of receiverRules) expect(read(skill(name)), rule).toContain(rule);
-        expect(read(skill(name))).toContain("expected PASS/FAIL recipient names/UUIDs (not mentions)");
+        expect(read(skill(name))).toContain("send them with `chorus_request_review` (target, reviewer, round)");
         expect(read(skill(name))).toContain("A request must never start a line with `VERDICT:`");
       });
     }

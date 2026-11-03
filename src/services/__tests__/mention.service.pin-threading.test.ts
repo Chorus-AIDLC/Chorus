@@ -327,12 +327,33 @@ describe("createMentions — threads the mention pin into the wake notification 
 });
 
 
-it.each([["task", "task"], ["proposal", "proposal"], ["code", "idea"]])("threads the %s review envelope from the full comment into agent notifications", async (kind, targetType) => {
-  mockPrisma.comment.findUnique.mockResolvedValue({ targetType, targetUuid: SOURCE_UUID });
+const OTHER_AGENT_UUID = "77777777-7777-7777-7777-777777777777";
+const reviewEnvelopes = [
+  ["plain envelope", "Team review request — task, round 1"],
+  ["bold envelope", "**Team review request — task, round 1**"],
+  ["quoted envelope", "> Team review request — task, round 1"],
+  ["code-block example", "Example only:\n```\nTeam review request — task, round 1\n```"],
+  ["Chinese envelope", "团队审查请求 — task，第 1 轮"],
+];
+
+it.each(reviewEnvelopes)("never derives a review anchor from free comment text: %s", async (_label, text) => {
+  mockPrisma.comment.findUnique.mockResolvedValue({ targetType: "task", targetUuid: SOURCE_UUID });
   await createMentions({ companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, sourceType: "comment", sourceUuid: SOURCE_UUID,
     actorType: "user", actorUuid: ACTOR_UUID, entityTitle: "Review target",
-    content: `${"Long preface ".repeat(30)}\nTeam review request — ${kind}, round 2\n${buildMentionMarker("DevBot", "agent", AGENT_UUID)}`,
+    content: `${text}\n${buildMentionMarker("DevBot", "agent", AGENT_UUID)}`,
   });
-  expect(notifiedParams().sessionAnchorHint).toBe(`review:${targetType}:${SOURCE_UUID}`);
+  expect(notifiedParams()).not.toHaveProperty("sessionAnchorHint");
+});
+
+it("applies a structured review anchor only to the named reviewer", async () => {
+  mockPrisma.comment.findUnique.mockResolvedValue({ targetType: "task", targetUuid: SOURCE_UUID });
+  await createMentions({ companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, sourceType: "comment", sourceUuid: SOURCE_UUID,
+    actorType: "agent", actorUuid: ACTOR_UUID, entityTitle: "Review target",
+    content: `Team review request — task, round 1\nReviewer: ${buildMentionMarker("DevBot", "agent", AGENT_UUID)}\ncc ${buildMentionMarker("Other", "agent", OTHER_AGENT_UUID)}`,
+    reviewAnchor: { agentUuid: AGENT_UUID, sessionAnchorHint: `review:task:${SOURCE_UUID}` },
+  });
+  const batch = mockCreateBatch.mock.calls[0][0] as Record<string, unknown>[];
+  expect(batch.find((p) => p.recipientUuid === AGENT_UUID)!.sessionAnchorHint).toBe(`review:task:${SOURCE_UUID}`);
+  expect(batch.find((p) => p.recipientUuid === OTHER_AGENT_UUID)).not.toHaveProperty("sessionAnchorHint");
   expect(mockPrisma.mention.createMany.mock.calls[0][0].data[0]).not.toHaveProperty("sessionAnchorHint");
 });

@@ -405,11 +405,13 @@ it as `sessionId`; it is not the Agent Session `sessionUuid` used by check-in to
 
 Task assignment and reopening use the task anchor even when the developer is also
 the Idea orchestrator. Ordinary task mentions to its developer use the task anchor;
-ordinary mentions to the orchestrator stay in the Idea conversation. A matching
-`Team review request — task|proposal|code` comment envelope selects a review anchor
-before task ownership routing, including when the developer is also the reviewer.
-A comment containing a line beginning `VERDICT:` is a review result, not a new
-review request. Re-review resumes the same review anchor. Idea-stage actions remain
+ordinary mentions to the orchestrator stay in the Idea conversation. Only a
+structured `chorus_request_review` call selects a review anchor: the server validates
+the target, reviewer and round, posts the `Team review request — <kind>, round N`
+comment, and applies the review anchor to the named reviewer's wake alone, before
+task ownership routing (including when the developer is also the reviewer). Comment
+text never selects a review anchor, so a hand-written, quoted or example envelope in
+an ordinary comment keeps default routing. Re-review resumes the same review anchor. Idea-stage actions remain
 in the Idea session; ordinary non-owner notifications retain Idea routing. When the
 developer is also the Idea orchestrator, only task assignment and reopening use the
 task anchor; its task comments, mentions, VERDICT replies and Team handoffs stay in

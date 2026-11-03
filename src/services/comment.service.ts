@@ -94,6 +94,8 @@ export interface CommentCreateParams {
   content: string;
   authorType: "user" | "agent";
   authorUuid: string;
+  /** Set only by the structured review-request service; see mention.service. */
+  reviewAnchor?: { agentUuid: string; sessionAnchorHint: string };
 }
 
 export interface CommentDeleteParams {
@@ -212,6 +214,7 @@ export async function createComment({
   content,
   authorType,
   authorUuid,
+  reviewAnchor,
 }: CommentCreateParams): Promise<CommentResponse> {
   // Validate target exists
   const exists = await validateTargetExists(targetType, targetUuid, companyUuid);
@@ -257,8 +260,9 @@ export async function createComment({
     }
   }).catch(() => {});
 
-  // Process @mentions in comment content (fire-and-forget)
-  processCommentMentions(
+  // Process @mentions in comment content. Fire-and-forget for ordinary comments;
+  // a structured review request awaits so a failed reviewer wake is not silent.
+  const mentionWork = processCommentMentions(
     companyUuid,
     targetType,
     targetUuid,
@@ -266,7 +270,10 @@ export async function createComment({
     content,
     authorType,
     authorUuid,
-  ).catch((err) => logger.error({ err }, "Failed to process comment mentions"));
+    reviewAnchor,
+  );
+  if (reviewAnchor) await mentionWork;
+  else mentionWork.catch((err) => logger.error({ err }, "Failed to process comment mentions"));
 
   return response;
 }
@@ -474,6 +481,7 @@ async function processCommentMentions(
   content: string,
   authorType: string,
   authorUuid: string,
+  reviewAnchor?: { agentUuid: string; sessionAnchorHint: string },
 ): Promise<void> {
   const mentions = mentionService.parseMentions(content);
   if (mentions.length === 0) return;
@@ -492,6 +500,7 @@ async function processCommentMentions(
     actorUuid: authorUuid,
     projectUuid,
     entityTitle,
+    ...(reviewAnchor ? { reviewAnchor } : {}),
   });
 
   // Log mention activity for each mentioned user/agent

@@ -1066,6 +1066,11 @@ describe("purpose-scoped session integration", () => {
       expect(events.map((event) => event.sessionId)).toEqual([`task:${TASK}`, `review:task:${TASK}`, `review:task:${TASK}`]);
       expect(store.data.notification.every((row) => !("sessionAnchorHint" in row))).toBe(true);
       expect(development.turn).not.toBeNull();
+      // A plain comment that merely contains an envelope carries no hint: the developer's
+      // mention routes to its development session, never a review session.
+      await notificationService.createBatch([{ ...baseNotif, action: "mentioned", message: "Team review request — task, round 3" }]);
+      expect(events.at(-1)?.sessionId).toBe(`task:${TASK}`);
+      expect(store.data.daemonSession).toHaveLength(3);
     } finally { eventBus.off(channel, capture); }
   });
 
