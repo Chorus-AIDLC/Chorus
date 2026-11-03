@@ -140,6 +140,59 @@ describe("buildBatchPrompt — single-event path is byte-identical to buildPromp
   });
 });
 
+describe("scoped session headers", () => {
+  it("places task isolation and worktree guidance before the wake body", () => {
+    const notification = mk({ sessionId: "task:task-A", entityUuid: "task-A" });
+    const prompt = buildPrompt(notification);
+    expect(prompt.startsWith(HEADLESS_PREAMBLE)).toBe(true);
+    expect(prompt).toContain("task-scoped session for task task-A");
+    expect(prompt).toContain("no memory of the Idea session");
+    expect(prompt).toContain("read the task, its proposal and the Idea first");
+    expect(prompt).toContain("Other tasks of the same Idea may run concurrently in this working directory");
+    expect(prompt).toContain("before editing files, work in your own git worktree");
+    expect(prompt).toContain("EnterWorktree / `git worktree add`");
+    expect(prompt.indexOf("task-scoped session")).toBeLessThan(prompt.indexOf("chorus_get_task"));
+    expect(buildBatchPrompt([notification])).toBe(prompt);
+  });
+
+  it.each(["task", "proposal", "idea"])("makes %s reviews read-only without development memory", (entityType) => {
+    const notification = mk({ action: "mentioned", sessionId: `review:${entityType}:review-target` });
+    const prompt = buildPrompt(notification);
+    expect(prompt).toContain(`review-scoped session for ${entityType} review-target`);
+    expect(prompt).toContain("it never carries development memory. Stay read-only.");
+    expect(prompt).not.toContain("task-scoped session");
+    expect(prompt).not.toContain("git worktree add");
+    expect(buildBatchPrompt([notification])).toBe(prompt);
+  });
+
+  it.each(["task:task-A", "review:task:task-A", "review:proposal:proposal-A", "review:idea:idea-A"])(
+    "includes one scope header for coalesced and resumed wakes on %s", (sessionId) => {
+      const notification = mk({ sessionId, action: "resource_resumed" });
+      const prompt = buildBatchPrompt([notification, mk({ sessionId, action: "mentioned" })]);
+      const header = buildPrompt(notification).split("\n\n").find((part) => part.includes("-scoped session"));
+      expect(header).toBeTruthy();
+      expect(occurrences(prompt, header)).toBe(1);
+      expect(prompt.indexOf(header)).toBeLessThan(prompt.indexOf("queued Chorus events"));
+    },
+  );
+
+  it.each([undefined, null, "", "11111111-1111-4111-8111-111111111111", "ad-hoc-session", "review:document:doc-A"])(
+    "keeps unscoped prompts byte-identical for sessionId %s", (sessionId) => {
+      const notification = mk();
+      const mention = mk({ action: "mentioned" });
+      expect(buildPrompt({ ...notification, sessionId })).toBe(buildPrompt(notification));
+      expect(buildBatchPrompt([{ ...notification, sessionId }, { ...mention, sessionId }]))
+        .toBe(buildBatchPrompt([notification, mention]));
+    },
+  );
+
+  it.each(["task:task-A", "review:task:task-A"])("does not render a scope-only empty wake for %s", (sessionId) => {
+    const notification = mk({ sessionId, action: "human_instruction", instructionText: "" });
+    expect(buildPrompt(notification)).toBeNull();
+    expect(buildBatchPrompt([notification, notification])).toBeNull();
+  });
+});
+
 describe("buildBatchPrompt — N>1 composition", () => {
   it("emits exactly one headless preamble, one backlog preamble, and N ordered labeled blocks", () => {
     // AC: For N>1 events, output has exactly one HEADLESS_PREAMBLE + one backlog

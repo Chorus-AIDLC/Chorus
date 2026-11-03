@@ -42,6 +42,7 @@
 
 import { spawn } from "node:child_process";
 import { backendSessionKey } from "./backend-session-identity.mjs";
+import { parseScopedAnchor } from "./session-anchor.mjs";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { existsSync, statSync } from "node:fs";
@@ -748,7 +749,8 @@ export class ClaudeSpawner {
   }
 
   async #wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage, onChild }, diagnostics) {
-    const id = isValidSessionId(sessionId) ? backendSessionKey(sessionId, this.creds?.agentUuid) : sessionId;
+    const id = isValidSessionId(sessionId) || parseScopedAnchor(sessionId)
+      ? backendSessionKey(sessionId, this.creds?.agentUuid) : sessionId;
 
     // Pre-validate the session id BEFORE locating claude or spawning: a malformed
     // id (not a lowercase UUID) is refused visibly with no subprocess started.

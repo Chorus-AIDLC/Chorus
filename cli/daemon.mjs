@@ -430,6 +430,7 @@ export function buildDaemon(creds, deps = {}) {
       resumeReason,
       runtimeCwd,
       orchestrator,
+      sessionId,
     ) => {
       router.dispatchResume?.({
         entityType,
@@ -437,6 +438,7 @@ export function buildDaemon(creds, deps = {}) {
         resumeReason,
         runtimeCwd,
         orchestrator,
+        ...(sessionId !== undefined ? { sessionId } : {}),
       });
     };
     const deliverTurn = (turnUuid) => recovery.deliver(turnUuid);

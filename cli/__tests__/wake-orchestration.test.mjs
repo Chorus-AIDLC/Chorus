@@ -1028,8 +1028,9 @@ describe("Waker interrupt / crash reporting (子3)", () => {
     expect(snapshotDuringRun).toHaveLength(1);
     expect(snapshotDuringRun[0]).not.toHaveProperty("child");
     expect(Object.keys(snapshotDuringRun[0]).sort()).toEqual(
-      ["directIdeaUuid", "entityType", "entityUuid", "rootIdeaUuid", "startedAt", "status"].sort()
+      ["directIdeaUuid", "entityType", "entityUuid", "rootIdeaUuid", "sessionId", "startedAt", "status"].sort()
     );
+    expect(snapshotDuringRun[0].sessionId).toBe("");
   });
 
   it("reports interrupted(reason=user) when the control handler marked the entity interrupting", async () => {
