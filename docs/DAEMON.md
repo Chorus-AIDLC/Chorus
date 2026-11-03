@@ -410,7 +410,12 @@ ordinary mentions to the orchestrator stay in the Idea conversation. A matching
 before task ownership routing, including when the developer is also the reviewer.
 A comment containing a line beginning `VERDICT:` is a review result, not a new
 review request. Re-review resumes the same review anchor. Idea-stage actions remain
-in the Idea session; ordinary non-owner notifications retain Idea routing.
+in the Idea session; ordinary non-owner notifications retain Idea routing. When the
+developer is also the Idea orchestrator, only task assignment and reopening use the
+task anchor; its task comments, mentions, VERDICT replies and Team handoffs stay in
+the Idea session. Human instructions, operations (for example conversational Idea
+creation) and research requests always use the Idea session, so task and review child
+conversations in the chat UI do not offer an instruction composer.
 
 Live SSE notifications and reconnect backfill carry the resolved `sessionId`.
 The CLI consumes a nonempty delivered anchor before attempting lineage lookup:
