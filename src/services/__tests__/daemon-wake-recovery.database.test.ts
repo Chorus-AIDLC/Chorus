@@ -193,6 +193,49 @@ describe("durable wake recovery against isolated in-memory PostgreSQL", () => {
     expect(await service.advanceTurnForWake({ ...params, status: "ended" })).toMatchObject({ ok: true, turn: { uuid: turnUuids[0] } });
   });
 
+  it.each((["research_requested", "legacy_research", "idea_creation_requested"] as const).flatMap((format) =>
+    ["legacy", "isolated_research", "isolated_operations", "foreign_origin"].flatMap((mode) =>
+      [false, true].map((sibling) => ({ format, mode, sibling }))),
+  ))("retains Idea FIFO for $format ($mode, scoped sibling=$sibling)", async ({ format, mode, sibling }) => {
+    await db.daemonSessionTurn.deleteMany({ where: { sessionUuid } });
+    const operation = await service.createPendingTurn({
+      sessionUuid,
+      trigger: format === "legacy_research" ? "human_instruction" : format,
+      promptText: format === "legacy_research" ? "[Chorus Tracker Research] Research only" : null,
+      ...(format === "legacy_research" ? {} : { operationPayload: format === "research_requested"
+        ? { version: 1, kind: "research", ideaUuid }
+        : { version: 1, kind: "idea_creation", ideaUuid, projectUuid, mode: "elaborate", researchFirst: false, descriptionText: "fixture operation" } }),
+    });
+    const laterUuid = await legacyAnchor(ideaUuid, "idea", ideaUuid);
+    if (sibling) await legacyAnchor(`review:proposal:${randomUUID()}`, "proposal", randomUUID());
+    if (mode === "foreign_origin") await repointOrigin();
+    const params = {
+      ...legacyRequest("idea", ideaUuid),
+      researchMode: mode === "isolated_research" ? "isolated" as const : "legacy" as const,
+      operationProtocol: mode === "isolated_operations",
+    };
+    const admitOperation = mode === "legacy" || (mode === "isolated_research" && format === "idea_creation_requested");
+    const expectedUuid = admitOperation ? operation.uuid : laterUuid;
+    expect(await service.advanceTurnForWake(params)).toMatchObject({ ok: true, turn: { uuid: expectedUuid, status: "running" } });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: admitOperation ? laterUuid : operation.uuid } })).toMatchObject({ status: "pending" });
+    expect(await service.appendTranscriptMessages({ companyUuid, agentUuid, sessionId: ideaUuid, messages: [{ role: "assistant", text: "FIFO output" }] }))
+      .toMatchObject({ ok: true, messages: [{ turnUuid: expectedUuid, text: "FIFO output" }] });
+    expect(await service.advanceTurnForWake({ ...params, status: "ended" })).toMatchObject({ ok: true, turn: { uuid: expectedUuid, status: "ended" } });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: admitOperation ? laterUuid : operation.uuid } })).toMatchObject({ status: "pending" });
+  });
+
+  it.each(["research_requested", "human_instruction"] as const)("settles a lone legacy %s turn with an unrelated scoped sibling", async (trigger) => {
+    await db.daemonSessionTurn.deleteMany({ where: { sessionUuid } });
+    const research = await service.createPendingTurn({
+      sessionUuid, trigger, promptText: "[Chorus Tracker Research] Research only",
+      ...(trigger === "research_requested" ? { operationPayload: { version: 1, kind: "research", ideaUuid } } : {}),
+    });
+    await legacyAnchor(`task:${randomUUID()}`, "task", randomUUID());
+    const params = { ...legacyRequest("idea", ideaUuid), researchMode: "legacy" as const };
+    expect(await service.advanceTurnForWake(params)).toMatchObject({ ok: true, turn: { uuid: research.uuid, status: "running" } });
+    expect(await service.advanceTurnForWake({ ...params, status: "ended" })).toMatchObject({ ok: true, turn: { uuid: research.uuid, status: "ended" } });
+  });
+
   it("migrates historical rows to null without guessing source or admission", async () => {
     expect(await db.daemonSessionTurn.findUnique({ where: { uuid: legacyUuid } })).toMatchObject({
       status: "pending", wakeContext: null, admissionUuid: null, admissionTurnUuids: null, admissionConnectionUuid: null,

@@ -1845,7 +1845,8 @@ function filterPersistableMessages(
 // Bare-Idea reports from pre-recovery clients lack a purpose/turn identifier. Once
 // scoped sessions exist, resolve across the owned Idea family rather than silently
 // writing/advancing the Idea FIFO. Multiple matching purposes fail closed: entity T
-// cannot distinguish task:T from review:task:T. Within one purpose FIFO is retained.
+// cannot distinguish task:T from review:task:T. Within one purpose FIFO is retained;
+// attributable Idea reports without a scoped match keep the original mode/origin FIFO.
 // Transcripts have no entity at all: only a unique running conversation (or a unique
 // settled conversation for a late flush) is safe. Exact IDs bypass this compatibility
 // resolver, and families without scoped sessions retain their original paths.
@@ -1903,7 +1904,17 @@ async function resolveLegacyIdeaTurn(params: {
       return entityMatches || (!notification && params.entityType === "idea" && params.entityUuid === params.sessionId);
     });
     const scopedMatches = matching.filter((turn) => scoped.some((session) => session.uuid === turn.sessionUuid));
-    if (scopedMatches.length > 0) matching = scopedMatches;
+    if (scopedMatches.length === 0) {
+      // Do not select an Idea turn using the scoped-purpose filter above: legacy
+      // Idea FIFO may include research and operations according to client mode and
+      // origin. Defer attributable Idea reports to that unchanged path, even when
+      // no ordinary Idea turn is available (e.g. the research turn alone is running).
+      if (matching.length > 0 || (params.entityType === "idea" && params.entityUuid === params.sessionId)) {
+        return { handled: false };
+      }
+      return { handled: true, turnUuid: null };
+    }
+    matching = scopedMatches;
   } else {
     const running = turns.filter((turn) => turn.status === "running");
     // Pending siblings do not steal output from the conversation producing it.

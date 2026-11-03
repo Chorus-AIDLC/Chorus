@@ -449,9 +449,15 @@ reactivation of the de-listed dsh daemon backend.
 Idea `sessionId` after the server creates a task/review turn. The server searches
 only that agent's, company-scoped direct-Idea family. Turn reports match the wake
 entity and lifecycle edge (pending for running; running for ended/interrupted),
-prefer a matching scoped anchor, and use an entity-matching Idea turn only when no
-scoped turn matches. FIFO applies within a single matching conversation, not across
-purposes. If both `task:T` and `review:task:T` match, the server returns the usual
+prefer a matching scoped anchor, and fall back to the original Idea-session FIFO
+only when no scoped turn matches and the report is attributable to the Idea (the
+Idea entity itself or an entity-matching Idea wake). That fallback retains the
+existing research/operation protocol and origin filters: an unrelated scoped
+sibling must not skip a legacy research/operation turn or admit an isolated one.
+FIFO applies within a single matching conversation, not across purposes. When an
+Idea wake and `review:idea:I` both match entity idea/I, the scoped review wins;
+legacy reports cannot distinguish those two purposes, so an Idea mention can be
+attributed to review. Use exact-turn reporting to disambiguate. If both `task:T` and `review:task:T` match, the server returns the usual
 non-disclosing 404 and changes neither: entity T alone cannot identify the purpose.
 Reports missing the entity also fail closed when scoped conversations exist.
 
