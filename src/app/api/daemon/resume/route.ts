@@ -45,6 +45,7 @@ const bodySchema = z.object({
   connectionUuid: z.string().min(1),
   entityType: z.enum([...CONTROL_ENTITY_TYPES]),
   entityUuid: z.string().min(1),
+  sessionId: z.string().optional(),
 });
 
 // POST /api/daemon/resume — resume an interrupted wake (user- or crash-interrupted).
@@ -65,7 +66,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!parsed.success) {
     return errors.validationError(parsed.error.flatten());
   }
-  const { connectionUuid, entityType, entityUuid } = parsed.data;
+  const { connectionUuid, entityType, entityUuid, sessionId } = parsed.data;
 
   const hasTaskAdmin =
     (auth.type === "agent" || auth.type === "super_admin") &&
@@ -102,7 +103,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   // Record the row transition. An interrupted row (reason user OR crash) is
   // resumable; any non-interrupted row is rejected with a precise error.
-  const result = await resumeExecution(auth.companyUuid, connectionUuid, entityType, entityUuid);
+  const result = await resumeExecution(auth.companyUuid, connectionUuid, entityType, entityUuid, sessionId ?? "");
   if (!result.ok) {
     if (result.reason === "not_found") return errors.notFound("Execution");
     return errors.badRequest(
@@ -110,14 +111,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     );
   }
   const execution = await prisma.daemonExecution?.findFirst({
-    where: { companyUuid: auth.companyUuid, connectionUuid, entityType, entityUuid },
-    select: { uuid: true, directIdeaUuid: true },
+    where: { companyUuid: auth.companyUuid, connectionUuid, entityType, entityUuid, sessionId: sessionId ?? "" },
+    select: { uuid: true, directIdeaUuid: true, sessionId: true },
   });
   const resumedSession = await prisma.daemonSession?.findFirst({
     where: {
       companyUuid: auth.companyUuid,
       agentUuid: authz.target.agentUuid,
-      sessionId: execution?.directIdeaUuid ?? entityUuid,
+      sessionId: execution?.sessionId || execution?.directIdeaUuid || entityUuid,
     },
     select: { uuid: true, runtimeCwd: true },
   });
@@ -141,7 +142,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         resumedFrom: result.resumedFrom,
       })).uuid;
     } catch {
-      await restoreInterruptedExecution(auth.companyUuid, connectionUuid, entityType, entityUuid, result.resumedFrom);
+      await restoreInterruptedExecution(auth.companyUuid, connectionUuid, entityType, entityUuid, result.resumedFrom, sessionId ?? "");
       await publishExecutionChange(auth.companyUuid, connectionUuid);
       return errors.conflict("Could not prepare the resumed run; the execution is still interrupted — try again.");
     }
@@ -156,6 +157,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     command: "resume",
     entityType,
     entityUuid,
+    sessionId: execution?.sessionId ?? "",
     resumeReason: result.resumedFrom,
     orchestrator,
     ...(resumeTurnUuid ? { turnUuid: resumeTurnUuid } : {}),

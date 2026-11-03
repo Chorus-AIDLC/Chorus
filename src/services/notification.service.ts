@@ -58,6 +58,7 @@ export interface NotificationCreateParams {
   // (notification-turn.ts resolvePinnedTarget), so it does not need these fields.
   // Both undefined/null → no pin (online-first, exactly as before).
   // `pinnedHost` "" = unknown-host instance; `pinnedCwd` null = unknown-path instance.
+  sessionAnchorHint?: string | null;
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
   temporaryHost?: string | null;
@@ -535,7 +536,7 @@ export async function createReturningTurn(
   // born, so human and autonomous wakes are handled symmetrically. The bridge is
   // failure-isolated (logs + swallows): a turn-creation/ping failure MUST NOT abort or
   // block this already-created notification.
-  const { turn, targetConnectionUuid, runtimeCwd, suppressWake, wakeContext } =
+  const { turn, sessionId, targetConnectionUuid, runtimeCwd, suppressWake, wakeContext } =
     await createTurnAndResolveTarget({ ...params, wakeContext: createWakeContext(notification) });
 
   // Emit SSE event for real-time notification delivery (includes details for toast).
@@ -564,6 +565,7 @@ export async function createReturningTurn(
   eventBus.emit(`notification:${params.recipientType}:${params.recipientUuid}`, {
     type: "new_notification",
     notificationUuid: notification.uuid,
+    ...(turn ? { sessionId } : {}),
     ...(turn && wakeContext ? { turnUuid: turn.uuid, wakeContext } : {}),
     unreadCount,
     action: params.action,
@@ -659,6 +661,7 @@ export async function createBatch(
     eventBus.emit(`notification:${recipientType}:${recipientUuid}`, {
       type: "new_notification",
       notificationUuid: match?.uuid,
+      ...(wake?.turn ? { sessionId: wake.sessionId } : {}),
       ...(wakeRecoveryOnly ? { wakeRecoveryOnly: true } : {}),
       ...(wake?.turn && wake.wakeContext ? { turnUuid: wake.turn.uuid, wakeContext: wake.wakeContext } : {}),
       unreadCount,

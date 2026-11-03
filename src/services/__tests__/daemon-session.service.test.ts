@@ -2655,11 +2655,11 @@ describe("advanceTurnForWake", () => {
     // Session resolved under the agent + company + business-key fence.
     expect(mockPrisma.daemonSession.findFirst).toHaveBeenCalledWith({
       where: { agentUuid, companyUuid, sessionId },
-      select: { uuid: true, originConnectionUuid: true },
+      select: { uuid: true, originConnectionUuid: true, sessionId: true },
     });
     // Execution row resolved for the weak link.
     expect(mockPrisma.daemonExecution.findFirst).toHaveBeenCalledWith({
-      where: { companyUuid, connectionUuid, entityType: "task", entityUuid: "task-9" },
+      where: { companyUuid, connectionUuid, entityType: "task", entityUuid: "task-9", sessionId: "" },
       select: { uuid: true },
     });
     // advanceTurn wrote running + a startedAt + the resolved executionUuid.
@@ -2730,7 +2730,7 @@ describe("advanceTurnForWake", () => {
     expect(res).toMatchObject({ ok: true });
     expect(mockPrisma.daemonSession.findFirst).toHaveBeenCalledWith({
       where: { agentUuid, companyUuid, sessionId },
-      select: { uuid: true, originConnectionUuid: true },
+      select: { uuid: true, originConnectionUuid: true, sessionId: true },
     });
     expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
       where: {
@@ -3787,5 +3787,30 @@ describe("createResumeTurn", () => {
     expect(view.uuid).toBe("turn-new");
     const changed = mockEventBus.emit.mock.calls.map(([, p]) => p).filter((p) => p?.trigger === "turn_status_changed");
     expect(changed.map((p) => [p.turn.uuid, p.turn.status])).toEqual([["turn-old", "merged"]]);
+  });
+});
+
+
+describe("scoped control session resolution", () => {
+  it("resolves only the exact owned anchor, not same-entity sibling sessions", async () => {
+    const sessionId = "review:task:T";
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ sessionId });
+    expect(await resolveControlSessionId({ companyUuid, agentUuid, connectionUuid, entityUuid: "T", sessionId }))
+      .toEqual({ sessionId, ambiguous: false });
+    expect(mockPrisma.daemonSession.findFirst).toHaveBeenCalledWith({ where: { companyUuid, agentUuid, sessionId }, select: { sessionId: true } });
+    expect(mockPrisma.daemonSession.findMany).not.toHaveBeenCalled();
+  });
+  it("does not fall back to a sibling when the requested anchor is missing", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(null);
+    expect(await resolveControlSessionId({ companyUuid, agentUuid, connectionUuid, entityUuid: "T", sessionId: "review:task:T" }))
+      .toEqual({ sessionId: null, ambiguous: false });
+    expect(mockPrisma.daemonSession.findMany).not.toHaveBeenCalled();
+  });
+  it("stores a scoped title only on session creation", async () => {
+    mockPrisma.daemonSession.upsert.mockResolvedValue(sessionRow());
+    await resolveOrCreateSession({ companyUuid, agentUuid, originConnectionUuid: connectionUuid, sessionId: "task:T", title: "Task: Build feature" });
+    const call = mockPrisma.daemonSession.upsert.mock.calls[0][0];
+    expect(call.create.title).toBe("Task: Build feature");
+    expect(call.update.title).toBeUndefined();
   });
 });

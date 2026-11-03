@@ -779,6 +779,8 @@ model DaemonExecution {
   //   surfaces on the child conversation, not its parent. Null when the wake has
   //   no idea ancestor. Weak ref, no DB FK.
   directIdeaUuid String?
+  // Purpose-scoped anchor; empty for Idea, ad-hoc and legacy executions.
+  sessionId      String @default("")
 
   // running | queued | ended | interrupted
   //   `interrupted` is a STICKY status: when a wake's subprocess is stopped (by a
@@ -801,9 +803,9 @@ model DaemonExecution {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // A resource appears at most once per connection: re-dispatch updates the
-  // existing row (queued -> running -> ended) rather than inserting a duplicate.
-  @@unique([connectionUuid, entityType, entityUuid])
+  // A resource appears at most once per connection/session lane: re-dispatch
+  // updates that lane without overwriting a same-entity task or review sibling.
+  @@unique([connectionUuid, entityType, entityUuid, sessionId])
   @@index([connectionUuid, status])
   @@index([companyUuid, agentUuid])
 }

@@ -43,6 +43,8 @@ type SessionTransactionClient = Omit<typeof prisma, "$connect" | "$disconnect" |
 // Only the exact, origin-fenced wake reporter may bypass the pending-turn FSM.
 const OPERATION_LAUNCH_ABORT = Symbol("operationLaunchAbort");
 import { eventBus } from "@/lib/event-bus";
+import { parseSessionAnchor } from "@/lib/session-anchor";
+
 // Re-export the canonical DIRECT-idea primitive so the notification chokepoint and the
 // waker-session anchor resolve a session's idea anchor from ONE source (no ancestry climb).
 export { resolveDirectIdeaUuid } from "@/services/lineage.service";
@@ -358,6 +360,11 @@ function toTokenUsageView(raw: unknown): TokenUsage | null {
 
 // ===== Helpers =====
 
+function executionSessionId(sessionId: string): string {
+  const anchor = parseSessionAnchor(sessionId);
+  return anchor.kind === "task" || anchor.kind === "review" ? sessionId : "";
+}
+
 const CURRENT_BACKEND_INCLUDE = {
   turns: {
     where: { AND: [NON_OPERATION_TURN, { backendSessionId: { not: null } }] },
@@ -502,6 +509,7 @@ export async function resolveOrCreateSession(params: {
   directIdeaUuid?: string | null;
   originConnectionUuid: string;
   runtimeCwd?: string | null;
+  title?: string;
 }, db: SessionTransactionClient = prisma): Promise<SessionView> {
   const row = await db.daemonSession.upsert({
     where: {
@@ -517,6 +525,7 @@ export async function resolveOrCreateSession(params: {
       directIdeaUuid: params.directIdeaUuid ?? null,
       originConnectionUuid: params.originConnectionUuid,
       runtimeCwd: params.runtimeCwd ?? null,
+      ...(params.title ? { title: params.title } : {}),
       status: "active",
     },
     update: {
@@ -2099,7 +2108,15 @@ export async function resolveControlSessionId(params: {
   agentUuid: string;
   connectionUuid: string;
   entityUuid: string;
+  sessionId?: string;
 }): Promise<{ sessionId: string | null; ambiguous: boolean }> {
+  if (params.sessionId) {
+    const session = await prisma.daemonSession.findFirst({
+      where: { companyUuid: params.companyUuid, agentUuid: params.agentUuid, sessionId: params.sessionId },
+      select: { sessionId: true },
+    });
+    return { sessionId: session?.sessionId ?? null, ambiguous: false };
+  }
   const candidates = await prisma.daemonSession.findMany({
     where: {
       companyUuid: params.companyUuid,
@@ -2167,9 +2184,11 @@ export async function advanceTurnForWake(params: {
     where: {
       agentUuid: params.agentUuid,
       companyUuid: params.companyUuid,
-      sessionId: params.sessionId,
+      // An old daemon reports the Idea key for an anchored wake; its exact
+      // turn UUID still identifies the owned session without crossing tenants.
+      ...(params.turnUuid ? { turns: { some: { uuid: params.turnUuid } } } : { sessionId: params.sessionId }),
     },
-    select: { uuid: true, originConnectionUuid: true },
+    select: { uuid: true, originConnectionUuid: true, sessionId: true },
   });
   if (!session) return { ok: false, reason: "not_found" }; // non-disclosure 404
 
@@ -2318,6 +2337,7 @@ export async function advanceTurnForWake(params: {
         connectionUuid: params.connectionUuid,
         entityType: params.entityType,
         entityUuid: params.entityUuid,
+        sessionId: executionSessionId(session.sessionId ?? params.sessionId),
       },
       select: { uuid: true },
     });
@@ -2536,7 +2556,7 @@ async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]
       const sessions = await tx.$queryRaw<Array<{ uuid: string }>>`
         SELECT "uuid" FROM "DaemonSession"
         WHERE "companyUuid" = ${params.companyUuid} AND "agentUuid" = ${params.agentUuid}
-          AND "sessionId" = ${params.sessionId}
+          AND "uuid" IN (SELECT "sessionUuid" FROM "DaemonSessionTurn" WHERE "uuid" = ${params.turnUuid})
         FOR UPDATE`;
       if (!sessions.length) return { ok: false, reason: "not_found" };
       const session = await tx.daemonSession.findFirst({
@@ -2604,7 +2624,11 @@ async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]
       const wakeError = params.status === "interrupted" &&
         (params.interruptedReason === "crash" || params.interruptedReason === "invalid_path") ? normalizeWakeError(params.wakeError) : null;
       const execution = !terminal && params.entityType && params.entityUuid ? await tx.daemonExecution.findFirst({
-        where: { companyUuid: params.companyUuid, connectionUuid: params.connectionUuid, entityType: params.entityType, entityUuid: params.entityUuid },
+        where: {
+          companyUuid: params.companyUuid, connectionUuid: params.connectionUuid,
+          entityType: params.entityType, entityUuid: params.entityUuid,
+          sessionId: executionSessionId(session.sessionId),
+        },
         select: { uuid: true },
       }) : null;
       const data: Prisma.DaemonSessionTurnUpdateManyMutationInput = terminal ? {

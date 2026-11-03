@@ -94,6 +94,22 @@ describe("durable wake recovery against isolated in-memory PostgreSQL", () => {
     return replacement.uuid;
   };
 
+  it("admits and settles an anchored wake reported with the old Idea key, binding only its scoped execution", async () => {
+    const anchor = `review:idea:${ideaUuid}`;
+    await db.daemonSession.update({ where: { uuid: sessionUuid }, data: { sessionId: anchor } });
+    const base = { companyUuid, agentUuid, connectionUuid, entityType: "idea", entityUuid: ideaUuid, directIdeaUuid: ideaUuid, status: "running" };
+    const legacy = await db.daemonExecution.create({ data: base });
+    const scoped = await db.daemonExecution.create({ data: { ...base, sessionId: anchor } });
+    expect(legacy.sessionId).toBe("");
+    expect(scoped.uuid).not.toBe(legacy.uuid);
+    const params = { ...request(), entityType: "idea", entityUuid: ideaUuid };
+    expect(await service.advanceTurnForWake(params)).toMatchObject({ ok: true });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: params.turnUuid } }))
+      .toMatchObject({ executionUuid: scoped.uuid, status: "running" });
+    expect(await service.advanceTurnForWake({ ...params, status: "ended" })).toMatchObject({ ok: true });
+    expect(await db.daemonSessionTurn.findUnique({ where: { uuid: params.turnUuid } })).toMatchObject({ status: "ended" });
+  });
+
   it("migrates historical rows to null without guessing source or admission", async () => {
     expect(await db.daemonSessionTurn.findUnique({ where: { uuid: legacyUuid } })).toMatchObject({
       status: "pending", wakeContext: null, admissionUuid: null, admissionTurnUuids: null, admissionConnectionUuid: null,

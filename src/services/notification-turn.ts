@@ -51,6 +51,7 @@
 // daemon, the action is not wake-triggering, or creation failed and was logged).
 
 import logger from "@/lib/logger";
+import { formatSessionAnchor, parseSessionAnchor } from "@/lib/session-anchor";
 import { prisma } from "@/lib/prisma";
 import { parseWakeContext, type WakeContext } from "@/services/daemon-wake-context";
 import { canActorAccessProject } from "@/services/project-access.service";
@@ -222,6 +223,61 @@ const RESIDUAL_CWD_UPGRADE_TRIGGERS = new Set<TurnTrigger>([
  * Resolve the trigger for a notification action, or null when the action is not
  * wake-triggering (so the caller skips turn creation entirely).
  */
+async function logicalAssignee(
+  companyUuid: string,
+  assignee: { assigneeType: string | null; assigneeUuid: string | null } | null,
+): Promise<string | null> {
+  if (assignee?.assigneeType === "agent") return assignee.assigneeUuid;
+  if (assignee?.assigneeType === "agent_instance" && assignee.assigneeUuid) {
+    return (await resolveInstancePlace(companyUuid, assignee.assigneeUuid))?.agentUuid ?? null;
+  }
+  return null;
+}
+
+/** First-match purpose routing; connection selection remains independent of the anchor. */
+export async function resolveWakeSessionAnchor(
+  ctx: WakeNotificationContext,
+  directIdeaUuid: string | null,
+): Promise<string> {
+  if (!directIdeaUuid) return ctx.entityUuid;
+  if (["human_instruction", "idea_creation_requested", "research_requested"].includes(ctx.action)) {
+    return directIdeaUuid;
+  }
+  if (ctx.sessionAnchorHint) {
+    if (ctx.sessionAnchorHint === "idea") return directIdeaUuid;
+    const hint = parseSessionAnchor(ctx.sessionAnchorHint, directIdeaUuid);
+    if (
+      (hint.kind === "task" || hint.kind === "review") &&
+      await resolveDirectIdeaUuid(ctx.companyUuid, hint.entityType, hint.entityUuid) === directIdeaUuid
+    ) {
+      return hint.sessionId;
+    }
+    // A bad hint falls straight to the Idea, never through task ownership.
+    turnLogger.warn(
+      { sessionAnchorHint: ctx.sessionAnchorHint, directIdeaUuid, companyUuid: ctx.companyUuid },
+      "Invalid wake session anchor hint; using Idea session",
+    );
+    return directIdeaUuid;
+  }
+  if (ctx.entityType === "task") {
+    const task = await prisma.task.findFirst({
+      where: { companyUuid: ctx.companyUuid, uuid: ctx.entityUuid },
+      select: { assigneeType: true, assigneeUuid: true },
+    });
+    if (await logicalAssignee(ctx.companyUuid, task) === ctx.recipientUuid) {
+      const idea = await prisma.idea.findFirst({
+        where: { companyUuid: ctx.companyUuid, uuid: directIdeaUuid },
+        select: { assigneeType: true, assigneeUuid: true },
+      });
+      const orchestrator = await logicalAssignee(ctx.companyUuid, idea);
+      if (orchestrator !== ctx.recipientUuid || ["task_assigned", "task_reopened"].includes(ctx.action)) {
+        return formatSessionAnchor("task", "task", ctx.entityUuid);
+      }
+    }
+  }
+  return directIdeaUuid;
+}
+
 export function triggerForAction(action: string): TurnTrigger | null {
   return NOTIFICATION_ACTION_TO_TURN_TRIGGER[action] ?? null;
 }
@@ -233,6 +289,7 @@ export function triggerForAction(action: string): TurnTrigger | null {
  */
 export interface WakeNotificationContext {
   wakeContext?: WakeContext | null;
+  sessionAnchorHint?: string | null;
   companyUuid: string;
   recipientType: string;
   recipientUuid: string;
@@ -726,6 +783,7 @@ export async function resolveIdeaSessionOriginTarget(
  * a momentarily-no-online un-pinned wake must stay byte-identical to before).
  */
 export interface WakeTurnResult {
+  sessionId?: string;
   wakeContext?: WakeContext | null;
   turn: TurnView | null;
   targetConnectionUuid: string | null;
@@ -1016,7 +1074,24 @@ export async function createTurnAndResolveTarget(
     // offline / none) never stamps a runtime cwd (broadcast → the daemon uses each connection's
     // own bound cwd), so it stays null there.
     const runtimeCwd = pin?.runtimeCwd ?? null;
-    const directedRuntimeCwd = directed ? runtimeCwd ?? origin.cwd ?? null : runtimeCwd;
+    const sessionId = await resolveWakeSessionAnchor(ctx, directIdeaUuid);
+    const anchor = parseSessionAnchor(sessionId, directIdeaUuid);
+    const scoped = anchor.kind === "task" || anchor.kind === "review";
+    const ideaSession = scoped && !pin && directIdeaUuid
+      ? await prisma.daemonSession.findFirst({
+          where: { companyUuid: ctx.companyUuid, agentUuid: ctx.recipientUuid, sessionId: directIdeaUuid },
+          select: { originConnectionUuid: true, runtimeCwd: true },
+        }) : null;
+    const inheritedCwd = ideaSession?.originConnectionUuid === origin.uuid ? ideaSession.runtimeCwd : null;
+    const directedRuntimeCwd = inheritedCwd ?? (directed ? runtimeCwd ?? origin.cwd ?? null : runtimeCwd);
+    let title: string | undefined;
+    if (anchor.kind === "task" || anchor.kind === "review") {
+      const where = { companyUuid: ctx.companyUuid, uuid: anchor.entityUuid };
+      const target = anchor.entityType === "task" ? await prisma.task.findFirst({ where, select: { title: true } })
+        : anchor.entityType === "proposal" ? await prisma.proposal.findFirst({ where, select: { title: true } })
+        : await prisma.idea.findFirst({ where, select: { title: true } });
+      if (target?.title) title = `${anchor.kind === "task" ? "Task" : "Review"}: ${target.title}`.slice(0, 200);
+    }
 
     // (5) Session business key — ONE conversation per idea per agent (fix idea 2ddd1d11:
     // "switching daemon cwd / agent splits the chat into two threads → can't interrupt").
@@ -1043,7 +1118,7 @@ export async function createTurnAndResolveTarget(
     // Re-pointing is safe for `claude --resume`: the daemon probes the transcript per-cwd,
     // so a session re-pointed to a new cwd simply starts a fresh session there rather than
     // failing to resume; the prior turns remain as read-only history on the same row.
-    const sessionId = directIdeaUuid ?? ctx.entityUuid;
+    // Purpose-based business key; Idea origin selection above stays Idea-keyed.
     // Keep the originating entity key when there is no idea ancestor. Delivery
     // resolves this key to its current project; null lineage is not an access exemption.
     const sessionDirectIdeaUuid: string | null = directIdeaUuid;
@@ -1083,6 +1158,7 @@ export async function createTurnAndResolveTarget(
       agentUuid: ctx.recipientUuid,
       sessionId,
       directIdeaUuid: sessionDirectIdeaUuid,
+      ...(title ? { title } : {}),
       originConnectionUuid: origin.uuid,
       ...(directedRuntimeCwd ? { runtimeCwd: directedRuntimeCwd } : {}),
     });
@@ -1135,6 +1211,7 @@ export async function createTurnAndResolveTarget(
       });
       return {
         turn,
+        sessionId,
         wakeContext,
         targetConnectionUuid: origin.uuid,
         runtimeCwd: effectiveRuntimeCwd,
@@ -1142,7 +1219,7 @@ export async function createTurnAndResolveTarget(
       };
     }
 
-    return { turn, wakeContext, targetConnectionUuid: null, runtimeCwd: null, suppressWake: false };
+    return { turn, sessionId, wakeContext, targetConnectionUuid: null, runtimeCwd: null, suppressWake: false };
   } catch (error) {
     // VISIBLE failure (repo "no silent errors"): log with full context but DO NOT
     // rethrow — the notification was already created and must not be aborted by a

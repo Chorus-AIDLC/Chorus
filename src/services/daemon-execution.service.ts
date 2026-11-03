@@ -88,6 +88,7 @@ export type ExecutionEntityType = (typeof EXECUTION_ENTITY_TYPES)[number];
 export interface SnapshotExecution {
   entityType: ExecutionEntityType;
   entityUuid: string;
+  sessionId?: string;
   rootIdeaUuid?: string | null;
   // The DIRECT idea (the entity's directly-attached idea — the daemon's session
   // anchor). Equals rootIdeaUuid for a top-level idea; for a derived child it is
@@ -109,6 +110,7 @@ export interface ExecutionView {
   connectionUuid: string;
   entityType: string; // task | idea | proposal | document | daemon_session
   entityUuid: string;
+  sessionId?: string;
   rootIdeaUuid: string | null;
   // The DIRECT idea (the entity's directly-attached idea — the daemon session
   // anchor). Null when the wake has no idea ancestor or when reported by an older
@@ -160,6 +162,7 @@ interface DaemonExecutionRow {
   connectionUuid: string;
   entityType: string;
   entityUuid: string;
+  sessionId?: string;
   rootIdeaUuid: string | null;
   directIdeaUuid: string | null;
   status: string;
@@ -202,6 +205,7 @@ function toExecutionView(
     connectionUuid: row.connectionUuid,
     entityType: row.entityType,
     entityUuid: row.entityUuid,
+    sessionId: row.sessionId ?? "",
     rootIdeaUuid: row.rootIdeaUuid,
     directIdeaUuid: row.directIdeaUuid,
     status: row.status,
@@ -410,17 +414,18 @@ export async function reconcileSnapshot(
   //    terminal before (and independent of) the upserts below. A row is "kept"
   //    only when BOTH its type and uuid match a reported entry — so a uuid that
   //    appears under a different type is not accidentally preserved.
-  const keptKeys = new Set(executions.map((e) => entityKey(e.entityType, e.entityUuid)));
+  const executionKey = (e: { entityType: string; entityUuid: string; sessionId?: string }) => JSON.stringify([e.entityType, e.entityUuid, e.sessionId ?? ""]);
+  const keptKeys = new Set(executions.map(executionKey));
   const activeRows = await prisma.daemonExecution.findMany({
     where: {
       companyUuid,
       connectionUuid,
       status: { in: [...ACTIVE_EXECUTION_STATUSES] },
     },
-    select: { id: true, entityType: true, entityUuid: true },
+    select: { id: true, entityType: true, entityUuid: true, sessionId: true },
   });
   const endIds = activeRows
-    .filter((r) => !keptKeys.has(entityKey(r.entityType, r.entityUuid)))
+    .filter((r) => !keptKeys.has(executionKey(r)))
     .map((r) => r.id);
   let endedCount = 0;
   if (endIds.length > 0) {
@@ -438,10 +443,11 @@ export async function reconcileSnapshot(
   for (const exec of executions) {
     await prisma.daemonExecution.upsert({
       where: {
-        connectionUuid_entityType_entityUuid: {
+        connectionUuid_entityType_entityUuid_sessionId: {
           connectionUuid,
           entityType: exec.entityType,
           entityUuid: exec.entityUuid,
+          sessionId: exec.sessionId ?? "",
         },
       },
       create: {
@@ -450,6 +456,7 @@ export async function reconcileSnapshot(
         connectionUuid,
         entityType: exec.entityType,
         entityUuid: exec.entityUuid,
+        sessionId: exec.sessionId ?? "",
         rootIdeaUuid: exec.rootIdeaUuid ?? null,
         directIdeaUuid: exec.directIdeaUuid ?? null,
         status: exec.status,
@@ -625,12 +632,14 @@ export async function hasRunningExecution(
   connectionUuid: string,
   entityType: string,
   entityUuid: string,
+  sessionId?: string,
 ): Promise<boolean> {
   const row = await prisma.daemonExecution.findFirst({
     where: {
       companyUuid,
       connectionUuid,
       status: "running",
+      ...(sessionId !== undefined ? { sessionId } : {}),
       // An `idea:A` control key must also match a wake on a CHILD resource of idea A
       // (`task:T` / `proposal:P` / `document:D` with `directIdeaUuid = A`): those run on
       // session A (the daemon anchors `sessionId = directIdeaUuid`), so such a row IS a
@@ -954,9 +963,10 @@ export async function reportExecutionInterrupt(
   entityType: string,
   entityUuid: string,
   reason: InterruptReason,
+  sessionId = "",
 ): Promise<boolean> {
   const result = await prisma.daemonExecution.updateMany({
-    where: { companyUuid, connectionUuid, entityType, entityUuid },
+    where: { companyUuid, connectionUuid, entityType, entityUuid, sessionId },
     data: { status: INTERRUPTED_EXECUTION_STATUS, interruptedReason: reason },
   });
   return result.count > 0;
@@ -985,9 +995,10 @@ export async function resumeExecution(
   connectionUuid: string,
   entityType: string,
   entityUuid: string,
+  sessionId = "",
 ): Promise<ResumeExecutionResult> {
   const row = await prisma.daemonExecution.findFirst({
-    where: { companyUuid, connectionUuid, entityType, entityUuid },
+    where: { companyUuid, connectionUuid, entityType, entityUuid, sessionId },
     select: { id: true, status: true, interruptedReason: true },
   });
   if (!row) return { ok: false, reason: "not_found" };
@@ -1022,9 +1033,10 @@ export async function restoreInterruptedExecution(
   entityType: string,
   entityUuid: string,
   interruptedReason: "user" | "crash",
+  sessionId = "",
 ): Promise<void> {
   await prisma.daemonExecution.updateMany({
-    where: { companyUuid, connectionUuid, entityType, entityUuid, status: "running" },
+    where: { companyUuid, connectionUuid, entityType, entityUuid, sessionId, status: "running" },
     data: { status: INTERRUPTED_EXECUTION_STATUS, interruptedReason },
   });
 }

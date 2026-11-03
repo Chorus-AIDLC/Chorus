@@ -49,6 +49,7 @@ import { filterExecutionViewsByAccess } from "@/services/project-access.service"
 const snapshotEntrySchema = z.object({
   entityType: z.enum([...EXECUTION_ENTITY_TYPES]),
   entityUuid: z.string().min(1),
+  sessionId: z.string().optional(),
   rootIdeaUuid: z.string().min(1).nullish(),
   // The DIRECT idea (the entity's directly-attached idea — the daemon session
   // anchor). Optional + nullable: a wake with no idea ancestor has none, and an
