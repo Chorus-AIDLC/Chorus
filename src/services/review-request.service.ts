@@ -10,6 +10,8 @@ import { buildMentionMarker } from "@/lib/mention-format";
 import * as commentService from "@/services/comment.service";
 import * as activityService from "@/services/activity.service";
 import { resolveDirectIdeaUuid } from "@/services/lineage.service";
+import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
+import { getIdeaTeamProductDelegate } from "@/services/idea-team.service";
 import { filterRecipientsByProjectAccess } from "@/services/project-access.service";
 
 export type ReviewTargetType = "task" | "proposal" | "idea";
@@ -27,13 +29,6 @@ export interface RequestReviewParams {
 export class ReviewRequestError extends Error {}
 
 const KIND: Record<ReviewTargetType, string> = { task: "task", proposal: "proposal", idea: "code" };
-
-async function logicalAgent(companyUuid: string, type: string | null, uuid: string | null): Promise<string | null> {
-  if (!type || !uuid) return null;
-  if (type === "agent") return uuid;
-  if (type !== "agent_instance") return null;
-  return (await prisma.agentInstance.findFirst({ where: { uuid, companyUuid }, select: { agentUuid: true } }))?.agentUuid ?? null;
-}
 
 async function agentName(companyUuid: string, uuid: string | null): Promise<string> {
   if (!uuid) return "unknown";
@@ -68,13 +63,22 @@ export async function requestReview(params: RequestReviewParams) {
   const allowed = await filterRecipientsByProjectAccess(companyUuid, target.projectUuid, [{ type: "agent", uuid: reviewer.uuid }]);
   if (allowed.length === 0) throw new ReviewRequestError(`reviewer ${reviewer.name} has no access to this project`);
 
+  // Recipients come from authoritative assignments; unresolved ones are a repair
+  // problem for the caller, never a fabricated identity.
   const idea = await prisma.idea.findFirst({ where: { uuid: directIdeaUuid, companyUuid }, select: { assigneeType: true, assigneeUuid: true } });
-  const orchestratorUuid = (await logicalAgent(companyUuid, idea?.assigneeType ?? null, idea?.assigneeUuid ?? null)) ?? actorUuid;
-  const failUuid = targetType === "task"
-    ? (await logicalAgent(companyUuid, target.assigneeType ?? null, target.assigneeUuid ?? null)) ?? orchestratorUuid
-    : orchestratorUuid;
-  const failRole = targetType === "task" ? "the task developer" : targetType === "proposal" ? "the product delegate, else the orchestrator" : "the orchestrator";
-
+  const orchestratorUuid = await resolveAssigneeAgentUuid(companyUuid, idea?.assigneeType ?? null, idea?.assigneeUuid ?? null);
+  if (!orchestratorUuid) throw new ReviewRequestError(`Idea ${directIdeaUuid} has no agent orchestrator to receive the verdict; assign the Idea first`);
+  let failUuid = orchestratorUuid;
+  let failRole = "the orchestrator";
+  if (targetType === "task") {
+    const developer = await resolveAssigneeAgentUuid(companyUuid, target.assigneeType ?? null, target.assigneeUuid ?? null);
+    if (!developer) throw new ReviewRequestError(`task ${targetUuid} has no agent developer to receive a FAIL; assign the task first`);
+    failUuid = developer;
+    failRole = "the task developer";
+  } else if (targetType === "proposal") {
+    const delegate = await getIdeaTeamProductDelegate(companyUuid, directIdeaUuid);
+    if (delegate) { failUuid = delegate; failRole = "the product delegate"; }
+  }
   const kind = KIND[targetType];
   const content = [
     `Team review request — ${kind}, round ${round}`,
@@ -91,6 +95,9 @@ export async function requestReview(params: RequestReviewParams) {
     companyUuid, targetType, targetUuid, content, authorType: "agent", authorUuid: actorUuid,
     reviewAnchor: { agentUuid: reviewer.uuid, sessionAnchorHint },
   });
+  if (!comment.reviewDelivered) {
+    throw new ReviewRequestError(`request comment ${comment.uuid} was posted but reviewer ${reviewer.name} could not be notified; no review was dispatched`);
+  }
   await activityService.createActivity({
     companyUuid, projectUuid: target.projectUuid, targetType, targetUuid,
     actorType: "agent", actorUuid, action: "review_requested",

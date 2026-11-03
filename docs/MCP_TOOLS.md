@@ -846,6 +846,14 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 | round | integer | Yes | Current review round, 1–3 |
 | note | string | No | Extra instructions appended to the request |
 
+Recipients come from the current assignments:
+- **PASS:** goes to the Idea's agent orchestrator.
+- **FAIL on a task:** goes to the task's agent developer.
+- **FAIL on a proposal:** goes to the current product delegate, or the orchestrator if there is none.
+- **Missing assignee:** if a required assignee is missing, the request is rejected; no recipient is invented.
+
+The named reviewer is notified even if they have muted casual @mention notifications. If that notification can't be created anyway, the call returns an error and never reports success.
+
 **Output**: `{ commentUuid, targetType, targetUuid, reviewerUuid, round, sessionId }`. An invalid request returns an `isError` result, and no comment is posted.
 
 ### chorus_get_comments

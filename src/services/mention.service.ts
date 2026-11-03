@@ -360,7 +360,8 @@ export function parseMentions(content: string): MentionRef[] {
  * - Batch creates Mention records
  * - Creates Notification for each valid mention (respecting preferences)
  */
-export async function createMentions(params: CreateMentionsParams): Promise<void> {
+/** Returns the recipient UUIDs whose notification was actually created. */
+export async function createMentions(params: CreateMentionsParams): Promise<string[]> {
   const {
     companyUuid,
     sourceType,
@@ -375,7 +376,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
   } = params;
 
   const mentions = parseMentions(content);
-  if (mentions.length === 0) return;
+  if (mentions.length === 0) return [];
 
   // Filter out self-mentions
   const excludedKeys = new Set(excludeMentions.map((mention) => `${mention.type}:${mention.uuid}`));
@@ -383,7 +384,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     (mention) => !(mention.type === actorType && mention.uuid === actorUuid)
       && !excludedKeys.has(`${mention.type}:${mention.uuid}`)
   );
-  if (filteredMentions.length === 0) return;
+  if (filteredMentions.length === 0) return [];
 
   // Validate that mentioned targets exist in this company
   const existingMentions: MentionRef[] = [];
@@ -395,7 +396,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     }
   }
 
-  if (existingMentions.length === 0) return;
+  if (existingMentions.length === 0) return [];
 
   // Private-project isolation: drop targets without viewer access to the
   // entity's project (users must be members; agents need a member owner). Like
@@ -407,7 +408,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     projectUuid,
     existingMentions,
   );
-  if (validMentions.length === 0) return;
+  if (validMentions.length === 0) return [];
 
   // Batch create Mention records
   await prisma.mention.createMany({
@@ -463,7 +464,10 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
       mention.type,
       mention.uuid
     );
-    if (!prefs.mentioned) continue;
+    // An explicit structured review dispatch is delivered to its named reviewer even
+    // when casual @mention notifications are muted; ordinary mentions respect prefs.
+    const isNamedReviewer = mention.type === "agent" && reviewAnchor?.agentUuid === mention.uuid;
+    if (!prefs.mentioned && !isNamedReviewer) continue;
 
     const message = `${actorName} mentioned you: "${snippet}"`;
     const hasExplicitPin =
@@ -537,9 +541,9 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     });
   }
 
-  if (notifications.length > 0) {
-    await notificationService.createBatch(notifications);
-  }
+  if (notifications.length === 0) return [];
+  const created = await notificationService.createBatch(notifications);
+  return (created ?? []).map((notification) => notification.recipientUuid);
 }
 
 const DEFAULT_EMPTY_QUERY_LIMIT = 5;

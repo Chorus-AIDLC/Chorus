@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockPrisma, mockCreateComment, mockCreateActivity, mockDirectIdea, mockFilter } = vi.hoisted(() => ({
+const { mockPrisma, mockCreateComment, mockCreateActivity, mockDirectIdea, mockFilter, mockDelegate } = vi.hoisted(() => ({
   mockPrisma: {
     task: { findFirst: vi.fn() },
     proposal: { findFirst: vi.fn() },
@@ -12,6 +12,7 @@ const { mockPrisma, mockCreateComment, mockCreateActivity, mockDirectIdea, mockF
   mockCreateActivity: vi.fn(),
   mockDirectIdea: vi.fn(),
   mockFilter: vi.fn(),
+  mockDelegate: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -19,6 +20,7 @@ vi.mock("@/services/comment.service", () => ({ createComment: mockCreateComment 
 vi.mock("@/services/activity.service", () => ({ createActivity: mockCreateActivity }));
 vi.mock("@/services/lineage.service", () => ({ resolveDirectIdeaUuid: mockDirectIdea }));
 vi.mock("@/services/project-access.service", () => ({ filterRecipientsByProjectAccess: mockFilter }));
+vi.mock("@/services/idea-team.service", () => ({ getIdeaTeamProductDelegate: mockDelegate }));
 
 import { requestReview, ReviewRequestError } from "@/services/review-request.service";
 
@@ -28,7 +30,8 @@ const IDEA = "i0000000-0000-0000-0000-000000000000";
 const TASK = "t0000000-0000-0000-0000-000000000000";
 const ORCH = "o0000000-0000-0000-0000-000000000000";
 const DEV = "d0000000-0000-0000-0000-000000000000";
-const names: Record<string, string> = { [ORCH]: "Clay", [DEV]: "Leo" };
+const PRODUCT = "a0000000-0000-0000-0000-000000000000";
+const names: Record<string, string> = { [ORCH]: "Clay", [DEV]: "Leo", [PRODUCT]: "Pam" };
 
 const base = { companyUuid: COMPANY, actorUuid: ORCH, targetType: "task" as const, targetUuid: TASK, reviewerUuid: DEV, round: 1 };
 
@@ -41,7 +44,8 @@ beforeEach(() => {
     names[where.uuid] ? { uuid: where.uuid, name: names[where.uuid] } : null);
   mockDirectIdea.mockResolvedValue(IDEA);
   mockFilter.mockImplementation(async (_c: string, _p: string, r: unknown[]) => r);
-  mockCreateComment.mockResolvedValue({ uuid: "comment-1" });
+  mockCreateComment.mockResolvedValue({ uuid: "comment-1", reviewDelivered: true });
+  mockDelegate.mockResolvedValue(null);
 });
 
 describe("requestReview", () => {
@@ -93,5 +97,30 @@ describe("requestReview", () => {
     mockFilter.mockResolvedValueOnce([]);
     await expect(requestReview(base)).rejects.toThrow("no access");
     expect(mockCreateComment).not.toHaveBeenCalled();
+  });
+
+  it("sends a delegated proposal FAIL to the current product delegate", async () => {
+    mockDelegate.mockResolvedValue(PRODUCT);
+    await requestReview({ ...base, targetType: "proposal", targetUuid: "prop-1" });
+    expect(mockCreateComment.mock.calls[0][0].content).toContain(`FAIL: Pam (agent ${PRODUCT}), the product delegate`);
+  });
+
+  it("sends an undelegated proposal FAIL to the orchestrator", async () => {
+    await requestReview({ ...base, targetType: "proposal", targetUuid: "prop-1" });
+    expect(mockCreateComment.mock.calls[0][0].content).toContain(`FAIL: Clay (agent ${ORCH}), the orchestrator`);
+  });
+
+  it("rejects unresolved recipients instead of inventing them", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValueOnce({ projectUuid: PROJECT, title: "I1", assigneeType: null, assigneeUuid: null });
+    await expect(requestReview(base)).rejects.toThrow("no agent orchestrator");
+    mockPrisma.task.findFirst.mockResolvedValueOnce({ projectUuid: PROJECT, title: "T1", assigneeType: null, assigneeUuid: null });
+    await expect(requestReview(base)).rejects.toThrow("no agent developer");
+    expect(mockCreateComment).not.toHaveBeenCalled();
+  });
+
+  it("never reports success when the reviewer was not notified", async () => {
+    mockCreateComment.mockResolvedValue({ uuid: "comment-2", reviewDelivered: false });
+    await expect(requestReview(base)).rejects.toThrow("could not be notified");
+    expect(mockCreateActivity).not.toHaveBeenCalled();
   });
 });

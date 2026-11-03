@@ -357,3 +357,16 @@ it("applies a structured review anchor only to the named reviewer", async () => 
   expect(batch.find((p) => p.recipientUuid === OTHER_AGENT_UUID)).not.toHaveProperty("sessionAnchorHint");
   expect(mockPrisma.mention.createMany.mock.calls[0][0].data[0]).not.toHaveProperty("sessionAnchorHint");
 });
+
+it("delivers a structured review to its reviewer even with casual mentions muted, and reports who was notified", async () => {
+  mockPrisma.comment.findUnique.mockResolvedValue({ targetType: "task", targetUuid: SOURCE_UUID });
+  mockGetPreferences.mockResolvedValue({ mentioned: false });
+  mockCreateBatch.mockImplementation(async (rows: Record<string, unknown>[]) => rows.map((row) => ({ recipientUuid: row.recipientUuid })));
+  const notified = await createMentions({ companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, sourceType: "comment", sourceUuid: SOURCE_UUID,
+    actorType: "agent", actorUuid: ACTOR_UUID, entityTitle: "Review target",
+    content: `Reviewer: ${buildMentionMarker("DevBot", "agent", AGENT_UUID)} cc ${buildMentionMarker("Other", "agent", OTHER_AGENT_UUID)}`,
+    reviewAnchor: { agentUuid: AGENT_UUID, sessionAnchorHint: `review:task:${SOURCE_UUID}` },
+  });
+  expect(notified).toEqual([AGENT_UUID]);
+  mockCreateBatch.mockResolvedValue([]);
+});
