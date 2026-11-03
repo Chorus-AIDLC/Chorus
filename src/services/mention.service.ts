@@ -360,8 +360,19 @@ export function parseMentions(content: string): MentionRef[] {
  * - Batch creates Mention records
  * - Creates Notification for each valid mention (respecting preferences)
  */
-/** Returns the recipient UUIDs whose notification was actually created. */
-export async function createMentions(params: CreateMentionsParams): Promise<string[]> {
+/** A recipient whose notification was created, with its queued wake turn when confirmed. */
+export interface MentionDelivery {
+  recipientUuid: string;
+  turnUuid: string | null;
+  sessionId: string | null;
+}
+
+/**
+ * Returns the recipients whose notification was actually created. Wake turns are
+ * reported only for structured review dispatch (reviewAnchor); ordinary mentions keep
+ * the plain fault-tolerant createBatch path and report null turns.
+ */
+export async function createMentions(params: CreateMentionsParams): Promise<MentionDelivery[]> {
   const {
     companyUuid,
     sourceType,
@@ -542,8 +553,14 @@ export async function createMentions(params: CreateMentionsParams): Promise<stri
   }
 
   if (notifications.length === 0) return [];
+  if (reviewAnchor) {
+    const delivered = await notificationService.createBatchWithTurns(notifications);
+    return delivered.map((entry) => ({
+      recipientUuid: entry.notification.recipientUuid, turnUuid: entry.turnUuid, sessionId: entry.sessionId,
+    }));
+  }
   const created = await notificationService.createBatch(notifications);
-  return (created ?? []).map((notification) => notification.recipientUuid);
+  return (created ?? []).map((notification) => ({ recipientUuid: notification.recipientUuid, turnUuid: null, sessionId: null }));
 }
 
 const DEFAULT_EMPTY_QUERY_LIMIT = 5;

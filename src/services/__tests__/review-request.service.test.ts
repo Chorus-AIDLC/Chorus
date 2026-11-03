@@ -44,7 +44,8 @@ beforeEach(() => {
     names[where.uuid] ? { uuid: where.uuid, name: names[where.uuid] } : null);
   mockDirectIdea.mockResolvedValue(IDEA);
   mockFilter.mockImplementation(async (_c: string, _p: string, r: unknown[]) => r);
-  mockCreateComment.mockResolvedValue({ uuid: "comment-1", reviewDelivered: true });
+  mockCreateComment.mockImplementation(async (args: { reviewAnchor: { sessionAnchorHint: string } }) =>
+    ({ uuid: "comment-1", reviewDispatch: { turnUuid: "turn-1", sessionId: args.reviewAnchor.sessionAnchorHint } }));
   mockDelegate.mockResolvedValue(null);
 });
 
@@ -119,8 +120,23 @@ describe("requestReview", () => {
   });
 
   it("never reports success when the reviewer was not notified", async () => {
-    mockCreateComment.mockResolvedValue({ uuid: "comment-2", reviewDelivered: false });
+    mockCreateComment.mockResolvedValue({ uuid: "comment-2", reviewDispatch: null });
     await expect(requestReview(base)).rejects.toThrow("could not be notified");
     expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the wake bridge failed (no turn)", { turnUuid: null, sessionId: null }],
+    ["the reviewer is offline / notify-only (no turn)", { turnUuid: null, sessionId: null }],
+    ["the turn landed on another session", { turnUuid: "turn-x", sessionId: `task:${TASK}` }],
+  ])("rejects visibly when %s", async (_label, dispatch) => {
+    mockCreateComment.mockResolvedValue({ uuid: "comment-3", reviewDispatch: dispatch });
+    await expect(requestReview(base)).rejects.toThrow("no review wake was queued");
+    expect(mockCreateActivity).not.toHaveBeenCalled();
+  });
+
+  it("returns the queued review turn on success", async () => {
+    await expect(requestReview(base)).resolves.toMatchObject({ turnUuid: "turn-1", sessionId: `review:task:${TASK}` });
+    expect(mockCreateActivity.mock.calls[0][0].value).toMatchObject({ turnUuid: "turn-1" });
   });
 });
