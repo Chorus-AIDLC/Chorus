@@ -897,6 +897,7 @@
       "delete": "チームを削除",
       "editNamed": "チーム「{name}」を編集",
       "deleteNamed": "チーム「{name}」を削除",
+      "actionsNamed": "チーム「{name}」の操作",
       "editorDescription": "役割ごとにチームを編成します。同じエージェントを複数の役割に割り当てられます。",
       "roleAssignments": "役割の割り当て",
       "optionalRoles": "すべての役割は任意です",

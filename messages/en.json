@@ -897,6 +897,7 @@
       "delete": "Delete team",
       "editNamed": "Edit team {name}",
       "deleteNamed": "Delete team {name}",
+      "actionsNamed": "Actions for team {name}",
       "editorDescription": "Build your team by role. The same agent can contribute in more than one role.",
       "roleAssignments": "Role assignments",
       "optionalRoles": "All roles are optional",

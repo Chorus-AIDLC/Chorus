@@ -897,6 +897,7 @@
       "delete": "删除团队",
       "editNamed": "编辑团队 {name}",
       "deleteNamed": "删除团队 {name}",
+      "actionsNamed": "团队 {name} 的操作",
       "editorDescription": "按职责组建你的团队，同一个 Agent 可以兼任多个角色。",
       "roleAssignments": "角色分工",
       "optionalRoles": "每个角色均可留空",
