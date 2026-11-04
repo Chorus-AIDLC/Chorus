@@ -79,6 +79,7 @@ describe("POST /api/daemon/report-interrupt", () => {
       "task",
       t1,
       "user",
+      "",
     );
     expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
   });
@@ -95,6 +96,7 @@ describe("POST /api/daemon/report-interrupt", () => {
       "idea",
       "idea-1",
       "crash",
+      "",
     );
   });
 
@@ -119,4 +121,11 @@ describe("POST /api/daemon/report-interrupt", () => {
     expect(res.status).toBe(404);
     expect(mockPublishExecutionChange).not.toHaveBeenCalled();
   });
+});
+
+
+it("threads the reported scoped execution identity", async () => {
+  const sessionId = `review:task:${t1}`;
+  expect((await POST(postRequest({ ...validBody, sessionId }), emptyCtx)).status).toBe(200);
+  expect(mockReportExecutionInterrupt).toHaveBeenCalledWith(companyUuid, connectionUuid, "task", t1, "user", sessionId);
 });

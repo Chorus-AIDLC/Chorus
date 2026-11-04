@@ -144,6 +144,10 @@ function matchWhere(store: Store, model: keyof Store["data"], row: Row, where: R
       }
       continue;
     }
+    if (key === "turns" && model === "daemonSession") {
+      if (!store.data.daemonSessionTurn.some((turn) => turn.sessionUuid === row.uuid && matchWhere(store, "daemonSessionTurn", turn, (cond as Row).some as Row))) return false;
+      continue;
+    }
     if (key === "session" && model === "daemonSessionTurn") {
       const session = store.data.daemonSession.find((s) => s.uuid === row.sessionUuid);
       if (!session) return false;
@@ -565,6 +569,7 @@ import {
   assertContinuable,
   canAgentReceiveTurn,
   createPendingTurn,
+  resolveOrCreateSession,
   getPendingTurnsForConnection,
   getWakeRecoveryDelivery,
   transcriptEventName,
@@ -1038,4 +1043,94 @@ describe("integration: reconnect backfill re-derives the unstarted (pending) tur
     const res = await pendingTurnsGET(getReq(`/api/daemon/pending-turns?connectionUuid=conn-not-mine-9999`));
     expect(res.status).toBe(404);
   });
+});
+
+
+describe("purpose-scoped session integration", () => {
+  it("separates development/review, reuses round 2, inherits Idea cwd and transports both paths without persisting hints", async () => {
+    Object.assign(store.data.task[0], { assigneeType: "agent", assigneeUuid: AGENT, title: "Build feature" });
+    await resolveOrCreateSession({ companyUuid: COMPANY, agentUuid: AGENT, sessionId: IDEA,
+      directIdeaUuid: IDEA, originConnectionUuid: ORIGIN_CONN, runtimeCwd: "/work/idea" });
+    const events: Record<string, unknown>[] = [];
+    const channel = `notification:agent:${AGENT}`;
+    const capture = (event: Record<string, unknown>) => events.push(event);
+    eventBus.on(channel, capture);
+    try {
+      const development = await notificationService.createReturningTurn({ ...baseNotif, action: "task_assigned", message: "Task assigned" });
+      await notificationService.createBatch([{ ...baseNotif, action: "mentioned", message: "Review request", sessionAnchorHint: `review:task:${TASK}` }]);
+      await notificationService.createBatch([{ ...baseNotif, action: "mentioned", message: "Review request", sessionAnchorHint: `review:task:${TASK}` }]);
+      expect(store.data.daemonSession.map((row) => row.sessionId)).toEqual([IDEA, `task:${TASK}`, `review:task:${TASK}`]);
+      expect(store.data.daemonSession.slice(1).map((row) => [row.title, row.originConnectionUuid, row.runtimeCwd]))
+        .toEqual([["Task: Build feature", ORIGIN_CONN, "/work/idea"], ["Review: Build feature", ORIGIN_CONN, "/work/idea"]]);
+      expect(store.data.daemonSessionTurn[1].sessionUuid).toBe(store.data.daemonSessionTurn[2].sessionUuid);
+      expect(events.map((event) => event.sessionId)).toEqual([`task:${TASK}`, `review:task:${TASK}`, `review:task:${TASK}`]);
+      expect(store.data.notification.every((row) => !("sessionAnchorHint" in row))).toBe(true);
+      expect(development.turn).not.toBeNull();
+      // A plain comment that merely contains an envelope carries no hint: the developer's
+      // mention routes to its development session, never a review session.
+      await notificationService.createBatch([{ ...baseNotif, action: "mentioned", message: "Team review request — task, round 3" }]);
+      expect(events.at(-1)?.sessionId).toBe(`task:${TASK}`);
+      expect(store.data.daemonSession).toHaveLength(3);
+    } finally { eventBus.off(channel, capture); }
+  });
+
+  it("reports the queued scoped turn per recipient, and none when the wake bridge fails", async () => {
+    Object.assign(store.data.task[0], { assigneeType: "agent", assigneeUuid: AGENT, title: "Build feature" });
+    const hint = `review:task:${TASK}`;
+    const [ok] = await notificationService.createBatchWithTurns([{ ...baseNotif, action: "mentioned", message: "Review request", sessionAnchorHint: hint }]);
+    expect(ok.turnUuid).toEqual(expect.any(String));
+    expect(ok.sessionId).toBe(hint);
+    mockListConnectionsForAgent.mockRejectedValueOnce(new Error("injected connection lookup failure"));
+    const [failed] = await notificationService.createBatchWithTurns([{ ...baseNotif, action: "mentioned", message: "Review request", sessionAnchorHint: hint }]);
+    expect(failed.notification.uuid).toEqual(expect.any(String));
+    expect(failed.turnUuid).toBeNull();
+    expect(failed.sessionId).toBeNull();
+    // Fully offline reviewer: the notification is created but no wake turn is queued.
+    mockListConnectionsForAgent.mockResolvedValueOnce([]);
+    const [offline] = await notificationService.createBatchWithTurns([{ ...baseNotif, action: "mentioned", message: "Review request", sessionAnchorHint: hint }]);
+    expect(offline.notification.uuid).toEqual(expect.any(String));
+    expect(offline.turnUuid).toBeNull();
+  });
+
+  it("settles an anchored turn and accepts its transcript from an old daemon reporting the Idea key", async () => {
+    Object.assign(store.data.task[0], { assigneeType: "agent", assigneeUuid: AGENT, title: "Build feature" });
+    const { turn } = await notificationService.createReturningTurn({ ...baseNotif, action: "task_assigned", message: "Task assigned" });
+    expect(turn).not.toBeNull();
+    // The reported business key is still a fence: an unrelated key with a valid turn
+    // UUID never settles the turn.
+    const fenced = await turnAdvancePOST(postReq("/api/daemon/turn-advance", {
+      connectionUuid: ORIGIN_CONN, sessionId: "unrelated-session-key", turnUuid: turn!.uuid, status: "running",
+    }));
+    expect(fenced.status).toBe(404);
+    expect(store.data.daemonSessionTurn[0].status).toBe("pending");
+    for (const status of ["running", "ended"]) {
+      const response = await turnAdvancePOST(postReq("/api/daemon/turn-advance", {
+        connectionUuid: ORIGIN_CONN, sessionId: IDEA, turnUuid: turn!.uuid, status,
+      }));
+      expect(response.status).toBe(200);
+    }
+    expect(store.data.daemonSessionTurn[0].status).toBe("ended");
+    const response = await transcriptPOST(postReq("/api/daemon/transcript", {
+      connectionUuid: ORIGIN_CONN, turnUuid: turn!.uuid,
+      messages: [{ uuid: "legacy-message", role: "assistant", text: "Done" }],
+    }));
+    expect(response.status).toBe(200);
+    expect(store.data.daemonTranscriptMessage[0].turnUuid).toBe(turn!.uuid);
+    expect(store.data.daemonSession[0].sessionId).toBe(`task:${TASK}`);
+  });
+});
+
+
+it("binds a scoped turn to its own same-entity execution, not its review sibling", async () => {
+  Object.assign(store.data.task[0], { assigneeType: "agent", assigneeUuid: AGENT, title: "Build feature" });
+  const { turn } = await notificationService.createReturningTurn({ ...baseNotif, action: "task_assigned", message: "Task assigned" });
+  store.data.daemonExecution.push(
+    { uuid: "review-execution", companyUuid: COMPANY, connectionUuid: ORIGIN_CONN, entityType: "task", entityUuid: TASK, sessionId: `review:task:${TASK}` },
+    { uuid: "task-execution", companyUuid: COMPANY, connectionUuid: ORIGIN_CONN, entityType: "task", entityUuid: TASK, sessionId: `task:${TASK}` },
+  );
+  const response = await turnAdvancePOST(postReq("/api/daemon/turn-advance", {
+    connectionUuid: ORIGIN_CONN, sessionId: `task:${TASK}`, turnUuid: turn!.uuid, status: "running", entityType: "task", entityUuid: TASK,
+  }));
+  expect(response.status).toBe(200);
+  expect(store.data.daemonSessionTurn[0].executionUuid).toBe("task-execution");
 });

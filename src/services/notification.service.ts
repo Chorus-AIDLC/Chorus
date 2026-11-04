@@ -58,6 +58,7 @@ export interface NotificationCreateParams {
   // (notification-turn.ts resolvePinnedTarget), so it does not need these fields.
   // Both undefined/null → no pin (online-first, exactly as before).
   // `pinnedHost` "" = unknown-host instance; `pinnedCwd` null = unknown-path instance.
+  sessionAnchorHint?: string | null;
   pinnedHost?: string | null;
   pinnedCwd?: string | null;
   temporaryHost?: string | null;
@@ -535,7 +536,7 @@ export async function createReturningTurn(
   // born, so human and autonomous wakes are handled symmetrically. The bridge is
   // failure-isolated (logs + swallows): a turn-creation/ping failure MUST NOT abort or
   // block this already-created notification.
-  const { turn, targetConnectionUuid, runtimeCwd, suppressWake, wakeContext } =
+  const { turn, sessionId, targetConnectionUuid, runtimeCwd, suppressWake, wakeContext } =
     await createTurnAndResolveTarget({ ...params, wakeContext: createWakeContext(notification) });
 
   // Emit SSE event for real-time notification delivery (includes details for toast).
@@ -564,6 +565,7 @@ export async function createReturningTurn(
   eventBus.emit(`notification:${params.recipientType}:${params.recipientUuid}`, {
     type: "new_notification",
     notificationUuid: notification.uuid,
+    ...(turn ? { sessionId } : {}),
     ...(turn && wakeContext ? { turnUuid: turn.uuid, wakeContext } : {}),
     unreadCount,
     action: params.action,
@@ -601,6 +603,24 @@ export async function create(
 export async function createBatch(
   requested: NotificationCreateParams[]
 ): Promise<NotificationResponse[]> {
+  return (await createBatchWithTurns(requested)).map((entry) => entry.notification);
+}
+
+/** One created notification plus the wake turn the chokepoint queued for it (or null). */
+export interface BatchDelivery {
+  notification: NotificationResponse;
+  turnUuid: string | null;
+  sessionId: string | null;
+}
+
+/**
+ * createBatch, additionally reporting each recipient's queued wake turn. Fault tolerance
+ * is identical (a failed turn is logged, never thrown); callers that must confirm a wake
+ * was actually queued — structured review dispatch — inspect `turnUuid`/`sessionId`.
+ */
+export async function createBatchWithTurns(
+  requested: NotificationCreateParams[]
+): Promise<BatchDelivery[]> {
   // Silently drop recipients without access to the notification's project (no row, no
   // SSE event, no wake turn). Fan-out callers treat a dropped recipient as a no-op.
   const notifications = await filterNotificationsByProjectAccess(requested);
@@ -659,6 +679,7 @@ export async function createBatch(
     eventBus.emit(`notification:${recipientType}:${recipientUuid}`, {
       type: "new_notification",
       notificationUuid: match?.uuid,
+      ...(wake?.turn ? { sessionId: wake.sessionId } : {}),
       ...(wakeRecoveryOnly ? { wakeRecoveryOnly: true } : {}),
       ...(wake?.turn && wake.wakeContext ? { turnUuid: wake.turn.uuid, wakeContext: wake.wakeContext } : {}),
       unreadCount,
@@ -678,7 +699,11 @@ export async function createBatch(
     });
   }
 
-  return formatNotifications(created);
+  return (await formatNotifications(created)).map((notification, index) => ({
+    notification,
+    turnUuid: wakes[index]?.turn?.uuid ?? null,
+    sessionId: wakes[index]?.turn ? wakes[index].sessionId ?? null : null,
+  }));
 }
 
 /**

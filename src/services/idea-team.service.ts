@@ -148,6 +148,12 @@ export async function isIdeaTeamProductDelegate(companyUuid: string, ideaUuid: s
   return Boolean(state?.active && state.productAgentUuid === agentUuid);
 }
 
+/** The current eligible product delegate of an active managed Idea, or null. */
+export async function getIdeaTeamProductDelegate(companyUuid: string, ideaUuid: string, client: ProjectTeamClient = prisma): Promise<string | null> {
+  const state = await resolveState(companyUuid, ideaUuid, client);
+  return state?.active ? state.productAgentUuid : null;
+}
+
 /** Current orchestrators of the managed Ideas behind an idea/proposal/task (for lifecycle handoff wakes). */
 export async function getIdeaTeamOrchestrators(companyUuid: string, targetType: string, targetUuid: string, client: ProjectTeamClient = prisma): Promise<{ ideaUuid: string; agentUuid: string }[]> {
   let ideaUuids: string[] = [];

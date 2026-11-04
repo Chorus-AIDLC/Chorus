@@ -202,6 +202,7 @@ export type DispatchControlParams =
       command: EntityBearingControlCommand;
       entityType: ControlEntityType;
       entityUuid: string;
+      sessionId?: string;
       resumeReason?: "user" | "crash";
       runtimeCwd?: string | null;
       orchestrator?: OrchestratorAttribution | null;
@@ -236,6 +237,7 @@ export function dispatchControl(params: DispatchControlParams): void {
           targetConnectionUuid: params.targetConnectionUuid,
           entityType: params.entityType,
           entityUuid: params.entityUuid,
+          ...(params.sessionId !== undefined ? { sessionId: params.sessionId } : {}),
           ...(params.runtimeCwd ? { runtimeCwd: params.runtimeCwd } : {}),
           // Only a resume carries a reason; spread-if-present keeps the interrupt
           // wire shape byte-identical to before.

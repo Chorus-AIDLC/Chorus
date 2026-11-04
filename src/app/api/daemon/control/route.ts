@@ -63,6 +63,7 @@ const bodySchema = z.object({
   targetConnectionUuid: z.string().min(1),
   entityType: z.enum([...CONTROL_ENTITY_TYPES]),
   entityUuid: z.string().min(1),
+  sessionId: z.string().optional(),
 });
 
 // POST /api/daemon/control — issue a reverse control command to a daemon.
@@ -117,6 +118,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     command: body.command,
     entityType: body.entityType,
     entityUuid: body.entityUuid,
+    ...(body.sessionId !== undefined ? { sessionId: body.sessionId } : {}),
   } satisfies DispatchControlParams);
 
   // Converge a PHANTOM `running` turn (fix-phantom-running-turn C3). Publishing the
@@ -153,6 +155,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           targetConnectionUuid,
           body.entityType,
           body.entityUuid,
+          body.sessionId ?? "",
         ));
       if (noLiveRun) {
         // Never assume `sessionId === body.entityUuid`. That identity holds for a modern
@@ -168,6 +171,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
           agentUuid: target.agentUuid,
           connectionUuid: targetConnectionUuid,
           entityUuid: body.entityUuid,
+          sessionId: body.sessionId,
         });
         if (!sessionId) {
           logger.info(

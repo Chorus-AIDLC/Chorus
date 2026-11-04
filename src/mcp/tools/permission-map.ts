@@ -158,6 +158,7 @@ export const TOOL_PROJECT_ACCESS_OVERRIDES = {
   chorus_get_elaboration: { scope: "resource", required: "viewer" },
   chorus_search_mentionables: { scope: "resource", required: "viewer" },
   chorus_add_comment: { scope: "resource", required: "editor" },
+  chorus_request_review: { scope: "resource", required: "editor" },
   chorus_answer_elaboration: { scope: "resource", required: "editor" },
   chorus_create_tasks: { scope: "resource", required: "editor" },
   chorus_update_task: { scope: "resource", required: "editor" },

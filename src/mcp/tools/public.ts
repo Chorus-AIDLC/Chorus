@@ -27,6 +27,7 @@ import * as referenceArtifactService from "@/services/reference-artifact.service
 import { REFERENCE_TYPES } from "@/services/reference-artifact.service";
 import * as activityService from "@/services/activity.service";
 import * as commentService from "@/services/comment.service";
+import * as reviewRequestService from "@/services/review-request.service";
 import * as assignmentService from "@/services/assignment.service";
 import { zArray } from "./schema-utils";
 import * as notificationService from "@/services/notification.service";
@@ -525,6 +526,35 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       } catch (error) {
         if (error instanceof Error && error.message.includes("not found")) {
           return { content: [{ type: "text", text: `${targetType} not found` }], isError: true };
+        }
+        throw error;
+      }
+    }
+  );
+
+  // chorus_request_review - Structured Team review request (the only review-session route)
+  server.registerTool(
+    "chorus_request_review",
+    {
+      description: "Request a Team review from one reviewer agent. Posts the review request comment on the target and wakes ONLY that reviewer in an isolated review session (review:<type>:<uuid>; a re-review of the same target resumes it). Use this instead of a hand-written review comment: plain comments never start a review session. targetType idea = whole-Idea code review.",
+      inputSchema: z.object({
+        targetType: z.enum(["task", "proposal", "idea"]).describe("Review target: task, proposal, or idea (whole-Idea code review)"),
+        targetUuid: z.string().describe("Target UUID"),
+        reviewerUuid: z.string().describe("Reviewer agent UUID (must differ from the caller)"),
+        round: z.number().int().min(1).max(3).describe("Current review round (1-3)"),
+        note: z.string().optional().describe("Optional extra instructions appended to the request"),
+      }),
+    },
+    async ({ targetType, targetUuid, reviewerUuid, round, note }) => {
+      try {
+        const result = await reviewRequestService.requestReview({
+          companyUuid: auth.companyUuid, actorUuid: auth.actorUuid,
+          targetType, targetUuid, reviewerUuid, round, note,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (error) {
+        if (error instanceof reviewRequestService.ReviewRequestError) {
+          return { content: [{ type: "text", text: `Review request rejected: ${error.message}` }], isError: true };
         }
         throw error;
       }

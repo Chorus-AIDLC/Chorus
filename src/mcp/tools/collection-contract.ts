@@ -358,6 +358,7 @@ export type ToolCollectionClassification = "collection" | "non-collection";
  */
 export const TOOL_COLLECTION_CLASSIFICATION = {
   chorus_add_comment: "non-collection",
+  chorus_request_review: "non-collection",
   chorus_add_reference: "non-collection",
   chorus_admin_approve_proposal: "non-collection",
   chorus_admin_close_proposal: "non-collection",

@@ -100,7 +100,7 @@ function isRetryableFailure(status) {
  *   turnAdvance: (p: { sessionId: string, turnUuid?: string|null, backendSessionId?: string|null, status: string, entityType?: string|null, entityUuid?: string|null, coalescedCount?: number, wakeError?: ReturnType<typeof import("./wake-error.mjs").createWakeError>|null }) => Promise<DaemonRestResult>,
  *   transcript: (p: { sessionId: string, messages: Array<{ role: string, text: string }> }) => Promise<DaemonRestResult>,
  *   executionState: (p: { executions: Array<Record<string, unknown>> }) => Promise<DaemonRestResult>,
- *   reportInterrupt: (p: { entityType: string, entityUuid: string, reason: string }) => Promise<DaemonRestResult>,
+ *   reportInterrupt: (p: { entityType: string, entityUuid: string, reason: string, sessionId?: string }) => Promise<DaemonRestResult>,
  *   heartbeat: (p: { connectionUuid: string, connectedAt: string }) => Promise<DaemonRestResult>,
  *   reportDirectoryRequest: (p: { requestUuid: string, status: "succeeded"|"failed", roots?: string[], items?: Array<{name:string,path:string}>, nextCursor?: string|null, normalizedPath?: string, errorCode?: string }) => Promise<DaemonRestResult>,
  *   readPendingTurns: () => Promise<DaemonRestResult>,
@@ -346,7 +346,7 @@ export function createDaemonRestClient(opts) {
      * (reason = "user" | "crash") on the server execution row keyed by connection +
      * entity. Requires the connectionUuid to target the right execution row.
      */
-    async reportInterrupt({ entityType, entityUuid, reason }) {
+    async reportInterrupt({ entityType, entityUuid, reason, sessionId }) {
       const connectionUuid = getConnectionUuid();
       if (!connectionUuid) {
         const error = `cannot report interrupt for ${entityType}:${entityUuid} — no connection uuid yet`;
@@ -356,7 +356,7 @@ export function createDaemonRestClient(opts) {
       return post(
         "report-interrupt",
         "/api/daemon/report-interrupt",
-        { connectionUuid, entityType, entityUuid, reason },
+        { connectionUuid, entityType, entityUuid, reason, ...(sessionId !== undefined ? { sessionId } : {}) },
         `reported ${entityType}:${entityUuid} interrupted (reason=${reason})`,
         // Keep the failing entity visible in the failure log (restores the suffix the
         // standalone interrupt reporter used to emit) without altering the asserted

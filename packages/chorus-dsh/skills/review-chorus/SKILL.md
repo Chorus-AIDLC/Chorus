@@ -17,6 +17,16 @@ This skill covers the **Review** stage of the AI-DLC workflow: approving or reje
 
 ---
 
+## Session scope for CLI daemon wakes
+
+These rules apply only to wakes handled by an updated Chorus CLI daemon that honors the server-delivered SSE `sessionId`. They do not upgrade OpenClaw, Hermes, or dsh-native session routing; those native runtimes retain their existing behavior. Older daemons may fall back to legacy entity/Idea routing, so do not assume task/review isolation there.
+
+- **Task work:** `task:<uuid>` is a task-scoped session with no Idea-session memory. Fetch the current task, its proposal and documents, and its direct Idea from Chorus before starting work; do not rely on the orchestrator's conversation. Sibling tasks of the same Idea can run concurrently for one agent and may share the working directory. Before editing when siblings share the cwd, work in your own git worktree; the daemon does not create one for you.
+- **Review work:** a Team review request sent with `chorus_request_review` uses `review:<type>:<uuid>`, where type is `proposal`, `task`, or `idea` (a code review targets the Idea). It is a read-only review-scoped session with no development-session memory. Fetch the target and current reviewer protocol/context before reviewing; do not implement fixes or perform lifecycle writes. A re-review by the same reviewer of the same target resumes the same review session, preserving review history rather than development memory.
+- **Orchestration:** elaboration, proposal work, Start Development, Yolo, and orchestration stay in the bare direct-Idea UUID session (`<directIdeaUuid>`, not `idea:<uuid>`). An orchestrator also assigned a task uses `task:<uuid>` only for task-start/reopen work; its other task wakes (comments, mentions, PASS/FAIL VERDICT replies, Team handoffs) stay in the Idea session. Human instructions, operations, and research requests always use the Idea session, even for a task's developer.
+
+These are backend conversation and wake-queue anchors, not the Chorus Agent Session `sessionUuid` used by session check-in tools. Session separation does not isolate files or change the host's existing session check-in lifecycle.
+
 ## Overview
 
 Admin Agent has **full access to all Chorus operations**. You are the **human proxy role** — acting on behalf of the project owner to ensure quality and manage the AI-DLC lifecycle.
@@ -66,7 +76,7 @@ Key responsibilities:
 
 Resolve the entity's source Ideas, including proposal/document ancestry, and read each `chorus_get_idea_team_context` before reviewing or acting. For active managed work, follow [Team review routing](../orchestrate-chorus/SKILL.md#team-review-routing): only the current orchestrator dispatches through `role: "review"`; a woken Team reviewer posts the routed VERDICT and makes no lifecycle writes. Task verification and human-YOLO proposal approval require current-round PASS / PASS WITH NOTES plus existing authority. Non-YOLO proposal PASS requires one human-owner approval-request comment, not agent approval. Start whole-Idea review when all source-proposal tasks reach `to_verify` / `done` / `closed`, in parallel with task reviews; it gates report/PR only. Stop on paused or unresolved context. The legacy strategy and workflow below apply to **unmanaged** work; generic spawn/approve/reopen instructions do not override the Team protocol.
 
-**Direct Team review requests:** send the complete request envelope required by Team review routing: `Team review request — <kind>, round N`, target UUID, matching local reviewer protocol location, exactly one reviewer @mention, and expected PASS/FAIL recipient names/UUIDs (not mentions). A request must never start a line with `VERDICT:`.
+**Direct Team review requests:** send them with `chorus_request_review` (target, reviewer, round). The server renders the `Team review request — <kind>, round N` envelope and routes only that reviewer into its review session; a hand-written `chorus_add_comment` envelope never opens a review session. A request must never start a line with `VERDICT:`.
 
 Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
 

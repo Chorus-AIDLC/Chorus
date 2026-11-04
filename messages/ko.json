@@ -1947,6 +1947,11 @@
     "mobileBack": "대화",
     "conversationAdHoc": "대화 {id}",
     "conversationIdea": "아이디어 {id}",
+    "childSession": {
+      "task": "작업: {title}",
+      "review": "검토: {title}",
+      "instructionNote": "아이디어 대화에서 지시를 보내세요. 이 하위 대화는 작업 또는 검토용입니다."
+    },
     "badgeIdea": "아이디어",
     "running": "실행 중",
     "runningElapsedLabel": "이번 실행 시작 후 경과 시간",

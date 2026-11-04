@@ -28,6 +28,7 @@ import { isNewSession, SESSION_CONFLICT_FAILURE } from "./claude-spawner.mjs";
 import { backendSessionKey } from "./backend-session-identity.mjs";
 import { killProcessTree, DEFAULT_SIGINT_TIMEOUT_MS } from "./process-killer.mjs";
 import { createWakeError } from "./wake-error.mjs";
+import { executionKey, parseScopedAnchor } from "./session-anchor.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -182,8 +183,8 @@ export class Waker {
    * entity. Idempotent; never throws.
    * @param {string} entityType @param {string} entityUuid
    */
-  markInterrupting(entityType, entityUuid) {
-    const key = this.#execKey(entityType, entityUuid);
+  markInterrupting(entityType, entityUuid, sessionId = "") {
+    const key = this.#execKey(entityType, entityUuid, sessionId);
     this.interrupting.add(key);
     const entry = this.executions.get(key);
     if (!entry?.child) entry?.cancelAdmission?.();
@@ -252,6 +253,8 @@ export class Waker {
    * @returns {{ entityType: string, entityUuid: string }|null}
    */
   #entityOf(notification) {
+    const anchor = parseScopedAnchor(notification?.sessionId);
+    if (anchor) return { entityType: anchor.entityType, entityUuid: anchor.entityUuid };
     const { entityType, entityUuid } = notification ?? {};
     if (
       typeof entityType === "string" &&
@@ -265,8 +268,8 @@ export class Waker {
   }
 
   /** Registry key for a resource. */
-  #execKey(entityType, entityUuid) {
-    return `${entityType}:${entityUuid}`;
+  #execKey(entityType, entityUuid, sessionId = "") {
+    return executionKey(entityType, entityUuid, sessionId);
   }
 
   /**
@@ -274,12 +277,13 @@ export class Waker {
    * resource (running or queued), carrying entityType/entityUuid, the reused
    * rootIdeaUuid, and the daemon-side status/startedAt. Returns a fresh array each
    * call so the caller can't mutate internal state. Never throws.
-   * @returns {Array<{ entityType: string, entityUuid: string, rootIdeaUuid: string|null, directIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null }>}
+   * @returns {Array<{ entityType: string, entityUuid: string, sessionId: string, rootIdeaUuid: string|null, directIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null }>}
    */
   buildExecutionSnapshot() {
     return [...this.executions.values()].map((e) => ({
       entityType: e.entityType,
       entityUuid: e.entityUuid,
+      sessionId: e.sessionId ?? "",
       rootIdeaUuid: e.rootIdeaUuid,
       directIdeaUuid: e.directIdeaUuid,
       status: e.status,
@@ -305,7 +309,8 @@ export class Waker {
   markQueued(notification, key, attribution) {
     const entity = this.#entityOf(notification);
     if (!entity) return;
-    const execKey = this.#execKey(entity.entityType, entity.entityUuid);
+    const sessionId = parseScopedAnchor(notification.sessionId) ? notification.sessionId : "";
+    const execKey = this.#execKey(entity.entityType, entity.entityUuid, sessionId);
     const rootIdeaUuid = attribution?.rootIdeaUuid ?? null;
     // The DIRECT idea (session anchor) the UI matches a conversation's execution by
     // — carried from the SAME server-resolved attribution as rootIdeaUuid, never
@@ -318,6 +323,7 @@ export class Waker {
     this.executions.set(execKey, {
       entityType: entity.entityType,
       entityUuid: entity.entityUuid,
+      sessionId,
       rootIdeaUuid,
       directIdeaUuid,
       status: "queued",
@@ -349,9 +355,11 @@ export class Waker {
    */
   async keyFor(notification) {
     const { rootIdeaUuid, directIdeaUuid } = await this.lineage.resolve(notification);
-    const key = directIdeaUuid
-      ? `idea:${directIdeaUuid}`
-      : `entity:${notification.entityType}:${notification.entityUuid}`;
+    const key = parseScopedAnchor(notification.sessionId)
+      ? `session:${notification.sessionId}`
+      : directIdeaUuid
+        ? `idea:${directIdeaUuid}`
+        : `entity:${notification.entityType}:${notification.entityUuid}`;
     return { key, rootIdeaUuid, directIdeaUuid };
   }
 
@@ -462,6 +470,8 @@ export class Waker {
     // wire (see #advanceTurn) so no settlement runs.
     const coalescedCount = list.filter((n) => n?.action !== "resource_resumed").length;
     const first = list[0];
+    const scopedAnchor = parseScopedAnchor(first?.sessionId);
+    const scopedSessionId = scopedAnchor ? first.sessionId : "";
     // Both ids come from the resolved `attribution` (supplied by keyFor via the
     // router) and are threaded SEPARATELY — NEVER sliced from `key`. The ROOT idea
     // is reported in the snapshot; the DIRECT idea is the preferred session anchor.
@@ -473,7 +483,8 @@ export class Waker {
     const drainedExecKeys = [];
     for (const n of receivedList) {
       const e = this.#entityOf(n);
-      if (e) drainedExecKeys.push(this.#execKey(e.entityType, e.entityUuid));
+      if (e) drainedExecKeys.push(this.#execKey(e.entityType, e.entityUuid,
+        parseScopedAnchor(n.sessionId) ? n.sessionId : ""));
     }
     // The session-anchor resource for the ONE running row:
     //  - a coalesced batch (> 1) is anchored on the SESSION, synthesized from attribution:
@@ -481,10 +492,10 @@ export class Waker {
     //    else the ad-hoc entity (all ad-hoc items share one entity → the first item's entity).
     //  - a single wake (batch of one) keeps the item's OWN entity — byte-identical to before.
     const entity =
-      batchSize > 1 && directIdeaUuid
+      !scopedAnchor && batchSize > 1 && directIdeaUuid
         ? { entityType: "idea", entityUuid: directIdeaUuid }
         : this.#entityOf(first);
-    const execKey = entity ? this.#execKey(entity.entityType, entity.entityUuid) : null;
+    const execKey = entity ? this.#execKey(entity.entityType, entity.entityUuid, scopedSessionId) : null;
     // Per-wake lifecycle logging: stamp the start so completion can report a
     // duration. `Date.now()` is fine here (runtime metric, not a resume seed).
     const startMs = Date.now();
@@ -570,6 +581,7 @@ export class Waker {
         this.executions.set(execKey, {
           entityType: entity.entityType,
           entityUuid: entity.entityUuid,
+          sessionId: scopedSessionId,
           rootIdeaUuid,
           directIdeaUuid,
           status: "running",
@@ -886,11 +898,11 @@ export class Waker {
       // `ended` when this connection's stream drops.
       if (entity && execKey) {
         if (wasInterrupting) {
-          await this.#report(entity, "user");
+          await this.#report(entity, "user", scopedSessionId);
         } else if (!cleanExit && !this.shuttingDown) {
           // No interrupt requested but the subprocess did not exit cleanly (non-zero
           // code, or null from a spawn/transport failure) → treat as a crash.
-          await this.#report(entity, "crash");
+          await this.#report(entity, "crash", scopedSessionId);
         }
       }
 
@@ -1060,9 +1072,9 @@ export class Waker {
    * @param {{ entityType: string, entityUuid: string }} entity
    * @param {"user"|"crash"} reason
    */
-  async #report(entity, reason) {
+  async #report(entity, reason, sessionId = "") {
     try {
-      await this.reportInterrupt(entity.entityType, entity.entityUuid, reason);
+      await this.reportInterrupt(entity.entityType, entity.entityUuid, reason, ...(sessionId ? [sessionId] : []));
     } catch (err) {
       this.logger.warn(
         `[Chorus] reportInterrupt failed for ${entity.entityType}:${entity.entityUuid} (${reason}): ${err}`

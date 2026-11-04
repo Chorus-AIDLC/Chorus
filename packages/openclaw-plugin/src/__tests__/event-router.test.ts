@@ -146,7 +146,8 @@ describe("ChorusEventRouter.dispatch", () => {
     expect(prompt).toContain("For a Team review handoff or direct review request only (not ordinary mentions)");
     expect(prompt).toContain("fetch the full comments");
     expect(prompt).toContain("Team review request — <kind>, round N");
-    expect(prompt).toContain("expected PASS/FAIL recipient names and UUIDs without extra @mentions");
+    expect(prompt).toContain("Send a remote request with chorus_request_review");
+    expect(prompt).toContain("a hand-written comment never opens a review session");
     expect(prompt).toContain("load and follow the current installed matching reviewer instructions BEFORE reviewing");
     expect(prompt).toContain("proposal → proposal-reviewer, task → task-reviewer, code (whole-Idea) → code-reviewer");
     expect(prompt).toContain("corrected request and stop without a verdict");

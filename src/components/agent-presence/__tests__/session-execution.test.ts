@@ -173,6 +173,7 @@ describe("executionsForSession", () => {
 // agent switch.
 describe("sessionExecutionsForComposer", () => {
   const ideaComposerSession = {
+    agentUuid: "agent-B",
     sessionId: "idea-9",
     directIdeaUuid: "idea-9",
     originConnectionUuid: "conn-origin",
@@ -211,12 +212,12 @@ describe("sessionExecutionsForComposer", () => {
         exec({ uuid: "agentA-run", agentUuid: "agent-A", entityType: "idea", entityUuid: "idea-9", status: "running", connectionUuid: "conn-a" }),
       ],
     };
-    const viewedOnB = { sessionId: "idea-9", directIdeaUuid: "idea-9", originConnectionUuid: "conn-b" };
+    const viewedOnB = { agentUuid: "agent-B", sessionId: "idea-9", directIdeaUuid: "idea-9", originConnectionUuid: "conn-b" };
     expect(sessionExecutionsForComposer(byConn, viewedOnB).map((e) => e.uuid)).toEqual(["agentA-run"]);
   });
 
   it("heals a legacy residual `::` session by recovering the idea and matching across slices", () => {
-    const residual = { sessionId: "idea-9::conn-xyz", directIdeaUuid: null, originConnectionUuid: "conn-xyz" };
+    const residual = { agentUuid: "agent-B", sessionId: "idea-9::conn-xyz", directIdeaUuid: null, originConnectionUuid: "conn-xyz" };
     const byConn = {
       "conn-xyz": [],
       "conn-running": [exec({ uuid: "run", entityType: "idea", entityUuid: "idea-9", status: "running", connectionUuid: "conn-running" })],

@@ -94,6 +94,8 @@ export interface CommentCreateParams {
   content: string;
   authorType: "user" | "agent";
   authorUuid: string;
+  /** Set only by the structured review-request service; see mention.service. */
+  reviewAnchor?: { agentUuid: string; sessionAnchorHint: string };
 }
 
 export interface CommentDeleteParams {
@@ -116,6 +118,11 @@ export interface CommentResponse {
   };
   createdAt: string;
   updatedAt: string;
+  /**
+   * Present only for structured review requests: the named reviewer's notification
+   * and queued wake turn, or null when the reviewer was not notified.
+   */
+  reviewDispatch?: { turnUuid: string | null; sessionId: string | null } | null;
 }
 
 // List comments.
@@ -212,6 +219,7 @@ export async function createComment({
   content,
   authorType,
   authorUuid,
+  reviewAnchor,
 }: CommentCreateParams): Promise<CommentResponse> {
   // Validate target exists
   const exists = await validateTargetExists(targetType, targetUuid, companyUuid);
@@ -257,8 +265,9 @@ export async function createComment({
     }
   }).catch(() => {});
 
-  // Process @mentions in comment content (fire-and-forget)
-  processCommentMentions(
+  // Process @mentions in comment content. Fire-and-forget for ordinary comments;
+  // a structured review request awaits so a failed reviewer wake is not silent.
+  const mentionWork: Promise<mentionService.MentionDelivery[]> = processCommentMentions(
     companyUuid,
     targetType,
     targetUuid,
@@ -266,7 +275,13 @@ export async function createComment({
     content,
     authorType,
     authorUuid,
-  ).catch((err) => logger.error({ err }, "Failed to process comment mentions"));
+    reviewAnchor,
+  );
+  if (reviewAnchor) {
+    const delivery = (await mentionWork).find((entry) => entry.recipientUuid === reviewAnchor.agentUuid);
+    return { ...response, reviewDispatch: delivery ? { turnUuid: delivery.turnUuid, sessionId: delivery.sessionId } : null };
+  }
+  mentionWork.catch((err) => logger.error({ err }, "Failed to process comment mentions"));
 
   return response;
 }
@@ -474,16 +489,17 @@ async function processCommentMentions(
   content: string,
   authorType: string,
   authorUuid: string,
-): Promise<void> {
+  reviewAnchor?: { agentUuid: string; sessionAnchorHint: string },
+): Promise<mentionService.MentionDelivery[]> {
   const mentions = mentionService.parseMentions(content);
-  if (mentions.length === 0) return;
+  if (mentions.length === 0) return [];
 
   const projectUuid = await resolveProjectUuid(targetType, targetUuid, companyUuid);
-  if (!projectUuid) return;
+  if (!projectUuid) return [];
 
   const entityTitle = await resolveEntityTitle(targetType, targetUuid);
 
-  await mentionService.createMentions({
+  const notified = await mentionService.createMentions({
     companyUuid,
     sourceType: "comment",
     sourceUuid: commentUuid,
@@ -492,6 +508,7 @@ async function processCommentMentions(
     actorUuid: authorUuid,
     projectUuid,
     entityTitle,
+    ...(reviewAnchor ? { reviewAnchor } : {}),
   });
 
   // Log mention activity for each mentioned user/agent
@@ -514,6 +531,7 @@ async function processCommentMentions(
       },
     });
   }
+  return notified;
 }
 
 // Batch get comment counts

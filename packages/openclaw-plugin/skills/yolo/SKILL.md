@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline — from prompt to done. Automates the en
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.2"
+  version: "0.23.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -104,7 +104,7 @@ Call `chorus_get_idea_team_context({ideaUuid})` before executing. If `managed: t
 - **Product work**: delegate via `chorus_recommend_team_agent({ideaUuid, role: "product"})` + `chorus_delegate_team_product`, instead of elaborating and writing the proposal yourself (if the recommendation is yourself, do it yourself).
 - **Reviews**: follow [Team review routing](../orchestrate/SKILL.md#team-review-routing) for proposal, task and whole-Idea reviews. Recommend with `role: "review"` and `proposalUuid` / `taskUuid` / neither respectively, rather than always spawning your own reviewer. Self → matching read-only reviewer via the host-specific path in that section in this turn; another agent → one review-request mention, then end the turn. Generic reviewer instructions below do not override Team routing.
 
-**Direct Team review requests:** send the complete request envelope required by Team review routing: `Team review request — <kind>, round N`, target UUID, matching local reviewer protocol location, exactly one reviewer @mention, and expected PASS/FAIL recipient names/UUIDs (not mentions). A request must never start a line with `VERDICT:`.
+**Direct Team review requests:** send them with `chorus_request_review` (target, reviewer, round). The server renders the `Team review request — <kind>, round N` envelope and routes only that reviewer into its review session; a hand-written `chorus_add_comment` envelope never opens a review session. A request must never start a line with `VERDICT:`.
 
 Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
 

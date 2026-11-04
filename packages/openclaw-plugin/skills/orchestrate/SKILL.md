@@ -4,7 +4,7 @@ description: Multi-agent orchestration playbook — coordinate OTHER agents and 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.2"
+  version: "0.23.3"
   category: project-management
   mcp_server: chorus
 ---
@@ -21,6 +21,16 @@ It complements the other skills rather than replacing them:
 - `/idea`, `/proposal`, `/develop`, `/review`, `/quick-dev` — a single stage you execute yourself. Orchestration is the layer *above* those: you decide who runs each stage.
 
 ---
+
+## Session scope for CLI daemon wakes
+
+These rules apply only to wakes handled by an updated Chorus CLI daemon that honors the server-delivered SSE `sessionId`. They do not upgrade OpenClaw, Hermes, or dsh-native session routing; those native runtimes retain their existing behavior. Older daemons may fall back to legacy entity/Idea routing, so do not assume task/review isolation there.
+
+- **Task work:** `task:<uuid>` is a task-scoped session with no Idea-session memory. Fetch the current task, its proposal and documents, and its direct Idea from Chorus before starting work; do not rely on the orchestrator's conversation. Sibling tasks of the same Idea can run concurrently for one agent and may share the working directory. Before editing when siblings share the cwd, work in your own git worktree; the daemon does not create one for you.
+- **Review work:** a Team review request sent with `chorus_request_review` uses `review:<type>:<uuid>`, where type is `proposal`, `task`, or `idea` (a code review targets the Idea). It is a read-only review-scoped session with no development-session memory. Fetch the target and current reviewer protocol/context before reviewing; do not implement fixes or perform lifecycle writes. A re-review by the same reviewer of the same target resumes the same review session, preserving review history rather than development memory.
+- **Orchestration:** elaboration, proposal work, Start Development, Yolo, and orchestration stay in the bare direct-Idea UUID session (`<directIdeaUuid>`, not `idea:<uuid>`). An orchestrator also assigned a task uses `task:<uuid>` only for task-start/reopen work; its other task wakes (comments, mentions, PASS/FAIL VERDICT replies, Team handoffs) stay in the Idea session. Human instructions, operations, and research requests always use the Idea session, even for a task's developer.
+
+These are backend conversation and wake-queue anchors, not the Chorus Agent Session `sessionUuid` used by session check-in tools. Session separation does not isolate files or change the host's existing session check-in lifecycle.
 
 ## When to use this skill
 
@@ -101,7 +111,7 @@ Supply at most one target. The task/proposal must belong to the source Idea. Sel
 ### Dispatch and self-submission
 
 - **Recommendation is yourself:** run the matching `/proposal-reviewer` / `/task-reviewer` / `/code-reviewer` skill via `sessions_spawn` as a fresh read-only sub-agent **in the same turn**, with the target UUID and round in the spawn `task`. If spawning is unavailable or disabled by policy, load the matching reviewer skill and perform a separate focused read-only pass inline, posting the same routed VERDICT. A fresh sub-agent counts as the memory-free session; do not wait for a self-wake.
-- **Another agent:** post **one** `chorus_add_comment` on the review target. The sender MUST include `Team review request — <kind>, round N` (kind is `proposal`, `task` or `code`; N is the current review round), the target UUID, the matching local reviewer protocol location from the list below, exactly one reviewer @mention, and the expected PASS / PASS WITH NOTES and FAIL recipient names/UUIDs from the table below (not mentions). Resolve these values from current context before sending; do not omit them. Then **end the turn**; do not poll for a reply. There is no server-direct reviewer wake.
+- **Another agent:** call `chorus_request_review({ targetType, targetUuid, reviewerUuid, round })` once. `targetType` is `proposal`, `task` or `idea` (the whole-Idea code review); `round` is the current review round. The server validates the request, posts the `Team review request — <kind>, round N` comment (target UUID, reviewer protocol, exactly one reviewer @mention, and the expected PASS / PASS WITH NOTES and FAIL recipients from the table below), and wakes only that reviewer in its review session. Do not hand-write the request with `chorus_add_comment`: a plain comment never opens a review session. Then **end the turn**; do not poll for a reply.
 - **Request/forwarding format:** never start a line with `VERDICT:` in a review request or a forwarded finding. Use prose such as `Reviewer result: FAIL` and link the original comment instead; only the actual reviewer verdict may create affinity.
 - **Self-submission:** immediately after the orchestrator itself calls `chorus_pm_submit_proposal` or `chorus_submit_for_verify`, recommend and dispatch the review in that turn. The server skips waking the submitting actor.
 - **Last-task check:** after any task submission, enumerate **all tasks across every proposal whose source Ideas include this Idea**, including document-input proposals; read all pages. When every task is `to_verify`, `done` or `closed`, also start the **whole-Idea review in parallel with task reviews**, not after the last verification. Read the Idea comments first and avoid a duplicate whole-Idea review request/dispatch for the current round. Prepare both task and aggregate dispatches before ending a remote-review submission turn. If a task review later needs fixes, the aggregate PASS does not clear those fixes or their task gates.

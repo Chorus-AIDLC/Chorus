@@ -152,10 +152,11 @@ describe("reconcileSnapshot", () => {
     expect(mockPrisma.daemonExecution.upsert).toHaveBeenCalledTimes(1);
     const upArg = mockPrisma.daemonExecution.upsert.mock.calls[0][0];
     expect(upArg.where).toEqual({
-      connectionUuid_entityType_entityUuid: {
+      connectionUuid_entityType_entityUuid_sessionId: {
         connectionUuid,
         entityType: "task",
         entityUuid: t2,
+        sessionId: "",
       },
     });
     expect(upArg.create.entityType).toBe("task");
@@ -176,10 +177,11 @@ describe("reconcileSnapshot", () => {
     ];
     await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, executions);
     const upArg = mockPrisma.daemonExecution.upsert.mock.calls[0][0];
-    expect(upArg.where.connectionUuid_entityType_entityUuid).toEqual({
+    expect(upArg.where.connectionUuid_entityType_entityUuid_sessionId).toEqual({
       connectionUuid,
       entityType: "idea",
       entityUuid: idea1,
+      sessionId: "",
     });
     expect(upArg.create.entityType).toBe("idea");
     expect(upArg.create.entityUuid).toBe(idea1);
@@ -208,11 +210,11 @@ describe("reconcileSnapshot", () => {
 
     expect(mockPrisma.daemonExecution.upsert).toHaveBeenCalledTimes(2);
     const keys = mockPrisma.daemonExecution.upsert.mock.calls.map(
-      (c) => c[0].where.connectionUuid_entityType_entityUuid,
+      (c) => c[0].where.connectionUuid_entityType_entityUuid_sessionId,
     );
     expect(keys).toEqual([
-      { connectionUuid, entityType: "task", entityUuid: t1 },
-      { connectionUuid, entityType: "idea", entityUuid: idea1 },
+      { connectionUuid, entityType: "task", entityUuid: t1, sessionId: "" },
+      { connectionUuid, entityType: "idea", entityUuid: idea1, sessionId: "" },
     ]);
     const queuedUpsert = mockPrisma.daemonExecution.upsert.mock.calls[1][0];
     expect(queuedUpsert.create.status).toBe("queued");
@@ -345,6 +347,7 @@ describe("getVisibleExecutions", () => {
       connectionUuid,
       entityType: "task",
       entityUuid: t1,
+      sessionId: "",
       rootIdeaUuid: null,
       directIdeaUuid: null,
       status: "running",
@@ -385,6 +388,7 @@ describe("getVisibleExecutions", () => {
       connectionUuid,
       entityType: "task",
       entityUuid: t1,
+      sessionId: "",
       rootIdeaUuid: null,
       directIdeaUuid: null,
       status: "running",
@@ -921,7 +925,7 @@ describe("reportExecutionInterrupt", () => {
     const ok = await reportExecutionInterrupt(companyUuid, connectionUuid, "task", t1, "user");
     expect(ok).toBe(true);
     expect(mockPrisma.daemonExecution.updateMany).toHaveBeenCalledWith({
-      where: { companyUuid, connectionUuid, entityType: "task", entityUuid: t1 },
+      where: { companyUuid, connectionUuid, entityType: "task", entityUuid: t1, sessionId: "" },
       data: { status: INTERRUPTED_EXECUTION_STATUS, interruptedReason: "user" },
     });
   });
@@ -1137,8 +1141,46 @@ describe("restoreInterruptedExecution", () => {
     mockPrisma.daemonExecution.updateMany.mockResolvedValue({ count: 1 });
     await restoreInterruptedExecution(companyUuid, connectionUuid, "task", t1, "crash");
     expect(mockPrisma.daemonExecution.updateMany).toHaveBeenCalledWith({
-      where: { companyUuid, connectionUuid, entityType: "task", entityUuid: t1, status: "running" },
+      where: { companyUuid, connectionUuid, entityType: "task", entityUuid: t1, sessionId: "", status: "running" },
       data: { status: "interrupted", interruptedReason: "crash" },
     });
+  });
+});
+
+
+describe("per-session execution identity", () => {
+  it("upserts concurrent development and review independently, ending only the absent lane", async () => {
+    const taskSession = `task:${t1}`;
+    const reviewSession = `review:task:${t1}`;
+    mockPrisma.daemonExecution.findMany.mockResolvedValue([
+      { id: 1, entityType: "task", entityUuid: t1, sessionId: taskSession },
+      { id: 2, entityType: "task", entityUuid: t1, sessionId: reviewSession },
+    ]);
+    await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, [
+      { entityType: "task", entityUuid: t1, sessionId: taskSession, status: "running" },
+      { entityType: "task", entityUuid: t1, sessionId: reviewSession, status: "running" },
+    ]);
+    expect(mockPrisma.daemonExecution.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonExecution.upsert.mock.calls.map(([arg]) => arg.where.connectionUuid_entityType_entityUuid_sessionId.sessionId))
+      .toEqual([taskSession, reviewSession]);
+    expect(mockPrisma.daemonExecution.upsert.mock.calls.map(([arg]) => arg.create.sessionId)).toEqual([taskSession, reviewSession]);
+    await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, [
+      { entityType: "task", entityUuid: t1, sessionId: taskSession, status: "running" },
+    ]);
+    expect(mockPrisma.daemonExecution.updateMany).toHaveBeenCalledWith({ where: { id: { in: [2] } }, data: { status: "ended" } });
+  });
+
+  it("defaults old snapshots to the legacy execution discriminator", async () => {
+    await reconcileSnapshot(companyUuid, agentUuid, connectionUuid, [{ entityType: "task", entityUuid: t1, status: "running" }]);
+    expect(mockPrisma.daemonExecution.upsert.mock.calls[0][0].create.sessionId).toBe("");
+  });
+
+  it.each(["", `task:${t1}`, `review:task:${t1}`])("interrupt and resume touch only session %s", async (sessionId) => {
+    mockPrisma.daemonExecution.findFirst.mockResolvedValue({ id: 2, status: "interrupted", interruptedReason: "user" });
+    await reportExecutionInterrupt(companyUuid, connectionUuid, "task", t1, "user", sessionId);
+    expect(mockPrisma.daemonExecution.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { companyUuid, connectionUuid, entityType: "task", entityUuid: t1, sessionId } }));
+    expect(await resumeExecution(companyUuid, connectionUuid, "task", t1, sessionId)).toEqual({ ok: true, resumedFrom: "user" });
+    expect(mockPrisma.daemonExecution.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { companyUuid, connectionUuid, entityType: "task", entityUuid: t1, sessionId } }));
+    expect(mockPrisma.daemonExecution.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 2 } }));
   });
 });
