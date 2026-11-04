@@ -6,17 +6,16 @@ import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../../../../../../messages/en.json";
 import zh from "../../../../../../messages/zh.json";
+import ja from "../../../../../../messages/ja.json";
+import ko from "../../../../../../messages/ko.json";
+import { toast } from "sonner";
 import { AGENT_TEAM_ROLE_DEFINITIONS } from "@/lib/agent-team-roles";
 import type { AgentTeamCandidateDto, AgentTeamDto } from "@/types/agent-team";
 
 const { authFetch } = vi.hoisted(() => ({ authFetch: vi.fn() }));
 vi.mock("@/lib/auth-client", () => ({ authFetch }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 import TeamsSettingsPage from "../page";
-import { ProjectTeamEditor, ProjectTeamSettings } from "@/components/project-team-settings";
-import { ProjectAccessProvider } from "@/contexts/project-access-context";
-import type { ProjectAgentTeamDto } from "@/types/project-agent-team";
-import ja from "../../../../../../messages/ja.json";
-import ko from "../../../../../../messages/ko.json";
 
 const capable: AgentTeamCandidateDto = { uuid: "agent-one", name: "Alice", effectivePermissions: [...AGENT_TEAM_ROLE_DEFINITIONS.lead.requiredPermissions] };
 const second: AgentTeamCandidateDto = { ...capable, uuid: "agent-two", name: "Bob" };
@@ -34,8 +33,9 @@ function setup(teams: AgentTeamDto[] = [], candidates = [capable, second, reader
   });
   return userEvent.setup();
 }
-function mount(locale: "en" | "zh" = "en") {
-  return render(<NextIntlClientProvider locale={locale} messages={locale === "en" ? en : zh}><TeamsSettingsPage /></NextIntlClientProvider>);
+const messages = { en, zh, ja, ko };
+function mount(locale: keyof typeof messages = "en") {
+  return render(<NextIntlClientProvider locale={locale} messages={messages[locale]}><TeamsSettingsPage /></NextIntlClientProvider>);
 }
 async function create(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Create team" }));
@@ -43,10 +43,16 @@ async function create(user: ReturnType<typeof userEvent.setup>) {
   return within(screen.getByRole("dialog"));
 }
 function writes() { return authFetch.mock.calls.filter(([, init]) => init?.method); }
-function role(name: string) { return within(screen.getByRole("group", { name })); }
+function role(name: string) { return within(within(screen.getByRole("dialog", { name: /Create team|Edit team|创建团队|编辑团队/ })).getByRole("group", { name })); }
+function memberIdentity(roleName: string, name: string) { return role(roleName).getByText(name).parentElement!; }
+async function openDelete(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: "Actions for team My team" }));
+  await user.click(screen.getByRole("menuitem", { name: "Delete team My team" }));
+}
 
 async function openPicker(user: ReturnType<typeof userEvent.setup>, roleName: string) {
-  const trigger = role(roleName).getByRole("combobox");
+  await user.click(role(roleName).getByRole("button", { name: /^Add agent to |^为.+添加 Agent/ }));
+  const trigger = screen.getByRole("combobox");
   trigger.focus();
   await user.keyboard("{Enter}");
   return within(await screen.findByRole("listbox"));
@@ -58,6 +64,7 @@ async function addAgent(user: ReturnType<typeof userEvent.setup>, roleName: stri
 
 beforeEach(() => {
   authFetch.mockReset();
+  vi.mocked(toast.success).mockReset();
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = vi.fn().mockReturnValue(false);
@@ -66,206 +73,35 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-const projectTeam: ProjectAgentTeamDto = {
-  projectUuid: "project-one", templateUuid: team.uuid, templateName: team.name, frozen: false, revision: 1, overrides: {}, myRoles: [], handoffWarning: null,
-  roles: { product: [], development: [], review: [], lead: [{ agentUuid: capable.uuid, agentName: capable.name, eligible: true, missingPermissions: [], hasProjectAccess: true, online: false, activeCount: 0 }] },
-};
-const projectTemplate = { ...team, members: [{ role: "lead", agentUuid: capable.uuid, agentName: capable.name, eligible: true, missingPermissions: [] }] };
-
-function setupProject(config: ProjectAgentTeamDto | null = projectTeam) {
-  authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
-    if (init?.method === "PUT") return ok({ team: { ...projectTeam, ...config, ...JSON.parse(init.body as string) } });
-    if (url.endsWith("/candidates")) return ok([capable, second, reader]);
-    if (url === "/api/agent-teams") return ok([projectTemplate]);
-    if (url.endsWith("/handoff")) return ok({ candidates: [{ uuid: "idea-one", title: "Own unfinished idea" }], count: 1, confirmationToken: "preview-token", expiresAt: "2099-01-01T00:00:00Z" });
-    return ok({ team: config });
-  });
-  return userEvent.setup();
-}
-
-function mountProject(accessLevel: "viewer" | "editor" = "editor", locale: "en" | "zh" | "ja" | "ko" = "en") {
-  return render(<NextIntlClientProvider locale={locale} messages={{ en, zh, ja, ko }[locale]}><ProjectAccessProvider accessLevel={accessLevel}><ProjectTeamEditor projectUuid="project-one" onClose={vi.fn()} /></ProjectAccessProvider></NextIntlClientProvider>);
-}
-
-async function selectProjectLead(user: ReturnType<typeof userEvent.setup>) {
-  const trigger = await screen.findByRole("combobox", { name: "Choose a lead explicitly…" });
-  trigger.focus();
-  await user.keyboard("{Enter}");
-  await user.click(within(await screen.findByRole("listbox")).getByRole("option", { name: /Alice/ }));
-}
-
-describe("personal project team controls", () => {
-  it("exposes a separate viewer-accessible entry and does not permit handoff", async () => {
-    const user = setupProject();
-    render(<NextIntlClientProvider locale="en" messages={en}><ProjectAccessProvider accessLevel="viewer"><ProjectTeamSettings projectUuid="project-one" /></ProjectAccessProvider></NextIntlClientProvider>);
-    await user.click(screen.getByRole("button", { name: "My project team" }));
-    expect(await screen.findByText(/Viewers can configure/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Preview handoff" })).not.toBeInTheDocument();
-    const lead = within(screen.getByRole("region", { name: "Lead" }));
-    await user.click(lead.getByRole("button", { name: "Empty role" }));
-    expect(screen.getByRole("button", { name: "Save team" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Save team" }));
-    await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(JSON.parse(writes()[0][1].body)).toEqual({ templateUuid: team.uuid, overrides: { lead: [] } });
-  });
-
-  it("binds an empty personal team without automatic assignment", async () => {
-    const user = setupProject(null);
-    mountProject();
-    expect(await screen.findByText(/No team is bound/)).toBeInTheDocument();
-    screen.getByRole("combobox", { name: "Personal template" }).focus();
-    await user.keyboard("{Enter}");
-    await user.click(await screen.findByRole("option", { name: "My team" }));
-    await user.click(screen.getByRole("button", { name: "Save team" }));
-    await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(writes()[0][1].method).toBe("PUT");
-  });
-
-  it("explicitly empties an already-empty inherited role with no candidates and restores inheritance", async () => {
-    const user = setupProject();
-    const fetch = authFetch.getMockImplementation()!;
-    let saved = projectTeam;
-    authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/candidates")) return ok([]);
-      if (init?.method === "PUT") {
-        saved = { ...saved, ...JSON.parse(init.body as string) };
-        return ok({ team: saved });
-      }
-      if (url.endsWith("/team")) return ok({ team: saved });
-      return fetch(url, init);
-    });
-    const mounted = mountProject("viewer");
-    let product = within(await screen.findByRole("region", { name: "Product" }));
-    expect(product.getByText("Inherited")).toBeInTheDocument();
-    await user.click(product.getByRole("button", { name: "Empty role" }));
-    expect(product.getByText("Overridden")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Save team" }));
-    await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(JSON.parse(writes()[0][1].body).overrides).toEqual({ product: [] });
-    mounted.unmount();
-    mountProject("viewer");
-    product = within(await screen.findByRole("region", { name: "Product" }));
-    expect(product.getByText("Overridden")).toBeInTheDocument();
-    expect(product.getByRole("button", { name: "Empty role" })).toBeDisabled();
-    await user.click(product.getByRole("button", { name: "Reset inheritance" }));
-    expect(product.getByText("Inherited")).toBeInTheDocument();
-    expect(product.getByRole("button", { name: "Empty role" })).toBeEnabled();
-  });
-
-  it("retains failed-save edits, supports empty overrides and resets inheritance", async () => {
-    const user = setupProject();
-    mountProject();
-    const lead = within(await screen.findByRole("region", { name: "Lead" }));
-    await user.click(lead.getByRole("button", { name: "Empty role" }));
-    expect(lead.getByText("Overridden")).toBeInTheDocument();
-    expect(lead.getByText(/No members/)).toBeInTheDocument();
-    authFetch.mockResolvedValueOnce(fail("VALIDATION_ERROR"));
-    await user.click(screen.getByRole("button", { name: "Save team" }));
-    expect(await screen.findByText(/Check member permissions/)).toBeInTheDocument();
-    expect(lead.getByText("Overridden")).toBeInTheDocument();
-    await user.click(lead.getByRole("button", { name: "Reset inheritance" }));
-    expect(lead.getByText("Inherited")).toBeInTheDocument();
-    expect(lead.getByText("Alice")).toBeInTheDocument();
-  });
-
-  it.each([true, false])("shows and clears a deleted override immediately with no candidates (frozen=%s)", async (frozen) => {
-    let saved: ProjectAgentTeamDto = {
-      ...projectTeam, templateUuid: frozen ? null : projectTeam.templateUuid, frozen,
-      overrides: { development: ["deleted-agent"] },
-      roles: { product: [], development: [], review: [], lead: [] },
-    };
-    const user = setupProject(saved);
-    authFetch.mockImplementation(async (url: string, init?: RequestInit) => {
-      if (url === "/api/agent-teams" || url.endsWith("/candidates")) return ok([]);
-      if (init?.method === "PUT") saved = { ...saved, ...JSON.parse(init.body as string) };
-      return ok({ team: saved });
-    });
-    const mounted = mountProject();
-    let development = within(await screen.findByRole("region", { name: "Development" }));
-    expect(development.getByText("deleted-agent")).toBeInTheDocument();
-    expect(development.getByRole("button", { name: /Remove.*deleted-agent/ })).toBeEnabled();
-    if (frozen) expect(development.queryByRole("button", { name: "Reset inheritance" })).not.toBeInTheDocument();
-    expect(development.getByRole("button", { name: "Empty role" })).toBeEnabled();
-    await user.click(development.getByRole("button", { name: "Empty role" }));
-    await user.click(screen.getByRole("button", { name: "Save team" }));
-    await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(JSON.parse(writes()[0][1].body)).toEqual({ templateUuid: saved.templateUuid, overrides: { development: [] } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save team" })).toBeDisabled());
-    mounted.unmount();
-    mountProject();
-    development = within(await screen.findByRole("region", { name: "Development" }));
-    expect(development.getByText(/No members/)).toBeInTheDocument();
-    expect(development.getByRole("button", { name: "Empty role" })).toBeDisabled();
-  });
-
-  it("saves editable frozen snapshots with a null template and confirms unbinding", async () => {
-    const user = setupProject({ ...projectTeam, templateUuid: null, frozen: true });
-    mountProject();
-    expect(await screen.findByText(/was deleted/)).toBeInTheDocument();
-    await user.click(within(screen.getByRole("region", { name: "Lead" })).getByRole("button", { name: "Empty role" }));
-    await user.click(screen.getByRole("button", { name: "Save team" }));
-    await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(JSON.parse(writes()[0][1].body)).toEqual({ templateUuid: null, overrides: { lead: [] } });
-    await user.click(screen.getByRole("button", { name: "Unbind" }));
-    expect(screen.getByText(/Existing Idea assignments and all Tasks remain unchanged/)).toBeInTheDocument();
-    expect(writes()).toHaveLength(1);
-    await user.click(screen.getByRole("button", { name: "Confirm unbind" }));
-    expect(await screen.findByText(/Personal team unbound/)).toBeInTheDocument();
-    expect(writes()[1][1].method).toBe("DELETE");
-  });
-
-  it("warns about a removed previous lead despite an eligible replacement, requiring explicit preview and confirm", async () => {
-    const user = setupProject({ ...projectTeam, handoffWarning: { agentUuid: second.uuid, agentName: second.name, reason: "removed_from_lead" } });
-    mountProject();
-    expect(await screen.findByText(/Previous handoff recipient: Bob/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Preview handoff" })).toBeDisabled();
-    await selectProjectLead(user);
-    await user.click(screen.getByRole("button", { name: "Preview handoff" }));
-    expect(await screen.findByRole("link", { name: "Own unfinished idea" })).toHaveAttribute("href", "/projects/project-one/dashboard/idea-one");
-    expect(JSON.parse(writes()[0][1].body)).toEqual({ leadAgentUuid: capable.uuid, preview: true });
-    await user.click(screen.getByRole("button", { name: "Confirm Idea handoff" }));
-    expect(await screen.findByText(/Idea handoff confirmed/)).toBeInTheDocument();
-    expect(JSON.parse(writes()[1][1].body)).toEqual({ leadAgentUuid: capable.uuid, confirmationToken: "preview-token" });
-    expect(screen.queryByText(/Previous handoff recipient/)).not.toBeInTheDocument();
-  });
-
-  it("rejects a stale preview locally until explicitly refreshed, preserving lead selection", async () => {
-    const user = setupProject();
-    mountProject();
-    await selectProjectLead(user);
-    await user.click(screen.getByRole("button", { name: "Preview handoff" }));
-    await screen.findByRole("button", { name: "Confirm Idea handoff" });
-    authFetch.mockResolvedValueOnce(fail("CONFLICT"));
-    await user.click(screen.getByRole("button", { name: "Confirm Idea handoff" }));
-    expect(await screen.findByText(/This preview is stale/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Confirm Idea handoff" })).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Choose a lead explicitly…" })).toHaveTextContent("Alice");
-    await user.click(screen.getByRole("button", { name: "Preview handoff" }));
-    expect(await screen.findByRole("button", { name: "Confirm Idea handoff" })).toBeEnabled();
-  });
-
-  it("shows eligibility separately from offline presence and prevents ineligible selection", async () => {
-    const user = setupProject({ ...projectTeam, roles: { ...projectTeam.roles, lead: [{ ...projectTeam.roles.lead[0], eligible: false, missingPermissions: ["idea:admin"], activeCount: 2 }] } });
-    mountProject();
-    expect(await screen.findByText("Missing permissions: idea:admin")).toBeInTheDocument();
-    expect(screen.getByText("Offline · 2 active / queued")).toBeInTheDocument();
-    screen.getByRole("combobox", { name: "Choose a lead explicitly…" }).focus();
-    await user.keyboard("{Enter}");
-    expect(await screen.findByRole("option", { name: /Alice/ })).toHaveAttribute("aria-disabled", "true");
-    await user.keyboard("{Escape}");
-    expect(writes()).toHaveLength(0);
-  });
-
-  it.each(["en", "zh", "ja", "ko"] as const)("renders %s and keeps catalog keys in parity", async (locale) => {
-    setupProject();
-    mountProject("editor", locale);
-    expect(await screen.findByRole("heading", { name: { en, zh, ja, ko }[locale].projectTeam.handoff })).toBeInTheDocument();
-    expect(Object.keys({ en, zh, ja, ko }[locale].projectTeam).sort()).toEqual(Object.keys(en.projectTeam).sort());
-    expect(Object.keys({ en, zh, ja, ko }[locale].projectTeam.warningReasons).sort()).toEqual(Object.keys(en.projectTeam.warningReasons).sort());
-  });
-});
-
 describe("personal team settings", () => {
+  it.each(["en", "zh", "ja", "ko"] as const)("renders read-only role rows and compact card actions in %s", async (locale) => {
+    setup([{ ...team, members: [{ role: "product", agentUuid: capable.uuid, agentName: capable.name, eligible: true, missingPermissions: [] }] }]);
+    mount(locale);
+    const labels = messages[locale].settings.teams;
+    const edit = await screen.findByRole("button", { name: labels.editNamed.replace("{name}", team.name) });
+    expect(edit).toHaveAttribute("data-variant", "outline");
+    expect(edit).toHaveAttribute("data-size", "sm");
+    expect(screen.getByRole("button", { name: labels.create })).toHaveAttribute("data-size", "sm");
+    const rows = screen.getAllByRole("group");
+    expect(rows).toHaveLength(4);
+    for (const row of rows) expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByText("Alice")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: labels.actionsNamed.replace("{name}", team.name) })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
+  });
+
+  it("shows exact server rejection on an affected retained chip even when its fresh eligibility passes", async () => {
+    const user = setup([{ ...team, members: [{ role: "product", agentUuid: capable.uuid, agentName: capable.name, eligible: true, missingPermissions: [] }] }]);
+    mount();
+    await user.click(await screen.findByRole("button", { name: "Edit team My team" }));
+    await waitFor(() => expect(screen.getByLabelText("Team name")).toBeEnabled());
+    authFetch.mockResolvedValueOnce(fail("VALIDATION_ERROR", { members: [{ role: "product", agentUuid: capable.uuid, missingPermissions: ["project:read"] }] }));
+    await user.click(screen.getByRole("button", { name: "Save team" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Alice · Product: Missing permissions: project:read");
+    expect(memberIdentity("Product", "Alice")).toHaveAccessibleDescription(/Missing permissions: project:read/);
+    expect(role("Product").getByRole("button", { name: "Remove Alice" })).toBeEnabled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
   it("shows loading, private scope, the empty state, and Settings navigation", async () => {
     setup();
     mount();
@@ -294,7 +130,8 @@ describe("personal team settings", () => {
     expect(JSON.parse(writes()[0][1].body)).toEqual({ name: "Delivery", description: "My agents", members: [
       { role: "product", agentUuid: capable.uuid }, { role: "product", agentUuid: second.uuid }, { role: "development", agentUuid: capable.uuid },
     ] });
-    expect(screen.getByText("Team saved.")).toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith("Team saved.");
+    expect(screen.queryByText("Team saved.")).not.toBeInTheDocument();
     expect(authFetch.mock.calls.filter(([url]) => url === "/api/agent-teams")).toHaveLength(3);
   });
 
@@ -317,9 +154,10 @@ describe("personal team settings", () => {
     const user = setup(); mount(); await create(user);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
-    expect(role("Product").getByText(/^Required permissions:/)).not.toBeVisible();
-    await user.click(role("Product").getByText("Permission requirements"));
-    expect(role("Product").getByText(/^Required permissions:/)).toHaveTextContent(AGENT_TEAM_ROLE_DEFINITIONS.product.requiredPermissions.join(", "));
+    const permissionInfo = role("Product").getByLabelText("Permission requirements");
+    expect(permissionInfo).toHaveAccessibleDescription(`Required permissions: ${AGENT_TEAM_ROLE_DEFINITIONS.product.requiredPermissions.join(", ")}`);
+    permissionInfo.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(AGENT_TEAM_ROLE_DEFINITIONS.product.requiredPermissions.join(", "));
     let picker = await openPicker(user, "Product");
     const productReader = picker.getByRole("option", { name: /Reader/ });
     expect(productReader).toHaveAttribute("aria-disabled", "true");
@@ -343,7 +181,7 @@ describe("personal team settings", () => {
     const selected = role("Development").getByRole("button", { name: "Remove Reader" });
     expect(selected).toBeInTheDocument();
     expect(selected).toBeEnabled();
-    expect(selected).toHaveAccessibleDescription(/Existing member/);
+    expect(memberIdentity("Development", "Reader")).toHaveAccessibleDescription(/Existing member/);
     await user.clear(screen.getByLabelText("Team name"));
     await user.type(screen.getByLabelText("Team name"), "Renamed");
     await user.click(screen.getByRole("button", { name: "Save team" }));
@@ -370,7 +208,7 @@ describe("personal team settings", () => {
     await waitFor(() => expect(screen.getByLabelText("Team name")).toBeEnabled());
     const selected = role("Development").getByRole("button", { name: "Remove Reader" });
     expect(selected).toBeInTheDocument();
-    expect(selected).toHaveAccessibleDescription(/Missing permissions: task:write/);
+    expect(memberIdentity("Development", "Reader")).toHaveAccessibleDescription(/Missing permissions: task:write/);
     await user.click(selected);
     expect(selected).not.toBeInTheDocument();
   });
@@ -410,7 +248,7 @@ describe("personal team settings", () => {
     expect(dialog.queryByText(/You have no agents yet/)).not.toBeInTheDocument();
     await user.click(dialog.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(dialog.getByLabelText("Team name")).toBeEnabled());
-    expect(role("Product").getByRole("combobox")).toBeEnabled();
+    expect(role("Product").getByRole("button", { name: "Add agent to Product" })).toBeEnabled();
   });
 
   it("disables newly invalid choices after write-time permission drift without discarding form input", async () => {
@@ -423,7 +261,7 @@ describe("personal team settings", () => {
     await user.click(screen.getByRole("button", { name: "Save team" }));
     await screen.findByRole("alert");
     expect(selection).toBeInTheDocument();
-    expect(selection).toHaveAccessibleDescription("Missing permissions: idea:write");
+    expect(memberIdentity("Product", "Alice")).toHaveAccessibleDescription("Missing permissions: idea:write");
     await user.click(selection);
     expect(selection).not.toBeInTheDocument();
     const picker = await openPicker(user, "Product");
@@ -456,13 +294,14 @@ describe("personal team settings", () => {
 
   it("requires deletion confirmation, preserves the confirmation on errors, and refreshes after retry", async () => {
     const user = setup([team]); mount();
-    await user.click(await screen.findByRole("button", { name: "Delete team My team" }));
+    expect(screen.queryByRole("button", { name: "Delete team My team" })).not.toBeInTheDocument();
+    await openDelete(user);
     expect(writes()).toHaveLength(0);
     let dialog = within(screen.getByRole("alertdialog"));
     expect(dialog.getByText(/Bound project teams retain their latest effective members as frozen snapshots/)).toBeInTheDocument();
     await user.click(dialog.getByRole("button", { name: "Cancel" }));
     expect(writes()).toHaveLength(0);
-    await user.click(screen.getByRole("button", { name: "Delete team My team" }));
+    await openDelete(user);
     dialog = within(screen.getByRole("alertdialog"));
     authFetch.mockResolvedValueOnce(fail());
     await user.click(dialog.getByRole("button", { name: "Confirm deletion" }));
@@ -470,7 +309,8 @@ describe("personal team settings", () => {
     await user.click(dialog.getByRole("button", { name: "Confirm deletion" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(writes().map(([url, init]) => [url, init.method])).toEqual([[`/api/agent-teams/${team.uuid}`, "DELETE"], [`/api/agent-teams/${team.uuid}`, "DELETE"]]);
-    expect(screen.getByText("Team deleted. Your agents are unchanged.")).toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith("Team deleted. Your agents are unchanged.");
+    expect(screen.queryByText("Team deleted. Your agents are unchanged.")).not.toBeInTheDocument();
   });
 
   it("blocks duplicate saves and dismissal while the request is pending", async () => {
@@ -494,9 +334,7 @@ describe("personal team settings", () => {
     expect(await screen.findByText("暂无团队")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "创建团队" }));
     await waitFor(() => expect(screen.getByLabelText("团队名称")).toBeEnabled());
-    role("产品").getByRole("combobox").focus();
-    await user.keyboard("{Enter}");
-    await screen.findByRole("listbox");
+    await openPicker(user, "产品");
     await user.keyboard("b{Enter}");
     expect(role("产品").getByRole("button", { name: "移除 Bob" })).toBeInTheDocument();
     const picker = await openPicker(user, "开发");

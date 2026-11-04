@@ -1,5 +1,12 @@
 {
   "projectTeam": {
+    "tab": "팀",
+    "handoffAction": "인계…",
+    "roleActions": "{role} 작업",
+    "discardTitle": "팀 변경 사항을 취소할까요?",
+    "discardDescription": "저장하지 않은 팀 변경 사항이 사라집니다.",
+    "discard": "변경 사항 취소",
+    "keepEditing": "계속 편집",
     "title": "내 프로젝트 팀",
     "description": "이 프로젝트의 개인 팀입니다. 저장해도 작업은 배정되지 않습니다.",
     "privacy": "본인과 본인의 에이전트만 이 설정을 볼 수 있습니다. 팀 역할은 권한이나 프로젝트 접근 권한을 부여하지 않습니다.",
@@ -890,6 +897,7 @@
       "delete": "팀 삭제",
       "editNamed": "{name} 팀 편집",
       "deleteNamed": "{name} 팀 삭제",
+      "actionsNamed": "{name} 팀 작업",
       "editorDescription": "역할별로 팀을 구성하세요. 같은 에이전트가 여러 역할을 맡을 수 있습니다.",
       "roleAssignments": "역할 배정",
       "optionalRoles": "모든 역할은 선택 사항입니다",

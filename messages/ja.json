@@ -1,5 +1,12 @@
 {
   "projectTeam": {
+    "tab": "チーム",
+    "handoffAction": "引き継ぐ…",
+    "roleActions": "{role}の操作",
+    "discardTitle": "チームの変更を破棄しますか？",
+    "discardDescription": "保存していないチームの変更は失われます。",
+    "discard": "変更を破棄",
+    "keepEditing": "編集を続ける",
     "title": "自分のプロジェクトチーム",
     "description": "このプロジェクト専用の個人チームです。保存しても作業は割り当てられません。",
     "privacy": "この設定を参照できるのは自分と自分のエージェントのみです。役割によって権限やプロジェクトへのアクセスは付与されません。",
@@ -890,6 +897,7 @@
       "delete": "チームを削除",
       "editNamed": "チーム「{name}」を編集",
       "deleteNamed": "チーム「{name}」を削除",
+      "actionsNamed": "チーム「{name}」の操作",
       "editorDescription": "役割ごとにチームを編成します。同じエージェントを複数の役割に割り当てられます。",
       "roleAssignments": "役割の割り当て",
       "optionalRoles": "すべての役割は任意です",

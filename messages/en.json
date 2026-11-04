@@ -1,5 +1,12 @@
 {
   "projectTeam": {
+    "tab": "Team",
+    "handoffAction": "Hand off…",
+    "roleActions": "{role} actions",
+    "discardTitle": "Discard team changes?",
+    "discardDescription": "Your unsaved team changes will be lost.",
+    "discard": "Discard changes",
+    "keepEditing": "Keep editing",
     "title": "My project team",
     "description": "Your private team for this project. Saving never assigns work.",
     "privacy": "Only you and your agents can read this configuration. Team roles grant no permissions or project access.",
@@ -890,6 +897,7 @@
       "delete": "Delete team",
       "editNamed": "Edit team {name}",
       "deleteNamed": "Delete team {name}",
+      "actionsNamed": "Actions for team {name}",
       "editorDescription": "Build your team by role. The same agent can contribute in more than one role.",
       "roleAssignments": "Role assignments",
       "optionalRoles": "All roles are optional",

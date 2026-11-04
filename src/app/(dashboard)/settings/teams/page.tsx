@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { ArrowLeft, Plus, Users, LockKeyhole, Lightbulb, Code2, ShieldCheck, Compass, X, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Plus, Users, LockKeyhole, Ellipsis, Info } from "lucide-react";
+import { toast } from "sonner";
+import { TapTooltip, TeamRoleRow } from "@/components/agent-team";
+
 import { authFetch } from "@/lib/auth-client";
 import { isImeComposing } from "@/lib/ime";
 import { AGENT_TEAM_ROLES, AGENT_TEAM_ROLE_DEFINITIONS, getAgentTeamRoleEligibility } from "@/lib/agent-team-roles";
@@ -12,15 +15,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { AgentSelect } from "@/components/agent-select";
-import { AgentAvatar } from "@/components/ui/agent-avatar";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollableDialog, ScrollableDialogDescription, ScrollableDialogTitle } from "@/components/ui/scrollable-dialog";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 type TeamApiError = { code?: string; details?: { members?: { role: AgentTeamRole; agentUuid: string; missingPermissions: string[] }[] } };
-
-const roleIcons = { product: Lightbulb, development: Code2, review: ShieldCheck, lead: Compass };
 
 async function teamRequest<Result>(url: string, init?: RequestInit): Promise<Result> {
   const response = await authFetch(url, { cache: "no-store", ...init });
@@ -145,9 +145,8 @@ function TeamEditor({ team, onClose, onSaved }: {
           </div>
           <div className="flex items-center justify-between border-t border-border pt-5"><h3 className="text-sm font-semibold">{t("roleAssignments")}</h3><span className="text-xs text-muted-foreground">{t("optionalRoles")}</span></div>
           {!loading && !loadFailed && candidates.length === 0 && <div role="status" className="rounded-md border border-border bg-muted/40 p-3 text-sm"><p>{t("noAgents")}</p><Link href="/settings" className="mt-2 inline-block text-primary underline">{t("manageAgents")}</Link></div>}
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="divide-y divide-border rounded-xl border border-border bg-card">
           {AGENT_TEAM_ROLES.map((role) => {
-            const RoleIcon = roleIcons[role];
             const options = [...candidates];
             for (const member of currentTeam?.members ?? []) {
               if (member.role === role && !options.some((candidate) => candidate.uuid === member.agentUuid)) {
@@ -160,28 +159,31 @@ function TeamEditor({ team, onClose, onSaved }: {
               return { ...candidate, ...eligibility, existing, selected: members.some((member) => member.role === role && member.agentUuid === candidate.uuid) };
             });
             const selectedOptions = roleOptions.filter((candidate) => candidate.selected);
-            return <fieldset key={role} aria-labelledby={`${role}-title`} aria-describedby={`${role}-description`} className="min-w-0 rounded-xl border border-border bg-card p-4">
-              <div className="flex items-center gap-2.5">
-                <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><RoleIcon className="size-4" aria-hidden="true" /></span>
-                <h4 id={`${role}-title`} className="flex-1 text-sm font-semibold">{t(`roles.${role}.name`)}</h4>
-                <span className="text-xs tabular-nums text-muted-foreground">{t("selectedCount", { count: selectedOptions.length })}</span>
-              </div>
-              <p id={`${role}-description`} className="mt-2 text-xs leading-relaxed text-muted-foreground">{t(`roles.${role}.description`)}</p>
-              <div className="my-3 flex min-h-9 flex-wrap items-start gap-2">
-                {selectedOptions.length === 0 && <p className="py-2 text-xs text-muted-foreground">{t("emptyRole")}</p>}
-                {selectedOptions.map((candidate) => <div key={candidate.uuid} className={candidate.eligible ? "max-w-full" : "w-full rounded-lg border border-destructive/30 bg-destructive/5 p-2"}>
-                  <div className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background py-1 pl-1.5 pr-1">
-                    <AgentAvatar name={candidate.name} size={20} className="shrink-0 rounded-full" />
-                    <span className="min-w-0 break-all text-xs font-medium">{candidate.name}</span>
-                    {!candidate.eligible && <AlertTriangle className="size-3.5 shrink-0 text-destructive" aria-hidden="true" />}
-                    <Button type="button" variant="ghost" size="icon" className="size-6 shrink-0" aria-label={t("removeMember", { name: candidate.name })} aria-describedby={!candidate.eligible ? `${role}-${candidate.uuid}-missing` : undefined} onClick={() => toggleMember(role, candidate.uuid, false)}><X className="size-3" aria-hidden="true" /></Button>
-                  </div>
-                  {!candidate.eligible && <p id={`${role}-${candidate.uuid}-missing`} className="mt-2 break-words text-xs text-destructive">{t("missingPermissions", { permissions: candidate.missingPermissions.join(", ") })}{candidate.existing && ` ${t("retainedMember")}`}</p>}
-                </div>)}
-              </div>
-              <AgentSelect agents={roleOptions.filter((candidate) => !candidate.selected).map((candidate) => ({ uuid: candidate.uuid, name: candidate.name, disabled: !candidate.eligible, description: candidate.eligible ? undefined : t("missingPermissions", { permissions: candidate.missingPermissions.join(", ") }) }))} value="" onValueChange={(uuid) => toggleMember(role, uuid, true)} placeholder={t("addAgent")} ariaLabel={t("addAgentToRole", { role: t(`roles.${role}.name`) })} emptyLabel={t("allAgentsAdded")} disabled={loading || loadFailed || saving} />
-              <details className="mt-3 text-xs text-muted-foreground"><summary className="w-fit cursor-pointer rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">{t("permissionDetails")}</summary><p className="mt-2 break-words leading-relaxed">{t("requiredPermissions", { permissions: AGENT_TEAM_ROLE_DEFINITIONS[role].requiredPermissions.join(", ") })}</p></details>
-            </fieldset>;
+            const permissions = t("requiredPermissions", { permissions: AGENT_TEAM_ROLE_DEFINITIONS[role].requiredPermissions.join(", ") });
+            return <TeamRoleRow
+              key={role}
+              role={role}
+              roleLabel={t(`roles.${role}.name`)}
+              description={t(`roles.${role}.description`)}
+              badge={<><TapTooltip content={permissions}>
+                <span tabIndex={0} aria-label={t("permissionDetails")} aria-describedby={`${role}-permissions`} className="relative rounded-sm text-muted-foreground outline-none after:absolute after:-inset-2.5 after:content-[''] focus-visible:ring-2 focus-visible:ring-ring"><Info className="size-3.5" aria-hidden="true" /></span>
+              </TapTooltip><span id={`${role}-permissions`} className="sr-only">{permissions}</span></>}
+              members={selectedOptions.map((candidate) => {
+                const rejected = Array.isArray(memberErrors) ? memberErrors.find((member) => member.role === role && member.agentUuid === candidate.uuid) : undefined;
+                return { uuid: candidate.uuid, name: candidate.name, ineligibleReason: rejected || !candidate.eligible
+                  ? `${t("missingPermissions", { permissions: (rejected?.missingPermissions ?? candidate.missingPermissions).join(", ") })}${candidate.existing ? ` ${t("retainedMember")}` : ""}`
+                  : undefined };
+              })}
+              addOptions={roleOptions.filter((candidate) => !candidate.selected).map((candidate) => ({ uuid: candidate.uuid, name: candidate.name, disabled: !candidate.eligible, description: candidate.eligible ? undefined : t("missingPermissions", { permissions: candidate.missingPermissions.join(", ") }) }))}
+              addLabel={t("addAgentToRole", { role: t(`roles.${role}.name`) })}
+              emptyLabel={t("allAgentsAdded")}
+              emptyMembersLabel={t("emptyRole")}
+              actionsLabel={t("permissionDetails")}
+              removeLabel={(member) => t("removeMember", { name: member.name })}
+              onAdd={(uuid) => toggleMember(role, uuid, true)}
+              onRemove={(uuid) => toggleMember(role, uuid, false)}
+              disabled={loading || loadFailed || saving}
+            />;
           })}
           </div>
           <p className="flex items-start gap-2 text-xs leading-relaxed text-muted-foreground"><LockKeyhole className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />{t("privacy")}</p>
@@ -201,7 +203,6 @@ export default function TeamsSettingsPage() {
   const [deleting, setDeleting] = useState<AgentTeamDto | null>(null);
   const [deleteError, setDeleteError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
   const submitting = useRef(false);
   const requestNumber = useRef(0);
 
@@ -232,7 +233,7 @@ export default function TeamsSettingsPage() {
     try {
       await teamRequest(`/api/agent-teams/${deleting.uuid}`, { method: "DELETE" });
       setDeleting(null);
-      setNotice(t("deleted"));
+      toast.success(t("deleted"));
       void loadTeams();
     } catch (caught) {
       setDeleteError(caught);
@@ -247,27 +248,41 @@ export default function TeamsSettingsPage() {
       <Link href="/settings" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" aria-hidden="true" />{t("backToSettings")}</Link>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><h1 className="text-2xl font-semibold text-foreground">{t("title")}</h1><p className="mt-1 text-sm text-muted-foreground">{t("subtitle")}</p></div>
-        <Button onClick={() => setEditor({ team: null })}><Plus className="size-4" aria-hidden="true" />{t("create")}</Button>
+        <Button size="sm" onClick={() => setEditor({ team: null })}><Plus className="size-4" aria-hidden="true" />{t("create")}</Button>
       </div>
       <p className="flex items-center gap-2 text-xs text-muted-foreground"><LockKeyhole className="size-3.5 shrink-0" aria-hidden="true" />{t("privacy")}</p>
-      {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
       {loading ? <p role="status" className="py-8 text-center text-muted-foreground">{t("loading")}</p> : error != null ? <div role="alert" className="space-y-3 rounded-lg border border-destructive/40 p-4"><p className="text-sm text-destructive">{errorMessage(error)}</p><Button variant="outline" onClick={() => void loadTeams()}>{t("retry")}</Button></div> : teams.length === 0 ? <div className="rounded-lg border border-dashed border-border p-10 text-center"><Users aria-hidden="true" className="mx-auto mb-3 size-8 text-muted-foreground" /><h2 className="font-semibold text-foreground">{t("emptyTitle")}</h2><p className="mt-2 text-sm text-muted-foreground">{t("emptyDescription")}</p></div> : <div className="grid gap-4">
-        {teams.map((team) => <Card key={team.uuid}>
+        {teams.map((team) => <Card key={team.uuid} className="min-w-0">
           <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1"><CardTitle className="break-words">{team.name}</CardTitle>{team.description && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">{team.description}</p>}</div>
-            <div className="flex gap-2"><Button variant="outline" onClick={() => setEditor({ team })} aria-label={t("editNamed", { name: team.name })}>{t("edit")}</Button><Button variant="outline" onClick={() => { setDeleteError(null); setDeleting(team); }} aria-label={t("deleteNamed", { name: team.name })}>{t("delete")}</Button></div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setEditor({ team })} aria-label={t("editNamed", { name: team.name })}>{t("edit")}</Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="size-9 sm:size-8" aria-label={t("actionsNamed", { name: team.name })}><Ellipsis className="size-4" aria-hidden="true" /></Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end"><DropdownMenuItem variant="destructive" onSelect={() => { setDeleteError(null); setDeleting(team); }} aria-label={t("deleteNamed", { name: team.name })}>{t("delete")}</DropdownMenuItem></DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {AGENT_TEAM_ROLES.map((role) => {
-              const RoleIcon = roleIcons[role];
-              return <section key={role} aria-label={t(`roles.${role}.name`)} className="min-w-0 rounded-lg bg-muted/40 p-3"><h3 className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><RoleIcon className="size-3.5" aria-hidden="true" />{t(`roles.${role}.name`)}</h3><ul className="mt-3 space-y-2 text-sm">
-                {team.members.filter((member) => member.role === role).map((member) => <li key={member.agentUuid}><span className="flex items-center gap-2"><AgentAvatar name={member.agentName} size={24} className="shrink-0 rounded-full" /><span className="min-w-0 break-all">{member.agentName}</span></span>{!member.eligible && <span className="mt-1 block break-words text-xs text-destructive">{t("missingPermissions", { permissions: member.missingPermissions.join(", ") })}</span>}</li>)}
-              </ul>{!team.members.some((member) => member.role === role) && <p className="mt-3 text-xs text-muted-foreground">{t("emptyRole")}</p>}</section>;
-            })}
+          <CardContent>
+            <div className="divide-y divide-border rounded-xl border border-border bg-card">
+              {AGENT_TEAM_ROLES.map((role) => <TeamRoleRow
+                key={role}
+                role={role}
+                roleLabel={t(`roles.${role}.name`)}
+                description={t(`roles.${role}.description`)}
+                members={team.members.filter((member) => member.role === role).map((member) => ({ uuid: member.agentUuid, name: member.agentName, ineligibleReason: member.eligible ? undefined : t("missingPermissions", { permissions: member.missingPermissions.join(", ") }) }))}
+                addLabel={t("addAgentToRole", { role: t(`roles.${role}.name`) })}
+                emptyLabel={t("allAgentsAdded")}
+                emptyMembersLabel={t("emptyRole")}
+                actionsLabel={t("permissionDetails")}
+                removeLabel={(member) => t("removeMember", { name: member.name })}
+                readOnly
+              />)}
+            </div>
           </CardContent>
         </Card>)}
       </div>}
-      {editor && <TeamEditor team={editor.team} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); setNotice(t("saved")); void loadTeams(); }} />}
+      {editor && <TeamEditor team={editor.team} onClose={() => setEditor(null)} onSaved={() => { setEditor(null); toast.success(t("saved")); void loadTeams(); }} />}
       <AlertDialog open={deleting !== null} onOpenChange={(open) => { if (!open && !submitting.current) setDeleting(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader><AlertDialogTitle>{t("confirmDeleteTitle")}</AlertDialogTitle><AlertDialogDescription>{t("confirmDeleteDescription", { name: deleting?.name ?? "" })}</AlertDialogDescription></AlertDialogHeader>
