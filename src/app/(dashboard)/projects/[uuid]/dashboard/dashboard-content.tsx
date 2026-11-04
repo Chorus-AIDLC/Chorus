@@ -8,7 +8,6 @@ import { IdeaTracker } from "./idea-tracker";
 import { CollapsibleMarkdown } from "@/components/collapsible-markdown";
 import { ProjectCwdSummary } from "./project-cwd-summary";
 import { ProjectLockIndicator } from "@/components/project-lock-indicator";
-import { ProjectTeamSettings } from "@/components/project-team-settings";
 
 interface DashboardContentProps {
   projectUuid: string;
@@ -41,7 +40,6 @@ export async function DashboardContent({ projectUuid, initialSelectedIdeaUuid }:
           )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
-          <ProjectTeamSettings projectUuid={projectUuid} />
           <ProjectSettingsModal projectUuid={projectUuid} projectName={project.name} projectDescription={project.description ?? null} />
         </div>
       </div>

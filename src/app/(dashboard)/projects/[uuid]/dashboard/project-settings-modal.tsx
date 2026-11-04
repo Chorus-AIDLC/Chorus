@@ -17,6 +17,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import { ProjectTeamTab } from "@/components/agent-team/project-team-tab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
@@ -60,7 +61,22 @@ export function ProjectSettingsModal({
   const t = useTranslations();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [open, setOpen] = useState(searchParams.get("settings") === "agent-cwds");
+  const initialSettings = searchParams.get("settings");
+  const [open, setOpen] = useState(initialSettings === "agent-cwds" || initialSettings === "team");
+  const [activeTab, setActiveTab] = useState(initialSettings === "team" ? "team" : "general");
+  const [teamDirty, setTeamDirty] = useState(false);
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
+
+  const navigateSettings = (target: string) => {
+    if (teamBusy) return;
+    if (teamDirty) {
+      setPendingNavigation(target);
+      return;
+    }
+    if (target === "close") setOpen(false);
+    else setActiveTab(target);
+  };
   const [name, setName] = useState(projectName);
   const [description, setDescription] = useState(projectDescription || "");
   const [saving, setSaving] = useState(false);
@@ -160,7 +176,7 @@ export function ProjectSettingsModal({
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(next) => { if (next) setOpen(true); else navigateSettings("close"); }}>
       <DialogTrigger asChild>
         <Button
           variant="outline"
@@ -171,7 +187,7 @@ export function ProjectSettingsModal({
           {t("dashboard.settings")}
         </Button>
       </DialogTrigger>
-      <DialogContent className="flex max-h-[90svh] flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 sm:max-w-[620px]">
+      <DialogContent aria-describedby={undefined} className="flex max-h-[90svh] flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 sm:max-w-[620px]">
         <DialogHeader className="px-7 py-6">
           <DialogTitle className="text-[20px] font-semibold tracking-tight text-foreground">
             {t("projectSettings.title")}
@@ -180,11 +196,12 @@ export function ProjectSettingsModal({
 
         <Separator className="bg-[#E5E2DC] dark:bg-[#26241f]" />
 
-        <Tabs defaultValue="general" className="min-h-0 flex-1 gap-0">
+        <Tabs value={activeTab} onValueChange={navigateSettings} className="min-h-0 flex-1 gap-0">
         <div className="px-5 pt-4 sm:px-7">
           <TabsList>
             <TabsTrigger value="general">{t("projectAccess.tabs.general")}</TabsTrigger>
             <TabsTrigger value="access">{t("projectAccess.tabs.access")}</TabsTrigger>
+            <TabsTrigger value="team">{t("projectTeam.tab")}</TabsTrigger>
           </TabsList>
         </div>
         <TabsContent value="general" className="min-h-0 overflow-y-auto">
@@ -356,7 +373,29 @@ export function ProjectSettingsModal({
             )}
           </div>
         </TabsContent>
+        <TabsContent value="team" className="min-h-0 overflow-y-auto">
+          <div className="p-5 sm:p-7">
+            <ProjectTeamTab projectUuid={projectUuid} onDirtyChange={setTeamDirty} onBusyChange={setTeamBusy} />
+          </div>
+        </TabsContent>
         </Tabs>
+        <AlertDialog open={pendingNavigation !== null} onOpenChange={(next) => { if (!next) setPendingNavigation(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("projectTeam.discardTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>{t("projectTeam.discardDescription")}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("projectTeam.keepEditing")}</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" onClick={() => {
+                setTeamDirty(false);
+                if (pendingNavigation === "close") setOpen(false);
+                else if (pendingNavigation) setActiveTab(pendingNavigation);
+                setPendingNavigation(null);
+              }}>{t("projectTeam.discard")}</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
