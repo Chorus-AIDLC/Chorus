@@ -1096,6 +1096,13 @@ describe("purpose-scoped session integration", () => {
     Object.assign(store.data.task[0], { assigneeType: "agent", assigneeUuid: AGENT, title: "Build feature" });
     const { turn } = await notificationService.createReturningTurn({ ...baseNotif, action: "task_assigned", message: "Task assigned" });
     expect(turn).not.toBeNull();
+    // The reported business key is still a fence: an unrelated key with a valid turn
+    // UUID never settles the turn.
+    const fenced = await turnAdvancePOST(postReq("/api/daemon/turn-advance", {
+      connectionUuid: ORIGIN_CONN, sessionId: "unrelated-session-key", turnUuid: turn!.uuid, status: "running",
+    }));
+    expect(fenced.status).toBe(404);
+    expect(store.data.daemonSessionTurn[0].status).toBe("pending");
     for (const status of ["running", "ended"]) {
       const response = await turnAdvancePOST(postReq("/api/daemon/turn-advance", {
         connectionUuid: ORIGIN_CONN, sessionId: IDEA, turnUuid: turn!.uuid, status,

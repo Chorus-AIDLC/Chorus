@@ -2283,9 +2283,13 @@ export async function advanceTurnForWake(params: {
     where: {
       agentUuid: params.agentUuid,
       companyUuid: params.companyUuid,
-      // An old daemon reports the Idea key for an anchored wake; its exact
-      // turn UUID still identifies the owned session without crossing tenants.
-      ...(params.turnUuid ? { turns: { some: { uuid: params.turnUuid } } } : { sessionId: params.sessionId }),
+      // The reported business key stays a fence. An old daemon reports the bare Idea
+      // key for an anchored wake, so with an exact turn UUID the key may also be the
+      // anchored session's direct Idea; any other key never matches.
+      ...(params.turnUuid
+        ? { turns: { some: { uuid: params.turnUuid } },
+            OR: [{ sessionId: params.sessionId }, { directIdeaUuid: params.sessionId }] }
+        : { sessionId: params.sessionId }),
     },
     select: { uuid: true, originConnectionUuid: true, sessionId: true },
   });
@@ -2656,6 +2660,7 @@ async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]
         SELECT "uuid" FROM "DaemonSession"
         WHERE "companyUuid" = ${params.companyUuid} AND "agentUuid" = ${params.agentUuid}
           AND "uuid" IN (SELECT "sessionUuid" FROM "DaemonSessionTurn" WHERE "uuid" = ${params.turnUuid})
+          AND ("sessionId" = ${params.sessionId} OR "directIdeaUuid" = ${params.sessionId})
         FOR UPDATE`;
       if (!sessions.length) return { ok: false, reason: "not_found" };
       const session = await tx.daemonSession.findFirst({
