@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { ArrowLeft, Plus, Users, LockKeyhole, Lightbulb, Code2, ShieldCheck, Compass, X, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Plus, Users, LockKeyhole, X, AlertTriangle } from "lucide-react";
+import { roleIcons } from "@/components/agent-team";
 import { authFetch } from "@/lib/auth-client";
 import { isImeComposing } from "@/lib/ime";
 import { AGENT_TEAM_ROLES, AGENT_TEAM_ROLE_DEFINITIONS, getAgentTeamRoleEligibility } from "@/lib/agent-team-roles";
@@ -19,8 +20,6 @@ import { ScrollableDialog, ScrollableDialogDescription, ScrollableDialogTitle } 
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 type TeamApiError = { code?: string; details?: { members?: { role: AgentTeamRole; agentUuid: string; missingPermissions: string[] }[] } };
-
-const roleIcons = { product: Lightbulb, development: Code2, review: ShieldCheck, lead: Compass };
 
 async function teamRequest<Result>(url: string, init?: RequestInit): Promise<Result> {
   const response = await authFetch(url, { cache: "no-store", ...init });
