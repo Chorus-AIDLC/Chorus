@@ -66,7 +66,8 @@ describe("TeamMemberChip", () => {
     const identity = screen.getByText("Leo").parentElement!;
     expect(identity.tabIndex).toBe(0);
     expect(screen.queryByRole("tooltip")).toBeNull();
-    await userEvent.click(identity);
+    // Touch pointer: Radix ignores touch for hover-open, so only the tap handler can open it.
+    await userEvent.setup().pointer([{ keys: "[TouchA]", target: identity }]);
     expect((await screen.findByRole("tooltip")).textContent).toContain("Online · 1 active / queued");
   });
 
