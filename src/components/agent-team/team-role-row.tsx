@@ -46,7 +46,7 @@ export function TeamRoleRow({ role, roleLabel, description, members, badge, addO
             <span id={labelId} className="text-sm font-medium text-foreground">{roleLabel}</span>
             {badge}
           </div>
-          {description && <p className="truncate text-xs text-muted-foreground" title={description}>{description}</p>}
+          {description && <p className="text-xs text-muted-foreground sm:truncate" title={description}>{description}</p>}
         </div>
       </div>
       <div className="flex min-w-0 flex-1 items-start gap-2">
@@ -61,7 +61,7 @@ export function TeamRoleRow({ role, roleLabel, description, members, badge, addO
             {onAdd && (
               <Popover open={addOpen && !disabled} onOpenChange={setAddOpen}>
                 <PopoverTrigger asChild>
-                  <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={addLabel} disabled={disabled}>
+                  <Button type="button" variant="ghost" size="icon" className="size-9 sm:size-7" aria-label={addLabel} disabled={disabled}>
                     <Plus aria-hidden="true" className="size-4" />
                   </Button>
                 </PopoverTrigger>
@@ -76,7 +76,7 @@ export function TeamRoleRow({ role, roleLabel, description, members, badge, addO
             {actions && (
               <DropdownMenu open={actionsOpen && !disabled} onOpenChange={setActionsOpen}>
                 <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="ghost" size="icon" className="size-7" aria-label={actionsLabel} disabled={disabled}>
+                  <Button type="button" variant="ghost" size="icon" className="size-9 sm:size-7" aria-label={actionsLabel} disabled={disabled}>
                     <Ellipsis aria-hidden="true" className="size-4" />
                   </Button>
                 </DropdownMenuTrigger>

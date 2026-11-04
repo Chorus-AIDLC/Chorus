@@ -58,7 +58,16 @@ describe("TeamMemberChip", () => {
     expect(identity.closest(".border-destructive\\/40")?.className).toContain("dark:border-destructive/60");
     expect(screen.getByText("Offline")).toBeTruthy();
     await userEvent.tab();
-    expect((await screen.findByRole("tooltip")).textContent).toBe("Missing task permission");
+    expect((await screen.findByRole("tooltip")).textContent).toBe("Missing task permissionOffline");
+  });
+
+  it("opens presence and eligibility hints on tap for touch users", async () => {
+    render(<TeamMemberChip member={{ ...member, online: true, presenceLabel: "Online · 1 active / queued" }} removeLabel="Remove Leo" readOnly />);
+    const identity = screen.getByText("Leo").parentElement!;
+    expect(identity.tabIndex).toBe(0);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    await userEvent.click(identity);
+    expect((await screen.findByRole("tooltip")).textContent).toContain("Online · 1 active / queued");
   });
 
   it("hides removal when read-only and disables it when busy", async () => {

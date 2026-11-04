@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { ArrowLeft, Plus, Users, LockKeyhole, Ellipsis, Info } from "lucide-react";
 import { toast } from "sonner";
-import { TeamRoleRow } from "@/components/agent-team";
+import { TapTooltip, TeamRoleRow } from "@/components/agent-team";
+
 import { authFetch } from "@/lib/auth-client";
 import { isImeComposing } from "@/lib/ime";
 import { AGENT_TEAM_ROLES, AGENT_TEAM_ROLE_DEFINITIONS, getAgentTeamRoleEligibility } from "@/lib/agent-team-roles";
@@ -15,7 +16,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollableDialog, ScrollableDialogDescription, ScrollableDialogTitle } from "@/components/ui/scrollable-dialog";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -165,10 +165,9 @@ function TeamEditor({ team, onClose, onSaved }: {
               role={role}
               roleLabel={t(`roles.${role}.name`)}
               description={t(`roles.${role}.description`)}
-              badge={<TooltipProvider><Tooltip>
-                <TooltipTrigger asChild><span tabIndex={0} aria-label={t("permissionDetails")} aria-describedby={`${role}-permissions`} className="rounded-sm text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"><Info className="size-3.5" aria-hidden="true" /></span></TooltipTrigger>
-                <TooltipContent className="z-[130] max-w-72">{permissions}</TooltipContent>
-              </Tooltip><span id={`${role}-permissions`} className="sr-only">{permissions}</span></TooltipProvider>}
+              badge={<><TapTooltip content={permissions}>
+                <span tabIndex={0} aria-label={t("permissionDetails")} aria-describedby={`${role}-permissions`} className="relative rounded-sm text-muted-foreground outline-none after:absolute after:-inset-2.5 after:content-[''] focus-visible:ring-2 focus-visible:ring-ring"><Info className="size-3.5" aria-hidden="true" /></span>
+              </TapTooltip><span id={`${role}-permissions`} className="sr-only">{permissions}</span></>}
               members={selectedOptions.map((candidate) => {
                 const rejected = Array.isArray(memberErrors) ? memberErrors.find((member) => member.role === role && member.agentUuid === candidate.uuid) : undefined;
                 return { uuid: candidate.uuid, name: candidate.name, ineligibleReason: rejected || !candidate.eligible
@@ -259,7 +258,7 @@ export default function TeamsSettingsPage() {
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={() => setEditor({ team })} aria-label={t("editNamed", { name: team.name })}>{t("edit")}</Button>
               <DropdownMenu>
-                <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="size-8" aria-label={t("actionsNamed", { name: team.name })}><Ellipsis className="size-4" aria-hidden="true" /></Button></DropdownMenuTrigger>
+                <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="size-9 sm:size-8" aria-label={t("actionsNamed", { name: team.name })}><Ellipsis className="size-4" aria-hidden="true" /></Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end"><DropdownMenuItem variant="destructive" onSelect={() => { setDeleteError(null); setDeleting(team); }} aria-label={t("deleteNamed", { name: team.name })}>{t("delete")}</DropdownMenuItem></DropdownMenuContent>
               </DropdownMenu>
             </div>
