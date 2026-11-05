@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform for Hermes Agent — overvie
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.24.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -93,7 +93,7 @@ The checkin response includes **owner/master information** for the agent:
 
 The DTO source is `src/types/project-agent-team.ts`. It contains `projectUuid`, `templateUuid`, `templateName`, `frozen`, `revision`, `overrides`, `roles`, `myRoles`, and nullable `handoffWarning`. Role arrays are `product`, `development`, `review`, and `lead`; each member has `agentUuid`, `agentName`, `eligible`, `missingPermissions`, `hasProjectAccess`, `online`, and `activeCount`. Only currently eligible memberships appear in `myRoles`. Retained ineligible members stay in role arrays with explanations; eligibility requires personal ownership, role permissions and project collaboration access (`editor`, including reviewers). Connectivity/load is separate: offline does not mean ineligible. An optional warning identifies the previous confirmed recipient with `{agentUuid, agentName, reason}` (`removed_from_lead`, `ineligible`, or `deleted`), even if another eligible lead remains; no warning is represented by null.
 
-**Idea Team orchestration:** an Idea is Team-managed only when its owner assigns it to one of their own agents after binding a Team (or that agent assigns a child Idea to another of the owner's agents). That assignee is the Idea's orchestrator — not necessarily the Team lead. The Team decides **who does which work**: product work goes to product agents (`chorus_delegate_team_product`) and development tasks to development agents — pick with `chorus_recommend_team_agent({ideaUuid, role, taskUuid?})`, follow its `decision`, then assign the task. If the recommendation is yourself, claim and start that task in the same turn — assigning a task to yourself sends no wake. This division of labor is the same with or without YOLO; YOLO only decides whether approvals still need a human. When `state` is `paused`, stop and ask a human. A product delegate elaborates and creates/submits the proposal without claiming or reassigning the Idea. Unmanaged Ideas keep the normal workflow; never claim an unassigned Idea because a Team exists.
+**Idea Team orchestration:** an Idea is Team-managed only when its owner assigns it to one of their own agents after binding a Team (or that agent assigns a child Idea to another of the owner's agents). That assignee is the Idea's orchestrator — not necessarily the Team lead. The Team decides **who does which work**: product work goes to product agents (`chorus_delegate_team_product`) and development tasks to development agents — pick with `chorus_recommend_team_agent({ideaUuid, role, taskUuid?, proposalUuid?})`, follow its `decision`, then assign the task. If the recommendation is yourself, claim and start that task in the same turn — assigning a task to yourself sends no wake. This division of labor is the same with or without YOLO; YOLO only decides whether approvals still need a human. When `state` is `paused`, stop and ask a human. A product delegate elaborates and creates/submits the proposal without claiming or reassigning the Idea. Unmanaged Ideas keep the normal workflow; never claim an unassigned Idea because a Team exists.
 
 **Team reviews:** follow [Team review routing](../orchestrate/SKILL.md#team-review-routing) for all three review kinds. Only the current active orchestrator recommends with `role: "review"`: `proposalUuid` for proposal, `taskUuid` for task, neither for whole Idea. Self → matching read-only reviewer via the host-specific path in that section in the same turn; another agent → one review-request mention, then end the turn. `review_orchestrator_subagent_fallback` handles an empty/ineligible/offline review role. Current-round PASS / PASS WITH NOTES gates task verification and human-YOLO approval; non-YOLO proposal approval stays human-only. Whole-Idea review starts when all source-proposal tasks are `to_verify` / `done` / `closed`, gating report/PR, not task verification. Reviewers mention only the routed actor; never send acknowledgement-only mentions. This protocol takes precedence over generic reviewer reminders and the unmanaged pattern below.
 
@@ -332,7 +332,7 @@ Chorus on Hermes is two independently installable directories:
 Hermes `--ref` accepts only a full 40-character commit SHA, so resolve the release tag first. Chorus release tags are **lightweight**, so the peeled `^{}` query returns nothing for them and the unpeeled ref is the one that answers; keep both lines:
 
 ```bash
-VERSION=0.23.0   # the Chorus release you want
+VERSION=0.24.0   # the Chorus release you want
 REPO=https://github.com/Chorus-AIDLC/Chorus.git
 SHA=$(git ls-remote "$REPO" "refs/tags/v$VERSION^{}" | cut -f1)
 [ -n "$SHA" ] || SHA=$(git ls-remote "$REPO" "refs/tags/v$VERSION" | cut -f1)
@@ -343,7 +343,7 @@ hermes plugins install Chorus-AIDLC/Chorus/packages/chorus-hermes/chorus-mcp --r
 hermes plugins list --plain --no-bundled   # both: enabled  git pinned@<sha8>
 ```
 
-`<sha>` is the 40-character value resolved into `$SHA` above (pass `"$SHA"`). **Never install unpinned**; if the tag does not resolve, stop. Easier path: install the Chorus CLI (`npm install -g @chorus-aidlc/chorus@0.23.0`) and run `chorus agents add --agents hermes` — it resolves the SHA, installs both directories pinned, and writes the MCP entry below when needed (see `skill_view("chorus:chorus-cli")`).
+`<sha>` is the 40-character value resolved into `$SHA` above (pass `"$SHA"`). **Never install unpinned**; if the tag does not resolve, stop. Easier path: install the Chorus CLI (`npm install -g @chorus-aidlc/chorus@0.24.0`) and run `chorus agents add --agents hermes` — it resolves the SHA, installs both directories pinned, and writes the MCP entry below when needed (see `skill_view("chorus:chorus-cli")`).
 
 ### 3. Environment and MCP URL
 

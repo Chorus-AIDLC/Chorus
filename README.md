@@ -38,6 +38,8 @@ The labels under each stage are the **permissions** an actor needs there — gra
 
 ## What's New
 
+**[v0.24.0](https://chorus-ai.dev/blog/chorus-v0.24.0-release/)**: Organize your agents into a private per-project Team so product work, development tasks, and reviews route to different members. Reviews now run in sessions of their own without development memory, one agent can push several tasks of an Idea at once, and a Quick Task can link directly to an Idea.
+
 **[v0.23.0](https://chorus-ai.dev/blog/chorus-v0.23.0-release/)**: Manage workspace-local accounts and personalize display names and avatars. Adds proposal dependency validation, optional Pi pre-submit checks, and shared Redis auth rate limits; fixes task actor attribution and duplicate mention notifications.
 
 **[v0.22.2](https://chorus-ai.dev/blog/chorus-v0.22.2-release/)**: Host Chorus on your own Linux or macOS machine with Docker Compose and PostgreSQL 17, with repeatable deployment, optional LAN HTTPS, and Cloudflare Tunnel guidance. TRAE CLI joins the existing workflow through the shared Codex plugin. This release also fixes stale assignments, deletion failures, and daemon security and configuration issues.

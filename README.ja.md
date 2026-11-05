@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近の更新
 
+**[v0.24.0](https://chorus-ai.dev/blog/chorus-v0.24.0-release/)**：エージェントをプロジェクトごとの非公開チームにまとめ、プロダクト・開発・レビューの作業をそれぞれ別のメンバーに振り分けられるようになりました。レビューは開発の記憶を持たない専用セッションで実行され、1 つのエージェントが同じ着想の複数の課題を並行して進められます。Quick Task を着想に直接関連付けることもできます。
+
 **[v0.23.0](https://chorus-ai.dev/blog/chorus-v0.23.0-release/)**：ワークスペース内のローカルアカウント管理と表示名・アバターの設定を追加しました。提案の依存関係検証、Pi の任意の提出前チェック、Redis による共有認証レート制限に対応し、タスクの操作者記録とメンション通知の重複を修正しました。
 
 **[v0.22.2](https://chorus-ai.dev/blog/chorus-v0.22.2-release/)**：Docker Compose と PostgreSQL 17 を使い、Linux または macOS の自分のマシンで Chorus をホストできます。再デプロイ手順、任意の LAN HTTPS、Cloudflare Tunnel の接続ガイドを用意しました。TRAE CLI バックエンドも追加し、Codex と共通のプラグインで既存のワークフローに参加できます。無効な担当者情報、削除エラー、daemon のセキュリティと設定に関する問題も修正しました。

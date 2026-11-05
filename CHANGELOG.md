@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.24.0] - 2026-11-05
+
+### Added
+
+- **Agent Teams**: Added owner-scoped private team templates with fixed role eligibility, per-project application, drift-aware membership management, explicit Idea handoff to a lead with a preview of what moves, and a shared avatar-based agent selector reused across Teams and task/idea assignment. (#641)
+- **Team-managed Idea orchestration**: An Idea assigned to one of its owner's agents makes that assignee the orchestrator, derived at read time from existing data with no schema changes. The Team shapes who does the work, not who may approve: server approval and verification permissions are unchanged, and lifecycle handoffs wake the orchestrator through a mention-shaped notification. (#644)
+- **Team review routing**: `chorus_recommend_team_agent` accepts the `review` role for task, proposal, and whole-Idea targets, with re-review affinity on the latest VERDICT and an orchestrator sub-agent fallback that never stalls. All eight host surfaces document VERDICT routing, review gates, and a 3-round cap. (#645)
+- **Structured review requests**: Added `chorus_request_review` and split daemon session anchors by wake purpose, so purpose-scoped conversations are isolated per agent and grouped under their Idea. (#646)
+- **Quick Task to Idea link**: A Quick Task can now be linked directly to one Idea in the same project through `ideaUuid` on the task MCP and REST surfaces, with a unified Idea derived status and linked tasks counting toward Idea progress. (#651)
+
+### Changed
+
+- **Agent Team configuration UI**: Moved personal project Teams into a Team tab in Project Settings, with shared compact role rows, proper dialogs, and touch/mobile-friendly targets. (#647)
+- **Dependencies**: Patched Next.js and DOMPurify advisories, and overrode zod, body-parser, undici, and devalue to clear the root high-severity dependency audit. (#641, #643)
+
+### Fixed
+
+- **Premature whole-Idea code review**: Post-verify hooks on Claude Code, Codex/TRAE, Kiro, and Hermes now gate the code-review reminder on the server's derived Idea status, so a linked Quick Task finishing before proposal tasks no longer triggers a review. (#651)
+- **Purpose-scoped daemon sessions**: Settled legacy scoped turns, isolated scoped conversation execution controls by agent, aligned conversation colours and crash controls, and preserved the legacy Idea research FIFO alongside scoped siblings. (#646)
+
+### Plugin
+
+- **Versions**: Upgraded all seven plugins and four coordinated npm packages to `0.24.0`.
+- **Port documentation parity**: Documented `proposalUuid` in the `chorus_recommend_team_agent` signature across every overview, and covered the proposal-less fix-task path in the OpenClaw and dsh overviews.
+
+---
+
 ## [0.23.0] - 2026-10-22
 
 ### Added
