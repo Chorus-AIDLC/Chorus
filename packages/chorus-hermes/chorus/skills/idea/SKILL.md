@@ -4,7 +4,7 @@ description: Chorus Idea workflow on Hermes — claim ideas, run elaboration rou
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.24.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -83,6 +83,14 @@ Then route each kind of question:
 When the current instruction is an explicit Tracker Research action, route directly to the research skill (`skill_view("chorus:research")`, research-only contract) and the result-saving rules in Step 4.45. Check current authoritative development eligibility before executing. This branch bypasses the normal claim and elaboration sequence below: preserve the existing Idea, root session, pending questions, answers, resolution, proposal approval and task states. Save findings to the latest Idea body with real citations and report, then **return**. If development has begun, report the changed stage without researching or editing. Record impacts on approved scope as follow-up in the Idea; do not mutate locked proposals.
 
 ---
+
+## Team-managed Ideas (check first)
+
+Before the workflow below, call `chorus_get_idea_team_context({ideaUuid})`. If `managed: true` and you are the `orchestrator`, route the work instead of doing every stage yourself:
+
+- **Product work** (elaboration + proposal): `chorus_recommend_team_agent({ideaUuid, role: "product"})`, then `chorus_delegate_team_product({ideaUuid, agentUuid})`. If the recommendation is yourself, do it yourself with the workflow below.
+- If you are the **product delegate** (not the orchestrator): run elaboration and author/submit the proposal with the workflow below, but never claim, release or reassign the Idea; leave resolving elaboration to the orchestrator or a human.
+- Unmanaged Ideas (`managed: false`): follow the workflow below unchanged. See the orchestrate skill for the full Team routing contract.
 
 ## Workflow
 

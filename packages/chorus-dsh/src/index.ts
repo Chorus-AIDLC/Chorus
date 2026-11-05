@@ -71,7 +71,7 @@ const ACTIONS = {
     argument: "taskUuid",
     label: "aggregate-review",
     instruction: (target: string) =>
-      `First verify whether task ${target} was the final task of an idea-rooted proposal. Only if it was the last task, run the aggregate Chorus code-review for that idea: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits for the reviewer to finish), then read THIS round's "VERDICT:" comment on the idea with chorus_get_comments and base the ship decision on that comment, not on the call's return value. Then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
+      `First verify whether task ${target} was the final task of its idea: the last task of an idea-rooted proposal (with any Quick Tasks linked to that idea via ideaUuid also done/closed), or — for a Quick Task with no proposal but an ideaUuid — the last of the Quick Tasks linked to that idea (chorus_list_tasks with ideaUuid). Only if it was the last task, run the aggregate Chorus code-review for that idea: spawn the reviewer sub-agent with run_in_background: false (foreground — the call waits for the reviewer to finish), then read THIS round's "VERDICT:" comment on the idea with chorus_get_comments and base the ship decision on that comment, not on the call's return value. Then close the reviewer agent. Only set run_in_background: true when you deliberately want to fan out and collect the verdict later.`,
   },
 } as const;
 

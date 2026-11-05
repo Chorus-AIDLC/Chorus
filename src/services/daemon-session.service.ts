@@ -43,6 +43,8 @@ type SessionTransactionClient = Omit<typeof prisma, "$connect" | "$disconnect" |
 // Only the exact, origin-fenced wake reporter may bypass the pending-turn FSM.
 const OPERATION_LAUNCH_ABORT = Symbol("operationLaunchAbort");
 import { eventBus } from "@/lib/event-bus";
+import { parseSessionAnchor } from "@/lib/session-anchor";
+
 // Re-export the canonical DIRECT-idea primitive so the notification chokepoint and the
 // waker-session anchor resolve a session's idea anchor from ONE source (no ancestry climb).
 export { resolveDirectIdeaUuid } from "@/services/lineage.service";
@@ -358,12 +360,26 @@ function toTokenUsageView(raw: unknown): TokenUsage | null {
 
 // ===== Helpers =====
 
-function toSessionView(row: DaemonSessionRow): SessionView {
+function executionSessionId(sessionId: string): string {
+  const anchor = parseSessionAnchor(sessionId);
+  return anchor.kind === "task" || anchor.kind === "review" ? sessionId : "";
+}
+
+const CURRENT_BACKEND_INCLUDE = {
+  turns: {
+    where: { AND: [NON_OPERATION_TURN, { backendSessionId: { not: null } }] },
+    orderBy: { seq: "desc" },
+    take: 1,
+    select: { backendSessionId: true },
+  },
+} satisfies Prisma.DaemonSessionInclude;
+
+function toSessionView(row: DaemonSessionRow & { turns?: Array<{ backendSessionId: string | null }> }): SessionView {
   return {
     uuid: row.uuid,
     agentUuid: row.agentUuid,
     sessionId: row.sessionId,
-    backendSessionId: row.backendSessionId,
+    backendSessionId: row.turns?.[0]?.backendSessionId ?? row.backendSessionId,
     directIdeaUuid: row.directIdeaUuid,
     originConnectionUuid: row.originConnectionUuid,
     runtimeCwd: row.runtimeCwd ?? null,
@@ -493,6 +509,7 @@ export async function resolveOrCreateSession(params: {
   directIdeaUuid?: string | null;
   originConnectionUuid: string;
   runtimeCwd?: string | null;
+  title?: string;
 }, db: SessionTransactionClient = prisma): Promise<SessionView> {
   const row = await db.daemonSession.upsert({
     where: {
@@ -508,6 +525,7 @@ export async function resolveOrCreateSession(params: {
       directIdeaUuid: params.directIdeaUuid ?? null,
       originConnectionUuid: params.originConnectionUuid,
       runtimeCwd: params.runtimeCwd ?? null,
+      ...(params.title ? { title: params.title } : {}),
       status: "active",
     },
     update: {
@@ -1172,6 +1190,7 @@ export async function getVisibleSessions(auth: {
   const rows = await prisma.daemonSession.findMany({
     where: { companyUuid: auth.companyUuid, ...ownerScope(auth) },
     orderBy: { lastTurnAt: "desc" },
+    include: CURRENT_BACKEND_INCLUDE,
   });
   // Read-time orphan-turn fallback: converge running turns whose origin daemon is
   // stale-dead BEFORE the caller derives per-session running indicators. Best-effort
@@ -1275,6 +1294,7 @@ export async function getSessionsPageForAgent(
     orderBy: [{ lastTurnAt: "desc" }, { uuid: "desc" }],
     ...(before ? { cursor: { uuid: before }, skip: 1 } : {}),
     take: limit + 1,
+    include: CURRENT_BACKEND_INCLUDE,
   });
   const hasMore = rows.length > limit;
   const pageRows = hasMore ? rows.slice(0, limit) : rows;
@@ -1492,6 +1512,7 @@ export async function getSessionDetail(
 ): Promise<SessionDetailView | null> {
   const sessionRow = await prisma.daemonSession.findFirst({
     where: { uuid: sessionUuid, companyUuid: auth.companyUuid, ...ownerScope(auth) },
+    include: CURRENT_BACKEND_INCLUDE,
   });
   if (!sessionRow) return null; // not visible → 404 non-disclosure
 
@@ -1821,6 +1842,90 @@ function filterPersistableMessages(
   );
 }
 
+// Bare-Idea reports from pre-recovery clients lack a purpose/turn identifier. Once
+// scoped sessions exist, resolve across the owned Idea family rather than silently
+// writing/advancing the Idea FIFO. Multiple matching purposes fail closed: entity T
+// cannot distinguish task:T from review:task:T. Within one purpose FIFO is retained;
+// attributable Idea reports without a scoped match keep the original mode/origin FIFO.
+// Transcripts have no entity at all: only a unique running conversation (or a unique
+// settled conversation for a late flush) is safe. Exact IDs bypass this compatibility
+// resolver, and families without scoped sessions retain their original paths.
+async function resolveLegacyIdeaTurn(params: {
+  companyUuid: string;
+  agentUuid: string;
+  sessionId: string;
+  connectionUuid?: string;
+  status?: TurnStatus;
+  entityType?: string | null;
+  entityUuid?: string | null;
+}): Promise<{ handled: false } | { handled: true; turnUuid: string | null }> {
+  const sessions = await prisma.daemonSession.findMany({
+    where: {
+      companyUuid: params.companyUuid, agentUuid: params.agentUuid,
+      directIdeaUuid: params.sessionId,
+    },
+    select: { uuid: true, sessionId: true },
+  });
+  const scoped = sessions.filter((session) => {
+    const anchor = parseSessionAnchor(session.sessionId ?? "");
+    return anchor.kind === "task" || anchor.kind === "review";
+  });
+  if (scoped.length === 0) return { handled: false };
+
+  const candidates = sessions.filter((session) => {
+    if (session.sessionId === params.sessionId) return true;
+    return scoped.some((candidate) => candidate.uuid === session.uuid);
+  });
+  const turns = await prisma.daemonSessionTurn.findMany({
+    where: {
+      sessionUuid: { in: candidates.map((session) => session.uuid) },
+      ...(params.status ? {
+        // Dedicated operations must never be admitted through legacy purpose inference.
+        AND: [NON_OPERATION_TURN],
+        status: params.status === "running" ? "pending" : "running",
+        OR: [{ wakeTargetConnectionUuid: null }, { wakeTargetConnectionUuid: params.connectionUuid }],
+      } : { status: { in: ["running", "ended", "interrupted"] } }),
+    },
+    orderBy: { seq: "asc" },
+    select: { uuid: true, sessionUuid: true, status: true, wakeContext: true },
+  });
+  let matching = turns;
+  if (params.status) {
+    if (!params.entityType || !params.entityUuid) return { handled: true, turnUuid: null };
+    matching = turns.filter((turn) => {
+      const session = candidates.find((candidate) => candidate.uuid === turn.sessionUuid)!;
+      const anchor = parseSessionAnchor(session.sessionId ?? "", params.sessionId);
+      const notification = parseWakeContext(turn.wakeContext)?.notification;
+      const entityMatches = notification?.entityType === params.entityType && notification?.entityUuid === params.entityUuid;
+      if (anchor.kind === "task" || anchor.kind === "review") {
+        return anchor.entityType === params.entityType && anchor.entityUuid === params.entityUuid &&
+          (!notification || entityMatches);
+      }
+      return entityMatches || (!notification && params.entityType === "idea" && params.entityUuid === params.sessionId);
+    });
+    const scopedMatches = matching.filter((turn) => scoped.some((session) => session.uuid === turn.sessionUuid));
+    if (scopedMatches.length === 0) {
+      // Do not select an Idea turn using the scoped-purpose filter above: legacy
+      // Idea FIFO may include research and operations according to client mode and
+      // origin. Defer attributable Idea reports to that unchanged path, even when
+      // no ordinary Idea turn is available (e.g. the research turn alone is running).
+      if (matching.length > 0 || (params.entityType === "idea" && params.entityUuid === params.sessionId)) {
+        return { handled: false };
+      }
+      return { handled: true, turnUuid: null };
+    }
+    matching = scopedMatches;
+  } else {
+    const running = turns.filter((turn) => turn.status === "running");
+    // Pending siblings do not steal output from the conversation producing it.
+    matching = running.length > 0 ? running : turns;
+  }
+  const sessionUuids = new Set(matching.map((turn) => turn.sessionUuid));
+  if (sessionUuids.size !== 1) return { handled: true, turnUuid: null };
+  return { handled: true, turnUuid: params.status || matching[0].status === "running"
+    ? matching[0].uuid : matching[matching.length - 1].uuid };
+}
+
 /**
  * Append transcript messages to one turn of a session the authenticated agent owns.
  *
@@ -1830,7 +1935,8 @@ function filterPersistableMessages(
  *    within its company; or
  *  - `sessionId` (the conversation business key — `directIdeaUuid` or the ad-hoc uuid,
  *    NOT the session's `uuid`) resolves the agent's `(agentUuid, sessionId)` session
- *    and appends to its most-recent turn (highest `seq`).
+ *    and appends to its running turn, falling back to its most-recent turn.
+ *    Bare Idea keys with scoped conversations use resolveLegacyIdeaTurn instead.
  * Every negative case (unknown turn/session, foreign agent, cross-company, or a session
  * with no turn yet) yields the SAME `not_found` so the route is non-disclosing.
  *
@@ -1856,6 +1962,13 @@ export async function appendTranscriptMessages(params: {
   sessionId?: string | null;
   messages: InboundTranscriptMessage[];
 }): Promise<AppendTranscriptResult> {
+  if (!params.turnUuid && params.sessionId) {
+    const resolved = await resolveLegacyIdeaTurn({ ...params, sessionId: params.sessionId });
+    if (resolved.handled) {
+      if (!resolved.turnUuid) return { ok: false, reason: "not_found" };
+      return appendTranscriptMessages({ ...params, turnUuid: resolved.turnUuid });
+    }
+  }
   // Resolve the target turn under the caller's ownership scope. Both paths fence on
   // the authenticated company + agent so a turn/session of another agent (or another
   // company) is indistinguishable from a non-existent one.
@@ -2087,7 +2200,15 @@ export async function resolveControlSessionId(params: {
   agentUuid: string;
   connectionUuid: string;
   entityUuid: string;
+  sessionId?: string;
 }): Promise<{ sessionId: string | null; ambiguous: boolean }> {
+  if (params.sessionId) {
+    const session = await prisma.daemonSession.findFirst({
+      where: { companyUuid: params.companyUuid, agentUuid: params.agentUuid, sessionId: params.sessionId },
+      select: { sessionId: true },
+    });
+    return { sessionId: session?.sessionId ?? null, ambiguous: false };
+  }
   const candidates = await prisma.daemonSession.findMany({
     where: {
       companyUuid: params.companyUuid,
@@ -2150,14 +2271,27 @@ export async function advanceTurnForWake(params: {
   coalescedCount?: number;
 }): Promise<AdvanceTurnForWakeResult> {
   if (params.wakeRecoveryProtocol === 1) return advanceExactWake(params);
+  if (!params.turnUuid) {
+    const resolved = await resolveLegacyIdeaTurn(params);
+    if (resolved.handled) {
+      if (!resolved.turnUuid) return { ok: false, reason: "not_found" };
+      return advanceTurnForWake({ ...params, turnUuid: resolved.turnUuid });
+    }
+  }
   // Resolve the agent's OWN session by its business key (company + agent fenced).
   const session = await prisma.daemonSession.findFirst({
     where: {
       agentUuid: params.agentUuid,
       companyUuid: params.companyUuid,
-      sessionId: params.sessionId,
+      // The reported business key stays a fence. An old daemon reports the bare Idea
+      // key for an anchored wake, so with an exact turn UUID the key may also be the
+      // anchored session's direct Idea; any other key never matches.
+      ...(params.turnUuid
+        ? { turns: { some: { uuid: params.turnUuid } },
+            OR: [{ sessionId: params.sessionId }, { directIdeaUuid: params.sessionId }] }
+        : { sessionId: params.sessionId }),
     },
-    select: { uuid: true, originConnectionUuid: true },
+    select: { uuid: true, originConnectionUuid: true, sessionId: true },
   });
   if (!session) return { ok: false, reason: "not_found" }; // non-disclosure 404
 
@@ -2285,10 +2419,11 @@ export async function advanceTurnForWake(params: {
       return { ok: false, reason: "backend_session_conflict" };
     }
 
-    // Preserve the session column as the immutable first-wake compatibility anchor.
-    // A zero count is expected on later wakes and is never a conflict.
     await prisma.daemonSession.updateMany({
-      where: { uuid: session.uuid, backendSessionId: null },
+      where: {
+        uuid: session.uuid,
+        OR: [{ backendSessionId: null }, { backendSessionId: params.sessionId }],
+      },
       data: { backendSessionId: params.backendSessionId },
     });
   }
@@ -2305,6 +2440,7 @@ export async function advanceTurnForWake(params: {
         connectionUuid: params.connectionUuid,
         entityType: params.entityType,
         entityUuid: params.entityUuid,
+        sessionId: executionSessionId(session.sessionId ?? params.sessionId),
       },
       select: { uuid: true },
     });
@@ -2523,7 +2659,8 @@ async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]
       const sessions = await tx.$queryRaw<Array<{ uuid: string }>>`
         SELECT "uuid" FROM "DaemonSession"
         WHERE "companyUuid" = ${params.companyUuid} AND "agentUuid" = ${params.agentUuid}
-          AND "sessionId" = ${params.sessionId}
+          AND "uuid" IN (SELECT "sessionUuid" FROM "DaemonSessionTurn" WHERE "uuid" = ${params.turnUuid})
+          AND ("sessionId" = ${params.sessionId} OR "directIdeaUuid" = ${params.sessionId})
         FOR UPDATE`;
       if (!sessions.length) return { ok: false, reason: "not_found" };
       const session = await tx.daemonSession.findFirst({
@@ -2591,7 +2728,11 @@ async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]
       const wakeError = params.status === "interrupted" &&
         (params.interruptedReason === "crash" || params.interruptedReason === "invalid_path") ? normalizeWakeError(params.wakeError) : null;
       const execution = !terminal && params.entityType && params.entityUuid ? await tx.daemonExecution.findFirst({
-        where: { companyUuid: params.companyUuid, connectionUuid: params.connectionUuid, entityType: params.entityType, entityUuid: params.entityUuid },
+        where: {
+          companyUuid: params.companyUuid, connectionUuid: params.connectionUuid,
+          entityType: params.entityType, entityUuid: params.entityUuid,
+          sessionId: executionSessionId(session.sessionId),
+        },
         select: { uuid: true },
       }) : null;
       const data: Prisma.DaemonSessionTurnUpdateManyMutationInput = terminal ? {
@@ -2627,7 +2768,10 @@ async function advanceExactWake(params: Parameters<typeof advanceTurnForWake>[0]
         } });
       }
       if (params.backendSessionId) await tx.daemonSession.updateMany({
-        where: { uuid: session.uuid, backendSessionId: null }, data: { backendSessionId: params.backendSessionId },
+        where: {
+          uuid: session.uuid,
+          OR: [{ backendSessionId: null }, { backendSessionId: params.sessionId }],
+        }, data: { backendSessionId: params.backendSessionId },
       });
       const updated = await tx.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: primary.uuid } });
       const view = toTurnView(updated);

@@ -91,7 +91,7 @@ export async function submitProposalAction(proposalUuid: string) {
     const hiddenInput = await denyUnlessProposalInputsAccess(auth, proposalUuid);
     if (hiddenInput) return hiddenInput;
 
-    await submitProposal(proposalUuid, auth.companyUuid);
+    await submitProposal(proposalUuid, auth.companyUuid, { actorType: auth.type, actorUuid: auth.actorUuid });
 
     revalidatePath(`/projects/${proposal.projectUuid}/proposals/${proposalUuid}`);
     revalidatePath(`/projects/${proposal.projectUuid}/proposals`);

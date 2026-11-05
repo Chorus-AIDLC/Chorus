@@ -306,6 +306,8 @@ const PM_AGENT_ADDED_IN_0_9_0 = [
 // (and admin_agent) carry idea:write so it appears in their visibility set.
 const PM_AGENT_ADDED_IN_0_10_0 = [
   "chorus_edit_idea",
+  // Agent Team ③: the Idea orchestrator's idea:write-gated product delegation.
+  "chorus_delegate_team_product",
 ];
 
 // reference-artifacts (0.14.0): three document:write-gated reference write

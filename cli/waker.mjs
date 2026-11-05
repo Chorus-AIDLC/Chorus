@@ -1,12 +1,12 @@
 // cli/waker.mjs
 // Executes a single wake: resolve the event to its idea attribution, derive the
-// deterministic session id (= the DIRECT idea uuid), build the --mcp-config, spawn
+// business anchor and agent-scoped backend identity, build the --mcp-config, spawn
 // the configured headless agent, and
 // fire the (no-op) upload hooks. The WakeQueue schedules these per DIRECT idea so
 // two wakes for the same idea never run concurrently against the same session.
 //
 // TWO-ID CONTRACT (do not conflate): the session is anchored on the DIRECT idea
-// (so a human can `claude --resume <idea-uuid>`), while the execution snapshot
+// for Chorus attribution, while the execution snapshot
 // reports the ROOT idea (for the observability UI). Both ids come from one lineage
 // resolution and are threaded SEPARATELY — the root reported in the snapshot is
 // the server-resolved root, NEVER re-derived from the (direct-idea) serialization
@@ -25,8 +25,10 @@ import { OPERATION_ACTIONS, isExactOperation, validateOperation } from "./operat
 import { buildBatchPrompt } from "./prompts.mjs";
 import { writeMcpConfig } from "./mcp-config.mjs";
 import { isNewSession, SESSION_CONFLICT_FAILURE } from "./claude-spawner.mjs";
+import { backendSessionKey } from "./backend-session-identity.mjs";
 import { killProcessTree, DEFAULT_SIGINT_TIMEOUT_MS } from "./process-killer.mjs";
 import { createWakeError } from "./wake-error.mjs";
+import { executionKey, parseScopedAnchor } from "./session-anchor.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -181,8 +183,8 @@ export class Waker {
    * entity. Idempotent; never throws.
    * @param {string} entityType @param {string} entityUuid
    */
-  markInterrupting(entityType, entityUuid) {
-    const key = this.#execKey(entityType, entityUuid);
+  markInterrupting(entityType, entityUuid, sessionId = "") {
+    const key = this.#execKey(entityType, entityUuid, sessionId);
     this.interrupting.add(key);
     const entry = this.executions.get(key);
     if (!entry?.child) entry?.cancelAdmission?.();
@@ -233,9 +235,7 @@ export class Waker {
   // `daemon_session` is the ad-hoc conversation's own execution entity (子3 follow-up):
   // an ad-hoc human_instruction wake has no task/idea/proposal/document behind it, so
   // its running/interrupted state is reported against the DaemonSession itself, keyed by
-  // the session BUSINESS id (`sessionId`) — which is ALSO the Claude `--resume` anchor for
-  // an ad-hoc session, so the execution entity, the per-session UI match key, and the
-  // resume anchor are one and the same value (no identity divergence).
+  // the session BUSINESS id (`sessionId`), not the agent-scoped backend resume id.
   static #EXECUTION_ENTITY_TYPES = new Set([
     "task",
     "idea",
@@ -253,6 +253,8 @@ export class Waker {
    * @returns {{ entityType: string, entityUuid: string }|null}
    */
   #entityOf(notification) {
+    const anchor = parseScopedAnchor(notification?.sessionId);
+    if (anchor) return { entityType: anchor.entityType, entityUuid: anchor.entityUuid };
     const { entityType, entityUuid } = notification ?? {};
     if (
       typeof entityType === "string" &&
@@ -266,8 +268,8 @@ export class Waker {
   }
 
   /** Registry key for a resource. */
-  #execKey(entityType, entityUuid) {
-    return `${entityType}:${entityUuid}`;
+  #execKey(entityType, entityUuid, sessionId = "") {
+    return executionKey(entityType, entityUuid, sessionId);
   }
 
   /**
@@ -275,12 +277,13 @@ export class Waker {
    * resource (running or queued), carrying entityType/entityUuid, the reused
    * rootIdeaUuid, and the daemon-side status/startedAt. Returns a fresh array each
    * call so the caller can't mutate internal state. Never throws.
-   * @returns {Array<{ entityType: string, entityUuid: string, rootIdeaUuid: string|null, directIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null }>}
+   * @returns {Array<{ entityType: string, entityUuid: string, sessionId: string, rootIdeaUuid: string|null, directIdeaUuid: string|null, status: "running"|"queued", startedAt: string|null }>}
    */
   buildExecutionSnapshot() {
     return [...this.executions.values()].map((e) => ({
       entityType: e.entityType,
       entityUuid: e.entityUuid,
+      sessionId: e.sessionId ?? "",
       rootIdeaUuid: e.rootIdeaUuid,
       directIdeaUuid: e.directIdeaUuid,
       status: e.status,
@@ -306,7 +309,8 @@ export class Waker {
   markQueued(notification, key, attribution) {
     const entity = this.#entityOf(notification);
     if (!entity) return;
-    const execKey = this.#execKey(entity.entityType, entity.entityUuid);
+    const sessionId = parseScopedAnchor(notification.sessionId) ? notification.sessionId : "";
+    const execKey = this.#execKey(entity.entityType, entity.entityUuid, sessionId);
     const rootIdeaUuid = attribution?.rootIdeaUuid ?? null;
     // The DIRECT idea (session anchor) the UI matches a conversation's execution by
     // — carried from the SAME server-resolved attribution as rootIdeaUuid, never
@@ -319,6 +323,7 @@ export class Waker {
     this.executions.set(execKey, {
       entityType: entity.entityType,
       entityUuid: entity.entityUuid,
+      sessionId,
       rootIdeaUuid,
       directIdeaUuid,
       status: "queued",
@@ -342,7 +347,7 @@ export class Waker {
    * Resolve an event to its serialization key + idea attribution WITHOUT running
    * the wake. Used by the router to enqueue under the right key and to pass the
    * resolved root down to markQueued/wake (so the snapshot's root is never derived
-   * from the key). The key — and the Claude session anchor — is the DIRECT idea;
+   * from the key). The Chorus session anchor is the DIRECT idea;
    * falls back to a per-entity key when there's no direct idea (so unrelated
    * entities still get their own serial lane). One lineage resolution (cached).
    * @param {any} notification
@@ -350,9 +355,11 @@ export class Waker {
    */
   async keyFor(notification) {
     const { rootIdeaUuid, directIdeaUuid } = await this.lineage.resolve(notification);
-    const key = directIdeaUuid
-      ? `idea:${directIdeaUuid}`
-      : `entity:${notification.entityType}:${notification.entityUuid}`;
+    const key = parseScopedAnchor(notification.sessionId)
+      ? `session:${notification.sessionId}`
+      : directIdeaUuid
+        ? `idea:${directIdeaUuid}`
+        : `entity:${notification.entityType}:${notification.entityUuid}`;
     return { key, rootIdeaUuid, directIdeaUuid };
   }
 
@@ -463,6 +470,8 @@ export class Waker {
     // wire (see #advanceTurn) so no settlement runs.
     const coalescedCount = list.filter((n) => n?.action !== "resource_resumed").length;
     const first = list[0];
+    const scopedAnchor = parseScopedAnchor(first?.sessionId);
+    const scopedSessionId = scopedAnchor ? first.sessionId : "";
     // Both ids come from the resolved `attribution` (supplied by keyFor via the
     // router) and are threaded SEPARATELY — NEVER sliced from `key`. The ROOT idea
     // is reported in the snapshot; the DIRECT idea is the preferred session anchor.
@@ -474,7 +483,8 @@ export class Waker {
     const drainedExecKeys = [];
     for (const n of receivedList) {
       const e = this.#entityOf(n);
-      if (e) drainedExecKeys.push(this.#execKey(e.entityType, e.entityUuid));
+      if (e) drainedExecKeys.push(this.#execKey(e.entityType, e.entityUuid,
+        parseScopedAnchor(n.sessionId) ? n.sessionId : ""));
     }
     // The session-anchor resource for the ONE running row:
     //  - a coalesced batch (> 1) is anchored on the SESSION, synthesized from attribution:
@@ -482,15 +492,16 @@ export class Waker {
     //    else the ad-hoc entity (all ad-hoc items share one entity → the first item's entity).
     //  - a single wake (batch of one) keeps the item's OWN entity — byte-identical to before.
     const entity =
-      batchSize > 1 && directIdeaUuid
+      !scopedAnchor && batchSize > 1 && directIdeaUuid
         ? { entityType: "idea", entityUuid: directIdeaUuid }
         : this.#entityOf(first);
-    const execKey = entity ? this.#execKey(entity.entityType, entity.entityUuid) : null;
+    const execKey = entity ? this.#execKey(entity.entityType, entity.entityUuid, scopedSessionId) : null;
     // Per-wake lifecycle logging: stamp the start so completion can report a
     // duration. `Date.now()` is fine here (runtime metric, not a resume seed).
     const startMs = Date.now();
     const target = entity ? `${entity.entityType}:${entity.entityUuid}` : key;
     const sessionId = first?.sessionId ?? directIdeaUuid ?? first?.entityUuid ?? null;
+    const backendKey = backendSessionKey(sessionId, this.creds?.agentUuid);
     const operations = list.filter(isExactOperation);
     const operationRequestUuid = batchSize === 1 && operations.length ? first.turnUuid : null;
     const turnUuids = [...new Set(list.filter((notification) => notification?.action !== "resource_resumed")
@@ -570,6 +581,7 @@ export class Waker {
         this.executions.set(execKey, {
           entityType: entity.entityType,
           entityUuid: entity.entityUuid,
+          sessionId: scopedSessionId,
           rootIdeaUuid,
           directIdeaUuid,
           status: "running",
@@ -583,9 +595,9 @@ export class Waker {
 
       // Session anchor: the DIRECT idea uuid when the entity has an idea ancestor;
       // otherwise the entity's OWN uuid (quick task, standalone doc, non-idea
-      // proposal). Both are deterministic Chorus uuids, so the session stays
-      // human-resumable (`claude --resume <uuid>`) and same-entity wakes continue
-      // the same session — and we never drop a wake just because there's no idea
+      // proposal). The backend key additionally scopes this anchor to the agent,
+      // so same-agent wakes continue their own session without sharing context.
+      // We never drop a wake just because there's no idea
       // (the daemon's headline `task_assigned` for a quick task must still spawn).
       // Decide new-vs-resume by probing the on-disk transcript in the SAME cwd we
       // spawn in. The spawner re-validates the id is a lowercase UUID before
@@ -607,7 +619,7 @@ export class Waker {
         cwd = validation.normalizedPath;
         validatingRuntimeCwd = false;
       }
-      const isNew = sessionId ? this.isNewSessionFn(sessionId, cwd) : true;
+      const isNew = backendKey ? this.isNewSessionFn(backendKey, cwd) : true;
 
       // Spawners declare whether the shared transcript probe is authoritative
       // for their session decision. Missing metadata preserves the established
@@ -616,9 +628,13 @@ export class Waker {
       const probeIsAuthoritative = sessionDecision?.probeIsAuthoritative !== false;
       if (probeIsAuthoritative) {
         const takeoverCommand = sessionDecision?.takeoverCommand ?? "claude --resume";
+        if (isNew && backendKey !== sessionId && !this.isNewSessionFn(sessionId, cwd)) {
+          this.logger.warn(`[Chorus] legacy backend session ${sessionId} has unknown or shared agent ownership; starting isolated session ${backendKey}. The original conversation is preserved for manual recovery with ${takeoverCommand} ${sessionId} in ${cwd}. See docs/DAEMON.md#backend-session-isolation; it is not automatically imported.`);
+        }
         this.logger.info(
-          `[Chorus] ${isNew ? "spawning new" : "resuming"} session ${sessionId ?? "(none)"}` +
-            (sessionId && takeoverCommand ? ` — take over with: ${takeoverCommand} ${sessionId}` : "")
+          `[Chorus] ${isNew ? "spawning new" : "resuming"} session ${backendKey ?? "(none)"}` +
+            (backendKey !== sessionId ? ` (Chorus anchor ${sessionId})` : "") +
+            (backendKey && takeoverCommand ? ` — take over with: ${takeoverCommand} ${backendKey}` : "")
         );
       } else {
         this.logger.info(`[Chorus] dispatching session ${sessionId ?? "(none)"}`);
@@ -675,17 +691,13 @@ export class Waker {
       await this.hooks?.onSessionStart?.({ rootIdeaKey: key, sessionId: sessionId ?? "", isNew, ...transcriptIdentity });
 
       // Turn lifecycle (子1): the server created a `pending` turn for this wake at the
-      // notification chokepoint, keyed on the same session business key the daemon
-      // anchors the Claude session on (`sessionId` = directIdeaUuid, or the entity uuid
+      // notification chokepoint, keyed on the Chorus business key
+      // (`sessionId` = directIdeaUuid, or the entity uuid
       // for an ad-hoc session). Advance it pending→running the moment the subprocess
       // spawns (in onChild — guaranteed to fire only on a successful spawn), and
       // running→ended after it exits. A failed startup requests the same admission
       // after wake() returns, then settles only the UUID returned by that edge.
 
-      // Track the session id the stream reports so the transcript hook can use
-      // it even before spawner.wake() returns. (Do NOT reference the awaited
-      // `result` inside onMessage — it's in the temporal dead zone there.)
-      let observedSessionId = sessionId ?? "";
       const onChild = (child) => {
         childStarted = true;
         const entry = execKey ? this.executions.get(execKey) : null;
@@ -705,13 +717,12 @@ export class Waker {
         admitOrdinaryTurn();
       };
       const onMessage = (message) => {
-        if (message && typeof message.session_id === "string") observedSessionId = message.session_id;
         // Fire-and-forget transcript hook (子1): keeps only user/assistant text and
         // batch-POSTs to /api/daemon/transcript for the current turn. Warn-not-throw
         // inside the hook; the trailing .catch is belt-and-braces so a rejected hook
         // promise can never surface as an unhandled rejection in the wake path.
         this.hooks
-          ?.onTranscriptMessage?.({ rootIdeaKey: key, sessionId: observedSessionId, message, ...transcriptIdentity })
+          ?.onTranscriptMessage?.({ rootIdeaKey: key, sessionId: sessionId ?? "", message, ...transcriptIdentity })
           .catch(() => {});
       };
       const wakeParams = {
@@ -768,8 +779,7 @@ export class Waker {
         );
       }
 
-      // No session map to persist anymore — the id is deterministic (= direct idea
-      // uuid) and the next wake re-derives new-vs-resume from disk. Just log a
+      // Backend identity persistence belongs to the spawner. Just log a
       // non-zero exit visibly (no-silent-errors).
       if (result && result.exitCode !== 0) {
         this.logger.warn(
@@ -888,11 +898,11 @@ export class Waker {
       // `ended` when this connection's stream drops.
       if (entity && execKey) {
         if (wasInterrupting) {
-          await this.#report(entity, "user");
+          await this.#report(entity, "user", scopedSessionId);
         } else if (!cleanExit && !this.shuttingDown) {
           // No interrupt requested but the subprocess did not exit cleanly (non-zero
           // code, or null from a spawn/transport failure) → treat as a crash.
-          await this.#report(entity, "crash");
+          await this.#report(entity, "crash", scopedSessionId);
         }
       }
 
@@ -1062,9 +1072,9 @@ export class Waker {
    * @param {{ entityType: string, entityUuid: string }} entity
    * @param {"user"|"crash"} reason
    */
-  async #report(entity, reason) {
+  async #report(entity, reason, sessionId = "") {
     try {
-      await this.reportInterrupt(entity.entityType, entity.entityUuid, reason);
+      await this.reportInterrupt(entity.entityType, entity.entityUuid, reason, ...(sessionId ? [sessionId] : []));
     } catch (err) {
       this.logger.warn(
         `[Chorus] reportInterrupt failed for ${entity.entityType}:${entity.entityUuid} (${reason}): ${err}`

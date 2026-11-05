@@ -490,3 +490,53 @@ describe("getProjectResourceGraph — null badgeHint → sentinel (separately-mo
     vi.resetModules();
   });
 });
+
+describe("getProjectResourceGraph — directly linked Quick Tasks (Task.ideaUuid)", () => {
+  it("selects ideaUuid and emits Idea → Task derive edges for root linked tasks only", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "i1", title: "Idea", parentUuid: null, status: "elaborated", elaborationStatus: "resolved" },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "q1", title: "Quick 1", proposalUuid: null, ideaUuid: "i1", status: "done" },
+      { uuid: "q2", title: "Quick 2", proposalUuid: null, ideaUuid: "i1", status: "done" },
+      { uuid: "q3", title: "Quick 3 (after q2)", proposalUuid: null, ideaUuid: "i1", status: "done" },
+      { uuid: "qx", title: "Foreign link", proposalUuid: null, ideaUuid: "other-project-idea", status: "open" },
+    ]);
+    mockPrisma.taskDependency.findMany.mockResolvedValue([{ taskUuid: "q3", dependsOnUuid: "q2" }]);
+
+    const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
+
+    expect(mockPrisma.task.findMany.mock.calls[0][0].select).toMatchObject({ ideaUuid: true });
+    const ideaTaskEdges = result.edges.filter((e) => e.from === "i1");
+    expect(ideaTaskEdges).toEqual([
+      { from: "i1", to: "q1", kind: "derive" },
+      { from: "i1", to: "q2", kind: "derive" },
+    ]);
+    expect(result.edges).toContainEqual({ from: "q2", to: "q3", kind: "depends" });
+    const byUuid = Object.fromEntries(result.nodes.map((n) => [n.uuid, n]));
+    expect(byUuid.q1).toMatchObject({ type: "task", ideaUuid: "i1", proposalUuid: null });
+    // #650: proposal-less idea with all linked tasks done → done badge.
+    expect(byUuid.i1.status).toBe("done");
+  });
+
+  it("includes linked tasks in the idea badge (union with approved-proposal tasks)", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { uuid: "i1", title: "Idea", parentUuid: null, status: "open", elaborationStatus: null },
+      { uuid: "i2", title: "Mixed", parentUuid: null, status: "elaborated", elaborationStatus: "resolved" },
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "p2", title: "P", inputType: "idea", inputUuids: ["i2"], status: "approved", createdAt: new Date("2026-01-01") },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "q1", title: "Q1", proposalUuid: null, ideaUuid: "i1", status: "done" },
+      { uuid: "q2", title: "Q2", proposalUuid: null, ideaUuid: "i1", status: "to_verify" },
+      { uuid: "t1", title: "T1", proposalUuid: "p2", ideaUuid: null, status: "done" },
+      { uuid: "q3", title: "Q3", proposalUuid: null, ideaUuid: "i2", status: "in_progress" },
+    ]);
+
+    const result = await getProjectResourceGraph(COMPANY_UUID, PROJECT_UUID);
+    const byUuid = Object.fromEntries(result.nodes.map((n) => [n.uuid, n]));
+    expect(byUuid.i1.status).toBe("verify_work");
+    expect(byUuid.i2.status).toBe("building");
+  });
+});

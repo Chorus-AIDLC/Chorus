@@ -83,6 +83,8 @@ export const TOOL_PERMISSIONS = {
   chorus_admin_move_project_to_group: "project:write",
   // Proposal admin (approve + admin-only close)
   chorus_admin_approve_proposal: "proposal:admin",
+  // Idea Team: the current orchestrator delegates product work
+  chorus_delegate_team_product: "idea:write",
   chorus_admin_close_proposal: "proposal:admin",
   // Task admin (verify, reopen, close)
   chorus_admin_verify_task: "task:admin",
@@ -105,6 +107,9 @@ export type ManagedToolName = keyof typeof TOOL_PERMISSIONS;
 // never supply an agent capability that the API key does not have.
 export const TOOL_READ_PERMISSIONS: Record<string, Permission> = {
   chorus_get_project: "project:read",
+  chorus_get_project_team: "project:read",
+  chorus_get_idea_team_context: "idea:read",
+  chorus_recommend_team_agent: "idea:read",
   chorus_list_projects: "project:read",
   chorus_get_project_groups: "project:read",
   chorus_get_project_group: "project:read",
@@ -134,6 +139,9 @@ export type ToolProjectAccessPolicy =
 // Public tool names alone do not tell us whether a call reads or writes.
 export const TOOL_PROJECT_ACCESS_OVERRIDES = {
   chorus_get_project: { scope: "resource", required: "viewer" },
+  chorus_get_project_team: { scope: "resource", required: "viewer" },
+  chorus_get_idea_team_context: { scope: "resource", required: "viewer" },
+  chorus_recommend_team_agent: { scope: "resource", required: "viewer" },
   chorus_get_ideas: { scope: "resource", required: "viewer" },
   chorus_get_documents: { scope: "resource", required: "viewer" },
   chorus_get_document: { scope: "resource", required: "viewer" },
@@ -150,6 +158,7 @@ export const TOOL_PROJECT_ACCESS_OVERRIDES = {
   chorus_get_elaboration: { scope: "resource", required: "viewer" },
   chorus_search_mentionables: { scope: "resource", required: "viewer" },
   chorus_add_comment: { scope: "resource", required: "editor" },
+  chorus_request_review: { scope: "resource", required: "editor" },
   chorus_answer_elaboration: { scope: "resource", required: "editor" },
   chorus_create_tasks: { scope: "resource", required: "editor" },
   chorus_update_task: { scope: "resource", required: "editor" },

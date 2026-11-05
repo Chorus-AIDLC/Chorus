@@ -11,7 +11,7 @@ const { mockPrisma, notifications } = vi.hoisted(() => {
       project: delegate(), projectMember: delegate(), projectGroup: delegate(), projectGroupMember: delegate(),
       projectVisit: delegate(), idea: delegate(), task: delegate(),
       proposal: delegate(), document: delegate(), activity: delegate(),
-      agent: delegate(), agentInstance: delegate(),
+      agent: delegate(), agentInstance: delegate(), projectAgentTeam: delegate(),
       user: delegate(),
     },
     notifications: { list: vi.fn(), markRead: vi.fn(), emitAgentCheckin: vi.fn() },
@@ -169,7 +169,7 @@ beforeEach(() => {
   db = {
     project: [], projectMember: [], projectGroup: [], projectGroupMember: [], projectVisit: [],
     idea: [], task: [], proposal: [], document: [], activity: [],
-    agent: [], agentInstance: [], user: [],
+    agent: [], agentInstance: [], user: [], projectAgentTeam: [],
   };
   addProject(1, "public", GROUP);
   addProject(2, "private", GROUP);

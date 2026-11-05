@@ -299,6 +299,9 @@ describe("deleteIdea orphans children", () => {
       ideaRow({ uuid: "parent", companyUuid: COMPANY, projectUuid: PROJECT }),
     );
 
+    mockPrisma.task.updateMany.mockResolvedValueOnce({ count: 0 });
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma));
+
     await deleteIdea("parent");
 
     // Orphan updateMany is scoped by both companyUuid and parentUuid.
@@ -659,6 +662,7 @@ describe("moveIdea lineage cascade", () => {
     mockPrisma.idea.updateMany.mockResolvedValueOnce({ count: 3 }); // R + C1 + C2
     mockPrisma.idea.update.mockResolvedValueOnce(ideaRow({ uuid: "R", parentUuid: null }));
     mockPrisma.proposal.findMany.mockResolvedValueOnce([]); // no proposals
+    mockPrisma.task.findMany.mockResolvedValueOnce([]); // no linked Quick Tasks
     mockPrisma.activity.updateMany.mockResolvedValueOnce({ count: 0 });
     wireTransaction();
 
@@ -717,8 +721,14 @@ describe("moveIdea lineage cascade", () => {
     expect(mockPrisma.document.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { companyUuid: COMPANY, proposalUuid: { in: ["PC1"] } }, data: { projectUuid: TARGET } }),
     );
+    // Tasks = the proposal's tasks ∪ Quick Tasks linked to any moved idea; the
+    // resolved set then moves by uuid.
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where).toEqual({
+      companyUuid: COMPANY,
+      OR: [{ proposalUuid: { in: ["PC1"] } }, { projectUuid: PROJECT, ideaUuid: { in: ["R", "C1"] } }],
+    });
     expect(mockPrisma.task.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { companyUuid: COMPANY, proposalUuid: { in: ["PC1"] } }, data: { projectUuid: TARGET } }),
+      expect.objectContaining({ where: { companyUuid: COMPANY, uuid: { in: ["TC1"] } }, data: { projectUuid: TARGET } }),
     );
     expect(res.moved).toEqual({ ideas: 2, proposals: 1, documents: 1, tasks: 1, activities: 0 });
   });
@@ -730,6 +740,7 @@ describe("moveIdea lineage cascade", () => {
     mockPrisma.idea.findMany.mockResolvedValueOnce([]); // no descendants
     mockPrisma.idea.updateMany.mockResolvedValueOnce({ count: 1 });
     mockPrisma.proposal.findMany.mockResolvedValueOnce([]);
+    mockPrisma.task.findMany.mockResolvedValueOnce([]); // no linked Quick Tasks
     mockPrisma.activity.updateMany.mockResolvedValueOnce({ count: 0 });
     wireTransaction();
 

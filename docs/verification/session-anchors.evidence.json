@@ -1,0 +1,47 @@
+{
+  "checkedAt": "2026-11-03T01:36:05.169Z",
+  "url": "http://127.0.0.1:8637",
+  "nativeBackend": "Claude Code (real subprocess, no fixture)",
+  "workerUuid": "059ea321-5ebf-40b4-82d2-41140c5aadba",
+  "projectUuid": "dd7c8bec-5b80-442c-9f23-541c3a84d8d9",
+  "ideaUuid": "6813167e-f13a-4f18-b85d-41c82785e251",
+  "proposalUuid": "ae313c5f-77a0-41fc-b165-b349fb9c2318",
+  "tasks": [
+    "904a95e7-4be8-46e3-8f37-53c95cefbc11",
+    "82020dc8-ace3-4596-979b-1c21d434801a"
+  ],
+  "turns": [
+    {
+      "sessionId": "task:904a95e7-4be8-46e3-8f37-53c95cefbc11",
+      "backendSessionId": "ce7f1b8b-1fd4-5f5b-8fda-90ba553cc191",
+      "status": "ended",
+      "startedAt": "2026-11-03T01:35:31.003Z",
+      "endedAt": "2026-11-03T01:35:40.859Z",
+      "wakeError": null
+    },
+    {
+      "sessionId": "task:82020dc8-ace3-4596-979b-1c21d434801a",
+      "backendSessionId": "f109d988-cd27-5b8e-a9b5-c640c8c3d144",
+      "status": "ended",
+      "startedAt": "2026-11-03T01:35:31.131Z",
+      "endedAt": "2026-11-03T01:35:40.568Z",
+      "wakeError": null
+    },
+    {
+      "sessionId": "review:task:904a95e7-4be8-46e3-8f37-53c95cefbc11",
+      "backendSessionId": "bd2670fe-c0d2-5e45-b759-50240ceb2c14",
+      "status": "ended",
+      "startedAt": "2026-11-03T01:35:41.399Z",
+      "endedAt": "2026-11-03T01:35:52.258Z",
+      "wakeError": null
+    },
+    {
+      "sessionId": "review:task:904a95e7-4be8-46e3-8f37-53c95cefbc11",
+      "backendSessionId": "bd2670fe-c0d2-5e45-b759-50240ceb2c14",
+      "status": "ended",
+      "startedAt": "2026-11-03T01:35:53.055Z",
+      "endedAt": "2026-11-03T01:36:05.112Z",
+      "wakeError": null
+    }
+  ]
+}

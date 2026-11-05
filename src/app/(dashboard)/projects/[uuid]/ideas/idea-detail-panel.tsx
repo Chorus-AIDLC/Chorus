@@ -41,7 +41,7 @@ import { AssignIdeaModal } from "./assign-idea-modal";
 import { MoveIdeaDialog } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/move-idea-dialog";
 import { ElaborationPanel } from "@/components/elaboration-panel";
 import { getElaborationAction, skipElaborationAction, verifyElaborationAction } from "./[ideaUuid]/elaboration-actions";
-import { getProposalsForIdeaAction, getTasksForProposalAction } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions";
+import { getProposalsForIdeaAction, getTasksForProposalAction, getTasksForIdeaAction } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions";
 import { clientLogger } from "@/lib/logger-client";
 import { StartDevelopmentButton } from "@/components/start-development-button";
 import { YoloButton } from "@/components/yolo-button";
@@ -200,7 +200,18 @@ export function IdeaDetailPanel({
   // approved proposal can exist, so the fetch is skipped entirely).
   const [sdProposals, setSdProposals] = useState<{ status: string }[]>([]);
   const [sdTasks, setSdTasks] = useState<{ status: string }[]>([]);
+  // Quick Tasks linked directly to the idea (Task.ideaUuid) — can exist at any
+  // native status, so they are loaded regardless of elaboration (Yolo gating).
+  const [sdLinkedTasks, setSdLinkedTasks] = useState<{ status: string }[]>([]);
   const reloadStartDevData = useCallback(async () => {
+    try {
+      const linked = await getTasksForIdeaAction(projectUuid, idea.uuid);
+      if (linked.success && linked.data) {
+        setSdLinkedTasks(linked.data.map((task) => ({ status: (task as { status: string }).status })));
+      }
+    } catch (e) {
+      clientLogger.error("Failed to load linked tasks:", e);
+    }
     if (idea.status !== "elaborated") {
       setSdProposals([]);
       setSdTasks([]);
@@ -785,6 +796,8 @@ export function IdeaDetailPanel({
                     assigneeName={idea.assignee?.name}
                     proposals={sdProposals}
                     tasks={sdTasks}
+                    linkedTasks={sdLinkedTasks}
+                    elaborationStatus={idea.elaborationStatus}
                     onStarted={() => {
                       router.refresh();
                     }}

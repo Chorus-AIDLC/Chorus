@@ -33,6 +33,7 @@
 // LF-only framing, i.e. NOT readline) and the shared stop-hook / settlement seams.
 
 import { spawn, execFile } from "node:child_process";
+import { backendSessionKey } from "./backend-session-identity.mjs";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { statSync, readdirSync } from "node:fs";
@@ -177,11 +178,12 @@ export class PiRpcChannel {
    *           prompt: string, anchor: string, isNew: boolean, platform?: NodeJS.Platform,
    *           forward?: (obj: any) => void, readdirImpl?: (dir: string) => string[] }} o
    */
-  constructor({ stdin, logger, prompt, anchor, isNew, platform = process.platform, forward, readdirImpl, textOptions = {} }) {
+  constructor({ stdin, logger, prompt, anchor, legacyAnchor, isNew, platform = process.platform, forward, readdirImpl, textOptions = {} }) {
     this.stdin = stdin ?? null;
     this.logger = logger;
     this.prompt = prompt;
     this.anchor = anchor;
+    this.legacyAnchor = legacyAnchor;
     this.platform = platform;
     this.forward = forward ?? (() => {});
     this.readdirImpl = readdirImpl ?? ((dir) => readdirSync(dir));
@@ -461,6 +463,11 @@ export class PiRpcChannel {
   #onInitialState(data) {
     if (typeof data.messageCount !== "number") return;
     this.isNew = data.messageCount === 0;
+    if (this.isNew && this.legacyAnchor) {
+      const notice = `Pi is starting a new isolated session scoped to this agent without copying legacy context. Any original session is preserved; native manual resume handle: ${JSON.stringify(this.legacyAnchor)} (pi --session-id). See docs/DAEMON.md#backend-session-isolation.`;
+      this.logger.warn(`[Chorus] ${notice}`);
+      this.forward({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: notice }] } });
+    }
     if (this.isNew && this.#historyWasLost(data.sessionFile)) {
       this.logger.warn(`[Chorus] ${PI_CONTINUITY_NOTICE} Session: ${this.anchor}.`);
       this.forward({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: PI_CONTINUITY_NOTICE }] } });
@@ -571,14 +578,14 @@ export class PiSpawner {
   /**
    * Run one headless pi RPC wake. Resolves when the subprocess exits. The prompt is
    * sent as the `prompt` command (never argv). `sessionId` is the Chorus anchor,
-   * passed straight through as pi's client-owned `--session-id`; the result's
+   * scoped by agent identity for pi's client-owned `--session-id`; the result's
    * `isNew` comes from pi's own `get_state` (the passed value is only a fallback).
    *
    * @param {{ prompt: string, sessionId: string|null, isNew?: boolean, cwd?: string,
    *           onMessage?: (obj: any) => void,
    *           onChild?: (child: import("node:child_process").ChildProcess) => void }} params
    * @returns {Promise<{ sessionId: string, backendSessionId: string|null, exitCode: number|null, isNew: boolean }>}
-   *   `backendSessionId` is the resumable anchor after a spawn; `null` on the
+   *   `backendSessionId` is the scoped native session key after a spawn; `null` on the
    *   pre-spawn failure paths (no run started, nothing to resume).
    */
   async wake(params) {
@@ -594,6 +601,7 @@ export class PiSpawner {
 
   async #wake({ prompt, sessionId, isNew, cwd, onMessage, onChild }, diagnostics) {
     const anchor = typeof sessionId === "string" ? sessionId : "";
+    const sessionKey = backendSessionKey(anchor, this.creds?.agentUuid);
     const isNewFlag = Boolean(isNew);
 
     const piPath = this.piPath ?? this.resolvePiPathFn({ env: this.env, platform: this.platform });
@@ -610,7 +618,7 @@ export class PiSpawner {
       return { sessionId: anchor, backendSessionId: null, exitCode: null, isNew: isNewFlag,
         wakeError: diagnostics.build({ kind: "startup", message: `Pi version is too old for RPC wakes; need >= ${MIN_PI_VERSION}. Upgrade: ${PI_UPGRADE_COMMAND}` }) };
     }
-    const args = [...buildPiArgs({ sessionId: anchor }), ...this.cliConfig.args];
+    const args = [...buildPiArgs({ sessionId: sessionKey }), ...this.cliConfig.args];
     const { command, argv } = resolveSpawnCommand(piPath, args, this.platform, this.env);
 
     // POSIX: detached process group so the interrupt path can group-kill the tree
@@ -659,7 +667,8 @@ export class PiSpawner {
       }
 
       const channel = new PiRpcChannel({
-        stdin: child.stdin, logger: this.logger, prompt, anchor, isNew: isNewFlag,
+        stdin: child.stdin, logger: this.logger, prompt, anchor: sessionKey,
+        legacyAnchor: sessionKey !== anchor ? anchor : null, isNew: isNewFlag,
         platform: this.platform, forward, readdirImpl: this.readdirImpl,
         textOptions: { env: this.env, creds: this.creds },
       });
@@ -707,7 +716,7 @@ export class PiSpawner {
         this.logger.error(`[Chorus] pi process error: ${safeSpawnError(error)}`);
         channel.markExited();
         unregisterStopHook();
-        resolve({ sessionId: anchor, backendSessionId: anchor || null, exitCode: null, isNew: channel.isNew,
+        resolve({ sessionId: anchor, backendSessionId: sessionKey || null, exitCode: null, isNew: channel.isNew,
           wakeError: diagnostics.build({ kind: "startup", message: `Pi process error: ${safeSpawnError(error)}` }) });
       });
 
@@ -727,7 +736,7 @@ export class PiSpawner {
         if (code !== 0) {
           this.logger.warn(`[Chorus] pi exited with code ${code}`);
         }
-        const result = { sessionId: anchor, backendSessionId: anchor || null, exitCode: code, isNew: channel.isNew };
+        const result = { sessionId: anchor, backendSessionId: sessionKey || null, exitCode: code, isNew: channel.isNew };
         if (code !== 0 && !channel.cancelled) {
           if (channel.failed) {
             if (channel.failureIsFallback) diagnostics.failFallback(channel.failureReason, channel.failureKind);

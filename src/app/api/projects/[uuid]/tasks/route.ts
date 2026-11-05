@@ -29,6 +29,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
     const statusFilter = url.searchParams.get("status") || undefined;
     const priorityFilter = url.searchParams.get("priority") || undefined;
     const proposalUuids = url.searchParams.get("proposalUuids")?.split(",").filter(Boolean);
+    const ideaUuid = url.searchParams.get("ideaUuid") || undefined;
 
     // Project access (404 when not visible, 403 below required level)
     await requireProjectAccess(auth, projectUuid, "viewer");
@@ -41,6 +42,7 @@ export const GET = withErrorHandler<{ uuid: string }>(
       status: statusFilter,
       priority: priorityFilter,
       proposalUuids,
+      ideaUuid,
     });
 
     return paginated(tasks, page, pageSize, total);
@@ -74,6 +76,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       description?: string;
       priority?: string;
       storyPoints?: number;
+      ideaUuid?: string | null;
     }>(request);
 
     // Validate required fields
@@ -98,6 +101,12 @@ export const POST = withErrorHandler<{ uuid: string }>(
       });
     }
 
+    // Direct Idea link (Quick Tasks). Shape-check here; the service enforces the
+    // link invariants (same project, not a theme) and throws 400/404 ApiErrors.
+    if (body.ideaUuid !== undefined && body.ideaUuid !== null && typeof body.ideaUuid !== "string") {
+      return errors.badRequest("ideaUuid must be a string or null");
+    }
+
     const task = await createTask({
       companyUuid: auth.companyUuid,
       projectUuid,
@@ -105,6 +114,7 @@ export const POST = withErrorHandler<{ uuid: string }>(
       description: body.description?.trim() || null,
       priority,
       storyPoints: storyPoints || null,
+      ideaUuid: body.ideaUuid || null,
       createdByUuid: auth.actorUuid,
     });
 

@@ -5,6 +5,8 @@
 
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { isIdeaTeamProductDelegate, projectHasTeams, type IdeaTeamActor } from "./idea-team.service";
+import { createActivity } from "./activity.service";
 import { Prisma } from "@/generated/prisma/client";
 import { formatCreatedBy, formatReview, resolveAssigneeAgentUuid, batchResolveActorIdentities, type ActorIdentityMap } from "@/lib/uuid-resolver";
 import { eventBus } from "@/lib/event-bus";
@@ -607,6 +609,10 @@ export async function checkIdeasAssignee(
       isAssignee = ownerAgentUuid === actorUuid;
     }
 
+    // A Team product delegate authors the proposal while the orchestrator stays assignee.
+    if (!isAssignee && actorType === "agent") {
+      isAssignee = await isIdeaTeamProductDelegate(companyUuid, idea.uuid, actorUuid);
+    }
     if (!isAssignee) {
       unassignedIdeas.push(idea.uuid);
     }
@@ -1222,7 +1228,8 @@ export async function deleteProposal(
 // Submit Proposal for review (draft -> pending)
 export async function submitProposal(
   proposalUuid: string,
-  companyUuid: string
+  companyUuid: string,
+  actorContext?: IdeaTeamActor
 ): Promise<ProposalResponse> {
   const proposal = await prisma.proposal.findFirst({
     where: { uuid: proposalUuid, companyUuid },
@@ -1256,6 +1263,13 @@ export async function submitProposal(
   });
 
   eventBus.emitChange({ companyUuid: updated.companyUuid, projectUuid: updated.projectUuid, entityType: "proposal", entityUuid: updated.uuid, action: "updated" });
+
+  // Lifecycle event that hands a Team-managed Idea back to its orchestrator. Only
+  // emitted in projects with a bound Team, so projects without Teams are unchanged.
+  if (actorContext && await projectHasTeams(companyUuid, updated.projectUuid)) {
+    await createActivity({ companyUuid, projectUuid: updated.projectUuid, targetType: "proposal", targetUuid: updated.uuid,
+      actorType: actorContext.actorType, actorUuid: actorContext.actorUuid, action: "submitted" });
+  }
 
   return formatProposalResponse(updated);
 }

@@ -10,12 +10,6 @@
 //     from STDIN (never argv). It runs under the `chorus` agent profile
 //     (`--agent chorus`) so the woken session loads the Kiro plugin's Chorus MCP
 //     server + AI-DLC skills + steering (parity with an interactive plugin user).
-//   • Kiro GENERATES its own per-cwd `sessionId` (like Codex's thread_id, unlike
-//     Claude's client-supplied --session-id) — BUT there is NO id-bearing stream
-//     event (Kiro emits plain text/markdown on stdout; `--format json` is
-//     list-commands-only). So we capture the id POST-RUN by diffing the session
-//     store, and persist anchor→sessionId (kiro-session-map.mjs) so a later wake
-//     can `--resume-id <sessionId>`.
 //   • No `--mcp-config`: MCP comes from the plugin's .kiro/settings/mcp.json
 //     (loaded via --agent chorus), which references ${env:CHORUS_API_KEY}; the
 //     daemon key reaches it via that env var — never argv.
@@ -28,12 +22,13 @@
 // no-op here (this task owns spawn/resume/trust/interrupt + sessionId capture).
 
 import { spawn } from "node:child_process";
+import { backendSessionKey } from "./backend-session-identity.mjs";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { win32 as pathWin32, posix as pathPosix, join } from "node:path";
-import { getSessionId as defaultGetSessionId, setSessionId as defaultSetSessionId } from "./kiro-session-map.mjs";
+import { getSessionId as defaultGetSessionId } from "./kiro-session-map.mjs";
 import { reconstructTranscript as defaultReconstructTranscript } from "./kiro-transcript.mjs";
 import { awaitChildSettled } from "./child-exit.mjs";
 import { createWakeErrorCollector } from "./wake-error.mjs";
@@ -182,33 +177,6 @@ export function snapshotSessions(cwd, deps = {}) {
 }
 
 /**
- * Decide the run's sessionId by diffing a before/after store snapshot, UNAMBIGUOUSLY.
- *
- * Concurrency (reviewer N1): the WakeQueue serializes wakes per idea-key but runs
- * DIFFERENT keys concurrently (default maxConcurrency 4), and all keys share the
- * daemon's single repo cwd — so two fresh Kiro runs can be in flight in the same
- * cwd at once. A "newest new id wins" heuristic would then mis-attribute one run's
- * sessionId to the other's anchor. To stay correct we require the id to be
- * UNAMBIGUOUS: return the new id ONLY when EXACTLY ONE brand-new id appeared in the
- * window (present in `after`, absent in `before`). If zero or several new ids
- * appeared, return null — the caller degrades to "not resumable this time" (a
- * missed resume is a minor efficiency loss; a wrong resume would cross-wire two
- * ideas' conversations, which is a correctness bug). No "updated_at advanced"
- * fallback: on a fresh run the id is always new-to-the-store; on a resume the
- * caller already knows the id and never calls this.
- * @param {Map<string, number>} before @param {Map<string, number>} after
- * @returns {string|null}
- */
-export function pickNewSessionId(before, after) {
-  const fresh = [];
-  for (const sid of after.keys()) {
-    if (!before.has(sid)) fresh.push(sid);
-  }
-  // Exactly one new session created in this run's window → unambiguous.
-  return fresh.length === 1 ? fresh[0] : null;
-}
-
-/**
  * @typedef {Object} KiroSpawnerOptions
  * @property {string} [kiroPath]   Resolved kiro-cli path (resolved lazily if omitted).
  * @property {(o: object) => any} [spawnImpl]   Injectable spawn (tests).
@@ -218,8 +186,6 @@ export function pickNewSessionId(before, after) {
  *   into the child env for plugin hooks, shell tooling, and MCP authentication.
  * @property {NodeJS.Platform} [platform]  Injectable for tests; gates POSIX `detached`.
  * @property {(anchor: string) => string|null} [getSessionIdFn]  Injectable session-map read.
- * @property {(anchor: string, id: string) => void} [setSessionIdFn]  Injectable session-map write.
- * @property {(cwd: string) => Map<string, number>} [snapshotSessionsFn]  Injectable store snapshot.
  * @property {(o: {sessionId: string, cwd: string, onMessage?: Function, stdout: string, logger: any}) => void} [reconstructTranscript]
  *   Injectable transcript reconstruction (task 4) — invoked post-run; a no-op if absent.
  */
@@ -239,9 +205,8 @@ export class KiroSpawner {
     this.cliConfig = validateAgentCliConfig(opts.cliConfig, "kiro", opts.label);
     this.env = overlayAgentEnv(opts.env ?? process.env, this.cliConfig.env, this.platform);
     this.getSessionIdFn = opts.getSessionIdFn ?? defaultGetSessionId;
-    this.setSessionIdFn = opts.setSessionIdFn ?? defaultSetSessionId;
+    this.verifySessionOwnershipFn = opts.verifySessionOwnershipFn ?? (() => false);
     this.resolveKiroPathFn = opts.resolveKiroPathFn ?? resolveKiroPath;
-    this.snapshotSessionsFn = opts.snapshotSessionsFn ?? snapshotSessions;
     // Post-run transcript reconstruction from Kiro's on-disk session store (task 4).
     // Defaults to the real reader; injectable/nullable for tests.
     this.reconstructTranscript =
@@ -249,12 +214,6 @@ export class KiroSpawner {
   }
 
   /**
-   * Spawn a headless Kiro run. Resolves when the subprocess exits. The prompt is
-   * written to stdin (never argv). `sessionId` is the Chorus anchor (direct idea
-   * uuid, or entity uuid). Kiro owns its session id, so we IGNORE the passed
-   * `isNew`/`mcpConfigPath` and decide new-vs-resume from the persisted
-   * anchor→sessionId map: a recorded id → `--resume-id`, otherwise a fresh run.
-   *
    * @param {{ prompt: string, sessionId: string|null, isNew?: boolean, mcpConfigPath?: string,
    *           cwd?: string, onMessage?: (obj: any) => void,
    *           onChild?: (child: import("node:child_process").ChildProcess) => void }} params
@@ -262,7 +221,7 @@ export class KiroSpawner {
    */
   async wake(params) {
     const diagnostics = createWakeErrorCollector({ source: this.wakeErrorSource, env: this.env, creds: this.creds });
-    const startupResult = { sessionId: typeof params.sessionId === "string" ? params.sessionId : "", exitCode: null, isNew: true };
+    const startupResult = { sessionId: typeof params.sessionId === "string" ? params.sessionId : "", backendSessionId: null, exitCode: null, isNew: true };
     try {
       return await this.#wake(params, diagnostics, startupResult);
     } catch (error) {
@@ -273,11 +232,34 @@ export class KiroSpawner {
 
   async #wake({ prompt, sessionId, cwd, onMessage, onChild }, diagnostics, startupResult) {
     const anchor = typeof sessionId === "string" ? sessionId : "";
+    const sessionKey = backendSessionKey(anchor, this.creds?.agentUuid);
     const runCwd = cwd ?? process.cwd();
 
-    // new-vs-resume is OWNED by this backend (Kiro session model), not the waker's
-    // Claude transcript probe: a recorded sessionId means resume via --resume-id.
-    const knownSessionId = anchor ? this.getSessionIdFn(anchor) : null;
+    const candidateSessionId = sessionKey ? this.getSessionIdFn(sessionKey) : null;
+    let knownSessionId = null;
+    if (typeof candidateSessionId === "string" && candidateSessionId) {
+      try {
+        if (anchor && this.creds?.agentUuid && this.verifySessionOwnershipFn({
+          agentUuid: this.creds.agentUuid,
+          anchor,
+          sessionKey,
+          sessionId: candidateSessionId,
+          cwd: runCwd,
+          dir: kiroSessionsDir(this.env, this.platform),
+        }) === true) knownSessionId = candidateSessionId;
+      } catch (error) {
+        this.logger.warn(`[Chorus] Kiro session ownership verification failed; refusing resume: ${error}`);
+      }
+      if (!knownSessionId) {
+        this.logger.warn(`[Chorus] Kiro session mapping has unverified ownership (including older agent-scoped captures); refusing automatic resume/reconstruction. Entry preserved; native manual resume handle: ${JSON.stringify(candidateSessionId)} (kiro-cli chat --resume-id).`);
+      }
+    }
+    if (!knownSessionId && sessionKey !== anchor) {
+      const legacySessionId = this.getSessionIdFn(anchor);
+      if (legacySessionId) {
+        this.logger.warn(`[Chorus] Kiro legacy session mapping has unknown ownership; starting a new isolated session without copying old context. Legacy entry preserved; native manual resume handle: ${JSON.stringify(legacySessionId)} (kiro-cli chat --resume-id).`);
+      }
+    }
     const isNew = !knownSessionId;
     startupResult.isNew = isNew;
 
@@ -285,7 +267,7 @@ export class KiroSpawner {
     if (!kiroPath) {
       // No crash — surface visibly and resolve with a failure result.
       this.logger.error("[Chorus] cannot locate the `kiro-cli` executable on PATH; skipping wake");
-      return { sessionId: anchor, exitCode: null, isNew,
+      return { sessionId: anchor, backendSessionId: null, exitCode: null, isNew,
         wakeError: diagnostics.build({ kind: "startup", message: "Cannot locate kiro-cli executable; check installation and PATH" }) };
     }
 
@@ -310,10 +292,9 @@ export class KiroSpawner {
         childEnv.CHORUS_AGENT_PROFILE = this.creds.agentUuid || this.creds.agentName;
     }
 
-    // Snapshot the session store BEFORE the run so we can identify the sessionId
-    // this run creates (Kiro has no id-bearing stream event). On resume we already
-    // know the id, so the snapshot is only needed for a fresh run.
-    const before = isNew ? this.#safeSnapshot(runCwd) : new Map();
+    if (isNew) {
+      this.logger.warn("[Chorus] Kiro native session ownership is unavailable; shared-store changes (even a singleton) cannot identify this process. No session capture or store reconstruction; using this process's stdout only. Next wake starts fresh unless ownership is independently verified.");
+    }
 
     return new Promise((resolve) => {
       let child;
@@ -328,7 +309,7 @@ export class KiroSpawner {
         });
       } catch (error) {
         this.logger.error(`[Chorus] failed to spawn kiro-cli: ${safeSpawnError(error)}`);
-        resolve({ sessionId: anchor, exitCode: null, isNew,
+        resolve({ sessionId: anchor, backendSessionId: null, exitCode: null, isNew,
           wakeError: diagnostics.build({ kind: "startup", message: `Cannot spawn kiro-cli: ${safeSpawnError(error)}` }) });
         return;
       }
@@ -360,7 +341,7 @@ export class KiroSpawner {
 
       child.on("error", (error) => {
         this.logger.error(`[Chorus] kiro-cli process error: ${safeSpawnError(error)}`);
-        resolve({ sessionId: knownSessionId || anchor, exitCode: null, isNew,
+        resolve({ sessionId: knownSessionId || anchor, backendSessionId: knownSessionId || null, exitCode: null, isNew,
           wakeError: diagnostics.build({ kind: "startup", message: `Kiro process error: ${safeSpawnError(error)}` }) });
       });
 
@@ -372,26 +353,7 @@ export class KiroSpawner {
           this.logger.warn(`[Chorus] kiro-cli exited with code ${code}`);
         }
 
-        // Resolve the run's sessionId. On resume it's the id we passed; on a fresh
-        // run, diff the store snapshot to find the newly-created conversation.
-        let observedSessionId = knownSessionId || null;
-        if (isNew && code === 0) {
-          const after = this.#safeSnapshot(runCwd);
-          const found = pickNewSessionId(before, after);
-          if (found) {
-            observedSessionId = found;
-            if (anchor) this.setSessionIdFn(anchor, found);
-          } else {
-            // Zero or MULTIPLE new sessions in the window (e.g. a concurrent wake
-            // in the same cwd — reviewer N1). We refuse to guess: not persisting
-            // means a missed resume next time (minor), whereas guessing could
-            // cross-wire two ideas' conversations (a correctness bug).
-            this.logger.warn(
-              "[Chorus] kiro wake: run sessionId ambiguous or absent in the store " +
-                "(0 or >1 new sessions this window) — not persisting; next wake starts fresh"
-            );
-          }
-        }
+        const observedSessionId = knownSessionId;
 
         // Transcript reconstruction (task 4) — post-run, best-effort. Runs even
         // when no sessionId was captured: `kiro-cli chat --no-interactive` does NOT
@@ -416,7 +378,7 @@ export class KiroSpawner {
           }
         }
 
-        const result = { sessionId: observedSessionId || anchor, exitCode: code, isNew };
+        const result = { sessionId: observedSessionId || anchor, backendSessionId: observedSessionId, exitCode: code, isNew };
         if (code !== 0) result.wakeError = diagnostics.build({ exitCode: rawCode });
         resolve(result);
       });
@@ -439,15 +401,5 @@ export class KiroSpawner {
         try { child.stdin?.end?.(); } catch {}
       }
     });
-  }
-
-  /** Snapshot the store, swallowing any failure (best-effort id capture). */
-  #safeSnapshot(cwd) {
-    try {
-      return this.snapshotSessionsFn(cwd, { logger: this.logger, dir: kiroSessionsDir(this.env, this.platform) });
-    } catch (err) {
-      this.logger.warn(`[Chorus] kiro session snapshot failed (${err}) — id capture degraded`);
-      return new Map();
-    }
   }
 }

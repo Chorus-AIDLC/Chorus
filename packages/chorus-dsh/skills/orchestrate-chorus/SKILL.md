@@ -4,7 +4,7 @@ description: Multi-agent orchestration playbook — coordinate OTHER agents and 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.24.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -17,10 +17,20 @@ This skill is for an **orchestrator** (typically an Admin-preset agent) that coo
 
 It complements the other skills rather than replacing them:
 
-- `yolo-chorus` — **one** agent drives the whole pipeline solo. Orchestration is the opposite: **many** agents, each owning a piece, coordinated by you.
+- `yolo-chorus` — **one** agent drives the whole pipeline solo. (On a Team-managed Idea, yolo still routes product/development work to the Team — see below.) Orchestration is the opposite: **many** agents, each owning a piece, coordinated by you.
 - `idea-chorus`, `proposal-chorus`, `develop-chorus`, `review-chorus`, `quick-dev-chorus` — a single stage you execute yourself. Orchestration is the layer *above* those: you decide who runs each stage.
 
 ---
+
+## Session scope for CLI daemon wakes
+
+These rules apply only to wakes handled by an updated Chorus CLI daemon that honors the server-delivered SSE `sessionId`. They do not upgrade OpenClaw, Hermes, or dsh-native session routing; those native runtimes retain their existing behavior. Older daemons may fall back to legacy entity/Idea routing, so do not assume task/review isolation there.
+
+- **Task work:** `task:<uuid>` is a task-scoped session with no Idea-session memory. Fetch the current task, its proposal and documents, and its direct Idea from Chorus before starting work; do not rely on the orchestrator's conversation. Sibling tasks of the same Idea can run concurrently for one agent and may share the working directory. Before editing when siblings share the cwd, work in your own git worktree; the daemon does not create one for you.
+- **Review work:** a Team review request sent with `chorus_request_review` uses `review:<type>:<uuid>`, where type is `proposal`, `task`, or `idea` (a code review targets the Idea). It is a read-only review-scoped session with no development-session memory. Fetch the target and current reviewer protocol/context before reviewing; do not implement fixes or perform lifecycle writes. A re-review by the same reviewer of the same target resumes the same review session, preserving review history rather than development memory.
+- **Orchestration:** elaboration, proposal work, Start Development, Yolo, and orchestration stay in the bare direct-Idea UUID session (`<directIdeaUuid>`, not `idea:<uuid>`). An orchestrator also assigned a task uses `task:<uuid>` only for task-start/reopen work; its other task wakes (comments, mentions, PASS/FAIL VERDICT replies, Team handoffs) stay in the Idea session. Human instructions, operations, and research requests always use the Idea session, even for a task's developer.
+
+These are backend conversation and wake-queue anchors, not the Chorus Agent Session `sessionUuid` used by session check-in tools. Session separation does not isolate files or change the host's existing session check-in lifecycle.
 
 ## When to use this skill
 
@@ -69,7 +79,80 @@ The theme-decomposition case, end to end:
 
 ---
 
-## Independent review as an adversarial gate
+## Routing work through your Team (Team-managed Ideas)
+
+If `chorus_get_idea_team_context({ideaUuid})` shows `managed: true` and you are the `orchestrator`, the Team decides **who does each step**; you do the routing:
+
+- **Product work** — `chorus_recommend_team_agent({ideaUuid, role: "product"})`, then `chorus_delegate_team_product({ideaUuid, agentUuid})`. The delegate elaborates and creates/submits the proposal; you stay the Idea's assignee. If the recommendation is **yourself** (offline fallback), do the product work yourself — don't delegate to yourself.
+- **Development** — for each ready task, `chorus_recommend_team_agent({ideaUuid, role: "development", taskUuid})`, follow its `decision` (`recommended` → assign; `lead_decision` → you choose among `candidates`; `manual` / `paused` → ask a human), then assign the task normally. If the recommendation is **yourself**, claim and start the task in the same turn — self-assignment sends no wake.
+- **Reviews** — follow [Team review routing](#team-review-routing), including review-role recommendations and same-turn self-review dispatch.
+- **Handoffs** — you are woken when a proposal is submitted or approved and when a task is submitted for verification; re-read the Team context, then route the next step.
+- YOLO only decides whether approvals still need a human; it does not change who does the work. With YOLO you approve/verify yourself (existing permissions) and keep routing to the Team; without YOLO the proposal gate below still applies. Unmanaged Ideas keep the workflow below unchanged.
+- Don't @mention another agent just to acknowledge a handoff — @mention only when they need to act.
+
+## Team review routing
+
+This is the shared protocol for **active Team-managed Ideas**. It takes precedence over generic sub-agent reviewer reminders and the unmanaged review flow below. Only the Idea's **current active orchestrator** dispatches reviews and coordinates the gates; a developer or product delegate submits work and leaves routing to that orchestrator.
+
+### Resolve authority and select the reviewer
+
+Read the original entity and resolve every source Idea through proposal inputs, including document-input ancestry. Fetch `chorus_get_idea_team_context({ideaUuid})` for each source Idea before acting, and re-read before dispatch, approval or verification. Missing or ambiguous ancestry/context means stop; `paused` means stop automated Team actions and request explicit human repair. Never claim or reassign an Idea to take over a review. Confirmed unmanaged work retains the legacy flow.
+
+The current orchestrator calls the recommendation tool for the review target:
+
+```js
+chorus_recommend_team_agent({ideaUuid, role: "review", proposalUuid}) // proposal review
+chorus_recommend_team_agent({ideaUuid, role: "review", taskUuid})     // task review
+chorus_recommend_team_agent({ideaUuid, role: "review"})               // whole-Idea code review
+```
+
+Supply at most one target. The task/proposal must belong to the source Idea. Selection is eligible → online → latest valid agent-authored target VERDICT affinity → minimum `activeCount`; equal candidates return `lead_decision`, which the current orchestrator resolves among the returned candidates, never arbitrarily. Nobody is excluded: the author, developer and orchestrator may be recommended. `rereview_affinity` keeps the same reviewer, including an orchestrator whose sub-agent reviewed earlier. No eligible online reviewer returns the orchestrator with `review_orchestrator_subagent_fallback` and empty candidates — unlike product/development's manual fallback. Honor `manual` and `paused`; recommendation alone grants no action permissions.
+
+### Dispatch and self-submission
+
+- **Recommendation is yourself:** run the matching `proposal-reviewer-chorus` / `task-reviewer-chorus` / `code-reviewer-chorus` skill in a fresh read-only `subagent` with `run_in_background: false` **in the same turn**, with the target UUID and round; tell the child to load the exact reviewer name with the `skill` tool. If spawning is unavailable or disabled by policy, load the matching reviewer skill and perform a separate focused read-only pass inline, posting the same routed VERDICT. A fresh sub-agent counts as the memory-free session; do not wait for a self-wake.
+- **Another agent:** call `chorus_request_review({ targetType, targetUuid, reviewerUuid, round })` once. `targetType` is `proposal`, `task` or `idea` (the whole-Idea code review); `round` is the current review round. The server validates the request, posts the `Team review request — <kind>, round N` comment (target UUID, reviewer protocol, exactly one reviewer @mention, and the expected PASS / PASS WITH NOTES and FAIL recipients from the table below), and wakes only that reviewer in its review session. Do not hand-write the request with `chorus_add_comment`: a plain comment never opens a review session. Then **end the turn**; do not poll for a reply.
+- **Request/forwarding format:** never start a line with `VERDICT:` in a review request or a forwarded finding. Use prose such as `Reviewer result: FAIL` and link the original comment instead; only the actual reviewer verdict may create affinity.
+- **Self-submission:** immediately after the orchestrator itself calls `chorus_pm_submit_proposal` or `chorus_submit_for_verify`, recommend and dispatch the review in that turn. The server skips waking the submitting actor.
+- **Last-task check:** after any task submission, enumerate **all tasks across every proposal whose source Ideas include this Idea**, including document-input proposals; read all pages. When every task is `to_verify`, `done` or `closed`, also start the **whole-Idea review in parallel with task reviews**, not after the last verification. Read the Idea comments first and avoid a duplicate whole-Idea review request/dispatch for the current round. Prepare both task and aggregate dispatches before ending a remote-review submission turn. If a task review later needs fixes, the aggregate PASS does not clear those fixes or their task gates.
+
+### Local reviewer protocols
+
+Use the matching installed protocol for the receiving host; paths below are relative to this skill. Include that location in the request.
+
+- **proposal:** [proposal reviewer protocol](../proposal-reviewer-chorus/SKILL.md).
+- **task:** [task reviewer protocol](../task-reviewer-chorus/SKILL.md).
+- **code:** [code reviewer protocol](../code-reviewer-chorus/SKILL.md).
+
+### Receiver bootstrap
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+### VERDICT routing and reviewer duty
+
+A woken Team reviewer stays read-only and posts **exactly one VERDICT comment per round** on the reviewed entity, with **exactly one @mention**, of the actor who must act next:
+
+| Review target | PASS / PASS WITH NOTES | FAIL |
+|---------------|-----------------------|------|
+| Proposal | Current Idea orchestrator | Product delegate (`productAgentUuid`), else orchestrator |
+| Task | Current Idea orchestrator (to verify) | Task developer (logical assignee, not instance UUID) |
+| Whole Idea | Current Idea orchestrator | Current Idea orchestrator |
+
+Re-read the entity/Team context before posting so a stale request does not route to a former assignee. If authority or the routed recipient cannot be resolved, stop and request human repair rather than inventing a recipient. The reviewer never rejects, reopens, approves, verifies or creates tasks — those decisions belong to the authorized orchestrator or human. Put the routed mention before the final literal `VERDICT: PASS`, `VERDICT: PASS WITH NOTES` or `VERDICT: FAIL` line.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
+
+### Gates, fixes and rounds
+
+- **Task verification:** only the current active orchestrator, with existing permissions and required AC passed, verifies after a **current-round PASS / PASS WITH NOTES** on that task. An older verdict or silence is not a PASS.
+- **Proposal approval:** under **server-confirmed human-requested YOLO for this exact Idea**, the current orchestrator may approve with existing permissions only after a **current-round PASS / PASS WITH NOTES**. Without YOLO, after PASS the orchestrator posts **one comment @mentioning the human owner to request approval**, then ends the turn; it does **not** approve. Respect every linked Idea's gate and generation fence; YOLO changes approval, not Team review routing.
+- **Whole-Idea gate:** PASS / PASS WITH NOTES gates only the **completion report and PR**, not individual task verification. On FAIL, the orchestrator creates tracked fix tasks via `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** (never standalone), or reopens affected tasks with existing authority. Route fixes through development, AC self-check, task review and verification, then re-run the aggregate review. A failed or cancelled fix stops automation and escalates. No review verdict authorizes push, merge or deployment.
+- **Re-review:** recommend again after resubmission; use the same reviewer through `rereview_affinity` when available, with stable finding IDs. Round 2+ acknowledges every prior finding as `fixed`, `still-open` or `not-verifiable`, citing targeted re-reads/re-runs; never rename IDs or silently close findings.
+- **Batching:** list all findings in one review pass/comment (within the existing reviewer finding rules); forward the batch in **one** orchestrator comment, not one mention per finding.
+- **Round cap:** at most **3 rounds per entity**. If unresolved after round 3, post a comment @mentioning the human owner and **stop automation** for that entity. Never start round 4, self-review around an escalation, or treat a missing verdict as success.
+- **No acknowledgement mentions:** @mention only an actor who must act on a question, decision or work handoff. Never reply `received` or @mention just to acknowledge. After a task PASS the developer needs no duplicate PASS-to-verify handoff: the VERDICT already @mentions the orchestrator.
+
+## Independent review as an adversarial gate (unmanaged Ideas)
 
 Chorus ships three read-only reviewer skills. As orchestrator you run them at the three gates and act on the verdict — this is your primary quality lever when you are not writing the code yourself.
 
@@ -118,8 +201,8 @@ This is **advisory, not routing.** There is no automatic server subscription and
 
 Chorus is **AI proposes, humans verify**. As orchestrator you enforce that, you do not bypass it:
 
-- **Proposal gate.** When a delegated owner submits a proposal, STOP. Run the proposal reviewer, then hand the approve/reject decision to the human owner. Do not self-approve just because you *can* (`proposal:admin`).
-- **Verify gate.** When a task reaches `to_verify`, STOP. Run the task reviewer, then let the human verify. Permission to verify is not authorization to rubber-stamp your own coordinated work.
+- **Proposal gate.** Unless a human requested YOLO on the Idea: when a delegated owner submits a proposal, STOP. Run the proposal reviewer, then hand the approve/reject decision to the human owner. Do not self-approve just because you *can* (`proposal:admin`).
+- **Verify gate.** (Unmanaged Ideas) When a task reaches `to_verify`, STOP. On a Team-managed Idea you are its orchestrator and verify the task yourself with your existing permissions after reviewing it. Run the task reviewer, then let the human verify. Permission to verify is not authorization to rubber-stamp your own coordinated work.
 - **Never merge or push.** The orchestrator drives work up to "PR ready" and hands it back to the human — it does not merge, push, or otherwise ship autonomously.
 
 @mention the owner at each gate so the handoff is explicit and auditable.

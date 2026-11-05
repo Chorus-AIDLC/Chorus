@@ -32,6 +32,7 @@ const bodySchema = z.object({
   connectionUuid: z.string().min(1),
   entityType: z.enum([...CONTROL_ENTITY_TYPES]),
   entityUuid: z.string().min(1),
+  sessionId: z.string().optional(),
   reason: z.enum([...INTERRUPT_REASONS]),
 });
 
@@ -53,7 +54,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!parsed.success) {
     return errors.validationError(parsed.error.flatten());
   }
-  const { connectionUuid, entityType, entityUuid, reason } = parsed.data;
+  const { connectionUuid, entityType, entityUuid, reason, sessionId } = parsed.data;
 
   const hasTaskAdmin =
     (auth.type === "agent" || auth.type === "super_admin") &&
@@ -76,6 +77,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     entityType,
     entityUuid,
     reason,
+    sessionId ?? "",
   );
   if (!updated) {
     // No active execution row for this connection+entity (the wake already ended,

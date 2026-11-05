@@ -84,6 +84,12 @@ vi.mock("@/lib/uuid-resolver", () => ({
   formatReview: mockFormatReview,
   resolveAssigneeAgentUuid: mockResolveAssigneeAgentUuid,
 }));
+vi.mock("@/services/idea-team.service", () => ({
+  assertIdeaTeamGate: vi.fn(async () => {}),
+  isIdeaTeamProductDelegate: vi.fn(async () => false),
+  projectHasTeams: vi.fn(async () => false),
+}));
+vi.mock("@/services/activity.service", () => ({ createActivity: vi.fn(async () => ({})) }));
 vi.mock("@/services/document.service", () => ({
   createDocumentFromProposal: mockCreateDoc,
 }));
@@ -1309,6 +1315,19 @@ describe("submitProposal", () => {
     );
     expect(result.status).toBe("pending");
     expect(mockEventBus.emitChange).toHaveBeenCalled();
+  });
+
+  it.each([[false, 0], [true, 1]])("records the Team handoff activity only in projects with a Team (hasTeams=%s)", async (hasTeams, calls) => {
+    const { createActivity } = await import("@/services/activity.service");
+    const { projectHasTeams } = await import("@/services/idea-team.service");
+    vi.mocked(createActivity).mockClear();
+    vi.mocked(projectHasTeams).mockResolvedValueOnce(hasTeams);
+    const proposal = dbProposal({ status: "draft", inputType: "idea", inputUuids: ["idea-1"], documentDrafts: [validDocDraft()], taskDrafts: [validTaskDraft()], description: "Good proposal" });
+    mockPrisma.proposal.findFirst.mockResolvedValue(proposal);
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: "idea-1", title: "Idea", elaborationStatus: "resolved" }]);
+    mockPrisma.proposal.update.mockResolvedValue(dbProposal({ ...proposal, status: "pending" }));
+    await submitProposal(proposal.uuid, COMPANY_UUID, { actorType: "agent", actorUuid: "agent-1" });
+    expect(createActivity).toHaveBeenCalledTimes(calls);
   });
 
   it("should NOT auto-transition input ideas on submit (status derived from proposal/tasks)", async () => {

@@ -18,6 +18,8 @@ Agents may use a **role preset** (`developer_agent`, `pm_agent`, `admin_agent`) 
 
 Discovery and collaboration tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, session management, `chorus_create_tasks`, `chorus_update_task`) are **public** and registered for every preset — they are listed under "Public Tools" and "Session Tools" below without a Required Permission row. Commenting requires the target resource's `read` capability plus project `editor` access; answering elaboration similarly requires `idea:read` plus project `editor`. Thus `developer_agent` can participate without `idea:write`, `proposal:write`, or `document:write`. Public task creation/update still requires `task:write`, and reads/searches are filtered by resource read capabilities.
 
+Exception to the discovery-tool visibility shorthand: `chorus_get_project_team` requires `project:read`, plus project `viewer` access and personal-owner scoping at read time. Team membership never grants permissions or project access.
+
 > Note: `chorus_create_tasks` and `chorus_update_task` field edits are public because handler-level assignee / authorship guards enforce who can actually mutate state. Operational status transitions (`in_progress`, `to_verify`) still require the caller to be the task's assignee at the service layer — the permission gate is about tool visibility, not operation authorization.
 
 ### Gated Tool → Required Permission Matrix
@@ -26,6 +28,10 @@ The following table summarizes every permission-gated MCP tool. Each tool has ex
 
 | Tool | Required Permission |
 |------|---------------------|
+| `chorus_get_project_team` | `project:read` |
+| `chorus_get_idea_team_context` | `idea:read` |
+| `chorus_recommend_team_agent` | `idea:read` |
+| `chorus_delegate_team_product` | `idea:write` |
 | `chorus_claim_idea` | `idea:write` |
 | `chorus_release_idea` | `idea:write` |
 | `chorus_move_idea` | `idea:write` |
@@ -104,7 +110,7 @@ Agents can filter results by project(s) using HTTP headers during MCP connection
 ### Affected Tools
 
 The following tools respect project filtering:
-- `chorus_checkin` - Returns filtered assignments
+- `chorus_checkin` - Returns filtered `activeProjects` counts and personal `projectTeams` for active/request-scoped projects
 - `chorus_get_my_assignments` - Returns filtered idea/task tracker (grouped by project)
 
 ### Usage Example
@@ -221,7 +227,7 @@ Tools available to all Agents.
 
 ### chorus_checkin
 
-**Description**: Agent check-in. Returns agent identity (including owner info), the resource-aggregated effective permission set, an `activeProjects` distribution (which projects the agent is advancing ideas in + an active-idea count per project — not a per-idea list), and a notification summary. Recommended at session start. Side effects: updates `agent.lastActiveAt`, emits the first-checkin notification to the owner once, and marks the 5 returned recent notifications as read.
+**Description**: Agent check-in. Returns agent identity (including owner info), the resource-aggregated effective permission set, an `activeProjects` distribution (which projects the agent is advancing ideas in + an active-idea count per project — not a per-idea list), a separate owner-private `projectTeams` map, and a notification summary. Recommended at session start. Side effects: updates `agent.lastActiveAt`, emits the first-checkin notification to the owner once, and marks the 5 returned recent notifications as read.
 
 **Project Filtering**: Results can be filtered by project using HTTP headers during MCP connection:
 - `X-Chorus-Project`: Single or multiple project UUIDs (comma-separated)
@@ -251,6 +257,9 @@ Tools available to all Agents.
   "activeProjects": {
     "<project-uuid>": { "name": "Project name", "activeIdeaCount": 2 }
   },
+  "projectTeams": {
+    "<project-uuid>": null
+  },
   "notifications": {
     "unread": 0,
     "recent": []
@@ -259,6 +268,8 @@ Tools available to all Agents.
 ```
 
 `activeProjects` is a location map — which projects the agent is advancing ideas in and how many active ideas each holds — NOT a per-idea list. "Active" = assigned to the agent (or its instance/owner), not `closed`, not rolled-up `done`; the count is derived uncapped from the same computation `chorus_get_my_assignments` uses. For per-idea detail (titles, UUIDs, derived status, `parentUuid`, proposal/task counts), call `chorus_get_my_assignments`. (Working-style guidance is injected by each harness's session-start hook, not returned in this payload.)
+
+`projectTeams` is a separate map keyed by project UUID, bounded to the union of `activeProjects` keys and request-scoped projects resolved from the headers above, subject to `project:read` and project `viewer` checks. Each value is the calling agent owner's `ProjectAgentTeamDto` or `null` when no personal configuration exists; it is not a `{team: ...}` wrapper. Request-scoped projects can appear even with no active Ideas. With no request scope, this does not enumerate every company project. Ownerless agents receive `{}`; no other user's configuration or template metadata is exposed. This addition leaves `activeProjects` counts and existing guidance unchanged. Use `chorus_get_project_team({projectUuid})` for a direct read outside this bounded set.
 
 > The legacy 0.6.x shape (`roles: ["developer"]`, `assignments`, `pending`) was replaced in 0.6.6 by a project-grouped idea tracker and in 0.7.0 by the resource-aggregated `permissions` object. In 0.17.0 the checkin idea surface became `activeProjects` (a project→count distribution) + `guidance`; the full per-idea list now lives only in `chorus_get_my_assignments`. The old fields are no longer returned.
 
@@ -292,6 +303,74 @@ Tools available to all Agents.
 
 A project the caller cannot see returns the same `Project not found` error as a nonexistent UUID.
 
+### chorus_get_project_team
+
+**Description**: Read the calling agent owner's personal Team configuration for one project. This is a detail read, not a paginated collection, and may target a project outside checkin's active/request-scoped set.
+
+**Required Permission**: `project:read`, plus at least project `viewer` access. The owner is resolved from authenticated agent identity, never from an input parameter. Configuration is private to the `(projectUuid, ownerUuid)` pair within the company; project administrators cannot bypass ownership. Hidden projects use the normal not-found response without foreign metadata.
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| projectUuid | string | Yes | Project UUID |
+
+**Output**: `{ "team": ProjectAgentTeamDto | null }`. An accessible project with no personal binding returns `{ "team": null }`; ownerless agents also receive `{ "team": null }`, never another user's Team. Source of truth: `src/types/project-agent-team.ts`.
+
+| DTO field | Type | Description |
+|-----------|------|-------------|
+| projectUuid | string | Project UUID |
+| templateUuid | string \| null | Owned template UUID; null after template deletion |
+| templateName | string | Template display name, retained for a frozen configuration |
+| frozen | boolean | Template deletion froze the last effective memberships; current eligibility is still checked |
+| revision | number | Configuration revision; treat as opaque, not as assignment authority |
+| overrides | Partial<Record<Role, string[]>> | Whole-role overrides using agent UUIDs; an absent role inherits, `[]` explicitly empties it |
+| roles | Record<Role, ProjectTeamMember[]> | All four role arrays: `product`, `development`, `review`, `lead`; agents may hold multiple roles |
+| myRoles | Role[] | Only the calling agent's currently eligible memberships, not all bound roles |
+| handoffWarning | object \| null | Optional warning state: `{ agentUuid, agentName: string \| null, reason: "removed_from_lead" \| "ineligible" \| "deleted" }` for the previous confirmed recipient; null when there is no warning |
+
+Each `ProjectTeamMember` contains `agentUuid`, `agentName`, `eligible`, `missingPermissions: string[]`, `hasProjectAccess`, `online`, and `activeCount`. Eligibility requires same-company personal ownership, the role's minimum permissions and project collaboration access (`editor`, including reviewers). Retained members that lose permissions/access remain visible as ineligible with explanations; deleted/foreign agents are filtered out. `online` and `activeCount` describe connectivity/load, not eligibility: an offline agent can still be eligible.
+
+Team roles grant **no permissions or project access**. All roles may be empty, preserving the manual workflow. Saving, overriding, template changes/deletion and unbinding never automatically assign/reassign Ideas or Tasks or undo prior assignments. A `handoffWarning` remains relevant even if another eligible lead exists; it calls for explicit human repair, not automatic reassignment.
+
+**Human UI/REST only**: Binding, whole-role overrides/reset and unbinding use the personal project Team UI or human-session `PUT`/`DELETE /api/projects/:uuid/team`. Handoff uses human-session `POST /api/projects/:uuid/team/handoff`: select one owned eligible lead, preview with `{leadAgentUuid, preview: true}`, then confirm with `{leadAgentUuid, confirmationToken}`. It requires editor access and applicable assignment authority; viewer access suffices only for personal configuration. Only unfinished project Ideas currently assigned to the user or their owned agents/instances qualify, regardless of creator; unassigned, foreign-assigned and derived-done Ideas are excluded. Stale/tampered previews require a fresh preview with no partial changes. Handoff preserves lifecycle and Task execution/assignments. These are **not new MCP write tools**; agent keys cannot write Team configuration or confirm this handoff.
+
+### Idea Team orchestration (Agent Team ③–④)
+
+Team management is **derived, not stored**: an Idea is Team-managed when its logical agent assignee A was assigned by A's owner (a human) after the owner bound a personal Team to the project, or — for a child Idea — by one of the owner's agents under a managed parent Idea of the same owner. A is that Idea's **orchestrator**; it does not need to be in the Team's lead role. Creation, self-claim, assignment by anyone else, assignment before the Team was bound, and unbinding all keep (or return to) the legacy workflow. Reassigning a parent does not stop already-assigned managed children.
+
+The Team decides **who does which work** (product, development and review), the same with or without YOLO. Existing action permissions and linked Idea gates still apply; human-confirmed YOLO only decides whether proposal approval needs a human. Team review PASS gates are a prompt-enforced protocol, not new server-side VERDICT enforcement.
+
+Lifecycle handoffs (proposal submitted / approved, task submitted for verification) wake the orchestrator with a `mentioned` notification. Each wake should re-read `chorus_get_idea_team_context` before acting.
+
+#### chorus_get_idea_team_context
+**Input**: `{ ideaUuid }`. **Output**: `{ ideaUuid, managed, state: "active"|"paused"|"unmanaged", reason, orchestrator, yolo, routing }`. `routing` (owner, product delegate, Team roles) is returned only to the Team owner and the owner's agents.
+
+#### chorus_recommend_team_agent
+**Input**: `{ ideaUuid, role: "product"|"development"|"review", taskUuid?, proposalUuid? }`. **Output**: `{ decision: "recommended"|"lead_decision"|"manual"|"paused", agentUuid, candidates, reason }`. Owner-private; does not assign or wake. Only the current active orchestrator dispatches managed reviews; a recommendation grants no permissions.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| ideaUuid | string (UUID) | Yes | Source Idea whose live Team context governs routing |
+| role | enum | Yes | `product`, `development` or `review` |
+| taskUuid | string (UUID) | No | Related Task; for review, selects task review |
+| proposalUuid | string (UUID) | No | Related Proposal; for review, selects proposal review |
+
+**Review target resolution:** `taskUuid` only → that task; `proposalUuid` only → that proposal; neither → the Idea itself (whole-change review). Both targets return **400** (`Supply at most one of taskUuid and proposalUuid`). A task not belonging to the Idea returns **403** (`Task does not belong to this Idea`); a foreign/non-source proposal returns **403** (`Proposal does not belong to this Idea`). Membership follows all source Ideas through proposal inputs, including document-input ancestry, not just the first input.
+
+**Review recommendation order:**
+1. Unmanaged Ideas return `manual` with reason `unmanaged`; paused Ideas return `paused` with their current state reason. These paths are unchanged.
+2. Keep eligible review members, then online members. Nobody is excluded: the developer, proposal author and orchestrator can be recommended.
+3. No eligible online member (empty role, all ineligible or all offline) → `recommended`, `agentUuid` = current orchestrator, `candidates: []`, reason **`review_orchestrator_subagent_fallback`**. This differs deliberately from product/development: the orchestrator runs the matching reviewer sub-agent in the same turn, with no roster eligibility/liveness requirement for this fallback.
+4. Find the target's latest valid **agent-authored** comment with a line matching `/^VERDICT: (PASS WITH NOTES|PASS|FAIL)\b/m`. Human comments and mid-line forwarded verdicts do not count. If its author is an eligible online review member, recommend that agent with **`rereview_affinity`**; if the author is the current orchestrator outside the online roster, recommend the orchestrator with the same reason (its sub-agent reviewed previously).
+5. Otherwise choose minimum `activeCount`: a unique candidate returns `recommended` with `minimum_load`; a tie returns `lead_decision` with `equal_candidates`, for the current orchestrator to resolve among `candidates`.
+
+Product/development behavior is unchanged: eligible → online, development reopen affinity → minimum load → dependency affinity → `lead_decision` on ties. Their empty/ineligible and offline cases retain manual handling (`role_empty_or_ineligible`, `role_offline`) or their eligible-online orchestrator fallback; do not apply the review fallback to those roles.
+
+**Dispatch protocol:** self → fresh matching reviewer sub-agent now; another agent → one review-request comment on the target mentioning the reviewer, then end the turn. Requests/forwarded findings never start a line with `VERDICT:`. For VERDICT mention recipients, current-round approval/verification gates, last-task aggregate review, stable finding IDs, the 3-round cap and no acknowledgement-only mentions, see [Team review routing](../public/chorus-plugin/skills/orchestrate/SKILL.md#team-review-routing).
+
+#### chorus_delegate_team_product
+**Input**: `{ ideaUuid, agentUuid }`. The current orchestrator (or the Team owner) delegates elaboration and proposal authoring to an eligible product member and @mentions it. The delegate may start elaboration and create/submit the Idea's proposal; it cannot claim/release/reassign the Idea, resolve elaboration, approve or verify. Reassigning the Idea revokes the delegation.
+
 ### chorus_get_ideas
 
 **Description**: Get the list of Ideas for a project. Each row includes `reportCount` — number of completion reports for the idea — plus lineage fields `parentUuid` (the single-parent edge, or null) and `childCount` (number of **direct** children, for the `+N derived` rollup). Build the lineage forest client-side from `parentUuid`.
@@ -323,7 +402,9 @@ A project the caller cannot see returns the same `Project not found` error as a 
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
 
-**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `references: ReferenceArtifact[]` (inline reference artifacts linked to the idea, oldest-first; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields.
+**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `references: ReferenceArtifact[]` (inline reference artifacts linked to the idea, oldest-first; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields. It also carries the server-computed `derivedStatus` (`todo` / `in_progress` / `human_conduct_required` / `done`) and `badgeHint` — the same computation as the tracker and dashboard (`ideaService.getIdeaWithDerivedStatus`): the union of the idea's approved-proposal tasks and Quick Tasks linked directly via `Task.ideaUuid`; a theme with children rolls up from its children (plus `childProgress`).
+
+> Plugin post-verify hooks (Claude Code, Codex/TRAE, Kiro, Hermes) gate the whole-Idea code-review gateway on `derivedStatus == "done"`, so a mixed idea (proposal tasks + linked Quick Tasks) only triggers the final review once both sides are complete. Older servers without the field fall back to the hooks' own task-count check.
 
 > Entity → root-idea lineage resolution is **not** an MCP tool. It is a standalone REST endpoint, `GET /api/entities/{type}/{uuid}/root-idea`, callable with any valid auth (including an agent API key) — see `docs/API.md` / the route at `src/app/api/entities/[type]/[uuid]/root-idea/`.
 
@@ -397,10 +478,13 @@ A project the caller cannot see returns the same `Project not found` error as a 
 | status | enum | No | Filter by status: `open` \| `assigned` \| `in_progress` \| `to_verify` \| `done` \| `closed` |
 | priority | enum | No | Filter by priority: `low` \| `medium` \| `high` |
 | proposalUuids | string[] | No | Filter tasks by proposal UUIDs |
+| ideaUuid | string | No | Filter to Quick Tasks directly linked to this Idea (`Task.ideaUuid`). Proposal tasks of the Idea are **not** included — list those with `proposalUuids`. |
 | page | number | No | Page number |
-| pageSize | number | No | Items per page |
+| pageSize | number | No | Items per page (maximum 100) |
 
-**Output**: Task list JSON
+**Output**: Task list JSON (`{ tasks, total, page, pageSize }`)
+
+> The plugin post-verify hooks use `chorus_list_tasks({ projectUuid, ideaUuid, pageSize: 100 })` to decide whether the last Quick Task linked to an Idea has been verified (code-review gateway), treating `total > tasks.length` as "not complete".
 
 ### chorus_get_task
 
@@ -415,6 +499,8 @@ A project the caller cannot see returns the same `Project not found` error as a 
 - `acceptanceCriteriaItems`: Array of structured acceptance criteria (each with `uuid`, `description`, `required`, `devStatus`, `devEvidence`, `status`, `evidence`, etc.)
 - `acceptanceStatus`: Computed status — `"not_started"` | `"in_progress"` | `"passed"` | `"failed"`
 - `acceptanceSummary`: `{ total, required, passed, failed, pending, requiredPassed, requiredFailed, requiredPending }`
+- `proposalUuid`: The task's proposal, or `null` for a Quick Task
+- `ideaUuid`: The Idea a Quick Task is directly linked to, or `null` (always `null` for proposal tasks, whose Idea is reached via the proposal's `inputUuids`)
 
 ### chorus_get_activity
 
@@ -754,6 +840,29 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 **Output**: Created comment JSON
 
+### chorus_request_review
+
+**Description**: Request a Team review from one reviewer agent. The server checks the request, then posts a `Team review request — <kind>, round N` comment on the target. The comment lists the target, the reviewer protocol, one reviewer @mention, and who receives the result on PASS and on FAIL. Only that reviewer is woken, in an isolated review session (`review:<type>:<uuid>`); a re-review of the same target resumes that session. This is the only way to open a review session: plain comments never do, whatever their text. A `review_requested` activity is logged. Uses the same permission gate as `chorus_add_comment`.
+
+**Input**:
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| targetType | enum | Yes | `task`, `proposal`, or `idea` (whole-Idea code review) |
+| targetUuid | string | Yes | Target UUID (it must belong to an Idea) |
+| reviewerUuid | string | Yes | Reviewer agent UUID; must have project access and differ from the caller |
+| round | integer | Yes | Current review round, 1–3 |
+| note | string | No | Extra instructions appended to the request |
+
+Recipients come from the current assignments:
+- **PASS:** goes to the Idea's agent orchestrator.
+- **FAIL on a task:** goes to the task's agent developer.
+- **FAIL on a proposal:** goes to the current product delegate, or the orchestrator if there is none.
+- **Missing assignee:** if a required assignee is missing, the request is rejected; no recipient is invented.
+
+The named reviewer is notified even if they have muted casual @mention notifications. Success means a pending wake turn has been queued on the reviewer's `review:<type>:<uuid>` session, and the result includes its `turnUuid`. If the notification can't be created, or no review turn is queued, the call returns an error and never reports success. A review turn can fail to be queued because the reviewer is offline or notify-only, or because creating the wake failed. Retry when the reviewer is online.
+
+**Output**: `{ commentUuid, targetType, targetUuid, reviewerUuid, round, sessionId, turnUuid }`. An invalid request returns an `isError` result, and no comment is posted.
+
 ### chorus_get_comments
 
 **Description**: Get paginated comments for an Idea/Proposal/Task/Document, newest first. There is no single-comment get tool, so each row includes the full `content` and resolved `author`.
@@ -772,7 +881,7 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 **Description**: Batch create tasks in a project. Public tool — available to any agent (no permission gate). Supports two modes:
 
-- **Quick Task** (skip Idea → Proposal): omit `proposalUuid`. Ideal for bug fixes, small features, or post-delivery patches. Lifecycle: create → claim → execute → verify → done.
+- **Quick Task** (skip Idea → Proposal): omit `proposalUuid`. Ideal for bug fixes, small features, or post-delivery patches. Lifecycle: create → claim → execute → verify → done. Optionally pass a top-level `ideaUuid` to link every task in the batch directly to an Idea: the Idea's derived status then follows those tasks (it reaches `done` when all linked tasks are `done`/`closed`) without any proposal, and the plugins' code-review gateway fires when the last linked Quick Task is verified.
 - **Proposal-linked** (traditional AI-DLC): pass `proposalUuid` to associate the new tasks with an approved proposal.
 
 Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and dependencies on existing tasks via `dependsOnTaskUuids`.
@@ -784,6 +893,7 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
 | proposalUuid | string | No | Associated Proposal UUID (omit for Quick Task mode) |
+| ideaUuid | string | No | Quick Task mode only: link every task in the batch to this Idea. The Idea must be in the same project and must not be a theme (`isContainer`). Rejected when combined with `proposalUuid`; an invalid link rejects the whole call (no task is created). |
 | tasks | array | Yes | Task list |
 
 **tasks array item fields**:
@@ -798,6 +908,7 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 | dependsOnDraftUuids | string[] | No | Intra-batch draftUuids this task depends on |
 | dependsOnTaskUuids | string[] | No | Existing Task UUIDs this task depends on |
 | references | array | No | Reference artifacts to attach to this task inline: `[{ type, url, title, notes? }]`. Fail-soft per item — a bad ref is skipped and reported in the response `referenceErrors`, not created. |
+| ideaUuid | — | Not allowed | A per-task `ideaUuid` is rejected (validation error pointing to the top-level `ideaUuid`) instead of being silently dropped. Use the top-level `ideaUuid` to link the batch. |
 
 **Quick Task example**:
 ```json
@@ -811,6 +922,22 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
       "storyPoints": 0.5,
       "acceptanceCriteriaItems": [
         { "description": "Submit button is centered at the 375px mobile breakpoint", "required": true }
+      ]
+    }
+  ]
+}
+```
+
+**Quick Task linked to an Idea** (the Idea completes when its linked tasks are done — no proposal needed):
+```json
+{
+  "projectUuid": "8c16d9aa-...",
+  "ideaUuid": "4f2a91c0-...",
+  "tasks": [
+    {
+      "title": "Fix duplicate toast on save",
+      "acceptanceCriteriaItems": [
+        { "description": "Saving shows exactly one success toast", "required": true }
       ]
     }
   ]
@@ -1608,7 +1735,7 @@ Tools gated by `task:write`. Available to any agent whose effective permissions 
 
 Three distinct edit modes can be combined in a single call:
 
-- **Field editing** (any agent): `title`, `description`, `priority`, `storyPoints`, `addDependsOn`, `removeDependsOn`.
+- **Field editing** (any agent): `title`, `description`, `priority`, `storyPoints`, `ideaUuid`, `addDependsOn`, `removeDependsOn`.
 - **Acceptance criteria editing** (any agent): `acceptanceCriteriaItems` — **replaces** the task's acceptance criteria with the provided non-empty set. Omit it to leave criteria untouched.
 - **Status update** (assignee only): `status` (`in_progress` requires all dependencies resolved; `to_verify` submits for human verification).
 
@@ -1620,6 +1747,7 @@ Three distinct edit modes can be combined in a single call:
 | description | string | No | New task description (supports @mentions) |
 | priority | enum | No | New priority: low, medium, high |
 | storyPoints | number | No | New effort estimate (agent hours) |
+| ideaUuid | string \| null | No | Quick Tasks only: link the task to an Idea (same project, not a theme), change the link, or pass `null` to clear it. Omit to leave unchanged. Rejected on proposal tasks. |
 | acceptanceCriteriaItems | array | No | Replace the task's acceptance criteria with this non-empty set: `[{ description: string, required?: boolean }]`. Omit to leave AC unchanged; an empty or all-blank array is rejected (cannot clear AC). |
 | addDependsOn | string[] | No | Task UUIDs to add as dependencies (incremental) |
 | removeDependsOn | string[] | No | Task UUIDs to remove from dependencies (incremental) |

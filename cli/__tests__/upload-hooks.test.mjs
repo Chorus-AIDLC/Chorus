@@ -211,7 +211,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     // Enqueue: marks the task queued and emits a snapshot.
     waker.markQueued(TASK_NOTIF, `idea:${DIRECT_IDEA}`, attrib("root-1"));
     expect(waker.buildExecutionSnapshot()).toEqual([
-      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", directIdeaUuid: DIRECT_IDEA, status: "queued", startedAt: null },
+      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: "root-1", directIdeaUuid: DIRECT_IDEA, sessionId: "", status: "queued", startedAt: null },
     ]);
     expect(changes).toHaveLength(1);
 
@@ -275,7 +275,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     waker.markQueued(ideaNotif, "idea:idea-7", { key: "idea:idea-7", rootIdeaUuid: "idea-7", directIdeaUuid: "idea-7" });
     expect(waker.buildExecutionSnapshot()).toEqual([
       // Top-level idea: direct == root == idea-7.
-      { entityType: "idea", entityUuid: "idea-7", rootIdeaUuid: "idea-7", directIdeaUuid: "idea-7", status: "queued", startedAt: null },
+      { entityType: "idea", entityUuid: "idea-7", rootIdeaUuid: "idea-7", directIdeaUuid: "idea-7", sessionId: "", status: "queued", startedAt: null },
     ]);
     expect(changes).toEqual(["c"]); // tracked → snapshot emitted
   });
@@ -306,7 +306,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     const { waker } = makeWaker(hooks);
     waker.markQueued(TASK_NOTIF, "entity:task:task-1", { key: "entity:task:task-1", rootIdeaUuid: null, directIdeaUuid: null });
     expect(waker.buildExecutionSnapshot()).toEqual([
-      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: null, directIdeaUuid: null, status: "queued", startedAt: null },
+      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: null, directIdeaUuid: null, sessionId: "", status: "queued", startedAt: null },
     ]);
   });
 
@@ -326,7 +326,7 @@ describe("Waker.buildExecutionSnapshot from lifecycle transitions", () => {
     });
     const snap = waker.buildExecutionSnapshot();
     expect(snap).toEqual([
-      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: parent, directIdeaUuid: child, status: "queued", startedAt: null },
+      { entityType: "task", entityUuid: "task-1", rootIdeaUuid: parent, directIdeaUuid: child, sessionId: "", status: "queued", startedAt: null },
     ]);
     expect(snap[0].directIdeaUuid).not.toBe(snap[0].rootIdeaUuid);
   });

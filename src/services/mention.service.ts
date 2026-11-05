@@ -18,6 +18,7 @@ import * as notificationService from "@/services/notification.service";
 // Pure mention-markup codec, shared with the client editor so producer and
 // parser of the on-disk markup cannot drift (cwd-addressable instances, T3).
 import { decodePinSuffix } from "@/lib/mention-format";
+
 // Re-exported for callers that build pinned markers (kept here so existing
 // imports of these symbols from the service keep resolving).
 export {
@@ -271,6 +272,11 @@ export interface CreateMentionsParams {
   projectUuid: string;
   entityTitle: string;
   excludeMentions?: Pick<MentionRef, "type" | "uuid">[];
+  /**
+   * Structured review request (chorus_request_review): the review session anchor
+   * applies ONLY to this agent's wake. Free comment text never selects a review anchor.
+   */
+  reviewAnchor?: { agentUuid: string; sessionAnchorHint: string };
 }
 
 export interface SearchMentionablesParams {
@@ -354,7 +360,19 @@ export function parseMentions(content: string): MentionRef[] {
  * - Batch creates Mention records
  * - Creates Notification for each valid mention (respecting preferences)
  */
-export async function createMentions(params: CreateMentionsParams): Promise<void> {
+/** A recipient whose notification was created, with its queued wake turn when confirmed. */
+export interface MentionDelivery {
+  recipientUuid: string;
+  turnUuid: string | null;
+  sessionId: string | null;
+}
+
+/**
+ * Returns the recipients whose notification was actually created. Wake turns are
+ * reported only for structured review dispatch (reviewAnchor); ordinary mentions keep
+ * the plain fault-tolerant createBatch path and report null turns.
+ */
+export async function createMentions(params: CreateMentionsParams): Promise<MentionDelivery[]> {
   const {
     companyUuid,
     sourceType,
@@ -365,10 +383,11 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     projectUuid,
     entityTitle,
     excludeMentions = [],
+    reviewAnchor,
   } = params;
 
   const mentions = parseMentions(content);
-  if (mentions.length === 0) return;
+  if (mentions.length === 0) return [];
 
   // Filter out self-mentions
   const excludedKeys = new Set(excludeMentions.map((mention) => `${mention.type}:${mention.uuid}`));
@@ -376,7 +395,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     (mention) => !(mention.type === actorType && mention.uuid === actorUuid)
       && !excludedKeys.has(`${mention.type}:${mention.uuid}`)
   );
-  if (filteredMentions.length === 0) return;
+  if (filteredMentions.length === 0) return [];
 
   // Validate that mentioned targets exist in this company
   const existingMentions: MentionRef[] = [];
@@ -388,7 +407,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     }
   }
 
-  if (existingMentions.length === 0) return;
+  if (existingMentions.length === 0) return [];
 
   // Private-project isolation: drop targets without viewer access to the
   // entity's project (users must be members; agents need a member owner). Like
@@ -400,7 +419,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     projectUuid,
     existingMentions,
   );
-  if (validMentions.length === 0) return;
+  if (validMentions.length === 0) return [];
 
   // Batch create Mention records
   await prisma.mention.createMany({
@@ -445,6 +464,7 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     }
   }
 
+
   // Create notifications for each mentioned user/agent (respecting preferences)
   const notifications: notificationService.NotificationCreateParams[] = [];
 
@@ -455,7 +475,10 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
       mention.type,
       mention.uuid
     );
-    if (!prefs.mentioned) continue;
+    // An explicit structured review dispatch is delivered to its named reviewer even
+    // when casual @mention notifications are muted; ordinary mentions respect prefs.
+    const isNamedReviewer = mention.type === "agent" && reviewAnchor?.agentUuid === mention.uuid;
+    if (!prefs.mentioned && !isNamedReviewer) continue;
 
     const message = `${actorName} mentioned you: "${snippet}"`;
     const hasExplicitPin =
@@ -509,6 +532,8 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
       // pinned (parseMentions attaches pinnedHost/pinnedCwd only for a pinned ref); an
       // un-pinned mention omits them → online-first selection, exactly as before. The
       // pin is transport-only here — it is NOT persisted on the Notification row.
+      ...(mention.type === "agent" && reviewAnchor && mention.uuid === reviewAnchor.agentUuid
+        ? { sessionAnchorHint: reviewAnchor.sessionAnchorHint } : {}),
       pinnedHost: mention.pinnedHost,
       pinnedCwd: mention.pinnedCwd,
       ...(resolvedTarget?.source === "project_fixed"
@@ -527,9 +552,15 @@ export async function createMentions(params: CreateMentionsParams): Promise<void
     });
   }
 
-  if (notifications.length > 0) {
-    await notificationService.createBatch(notifications);
+  if (notifications.length === 0) return [];
+  if (reviewAnchor) {
+    const delivered = await notificationService.createBatchWithTurns(notifications);
+    return delivered.map((entry) => ({
+      recipientUuid: entry.notification.recipientUuid, turnUuid: entry.turnUuid, sessionId: entry.sessionId,
+    }));
   }
+  const created = await notificationService.createBatch(notifications);
+  return (created ?? []).map((notification) => ({ recipientUuid: notification.recipientUuid, turnUuid: null, sessionId: null }));
 }
 
 const DEFAULT_EMPTY_QUERY_LIMIT = 5;
@@ -620,9 +651,10 @@ export function compareMentionables(a: Mentionable, b: Mentionable): number {
  *
  * Mutates the `online`/`activeCount` fields of the agent entries in `results`.
  */
-async function enrichAgentLiveness(
+export async function enrichAgentLiveness(
   companyUuid: string,
-  results: Mentionable[]
+  results: Mentionable[],
+  client: Pick<typeof prisma, "daemonConnection" | "daemonExecution"> = prisma,
 ): Promise<void> {
   const agentUuids = results
     .filter((r) => r.type === "agent")
@@ -634,7 +666,7 @@ async function enrichAgentLiveness(
 
   // 1. Online set — one batched, companyUuid-scoped connection query. An agent is
   //    online iff ANY of its connections is effectively online (registry rule).
-  const connections = await prisma.daemonConnection.findMany({
+  const connections = await client.daemonConnection.findMany({
     where: { companyUuid, agentUuid: { in: agentUuids } },
     select: { agentUuid: true, status: true, lastSeenAt: true },
   });
@@ -648,7 +680,7 @@ async function enrichAgentLiveness(
 
   // 2. Active counts — one batched, companyUuid-scoped aggregate over running/
   //    queued executions, grouped by agent.
-  const grouped = await prisma.daemonExecution.groupBy({
+  const grouped = await client.daemonExecution.groupBy({
     by: ["agentUuid"],
     where: {
       companyUuid,

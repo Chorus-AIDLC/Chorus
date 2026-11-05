@@ -9,6 +9,7 @@ import type { NotificationCreateParams } from "./notification.service";
 import { resolveAssigneeAgentUuid } from "@/lib/uuid-resolver";
 import { filterRecipientsByProjectAccess } from "./project-access.service";
 import logger from "@/lib/logger";
+import { getIdeaTeamOrchestrators } from "./idea-team.service";
 
 const nlLogger = logger.child({ module: "notification-listener" });
 
@@ -578,9 +579,105 @@ function buildMessage(
   }
 }
 
+// ===== Idea Team lifecycle handoff =====
+
+const TEAM_HANDOFF_LABELS: Record<string, string> = {
+  "proposal:submitted": "a proposal was submitted for review",
+  "proposal:approved": "a proposal was approved; assign development",
+  "task:submitted": "a task was submitted for verification",
+  "last_task_submitted": "also start the whole-Idea code review via chorus_recommend_team_agent({ideaUuid, role:'review'}) without a taskUuid or proposalUuid target",
+};
+
+async function ideaSourceProposalUuids(companyUuid: string, ideaUuid: string): Promise<string[]> {
+  const proposals = await prisma.proposal.findMany({
+    where: { companyUuid, inputType: "idea", inputUuids: { array_contains: [ideaUuid] } },
+    select: { uuid: true },
+  });
+  const uuids = new Set(proposals.map((proposal) => proposal.uuid));
+  let pending = [...uuids];
+  // Document-input proposals inherit their source Ideas, including review fix tasks.
+  while (pending.length) {
+    const documents = await prisma.document.findMany({
+      where: { companyUuid, proposalUuid: { in: pending } }, select: { uuid: true },
+    });
+    if (!documents.length) break;
+    const descendants = await prisma.proposal.findMany({
+      where: { companyUuid, inputType: "document", OR: documents.map((document) => ({ inputUuids: { array_contains: [document.uuid] } })) },
+      select: { uuid: true },
+    });
+    pending = descendants.filter((proposal) => !uuids.has(proposal.uuid)).map((proposal) => proposal.uuid);
+    for (const uuid of pending) uuids.add(uuid);
+  }
+  return [...uuids];
+}
+
+/**
+ * Wake the orchestrator (current assignee) of every Team-managed Idea behind this
+ * event. Delivered as a `mentioned` notification so every daemon client (CLI,
+ * OpenClaw, Hermes) wakes with its existing mention handling — no new client action.
+ * Stale recipients are harmless: every gated action re-checks the current assignee.
+ */
+export async function notifyIdeaTeamHandoff(event: ActivityEvent): Promise<void> {
+  const key = `${event.targetType}:${event.action}`;
+  const value = (typeof event.value === "object" && event.value !== null ? event.value : {}) as Record<string, unknown>;
+  const label = TEAM_HANDOFF_LABELS[key]
+    ?? (key === "task:status_changed" && (value.status === "to_verify" || value.to === "to_verify") ? TEAM_HANDOFF_LABELS["task:submitted"] : null);
+  if (!label) return;
+  try {
+    const orchestrators = (await getIdeaTeamOrchestrators(event.companyUuid, event.targetType, event.targetUuid))
+      .filter((entry) => !(event.actorType === "agent" && entry.agentUuid === event.actorUuid));
+    const agentUuids = [...new Set(orchestrators.map((entry) => entry.agentUuid))];
+    if (!agentUuids.length) return;
+    const [entityTitle, actorName, projectName] = await Promise.all([
+      resolveEntityTitle(event.targetType, event.targetUuid),
+      resolveActorName(event.actorType, event.actorUuid),
+      resolveProjectName(event.companyUuid, event.projectUuid),
+    ]);
+    const recipients = await filterRecipientsByProjectAccess(event.companyUuid, event.projectUuid, agentUuids.map((uuid) => ({ type: "agent", uuid })));
+    if (!recipients.length) return;
+    let reviewGuidance = "";
+    if (key === "proposal:submitted") {
+      reviewGuidance = ` Route the proposal review via chorus_recommend_team_agent({ideaUuid, role:'review', proposalUuid:'${event.targetUuid}'}). ` +
+        `A human approves; only under human-requested YOLO for this Idea may you approve after a current-round PASS or PASS WITH NOTES VERDICT.`;
+    } else if (event.targetType === "task") {
+      reviewGuidance = ` Route the task review via chorus_recommend_team_agent({ideaUuid, role:'review', taskUuid:'${event.targetUuid}'}); ` +
+        `verify only after a current-round PASS or PASS WITH NOTES VERDICT.`;
+    }
+    const lastTaskIdeas = event.targetType === "task" ? (await Promise.all(orchestrators.map(async (entry) => {
+      const proposalUuids = await ideaSourceProposalUuids(event.companyUuid, entry.ideaUuid);
+      const remaining = await prisma.task.count({
+        // Proposal tasks ∪ Quick Tasks linked directly to the Idea (task.ideaUuid).
+        where: {
+          companyUuid: event.companyUuid, uuid: { not: event.targetUuid }, status: { notIn: ["to_verify", "done", "closed"] },
+          OR: [{ proposalUuid: { in: proposalUuids } }, { ideaUuid: entry.ideaUuid }],
+        },
+      });
+      return remaining === 0 ? entry.ideaUuid : null;
+    }))).filter((uuid) => uuid !== null) : [];
+    await notificationService.createBatch(recipients.map((recipient) => {
+      const ideas = orchestrators.filter((entry) => entry.agentUuid === recipient.uuid).map((entry) => entry.ideaUuid);
+      const lastIdeas = lastTaskIdeas.filter((ideaUuid) => ideas.includes(ideaUuid));
+      return {
+        companyUuid: event.companyUuid, projectUuid: event.projectUuid,
+        recipientType: recipient.type, recipientUuid: recipient.uuid,
+        entityType: event.targetType, entityUuid: event.targetUuid, entityTitle, projectName,
+        action: "mentioned",
+        sessionAnchorHint: "idea",
+        message: `Idea Team handoff — ${label} by ${actorName}. You are the assignee of Team-managed Idea(s) ${ideas.join(", ")}: ` +
+          `call chorus_get_idea_team_context and route the next step to the Team (product delegation, or development via chorus_recommend_team_agent + task assignment). Approval follows the normal workflow (a human, unless a human requested YOLO).` +
+          reviewGuidance + (lastIdeas.length ? ` For Idea(s) ${lastIdeas.join(", ")}, ${TEAM_HANDOFF_LABELS.last_task_submitted}; run it in parallel with task reviews. Its PASS gates the completion report and PR, not individual task verification.` : ""),
+        actorType: event.actorType, actorUuid: event.actorUuid, actorName,
+      };
+    }));
+  } catch (error) {
+    nlLogger.error({ err: error }, "Failed to process Idea Team handoff");
+  }
+}
+
 // ===== Main listener =====
 
 export async function handleActivity(event: ActivityEvent): Promise<void> {
+  await notifyIdeaTeamHandoff(event);
   const notificationType = resolveNotificationType(event.action, event.targetType);
   if (!notificationType) return; // Not a notifiable action
 

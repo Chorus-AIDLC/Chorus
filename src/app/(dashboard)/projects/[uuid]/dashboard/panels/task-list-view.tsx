@@ -11,11 +11,15 @@ import { PresenceIndicator } from "@/components/ui/presence-indicator";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { isAgentAssignee } from "@/lib/assignee-identity";
 import { getTaskStatusDotColor, type FlatTask } from "../utils";
+import { buildTaskScopeQuery } from "@/app/(dashboard)/projects/[uuid]/tasks/task-scope-filter";
 
 interface TaskListViewProps {
   tasks: FlatTask[];
   projectUuid: string;
   proposalUuids: string[];
+  // Set when the list includes Quick Tasks linked directly to this idea, so the
+  // "view all" link also scopes the tasks page to them.
+  ideaUuid?: string | null;
   onSelectTask: (taskUuid: string) => void;
 }
 
@@ -40,7 +44,7 @@ function getStatusLabel(status: string, t: (key: string) => string): string {
   }
 }
 
-export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }: TaskListViewProps) {
+export function TaskListView({ tasks, projectUuid, proposalUuids, ideaUuid = null, onSelectTask }: TaskListViewProps) {
   const t = useTranslations("ideaTracker");
   // Worker counts from sessions
   const [workerCounts, setWorkerCounts] = useState<Record<string, number>>({});
@@ -138,9 +142,9 @@ export function TaskListView({ tasks, projectUuid, proposalUuids, onSelectTask }
             </span>
           </>
         )}
-        {proposalUuids.length > 0 && (
+        {(proposalUuids.length > 0 || ideaUuid) && (
           <Link
-            href={`/projects/${projectUuid}/tasks?proposalUuids=${proposalUuids.join(",")}`}
+            href={`/projects/${projectUuid}/tasks?${buildTaskScopeQuery(proposalUuids, ideaUuid)}`}
             className="ml-auto flex items-center gap-1 text-[13px] font-medium text-primary shrink-0"
           >
             {t("panel.taskList.viewKanban")}

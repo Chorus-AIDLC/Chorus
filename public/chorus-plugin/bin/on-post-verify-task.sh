@@ -16,8 +16,14 @@
 #     Tells the agent to spawn the code-reviewer for the idea — the final
 #     ship-time review of the idea's AGGREGATE code change (the whole
 #     feature across all its tasks). Gates: CLAUDE_PLUGIN_OPTION_
-#     ENABLECODEREVIEWER=true (default), proposal inputType=="idea", every
-#     task of THIS proposal done/closed. Read-only — emits a reminder only.
+#     ENABLECODEREVIEWER=true (default), the task resolves to an idea
+#     (proposal inputType=="idea" -> inputUuids[0], or a proposal-less
+#     Quick Task's ideaUuid), and the server's chorus_get_idea
+#     derivedStatus is "done" (union of approved-proposal and linked Quick
+#     Tasks). Older servers without derivedStatus fall back to the
+#     client-side task-count check (proposal tasks + linked Quick Tasks
+#     done/closed).
+#     Read-only — emits a reminder only.
 #
 #   Branch B — Idea-completion report reminder
 #     Tells the agent to call `chorus_create_report` when this proposal
@@ -25,6 +31,9 @@
 #     of THIS proposal are done/closed, and THIS proposal has no
 #     `type="report"` Document yet. The multi-proposal-per-Idea case is
 #     handled by yolo's mandatory end-step, not by this hook.
+#
+# Branches A and B are proposal-only: a linked Quick Task (no
+# proposalUuid) can only trigger Branch C.
 #
 # Each branch is computed independently into its own context variable;
 # any non-empty contexts are concatenated and emitted as one
@@ -75,9 +84,10 @@ if [ -z "$TASK_UUID" ]; then
   exit 0
 fi
 
-# Resolve the verified task once — both branches need proposalUuid +
-# project.uuid. If the lookup fails or returns no proposalUuid (Quick
-# Tasks), neither branch can fire, so we exit silently.
+# Resolve the verified task once — every branch needs project.uuid plus
+# either proposalUuid (Branches A/B/C) or ideaUuid (Branch C for a Quick
+# Task linked directly to an idea). If the lookup fails, or the task has
+# neither (an unlinked Quick Task), no branch can fire: exit silently.
 TASK_JSON=$("$API" mcp-tool chorus_get_task "$(printf '{"taskUuid":"%s"}' "$TASK_UUID")" 2>/dev/null) || exit 0
 if [ -z "$TASK_JSON" ]; then
   exit 0
@@ -85,16 +95,48 @@ fi
 
 PROPOSAL_UUID=$(printf '%s' "$TASK_JSON" | jq -r '.proposalUuid // empty' 2>/dev/null) || true
 PROJECT_UUID=$(printf '%s' "$TASK_JSON" | jq -r '.project.uuid // empty' 2>/dev/null) || true
+TASK_IDEA_UUID=$(printf '%s' "$TASK_JSON" | jq -r '.ideaUuid // empty' 2>/dev/null) || true
 
-if [ -z "$PROPOSAL_UUID" ] || [ -z "$PROJECT_UUID" ]; then
+if [ -z "$PROJECT_UUID" ]; then
+  exit 0
+fi
+if [ -z "$PROPOSAL_UUID" ] && [ -z "$TASK_IDEA_UUID" ]; then
   exit 0
 fi
 
-# Both branches need the proposal's full record; fetch once.
-PROPOSAL_JSON=$("$API" mcp-tool chorus_get_proposal "$(printf '{"proposalUuid":"%s"}' "$PROPOSAL_UUID")" 2>/dev/null) || exit 0
-if [ -z "$PROPOSAL_JSON" ]; then
-  exit 0
+# Proposal tasks: every branch needs the proposal's full record; fetch once.
+# Linked Quick Tasks have no proposal — PROPOSAL_JSON stays empty and only
+# Branch C runs.
+PROPOSAL_JSON=""
+if [ -n "$PROPOSAL_UUID" ]; then
+  PROPOSAL_JSON=$("$API" mcp-tool chorus_get_proposal "$(printf '{"proposalUuid":"%s"}' "$PROPOSAL_UUID")" 2>/dev/null) || exit 0
+  if [ -z "$PROPOSAL_JSON" ]; then
+    exit 0
+  fi
 fi
+
+# ===== Shared: task-list terminal check =====
+#
+# tasks_all_terminal <tasks_json> <allow_empty: yes|no>
+# Succeeds (exit 0) only when the chorus_list_tasks payload is complete
+# (total <= returned — pageSize=100 is the MCP maximum, so a wider set
+# fails safe) and every task is done/closed. allow_empty=no also fails on
+# an empty list.
+tasks_all_terminal() {
+  local tj="$1" allow_empty="$2" total returned non_terminal
+  [ -n "$tj" ] || return 1
+  total=$(printf '%s' "$tj" | jq -r '.total // 0' 2>/dev/null) || return 1
+  returned=$(printf '%s' "$tj" | jq -r '(.tasks // []) | length' 2>/dev/null) || return 1
+  [ -n "$total" ] && [ -n "$returned" ] || return 1
+  if [ "$total" -gt "$returned" ]; then
+    return 1
+  fi
+  if [ "$returned" -eq 0 ] && [ "$allow_empty" != "yes" ]; then
+    return 1
+  fi
+  non_terminal=$(printf '%s' "$tj" | jq -r '[(.tasks // [])[] | select(.status != "done" and .status != "closed")] | length' 2>/dev/null) || return 1
+  [ "$non_terminal" = "0" ]
+}
 
 # ===== Branch A: OpenSpec archive trigger =====
 #
@@ -102,6 +144,9 @@ fi
 # hold; returns empty (silent skip) otherwise. Designed to be captured
 # via command substitution: OPENSPEC_CONTEXT=$(branch_openspec_archive)
 branch_openspec_archive() {
+  # Proposal-only branch.
+  [ -n "$PROPOSAL_UUID" ] || return 0
+
   # OpenSpec userConfig toggle — default enabled. The same `enableOpenSpec`
   # switch gates SessionStart detection; if it's off, we skip the archive
   # reminder too. (Env-level CHORUS_OPENSPEC_MODE=off is checked separately
@@ -214,6 +259,9 @@ CTX
 #   2. no Document with type="report" attached to this proposal
 # Read-only — the hook never calls chorus_create_report.
 branch_idea_report_reminder() {
+  # Proposal-only branch (chorus_create_report needs a proposalUuid).
+  [ -n "$PROPOSAL_UUID" ] || return 0
+
   # Only idea-rooted proposals get a completion report.
   local input_type
   input_type=$(printf '%s' "$PROPOSAL_JSON" | jq -r '.inputType // empty' 2>/dev/null) || true
@@ -265,65 +313,103 @@ CTX
 
 # ===== Branch C: Code-review gateway reminder =====
 #
-# Fires when the last task of an idea-rooted proposal is verified and the
-# code-reviewer is enabled. Tells the agent to spawn the code-reviewer for
-# the idea — the final ship-time review of the idea's AGGREGATE code change
-# (the whole feature across all its tasks), not a single task.
+# Fires when the last task of an idea is verified and the code-reviewer is
+# enabled. Tells the agent to spawn the code-reviewer for the idea — the
+# final ship-time review of the idea's AGGREGATE code change (the whole
+# feature across all its tasks), not a single task.
+# The idea is resolved from the proposal's inputUuids[0] (proposal task of
+# an idea-rooted proposal, inputType=="idea") or from task.ideaUuid
+# (proposal-less Quick Task linked to an idea). Completion is decided by the
+# SERVER: chorus_get_idea's derivedStatus (union of approved-proposal tasks
+# and linked Quick Tasks) must be "done" — so a mixed idea never fires while
+# either side is still building, whichever task finishes first. Only when
+# derivedStatus is absent (older server / idea read failed) does the legacy
+# client-side task-count check apply:
+#   - proposal task: every task of THIS proposal terminal AND every Quick
+#     Task linked directly to the idea (chorus_list_tasks ideaUuid) terminal;
+#   - Quick Task: every Quick Task linked to that idea terminal.
 # Read-only — emits a reminder only; never posts a comment or mutates.
 # Gated by enableCodeReviewer (default true), parallel to how Branch A
-# gates on enableOpenSpec. Only idea-rooted proposals (inputType=="idea").
+# gates on enableOpenSpec.
 branch_code_review() {
   # Config toggle — default enabled.
   if [ "${CLAUDE_PLUGIN_OPTION_ENABLECODEREVIEWER:-true}" != "true" ]; then
     return 0
   fi
 
-  # Only idea-rooted proposals get a code-review gateway.
-  local input_type
-  input_type=$(printf '%s' "$PROPOSAL_JSON" | jq -r '.inputType // empty' 2>/dev/null) || true
-  if [ "$input_type" != "idea" ]; then
-    return 0
-  fi
+  local idea_uuid tasks_json linked_json idea_json derived_status
+  if [ -n "$PROPOSAL_UUID" ]; then
+    # Only idea-rooted proposals get a code-review gateway.
+    local input_type
+    input_type=$(printf '%s' "$PROPOSAL_JSON" | jq -r '.inputType // empty' 2>/dev/null) || true
+    if [ "$input_type" != "idea" ]; then
+      return 0
+    fi
 
-  # Resolve the idea UUID from the proposal's inputUuids (first idea).
-  local idea_uuid
-  idea_uuid=$(printf '%s' "$PROPOSAL_JSON" | jq -r '(.inputUuids // [])[0] // empty' 2>/dev/null) || true
+    # Resolve the idea UUID from the proposal's inputUuids (first idea).
+    idea_uuid=$(printf '%s' "$PROPOSAL_JSON" | jq -r '(.inputUuids // [])[0] // empty' 2>/dev/null) || true
+  else
+    idea_uuid="$TASK_IDEA_UUID"
+  fi
   if [ -z "$idea_uuid" ]; then
     return 0
   fi
 
-  # All tasks of this proposal must be terminal. Same pageSize=100 (the MCP maximum) +
-  # total>returned pagination guard as Branch B.
-  local tasks_json non_terminal_count tasks_total tasks_returned
-  tasks_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":100}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
-  [ -n "$tasks_json" ] || return 0
-  tasks_total=$(printf '%s' "$tasks_json" | jq -r '.total // 0' 2>/dev/null) || return 0
-  tasks_returned=$(printf '%s' "$tasks_json" | jq -r '(.tasks // []) | length' 2>/dev/null) || return 0
-  if [ -n "$tasks_total" ] && [ -n "$tasks_returned" ] && [ "$tasks_total" -gt "$tasks_returned" ]; then
-    return 0
+  # Server-side completion: the idea's derivedStatus is the single source of
+  # truth (same computation as the tracker/dashboard). Fire only on "done".
+  idea_json=$("$API" mcp-tool chorus_get_idea "$(printf '{"ideaUuid":"%s"}' "$idea_uuid")" 2>/dev/null) || idea_json=""
+  derived_status=""
+  if [ -n "$idea_json" ]; then
+    derived_status=$(printf '%s' "$idea_json" | jq -r '.derivedStatus // empty' 2>/dev/null) || derived_status=""
   fi
-  # Defensive: zero-task proposal -> skip.
-  if [ -z "$tasks_returned" ] || [ "$tasks_returned" -eq 0 ]; then
-    return 0
+
+  if [ -n "$derived_status" ]; then
+    [ "$derived_status" = "done" ] || return 0
+  elif [ -n "$PROPOSAL_UUID" ]; then
+    # Legacy fallback (no derivedStatus): all tasks of this proposal must be
+    # terminal (zero-task proposal -> skip) ...
+    tasks_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":100}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
+    tasks_all_terminal "$tasks_json" no || return 0
+
+    # ... and Quick Tasks linked directly to the idea too (none is fine).
+    linked_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","ideaUuid":"%s","pageSize":100}' "$PROJECT_UUID" "$idea_uuid")" 2>/dev/null) || return 0
+    tasks_all_terminal "$linked_json" yes || return 0
+  else
+    # Legacy fallback (no derivedStatus), proposal-less Quick Task: every
+    # linked Quick Task must be terminal (the verified task itself is in the
+    # list, so an empty list means the read is stale -> skip).
+    linked_json=$("$API" mcp-tool chorus_list_tasks "$(printf '{"projectUuid":"%s","ideaUuid":"%s","pageSize":100}' "$PROJECT_UUID" "$idea_uuid")" 2>/dev/null) || return 0
+    tasks_all_terminal "$linked_json" no || return 0
   fi
-  non_terminal_count=$(printf '%s' "$tasks_json" | jq -r '[(.tasks // [])[] | select(.status != "done" and .status != "closed")] | length' 2>/dev/null) || return 0
-  [ "$non_terminal_count" = "0" ] || return 0
+
+  # Scope-specific wording: headline, where FAIL fix tasks go, and whether a
+  # completion report follows (proposal-only).
+  local headline fix_target report_line
+  if [ -n "$PROPOSAL_UUID" ]; then
+    headline="All tasks of idea-rooted proposal ${PROPOSAL_UUID} (and any Quick Tasks linked to the idea) are now done. This is the final ship-time gateway for idea ${idea_uuid}."
+    fix_target="create new tasks on the original approved proposal"
+    report_line="Run the code-review gateway BEFORE writing any idea-completion report — the report must not be written while a FAIL verdict is outstanding."
+  else
+    headline="Every task of idea ${idea_uuid} is now done — its linked Quick Tasks and any approved-proposal tasks. This is the final ship-time gateway for idea ${idea_uuid}."
+    fix_target="create new Quick Tasks linked to the idea (chorus_create_tasks with ideaUuid=\"${idea_uuid}\")"
+    report_line="A linked Quick Task closed this idea, so no completion-report reminder follows here. If the idea has no proposal, no idea-completion report applies and the VERDICT comment on the idea is the ship record; if it also has an approved proposal, write that proposal's idea-completion report only after this gateway passes."
+  fi
 
   # Emit the reminder. The literal substring `spawn code-reviewer` is the
   # contract grep target asserted by the regression test.
   cat <<CTX
 [Chorus Plugin — Code-Review Gateway Trigger]
-All tasks of idea-rooted proposal ${PROPOSAL_UUID} are now done. This is the final ship-time gateway for idea ${idea_uuid}.
+${headline}
 
 ACTION REQUESTED: spawn code-reviewer for this idea — an independent, read-only review of the idea's AGGREGATE code change (the whole feature across all its tasks), not a single task.
 
 1. Spawn the code-reviewer and wait for its completion notification, passing it ideaUuid="${idea_uuid}" and the review round number (read prior code-review verdict comments on the idea to determine it). It reviews cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage, and overall code soundness, then posts ONE VERDICT comment on the idea.
 2. Read THIS round's VERDICT on the idea (chorus_get_comments targetType="idea") — the comment posted after your dispatch, not an earlier round's. The launch result is not the verdict; do not declare the feature shippable before you have read that comment. If it is missing, check what the reviewer did post: a comment reporting the round limit was reached, or any other explicit refusal to review, is a deliberate escalation — STOP: do not respawn, do not self-review, do not post a VERDICT of your own; leave it pending the human's decision. If it posted nothing at all, respawn once and apply this same check again to what the retry posts — an explicit refusal still means STOP; only a second true silence lets you review the idea's aggregate change yourself as a read-only pass and post the VERDICT. Absence is never a PASS.
 3. PASS / PASS WITH NOTES -> the feature may ship.
-4. FAIL -> the orchestrator invokes Quick Dev to create new tasks on the original approved proposal; never reopen completed tasks or apply untracked fixes. Group related small BLOCKERs by default and split only materially large or independently testable fixes.
+4. FAIL -> the orchestrator invokes Quick Dev to ${fix_target}; never reopen completed tasks or apply untracked fixes. Group related small BLOCKERs by default and split only materially large or independently testable fixes.
 5. Re-run only after every fix task passes AC self-check, independent task review, and admin verification to done. A failed or cancelled fix stops the loop and escalates. Keep maxCodeReviewRounds authoritative.
 
-Run the code-review gateway BEFORE writing any idea-completion report — the report must not be written while a FAIL verdict is outstanding.
+${report_line}
 CTX
 }
 

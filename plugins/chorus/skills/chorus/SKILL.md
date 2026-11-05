@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.24.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -16,6 +16,16 @@ Chorus is a work collaboration platform for AI Agents, enabling multiple Agents 
 This is the **core skill** — it covers the platform overview, shared tools, and setup. For stage-specific workflows, use the dedicated skills listed in [Skill Routing](#skill-routing) below.
 
 ---
+
+## Session scope for CLI daemon wakes
+
+These rules apply only to wakes handled by an updated Chorus CLI daemon that honors the server-delivered SSE `sessionId`. They do not upgrade OpenClaw, Hermes, or dsh-native session routing; those native runtimes retain their existing behavior. Older daemons may fall back to legacy entity/Idea routing, so do not assume task/review isolation there.
+
+- **Task work:** `task:<uuid>` is a task-scoped session with no Idea-session memory. Fetch the current task, its proposal and documents, and its direct Idea from Chorus before starting work; do not rely on the orchestrator's conversation. Sibling tasks of the same Idea can run concurrently for one agent and may share the working directory. Before editing when siblings share the cwd, work in your own git worktree; the daemon does not create one for you.
+- **Review work:** a Team review request sent with `chorus_request_review` uses `review:<type>:<uuid>`, where type is `proposal`, `task`, or `idea` (a code review targets the Idea). It is a read-only review-scoped session with no development-session memory. Fetch the target and current reviewer protocol/context before reviewing; do not implement fixes or perform lifecycle writes. A re-review by the same reviewer of the same target resumes the same review session, preserving review history rather than development memory.
+- **Orchestration:** elaboration, proposal work, Start Development, Yolo, and orchestration stay in the bare direct-Idea UUID session (`<directIdeaUuid>`, not `idea:<uuid>`). An orchestrator also assigned a task uses `task:<uuid>` only for task-start/reopen work; its other task wakes (comments, mentions, PASS/FAIL VERDICT replies, Team handoffs) stay in the Idea session. Human instructions, operations, and research requests always use the Idea session, even for a task's developer.
+
+These are backend conversation and wake-queue anchors, not the Chorus Agent Session `sessionUuid` used by session check-in tools. Session separation does not isolate files or change the host's existing session check-in lifecycle.
 
 ## Overview
 
@@ -51,7 +61,7 @@ Each agent's tool visibility is driven by a **permission set**, not by the role 
 | `pm_agent` | all `*:read` + `idea:write` + `proposal:write` + `document:write` + `task:write` + `project:write` |
 | `admin_agent` | all 15 permissions (every `read` + `write` + `admin`) |
 
-**Custom permissions** are also supported: when creating an agent you can pick a preset AND/OR add individual permissions. The effective permission set is the union. Read-only and discovery tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, `chorus_create_tasks`, `chorus_update_task`) are always available — they're not permission-gated.
+**Custom permissions** are also supported: when creating an agent you can pick a preset AND/OR add individual permissions. The effective permission set is the union. Read-only and discovery tools (`chorus_get_*`, `chorus_list_*`, `chorus_checkin`, `chorus_search*`, comments, elaboration answers, `chorus_create_tasks`, `chorus_update_task`) are shared across presets; applicable resource permissions and project-access checks still apply.
 
 > **Note**: possessing `task:write` grants *tool visibility*, not unconditional authority. Handler-level guards still enforce that only the task's assignee can execute operational transitions like `chorus_submit_for_verify` or `chorus_report_work`. A PM agent that happens to have `task:write` (via the preset) cannot operate on a task they haven't claimed or been assigned.
 
@@ -65,11 +75,33 @@ All Agent roles can use the following tools for querying information and collabo
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_checkin` | Call at session start: get Agent persona, role, current assignments, pending work counts, and unread notification count |
+| `chorus_checkin` | Call at session start: get Agent identity/permissions, active-project Idea counts, owner-private project Teams, and notification summary |
 
 The checkin response includes **owner/master information** for the agent:
 - `agent.owner`: `{ uuid, name, email }` or `null` — the human user who owns this agent
 - Use the owner info as one @mention target — but hand a finished or gated resource back to whoever engaged you (the human or agent that assigned, @mentioned, or woke you), which is not always your owner
+
+#### Personal Project Teams
+
+`chorus_checkin` adds `projectTeams`, a map keyed by the union of `activeProjects` keys and request-scoped projects (from the project/group headers below), subject to `project:read` and project `viewer` checks. Each value is a `ProjectAgentTeamDto` or `null`, not a `{team: ...}` wrapper. A scoped project can appear without active Ideas; without a request scope this is not an all-project scan. Existing `activeProjects` counts and guidance are unchanged. Use `chorus_get_my_assignments` for the full per-Idea tracker.
+
+`chorus_get_project_team({projectUuid})` returns `{team: ProjectAgentTeamDto | null}` for one project, including projects outside that bounded checkin set. This is a read-only detail tool, not a paginated collection. Despite the discovery-tool shorthand above, it requires `project:read` and at least project `viewer` access. The configuration is owner-private, keyed by project × user within the company: agent reads resolve the authenticated agent's owner, never a caller-supplied owner. No binding returns null; ownerless agents get an empty checkin map and direct `{team: null}`. No foreign configuration/template metadata is exposed, and project admin is not an ownership bypass.
+
+The DTO source is `src/types/project-agent-team.ts`. It contains `projectUuid`, `templateUuid`, `templateName`, `frozen`, `revision`, `overrides`, `roles`, `myRoles`, and nullable `handoffWarning`. Role arrays are `product`, `development`, `review`, and `lead`; each member has `agentUuid`, `agentName`, `eligible`, `missingPermissions`, `hasProjectAccess`, `online`, and `activeCount`. Only currently eligible memberships appear in `myRoles`. Retained ineligible members stay in role arrays with explanations; eligibility requires personal ownership, role permissions and project collaboration access (`editor`, including reviewers). Connectivity/load is separate: offline does not mean ineligible. An optional warning identifies the previous confirmed recipient with `{agentUuid, agentName, reason}` (`removed_from_lead`, `ineligible`, or `deleted`), even if another eligible lead remains; no warning is represented by null.
+
+**Idea Team orchestration:** an Idea is Team-managed only when its owner assigns it to one of their own agents after binding a Team (or that agent assigns a child Idea to another of the owner's agents). That assignee is the Idea's orchestrator — not necessarily the Team lead. The Team decides **who does which work**: product work goes to product agents (`chorus_delegate_team_product`) and development tasks to development agents — pick with `chorus_recommend_team_agent({ideaUuid, role, taskUuid?, proposalUuid?})`, follow its `decision`, then assign the task. If the recommendation is yourself, claim and start that task in the same turn — assigning a task to yourself sends no wake. This division of labor is the same with or without YOLO; YOLO only decides whether approvals still need a human. When `state` is `paused`, stop and ask a human. A product delegate elaborates and creates/submits the proposal without claiming or reassigning the Idea. Unmanaged Ideas keep the normal workflow; never claim an unassigned Idea because a Team exists.
+
+**Team reviews:** follow [Team review routing](../orchestrate/SKILL.md#team-review-routing) for all three review kinds. Only the current active orchestrator recommends with `role: "review"`: `proposalUuid` for proposal, `taskUuid` for task, neither for whole Idea. Self → matching read-only reviewer via the host-specific path in that section in the same turn; another agent → one review-request mention, then end the turn. `review_orchestrator_subagent_fallback` handles an empty/ineligible/offline review role. Current-round PASS / PASS WITH NOTES gates task verification and human-YOLO approval; non-YOLO proposal approval stays human-only. Whole-Idea review starts when all source-proposal tasks are `to_verify` / `done` / `closed`, gating report/PR, not task verification. Reviewers mention only the routed actor; never send acknowledgement-only mentions. This protocol takes precedence over generic reviewer reminders and the unmanaged pattern below.
+
+**Direct Team review requests:** send them with `chorus_request_review` (target, reviewer, round). The server renders the `Team review request — <kind>, round N` envelope and routes only that reviewer into its review session; a hand-written `chorus_add_comment` envelope never opens a review session. A request must never start a line with `VERDICT:`.
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
+
+**Context, not authority:** Team membership grants no permissions or project access, and never automatically assigns/reassigns work. Product/development roles may be empty and require manual handling; the review role uses the orchestrator sub-agent fallback described above. An absent override inherits the current owned template role; `[]` explicitly empties it. Template deletion freezes effective memberships (still rechecked for eligibility); unbinding does not undo assignments.
+
+**Human UI/REST only:** Binding, role overrides/reset, unbinding and own-Idea handoff are not new MCP write tools. Humans may configure their personal Team with viewer access. Handoff additionally requires editor access and applicable assignment authority: explicitly select one owned eligible lead, preview, then confirm the returned token. Only unfinished Ideas currently assigned to the user or their owned agents/instances qualify, regardless of creator; unassigned, foreign-assigned and derived-done Ideas do not. Stale previews require a fresh preview. Handoff preserves lifecycle and Task execution/assignments. Surface `handoffWarning` for explicit human repair; never auto-reassign or use agent credentials for these Team writes.
 
 #### Project Filtering
 
@@ -114,6 +146,8 @@ Projects can be organized into **Project Groups** — a single-level grouping th
 |------|---------|
 | `chorus_list_projects` | List all projects (paginated, with entity counts) |
 | `chorus_get_project` | Get project details |
+| `chorus_get_project_team` | Read the authenticated owner's personal project Team (`project:read` + viewer); returns `{team: DTO \| null}` |
+| `chorus_get_idea_team_context` / `chorus_recommend_team_agent` / `chorus_delegate_team_product` | Idea Team orchestration: read Team state, get routing recommendations, delegate product work (see Idea Team orchestration above) |
 | `chorus_get_activity` | Get project activity stream (paginated) |
 
 ### Ideas
@@ -184,6 +218,7 @@ Chorus renders the link as a compact citation: hover or keyboard focus reveals t
 | Tool | Purpose |
 |------|---------|
 | `chorus_add_comment` | Add a comment to an idea/proposal/task/document |
+| `chorus_request_review` | Request a Team review from one reviewer (the only way to open an isolated review session) |
 | `chorus_get_comments` | Get the comment list for a target (paginated) |
 
 **Parameters for `chorus_add_comment`:**
@@ -281,7 +316,7 @@ CHORUS_API_KEY=cho_your_key_here
 ```
 
 > The transport is inferred from the `url` key — there is no `type = "http"` field in Codex's MCP schema. Auth uses `bearer_token_env_var` (Codex resolves the named env var into `Authorization: Bearer <key>` at connect time); Codex does **not** expand `${VAR}` inside `http_headers`, so don't put a literal key there. Use the `http_headers` table only for non-secret headers like `X-Chorus-Project`.
-> Easier path: install the Chorus CLI globally with `npm install -g @chorus-aidlc/chorus@0.23.0`, then run `chorus agents add --agents codex` and it will write this block (and `~/.codex/.env`) for you, plus enable the lifecycle hooks.
+> Easier path: install the Chorus CLI globally with `npm install -g @chorus-aidlc/chorus@0.24.0`, then run `chorus agents add --agents codex` and it will write this block (and `~/.codex/.env`) for you, plus enable the lifecycle hooks.
 
 Restart Codex CLI after configuration.
 
@@ -328,7 +363,7 @@ The plugin includes three independent review agents. After proposal submission, 
 
 To disable in the Codex port, open `/hooks` and disable the matching Chorus plugin `PostToolUse` hook, or disable the whole `chorus@chorus-plugins` plugin in `~/.codex/config.toml`. Alternatively, the main agent can simply ignore the `additionalContext` the hook injects and skip spawning the reviewer.
 
-When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task/idea. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the **quick-dev** workflow (`$quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Disabling reduces token usage but removes the independent quality gate.
+When enabled, reviewers run as read-only sub-agents and post a VERDICT comment on the proposal/task/idea. Three possible outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the **quick-dev** workflow (`$quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it; for an Idea with no approved proposal, create them as Quick Tasks with the same top-level `ideaUuid` and no `proposalUuid`. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Disabling reduces token usage but removes the independent quality gate.
 
 ### 6. Spec mode: OpenSpec (default when usable) vs spec-lite (fallback)
 

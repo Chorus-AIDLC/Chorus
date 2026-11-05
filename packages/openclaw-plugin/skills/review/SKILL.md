@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.24.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -16,6 +16,16 @@ This skill covers the **Review** stage of the AI-DLC workflow: approving or reje
 > **Tool namespace:** Chorus tools are exposed by the connected MCP server under a `chorus__` prefix on OpenClaw (e.g. `chorus__chorus_admin_verify_task`). Bare names are used below for readability — prepend `chorus__` when invoking. See `/chorus` for the full rule.
 
 ---
+
+## Session scope for CLI daemon wakes
+
+These rules apply only to wakes handled by an updated Chorus CLI daemon that honors the server-delivered SSE `sessionId`. They do not upgrade OpenClaw, Hermes, or dsh-native session routing; those native runtimes retain their existing behavior. Older daemons may fall back to legacy entity/Idea routing, so do not assume task/review isolation there.
+
+- **Task work:** `task:<uuid>` is a task-scoped session with no Idea-session memory. Fetch the current task, its proposal and documents, and its direct Idea from Chorus before starting work; do not rely on the orchestrator's conversation. Sibling tasks of the same Idea can run concurrently for one agent and may share the working directory. Before editing when siblings share the cwd, work in your own git worktree; the daemon does not create one for you.
+- **Review work:** a Team review request sent with `chorus_request_review` uses `review:<type>:<uuid>`, where type is `proposal`, `task`, or `idea` (a code review targets the Idea). It is a read-only review-scoped session with no development-session memory. Fetch the target and current reviewer protocol/context before reviewing; do not implement fixes or perform lifecycle writes. A re-review by the same reviewer of the same target resumes the same review session, preserving review history rather than development memory.
+- **Orchestration:** elaboration, proposal work, Start Development, Yolo, and orchestration stay in the bare direct-Idea UUID session (`<directIdeaUuid>`, not `idea:<uuid>`). An orchestrator also assigned a task uses `task:<uuid>` only for task-start/reopen work; its other task wakes (comments, mentions, PASS/FAIL VERDICT replies, Team handoffs) stay in the Idea session. Human instructions, operations, and research requests always use the Idea session, even for a task's developer.
+
+These are backend conversation and wake-queue anchors, not the Chorus Agent Session `sessionUuid` used by session check-in tools. Session separation does not isolate files or change the host's existing session check-in lifecycle.
 
 ## Overview
 
@@ -62,6 +72,16 @@ Key responsibilities:
 
 ---
 
+## Team-managed review (check first)
+
+Resolve the entity's source Ideas, including proposal/document ancestry, and read each `chorus_get_idea_team_context` before reviewing or acting. For active managed work, follow [Team review routing](../orchestrate/SKILL.md#team-review-routing): only the current orchestrator dispatches through `role: "review"`; a woken Team reviewer posts the routed VERDICT and makes no lifecycle writes. Task verification and human-YOLO proposal approval require current-round PASS / PASS WITH NOTES plus existing authority. Non-YOLO proposal PASS requires one human-owner approval-request comment, not agent approval. Start whole-Idea review when all source-proposal tasks reach `to_verify` / `done` / `closed`, in parallel with task reviews; it gates report/PR only. Stop on paused or unresolved context. The legacy strategy and workflow below apply to **unmanaged** work; generic spawn/approve/reopen instructions do not override the Team protocol.
+
+**Direct Team review requests:** send them with `chorus_request_review` (target, reviewer, round). The server renders the `Team review request — <kind>, round N` envelope and routes only that reviewer into its review session; a hand-written `chorus_add_comment` envelope never opens a review session. A request must never start a line with `VERDICT:`.
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
+
 ## Review Strategy
 
 When reviewing proposals, tasks, or an Idea's final aggregate code change, get an independent VERDICT before approving/verifying/shipping. On OpenClaw there is **no PostToolUse hook** to remind you — invoke the review yourself, inline.
@@ -70,7 +90,7 @@ When reviewing proposals, tasks, or an Idea's final aggregate code change, get a
 2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
-   - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). For a **code-review gateway** FAIL, do not reopen the verified tasks — instead fix via the **quick-dev** workflow (`/quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Fix the specific BLOCKERs listed in the comment before resubmitting.
+   - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). For a **code-review gateway** FAIL, do not reopen the verified tasks — instead fix via the **quick-dev** workflow (`/quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it; for an Idea with no approved proposal, create them as Quick Tasks with the same top-level `ideaUuid` and no `proposalUuid`. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Fix the specific BLOCKERs listed in the comment before resubmitting.
 3. **No new VERDICT comment?** Check what the reviewer *did* post. A comment reporting that the round limit was reached, or any other explicit refusal to review, is a deliberate escalation to a human: STOP — do not respawn, do not self-review, do not post a VERDICT of your own. If it posted nothing at all, respawn it ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you review the item yourself as a read-only pass using the checklists below and POST the VERDICT — **absence is never a PASS**.
 4. **Track rounds.** Count existing VERDICT comments before spawning. After 3 rounds of FAIL on the same item, stop the loop and escalate to human review: post a comment saying the round limit was reached and a human decision is needed, and post no VERDICT. Nobody — including you on a later turn — may replace that escalation with a self-reviewed VERDICT.
 5. **Fallback — review it yourself (no `sessions_spawn` on the host).** If spawning is unavailable (disabled by policy, or the spawn fails), perform the review yourself as a **focused, read-only pass** using the quality checklists in the workflows below: read the entity, its comments, and the relevant documents/code, run read-only test/build commands where applicable, and do NOT modify anything. Then record your VERDICT via `chorus_add_comment` ending with a `VERDICT:` line (PASS / PASS WITH NOTES / FAIL), classifying every finding as BLOCKER or NOTE. The `/proposal-reviewer`, `/task-reviewer`, and `/code-reviewer` skills are the authoritative checklists for this manual pass — read the relevant one and follow its procedure.
@@ -147,6 +167,8 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 #### A3.5: Independent Review
 
+**Managed work:** use [Team review routing](../orchestrate/SKILL.md#team-review-routing) instead of the unmanaged dispatch/timing below.
+
 Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `sessions_spawn` and have it run the `/proposal-reviewer` skill (wait for it), otherwise review yourself as a read-only pass and post the VERDICT. Read its VERDICT comment before proceeding.
 
 #### A4: Approve or Reject
@@ -211,6 +233,8 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 ```
 
 #### B2.5: Independent Review
+
+**Managed work:** use [Team review routing](../orchestrate/SKILL.md#team-review-routing) instead of the unmanaged dispatch/timing below.
 
 Get a VERDICT per the [Review Strategy](#review-strategy) above — spawn a sub-agent via `sessions_spawn` and have it run the `/task-reviewer` skill (wait for it), otherwise review yourself as a read-only pass and post the VERDICT. After it completes, read its VERDICT:
 

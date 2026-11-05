@@ -118,3 +118,52 @@ describe("canRequestYolo — online gate", () => {
     ).toBe(false);
   });
 });
+
+describe("yolo-request — directly linked Quick Tasks (design D4 / #650)", () => {
+  const base = { assignee: agentAssignee, agentOnline: true };
+
+  it("treats a proposal-less idea whose linked tasks are all done/closed as done", () => {
+    const input = { ...base, proposals: [], tasks: [], linkedTasks: [{ status: "done" }, { status: "closed" }] };
+    expect(yoloPreconditionsMet(input)).toBe(false);
+    expect(canRequestYolo(input)).toBe(false);
+  });
+
+  it("is not done while any linked task is unfinished", () => {
+    for (const status of ["open", "assigned", "in_progress", "to_verify"]) {
+      expect(canRequestYolo({ ...base, proposals: null, tasks: null, linkedTasks: [{ status: "done" }, { status }] })).toBe(true);
+    }
+  });
+
+  it("unions linked tasks with the approved proposal's tasks", () => {
+    expect(canRequestYolo({
+      ...base, proposals: approvedProposal, tasks: [{ status: "done" }], linkedTasks: [{ status: "in_progress" }],
+    })).toBe(true);
+    expect(canRequestYolo({
+      ...base, proposals: approvedProposal, tasks: [{ status: "done" }], linkedTasks: [{ status: "done" }],
+    })).toBe(false);
+  });
+
+  it("a pending proposal keeps the idea not-done even when every linked task is done", () => {
+    expect(canRequestYolo({
+      ...base, proposals: [{ status: "pending" }], tasks: [], linkedTasks: [{ status: "done" }],
+    })).toBe(true);
+  });
+
+  it("pending elaboration answers keep the idea not-done even when every linked task is done (D4 rule 1)", () => {
+    const input = { ...base, proposals: [], tasks: [], linkedTasks: [{ status: "done" }] };
+    expect(canRequestYolo({ ...input, elaborationStatus: "pending_answers" })).toBe(true);
+    expect(canRequestYolo({ ...input, elaborationStatus: "resolved" })).toBe(false);
+    expect(canRequestYolo({ ...input, elaborationStatus: null })).toBe(false);
+  });
+
+  it("elaborationStatus is ignored without linked tasks (proposal-only rule unchanged)", () => {
+    expect(canRequestYolo({
+      ...base, proposals: approvedProposal, tasks: [{ status: "done" }], elaborationStatus: "pending_answers",
+    })).toBe(false);
+  });
+
+  it("empty or omitted linkedTasks keeps the proposal-only rule", () => {
+    expect(canRequestYolo({ ...base, proposals: [], tasks: [{ status: "done" }], linkedTasks: [] })).toBe(true);
+    expect(canRequestYolo({ ...base, proposals: approvedProposal, tasks: [{ status: "done" }], linkedTasks: null })).toBe(false);
+  });
+});

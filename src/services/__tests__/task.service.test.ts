@@ -60,7 +60,7 @@ const mockPrisma = vi.hoisted(() => {
     $queryRaw: vi.fn().mockResolvedValue([]),
     activity: { create: vi.fn(), createMany: vi.fn(), findMany: vi.fn() },
     proposal: { findFirst: vi.fn() },
-    idea: { findMany: vi.fn() },
+    idea: { findMany: vi.fn(), findFirst: vi.fn() },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(txProxy)),
   };
 });
@@ -128,6 +128,8 @@ import {
   createAcceptanceCriteria,
   replaceAcceptanceCriteria,
   AssigneeAccessError,
+  assertValidTaskIdeaLink,
+  getUnblockedTasks,
 } from "@/services/task.service";
 import { AlreadyClaimedError, NotClaimedError } from "@/lib/errors";
 
@@ -1987,5 +1989,244 @@ describe("task update actor and mention regression", () => {
     expect(mockMentionService.parseMentions).toHaveBeenCalledTimes(2);
     expect(mockMentionService.createMentions).not.toHaveBeenCalled();
     expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+  });
+});
+
+// ---------- Direct Idea link (link-quick-task-to-idea) ----------
+
+describe("assertValidTaskIdeaLink", () => {
+  const IDEA = "idea-linked";
+
+  it("accepts a null / undefined ideaUuid without reading the idea", async () => {
+    await expect(assertValidTaskIdeaLink(COMPANY_UUID, { projectUuid: PROJECT_UUID, ideaUuid: null })).resolves.toBeUndefined();
+    await expect(assertValidTaskIdeaLink(COMPANY_UUID, { projectUuid: PROJECT_UUID, proposalUuid: "p" })).resolves.toBeUndefined();
+    expect(mockPrisma.idea.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("rejects a proposal task", async () => {
+    await expect(
+      assertValidTaskIdeaLink(COMPANY_UUID, { projectUuid: PROJECT_UUID, proposalUuid: "prop", ideaUuid: IDEA }),
+    ).rejects.toMatchObject({ status: 400, message: "A task linked to a proposal cannot also link to an idea directly" });
+    expect(mockPrisma.idea.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing or cross-company idea (company-scoped lookup)", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(null);
+    await expect(
+      assertValidTaskIdeaLink(COMPANY_UUID, { projectUuid: PROJECT_UUID, ideaUuid: IDEA }),
+    ).rejects.toMatchObject({ status: 404, message: "Idea not found" });
+    expect(mockPrisma.idea.findFirst).toHaveBeenCalledWith({
+      where: { uuid: IDEA, companyUuid: COMPANY_UUID },
+      select: { projectUuid: true, isContainer: true },
+    });
+  });
+
+  it("rejects a cross-project idea", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid: "other-project", isContainer: false });
+    await expect(
+      assertValidTaskIdeaLink(COMPANY_UUID, { projectUuid: PROJECT_UUID, ideaUuid: IDEA }),
+    ).rejects.toMatchObject({ status: 400, message: "Idea must be in the same project as the task" });
+  });
+
+  it("rejects a theme (container) idea", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid: PROJECT_UUID, isContainer: true });
+    await expect(
+      assertValidTaskIdeaLink(COMPANY_UUID, { projectUuid: PROJECT_UUID, ideaUuid: IDEA }),
+    ).rejects.toMatchObject({ status: 400, message: "Theme ideas cannot have tasks; link a child idea" });
+  });
+
+  it.each(["open", "elaborating", "elaborated", "proposal_created", "completed", "closed"])(
+    "accepts a same-project native idea regardless of status (%s) and never mutates it",
+    async (status) => {
+      mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid: PROJECT_UUID, isContainer: false, status });
+      await expect(
+        assertValidTaskIdeaLink(COMPANY_UUID, { projectUuid: PROJECT_UUID, ideaUuid: IDEA }),
+      ).resolves.toBeUndefined();
+      // Status is not part of the check: the select never reads it.
+      expect(mockPrisma.idea.findFirst.mock.calls[0][0].select).not.toHaveProperty("status");
+    },
+  );
+});
+
+describe("createTask — direct Idea link", () => {
+  it("validates and persists ideaUuid, exposing it on the response", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid: PROJECT_UUID, isContainer: false });
+    mockPrisma.task.create.mockResolvedValue(rawTask({ ideaUuid: "idea-1" }));
+
+    const result = await createTask({
+      companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, title: "Quick", ideaUuid: "idea-1",
+      createdByUuid: authContexts.user.actorUuid,
+    });
+
+    expect(mockPrisma.idea.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uuid: "idea-1", companyUuid: COMPANY_UUID },
+    }));
+    expect(mockPrisma.task.create.mock.calls[0][0].data.ideaUuid).toBe("idea-1");
+    expect(mockPrisma.task.create.mock.calls[0][0].select.ideaUuid).toBe(true);
+    expect(result.ideaUuid).toBe("idea-1");
+  });
+
+  it("defaults ideaUuid to null when not linked", async () => {
+    mockPrisma.task.create.mockResolvedValue(rawTask());
+    const result = await createTask({
+      companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, title: "Plain", createdByUuid: authContexts.user.actorUuid,
+    });
+    expect(mockPrisma.task.create.mock.calls[0][0].data.ideaUuid).toBeNull();
+    expect(result.ideaUuid).toBeNull();
+  });
+
+  it("rejects an invalid link before creating anything", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid: PROJECT_UUID, isContainer: true });
+    await expect(createTask({
+      companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, title: "Quick", ideaUuid: "theme",
+      createdByUuid: authContexts.user.actorUuid,
+    })).rejects.toMatchObject({ status: 400 });
+    await expect(createTask({
+      companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, title: "Mixed", ideaUuid: "idea-1", proposalUuid: "prop",
+      createdByUuid: authContexts.user.actorUuid,
+    })).rejects.toMatchObject({ status: 400 });
+    expect(mockPrisma.task.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateTask — direct Idea link", () => {
+  it("validates against the current row's project and persists the new link", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask({ proposalUuid: null }));
+    mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid: PROJECT_UUID, isContainer: false });
+    mockPrisma.task.update.mockResolvedValue(rawTaskWithRelations({ ideaUuid: "idea-1" }));
+
+    const result = await updateTask(TASK_UUID, { ideaUuid: "idea-1" });
+
+    expect(mockPrisma.idea.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uuid: "idea-1", companyUuid: COMPANY_UUID },
+    }));
+    expect(mockPrisma.task.update.mock.calls[0][0].data).toEqual({ ideaUuid: "idea-1" });
+    expect(result.ideaUuid).toBe("idea-1");
+  });
+
+  it("rejects linking a proposal task (uses the current row's proposalUuid)", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask({ proposalUuid: "prop" }));
+    await expect(updateTask(TASK_UUID, { ideaUuid: "idea-1" })).rejects.toMatchObject({ status: 400 });
+    expect(mockPrisma.task.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cross-project idea on update", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask());
+    mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid: "elsewhere", isContainer: false });
+    await expect(updateTask(TASK_UUID, { ideaUuid: "idea-1" })).rejects.toMatchObject({ status: 400 });
+    expect(mockPrisma.task.update).not.toHaveBeenCalled();
+  });
+
+  it("clears the link with null without an idea lookup", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask({ ideaUuid: "idea-1" }));
+    mockPrisma.task.update.mockResolvedValue(rawTaskWithRelations({ ideaUuid: null }));
+    const result = await updateTask(TASK_UUID, { ideaUuid: null });
+    expect(mockPrisma.idea.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.task.update.mock.calls[0][0].data).toEqual({ ideaUuid: null });
+    expect(result.ideaUuid).toBeNull();
+  });
+
+  it("skips validation when ideaUuid is absent from the update", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(null);
+    mockPrisma.task.update.mockResolvedValue(rawTaskWithRelations({ title: "x" }));
+    await updateTask(TASK_UUID, { title: "x" });
+    expect(mockPrisma.idea.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("preserveIdeaExecution — linked Quick Tasks", () => {
+  it("writes the idea execution_started activity when a linked task starts executing", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask({ status: "assigned", ideaUuid: "idea-1" }));
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: "idea-1" }]);
+    mockPrisma.task.update.mockResolvedValue(rawTaskWithRelations({ status: "in_progress", ideaUuid: "idea-1" }));
+
+    await updateTask(TASK_UUID, { status: "in_progress" }, { actorType: "agent", actorUuid: "agent-1" });
+
+    expect(mockPrisma.proposal.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.idea.findMany).toHaveBeenCalledWith({
+      where: { companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, uuid: { in: ["idea-1"] } },
+      select: { uuid: true },
+    });
+    expect(mockPrisma.activity.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({
+      targetType: "idea", targetUuid: "idea-1", action: "execution_started",
+      actorType: "agent", actorUuid: "agent-1",
+      value: { taskUuid: TASK_UUID, ideaUuid: "idea-1" },
+    })] });
+  });
+
+  it("attributes to the post-update link when the same update sets ideaUuid", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask({ status: "assigned", ideaUuid: null }));
+    mockPrisma.idea.findFirst.mockResolvedValue({ projectUuid: PROJECT_UUID, isContainer: false });
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: "idea-2" }]);
+    mockPrisma.task.update.mockResolvedValue(rawTaskWithRelations({ status: "in_progress", ideaUuid: "idea-2" }));
+
+    await updateTask(TASK_UUID, { status: "in_progress", ideaUuid: "idea-2" });
+
+    expect(mockPrisma.activity.createMany.mock.calls[0][0].data[0]).toMatchObject({
+      targetUuid: "idea-2", value: { taskUuid: TASK_UUID, ideaUuid: "idea-2" },
+    });
+  });
+
+  it("writes nothing for an unlinked Quick Task", async () => {
+    mockPrisma.task.findUnique.mockResolvedValue(rawTask({ status: "assigned" }));
+    mockPrisma.task.update.mockResolvedValue(rawTaskWithRelations({ status: "in_progress" }));
+    await updateTask(TASK_UUID, { status: "in_progress" });
+    expect(mockPrisma.idea.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.activity.createMany).not.toHaveBeenCalled();
+  });
+
+  it("anchors execution on the linked idea before deleting an executed linked task", async () => {
+    const task = rawTask({ status: "done", ideaUuid: "idea-1" });
+    mockPrisma.task.findUnique.mockResolvedValue(task);
+    mockPrisma.task.delete.mockResolvedValue(task);
+    mockPrisma.activity.findMany.mockResolvedValue([]);
+    mockPrisma.idea.findMany.mockResolvedValue([{ uuid: "idea-1" }]);
+
+    await deleteTask(TASK_UUID);
+
+    expect(mockPrisma.activity.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({
+      targetType: "idea", targetUuid: "idea-1", action: "execution_started", actorType: "system",
+      value: { taskUuid: TASK_UUID, ideaUuid: "idea-1" },
+    })] });
+    expect(mockPrisma.activity.createMany.mock.invocationCallOrder[0])
+      .toBeLessThan(mockPrisma.task.delete.mock.invocationCallOrder[0]);
+  });
+});
+
+describe("TaskResponse / listTasks — ideaUuid", () => {
+  it("listTasks filters by ideaUuid, selects it, and exposes it in the batch response", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([rawTaskWithRelations({ uuid: "t1", ideaUuid: "idea-1" })]);
+    mockPrisma.task.count.mockResolvedValue(1);
+
+    const { tasks } = await listTasks({
+      companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, skip: 0, take: 20, ideaUuid: "idea-1",
+    });
+
+    const args = mockPrisma.task.findMany.mock.calls[0][0];
+    expect(args.where).toMatchObject({ companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, ideaUuid: "idea-1" });
+    expect(args.select.ideaUuid).toBe(true);
+    expect(mockPrisma.task.count).toHaveBeenCalledWith({ where: args.where });
+    expect(tasks[0].ideaUuid).toBe("idea-1");
+  });
+
+  it("listTasks without the filter does not constrain ideaUuid", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.task.count.mockResolvedValue(0);
+    await listTasks({ companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, skip: 0, take: 20 });
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where).not.toHaveProperty("ideaUuid");
+  });
+
+  it("getTask (single response) exposes ideaUuid", async () => {
+    mockPrisma.task.findFirst.mockResolvedValue(rawTaskWithRelations({ ideaUuid: "idea-1" }));
+    mockPrisma.comment.count.mockResolvedValue(0);
+    const task = await getTask(COMPANY_UUID, TASK_UUID);
+    expect(task?.ideaUuid).toBe("idea-1");
+  });
+
+  it("getUnblockedTasks selects ideaUuid", async () => {
+    mockPrisma.task.findMany.mockResolvedValue([]);
+    mockPrisma.task.count.mockResolvedValue(0);
+    await getUnblockedTasks({ companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID });
+    expect(mockPrisma.task.findMany.mock.calls[0][0].select.ideaUuid).toBe(true);
   });
 });

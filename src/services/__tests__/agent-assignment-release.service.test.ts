@@ -64,9 +64,20 @@ type ProposalRow = { uuid: string; projectUuid: string; status: string; inputUui
 function setProposals(rows: ProposalRow[]) {
   mockTx.proposal.findMany.mockResolvedValue(rows.map((r) => ({ createdAt: new Date(0), ...r })));
 }
-function taskFindManyFor(proposalTasks: { proposalUuid: string; status: string }[], assignedTasks: unknown[] = []) {
-  mockTx.task.findMany.mockImplementation(async (args: { where: Record<string, unknown> }) =>
-    "proposalUuid" in args.where ? proposalTasks : assignedTasks,
+// The derived-status loader's task query selects ideaUuid (proposal tasks ∪
+// directly linked tasks); the assignee lookup does not.
+function taskFindManyFor(
+  proposalTasks: { proposalUuid: string; status: string }[],
+  assignedTasks: unknown[] = [],
+  linkedTasks: { ideaUuid: string; status: string }[] = [],
+) {
+  mockTx.task.findMany.mockImplementation(async (args: { select: Record<string, unknown> }) =>
+    args.select && "ideaUuid" in args.select
+      ? [
+        ...proposalTasks.map((t, i) => ({ uuid: `pt-${i}`, ideaUuid: null, ...t })),
+        ...linkedTasks.map((t, i) => ({ uuid: `lt-${i}`, proposalUuid: null, ...t })),
+      ]
+      : assignedTasks,
   );
 }
 
@@ -207,8 +218,9 @@ describe("releaseAgentAssignments", () => {
     // Latest approved proposal is all done and the foreign pending one is ignored → done, kept.
     expect(result.releasedIdeaUuids).toEqual([]);
     expect(mockTx.task.findMany).toHaveBeenCalledWith({
-      where: { companyUuid, proposalUuid: { in: ["new"] } },
-      select: { proposalUuid: true, status: true },
+      where: { companyUuid, OR: [{ proposalUuid: { in: ["new"] } }, { ideaUuid: { in: ["i1"] } }] },
+      select: { uuid: true, proposalUuid: true, ideaUuid: true, status: true },
+      orderBy: { uuid: "asc" },
     });
   });
 
@@ -355,5 +367,21 @@ describe("releaseAgentAssignments", () => {
 
     expect(result.releasedIdeaUuids).toEqual([]);
     expect(mockTx.idea.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("keeps a proposal-less idea whose linked Quick Tasks are all done (#650)", async () => {
+    setIdeas([
+      { uuid: "done-quick", projectUuid: "p1", status: "elaborated" },
+      { uuid: "open-quick", projectUuid: "p1", status: "elaborated" },
+    ]);
+    taskFindManyFor([], [], [
+      { ideaUuid: "done-quick", status: "done" },
+      { ideaUuid: "done-quick", status: "closed" },
+      { ideaUuid: "open-quick", status: "in_progress" },
+    ]);
+
+    const result = await releaseAgentAssignments(companyUuid, agentUuid, actorUuid, tx);
+
+    expect(result.releasedIdeaUuids).toEqual(["open-quick"]);
   });
 });

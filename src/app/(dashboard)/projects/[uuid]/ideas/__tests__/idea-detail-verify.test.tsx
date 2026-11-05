@@ -12,7 +12,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { refreshMock } = vi.hoisted(() => ({ refreshMock: vi.fn() }));
+const { refreshMock, getTasksForIdeaActionMock } = vi.hoisted(() => ({
+  refreshMock: vi.fn(),
+  getTasksForIdeaActionMock: vi.fn(),
+}));
 
 const {
   getElaborationActionMock,
@@ -70,6 +73,7 @@ vi.mock("@/app/(dashboard)/projects/[uuid]/dashboard/panels/move-idea-dialog", (
 vi.mock("@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions", () => ({
   getProposalsForIdeaAction: vi.fn().mockResolvedValue({ success: true, data: [] }),
   getTasksForProposalAction: vi.fn().mockResolvedValue({ success: true, data: [] }),
+  getTasksForIdeaAction: (...args: unknown[]) => getTasksForIdeaActionMock(...args),
 }));
 
 vi.mock("next-intl", async () => {
@@ -158,6 +162,7 @@ function renderPanel(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   getIdeaActivitiesActionMock.mockResolvedValue({ activities: [] });
+  getTasksForIdeaActionMock.mockResolvedValue({ success: true, data: [] });
   getElaborationActionMock.mockResolvedValue(elaborationResponse("answered"));
   verifyElaborationActionMock.mockResolvedValue({ success: true, data: {} });
   // Verify Elaborate now runs through pin-then-wake, which fetches
@@ -237,5 +242,21 @@ describe("/ideas IdeaDetailPanel — Verify Elaborate replaces Create Proposal",
     expect(await screen.findByText("boom")).toBeTruthy();
     // Button still present after failure (verified flag not set).
     expect(screen.getByRole("button", { name: "Verify Elaborate" })).toBeTruthy();
+  });
+});
+
+describe("/ideas IdeaDetailPanel — Yolo gating includes directly linked Quick Tasks", () => {
+  it("hides Yolo once every linked Quick Task of a proposal-less idea is done", async () => {
+    getTasksForIdeaActionMock.mockResolvedValue({ success: true, data: [{ uuid: "q1", status: "done" }] });
+    renderPanel({ status: "open", elaborationStatus: null });
+    await waitFor(() => expect(getTasksForIdeaActionMock).toHaveBeenCalledWith(PROJECT_UUID, IDEA_UUID));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Yolo" })).toBeNull());
+  });
+
+  it("keeps Yolo while a linked Quick Task is unfinished", async () => {
+    getTasksForIdeaActionMock.mockResolvedValue({ success: true, data: [{ uuid: "q1", status: "in_progress" }] });
+    renderPanel({ status: "open", elaborationStatus: null });
+    await waitFor(() => expect(getTasksForIdeaActionMock).toHaveBeenCalled());
+    expect(await screen.findByRole("button", { name: "Yolo" })).toBeTruthy();
   });
 });

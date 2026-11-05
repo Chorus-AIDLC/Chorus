@@ -41,6 +41,8 @@
 // human can answer it in a daemon wake.
 
 import { spawn } from "node:child_process";
+import { backendSessionKey } from "./backend-session-identity.mjs";
+import { parseScopedAnchor } from "./session-anchor.mjs";
 import { safeSpawnError } from "./launch-diagnostics.mjs";
 import { validateAgentCliConfig, overlayAgentEnv, getAgentEnv, assertConfiguredShimArgs } from "./agent-cli-config.mjs";
 import { existsSync, statSync } from "node:fs";
@@ -710,8 +712,8 @@ export class ClaudeSpawner {
    * is written to stdin as one stream-json user frame (never argv) — this is what keeps long prompts off the
    * Windows command line and out of shell escaping/injection.
    *
-   * The session id is supplied by the caller (the daemon passes the dispatched
-   * entity's DIRECT idea uuid, so the session is human-resumable by idea uuid) and
+   * The business anchor is supplied by the caller (the dispatched entity's DIRECT
+   * idea uuid). The backend id additionally scopes it to this agent. The anchor
    * MUST be a well-formed lowercase UUID — an invalid id is refused with a visible
    * log and NO spawn (no-silent-errors). `isNew` (decided by the caller via a disk
    * probe — see isNewSession) selects --session-id (new) vs --resume (continue).
@@ -727,7 +729,7 @@ export class ClaudeSpawner {
    *   successful spawn; a spawn failure never calls it.
    * @returns {Promise<{ sessionId: string, backendSessionId: string|null, exitCode: number|null, isNew: boolean,
    *                     failureClassification?: "session_conflict" }>}
-   *   `backendSessionId` is the Claude `--resume` anchor (the input `sessionId`) on a
+   *   `backendSessionId` is the agent-scoped Claude `--resume` id on a
    *   terminal resolution after a spawn, so the conversation UI can offer a resumable
    *   id — mirrors codex-spawner's shape. `null` on the pre-spawn failure paths (no
    *   turn ran, nothing to resume).
@@ -747,7 +749,8 @@ export class ClaudeSpawner {
   }
 
   async #wake({ prompt, sessionId, isNew, mcpConfigPath, cwd, onMessage, onChild }, diagnostics) {
-    const id = sessionId;
+    const id = isValidSessionId(sessionId) || parseScopedAnchor(sessionId)
+      ? backendSessionKey(sessionId, this.creds?.agentUuid) : sessionId;
 
     // Pre-validate the session id BEFORE locating claude or spawning: a malformed
     // id (not a lowercase UUID) is refused visibly with no subprocess started.

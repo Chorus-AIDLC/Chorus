@@ -30,7 +30,7 @@ const OTHER_COMPANY = "company-9999";
 // only when asked for the right company (mirrors findFirst({ where:{uuid,companyUuid} })).
 
 type IdeaRow = { uuid: string; title: string; parentUuid: string | null };
-type TaskRow = { uuid: string; title: string; proposalUuid: string | null };
+type TaskRow = { uuid: string; title: string; proposalUuid: string | null; ideaUuid?: string | null };
 type DocRow = { uuid: string; title: string; proposalUuid: string | null };
 type PropRow = { uuid: string; title: string; inputType: string; inputUuids: unknown };
 
@@ -728,5 +728,66 @@ describe("lineage.service / resolveDirectIdeaUuid (shallow, no-climb)", () => {
     installGraph({});
     // @ts-expect-error — exercising the runtime default branch
     await expect(resolveDirectIdeaUuid(COMPANY, "comment", "c1")).resolves.toBeNull();
+  });
+});
+
+describe("lineage.service — directly linked Quick Tasks (task.ideaUuid)", () => {
+  const graph = () => ({
+    ideas: [
+      { uuid: "i-root", title: "Root", parentUuid: null },
+      { uuid: "i-child", title: "Child", parentUuid: "i-root" },
+    ],
+    tasks: [
+      { uuid: "t-linked", title: "Linked", proposalUuid: null, ideaUuid: "i-child" },
+      { uuid: "t-plain", title: "Plain", proposalUuid: null, ideaUuid: null },
+      { uuid: "t-ghost-link", title: "Ghost", proposalUuid: null, ideaUuid: "i-missing" },
+    ],
+  });
+
+  it("resolveRootIdea: linked task → idea → root with resolvedVia via_task_idea", async () => {
+    installGraph(graph());
+
+    const res = await resolveRootIdea(COMPANY, "task", "t-linked");
+
+    expect(res.rootIdeaUuid).toBe("i-root");
+    expect(res.directIdeaUuid).toBe("i-child");
+    expect(res.resolvedVia).toBe("via_task_idea");
+    expect(res.lineage.map((n) => `${n.type}:${n.uuid}`)).toEqual([
+      "task:t-linked",
+      "idea:i-child",
+      "idea:i-root",
+    ]);
+    expect(mockGetProposalByUuid).not.toHaveBeenCalled();
+  });
+
+  it("resolveRootIdea: unlinked Quick Task still → null/no_proposal", async () => {
+    installGraph(graph());
+    const res = await resolveRootIdea(COMPANY, "task", "t-plain");
+    expect(res.rootIdeaUuid).toBeNull();
+    expect(res.directIdeaUuid).toBeNull();
+    expect(res.resolvedVia).toBe("no_proposal");
+  });
+
+  it("resolveRootIdea: linked to a missing idea → null/not_found", async () => {
+    installGraph(graph());
+    const res = await resolveRootIdea(COMPANY, "task", "t-ghost-link");
+    expect(res.rootIdeaUuid).toBeNull();
+    expect(res.resolvedVia).toBe("not_found");
+  });
+
+  it("resolveDirectIdeaUuid: linked task → its idea (existence-checked), no parent climb", async () => {
+    installGraph(graph());
+
+    await expect(resolveDirectIdeaUuid(COMPANY, "task", "t-linked")).resolves.toBe("i-child");
+    const readIdeaUuids = mockGetIdeaByUuid.mock.calls.map((c) => c[1]);
+    expect(readIdeaUuids).toEqual(["i-child"]);
+    expect(mockGetProposalByUuid).not.toHaveBeenCalled();
+  });
+
+  it("resolveDirectIdeaUuid: unlinked → null; ghost link → null; cross-company → null", async () => {
+    installGraph(graph());
+    await expect(resolveDirectIdeaUuid(COMPANY, "task", "t-plain")).resolves.toBeNull();
+    await expect(resolveDirectIdeaUuid(COMPANY, "task", "t-ghost-link")).resolves.toBeNull();
+    await expect(resolveDirectIdeaUuid(OTHER_COMPANY, "task", "t-linked")).resolves.toBeNull();
   });
 });

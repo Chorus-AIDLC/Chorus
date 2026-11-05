@@ -107,7 +107,7 @@ describe("POST /api/daemon/resume", () => {
   it("resumes a user-interrupted row, dispatches a resume control command, and publishes", async () => {
     const res = await POST(postRequest(validBody), emptyCtx);
     expect(res.status).toBe(200);
-    expect(mockResumeExecution).toHaveBeenCalledWith(companyUuid, connectionUuid, "task", t1);
+    expect(mockResumeExecution).toHaveBeenCalledWith(companyUuid, connectionUuid, "task", t1, "");
     // The daemon is told to re-spawn via the SAME control channel as interrupt, with
     // the prior reason threaded through so it can branch the continue instruction.
     expect(mockDispatchControl).toHaveBeenCalledWith({
@@ -116,6 +116,7 @@ describe("POST /api/daemon/resume", () => {
       command: "resume",
       entityType: "task",
       entityUuid: t1,
+      sessionId: "",
       resumeReason: "user",
       orchestrator: null,
     });
@@ -132,6 +133,7 @@ describe("POST /api/daemon/resume", () => {
       command: "resume",
       entityType: "task",
       entityUuid: t1,
+      sessionId: "",
       resumeReason: "crash",
       orchestrator: null,
     });
@@ -238,7 +240,7 @@ describe("POST /api/daemon/resume", () => {
       mockCreateResumeTurn.mockRejectedValue(new Error("db down"));
       const res = await POST(postRequest(validBody), emptyCtx);
       expect(res.status).toBe(409);
-      expect(mockRestoreInterruptedExecution).toHaveBeenCalledWith(companyUuid, connectionUuid, "task", t1, "crash");
+      expect(mockRestoreInterruptedExecution).toHaveBeenCalledWith(companyUuid, connectionUuid, "task", t1, "crash", "");
       expect(mockDispatchControl).not.toHaveBeenCalled();
       expect(mockPublishExecutionChange).toHaveBeenCalledWith(companyUuid, connectionUuid);
     });
@@ -253,4 +255,17 @@ describe("POST /api/daemon/resume", () => {
       expect(mockDispatchControl).not.toHaveBeenCalled();
     });
   });
+});
+
+
+it("resumes only the requested same-entity review session and redispatches its stored anchor", async () => {
+  const sessionId = `review:task:${t1}`;
+  mockExecutionFindFirst.mockResolvedValue({ uuid: "review-execution", directIdeaUuid: "idea", sessionId });
+  mockSessionFindFirst.mockResolvedValue({ uuid: "review-session", runtimeCwd: "/work/review" });
+  const res = await POST(postRequest({ ...validBody, sessionId }), emptyCtx);
+  expect(res.status).toBe(200);
+  expect(mockResumeExecution).toHaveBeenCalledWith(companyUuid, connectionUuid, "task", t1, sessionId);
+  expect(mockExecutionFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { companyUuid, connectionUuid, entityType: "task", entityUuid: t1, sessionId } }));
+  expect(mockSessionFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { companyUuid, agentUuid, sessionId } }));
+  expect(mockDispatchControl).toHaveBeenCalledWith(expect.objectContaining({ sessionId, runtimeCwd: "/work/review" }));
 });

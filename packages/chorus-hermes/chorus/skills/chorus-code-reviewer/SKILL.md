@@ -1,10 +1,10 @@
 ---
 name: chorus-code-reviewer
-description: 'Read-only Chorus code-review gateway for Hermes — the final ship-time review of an Idea''s aggregate code change (the whole feature across all its tasks, not one task). Runs as a delegate_task child whose context starts with [chorus-reviewer:code]; fetches the Idea, its approved proposals, documents, and tasks via MCP, reviews the aggregate implementation from the source files and the parent-built evidence bundle, and posts exactly one structured VERDICT comment on the Idea.'
+description: 'Read-only Chorus code-review gateway for Hermes — the final ship-time review of an Idea''s aggregate code change (the whole feature across all its tasks, not one task). Runs as a delegate_task child whose context starts with [chorus-reviewer:code]; fetches the Idea, its approved proposals, documents, proposal tasks and linked Quick Tasks via MCP, reviews the aggregate implementation from the source files and the parent-built evidence bundle, and posts exactly one structured VERDICT comment on the Idea.'
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.24.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -91,6 +91,18 @@ You know nothing of the parent conversation. If `Evidence:` is missing or a list
 - **Do not lower severity for lack of a shell.** A defect visible in the code as written is still a BLOCKER on file-and-line evidence; missing execution evidence never downgrades a finding you can point at.
 - A broken build or failing tests in the bundle is an automatic FAIL.
 
+## Team reviewer
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+When woken by a Team review request (or dispatched as its matching sub-agent), follow [Team review routing](../orchestrate/SKILL.md#team-review-routing). Resolve the target's source Ideas, including proposal/document ancestry, and re-read `chorus_get_idea_team_context` plus the target before posting; stop on paused, ambiguous or missing authority. Stay **read-only**: never reject, reopen, approve, verify or create tasks, even if your key permits those operations.
+
+Post **exactly one VERDICT comment per round** on the reviewed entity, with **exactly one @mention of only the routed target**: Every verdict → current Idea orchestrator. Start when all tasks across all source proposals are `to_verify`, `done` or `closed`; task reviews may still be running. Review the aggregate without assuming every task has already passed, and do not repeat their individual AC reviews. Place the mention before the final literal VERDICT line. Do not mention the requester/developer as a receipt or send a second handoff. Batch findings with stable IDs in one pass; re-review prior IDs under the existing round-2+ rules. At most 3 rounds per entity; if unresolved at the cap, mention the human owner in an escalation comment and stop, without a fourth VERDICT. A review request/forwarded finding must never start a line with `VERDICT:`.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
+
+These managed instructions override legacy dispatch timing and fix-handling text below; the reviewer never performs the orchestrator's lifecycle actions.
+
 === REVIEW PROCEDURE ===
 
 **Efficiency rule:** Gather ALL context in Step 1 before verifying. Batch your tool calls — do not alternate between fetching and writing conclusions.
@@ -103,9 +115,12 @@ chorus_get_comments({ targetType: "idea", targetUuid: "<uuid>" })          # pri
 chorus_get_proposals({ projectUuid: "<idea.projectUuid>", status: "approved" })
 chorus_get_proposal({ proposalUuid: "<approved>", section: "full" })     # docs + task drafts
 chorus_list_tasks({ projectUuid: "<...>", proposalUuids: ["<approved>"] })
+chorus_list_tasks({ projectUuid: "<idea.projectUuid>", ideaUuid: "<uuid>", pageSize: 100 })  # Quick Tasks linked directly to the Idea
 ```
 
 Read each task's work report (in its comments, `chorus_get_comments({ targetType: "task", targetUuid })`) — the developers describe what they changed; that is your map into the diff.
+
+**The Idea's work = approved-proposal tasks + linked Quick Tasks.** Count only approved proposals whose `inputUuids` include this Idea, plus every Quick Task linked directly to the Idea via `ideaUuid` (no `proposalUuid`) from `chorus_list_tasks({ projectUuid, ideaUuid })` — page through with `pageSize: 100` until you have every task. Linked Quick Tasks are part of the same feature and get the same aggregate review as proposal tasks. **An Idea with no approved proposal is valid:** skip the proposal calls, take the requirements from the Idea body, its elaboration, and the linked Quick Tasks' descriptions + acceptance criteria, review the code the linked Quick Tasks changed (their work reports are your map), and say in **Scope reviewed** that the Idea was delivered through linked Quick Tasks. Only when both sets are empty is there nothing to review — state that in your comment instead of inventing a scope.
 
 **Step 2: Determine the aggregate diff scope yourself.** No fixed branch convention. Infer scope from the task work reports plus the bundle: the commit list, the diff stat, and the diff itself. Cross-check that the commits the reports name appear in the log and that the files they name appear in the diff. **State the scope you settled on** in your comment (e.g. "Reviewed the aggregate of commits abc1..def9 spanning tasks T1–T5, from <bundle diff path>"). If you cannot pin an exact range (the bundle has no log, or the diff does not match the reports), say so and review what the reports + current tree support; if that leaves part of the feature unseen, raise a BLOCKER naming the diff/log output the parent must supply.
 

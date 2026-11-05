@@ -97,3 +97,34 @@ describe("REST task actor propagation", () => {
     }));
   });
 });
+
+describe("REST task PATCH ideaUuid", () => {
+  it.each([
+    ["sets", "idea-1", "idea-1"],
+    ["clears", null, null],
+  ])("%s the direct Idea link", async (_label, input, expected) => {
+    expect((await patch({ ideaUuid: input })).status).toBe(200);
+    expect(mocks.updateTask).toHaveBeenCalledWith("task", { ideaUuid: expected }, {
+      actorType: "user", actorUuid: "actor",
+    });
+  });
+
+  it("leaves the link untouched when ideaUuid is omitted", async () => {
+    await patch({ description: "x" });
+    expect(mocks.updateTask.mock.calls[0][1]).not.toHaveProperty("ideaUuid");
+  });
+
+  it("rejects a non-string ideaUuid with 400", async () => {
+    expect((await patch({ ideaUuid: 42 })).status).toBe(400);
+    expect(mocks.updateTask).not.toHaveBeenCalled();
+  });
+
+  it("maps service link-validation errors to 400", async () => {
+    mocks.updateTask.mockRejectedValue(
+      new ApiError("BAD_REQUEST", "A task linked to a proposal cannot also link to an idea directly", 400),
+    );
+    const response = await patch({ ideaUuid: "idea-1" });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.message).toContain("cannot also link to an idea");
+  });
+});

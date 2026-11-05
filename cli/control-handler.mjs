@@ -33,6 +33,7 @@
 // handler is unit-testable without a real subprocess or SSE stream.
 
 import { killProcessTree } from "./process-killer.mjs";
+import { executionKey } from "./session-anchor.mjs";
 
 const NOOP_LOGGER = { info() {}, warn() {}, error() {} };
 
@@ -103,7 +104,7 @@ export function createControlHandler(deps) {
   const logger = deps.logger ?? NOOP_LOGGER;
 
   /** Registry key for a resource — MUST match waker.#execKey. */
-  const execKey = (entityType, entityUuid) => `${entityType}:${entityUuid}`;
+  const execKey = executionKey;
 
   /**
    * Handle one control event. Synchronous + non-throwing: it performs the
@@ -132,6 +133,7 @@ export function createControlHandler(deps) {
       }
 
       const { command, targetConnectionUuid, entityType, entityUuid } = event;
+      const sessionId = typeof event.sessionId === "string" ? event.sessionId : "";
 
       // --- Check 1: connection-uuid match (applies to every command) ---
       const myConnectionUuid = getConnectionUuid?.() ?? null;
@@ -214,7 +216,7 @@ export function createControlHandler(deps) {
         try {
           if (
             (typeof event.runtimeCwd === "string" && event.runtimeCwd) ||
-            event.orchestrator != null
+            event.orchestrator != null || sessionId
           ) {
             redispatchResume?.(
               entityType,
@@ -222,6 +224,7 @@ export function createControlHandler(deps) {
               resumeReason,
               typeof event.runtimeCwd === "string" ? event.runtimeCwd : undefined,
               event.orchestrator ?? null,
+              ...(sessionId ? [sessionId] : []),
             );
           } else {
             redispatchResume?.(entityType, entityUuid, resumeReason);
@@ -242,17 +245,18 @@ export function createControlHandler(deps) {
       // applies. Without this the exact-key lookup misses, we report a turn miss, the
       // server's FIFO resolution grabs the SIBLING wake's `running` turn, and NOTHING is
       // killed: the UI would say interrupted while the agent keeps working.
-      const key = execKey(entityType, entityUuid);
+      const key = execKey(entityType, entityUuid, sessionId);
       let entry = waker?.executions?.get(key);
       // The entity the kill actually targets — normally the command's own, but a sibling
       // wake when the match below re-points it.
       let killEntityType = entityType;
       let killEntityUuid = entityUuid;
       let killKey = key;
-      if ((!entry || entry.status !== "running" || !entry.child) && entityType === "idea") {
+      if (!sessionId && (!entry || entry.status !== "running" || !entry.child) && entityType === "idea") {
         for (const candidate of waker?.executions?.values() ?? []) {
           if (
             candidate.status === "running" &&
+            !candidate.sessionId &&
             (candidate.child || candidate.admission || candidate.operationTurnUuid) &&
             candidate.directIdeaUuid === entityUuid
           ) {
@@ -270,16 +274,16 @@ export function createControlHandler(deps) {
       }
       if (!entry || entry.status !== "running" || !entry.child) {
         if (entry?.status === "running" && entry.admission) {
-          waker.markInterrupting?.(killEntityType, killEntityUuid);
+          waker.markInterrupting?.(killEntityType, killEntityUuid, ...(sessionId ? [sessionId] : []));
           return;
         }
         if (entry?.status === "running" && entry.operationTurnUuid) {
           // Admission can be committed while its response is still in flight.
           // Cancel locally before reporting, so even a lost response cannot launch.
-          waker.markInterrupting?.(killEntityType, killEntityUuid);
+          waker.markInterrupting?.(killEntityType, killEntityUuid, ...(sessionId ? [sessionId] : []));
           try {
             Promise.resolve(advanceTurn?.({
-              sessionId: entry.directIdeaUuid ?? killEntityUuid,
+              sessionId: sessionId || entry.directIdeaUuid || killEntityUuid,
               turnUuid: entry.operationTurnUuid,
               status: "interrupted",
               interruptedReason: "user",
@@ -299,7 +303,7 @@ export function createControlHandler(deps) {
         // that nothing else will ever close (the phantom-running-turn bug). Report it
         // terminal so the UI converges. Only for the self-anchored entity types; for
         // the rest we cannot know the session locally, so keep the old pure log.
-        if (SELF_ANCHORED_ENTITY_TYPES.has(entityType)) {
+        if (sessionId || SELF_ANCHORED_ENTITY_TYPES.has(entityType)) {
           logger.info(
             `[Chorus] control: no running subprocess for ${key} on this daemon; ` +
               `reporting the turn as interrupted(user)`
@@ -311,7 +315,7 @@ export function createControlHandler(deps) {
           try {
             Promise.resolve(
               advanceTurn?.({
-                sessionId: entityUuid,
+                sessionId: sessionId || entityUuid,
                 status: "interrupted",
                 interruptedReason: "user",
                 entityType,
@@ -339,7 +343,7 @@ export function createControlHandler(deps) {
       try {
         // Flag the entity whose wake we are actually killing — a sibling re-point must
         // mark THAT wake interrupting, or its exit would be reported as a crash.
-        waker.markInterrupting?.(killEntityType, killEntityUuid);
+        waker.markInterrupting?.(killEntityType, killEntityUuid, ...(sessionId ? [sessionId] : []));
       } catch (err) {
         logger.warn(`[Chorus] control: markInterrupting failed for ${killKey}: ${err}`);
       }

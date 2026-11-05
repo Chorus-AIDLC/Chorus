@@ -17,7 +17,7 @@
 // assert the batch composition on top of them, so this file stays independent of the
 // modules (waker/event-router/wake-queue) that other tasks touch.
 import { describe, it, expect } from "vitest";
-import { buildPrompt, buildBatchPrompt, HEADLESS_PREAMBLE } from "../prompts.mjs";
+import { buildPrompt, buildBatchPrompt, HEADLESS_PREAMBLE, TEAM_REVIEW_MENTION_GUIDANCE } from "../prompts.mjs";
 
 /** A representative task_assigned notification; spread `mk({...})` to vary it. */
 const BASE = {
@@ -33,6 +33,54 @@ const BASE = {
   actorName: "Alice",
 };
 const mk = (o) => ({ ...BASE, ...o });
+
+describe("direct Team reviewer wake protocol", () => {
+  it.each(["proposal", "task", "idea"])("loads reviewer instructions on a fresh %s mention even with a truncated request", (entityType) => {
+    const prompt = buildPrompt(mk({ action: "mentioned", entityType, message: "Please review…" }));
+    expect(prompt).toContain(TEAM_REVIEW_MENTION_GUIDANCE);
+    expect(prompt).toContain("fetch the full comments");
+    expect(prompt).toContain("load and follow the current installed matching reviewer instructions BEFORE reviewing");
+    expect(prompt).toContain("proposal → proposal-reviewer, task → task-reviewer, code (whole-Idea) → code-reviewer");
+    expect(prompt).toContain("kind, target, current round and expected PASS/FAIL recipients");
+    expect(prompt).toContain("corrected request and stop without a verdict");
+    expect(prompt).toContain("exactly one final unformatted line starting at column 1: VERDICT: PASS, VERDICT: PASS WITH NOTES or VERDICT: FAIL");
+    expect(prompt).toContain("No bold, backticks, bullet, quote, indentation or code fence");
+    expect(prompt).toContain("exactly one actionable @mention");
+    expect(prompt).toContain("proposal FAIL → current product delegate, else orchestrator");
+    expect(prompt).toContain("task FAIL → current logical task developer");
+    expect(prompt).toContain("whole-Idea FAIL → current orchestrator");
+    expect(prompt).toContain("override generic sender/orchestrator reply guidance");
+    expect(prompt).toContain("no second completion handoff");
+    expect(prompt).not.toMatch(/^VERDICT:/m);
+  });
+
+  it("preserves dispatch and receiver rules in a coalesced mention wake", () => {
+    const prompt = buildBatchPrompt([
+      mk({ action: "task_assigned" }),
+      mk({ action: "mentioned", entityType: "proposal", entityUuid: "proposal-1" }),
+    ]);
+    expect(prompt).toContain(TEAM_REVIEW_MENTION_GUIDANCE);
+    expect(prompt).toContain("Team review request — <kind>, round N");
+    expect(prompt).toContain("Send a remote request with chorus_request_review");
+    expect(prompt).toContain("a hand-written comment never opens a review session");
+    expect(prompt).toContain("Never start a forwarding line with VERDICT:");
+  });
+
+  it("does not turn non-review work into a reviewer request", () => {
+    expect(buildPrompt(mk({ action: "task_assigned" }))).not.toContain(TEAM_REVIEW_MENTION_GUIDANCE);
+    expect(buildPrompt(mk({ action: "mentioned", message: "ordinary question" }))).toContain("For a Team review handoff or direct review request only (not ordinary mentions)");
+  });
+});
+
+describe("conditional sender mention guidance", () => {
+  it.each(["user", "agent"])("mentions a %s sender only when they must act, never to acknowledge", (actorType) => {
+    const prompt = buildPrompt(mk({ action: "mentioned", actorType }));
+    expect(prompt).toContain("Only if the sender must act on your result (a question, requested decision, or work handoff)");
+    expect(prompt).toContain(`post a comment on this task using chorus_add_comment with @mention: @[Alice](${actorType}:user-1)`);
+    expect(prompt).toContain('Never @mention only to acknowledge or say "received".');
+    expect(prompt).not.toContain("After completing your work, post a comment");
+  });
+});
 
 describe("headless background lifetime policy", () => {
   it("leaves background-agent waiting to runtime configuration, not a global foreground mandate", () => {
@@ -89,6 +137,59 @@ describe("buildBatchPrompt — single-event path is byte-identical to buildPromp
     const empty = mk({ action: "human_instruction", instructionText: "" });
     const real = mk({ action: "mentioned", entityType: "idea", entityUuid: "idea-9", message: "@agent hi" });
     expect(buildBatchPrompt([empty, real])).toBe(buildPrompt(real));
+  });
+});
+
+describe("scoped session headers", () => {
+  it("places task isolation and worktree guidance before the wake body", () => {
+    const notification = mk({ sessionId: "task:task-A", entityUuid: "task-A" });
+    const prompt = buildPrompt(notification);
+    expect(prompt.startsWith(HEADLESS_PREAMBLE)).toBe(true);
+    expect(prompt).toContain("task-scoped session for task task-A");
+    expect(prompt).toContain("no memory of the Idea session");
+    expect(prompt).toContain("read the task, its proposal and the Idea first");
+    expect(prompt).toContain("Other tasks of the same Idea may run concurrently in this working directory");
+    expect(prompt).toContain("before editing files, work in your own git worktree");
+    expect(prompt).toContain("EnterWorktree / `git worktree add`");
+    expect(prompt.indexOf("task-scoped session")).toBeLessThan(prompt.indexOf("chorus_get_task"));
+    expect(buildBatchPrompt([notification])).toBe(prompt);
+  });
+
+  it.each(["task", "proposal", "idea"])("makes %s reviews read-only without development memory", (entityType) => {
+    const notification = mk({ action: "mentioned", sessionId: `review:${entityType}:review-target` });
+    const prompt = buildPrompt(notification);
+    expect(prompt).toContain(`review-scoped session for ${entityType} review-target`);
+    expect(prompt).toContain("it never carries development memory. Stay read-only.");
+    expect(prompt).not.toContain("task-scoped session");
+    expect(prompt).not.toContain("git worktree add");
+    expect(buildBatchPrompt([notification])).toBe(prompt);
+  });
+
+  it.each(["task:task-A", "review:task:task-A", "review:proposal:proposal-A", "review:idea:idea-A"])(
+    "includes one scope header for coalesced and resumed wakes on %s", (sessionId) => {
+      const notification = mk({ sessionId, action: "resource_resumed" });
+      const prompt = buildBatchPrompt([notification, mk({ sessionId, action: "mentioned" })]);
+      const header = buildPrompt(notification).split("\n\n").find((part) => part.includes("-scoped session"));
+      expect(header).toBeTruthy();
+      expect(occurrences(prompt, header)).toBe(1);
+      expect(prompt.indexOf(header)).toBeLessThan(prompt.indexOf("queued Chorus events"));
+    },
+  );
+
+  it.each([undefined, null, "", "11111111-1111-4111-8111-111111111111", "ad-hoc-session", "review:document:doc-A"])(
+    "keeps unscoped prompts byte-identical for sessionId %s", (sessionId) => {
+      const notification = mk();
+      const mention = mk({ action: "mentioned" });
+      expect(buildPrompt({ ...notification, sessionId })).toBe(buildPrompt(notification));
+      expect(buildBatchPrompt([{ ...notification, sessionId }, { ...mention, sessionId }]))
+        .toBe(buildBatchPrompt([notification, mention]));
+    },
+  );
+
+  it.each(["task:task-A", "review:task:task-A"])("does not render a scope-only empty wake for %s", (sessionId) => {
+    const notification = mk({ sessionId, action: "human_instruction", instructionText: "" });
+    expect(buildPrompt(notification)).toBeNull();
+    expect(buildBatchPrompt([notification, notification])).toBeNull();
   });
 });
 

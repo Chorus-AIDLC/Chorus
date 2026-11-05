@@ -29,6 +29,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 最近更新
 
+**[v0.24.0](https://chorus-ai.dev/zh/blog/chorus-v0.24.0-release/)**：把你的 Agent 按角色组成项目私有团队，产品、开发和评审分派给不同成员。评审现在跑在自己的会话里，不带开发记忆；一个 Agent 可以同时推进同一个 Idea 的多个任务；Quick Task 也能直接关联到 Idea。
+
 **[v0.23.0](https://chorus-ai.dev/zh/blog/chorus-v0.23.0-release/)**：新增工作区本地账号管理、自定义显示名和头像。支持方案依赖校验、Pi 可选提交前检查及 Redis 共享认证限流，修复任务操作归属和重复提及通知。
 
 **[v0.22.2](https://chorus-ai.dev/zh/blog/chorus-v0.22.2-release/)**：支持在 Linux 或 macOS 主机上通过 Docker Compose 和 PostgreSQL 17 托管 Chorus，提供可重复部署、可选的局域网 HTTPS 和 Cloudflare Tunnel 接入指南。新增 TRAE CLI 后端，共用 Codex 插件参与现有工作流，并修复失效指派、删除失败及 daemon 安全与配置问题。

@@ -12,11 +12,12 @@ import type { prisma } from "@/lib/prisma";
 import { eventBus } from "@/lib/event-bus";
 import * as activityService from "@/services/activity.service";
 import {
-  computeDerivedStatus,
+  computeIdeaDerivedStatus,
   normalizeIdeaStatus,
   rollupThemeDerivedStatus,
   type DerivedIdeaStatus,
 } from "@/services/idea.service";
+import { loadIdeaTaskContexts } from "@/services/idea-task-context.service";
 
 type ReleaseDb = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
 
@@ -162,7 +163,8 @@ export async function releaseAgentAssignments(
  * Batched derived status for every Idea in the given projects, mirroring
  * getIdeasWithDerivedStatus (own status from the latest approved / any pending
  * proposal and its tasks, then theme rollup over same-project direct children)
- * but reading through the caller's transaction client. Three queries total.
+ * but reading through the caller's transaction client via the shared
+ * idea-task loader. Three queries total (ideas, proposals, tasks).
  */
 async function computeDerivedStatusesInTx(
   tx: ReleaseDb,
@@ -172,66 +174,21 @@ async function computeDerivedStatusesInTx(
   const result = new Map<string, DerivedIdeaStatus>();
   if (projectUuids.length === 0) return result;
 
-  const [ideas, proposals] = await Promise.all([
-    tx.idea.findMany({
-      where: { companyUuid, projectUuid: { in: projectUuids } },
-      select: { uuid: true, projectUuid: true, status: true, elaborationStatus: true, parentUuid: true, isContainer: true },
-    }),
-    tx.proposal.findMany({
-      where: { companyUuid, projectUuid: { in: projectUuids }, status: { in: ["approved", "pending"] } },
-      select: { uuid: true, projectUuid: true, status: true, inputUuids: true, createdAt: true },
-    }),
-  ]);
-
-  // Proposal inputs are only honored within the proposal's own project, as in
-  // the per-project tracker query.
-  const latestApproved = new Map<string, { uuid: string; createdAt: Date }>();
-  const hasPending = new Set<string>();
-  for (const proposal of proposals) {
-    const inputUuids = proposal.inputUuids as string[];
-    if (!Array.isArray(inputUuids)) continue;
-    for (const ideaUuid of inputUuids) {
-      const key = `${proposal.projectUuid}:${ideaUuid}`;
-      if (proposal.status === "pending") {
-        hasPending.add(key);
-      } else if (proposal.status === "approved") {
-        const existing = latestApproved.get(key);
-        if (!existing || proposal.createdAt > existing.createdAt) {
-          latestApproved.set(key, { uuid: proposal.uuid, createdAt: proposal.createdAt });
-        }
-      }
-    }
-  }
-
-  const approvedUuids = [...new Set([...latestApproved.values()].map((p) => p.uuid))];
-  const taskStatusesByProposal = new Map<string, string[]>();
-  if (approvedUuids.length > 0) {
-    const tasks = await tx.task.findMany({
-      where: { companyUuid, proposalUuid: { in: approvedUuids } },
-      select: { proposalUuid: true, status: true },
-    });
-    for (const task of tasks) {
-      if (!task.proposalUuid) continue;
-      const statuses = taskStatusesByProposal.get(task.proposalUuid) ?? [];
-      statuses.push(task.status);
-      taskStatusesByProposal.set(task.proposalUuid, statuses);
-    }
-  }
+  const ideas = await tx.idea.findMany({
+    where: { companyUuid, projectUuid: { in: projectUuids } },
+    select: { uuid: true, projectUuid: true, status: true, elaborationStatus: true, parentUuid: true, isContainer: true },
+  });
+  // Shared batched loader on the transaction client: proposal inputs are only
+  // honored within the idea's own project; linked tasks (Task.ideaUuid) join
+  // the latest approved proposal's tasks.
+  const contexts = await loadIdeaTaskContexts(tx, companyUuid, ideas);
 
   type IdeaNode = (typeof ideas)[number];
   const base = new Map<string, DerivedIdeaStatus>();
   const byUuid = new Map<string, IdeaNode>(ideas.map((i) => [i.uuid, i]));
   const childrenByParent = new Map<string, string[]>();
   for (const idea of ideas) {
-    const key = `${idea.projectUuid}:${idea.uuid}`;
-    const approved = latestApproved.get(key);
-    base.set(idea.uuid, computeDerivedStatus({
-      ideaStatus: idea.status,
-      elaborationStatus: idea.elaborationStatus,
-      hasPendingProposal: hasPending.has(key),
-      hasApprovedProposal: !!approved,
-      taskStatuses: approved ? taskStatusesByProposal.get(approved.uuid) ?? [] : [],
-    }).derivedStatus);
+    base.set(idea.uuid, computeIdeaDerivedStatus(idea, contexts.get(idea.uuid)).derivedStatus);
     const parent = idea.parentUuid ? byUuid.get(idea.parentUuid) : undefined;
     if (parent && parent.projectUuid === idea.projectUuid) {
       const siblings = childrenByParent.get(parent.uuid) ?? [];

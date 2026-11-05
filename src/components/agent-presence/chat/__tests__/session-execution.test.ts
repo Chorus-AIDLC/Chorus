@@ -36,6 +36,7 @@ function exec(over: Partial<ExecutionView> & { connectionUuid: string }): Execut
 }
 
 const ideaSession = {
+  agentUuid: "agent-1",
   sessionId: "idea-A",
   directIdeaUuid: "idea-A",
   originConnectionUuid: "conn-origin",
@@ -107,7 +108,7 @@ describe("sessionExecStatusForRow", () => {
   });
 
   it("matches an ad-hoc conversation by its daemon_session id across slices", () => {
-    const adhoc = { sessionId: "sess-xyz", directIdeaUuid: null, originConnectionUuid: "conn-origin" };
+    const adhoc = { agentUuid: "agent-1", sessionId: "sess-xyz", directIdeaUuid: null, originConnectionUuid: "conn-origin" };
     const byConn: Record<string, ExecutionView[]> = {
       "conn-origin": [],
       "conn-other": [
@@ -188,5 +189,75 @@ describe("sessionControlTarget", () => {
         ),
       ).toBe(true);
     }
+  });
+});
+
+describe("purpose-scoped execution ownership", () => {
+  describe.each(["task:T", "review:task:T", "review:proposal:P", "review:idea:idea-A"])("agent isolation for %s", (sessionId) => {
+    const viewed = { ...ideaSession, sessionId };
+    it.each(["running", "user", "crash"])("does not borrow another agent's %s execution or status", (state) => {
+      const foreign = exec({
+        connectionUuid: "conn-foreign", agentUuid: "agent-2", sessionId,
+        status: state === "running" ? "running" : "interrupted",
+        interruptedReason: state === "running" ? null : state,
+      });
+      for (const slice of ["conn-origin", "conn-foreign"]) {
+        const connections = { [slice]: [foreign] };
+        expect(sessionExecutionsForComposer(connections, viewed)).toEqual([]);
+        expect(sessionExecStatusForRow(connections, viewed)).toBeNull();
+      }
+    });
+
+    it("recovers on another connection of the same agent despite a foreign same-anchor row", () => {
+      const foreign = exec({ connectionUuid: "conn-origin", agentUuid: "agent-2", sessionId });
+      const own = exec({ connectionUuid: "conn-recovery", agentUuid: "agent-1", sessionId });
+      const connections = { "conn-origin": [foreign], "conn-recovery": [own] };
+      expect(sessionExecutionsForComposer(connections, viewed)).toEqual([own]);
+      expect(sessionExecStatusForRow(connections, viewed)).toBe("running");
+    });
+  });
+
+  it("preserves the legacy ad-hoc cross-agent fallback", () => {
+    const viewed = { ...ideaSession, sessionId: "adhoc", directIdeaUuid: null };
+    const foreign = exec({ connectionUuid: "conn-foreign", agentUuid: "agent-2", entityType: "daemon_session", entityUuid: "adhoc", directIdeaUuid: null, sessionId: "" });
+    expect(sessionExecutionsForComposer({ "conn-foreign": [foreign] }, viewed)).toEqual([foreign]);
+    expect(sessionExecStatusForRow({ "conn-foreign": [foreign] }, viewed)).toBe("running");
+  });
+
+  const task = { ...ideaSession, sessionId: "task:T" };
+  const review = { ...ideaSession, sessionId: "review:task:T" };
+  const lanes = [
+    exec({ connectionUuid: "conn-origin", entityType: "task", entityUuid: "T", sessionId: "task:T" }),
+    exec({ connectionUuid: "conn-origin", entityType: "task", entityUuid: "T", sessionId: "review:task:T", status: "interrupted", interruptedReason: "user" }),
+    exec({ connectionUuid: "conn-origin", entityType: "task", entityUuid: "T", sessionId: "", status: "queued" }),
+  ];
+
+  it("same-entity task/review/Idea lanes show independent state", () => {
+    expect(sessionExecStatus(lanes, task)).toBe("running");
+    expect(sessionExecStatus(lanes, review)).toBe("interrupted");
+    expect(sessionExecStatus(lanes, ideaSession)).toBeNull();
+    expect(sessionExecutionsForComposer({ "conn-origin": lanes }, task)).toEqual([lanes[0]]);
+    expect(sessionExecutionsForComposer({ "conn-origin": lanes }, review)).toEqual([lanes[1]]);
+  });
+
+  it("legacy Idea lanes cannot borrow task or review executions, including review:idea", () => {
+    for (const sessionId of ["task:T", "review:task:T", "review:idea:idea-A"]) {
+      const scoped = exec({ connectionUuid: "other", sessionId });
+      expect(executionMatchesSession(scoped, ideaSession)).toBe(false);
+    }
+    expect(executionMatchesSession(exec({ connectionUuid: "other", sessionId: "" }), ideaSession)).toBe(true);
+    expect(executionMatchesSession(exec({ connectionUuid: "other" }), ideaSession)).toBe(true);
+  });
+
+  it("scoped fallback searches other connections without borrowing siblings", () => {
+    expect(sessionExecutionsForComposer({ sibling: [lanes[0]], other: [lanes[1]] }, review)).toEqual([lanes[1]]);
+    expect(sessionExecStatusForRow({ other: [lanes[0]] }, review)).toBeNull();
+  });
+
+  it.each([
+    ["task:T", "task", "T"], ["review:task:T", "task", "T"],
+    ["review:proposal:P", "proposal", "P"], ["review:idea:idea-A", "idea", "idea-A"],
+  ])("derives scoped phantom-control target %s", (sessionId, entityType, entityUuid) => {
+    expect(sessionControlTarget({ ...ideaSession, sessionId })).toEqual({ sessionId, entityType, entityUuid });
   });
 });

@@ -19,6 +19,7 @@ const mockTaskService = vi.hoisted(() => ({
   removeTaskDependency: vi.fn(),
   createAcceptanceCriteria: vi.fn(),
   replaceAcceptanceCriteria: vi.fn(),
+  assertValidTaskIdeaLink: vi.fn(),
   TaskUpdateParams: {},
 }));
 
@@ -68,15 +69,18 @@ vi.mock("@/services/search.service", () => ({}));
 // Capture tool handlers via a fake McpServer
 type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
 const toolHandlers: Record<string, ToolHandler> = {};
+const toolMetas: Record<string, { inputSchema?: { safeParse: (v: unknown) => { success: boolean; error?: { issues: { message: string; path: PropertyKey[] }[] } } } }> = {};
 
 const fakeMcpServer = {
-  registerTool: (name: string, _meta: unknown, handler: ToolHandler) => {
+  registerTool: (name: string, meta: unknown, handler: ToolHandler) => {
     toolHandlers[name] = handler;
+    toolMetas[name] = meta as (typeof toolMetas)[string];
   },
 };
 
 import type { AgentAuthContext } from "@/types/auth";
-import { registerPublicTools } from "@/mcp/tools/public";
+import { ApiError } from "@/lib/api-handler";
+import { registerPublicTools, PER_TASK_IDEA_UUID_ERROR } from "@/mcp/tools/public";
 
 const AUTH: AgentAuthContext = {
   type: "agent",
@@ -407,5 +411,200 @@ describe("chorus_update_task", () => {
 
     expect(mockTaskService.addTaskDependency).toHaveBeenCalledWith("company-1", "task-1", "dep-1");
     expect(mockTaskService.replaceAcceptanceCriteria).not.toHaveBeenCalled();
+  });
+});
+
+// ===== Direct Idea link (link-quick-task-to-idea D3) =====
+
+describe("chorus_create_tasks — ideaUuid", () => {
+  const AC = [{ description: "It works", required: true }];
+
+  it("applies a top-level ideaUuid to every task and records it in activity", async () => {
+    mockProjectService.projectExists.mockResolvedValue(true);
+    mockTaskService.assertValidTaskIdeaLink.mockResolvedValue(undefined);
+    mockTaskService.createTask
+      .mockResolvedValueOnce({ uuid: "task-1", title: "A" })
+      .mockResolvedValueOnce({ uuid: "task-2", title: "B" });
+
+    const result = await toolHandlers["chorus_create_tasks"]({
+      projectUuid: "project-1",
+      ideaUuid: "idea-1",
+      tasks: [
+        { title: "A", acceptanceCriteriaItems: AC },
+        { title: "B", acceptanceCriteriaItems: AC },
+      ],
+    });
+
+    expect(result).not.toEqual(expect.objectContaining({ isError: true }));
+    expect(mockTaskService.assertValidTaskIdeaLink).toHaveBeenCalledWith("company-1", {
+      projectUuid: "project-1", proposalUuid: undefined, ideaUuid: "idea-1",
+    });
+    expect(mockTaskService.createTask).toHaveBeenCalledTimes(2);
+    for (const call of mockTaskService.createTask.mock.calls) {
+      expect(call[0]).toEqual(expect.objectContaining({ ideaUuid: "idea-1", proposalUuid: null }));
+    }
+    expect(mockActivityService.createActivity).toHaveBeenCalledTimes(2);
+    for (const call of mockActivityService.createActivity.mock.calls) {
+      expect(call[0].value).toEqual(expect.objectContaining({ quickTask: true, ideaUuid: "idea-1" }));
+    }
+  });
+
+  it("passes ideaUuid null and skips validation when omitted", async () => {
+    mockProjectService.projectExists.mockResolvedValue(true);
+    mockTaskService.createTask.mockResolvedValue({ uuid: "task-1", title: "A" });
+
+    await toolHandlers["chorus_create_tasks"]({
+      projectUuid: "project-1",
+      tasks: [{ title: "A", acceptanceCriteriaItems: AC }],
+    });
+
+    expect(mockTaskService.assertValidTaskIdeaLink).not.toHaveBeenCalled();
+    expect(mockTaskService.createTask).toHaveBeenCalledWith(expect.objectContaining({ ideaUuid: null }));
+    expect(mockActivityService.createActivity.mock.calls[0][0].value).not.toHaveProperty("ideaUuid");
+  });
+
+  it("rejects ideaUuid combined with proposalUuid and creates nothing", async () => {
+    mockProjectService.projectExists.mockResolvedValue(true);
+    mockProposalService.getProposalByUuid.mockResolvedValue({ uuid: "prop-1" });
+    mockTaskService.assertValidTaskIdeaLink.mockRejectedValue(
+      new ApiError("BAD_REQUEST", "A task linked to a proposal cannot also link to an idea directly", 400),
+    );
+
+    const result = await toolHandlers["chorus_create_tasks"]({
+      projectUuid: "project-1",
+      proposalUuid: "prop-1",
+      ideaUuid: "idea-1",
+      tasks: [{ title: "A", acceptanceCriteriaItems: AC }],
+    }) as { isError?: boolean; content: { text: string }[] };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("cannot also link to an idea");
+    expect(mockTaskService.assertValidTaskIdeaLink).toHaveBeenCalledWith("company-1", {
+      projectUuid: "project-1", proposalUuid: "prop-1", ideaUuid: "idea-1",
+    });
+    expect(mockTaskService.createTask).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid idea link (e.g. theme idea) before creating any task", async () => {
+    mockProjectService.projectExists.mockResolvedValue(true);
+    mockTaskService.assertValidTaskIdeaLink.mockRejectedValue(
+      new ApiError("BAD_REQUEST", "Theme ideas cannot have tasks; link a child idea", 400),
+    );
+
+    const result = await toolHandlers["chorus_create_tasks"]({
+      projectUuid: "project-1",
+      ideaUuid: "theme-1",
+      tasks: [{ title: "A", acceptanceCriteriaItems: AC }],
+    }) as { isError?: boolean; content: { text: string }[] };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Theme ideas");
+    expect(mockTaskService.createTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("chorus_create_tasks — per-task ideaUuid", () => {
+  const AC = [{ description: "It works", required: true }];
+  const schema = () => toolMetas["chorus_create_tasks"].inputSchema!;
+
+  it("rejects ideaUuid inside tasks[] with an error pointing to the top-level field", () => {
+    const parsed = schema().safeParse({
+      projectUuid: "project-1",
+      tasks: [{ title: "A", acceptanceCriteriaItems: AC, ideaUuid: "idea-1" }],
+    });
+
+    expect(parsed.success).toBe(false);
+    const issue = parsed.error!.issues.find((i) => i.path.join(".") === "tasks.0.ideaUuid");
+    expect(issue?.message).toBe(PER_TASK_IDEA_UUID_ERROR);
+    expect(issue?.message).toContain("top-level ideaUuid");
+  });
+
+  it("still accepts the top-level ideaUuid and tasks without a per-task ideaUuid", () => {
+    const parsed = schema().safeParse({
+      projectUuid: "project-1",
+      ideaUuid: "idea-1",
+      tasks: [{ title: "A", acceptanceCriteriaItems: AC }],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+});
+
+describe("chorus_update_task — ideaUuid", () => {
+  const TASK = {
+    uuid: "task-1",
+    status: "assigned",
+    projectUuid: "project-1",
+    assigneeType: "agent",
+    assigneeUuid: "agent-1",
+  };
+
+  it.each([
+    ["sets", "idea-1", "idea-1"],
+    ["changes", "idea-2", "idea-2"],
+    ["clears", null, null],
+  ])("%s the link as a field update and logs activity", async (_label, input, expected) => {
+    mockTaskService.getTaskByUuid.mockResolvedValue(TASK);
+    mockTaskService.updateTask.mockResolvedValue(TASK);
+
+    const result = await toolHandlers["chorus_update_task"]({ taskUuid: "task-1", ideaUuid: input });
+
+    expect(result).not.toEqual(expect.objectContaining({ isError: true }));
+    expect(mockTaskService.updateTask).toHaveBeenCalledWith(
+      "task-1",
+      { ideaUuid: expected },
+      { actorType: "agent", actorUuid: "agent-1" },
+    );
+    expect(mockActivityService.createActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "updated", value: { ideaUuid: expected } }),
+    );
+  });
+
+  it("does not touch the link when ideaUuid is omitted", async () => {
+    mockTaskService.getTaskByUuid.mockResolvedValue(TASK);
+    mockTaskService.updateTask.mockResolvedValue(TASK);
+
+    await toolHandlers["chorus_update_task"]({ taskUuid: "task-1", title: "New" });
+
+    expect(mockTaskService.updateTask.mock.calls[0][1]).not.toHaveProperty("ideaUuid");
+  });
+
+  it("returns isError and logs no activity when the service rejects the link", async () => {
+    mockTaskService.getTaskByUuid.mockResolvedValue(TASK);
+    mockTaskService.updateTask.mockRejectedValue(
+      new ApiError("BAD_REQUEST", "Idea must be in the same project as the task", 400),
+    );
+
+    const result = await toolHandlers["chorus_update_task"]({
+      taskUuid: "task-1",
+      ideaUuid: "other-project-idea",
+    }) as { isError?: boolean; content: { text: string }[] };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Idea must be in the same project as the task");
+    expect(mockActivityService.createActivity).not.toHaveBeenCalled();
+  });
+
+  it("rethrows non-ApiError failures", async () => {
+    mockTaskService.getTaskByUuid.mockResolvedValue(TASK);
+    mockTaskService.updateTask.mockRejectedValue(new Error("db down"));
+
+    await expect(
+      toolHandlers["chorus_update_task"]({ taskUuid: "task-1", ideaUuid: "idea-1" }),
+    ).rejects.toThrow("db down");
+  });
+});
+
+describe("chorus_list_tasks — ideaUuid filter", () => {
+  it("passes ideaUuid through to listTasks", async () => {
+    mockProjectService.getProjectByUuid.mockResolvedValue({ uuid: "project-1" });
+    mockTaskService.listTasks.mockResolvedValue({ tasks: [], total: 0 });
+
+    const result = await toolHandlers["chorus_list_tasks"]({ projectUuid: "project-1", ideaUuid: "idea-1" });
+
+    expect(result).not.toEqual(expect.objectContaining({ isError: true }));
+    expect(mockTaskService.listTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ companyUuid: "company-1", projectUuid: "project-1", ideaUuid: "idea-1" }),
+    );
   });
 });

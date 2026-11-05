@@ -464,13 +464,16 @@ describe("getIdeasWithDerivedStatus", () => {
     expect(badgeMap["idea-verify"]).toBe("verify_work");
   });
 
-  it("skips task query when no relevant proposals exist", async () => {
+  it("queries only linked tasks when no relevant proposals exist", async () => {
     mockPrisma.idea.findMany.mockResolvedValue([makeIdea("idea-1", "open")]);
     mockPrisma.proposal.findMany.mockResolvedValue([]);
 
     await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
 
-    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.task.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where.OR).toEqual([
+      { ideaUuid: { in: ["idea-1"] } },
+    ]);
   });
 
   it("handles proposal with non-array inputUuids gracefully", async () => {
@@ -484,7 +487,9 @@ describe("getIdeasWithDerivedStatus", () => {
     // Should not crash; no valid proposal mapping → no approved, no pending → in_progress/planning
     expect(result[0].derivedStatus).toBe("in_progress");
     expect(result[0].badgeHint).toBe("planning");
-    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where.OR).toEqual([
+      { ideaUuid: { in: ["idea-1"] } },
+    ]);
   });
 });
 
@@ -589,12 +594,13 @@ describe("getIdeaWithDerivedStatus", () => {
 
   it("computes building when approved proposal has active tasks", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
-    mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "proposal-1", status: "approved" },
+    // 1st call: getIdea's report-bearing proposal lookup; 2nd: the task-context loader.
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { uuid: "proposal-1", status: "approved", inputUuids: ["idea-1"], createdAt: now },
     ]);
     mockPrisma.task.findMany.mockResolvedValue([
-      { status: "in_progress" },
-      { status: "open" },
+      { uuid: "t-in_progress", proposalUuid: "proposal-1", status: "in_progress" },
+      { uuid: "t-open", proposalUuid: "proposal-1", status: "open" },
     ]);
 
     const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
@@ -605,12 +611,13 @@ describe("getIdeaWithDerivedStatus", () => {
 
   it("computes done when all tasks are done/closed", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
-    mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "proposal-1", status: "approved" },
+    // 1st call: getIdea's report-bearing proposal lookup; 2nd: the task-context loader.
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { uuid: "proposal-1", status: "approved", inputUuids: ["idea-1"], createdAt: now },
     ]);
     mockPrisma.task.findMany.mockResolvedValue([
-      { status: "done" },
-      { status: "closed" },
+      { uuid: "t-done", proposalUuid: "proposal-1", status: "done" },
+      { uuid: "t-closed", proposalUuid: "proposal-1", status: "closed" },
     ]);
 
     const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
@@ -621,12 +628,13 @@ describe("getIdeaWithDerivedStatus", () => {
 
   it("computes verify_work when any task is to_verify", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
-    mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "proposal-1", status: "approved" },
+    // 1st call: getIdea's report-bearing proposal lookup; 2nd: the task-context loader.
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { uuid: "proposal-1", status: "approved", inputUuids: ["idea-1"], createdAt: now },
     ]);
     mockPrisma.task.findMany.mockResolvedValue([
-      { status: "done" },
-      { status: "to_verify" },
+      { uuid: "t-done", proposalUuid: "proposal-1", status: "done" },
+      { uuid: "t-to_verify", proposalUuid: "proposal-1", status: "to_verify" },
     ]);
 
     const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
@@ -637,24 +645,32 @@ describe("getIdeaWithDerivedStatus", () => {
 
   it("computes review_proposal when pending proposal exists", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
-    mockPrisma.proposal.findMany.mockResolvedValue([
-      { uuid: "proposal-1", status: "pending" },
+    // 1st call: getIdea's report-bearing proposal lookup; 2nd: the task-context loader.
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { uuid: "proposal-1", status: "pending", inputUuids: ["idea-1"], createdAt: now },
     ]);
 
     const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
 
     expect(result!.derivedStatus).toBe("human_conduct_required");
     expect(result!.badgeHint).toBe("review_proposal");
-    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    // Only the directly-linked task clause is queried (no approved proposal).
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where.OR).toEqual([
+      { ideaUuid: { in: ["idea-1"] } },
+    ]);
   });
 
-  it("skips task query when no approved proposal", async () => {
+  it("queries only linked tasks when no approved proposal", async () => {
     mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
     mockPrisma.proposal.findMany.mockResolvedValue([]);
+    mockPrisma.task.findMany.mockResolvedValue([]);
 
     await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
 
-    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.task.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where.OR).toEqual([
+      { ideaUuid: { in: ["idea-1"] } },
+    ]);
   });
 });
 
@@ -763,5 +779,156 @@ describe("getTrackerGroups", () => {
 
     expect(result.groups.todo).toHaveLength(3);
     expect(result.counts.todo).toBe(3);
+  });
+});
+
+// ===== Directly linked tasks (design D4 / issue #650) =====
+
+describe("computeDerivedStatus — linked tasks (D4 precedence)", () => {
+  const base = { hasPendingProposal: false, hasApprovedProposal: false, taskStatuses: [] as string[] };
+
+  it("empty linkedTaskStatuses is identical to omitting it", () => {
+    for (const ideaStatus of ["open", "elaborating", "elaborated", "proposal_created", "weird"]) {
+      for (const ctx of [
+        { ...base },
+        { ...base, hasPendingProposal: true },
+        { ...base, hasApprovedProposal: true, taskStatuses: ["done"] },
+        { ...base, hasApprovedProposal: true, taskStatuses: ["to_verify", "open"] },
+      ]) {
+        expect(computeDerivedStatus({ ideaStatus, ...ctx, linkedTaskStatuses: [] }))
+          .toEqual(computeDerivedStatus({ ideaStatus, ...ctx }));
+      }
+    }
+  });
+
+  it("#650: elaborated idea, no proposal, all linked tasks done → done", () => {
+    expect(computeDerivedStatus({ ideaStatus: "elaborated", ...base, linkedTaskStatuses: ["done", "done", "done"] }))
+      .toEqual({ derivedStatus: "done", badgeHint: "done" });
+  });
+
+  it("linked done + closed counts as done regardless of native status", () => {
+    for (const ideaStatus of ["open", "elaborating", "elaborated"]) {
+      expect(computeDerivedStatus({ ideaStatus, ...base, linkedTaskStatuses: ["done", "closed"] }))
+        .toEqual({ derivedStatus: "done", badgeHint: "done" });
+    }
+  });
+
+  it("pending elaboration answers win (answer_questions)", () => {
+    expect(computeDerivedStatus({
+      ideaStatus: "elaborating", elaborationStatus: "pending_answers", ...base,
+      hasPendingProposal: true, linkedTaskStatuses: ["to_verify"],
+    })).toEqual({ derivedStatus: "human_conduct_required", badgeHint: "answer_questions" });
+  });
+
+  it("pending proposal wins over done tasks (review_proposal)", () => {
+    expect(computeDerivedStatus({ ideaStatus: "elaborated", ...base, hasPendingProposal: true, linkedTaskStatuses: ["done"] }))
+      .toEqual({ derivedStatus: "human_conduct_required", badgeHint: "review_proposal" });
+  });
+
+  it("open idea with one linked done + one to_verify → verify_work", () => {
+    expect(computeDerivedStatus({ ideaStatus: "open", ...base, linkedTaskStatuses: ["done", "to_verify"] }))
+      .toEqual({ derivedStatus: "human_conduct_required", badgeHint: "verify_work" });
+  });
+
+  it("to_verify in the approved proposal's tasks also triggers verify_work", () => {
+    expect(computeDerivedStatus({
+      ideaStatus: "elaborated", ...base, hasApprovedProposal: true, taskStatuses: ["to_verify"], linkedTaskStatuses: ["done"],
+    })).toEqual({ derivedStatus: "human_conduct_required", badgeHint: "verify_work" });
+  });
+
+  it("union with proposal tasks: all proposal tasks done + one linked in_progress → building", () => {
+    expect(computeDerivedStatus({
+      ideaStatus: "elaborated", ...base, hasApprovedProposal: true, taskStatuses: ["done", "done"], linkedTaskStatuses: ["in_progress"],
+    })).toEqual({ derivedStatus: "in_progress", badgeHint: "building" });
+  });
+
+  it("unfinished linked task on an open/elaborating idea → building", () => {
+    expect(computeDerivedStatus({ ideaStatus: "open", ...base, linkedTaskStatuses: ["open"] }))
+      .toEqual({ derivedStatus: "in_progress", badgeHint: "building" });
+    expect(computeDerivedStatus({ ideaStatus: "elaborating", elaborationStatus: "validating", ...base, linkedTaskStatuses: ["done", "assigned"] }))
+      .toEqual({ derivedStatus: "in_progress", badgeHint: "building" });
+  });
+
+  it("ignores proposal tasks when the proposal is not approved", () => {
+    expect(computeDerivedStatus({ ideaStatus: "elaborated", ...base, taskStatuses: ["in_progress"], linkedTaskStatuses: ["done"] }))
+      .toEqual({ derivedStatus: "done", badgeHint: "done" });
+  });
+});
+
+describe("getIdeasWithDerivedStatus / getIdeaWithDerivedStatus — linked tasks", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("#650: proposal-less idea with all linked tasks done is done; taskCount is the union", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("idea-650", "elaborated"),
+      makeIdea("idea-mixed", "elaborated"),
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "prop-mixed", status: "approved", inputUuids: ["idea-mixed"], createdAt: now },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "q1", proposalUuid: null, ideaUuid: "idea-650", status: "done" },
+      { uuid: "q2", proposalUuid: null, ideaUuid: "idea-650", status: "done" },
+      { uuid: "q3", proposalUuid: null, ideaUuid: "idea-650", status: "done" },
+      { uuid: "pt1", proposalUuid: "prop-mixed", ideaUuid: null, status: "done" },
+      { uuid: "pt2", proposalUuid: "prop-mixed", ideaUuid: null, status: "done" },
+      { uuid: "q4", proposalUuid: null, ideaUuid: "idea-mixed", status: "in_progress" },
+    ]);
+
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const byUuid = Object.fromEntries(result.map((r) => [r.uuid, r]));
+
+    expect(byUuid["idea-650"]).toMatchObject({ derivedStatus: "done", badgeHint: "done", taskCount: 3, proposalCount: 0 });
+    expect(byUuid["idea-mixed"]).toMatchObject({ derivedStatus: "in_progress", badgeHint: "building", taskCount: 3, proposalCount: 1 });
+    expect(mockPrisma.task.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("theme rolls up to done when children are done via linked tasks only", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      { ...makeIdea("theme", "elaborated"), isContainer: true, parentUuid: null },
+      { ...makeIdea("child-quick", "elaborated"), parentUuid: "theme" },
+      { ...makeIdea("child-proposal", "elaborated"), parentUuid: "theme" },
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      { uuid: "prop", status: "approved", inputUuids: ["child-proposal"], createdAt: now },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "q1", proposalUuid: null, ideaUuid: "child-quick", status: "done" },
+      { uuid: "pt", proposalUuid: "prop", ideaUuid: null, status: "closed" },
+    ]);
+
+    const result = await getIdeasWithDerivedStatus(COMPANY_UUID, PROJECT_UUID);
+    const theme = result.find((r) => r.uuid === "theme")!;
+    expect(theme.derivedStatus).toBe("done");
+    expect(theme.childProgress).toEqual({ done: 2, total: 2 });
+  });
+
+  it("single idea: open idea with linked done + to_verify → verify_work", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "open"));
+    mockPrisma.proposal.findMany.mockResolvedValue([]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "q1", proposalUuid: null, ideaUuid: "idea-1", status: "done" },
+      { uuid: "q2", proposalUuid: null, ideaUuid: "idea-1", status: "to_verify" },
+    ]);
+
+    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
+    expect(result!.status).toBe("open");
+    expect(result!.derivedStatus).toBe("human_conduct_required");
+    expect(result!.badgeHint).toBe("verify_work");
+  });
+
+  it("single idea: pending proposal still wins over all-done linked tasks", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValue(makeFullIdea("idea-1", "elaborated"));
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { uuid: "pend", status: "pending", inputUuids: ["idea-1"], createdAt: now },
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "q1", proposalUuid: null, ideaUuid: "idea-1", status: "done" },
+    ]);
+
+    const result = await getIdeaWithDerivedStatus(COMPANY_UUID, "idea-1");
+    expect(result!.badgeHint).toBe("review_proposal");
   });
 });

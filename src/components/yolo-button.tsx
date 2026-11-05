@@ -58,6 +58,10 @@ interface YoloButtonProps extends StageActionPresentation {
   assigneeName?: string | null;
   proposals: { status: string }[] | null | undefined;
   tasks: { status: string }[] | null | undefined;
+  // Quick Tasks linked directly to the idea (Task.ideaUuid) + the idea's
+  // elaboration status — both feed the shared "idea is done" rule (design D4).
+  linkedTasks?: { status: string }[] | null;
+  elaborationStatus?: string | null;
   // Called after a successful request so the panel can refresh its data.
   onStarted?: () => void;
 }
@@ -86,6 +90,8 @@ export function YoloButton({
   assigneeName,
   proposals,
   tasks,
+  linkedTasks,
+  elaborationStatus,
   onStarted,
   renderAction,
   disabledReason,
@@ -137,8 +143,8 @@ export function YoloButton({
       (c) => c.agentUuid === owningAgentUuid && c.effectiveStatus === "online"
     );
 
-  const preconditionsMet = yoloPreconditionsMet({ assignee, proposals, tasks });
-  const enabled = canRequestYolo({ assignee, proposals, tasks, agentOnline });
+  const preconditionsMet = yoloPreconditionsMet({ assignee, proposals, tasks, linkedTasks, elaborationStatus });
+  const enabled = canRequestYolo({ assignee, proposals, tasks, linkedTasks, elaborationStatus, agentOnline });
 
   // The button renders only while the stage preconditions hold (agent assignee +
   // not-done idea); an offline agent keeps it visible-but-disabled with a hint,

@@ -21,6 +21,12 @@ import {
 } from "@/services/task.service";
 import { canActorAccessProject, type ProjectAccessClient } from "@/services/project-access.service";
 import logger from "@/lib/logger";
+import {
+  emptyIdeaTaskContext,
+  ideaTaskStatuses,
+  loadIdeaTaskContexts,
+  type IdeaTaskContext,
+} from "@/services/idea-task-context.service";
 
 // ===== Derived Status =====
 
@@ -1061,17 +1067,26 @@ export async function deleteIdea(uuid: string) {
     where: { uuid },
     select: { companyUuid: true },
   });
-  // Orphan direct children to top-level BEFORE deleting the parent (weak
-  // lineage: a parent does not own its children). Doing this first also means
-  // the Restrict referential action on the self-relation never fires, since no
-  // child references the parent by delete time.
-  if (target) {
-    await prisma.idea.updateMany({
-      where: { companyUuid: target.companyUuid, parentUuid: uuid },
-      data: { parentUuid: null },
-    });
-  }
-  const idea = await prisma.idea.delete({ where: { uuid } });
+  // One transaction: orphan children + unlink Quick Tasks + delete the Idea.
+  const idea = await prisma.$transaction(async (tx) => {
+    // Orphan direct children to top-level BEFORE deleting the parent (weak
+    // lineage: a parent does not own its children). Doing this first also means
+    // the Restrict referential action on the self-relation never fires, since no
+    // child references the parent by delete time.
+    if (target) {
+      await tx.idea.updateMany({
+        where: { companyUuid: target.companyUuid, parentUuid: uuid },
+        data: { parentUuid: null },
+      });
+      // Directly linked Quick Tasks survive as plain (unlinked) Quick Tasks
+      // (link-quick-task-to-idea D7) — Task.ideaUuid is a scalar, no FK cascade.
+      await tx.task.updateMany({
+        where: { companyUuid: target.companyUuid, ideaUuid: uuid },
+        data: { ideaUuid: null },
+      });
+    }
+    return tx.idea.delete({ where: { uuid } });
+  });
   eventBus.emitChange({ companyUuid: idea.companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: idea.uuid, action: "deleted" });
   return idea;
 }
@@ -1197,6 +1212,21 @@ function taskAssigneeRows(
   }));
 }
 
+// Tasks that follow a moved Idea subtree: tasks of the moved proposals plus
+// Quick Tasks linked directly to a moved Idea (task.ideaUuid). Linked tasks are
+// scoped to the source project (the link invariant keeps them there anyway).
+function movedTaskWhere(
+  companyUuid: string,
+  fromProjectUuid: string,
+  proposalUuids: string[],
+  movedIdeaUuids: string[],
+) {
+  const linked = { projectUuid: fromProjectUuid, ideaUuid: { in: movedIdeaUuids } };
+  return proposalUuids.length > 0
+    ? { companyUuid, OR: [{ proposalUuid: { in: proposalUuids } }, linked] }
+    : { companyUuid, ...linked };
+}
+
 export async function moveIdea(
   companyUuid: string,
   ideaUuid: string,
@@ -1268,24 +1298,22 @@ export async function moveIdea(
     });
     const proposalUuids = proposals.map((p) => p.uuid);
 
-    // Resolve Document/Task UUIDs via proposalUuid (D2). Skipped when no
-    // proposals are linked (both lookups would return nothing).
-    let documentUuids: string[] = [];
-    let taskRows: { uuid: string; title: string; assigneeType: string | null; assigneeUuid: string | null }[] = [];
-    if (proposalUuids.length > 0) {
-      const [documentRows, tasks] = await Promise.all([
-        tx.document.findMany({
+    // Resolve Document UUIDs via proposalUuid (D2) — skipped when no proposals
+    // are linked. Tasks = proposal tasks ∪ Quick Tasks linked to a moved Idea,
+    // so the task lookup always runs (a proposal-less Idea can own tasks).
+    const [documentRows, taskRows] = await Promise.all([
+      proposalUuids.length > 0
+        ? tx.document.findMany({
           where: { companyUuid, proposalUuid: { in: proposalUuids } },
           select: { uuid: true },
-        }),
-        tx.task.findMany({
-          where: { companyUuid, proposalUuid: { in: proposalUuids } },
-          select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
-        }),
-      ]);
-      documentUuids = documentRows.map((d) => d.uuid);
-      taskRows = tasks;
-    }
+        })
+        : Promise.resolve([] as { uuid: string }[]),
+      tx.task.findMany({
+        where: movedTaskWhere(companyUuid, fromProjectUuid, proposalUuids, movedIdeaUuids),
+        select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
+      }),
+    ]);
+    const documentUuids = documentRows.map((d) => d.uuid);
     const taskUuids = taskRows.map((t) => t.uuid);
 
     // Moved ideas and tasks keep their assignees: every LIVE one must be able to
@@ -1314,8 +1342,9 @@ export async function moveIdea(
       });
     }
 
-    // Short-circuit when no proposals are linked: skip the proposal/document/
-    // task updateMany calls that would all return count 0 anyway. Activity
+    // Short-circuit when no proposals are linked: skip the proposal/document
+    // updateMany calls (and the task one when no tasks were resolved) that
+    // would all return count 0 anyway. Activity
     // still runs because idea-targeting activity rows can exist independent of
     // any proposal (e.g. created/assigned/released events).
     let proposalCount = 0;
@@ -1338,10 +1367,13 @@ export async function moveIdea(
         data: { projectUuid: targetProjectUuid },
       });
       documentCount = documentUpdate.count;
+    }
 
-      // Tasks linked to migrated proposals (assignee fields untouched).
+    if (taskUuids.length > 0) {
+      // Proposal tasks + linked Quick Tasks resolved above — walk the uuid PK
+      // (assignee fields untouched).
       const taskUpdate = await tx.task.updateMany({
-        where: { companyUuid, proposalUuid: { in: proposalUuids } },
+        where: { companyUuid, uuid: { in: taskUuids } },
         data: { projectUuid: targetProjectUuid },
       });
       taskCount = taskUpdate.count;
@@ -1456,29 +1488,23 @@ export async function moveIdeaPreview(
   });
   const proposalUuids = proposals.map((p) => p.uuid);
 
-  let documentCount = 0;
-  let taskCount = 0;
-  let documentUuids: string[] = [];
-  let taskUuids: string[] = [];
-  let taskRows: { uuid: string; title: string; assigneeType: string | null; assigneeUuid: string | null }[] = [];
-
-  if (proposalUuids.length > 0) {
-    const [documentRows, tasks] = await Promise.all([
-      prisma.document.findMany({
+  // Tasks include Quick Tasks linked to a moved Idea (same rule as moveIdea).
+  const [documentRows, taskRows] = await Promise.all([
+    proposalUuids.length > 0
+      ? prisma.document.findMany({
         where: { companyUuid, proposalUuid: { in: proposalUuids } },
         select: { uuid: true },
-      }),
-      prisma.task.findMany({
-        where: { companyUuid, proposalUuid: { in: proposalUuids } },
-        select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
-      }),
-    ]);
-    taskRows = tasks;
-    documentUuids = documentRows.map((d) => d.uuid);
-    taskUuids = taskRows.map((t) => t.uuid);
-    documentCount = documentUuids.length;
-    taskCount = taskUuids.length;
-  }
+      })
+      : Promise.resolve([] as { uuid: string }[]),
+    prisma.task.findMany({
+      where: movedTaskWhere(companyUuid, idea.projectUuid, proposalUuids, movedIdeaUuids),
+      select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
+    }),
+  ]);
+  const documentUuids = documentRows.map((d) => d.uuid);
+  const taskUuids = taskRows.map((t) => t.uuid);
+  const documentCount = documentUuids.length;
+  const taskCount = taskUuids.length;
 
   // Same blocked-assignee rule as moveIdea (dangling assignees skipped).
   const blockedAssignees = await collectBlockedAssignees(
@@ -1522,7 +1548,10 @@ export interface DerivedStatusContext {
   elaborationStatus?: string | null;
   hasPendingProposal: boolean;
   hasApprovedProposal: boolean;
+  /** Tasks of the latest approved proposal (only consulted when hasApprovedProposal). */
   taskStatuses: string[];
+  /** Tasks linked directly to the idea via Task.ideaUuid (Quick Tasks). Default []. */
+  linkedTaskStatuses?: string[];
 }
 
 export type BadgeHint =
@@ -1574,6 +1603,23 @@ export function rollupThemeDerivedStatus(
 export function computeDerivedStatus(ctx: DerivedStatusContext): DerivedStatusResult {
   const normalized = normalizeIdeaStatus(ctx.ideaStatus);
 
+  // Directly linked tasks (design D4): the union of approved-proposal tasks and
+  // linked tasks drives the status regardless of the native idea status. With
+  // no linked tasks the original switch below applies unchanged.
+  const linked = ctx.linkedTaskStatuses ?? [];
+  if (linked.length > 0) {
+    if (normalized === "elaborating" && ctx.elaborationStatus === "pending_answers")
+      return { derivedStatus: "human_conduct_required", badgeHint: "answer_questions" };
+    if (ctx.hasPendingProposal)
+      return { derivedStatus: "human_conduct_required", badgeHint: "review_proposal" };
+    const all = [...(ctx.hasApprovedProposal ? ctx.taskStatuses : []), ...linked];
+    if (all.some((s) => s === "to_verify"))
+      return { derivedStatus: "human_conduct_required", badgeHint: "verify_work" };
+    if (all.every((s) => s === "done" || s === "closed"))
+      return { derivedStatus: "done", badgeHint: "done" };
+    return { derivedStatus: "in_progress", badgeHint: "building" };
+  }
+
   switch (normalized) {
     case "open":
       return { derivedStatus: "todo", badgeHint: "open" };
@@ -1601,6 +1647,25 @@ export function computeDerivedStatus(ctx: DerivedStatusContext): DerivedStatusRe
 }
 
 /**
+ * Derived status of one idea from its shared task context (loadIdeaTaskContexts).
+ * A missing context means "no proposals, no tasks".
+ */
+export function computeIdeaDerivedStatus(
+  idea: { status: string; elaborationStatus?: string | null },
+  ctx: IdeaTaskContext | undefined,
+): DerivedStatusResult {
+  const c = ctx ?? emptyIdeaTaskContext();
+  return computeDerivedStatus({
+    ideaStatus: idea.status,
+    elaborationStatus: idea.elaborationStatus,
+    hasPendingProposal: c.hasPendingProposal,
+    hasApprovedProposal: c.hasApprovedProposal,
+    taskStatuses: c.proposalTaskStatuses,
+    linkedTaskStatuses: c.linkedTaskStatuses,
+  });
+}
+
+/**
  * Get a single idea with its derived status computed from proposal + task states.
  * Returns the full IdeaResponse plus derivedStatus and badgeHint.
  */
@@ -1611,34 +1676,10 @@ export async function getIdeaWithDerivedStatus(
   const idea = await getIdea(companyUuid, ideaUuid);
   if (!idea) return null;
 
-  const proposals = await prisma.proposal.findMany({
-    where: {
-      companyUuid,
-      projectUuid: idea.project?.uuid,
-      status: { in: ["approved", "pending"] },
-      inputUuids: { array_contains: [ideaUuid] },
-    },
-    select: { uuid: true, status: true, createdAt: true },
-    orderBy: { createdAt: "desc" },
-  });
-
-  const approvedProposal = proposals.find((p) => p.status === "approved") ?? null;
-  let taskStatuses: string[] = [];
-  if (approvedProposal) {
-    const tasks = await prisma.task.findMany({
-      where: { companyUuid, proposalUuid: approvedProposal.uuid },
-      select: { status: true },
-    });
-    taskStatuses = tasks.map((t) => t.status);
-  }
-
-  const result = computeDerivedStatus({
-    ideaStatus: idea.status,
-    elaborationStatus: idea.elaborationStatus,
-    hasPendingProposal: proposals.some((p) => p.status === "pending"),
-    hasApprovedProposal: !!approvedProposal,
-    taskStatuses,
-  });
+  const contexts = idea.project?.uuid
+    ? await loadIdeaTaskContexts(prisma, companyUuid, [{ uuid: ideaUuid, projectUuid: idea.project.uuid }])
+    : new Map<string, IdeaTaskContext>();
+  const result = computeIdeaDerivedStatus(idea, contexts.get(ideaUuid));
 
   // A theme with children rolls its status up from them (getIdea already
   // resolved each direct child's derivedStatus). Attach childProgress for the
@@ -1683,7 +1724,7 @@ export interface IdeaWithDerivedStatus {
 
 /**
  * Get all ideas in a project with their derived statuses.
- * Uses 3 batch queries (Ideas, Proposals, Tasks) — no N+1.
+ * Batched (ideas, child/reference counts, then the shared idea-task loader) — no N+1.
  */
 export async function getIdeasWithDerivedStatus(
   companyUuid: string,
@@ -1737,83 +1778,18 @@ export async function getIdeasWithDerivedStatus(
     }
   }
 
-  // Query 2: All proposals (approved + pending) for the project
-  const proposals = await prisma.proposal.findMany({
-    where: {
-      companyUuid,
-      projectUuid,
-      status: { in: ["approved", "pending"] },
-    },
-    select: {
-      uuid: true,
-      status: true,
-      inputUuids: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  // Build ideaUuid → latest approved Proposal mapping
-  // Also track which ideas have a pending proposal and count pending+approved per idea
-  const ideaToLatestApproved = new Map<string, { uuid: string; createdAt: Date }>();
-  const ideasWithPendingProposal = new Set<string>();
-  const ideaProposalCounts = new Map<string, number>();
-
-  for (const proposal of proposals) {
-    const inputUuids = proposal.inputUuids as string[];
-    if (!Array.isArray(inputUuids)) continue;
-    for (const ideaUuid of inputUuids) {
-      ideaProposalCounts.set(ideaUuid, (ideaProposalCounts.get(ideaUuid) ?? 0) + 1);
-      if (proposal.status === "pending") {
-        ideasWithPendingProposal.add(ideaUuid);
-      } else if (proposal.status === "approved") {
-        const existing = ideaToLatestApproved.get(ideaUuid);
-        if (!existing || proposal.createdAt > existing.createdAt) {
-          ideaToLatestApproved.set(ideaUuid, { uuid: proposal.uuid, createdAt: proposal.createdAt });
-        }
-      }
-    }
-  }
-
-  // Collect unique approved proposal UUIDs
-  const relevantProposalUuids = [...new Set([...ideaToLatestApproved.values()].map((p) => p.uuid))];
-
-  // Query 3: Tasks linked to those approved proposals
-  const proposalToTaskStatuses = new Map<string, string[]>();
-  if (relevantProposalUuids.length > 0) {
-    const tasks = await prisma.task.findMany({
-      where: {
-        companyUuid,
-        proposalUuid: { in: relevantProposalUuids },
-      },
-      select: {
-        proposalUuid: true,
-        status: true,
-      },
-    });
-
-    for (const task of tasks) {
-      if (!task.proposalUuid) continue;
-      const statuses = proposalToTaskStatuses.get(task.proposalUuid) || [];
-      statuses.push(task.status);
-      proposalToTaskStatuses.set(task.proposalUuid, statuses);
-    }
-  }
+  // Query 2+: shared batched loader — latest approved / pending proposals plus
+  // the union of approved-proposal tasks and directly linked tasks per idea.
+  const contexts = await loadIdeaTaskContexts(
+    prisma,
+    companyUuid,
+    ideas.map((idea) => ({ uuid: idea.uuid, projectUuid })),
+  );
 
   // Pass 1: compute each idea's OWN derived status from its proposal/task chain.
   const base: IdeaWithDerivedStatus[] = ideas.map((idea) => {
-    const latestApproved = ideaToLatestApproved.get(idea.uuid);
-    const taskStatuses = latestApproved
-      ? proposalToTaskStatuses.get(latestApproved.uuid) || []
-      : [];
-
-    const { derivedStatus, badgeHint } = computeDerivedStatus({
-      ideaStatus: idea.status,
-      elaborationStatus: idea.elaborationStatus,
-      hasPendingProposal: ideasWithPendingProposal.has(idea.uuid),
-      hasApprovedProposal: !!latestApproved,
-      taskStatuses,
-    });
+    const ctx = contexts.get(idea.uuid);
+    const { derivedStatus, badgeHint } = computeIdeaDerivedStatus(idea, ctx);
 
     return {
       uuid: idea.uuid,
@@ -1824,8 +1800,8 @@ export async function getIdeasWithDerivedStatus(
       createdAt: idea.createdAt,
       updatedAt: idea.updatedAt,
       projectUuid,
-      proposalCount: ideaProposalCounts.get(idea.uuid) ?? 0,
-      taskCount: taskStatuses.length,
+      proposalCount: ctx?.proposalCount ?? 0,
+      taskCount: ideaTaskStatuses(ctx).length,
       parentUuid: idea.parentUuid ?? null,
       childCount: childCountByParent.get(idea.uuid) ?? 0,
       isContainer: idea.isContainer,

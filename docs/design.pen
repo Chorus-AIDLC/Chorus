@@ -3,6 +3,698 @@
   "children": [
     {
       "type": "frame",
+      "id": "projectTeamLight",
+      "name": "Personal Project Team — Light",
+      "x": 0,
+      "y": 29200,
+      "width": 900,
+      "height": 1330,
+      "layout": "vertical",
+      "gap": 20,
+      "padding": 32,
+      "fill": "#FAF8F4",
+      "children": [
+        {
+          "type": "text",
+          "id": "pt01",
+          "content": "My project team",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 26,
+          "fill": "#2C2C2C",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "text",
+          "id": "pt02",
+          "content": "Private to you and your agents · Saving never assigns work.",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 14,
+          "fill": "#77716B",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "pt05",
+          "name": "Template selector",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt03",
+              "content": "Personal template                 [My delivery team ▾]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt04",
+              "content": "Manage templates →",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt012",
+          "name": "Roles — inherited, overridden, empty, frozen",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt06",
+              "content": "Product · Inherited     ◉ Product Agent · Online · 1 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt07",
+              "content": "Development · Overridden     ◉ Developer · Offline · 0 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt08",
+              "content": "[Add agent ▾]   [Empty role]   [Reset inheritance]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt09",
+              "content": "Review · No members — assign this work manually.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt010",
+              "content": "Lead · ◉ Lead Agent · Offline · 0 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt011",
+              "content": "Ineligible members retain bindings; missing permissions / access are shown.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt015",
+          "name": "Frozen snapshot state",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt013",
+              "content": "Deleted template: members are frozen; edit here or choose another template.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt014",
+              "content": "Template deletion keeps latest effective roles + overrides; Ideas and Tasks unchanged.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt018",
+          "name": "Removed previous lead warning",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt016",
+              "content": "Previous handoff recipient removed from lead — even with an eligible replacement.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt017",
+              "content": "Existing assignments remain unchanged. Repair only by explicit preview + confirmation.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt025",
+          "name": "Explicit handoff — editor only",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt019",
+              "content": "Choose a lead explicitly… ▾     [Preview handoff]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt020",
+              "content": "2 Ideas · expires 14:30 · exact Idea titles and UUIDs",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt021",
+              "content": "Own unfinished Idea A    032146fe-…",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt022",
+              "content": "Own unfinished Idea B    728ca3e6-…",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt023",
+              "content": "[Refresh preview]       [Confirm Idea handoff]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt024",
+              "content": "Stale preview: no reassignment; refresh required. Inputs retained on errors.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt027",
+          "name": "Viewer state",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt026",
+              "content": "Viewers can configure their own team. Handoff requires Editor access.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#77716B",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt030",
+          "name": "Unbind confirmation",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt028",
+              "content": "Remove only your personal team? Templates, Ideas and Tasks remain unchanged.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#2C2C2C",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt029",
+              "content": "[Cancel]     [Confirm unbind]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "pt031",
+          "content": "[Close]                                    [Unbind]    [Save team]",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 16,
+          "fill": "#2C2C2C",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "projectTeamDark",
+      "name": "Personal Project Team — Dark",
+      "x": 960,
+      "y": 29200,
+      "width": 900,
+      "height": 1330,
+      "layout": "vertical",
+      "gap": 20,
+      "padding": 32,
+      "fill": "#1C1B19",
+      "children": [
+        {
+          "type": "text",
+          "id": "pt11",
+          "content": "My project team",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 26,
+          "fill": "#E8E4DE",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "text",
+          "id": "pt12",
+          "content": "Private to you and your agents · Saving never assigns work.",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 14,
+          "fill": "#A6A09A",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "pt15",
+          "name": "Template selector",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt13",
+              "content": "Personal template                 [My delivery team ▾]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt14",
+              "content": "Manage templates →",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt112",
+          "name": "Roles — inherited, overridden, empty, frozen",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt16",
+              "content": "Product · Inherited     ◉ Product Agent · Online · 1 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt17",
+              "content": "Development · Overridden     ◉ Developer · Offline · 0 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt18",
+              "content": "[Add agent ▾]   [Empty role]   [Reset inheritance]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt19",
+              "content": "Review · No members — assign this work manually.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt110",
+              "content": "Lead · ◉ Lead Agent · Offline · 0 active / queued",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt111",
+              "content": "Ineligible members retain bindings; missing permissions / access are shown.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt115",
+          "name": "Frozen snapshot state",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt113",
+              "content": "Deleted template: members are frozen; edit here or choose another template.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt114",
+              "content": "Template deletion keeps latest effective roles + overrides; Ideas and Tasks unchanged.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt118",
+          "name": "Removed previous lead warning",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt116",
+              "content": "Previous handoff recipient removed from lead — even with an eligible replacement.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt117",
+              "content": "Existing assignments remain unchanged. Repair only by explicit preview + confirmation.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt125",
+          "name": "Explicit handoff — editor only",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt119",
+              "content": "Choose a lead explicitly… ▾     [Preview handoff]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt120",
+              "content": "2 Ideas · expires 14:30 · exact Idea titles and UUIDs",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt121",
+              "content": "Own unfinished Idea A    032146fe-…",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt122",
+              "content": "Own unfinished Idea B    728ca3e6-…",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt123",
+              "content": "[Refresh preview]       [Confirm Idea handoff]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt124",
+              "content": "Stale preview: no reassignment; refresh required. Inputs retained on errors.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 13,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt127",
+          "name": "Viewer state",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt126",
+              "content": "Viewers can configure their own team. Handoff requires Editor access.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#A6A09A",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "pt130",
+          "name": "Unbind confirmation",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 20,
+          "width": "fill_container",
+          "fill": "#292724",
+          "cornerRadius": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "pt128",
+              "content": "Remove only your personal team? Templates, Ideas and Tasks remain unchanged.",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#E8E4DE",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            },
+            {
+              "type": "text",
+              "id": "pt129",
+              "content": "[Cancel]     [Confirm unbind]",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 14,
+              "fill": "#C67A52",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "pt131",
+          "content": "[Close]                                    [Unbind]    [Save team]",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 16,
+          "fill": "#E8E4DE",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        }
+      ]
+    },
+    {
+      "type": "frame",
       "id": "XlN0Q",
       "x": 0,
       "y": 5400,
@@ -108852,6 +109544,1654 @@
       "width": 520,
       "height": 0,
       "content": "Screen 4 — Describe-to-an-agent + 'decompose into child ideas' (idea 794633cc · Block 3)\n\nThe decompose intent rides the EXISTING conversational-idea wake — no new action type / plugin port. On dispatch the server pre-creates a THEME (isContainer=true) and wakes the picked instance. The agent edits the theme, runs one lightweight scope elaboration, then proposes candidate children AS A STANDARD ELABORATION ROUND (one single-select question per candidate) — rendered in the EXISTING 'Idea Tracker · Elaboration Panel', no new surface. On the user's answer (the existing elaboration_answered re-wake of the same idea-anchored session) the agent creates each accepted child via chorus_pm_create_idea(parentUuid=theme), children start 'open', no auto-elaborate; the theme stays elaborated and its x/y ring rolls up the new children."
+    },
+    {
+      "type": "frame",
+      "id": "teamsUi71",
+      "name": "Settings Teams — Light",
+      "layout": "vertical",
+      "width": 768,
+      "gap": 20,
+      "children": [
+        {
+          "type": "text",
+          "id": "teamsUi1",
+          "name": "Create team",
+          "content": "Create team",
+          "fill": "#2C2C2C",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 22,
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "teamsUi2",
+          "name": "Build your team by role. An agent can contribute in multiple roles.",
+          "content": "Build your team by role. An agent can contribute in multiple roles.",
+          "fill": "#6B6560",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 14,
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "teamsUi9",
+          "name": "Template details",
+          "layout": "horizontal",
+          "width": "fill_container",
+          "gap": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "teamsUi5",
+              "name": "Name",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "teamsUi3",
+                  "name": "Team name",
+                  "content": "Team name",
+                  "fill": "#2C2C2C",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi4",
+                  "name": "Product delivery",
+                  "content": "Product delivery",
+                  "fill": "#2C2C2C",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ],
+              "fill": "#FFFFFF",
+              "padding": 12,
+              "cornerRadius": 6
+            },
+            {
+              "type": "frame",
+              "id": "teamsUi8",
+              "name": "Description",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "teamsUi6",
+                  "name": "Description (optional)",
+                  "content": "Description (optional)",
+                  "fill": "#2C2C2C",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi7",
+                  "name": "From idea to release",
+                  "content": "From idea to release",
+                  "fill": "#2C2C2C",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ],
+              "fill": "#FFFFFF",
+              "padding": 12,
+              "cornerRadius": 6
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "teamsUi12",
+          "name": "Section heading",
+          "layout": "horizontal",
+          "width": "fill_container",
+          "gap": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "teamsUi10",
+              "name": "Role assignments",
+              "content": "Role assignments",
+              "fill": "#2C2C2C",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 16,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "teamsUi11",
+              "name": "All roles are optional",
+              "content": "All roles are optional",
+              "fill": "#6B6560",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "justifyContent": "space_between"
+        },
+        {
+          "type": "frame",
+          "id": "teamsUi39",
+          "name": "First role row",
+          "layout": "horizontal",
+          "width": "fill_container",
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "teamsUi24",
+              "name": "Product role",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "teamsUi15",
+                  "name": "Role heading",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi13",
+                      "name": "Product",
+                      "content": "Product",
+                      "fill": "#2C2C2C",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 16,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi14",
+                      "name": "1 selected",
+                      "content": "1 selected",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi16",
+                  "name": "Ideas, proposals and documents",
+                  "content": "Ideas, proposals and documents",
+                  "fill": "#6B6560",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi19",
+                  "name": "Selected members",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "teamsUi18",
+                      "name": "Selected agent",
+                      "layout": "horizontal",
+                      "width": "fit_content",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "teamsUi17",
+                          "name": "◉  Atlas   ×",
+                          "content": "◉  Atlas   ×",
+                          "fill": "#2C2C2C",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ],
+                      "fill": "#FAF8F4",
+                      "padding": [
+                        6,
+                        10
+                      ],
+                      "cornerRadius": 6
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi22",
+                  "name": "Shared AgentSelect trigger",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi20",
+                      "name": "Add agent…",
+                      "content": "Add agent…",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi21",
+                      "name": "⌄",
+                      "content": "⌄",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between",
+                  "padding": 10,
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "fill": "#E5DFD8",
+                    "thickness": 1
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi23",
+                  "name": "▸ Permission requirements",
+                  "content": "▸ Permission requirements",
+                  "fill": "#6B6560",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": 16,
+              "cornerRadius": 12,
+              "fill": "#FFFFFF",
+              "stroke": {
+                "fill": "#E5DFD8",
+                "thickness": 1
+              }
+            },
+            {
+              "type": "frame",
+              "id": "teamsUi38",
+              "name": "Development role",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "teamsUi27",
+                  "name": "Role heading",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi25",
+                      "name": "Development",
+                      "content": "Development",
+                      "fill": "#2C2C2C",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 16,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi26",
+                      "name": "2 selected",
+                      "content": "2 selected",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi28",
+                  "name": "Execute and deliver tasks",
+                  "content": "Execute and deliver tasks",
+                  "fill": "#6B6560",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi33",
+                  "name": "Selected members",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "teamsUi30",
+                      "name": "Selected agent",
+                      "layout": "horizontal",
+                      "width": "fit_content",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "teamsUi29",
+                          "name": "◉  Nova   ×",
+                          "content": "◉  Nova   ×",
+                          "fill": "#2C2C2C",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ],
+                      "fill": "#FAF8F4",
+                      "padding": [
+                        6,
+                        10
+                      ],
+                      "cornerRadius": 6
+                    },
+                    {
+                      "type": "frame",
+                      "id": "teamsUi32",
+                      "name": "Selected agent",
+                      "layout": "horizontal",
+                      "width": "fit_content",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "teamsUi31",
+                          "name": "◉  Pixel   ×",
+                          "content": "◉  Pixel   ×",
+                          "fill": "#2C2C2C",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ],
+                      "fill": "#FAF8F4",
+                      "padding": [
+                        6,
+                        10
+                      ],
+                      "cornerRadius": 6
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi36",
+                  "name": "Shared AgentSelect trigger",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi34",
+                      "name": "Add agent…",
+                      "content": "Add agent…",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi35",
+                      "name": "⌄",
+                      "content": "⌄",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between",
+                  "padding": 10,
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "fill": "#E5DFD8",
+                    "thickness": 1
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi37",
+                  "name": "▸ Permission requirements",
+                  "content": "▸ Permission requirements",
+                  "fill": "#6B6560",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": 16,
+              "cornerRadius": 12,
+              "fill": "#FFFFFF",
+              "stroke": {
+                "fill": "#E5DFD8",
+                "thickness": 1
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "teamsUi64",
+          "name": "Second role row",
+          "layout": "horizontal",
+          "width": "fill_container",
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "teamsUi51",
+              "name": "Review role",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "teamsUi42",
+                  "name": "Role heading",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi40",
+                      "name": "Review",
+                      "content": "Review",
+                      "fill": "#2C2C2C",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 16,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi41",
+                      "name": "1 selected",
+                      "content": "1 selected",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi43",
+                  "name": "Independent review comments",
+                  "content": "Independent review comments",
+                  "fill": "#6B6560",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi46",
+                  "name": "Selected members",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "teamsUi45",
+                      "name": "Selected agent",
+                      "layout": "horizontal",
+                      "width": "fit_content",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "teamsUi44",
+                          "name": "◉  Sage   ×",
+                          "content": "◉  Sage   ×",
+                          "fill": "#2C2C2C",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ],
+                      "fill": "#FAF8F4",
+                      "padding": [
+                        6,
+                        10
+                      ],
+                      "cornerRadius": 6
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi49",
+                  "name": "Shared AgentSelect trigger",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi47",
+                      "name": "Add agent…",
+                      "content": "Add agent…",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi48",
+                      "name": "⌄",
+                      "content": "⌄",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between",
+                  "padding": 10,
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "fill": "#E5DFD8",
+                    "thickness": 1
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi50",
+                  "name": "▸ Permission requirements",
+                  "content": "▸ Permission requirements",
+                  "fill": "#6B6560",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": 16,
+              "cornerRadius": 12,
+              "fill": "#FFFFFF",
+              "stroke": {
+                "fill": "#E5DFD8",
+                "thickness": 1
+              }
+            },
+            {
+              "type": "frame",
+              "id": "teamsUi63",
+              "name": "Lead role",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "teamsUi54",
+                  "name": "Role heading",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi52",
+                      "name": "Lead",
+                      "content": "Lead",
+                      "fill": "#2C2C2C",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 16,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi53",
+                      "name": "1 selected",
+                      "content": "1 selected",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi55",
+                  "name": "Delegate, approve and verify",
+                  "content": "Delegate, approve and verify",
+                  "fill": "#6B6560",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi58",
+                  "name": "Selected members",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "teamsUi57",
+                      "name": "Selected agent",
+                      "layout": "horizontal",
+                      "width": "fit_content",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "teamsUi56",
+                          "name": "◉  Release Captain   ×",
+                          "content": "◉  Release Captain   ×",
+                          "fill": "#2C2C2C",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ],
+                      "fill": "#FAF8F4",
+                      "padding": [
+                        6,
+                        10
+                      ],
+                      "cornerRadius": 6
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi61",
+                  "name": "Shared AgentSelect trigger",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi59",
+                      "name": "Add agent…",
+                      "content": "Add agent…",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi60",
+                      "name": "⌄",
+                      "content": "⌄",
+                      "fill": "#6B6560",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between",
+                  "padding": 10,
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "fill": "#E5DFD8",
+                    "thickness": 1
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi62",
+                  "name": "▸ Permission requirements",
+                  "content": "▸ Permission requirements",
+                  "fill": "#6B6560",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": 16,
+              "cornerRadius": 12,
+              "fill": "#FFFFFF",
+              "stroke": {
+                "fill": "#E5DFD8",
+                "thickness": 1
+              }
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "teamsUi65",
+          "name": "Private to you. Templates never grant permissions or project access.",
+          "content": "Private to you. Templates never grant permissions or project access.",
+          "fill": "#6B6560",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 12,
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "teamsUi70",
+          "name": "Pinned footer",
+          "layout": "horizontal",
+          "width": "fill_container",
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "teamsUi67",
+              "name": "Cancel",
+              "layout": "vertical",
+              "width": "fit_content",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "teamsUi66",
+                  "name": "Cancel",
+                  "content": "Cancel",
+                  "fill": "#2C2C2C",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": [
+                10,
+                16
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "teamsUi69",
+              "name": "Save",
+              "layout": "vertical",
+              "width": "fit_content",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "teamsUi68",
+                  "name": "Save team",
+                  "content": "Save team",
+                  "fill": "#FFFFFF",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": [
+                10,
+                16
+              ],
+              "fill": "#C67A52",
+              "cornerRadius": 6
+            }
+          ],
+          "justifyContent": "end"
+        }
+      ],
+      "x": 0,
+      "y": 28200,
+      "height": 800,
+      "padding": 24,
+      "fill": "#FAF8F4",
+      "cornerRadius": 12
+    },
+    {
+      "type": "frame",
+      "id": "teamsUi142",
+      "name": "Settings Teams — Dark",
+      "layout": "vertical",
+      "width": 768,
+      "gap": 20,
+      "children": [
+        {
+          "type": "text",
+          "id": "teamsUi72",
+          "name": "Create team",
+          "content": "Create team",
+          "fill": "#F5F0EB",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 22,
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "teamsUi73",
+          "name": "Build your team by role. An agent can contribute in multiple roles.",
+          "content": "Build your team by role. An agent can contribute in multiple roles.",
+          "fill": "#AAA29B",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 14,
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "teamsUi80",
+          "name": "Template details",
+          "layout": "horizontal",
+          "width": "fill_container",
+          "gap": 16,
+          "children": [
+            {
+              "type": "frame",
+              "id": "teamsUi76",
+              "name": "Name",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "teamsUi74",
+                  "name": "Team name",
+                  "content": "Team name",
+                  "fill": "#F5F0EB",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi75",
+                  "name": "Product delivery",
+                  "content": "Product delivery",
+                  "fill": "#F5F0EB",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ],
+              "fill": "#24211E",
+              "padding": 12,
+              "cornerRadius": 6
+            },
+            {
+              "type": "frame",
+              "id": "teamsUi79",
+              "name": "Description",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "teamsUi77",
+                  "name": "Description (optional)",
+                  "content": "Description (optional)",
+                  "fill": "#F5F0EB",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi78",
+                  "name": "From idea to release",
+                  "content": "From idea to release",
+                  "fill": "#F5F0EB",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ],
+              "fill": "#24211E",
+              "padding": 12,
+              "cornerRadius": 6
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "teamsUi83",
+          "name": "Section heading",
+          "layout": "horizontal",
+          "width": "fill_container",
+          "gap": 12,
+          "children": [
+            {
+              "type": "text",
+              "id": "teamsUi81",
+              "name": "Role assignments",
+              "content": "Role assignments",
+              "fill": "#F5F0EB",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 16,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "teamsUi82",
+              "name": "All roles are optional",
+              "content": "All roles are optional",
+              "fill": "#AAA29B",
+              "fontFamily": "IBM Plex Sans",
+              "fontSize": 12,
+              "fontWeight": "normal"
+            }
+          ],
+          "justifyContent": "space_between"
+        },
+        {
+          "type": "frame",
+          "id": "teamsUi110",
+          "name": "First role row",
+          "layout": "horizontal",
+          "width": "fill_container",
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "teamsUi95",
+              "name": "Product role",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "teamsUi86",
+                  "name": "Role heading",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi84",
+                      "name": "Product",
+                      "content": "Product",
+                      "fill": "#F5F0EB",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 16,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi85",
+                      "name": "1 selected",
+                      "content": "1 selected",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi87",
+                  "name": "Ideas, proposals and documents",
+                  "content": "Ideas, proposals and documents",
+                  "fill": "#AAA29B",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi90",
+                  "name": "Selected members",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "teamsUi89",
+                      "name": "Selected agent",
+                      "layout": "horizontal",
+                      "width": "fit_content",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "teamsUi88",
+                          "name": "◉  Atlas   ×",
+                          "content": "◉  Atlas   ×",
+                          "fill": "#F5F0EB",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ],
+                      "fill": "#171513",
+                      "padding": [
+                        6,
+                        10
+                      ],
+                      "cornerRadius": 6
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi93",
+                  "name": "Shared AgentSelect trigger",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi91",
+                      "name": "Add agent…",
+                      "content": "Add agent…",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi92",
+                      "name": "⌄",
+                      "content": "⌄",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between",
+                  "padding": 10,
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "fill": "#3F3934",
+                    "thickness": 1
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi94",
+                  "name": "▸ Permission requirements",
+                  "content": "▸ Permission requirements",
+                  "fill": "#AAA29B",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": 16,
+              "cornerRadius": 12,
+              "fill": "#24211E",
+              "stroke": {
+                "fill": "#3F3934",
+                "thickness": 1
+              }
+            },
+            {
+              "type": "frame",
+              "id": "teamsUi109",
+              "name": "Development role",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "teamsUi98",
+                  "name": "Role heading",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi96",
+                      "name": "Development",
+                      "content": "Development",
+                      "fill": "#F5F0EB",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 16,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi97",
+                      "name": "2 selected",
+                      "content": "2 selected",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi99",
+                  "name": "Execute and deliver tasks",
+                  "content": "Execute and deliver tasks",
+                  "fill": "#AAA29B",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi104",
+                  "name": "Selected members",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "teamsUi101",
+                      "name": "Selected agent",
+                      "layout": "horizontal",
+                      "width": "fit_content",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "teamsUi100",
+                          "name": "◉  Nova   ×",
+                          "content": "◉  Nova   ×",
+                          "fill": "#F5F0EB",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ],
+                      "fill": "#171513",
+                      "padding": [
+                        6,
+                        10
+                      ],
+                      "cornerRadius": 6
+                    },
+                    {
+                      "type": "frame",
+                      "id": "teamsUi103",
+                      "name": "Selected agent",
+                      "layout": "horizontal",
+                      "width": "fit_content",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "teamsUi102",
+                          "name": "◉  Pixel   ×",
+                          "content": "◉  Pixel   ×",
+                          "fill": "#F5F0EB",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ],
+                      "fill": "#171513",
+                      "padding": [
+                        6,
+                        10
+                      ],
+                      "cornerRadius": 6
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi107",
+                  "name": "Shared AgentSelect trigger",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi105",
+                      "name": "Add agent…",
+                      "content": "Add agent…",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi106",
+                      "name": "⌄",
+                      "content": "⌄",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between",
+                  "padding": 10,
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "fill": "#3F3934",
+                    "thickness": 1
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi108",
+                  "name": "▸ Permission requirements",
+                  "content": "▸ Permission requirements",
+                  "fill": "#AAA29B",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": 16,
+              "cornerRadius": 12,
+              "fill": "#24211E",
+              "stroke": {
+                "fill": "#3F3934",
+                "thickness": 1
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "teamsUi135",
+          "name": "Second role row",
+          "layout": "horizontal",
+          "width": "fill_container",
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "teamsUi122",
+              "name": "Review role",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "teamsUi113",
+                  "name": "Role heading",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi111",
+                      "name": "Review",
+                      "content": "Review",
+                      "fill": "#F5F0EB",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 16,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi112",
+                      "name": "1 selected",
+                      "content": "1 selected",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi114",
+                  "name": "Independent review comments",
+                  "content": "Independent review comments",
+                  "fill": "#AAA29B",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi117",
+                  "name": "Selected members",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "teamsUi116",
+                      "name": "Selected agent",
+                      "layout": "horizontal",
+                      "width": "fit_content",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "teamsUi115",
+                          "name": "◉  Sage   ×",
+                          "content": "◉  Sage   ×",
+                          "fill": "#F5F0EB",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ],
+                      "fill": "#171513",
+                      "padding": [
+                        6,
+                        10
+                      ],
+                      "cornerRadius": 6
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi120",
+                  "name": "Shared AgentSelect trigger",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi118",
+                      "name": "Add agent…",
+                      "content": "Add agent…",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi119",
+                      "name": "⌄",
+                      "content": "⌄",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between",
+                  "padding": 10,
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "fill": "#3F3934",
+                    "thickness": 1
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi121",
+                  "name": "▸ Permission requirements",
+                  "content": "▸ Permission requirements",
+                  "fill": "#AAA29B",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": 16,
+              "cornerRadius": 12,
+              "fill": "#24211E",
+              "stroke": {
+                "fill": "#3F3934",
+                "thickness": 1
+              }
+            },
+            {
+              "type": "frame",
+              "id": "teamsUi134",
+              "name": "Lead role",
+              "layout": "vertical",
+              "width": "fill_container",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "teamsUi125",
+                  "name": "Role heading",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi123",
+                      "name": "Lead",
+                      "content": "Lead",
+                      "fill": "#F5F0EB",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 16,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi124",
+                      "name": "1 selected",
+                      "content": "1 selected",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between"
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi126",
+                  "name": "Delegate, approve and verify",
+                  "content": "Delegate, approve and verify",
+                  "fill": "#AAA29B",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi129",
+                  "name": "Selected members",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "teamsUi128",
+                      "name": "Selected agent",
+                      "layout": "horizontal",
+                      "width": "fit_content",
+                      "gap": 12,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "teamsUi127",
+                          "name": "◉  Release Captain   ×",
+                          "content": "◉  Release Captain   ×",
+                          "fill": "#F5F0EB",
+                          "fontFamily": "IBM Plex Sans",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        }
+                      ],
+                      "fill": "#171513",
+                      "padding": [
+                        6,
+                        10
+                      ],
+                      "cornerRadius": 6
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "teamsUi132",
+                  "name": "Shared AgentSelect trigger",
+                  "layout": "horizontal",
+                  "width": "fill_container",
+                  "gap": 12,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "teamsUi130",
+                      "name": "Add agent…",
+                      "content": "Add agent…",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "teamsUi131",
+                      "name": "⌄",
+                      "content": "⌄",
+                      "fill": "#AAA29B",
+                      "fontFamily": "IBM Plex Sans",
+                      "fontSize": 14,
+                      "fontWeight": "normal"
+                    }
+                  ],
+                  "justifyContent": "space_between",
+                  "padding": 10,
+                  "cornerRadius": 6,
+                  "stroke": {
+                    "fill": "#3F3934",
+                    "thickness": 1
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "teamsUi133",
+                  "name": "▸ Permission requirements",
+                  "content": "▸ Permission requirements",
+                  "fill": "#AAA29B",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 12,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": 16,
+              "cornerRadius": 12,
+              "fill": "#24211E",
+              "stroke": {
+                "fill": "#3F3934",
+                "thickness": 1
+              }
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "id": "teamsUi136",
+          "name": "Private to you. Templates never grant permissions or project access.",
+          "content": "Private to you. Templates never grant permissions or project access.",
+          "fill": "#AAA29B",
+          "fontFamily": "IBM Plex Sans",
+          "fontSize": 12,
+          "fontWeight": "normal"
+        },
+        {
+          "type": "frame",
+          "id": "teamsUi141",
+          "name": "Pinned footer",
+          "layout": "horizontal",
+          "width": "fill_container",
+          "gap": 12,
+          "children": [
+            {
+              "type": "frame",
+              "id": "teamsUi138",
+              "name": "Cancel",
+              "layout": "vertical",
+              "width": "fit_content",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "teamsUi137",
+                  "name": "Cancel",
+                  "content": "Cancel",
+                  "fill": "#F5F0EB",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": [
+                10,
+                16
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "teamsUi140",
+              "name": "Save",
+              "layout": "vertical",
+              "width": "fit_content",
+              "gap": 12,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "teamsUi139",
+                  "name": "Save team",
+                  "content": "Save team",
+                  "fill": "#FFFFFF",
+                  "fontFamily": "IBM Plex Sans",
+                  "fontSize": 14,
+                  "fontWeight": "normal"
+                }
+              ],
+              "padding": [
+                10,
+                16
+              ],
+              "fill": "#C67A52",
+              "cornerRadius": 6
+            }
+          ],
+          "justifyContent": "end"
+        }
+      ],
+      "x": 1000,
+      "y": 28200,
+      "height": 800,
+      "padding": 24,
+      "fill": "#171513",
+      "cornerRadius": 12
     }
   ],
   "themes": {

@@ -4,7 +4,7 @@ description: Chorus Development workflow — claim tasks, report work, manage se
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.24.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -16,6 +16,16 @@ This skill covers the **Development** stage of the AI-DLC workflow: claiming Tas
 > **Tool namespace:** Chorus tools are exposed by the connected MCP server under a `chorus__` prefix on OpenClaw (e.g. `chorus__chorus_claim_task`). Bare names are used below for readability — prepend `chorus__` when invoking. See `/chorus` for the full rule.
 
 ---
+
+## Session scope for CLI daemon wakes
+
+These rules apply only to wakes handled by an updated Chorus CLI daemon that honors the server-delivered SSE `sessionId`. They do not upgrade OpenClaw, Hermes, or dsh-native session routing; those native runtimes retain their existing behavior. Older daemons may fall back to legacy entity/Idea routing, so do not assume task/review isolation there.
+
+- **Task work:** `task:<uuid>` is a task-scoped session with no Idea-session memory. Fetch the current task, its proposal and documents, and its direct Idea from Chorus before starting work; do not rely on the orchestrator's conversation. Sibling tasks of the same Idea can run concurrently for one agent and may share the working directory. Before editing when siblings share the cwd, work in your own git worktree; the daemon does not create one for you.
+- **Review work:** a Team review request sent with `chorus_request_review` uses `review:<type>:<uuid>`, where type is `proposal`, `task`, or `idea` (a code review targets the Idea). It is a read-only review-scoped session with no development-session memory. Fetch the target and current reviewer protocol/context before reviewing; do not implement fixes or perform lifecycle writes. A re-review by the same reviewer of the same target resumes the same review session, preserving review history rather than development memory.
+- **Orchestration:** elaboration, proposal work, Start Development, Yolo, and orchestration stay in the bare direct-Idea UUID session (`<directIdeaUuid>`, not `idea:<uuid>`). An orchestrator also assigned a task uses `task:<uuid>` only for task-start/reopen work; its other task wakes (comments, mentions, PASS/FAIL VERDICT replies, Team handoffs) stay in the Idea session. Human instructions, operations, and research requests always use the Idea session, even for a task's developer.
+
+These are backend conversation and wake-queue anchors, not the Chorus Agent Session `sessionUuid` used by session check-in tools. Session separation does not isolate files or change the host's existing session check-in lifecycle.
 
 ## Overview
 
@@ -271,6 +281,8 @@ Obtain an independent VERDICT before the task is verified:
 If no new `VERDICT:` comment appears after the reviewer returns, check what it *did* post. A comment reporting that the round limit was reached, or any other explicit refusal to review, is a deliberate escalation to a human: STOP — do not respawn, do not self-review, do not post a VERDICT of your own. If it posted nothing at all, respawn it ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you fall back to reviewing manually (Step 8.5 fallback) and post the VERDICT yourself. **Absence is never a PASS.**
 
 > **Final code-review gateway (after the Idea's LAST task is verified):** when the task you just verified is the **last** task of its idea-rooted proposal, the feature is about to ship — run the ship-time code-review gateway before declaring the Idea done. Inline (no hook on OpenClaw), same mechanism as Step 8.5: spawn a sub-agent via `sessions_spawn` whose `task` tells it to **invoke the `/code-reviewer` skill** against the idea (pass the `ideaUuid` + round number), and wait for it; fallback is a read-only self-review following the `/code-reviewer` procedure. It reviews the Idea's **aggregate** code change (cross-task integration, architecture, security, regression, feature-level coverage) and posts one `VERDICT:` comment on the **idea**. `PASS` / `PASS WITH NOTES` → ship; `FAIL` → fix via the **quick-dev** workflow (`/quick-dev`): `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it (do not reopen old tasks). Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Each fix task must self-check its acceptance criteria and pass independent task review plus admin verification. Re-run the gateway only after every fix task is successfully `done`; if there is a failed or cancelled fix task, stop and escalate instead. Advisory/behavioral. Run it **before** any idea-completion report.
+>
+> **Quick Tasks linked to an Idea (`ideaUuid`):** a Quick Task created with `ideaUuid` (and no `proposalUuid`) counts toward that Idea — the Idea completes when all its linked Quick Tasks (plus any approved-proposal tasks) are `done`/`closed`. Run the same gateway inline (no hook on OpenClaw) when the verified task is the **last** Quick Task linked to a proposal-less Idea (check with `chorus_list_tasks({ projectUuid, ideaUuid })`), and for a proposal-rooted Idea it waits until the Idea's linked Quick Tasks are terminal too. On `FAIL` for a proposal-less Idea, create the fix tasks as Quick Tasks with the same `ideaUuid` (no `proposalUuid`); no idea-completion report applies, because `chorus_create_report` needs a proposal.
 
 ### Step 9: Handle Review Feedback
 

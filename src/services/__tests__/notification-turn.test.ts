@@ -316,7 +316,7 @@ describe("project-Agent fixed cwd resolution", () => {
       expect(mockDaemonSessionUpdate).not.toHaveBeenCalled();
       expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
         expect.objectContaining({
-          sessionId: ideaUuid,
+          sessionId: `task:${taskUuid}`,
           originConnectionUuid: rootConnection,
           runtimeCwd: "/work/root",
         }),
@@ -522,7 +522,7 @@ describe("maybeCreateTurnForWakeNotification — creates exactly one pending tur
       expect.objectContaining({
         companyUuid,
         agentUuid,
-        sessionId: ideaUuid,
+        sessionId: `task:${taskUuid}`,
         directIdeaUuid: ideaUuid,
         originConnectionUuid: connectionUuid,
       }),
@@ -642,8 +642,8 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(result?.trigger).toBe("mentioned");
     expect(result?.status).toBe("pending");
     expect(mockLoggerError).not.toHaveBeenCalled();
-    // A mentioned wake reads its pin from the context, NOT from the Task table.
-    expect(mockTaskFindFirst).not.toHaveBeenCalled();
+    // The pin is context-only; the task read resolves purpose-based ownership.
+    expect(mockTaskFindFirst).toHaveBeenCalledWith(expect.objectContaining({ select: { assigneeType: true, assigneeUuid: true } }));
   });
 
   it("does NOT read the Task pin for a mentioned wake (pin is context-only)", async () => {
@@ -831,8 +831,8 @@ describe("maybeCreateTurnForWakeNotification — pinned-target instance routing 
     expect(mockResolveOrCreateSession).toHaveBeenCalledWith(
       expect.objectContaining({ originConnectionUuid: onlineFirst }),
     );
-    // No pin on a mentioned wake → never reads the Task table.
-    expect(mockTaskFindFirst).not.toHaveBeenCalled();
+    // No instance pin, but task ownership is still needed for the session anchor.
+    expect(mockTaskFindFirst).toHaveBeenCalledWith(expect.objectContaining({ select: { assigneeType: true, assigneeUuid: true } }));
   });
 
   it("a task_assigned wake whose Task is a plain agent (no instance) uses online-first, unchanged", async () => {

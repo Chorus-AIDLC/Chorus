@@ -2,6 +2,7 @@
 // Public MCP tools - available to all Agents (ARCHITECTURE.md §5.2)
 // UUID-Based Architecture: All operations use UUIDs
 
+import { getIdeaTeamContext, recommendIdeaTeamRole, delegateIdeaTeamProduct } from "@/services/idea-team.service";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
@@ -26,6 +27,7 @@ import * as referenceArtifactService from "@/services/reference-artifact.service
 import { REFERENCE_TYPES } from "@/services/reference-artifact.service";
 import * as activityService from "@/services/activity.service";
 import * as commentService from "@/services/comment.service";
+import * as reviewRequestService from "@/services/review-request.service";
 import * as assignmentService from "@/services/assignment.service";
 import { zArray } from "./schema-utils";
 import * as notificationService from "@/services/notification.service";
@@ -36,13 +38,18 @@ import * as mentionService from "@/services/mention.service";
 import * as searchService from "@/services/search.service";
 import * as sessionService from "@/services/session.service";
 import * as checkinService from "@/services/checkin.service";
+import { getProjectAgentTeam } from "@/services/project-agent-team.service";
 import { registerPermissionedTool } from "./register-helpers";
 import { isAssignmentOwnedByActor } from "@/lib/uuid-resolver";
+import { ApiError } from "@/lib/api-handler";
 import {
   ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE,
   hasNonEmptyAcceptanceCriteria,
   normalizeAcceptanceCriteria,
 } from "@/lib/acceptance-criteria";
+
+export const PER_TASK_IDEA_UUID_ERROR =
+  "ideaUuid is not supported inside tasks[]; set the top-level ideaUuid to link every task in the batch to the Idea (Quick Task mode, no proposalUuid)";
 
 export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server = enforceToolClassification(server);
@@ -138,6 +145,45 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       };
     }
   );
+
+  registerPermissionedTool(server, auth, "project:read", "chorus_get_project_team", {
+    description: "Read your owner's private Team for a project, including eligible caller roles, member eligibility, online/activeCount and handoff warnings. Returns team:null when unconfigured or ownerless. Does not grant permissions or assign work.",
+    inputSchema: z.object({ projectUuid: z.string().uuid().describe("Project UUID") }),
+    annotations: { readOnlyHint: true },
+  }, async ({ projectUuid }) => ({
+    content: [{ type: "text", text: JSON.stringify({ team: await getProjectAgentTeam(auth, projectUuid) }, null, 2) }],
+  }));
+
+  registerPermissionedTool(server, auth, "idea:read", "chorus_get_idea_team_context", {
+    description: "Read an Idea's Team state: managed/paused/unmanaged, its orchestrator (the Idea's current assignee) and whether a human requested YOLO. The private routing roster (Team roles, product delegate) is returned only to the Team owner and the owner's agents. The Team only decides who does which work; approvals follow the normal workflow. Never claim an unassigned Idea because a Team exists.",
+    inputSchema: z.object({ ideaUuid: z.string().uuid().describe("Idea UUID") }),
+    annotations: { readOnlyHint: true },
+  }, async ({ ideaUuid }) => ({
+    content: [{ type: "text", text: JSON.stringify(await getIdeaTeamContext(auth, ideaUuid), null, 2) }],
+  }));
+
+  registerPermissionedTool(server, auth, "idea:read", "chorus_recommend_team_agent", {
+    description: "Recommend a product, development or review agent for a Team-managed Idea from live eligibility, online status, load and affinity. Review prefers the previous reviewer and falls back to the orchestrator's sub-agent when no eligible reviewer is online. Owner-private; does not assign or wake anyone. Follow recommended / lead_decision / manual / paused. Optional taskUuid or proposalUuid must belong to the Idea; supply at most one. Review without a target reviews the whole Idea.",
+    inputSchema: z.object({
+      ideaUuid: z.string().uuid().describe("Idea UUID"),
+      role: z.enum(["product", "development", "review"]),
+      taskUuid: z.string().uuid().optional().describe("Related Task UUID for development affinity or task review"),
+      proposalUuid: z.string().uuid().optional().describe("Related Proposal UUID for proposal review"),
+    }),
+    annotations: { readOnlyHint: true },
+  }, async ({ ideaUuid, role, taskUuid, proposalUuid }) => ({
+    content: [{ type: "text", text: JSON.stringify(await recommendIdeaTeamRole(auth, ideaUuid, role, taskUuid, proposalUuid), null, 2) }],
+  }));
+
+  registerPermissionedTool(server, auth, "idea:write", "chorus_delegate_team_product", {
+    description: "The current assignee of an active Team-managed Idea delegates elaboration and proposal authoring to an eligible product agent of the owner's Team, and @mentions it. The assignee stays the Idea's sole owner. Grants no permissions; the delegate cannot resolve elaboration, approve proposals or verify tasks.",
+    inputSchema: z.object({
+      ideaUuid: z.string().uuid().describe("Idea UUID"),
+      agentUuid: z.string().uuid().describe("Eligible product agent UUID"),
+    }),
+  }, async ({ ideaUuid, agentUuid }) => ({
+    content: [{ type: "text", text: JSON.stringify(await delegateIdeaTeamProduct(auth, ideaUuid, agentUuid), null, 2) }],
+  }));
 
   // chorus_list_projects - List all projects
   server.registerTool(
@@ -363,11 +409,12 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         status: z.enum(["open", "assigned", "in_progress", "to_verify", "done", "closed"]).optional().describe("Filter by status"),
         priority: z.enum(["low", "medium", "high"]).optional().describe("Filter by priority"),
         proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
+        ideaUuid: z.string().optional().describe("Filter to Quick Tasks directly linked to this Idea"),
         page: collectionPageSchema,
         pageSize: collectionPageSizeSchema,
       }),
     }),
-    async ({ projectUuid, status, priority, proposalUuids, page = 1, pageSize = 20 }) => {
+    async ({ projectUuid, status, priority, proposalUuids, ideaUuid, page = 1, pageSize = 20 }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
       if (!project) {
@@ -383,6 +430,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         status,
         priority,
         proposalUuids,
+        ideaUuid,
       });
 
       return {
@@ -490,12 +538,41 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
     }
   );
 
+  // chorus_request_review - Structured Team review request (the only review-session route)
+  server.registerTool(
+    "chorus_request_review",
+    {
+      description: "Request a Team review from one reviewer agent. Posts the review request comment on the target and wakes ONLY that reviewer in an isolated review session (review:<type>:<uuid>; a re-review of the same target resumes it). Use this instead of a hand-written review comment: plain comments never start a review session. targetType idea = whole-Idea code review.",
+      inputSchema: z.object({
+        targetType: z.enum(["task", "proposal", "idea"]).describe("Review target: task, proposal, or idea (whole-Idea code review)"),
+        targetUuid: z.string().describe("Target UUID"),
+        reviewerUuid: z.string().describe("Reviewer agent UUID (must differ from the caller)"),
+        round: z.number().int().min(1).max(3).describe("Current review round (1-3)"),
+        note: z.string().optional().describe("Optional extra instructions appended to the request"),
+      }),
+    },
+    async ({ targetType, targetUuid, reviewerUuid, round, note }) => {
+      try {
+        const result = await reviewRequestService.requestReview({
+          companyUuid: auth.companyUuid, actorUuid: auth.actorUuid,
+          targetType, targetUuid, reviewerUuid, round, note,
+        });
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      } catch (error) {
+        if (error instanceof reviewRequestService.ReviewRequestError) {
+          return { content: [{ type: "text", text: `Review request rejected: ${error.message}` }], isError: true };
+        }
+        throw error;
+      }
+    }
+  );
+
   // chorus_checkin - Agent heartbeat check-in
   server.registerTool(
     "chorus_checkin",
     collectionToolConfig({
       description:
-        "Agent check-in. Returns agent identity (owner, roles, persona), activeProjects — a per-project distribution of your active ideas (project name + active-idea count, NOT a per-idea list) — and up to 5 recent unread notifications (auto-marked read). Recommended at session start. For the full per-idea list, call chorus_get_my_assignments.",
+        "Agent check-in. Returns agent identity, activeProjects (project name + active-idea count, NOT an idea list), projectTeams (owner-private Team context for active/request-scoped projects), and up to 5 unread notifications (auto-marked read). Use chorus_get_project_team for another project and chorus_get_my_assignments for the full idea/task list.",
       inputSchema: z.object({}),
     }),
     async () => {
@@ -623,13 +700,16 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_get_idea",
     {
-      description: "Get detailed information for a single Idea. Includes `reports[]` — full content of the idea's completion reports, newest first.",
+      description: "Get detailed information for a single Idea. Includes `derivedStatus` / `badgeHint` (server-computed lifecycle status: union of approved-proposal and directly linked Quick Tasks; themes roll up from children) and `reports[]` — full content of the idea's completion reports, newest first.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
       }),
     },
     async ({ ideaUuid }) => {
-      const idea = await ideaService.getIdea(auth.companyUuid, ideaUuid);
+      // getIdeaWithDerivedStatus = getIdea + the shared derived-status
+      // computation (tracker/dashboard parity), so hooks can gate on
+      // `derivedStatus` instead of re-deriving completion client-side.
+      const idea = await ideaService.getIdeaWithDerivedStatus(auth.companyUuid, ideaUuid);
       if (!idea) {
         return { content: [{ type: "text", text: "Idea not found" }], isError: true };
       }
@@ -1091,6 +1171,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         "Batch-create tasks in a project — either Quick Task mode (omit proposalUuid) or linked to an approved proposal (pass proposalUuid). Every task must include at least one acceptance criterion, or the whole batch is rejected.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
+        ideaUuid: z.string().optional().describe("Quick Task mode only: link every task in the batch to this Idea (same project, not a theme). Rejected with proposalUuid."),
         proposalUuid: z.string().optional().describe("Associated Proposal UUID. Omit for Quick Task mode (bug fixes, small features, post-delivery patches; flow: create → claim → execute → verify → done); pass it to link to an approved proposal in the traditional AI-DLC flow. Intra-batch dependencies use draftUuid + dependsOnDraftUuids; dependencies on existing tasks use dependsOnTaskUuids."),
         tasks: zArray(z.object({
           title: z.string().describe("Task title"),
@@ -1105,12 +1186,25 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent draftUuid list within this batch"),
           dependsOnTaskUuids: zArray(z.string()).optional().describe("Dependent existing Task UUID list"),
           references: zArray(referenceInlineItemSchema).optional().describe("Optional reference artifacts to attach to this task (fail-soft per item)"),
+          // A per-task ideaUuid would otherwise be stripped silently by zod, leaving
+          // the task unlinked. Reject it and point to the top-level field instead.
+          ideaUuid: z.never({ error: PER_TASK_IDEA_UUID_ERROR }).optional().describe("Not supported per task — set the top-level ideaUuid to link the whole batch to an Idea"),
         })).describe("Task list"),
       }),
     },
-    async ({ projectUuid, proposalUuid, tasks }) => {
+    async ({ projectUuid, proposalUuid, ideaUuid, tasks }) => {
       if (!(await projectExists(auth.companyUuid, projectUuid))) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
+      }
+
+      // Direct Idea link is Quick Task mode only (proposal tasks reach their Idea
+      // via the proposal). Validate once up front so the batch is all-or-nothing.
+      if (ideaUuid) {
+        try {
+          await taskService.assertValidTaskIdeaLink(auth.companyUuid, { projectUuid, proposalUuid, ideaUuid });
+        } catch (error) {
+          return { content: [{ type: "text", text: error instanceof Error ? error.message : "Invalid ideaUuid" }], isError: true };
+        }
       }
 
       if (proposalUuid) {
@@ -1141,6 +1235,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
             priority: task.priority,
             storyPoints: task.storyPoints ?? null,
             proposalUuid: proposalUuid || null,
+            ideaUuid: ideaUuid || null,
             createdByUuid: auth.actorUuid,
           })
         )
@@ -1220,7 +1315,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           actorType: "agent",
           actorUuid: auth.actorUuid,
           action: "created",
-          value: { title: created.title, ...(proposalUuid ? { proposalUuid } : { quickTask: true }) },
+          value: { title: created.title, ...(proposalUuid ? { proposalUuid } : { quickTask: true, ...(ideaUuid && { ideaUuid }) }) },
         });
       }
 
@@ -1264,9 +1359,10 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         })).optional().describe("Replace the task's acceptance criteria with this non-empty set. Omit to leave AC unchanged; cannot be used to clear AC (empty/all-blank is rejected). Replacing discards any prior dev/admin verification marks on the old criteria."),
         addDependsOn: zArray(z.string()).optional().describe("Task UUIDs to add as dependencies (incremental)"),
         removeDependsOn: zArray(z.string()).optional().describe("Task UUIDs to remove from dependencies (incremental)"),
+        ideaUuid: z.string().nullable().optional().describe("Quick Tasks only: link to an Idea (same project, not a theme); null clears the link"),
       }),
     },
-    async ({ taskUuid, status, sessionUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, addDependsOn, removeDependsOn }) => {
+    async ({ taskUuid, status, sessionUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, addDependsOn, removeDependsOn, ideaUuid }) => {
       const task = await taskService.getTaskByUuid(auth.companyUuid, taskUuid);
       if (!task) {
         return { content: [{ type: "text", text: "Task not found" }], isError: true };
@@ -1340,16 +1436,25 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (description !== undefined) updateData.description = description;
       if (priority !== undefined) updateData.priority = priority;
       if (storyPoints !== undefined) updateData.storyPoints = storyPoints;
+      if (ideaUuid !== undefined) updateData.ideaUuid = ideaUuid || null;
 
-      const hasFieldUpdates = title !== undefined || description !== undefined || priority !== undefined || storyPoints !== undefined || status !== undefined;
+      const hasFieldUpdates = title !== undefined || description !== undefined || priority !== undefined || storyPoints !== undefined || status !== undefined || ideaUuid !== undefined;
 
       let updatedStatus = task.status;
       if (hasFieldUpdates) {
-        const updated = await taskService.updateTask(task.uuid, updateData, {
-          actorType: auth.type,
-          actorUuid: auth.actorUuid,
-        });
-        updatedStatus = updated.status;
+        try {
+          const updated = await taskService.updateTask(task.uuid, updateData, {
+            actorType: auth.type,
+            actorUuid: auth.actorUuid,
+          });
+          updatedStatus = updated.status;
+        } catch (error) {
+          // Idea-link validation (task.service assertValidTaskIdeaLink) → isError.
+          if (error instanceof ApiError) {
+            return { content: [{ type: "text", text: error.message }], isError: true };
+          }
+          throw error;
+        }
       }
 
       const warnings: string[] = [];
@@ -1393,6 +1498,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (description !== undefined) activityValue.descriptionUpdated = true;
       if (priority !== undefined) activityValue.priority = priority;
       if (storyPoints !== undefined) activityValue.storyPoints = storyPoints;
+      if (ideaUuid !== undefined) activityValue.ideaUuid = ideaUuid || null;
       if (acReplaced) activityValue.acceptanceCriteriaReplaced = true;
       if (addDependsOn) activityValue.addedDependencies = addDependsOn.length;
       if (removeDependsOn) activityValue.removedDependencies = removeDependsOn.length;

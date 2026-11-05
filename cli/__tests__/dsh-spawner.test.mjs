@@ -278,6 +278,30 @@ describe("DshSpawner.wake", () => {
     });
   });
 
+  it("keeps agents sharing cwd, config and anchor isolated without any native resume", async () => {
+    const fixtures = [
+      { agentUuid: "agent-one", uuid: UUID, sid: SID },
+      { agentUuid: "agent-two", uuid: UUID2, sid: SID2 },
+      { agentUuid: "agent-one", uuid: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", sid: "chorus-bbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb" },
+    ];
+    const identities = [];
+    for (const fixture of fixtures) {
+      const child = successfulRuntime(fixture.sid);
+      const { spawner, calls } = makeSpawner({
+        child, creds: { ...CREDS, agentUuid: fixture.agentUuid }, uuidFn: () => fixture.uuid,
+      });
+      const result = await spawner.wake({ prompt: "continue", sessionId: "same-anchor", cwd: "/shared/repo", isNew: false });
+      expect(result).toMatchObject({ backendSessionId: fixture.sid, isNew: true, exitCode: 0 });
+      expect(calls.opts.env.DSH_HOME).toBe("/managed/home");
+      expect(calls.opts.cwd).toBe("/shared/repo");
+      const requests = child.stdin.writes.map((line) => JSON.parse(line));
+      expect(requests.some((request) => /resume|load/.test(request.method))).toBe(false);
+      expect(requests.find((request) => request.method === "session/prompt").params.sessionId).toBe(fixture.sid);
+      identities.push(result.backendSessionId);
+    }
+    expect(new Set(identities).size).toBe(fixtures.length);
+  });
+
   it("passes CJK/space cwd values verbatim while isolating every runtime session", async () => {
     const fixtures = [
       { cwd: "/workspaces/项目 alpha", uuid: UUID, sid: SID },

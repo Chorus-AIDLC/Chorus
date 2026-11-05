@@ -376,6 +376,7 @@ describe("POST /api/daemon/control — settles a phantom running turn", () => {
       connectionUuid,
       "idea",
       ideaUuid,
+      "",
     );
   });
 
@@ -536,4 +537,18 @@ describe("POST /api/daemon/control — settles a phantom running turn", () => {
     expect(mockAdvanceTurnForWake).not.toHaveBeenCalled();
     expect(mockDispatchControl).not.toHaveBeenCalled();
   });
+});
+
+
+it("targets and phantom-settles only the supplied review anchor", async () => {
+  const sessionId = `review:task:${t1}`;
+  mockIsConnectionLive.mockResolvedValue(true);
+  mockHasRunningExecution.mockResolvedValue(false);
+  mockResolveControlSessionId.mockResolvedValue({ sessionId, ambiguous: false });
+  mockAdvanceTurnForWake.mockResolvedValue({ ok: true });
+  expect((await POST(postRequest({ ...validBody, sessionId }), emptyCtx)).status).toBe(200);
+  expect(mockDispatchControl).toHaveBeenCalledWith(expect.objectContaining({ sessionId }));
+  expect(mockHasRunningExecution).toHaveBeenCalledWith(companyUuid, connectionUuid, "task", t1, sessionId);
+  expect(mockResolveControlSessionId).toHaveBeenCalledWith(expect.objectContaining({ sessionId }));
+  expect(mockAdvanceTurnForWake).toHaveBeenCalledWith(expect.objectContaining({ sessionId }));
 });

@@ -84,6 +84,7 @@ const fixture = vi.hoisted(() => {
     },
     idea: {
       getIdea: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
+      getIdeaWithDerivedStatus: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
       getIdeaByUuid: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
       createIdea: vi.fn(async (params: Row) => ({ uuid: "new-idea", ...params })),
       moveIdea: vi.fn(async (_company: string, uuid: string, targetProjectUuid: string) => ({
@@ -129,6 +130,7 @@ const fixture = vi.hoisted(() => {
       getMyAssignments: vi.fn(async () => ({ ideaTracker: {}, taskTracker: {} })),
     },
     checkin: { buildCheckinResponse: vi.fn(async () => ({ activeProjects: {} })) },
+    projectTeam: { getProjectAgentTeam: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => null) },
     search: { search: vi.fn(async () => ({ results: [], counts: {} })) },
   };
   return { rows, prisma, services };
@@ -150,6 +152,7 @@ vi.mock("@/services/proposal.service", async (importOriginal) => {
   fixture.services.proposal.createProposal.mockImplementation(actual.createProposal);
   return fixture.services.proposal;
 });
+vi.mock("@/services/idea-team.service", async (importOriginal) => ({ ...await importOriginal<typeof import("@/services/idea-team.service")>(), projectHasTeams: vi.fn(async () => false), isIdeaTeamProductDelegate: vi.fn(async () => false) }));
 vi.mock("@/services/activity.service", () => fixture.services.activity);
 vi.mock("@/services/comment.service", () => fixture.services.comment);
 vi.mock("@/services/reference-artifact.service", () => fixture.services.reference);
@@ -157,6 +160,7 @@ vi.mock("@/services/session.service", () => fixture.services.session);
 vi.mock("@/services/project-group.service", () => fixture.services.group);
 vi.mock("@/services/assignment.service", () => fixture.services.assignment);
 vi.mock("@/services/checkin.service", () => fixture.services.checkin);
+vi.mock("@/services/project-agent-team.service", () => fixture.services.projectTeam);
 vi.mock("@/services/search.service", () => fixture.services.search);
 vi.mock("@/services/notification.service", () => ({}));
 vi.mock("@/services/elaboration.service", () => fixture.services.elaboration);
@@ -297,6 +301,33 @@ describe("MCP central project access", () => {
       );
     },
   );
+
+  it("project Team read requires project:read and delegates personal scope from auth", async () => {
+    const actor = auth("editor");
+    const { handlers } = register(actor);
+    const team = { myRoles: ["lead"], handoffWarning: null, roles: { lead: [{ agentUuid: actor.actorUuid, eligible: true, online: false, activeCount: 0 }] } };
+    fixture.services.projectTeam.getProjectAgentTeam.mockResolvedValueOnce(team);
+    const response = await handlers.chorus_get_project_team({ projectUuid: "private" });
+    expect(fixture.services.projectTeam.getProjectAgentTeam).toHaveBeenCalledWith(actor, "private");
+    expect(response.content).toEqual([{ type: "text", text: JSON.stringify({ team }, null, 2) }]);
+    const restricted = register(auth("editor", [...ROLE_PRESETS.admin_agent].filter((permission) => permission !== "project:read")));
+    expect(restricted.handlers.chorus_get_project_team).toBeUndefined();
+  });
+
+  it("project Team read returns explicit null for unconfigured or ownerless callers", async () => {
+    const { handlers } = register(auth());
+    const response = await handlers.chorus_get_project_team({ projectUuid: "public" });
+    expect(response.content).toEqual([{ type: "text", text: JSON.stringify({ team: null }, null, 2) }]);
+  });
+
+  it("project Team read allows viewers and hides inaccessible projects before service access", async () => {
+    const denied = register(auth("nonmember"));
+    expect(await denied.handlers.chorus_get_project_team({ projectUuid: "private" })).toEqual({ content: [{ type: "text", text: "Project not found" }], isError: true });
+    expect(fixture.services.projectTeam.getProjectAgentTeam).not.toHaveBeenCalled();
+    const viewer = register(auth("viewer"));
+    expect((await viewer.handlers.chorus_get_project_team({ projectUuid: "private" })).isError).not.toBe(true);
+    expect(fixture.services.projectTeam.getProjectAgentTeam).toHaveBeenCalledWith(expect.objectContaining({ ownerUuid: "viewer" }), "private");
+  });
 
   it("developer_agent can answer elaboration when its owner is a project Editor", async () => {
     const { handlers } = register(auth("editor", [...ROLE_PRESETS.developer_agent]));
@@ -469,6 +500,16 @@ describe("MCP central project access", () => {
     expect(eventBus.emitPresence).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["chorus_create_tasks", { projectUuid: "public", ideaUuid: "idea-private", tasks: [{ title: "New" }] }],
+    ["chorus_list_tasks", { projectUuid: "public", ideaUuid: "idea-private" }],
+  ] as [string, Record<string, unknown>][])("rejects an ideaUuid outside the declared project for visible ideas (%s)", async (name, params) => {
+    const { handlers, originals } = register(auth("editor"));
+    expect((await handlers[name](params)).isError).toBe(true);
+    expect(originals[name]).not.toHaveBeenCalled();
+    expect(eventBus.emitPresence).not.toHaveBeenCalled();
+  });
+
   it.each(["missing", "foreign"])("matches hidden and %s task errors", async (suffix) => {
     const { handlers } = register(auth("nonmember"));
     const hidden = await handlers.chorus_get_task({ taskUuid: "task-private" });
@@ -484,6 +525,10 @@ describe("MCP central project access", () => {
     ["chorus_pm_create_proposal", { projectUuid: "public", inputType: "idea", inputUuids: ["idea-private"], title: "New" }],
     ["chorus_pm_create_proposal", { projectUuid: "public", inputType: "document", inputUuids: ["document-private"], title: "New" }],
     ["chorus_pm_create_idea", { projectUuid: "public", parentUuid: "idea-private", title: "New" }],
+    // Direct Idea link (link-quick-task-to-idea): ideaUuid is an authorized entity field.
+    ["chorus_create_tasks", { projectUuid: "public", ideaUuid: "idea-private", tasks: [{ title: "New" }] }],
+    ["chorus_update_task", { taskUuid: "task-public", ideaUuid: "idea-private" }],
+    ["chorus_list_tasks", { projectUuid: "public", ideaUuid: "idea-private" }],
   ] as [string, Record<string, unknown>][])("checks secondary projects for %s before any handler/presence", async (name, params) => {
     const { handlers, originals } = register(auth("nonmember"));
     expect((await handlers[name](params)).isError).toBe(true);
@@ -686,7 +731,7 @@ describe("MCP central project access", () => {
           expect(JSON.parse((response.content[0] as { text: string }).text)).toEqual({
             uuid: proposal.uuid, status: "pending",
           });
-          expect(fixture.services.proposal.submitProposal).toHaveBeenCalledWith(proposal.uuid, "company");
+          expect(fixture.services.proposal.submitProposal).toHaveBeenCalledWith(proposal.uuid, "company", expect.objectContaining({ actorType: "agent" }));
           expect(fixture.prisma.proposal.update).toHaveBeenCalledOnce();
         }
         if (inputType === "document") expect(fixture.prisma.idea.findMany).not.toHaveBeenCalled();

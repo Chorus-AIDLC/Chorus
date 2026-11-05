@@ -156,6 +156,21 @@ describe("YoloButton — render gating", () => {
     expect(screen.queryByRole("button", { name: "Yolo" })).toBeNull();
   });
 
+  it("does not render when a proposal-less idea's linked Quick Tasks are all done", () => {
+    render(<YoloButton {...HAPPY_PROPS} linkedTasks={[{ status: "done" }, { status: "closed" }]} />);
+    expect(screen.queryByRole("button", { name: "Yolo" })).toBeNull();
+  });
+
+  it("renders while a linked Quick Task is unfinished, or while elaboration answers are pending", () => {
+    const { unmount } = render(<YoloButton {...HAPPY_PROPS} linkedTasks={[{ status: "in_progress" }]} />);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Yolo" }).disabled).toBe(false);
+    unmount();
+    render(
+      <YoloButton {...HAPPY_PROPS} linkedTasks={[{ status: "done" }]} elaborationStatus="pending_answers" />
+    );
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Yolo" }).disabled).toBe(false);
+  });
+
   it("does not render for a non-agent assignee", () => {
     render(<YoloButton {...HAPPY_PROPS} assignee={{ type: "user", uuid: "u1" }} />);
     expect(screen.queryByRole("button", { name: "Yolo" })).toBeNull();

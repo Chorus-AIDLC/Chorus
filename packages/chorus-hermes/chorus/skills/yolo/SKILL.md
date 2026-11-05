@@ -4,7 +4,7 @@ description: Full-auto AI-DLC pipeline in Hermes — from prompt to done. Automa
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.24.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -98,7 +98,26 @@ yolo: <prompt> --project <project-uuid>
 
 During planning, follow the Idea and Proposal routes in the research skill (`skill_view("chorus:research")`, which also holds the shared rules): Idea before formal clarification once focused, Proposal after reusing evidence and only for new gaps or an explicit request. Carry findings and the request context across wakes and brainstorm; do not restart the same investigation on resume. Preserve the existing yolo decision/review gates. A Tracker Research action is research-only even inside a yolo-associated conversation: use the Idea research-only branch, save/report, and return without advancing to elaboration, proposal submission, or development. A yolo request alone does not prove development started; use actual execution facts.
 
+## Team-managed Ideas (check first)
+
+Call `chorus_get_idea_team_context({ideaUuid})` before executing. If `managed: true` and you are the `orchestrator`, YOLO keeps the Team's division of labor — it only removes the need for a human to approve:
+
+- **Product work**: delegate via `chorus_recommend_team_agent({ideaUuid, role: "product"})` + `chorus_delegate_team_product`, instead of elaborating and writing the proposal yourself (if the recommendation is yourself, do it yourself).
+- **Reviews**: follow [Team review routing](../orchestrate/SKILL.md#team-review-routing) for proposal, task and whole-Idea reviews. Recommend with `role: "review"` and `proposalUuid` / `taskUuid` / neither respectively, rather than always spawning your own reviewer. Self → matching read-only reviewer via the host-specific path in that section in this turn; another agent → one review-request mention, then end the turn. Generic hook reminders below do not override Team routing.
+
+**Direct Team review requests:** send them with `chorus_request_review` (target, reviewer, round). The server renders the `Team review request — <kind>, round N` envelope and routes only that reviewer into its review session; a hand-written `chorus_add_comment` envelope never opens a review session. A request must never start a line with `VERDICT:`.
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
+- **Approval**: only the current orchestrator may approve with existing `proposal:admin` permission after current-round PASS / PASS WITH NOTES and server-confirmed human YOLO for this exact Idea. Otherwise request human approval once and stop.
+- **Development**: for each ready task use `chorus_recommend_team_agent({ideaUuid, role: "development", taskUuid})` and assign the recommended agent, instead of spawning sub-agents or implementing yourself. If the recommendation is yourself, claim and implement it in this turn.
+- **Verification**: only the current orchestrator verifies with existing permissions after a current-round task PASS / PASS WITH NOTES. Re-read all source Idea contexts before acting. After self-submission, route review immediately (no self-wake), including the all-source-proposals last-task check; start aggregate review in parallel at `to_verify`, not after every task is verified. Its PASS gates report/PR only. Honor paused state, routed mentions, stable IDs, batching and the 3-round human escalation cap.
+- Unmanaged Ideas (`managed: false`): follow the workflow below unchanged.
+
 ## Workflow
+
+The detailed spawn-based execution and review loops below are the **unmanaged flow**. Managed Ideas use [Team review routing](../orchestrate/SKILL.md#team-review-routing) and the Team division of labor above, including the 3-round cap even where legacy configuration permits unlimited rounds. A worker or product delegate must not take over orchestration or verification.
 
 ### Phase 1: Planning
 
@@ -574,7 +593,7 @@ comments = chorus_get_comments({ targetType: "idea", targetUuid: "<idea-uuid>" }
 Act on the VERDICT:
 
 - **PASS** / **PASS WITH NOTES** — the feature is cleared to ship. Proceed to Phase 5 / 5b.
-- **FAIL** — do NOT ship. Read the BLOCKERs, then fix them via the **quick-dev** workflow (`skill_view("chorus:quick-dev")`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it — do **not** reopen the already-verified tasks. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Drive every fix task through Phase 3 → Phase 4, including AC self-check, independent task review, and admin verification. Re-spawn the code-reviewer only after every fix task is successfully `done`; a failed or cancelled fix task, stop the automatic loop and escalate. Loop bounded by the `maxCodeReviewRounds` setting (`CHORUS_MAX_CODE_REVIEW_ROUNDS`, default 3; 0 = unlimited). Rebuild the aggregate evidence bundle before every re-review round.
+- **FAIL** — do NOT ship. Read the BLOCKERs, then fix them via the **quick-dev** workflow (`skill_view("chorus:quick-dev")`): call `chorus_create_tasks` with `proposalUuid` set to the **current approved proposal** so the fix tasks attach to it; for an Idea with no approved proposal, create them as Quick Tasks with the same top-level `ideaUuid` and no `proposalUuid` — do **not** reopen the already-verified tasks. Group related small BLOCKERs into one cohesive task by default; split only materially large or independently testable fixes. Drive every fix task through Phase 3 → Phase 4, including AC self-check, independent task review, and admin verification. Re-spawn the code-reviewer only after every fix task is successfully `done`; a failed or cancelled fix task, stop the automatic loop and escalate. Loop bounded by the `maxCodeReviewRounds` setting (`CHORUS_MAX_CODE_REVIEW_ROUNDS`, default 3; 0 = unlimited). Rebuild the aggregate evidence bundle before every re-review round.
 
 ```
 # Max rounds escalation

@@ -141,13 +141,13 @@ describe("kiro backend end-to-end argv (via the daemon-selected spawner)", () =>
     expect(calls.argv.join(" ")).not.toContain("cho_daemonkey");
   });
 
-  it("KNOWN anchor (map hit) → `kiro-cli chat --no-interactive --resume-id <sessionId> --agent chorus`", async () => {
+  it("refuses map-only ownership and starts fresh without a native resume handle", async () => {
     const { spawner, calls, child } = kiroSpawnerWithFakeSpawn({ getSessionId: () => SID });
     const p = spawner.wake({ prompt: "continue", sessionId: ANCHOR, isNew: true });
     child.emit("close", 0);
-    await p;
-    expect(calls.argv.slice(0, 3)).toEqual(["chat", "--no-interactive", "--resume-id"]);
-    expect(calls.argv[3]).toBe(SID);
-    expect(calls.argv.slice(4, 6)).toEqual(["--agent", "chorus"]);
+    expect(await p).toMatchObject({ backendSessionId: null, isNew: true });
+    expect(calls.argv.slice(0, 4)).toEqual(["chat", "--no-interactive", "--agent", "chorus"]);
+    expect(calls.argv).not.toContain("--resume-id");
+    expect(calls.argv).not.toContain(SID);
   });
 });

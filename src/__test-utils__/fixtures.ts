@@ -94,6 +94,7 @@ export function makeTask(overrides: Record<string, unknown> = {}) {
     companyUuid: '00000000-0000-0000-0000-000000000001',
     companyId: 1,
     proposalUuid: null,
+    ideaUuid: null,
     createdByUuid: '00000000-0000-0000-0000-000000000002',
     createdByType: 'user',
     createdAt: new Date('2026-01-01'),

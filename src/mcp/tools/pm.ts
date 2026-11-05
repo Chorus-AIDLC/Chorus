@@ -307,7 +307,8 @@ export function registerPmTools(server: McpServer, auth: AgentAuthContext) {
       try {
         const proposal = await proposalService.submitProposal(
           proposalUuid,
-          auth.companyUuid
+          auth.companyUuid,
+          { actorType: auth.type, actorUuid: auth.actorUuid }
         );
         return {
           content: [{ type: "text", text: JSON.stringify({ uuid: proposal.uuid, status: proposal.status }, null, 2) }],

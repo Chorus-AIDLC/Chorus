@@ -11,10 +11,11 @@ import type { AuthContext } from "@/types/auth";
 import { buildAssigneeMatch } from "@/lib/uuid-resolver";
 import { accessibleProjectUuids } from "@/services/project-access.service";
 import {
-  computeDerivedStatus,
+  computeIdeaDerivedStatus,
   getIdeasWithDerivedStatus,
   type DerivedIdeaStatus,
 } from "@/services/idea.service";
+import { ideaTaskStatuses, loadIdeaTaskContexts } from "@/services/idea-task-context.service";
 
 // ===== Idea tracker types =====
 
@@ -77,7 +78,8 @@ async function trackerProjectUuids(auth: AuthContext, projectUuids?: string[]) {
 
 /**
  * Build the agent's idea tracker — assigned-to-me ideas grouped by project,
- * each carrying derivedStatus + proposal/task counts.
+ * each carrying derivedStatus + proposal/task counts (tasks = latest approved
+ * proposal's tasks ∪ tasks linked directly to the idea).
  *
  * Filters: excludes status="closed" (terminal) and derivedStatus="done"
  * (rolled-up completion of the proposal/task chain). A container (theme) idea's
@@ -88,7 +90,8 @@ async function trackerProjectUuids(auth: AuthContext, projectUuids?: string[]) {
  * Ordering: ideas are visited in `updatedAt desc` so the cap, when applied,
  * keeps the most-recently-touched work.
  *
- * Query budget: 4 prisma calls (ideas → proposals → tasks → projects), plus —
+ * Query budget: 4 prisma calls (ideas → proposals → tasks [approved-proposal ∪
+ * linked] → projects), plus —
  * ONLY when the agent has a container idea on their plate — one
  * getIdeasWithDerivedStatus (itself ~3-4 queries over the whole project) per
  * distinct project that holds a container. This container rollup runs before the
@@ -134,71 +137,12 @@ export async function buildIdeaTracker(
 
   if (rawIdeas.length === 0) return {};
 
-  const ideaUuidSet = new Set(rawIdeas.map((i) => i.uuid));
   const projectUuids = [...new Set(rawIdeas.map((i) => i.projectUuid))];
 
-  // Q2: Pending + approved proposals in those projects, filtered in-memory by
-  // inputUuids overlap. Scoping by projectUuid keeps the fetch small; JSON
-  // overlap filtering in Prisma is awkward.
-  const rawProposals = await prisma.proposal.findMany({
-    where: {
-      companyUuid: auth.companyUuid,
-      projectUuid: { in: projectUuids },
-      status: { in: ["pending", "approved"] },
-      inputType: "idea",
-    },
-    select: {
-      uuid: true,
-      status: true,
-      inputUuids: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  const ideaProposalCount = new Map<string, number>();
-  const ideaHasPending = new Set<string>();
-  const ideaLatestApproved = new Map<string, { uuid: string; createdAt: Date }>();
-
-  for (const proposal of rawProposals) {
-    const inputUuids = proposal.inputUuids as unknown;
-    if (!Array.isArray(inputUuids)) continue;
-    for (const ideaUuid of inputUuids) {
-      if (typeof ideaUuid !== "string" || !ideaUuidSet.has(ideaUuid)) continue;
-      ideaProposalCount.set(ideaUuid, (ideaProposalCount.get(ideaUuid) ?? 0) + 1);
-      if (proposal.status === "pending") {
-        ideaHasPending.add(ideaUuid);
-      } else if (proposal.status === "approved") {
-        const existing = ideaLatestApproved.get(ideaUuid);
-        if (!existing || proposal.createdAt > existing.createdAt) {
-          ideaLatestApproved.set(ideaUuid, { uuid: proposal.uuid, createdAt: proposal.createdAt });
-        }
-      }
-    }
-  }
-
-  const approvedProposalUuids = [
-    ...new Set([...ideaLatestApproved.values()].map((p) => p.uuid)),
-  ];
-
-  // Q3: Tasks on the latest-approved proposals
-  const proposalToTaskStatuses = new Map<string, string[]>();
-  if (approvedProposalUuids.length > 0) {
-    const tasks = await prisma.task.findMany({
-      where: {
-        companyUuid: auth.companyUuid,
-        projectUuid: { in: projectUuids },
-        proposalUuid: { in: approvedProposalUuids },
-      },
-      select: { proposalUuid: true, status: true },
-    });
-    for (const task of tasks) {
-      if (!task.proposalUuid) continue;
-      const statuses = proposalToTaskStatuses.get(task.proposalUuid) ?? [];
-      statuses.push(task.status);
-      proposalToTaskStatuses.set(task.proposalUuid, statuses);
-    }
-  }
+  // Q2+Q3: shared batched loader — pending/approved proposals (honored within
+  // the idea's own project) plus the union of latest-approved-proposal tasks and
+  // tasks linked directly via Task.ideaUuid.
+  const contexts = await loadIdeaTaskContexts(prisma, auth.companyUuid, rawIdeas);
 
   // Q4: Project names (only for projects that have surviving ideas)
   const projects = await prisma.project.findMany({
@@ -211,7 +155,7 @@ export async function buildIdeaTracker(
   const projectNames = new Map(projects.map((p) => [p.uuid, p.name]));
 
   // Q5 (containers only): a theme (container) idea has no proposal/task chain of
-  // its own, so computeDerivedStatus would stall it at "in_progress" forever —
+  // its own, so computeIdeaDerivedStatus would stall it at "in_progress" forever —
   // even when every child is done. Its real status must roll up from its
   // children, which may be assigned to other actors and thus absent from the
   // assignee-matched set above. Resolve the rolled-up status from the same
@@ -238,18 +182,8 @@ export async function buildIdeaTracker(
   for (const idea of rawIdeas) {
     if (count >= maxIdeas) break;
 
-    const latestApproved = ideaLatestApproved.get(idea.uuid);
-    const taskStatuses = latestApproved
-      ? proposalToTaskStatuses.get(latestApproved.uuid) ?? []
-      : [];
-
-    const own = computeDerivedStatus({
-      ideaStatus: idea.status,
-      elaborationStatus: idea.elaborationStatus,
-      hasPendingProposal: ideaHasPending.has(idea.uuid),
-      hasApprovedProposal: !!latestApproved,
-      taskStatuses,
-    });
+    const ctx = contexts.get(idea.uuid);
+    const own = computeIdeaDerivedStatus(idea, ctx);
 
     // A container idea takes its children's rolled-up status; everything else
     // uses the status derived from its own proposal/task chain. The board query
@@ -277,8 +211,8 @@ export async function buildIdeaTracker(
       title: idea.title,
       status: derivedStatus,
       parentUuid: idea.parentUuid ?? null,
-      proposals: ideaProposalCount.get(idea.uuid) ?? 0,
-      tasks: taskStatuses.length,
+      proposals: ctx?.proposalCount ?? 0,
+      tasks: ideaTaskStatuses(ctx).length,
     });
     count++;
   }

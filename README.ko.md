@@ -38,6 +38,8 @@ Idea ──> Proposal ──> [Document + Task DAG] ──> Execute ──> Veri
 
 ## 최근 업데이트
 
+**[v0.24.0](https://chorus-ai.dev/blog/chorus-v0.24.0-release/)**: 에이전트를 프로젝트별 비공개 팀으로 구성해 제품·개발·리뷰 작업을 각각 다른 구성원에게 배분할 수 있습니다. 리뷰는 개발 기억이 없는 전용 세션에서 실행되고, 한 에이전트가 같은 아이디어의 여러 작업을 동시에 진행할 수 있으며, Quick Task를 아이디어에 바로 연결할 수도 있습니다.
+
 **[v0.23.0](https://chorus-ai.dev/blog/chorus-v0.23.0-release/)**: 워크스페이스 로컬 계정 관리와 표시 이름·아바타 설정을 추가했습니다. 제안서 의존성 검증, Pi의 선택적 제출 전 검사, Redis 기반 공유 인증 요청 제한을 지원하며, 작업 수행자 기록과 중복 멘션 알림을 수정했습니다.
 
 **[v0.22.2](https://chorus-ai.dev/blog/chorus-v0.22.2-release/)**: Docker Compose와 PostgreSQL 17을 사용해 자신의 Linux 또는 macOS 머신에서 Chorus를 호스팅할 수 있습니다. 반복 가능한 배포, 선택적 LAN HTTPS, Cloudflare Tunnel 연결 가이드를 제공합니다. TRAE CLI 백엔드를 추가해 Codex와 공통 플러그인으로 기존 워크플로에 참여할 수 있으며, 유효하지 않은 담당자 정보, 삭제 실패, daemon 보안 및 설정 문제도 수정했습니다.

@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { LayoutGrid, GitBranch, Plus, List } from "lucide-react";
+import { LayoutGrid, GitBranch, Plus, List, Lightbulb, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -17,6 +17,8 @@ import { useCanEditProject } from "@/contexts/project-access-context";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { isAgentAssignee } from "@/lib/assignee-identity";
 import { motion } from "framer-motion";
+import { parseTaskScopeFilter, taskMatchesScope, IDEA_UUID_PARAM } from "./task-scope-filter";
+import { getTaskIdeaSourceAction } from "./[taskUuid]/source-actions";
 
 interface Task {
   uuid: string;
@@ -26,6 +28,7 @@ interface Task {
   priority: string;
   storyPoints: number | null;
   proposalUuid: string | null;
+  ideaUuid?: string | null;
   assignee: {
     type: string;
     uuid: string;
@@ -91,13 +94,34 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
   const basePath = `/projects/${projectUuid}/tasks`;
   const { selectedId: selectedTaskUuid, openPanel, closePanel } = usePanelUrl(basePath, initialSelectedTaskUuid);
 
-  // Parse proposalUuids from URL for filtering
-  const proposalUuidFilter = useMemo(() => {
-    const param = searchParams.get("proposalUuids");
-    if (!param) return null;
-    const uuids = param.split(",").filter(Boolean);
-    return uuids.length > 0 ? new Set(uuids) : null;
-  }, [searchParams]);
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Parse the task scope (proposalUuids and/or the idea's linked Quick Tasks)
+  // from the URL for filtering
+  const scopeFilter = useMemo(() => parseTaskScopeFilter(searchParams), [searchParams]);
+  const scopeIdeaUuid = scopeFilter?.ideaUuid ?? null;
+
+  // Title of the idea the scope is limited to, for the removable filter chip.
+  const [scopeIdeaTitle, setScopeIdeaTitle] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setScopeIdeaTitle(null);
+    if (!scopeIdeaUuid) return;
+    getTaskIdeaSourceAction(scopeIdeaUuid).then((idea) => {
+      if (!cancelled) setScopeIdeaTitle(idea?.title ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [scopeIdeaUuid]);
+
+  const clearIdeaScope = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete(IDEA_UUID_PARAM);
+    const query = params.toString();
+    router.replace(`${pathname}${query ? `?${query}` : ""}`, { scroll: false });
+  }, [router, pathname, searchParams]);
 
   // Switch to list view on mobile after hydration
   useEffect(() => {
@@ -120,9 +144,9 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
 
   // Apply both proposal filter and status filter
   const proposalFilteredTasks = useMemo(() => {
-    if (!proposalUuidFilter) return initialTasks;
-    return initialTasks.filter(task => task.proposalUuid && proposalUuidFilter.has(task.proposalUuid));
-  }, [initialTasks, proposalUuidFilter]);
+    if (!scopeFilter) return initialTasks;
+    return initialTasks.filter(task => taskMatchesScope(task, scopeFilter));
+  }, [initialTasks, scopeFilter]);
 
   const filteredTasks = useMemo(() => {
     const filter = statusFilters.find(f => f.id === activeFilter);
@@ -133,8 +157,29 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
   return (
     <>
       {/* Proposal Filter */}
-      <div className="mb-4 overflow-x-auto">
+      <div className="mb-4 flex flex-wrap items-center gap-2 overflow-x-auto">
         <ProposalFilter projectUuid={projectUuid} />
+        {scopeIdeaUuid && (
+          <Badge
+            variant="secondary"
+            className="h-7 gap-1.5 border-border bg-secondary pl-2.5 pr-1 text-xs font-normal text-foreground"
+          >
+            <Lightbulb className="h-3 w-3 shrink-0 text-primary" />
+            <span className="max-w-[200px] truncate">
+              {t("tasks.ideaFilter.label", { title: scopeIdeaTitle ?? t("tasks.ideaFilter.fallbackTitle") })}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 rounded-full text-muted-foreground hover:text-foreground"
+              aria-label={t("tasks.ideaFilter.clear")}
+              onClick={clearIdeaScope}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          </Badge>
+        )}
       </div>
 
       {/* Toolbar: View Toggle + New Task */}
@@ -307,7 +352,7 @@ export function TaskViewToggle({ projectUuid, initialTasks, currentUserUuid, ini
           selectedTaskUuid={selectedTaskUuid}
           onTaskSelect={openPanel}
           onPanelClose={closePanel}
-          proposalUuidFilter={proposalUuidFilter}
+          scopeFilter={scopeFilter}
         />
       ) : (
         <div className="flex flex-1 flex-col">

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "@/hooks/use-progress-router";
 import { useTranslations } from "next-intl";
-import { X, Pencil, CheckCircle, Play, Eye, User, Send, FileText, Loader2, Check, Trash2, GitBranch, Plus, ArrowLeft, ArrowRight, Activity as ActivityIcon, CircleCheck, Timer, CircleX, AlertTriangle } from "lucide-react";
+import { X, Pencil, CheckCircle, Play, Eye, User, Send, FileText, Loader2, Check, Trash2, GitBranch, Plus, ArrowLeft, ArrowRight, Activity as ActivityIcon, CircleCheck, Timer, CircleX, AlertTriangle, Lightbulb } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,7 +34,7 @@ import { UserIdentityAvatar as UserAvatar } from "@/components/user-identity-ava
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { AssigneeInstanceLine } from "@/components/agent-presence";
 import { isAssignedToActor, isAgentAssignee } from "@/lib/assignee-identity";
-import { updateTaskStatusAction, createTaskAction, updateTaskFieldsAction, deleteTaskAction } from "./[taskUuid]/actions";
+import { updateTaskStatusAction, createTaskAction, updateTaskFieldsAction, deleteTaskAction, getTaskIdeaOptionsAction } from "./[taskUuid]/actions";
 import { markCriteriaAction, selfCheckCriteriaAction, resetCriterionAction } from "./[taskUuid]/criteria-actions";
 import { UnifiedComments } from "@/components/unified-comments";
 import { ReferencesSection } from "@/components/references-section";
@@ -42,7 +42,9 @@ import { getTaskActivitiesAction } from "./[taskUuid]/activity-actions";
 import type { ActivityResponse } from "@/services/activity.service";
 import {
   getTaskSourceAction,
+  getTaskIdeaSourceAction,
   type ProposalSource,
+  type IdeaSource,
 } from "./[taskUuid]/source-actions";
 import { MarkdownContent } from "@/components/markdown-content";
 import { ContentWithMentions } from "@/components/mention-renderer";
@@ -107,6 +109,8 @@ interface Task {
   acceptanceStatus?: string;
   acceptanceSummary?: AcceptanceSummaryData;
   proposalUuid: string | null;
+  // Direct Idea link for Quick Tasks (Task.ideaUuid); null for proposal tasks.
+  ideaUuid?: string | null;
   assignee: {
     type: string;
     uuid: string;
@@ -168,6 +172,9 @@ const priorityI18nKeys: Record<string, string> = {
   high: "highPriority",
   critical: "criticalPriority",
 };
+
+// Radix Select items cannot use "" as a value — sentinel for "no linked idea".
+const NO_IDEA_VALUE = "__none__";
 
 // Format relative time
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -267,6 +274,7 @@ export function TaskDetailPanel({
   const [activities, setActivities] = useState<ActivityResponse[]>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState(true);
   const [source, setSource] = useState<ProposalSource | null>(null);
+  const [ideaSource, setIdeaSource] = useState<IdeaSource | null>(null);
   const [showAssignModal, setShowAssignModal] = useState(false);
 
   // Dependency state
@@ -297,6 +305,10 @@ export function TaskDetailPanel({
       required: item.required ?? true,
     }))
   );
+  // Direct Idea link (Quick Tasks only): "" = no link.
+  const [editIdeaUuid, setEditIdeaUuid] = useState<string>(task?.ideaUuid ?? "");
+  const [ideaOptions, setIdeaOptions] = useState<{ uuid: string; title: string }[]>([]);
+  const [ideaOptionsLoaded, setIdeaOptionsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -330,6 +342,16 @@ export function TaskDetailPanel({
       if (task!.proposalUuid) {
         const result = await getTaskSourceAction(task!.proposalUuid);
         setSource(result);
+      } else {
+        setSource(null);
+      }
+    }
+    async function loadIdeaSource() {
+      if (task!.ideaUuid && !task!.proposalUuid) {
+        const result = await getTaskIdeaSourceAction(task!.ideaUuid);
+        setIdeaSource(result);
+      } else {
+        setIdeaSource(null);
       }
     }
     async function loadDependencies() {
@@ -351,9 +373,28 @@ export function TaskDetailPanel({
     }
     loadActivities();
     loadSource();
+    loadIdeaSource();
     loadDependencies();
     loadActiveWorkers();
-  }, [task?.uuid, task?.proposalUuid, projectUuid]);
+  }, [task?.uuid, task?.proposalUuid, task?.ideaUuid, projectUuid]);
+
+  // The Idea link is offered only for Quick Tasks (create mode, or a task with
+  // no proposal) — proposal tasks reach their Idea through the proposal.
+  const canLinkIdea = isCreateMode || !task?.proposalUuid;
+
+  // Load the project's linkable (non-theme) ideas the first time the form opens.
+  useEffect(() => {
+    if (!isEditing || !canLinkIdea || ideaOptionsLoaded) return;
+    let cancelled = false;
+    getTaskIdeaOptionsAction(projectUuid).then((result) => {
+      if (cancelled) return;
+      setIdeaOptions(result.data);
+      setIdeaOptionsLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing, canLinkIdea, ideaOptionsLoaded, projectUuid]);
 
   // Load project tasks for dependency picker in create mode
   useEffect(() => {
@@ -379,9 +420,10 @@ export function TaskDetailPanel({
           required: item.required ?? true,
         }))
       );
+      setEditIdeaUuid(task.ideaUuid ?? "");
       setEditError(null);
     }
-  }, [task?.uuid, task?.title, task?.description, task?.priority, task?.storyPoints, task?.acceptanceCriteriaItems]);
+  }, [task?.ideaUuid, task?.uuid, task?.title, task?.description, task?.priority, task?.storyPoints, task?.acceptanceCriteriaItems]);
 
   const handleStatusChange = async (newStatus: string) => {
     if (!task) return;
@@ -406,6 +448,7 @@ export function TaskDetailPanel({
         required: item.required ?? true,
       }))
     );
+    setEditIdeaUuid(task.ideaUuid ?? "");
     setEditError(null);
     setIsEditing(true);
   };
@@ -427,6 +470,7 @@ export function TaskDetailPanel({
           required: item.required ?? true,
         }))
       );
+      setEditIdeaUuid(task.ideaUuid ?? "");
     }
     setEditError(null);
   };
@@ -450,6 +494,7 @@ export function TaskDetailPanel({
         priority: editPriority,
         storyPoints: storyPointsValue,
         acceptanceCriteria: null,
+        ideaUuid: editIdeaUuid || null,
       });
 
       setIsSaving(false);
@@ -490,6 +535,11 @@ export function TaskDetailPanel({
         return;
       }
 
+      // Only send the Idea link when it changed (null clears it); proposal
+      // tasks never send it.
+      const nextIdeaUuid = editIdeaUuid || null;
+      const ideaChanged = canLinkIdea && nextIdeaUuid !== (task!.ideaUuid ?? null);
+
       const result = await updateTaskFieldsAction({
         taskUuid: task!.uuid,
         projectUuid,
@@ -497,6 +547,7 @@ export function TaskDetailPanel({
         description: editDescription.trim() || null,
         priority: editPriority,
         storyPoints: storyPointsValue,
+        ...(ideaChanged ? { ideaUuid: nextIdeaUuid } : {}),
         ...(acChanged
           ? {
               acceptanceCriteriaItems: filteredEdited.map((item) => ({
@@ -645,6 +696,41 @@ export function TaskDetailPanel({
           className="border-border text-sm focus-visible:ring-primary"
         />
       </div>
+
+      {canLinkIdea && (
+        <div className="space-y-2">
+          <Label htmlFor="edit-idea" className="text-[13px] font-medium text-foreground">
+            {t("tasks.ideaLink.label")}
+          </Label>
+          <Select
+            value={editIdeaUuid || NO_IDEA_VALUE}
+            onValueChange={(value) => setEditIdeaUuid(value === NO_IDEA_VALUE ? "" : value)}
+          >
+            <SelectTrigger id="edit-idea" className="border-border text-sm focus:ring-primary">
+              <SelectValue placeholder={t("tasks.ideaLink.none")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_IDEA_VALUE}>
+                <span className="text-muted-foreground">{t("tasks.ideaLink.none")}</span>
+              </SelectItem>
+              {/* Keep the current link selectable even if it is outside the loaded options. */}
+              {editIdeaUuid && !ideaOptions.some((idea) => idea.uuid === editIdeaUuid) && (
+                <SelectItem value={editIdeaUuid}>
+                  <span className="truncate">
+                    {ideaSource?.uuid === editIdeaUuid ? ideaSource.title : t("tasks.ideaLink.current")}
+                  </span>
+                </SelectItem>
+              )}
+              {ideaOptions.map((idea) => (
+                <SelectItem key={idea.uuid} value={idea.uuid}>
+                  <span className="truncate">{idea.title}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{t("tasks.ideaLink.hint")}</p>
+        </div>
+      )}
 
       <div className="space-y-2">
         <Label className="text-[13px] font-medium text-foreground">
@@ -911,6 +997,24 @@ export function TaskDetailPanel({
                         <MarkdownContent>{task.acceptanceCriteria}</MarkdownContent>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* Idea Section - Quick Task directly linked to an Idea */}
+                {ideaSource && (
+                  <div className="mt-5">
+                    <label className="text-[11px] font-medium uppercase tracking-wide text-[#9A9A9A]">
+                      {t("tasks.ideaLink.sourceLabel")}
+                    </label>
+                    <a
+                      href={`/projects/${projectUuid}/dashboard?panel=${ideaSource.uuid}`}
+                      className="mt-2 flex items-center justify-between rounded-lg bg-background p-3 hover:bg-[#F0EDE5] dark:hover:bg-[#26241f] transition-colors"
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Lightbulb className="h-3.5 w-3.5 shrink-0 text-primary" />
+                        <span className="truncate text-xs text-foreground">{ideaSource.title}</span>
+                      </div>
+                    </a>
                   </div>
                 )}
 

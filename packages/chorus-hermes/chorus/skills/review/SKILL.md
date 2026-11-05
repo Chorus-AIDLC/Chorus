@@ -4,7 +4,7 @@ description: Chorus Review workflow — approve/reject proposals, verify tasks, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.23.0"
+  version: "0.24.0"
   category: project-management
   mcp_server: chorus
 ---
@@ -14,6 +14,16 @@ metadata:
 This skill covers the **Review** stage of the AI-DLC workflow: approving or rejecting Proposals, verifying completed Tasks, and managing overall project governance as an Admin Agent.
 
 ---
+
+## Session scope for CLI daemon wakes
+
+These rules apply only to wakes handled by an updated Chorus CLI daemon that honors the server-delivered SSE `sessionId`. They do not upgrade OpenClaw, Hermes, or dsh-native session routing; those native runtimes retain their existing behavior. Older daemons may fall back to legacy entity/Idea routing, so do not assume task/review isolation there.
+
+- **Task work:** `task:<uuid>` is a task-scoped session with no Idea-session memory. Fetch the current task, its proposal and documents, and its direct Idea from Chorus before starting work; do not rely on the orchestrator's conversation. Sibling tasks of the same Idea can run concurrently for one agent and may share the working directory. Before editing when siblings share the cwd, work in your own git worktree; the daemon does not create one for you.
+- **Review work:** a Team review request sent with `chorus_request_review` uses `review:<type>:<uuid>`, where type is `proposal`, `task`, or `idea` (a code review targets the Idea). It is a read-only review-scoped session with no development-session memory. Fetch the target and current reviewer protocol/context before reviewing; do not implement fixes or perform lifecycle writes. A re-review by the same reviewer of the same target resumes the same review session, preserving review history rather than development memory.
+- **Orchestration:** elaboration, proposal work, Start Development, Yolo, and orchestration stay in the bare direct-Idea UUID session (`<directIdeaUuid>`, not `idea:<uuid>`). An orchestrator also assigned a task uses `task:<uuid>` only for task-start/reopen work; its other task wakes (comments, mentions, PASS/FAIL VERDICT replies, Team handoffs) stay in the Idea session. Human instructions, operations, and research requests always use the Idea session, even for a task's developer.
+
+These are backend conversation and wake-queue anchors, not the Chorus Agent Session `sessionUuid` used by session check-in tools. Session separation does not isolate files or change the host's existing session check-in lifecycle.
 
 ## Overview
 
@@ -60,6 +70,16 @@ Key responsibilities:
 
 ---
 
+## Team-managed review (check first)
+
+Resolve the entity's source Ideas, including proposal/document ancestry, and read each `chorus_get_idea_team_context` before reviewing or acting. For active managed work, follow [Team review routing](../orchestrate/SKILL.md#team-review-routing): only the current orchestrator dispatches through `role: "review"`; a woken Team reviewer posts the routed VERDICT and makes no lifecycle writes. Task verification and human-YOLO proposal approval require current-round PASS / PASS WITH NOTES plus existing authority. Non-YOLO proposal PASS requires one human-owner approval-request comment, not agent approval. Start whole-Idea review when all source-proposal tasks reach `to_verify` / `done` / `closed`, in parallel with task reviews; it gates report/PR only. Stop on paused or unresolved context. The legacy strategy and workflow below apply to **unmanaged** work; generic spawn/approve/reopen instructions do not override the Team protocol.
+
+**Direct Team review requests:** send them with `chorus_request_review` (target, reviewer, round). The server renders the `Team review request — <kind>, round N` envelope and routes only that reviewer into its review session; a hand-written `chorus_add_comment` envelope never opens a review session. A request must never start a line with `VERDICT:`.
+
+Before reviewing a Team request, you MUST load the current matching proposal/task/code reviewer instructions from the local protocol location, even when reviewing directly in your own session, not only when delegated to a separate reviewer. A wake or mention is not a substitute for loading those instructions. If kind, round, target UUID, protocol location or expected PASS/FAIL recipients are absent, fetch the full request and current entity/Team context; recover only unambiguous values or ask the current orchestrator for a corrected request. Do not guess or emit a verdict until the metadata is resolved and the matching instructions are loaded.
+
+The actual verdict MUST be exactly one plain unformatted line starting at column 1: `VERDICT: PASS`, `VERDICT: PASS WITH NOTES`, or `VERDICT: FAIL`. No bold, backticks, bullets, quotes, fences or extra verdict line in the posted result; the backticks here only delimit documentation examples. Place exactly one actionable routed @mention before that final line, using the recipient table, and re-read current entity/Team context before posting. Remain read-only; no lifecycle writes.
+
 ## Review Strategy
 
 When reviewing proposals, tasks, or an Idea's final aggregate code change, prefer running an independent reviewer over reviewing manually:
@@ -68,7 +88,7 @@ When reviewing proposals, tasks, or an Idea's final aggregate code change, prefe
 2. **Read the VERDICT.** After the reviewer completes, call `chorus_get_comments` and find THIS round's `VERDICT:` comment — the one posted after your dispatch, not an older round's. There are exactly three possible outcomes:
    - **VERDICT: PASS** — No issues found. Approve (proposals) or mark AC passed and verify (tasks).
    - **VERDICT: PASS WITH NOTES** — Minor non-blocking notes. Still approve/verify. Notes are informational.
-   - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). For a **code-review gateway** FAIL, do not reopen the verified tasks — instead fix via the quick-dev skill (`skill_view("chorus:quick-dev")`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it (see B2.6). Fix the specific BLOCKERs listed in the comment before resubmitting.
+   - **VERDICT: FAIL** — BLOCKERs found. Reject (proposals) or reopen (tasks). For a **code-review gateway** FAIL, do not reopen the verified tasks — instead fix via the quick-dev skill (`skill_view("chorus:quick-dev")`): `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it (see B2.6); for an Idea with no approved proposal, create them as Quick Tasks with the same top-level `ideaUuid` and no `proposalUuid`. Fix the specific BLOCKERs listed in the comment before resubmitting.
 3. **No new VERDICT comment?** Check what the reviewer *did* post. A comment reporting that the round limit was reached, or any other explicit refusal to review, is a deliberate escalation to a human: STOP — do not respawn, do not self-review, do not post a VERDICT of your own. If it posted nothing at all, respawn it ONCE, telling it to stay within its turn budget and reserve its last turns for the VERDICT, then apply this same check again to what the retry posts. An explicit refusal from the retry still means STOP; only a second true silence lets you review the item yourself as a read-only pass using the checklists below and POST the VERDICT — **absence is never a PASS**.
 4. **Track rounds.** Count existing VERDICT comments before spawning. After 3 rounds of FAIL on the same item, stop the loop and escalate to human review: post a comment saying the round limit was reached and a human decision is needed, and post no VERDICT. Nobody — including you on a later turn — may replace that escalation with a self-reviewed VERDICT.
 5. **Fallback.** If the reviewer is unavailable (e.g., the reviewer skill is not registered, or `delegate_task` fails), review the item yourself using the quality checklists in the workflows below.
@@ -195,6 +215,8 @@ chorus_get_comments({ targetType: "proposal", targetUuid: "<proposal-uuid>" })
 
 #### A3.5: Independent Review
 
+**Managed work:** use [Team review routing](../orchestrate/SKILL.md#team-review-routing) instead of the unmanaged dispatch/timing below.
+
 Run `chorus-proposal-reviewer` per the [Review Strategy](#review-strategy) above — a `delegate_task` child with the `[chorus-reviewer:proposal]` marker (see the proposal reviewer example). The call blocks until it finishes. Read its VERDICT comment before proceeding.
 
 #### A4: Approve or Reject
@@ -260,6 +282,8 @@ chorus_get_comments({ targetType: "task", targetUuid: "<task-uuid>" })
 
 #### B2.5: Independent Review
 
+**Managed work:** use [Team review routing](../orchestrate/SKILL.md#team-review-routing) instead of the unmanaged dispatch/timing below.
+
 Build the evidence bundle, then run `chorus-task-reviewer` per the [Review Strategy](#review-strategy) above — a `delegate_task` child with the `[chorus-reviewer:task]` marker (see the task reviewer example). The call blocks until it finishes. After it completes, read its VERDICT:
 
 - **VERDICT: PASS** or **PASS WITH NOTES** → proceed to B3 (mark AC) and B4 (verify).
@@ -267,10 +291,12 @@ Build the evidence bundle, then run `chorus-task-reviewer` per the [Review Strat
 
 #### B2.6: Final Code-Review Gateway (after an Idea's LAST task is verified)
 
+**Managed work:** use [Team review routing](../orchestrate/SKILL.md#team-review-routing) instead of the unmanaged dispatch/timing below.
+
 When the task you just verified is the **last** task of its idea-rooted proposal, run the ship-time code-review gateway before the Idea's code is considered shipped. The Chorus Hermes plugin appends a reminder to the `chorus_admin_verify_task` result to run `chorus-code-reviewer` (gated by `CHORUS_ENABLE_CODE_REVIEWER`, default on). Build the aggregate evidence bundle and run it per the [Review Strategy](#review-strategy) — a `delegate_task` child with the `[chorus-reviewer:code]` marker (see the code reviewer example), passing the `ideaUuid` + round number. It reviews the Idea's **aggregate** code change across all its tasks — cross-task integration, architecture/convention consistency, security, regression/performance, feature-level test coverage — dimensions a single-task review cannot see — and posts one `VERDICT` comment on the **idea**.
 
 - **VERDICT: PASS** / **PASS WITH NOTES** → the feature may ship.
-- **VERDICT: FAIL** → do not reopen the verified tasks; instead add new fix tasks to the approved proposal via the quick-dev skill (`skill_view("chorus:quick-dev")`) (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates. Bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (env, default 3; 0 = unlimited).
+- **VERDICT: FAIL** → do not reopen the verified tasks; instead add new fix tasks to the approved proposal via the quick-dev skill (`skill_view("chorus:quick-dev")`) (`chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it; for an Idea with no approved proposal, create them as Quick Tasks with the same top-level `ideaUuid` and no `proposalUuid`). Group related small BLOCKERs by default; split only materially large or independently testable fixes. Require AC self-check, independent task review, and admin verification for every fix task. Re-run aggregate review only after every fix is successfully `done`; a failed or cancelled fix stops the loop and escalates. Bounded by `CHORUS_MAX_CODE_REVIEW_ROUNDS` (env, default 3; 0 = unlimited).
 
 > **Advisory / behavioral** — the gateway does not change the Idea's stored status; the admin honors its verdict. Run it **before** writing any idea-completion report (the report must not be written while a `FAIL` is outstanding).
 

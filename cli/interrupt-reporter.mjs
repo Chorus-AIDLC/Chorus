@@ -42,7 +42,7 @@ const REPORTABLE_ENTITY_TYPES = new Set([
 ]);
 
 /**
- * Build a `reportInterrupt(entityType, entityUuid, reason)` function the waker
+ * Build a `reportInterrupt(entityType, entityUuid, reason, sessionId?)` function the waker
  * invokes when a wake's subprocess exits in an interrupted/crashed state.
  *
  * @param {{
@@ -56,7 +56,7 @@ const REPORTABLE_ENTITY_TYPES = new Set([
  *   logger?: { info(m:string):void, warn(m:string):void, error(m:string):void },
  *   fetchImpl?: typeof fetch,             Injectable for tests.
  * }} opts
- * @returns {(entityType: string, entityUuid: string, reason: "user"|"crash") => Promise<void>}
+ * @returns {(entityType: string, entityUuid: string, reason: "user"|"crash", sessionId?: string) => Promise<void>}
  */
 export function createInterruptReporter(opts) {
   const logger = opts.logger ?? NOOP_LOGGER;
@@ -71,7 +71,7 @@ export function createInterruptReporter(opts) {
     logger,
   });
 
-  return async function reportInterrupt(entityType, entityUuid, reason) {
+  return async function reportInterrupt(entityType, entityUuid, reason, sessionId) {
     if (!REPORTABLE_ENTITY_TYPES.has(entityType) || !entityUuid || !INTERRUPT_REASONS.has(reason)) {
       logger.warn(
         `[Chorus] refusing to report interrupt: bad entity/reason (${entityType}:${entityUuid}, ${reason})`,
@@ -82,6 +82,9 @@ export function createInterruptReporter(opts) {
     // "no connection uuid yet" when absent), POSTs the exact server payload, and logs the
     // failure cause on a network error / non-2xx. We swallow the structured result so a
     // failed report can never crash the wake path.
-    await client.reportInterrupt({ entityType, entityUuid, reason });
+    await client.reportInterrupt({
+      entityType, entityUuid, reason,
+      ...(sessionId !== undefined ? { sessionId } : {}),
+    });
   };
 }

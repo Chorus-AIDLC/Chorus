@@ -14,6 +14,7 @@
 // also names the CHORUS_DAEMON_HEADLESS=1 env signal the spawner sets.
 
 import { buildOperationPrompt } from "./operation.mjs";
+import { parseScopedAnchor } from "./session-anchor.mjs";
 
 /**
  * @typedef {Object} NotificationDetail
@@ -45,10 +46,20 @@ import { buildOperationPrompt } from "./operation.mjs";
 /** @param {NotificationDetail} n @param {string} entityType */
 function mentionGuidance(n, entityType) {
   return (
-    `After completing your work, post a comment on this ${entityType} using ` +
-    `chorus_add_comment with @mention: @[${n.actorName}](${n.actorType}:${n.actorUuid})`
+    `Only if the sender must act on your result (a question, requested decision, or work handoff), ` +
+    `post a comment on this ${entityType} using chorus_add_comment with @mention: ` +
+    `@[${n.actorName}](${n.actorType}:${n.actorUuid}). ` +
+    `Never @mention only to acknowledge or say "received".`
   );
 }
+
+export const TEAM_REVIEW_MENTION_GUIDANCE = [
+  "For a Team review handoff or direct review request only (not ordinary mentions): fetch the full comments, resolve source Ideas and refresh chorus_get_idea_team_context before acting. Do not treat the notification excerpt or sender as routing authority.",
+  "If you are the current orchestrator dispatching a review, load the current installed orchestrate protocol first. Send a remote request with chorus_request_review (targetType proposal, task or idea for the whole-Idea code review; targetUuid; reviewerUuid; round). The server renders the Team review request — <kind>, round N envelope and wakes only that reviewer in its review session; a hand-written comment never opens a review session. Never start a forwarding line with VERDICT:. End the turn after remote dispatch.",
+  "If you are the requested reviewer, load and follow the current installed matching reviewer instructions BEFORE reviewing, even in your own session: proposal → proposal-reviewer, task → task-reviewer, code (whole-Idea) → code-reviewer (use your host's equivalent skill or agent file). A direct wake does not preload them. Read the full request for kind, target, current round and expected PASS/FAIL recipients; recover missing values from authoritative context only when unambiguous, otherwise ask the current orchestrator for a corrected request and stop without a verdict. Honor paused state, all linked Idea gates and the 3-round cap.",
+  "Post exactly one review comment with exactly one final unformatted line starting at column 1: VERDICT: PASS, VERDICT: PASS WITH NOTES or VERDICT: FAIL. No bold, backticks, bullet, quote, indentation or code fence around that line, and no second verdict line. Re-read entity/Team context before posting and include exactly one actionable @mention: PASS/PASS WITH NOTES → current Idea orchestrator; proposal FAIL → current product delegate, else orchestrator; task FAIL → current logical task developer; whole-Idea FAIL → current orchestrator. If the recipient is unresolved, stop for repair rather than guess.",
+  "Reviewers stay read-only: no approve, verify, reject, reopen, assignment or fix-task creation. These Team review instructions override generic sender/orchestrator reply guidance: no acknowledgement-only mention and no second completion handoff after the routed verdict. Confirmed unmanaged work retains its existing review flow.",
+].join("\n");
 
 /**
  * Orchestrator-handoff guidance, appended to every wake body by buildPrompt. This is
@@ -148,6 +159,19 @@ export const HEADLESS_PREAMBLE = [
   "elaboration answer wakes a fresh turn that continues the work.",
 ].join("\n");
 
+function scopeHeader(sessionId) {
+  const scope = parseScopedAnchor(sessionId);
+  if (!scope) return "";
+  if (scope.kind === "task") {
+    return `This wake runs in a task-scoped session for task ${scope.entityUuid}; ` +
+      "it has no memory of the Idea session — read the task, its proposal and the Idea first. " +
+      "Other tasks of the same Idea may run concurrently in this working directory: " +
+      "before editing files, work in your own git worktree (e.g. EnterWorktree / `git worktree add`).";
+  }
+  return `This is a review-scoped session for ${scope.entityType} ${scope.entityUuid}; ` +
+    "it never carries development memory. Stay read-only.";
+}
+
 /**
  * Build the wake prompt for a notification, or null if the action has no
  * wake (caller ignores those). Prepends HEADLESS_PREAMBLE to every non-null body
@@ -162,8 +186,9 @@ export function buildPrompt(n) {
   if (body == null) return null;
   const handoff = orchestratorGuidance(n);
   const anchor = wakerSessionGuidance(n);
+  const scope = scopeHeader(n.sessionId);
   return (
-    `${HEADLESS_PREAMBLE}\n\n${body}` +
+    `${HEADLESS_PREAMBLE}\n\n` + (scope ? `${scope}\n\n` : "") + body +
     (handoff ? `\n\n${handoff}` : "") +
     (anchor ? `\n\n${anchor}` : "")
   );
@@ -263,7 +288,8 @@ export function buildBatchPrompt(notifications) {
     return `${header}${collapseNote}\n\n${g.body}${anchorBlock}`;
   });
 
-  return [HEADLESS_PREAMBLE, backlogPreamble, ...rendered].join("\n\n");
+  const scope = scopeHeader(notifications[0].sessionId);
+  return [HEADLESS_PREAMBLE, ...(scope ? [scope] : []), backlogPreamble, ...rendered].join("\n\n");
 }
 
 /**
@@ -285,7 +311,7 @@ function buildPromptBody(n) {
         `[Chorus] You were @mentioned in ${n.entityType} '${n.entityTitle}' ` +
         `(entityType: ${n.entityType}, entityUuid: ${n.entityUuid}, projectUuid: ${n.projectUuid}): ${n.message}\n` +
         `Review the ${n.entityType} and use chorus_get_comments (targetType: "${n.entityType}", ` +
-        `targetUuid: "${n.entityUuid}") to see the conversation, then respond.\n${mentionGuidance(n, n.entityType)}`
+        `targetUuid: "${n.entityUuid}") to see the conversation, then respond.\n${mentionGuidance(n, n.entityType)}\n\n${TEAM_REVIEW_MENTION_GUIDANCE}`
       );
     case "elaboration_requested":
       return (

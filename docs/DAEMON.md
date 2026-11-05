@@ -380,13 +380,163 @@ surfaces the missing-binary error when one arrives.
 
 ```
 [Chorus] ▶ wake: task_assigned → task:<uuid>
-[Chorus] spawning new session <idea-uuid> — take over with: claude --resume <idea-uuid>
+[Chorus] spawning new session <backend-uuid> (Chorus anchor task:<uuid>) — take over with: claude --resume <backend-uuid>
 [Chorus] ✓ wake done: task:<uuid> (exit=0, 1234ms)
 ```
 
-The `claude --resume <idea-uuid>` hint lets you attach to the session from the
+The `claude --resume <backend-uuid>` hint lets you attach to the agent's session from the
 daemon's working directory. Pass `--verbose` (or `CHORUS_VERBOSE=1`) for extra
 per-wake detail.
+
+### Backend session isolation
+
+The upgraded **CLI daemon** separates conversation purpose from Idea attribution.
+The server chooses the conversation business anchor at wake creation and delivers
+it as `sessionId`; it is not the Agent Session `sessionUuid` used by check-in tools.
+
+| Purpose | Business anchor (`sessionId`) |
+| --- | --- |
+| Idea orchestration | Bare direct Idea UUID |
+| Development of an Idea-backed task | `task:<taskUuid>` |
+| Task review | `review:task:<taskUuid>` |
+| Proposal review | `review:proposal:<proposalUuid>` |
+| Whole-Idea code review | `review:idea:<ideaUuid>` |
+| Quick task without an Idea / ad-hoc conversation | Existing entity/session UUID, unchanged |
+
+Task assignment and reopening use the task anchor even when the developer is also
+the Idea orchestrator. Ordinary task mentions to its developer use the task anchor;
+ordinary mentions to the orchestrator stay in the Idea conversation. Only a
+structured `chorus_request_review` call selects a review anchor: the server validates
+the target, reviewer and round, posts the `Team review request — <kind>, round N`
+comment, and applies the review anchor to the named reviewer's wake alone, before
+task ownership routing (including when the developer is also the reviewer). Comment
+text never selects a review anchor, so a hand-written, quoted or example envelope in
+an ordinary comment keeps default routing. Re-review resumes the same review anchor. Idea-stage actions remain
+in the Idea session; ordinary non-owner notifications retain Idea routing. When the
+developer is also the Idea orchestrator, only task assignment and reopening use the
+task anchor; its task comments, mentions, VERDICT replies and Team handoffs stay in
+the Idea session. Human instructions, operations (for example conversational Idea
+creation) and research requests always use the Idea session, so task and review child
+conversations in the chat UI do not offer an instruction composer.
+
+Live SSE notifications and reconnect backfill carry the resolved `sessionId`.
+The CLI consumes a nonempty delivered anchor before attempting lineage lookup:
+queue serialization, native backend identity, transcripts, turn reports, execution
+tracking and targeted interrupts all use that same anchor. Sibling task anchors can
+run concurrently up to the daemon's concurrency limit; wakes of one anchor remain
+serialized. Execution identity includes `(connectionUuid, entityType, entityUuid,
+sessionId)`, so development and review of the same task cannot overwrite each other.
+Legacy execution rows retain `sessionId=""`; a scoped interrupt never falls back to
+that legacy row or another purpose's execution.
+
+Task and review sessions have no Idea-session development memory. Fetch the task,
+proposal, source Ideas and comments explicitly. Review sessions are read-only.
+Orchestration keeps its Idea conversation. Session separation does **not** isolate
+files: when sibling sessions share a cwd, create your own git worktree before editing.
+Direct/root Idea UUIDs remain attribution and grouping fields, not queue keys.
+The native resume ID is separately reported as `backendSessionId`; use that value,
+not a business anchor, for takeover.
+
+**Compatibility boundary.** When `sessionId` is absent or empty (for example an old
+server), the upgraded CLI falls back to its existing direct-Idea/entity resolution.
+An old daemon ignores the new field and keeps its previous Idea-based queue/session
+behavior; upgrading only the server does not provide purpose isolation. Existing
+Idea conversations remain intact, but newly scoped task/review conversations do not
+import their transcripts. Native non-CLI consumers (including OpenClaw, Hermes and
+dsh integrations) are not upgraded by this change and may retain their previous
+session behavior. This documents CLI-host routing, not new non-CLI support or a
+reactivation of the de-listed dsh daemon backend.
+
+**Legacy report settlement.** A client without `turnUuid` may still report a bare
+Idea `sessionId` after the server creates a task/review turn. The server searches
+only that agent's, company-scoped direct-Idea family. Turn reports match the wake
+entity and lifecycle edge (pending for running; running for ended/interrupted),
+prefer a matching scoped anchor, and fall back to the original Idea-session FIFO
+only when no scoped turn matches and the report is attributable to the Idea (the
+Idea entity itself or an entity-matching Idea wake). That fallback retains the
+existing research/operation protocol and origin filters: an unrelated scoped
+sibling must not skip a legacy research/operation turn or admit an isolated one.
+FIFO applies within a single matching conversation, not across purposes. When an
+Idea wake and `review:idea:I` both match entity idea/I, the scoped review wins;
+legacy reports cannot distinguish those two purposes, so an Idea mention can be
+attributed to review. Use exact-turn reporting to disambiguate. If both `task:T` and `review:task:T` match, the server returns the usual
+non-disclosing 404 and changes neither: entity T alone cannot identify the purpose.
+Reports missing the entity also fail closed when scoped conversations exist.
+
+Legacy transcript bodies have neither entity nor purpose. A bare-Idea upload goes
+to the **sole running conversation** in the same owned family; newer pending turns
+do not steal its output. A late flush with no running turn is accepted only if
+settled turns belong to one conversation, targeting its latest settled turn.
+Multiple running/settled conversations are ambiguous and return 404 without
+writing into the Idea conversation. Clients should use the `turnUuid` returned by
+the running report (or upgrade to exact-turn reporting) for ambiguous uploads and
+reports. Exact-turn reports, explicit scoped keys, and families with no scoped
+sessions retain their existing behavior. Successfully settled scoped turns are no
+longer pending and therefore are not replayed by reconnect backfill.
+
+For daemon agents with a resolved `agentUuid`, `cli/backend-session-identity.mjs`
+derives a stable UUIDv5 from the logical agent UUID and the business anchor.
+Different agents sharing one cwd/config therefore do not share a conversation.
+Repeated wakes of the same agent/anchor derive the same key across restarts:
+
+| Backend | Isolated identity |
+| --- | --- |
+| Claude | Derived UUID for `--session-id` / `--resume` and the transcript filename |
+| Codex / TRAE | Derived UUID as the key in their separate thread and usage maps; the stored native thread ID is reported for takeover |
+| Kiro | Fresh headless session by default; map entries cannot establish native ownership. Independently verified native handles may resume under the agent-scoped key |
+| Pi | Derived UUID passed to `--session-id` |
+| dsh | A fresh SDK-native session per wake; no old session is resumed |
+
+Unbound programmatic spawner callers without an agent UUID keep their existing
+key derivation; Kiro still refuses unverified native ownership. A configured
+daemon resolves the logical agent identity before creating its spawner. Do not
+strip `agentUuid` from daemon credentials.
+
+Kiro's shared native-store snapshots cannot prove which process created a session,
+even when exactly one new file appears. The default headless adapter therefore
+never captures a store delta or resumes/reconstructs a mapped session. It logs
+the limitation, relays only that process's stdout, reports a null native ID, and
+starts fresh on the next wake. Bare-anchor and older agent-scoped mappings remain
+available for explicit manual recovery, not automatic reuse. Programmatic
+integrations may supply `verifySessionOwnershipFn` only with independent proof
+of agent, anchor, cwd and native-store ownership; the daemon supplies no such
+verifier by default. This fail-closed restriction also prevents an older unsafe
+scoped mapping from reintroducing another agent's context after restart.
+
+**Upgrade and legacy recovery.** Older releases used the bare anchor as a
+transcript/session-map key. Those records contain no trustworthy ownership
+metadata and may already contain several agents' turns. The daemon does **not**
+automatically copy or resume that context under an isolated reviewer identity.
+It starts a new isolated conversation and leaves the original files/map entries
+untouched. When an old Claude transcript or mapped Codex/TRAE/Kiro handle is found
+without an isolated counterpart, a warning identifies the retained legacy
+conversation and the manual recovery path. Pi has no daemon session map to
+attribute old sessions; treat its existing bare-anchor sessions the same way.
+
+On the first reported isolated wake, a server session's legacy `backendSessionId`
+equal to its bare business anchor is replaced with the new native handle so the
+UI takeover/copy control does not point back to the mixed conversation. Historical
+turn IDs stay unchanged; same-turn conflict guards still apply, and a retry of an
+already completed old turn cannot revert the upgraded session metadata. This is
+metadata migration only, never a transcript copy or context import.
+
+Session list/detail APIs expose the newest ordinary turn's reported native ID
+as the current copy/takeover handle, independently of the stored first-wake
+compatibility value. This also covers Codex/TRAE legacy native thread IDs, which
+are not equal to the business anchor. Research and dedicated operation threads
+cannot replace this handle. Older transcript pages and delayed old-turn reports
+do not move it back to an older turn; retained maps and history are unchanged.
+
+Before upgrading, finish or interrupt active work and preserve the backend's
+config/session directory and `~/.chorus/*-sessions.json` files. After upgrading,
+inspect any required legacy conversation using the same cwd and backend config:
+Claude can still use `claude --resume <old-anchor>`; Codex/TRAE/Kiro can use their
+native resume command with the handle saved under the old key; Pi's native
+session selector can open the old session. Keep this manual recovery separate
+from the new daemon conversation. Summarize only the necessary verified work
+into Chorus or an explicit human instruction for the intended agent; never copy
+a mixed O/R/D transcript into a reviewer's isolated session. No legacy records
+are deleted, rewritten, or silently assigned to whichever agent wakes first.
 
 ---
 
@@ -513,8 +663,8 @@ its turn ends; processes are never reused across wakes. The daemon talks to it
 with the bidirectional stream-json protocol (`--input-format stream-json
 --output-format stream-json`): the prompt is sent as one message, and stdin stays
 open until the turn's result so the daemon can answer control requests. There is
-no plain-text fallback or switch. Session resume (`claude --resume <idea-uuid>`)
-and existing sessions are unaffected.
+no plain-text fallback or switch. Session resume uses the agent-scoped backend
+UUID; see [Backend session isolation](#backend-session-isolation) for legacy recovery.
 
 - **Interrupt.** An authorized interrupt from the UI is sent to Claude as a
   protocol interrupt, so the turn ends cleanly and can be resumed. If the process
@@ -541,7 +691,7 @@ not a live Windows run (the same limitation as the Codex backend).
 
 ### Pi daemon: RPC transport
 
-Each Pi wake launches one `pi --mode rpc --session-id <idea-uuid>` process, which
+Each Pi wake launches one `pi --mode rpc --session-id <backend-uuid>` process, which
 exits once the run is settled; processes are never reused across wakes. The
 prompt is sent as an RPC command and stdin stays open until pi reports the run is
 fully settled (after any automatic retry or compaction). There is no fallback to
