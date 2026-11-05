@@ -13,6 +13,7 @@ import { createActivity } from "@/services/activity.service";
 import type { AcceptanceCriteriaItemInput } from "@/lib/acceptance-criteria";
 import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 import logger from "@/lib/logger";
+import { ApiError } from "@/lib/api-handler";
 import { denyUnlessEntityAccess, denyUnlessProjectAccess } from "@/lib/project-access-action";
 
 export async function claimTaskAction(taskUuid: string) {
@@ -398,6 +399,7 @@ interface CreateTaskInput {
   priority?: string;
   storyPoints?: number | null;
   acceptanceCriteria?: string | null;
+  ideaUuid?: string | null;  // Direct Idea link (Quick Tasks); validated by task.service
 }
 
 export async function createTaskAction(input: CreateTaskInput) {
@@ -417,6 +419,7 @@ export async function createTaskAction(input: CreateTaskInput) {
       priority: input.priority || "medium",
       storyPoints: input.storyPoints,
       acceptanceCriteria: input.acceptanceCriteria,
+      ideaUuid: input.ideaUuid ?? null,
       createdByUuid: auth.actorUuid,
     });
 
@@ -429,13 +432,15 @@ export async function createTaskAction(input: CreateTaskInput) {
       actorType: auth.type,
       actorUuid: auth.actorUuid,
       action: "task_created",
+      ...(input.ideaUuid ? { value: { ideaUuid: input.ideaUuid } } : {}),
     });
 
     revalidatePath(`/projects/${input.projectUuid}/tasks`);
     return { success: true, taskUuid: task.uuid };
   } catch (error) {
     logger.error({ err: error }, "Failed to create task");
-    return { success: false, error: "Failed to create task" };
+    // Surface Idea-link validation failures (400/404 ApiError) verbatim.
+    return { success: false, error: error instanceof ApiError ? error.message : "Failed to create task" };
   }
 }
 
@@ -449,6 +454,7 @@ interface UpdateTaskFieldsInput {
   storyPoints?: number | null;
   acceptanceCriteria?: string | null;
   acceptanceCriteriaItems?: AcceptanceCriteriaItemInput[];
+  ideaUuid?: string | null;  // Set / change / clear the direct Idea link; omit to leave unchanged
 }
 
 export async function updateTaskFieldsAction(input: UpdateTaskFieldsInput) {
@@ -471,6 +477,7 @@ export async function updateTaskFieldsAction(input: UpdateTaskFieldsInput) {
       priority: input.priority,
       storyPoints: input.storyPoints,
       acceptanceCriteria: input.acceptanceCriteria,
+      ...(input.ideaUuid !== undefined && { ideaUuid: input.ideaUuid }),
     }, {
       actorType: auth.type,
       actorUuid: auth.actorUuid,

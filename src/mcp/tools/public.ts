@@ -41,6 +41,7 @@ import * as checkinService from "@/services/checkin.service";
 import { getProjectAgentTeam } from "@/services/project-agent-team.service";
 import { registerPermissionedTool } from "./register-helpers";
 import { isAssignmentOwnedByActor } from "@/lib/uuid-resolver";
+import { ApiError } from "@/lib/api-handler";
 import {
   ACCEPTANCE_CRITERIA_REQUIRED_MESSAGE,
   hasNonEmptyAcceptanceCriteria,
@@ -405,11 +406,12 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         status: z.enum(["open", "assigned", "in_progress", "to_verify", "done", "closed"]).optional().describe("Filter by status"),
         priority: z.enum(["low", "medium", "high"]).optional().describe("Filter by priority"),
         proposalUuids: zArray(z.string()).optional().describe("Filter tasks by proposal UUIDs"),
+        ideaUuid: z.string().optional().describe("Filter to Quick Tasks directly linked to this Idea"),
         page: collectionPageSchema,
         pageSize: collectionPageSizeSchema,
       }),
     }),
-    async ({ projectUuid, status, priority, proposalUuids, page = 1, pageSize = 20 }) => {
+    async ({ projectUuid, status, priority, proposalUuids, ideaUuid, page = 1, pageSize = 20 }) => {
       // Verify project exists
       const project = await projectService.getProjectByUuid(auth.companyUuid, projectUuid);
       if (!project) {
@@ -425,6 +427,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         status,
         priority,
         proposalUuids,
+        ideaUuid,
       });
 
       return {
@@ -1162,6 +1165,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         "Batch-create tasks in a project — either Quick Task mode (omit proposalUuid) or linked to an approved proposal (pass proposalUuid). Every task must include at least one acceptance criterion, or the whole batch is rejected.",
       inputSchema: z.object({
         projectUuid: z.string().describe("Project UUID"),
+        ideaUuid: z.string().optional().describe("Quick Task mode only: link every task in the batch to this Idea (same project, not a theme). Rejected with proposalUuid."),
         proposalUuid: z.string().optional().describe("Associated Proposal UUID. Omit for Quick Task mode (bug fixes, small features, post-delivery patches; flow: create → claim → execute → verify → done); pass it to link to an approved proposal in the traditional AI-DLC flow. Intra-batch dependencies use draftUuid + dependsOnDraftUuids; dependencies on existing tasks use dependsOnTaskUuids."),
         tasks: zArray(z.object({
           title: z.string().describe("Task title"),
@@ -1179,9 +1183,19 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         })).describe("Task list"),
       }),
     },
-    async ({ projectUuid, proposalUuid, tasks }) => {
+    async ({ projectUuid, proposalUuid, ideaUuid, tasks }) => {
       if (!(await projectExists(auth.companyUuid, projectUuid))) {
         return { content: [{ type: "text", text: "Project not found" }], isError: true };
+      }
+
+      // Direct Idea link is Quick Task mode only (proposal tasks reach their Idea
+      // via the proposal). Validate once up front so the batch is all-or-nothing.
+      if (ideaUuid) {
+        try {
+          await taskService.assertValidTaskIdeaLink(auth.companyUuid, { projectUuid, proposalUuid, ideaUuid });
+        } catch (error) {
+          return { content: [{ type: "text", text: error instanceof Error ? error.message : "Invalid ideaUuid" }], isError: true };
+        }
       }
 
       if (proposalUuid) {
@@ -1212,6 +1226,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
             priority: task.priority,
             storyPoints: task.storyPoints ?? null,
             proposalUuid: proposalUuid || null,
+            ideaUuid: ideaUuid || null,
             createdByUuid: auth.actorUuid,
           })
         )
@@ -1291,7 +1306,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           actorType: "agent",
           actorUuid: auth.actorUuid,
           action: "created",
-          value: { title: created.title, ...(proposalUuid ? { proposalUuid } : { quickTask: true }) },
+          value: { title: created.title, ...(proposalUuid ? { proposalUuid } : { quickTask: true, ...(ideaUuid && { ideaUuid }) }) },
         });
       }
 
@@ -1335,9 +1350,10 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
         })).optional().describe("Replace the task's acceptance criteria with this non-empty set. Omit to leave AC unchanged; cannot be used to clear AC (empty/all-blank is rejected). Replacing discards any prior dev/admin verification marks on the old criteria."),
         addDependsOn: zArray(z.string()).optional().describe("Task UUIDs to add as dependencies (incremental)"),
         removeDependsOn: zArray(z.string()).optional().describe("Task UUIDs to remove from dependencies (incremental)"),
+        ideaUuid: z.string().nullable().optional().describe("Quick Tasks only: link to an Idea (same project, not a theme); null clears the link"),
       }),
     },
-    async ({ taskUuid, status, sessionUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, addDependsOn, removeDependsOn }) => {
+    async ({ taskUuid, status, sessionUuid, title, description, priority, storyPoints, acceptanceCriteriaItems, addDependsOn, removeDependsOn, ideaUuid }) => {
       const task = await taskService.getTaskByUuid(auth.companyUuid, taskUuid);
       if (!task) {
         return { content: [{ type: "text", text: "Task not found" }], isError: true };
@@ -1411,16 +1427,25 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (description !== undefined) updateData.description = description;
       if (priority !== undefined) updateData.priority = priority;
       if (storyPoints !== undefined) updateData.storyPoints = storyPoints;
+      if (ideaUuid !== undefined) updateData.ideaUuid = ideaUuid || null;
 
-      const hasFieldUpdates = title !== undefined || description !== undefined || priority !== undefined || storyPoints !== undefined || status !== undefined;
+      const hasFieldUpdates = title !== undefined || description !== undefined || priority !== undefined || storyPoints !== undefined || status !== undefined || ideaUuid !== undefined;
 
       let updatedStatus = task.status;
       if (hasFieldUpdates) {
-        const updated = await taskService.updateTask(task.uuid, updateData, {
-          actorType: auth.type,
-          actorUuid: auth.actorUuid,
-        });
-        updatedStatus = updated.status;
+        try {
+          const updated = await taskService.updateTask(task.uuid, updateData, {
+            actorType: auth.type,
+            actorUuid: auth.actorUuid,
+          });
+          updatedStatus = updated.status;
+        } catch (error) {
+          // Idea-link validation (task.service assertValidTaskIdeaLink) → isError.
+          if (error instanceof ApiError) {
+            return { content: [{ type: "text", text: error.message }], isError: true };
+          }
+          throw error;
+        }
       }
 
       const warnings: string[] = [];
@@ -1464,6 +1489,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
       if (description !== undefined) activityValue.descriptionUpdated = true;
       if (priority !== undefined) activityValue.priority = priority;
       if (storyPoints !== undefined) activityValue.storyPoints = storyPoints;
+      if (ideaUuid !== undefined) activityValue.ideaUuid = ideaUuid || null;
       if (acReplaced) activityValue.acceptanceCriteriaReplaced = true;
       if (addDependsOn) activityValue.addedDependencies = addDependsOn.length;
       if (removeDependsOn) activityValue.removedDependencies = removeDependsOn.length;

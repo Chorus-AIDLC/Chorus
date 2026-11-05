@@ -106,4 +106,32 @@ describe("Research eligibility", () => {
     expect(db.daemonSessionTurn.findFirst).toHaveBeenCalledOnce();
     expect(db.daemonSessionTurn.updateMany).not.toHaveBeenCalled();
   });
+
+  // The idea-task loader's task query selects ideaUuid; the all-proposal task query does not.
+  function linkedTasks(rows: { uuid: string; ideaUuid: string; status: string }[]) {
+    db.task.findMany.mockImplementation(async (args: { select: Record<string, unknown> }) =>
+      "ideaUuid" in args.select ? rows.map((r) => ({ proposalUuid: null, ...r })) : []);
+  }
+  it.each(["in_progress", "to_verify", "done"])("rejects a %s linked Quick Task as development", async (status) => {
+    linkedTasks([{ uuid: "quick", ideaUuid: "idea", status }]);
+    expect(await getResearchEligibility("company", "idea")).toEqual({ eligible: false, reason: "development_started" });
+  });
+  it("treats a proposal-less idea whose linked tasks are all closed as completed", async () => {
+    db.idea.findMany.mockResolvedValue([{ uuid: "idea", parentUuid: null, status: "elaborated", elaborationStatus: "resolved" }]);
+    linkedTasks([{ uuid: "q1", ideaUuid: "idea", status: "closed" }, { uuid: "q2", ideaUuid: "idea", status: "closed" }]);
+    expect(await getResearchEligibility("company", "idea")).toEqual({ eligible: false, reason: "idea_completed" });
+  });
+  it("scans linked tasks of the subtree for execution history, ignoring unrelated ideas", async () => {
+    db.idea.findMany.mockResolvedValue([
+      { uuid: "idea", parentUuid: null, status: "open" }, { uuid: "child", parentUuid: "idea", status: "open" },
+      { uuid: "sibling", parentUuid: null, status: "open" },
+    ]);
+    linkedTasks([
+      { uuid: "child-quick", ideaUuid: "child", status: "open" },
+      { uuid: "sibling-quick", ideaUuid: "sibling", status: "open" },
+    ]);
+    db.activity.findMany.mockResolvedValue([{ targetType: "task", action: "status_changed", value: { from: "in_progress", to: "open" } }]);
+    expect(await getResearchEligibility("company", "idea")).toEqual({ eligible: false, reason: "development_started" });
+    expect(db.activity.findMany.mock.calls[0][0].where.OR[1]).toEqual({ targetType: "task", targetUuid: { in: ["child-quick"] } });
+  });
 });

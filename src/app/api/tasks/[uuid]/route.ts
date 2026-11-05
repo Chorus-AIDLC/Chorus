@@ -66,6 +66,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       status?: string;
       priority?: string;
       storyPoints?: number | null;
+      ideaUuid?: string | null;
       force?: boolean;
     }>(request);
 
@@ -76,6 +77,7 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
       status?: string;
       priority?: string;
       storyPoints?: number | null;
+      ideaUuid?: string | null;
     } = {};
 
     // Title validation
@@ -110,6 +112,15 @@ export const PATCH = withErrorHandler<{ uuid: string }>(
         });
       }
       updateData.storyPoints = body.storyPoints;
+    }
+
+    // Direct Idea link (Quick Tasks): string sets/changes, null (or "") clears.
+    // The service enforces the link invariants and throws 400/404 ApiErrors.
+    if (body.ideaUuid !== undefined) {
+      if (body.ideaUuid !== null && typeof body.ideaUuid !== "string") {
+        return errors.badRequest("ideaUuid must be a string or null");
+      }
+      updateData.ideaUuid = body.ideaUuid || null;
     }
 
     // Status update

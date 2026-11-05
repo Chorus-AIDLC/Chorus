@@ -277,6 +277,23 @@ describe("project team handoff against isolated PostgreSQL", () => {
     await expect(preview()).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
+  it("excludes ideas completed via linked Quick Tasks and fingerprints linked task changes (#650)", async () => {
+    const quickTask = (ideaUuid: string, status: string) => db.task.create({ data: {
+      companyUuid: auth.companyUuid, projectUuid, title: "Quick task", ideaUuid, status, createdByUuid: previousUuid,
+    } });
+    const doneViaQuick = await idea({ status: "elaborated" });
+    await quickTask(doneViaQuick.uuid, "done");
+    await quickTask(doneViaQuick.uuid, "closed");
+    const active = await idea({ status: "elaborated" });
+    await quickTask(active.uuid, "done");
+    const pendingQuick = await quickTask(active.uuid, "in_progress");
+    const result = await preview();
+    expect(result.candidates).toEqual([expect.objectContaining({ uuid: active.uuid, derivedStatus: "in_progress" })]);
+    await db.task.update({ where: { uuid: pendingQuick.uuid }, data: { status: "done" } });
+    await expect(confirm(result)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect((await preview()).count).toBe(0);
+  });
+
   it("invalidates a theme preview when a foreign-assigned child completes", async () => {
     const theme = await idea({ status: "elaborated", isContainer: true });
     const child = await idea({ status: "elaborated", parentUuid: theme.uuid, assigneeUuid: other.actorUuid });

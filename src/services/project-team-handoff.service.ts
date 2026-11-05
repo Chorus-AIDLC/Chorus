@@ -4,7 +4,8 @@ import type { AuthContext } from "@/types/auth";
 import { AGENT_TEAM_ROLES } from "@/lib/agent-team-roles";
 import { eventBus } from "@/lib/event-bus";
 import { createActivityInTx } from "@/services/activity.service";
-import { computeDerivedStatus, rollupThemeDerivedStatus, type DerivedIdeaStatus } from "@/services/idea.service";
+import { computeIdeaDerivedStatus, rollupThemeDerivedStatus, type DerivedIdeaStatus } from "@/services/idea.service";
+import { loadIdeaTaskData } from "@/services/idea-task-context.service";
 import { computeProjectAccess, levelAtLeast } from "@/services/project-access.service";
 import { getProjectAgentTeam, ProjectTeamError, projectTeamTransaction, type ProjectTeamClient } from "@/services/project-agent-team.service";
 
@@ -74,34 +75,13 @@ interface LifecycleIdea {
 }
 
 async function derivedStatuses(client: ProjectTeamClient, companyUuid: string, projectUuid: string, ideas: LifecycleIdea[]) {
-  const proposals = await client.proposal.findMany({
-    where: { companyUuid, projectUuid, status: { in: ["approved", "pending"] } },
-    select: { uuid: true, status: true, inputUuids: true, createdAt: true },
-    orderBy: [{ createdAt: "desc" }, { uuid: "asc" }],
-  });
-  const latest = new Map<string, string>();
-  const pending = new Set<string>();
-  for (const proposal of proposals) {
-    if (!Array.isArray(proposal.inputUuids)) continue;
-    for (const ideaUuid of proposal.inputUuids) {
-      if (typeof ideaUuid !== "string") continue;
-      if (proposal.status === "pending") pending.add(ideaUuid);
-      else if (!latest.has(ideaUuid)) latest.set(ideaUuid, proposal.uuid);
-    }
-  }
-  const tasks = await client.task.findMany({
-    where: { companyUuid, proposalUuid: { in: [...new Set(latest.values())] } },
-    select: { uuid: true, proposalUuid: true, status: true }, orderBy: { uuid: "asc" },
-  });
-  const taskStatuses = new Map<string, string[]>();
-  for (const task of tasks) {
-    if (task.proposalUuid) taskStatuses.set(task.proposalUuid, [...(taskStatuses.get(task.proposalUuid) ?? []), task.status]);
-  }
-  const statuses = new Map(ideas.map((idea) => [idea.uuid, computeDerivedStatus({
-    ideaStatus: idea.status, elaborationStatus: idea.elaborationStatus,
-    hasPendingProposal: pending.has(idea.uuid), hasApprovedProposal: latest.has(idea.uuid),
-    taskStatuses: taskStatuses.get(latest.get(idea.uuid) ?? "") ?? [],
-  }).derivedStatus]));
+  // Shared batched loader: latest approved / pending proposals plus the union of
+  // approved-proposal tasks and tasks linked directly via Task.ideaUuid. The raw
+  // rows (deterministic order) feed the preview fingerprint.
+  const { contexts, proposals, tasks } = await loadIdeaTaskData(
+    client, companyUuid, ideas.map((idea) => ({ uuid: idea.uuid, projectUuid })),
+  );
+  const statuses = new Map(ideas.map((idea) => [idea.uuid, computeIdeaDerivedStatus(idea, contexts.get(idea.uuid)).derivedStatus]));
   const byUuid = new Map(ideas.map((idea) => [idea.uuid, idea]));
   const children = new Map<string, string[]>();
   for (const idea of ideas) {

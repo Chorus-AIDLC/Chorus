@@ -32,6 +32,11 @@ export interface CanRequestYoloInput {
   proposals: { status: string }[] | null | undefined;
   /** Tasks of the idea's approved proposal(s) already loaded into the panel. */
   tasks: { status: string }[] | null | undefined;
+  /**
+   * Quick Tasks linked directly to the idea (Task.ideaUuid). Optional — when
+   * omitted or empty the predicate is exactly the proposal-only rule.
+   */
+  linkedTasks?: { status: string }[] | null;
   /** AgentPresence verdict for the assignee's owning agent. */
   agentOnline: boolean;
 }
@@ -52,17 +57,27 @@ export function assigneeOwningAgentUuid(
 }
 
 /**
- * Whether the idea is already fully done: an approved proposal exists AND it has
- * at least one task and every task is `done`/`closed`. Mirrors the `allDone`
- * predicate in computeDerivedStatus, but computed from the primitives the panels
- * already hold. An idea with no approved proposal, or with any unfinished task,
- * is NOT done — so the Yolo button shows at every earlier stage.
+ * Whether the idea is already fully done. Mirrors computeDerivedStatus, but is
+ * computed from the primitives the panels already hold:
+ *  - No linked tasks: an approved proposal exists AND it has at least one task
+ *    and every task is `done`/`closed` (unchanged proposal-only rule).
+ *  - With linked tasks (design D4): the union of the approved proposal's tasks
+ *    (if any) and the linked tasks is all `done`/`closed` and no proposal is
+ *    pending review — even when the idea has no proposal at all.
+ * Otherwise the idea is NOT done — so the Yolo button shows at every earlier stage.
  */
 function ideaIsDone(
   proposals: { status: string }[] | null | undefined,
-  tasks: { status: string }[] | null | undefined
+  tasks: { status: string }[] | null | undefined,
+  linkedTasks: { status: string }[] | null | undefined
 ): boolean {
-  if (!proposals || !proposals.some((p) => p.status === "approved")) return false;
+  const hasApproved = !!proposals && proposals.some((p) => p.status === "approved");
+  if (linkedTasks && linkedTasks.length > 0) {
+    if (proposals && proposals.some((p) => p.status === "pending")) return false;
+    const all = [...(hasApproved ? tasks ?? [] : []), ...linkedTasks];
+    return all.every((t) => FINISHED_TASK_STATUSES.has(t.status));
+  }
+  if (!hasApproved) return false;
   if (!tasks || tasks.length === 0) return false;
   return tasks.every((t) => FINISHED_TASK_STATUSES.has(t.status));
 }
@@ -77,11 +92,12 @@ export function yoloPreconditionsMet({
   assignee,
   proposals,
   tasks,
+  linkedTasks,
 }: Omit<CanRequestYoloInput, "agentOnline">): boolean {
   if (!assignee || (assignee.type !== "agent" && assignee.type !== "agent_instance")) {
     return false;
   }
-  if (ideaIsDone(proposals, tasks)) return false;
+  if (ideaIsDone(proposals, tasks, linkedTasks)) return false;
   return true;
 }
 

@@ -11,6 +11,7 @@
 //   Idea.parentUuid          (schema:195)
 //   Document.proposalUuid    (schema:221)
 //   Task.proposalUuid        (schema:257)
+//   Task.ideaUuid            — direct Idea link (Quick Tasks; exclusive with proposalUuid)
 //   TaskDependency           (schema:276) — { taskUuid, dependsOnUuid }
 //   Proposal.inputType       (schema:329) — "idea" | "document"
 //   Proposal.inputUuids      (schema:330) — Json (array of UUID strings)
@@ -86,6 +87,9 @@ export interface ResourceGraphNode {
   // Task/Document-only: source Proposal UUID (null for manually-created
   // entities). Used by the client to associate derivatives with their hub.
   proposalUuid?: string | null;
+  // Task-only: the Idea this Quick Task is linked to directly (Task.ideaUuid),
+  // null when unlinked. Drives the Idea → Task derive edge.
+  ideaUuid?: string | null;
   // Proposal-only: the set of source-Idea UUIDs filtered to project-local
   // ideas. Empty for document-input proposals (inputType !== "idea") or when
   // none of the source ideas live in this project.
@@ -152,7 +156,7 @@ export async function getProjectResourceGraph(
       where: { companyUuid, projectUuid },
       // status feeds both the task node's badge AND each idea's badgeHint
       // (via the tasks-under-latest-approved-proposal grouping below).
-      select: { uuid: true, title: true, proposalUuid: true, status: true },
+      select: { uuid: true, title: true, proposalUuid: true, ideaUuid: true, status: true },
     }),
     prisma.document.findMany({
       where: { companyUuid, projectUuid },
@@ -222,6 +226,15 @@ export async function getProjectResourceGraph(
     if (arr) arr.push(task.status);
     else tasksByProposal.set(task.proposalUuid, [task.status]);
   }
+  // Tasks linked directly to an idea (Task.ideaUuid — Quick Tasks) join the
+  // idea's latest-approved-proposal tasks in the badge derivation (design D4).
+  const linkedTasksByIdea = new Map<string, string[]>();
+  for (const task of tasks) {
+    if (!task.ideaUuid) continue;
+    const arr = linkedTasksByIdea.get(task.ideaUuid);
+    if (arr) arr.push(task.status);
+    else linkedTasksByIdea.set(task.ideaUuid, [task.status]);
+  }
 
   const nodes: ResourceGraphNode[] = [
     ...ideas.map<ResourceGraphNode>((i) => {
@@ -235,6 +248,7 @@ export async function getProjectResourceGraph(
         hasPendingProposal: ideasWithPendingProposal.has(i.uuid),
         hasApprovedProposal: !!latestApproved,
         taskStatuses,
+        linkedTaskStatuses: linkedTasksByIdea.get(i.uuid) ?? [],
       });
       return {
         uuid: i.uuid,
@@ -269,6 +283,7 @@ export async function getProjectResourceGraph(
       title: t.title,
       status: t.status,
       proposalUuid: t.proposalUuid ?? null,
+      ideaUuid: t.ideaUuid ?? null,
     })),
     ...documents.map<ResourceGraphNode>((d) => ({
       uuid: d.uuid,
@@ -357,6 +372,32 @@ export async function getProjectResourceGraph(
     if ((inProposalIndegree.get(task.uuid) ?? 0) > 0) continue; // non-root: skip
     edges.push({
       from: task.proposalUuid,
+      to: task.uuid,
+      kind: "derive",
+    });
+  }
+
+  // --- derive: Idea → Task (direct link) -----------------------------------
+  // Quick Tasks linked via Task.ideaUuid hang off their Idea. Same root-only
+  // rule as Proposal → Task: a linked task whose prerequisite is linked to the
+  // same Idea is reached through the `depends` arrow instead. Both endpoints
+  // must be project-local.
+  const taskIdeaUuidByUuid = new Map<string, string | null>(
+    tasks.map((t) => [t.uuid, t.ideaUuid ?? null])
+  );
+  const inIdeaIndegree = new Map<string, number>();
+  for (const dep of dependencies) {
+    if (!taskUuidSet.has(dep.taskUuid) || !taskUuidSet.has(dep.dependsOnUuid)) continue;
+    const downstreamIdeaUuid = taskIdeaUuidByUuid.get(dep.taskUuid) ?? null;
+    if (downstreamIdeaUuid !== null && taskIdeaUuidByUuid.get(dep.dependsOnUuid) === downstreamIdeaUuid) {
+      inIdeaIndegree.set(dep.taskUuid, (inIdeaIndegree.get(dep.taskUuid) ?? 0) + 1);
+    }
+  }
+  for (const task of tasks) {
+    if (!task.ideaUuid || !ideaUuidSet.has(task.ideaUuid)) continue;
+    if ((inIdeaIndegree.get(task.uuid) ?? 0) > 0) continue; // non-root: skip
+    edges.push({
+      from: task.ideaUuid,
       to: task.uuid,
       kind: "derive",
     });

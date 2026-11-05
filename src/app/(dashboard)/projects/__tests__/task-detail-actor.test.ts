@@ -8,23 +8,31 @@ const mocks = vi.hoisted(() => ({
   updateTask: vi.fn(),
   acceptanceGate: vi.fn(),
   replaceCriteria: vi.fn(),
+  createTask: vi.fn(),
+  projectAccess: vi.fn(),
+  createActivity: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-server", () => ({ getServerAuthContext: mocks.auth }));
-vi.mock("@/lib/project-access-action", () => ({ denyUnlessEntityAccess: mocks.access }));
+vi.mock("@/lib/project-access-action", () => ({
+  denyUnlessEntityAccess: mocks.access,
+  denyUnlessProjectAccess: mocks.projectAccess,
+}));
 vi.mock("@/services/task.service", () => ({
   getTaskByUuid: mocks.getTask,
   updateTask: mocks.updateTask,
   checkAcceptanceCriteriaGate: mocks.acceptanceGate,
   replaceAcceptanceCriteria: mocks.replaceCriteria,
+  createTask: mocks.createTask,
 }));
 vi.mock("@/services/agent.service", () => ({}));
 vi.mock("@/services/daemon-connection.service", () => ({}));
 vi.mock("@/services/project-agent-cwd.service", () => ({}));
-vi.mock("@/services/activity.service", () => ({}));
+vi.mock("@/services/activity.service", () => ({ createActivity: mocks.createActivity }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { updateTaskFieldsAction, verifyTaskAction } from "../[uuid]/tasks/[taskUuid]/actions";
+import { ApiError } from "@/lib/api-handler";
+import { createTaskAction, updateTaskFieldsAction, verifyTaskAction } from "../[uuid]/tasks/[taskUuid]/actions";
 
 const auth: AuthContext = { type: "user", companyUuid: "company", actorUuid: "editor" };
 const fields = { taskUuid: "task", projectUuid: "project", title: "Title", description: "Updated description" };
@@ -85,5 +93,55 @@ describe("task detail actor propagation", () => {
     expect((await updateTaskFieldsAction(fields)).success).toBe(false);
     expect((await verifyTaskAction("task")).success).toBe(false);
     expect(mocks.updateTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("task actions — direct Idea link (ideaUuid)", () => {
+  beforeEach(() => {
+    mocks.projectAccess.mockResolvedValue(null);
+    mocks.createTask.mockResolvedValue({ uuid: "new-task" });
+  });
+
+  it("createTaskAction passes ideaUuid through and records it in activity", async () => {
+    expect(await createTaskAction({ projectUuid: "project", title: "Fix", ideaUuid: "idea-1" }))
+      .toEqual({ success: true, taskUuid: "new-task" });
+    expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ projectUuid: "project", ideaUuid: "idea-1" }));
+    expect(mocks.createActivity).toHaveBeenCalledWith(expect.objectContaining({
+      action: "task_created", value: { ideaUuid: "idea-1" },
+    }));
+  });
+
+  it("createTaskAction defaults ideaUuid to null and omits activity value", async () => {
+    await createTaskAction({ projectUuid: "project", title: "Fix" });
+    expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ ideaUuid: null }));
+    expect(mocks.createActivity.mock.calls[0][0]).not.toHaveProperty("value");
+  });
+
+  it("createTaskAction surfaces link-validation errors", async () => {
+    mocks.createTask.mockRejectedValue(new ApiError("BAD_REQUEST", "Theme ideas cannot have tasks; link a child idea", 400));
+    expect(await createTaskAction({ projectUuid: "project", title: "Fix", ideaUuid: "theme" }))
+      .toEqual({ success: false, error: "Theme ideas cannot have tasks; link a child idea" });
+  });
+
+  it("createTaskAction keeps a generic message for unexpected errors", async () => {
+    mocks.createTask.mockRejectedValue(new Error("db down"));
+    expect(await createTaskAction({ projectUuid: "project", title: "Fix" }))
+      .toEqual({ success: false, error: "Failed to create task" });
+  });
+
+  it.each([["idea-1"], [null]])("updateTaskFieldsAction passes ideaUuid=%s through", async (ideaUuid) => {
+    expect(await updateTaskFieldsAction({ ...fields, ideaUuid })).toEqual({ success: true });
+    expect(mocks.updateTask).toHaveBeenCalledWith("task", expect.objectContaining({ ideaUuid }), expect.anything());
+  });
+
+  it("updateTaskFieldsAction leaves the link untouched when ideaUuid is omitted", async () => {
+    await updateTaskFieldsAction(fields);
+    expect(mocks.updateTask.mock.calls[0][1]).not.toHaveProperty("ideaUuid");
+  });
+
+  it("updateTaskFieldsAction surfaces link-validation errors", async () => {
+    mocks.updateTask.mockRejectedValue(new ApiError("BAD_REQUEST", "Idea must be in the same project as the task", 400));
+    expect(await updateTaskFieldsAction({ ...fields, ideaUuid: "x" }))
+      .toEqual({ success: false, error: "Idea must be in the same project as the task" });
   });
 });

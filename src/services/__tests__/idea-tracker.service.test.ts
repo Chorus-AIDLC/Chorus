@@ -933,3 +933,49 @@ describe("consistency: checkin.ideaTracker ⊆ my_assignments.ideaTracker", () =
     expect(ckIds).toEqual(myFirst10);
   });
 });
+
+// ============================================================
+// Directly linked tasks (design D4 / issue #650)
+// ============================================================
+
+describe("buildIdeaTracker — directly linked tasks", () => {
+  it("#650: drops a proposal-less idea whose linked tasks are all done", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("i650", PROJECT_A, "elaborated"),
+      makeIdea("iopen", PROJECT_A, "elaborated"),
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "q1", proposalUuid: null, ideaUuid: "i650", status: "done" },
+      { uuid: "q2", proposalUuid: null, ideaUuid: "i650", status: "done" },
+      { uuid: "q3", proposalUuid: null, ideaUuid: "i650", status: "closed" },
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+
+    const tracker = await buildIdeaTracker(agentAuth);
+    expect(tracker[PROJECT_A].ideas.map((i) => i.uuid)).toEqual(["iopen"]);
+  });
+
+  it("reports verify_work status and union task counts", async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      makeIdea("iverify", PROJECT_A, "open"),
+      makeIdea("imixed", PROJECT_A, "elaborated"),
+    ]);
+    mockPrisma.proposal.findMany.mockResolvedValue([
+      makeProposal("p1", PROJECT_A, "approved", ["imixed"]),
+    ]);
+    mockPrisma.task.findMany.mockResolvedValue([
+      { uuid: "q1", proposalUuid: null, ideaUuid: "iverify", status: "done" },
+      { uuid: "q2", proposalUuid: null, ideaUuid: "iverify", status: "to_verify" },
+      { uuid: "t1", proposalUuid: "p1", ideaUuid: null, status: "done" },
+      { uuid: "t2", proposalUuid: "p1", ideaUuid: null, status: "done" },
+      { uuid: "q3", proposalUuid: null, ideaUuid: "imixed", status: "in_progress" },
+    ]);
+    mockPrisma.project.findMany.mockResolvedValue([{ uuid: PROJECT_A, name: "A" }]);
+
+    const tracker = await buildIdeaTracker(agentAuth);
+    const byUuid = Object.fromEntries(tracker[PROJECT_A].ideas.map((i) => [i.uuid, i]));
+    expect(byUuid.iverify).toMatchObject({ status: "human_conduct_required", tasks: 2, proposals: 0 });
+    expect(byUuid.imixed).toMatchObject({ status: "in_progress", tasks: 3, proposals: 1 });
+    expect(mockPrisma.task.findMany).toHaveBeenCalledTimes(1);
+  });
+});
