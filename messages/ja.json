@@ -1282,7 +1282,6 @@
     "descriptionPlaceholder": "このグループの概要を簡単に記述...",
     "createGroup": "グループを作成",
     "createFailed": "プロジェクトグループの作成に失敗しました",
-    "nameConflict": "同じ名前のプロジェクトグループが既に存在します。別の名前を入力してください。",
     "newProjectTitle": "新規プロジェクト",
     "creatingIn": "作成先：{groupName}",
     "projectTitle": "プロジェクト名",

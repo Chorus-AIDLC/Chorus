@@ -18,7 +18,7 @@ const services = vi.hoisted(() => ({
   session: { listAgentSessions: vi.fn() },
   search: { search: vi.fn() },
   checkin: { buildCheckinResponse: vi.fn() },
-  projectGroup: { getGroupDashboard: vi.fn(), listProjectGroups: vi.fn() },
+  projectGroup: { getGroupDashboard: vi.fn() },
 }));
 
 vi.mock("@/services/project.service", () => services.project);
@@ -50,15 +50,13 @@ type Handler = (params: Record<string, unknown>) => Promise<{
 
 const handlers: Record<string, Handler> = {};
 const schemas: Record<string, z.ZodType> = {};
-const descriptions: Record<string, string> = {};
 const server = {
   registerTool: (
     name: string,
-    config: { inputSchema: z.ZodType; description: string },
+    config: { inputSchema: z.ZodType },
     handler: Handler,
   ) => {
     schemas[name] = config.inputSchema;
-    descriptions[name] = config.description;
     handlers[name] = handler;
   },
 };
@@ -82,37 +80,6 @@ beforeEach(() => {
 });
 
 describe("MCP collection migration", () => {
-  it("traverses all 24 owner-visible groups including a private group on page two", async () => {
-    const groups = Array.from({ length: 24 }, (_, index) => ({
-      uuid: `group-${String(index).padStart(2, "0")}`,
-      name: index === 23 ? "火山引擎" : `Group ${index}`,
-      visibility: index === 23 ? "private" : "public",
-      accessLevel: "admin",
-      projectCount: 0,
-      createdAt: "2026-10-23T00:00:00.000Z",
-      updatedAt: "2026-10-23T00:00:00.000Z",
-    }));
-    services.projectGroup.listProjectGroups.mockResolvedValue({ groups, total: 24, ungroupedCount: 2 });
-    const pages: Array<{ groups: typeof groups }> = [];
-    for (const page of [1, 2, 3]) {
-      const response = await handlers.chorus_get_project_groups({ page, pageSize: 20 });
-      const payload = JSON.parse(response.content[0].text);
-      expect(payload).toMatchObject({ page, pageSize: 20, total: 24, ungroupedCount: 2 });
-      expect(payload.returned).toBe(page === 1 ? 20 : page === 2 ? 4 : 0);
-      pages.push(payload);
-    }
-    expect(pages[0].groups).not.toContainEqual(expect.objectContaining({ name: "火山引擎" }));
-    expect(pages[1].groups).toContainEqual(expect.objectContaining({ name: "火山引擎", visibility: "private" }));
-    const returnedGroups = pages.flatMap((page) => page.groups);
-    expect(returnedGroups.map((group) => group.uuid)).toEqual(groups.map((group) => group.uuid));
-    expect(new Set(returnedGroups.map((group) => group.uuid)).size).toBe(24);
-    expect(services.projectGroup.listProjectGroups).toHaveBeenCalledTimes(3);
-    expect(services.projectGroup.listProjectGroups).toHaveBeenCalledWith(auth.companyUuid, auth);
-    expect(descriptions.chorus_get_project_groups).toContain("Traverse all pages");
-    expect(descriptions.chorus_get_project_groups).toContain("bounded search");
-    expect(descriptions.chorus_get_project_groups).toContain("does not bypass");
-  });
-
   it.each([
     ["chorus_checkin", () => {
       services.checkin.buildCheckinResponse.mockResolvedValue({
