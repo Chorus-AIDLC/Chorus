@@ -906,6 +906,7 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 | dependsOnDraftUuids | string[] | No | Intra-batch draftUuids this task depends on |
 | dependsOnTaskUuids | string[] | No | Existing Task UUIDs this task depends on |
 | references | array | No | Reference artifacts to attach to this task inline: `[{ type, url, title, notes? }]`. Fail-soft per item — a bad ref is skipped and reported in the response `referenceErrors`, not created. |
+| ideaUuid | — | Not allowed | A per-task `ideaUuid` is rejected (validation error pointing to the top-level `ideaUuid`) instead of being silently dropped. Use the top-level `ideaUuid` to link the batch. |
 
 **Quick Task example**:
 ```json

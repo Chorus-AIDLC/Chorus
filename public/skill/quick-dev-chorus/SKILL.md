@@ -99,6 +99,7 @@ chorus_create_tasks({
 ```
 
 - The Idea must be in the same project and must not be a theme; `ideaUuid` and `proposalUuid` are mutually exclusive (the call is rejected if both are set).
+- `ideaUuid` belongs at the top level only: a per-task `ideaUuid` inside `tasks[]` is rejected with a validation error (it is never silently dropped).
 - Link or relink an existing Quick Task with `chorus_update_task({ taskUuid, ideaUuid: "<idea-uuid>" })`; pass `ideaUuid: null` to clear the link. Proposal tasks cannot carry `ideaUuid` — they reach their Idea through the proposal.
 - List an Idea's linked Quick Tasks with `chorus_list_tasks({ projectUuid, ideaUuid })`; `chorus_get_task` returns the task's `ideaUuid`.
 - When the **last** linked Quick Task is verified, the Idea's ship-time code-review gateway applies (see `/develop`, Step 8). If it returns `FAIL`, create the fix tasks the same way — Quick Tasks with the same `ideaUuid`. A proposal-less Idea has no idea-completion report (`chorus_create_report` needs a proposal).

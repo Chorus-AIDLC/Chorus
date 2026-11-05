@@ -69,16 +69,18 @@ vi.mock("@/services/search.service", () => ({}));
 // Capture tool handlers via a fake McpServer
 type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
 const toolHandlers: Record<string, ToolHandler> = {};
+const toolMetas: Record<string, { inputSchema?: { safeParse: (v: unknown) => { success: boolean; error?: { issues: { message: string; path: PropertyKey[] }[] } } } }> = {};
 
 const fakeMcpServer = {
-  registerTool: (name: string, _meta: unknown, handler: ToolHandler) => {
+  registerTool: (name: string, meta: unknown, handler: ToolHandler) => {
     toolHandlers[name] = handler;
+    toolMetas[name] = meta as (typeof toolMetas)[string];
   },
 };
 
 import type { AgentAuthContext } from "@/types/auth";
 import { ApiError } from "@/lib/api-handler";
-import { registerPublicTools } from "@/mcp/tools/public";
+import { registerPublicTools, PER_TASK_IDEA_UUID_ERROR } from "@/mcp/tools/public";
 
 const AUTH: AgentAuthContext = {
   type: "agent",
@@ -498,6 +500,33 @@ describe("chorus_create_tasks — ideaUuid", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Theme ideas");
     expect(mockTaskService.createTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("chorus_create_tasks — per-task ideaUuid", () => {
+  const AC = [{ description: "It works", required: true }];
+  const schema = () => toolMetas["chorus_create_tasks"].inputSchema!;
+
+  it("rejects ideaUuid inside tasks[] with an error pointing to the top-level field", () => {
+    const parsed = schema().safeParse({
+      projectUuid: "project-1",
+      tasks: [{ title: "A", acceptanceCriteriaItems: AC, ideaUuid: "idea-1" }],
+    });
+
+    expect(parsed.success).toBe(false);
+    const issue = parsed.error!.issues.find((i) => i.path.join(".") === "tasks.0.ideaUuid");
+    expect(issue?.message).toBe(PER_TASK_IDEA_UUID_ERROR);
+    expect(issue?.message).toContain("top-level ideaUuid");
+  });
+
+  it("still accepts the top-level ideaUuid and tasks without a per-task ideaUuid", () => {
+    const parsed = schema().safeParse({
+      projectUuid: "project-1",
+      ideaUuid: "idea-1",
+      tasks: [{ title: "A", acceptanceCriteriaItems: AC }],
+    });
+
+    expect(parsed.success).toBe(true);
   });
 });
 

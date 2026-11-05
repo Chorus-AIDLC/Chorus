@@ -48,6 +48,9 @@ import {
   normalizeAcceptanceCriteria,
 } from "@/lib/acceptance-criteria";
 
+export const PER_TASK_IDEA_UUID_ERROR =
+  "ideaUuid is not supported inside tasks[]; set the top-level ideaUuid to link every task in the batch to the Idea (Quick Task mode, no proposalUuid)";
+
 export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server = enforceToolClassification(server);
   const serializePage = (
@@ -1180,6 +1183,9 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
           dependsOnDraftUuids: zArray(z.string()).optional().describe("Dependent draftUuid list within this batch"),
           dependsOnTaskUuids: zArray(z.string()).optional().describe("Dependent existing Task UUID list"),
           references: zArray(referenceInlineItemSchema).optional().describe("Optional reference artifacts to attach to this task (fail-soft per item)"),
+          // A per-task ideaUuid would otherwise be stripped silently by zod, leaving
+          // the task unlinked. Reject it and point to the top-level field instead.
+          ideaUuid: z.never({ error: PER_TASK_IDEA_UUID_ERROR }).optional().describe("Not supported per task — set the top-level ideaUuid to link the whole batch to an Idea"),
         })).describe("Task list"),
       }),
     },

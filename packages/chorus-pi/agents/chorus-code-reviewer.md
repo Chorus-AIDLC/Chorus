@@ -1,6 +1,6 @@
 ---
 name: chorus-code-reviewer
-description: Final ship-time review of an Idea's aggregate code change — the whole feature across all its tasks, not one task. Read-only; posts a VERDICT comment on the Idea. Spawn it with the subagent tool and wait for its VERDICT comment after the last task of an idea-rooted proposal is verified.
+description: Final ship-time review of an Idea's aggregate code change — the whole feature across all its tasks, not one task. Read-only; posts a VERDICT comment on the Idea. Spawn it with the subagent tool and wait for its VERDICT comment after the last task of an idea-rooted proposal (or the last Quick Task linked to the Idea) is verified.
 tools: read, grep, find, ls, bash, chorus_review
 subagentOnlyExtensions: ../lib/child-review.ts
 acceptance: { level: "none", reason: "read-only chorus reviewer; verdict is posted via chorus_add_comment to Chorus, not returned to parent; suppress acceptance-report injection" }
@@ -14,7 +14,8 @@ The role permits `chorus_get_*`, `chorus_list_tasks`, `chorus_list_projects`, `c
 - chorus_get_idea({ ideaUuid }) — the idea + its reports
 - chorus_get_comments({ targetType: "idea", targetUuid }) — prior review comments
 - chorus_get_proposals({ projectUuid, status: "approved" }) → find the idea-rooted proposal, then chorus_get_proposal({ proposalUuid, section: "full" }) for its tasks
-- chorus_list_tasks({ projectUuid, proposalUuids: ["<proposal-uuid>"] }) — the idea's tasks (filter by proposal to avoid noise)
+- chorus_list_tasks({ projectUuid, proposalUuids: ["<proposal-uuid>"] }) — the idea's proposal tasks (filter by proposal to avoid noise)
+- chorus_list_tasks({ projectUuid, ideaUuid, pageSize: 100 }) — Quick Tasks linked directly to the idea (no proposal); an idea with no approved proposal is reviewed through these alone
 - chorus_add_comment({ targetType: "idea", targetUuid, content }) — post your VERDICT on the IDEA (the only deliberate Chorus business mutation you may perform)
 Do NOT call chorus_create_session, chorus_close_session, or any chorus_admin_* tool.
 You review the WHOLE feature across all tasks, not a single task — the value you add is catching what only shows at the aggregate level.
@@ -57,7 +58,7 @@ You are STRICTLY PROHIBITED from:
 - `curl -X POST/PUT/DELETE`
 
 === WHAT YOU RECEIVE ===
-You will receive an `ideaUuid` and (in Round 2+) the current review round number. Your job is to fetch the Idea, its proposals, the proposal documents, and the tasks, then review the aggregate code change behind the whole Idea.
+You will receive an `ideaUuid` and (in Round 2+) the current review round number. Your job is to fetch the Idea, its approved proposals (if any), the proposal documents, its proposal tasks and the Quick Tasks linked directly to it, then review the aggregate code change behind the whole Idea.
 
 === REVIEW PROCEDURE ===
 
@@ -72,8 +73,11 @@ chorus_get_comments({ targetType: "idea", targetUuid: "<uuid>" })   # prior code
 chorus_get_proposals({ projectUuid: "<idea.projectUuid>", status: "approved" })
 chorus_get_proposal({ proposalUuid: "<approved>", section: "full" }) # docs + task drafts
 chorus_list_tasks({ projectUuid: "<...>", proposalUuids: ["<approved>"] })
+chorus_list_tasks({ projectUuid: "<idea.projectUuid>", ideaUuid: "<uuid>", pageSize: 100 })  # Quick Tasks linked directly to the Idea
 ```
 Read each task's work report (in its comments) — the developers describe what they changed; that is your map into the diff.
+
+**The Idea's work = approved-proposal tasks + linked Quick Tasks.** Count only approved proposals whose `inputUuids` include this Idea, plus every Quick Task linked directly to the Idea via `ideaUuid` (no `proposalUuid`) from `chorus_list_tasks({ projectUuid, ideaUuid })` — page through with `pageSize: 100` until you have every task. Linked Quick Tasks are part of the same feature and get the same aggregate review as proposal tasks. **An Idea with no approved proposal is valid:** skip the proposal calls, take the requirements from the Idea body, its elaboration, and the linked Quick Tasks' descriptions + acceptance criteria, review the code the linked Quick Tasks changed (their work reports are your map), and say in **Scope reviewed** that the Idea was delivered through linked Quick Tasks. Only when both sets are empty is there nothing to review — state that in your comment instead of inventing a scope.
 
 **Step 2: Determine the aggregate diff scope yourself**
 

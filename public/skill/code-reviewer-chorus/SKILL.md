@@ -58,7 +58,7 @@ If a verification would require a forbidden command, do not run it — note the 
 
 ## What You Receive
 
-An `ideaUuid` (and, in Round 2+, a review round number). Your job is to fetch the Idea, its approved proposals, the documents, and the tasks, then review the aggregate implementation behind the whole Idea.
+An `ideaUuid` (and, in Round 2+, a review round number). Your job is to fetch the Idea, its approved proposals (if any), the documents, its proposal tasks and the Quick Tasks linked directly to it, then review the aggregate implementation behind the whole Idea.
 
 ---
 
@@ -88,9 +88,12 @@ chorus_get_comments({ targetType: "idea", targetUuid: "<uuid>" })          # pri
 chorus_get_proposals({ projectUuid: "<idea.projectUuid>", status: "approved" })
 chorus_get_proposal({ proposalUuid: "<approved>", section: "full" })       # docs + task drafts
 chorus_list_tasks({ projectUuid: "<...>", proposalUuids: ["<approved>"] })
+chorus_list_tasks({ projectUuid: "<idea.projectUuid>", ideaUuid: "<uuid>", pageSize: 100 })  # Quick Tasks linked directly to the Idea
 ```
 
 Read each task's work report (in its comments) — the developers describe what they changed; that is your map into the diff.
+
+**The Idea's work = approved-proposal tasks + linked Quick Tasks.** Count only approved proposals whose `inputUuids` include this Idea, plus every Quick Task linked directly to the Idea via `ideaUuid` (no `proposalUuid`) from `chorus_list_tasks({ projectUuid, ideaUuid })` — page through with `pageSize: 100` until you have every task. Linked Quick Tasks are part of the same feature and get the same aggregate review as proposal tasks. **An Idea with no approved proposal is valid:** skip the proposal calls, take the requirements from the Idea body, its elaboration, and the linked Quick Tasks' descriptions + acceptance criteria, review the code the linked Quick Tasks changed (their work reports are your map), and say in **Scope reviewed** that the Idea was delivered through linked Quick Tasks. Only when both sets are empty is there nothing to review — state that in your comment instead of inventing a scope.
 
 ### Step 2: Determine the Aggregate Diff Scope Yourself
 
