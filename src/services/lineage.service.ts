@@ -12,6 +12,8 @@
 //
 // Data model (prisma/schema.prisma):
 //   • Task.proposalUuid      String?  (nullable; quick tasks have none)
+//   • Task.ideaUuid          String?  (direct Idea link — Quick Tasks only; mutually
+//                                       exclusive with proposalUuid)
 //   • Document.proposalUuid  String?  (nullable; standalone docs have none)
 //   • Proposal.inputType     String   ("idea" | "document")
 //   • Proposal.inputUuids    Json     (string[]; for inputType="idea" these are idea uuids)
@@ -35,8 +37,9 @@ export type LineageEntityType = "task" | "document" | "proposal" | "idea";
 export type ResolvedVia =
   | "root_idea" // entity is/resolved to an idea, walked to its root
   | "via_proposal" // task → proposal(inputType=idea) → idea → root
+  | "via_task_idea" // quick task → task.ideaUuid (direct link) → idea → root
   | "via_document_proposal" // document → proposal(inputType=idea) → idea → root
-  | "no_proposal" // task/document with no proposalUuid (quick task / standalone)
+  | "no_proposal" // task with neither proposalUuid nor ideaUuid (unlinked quick task)
   | "proposal_input_not_idea" // proposal's inputType !== "idea" (or no input ideas)
   | "standalone_document" // document with no proposalUuid
   | "not_found"; // entity uuid not found in this company
@@ -53,8 +56,8 @@ export interface ResolveRootIdeaResult {
   rootIdeaUuid: string | null;
   /**
    * Direct idea uuid — the FIRST idea node on `lineage` (child→root), i.e. the idea the
-   * input entity attaches to directly: a task/document's proposal input idea
-   * (`inputUuids[0]`), or, for an idea input, that idea itself (NOT its root). Null in the
+   * input entity attaches to directly: a linked Quick Task's `ideaUuid`, a
+   * task/document's proposal input idea (`inputUuids[0]`), or, for an idea input, that idea itself (NOT its root). Null in the
    * same "no idea ancestor" cases as `rootIdeaUuid`. When `lineage` has exactly one idea
    * node, `directIdeaUuid === rootIdeaUuid`. Derived from the lineage already computed — no
    * extra query/traversal. The CLI daemon uses this as its Claude `--session-id` anchor.
@@ -107,11 +110,12 @@ export async function resolveRootIdea(
  * parent/container idea ancestry. It therefore reads at most one idea (the direct one,
  * for an existence check) and never a `parentUuid`:
  *   - `idea`      → itself (existence-checked)
- *   - `task`      → `task.proposalUuid` → the proposal's `inputUuids[0]` idea
+ *   - `task`      → `task.ideaUuid` (direct link, existence-checked) when set; else
+ *                   `task.proposalUuid` → the proposal's `inputUuids[0]` idea
  *   - `document`  → `doc.proposalUuid`  → the proposal's `inputUuids[0]` idea
  *   - `proposal`  → its own `inputUuids[0]` idea
  *
- * Returns null on any broken link (quick task / standalone document with no proposal,
+ * Returns null on any broken link (unlinked quick task / standalone document with no proposal,
  * a non-idea proposal input, an empty input list, a missing/cross-company entity) — the
  * same "no idea ancestor" successful-null outcome as `resolveRootIdea().directIdeaUuid`,
  * to which this is VALUE-identical while reading strictly fewer rows (no ancestry).
@@ -129,6 +133,10 @@ export async function resolveDirectIdeaUuid(
     }
     case "task": {
       const task = await getTaskByUuid(companyUuid, entityUuid);
+      if (task?.ideaUuid) {
+        const idea = await getIdeaByUuid(companyUuid, task.ideaUuid);
+        return idea ? idea.uuid : null;
+      }
       if (!task?.proposalUuid) return null;
       return directIdeaOfProposal(companyUuid, task.proposalUuid);
     }
@@ -209,6 +217,15 @@ async function resolveFromTask(
     return { rootIdeaUuid: null, lineage: [], resolvedVia: "not_found" };
   }
   const head: LineageNode = { type: "task", uuid: task.uuid, title: task.title };
+  if (task.ideaUuid) {
+    // Directly linked Quick Task: task → idea → root (no proposal hop).
+    const lineage: LineageNode[] = [head];
+    const root = await walkToRoot(companyUuid, task.ideaUuid, lineage);
+    if (root === null) {
+      return { rootIdeaUuid: null, lineage, resolvedVia: "not_found" };
+    }
+    return { rootIdeaUuid: root, lineage, resolvedVia: "via_task_idea" };
+  }
   if (!task.proposalUuid) {
     return { rootIdeaUuid: null, lineage: [head], resolvedVia: "no_proposal" };
   }

@@ -1695,6 +1695,34 @@ describe("updateIdea", () => {
 });
 
 describe("deleteIdea", () => {
+  beforeEach(() => {
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma));
+  });
+
+  it("clears ideaUuid on directly linked Quick Tasks in the same transaction, before deleting", async () => {
+    mockPrisma.idea.findUnique.mockResolvedValueOnce({ companyUuid: COMPANY_UUID });
+    mockPrisma.idea.updateMany.mockResolvedValueOnce({ count: 0 });
+    mockPrisma.task.updateMany.mockResolvedValueOnce({ count: 2 });
+    mockPrisma.idea.delete.mockResolvedValue(makeIdeaRecord());
+
+    await deleteIdea(IDEA_UUID);
+
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.task.updateMany).toHaveBeenCalledWith({
+      where: { companyUuid: COMPANY_UUID, ideaUuid: IDEA_UUID },
+      data: { ideaUuid: null },
+    });
+    expect(mockPrisma.task.updateMany.mock.invocationCallOrder[0])
+      .toBeLessThan(mockPrisma.idea.delete.mock.invocationCallOrder[0]);
+  });
+
+  it("does not touch tasks when the idea row is not found", async () => {
+    mockPrisma.idea.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.idea.delete.mockResolvedValue(makeIdeaRecord());
+    await deleteIdea(IDEA_UUID);
+    expect(mockPrisma.task.updateMany).not.toHaveBeenCalled();
+  });
+
   it("should delete idea and emit event", async () => {
     const deleted = makeIdeaRecord();
     mockPrisma.idea.delete.mockResolvedValue(deleted);

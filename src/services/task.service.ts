@@ -30,6 +30,7 @@ export interface TaskListParams {
   status?: string;
   priority?: string;
   proposalUuids?: string[];
+  ideaUuid?: string;  // Filter to Quick Tasks directly linked to this Idea
 }
 
 export interface TaskCreateParams {
@@ -41,6 +42,7 @@ export interface TaskCreateParams {
   storyPoints?: number | null;
   acceptanceCriteria?: string | null;  // acceptance criteria
   proposalUuid?: string | null;
+  ideaUuid?: string | null;  // Direct Idea link (Quick Tasks only; see assertValidTaskIdeaLink)
   createdByUuid: string;
 }
 
@@ -71,6 +73,7 @@ export interface TaskUpdateParams {
   priority?: string;
   storyPoints?: number | null;
   acceptanceCriteria?: string | null;  // acceptance criteria
+  ideaUuid?: string | null;  // Set / change / clear the direct Idea link (Quick Tasks only)
 }
 
 // Dependency summary info
@@ -132,6 +135,7 @@ export interface TaskResponse {
     instance?: AssigneeInstanceInfo;
   } | null;
   proposalUuid: string | null;
+  ideaUuid: string | null;  // Direct Idea link (Quick Tasks); null for proposal tasks / unlinked
   project?: { uuid: string; name: string };
   createdBy: { type: string; uuid: string; name: string; avatarSeed?: string | null } | null;
   dependsOn: TaskDependencyInfo[];
@@ -377,6 +381,7 @@ async function formatTaskResponse(
     assignedByType: string | null;
     assignedByUuid: string | null;
     proposalUuid: string | null;
+    ideaUuid?: string | null;
     createdByUuid: string;
     createdAt: Date;
     updatedAt: Date;
@@ -429,6 +434,7 @@ async function formatTaskResponse(
     acceptanceSummary,
     assignee,
     proposalUuid: task.proposalUuid,
+    ideaUuid: task.ideaUuid ?? null,
     ...(task.project && { project: task.project }),
     createdBy,
     dependsOn,
@@ -455,6 +461,7 @@ type RawTaskForBatch = {
   assignedByType: string | null;
   assignedByUuid: string | null;
   proposalUuid: string | null;
+  ideaUuid?: string | null;
   createdByUuid: string;
   createdAt: Date;
   updatedAt: Date;
@@ -553,6 +560,7 @@ async function formatTaskResponsesBatch(
       acceptanceSummary,
       assignee,
       proposalUuid: task.proposalUuid,
+      ideaUuid: task.ideaUuid ?? null,
       ...(task.project && { project: task.project }),
       createdBy,
       dependsOn,
@@ -593,6 +601,7 @@ export async function listTasks({
   status,
   priority,
   proposalUuids,
+  ideaUuid,
 }: TaskListParams): Promise<{ tasks: TaskResponse[]; total: number }> {
   const where = {
     projectUuid,
@@ -600,6 +609,7 @@ export async function listTasks({
     ...(status && { status }),
     ...(priority && { priority }),
     ...(proposalUuids && proposalUuids.length > 0 && { proposalUuid: { in: proposalUuids } }),
+    ...(ideaUuid && { ideaUuid }),
   };
 
   const [rawTasks, total] = await Promise.all([
@@ -623,6 +633,7 @@ export async function listTasks({
         assignedByType: true,
         assignedByUuid: true,
         proposalUuid: true,
+        ideaUuid: true,
         createdByUuid: true,
         createdAt: true,
         updatedAt: true,
@@ -673,8 +684,51 @@ export async function getTaskByUuid(companyUuid: string, uuid: string) {
   });
 }
 
+// ===== Direct Idea link (Quick Tasks) =====
+
+export const TASK_IDEA_LINK_PROPOSAL_CONFLICT_MESSAGE = "A task linked to a proposal cannot also link to an idea directly";
+export const TASK_IDEA_LINK_CROSS_PROJECT_MESSAGE = "Idea must be in the same project as the task";
+export const TASK_IDEA_LINK_CONTAINER_MESSAGE = "Theme ideas cannot have tasks; link a child idea";
+
+/**
+ * Validate a Task → Idea direct link (link-quick-task-to-idea D2). The single
+ * write-path guard, called from createTask / updateTask:
+ *  1. ideaUuid null/undefined → valid (no link / clears the link)
+ *  2. task carries a proposalUuid → reject (proposal tasks reach their Idea via the proposal)
+ *  3. idea must exist in companyUuid → else 404
+ *  4. idea.projectUuid must equal the task's projectUuid → else 400
+ *  5. theme (container) ideas are rejected → 400
+ *  6. any native idea status is allowed; linking never mutates the Idea row
+ */
+export async function assertValidTaskIdeaLink(
+  companyUuid: string,
+  link: { projectUuid: string; proposalUuid?: string | null; ideaUuid?: string | null },
+  db: Pick<typeof prisma, "idea"> = prisma,
+): Promise<void> {
+  if (link.ideaUuid == null) return;
+  if (link.proposalUuid) {
+    throw new ApiError("BAD_REQUEST", TASK_IDEA_LINK_PROPOSAL_CONFLICT_MESSAGE, 400);
+  }
+  const idea = await db.idea.findFirst({
+    where: { uuid: link.ideaUuid, companyUuid },
+    select: { projectUuid: true, isContainer: true },
+  });
+  if (!idea) throw new ApiError("NOT_FOUND", "Idea not found", 404);
+  if (idea.projectUuid !== link.projectUuid) {
+    throw new ApiError("BAD_REQUEST", TASK_IDEA_LINK_CROSS_PROJECT_MESSAGE, 400);
+  }
+  if (idea.isContainer) {
+    throw new ApiError("BAD_REQUEST", TASK_IDEA_LINK_CONTAINER_MESSAGE, 400);
+  }
+}
+
 // Create Task
 export async function createTask(params: TaskCreateParams): Promise<TaskResponse> {
+  await assertValidTaskIdeaLink(params.companyUuid, {
+    projectUuid: params.projectUuid,
+    proposalUuid: params.proposalUuid,
+    ideaUuid: params.ideaUuid,
+  });
   const task = await prisma.task.create({
     data: {
       companyUuid: params.companyUuid,
@@ -686,6 +740,7 @@ export async function createTask(params: TaskCreateParams): Promise<TaskResponse
       storyPoints: params.storyPoints,
       acceptanceCriteria: params.acceptanceCriteria,
       proposalUuid: params.proposalUuid,
+      ideaUuid: params.ideaUuid ?? null,
       createdByUuid: params.createdByUuid,
     },
     select: {
@@ -703,6 +758,7 @@ export async function createTask(params: TaskCreateParams): Promise<TaskResponse
       assignedByType: true,
       assignedByUuid: true,
       proposalUuid: true,
+      ideaUuid: true,
       createdByUuid: true,
       createdAt: true,
       updatedAt: true,
@@ -717,30 +773,40 @@ export async function createTask(params: TaskCreateParams): Promise<TaskResponse
 /**
  * Preserve the execution boundary independently of the task (and proposal) row.
  * Call only inside the execution/deletion transaction, holding the project lock.
- * Resolve every valid input Idea; eligibility already rolls these facts up subtrees.
+ * Resolve every valid input Idea (proposal tasks) or the directly linked Idea
+ * (Quick Tasks with `ideaUuid`); eligibility already rolls these facts up subtrees.
  */
 async function preserveIdeaExecution(
   tx: ResearchDb,
-  task: { uuid: string; companyUuid: string; projectUuid: string; proposalUuid: string | null },
+  task: { uuid: string; companyUuid: string; projectUuid: string; proposalUuid: string | null; ideaUuid?: string | null },
   actorContext?: { actorType: string; actorUuid: string },
 ) {
-  if (!task.proposalUuid) return;
-  const proposal = await tx.proposal.findFirst({
-    where: { uuid: task.proposalUuid, companyUuid: task.companyUuid, projectUuid: task.projectUuid, inputType: "idea" },
-    select: { inputUuids: true },
-  });
-  if (!Array.isArray(proposal?.inputUuids)) return;
-  const inputUuids = proposal.inputUuids.filter((id): id is string => typeof id === "string");
+  let candidateUuids: string[] = [];
+  if (task.proposalUuid) {
+    const proposal = await tx.proposal.findFirst({
+      where: { uuid: task.proposalUuid, companyUuid: task.companyUuid, projectUuid: task.projectUuid, inputType: "idea" },
+      select: { inputUuids: true },
+    });
+    if (Array.isArray(proposal?.inputUuids)) {
+      candidateUuids = proposal.inputUuids.filter((id): id is string => typeof id === "string");
+    }
+  } else if (task.ideaUuid) {
+    candidateUuids = [task.ideaUuid];
+  }
+  if (!candidateUuids.length) return;
   const ideas = await tx.idea.findMany({
-    where: { companyUuid: task.companyUuid, projectUuid: task.projectUuid, uuid: { in: inputUuids } },
+    where: { companyUuid: task.companyUuid, projectUuid: task.projectUuid, uuid: { in: candidateUuids } },
     select: { uuid: true },
   });
   if (!ideas.length) return;
+  const value = task.proposalUuid
+    ? { taskUuid: task.uuid, proposalUuid: task.proposalUuid }
+    : { taskUuid: task.uuid, ideaUuid: task.ideaUuid };
   await tx.activity.createMany({ data: ideas.map((idea) => ({
     companyUuid: task.companyUuid, projectUuid: task.projectUuid,
     targetType: "idea", targetUuid: idea.uuid, action: "execution_started",
     actorType: actorContext?.actorType ?? "system", actorUuid: actorContext?.actorUuid ?? "",
-    value: { taskUuid: task.uuid, proposalUuid: task.proposalUuid },
+    value,
   })) });
 }
 
@@ -760,6 +826,20 @@ export async function updateTask(
   // If moving FROM to_verify to any status EXCEPT done, reset acceptance criteria
   // Wrapped in transaction to prevent TOCTOU race condition
   const task = await prisma.$transaction(async (tx) => {
+    // Direct Idea link (D2): validate against the current row's project/proposal.
+    if (data.ideaUuid !== undefined) {
+      const linkAnchor = await tx.task.findUnique({
+        where: { uuid },
+        select: { companyUuid: true, projectUuid: true, proposalUuid: true },
+      });
+      if (linkAnchor) {
+        await assertValidTaskIdeaLink(linkAnchor.companyUuid, {
+          projectUuid: linkAnchor.projectUuid,
+          proposalUuid: linkAnchor.proposalUuid,
+          ideaUuid: data.ideaUuid,
+        }, tx);
+      }
+    }
     if (data.status) {
       const anchor = await tx.task.findUnique({ where: { uuid }, select: { companyUuid: true, projectUuid: true } });
       if (anchor) {
@@ -773,7 +853,12 @@ export async function updateTask(
             actorType: actorContext?.actorType ?? "system", actorUuid: actorContext?.actorUuid ?? "",
             value: { from: current.status, to: data.status },
           } });
-          await preserveIdeaExecution(tx, current, actorContext);
+          // Attribute to the post-update Idea link when this same call changes it.
+          await preserveIdeaExecution(
+            tx,
+            data.ideaUuid !== undefined ? { ...current, ideaUuid: data.ideaUuid } : current,
+            actorContext,
+          );
         }
       }
     }
@@ -931,7 +1016,7 @@ export async function deleteTask(uuid: string) {
       await lockResearchProject(tx, anchor.companyUuid, anchor.projectUuid);
       // Re-read after the lock: an execution/reopen may have committed while waiting.
       const current = await tx.task.findUnique({ where: { uuid } });
-      if (current?.proposalUuid) {
+      if (current?.proposalUuid || current?.ideaUuid) {
         const history = await tx.activity.findMany({
           where: { companyUuid: current.companyUuid, projectUuid: current.projectUuid, targetType: "task", targetUuid: uuid },
           select: { action: true, value: true },
@@ -989,6 +1074,7 @@ export async function createTasksFromProposal(
         assignedByType: true,
         assignedByUuid: true,
         proposalUuid: true,
+        ideaUuid: true,
         createdByUuid: true,
         createdAt: true,
         updatedAt: true,
@@ -1517,6 +1603,7 @@ export async function getUnblockedTasks({
         assignedByType: true,
         assignedByUuid: true,
         proposalUuid: true,
+        ideaUuid: true,
         createdByUuid: true,
         createdAt: true,
         updatedAt: true,

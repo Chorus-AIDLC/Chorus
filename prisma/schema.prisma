@@ -427,6 +427,7 @@ model Task {
   assignedByType          String? // user | agent (explicit assignment provenance)
   assignedByUuid          String? // User or Agent UUID (polymorphic provenance)
   proposalUuid            String? // Source Proposal UUID (traceable, optional)
+  ideaUuid                String? // Direct Idea link — Quick Tasks only (mutually exclusive with proposalUuid)
   createdByUuid           String // User or Agent UUID
   createdAt               DateTime              @default(now())
   updatedAt               DateTime              @updatedAt
@@ -441,6 +442,7 @@ model Task {
   @@index([companyUuid])
   @@index([projectUuid])
   @@index([proposalUuid])
+  @@index([ideaUuid])
   @@index([assigneeUuid])
   @@index([status])
 }

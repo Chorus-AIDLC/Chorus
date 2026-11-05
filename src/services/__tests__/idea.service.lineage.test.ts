@@ -299,6 +299,9 @@ describe("deleteIdea orphans children", () => {
       ideaRow({ uuid: "parent", companyUuid: COMPANY, projectUuid: PROJECT }),
     );
 
+    mockPrisma.task.updateMany.mockResolvedValueOnce({ count: 0 });
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => fn(mockPrisma));
+
     await deleteIdea("parent");
 
     // Orphan updateMany is scoped by both companyUuid and parentUuid.

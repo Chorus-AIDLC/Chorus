@@ -1061,17 +1061,26 @@ export async function deleteIdea(uuid: string) {
     where: { uuid },
     select: { companyUuid: true },
   });
-  // Orphan direct children to top-level BEFORE deleting the parent (weak
-  // lineage: a parent does not own its children). Doing this first also means
-  // the Restrict referential action on the self-relation never fires, since no
-  // child references the parent by delete time.
-  if (target) {
-    await prisma.idea.updateMany({
-      where: { companyUuid: target.companyUuid, parentUuid: uuid },
-      data: { parentUuid: null },
-    });
-  }
-  const idea = await prisma.idea.delete({ where: { uuid } });
+  // One transaction: orphan children + unlink Quick Tasks + delete the Idea.
+  const idea = await prisma.$transaction(async (tx) => {
+    // Orphan direct children to top-level BEFORE deleting the parent (weak
+    // lineage: a parent does not own its children). Doing this first also means
+    // the Restrict referential action on the self-relation never fires, since no
+    // child references the parent by delete time.
+    if (target) {
+      await tx.idea.updateMany({
+        where: { companyUuid: target.companyUuid, parentUuid: uuid },
+        data: { parentUuid: null },
+      });
+      // Directly linked Quick Tasks survive as plain (unlinked) Quick Tasks
+      // (link-quick-task-to-idea D7) — Task.ideaUuid is a scalar, no FK cascade.
+      await tx.task.updateMany({
+        where: { companyUuid: target.companyUuid, ideaUuid: uuid },
+        data: { ideaUuid: null },
+      });
+    }
+    return tx.idea.delete({ where: { uuid } });
+  });
   eventBus.emitChange({ companyUuid: idea.companyUuid, projectUuid: idea.projectUuid, entityType: "idea", entityUuid: idea.uuid, action: "deleted" });
   return idea;
 }
