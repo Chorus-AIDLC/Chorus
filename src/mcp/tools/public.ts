@@ -700,13 +700,16 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_get_idea",
     {
-      description: "Get detailed information for a single Idea. Includes `reports[]` — full content of the idea's completion reports, newest first.",
+      description: "Get detailed information for a single Idea. Includes `derivedStatus` / `badgeHint` (server-computed lifecycle status: union of approved-proposal and directly linked Quick Tasks; themes roll up from children) and `reports[]` — full content of the idea's completion reports, newest first.",
       inputSchema: z.object({
         ideaUuid: z.string().describe("Idea UUID"),
       }),
     },
     async ({ ideaUuid }) => {
-      const idea = await ideaService.getIdea(auth.companyUuid, ideaUuid);
+      // getIdeaWithDerivedStatus = getIdea + the shared derived-status
+      // computation (tracker/dashboard parity), so hooks can gate on
+      // `derivedStatus` instead of re-deriving completion client-side.
+      const idea = await ideaService.getIdeaWithDerivedStatus(auth.companyUuid, ideaUuid);
       if (!idea) {
         return { content: [{ type: "text", text: "Idea not found" }], isError: true };
       }

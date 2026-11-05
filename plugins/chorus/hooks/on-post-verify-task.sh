@@ -20,12 +20,13 @@
 #     Tells the agent to spawn the code-reviewer for the idea — the final
 #     ship-time review of the idea's AGGREGATE code change (the whole
 #     feature across all its tasks). Gates: CLAUDE_PLUGIN_OPTION_
-#     ENABLECODEREVIEWER=true (default) plus one of two scopes:
-#       - proposal task: proposal inputType=="idea", every task of THIS
-#         proposal done/closed, AND every Quick Task linked directly to the
-#         idea (Task.ideaUuid) done/closed;
-#       - proposal-less Quick Task linked to an idea (ideaUuid, no
-#         proposalUuid): every Quick Task linked to that idea done/closed.
+#     ENABLECODEREVIEWER=true (default), the task resolves to an idea
+#     (proposal inputType=="idea" -> inputUuids[0], or a proposal-less
+#     Quick Task's ideaUuid), and the server's chorus_get_idea
+#     derivedStatus is "done" (union of approved-proposal and linked Quick
+#     Tasks). Older servers without derivedStatus fall back to the
+#     client-side task-count check (proposal tasks + linked Quick Tasks
+#     done/closed).
 #     Read-only — emits a reminder only.
 #
 #   Branch B — Idea-completion report reminder
@@ -303,12 +304,17 @@ CTX
 # enabled. Tells the agent to spawn the code-reviewer for the idea — the
 # final ship-time review of the idea's AGGREGATE code change (the whole
 # feature across all its tasks), not a single task.
-# Two scopes:
-#   - proposal task of an idea-rooted proposal (inputType=="idea"): every
-#     task of THIS proposal terminal AND every Quick Task linked directly to
-#     the idea (chorus_list_tasks ideaUuid filter) terminal;
-#   - proposal-less Quick Task linked to an idea (ideaUuid): every Quick
-#     Task linked to that idea terminal.
+# The idea is resolved from the proposal's inputUuids[0] (proposal task of
+# an idea-rooted proposal, inputType=="idea") or from task.ideaUuid
+# (proposal-less Quick Task linked to an idea). Completion is decided by the
+# SERVER: chorus_get_idea's derivedStatus (union of approved-proposal tasks
+# and linked Quick Tasks) must be "done" — so a mixed idea never fires while
+# either side is still building, whichever task finishes first. Only when
+# derivedStatus is absent (older server / idea read failed) does the legacy
+# client-side task-count check apply:
+#   - proposal task: every task of THIS proposal terminal AND every Quick
+#     Task linked directly to the idea (chorus_list_tasks ideaUuid) terminal;
+#   - Quick Task: every Quick Task linked to that idea terminal.
 # Read-only — emits a reminder only; never posts a comment or mutates.
 # Gated by enableCodeReviewer (default true).
 branch_code_review() {
@@ -317,7 +323,7 @@ branch_code_review() {
     return 0
   fi
 
-  local idea_uuid tasks_json linked_json
+  local idea_uuid tasks_json linked_json idea_json derived_status
   if [ -n "$PROPOSAL_UUID" ]; then
     # Only idea-rooted proposals get a code-review gateway.
     local input_type
@@ -328,22 +334,36 @@ branch_code_review() {
 
     # Resolve the idea UUID from the proposal's inputUuids (first idea).
     idea_uuid=$(printf '%s' "$PROPOSAL_JSON" | jq -r '(.inputUuids // [])[0] // empty' 2>/dev/null) || true
-    if [ -z "$idea_uuid" ]; then
-      return 0
-    fi
+  else
+    idea_uuid="$TASK_IDEA_UUID"
+  fi
+  if [ -z "$idea_uuid" ]; then
+    return 0
+  fi
 
-    # All tasks of this proposal must be terminal (zero-task proposal -> skip).
+  # Server-side completion: the idea's derivedStatus is the single source of
+  # truth (same computation as the tracker/dashboard). Fire only on "done".
+  idea_json=$("$MCP" chorus_get_idea "$(printf '{"ideaUuid":"%s"}' "$idea_uuid")" 2>/dev/null) || idea_json=""
+  derived_status=""
+  if [ -n "$idea_json" ]; then
+    derived_status=$(printf '%s' "$idea_json" | jq -r '.derivedStatus // empty' 2>/dev/null) || derived_status=""
+  fi
+
+  if [ -n "$derived_status" ]; then
+    [ "$derived_status" = "done" ] || return 0
+  elif [ -n "$PROPOSAL_UUID" ]; then
+    # Legacy fallback (no derivedStatus): all tasks of this proposal must be
+    # terminal (zero-task proposal -> skip) ...
     tasks_json=$("$MCP" chorus_list_tasks "$(printf '{"projectUuid":"%s","proposalUuids":["%s"],"pageSize":100}' "$PROJECT_UUID" "$PROPOSAL_UUID")" 2>/dev/null) || return 0
     tasks_all_terminal "$tasks_json" no || return 0
 
-    # Quick Tasks linked directly to the idea must be terminal too (none is fine).
+    # ... and Quick Tasks linked directly to the idea too (none is fine).
     linked_json=$("$MCP" chorus_list_tasks "$(printf '{"projectUuid":"%s","ideaUuid":"%s","pageSize":100}' "$PROJECT_UUID" "$idea_uuid")" 2>/dev/null) || return 0
     tasks_all_terminal "$linked_json" yes || return 0
   else
-    # Proposal-less Quick Task linked to an idea: every linked Quick Task
-    # must be terminal (the verified task itself is in the list, so an
-    # empty list means the read is stale -> skip).
-    idea_uuid="$TASK_IDEA_UUID"
+    # Legacy fallback (no derivedStatus), proposal-less Quick Task: every
+    # linked Quick Task must be terminal (the verified task itself is in the
+    # list, so an empty list means the read is stale -> skip).
     linked_json=$("$MCP" chorus_list_tasks "$(printf '{"projectUuid":"%s","ideaUuid":"%s","pageSize":100}' "$PROJECT_UUID" "$idea_uuid")" 2>/dev/null) || return 0
     tasks_all_terminal "$linked_json" no || return 0
   fi
@@ -356,9 +376,9 @@ branch_code_review() {
     fix_target="create Proposal-linked fix tasks"
     report_line="Run the code-review gateway BEFORE writing any idea-completion report."
   else
-    headline="All Quick Tasks linked to idea ${idea_uuid} (no proposal) are now done. This is the final ship-time gateway for idea ${idea_uuid}."
+    headline="Every task of idea ${idea_uuid} is now done — its linked Quick Tasks and any approved-proposal tasks. This is the final ship-time gateway for idea ${idea_uuid}."
     fix_target="create fix Quick Tasks linked to the idea (chorus_create_tasks with ideaUuid=\"${idea_uuid}\")"
-    report_line="This idea has no proposal, so no idea-completion report applies; the VERDICT comment on the idea is the ship record."
+    report_line="A linked Quick Task closed this idea, so no completion-report reminder follows here. If the idea has no proposal, no idea-completion report applies and the VERDICT comment on the idea is the ship record; if it also has an approved proposal, write that proposal's idea-completion report only after this gateway passes."
   fi
 
   # Sub-agent wording differs per runtime (TRAE has no spawn_agent).

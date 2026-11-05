@@ -84,6 +84,7 @@ const fixture = vi.hoisted(() => {
     },
     idea: {
       getIdea: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
+      getIdeaWithDerivedStatus: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
       getIdeaByUuid: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
       createIdea: vi.fn(async (params: Row) => ({ uuid: "new-idea", ...params })),
       moveIdea: vi.fn(async (_company: string, uuid: string, targetProjectUuid: string) => ({

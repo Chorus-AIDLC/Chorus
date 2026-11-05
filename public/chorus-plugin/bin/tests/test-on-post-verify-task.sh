@@ -76,6 +76,11 @@
 #   proposal-linked-done — proposal task, all proposal tasks done AND all
 #                          linked Quick Tasks done -> `spawn code-reviewer`
 #
+# The fixtures above register no chorus_get_idea response, so they exercise
+# the legacy (older-server) fallback. The mixed-* fixtures (CR-R3 B3)
+# answer chorus_get_idea with/without derivedStatus and assert the gateway
+# fires only when the server-derived idea status is "done".
+#
 # All fixtures must end with exit 0.
 #
 # Bash 3.2 compatible. Run:
@@ -400,6 +405,136 @@ case "$cmd" in
         echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":100}'
         ;;
 
+      # ----- Branch C: server-derived idea status (CR-R3 B3) -----
+      # chorus_get_idea derivedStatus is authoritative; its absence (older
+      # server) falls back to the client-side task-count check.
+      mixed-qt-first:chorus_get_task)
+        echo '{"uuid":"qt-M","title":"QT M","status":"done","proposalUuid":null,"ideaUuid":"idea-M","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      mixed-qt-first:chorus_list_tasks@idea)
+        echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-qt-first:chorus_get_idea)
+        echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"in_progress","badgeHint":"x"}'
+        ;;
+      mixed-prop-first:chorus_get_task)
+        echo '{"uuid":"task-M","title":"Task M","status":"done","proposalUuid":"prop-M","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      mixed-prop-first:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-M","title":"PM","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-M"]}'
+        ;;
+      mixed-prop-first:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-M","status":"done","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-prop-first:chorus_list_tasks@idea)
+        echo '{"tasks":[{"uuid":"qt-M","status":"in_progress","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-prop-first:chorus_get_idea)
+        echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"in_progress","badgeHint":"x"}'
+        ;;
+      mixed-prop-first:chorus_get_documents)
+        echo '{"documents":[{"uuid":"doc-rM","type":"report","title":"Idea M — completion report","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-done-qt:chorus_get_task)
+        echo '{"uuid":"qt-M","title":"QT M","status":"done","proposalUuid":null,"ideaUuid":"idea-M","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      mixed-done-qt:chorus_list_tasks@idea)
+        echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-done-qt:chorus_get_idea)
+        echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"done","badgeHint":"x"}'
+        ;;
+      mixed-done-prop:chorus_get_task)
+        echo '{"uuid":"task-M","title":"Task M","status":"done","proposalUuid":"prop-M","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      mixed-done-prop:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-M","title":"PM","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-M"]}'
+        ;;
+      mixed-done-prop:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-M","status":"done","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-done-prop:chorus_list_tasks@idea)
+        echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-done-prop:chorus_get_idea)
+        echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"done","badgeHint":"x"}'
+        ;;
+      mixed-done-prop:chorus_get_documents)
+        echo '{"documents":[{"uuid":"doc-rM","type":"report","title":"Idea M — completion report","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-server-done:chorus_get_task)
+        echo '{"uuid":"qt-M","title":"QT M","status":"done","proposalUuid":null,"ideaUuid":"idea-M","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      mixed-server-done:chorus_list_tasks@idea)
+        echo '{"tasks":[{"uuid":"qt-M","status":"in_progress","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-server-done:chorus_get_idea)
+        echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"done","badgeHint":"x"}'
+        ;;
+      mixed-verify-pending:chorus_get_task)
+        echo '{"uuid":"task-M","title":"Task M","status":"done","proposalUuid":"prop-M","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      mixed-verify-pending:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-M","title":"PM","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-M"]}'
+        ;;
+      mixed-verify-pending:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-M","status":"done","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-verify-pending:chorus_list_tasks@idea)
+        echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-verify-pending:chorus_get_idea)
+        echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"human_conduct_required","badgeHint":"x"}'
+        ;;
+      mixed-verify-pending:chorus_get_documents)
+        echo '{"documents":[{"uuid":"doc-rM","type":"report","title":"Idea M — completion report","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-legacy-qt:chorus_get_task)
+        echo '{"uuid":"qt-M","title":"QT M","status":"done","proposalUuid":null,"ideaUuid":"idea-M","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      mixed-legacy-qt:chorus_list_tasks@idea)
+        echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-legacy-qt:chorus_get_idea)
+        echo '{"uuid":"idea-M","title":"Idea M"}'
+        ;;
+      mixed-legacy-prop-open:chorus_get_task)
+        echo '{"uuid":"task-M","title":"Task M","status":"done","proposalUuid":"prop-M","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      mixed-legacy-prop-open:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-M","title":"PM","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-M"]}'
+        ;;
+      mixed-legacy-prop-open:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-M","status":"done","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-legacy-prop-open:chorus_list_tasks@idea)
+        echo '{"tasks":[{"uuid":"qt-M","status":"open","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-legacy-prop-open:chorus_get_idea)
+        echo '{"uuid":"idea-M","title":"Idea M"}'
+        ;;
+      mixed-legacy-prop-open:chorus_get_documents)
+        echo '{"documents":[{"uuid":"doc-rM","type":"report","title":"Idea M — completion report","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-legacy-prop-done:chorus_get_task)
+        echo '{"uuid":"task-M","title":"Task M","status":"done","proposalUuid":"prop-M","project":{"uuid":"proj-1","name":"P"}}'
+        ;;
+      mixed-legacy-prop-done:chorus_get_proposal)
+        printf '%s' '{"uuid":"prop-M","title":"PM","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-M"]}'
+        ;;
+      mixed-legacy-prop-done:chorus_list_tasks)
+        echo '{"tasks":[{"uuid":"task-M","status":"done","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-legacy-prop-done:chorus_list_tasks@idea)
+        echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+        ;;
+      mixed-legacy-prop-done:chorus_get_idea)
+        echo '{"uuid":"idea-M","title":"Idea M"}'
+        ;;
+      mixed-legacy-prop-done:chorus_get_documents)
+        echo '{"documents":[{"uuid":"doc-rM","type":"report","title":"Idea M — completion report","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+        ;;
+
       # Default for fixtures without explicit linked data: no Quick Tasks
       # are linked to the idea.
       *:chorus_list_tasks@idea)
@@ -678,6 +813,136 @@ case "${fixture}:${tool}" in
     ;;
   proposal-linked-done:chorus_get_documents)
     echo '{"documents":[{"uuid":"doc-r1","type":"report","title":"Idea 9 — completion report","proposalUuid":"prop-9"}],"total":1,"page":1,"pageSize":100}'
+    ;;
+
+  # ----- Branch C: server-derived idea status (CR-R3 B3) -----
+  # chorus_get_idea derivedStatus is authoritative; its absence (older
+  # server) falls back to the client-side task-count check.
+  mixed-qt-first:chorus_get_task)
+    echo '{"uuid":"qt-M","title":"QT M","status":"done","proposalUuid":null,"ideaUuid":"idea-M","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  mixed-qt-first:chorus_list_tasks@idea)
+    echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-qt-first:chorus_get_idea)
+    echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"in_progress","badgeHint":"x"}'
+    ;;
+  mixed-prop-first:chorus_get_task)
+    echo '{"uuid":"task-M","title":"Task M","status":"done","proposalUuid":"prop-M","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  mixed-prop-first:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-M","title":"PM","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-M"]}'
+    ;;
+  mixed-prop-first:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-M","status":"done","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-prop-first:chorus_list_tasks@idea)
+    echo '{"tasks":[{"uuid":"qt-M","status":"in_progress","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-prop-first:chorus_get_idea)
+    echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"in_progress","badgeHint":"x"}'
+    ;;
+  mixed-prop-first:chorus_get_documents)
+    echo '{"documents":[{"uuid":"doc-rM","type":"report","title":"Idea M — completion report","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-done-qt:chorus_get_task)
+    echo '{"uuid":"qt-M","title":"QT M","status":"done","proposalUuid":null,"ideaUuid":"idea-M","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  mixed-done-qt:chorus_list_tasks@idea)
+    echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-done-qt:chorus_get_idea)
+    echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"done","badgeHint":"x"}'
+    ;;
+  mixed-done-prop:chorus_get_task)
+    echo '{"uuid":"task-M","title":"Task M","status":"done","proposalUuid":"prop-M","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  mixed-done-prop:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-M","title":"PM","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-M"]}'
+    ;;
+  mixed-done-prop:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-M","status":"done","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-done-prop:chorus_list_tasks@idea)
+    echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-done-prop:chorus_get_idea)
+    echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"done","badgeHint":"x"}'
+    ;;
+  mixed-done-prop:chorus_get_documents)
+    echo '{"documents":[{"uuid":"doc-rM","type":"report","title":"Idea M — completion report","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-server-done:chorus_get_task)
+    echo '{"uuid":"qt-M","title":"QT M","status":"done","proposalUuid":null,"ideaUuid":"idea-M","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  mixed-server-done:chorus_list_tasks@idea)
+    echo '{"tasks":[{"uuid":"qt-M","status":"in_progress","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-server-done:chorus_get_idea)
+    echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"done","badgeHint":"x"}'
+    ;;
+  mixed-verify-pending:chorus_get_task)
+    echo '{"uuid":"task-M","title":"Task M","status":"done","proposalUuid":"prop-M","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  mixed-verify-pending:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-M","title":"PM","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-M"]}'
+    ;;
+  mixed-verify-pending:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-M","status":"done","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-verify-pending:chorus_list_tasks@idea)
+    echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-verify-pending:chorus_get_idea)
+    echo '{"uuid":"idea-M","title":"Idea M","derivedStatus":"human_conduct_required","badgeHint":"x"}'
+    ;;
+  mixed-verify-pending:chorus_get_documents)
+    echo '{"documents":[{"uuid":"doc-rM","type":"report","title":"Idea M — completion report","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-legacy-qt:chorus_get_task)
+    echo '{"uuid":"qt-M","title":"QT M","status":"done","proposalUuid":null,"ideaUuid":"idea-M","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  mixed-legacy-qt:chorus_list_tasks@idea)
+    echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-legacy-qt:chorus_get_idea)
+    echo '{"uuid":"idea-M","title":"Idea M"}'
+    ;;
+  mixed-legacy-prop-open:chorus_get_task)
+    echo '{"uuid":"task-M","title":"Task M","status":"done","proposalUuid":"prop-M","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  mixed-legacy-prop-open:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-M","title":"PM","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-M"]}'
+    ;;
+  mixed-legacy-prop-open:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-M","status":"done","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-legacy-prop-open:chorus_list_tasks@idea)
+    echo '{"tasks":[{"uuid":"qt-M","status":"open","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-legacy-prop-open:chorus_get_idea)
+    echo '{"uuid":"idea-M","title":"Idea M"}'
+    ;;
+  mixed-legacy-prop-open:chorus_get_documents)
+    echo '{"documents":[{"uuid":"doc-rM","type":"report","title":"Idea M — completion report","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-legacy-prop-done:chorus_get_task)
+    echo '{"uuid":"task-M","title":"Task M","status":"done","proposalUuid":"prop-M","project":{"uuid":"proj-1","name":"P"}}'
+    ;;
+  mixed-legacy-prop-done:chorus_get_proposal)
+    printf '%s' '{"uuid":"prop-M","title":"PM","description":"Free-form proposal.","inputType":"idea","inputUuids":["idea-M"]}'
+    ;;
+  mixed-legacy-prop-done:chorus_list_tasks)
+    echo '{"tasks":[{"uuid":"task-M","status":"done","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-legacy-prop-done:chorus_list_tasks@idea)
+    echo '{"tasks":[{"uuid":"qt-M","status":"done","proposalUuid":null}],"total":1,"page":1,"pageSize":100}'
+    ;;
+  mixed-legacy-prop-done:chorus_get_idea)
+    echo '{"uuid":"idea-M","title":"Idea M"}'
+    ;;
+  mixed-legacy-prop-done:chorus_get_documents)
+    echo '{"documents":[{"uuid":"doc-rM","type":"report","title":"Idea M — completion report","proposalUuid":"prop-M"}],"total":1,"page":1,"pageSize":100}'
     ;;
 
   # Default for fixtures without explicit linked data: no Quick Tasks
@@ -1001,6 +1266,30 @@ done
 run_one "proposal-linked-done" "proposal-linked-done" "claude" "must-contain" "spawn code-reviewer"
 run_one "proposal-linked-done" "proposal-linked-done" "codex"  "must-contain" "spawn code-reviewer"
 run_one "proposal-linked-done" "proposal-linked-done" "kiro"   "must-contain" "gateway for idea idea-9"
+
+# ===== Branch C: server-derived idea status gates the gateway (CR-R3 B3) =====
+# M1: linked Quick Task verified first while the idea's approved-proposal
+#     task is still in_progress — the linked list alone is all-done (legacy
+#     logic would fire), but derivedStatus=in_progress -> silent.
+# M2: reverse order — proposal tasks done, linked Quick Task in_progress -> silent.
+# M3/M4: both sides done (derivedStatus=done) -> fires from either path.
+# M5: server says done though the client-visible linked list is stale -> fires
+#     (server is the single source of truth, no client-side counting).
+# M6: derivedStatus=human_conduct_required (verify pending elsewhere) -> silent.
+# L*: derivedStatus absent (older server) -> legacy task-count behaviour.
+for v in claude codex kiro; do
+  run_one "mixed-qt-first"         "mixed-qt-first"         "$v" "must-not-contain" "" "ode-Review Gateway"
+  run_one "mixed-prop-first"       "mixed-prop-first"       "$v" "must-not-contain" "" "ode-Review Gateway"
+  run_one "mixed-done-qt"          "mixed-done-qt"          "$v" "must-contain" "gateway for idea idea-M"
+  run_one "mixed-done-prop"        "mixed-done-prop"        "$v" "must-contain" "gateway for idea idea-M"
+  run_one "mixed-server-done"      "mixed-server-done"      "$v" "must-contain" "gateway for idea idea-M"
+  run_one "mixed-verify-pending"   "mixed-verify-pending"   "$v" "must-not-contain" "" "ode-Review Gateway"
+  run_one "mixed-legacy-qt"        "mixed-legacy-qt"        "$v" "must-contain" "gateway for idea idea-M"
+  run_one "mixed-legacy-prop-open" "mixed-legacy-prop-open" "$v" "must-not-contain" "" "ode-Review Gateway"
+  run_one "mixed-legacy-prop-done" "mixed-legacy-prop-done" "$v" "must-contain" "gateway for idea idea-M"
+done
+run_one "mixed-done-qt-wording"  "mixed-done-qt" "claude" "must-contain" "any approved-proposal tasks"
+run_one "mixed-done-qt-no-report" "mixed-done-qt" "claude" "must-not-contain" "" "create idea-completion report"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

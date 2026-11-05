@@ -10,7 +10,7 @@ P, T, PRJ, IDEA = "prop-1", "task-1", "proj-1", "idea-1"
 class FakeChorus:
     def __init__(self, *, tasks=None, total=None, desc="OpenSpec change slug: my-change", input_type="idea",
                  input_uuids=(IDEA,), docs=(), fail=(), linked=(), linked_total=None,
-                 task_proposal=P, task_idea=None):
+                 task_proposal=P, task_idea=None, idea=None):
         self.tasks = [{"uuid": f"t{i}", "status": s} for i, s in enumerate(["done", "done"] if tasks is None else tasks)]
         self.total = len(self.tasks) if total is None else total
         # Quick Tasks linked directly to the idea (chorus_list_tasks ideaUuid filter).
@@ -20,6 +20,9 @@ class FakeChorus:
         self.proposal = {"uuid": P, "description": desc, "inputType": input_type, "inputUuids": list(input_uuids)}
         self.docs = list(docs)
         self.fail = set(fail)
+        # chorus_get_idea payload; None = older server without the tool result
+        # this test cares about (falls through to AssertionError -> legacy path).
+        self.idea = idea
         self.calls = []
 
     def __call__(self, name, args):
@@ -38,6 +41,8 @@ class FakeChorus:
             return {"tasks": self.tasks, "total": self.total}
         if name == "chorus_get_documents":
             return {"documents": self.docs, "total": len(self.docs)}
+        if name == "chorus_get_idea" and self.idea is not None:
+            return {"uuid": args["ideaUuid"], **self.idea}
         raise AssertionError(name)
 
 
@@ -257,3 +262,90 @@ def test_proposal_gateway_fires_when_linked_quick_tasks_done(repo):
     out = run_verify(chorus, repo)
     assert C in out and "and any Quick Tasks linked to the idea" in out
     assert ("chorus_list_tasks", {"projectUuid": PRJ, "ideaUuid": IDEA, "pageSize": 100}) in chorus.calls
+
+
+# --- Server-derived idea status gates the code-review gateway (CR-R3 B3) ---------
+
+
+def _leo_repro_call(derived):
+    """Leo's round-3 repro: linked Quick Task done, same idea's approved-proposal task in_progress."""
+    calls = []
+
+    def call(tool, args):
+        calls.append((tool, args))
+        if tool == "chorus_get_task":
+            return {"uuid": "quick-1", "proposalUuid": None, "ideaUuid": "idea-1", "project": {"uuid": "project-1"}}
+        if tool == "chorus_get_idea":
+            if derived is None:
+                return {"uuid": "idea-1"}  # older server: no derivedStatus field
+            return {"uuid": "idea-1", "derivedStatus": derived}
+        if tool == "chorus_get_proposals":
+            return {"proposals": [{"uuid": "proposal-1", "status": "approved", "inputType": "idea",
+                                   "inputUuids": ["idea-1"]}], "total": 1}
+        if tool == "chorus_list_tasks":
+            tasks = [{"uuid": "quick-1", "status": "done"}] if args.get("ideaUuid") else \
+                [{"uuid": "proposal-task-1", "status": "in_progress"}]
+            return {"tasks": tasks, "total": len(tasks)}
+        raise AssertionError(tool)
+
+    return call, calls
+
+
+def test_mixed_idea_quick_task_first_is_silent():
+    # Server union says the idea is still building -> no final gateway.
+    call, calls = _leo_repro_call("in_progress")
+    out = r.verify_task_reminders("quick-1", call, env={"CHORUS_OPENSPEC_MODE": "off"})
+    assert out == ""
+    assert ("chorus_get_idea", {"ideaUuid": "idea-1"}) in calls
+    # The server answer is authoritative: no client-side task counting.
+    assert not any(n == "chorus_list_tasks" for n, _ in calls)
+
+
+def test_mixed_idea_quick_task_first_legacy_server_keeps_old_behaviour():
+    # derivedStatus absent (older server) -> previous task-count logic applies.
+    call, calls = _leo_repro_call(None)
+    out = r.verify_task_reminders("quick-1", call, env={"CHORUS_OPENSPEC_MODE": "off"})
+    assert C in out
+    assert ("chorus_list_tasks", {"projectUuid": "project-1", "ideaUuid": "idea-1", "pageSize": 100}) in calls
+
+
+def test_mixed_idea_proposal_task_first_is_silent(repo):
+    # Proposal tasks all done, linked Quick Task still in_progress -> server says building.
+    out = run_verify(FakeChorus(linked=["in_progress"], idea={"derivedStatus": "in_progress"}), repo)
+    assert C not in out and A in out and B in out  # A and B stay proposal-scoped
+
+
+@pytest.mark.parametrize("derived", ["human_conduct_required", "todo", "in_progress"])
+def test_proposal_task_silent_unless_derived_done(repo, derived):
+    # Even when every client-visible list is terminal, the server status wins.
+    out = run_verify(FakeChorus(linked=["done"], idea={"derivedStatus": derived}), repo)
+    assert C not in out
+
+
+def test_mixed_idea_both_done_fires_from_quick_task(repo):
+    chorus = quick(linked=["done"], idea={"derivedStatus": "done"})
+    out = run_verify(chorus, repo)
+    assert C in out and A not in out and B not in out
+    assert f"gateway for idea {LINKED_IDEA}" in out
+    assert "any approved-proposal tasks" in out
+    assert ("chorus_get_idea", {"ideaUuid": LINKED_IDEA}) in chorus.calls
+
+
+def test_mixed_idea_both_done_fires_from_proposal_task(repo):
+    chorus = FakeChorus(linked=["done"], idea={"derivedStatus": "done"})
+    out = run_verify(chorus, repo)
+    assert C in out and "and any Quick Tasks linked to the idea" in out
+    assert ("chorus_get_idea", {"ideaUuid": IDEA}) in chorus.calls
+    # Branch C no longer needs the linked-task list when the server answered.
+    assert not any(n == "chorus_list_tasks" and "ideaUuid" in a for n, a in chorus.calls)
+
+
+def test_proposal_task_legacy_server_without_field(repo):
+    # chorus_get_idea answers but without derivedStatus -> legacy linked-task check.
+    assert C not in run_verify(FakeChorus(linked=["open"], idea={}), repo)
+    assert C in run_verify(FakeChorus(linked=["done"], idea={}), repo)
+
+
+def test_get_idea_failure_falls_back_to_legacy(repo):
+    assert C in run_verify(quick(linked=["done"], fail={"chorus_get_idea"}), repo)
+    assert C not in run_verify(quick(linked=["in_progress"], fail={"chorus_get_idea"}), repo)

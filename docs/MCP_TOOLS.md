@@ -402,7 +402,9 @@ Product/development behavior is unchanged: eligible → online, development reop
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
 
-**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `references: ReferenceArtifact[]` (inline reference artifacts linked to the idea, oldest-first; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields.
+**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `references: ReferenceArtifact[]` (inline reference artifacts linked to the idea, oldest-first; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields. It also carries the server-computed `derivedStatus` (`todo` / `in_progress` / `human_conduct_required` / `done`) and `badgeHint` — the same computation as the tracker and dashboard (`ideaService.getIdeaWithDerivedStatus`): the union of the idea's approved-proposal tasks and Quick Tasks linked directly via `Task.ideaUuid`; a theme with children rolls up from its children (plus `childProgress`).
+
+> Plugin post-verify hooks (Claude Code, Codex/TRAE, Kiro, Hermes) gate the whole-Idea code-review gateway on `derivedStatus == "done"`, so a mixed idea (proposal tasks + linked Quick Tasks) only triggers the final review once both sides are complete. Older servers without the field fall back to the hooks' own task-count check.
 
 > Entity → root-idea lineage resolution is **not** an MCP tool. It is a standalone REST endpoint, `GET /api/entities/{type}/{uuid}/root-idea`, callable with any valid auth (including an agent API key) — see `docs/API.md` / the route at `src/app/api/entities/[type]/[uuid]/root-idea/`.
 

@@ -157,7 +157,7 @@ def openspec_archive(proposal_uuid: str, slug: str, project_uuid: str) -> str:
 
 
 def code_review(proposal_uuid: Optional[str], idea_uuid: str) -> str:
-    """Gateway reminder; ``proposal_uuid=None`` is a proposal-less idea whose linked Quick Tasks are all done."""
+    """Gateway reminder; ``proposal_uuid=None`` means a linked Quick Task (no proposal) closed the idea."""
     marker = reviewer_marker("code")
     if proposal_uuid:
         headline = (f"All tasks of idea-rooted proposal {proposal_uuid} (and any Quick Tasks linked to the idea) "
@@ -165,10 +165,13 @@ def code_review(proposal_uuid: Optional[str], idea_uuid: str) -> str:
         fix_target = "create Proposal-linked fix tasks"
         report_line = "Run the code-review gateway BEFORE writing any idea-completion report."
     else:
-        headline = f"All Quick Tasks linked to idea {idea_uuid} (no proposal) are now done."
+        headline = (f"Every task of idea {idea_uuid} is now done — its linked Quick Tasks and any "
+                    "approved-proposal tasks.")
         fix_target = f"create fix Quick Tasks linked to the idea (chorus_create_tasks with ideaUuid=\"{idea_uuid}\")"
-        report_line = ("This idea has no proposal, so no idea-completion report applies; the VERDICT comment on "
-                       "the idea is the ship record.")
+        report_line = ("A linked Quick Task closed this idea, so no completion-report reminder follows here. If the "
+                       "idea has no proposal, no idea-completion report applies and the VERDICT comment on the idea "
+                       "is the ship record; if it also has an approved proposal, write that proposal's "
+                       "idea-completion report only after this gateway passes.")
     return (
         "[Chorus — Code-Review Gateway Trigger]\n"
         f"{headline} This is the final ship-time gateway for idea {idea_uuid}.\n\n"
@@ -253,10 +256,14 @@ def verify_task_reminders(
     any failure of a shared lookup skips every branch, a failure inside one
     branch skips only that branch (same as the shell hook).
 
-    A Quick Task with no proposal but a linked ``ideaUuid`` runs only branch C,
-    scoped to the idea's linked Quick Tasks; for proposal tasks, branch C also
-    requires the idea's linked Quick Tasks to be terminal. A and B stay
-    proposal-only.
+    A Quick Task with no proposal but a linked ``ideaUuid`` runs only branch C;
+    A and B stay proposal-only. Branch C resolves the idea (proposal
+    ``inputUuids[0]`` or ``task.ideaUuid``) and fires only when the server's
+    ``chorus_get_idea`` ``derivedStatus`` is ``"done"`` (union of
+    approved-proposal and linked Quick Tasks), so a mixed idea never fires
+    while either side is still building. When ``derivedStatus`` is absent
+    (older server / idea read failed) it falls back to the client-side
+    task-count check: proposal tasks plus linked Quick Tasks terminal.
     """
     env = os.environ if env is None else env
     root = project_root or os.getcwd()
@@ -323,28 +330,47 @@ def verify_task_reminders(
     def all_terminal(items: Optional[list]) -> bool:
         return items is not None and all(s in ("done", "closed") for s in _statuses(items))
 
+    def idea_derived_status(idea_uuid: str) -> Optional[str]:
+        """Server-computed ``derivedStatus`` of the idea, or ``None`` when absent (older server) / unreadable."""
+        try:
+            idea = call("chorus_get_idea", {"ideaUuid": idea_uuid})
+        except Exception:
+            return None
+        status = idea.get("derivedStatus") if isinstance(idea, Mapping) else None
+        return status if isinstance(status, str) and status else None
+
     def branch_c() -> str:
         if (env.get(ENV_ENABLE_CODE_REVIEWER) or "true") != "true":
             return ""
-        if not proposal_uuid:
-            # Proposal-less Quick Task linked to an idea: every linked Quick Task
-            # must be terminal (the verified task is in the list, so empty = stale).
-            linked = linked_tasks(task_idea_uuid)
-            if not linked or not all_terminal(linked):
+        if proposal_uuid:
+            if proposal.get("inputType") != "idea":
                 return ""
-            return code_review(None, task_idea_uuid)
-        if proposal.get("inputType") != "idea":
-            return ""
-        inputs = proposal.get("inputUuids") or []
-        idea_uuid = inputs[0] if isinstance(inputs, list) and inputs else None
+            inputs = proposal.get("inputUuids") or []
+            idea_uuid = inputs[0] if isinstance(inputs, list) and inputs else None
+        else:
+            idea_uuid = task_idea_uuid
         if not idea_uuid:
             return ""
-        items = tasks()
-        if not items or not all_terminal(items):  # zero-task proposal -> skip
-            return ""
-        if not all_terminal(linked_tasks(idea_uuid)):  # no linked tasks is fine
-            return ""
-        return code_review(proposal_uuid, idea_uuid)
+        derived = idea_derived_status(idea_uuid)
+        if derived is not None:
+            # Server is the single source of truth (tracker/dashboard parity).
+            if derived != "done":
+                return ""
+        elif not proposal_uuid:
+            # Legacy fallback, proposal-less Quick Task: every linked Quick Task
+            # must be terminal (the verified task is in the list, so empty = stale).
+            linked = linked_tasks(idea_uuid)
+            if not linked or not all_terminal(linked):
+                return ""
+        else:
+            # Legacy fallback, proposal task: this proposal's tasks terminal
+            # (zero-task proposal -> skip) and linked Quick Tasks terminal (none is fine).
+            items = tasks()
+            if not items or not all_terminal(items):
+                return ""
+            if not all_terminal(linked_tasks(idea_uuid)):
+                return ""
+        return code_review(proposal_uuid or None, idea_uuid)
 
     def branch_b() -> str:
         if not proposal_uuid:  # proposal-only
