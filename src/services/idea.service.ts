@@ -1212,6 +1212,21 @@ function taskAssigneeRows(
   }));
 }
 
+// Tasks that follow a moved Idea subtree: tasks of the moved proposals plus
+// Quick Tasks linked directly to a moved Idea (task.ideaUuid). Linked tasks are
+// scoped to the source project (the link invariant keeps them there anyway).
+function movedTaskWhere(
+  companyUuid: string,
+  fromProjectUuid: string,
+  proposalUuids: string[],
+  movedIdeaUuids: string[],
+) {
+  const linked = { projectUuid: fromProjectUuid, ideaUuid: { in: movedIdeaUuids } };
+  return proposalUuids.length > 0
+    ? { companyUuid, OR: [{ proposalUuid: { in: proposalUuids } }, linked] }
+    : { companyUuid, ...linked };
+}
+
 export async function moveIdea(
   companyUuid: string,
   ideaUuid: string,
@@ -1283,24 +1298,22 @@ export async function moveIdea(
     });
     const proposalUuids = proposals.map((p) => p.uuid);
 
-    // Resolve Document/Task UUIDs via proposalUuid (D2). Skipped when no
-    // proposals are linked (both lookups would return nothing).
-    let documentUuids: string[] = [];
-    let taskRows: { uuid: string; title: string; assigneeType: string | null; assigneeUuid: string | null }[] = [];
-    if (proposalUuids.length > 0) {
-      const [documentRows, tasks] = await Promise.all([
-        tx.document.findMany({
+    // Resolve Document UUIDs via proposalUuid (D2) — skipped when no proposals
+    // are linked. Tasks = proposal tasks ∪ Quick Tasks linked to a moved Idea,
+    // so the task lookup always runs (a proposal-less Idea can own tasks).
+    const [documentRows, taskRows] = await Promise.all([
+      proposalUuids.length > 0
+        ? tx.document.findMany({
           where: { companyUuid, proposalUuid: { in: proposalUuids } },
           select: { uuid: true },
-        }),
-        tx.task.findMany({
-          where: { companyUuid, proposalUuid: { in: proposalUuids } },
-          select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
-        }),
-      ]);
-      documentUuids = documentRows.map((d) => d.uuid);
-      taskRows = tasks;
-    }
+        })
+        : Promise.resolve([] as { uuid: string }[]),
+      tx.task.findMany({
+        where: movedTaskWhere(companyUuid, fromProjectUuid, proposalUuids, movedIdeaUuids),
+        select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
+      }),
+    ]);
+    const documentUuids = documentRows.map((d) => d.uuid);
     const taskUuids = taskRows.map((t) => t.uuid);
 
     // Moved ideas and tasks keep their assignees: every LIVE one must be able to
@@ -1329,8 +1342,9 @@ export async function moveIdea(
       });
     }
 
-    // Short-circuit when no proposals are linked: skip the proposal/document/
-    // task updateMany calls that would all return count 0 anyway. Activity
+    // Short-circuit when no proposals are linked: skip the proposal/document
+    // updateMany calls (and the task one when no tasks were resolved) that
+    // would all return count 0 anyway. Activity
     // still runs because idea-targeting activity rows can exist independent of
     // any proposal (e.g. created/assigned/released events).
     let proposalCount = 0;
@@ -1353,10 +1367,13 @@ export async function moveIdea(
         data: { projectUuid: targetProjectUuid },
       });
       documentCount = documentUpdate.count;
+    }
 
-      // Tasks linked to migrated proposals (assignee fields untouched).
+    if (taskUuids.length > 0) {
+      // Proposal tasks + linked Quick Tasks resolved above — walk the uuid PK
+      // (assignee fields untouched).
       const taskUpdate = await tx.task.updateMany({
-        where: { companyUuid, proposalUuid: { in: proposalUuids } },
+        where: { companyUuid, uuid: { in: taskUuids } },
         data: { projectUuid: targetProjectUuid },
       });
       taskCount = taskUpdate.count;
@@ -1471,29 +1488,23 @@ export async function moveIdeaPreview(
   });
   const proposalUuids = proposals.map((p) => p.uuid);
 
-  let documentCount = 0;
-  let taskCount = 0;
-  let documentUuids: string[] = [];
-  let taskUuids: string[] = [];
-  let taskRows: { uuid: string; title: string; assigneeType: string | null; assigneeUuid: string | null }[] = [];
-
-  if (proposalUuids.length > 0) {
-    const [documentRows, tasks] = await Promise.all([
-      prisma.document.findMany({
+  // Tasks include Quick Tasks linked to a moved Idea (same rule as moveIdea).
+  const [documentRows, taskRows] = await Promise.all([
+    proposalUuids.length > 0
+      ? prisma.document.findMany({
         where: { companyUuid, proposalUuid: { in: proposalUuids } },
         select: { uuid: true },
-      }),
-      prisma.task.findMany({
-        where: { companyUuid, proposalUuid: { in: proposalUuids } },
-        select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
-      }),
-    ]);
-    taskRows = tasks;
-    documentUuids = documentRows.map((d) => d.uuid);
-    taskUuids = taskRows.map((t) => t.uuid);
-    documentCount = documentUuids.length;
-    taskCount = taskUuids.length;
-  }
+      })
+      : Promise.resolve([] as { uuid: string }[]),
+    prisma.task.findMany({
+      where: movedTaskWhere(companyUuid, idea.projectUuid, proposalUuids, movedIdeaUuids),
+      select: { uuid: true, title: true, assigneeType: true, assigneeUuid: true },
+    }),
+  ]);
+  const documentUuids = documentRows.map((d) => d.uuid);
+  const taskUuids = taskRows.map((t) => t.uuid);
+  const documentCount = documentUuids.length;
+  const taskCount = taskUuids.length;
 
   // Same blocked-assignee rule as moveIdea (dangling assignees skipped).
   const blockedAssignees = await collectBlockedAssignees(

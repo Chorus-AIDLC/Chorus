@@ -299,6 +299,23 @@ describe("Idea Team (derived, zero-schema) against isolated PostgreSQL", () => {
     expect(await service.getIdeaTeamOrchestrators(owner.companyUuid, "proposal", child.uuid)).toEqual([{ ideaUuid: managed.uuid, agentUuid: lead.actorUuid }]);
   });
 
+  it("treats a Quick Task linked via ideaUuid as belonging to its Idea for handoff and review routing", async () => {
+    const managed = await idea(lead);
+    const other = await idea(lead);
+    const linked = await db.task.create({ data: { companyUuid: owner.companyUuid, projectUuid, title: "Quick", status: "to_verify", ideaUuid: managed.uuid, createdByUuid: owner.actorUuid, assigneeType: "agent", assigneeUuid: developer.actorUuid } });
+    const plain = await db.task.create({ data: { companyUuid: owner.companyUuid, projectUuid, title: "Plain quick", createdByUuid: owner.actorUuid } });
+    expect(await service.getIdeaTeamOrchestrators(owner.companyUuid, "task", linked.uuid)).toEqual([{ ideaUuid: managed.uuid, agentUuid: lead.actorUuid }]);
+    expect(await service.getIdeaTeamOrchestrators(owner.companyUuid, "task", plain.uuid)).toEqual([]);
+    expect(await service.recommendIdeaTeamRole(lead, managed.uuid, "review", linked.uuid)).toMatchObject({ decision: "recommended" });
+    // Development routing accepts the linked task too (no online developer → manual, not 403).
+    expect(await service.recommendIdeaTeamRole(lead, managed.uuid, "development", linked.uuid)).toMatchObject({ decision: "manual" });
+    await expect(service.recommendIdeaTeamRole(lead, other.uuid, "review", linked.uuid)).rejects.toMatchObject({ status: 403, message: "Task does not belong to this Idea" });
+    await expect(service.recommendIdeaTeamRole(lead, managed.uuid, "review", plain.uuid)).rejects.toMatchObject({ status: 403, message: "Task does not belong to this Idea" });
+    // A project without a Team binding yields no orchestrators for a linked task.
+    await db.projectAgentTeam.deleteMany({ where: { projectUuid } });
+    expect(await service.getIdeaTeamOrchestrators(owner.companyUuid, "task", linked.uuid)).toEqual([]);
+  });
+
   it("returns the private roster only to the Team owner and their agents", async () => {
     const managed = await idea(lead);
     expect((await service.getIdeaTeamContext(lead, managed.uuid)).routing?.roles.product[0].agentUuid).toBe(product.actorUuid);

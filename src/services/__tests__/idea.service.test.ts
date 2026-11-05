@@ -1147,9 +1147,17 @@ describe("moveIdea", () => {
       data: { projectUuid: TARGET_PROJECT_UUID },
     });
 
-    // Task updateMany via proposalUuid (no assignee fields touched).
+    // Task lookup = proposal tasks ∪ Quick Tasks linked to a moved idea.
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where).toEqual({
+      companyUuid: COMPANY_UUID,
+      OR: [
+        { proposalUuid: { in: [PROPOSAL_A] } },
+        { projectUuid: PROJECT_UUID, ideaUuid: { in: [IDEA_UUID] } },
+      ],
+    });
+    // Task updateMany walks the resolved uuid set (no assignee fields touched).
     const taskUpdate = mockPrisma.task.updateMany.mock.calls[0][0];
-    expect(taskUpdate.where).toEqual({ companyUuid: COMPANY_UUID, proposalUuid: { in: [PROPOSAL_A] } });
+    expect(taskUpdate.where).toEqual({ companyUuid: COMPANY_UUID, uuid: { in: [TASK_UUID] } });
     expect(taskUpdate.data).toEqual({ projectUuid: TARGET_PROJECT_UUID });
     expect(taskUpdate.data).not.toHaveProperty("assigneeUuid");
     expect(taskUpdate.data).not.toHaveProperty("assigneeType");
@@ -1307,6 +1315,7 @@ describe("moveIdea", () => {
     mockPrisma.idea.findMany.mockResolvedValue([]); // getDescendantUuids: no descendants
     mockPrisma.idea.updateMany.mockResolvedValueOnce({ count: 1 }); // moved subtree = just the root
     mockPrisma.proposal.findMany.mockResolvedValueOnce([]); // no proposals
+    mockPrisma.task.findMany.mockResolvedValueOnce([]); // no linked Quick Tasks
     mockPrisma.activity.updateMany.mockResolvedValueOnce({ count: 2 });
     mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockPrisma) => Promise<unknown>) => {
       return await fn(mockPrisma);
@@ -1322,9 +1331,83 @@ describe("moveIdea", () => {
     expect(mockPrisma.idea.update).not.toHaveBeenCalled();
     expect(mockPrisma.activity.updateMany).toHaveBeenCalledTimes(1);
     expect(mockPrisma.document.findMany).not.toHaveBeenCalled();
-    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    // The task lookup still runs (linked Quick Tasks only) but finds nothing.
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where).toEqual({
+      companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, ideaUuid: { in: [IDEA_UUID] },
+    });
     expect(mockPrisma.proposal.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.document.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.task.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("moves Quick Tasks linked directly to the idea even without a proposal", async () => {
+    const idea = makeIdeaRecord();
+    const targetProject = { uuid: TARGET_PROJECT_UUID, name: "Target Project" };
+    const movedIdea = makeIdeaRecord({ projectUuid: TARGET_PROJECT_UUID, project: targetProject });
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(movedIdea);
+    mockPrisma.project.findFirst.mockResolvedValue(targetProject);
+    setupCascadeMocks({
+      tasks: [
+        { uuid: "qt-1", title: "Q1", assigneeType: "agent", assigneeUuid: "agent-ok" },
+        { uuid: "qt-2", title: "Q2", assigneeType: null, assigneeUuid: null },
+      ],
+      activityCount: 3,
+    });
+    txPassthrough();
+
+    const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user");
+
+    expect(result.moved).toEqual({ ideas: 1, proposals: 0, documents: 0, tasks: 2, activities: 3 });
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where).toEqual({
+      companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, ideaUuid: { in: [IDEA_UUID] },
+    });
+    expect(mockPrisma.task.updateMany).toHaveBeenCalledWith({
+      where: { companyUuid: COMPANY_UUID, uuid: { in: ["qt-1", "qt-2"] } },
+      data: { projectUuid: TARGET_PROJECT_UUID },
+    });
+    expect(mockPrisma.proposal.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.document.updateMany).not.toHaveBeenCalled();
+    // Live linked-task assignee is access-checked against the target.
+    expect(mockCanActorAccessProject).toHaveBeenCalledWith(
+      COMPANY_UUID, { type: "agent", uuid: "agent-ok" }, TARGET_PROJECT_UUID, "editor", mockPrisma,
+    );
+    // Activity rows of the linked tasks move with the idea.
+    const activityOr = mockPrisma.activity.updateMany.mock.calls[0][0].where.OR;
+    expect(activityOr).toContainEqual({ targetType: "task", targetUuid: { in: ["qt-1", "qt-2"] } });
+  });
+
+  it("includes Quick Tasks linked to a moved descendant idea", async () => {
+    const idea = makeIdeaRecord();
+    const targetProject = { uuid: TARGET_PROJECT_UUID, name: "Target Project" };
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(idea).mockResolvedValueOnce(makeIdeaRecord({ projectUuid: TARGET_PROJECT_UUID, project: targetProject }));
+    mockPrisma.project.findFirst.mockResolvedValue(targetProject);
+    setupCascadeMocks({
+      descendants: [{ uuid: "child-1", title: "C", assigneeType: null, assigneeUuid: null } as { uuid: string }],
+      proposals: [{ uuid: PROPOSAL_A }],
+      tasks: [{ uuid: TASK_UUID }, { uuid: "qt-child" }],
+    });
+    txPassthrough();
+
+    const result = await moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user");
+
+    expect(result.moved.tasks).toBe(2);
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where.OR[1]).toEqual({
+      projectUuid: PROJECT_UUID, ideaUuid: { in: [IDEA_UUID, "child-1"] },
+    });
+  });
+
+  it("rolls back when a linked Quick Task's assignee cannot access the target", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(makeIdeaRecord({ assigneeType: null, assigneeUuid: null }));
+    mockPrisma.project.findFirst.mockResolvedValue({ uuid: TARGET_PROJECT_UUID, name: "Private Target" });
+    setupCascadeMocks({
+      tasks: [{ uuid: "qt-1", title: "Q1", assigneeType: "agent", assigneeUuid: "agent-outsider" }],
+    });
+    txPassthrough();
+    mockCanActorAccessProject.mockResolvedValueOnce(false);
+
+    const err = await expectAssigneeError(moveIdea(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID, ACTOR_UUID, "user"));
+    expect(err.message).toBe("Assignee does not have access to this project: Agent agent-outsider (1 task)");
+    expect(mockPrisma.idea.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.task.updateMany).not.toHaveBeenCalled();
   });
 
@@ -1416,6 +1499,7 @@ describe("moveIdeaPreview", () => {
     // No proposals → short-circuits document/task findMany; only proposal.findMany
     // and activity.count run for an idea that hasn't been proposalized yet.
     mockPrisma.proposal.findMany.mockResolvedValueOnce([]);
+    mockPrisma.task.findMany.mockResolvedValueOnce([]);
     mockPrisma.activity.count.mockResolvedValueOnce(0);
 
     await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID);
@@ -1433,13 +1517,39 @@ describe("moveIdeaPreview", () => {
     // Short-circuit: empty proposal set means document/task findMany must NOT
     // run, and proposal.count is no longer called at all (count = uuids.length).
     expect(mockPrisma.document.findMany).not.toHaveBeenCalled();
-    expect(mockPrisma.task.findMany).not.toHaveBeenCalled();
+    // Linked Quick Task lookup still runs (read-only).
+    expect(mockPrisma.task.findMany).toHaveBeenCalledTimes(1);
     expect(mockPrisma.proposal.count).not.toHaveBeenCalled();
     expect(mockPrisma.document.count).not.toHaveBeenCalled();
     expect(mockPrisma.task.count).not.toHaveBeenCalled();
     // Multi-tenancy invariant: the calls that did run carry companyUuid.
     expect(mockPrisma.proposal.findMany.mock.calls[0][0].where.companyUuid).toBe(COMPANY_UUID);
     expect(mockPrisma.activity.count.mock.calls[0][0].where.companyUuid).toBe(COMPANY_UUID);
+  });
+
+  it("counts Quick Tasks linked to the idea (no proposal) in the preview", async () => {
+    mockPrisma.idea.findFirst.mockResolvedValueOnce(makeIdeaRecord());
+    mockPrisma.project.findFirst.mockResolvedValueOnce({ uuid: TARGET_PROJECT_UUID, name: "Target" });
+    mockPrisma.idea.findMany.mockResolvedValueOnce([]);
+    mockPrisma.proposal.findMany.mockResolvedValueOnce([]);
+    mockPrisma.task.findMany.mockResolvedValueOnce([
+      { uuid: "qt-1", title: "Q1", assigneeType: "agent", assigneeUuid: "agent-outsider" },
+      { uuid: "qt-2", title: "Q2", assigneeType: null, assigneeUuid: null },
+    ]);
+    mockPrisma.activity.count.mockResolvedValueOnce(2);
+    mockCanActorAccessProject.mockResolvedValueOnce(false);
+
+    const preview = await moveIdeaPreview(COMPANY_UUID, IDEA_UUID, TARGET_PROJECT_UUID);
+
+    expect(preview.moved).toEqual({ ideas: 1, proposals: 0, documents: 0, tasks: 2, activities: 2 });
+    expect(mockPrisma.task.findMany.mock.calls[0][0].where).toEqual({
+      companyUuid: COMPANY_UUID, projectUuid: PROJECT_UUID, ideaUuid: { in: [IDEA_UUID] },
+    });
+    expect(preview.blockedAssignees).toEqual([
+      { assigneeType: "agent", assigneeUuid: "agent-outsider", name: "Agent agent-outsider", entities: [{ type: "task", uuid: "qt-1", title: "Q1" }] },
+    ]);
+    expect(mockPrisma.activity.count.mock.calls[0][0].where.OR).toContainEqual({ targetType: "task", targetUuid: { in: ["qt-1", "qt-2"] } });
+    expect(mockPrisma.task.updateMany).not.toHaveBeenCalled();
   });
 
   it("reports the same blocked assignees the move would, skipping dangling ones", async () => {

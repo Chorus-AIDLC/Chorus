@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   createTask: vi.fn(),
   projectAccess: vi.fn(),
   createActivity: vi.fn(),
+  listIdeas: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-server", () => ({ getServerAuthContext: mocks.auth }));
@@ -25,6 +26,7 @@ vi.mock("@/services/task.service", () => ({
   replaceAcceptanceCriteria: mocks.replaceCriteria,
   createTask: mocks.createTask,
 }));
+vi.mock("@/services/idea.service", () => ({ listIdeas: mocks.listIdeas }));
 vi.mock("@/services/agent.service", () => ({}));
 vi.mock("@/services/daemon-connection.service", () => ({}));
 vi.mock("@/services/project-agent-cwd.service", () => ({}));
@@ -32,7 +34,7 @@ vi.mock("@/services/activity.service", () => ({ createActivity: mocks.createActi
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { ApiError } from "@/lib/api-handler";
-import { createTaskAction, updateTaskFieldsAction, verifyTaskAction } from "../[uuid]/tasks/[taskUuid]/actions";
+import { createTaskAction, updateTaskFieldsAction, verifyTaskAction, getTaskIdeaOptionsAction } from "../[uuid]/tasks/[taskUuid]/actions";
 
 const auth: AuthContext = { type: "user", companyUuid: "company", actorUuid: "editor" };
 const fields = { taskUuid: "task", projectUuid: "project", title: "Title", description: "Updated description" };
@@ -143,5 +145,58 @@ describe("task actions — direct Idea link (ideaUuid)", () => {
     mocks.updateTask.mockRejectedValue(new ApiError("BAD_REQUEST", "Idea must be in the same project as the task", 400));
     expect(await updateTaskFieldsAction({ ...fields, ideaUuid: "x" }))
       .toEqual({ success: false, error: "Idea must be in the same project as the task" });
+  });
+
+  it.each(["", "   "])("updateTaskFieldsAction normalizes ideaUuid=%j to null (clears the link)", async (ideaUuid) => {
+    expect(await updateTaskFieldsAction({ ...fields, ideaUuid })).toEqual({ success: true });
+    expect(mocks.updateTask).toHaveBeenCalledWith("task", expect.objectContaining({ ideaUuid: null }), expect.anything());
+  });
+
+  it("createTaskAction normalizes an empty ideaUuid to no link", async () => {
+    await createTaskAction({ projectUuid: "project", title: "Fix", ideaUuid: "" });
+    expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ ideaUuid: null }));
+    expect(mocks.createActivity.mock.calls[0][0]).not.toHaveProperty("value");
+  });
+});
+
+describe("getTaskIdeaOptionsAction", () => {
+  beforeEach(() => {
+    mocks.projectAccess.mockResolvedValue(null);
+  });
+
+  it("lists the project's non-theme ideas as {uuid,title}", async () => {
+    mocks.listIdeas.mockResolvedValue({
+      ideas: [
+        { uuid: "i1", title: "Idea one", isContainer: false },
+        { uuid: "theme", title: "Theme", isContainer: true },
+        { uuid: "i2", title: "Idea two", isContainer: false },
+      ],
+      total: 3,
+    });
+    expect(await getTaskIdeaOptionsAction("project")).toEqual({
+      success: true,
+      data: [{ uuid: "i1", title: "Idea one" }, { uuid: "i2", title: "Idea two" }],
+      hasMore: false,
+    });
+    expect(mocks.listIdeas).toHaveBeenCalledWith(expect.objectContaining({
+      companyUuid: "company", projectUuid: "project", skip: 0,
+    }));
+    expect(mocks.projectAccess).toHaveBeenCalledWith(auth, "project", "viewer");
+  });
+
+  it("reports truncation via hasMore", async () => {
+    mocks.listIdeas.mockResolvedValue({ ideas: [{ uuid: "i1", title: "A", isContainer: false }], total: 500 });
+    expect((await getTaskIdeaOptionsAction("project")).hasMore).toBe(true);
+  });
+
+  it("returns no options when unauthenticated, denied, or on error", async () => {
+    mocks.auth.mockResolvedValueOnce(null);
+    expect((await getTaskIdeaOptionsAction("project")).data).toEqual([]);
+    mocks.projectAccess.mockResolvedValueOnce({ success: false, error: "Project not found" });
+    expect((await getTaskIdeaOptionsAction("project")).data).toEqual([]);
+    mocks.listIdeas.mockRejectedValueOnce(new Error("db down"));
+    expect(await getTaskIdeaOptionsAction("project")).toEqual({
+      success: false, data: [], hasMore: false, error: "Failed to load ideas",
+    });
   });
 });

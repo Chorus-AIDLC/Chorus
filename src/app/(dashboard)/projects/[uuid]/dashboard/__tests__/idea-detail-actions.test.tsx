@@ -9,21 +9,22 @@ import { IdeaDetailPanel } from "../panels/idea-detail-panel";
 
 const mocks = vi.hoisted(() => ({
   getIdea: vi.fn(), proposals: vi.fn(), tasks: vi.fn(), elaboration: vi.fn(), verify: vi.fn(), update: vi.fn(), delete: vi.fn(),
-  refresh: vi.fn(), close: vi.fn(), reassign: vi.fn(), yolo: vi.fn(), start: vi.fn(),
+  refresh: vi.fn(), close: vi.fn(), reassign: vi.fn(), yolo: vi.fn(), start: vi.fn(), linkedTasks: vi.fn(),
+  timelineProps: vi.fn(), taskListProps: vi.fn(),
 }));
 vi.mock("@/hooks/use-progress-router", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 vi.mock("@/contexts/realtime-context", () => ({ useRealtimeEntityTypeEvent: () => {} }));
 vi.mock("@/contexts/agent-presence-context", () => ({ useAgentPresenceOptional: () => null }));
-vi.mock("../panels/actions", () => ({ getIdeaAction: mocks.getIdea, getTaskAction: vi.fn(), getProposalsForIdeaAction: mocks.proposals, getTasksForProposalAction: mocks.tasks }));
+vi.mock("../panels/actions", () => ({ getIdeaAction: mocks.getIdea, getTaskAction: vi.fn(), getProposalsForIdeaAction: mocks.proposals, getTasksForProposalAction: mocks.tasks, getTasksForIdeaAction: mocks.linkedTasks }));
 vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/actions", () => ({ updateIdeaAction: mocks.update, deleteIdeaAction: mocks.delete }));
 vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/actions", () => ({ reassignIdeaInstanceNoWakeAction: mocks.reassign }));
 vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/elaboration-actions", () => ({ getElaborationAction: mocks.elaboration, verifyElaborationAction: mocks.verify }));
 vi.mock("@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/stage-advance-actions", () => ({ startDevelopmentAction: mocks.start, yoloRequestedAction: mocks.yolo }));
 vi.mock("../panels/elaboration-view", () => ({ ElaborationView: () => null }));
 vi.mock("../panels/proposal-view", () => ({ ProposalView: () => null }));
-vi.mock("../panels/overview-timeline", () => ({ OverviewTimeline: () => null }));
+vi.mock("../panels/overview-timeline", () => ({ OverviewTimeline: (props: unknown) => { mocks.timelineProps(props); return null; } }));
 vi.mock("../panels/reports-list", () => ({ ReportsList: () => null }));
-vi.mock("../panels/task-list-view", () => ({ TaskListView: () => null }));
+vi.mock("../panels/task-list-view", () => ({ TaskListView: (props: unknown) => { mocks.taskListProps(props); return null; } }));
 vi.mock("../panels/activity-comments-view", () => ({ ActivityCommentsView: () => null }));
 vi.mock("@/app/(dashboard)/projects/[uuid]/tasks/task-detail-panel", () => ({ TaskDetailPanel: () => null }));
 vi.mock("../panels/document-panel", () => ({ DocumentPanel: () => null }));
@@ -45,6 +46,7 @@ beforeEach(() => {
   mocks.getIdea.mockImplementation(async (uuid: string) => ({ success: true, data: { ...idea, uuid } }));
   mocks.proposals.mockResolvedValue({ success: true, data: [] });
   mocks.tasks.mockResolvedValue({ success: true, data: [] });
+  mocks.linkedTasks.mockResolvedValue({ success: true, data: [] });
   mocks.elaboration.mockResolvedValue({ success: true, data: { rounds: [{ status: "validating" }] } });
   mocks.update.mockResolvedValue({ success: true }); mocks.delete.mockResolvedValue({ success: true });
   mocks.verify.mockResolvedValue({ success: true }); mocks.reassign.mockResolvedValue({ success: true });
@@ -172,6 +174,35 @@ describe("Tracker panel action integration", { timeout: 20_000 }, () => {
     expect(screen.getByRole("menuitem", { name: "Yolo" }).textContent).toContain(en.ideaTracker.panel.actions.loadingStage);
     await act(async () => resolveTasks({ success: true, data: [{ uuid: "t1", title: "Done", status: "done" }] }));
     await waitFor(() => expect(screen.getByRole("menuitem", { name: "Yolo" }).textContent).toContain(en.yolo.completedHint));
+  });
+
+  it("loads directly linked Quick Tasks: tasks tab, timeline and task list include them, Yolo sees the idea done", async () => {
+    mocks.getIdea.mockResolvedValue({ success: true, data: { ...idea, status: "open", elaborationStatus: null } });
+    mocks.linkedTasks.mockResolvedValue({ success: true, data: [{ uuid: "q1", title: "Quick", status: "done" }] });
+    const user = userEvent.setup(); render(<Panel />);
+    await waitFor(() => expect(mocks.linkedTasks).toHaveBeenCalledWith("project-1", "idea-1"));
+    // No proposal at all, yet the tasks tab appears for the linked task.
+    expect(await screen.findByRole("button", { name: new RegExp(en.ideaTracker.panel.tabs.tasks) })).toBeTruthy();
+    await waitFor(() => expect(mocks.timelineProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      hasLinkedTasks: true, tasks: [expect.objectContaining({ uuid: "q1" })],
+    })));
+    await open(user);
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Yolo" }).textContent).toContain(en.yolo.completedHint));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: new RegExp(en.ideaTracker.panel.tabs.tasks) }));
+    await waitFor(() => expect(mocks.taskListProps).toHaveBeenLastCalledWith(expect.objectContaining({
+      ideaUuid: "idea-1", proposalUuids: [], tasks: [expect.objectContaining({ uuid: "q1" })],
+    })));
+  });
+
+  it("pending elaboration answers keep Yolo available even when every linked task is done", async () => {
+    mocks.getIdea.mockResolvedValue({ success: true, data: { ...idea, elaborationStatus: "pending_answers" } });
+    mocks.linkedTasks.mockResolvedValue({ success: true, data: [{ uuid: "q1", title: "Quick", status: "done" }] });
+    const user = userEvent.setup(); render(<Panel />);
+    await waitFor(() => expect(mocks.linkedTasks).toHaveBeenCalled());
+    await open(user);
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Yolo" }).textContent).not.toContain(en.ideaTracker.panel.actions.loadingStage));
+    expect(screen.getByRole("menuitem", { name: "Yolo" }).textContent).not.toContain(en.yolo.completedHint);
   });
 
   it("resets modal/edit state when the URL selects another idea, ignoring late old data", async () => {

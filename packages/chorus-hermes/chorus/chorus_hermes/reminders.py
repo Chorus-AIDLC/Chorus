@@ -156,12 +156,22 @@ def openspec_archive(proposal_uuid: str, slug: str, project_uuid: str) -> str:
     )
 
 
-def code_review(proposal_uuid: str, idea_uuid: str) -> str:
+def code_review(proposal_uuid: Optional[str], idea_uuid: str) -> str:
+    """Gateway reminder; ``proposal_uuid=None`` is a proposal-less idea whose linked Quick Tasks are all done."""
     marker = reviewer_marker("code")
+    if proposal_uuid:
+        headline = (f"All tasks of idea-rooted proposal {proposal_uuid} (and any Quick Tasks linked to the idea) "
+                    "are now done.")
+        fix_target = "create Proposal-linked fix tasks"
+        report_line = "Run the code-review gateway BEFORE writing any idea-completion report."
+    else:
+        headline = f"All Quick Tasks linked to idea {idea_uuid} (no proposal) are now done."
+        fix_target = f"create fix Quick Tasks linked to the idea (chorus_create_tasks with ideaUuid=\"{idea_uuid}\")"
+        report_line = ("This idea has no proposal, so no idea-completion report applies; the VERDICT comment on "
+                       "the idea is the ship record.")
     return (
         "[Chorus — Code-Review Gateway Trigger]\n"
-        f"All tasks of idea-rooted proposal {proposal_uuid} are now done. This is the final ship-time gateway for "
-        f"idea {idea_uuid}.\n\n"
+        f"{headline} This is the final ship-time gateway for idea {idea_uuid}.\n\n"
         "ACTION REQUESTED: spawn code-reviewer for this idea — an independent, read-only review of the idea's "
         "AGGREGATE code change (the whole feature across all its tasks), not a single task. "
         + _EVIDENCE.format(tests=" across all of the idea's tasks and the project test command output",
@@ -175,11 +185,11 @@ def code_review(proposal_uuid: str, idea_uuid: str) -> str:
         "ONE VERDICT comment on the idea. Read THIS round's VERDICT on the idea (chorus_get_comments "
         "targetType=\"idea\") — the comment posted after your dispatch, not an earlier round's, and do not "
         "declare the feature shippable before you have read it: PASS / PASS WITH NOTES -> may ship; FAIL -> the "
-        "orchestrator must invoke Quick Dev to create Proposal-linked fix tasks (group related small BLOCKERs; "
+        f"orchestrator must invoke Quick Dev to {fix_target} (group related small BLOCKERs; "
         "split only materially large or independently testable work; never reopen completed tasks or apply "
         "untracked fixes). Re-run only after every fix task passes AC self-check, independent task review, and "
         "admin verification to `done`; failed or cancelled fixes stop and escalate. Keep the maxCodeReviewRounds "
-        "cap. Run the code-review gateway BEFORE writing any idea-completion report."
+        f"cap. {report_line}"
     )
 
 
@@ -242,6 +252,11 @@ def verify_task_reminders(
     ``call(name, args)`` returns the decoded Chorus tool result and may raise;
     any failure of a shared lookup skips every branch, a failure inside one
     branch skips only that branch (same as the shell hook).
+
+    A Quick Task with no proposal but a linked ``ideaUuid`` runs only branch C,
+    scoped to the idea's linked Quick Tasks; for proposal tasks, branch C also
+    requires the idea's linked Quick Tasks to be terminal. A and B stay
+    proposal-only.
     """
     env = os.environ if env is None else env
     root = project_root or os.getcwd()
@@ -252,13 +267,25 @@ def verify_task_reminders(
         proposal_uuid = task.get("proposalUuid") if isinstance(task, Mapping) else None
         project = task.get("project") if isinstance(task, Mapping) else None
         project_uuid = project.get("uuid") if isinstance(project, Mapping) else None
-        if not proposal_uuid or not project_uuid:
+        task_idea_uuid = task.get("ideaUuid") if isinstance(task, Mapping) else None
+        if not project_uuid or not (proposal_uuid or task_idea_uuid):
             return ""
-        proposal = call("chorus_get_proposal", {"proposalUuid": proposal_uuid})
-        if not isinstance(proposal, Mapping):
-            return ""
+        proposal: Mapping = {}
+        if proposal_uuid:
+            proposal = call("chorus_get_proposal", {"proposalUuid": proposal_uuid})
+            if not isinstance(proposal, Mapping):
+                return ""
     except Exception:
         return ""
+
+    def linked_tasks(idea_uuid: str) -> Optional[list]:
+        """Quick Tasks linked directly to the idea (Task.ideaUuid), or ``None`` when unusable / truncated."""
+        try:
+            return _page(call("chorus_list_tasks", {
+                "projectUuid": project_uuid, "ideaUuid": idea_uuid, "pageSize": PAGE_SIZE,
+            }), "tasks")
+        except Exception:
+            return None
 
     tasks_cache: dict = {}
 
@@ -273,6 +300,8 @@ def verify_task_reminders(
         return tasks_cache["v"]
 
     def branch_a() -> str:
+        if not proposal_uuid:  # proposal-only
+            return ""
         if env.get(ENV_OPENSPEC_MODE) == "off":
             return ""
         if not os.path.isdir(os.path.join(root, "openspec")):
@@ -297,6 +326,13 @@ def verify_task_reminders(
     def branch_c() -> str:
         if (env.get(ENV_ENABLE_CODE_REVIEWER) or "true") != "true":
             return ""
+        if not proposal_uuid:
+            # Proposal-less Quick Task linked to an idea: every linked Quick Task
+            # must be terminal (the verified task is in the list, so empty = stale).
+            linked = linked_tasks(task_idea_uuid)
+            if not linked or not all_terminal(linked):
+                return ""
+            return code_review(None, task_idea_uuid)
         if proposal.get("inputType") != "idea":
             return ""
         inputs = proposal.get("inputUuids") or []
@@ -306,9 +342,13 @@ def verify_task_reminders(
         items = tasks()
         if not items or not all_terminal(items):  # zero-task proposal -> skip
             return ""
+        if not all_terminal(linked_tasks(idea_uuid)):  # no linked tasks is fine
+            return ""
         return code_review(proposal_uuid, idea_uuid)
 
     def branch_b() -> str:
+        if not proposal_uuid:  # proposal-only
+            return ""
         if proposal.get("inputType") != "idea":
             return ""
         if not all_terminal(tasks()):

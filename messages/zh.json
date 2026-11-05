@@ -654,6 +654,18 @@
       "filtered": "{filtered} / {total} 个提案",
       "noResults": "未找到提案",
       "filteredSubtitle": "显示 {filtered} / {total} 个任务（已筛选）"
+    },
+    "ideaLink": {
+      "label": "关联 Idea（可选）",
+      "none": "不关联 Idea",
+      "current": "当前关联的 Idea",
+      "hint": "将此快速任务关联到 Idea，使其计入该 Idea 的进度。",
+      "sourceLabel": "Idea"
+    },
+    "ideaFilter": {
+      "label": "Idea：{title}",
+      "fallbackTitle": "关联的 Idea",
+      "clear": "清除 Idea 筛选"
     }
   },
   "proposals": {

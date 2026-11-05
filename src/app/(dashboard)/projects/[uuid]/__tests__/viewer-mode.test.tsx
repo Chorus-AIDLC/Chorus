@@ -14,6 +14,8 @@ vi.mock("next-intl", () => ({
 }));
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  usePathname: () => "/projects/p/tasks",
 }));
 vi.mock("@/hooks/use-progress-router", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),

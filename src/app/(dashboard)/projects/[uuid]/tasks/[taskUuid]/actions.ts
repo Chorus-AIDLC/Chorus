@@ -10,6 +10,7 @@ import {
   type ResolvedProjectAgentCwdTarget,
 } from "@/services/project-agent-cwd.service";
 import { createActivity } from "@/services/activity.service";
+import { listIdeas } from "@/services/idea.service";
 import type { AcceptanceCriteriaItemInput } from "@/lib/acceptance-criteria";
 import type { InstanceCandidate } from "@/components/agent-presence/instance-picker";
 import logger from "@/lib/logger";
@@ -402,6 +403,14 @@ interface CreateTaskInput {
   ideaUuid?: string | null;  // Direct Idea link (Quick Tasks); validated by task.service
 }
 
+// The Idea Select sends "" for "no idea"; treat it (and whitespace) as no link
+// so the service never looks up an empty uuid ("Idea not found").
+function normalizeIdeaUuid(ideaUuid: string | null | undefined): string | null | undefined {
+  if (ideaUuid === undefined || ideaUuid === null) return ideaUuid;
+  const trimmed = ideaUuid.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export async function createTaskAction(input: CreateTaskInput) {
   const auth = await getServerAuthContext();
   if (!auth) {
@@ -409,6 +418,7 @@ export async function createTaskAction(input: CreateTaskInput) {
   }
   const denied = await denyUnlessProjectAccess(auth, input.projectUuid, "editor");
   if (denied) return denied;
+  const ideaUuid = normalizeIdeaUuid(input.ideaUuid) ?? null;
 
   try {
     const task = await createTask({
@@ -419,7 +429,7 @@ export async function createTaskAction(input: CreateTaskInput) {
       priority: input.priority || "medium",
       storyPoints: input.storyPoints,
       acceptanceCriteria: input.acceptanceCriteria,
-      ideaUuid: input.ideaUuid ?? null,
+      ideaUuid,
       createdByUuid: auth.actorUuid,
     });
 
@@ -432,7 +442,7 @@ export async function createTaskAction(input: CreateTaskInput) {
       actorType: auth.type,
       actorUuid: auth.actorUuid,
       action: "task_created",
-      ...(input.ideaUuid ? { value: { ideaUuid: input.ideaUuid } } : {}),
+      ...(ideaUuid ? { value: { ideaUuid } } : {}),
     });
 
     revalidatePath(`/projects/${input.projectUuid}/tasks`);
@@ -471,13 +481,14 @@ export async function updateTaskFieldsAction(input: UpdateTaskFieldsInput) {
       return { success: false, error: "Task not found" };
     }
 
+    const ideaUuid = normalizeIdeaUuid(input.ideaUuid);
     await updateTask(input.taskUuid, {
       title: input.title,
       description: input.description,
       priority: input.priority,
       storyPoints: input.storyPoints,
       acceptanceCriteria: input.acceptanceCriteria,
-      ...(input.ideaUuid !== undefined && { ideaUuid: input.ideaUuid }),
+      ...(ideaUuid !== undefined && { ideaUuid }),
     }, {
       actorType: auth.type,
       actorUuid: auth.actorUuid,
@@ -519,6 +530,45 @@ export async function deleteTaskAction(taskUuid: string, projectUuid: string) {
   } catch (error) {
     logger.error({ err: error }, "Failed to delete task");
     return { success: false, error: "Failed to delete task" };
+  }
+}
+
+// Candidate Ideas for a Quick Task's direct Idea link (create / edit Idea Select).
+// Same-project, non-container (theme) ideas only — the service rejects theme
+// links, so they are never offered. Lightweight {uuid,title} rows.
+const TASK_IDEA_OPTIONS_LIMIT = 200;
+
+export async function getTaskIdeaOptionsAction(projectUuid: string): Promise<{
+  success: boolean;
+  data: { uuid: string; title: string }[];
+  hasMore: boolean;
+  error?: string;
+}> {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false, data: [], hasMore: false, error: "Unauthorized" };
+  }
+  if (await denyUnlessProjectAccess(auth, projectUuid, "viewer")) {
+    return { success: false, data: [], hasMore: false, error: "Forbidden" };
+  }
+
+  try {
+    const { ideas, total } = await listIdeas({
+      companyUuid: auth.companyUuid,
+      projectUuid,
+      skip: 0,
+      take: TASK_IDEA_OPTIONS_LIMIT,
+    });
+    return {
+      success: true,
+      data: ideas
+        .filter((idea) => !idea.isContainer)
+        .map((idea) => ({ uuid: idea.uuid, title: idea.title })),
+      hasMore: total > ideas.length,
+    };
+  } catch (error) {
+    logger.error({ err: error }, "Failed to get task idea options");
+    return { success: false, data: [], hasMore: false, error: "Failed to load ideas" };
   }
 }
 
