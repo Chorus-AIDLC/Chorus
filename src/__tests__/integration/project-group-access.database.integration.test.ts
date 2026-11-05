@@ -117,7 +117,7 @@ describe.skipIf(!url)("Project group access — real PostgreSQL acceptance", () 
     invoke<Entity, { uuid: string }>(actor(key), routes.project.GET, `/api/projects/${uuid}`, { uuid });
   async function createGroup(key: string, visibility = "private"): Promise<Entity> {
     const result = await invoke<Entity, Record<string, string>>(
-      actor(key), routes.groups.POST, "/api/project-groups", {}, "POST", { name: `${token}-${randomUUID()}`, visibility },
+      actor(key), routes.groups.POST, "/api/project-groups", {}, "POST", { name: token, visibility },
     );
     expect(result.status).toBe(200);
     return result.data;

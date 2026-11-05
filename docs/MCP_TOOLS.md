@@ -745,15 +745,9 @@ Each task in the response includes the full TaskResponse format (with dependsOn,
 
 ### chorus_get_project_groups
 
-**Description**: List compact project-group summaries visible to the agent's owner in the current company, ordered by creation time then UUID. Explicit memberships, automatic administration and accessible child projects determine private-group discovery; `project:admin` does not bypass this boundary. Counts include only accessible projects.
+**Description**: List all project groups for the current company. Returns groups with project counts.
 
-**Input**:
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| page | integer | No | Page number, starting at 1 (default 1) |
-| pageSize | integer | No | Items per page, 1–100 (default 20) |
-
-Traverse all pages before treating a group as absent. For `total: 24` and `pageSize: 20`, page 1 is incomplete: also read page 2. Search can locate a group, but a miss in bounded search results does not prove absence. Ordering is deterministic for unchanged data, not a snapshot across concurrent writes.
+**Input**: None
 
 **Output**:
 ```json
@@ -762,21 +756,13 @@ Traverse all pages before treating a group as absent. For `total: 24` and `pageS
     {
       "uuid": "Group UUID",
       "name": "Group name",
-      "visibility": "private",
-      "accessLevel": "admin",
-      "canManage": true,
-      "canCreateProject": true,
-      "accessInitialized": true,
+      "description": "...",
       "projectCount": 3,
       "createdAt": "ISO timestamp",
       "updatedAt": "ISO timestamp"
     }
   ],
-  "returned": 1,
-  "page": 1,
-  "pageSize": 20,
-  "total": 1,
-  "ungroupedCount": 0
+  "total": 1
 }
 ```
 
@@ -1986,7 +1972,7 @@ Therefore, after approval there is **no need** to manually call `chorus_create_t
 
 ### chorus_admin_create_project_group
 
-**Description**: Create a public or private project group. The agent's owner becomes its explicit Admin; private creation requires an owner.
+**Description**: Create a new project group
 
 **Required Permission**: `project:write`
 
@@ -1995,13 +1981,8 @@ Therefore, after approval there is **no need** to manually call `chorus_create_t
 |-----------|------|----------|-------------|
 | name | string | Yes | Project group name |
 | description | string | No | Project group description |
-| visibility | string | No | `public` (default) or `private` |
 
 **Output**: Created Project Group JSON (includes uuid, name, description, projectCount, createdAt, updatedAt)
-
-**Conflict contract**: Creation rejects an exact same-name group already visible to the caller in the same company, including private groups on later list pages. The service raises `CONFLICT`/HTTP 409 (MCP surfaces a tool error). Inaccessible private groups and other companies' groups do not cause a name conflict or appear in its message. Names are compared as stored, without case-folding, trimming or Unicode normalization. This guard is creation-only: it neither restricts renaming nor cleans up existing duplicates.
-
-Visibility checks and creation share a Serializable transaction with at most four attempts for serialization conflicts. Exhausted or non-retryable errors surface normally; no successful-create event is emitted for failed attempts. Check the full paginated group list before creating; bounded search misses are not proof of absence.
 
 ### chorus_admin_update_project_group
 

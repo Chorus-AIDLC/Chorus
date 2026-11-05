@@ -32,7 +32,6 @@ vi.mock("@/services/document.service", () => ({}));
 vi.mock("@/services/activity.service", () => ({}));
 import { registerAdminTools } from "@/mcp/tools/admin";
 import { enablePresence } from "@/mcp/tools/presence";
-import { ApiError } from "@/lib/api-handler";
 
 type Handler = (params: Record<string, unknown>) => Promise<CallToolResult>;
 function register(permissions: AgentAuthContext["permissions"] = ["project:read", "project:write"], ownerUuid: string | null = "owner") {
@@ -65,16 +64,6 @@ beforeEach(() => {
 });
 
 describe("existing MCP group administration contracts", () => {
-  it("propagates the service's visible-name conflict without returning a created group", async () => {
-    const { handlers, auth } = register();
-    const conflict = new ApiError("CONFLICT", "A visible project group with this name already exists", 409);
-    fixture.groups.createProjectGroup.mockRejectedValueOnce(conflict);
-    await expect(handlers.chorus_admin_create_project_group({ name: "火山引擎", visibility: "public" }))
-      .rejects.toMatchObject({ code: "CONFLICT", status: 409, message: conflict.message });
-    expect(fixture.groups.createProjectGroup).toHaveBeenCalledOnce();
-    expect(fixture.groups.createProjectGroup).toHaveBeenCalledWith(expect.objectContaining({ auth, name: "火山引擎" }));
-  });
-
   it("passes private group creation with the authenticated owner to the shared service", async () => {
     const { handlers, auth } = register();
     await handlers.chorus_admin_create_project_group({ name: "G", visibility: "private" });

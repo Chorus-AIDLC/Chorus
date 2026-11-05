@@ -38,9 +38,9 @@ export function groupAccessPresentation(group: ProjectGroup, explicitRole: Proje
 
 // The query includes project-only discovery without treating project grants as
 // authority over the group or inheriting a public group's implicit editor floor.
-export async function accessibleGroupWhere(auth: AuthContext, client: ProjectAccessClient = prisma): Promise<Prisma.ProjectGroupWhereInput> {
+export async function accessibleGroupWhere(auth: AuthContext): Promise<Prisma.ProjectGroupWhereInput> {
   const principal = membershipPrincipal(auth);
-  const automaticAdmin = principal !== null && principal === await firstCompanyUser(auth.companyUuid, client, auth);
+  const automaticAdmin = principal !== null && principal === await firstCompanyUser(auth.companyUuid, prisma, auth);
   return {
     companyUuid: auth.companyUuid,
     OR: [
