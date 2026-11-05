@@ -441,7 +441,7 @@ export function registerAdminTools(server: McpServer, auth: AgentAuthContext) {
     "project:write",
     "chorus_admin_create_project_group",
     {
-      description: "Create a public or private project group. Your owner becomes its Admin.",
+      description: "Create a public or private project group. Your owner becomes its Admin. An exact same-name group already visible to you causes a conflict, regardless of its list page; hidden private groups do not. Check all group-list pages before creating. Names are not normalized.",
       inputSchema: z.object({
         name: z.string().describe("Project group name"),
         description: z.string().optional().describe("Project group description"),

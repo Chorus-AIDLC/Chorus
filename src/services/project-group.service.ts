@@ -7,7 +7,7 @@ import { ApiError } from "@/lib/api-handler";
 import { accessibleGroupWhere, getGroupAccess, groupAccessPresentation, requireGroupOperation, GroupNotFoundError, type GroupAccessResult } from "@/services/project-group-access.service";
 import { assertAccessConfirmation } from "@/services/project-access-preview.service";
 import { getGroupVisibilityPreview, getProjectGroupMovePreview } from "@/services/project-group-preview.service";
-import { auditGroup, groupAuth, lockGroups, lockProjects, materializeGroupGrants, publishGroupAccess } from "@/services/project-group-mutation.service";
+import { auditGroup, groupAuth, lockGroups, lockProjects, materializeGroupGrants, publishGroupAccess, type GroupDbClient } from "@/services/project-group-mutation.service";
 import { firstCompanyUser } from "@/services/project-group-implicit-admin.service";
 import { detachIdeaLineageForProjects } from "@/services/idea.service";
 export { getGroupVisibilityPreview, getProjectGroupMovePreview } from "@/services/project-group-preview.service";
@@ -119,16 +119,40 @@ function accessFields(access: GroupAccessResult) {
   };
 }
 
+function isGroupCreationConflict(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  if ("code" in error && error.code === "P2034") return true;
+  return error instanceof Error && error.name === "DriverAdapterError"
+    && typeof error.cause === "object" && error.cause !== null
+    && "kind" in error.cause && error.cause.kind === "TransactionWriteConflict";
+}
+
+async function serialGroupCreation<Result>(work: (client: GroupDbClient) => Promise<Result>): Promise<Result> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await prisma.$transaction(work, { isolationLevel: "Serializable" });
+    } catch (error) {
+      if (attempt < 3 && isGroupCreationConflict(error)) continue;
+      throw error;
+    }
+  }
+}
+
 export async function createProjectGroup(params: ProjectGroupCreateParams, auth?: AuthContext): Promise<ProjectGroupResponse> {
   const actor = groupAuth(params.companyUuid, auth ?? params.auth);
   const principal = membershipPrincipal(actor);
   const visibility = params.visibility ?? "public";
   if (!isProjectVisibility(visibility)) throw new ApiError("BAD_REQUEST", "Invalid visibility", 400);
   if (visibility === "private" && !principal) throw new ApiError("BAD_REQUEST", "A private group requires an owner", 400);
-  const group = await prisma.$transaction(async (tx) => {
+  const group = await serialGroupCreation(async (tx) => {
     if (principal && !await tx.user.findFirst({ where: { companyUuid: params.companyUuid, uuid: principal }, select: { uuid: true } })) {
       throw new ApiError("NOT_FOUND", "Creator not found in this company", 404);
     }
+    const existing = await tx.projectGroup.findFirst({
+      where: { AND: [await accessibleGroupWhere(actor, tx), { name: params.name }] },
+      select: { uuid: true },
+    });
+    if (existing) throw new ApiError("CONFLICT", "A visible project group with this name already exists", 409);
     const created = await tx.projectGroup.create({ data: {
       companyUuid: params.companyUuid, name: params.name, description: params.description ?? "",
       visibility, createdByUuid: principal, accessVersion: principal ? 1 : 0,
@@ -250,7 +274,7 @@ export async function listProjectGroups(
   const projectWhere = await groupProjectWhere(companyUuid, auth);
   const groups = await prisma.projectGroup.findMany({
     where: await accessibleGroupWhere(auth ?? { type: "agent", actorUuid: "", companyUuid }),
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ createdAt: "asc" }, { uuid: "asc" }],
   });
 
   // Batch count projects per group
