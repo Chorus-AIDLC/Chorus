@@ -45,7 +45,8 @@ vi.mock("@/lib/auth", () => ({
   },
 }));
 
-import { GET } from "@/app/api/projects/[uuid]/tasks/route";
+import { GET, POST } from "@/app/api/projects/[uuid]/tasks/route";
+import { ApiError } from "@/lib/api-handler";
 
 const companyUuid = "company-0000-0000-0000-000000000001";
 const projectUuid = "project-0000-0000-0000-000000000001";
@@ -97,6 +98,14 @@ describe("GET /api/projects/[uuid]/tasks", () => {
     // proposalUuids should be undefined
     const callArg = mockListTasks.mock.calls[0][0];
     expect(callArg.proposalUuids).toBeUndefined();
+    expect(callArg.ideaUuid).toBeUndefined();
+  });
+
+  it("passes the ideaUuid filter to listTasks when provided", async () => {
+    const req = makeRequest(`/api/projects/${projectUuid}/tasks?ideaUuid=idea-1`);
+    await GET(req, makeContext(projectUuid));
+
+    expect(mockListTasks).toHaveBeenCalledWith(expect.objectContaining({ ideaUuid: "idea-1" }));
   });
 
   it("handles single proposalUuid correctly", async () => {
@@ -141,5 +150,49 @@ describe("GET /api/projects/[uuid]/tasks", () => {
     const response = await GET(req, makeContext(projectUuid));
 
     expect(response.status).toBe(404);
+  });
+});
+
+describe("POST /api/projects/[uuid]/tasks — ideaUuid", () => {
+  function post(body: Record<string, unknown>) {
+    return POST(new NextRequest(new URL(`/api/projects/${projectUuid}/tasks`, "http://localhost:3000"), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }), makeContext(projectUuid));
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetAuthContext.mockResolvedValue(mockAuth);
+    mockProjectExists.mockResolvedValue(true);
+    mockCreateTask.mockResolvedValue({ uuid: "task-1", ideaUuid: "idea-1" });
+  });
+
+  it("passes ideaUuid through to createTask", async () => {
+    const response = await post({ title: "Fix", ideaUuid: "idea-1" });
+    expect(response.status).toBe(200);
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({ projectUuid, ideaUuid: "idea-1" }));
+  });
+
+  it("defaults ideaUuid to null when omitted", async () => {
+    await post({ title: "Fix" });
+    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({ ideaUuid: null }));
+  });
+
+  it("returns 400 for a non-string ideaUuid without calling the service", async () => {
+    const response = await post({ title: "Fix", ideaUuid: 42 });
+    expect(response.status).toBe(400);
+    expect(mockCreateTask).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [400, new ApiError("BAD_REQUEST", "Idea must be in the same project as the task", 400)],
+    [400, new ApiError("BAD_REQUEST", "Theme ideas cannot have tasks; link a child idea", 400)],
+    [404, new ApiError("NOT_FOUND", "Idea not found", 404)],
+  ])("maps service link-validation errors to %i", async (status, error) => {
+    mockCreateTask.mockRejectedValue(error);
+    const response = await post({ title: "Fix", ideaUuid: "bad-idea" });
+    expect(response.status).toBe(status);
+    const body = await response.json();
+    expect(body.error.message).toBe(error.message);
   });
 });

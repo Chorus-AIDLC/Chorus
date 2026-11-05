@@ -646,7 +646,11 @@ export async function notifyIdeaTeamHandoff(event: ActivityEvent): Promise<void>
     const lastTaskIdeas = event.targetType === "task" ? (await Promise.all(orchestrators.map(async (entry) => {
       const proposalUuids = await ideaSourceProposalUuids(event.companyUuid, entry.ideaUuid);
       const remaining = await prisma.task.count({
-        where: { companyUuid: event.companyUuid, proposalUuid: { in: proposalUuids }, uuid: { not: event.targetUuid }, status: { notIn: ["to_verify", "done", "closed"] } },
+        // Proposal tasks ∪ Quick Tasks linked directly to the Idea (task.ideaUuid).
+        where: {
+          companyUuid: event.companyUuid, uuid: { not: event.targetUuid }, status: { notIn: ["to_verify", "done", "closed"] },
+          OR: [{ proposalUuid: { in: proposalUuids } }, { ideaUuid: entry.ideaUuid }],
+        },
       });
       return remaining === 0 ? entry.ideaUuid : null;
     }))).filter((uuid) => uuid !== null) : [];

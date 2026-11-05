@@ -52,8 +52,8 @@ Never infer verification authority from the agent's name, persona, preset/role l
 
 | Tool | Purpose |
 |------|---------|
-| `chorus_create_tasks` | Create task(s) — omit `proposalUuid` for standalone Quick Task, or pass it to attach to an existing proposal |
-| `chorus_update_task` | Edit task fields (title, description, priority, AC, dependencies) or change status |
+| `chorus_create_tasks` | Create task(s) — omit `proposalUuid` for standalone Quick Task (optionally linked to an Idea via top-level `ideaUuid`), or pass it to attach to an existing proposal |
+| `chorus_update_task` | Edit task fields (title, description, priority, AC, dependencies, `ideaUuid` link) or change status |
 | `chorus_claim_task` | Claim a task (open → assigned) |
 | `chorus_report_work` | Report progress with optional status update |
 | `chorus_report_criteria_self_check` | Self-check acceptance criteria before submitting |
@@ -87,6 +87,22 @@ chorus_create_tasks({
 **`proposalUuid` is optional:**
 - **Omit** for standalone quick tasks (bug fixes, hotfixes, exploratory work)
 - **Pass** to attach the task to an existing proposal — useful for gap-filling, follow-up patches, or continuing work after a proposal's initial tasks are delivered
+
+**Link Quick Tasks to an Idea (`ideaUuid`, optional):** when the work belongs to an existing Idea but does not need a proposal (e.g. a small Idea you can deliver directly), pass a top-level `ideaUuid` instead of `proposalUuid`. Every task in the batch is linked to that Idea, and the Idea's status follows its linked tasks — it completes (`done`) once all of them are `done`/`closed`, with no proposal required.
+
+```
+chorus_create_tasks({
+  projectUuid: "<project-uuid>",
+  ideaUuid: "<idea-uuid>",
+  tasks: [{ title: "...", acceptanceCriteriaItems: [{ description: "...", required: true }] }]
+})
+```
+
+- The Idea must be in the same project and must not be a theme; `ideaUuid` and `proposalUuid` are mutually exclusive (the call is rejected if both are set).
+- `ideaUuid` belongs at the top level only: a per-task `ideaUuid` inside `tasks[]` is rejected with a validation error (it is never silently dropped).
+- Link or relink an existing Quick Task with `chorus_update_task({ taskUuid, ideaUuid: "<idea-uuid>" })`; pass `ideaUuid: null` to clear the link. Proposal tasks cannot carry `ideaUuid` — they reach their Idea through the proposal.
+- List an Idea's linked Quick Tasks with `chorus_list_tasks({ projectUuid, ideaUuid })`; `chorus_get_task` returns the task's `ideaUuid`.
+- When the **last** linked Quick Task is verified, the Idea's ship-time code-review gateway applies (see `/develop`, Step 8). If it returns `FAIL`, create the fix tasks the same way — Quick Tasks with the same `ideaUuid`. A proposal-less Idea has no idea-completion report (`chorus_create_report` needs a proposal).
 
 ### Step 2: Claim the Task
 
@@ -175,6 +191,7 @@ This handoff applies in interactive and headless daemon sessions. Do not use an 
 - **Acceptance criteria are required at creation time** — `chorus_create_tasks` rejects tasks without them. They are your self-check contract; specific, testable AC enables autonomous verification and makes the entire workflow self-contained
 - Use `chorus_update_task` to refine tasks (including AC) after creation rather than deleting and recreating
 - Pass `proposalUuid` to attach follow-up or gap-filling tasks to an existing proposal — this keeps related work grouped in the same project context and DAG
+- Pass `ideaUuid` (instead of `proposalUuid`) when the Quick Tasks deliver an existing Idea directly — the Idea completes when its linked tasks are done, without a proposal
 - Quick Tasks appear in the same project task list and DAG as proposal-based tasks
 - Agents with explicit `task:admin` continue autonomously after AC and independent review pass; all others use the evidence-rich asynchronous human handoff
 

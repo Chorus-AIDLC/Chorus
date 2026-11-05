@@ -654,6 +654,18 @@
       "filtered": "{total}개 중 {filtered}개 제안",
       "noResults": "제안을 찾을 수 없습니다",
       "filteredSubtitle": "{total}개 중 {filtered}개 작업 (필터링됨)"
+    },
+    "ideaLink": {
+      "label": "Idea (선택 사항)",
+      "none": "연결된 Idea 없음",
+      "current": "현재 연결된 Idea",
+      "hint": "이 빠른 작업을 Idea에 연결하면 해당 Idea의 진행률에 반영됩니다.",
+      "sourceLabel": "Idea"
+    },
+    "ideaFilter": {
+      "label": "Idea: {title}",
+      "fallbackTitle": "연결된 Idea",
+      "clear": "Idea 필터 지우기"
     }
   },
   "proposals": {

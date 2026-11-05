@@ -369,7 +369,7 @@ The plugin ships three reviewer subagents (`chorus-code-reviewer`, `chorus-propo
 | `chorus-task-reviewer` | `chorus_submit_for_verify` | One task's implementation vs its AC (posts VERDICT on the task) |
 | `chorus-code-reviewer` | `chorus_admin_verify_task` (last task of the idea) | The idea's aggregate code change (posts VERDICT on the idea) |
 
-Reviewers post a VERDICT comment with one of three outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the `/chorus-quick-dev` workflow: `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it, then execute → verify and re-run the gateway.
+Reviewers post a VERDICT comment with one of three outcomes: **PASS** (no issues), **PASS WITH NOTES** (minor non-blocking notes), or **FAIL** (BLOCKERs found). Results are advisory — they do not block approval, verification, or ship; the code-review gateway in particular is behavioral (it does not change the Idea's stored status). On a code-review FAIL, fix it via the `/chorus-quick-dev` workflow: `chorus_create_tasks` with `proposalUuid` set to the current approved proposal so the fix tasks attach to it; for an Idea with no approved proposal, create them as Quick Tasks with the same top-level `ideaUuid` and no `proposalUuid`, then execute → verify and re-run the gateway.
 
 ### 6. Spec mode: OpenSpec (default when usable) vs spec-lite (fallback)
 

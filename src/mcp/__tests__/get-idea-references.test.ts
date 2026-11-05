@@ -6,7 +6,7 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // under `references`, mirroring chorus_get_task / chorus_get_proposal.
 
 const mockIdeaService = vi.hoisted(() => ({
-  getIdea: vi.fn(),
+  getIdeaWithDerivedStatus: vi.fn(),
 }));
 
 const mockReferenceService = vi.hoisted(() => ({
@@ -71,7 +71,7 @@ beforeEach(() => {
 
 describe("chorus_get_idea — inline references (V2)", () => {
   it("includes the idea's linked references inline", async () => {
-    mockIdeaService.getIdea.mockResolvedValue({ uuid: "idea-1", title: "Grounded idea" });
+    mockIdeaService.getIdeaWithDerivedStatus.mockResolvedValue({ uuid: "idea-1", title: "Grounded idea" });
     const refs = [
       { uuid: "ref-1", type: "paper_blog", url: "https://arxiv.org/abs/1", title: "Paper", notes: null },
     ];
@@ -95,7 +95,7 @@ describe("chorus_get_idea — inline references (V2)", () => {
   });
 
   it("embeds an empty references array when the idea has none", async () => {
-    mockIdeaService.getIdea.mockResolvedValue({ uuid: "idea-2", title: "No refs" });
+    mockIdeaService.getIdeaWithDerivedStatus.mockResolvedValue({ uuid: "idea-2", title: "No refs" });
 
     const result = (await toolHandlers["chorus_get_idea"]({
       ideaUuid: "idea-2",
@@ -106,7 +106,7 @@ describe("chorus_get_idea — inline references (V2)", () => {
   });
 
   it("returns isError with 'Idea not found' and does not resolve references when the idea is absent", async () => {
-    mockIdeaService.getIdea.mockResolvedValue(null);
+    mockIdeaService.getIdeaWithDerivedStatus.mockResolvedValue(null);
 
     const result = await toolHandlers["chorus_get_idea"]({ ideaUuid: "missing" });
 
@@ -117,5 +117,47 @@ describe("chorus_get_idea — inline references (V2)", () => {
       }),
     );
     expect(mockReferenceService.listReferences).not.toHaveBeenCalled();
+  });
+});
+
+describe("chorus_get_idea — server-derived status", () => {
+  it("returns derivedStatus and badgeHint from getIdeaWithDerivedStatus", async () => {
+    // Mixed idea: approved-proposal task still building while the linked
+    // Quick Task is done -> the shared union computation says in_progress.
+    mockIdeaService.getIdeaWithDerivedStatus.mockResolvedValue({
+      uuid: "idea-mixed",
+      title: "Mixed idea",
+      status: "elaborated",
+      derivedStatus: "in_progress",
+      badgeHint: "building",
+    });
+
+    const result = (await toolHandlers["chorus_get_idea"]({
+      ideaUuid: "idea-mixed",
+    })) as { content: { type: string; text: string }[] };
+
+    expect(mockIdeaService.getIdeaWithDerivedStatus).toHaveBeenCalledWith("company-1", "idea-mixed");
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.derivedStatus).toBe("in_progress");
+    expect(parsed.badgeHint).toBe("building");
+    expect(parsed.references).toEqual([]);
+  });
+
+  it("passes a theme rollup (childProgress) through unchanged", async () => {
+    mockIdeaService.getIdeaWithDerivedStatus.mockResolvedValue({
+      uuid: "theme-1",
+      isContainer: true,
+      derivedStatus: "done",
+      badgeHint: "done",
+      childProgress: { done: 2, total: 2 },
+    });
+
+    const result = (await toolHandlers["chorus_get_idea"]({
+      ideaUuid: "theme-1",
+    })) as { content: { type: string; text: string }[] };
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.derivedStatus).toBe("done");
+    expect(parsed.childProgress).toEqual({ done: 2, total: 2 });
   });
 });

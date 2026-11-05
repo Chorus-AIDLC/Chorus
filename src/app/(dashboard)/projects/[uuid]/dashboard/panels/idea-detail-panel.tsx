@@ -36,7 +36,7 @@ import { MoveIdeaDialog } from "./move-idea-dialog";
 import { SetParentDialog } from "./set-parent-dialog";
 import { NewIdeaDialog } from "../new-idea-dialog";
 import { deleteIdeaAction, updateIdeaAction } from "@/app/(dashboard)/projects/[uuid]/ideas/actions";
-import { getIdeaAction, getTaskAction, getProposalsForIdeaAction, getTasksForProposalAction } from "./actions";
+import { getIdeaAction, getTaskAction, getProposalsForIdeaAction, getTasksForProposalAction, getTasksForIdeaAction } from "./actions";
 import { getElaborationAction, verifyElaborationAction } from "@/app/(dashboard)/projects/[uuid]/ideas/[ideaUuid]/elaboration-actions";
 import { AssignIdeaModal } from "@/app/(dashboard)/projects/[uuid]/ideas/assign-idea-modal";
 import type { IdeaResponse } from "@/services/idea.service";
@@ -110,6 +110,26 @@ import {
   type FlatTask,
 } from "../utils";
 import { ProgressRing } from "@/components/ui/progress-ring";
+
+// Narrow a task row from the list actions to the panel's flat shape.
+function toFlatTask(t: unknown): FlatTask {
+  const task = t as {
+    uuid: string;
+    title: string;
+    status: string;
+    commentCount?: number;
+    assignee?: FlatTask["assignee"];
+    acceptanceSummary?: FlatTask["acceptanceSummary"];
+  };
+  return {
+    uuid: task.uuid,
+    title: task.title,
+    status: task.status,
+    commentCount: task.commentCount ?? 0,
+    assignee: task.assignee ?? null,
+    acceptanceSummary: task.acceptanceSummary ?? null,
+  };
+}
 
 // ===== Tab Types =====
 type TabId = "overview" | "elaboration" | "proposal" | "tasks" | "activity";
@@ -191,6 +211,7 @@ function IdeaDetailPanelContent({
   // Top-level data: proposals and tasks
   const [proposals, setProposals] = useState<ProposalData[]>([]);
   const [tasks, setTasks] = useState<FlatTask[]>([]);
+  const [linkedTasks, setLinkedTasks] = useState<FlatTask[]>([]);
   const [loadedProposalSource, setLoadedProposalSource] = useState<string | null>(null);
   const [loadedTaskSource, setLoadedTaskSource] = useState<ProposalData[] | null>(null);
   const proposalRequestRef = useRef(0);
@@ -350,49 +371,44 @@ function IdeaDetailPanelContent({
 
   useRealtimeEntityTypeEvent("proposal", fetchProposals);
 
-  // ===== Lift data fetching: Tasks (from approved proposals) =====
+  // ===== Lift data fetching: Tasks (approved proposals + directly linked Quick Tasks) =====
+  // `tasks` stays the approved proposals' tasks (Start Development's input);
+  // `linkedTasks` are Quick Tasks with Task.ideaUuid === this idea. Display
+  // surfaces (tabs, timeline, task list) use the union `allTasks`.
   const fetchTasks = useCallback(async () => {
     const request = ++taskRequestRef.current;
     setLoadedTaskSource(null);
     const approvedProposals = proposals.filter((p) => p.status === "approved");
-    if (approvedProposals.length === 0) {
-      setTasks([]);
-      setLoadedTaskSource(proposals);
-      return;
-    }
     try {
-      const results = await Promise.all(
-        approvedProposals.map((p) => getTasksForProposalAction(projectUuid, p.uuid))
+      const [proposalResults, linkedResult] = await Promise.all([
+        Promise.all(
+          approvedProposals.map((p) => getTasksForProposalAction(projectUuid, p.uuid))
+        ),
+        ideaUuidForFetch
+          ? getTasksForIdeaAction(projectUuid, ideaUuidForFetch)
+          : Promise.resolve({ success: true as const, data: [] }),
+      ]);
+      if (
+        request !== taskRequestRef.current ||
+        proposalResults.some((result) => !result.success) ||
+        !linkedResult.success
+      ) return;
+      const proposalTasks: FlatTask[] = proposalResults.flatMap((result) =>
+        result.success && result.data ? result.data.map(toFlatTask) : []
       );
-      if (request !== taskRequestRef.current || results.some((result) => !result.success)) return;
-      const allTasks: FlatTask[] = results.flatMap((result) =>
-        result.success && result.data
-          ? result.data.map((t) => {
-              const task = t as {
-                uuid: string;
-                title: string;
-                status: string;
-                commentCount?: number;
-                assignee?: { type: string; uuid: string; name: string } | null;
-                acceptanceSummary?: FlatTask["acceptanceSummary"];
-              };
-              return {
-                uuid: task.uuid,
-                title: task.title,
-                status: task.status,
-                commentCount: task.commentCount ?? 0,
-                assignee: task.assignee ?? null,
-                acceptanceSummary: task.acceptanceSummary ?? null,
-              };
-            })
-          : []
-      );
-      setTasks(allTasks);
+      const proposalTaskUuids = new Set(proposalTasks.map((task) => task.uuid));
+      const directTasks: FlatTask[] = (linkedResult.data ?? [])
+        .map(toFlatTask)
+        .filter((task) => !proposalTaskUuids.has(task.uuid));
+      setTasks(proposalTasks);
+      setLinkedTasks(directTasks);
       setLoadedTaskSource(proposals);
     } catch (e) {
       clientLogger.error("Failed to fetch tasks:", e);
     }
-  }, [projectUuid, proposals]);
+  }, [projectUuid, proposals, ideaUuidForFetch]);
+
+  const allTasks = useMemo(() => [...tasks, ...linkedTasks], [tasks, linkedTasks]);
 
   useEffect(() => {
     fetchTasks();
@@ -418,8 +434,8 @@ function IdeaDetailPanelContent({
 
   // ===== Tab visibility & default =====
   const visibleTabs = useMemo(
-    () => (idea ? getVisibleTabs(idea, proposals, tasks) : ["overview" as TabId, "activity" as TabId]),
-    [idea, proposals, tasks],
+    () => (idea ? getVisibleTabs(idea, proposals, allTasks) : ["overview" as TabId, "activity" as TabId]),
+    [idea, proposals, allTasks],
   );
 
   // Read initial tab from URL (if present and valid) — consumed once on first auto-select
@@ -484,8 +500,8 @@ function IdeaDetailPanelContent({
 
   // ===== Badge counts =====
   const activeTaskCount = useMemo(
-    () => tasks.filter((t) => t.status === "in_progress" || t.status === "assigned" || t.status === "to_verify").length,
-    [tasks],
+    () => allTasks.filter((t) => t.status === "in_progress" || t.status === "assigned" || t.status === "to_verify").length,
+    [allTasks],
   );
 
   // Fetch task when selected from any tab view
@@ -740,6 +756,8 @@ function IdeaDetailPanelContent({
                 assigneeName={idea.assignee?.name}
                 proposals={proposals}
                 tasks={tasks}
+                linkedTasks={linkedTasks}
+                elaborationStatus={idea.elaborationStatus}
                 triggerRef={actionsTriggerRef}
                 busy={isDeleting || isVerifying || isResolvingVerify || isSaving || isTogglingContainer || verifyPickerState !== null}
                 stageReason={isContainer ? tLineage("containerHint") : undefined}
@@ -893,7 +911,8 @@ function IdeaDetailPanelContent({
                       <OverviewTimeline
                         idea={idea}
                         proposals={proposals}
-                        tasks={tasks}
+                        tasks={allTasks}
+                        hasLinkedTasks={linkedTasks.length > 0}
                         onSelectTask={openTask}
                       />
 
@@ -1032,9 +1051,10 @@ function IdeaDetailPanelContent({
                   {visibleTabs.includes("tasks") && visitedTabs.has("tasks") && (
                     <div style={{ display: activeTab === "tasks" ? "block" : "none" }}>
                       <TaskListView
-                        tasks={tasks}
+                        tasks={allTasks}
                         projectUuid={projectUuid}
                         proposalUuids={proposals.filter((p) => p.status === "approved").map((p) => p.uuid)}
+                        ideaUuid={linkedTasks.length > 0 ? idea.uuid : null}
                         onSelectTask={openTask}
                       />
                     </div>

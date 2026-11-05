@@ -159,12 +159,20 @@ export async function getIdeaTeamOrchestrators(companyUuid: string, targetType: 
   let ideaUuids: string[] = [];
   if (targetType === "idea") ideaUuids = [targetUuid];
   else {
-    const proposalUuid = targetType === "proposal" ? targetUuid
-      : targetType === "task" ? (await client.task.findFirst({ where: { uuid: targetUuid, companyUuid }, select: { proposalUuid: true } }))?.proposalUuid : null;
-    if (!proposalUuid) return [];
-    const proposal = await client.proposal.findFirst({ where: { uuid: proposalUuid, companyUuid }, select: { projectUuid: true } });
-    if (!proposal || !await projectHasTeams(companyUuid, proposal.projectUuid, client)) return [];
-    ideaUuids = await proposalSourceIdeas(companyUuid, proposalUuid, client) ?? [];
+    const task = targetType === "task"
+      ? await client.task.findFirst({ where: { uuid: targetUuid, companyUuid }, select: { proposalUuid: true, ideaUuid: true } })
+      : null;
+    const proposalUuid = targetType === "proposal" ? targetUuid : task?.proposalUuid ?? null;
+    if (proposalUuid) {
+      const proposal = await client.proposal.findFirst({ where: { uuid: proposalUuid, companyUuid }, select: { projectUuid: true } });
+      if (!proposal || !await projectHasTeams(companyUuid, proposal.projectUuid, client)) return [];
+      ideaUuids = await proposalSourceIdeas(companyUuid, proposalUuid, client) ?? [];
+    } else if (task?.ideaUuid) {
+      // Linked Quick Task (no proposal): it belongs directly to its Idea.
+      const idea = await client.idea.findFirst({ where: { uuid: task.ideaUuid, companyUuid }, select: { projectUuid: true } });
+      if (!idea || !await projectHasTeams(companyUuid, idea.projectUuid, client)) return [];
+      ideaUuids = [task.ideaUuid];
+    } else return [];
   }
   const result: { ideaUuid: string; agentUuid: string }[] = [];
   for (const ideaUuid of ideaUuids) {
@@ -236,7 +244,9 @@ export async function recommendIdeaTeamRole(auth: AuthContext, ideaUuid: string,
   if (callerOwnerUuid(auth) !== state.ownerUuid) forbidden("Private Team routing is owner-only");
   if (!state.active || !state.team) return result("paused", state.reason ?? "paused");
   const task = taskUuid ? await prisma.task.findFirst({ where: { uuid: taskUuid, companyUuid: auth.companyUuid, projectUuid: state.projectUuid } }) : null;
-  if (taskUuid && (!task?.proposalUuid || !(await proposalSourceIdeas(auth.companyUuid, task.proposalUuid, prisma))?.includes(ideaUuid))) forbidden("Task does not belong to this Idea");
+  if (taskUuid && !(task && (task.proposalUuid
+    ? (await proposalSourceIdeas(auth.companyUuid, task.proposalUuid, prisma))?.includes(ideaUuid)
+    : task.ideaUuid === ideaUuid))) forbidden("Task does not belong to this Idea");
   if (proposalUuid && !(await proposalSourceIdeas(auth.companyUuid, proposalUuid, prisma))?.includes(ideaUuid)) forbidden("Proposal does not belong to this Idea");
 
   const eligible = state.team.roles[role].filter((member) => member.eligible);

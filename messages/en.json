@@ -654,6 +654,18 @@
       "filtered": "{filtered} of {total} proposals",
       "noResults": "No proposals found",
       "filteredSubtitle": "{filtered} of {total} tasks (filtered)"
+    },
+    "ideaLink": {
+      "label": "Idea (optional)",
+      "none": "No linked idea",
+      "current": "Current linked idea",
+      "hint": "Link this Quick Task to an idea so it counts toward the idea's progress.",
+      "sourceLabel": "Idea"
+    },
+    "ideaFilter": {
+      "label": "Idea: {title}",
+      "fallbackTitle": "Linked idea",
+      "clear": "Clear idea filter"
     }
   },
   "proposals": {

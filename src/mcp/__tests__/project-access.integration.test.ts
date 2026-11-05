@@ -84,6 +84,7 @@ const fixture = vi.hoisted(() => {
     },
     idea: {
       getIdea: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
+      getIdeaWithDerivedStatus: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
       getIdeaByUuid: vi.fn(async (_company: string, uuid: string) => entity("idea", uuid)),
       createIdea: vi.fn(async (params: Row) => ({ uuid: "new-idea", ...params })),
       moveIdea: vi.fn(async (_company: string, uuid: string, targetProjectUuid: string) => ({
@@ -499,6 +500,16 @@ describe("MCP central project access", () => {
     expect(eventBus.emitPresence).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["chorus_create_tasks", { projectUuid: "public", ideaUuid: "idea-private", tasks: [{ title: "New" }] }],
+    ["chorus_list_tasks", { projectUuid: "public", ideaUuid: "idea-private" }],
+  ] as [string, Record<string, unknown>][])("rejects an ideaUuid outside the declared project for visible ideas (%s)", async (name, params) => {
+    const { handlers, originals } = register(auth("editor"));
+    expect((await handlers[name](params)).isError).toBe(true);
+    expect(originals[name]).not.toHaveBeenCalled();
+    expect(eventBus.emitPresence).not.toHaveBeenCalled();
+  });
+
   it.each(["missing", "foreign"])("matches hidden and %s task errors", async (suffix) => {
     const { handlers } = register(auth("nonmember"));
     const hidden = await handlers.chorus_get_task({ taskUuid: "task-private" });
@@ -514,6 +525,10 @@ describe("MCP central project access", () => {
     ["chorus_pm_create_proposal", { projectUuid: "public", inputType: "idea", inputUuids: ["idea-private"], title: "New" }],
     ["chorus_pm_create_proposal", { projectUuid: "public", inputType: "document", inputUuids: ["document-private"], title: "New" }],
     ["chorus_pm_create_idea", { projectUuid: "public", parentUuid: "idea-private", title: "New" }],
+    // Direct Idea link (link-quick-task-to-idea): ideaUuid is an authorized entity field.
+    ["chorus_create_tasks", { projectUuid: "public", ideaUuid: "idea-private", tasks: [{ title: "New" }] }],
+    ["chorus_update_task", { taskUuid: "task-public", ideaUuid: "idea-private" }],
+    ["chorus_list_tasks", { projectUuid: "public", ideaUuid: "idea-private" }],
   ] as [string, Record<string, unknown>][])("checks secondary projects for %s before any handler/presence", async (name, params) => {
     const { handlers, originals } = register(auth("nonmember"));
     expect((await handlers[name](params)).isError).toBe(true);

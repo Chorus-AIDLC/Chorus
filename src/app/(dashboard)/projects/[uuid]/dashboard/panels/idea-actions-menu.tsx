@@ -123,6 +123,9 @@ interface IdeaActionsMenuProps {
   assigneeName?: string;
   proposals: { status: string }[];
   tasks: { status: string }[];
+  // Quick Tasks linked directly to the idea — Yolo's "idea is done" rule only.
+  linkedTasks?: { status: string }[];
+  elaborationStatus?: string | null;
   triggerRef: RefObject<HTMLButtonElement | null>;
   busy: boolean;
   stageReason?: string;
@@ -169,11 +172,11 @@ export function IdeaActionsMenu(props: IdeaActionsMenuProps) {
     <ResearchAction ideaUuid={props.ideaUuid} assignee={props.assignee}
       disabledReason={busyReason}
       onCloseAutoFocus={props.onCloseAutoFocus}
-      refreshKey={JSON.stringify([props.proposals, props.tasks])}
+      refreshKey={JSON.stringify([props.proposals, props.tasks, props.linkedTasks ?? []])}
       onStarted={props.onStarted}
       renderAction={(research) => (
     <StartDevelopmentButton {...shared} disabledReason={stageReason || (research.busy ? ta("busy") : undefined)} renderAction={(start) => (
-      <YoloButton {...shared} disabledReason={stageReason || (start.busy ? ta("busy") : undefined)} renderAction={(yolo) => {
+      <YoloButton {...shared} linkedTasks={props.linkedTasks} elaborationStatus={props.elaborationStatus} disabledReason={stageReason || (start.busy ? ta("busy") : undefined)} renderAction={(yolo) => {
         const mutationReason = busyReason || (start.busy || yolo.busy || research.busy ? ta("busy") : undefined);
         const groups = [
           [

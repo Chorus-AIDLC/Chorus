@@ -402,7 +402,9 @@ Product/development behavior is unchanged: eligible → online, development reop
 |-----------|------|----------|-------------|
 | ideaUuid | string | Yes | Idea UUID |
 
-**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `references: ReferenceArtifact[]` (inline reference artifacts linked to the idea, oldest-first; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields.
+**Output**: Idea details JSON, with `reports: DocumentResponse[]` (full Markdown content, sorted by `createdAt` desc; empty when none), `references: ReferenceArtifact[]` (inline reference artifacts linked to the idea, oldest-first; empty when none), `parent`, `children[]`, and `descendantUuids[]` lineage fields. It also carries the server-computed `derivedStatus` (`todo` / `in_progress` / `human_conduct_required` / `done`) and `badgeHint` — the same computation as the tracker and dashboard (`ideaService.getIdeaWithDerivedStatus`): the union of the idea's approved-proposal tasks and Quick Tasks linked directly via `Task.ideaUuid`; a theme with children rolls up from its children (plus `childProgress`).
+
+> Plugin post-verify hooks (Claude Code, Codex/TRAE, Kiro, Hermes) gate the whole-Idea code-review gateway on `derivedStatus == "done"`, so a mixed idea (proposal tasks + linked Quick Tasks) only triggers the final review once both sides are complete. Older servers without the field fall back to the hooks' own task-count check.
 
 > Entity → root-idea lineage resolution is **not** an MCP tool. It is a standalone REST endpoint, `GET /api/entities/{type}/{uuid}/root-idea`, callable with any valid auth (including an agent API key) — see `docs/API.md` / the route at `src/app/api/entities/[type]/[uuid]/root-idea/`.
 
@@ -476,10 +478,13 @@ Product/development behavior is unchanged: eligible → online, development reop
 | status | enum | No | Filter by status: `open` \| `assigned` \| `in_progress` \| `to_verify` \| `done` \| `closed` |
 | priority | enum | No | Filter by priority: `low` \| `medium` \| `high` |
 | proposalUuids | string[] | No | Filter tasks by proposal UUIDs |
+| ideaUuid | string | No | Filter to Quick Tasks directly linked to this Idea (`Task.ideaUuid`). Proposal tasks of the Idea are **not** included — list those with `proposalUuids`. |
 | page | number | No | Page number |
-| pageSize | number | No | Items per page |
+| pageSize | number | No | Items per page (maximum 100) |
 
-**Output**: Task list JSON
+**Output**: Task list JSON (`{ tasks, total, page, pageSize }`)
+
+> The plugin post-verify hooks use `chorus_list_tasks({ projectUuid, ideaUuid, pageSize: 100 })` to decide whether the last Quick Task linked to an Idea has been verified (code-review gateway), treating `total > tasks.length` as "not complete".
 
 ### chorus_get_task
 
@@ -494,6 +499,8 @@ Product/development behavior is unchanged: eligible → online, development reop
 - `acceptanceCriteriaItems`: Array of structured acceptance criteria (each with `uuid`, `description`, `required`, `devStatus`, `devEvidence`, `status`, `evidence`, etc.)
 - `acceptanceStatus`: Computed status — `"not_started"` | `"in_progress"` | `"passed"` | `"failed"`
 - `acceptanceSummary`: `{ total, required, passed, failed, pending, requiredPassed, requiredFailed, requiredPending }`
+- `proposalUuid`: The task's proposal, or `null` for a Quick Task
+- `ideaUuid`: The Idea a Quick Task is directly linked to, or `null` (always `null` for proposal tasks, whose Idea is reached via the proposal's `inputUuids`)
 
 ### chorus_get_activity
 
@@ -874,7 +881,7 @@ The named reviewer is notified even if they have muted casual @mention notificat
 
 **Description**: Batch create tasks in a project. Public tool — available to any agent (no permission gate). Supports two modes:
 
-- **Quick Task** (skip Idea → Proposal): omit `proposalUuid`. Ideal for bug fixes, small features, or post-delivery patches. Lifecycle: create → claim → execute → verify → done.
+- **Quick Task** (skip Idea → Proposal): omit `proposalUuid`. Ideal for bug fixes, small features, or post-delivery patches. Lifecycle: create → claim → execute → verify → done. Optionally pass a top-level `ideaUuid` to link every task in the batch directly to an Idea: the Idea's derived status then follows those tasks (it reaches `done` when all linked tasks are `done`/`closed`) without any proposal, and the plugins' code-review gateway fires when the last linked Quick Task is verified.
 - **Proposal-linked** (traditional AI-DLC): pass `proposalUuid` to associate the new tasks with an approved proposal.
 
 Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and dependencies on existing tasks via `dependsOnTaskUuids`.
@@ -886,6 +893,7 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 |-----------|------|----------|-------------|
 | projectUuid | string | Yes | Project UUID |
 | proposalUuid | string | No | Associated Proposal UUID (omit for Quick Task mode) |
+| ideaUuid | string | No | Quick Task mode only: link every task in the batch to this Idea. The Idea must be in the same project and must not be a theme (`isContainer`). Rejected when combined with `proposalUuid`; an invalid link rejects the whole call (no task is created). |
 | tasks | array | Yes | Task list |
 
 **tasks array item fields**:
@@ -900,6 +908,7 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
 | dependsOnDraftUuids | string[] | No | Intra-batch draftUuids this task depends on |
 | dependsOnTaskUuids | string[] | No | Existing Task UUIDs this task depends on |
 | references | array | No | Reference artifacts to attach to this task inline: `[{ type, url, title, notes? }]`. Fail-soft per item — a bad ref is skipped and reported in the response `referenceErrors`, not created. |
+| ideaUuid | — | Not allowed | A per-task `ideaUuid` is rejected (validation error pointing to the top-level `ideaUuid`) instead of being silently dropped. Use the top-level `ideaUuid` to link the batch. |
 
 **Quick Task example**:
 ```json
@@ -913,6 +922,22 @@ Supports intra-batch dependencies via `draftUuid` + `dependsOnDraftUuids`, and d
       "storyPoints": 0.5,
       "acceptanceCriteriaItems": [
         { "description": "Submit button is centered at the 375px mobile breakpoint", "required": true }
+      ]
+    }
+  ]
+}
+```
+
+**Quick Task linked to an Idea** (the Idea completes when its linked tasks are done — no proposal needed):
+```json
+{
+  "projectUuid": "8c16d9aa-...",
+  "ideaUuid": "4f2a91c0-...",
+  "tasks": [
+    {
+      "title": "Fix duplicate toast on save",
+      "acceptanceCriteriaItems": [
+        { "description": "Saving shows exactly one success toast", "required": true }
       ]
     }
   ]
@@ -1710,7 +1735,7 @@ Tools gated by `task:write`. Available to any agent whose effective permissions 
 
 Three distinct edit modes can be combined in a single call:
 
-- **Field editing** (any agent): `title`, `description`, `priority`, `storyPoints`, `addDependsOn`, `removeDependsOn`.
+- **Field editing** (any agent): `title`, `description`, `priority`, `storyPoints`, `ideaUuid`, `addDependsOn`, `removeDependsOn`.
 - **Acceptance criteria editing** (any agent): `acceptanceCriteriaItems` — **replaces** the task's acceptance criteria with the provided non-empty set. Omit it to leave criteria untouched.
 - **Status update** (assignee only): `status` (`in_progress` requires all dependencies resolved; `to_verify` submits for human verification).
 
@@ -1722,6 +1747,7 @@ Three distinct edit modes can be combined in a single call:
 | description | string | No | New task description (supports @mentions) |
 | priority | enum | No | New priority: low, medium, high |
 | storyPoints | number | No | New effort estimate (agent hours) |
+| ideaUuid | string \| null | No | Quick Tasks only: link the task to an Idea (same project, not a theme), change the link, or pass `null` to clear it. Omit to leave unchanged. Rejected on proposal tasks. |
 | acceptanceCriteriaItems | array | No | Replace the task's acceptance criteria with this non-empty set: `[{ description: string, required?: boolean }]`. Omit to leave AC unchanged; an empty or all-blank array is rejected (cannot clear AC). |
 | addDependsOn | string[] | No | Task UUIDs to add as dependencies (incremental) |
 | removeDependsOn | string[] | No | Task UUIDs to remove from dependencies (incremental) |

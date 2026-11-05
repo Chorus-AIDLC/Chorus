@@ -654,6 +654,18 @@
       "filtered": "{total} 件中 {filtered} 件の提案",
       "noResults": "提案が見つかりません",
       "filteredSubtitle": "{total} 件中 {filtered} 件の課題（絞り込み済み）"
+    },
+    "ideaLink": {
+      "label": "Idea（任意）",
+      "none": "Idea を関連付けない",
+      "current": "現在関連付けられている Idea",
+      "hint": "このクイックタスクを Idea に関連付けると、その Idea の進捗に反映されます。",
+      "sourceLabel": "Idea"
+    },
+    "ideaFilter": {
+      "label": "Idea：{title}",
+      "fallbackTitle": "関連付けられた Idea",
+      "clear": "Idea フィルターをクリア"
     }
   },
   "proposals": {

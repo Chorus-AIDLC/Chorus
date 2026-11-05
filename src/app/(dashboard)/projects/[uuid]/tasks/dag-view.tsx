@@ -25,6 +25,8 @@ import {
   type TaskNodeData,
 } from "@/components/task-dag";
 import { getProjectDependenciesAction } from "./actions";
+import { parseTaskScopeFilter } from "./task-scope-filter";
+import { getTasksForIdeaAction } from "@/app/(dashboard)/projects/[uuid]/dashboard/panels/actions";
 import { addTaskDependencyAction } from "./[taskUuid]/dependency-actions";
 
 interface DagViewProps {
@@ -43,25 +45,29 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
   const [error, setError] = useState<string | null>(null);
   const canEdit = useCanEditProject();
 
-  // Parse proposalUuids from URL search params
-  const proposalUuids = useMemo(() => {
-    const param = searchParams.get("proposalUuids");
-    if (!param) return null;
-    const uuids = param.split(",").filter(Boolean);
-    return uuids.length > 0 ? new Set(uuids) : null;
-  }, [searchParams]);
+  // Parse the task scope (proposalUuids and/or ideaUuid) from URL search params
+  const scopeFilter = useMemo(() => parseTaskScopeFilter(searchParams), [searchParams]);
 
   const loadDag = useCallback(async () => {
     setIsLoading(true);
-    const data = await getProjectDependenciesAction(projectUuid);
+    const scopeIdeaUuid = scopeFilter?.ideaUuid ?? null;
+    const [data, linkedResult] = await Promise.all([
+      getProjectDependenciesAction(projectUuid),
+      scopeIdeaUuid ? getTasksForIdeaAction(projectUuid, scopeIdeaUuid) : Promise.resolve(null),
+    ]);
+    // DAG nodes carry no ideaUuid; resolve the idea's linked Quick Tasks by uuid.
+    const linkedTaskUuids = new Set(
+      linkedResult && linkedResult.success ? linkedResult.data.map((task) => task.uuid) : []
+    );
 
     let filteredNodes = data.nodes;
     let filteredEdgeData = data.edges;
 
-    // Filter by proposalUuids if set
-    if (proposalUuids) {
-      filteredNodes = data.nodes.filter(
-        (n) => n.proposalUuid !== null && proposalUuids.has(n.proposalUuid)
+    // Filter by the task scope if set
+    if (scopeFilter) {
+      filteredNodes = data.nodes.filter((n) =>
+        (n.proposalUuid !== null && scopeFilter.proposalUuids.has(n.proposalUuid)) ||
+        linkedTaskUuids.has(n.uuid)
       );
       const visibleNodeIds = new Set(filteredNodes.map((n) => n.uuid));
       filteredEdgeData = data.edges.filter(
@@ -89,7 +95,7 @@ export function DagView({ projectUuid, onTaskSelect, refreshKey }: DagViewProps)
     setNodes(layoutedNodes);
     setEdges(layoutedEdges);
     setIsLoading(false);
-  }, [projectUuid, proposalUuids, setNodes, setEdges]);
+  }, [projectUuid, scopeFilter, setNodes, setEdges]);
 
   useEffect(() => {
     loadDag();

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { loadIdeaTaskData } from "@/services/idea-task-context.service";
 
 export type ResearchDb = Omit<typeof prisma, "$connect" | "$disconnect" | "$on" | "$transaction" | "$extends">;
 
@@ -35,7 +36,7 @@ export async function getResearchEligibility(
   if (!idea) return { eligible: false, reason: "idea_not_found" };
   const ideas = await db.idea.findMany({
     where: { companyUuid, projectUuid: idea.projectUuid },
-    select: { uuid: true, parentUuid: true, status: true, isContainer: true },
+    select: { uuid: true, parentUuid: true, status: true, elaborationStatus: true, isContainer: true },
   });
   const related = new Set([ideaUuid]);
   let grew = true;
@@ -62,22 +63,28 @@ export async function getResearchEligibility(
     where: { companyUuid, proposalUuid: { in: proposals.map((p) => p.uuid) } },
     select: { uuid: true, status: true, proposalUuid: true },
   }) : [];
-  if (tasks.some((t) => EXECUTED_TASK_STATUSES.includes(t.status))) {
+  // Shared idea-task loader (same rule as the Tracker): latest approved / pending
+  // proposals plus tasks linked directly via Task.ideaUuid. Linked tasks are
+  // execution evidence just like proposal tasks.
+  const taskData = await loadIdeaTaskData(
+    db, companyUuid, ideas.filter((i) => related.has(i.uuid)).map((i) => ({ uuid: i.uuid, projectUuid: idea.projectUuid })),
+  );
+  const linkedTasks = taskData.tasks.filter((t) => !!t.ideaUuid && related.has(t.ideaUuid));
+  if ([...tasks, ...linkedTasks].some((t) => EXECUTED_TASK_STATUSES.includes(t.status))) {
     return { eligible: false, reason: "development_started" };
   }
-  // Completion is derived, not stored on Idea. Match the Tracker's latest approved
-  // proposal + all-finished predicate, and roll up themes through their children.
-  // A closed task on its own is not execution; ALL closed tasks may complete an Idea.
+  // Completion is derived, not stored on Idea. Match the Tracker's derived "done"
+  // (computeDerivedStatus over the shared context), and roll up themes through
+  // their children. A closed task on its own is not execution; ALL closed tasks
+  // may complete an Idea.
+  // Lazy import: idea.service → task.service → this module is a cycle, and a
+  // static import would drag idea.service's whole graph into every importer.
+  const { computeIdeaDerivedStatus } = await import("@/services/idea.service");
   const completed = new Map<string, boolean>();
   for (const item of ideas) {
     if (!related.has(item.uuid)) continue;
-    const ownProposals = proposals.filter((p) => Array.isArray(p.inputUuids) && p.inputUuids.includes(item.uuid));
-    const approved = ownProposals.find((p) => p.status === "approved");
-    const statuses = tasks.filter((t) => t.proposalUuid === approved?.uuid).map((t) => t.status);
-    completed.set(item.uuid, item.status === "done" || (
-      item.status === "elaborated" && !ownProposals.some((p) => p.status === "pending") &&
-      !!approved && statuses.length > 0 && statuses.every((s) => s === "closed" || s === "done")
-    ));
+    completed.set(item.uuid, item.status === "done" ||
+      computeIdeaDerivedStatus(item, taskData.contexts.get(item.uuid)).derivedStatus === "done");
   }
   // Bounded fixed point also tolerates malformed legacy lineage without recursion.
   for (let pass = 0; pass < related.size; pass++) {
@@ -91,7 +98,7 @@ export async function getResearchEligibility(
   const activities = await db.activity.findMany({
     where: { companyUuid, projectUuid: idea.projectUuid, OR: [
       { targetType: "idea", targetUuid: { in: ids }, action: { in: ["start_development", "execution_started"] } },
-      { targetType: "task", targetUuid: { in: tasks.map((t) => t.uuid) } },
+      { targetType: "task", targetUuid: { in: [...new Set([...tasks, ...linkedTasks].map((t) => t.uuid))] } },
     ] },
     select: { action: true, value: true, targetType: true },
   });

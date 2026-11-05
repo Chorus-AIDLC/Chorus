@@ -488,7 +488,7 @@ export default function (pi: ExtensionAPI) {
           enabled: ENABLE_TASK_REVIEWER,
         },
         chorus_admin_verify_task: {
-          spawn: "if this was the last task of an idea-rooted proposal: spawn chorus-code-reviewer over the idea's aggregate change, wait for its VERDICT comment, then remind to archive the openspec change",
+          spawn: "if this was the last task of an idea-rooted proposal (and any Quick Tasks linked to that idea via ideaUuid are also done/closed), or the last Quick Task linked to a proposal-less idea (chorus_list_tasks with ideaUuid): spawn chorus-code-reviewer over the idea's aggregate change, wait for its VERDICT comment, then remind to archive the openspec change (proposal ideas only)",
           enabled: ENABLE_CODE_REVIEWER,
         },
       };

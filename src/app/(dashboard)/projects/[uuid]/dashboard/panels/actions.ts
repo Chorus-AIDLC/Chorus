@@ -171,6 +171,30 @@ export async function getTasksForProposalAction(
   return { success: true as const, data: tasks };
 }
 
+// Quick Tasks linked directly to the Idea (Task.ideaUuid) — shown alongside the
+// approved proposals' tasks in the idea panel (link-quick-task-to-idea D8).
+export async function getTasksForIdeaAction(
+  projectUuid: string,
+  ideaUuid: string,
+) {
+  const auth = await getServerAuthContext();
+  if (!auth) {
+    return { success: false as const, error: "Unauthorized" };
+  }
+  const denied = await denyUnlessProjectAccess(auth, projectUuid, "viewer");
+  if (denied) return denied;
+
+  const { tasks } = await listTasks({
+    companyUuid: auth.companyUuid,
+    projectUuid,
+    ideaUuid,
+    skip: 0,
+    take: 100,
+  });
+
+  return { success: true as const, data: tasks };
+}
+
 // Aggregate `type="report"` Documents across an Idea's approved Proposals.
 // Server-side aggregation avoids the client doing N round-trips, and keeps
 // the Idea-level "reports" surface consistent regardless of how many

@@ -33,6 +33,7 @@ import { TaskDetailPanel } from "./task-detail-panel";
 import { getBatchWorkerCountsAction } from "./session-actions";
 import { useRealtimeEntityTypeEvent } from "@/contexts/realtime-context";
 import { useCanEditProject } from "@/contexts/project-access-context";
+import { taskMatchesScope, type TaskScopeFilter } from "./task-scope-filter";
 
 interface Task {
   uuid: string;
@@ -42,6 +43,7 @@ interface Task {
   priority: string;
   storyPoints: number | null;
   proposalUuid: string | null;
+  ideaUuid?: string | null;
   assignee: {
     type: string;
     uuid: string;
@@ -72,7 +74,7 @@ interface KanbanBoardProps {
   selectedTaskUuid?: string | null;
   onTaskSelect: (taskUuid: string) => void;
   onPanelClose: () => void;
-  proposalUuidFilter?: Set<string> | null;
+  scopeFilter?: TaskScopeFilter | null;
 }
 
 // Status color configuration
@@ -125,7 +127,7 @@ function getUnresolvedDeps(task: Task): { uuid: string; title: string; status: s
   );
 }
 
-export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, selectedTaskUuid, onTaskSelect, onPanelClose, proposalUuidFilter }: KanbanBoardProps) {
+export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, selectedTaskUuid, onTaskSelect, onPanelClose, scopeFilter }: KanbanBoardProps) {
   const t = useTranslations();
   // Viewers can browse the board but not drag tasks between columns.
   const canEdit = useCanEditProject();
@@ -143,8 +145,8 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
   const refetchTasks = useCallback(async () => {
     const result = await fetchTasksAction(projectUuid);
     if (result.success) {
-      const filtered = proposalUuidFilter
-        ? result.data.filter(task => task.proposalUuid && proposalUuidFilter.has(task.proposalUuid))
+      const filtered = scopeFilter
+        ? result.data.filter(task => taskMatchesScope(task, scopeFilter))
         : result.data;
       setTasks(filtered);
       // Also refresh worker counts with the new task list
@@ -153,7 +155,7 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
         setWorkerCounts(wcResult.data);
       }
     }
-  }, [projectUuid, proposalUuidFilter]);
+  }, [projectUuid, scopeFilter]);
 
   // SSE: only refetch when task entities change
   useRealtimeEntityTypeEvent("task", refetchTasks);
@@ -162,13 +164,13 @@ export function KanbanBoard({ projectUuid, initialTasks, currentUserUuid, select
   // NOTE: We intentionally do NOT sync from initialTasks prop because pushState
   // sidebar navigation triggers Next.js soft re-render, producing a stale
   // initialTasks snapshot that overwrites fresher SSE-fetched data.
-  const filterRef = useRef(proposalUuidFilter);
+  const filterRef = useRef(scopeFilter);
   useEffect(() => {
-    if (filterRef.current !== proposalUuidFilter) {
-      filterRef.current = proposalUuidFilter;
+    if (filterRef.current !== scopeFilter) {
+      filterRef.current = scopeFilter;
       refetchTasks();
     }
-  }, [proposalUuidFilter, refetchTasks]);
+  }, [scopeFilter, refetchTasks]);
 
   // Fetch active worker counts in a single batch query instead of N individual calls
   useEffect(() => {

@@ -75,7 +75,10 @@ describe("Idea Team lifecycle handoff", () => {
       where: { companyUuid: "company", inputType: "idea", inputUuids: { array_contains: ["idea"] } }, select: { uuid: true },
     });
     expect(mocks.prisma.task.count).toHaveBeenCalledExactlyOnceWith({
-      where: { companyUuid: "company", proposalUuid: { in: ["proposal", "other-proposal"] }, uuid: { not: "task" }, status: { notIn: ["to_verify", "done", "closed"] } },
+      where: {
+        companyUuid: "company", uuid: { not: "task" }, status: { notIn: ["to_verify", "done", "closed"] },
+        OR: [{ proposalUuid: { in: ["proposal", "other-proposal"] } }, { ideaUuid: "idea" }],
+      },
     });
   });
 
@@ -97,7 +100,72 @@ describe("Idea Team lifecycle handoff", () => {
       where: { companyUuid: "company", inputType: "document", OR: [{ inputUuids: { array_contains: ["document"] } }] }, select: { uuid: true },
     });
     expect(mocks.prisma.task.count).toHaveBeenCalledExactlyOnceWith({
-      where: { companyUuid: "company", proposalUuid: { in: ["proposal", "document-proposal"] }, uuid: { not: "task" }, status: { notIn: ["to_verify", "done", "closed"] } },
+      where: {
+        companyUuid: "company", uuid: { not: "task" }, status: { notIn: ["to_verify", "done", "closed"] },
+        OR: [{ proposalUuid: { in: ["proposal", "document-proposal"] } }, { ideaUuid: "idea" }],
+      },
+    });
+  });
+
+  describe("Quick Tasks linked directly to the Idea (task.ideaUuid)", () => {
+    type Row = { uuid: string; status: string; proposalUuid: string | null; ideaUuid: string | null };
+    type Where = { uuid: { not: string }; status: { notIn: string[] }; OR: [{ proposalUuid: { in: string[] } }, { ideaUuid: string }] };
+    // Evaluate the listener's count query against an in-memory task table so the
+    // proposal ∪ linked union semantics are exercised, not just the query shape.
+    const countOver = (rows: Row[]) => async ({ where }: { where: Where }) => rows.filter((row) =>
+      row.uuid !== where.uuid.not && !where.status.notIn.includes(row.status) &&
+      ((row.proposalUuid !== null && where.OR[0].proposalUuid.in.includes(row.proposalUuid)) || row.ideaUuid === where.OR[1].ideaUuid),
+    ).length;
+
+    it("fires the whole-Idea handoff for a proposal-less Idea when its last linked task is submitted", async () => {
+      mocks.prisma.proposal.findMany.mockResolvedValue([]);
+      mocks.prisma.task.count.mockImplementation(countOver([
+        { uuid: "task", status: "in_progress", proposalUuid: null, ideaUuid: "idea" },
+        { uuid: "done-quick", status: "done", proposalUuid: null, ideaUuid: "idea" },
+        { uuid: "unrelated", status: "open", proposalUuid: null, ideaUuid: "other-idea" },
+      ]));
+      await notifyIdeaTeamHandoff(event());
+      expect(mocks.prisma.task.count).toHaveBeenCalledExactlyOnceWith({
+        where: {
+          companyUuid: "company", uuid: { not: "task" }, status: { notIn: ["to_verify", "done", "closed"] },
+          OR: [{ proposalUuid: { in: [] } }, { ideaUuid: "idea" }],
+        },
+      });
+      expect(mocks.createBatch.mock.calls[0][0][0].message).toContain("For Idea(s) idea, also start the whole-Idea code review");
+    });
+
+    it("does not fire early while another linked Quick Task is still open", async () => {
+      mocks.prisma.proposal.findMany.mockResolvedValue([]);
+      mocks.prisma.task.count.mockImplementation(countOver([
+        { uuid: "task", status: "in_progress", proposalUuid: null, ideaUuid: "idea" },
+        { uuid: "open-quick", status: "open", proposalUuid: null, ideaUuid: "idea" },
+      ]));
+      await notifyIdeaTeamHandoff(event());
+      expect(mocks.createBatch.mock.calls[0][0][0].message).not.toContain("whole-Idea code review");
+    });
+
+    it.each([
+      ["a proposal task is submitted while a linked Quick Task is open", "proposal", { uuid: "open-quick", status: "in_progress", proposalUuid: null, ideaUuid: "idea" }],
+      ["a linked Quick Task is submitted while a proposal task is open", null, { uuid: "open-proposal-task", status: "assigned", proposalUuid: "proposal", ideaUuid: null }],
+    ])("does not fire early for a mixed Idea when %s", async (_label, submittedProposal, other) => {
+      mocks.prisma.proposal.findMany.mockResolvedValue([{ uuid: "proposal" }]);
+      mocks.prisma.task.count.mockImplementation(countOver([
+        { uuid: "task", status: "in_progress", proposalUuid: submittedProposal, ideaUuid: submittedProposal ? null : "idea" },
+        other as Row,
+      ]));
+      await notifyIdeaTeamHandoff(event());
+      expect(mocks.createBatch.mock.calls[0][0][0].message).not.toContain("whole-Idea code review");
+    });
+
+    it("fires for a mixed Idea once proposal and linked tasks are all terminal", async () => {
+      mocks.prisma.proposal.findMany.mockResolvedValue([{ uuid: "proposal" }]);
+      mocks.prisma.task.count.mockImplementation(countOver([
+        { uuid: "task", status: "in_progress", proposalUuid: null, ideaUuid: "idea" },
+        { uuid: "proposal-task", status: "done", proposalUuid: "proposal", ideaUuid: null },
+        { uuid: "other-quick", status: "to_verify", proposalUuid: null, ideaUuid: "idea" },
+      ]));
+      await notifyIdeaTeamHandoff(event());
+      expect(mocks.createBatch.mock.calls[0][0][0].message).toContain("For Idea(s) idea, also start the whole-Idea code review");
     });
   });
 

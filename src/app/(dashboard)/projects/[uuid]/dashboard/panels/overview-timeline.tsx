@@ -33,6 +33,9 @@ interface OverviewTimelineProps {
   };
   proposals: ProposalData[];
   tasks: FlatTask[];
+  // Whether `tasks` includes Quick Tasks linked directly to the idea
+  // (Task.ideaUuid). Such an idea is in execution even with no proposal.
+  hasLinkedTasks?: boolean;
   onSelectTask: (taskUuid: string) => void;
 }
 
@@ -49,6 +52,7 @@ export function OverviewTimeline({
   idea,
   proposals,
   tasks,
+  hasLinkedTasks = false,
   onSelectTask,
 }: OverviewTimelineProps) {
   const t = useTranslations("ideaTracker");
@@ -70,6 +74,14 @@ export function OverviewTimeline({
 
   // Determine the current phase
   const currentPhase = useMemo(() => {
+    // Directly linked Quick Tasks drive the phase regardless of native status
+    // (same precedence as computeDerivedStatus, design D4): pending elaboration
+    // answers, then a pending proposal, otherwise execution.
+    if (hasLinkedTasks) {
+      if (idea.status === "elaborating" && idea.elaborationStatus === "pending_answers") return "elaboration";
+      if (proposals.some((p) => p.status === "pending")) return "proposal";
+      return "tasks";
+    }
     if (idea.status === "open") return "idea_created";
     if (idea.status === "elaborating") return "elaboration";
     // If no proposals yet but elaborated
@@ -80,7 +92,7 @@ export function OverviewTimeline({
     // If tasks exist
     if (tasks.length > 0) return "tasks";
     return "proposal";
-  }, [idea.status, proposals, tasks]);
+  }, [idea.status, idea.elaborationStatus, hasLinkedTasks, proposals, tasks]);
 
   // Build timeline nodes
   const nodes = useMemo((): TimelineNode[] => {

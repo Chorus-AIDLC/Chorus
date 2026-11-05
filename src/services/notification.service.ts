@@ -216,10 +216,11 @@ async function formatNotifications(
   // live session anchor so the woken peer can be told where a reply lands. The waker is the
   // notification's actor (`actorUuid`). Two idea anchors:
   //   - idea entity  → the idea itself (`entityUuid`, no lookup, no traversal).
-  //   - task entity  → the task's DIRECT containing idea. A Task has no `ideaUuid` column;
-  //                    it links to its idea via `proposalUuid` → Proposal.inputUuids[0].
-  //                    `resolveDirectIdeaUuid` (the shallow canonical primitive) reads exactly
-  //                    that — task → proposal → inputUuids[0] — and NEVER hops a `parentUuid`,
+  //   - task entity  → the task's DIRECT containing idea. A linked Quick Task carries it
+  //                    in `ideaUuid`; a proposal task links via `proposalUuid` →
+  //                    Proposal.inputUuids[0]. `resolveDirectIdeaUuid` (the shallow canonical
+  //                    primitive) reads exactly that — task.ideaUuid, else task → proposal →
+  //                    inputUuids[0] — and NEVER hops a `parentUuid`,
   //                    honoring the AC's no-ancestry-climb rule. It is the SAME primitive that
   //                    keys the idea-anchored `DaemonSession` (`sessionId === directIdeaUuid`,
   //                    via notification-turn), so the anchor lookup matches a real session by
