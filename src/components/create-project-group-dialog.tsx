@@ -62,7 +62,7 @@ export function CreateProjectGroupDialog({
           onCreated?.();
           router.refresh();
         } else {
-          setError(t("projectGroups.createFailed"));
+          setError(t(res.status === 409 ? "projectGroups.nameConflict" : "projectGroups.createFailed"));
         }
       } catch {
         setError(t("common.genericError"));

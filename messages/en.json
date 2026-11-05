@@ -1282,6 +1282,7 @@
     "descriptionPlaceholder": "Briefly describe this group...",
     "createGroup": "Create Group",
     "createFailed": "Failed to create project group",
+    "nameConflict": "A project group with this name already exists. Choose a different name.",
     "newProjectTitle": "New Project",
     "creatingIn": "Creating in: {groupName}",
     "projectTitle": "Project title",

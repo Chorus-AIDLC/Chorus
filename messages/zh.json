@@ -1282,6 +1282,7 @@
     "descriptionPlaceholder": "简要描述此分组...",
     "createGroup": "创建分组",
     "createFailed": "创建项目组失败",
+    "nameConflict": "已存在同名项目组，请使用其他名称。",
     "newProjectTitle": "新建项目",
     "creatingIn": "创建到：{groupName}",
     "projectTitle": "项目标题",

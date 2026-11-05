@@ -987,7 +987,7 @@ export function registerPublicTools(server: McpServer, auth: AgentAuthContext) {
   server.registerTool(
     "chorus_get_project_groups",
     collectionToolConfig({
-      description: "List compact project-group summaries.",
+      description: "List compact project-group summaries visible to your owner, ordered by creation time then UUID. Traverse all pages before treating a group as absent; a miss in bounded search results is not proof of absence. project:admin does not bypass private-group access.",
       inputSchema: z.object({
         page: collectionPageSchema,
         pageSize: collectionPageSizeSchema,
