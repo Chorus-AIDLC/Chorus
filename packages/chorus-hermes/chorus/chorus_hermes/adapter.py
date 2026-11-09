@@ -339,10 +339,13 @@ class ChorusAdapterCore:
             chat_id=wake.chat_id, chat_name=title if isinstance(title, str) and title else wake.chat_id,
             chat_type="dm", user_id=self.owner_uuid, user_name=self.owner_name or self.owner_uuid,
             message_id=message_id or None)
+        # No ``metadata``: Hermes >= 0.22.1 native admission (gateway/session_envelope.py) refuses any
+        # non-empty event metadata outside the WhatsApp adapter's key set, failing every wake with
+        # ``invalid_params (metadata)`` (#653). The turn and its wake stay in ``self._active``, keyed
+        # by ``source.chat_id``.
         return h.MessageEvent(
             text=text, message_type=h.MessageType.TEXT, source=source, message_id=message_id or None,
-            raw_message=dict(wake.notification), allow_gateway_control=control,
-            metadata={"chorus_chat_id": wake.chat_id, "chorus_wake": wake.label})
+            raw_message=dict(wake.notification), allow_gateway_control=control)
 
     async def _start(self, wake: WakeRequest) -> None:
         chat_id = wake.chat_id
@@ -421,8 +424,7 @@ class ChorusAdapterCore:
                 "projectUuid": turn.wake.notification.get("projectUuid")}
 
     def _turn_for_event(self, event: Any) -> Optional[ActiveTurn]:
-        md = getattr(event, "metadata", None) or {}
-        chat_id = md.get("chorus_chat_id") or getattr(getattr(event, "source", None), "chat_id", None)
+        chat_id = getattr(getattr(event, "source", None), "chat_id", None)
         turn = self._active.get(chat_id) if chat_id else None
         if turn is None or not turn.dispatched:
             return None

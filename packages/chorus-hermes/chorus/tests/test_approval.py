@@ -432,7 +432,7 @@ def test_live_race_ordinary_mention_then_reply_within_seconds(hermes, tmp_path, 
 
     asyncio.run(go())
     assert entry.choice == "once"
-    assert [e.metadata["chorus_wake"] for e in h.handled] == ["n-1"]
+    assert h.wake_labels == ["n-1"]
     assert ("ended", "tu-2") in h.closed()
     assert ("running", "tu-2") in h.closed()
 
@@ -455,7 +455,7 @@ def test_sweep_ordinary_mention_and_newer_reply_on_same_idea(hermes, tmp_path, m
         await h.adapter.disconnect()
 
     asyncio.run(go())
-    assert [e.metadata["chorus_wake"] for e in h.handled] == ["turn:tu-1"]
+    assert h.wake_labels == ["turn:tu-1"]
     assert h.handled[0].raw_message["uuid"] == "n-1"
     assert sorted(h.closed()) == [("ended", "tu-1"), ("ended", "tu-2"), ("running", "tu-1"), ("running", "tu-2")]
     assert [label for label, r in h.adapter.router.skipped if "consumed" in r] == ["turn:tu-2"]
@@ -529,9 +529,9 @@ def test_ambiguous_pending_turn_is_never_closed(hermes, tmp_path, monkeypatch, c
     asyncio.run(go())
     assert not any("consumed" in r for _, r in h.adapter.router.skipped)
     if case == "no_created_at":  # legacy match: dispatched normally (fail open), not closed as a reply
-        assert [e.metadata["chorus_wake"] for e in h.handled] == ["turn:tu-1"]
+        assert h.wake_labels == ["turn:tu-1"]
     else:  # ambiguous burst: still dispatched normally (fail open), never closed as a reply
-        assert [e.metadata["chorus_wake"] for e in h.handled] == ["turn:tu-1"]
+        assert h.wake_labels == ["turn:tu-1"]
 
 
 @pytest.mark.parametrize("second", ["ordinary", "reply"])
@@ -553,7 +553,7 @@ def test_burst_sweep_never_drops_the_ordinary_mention(hermes, tmp_path, monkeypa
         await h.adapter.disconnect()
 
     asyncio.run(go())
-    handled = [e.metadata["chorus_wake"] for e in h.handled]
+    handled = h.wake_labels
     assert "turn:tu-1" in handled  # the ordinary mention always runs
     assert not any("no unambiguous" in r for _, r in h.adapter.router.skipped)
     if second == "ordinary":
