@@ -184,16 +184,25 @@ describe("heartbeatCliSession", () => {
 describe("releaseCliSession", () => {
   it("clears the lease, stores continuable:false, ends the CLI turn and drains immediately", async () => {
     mockPrisma.daemonSession.updateMany.mockResolvedValueOnce({ count: 1 });
-    session.drainQueuedTurns.mockResolvedValueOnce(["t2"]);
+    // The shared drain retires (never delivers) the queued turns of a not-continuable session.
+    session.drainQueuedTurns.mockResolvedValueOnce([]);
     mockPrisma.daemonSession.findFirst.mockResolvedValueOnce({ uuid: "s", originConnectionUuid: "c", continuable: false, cliLeaseHolder: null });
     const res = await releaseCliSession(auth, "s", { leaseHolder: "h", continuable: false, reason: "exit 0" });
-    expect(res).toEqual({ released: true, continuable: false, originBound: true, deliveredTurnUuids: ["t2"] });
+    expect(res).toEqual({ released: true, continuable: false, originBound: true, deliveredTurnUuids: [] });
     expect(mockPrisma.daemonSession.updateMany).toHaveBeenCalledWith({
       where: { uuid: "s", companyUuid: "company-1", agentUuid: "agent-1", cliLeaseHolder: "h" },
       data: { cliLeaseHolder: null, cliLeaseExpiresAt: null, continuable: false },
     });
     expect(session.endCliTurn).toHaveBeenCalledWith("s", expect.any(Date));
     expect(session.drainQueuedTurns).toHaveBeenCalledWith("company-1", "s", expect.any(Date));
+  });
+
+  it("reports the turns the drain delivered for a continuable release", async () => {
+    mockPrisma.daemonSession.updateMany.mockResolvedValueOnce({ count: 1 });
+    session.drainQueuedTurns.mockResolvedValueOnce(["t2"]);
+    mockPrisma.daemonSession.findFirst.mockResolvedValueOnce({ uuid: "s", originConnectionUuid: "c", continuable: true, cliLeaseHolder: null });
+    const res = await releaseCliSession(auth, "s", { leaseHolder: "h", continuable: true });
+    expect(res.deliveredTurnUuids).toEqual(["t2"]);
   });
 
   it("keeps the stored flag on continuable:true and maps 404 / 409", async () => {

@@ -211,4 +211,40 @@ describe("CLI session sync on a real database", () => {
     const bad = await registerRoute.POST(post({ agentType: "claude_code", host: "box", cwd: "/repo", ideaUuid: "00000000-0000-4000-8000-000000000000" }), { params: Promise.resolve({}) });
     expect(bad.status).toBe(400);
   });
+
+  it("a not-continuable release retires queued instructions instead of delivering them", async () => {
+    const reg = await register();
+    const sent = await instructions.sendInstruction(auth(), { sessionUuid: reg.sessionUuid, instructionText: "queued" });
+    const rel = await releaseRoute.POST(post({ leaseHolder: reg.leaseHolder, continuable: false }), ctx(reg.sessionUuid));
+    expect((await rel.json()).data).toMatchObject({ continuable: false, deliveredTurnUuids: [] });
+    expect(deliveries()).toEqual([]);
+    expect(await db.daemonSessionTurn.findUniqueOrThrow({ where: { uuid: sent.turn.uuid } }))
+      .toMatchObject({ status: "interrupted", interruptedReason: "session_not_continuable" });
+    expect(await sessions.getPendingTurnsForConnection({ companyUuid: state.companyUuid, agentUuid: state.agentUuid, connectionUuid })).toEqual([]);
+  });
+
+  it("queues a send while the terminal holds the lease even if the origin daemon is offline; backfill delivers after release", async () => {
+    const reg = await register();
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "offline", lastSeenAt: new Date(Date.now() - 600_000) } });
+    const sent = await instructions.sendInstruction(auth(), { sessionUuid: reg.sessionUuid, instructionText: "while offline" });
+    expect(sent).toMatchObject({ queued: true, turn: { status: "pending" } });
+    const rel = await releaseRoute.POST(post({ leaseHolder: reg.leaseHolder, continuable: true }), ctx(reg.sessionUuid));
+    expect((await rel.json()).data.deliveredTurnUuids).toEqual([]); // origin offline → no ping
+    expect(deliveries()).toEqual([]);
+    await db.daemonConnection.update({ where: { uuid: connectionUuid }, data: { status: "online", lastSeenAt: new Date() } });
+    const pending = await sessions.getPendingTurnsForConnection({ companyUuid: state.companyUuid, agentUuid: state.agentUuid, connectionUuid });
+    expect(pending.map((p) => p.turnUuid)).toEqual([sent.turn.uuid]);
+  });
+
+  it("concurrent drains (lazy bind racing release) ping each queued turn once", async () => {
+    const reg = await register();
+    const sent = await instructions.sendInstruction(auth(), { sessionUuid: reg.sessionUuid, instructionText: "once" });
+    await db.daemonSession.update({ where: { uuid: reg.sessionUuid }, data: { cliLeaseHolder: null, cliLeaseExpiresAt: null } });
+    await Promise.all([
+      sessions.drainQueuedTurns(state.companyUuid, reg.sessionUuid),
+      sessions.drainQueuedTurns(state.companyUuid, reg.sessionUuid),
+      cli.bindUnboundCliSessionsForConnection(state.companyUuid, connectionUuid),
+    ]);
+    expect(deliveries()).toEqual([sent.turn.uuid]);
+  });
 });

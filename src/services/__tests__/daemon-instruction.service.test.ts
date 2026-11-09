@@ -42,6 +42,8 @@ const mockGetVisibleSessions = vi.fn();
 const mockGetSessionsPageForAgent = vi.fn();
 const mockGetFirstInstruction = vi.fn();
 const mockDrainExpiredCliLeases = vi.fn(async (..._a: unknown[]) => 0);
+const mockCreatePendingTurn = vi.fn();
+const mockFindReusable = vi.fn();
 vi.mock("@/services/daemon-session.service", () => {
   // Defined inside the factory (hoisted with the mock) so the class is initialized
   // before the SUT imports it. Mirrors the real SessionReadOnlyError shape.
@@ -64,6 +66,8 @@ vi.mock("@/services/daemon-session.service", () => {
     SessionUnboundError: class SessionUnboundError extends Error { readonly code = "session_unbound"; },
     SessionNotContinuableError: class SessionNotContinuableError extends Error { readonly code = "session_not_continuable"; },
     drainExpiredCliLeases: (...a: unknown[]) => mockDrainExpiredCliLeases(...a),
+    createPendingTurn: (...a: unknown[]) => mockCreatePendingTurn(...a),
+    findReusablePendingInstructionTurn: (...a: unknown[]) => mockFindReusable(...a),
     isCliLeased: (s: { cliLeaseHolder?: string | null; cliLeaseExpiresAt?: Date | null }) =>
       s.cliLeaseHolder != null && s.cliLeaseExpiresAt != null && s.cliLeaseExpiresAt.getTime() > Date.now(),
     STALE_THRESHOLD_MS: 90_000,
@@ -1057,6 +1061,37 @@ describe("cli-agent-session-sync — send / repoint gates", () => {
     expect(mockNotificationCreate).toHaveBeenCalledTimes(1);
     expect(mockDispatchControl).not.toHaveBeenCalled();
     expect(mockDrainExpiredCliLeases).toHaveBeenCalledWith(companyUuid, [leased], expect.any(Date));
+  });
+
+  it("queues a send to a leased session whose bound origin daemon is offline (no 409)", async () => {
+    const leased = { ...cliSession, cliLeaseHolder: "h", cliLeaseExpiresAt: new Date(Date.now() + 60_000) };
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(leased);
+    // No daemon of the agent online → the chokepoint creates no turn; it is queued directly.
+    mockNotificationCreate.mockResolvedValueOnce({ notification: {}, turn: null });
+    mockFindReusable.mockResolvedValueOnce(null);
+    mockCreatePendingTurn.mockResolvedValueOnce({ uuid: "queued-turn", status: "pending", trigger: "human_instruction" });
+    const res = await sendInstruction(userAuth, { sessionUuid, instructionText: "  later  " });
+    expect(res).toMatchObject({ queued: true, turn: { uuid: "queued-turn", status: "pending" } });
+    expect(mockAssertContinuable).not.toHaveBeenCalled();
+    expect(mockCreatePendingTurn).toHaveBeenCalledWith({ sessionUuid, trigger: "human_instruction", promptText: "later" });
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+
+    // An identical still-queued instruction is reused, not duplicated.
+    mockNotificationCreate.mockResolvedValueOnce({ notification: {}, turn: null });
+    mockFindReusable.mockResolvedValueOnce({ uuid: "queued-turn", status: "pending" });
+    expect((await sendInstruction(userAuth, { sessionUuid, instructionText: "later" })).turn.uuid).toBe("queued-turn");
+    expect(mockCreatePendingTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["unbound", SessionUnboundError, { originConnectionUuid: null }],
+    ["not continuable", SessionNotContinuableError, { continuable: false }],
+  ])("a leased %s session is still refused with its distinct reason", async (_n, ErrorClass, patch) => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({
+      ...cliSession, cliLeaseHolder: "h", cliLeaseExpiresAt: new Date(Date.now() + 60_000), ...patch,
+    });
+    await expect(sendInstruction(userAuth, { sessionUuid, instructionText: "x" })).rejects.toBeInstanceOf(ErrorClass);
+    expect(mockNotificationCreate).not.toHaveBeenCalled();
   });
 
   it("delivers to the bound origin with the CLI runtimeCwd once the lease is gone", async () => {

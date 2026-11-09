@@ -15,9 +15,9 @@ const fixture = vi.hoisted(() => {
     notifications: [] as Array<{ entityUuid: string; projectUuid: string }>,
   };
   const sessions = [
-    { uuid: "task-session", sessionId: "standalone-task", directIdeaUuid: null, runtimeCwd: "/private/task", companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection" },
-    { uuid: "comment-session", sessionId: "project-comment", directIdeaUuid: null, runtimeCwd: "/private/comment", companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection" },
-    { uuid: "adhoc-session", sessionId: "adhoc-key", directIdeaUuid: null, runtimeCwd: null, companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection" },
+    { uuid: "task-session", sessionId: "standalone-task", directIdeaUuid: null, runtimeCwd: "/private/task", companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection", continuable: true },
+    { uuid: "comment-session", sessionId: "project-comment", directIdeaUuid: null, runtimeCwd: "/private/comment", companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection", continuable: true },
+    { uuid: "adhoc-session", sessionId: "adhoc-key", directIdeaUuid: null, runtimeCwd: null, companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection", continuable: true },
   ];
   const turns = [
     { uuid: "task-turn", sessionUuid: "task-session", seq: 1, trigger: "task_assigned", promptText: null, operationPayload: null, status: "pending", session: sessions[0] },

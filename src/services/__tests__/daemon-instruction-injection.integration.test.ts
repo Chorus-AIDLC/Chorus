@@ -356,6 +356,7 @@ function buildPrismaFake(store: Store) {
           status: "active",
           title: null,
           directIdeaUuid: null,
+          continuable: true, // DB default (cli-agent-session-sync)
           lastTurnAt: now,
           createdAt: now,
           updatedAt: now,
@@ -638,6 +639,7 @@ function seedIdeaAnchoredSession(): { uuid: string } {
     sessionId: IDEA, // idea-anchored: sessionId === directIdeaUuid
     directIdeaUuid: IDEA,
     originConnectionUuid: ORIGIN_CONN,
+    continuable: true,
     status: "active",
     title: null,
     lastTurnAt: now,

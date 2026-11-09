@@ -231,10 +231,9 @@ export interface SessionView {
   // `chorus agents run` ({ leased: live lease right now, host, cwd } of the launch);
   // `originBound` = an origin daemon connection is bound; `continuable` = the stored flag
   // (false when the CLI could not establish the backend resume identity).
-  // Optional only so pre-feature fixtures/older responses still type-check.
-  cli?: CliSessionView | null;
-  originBound?: boolean;
-  continuable?: boolean;
+  cli: CliSessionView | null;
+  originBound: boolean;
+  continuable: boolean;
   status: string; // active | ended
   title: string | null;
   lastTurnAt: string; // ISO-8601
@@ -1906,14 +1905,52 @@ export async function endCliTurn(sessionUuid: string, now: Date = new Date()): P
   return ended;
 }
 
+/** `interruptedReason` of a queued turn retired because its session cannot be continued. */
+export const NOT_CONTINUABLE_INTERRUPT_REASON = "session_not_continuable" as const;
+
+/**
+ * Retire the queued `human_instruction` turns of a NOT-continuable session: the backend
+ * resume identity was never established, so delivering them would run each instruction in a
+ * brand-new backend conversation with no context. They are settled `interrupted` with reason
+ * `session_not_continuable` (a server-side terminal write, like `research_stage_changed`) so
+ * the conversation reads honestly, and each change is published live. Returns the uuids.
+ */
+export async function retireNotContinuableQueuedTurns(
+  companyUuid: string,
+  sessionUuid: string,
+  now: Date = new Date(),
+): Promise<string[]> {
+  const pending = await prisma.daemonSessionTurn.findMany({
+    where: { sessionUuid, status: "pending", trigger: "human_instruction", session: { companyUuid } },
+    orderBy: { seq: "asc" },
+  });
+  const retired: string[] = [];
+  for (const row of pending) {
+    const claimed = await prisma.daemonSessionTurn.updateMany({
+      where: { uuid: row.uuid, status: "pending" },
+      data: { status: "interrupted", interruptedReason: NOT_CONTINUABLE_INTERRUPT_REASON, endedAt: now },
+    });
+    if (claimed.count === 0) continue;
+    retired.push(row.uuid);
+    publishTranscriptEvent({
+      companyUuid, sessionUuid, trigger: "turn_status_changed", messages: [],
+      turn: toTurnView({ ...row, status: "interrupted", interruptedReason: NOT_CONTINUABLE_INTERRUPT_REASON, endedAt: now }),
+    });
+  }
+  return retired;
+}
+
 /**
  * Deliver a session's queued (pending, daemon-owned) turns to its origin daemon connection —
- * the drain half of D4. A no-op (returns []) when the session is unbound, still leased, or
- * its origin is offline: those turns simply stay `pending` and the daemon's reconnect
- * backfill delivers them later. When the origin is online, each pending turn gets the same
- * precise `deliver_turn` ping a live send would emit (oldest first); the daemon's per-session
- * wake queue coalesces them exactly like back-to-back live sends. No pending turns → nothing
- * is woken. Returns the turn uuids pinged.
+ * the drain half of D4, shared by EVERY trigger (release, expiry sweep, lazy check, lazy
+ * bind). A no-op (returns []) when the session is unbound, still leased, or its origin is
+ * offline: those turns simply stay `pending` and the daemon's reconnect backfill delivers
+ * them later. A NOT-continuable session never delivers — its queued instructions are retired
+ * (`retireNotContinuableQueuedTurns`). When the origin is online, each pending turn is claimed
+ * with a conditional `drainedAt` stamp and only the claimer pings it (the same precise
+ * `deliver_turn` a live send emits, oldest first), so concurrent triggers deliver once; the
+ * daemon's per-session wake queue coalesces them like back-to-back live sends. No pending
+ * turns → nothing is woken. Returns the turn uuids pinged.
  */
 export async function drainQueuedTurns(
   companyUuid: string,
@@ -1922,11 +1959,18 @@ export async function drainQueuedTurns(
 ): Promise<string[]> {
   const session = await prisma.daemonSession.findFirst({
     where: { uuid: sessionUuid, companyUuid },
-    select: { originConnectionUuid: true, runtimeCwd: true, cliLeaseHolder: true, cliLeaseExpiresAt: true },
+    select: {
+      originConnectionUuid: true, runtimeCwd: true, cliLeaseHolder: true, cliLeaseExpiresAt: true, continuable: true,
+    },
   });
-  if (!session || !session.originConnectionUuid || isCliLeased(session, now)) return [];
+  if (!session || isCliLeased(session, now)) return [];
+  if (session.continuable === false) {
+    await retireNotContinuableQueuedTurns(companyUuid, sessionUuid, now);
+    return [];
+  }
+  if (!session.originConnectionUuid) return [];
   const pending = await prisma.daemonSessionTurn.findMany({
-    where: { sessionUuid, status: "pending", ...DAEMON_OWNED_TURN },
+    where: { sessionUuid, status: "pending", drainedAt: null, ...DAEMON_OWNED_TURN },
     orderBy: { seq: "asc" },
     select: { uuid: true, wakeTargetConnectionUuid: true, wakeRuntimeCwd: true },
   });
@@ -1940,6 +1984,12 @@ export async function drainQueuedTurns(
   if (!online) return [];
   const delivered: string[] = [];
   for (const turn of pending) {
+    // Per-turn claim: a racing drain (e.g. a lazy bind against a release) loses here.
+    const claimed = await prisma.daemonSessionTurn.updateMany({
+      where: { uuid: turn.uuid, status: "pending", drainedAt: null },
+      data: { drainedAt: now },
+    });
+    if (claimed.count === 0) continue;
     const target = turn.wakeTargetConnectionUuid ?? session.originConnectionUuid;
     const runtimeCwd = turn.wakeTargetConnectionUuid ? turn.wakeRuntimeCwd : session.runtimeCwd;
     try {
@@ -3183,7 +3233,7 @@ export async function canAgentReceiveTurn(companyUuid: string, agentUuid: string
     where: {
       uuid: turnUuid, ...DAEMON_OWNED_TURN,
       // isCliLeased delivery gate (SSE layer): a deliver_turn for a leased session is dropped.
-      session: { companyUuid, agentUuid, ...notCliLeasedWhere() },
+      session: { companyUuid, agentUuid, ...notCliLeasedWhere(), continuable: true },
       ...(connectionUuid ? wakeTargetFilter(connectionUuid) : {}),
     },
     select: {
@@ -3199,7 +3249,7 @@ export async function getWakeRecoveryDelivery(companyUuid: string, agentUuid: st
     where: {
       uuid: turnUuid, status: "pending", ...DAEMON_OWNED_TURN,
       // isCliLeased delivery gate (SSE layer): a leased session's queued turn is not delivered.
-      session: { companyUuid, agentUuid, ...notCliLeasedWhere() },
+      session: { companyUuid, agentUuid, ...notCliLeasedWhere(), continuable: true },
       ...wakeTargetFilter(connectionUuid),
     },
     select: { uuid: true, sessionUuid: true, trigger: true, wakeContext: true, wakeTargetConnectionUuid: true, wakeRuntimeCwd: true, session: { select: { sessionId: true, directIdeaUuid: true, runtimeCwd: true } } },
@@ -3250,6 +3300,8 @@ export async function getPendingTurnsForConnection(params: {
         agentUuid: params.agentUuid,
         // isCliLeased backfill gate: a leased session's queued turns stay pending.
         ...notCliLeasedWhere(now),
+        // A not-continuable session's queued turns never reach a daemon (they are retired).
+        continuable: true,
       },
       ...wakeTargetFilter(params.connectionUuid),
     },

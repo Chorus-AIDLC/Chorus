@@ -6,5 +6,8 @@ ADD COLUMN "cliHost" TEXT,
 ADD COLUMN "cliCwd" TEXT,
 ADD COLUMN "continuable" BOOLEAN NOT NULL DEFAULT true;
 
+-- AlterTable
+ALTER TABLE "DaemonSessionTurn" ADD COLUMN "drainedAt" TIMESTAMP(3);
+
 -- CreateIndex
 CREATE INDEX "DaemonSession_agentUuid_cliHost_idx" ON "DaemonSession"("agentUuid", "cliHost");

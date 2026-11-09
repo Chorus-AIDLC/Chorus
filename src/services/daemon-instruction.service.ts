@@ -53,6 +53,8 @@ import {
   getSessionsPageForAgent,
   getFirstInstructionBySessionUuid,
   publishTranscriptEvent,
+  createPendingTurn,
+  findReusablePendingInstructionTurn,
   drainExpiredCliLeases,
   isCliLeased,
   SessionNotContinuableError,
@@ -323,6 +325,10 @@ async function createInstructionTurn(params: {
   // Key the turn on the session's own `sessionId` even though it has an Idea anchor
   // (CLI-registered Idea-anchored sessions — see `keysOnOwnSessionId`).
   keyOnSessionId?: boolean;
+  // CLI-leased send (queue until CLI exit): when the chokepoint creates no turn because no
+  // daemon of the agent is online right now, persist the queued turn directly on THIS session
+  // (reconnect backfill delivers it once the lease is released and the origin is back).
+  queueDirectly?: boolean;
 }): Promise<TurnView> {
   const { auth, agentUuid, sessionUuid, sessionId, directIdeaUuid, instructionText } = params;
 
@@ -354,6 +360,10 @@ async function createInstructionTurn(params: {
     instructionText,
   });
 
+  if (!turn && params.queueDirectly) {
+    return (await findReusablePendingInstructionTurn(sessionUuid, instructionText)) ??
+      createPendingTurn({ sessionUuid, trigger: "human_instruction", promptText: instructionText });
+  }
   if (!turn) {
     // Defensive: the chokepoint returns no turn only when the agent has no online origin.
     // sendInstruction re-checks `assertContinuable` immediately before, and the ad-hoc
@@ -467,7 +477,16 @@ export async function sendInstruction(
   // (3) Re-check the session is continuable: not-continuable / unbound are refused with
   // distinct reasons, then the origin must be online (read-only/409 when offline). Reuses
   // 子1's single staleness verdict; never re-routes to another connection.
-  await assertContinuable(auth.companyUuid, params.sessionUuid);
+  // While a terminal holds the lease the send is QUEUED until CLI exit, so the origin's
+  // current online-ness does not matter (reconnect backfill delivers it later) — only the
+  // unbound / not-continuable refusals apply.
+  const leasedAtSend = isCliLeased(session, now);
+  if (leasedAtSend) {
+    if (session.continuable === false) throw new SessionNotContinuableError();
+    if (session.originConnectionUuid == null) throw new SessionUnboundError();
+  } else {
+    await assertContinuable(auth.companyUuid, params.sessionUuid);
+  }
 
   // (4) Create the turn on THIS session via the chokepoint, session-key aligned.
   const turn = await createInstructionTurn({
@@ -479,6 +498,7 @@ export async function sendInstruction(
     projectUuid,
     instructionText,
     keyOnSessionId: keysOnOwnSessionId(session),
+    queueDirectly: leasedAtSend,
   });
 
   // (5) isCliLeased gate: while a foreground CLI holds the conversation the turn is QUEUED —

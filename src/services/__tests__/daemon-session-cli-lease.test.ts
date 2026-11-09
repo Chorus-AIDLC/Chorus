@@ -11,6 +11,7 @@ const mockPrisma = vi.hoisted(() => {
       findUniqueOrThrow: vi.fn(),
     },
     daemonConnection: { findFirst: vi.fn() },
+    daemonTranscriptMessage: { count: vi.fn(async () => 0), findFirst: vi.fn(), create: vi.fn() },
     daemonExecution: { findFirst: vi.fn(), findMany: vi.fn() },
     notification: { findFirst: vi.fn() },
   } as Record<string, any>;
@@ -33,6 +34,8 @@ const mockDispatchControl = vi.hoisted(() => vi.fn());
 vi.mock("@/services/daemon-control.service", () => ({ dispatchControl: mockDispatchControl }));
 
 import {
+  appendTranscriptMessages,
+  resolveControlSessionId,
   advanceTurn,
   advanceTurnForWake,
   assertContinuable,
@@ -194,6 +197,7 @@ describe("isCliLeased delivery gate — backfill", () => {
     });
     const where = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({ status: "pending", ...DAEMON_OWNED_TURN });
+    expect(where.session.continuable).toBe(true);
     expect(where.session.OR).toEqual([
       { cliLeaseHolder: null }, { cliLeaseExpiresAt: null }, { cliLeaseExpiresAt: { lte: expect.any(Date) } },
     ]);
@@ -240,9 +244,14 @@ describe("drainQueuedTurns", () => {
       { uuid: "t3", wakeTargetConnectionUuid: "conn-2", wakeRuntimeCwd: "/z" },
     ]);
     mockPrisma.daemonConnection.findFirst.mockResolvedValueOnce(live);
+    mockPrisma.daemonSessionTurn.updateMany.mockResolvedValue({ count: 1 });
     expect(await drainQueuedTurns(companyUuid, sessionUuid, now)).toEqual(["t2", "t3"]);
     expect(mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0]).toMatchObject({
-      where: { sessionUuid, status: "pending", ...DAEMON_OWNED_TURN }, orderBy: { seq: "asc" },
+      where: { sessionUuid, status: "pending", drainedAt: null, ...DAEMON_OWNED_TURN }, orderBy: { seq: "asc" },
+    });
+    // Each ping is preceded by its per-turn conditional claim.
+    expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
+      where: { uuid: "t2", status: "pending", drainedAt: null }, data: { drainedAt: now },
     });
     expect(mockDispatchControl.mock.calls.map((c) => c[0])).toEqual([
       { companyUuid, targetConnectionUuid: connectionUuid, command: "deliver_turn", turnUuid: "t2", runtimeCwd: "/w" },
@@ -265,6 +274,39 @@ describe("drainQueuedTurns", () => {
     expect(mockDispatchControl).not.toHaveBeenCalled();
   });
 
+  it("a racing drain that loses the per-turn claim does not ping again", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValueOnce({ originConnectionUuid: connectionUuid, runtimeCwd: null, cliLeaseHolder: null, cliLeaseExpiresAt: null, continuable: true });
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValueOnce([{ uuid: "t2", wakeTargetConnectionUuid: null, wakeRuntimeCwd: null }]);
+    mockPrisma.daemonConnection.findFirst.mockResolvedValueOnce(live);
+    mockPrisma.daemonSessionTurn.updateMany.mockResolvedValueOnce({ count: 0 });
+    expect(await drainQueuedTurns(companyUuid, sessionUuid, now)).toEqual([]);
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+  });
+
+  it("a not-continuable session never delivers: queued instructions are retired as session_not_continuable", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValueOnce({
+      originConnectionUuid: connectionUuid, runtimeCwd: null, cliLeaseHolder: null, cliLeaseExpiresAt: null, continuable: false,
+    });
+    mockPrisma.daemonSessionTurn.findMany.mockResolvedValueOnce([
+      turnRow({ uuid: "t2", trigger: "human_instruction", status: "pending", promptText: "go", endedAt: null }),
+      turnRow({ uuid: "t3", trigger: "human_instruction", status: "pending", promptText: "and", endedAt: null }),
+    ]);
+    mockPrisma.daemonSessionTurn.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+    expect(await drainQueuedTurns(companyUuid, sessionUuid, now)).toEqual([]);
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonConnection.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where).toEqual({
+      sessionUuid, status: "pending", trigger: "human_instruction", session: { companyUuid },
+    });
+    expect(mockPrisma.daemonSessionTurn.updateMany).toHaveBeenCalledWith({
+      where: { uuid: "t2", status: "pending" },
+      data: { status: "interrupted", interruptedReason: "session_not_continuable", endedAt: now },
+    });
+    // Only the claimed turn is published as changed.
+    const published = mockEventBus.emit.mock.calls.map((c) => c[1].turn);
+    expect(published).toEqual([expect.objectContaining({ uuid: "t2", status: "interrupted", interruptedReason: "session_not_continuable" })]);
+  });
+
   it("logs and continues when a ping fails", async () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValueOnce({ originConnectionUuid: connectionUuid, runtimeCwd: null, cliLeaseHolder: null, cliLeaseExpiresAt: null });
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValueOnce([
@@ -272,6 +314,7 @@ describe("drainQueuedTurns", () => {
       { uuid: "t3", wakeTargetConnectionUuid: null, wakeRuntimeCwd: null },
     ]);
     mockPrisma.daemonConnection.findFirst.mockResolvedValueOnce(live);
+    mockPrisma.daemonSessionTurn.updateMany.mockResolvedValue({ count: 1 });
     mockDispatchControl.mockImplementationOnce(() => { throw new Error("bus down"); });
     expect(await drainQueuedTurns(companyUuid, sessionUuid, now)).toEqual(["t3"]);
     expect(mockLogger.warn).toHaveBeenCalled();
@@ -289,6 +332,7 @@ describe("D4 expiry triggers are idempotent", () => {
     mockPrisma.daemonSession.findFirst.mockResolvedValueOnce({ originConnectionUuid: connectionUuid, runtimeCwd: null, cliLeaseHolder: null, cliLeaseExpiresAt: null });
     mockPrisma.daemonSessionTurn.findMany.mockResolvedValueOnce([{ uuid: "t2", wakeTargetConnectionUuid: null, wakeRuntimeCwd: null }]);
     mockPrisma.daemonConnection.findFirst.mockResolvedValueOnce({ status: "online", lastSeenAt: now });
+    mockPrisma.daemonSessionTurn.updateMany.mockResolvedValueOnce({ count: 1 });
     expect(await expireCliLeaseAndDrain(companyUuid, sessionUuid, "h", now)).toBe(true);
     expect(mockPrisma.daemonSession.updateMany).toHaveBeenLastCalledWith({
       where: { uuid: sessionUuid, companyUuid, cliLeaseHolder: "h", cliLeaseExpiresAt: { lte: now } },
@@ -325,5 +369,67 @@ describe("D4 expiry triggers are idempotent", () => {
 
     mockPrisma.daemonSession.findMany.mockRejectedValueOnce(new Error("db"));
     expect(await sweepExpiredCliLeasesForConnection(companyUuid, connectionUuid, now)).toBe(0);
+  });
+});
+
+// B2: fixture-honouring turn store — a running `cli_session` turn that MUST NOT be chosen.
+// These tests fail if the D8 exclusion (`trigger: { not: "cli_session" }`) is removed.
+type FixtureTurn = { uuid: string; sessionUuid: string; status: string; trigger: string; seq: number; wakeContext?: unknown };
+function honourTurnWhere(turns: FixtureTurn[]) {
+  return async ({ where }: { where: Record<string, any> }) => turns.filter((t) => {
+    if (where.sessionUuid?.in && !where.sessionUuid.in.includes(t.sessionUuid)) return false;
+    if (typeof where.sessionUuid === "string" && where.sessionUuid !== t.sessionUuid) return false;
+    if (typeof where.status === "string" && where.status !== t.status) return false;
+    if (where.status?.in && !where.status.in.includes(t.status)) return false;
+    if (where.trigger?.not && where.trigger.not === t.trigger) return false;
+    return true;
+  }).sort((a, b) => a.seq - b.seq);
+}
+
+describe("D8 exclusions that must hold at query level", () => {
+  it("resolveControlSessionId: a running CLI turn is never interrupt-settle evidence", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValueOnce([
+      { uuid: "s-cli", sessionId: "idea-A" }, { uuid: "s-legacy", sessionId: `idea-A::${connectionUuid}` },
+    ]);
+    mockPrisma.daemonSessionTurn.findMany.mockImplementation(honourTurnWhere([
+      { uuid: "cli", sessionUuid: "s-cli", status: "running", trigger: "cli_session", seq: 1 },
+      { uuid: "daemon", sessionUuid: "s-legacy", status: "running", trigger: "mentioned", seq: 1 },
+    ]));
+    // Without the exclusion both sessions hold a running turn → ambiguous (no settle).
+    expect(await resolveControlSessionId({ companyUuid, agentUuid, connectionUuid, entityUuid: "idea-A" }))
+      .toEqual({ sessionId: `idea-A::${connectionUuid}`, ambiguous: false });
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where).toMatchObject(DAEMON_OWNED_TURN);
+  });
+
+  it("resolveLegacyIdeaTurn: a daemon bare-Idea transcript never resolves to a CLI turn", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValueOnce([
+      { uuid: "s-idea", sessionId: "idea-A" }, { uuid: "s-task", sessionId: "task:T" },
+    ]);
+    mockPrisma.daemonSessionTurn.findMany.mockImplementation(honourTurnWhere([
+      { uuid: "cli", sessionUuid: "s-task", status: "running", trigger: "cli_session", seq: 1 },
+      { uuid: "daemon", sessionUuid: "s-idea", status: "running", trigger: "mentioned", seq: 2 },
+    ]));
+    // turnUuid path after resolution: owner-scoped lookup returns the resolved turn.
+    mockPrisma.daemonSessionTurn.findFirst.mockImplementation(async ({ where }: { where: { uuid: string } }) =>
+      ({ uuid: where.uuid, sessionUuid: where.uuid === "daemon" ? "s-idea" : "s-task" }));
+    mockPrisma.daemonTranscriptMessage.count.mockResolvedValue(0);
+    const res = await appendTranscriptMessages({ companyUuid, agentUuid, sessionId: "idea-A", messages: [] });
+    // Without the exclusion two sessions hold a running turn → not_found.
+    expect(res).toMatchObject({ ok: true });
+    expect(mockPrisma.daemonSessionTurn.findFirst.mock.calls[0][0].where.uuid).toBe("daemon");
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where).toMatchObject(DAEMON_OWNED_TURN);
+  });
+
+  it("read-time orphan fallback: a stale origin with only a CLI turn running is not a reconcile candidate", async () => {
+    mockPrisma.daemonSession.findMany.mockResolvedValueOnce([sessionRow({ cliHost: "box", cliCwd: "/w" })]);
+    mockPrisma.daemonSessionTurn.findMany.mockImplementation(honourTurnWhere([
+      { uuid: "cli", sessionUuid, status: "running", trigger: "cli_session", seq: 1 },
+    ]));
+    await getVisibleSessions({ type: "agent", companyUuid, actorUuid: agentUuid });
+    // Exactly one probe: with the exclusion removed the probe would match and hand the
+    // connection to reconcileOrphanTurns (a second findMany).
+    expect(mockPrisma.daemonSessionTurn.findMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where).toMatchObject({ status: "running", ...DAEMON_OWNED_TURN });
+    expect(mockPrisma.daemonSessionTurn.update).not.toHaveBeenCalled();
   });
 });

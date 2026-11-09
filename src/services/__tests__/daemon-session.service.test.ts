@@ -3697,7 +3697,7 @@ describe("getPendingTurnsForConnection", () => {
     expect(mockPrisma.daemonSessionTurn.findFirst).toHaveBeenCalledWith({
       where: {
         uuid: "turn-1", ...DAEMON_OWNED_TURN,
-        session: { companyUuid, agentUuid, OR: expect.any(Array) },
+        session: { companyUuid, agentUuid, OR: expect.any(Array), continuable: true },
       },
       select: {
         sessionUuid: true, trigger: true, wakeContext: true,
@@ -3744,7 +3744,7 @@ describe("getPendingTurnsForConnection", () => {
     expect(whereArg).toEqual({
       status: "pending",
       ...DAEMON_OWNED_TURN,
-      session: { companyUuid, agentUuid, OR: expect.any(Array) },
+      session: { companyUuid, agentUuid, OR: expect.any(Array), continuable: true },
       OR: [
         { wakeTargetConnectionUuid: connectionUuid },
         { wakeTargetConnectionUuid: null, session: { originConnectionUuid: connectionUuid } },

@@ -932,6 +932,10 @@ model DaemonSessionTurn {
   // Weak ref to the live DaemonExecution row this turn corresponds to (no DB FK;
   // execution rows are reconciled/transient).
   executionUuid     String?
+  // cli-agent-session-sync D4: set (once, conditionally) when a CLI-lease drain pinged this
+  // queued turn to its origin daemon. The per-turn claim that makes concurrent drain
+  // triggers (release / expiry sweep / lazy check / lazy bind) deliver exactly once.
+  drainedAt         DateTime?
   startedAt         DateTime?
   endedAt           DateTime?
   createdAt         DateTime                  @default(now())

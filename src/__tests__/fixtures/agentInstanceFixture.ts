@@ -735,6 +735,7 @@ export function buildMockPrisma() {
           uuid: nextUuid("session"),
           status: "active",
           title: null,
+          continuable: true, // DB default (cli-agent-session-sync)
           lastTurnAt: new Date(),
           createdAt: new Date(),
           updatedAt: new Date(),
