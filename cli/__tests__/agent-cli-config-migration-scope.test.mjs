@@ -56,7 +56,7 @@ describe("persisted flat customization migration", () => {
       const output = join(disk.dir, "child.json");
       writeFileSync(fixture, 'require("node:fs").writeFileSync(process.env.CAPTURE_PATH, JSON.stringify({args: process.argv.slice(2), token: process.env.TOKEN, key: process.env.CHORUS_API_KEY}));');
       const spawnImpl = vi.fn((_command, argv, opts) => spawn(process.execPath, [fixture, ...argv], opts));
-      const launch = { ...disk.deps, env: { PATH: "/fake", CAPTURE_PATH: output }, platform: "linux", isFile: () => true, spawnImpl, stdout: { write() {} }, stderr: { write() {} } };
+      const launch = { ...disk.deps, env: { PATH: "/fake", CAPTURE_PATH: output }, platform: "linux", isFile: () => true, spawnImpl, stdout: { write() {} }, stderr: { write() {} }, sessionSync: false };
       expect(await runAgentLaunch(["--name", "old", "--", "exec", "prompt"], launch)).toBe(0);
       expect(JSON.parse(readFileSync(output, "utf8"))).toEqual({ args: ["exec", ...config.args, "prompt"], token: config.env.TOKEN, key: flat.apiKey });
       const edited = disk.read();
@@ -162,7 +162,7 @@ function launchOpts(type, args, extra = {}) {
   return {
     env: { PATH: "/bin" }, platform: "linux", loginPath: "/config", settingsPath: "/settings",
     readJson: (path) => path === "/config" ? { agents: [{ agentType: type, args }] } : null,
-    isFile: () => true, stdout: { write() {} }, stderr: { write: vi.fn() },
+    isFile: () => true, stdout: { write() {} }, stderr: { write: vi.fn() }, sessionSync: false,
     spawnImpl: vi.fn(() => { const child = new EventEmitter(); queueMicrotask(() => child.emit("close", 0)); return child; }),
     ...extra,
   };

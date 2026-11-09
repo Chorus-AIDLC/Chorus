@@ -10,6 +10,11 @@
 //   • every token after `--` is passed to the agent VERBATIM, with no validation,
 //   • the child's exit (code or signal) is forwarded as this command's exit code.
 //
+// SESSION SYNC (cli-agent-session-sync): by default the run is registered as a Chorus
+// daemon session by cli/cli-session-sync.mjs, which runs beside the child (register →
+// spawn → heartbeat + transcript → flush + release → exit code). `--no-sync` takes the
+// historical path verbatim: zero Chorus session calls, no signal handlers.
+//
 // SECRET RULE: the `cho_` API key is injected into the child env only. It is NEVER
 // written to stdout, stderr, or any log — diagnostics name the agent by
 // name/UUID and the resolved binary, nothing else.
@@ -74,16 +79,17 @@ function nonEmpty(value) {
  * Split raw `chorus agents run` argv into chorus-owned flags and verbatim
  * passthrough. The FIRST bare `--` terminates chorus-flag parsing; everything
  * after it is passthrough, untouched. Chorus flags (before `--`): `--name <v>` /
- * `--name=<v>`, its `--agent` alias, `--type <v>` / `--type=<v>`, and `--help`/`-h`.
+ * `--name=<v>`, its `--agent` alias, `--type <v>` / `--type=<v>`, `--no-sync`,
+ * `--idea <uuid>` / `--idea=<uuid>`, and `--help`/`-h`.
  * The first token that is NOT a recognized chorus flag also starts the
  * passthrough (lenient) — so `chorus agents run --name x foo --bar` treats
  * `foo --bar` as passthrough even without an explicit `--`.
  *
  * @param {string[]} argv  argv AFTER the `run` sub-verb.
- * @returns {{ name?: string, type?: string, help: boolean, passthrough: string[], error?: string }}
+ * @returns {{ name?: string, type?: string, idea?: string, noSync: boolean, help: boolean, passthrough: string[], error?: string }}
  */
 export function parseRunArgs(argv = []) {
-  const out = { help: false, passthrough: [] };
+  const out = { help: false, noSync: false, passthrough: [] };
   let i = 0;
   for (; i < argv.length; i += 1) {
     const tok = argv[i];
@@ -108,6 +114,23 @@ export function parseRunArgs(argv = []) {
     }
     if (tok.startsWith("--agent=")) {
       out.name = tok.slice("--agent=".length);
+      continue;
+    }
+    if (tok === "--no-sync") {
+      out.noSync = true;
+      continue;
+    }
+    if (tok === "--idea") {
+      const v = argv[i + 1];
+      if (v === undefined || !v.trim()) return { ...out, error: `flag --idea needs a value` };
+      out.idea = v.trim();
+      i += 1;
+      continue;
+    }
+    if (tok.startsWith("--idea=")) {
+      const v = tok.slice("--idea=".length).trim();
+      if (!v) return { ...out, error: `flag --idea needs a value` };
+      out.idea = v;
       continue;
     }
     if (tok === "--type") {
@@ -239,7 +262,7 @@ export function runHelpText(version = "") {
 Chorus${v} — launch a configured agent
 
 USAGE
-  chorus agents run --name <name|uuid> [--type <type>] [--] [agent args…]
+  chorus agents run --name <name|uuid> [--type <type>] [--idea <uuid>] [--no-sync] [--] [agent args…]
 
 Launches the agent's binary in the FOREGROUND with this agent's Chorus connection
 injected into the child (CHORUS_URL / CHORUS_API_KEY / CHORUS_AGENT_PROFILE).
@@ -252,7 +275,17 @@ command grammars are not inferred. Analysis stops at the first bare \`--\`.
 FLAGS
   --name <name|uuid>   Which configured agent to launch (default: the only one).
   --type <type>        Override the agent's backend: ${SUPPORTED_TYPES}.
+  --idea <uuid>        Anchor the synced Chorus session to this Idea.
+  --no-sync            Do not register this run as a Chorus session.
   -h, --help           Show this help.
+
+SESSION SYNC (default on)
+  The run is registered as a Chorus daemon session: its transcript is shown live in
+  Chorus, and messages sent from Chorus while it runs are queued and continued by
+  the local daemon (same machine + directory) after you exit. Claude Code gets a
+  derived --session-id; passing your own --session-id/--resume/--continue keeps the
+  run visible but not continuable. Sync problems never stop the launch: at most one
+  warning line is printed, details go to ~/.chorus/logs/cli-session-sync.log.
 
 Notes
   • Agents added as opencode / openclaw / dsh are stored as "offline"; pass
@@ -271,7 +304,10 @@ Notes
  * @param {{ stdout?: {write:(s:string)=>void}, stderr?: {write:(s:string)=>void},
  *   env?: NodeJS.ProcessEnv, readJson?: (p:string)=>any, loginPath?: string,
  *   platform?: NodeJS.Platform, cwd?: string, version?: string,
- *   spawnImpl?: Function, isFile?: (p:string)=>boolean }} [opts]
+ *   spawnImpl?: Function, isFile?: (p:string)=>boolean,
+ *   sessionSync?: false | Record<string, any> }} [opts]
+ *   `sessionSync: false` disables sync exactly like `--no-sync`; an object is passed
+ *   through to CliSessionSync (fetchImpl, logger, timers, processRef, … — test seams).
  * @returns {Promise<number>}
  */
 export async function runAgentLaunch(argv = [], opts = {}) {
@@ -336,35 +372,135 @@ export async function runAgentLaunch(argv = [], opts = {}) {
     err.write(`error: ${e.message}\n`);
     return 1;
   }
-  const { command, argv: spawnArgv } = resolveSpawnCommand(binPath, args, platform, childEnv);
+  const cwd = opts.cwd ?? process.cwd();
+
+  // --no-sync (or the test-only `sessionSync: false` opt): exactly the pre-sync launch —
+  // zero Chorus session calls, no signal handlers, identical argv/stdio/exit forwarding.
+  if (parsed.noSync || opts.sessionSync === false) {
+    const { command, argv: spawnArgv } = resolveSpawnCommand(binPath, args, platform, childEnv);
+    // Diagnostic — agent name/uuid + binary ONLY. Never the key or url userinfo.
+    out.write(`Launching ${agent.label} (${agent.agentUuid ?? "no uuid"}) → ${typeRes.binary}\n`);
+    return spawnForeground({ spawnImpl, command, spawnArgv, cwd, childEnv, binary: typeRes.binary, err });
+  }
+
+  // 5. Session sync (default on): register BEFORE spawn; the adapter may inject the
+  // resume identity into argv. Any failure → one warning line + unsynced launch.
+  const syncOpts = opts.sessionSync && typeof opts.sessionSync === "object" ? opts.sessionSync : {};
+  const SyncClass = syncOpts.SyncClass ?? (await import("./cli-session-sync.mjs")).CliSessionSync;
+  const sync = new SyncClass({
+    ...syncOpts,
+    agent,
+    agentType: typeRes.type,
+    cwd,
+    childEnv,
+    platform,
+    ideaUuid: parsed.idea ?? null,
+    stderr: err,
+  });
+  const planned = await sync.register(args, parsed.passthrough);
+  const { command, argv: spawnArgv } = resolveSpawnCommand(binPath, planned.args, platform, childEnv);
 
   // Diagnostic — agent name/uuid + binary ONLY. Never the key or url userinfo.
   out.write(`Launching ${agent.label} (${agent.agentUuid ?? "no uuid"}) → ${typeRes.binary}\n`);
 
+  if (!planned.active) {
+    return spawnForeground({ spawnImpl, command, spawnArgv, cwd, childEnv, binary: typeRes.binary, err });
+  }
+  return spawnForeground({
+    spawnImpl, command, spawnArgv, cwd, childEnv, binary: typeRes.binary, err,
+    sync, processRef: syncOpts.processRef ?? process, signalGraceMs: syncOpts.signalGraceMs,
+  });
+}
+
+/** Signals that, delivered to THIS process, end the run (and release the CLI lease). */
+const SYNC_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+export const DEFAULT_SIGNAL_GRACE_MS = 5_000;
+
+/**
+ * Spawn the agent in the foreground and resolve with its forwarded exit code. Without
+ * `sync` this is byte-for-byte the historical launch (no signal handlers). With `sync`:
+ *   • after spawn → `sync.started()` (heartbeat + transcript pump);
+ *   • on child close → `await sync.finish()` (bounded flush + release), then the code;
+ *   • SIGINT is NOT forwarded (the TTY already delivered it to the child's process
+ *     group; forwarding would double it) — this process just stays alive so it can
+ *     release when the child exits. A SECOND SIGINT, and any SIGTERM/SIGHUP, is
+ *     forwarded to the child; if the child has not exited within `signalGraceMs` the
+ *     lease is released anyway and the run resolves `128 + signum`.
+ * @returns {Promise<number>}
+ */
+function spawnForeground({ spawnImpl, command, spawnArgv, cwd, childEnv, binary, err, sync, processRef, signalGraceMs }) {
   return new Promise((resolve) => {
     let child;
+    let settled = false;
+    const handlers = [];
+    let graceTimer = null;
+    let sigintCount = 0;
+    const cleanupSignals = () => {
+      for (const [sig, fn] of handlers) {
+        try {
+          processRef.removeListener(sig, fn);
+        } catch {
+          /* ignore */
+        }
+      }
+      handlers.length = 0;
+      if (graceTimer) clearTimeout(graceTimer);
+      graceTimer = null;
+    };
+    const settle = async (code, reason) => {
+      if (settled) return;
+      settled = true;
+      cleanupSignals();
+      if (sync) await sync.finish(reason ? { reason } : {});
+      resolve(code);
+    };
+
     try {
       child = spawnImpl(command, spawnArgv, {
-        cwd: opts.cwd ?? process.cwd(),
+        cwd,
         stdio: "inherit",
         env: childEnv,
         shell: false,
       });
     } catch (error) {
-      err.write(`error: failed to launch ${typeRes.binary}: ${safeSpawnError(error)}\n`);
-      resolve(1);
+      err.write(`error: failed to launch ${binary}: ${safeSpawnError(error)}\n`);
+      void settle(1, "spawn_failed");
       return;
     }
+
+    if (sync) {
+      sync.started();
+      for (const sig of SYNC_SIGNALS) {
+        const fn = () => {
+          sync.noteSignal(sig);
+          if (sig === "SIGINT" && (sigintCount += 1) === 1) return;
+          try {
+            child.kill?.(sig);
+          } catch {
+            /* child may already be gone */
+          }
+          if (!graceTimer) {
+            graceTimer = setTimeout(() => {
+              void settle(128 + (SIGNUM[sig] ?? 0), `signal:${sig}`);
+            }, signalGraceMs ?? DEFAULT_SIGNAL_GRACE_MS);
+            graceTimer.unref?.();
+          }
+        };
+        processRef.on(sig, fn);
+        handlers.push([sig, fn]);
+      }
+    }
+
     child.on("error", (error) => {
-      err.write(`error: ${typeRes.binary} failed to start: ${safeSpawnError(error)}\n`);
-      resolve(1);
+      err.write(`error: ${binary} failed to start: ${safeSpawnError(error)}\n`);
+      void settle(1, "spawn_failed");
     });
     child.on("close", (code, signal) => {
       if (signal) {
-        resolve(128 + (SIGNUM[signal] ?? 0));
+        void settle(128 + (SIGNUM[signal] ?? 0));
         return;
       }
-      resolve(typeof code === "number" ? code : 0);
+      void settle(typeof code === "number" ? code : 0);
     });
   });
 }
