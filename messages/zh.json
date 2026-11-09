@@ -2050,7 +2050,17 @@
     "detailHost": "主机",
     "detailStarted": "启动于",
     "copySessionId": "复制 session ID",
-    "sessionIdCopied": "已复制!"
+    "sessionIdCopied": "已复制!",
+    "triggerCliSession": "终端",
+    "runningInTerminal": "正在终端中运行",
+    "statusInTerminal": "终端中",
+    "turnStatusInTerminal": "终端中",
+    "turnCliSessionNote": "正在终端中运行——输出同步后会显示在这里。",
+    "turnQueuedForTerminal": "已排队——终端会话结束后投递",
+    "turnNotContinuableNote": "未投递——此对话无法在 Chorus 中继续。",
+    "sendQueuedNote": "正在终端中运行——现在发送的消息会排队，在终端会话结束后投递。",
+    "sendUnboundNote": "此 Agent 在该对话的源机器和目录上没有运行中的 Chorus 守护进程。请在那里启动守护进程以继续此对话。",
+    "sendNotContinuableNote": "此对话无法在 Chorus 中继续——从终端启动时未能识别其 Agent 会话。"
   },
   "agentPresence": {
     "online": "在线",

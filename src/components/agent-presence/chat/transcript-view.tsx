@@ -36,6 +36,7 @@ import {
   Loader2,
   Lock,
   Server,
+  SquareTerminal,
   WifiOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +67,7 @@ import type {
 } from "@/services/daemon-session.service";
 import { TurnBand } from "./turn-band";
 import { sessionControlTarget } from "./session-execution";
+import { deriveSendGate, isCliLeaseLive } from "./session-cli-state";
 
 // A render group: an absorbing turn plus the coalesced-away `merged` turns folded into it.
 // Wake coalescing settles the next N-1 same-session pending turns (by ascending seq,
@@ -310,6 +312,19 @@ export function TranscriptView({
       ? { ...originConnection, cwd: session.runtimeCwd }
       : originConnection;
 
+  // cli-agent-session-sync D7: a terminal (`chorus agents run`) holds this conversation
+  // right now — live lease, and its `cli_session` turn has not ended yet.
+  const cliLeased = useMemo(() => isCliLeaseLive(session, turns), [session, turns]);
+  const sendGate = deriveSendGate({ session, cliLeased, originOnline });
+  // The instance chip falls back to the terminal's launch (host, cwd) when no daemon
+  // connection is bound/resolved yet, so a CLI conversation still shows where it runs.
+  const identityCwd = displayConnection ? displayConnection.cwd : session?.cli?.cwd ?? null;
+  const identityHost = displayConnection ? displayConnection.host : session?.cli?.host ?? "";
+  const showIdentity = !!displayConnection || !!session?.cli;
+  const terminalTitle = session?.cli
+    ? [session.cli.host, session.cli.cwd].filter((v): v is string => !!v).join(" · ")
+    : "";
+
   // Current/last turn status for the header badge — the running turn if any,
   // otherwise the newest turn's status.
   const currentTurn = useMemo(() => {
@@ -430,11 +445,11 @@ export function TranscriptView({
           <h3 className="truncate text-[17px] font-semibold text-foreground min-w-0">
             {title}
           </h3>
-          {displayConnection && (
+          {showIdentity && (
             <div className="shrink-0">
               <InstanceIdentity
-                cwd={displayConnection.cwd}
-                host={displayConnection.host}
+                cwd={identityCwd}
+                host={identityHost}
                 crossHost={originCrossHost}
               />
             </div>
@@ -450,7 +465,21 @@ export function TranscriptView({
                 {t("statusEnded")}
               </Badge>
             )}
-            {currentTurn && currentTurn.status === "running" && (
+            {/* "Running in terminal" (cli-agent-session-sync D7): the conversation is held by
+                a foreground CLI run. Replaces the generic running pulse while the lease is
+                live — the terminal's turn has no daemon execution or elapsed timer here. */}
+            {cliLeased && (
+              <Badge
+                variant="secondary"
+                data-testid="running-in-terminal"
+                title={terminalTitle || undefined}
+                className="gap-1 border-0 bg-[#FBF0E8] dark:bg-[#2a211b] px-2 py-0.5 text-[11px] font-medium text-primary"
+              >
+                <SquareTerminal className="h-3 w-3" aria-hidden />
+                {t("runningInTerminal")}
+              </Badge>
+            )}
+            {!cliLeased && currentTurn && currentTurn.status === "running" && (
               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary">
                 <span className="relative inline-flex h-2 w-2 items-center justify-center">
                   <span className="absolute inline-flex h-full w-full rounded-full bg-primary opacity-40 motion-safe:animate-ping" />
@@ -617,6 +646,7 @@ export function TranscriptView({
                     ? executionsByUuid.get(group.absorbing.executionUuid) ?? null
                     : null
                 }
+                cliLeased={cliLeased}
                 mergedEvents={group.merged.map((m) => ({
                   turn: m,
                   linkedExecution: m.executionUuid
@@ -656,6 +686,7 @@ export function TranscriptView({
               agentUuid={originConnection?.agentUuid ?? null}
               onlineConnections={originAgentOnlineConnections}
               onSessionStarted={onSessionStarted}
+              sendGate={sendGate}
             />
           )}
         </div>
