@@ -424,7 +424,7 @@ export class CliSessionSync {
   }
 
   /**
-   * Flush (bounded by flushBudgetMs) and release the lease. Idempotent; never throws.
+   * Flush + finalize + release the lease, all within ONE flushBudgetMs budget. Idempotent; never throws.
    * @param {{ reason?: string }} [opts]
    * @returns {Promise<{ released: boolean, continuable: boolean }>}
    */
@@ -443,24 +443,32 @@ export class CliSessionSync {
     this.heartbeatTimer = null;
     this.pollTimer = null;
 
+    // ONE overall exit budget (≤ flushBudgetMs) shared by flush + finalize + release, so
+    // a hanging server can delay the user's shell by at most the budget — never the
+    // budget plus a full request timeout. A slice is reserved up front for finalize
+    // (local disk work) and the release POST; the flush may only use what is left.
     const deadline = this.now() + this.flushBudgetMs;
     const remaining = () => Math.max(0, deadline - this.now());
+    const reserveMs = Math.min(2_000, Math.floor(this.flushBudgetMs * 0.4));
+    const flushDeadline = deadline - reserveMs;
+    const flushRemaining = () => Math.max(0, flushDeadline - this.now());
     const flushed = (async () => {
       if (this.tickPromise) await this.tickPromise;
       await this.#tick(true);
-      while (this.pending.length && !this.uploadFailed && remaining() > 0) {
-        await delay(Math.min(200, remaining()), this.timers);
+      while (this.pending.length && !this.uploadFailed && flushRemaining() > 0) {
+        await delay(Math.min(200, flushRemaining()), this.timers);
         await this.#tick(true);
       }
       return this.pending.length === 0 && !this.uploadFailed;
     })();
-    const flushOk = await Promise.race([flushed, delay(remaining(), this.timers).then(() => false)]);
+    const flushOk = await Promise.race([flushed, delay(flushRemaining(), this.timers).then(() => false)]);
 
     let verdict = { continuable: false, reason: "finalize_failed" };
     try {
+      // Finalize gets up to half of what is left; the rest is the release's.
       verdict = await Promise.race([
         this.adapter.finalize(this.ctx),
-        delay(Math.max(remaining(), 500), this.timers).then(() => ({ continuable: false, reason: "finalize_timeout" })),
+        delay(Math.floor(remaining() / 2), this.timers).then(() => ({ continuable: false, reason: "finalize_timeout" })),
       ]);
     } catch (err) {
       this.logger.warn(`[sync] ${this.adapter.id} finalize threw: ${err?.message ?? err}`);
@@ -468,7 +476,7 @@ export class CliSessionSync {
     const continuable = this.continuable && verdict?.continuable === true;
     const releaseReason = reason ?? (this.signal ? `signal:${this.signal}` : "exit");
     const body = { leaseHolder: this.session.leaseHolder, continuable, reason: continuable ? releaseReason : `${releaseReason}; not continuable: ${verdict?.reason ?? this.ctx.inspection?.reason ?? "unknown"}` };
-    const res = await this.client.release(this.session.sessionUuid, body);
+    const res = await this.client.release(this.session.sessionUuid, body, Math.max(1, Math.min(this.requestTimeoutMs, remaining())));
     if (res.ok) this.logger.info(`[sync] released session ${this.session.sessionUuid} (continuable=${continuable}, delivered=${(res.data?.deliveredTurnUuids ?? []).length})`);
     if (!flushOk) {
       this.logger.error(`[sync] transcript flush incomplete (${this.pending.length} message(s) pending)`);

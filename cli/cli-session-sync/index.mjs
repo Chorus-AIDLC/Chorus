@@ -6,6 +6,9 @@
 
 import { normalizeAdapter, createNonResumableAdapter } from "./contract.mjs";
 import { claudeAdapter } from "./claude.mjs";
+import { codexAdapter, traeAdapter } from "./codex.mjs";
+import { piAdapter } from "./pi.mjs";
+import { kiroAdapter } from "./kiro.mjs";
 
 export { normalizeAdapter, createNonResumableAdapter, defaultInspection } from "./contract.mjs";
 
@@ -13,7 +16,11 @@ export { normalizeAdapter, createNonResumableAdapter, defaultInspection } from "
 export const SESSION_SYNC_ADAPTERS = Object.freeze({
   "claude-code": claudeAdapter,
   claude: claudeAdapter,
-  // pi / codex / trae / kiro: dedicated adapters land with the backend-adapters task.
+  pi: piAdapter,
+  codex: codexAdapter,
+  trae: traeAdapter,
+  kiro: kiroAdapter,
+  // opencode / openclaw / dsh: no resumable identity → registration-only fallback.
 });
 
 /**

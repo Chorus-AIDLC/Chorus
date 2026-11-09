@@ -71,6 +71,8 @@ function readMap(path, read, logger, logPrefix) {
  *   mapPath: () => string,
  *   get: (anchor: string, deps?: object) => string | null,
  *   set: (anchor: string, handle: string, deps?: object) => void,
+ *   entries: (deps?: object) => Record<string, string>,
+ *   remove: (anchor: string, expectedHandle: string, deps?: object) => void,
  * }}
  */
 export function createSessionMap({ filename, logPrefix }) {
@@ -122,5 +124,47 @@ export function createSessionMap({ filename, logPrefix }) {
     }
   };
 
-  return { mapPath, get, set };
+  /**
+   * Snapshot of every `anchor → handle` entry (string handles only). Never throws;
+   * used by `chorus agents run` session sync to skip handles another run already
+   * claimed when discovering a self-generated id.
+   * @returns {Record<string, string>}
+   */
+  const entries = (deps = {}) => {
+    const path = deps.path ?? mapPath();
+    const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
+    const logger = deps.logger ?? NOOP_LOGGER;
+    const out = {};
+    for (const [k, v] of Object.entries(readMap(path, read, logger, logPrefix))) {
+      const h = nonEmpty(v);
+      if (h) out[k] = h;
+    }
+    return out;
+  };
+
+  /**
+   * Delete `anchor`'s entry, but only while it still maps to `expectedHandle` (so a
+   * newer write by someone else is never clobbered). Atomic, best-effort, never throws.
+   */
+  const remove = (anchor, expectedHandle, deps = {}) => {
+    const a = nonEmpty(anchor);
+    if (!a) return;
+    const path = deps.path ?? mapPath();
+    const read = deps.read ?? ((p) => readFileSync(p, "utf8"));
+    const write = deps.write ?? writeFileSync;
+    const rename = deps.rename ?? renameSync;
+    const logger = deps.logger ?? NOOP_LOGGER;
+    try {
+      const map = readMap(path, read, logger, logPrefix);
+      if (!Object.prototype.hasOwnProperty.call(map, a) || map[a] !== expectedHandle) return;
+      delete map[a];
+      const tmp = `${path}.tmp`;
+      write(tmp, JSON.stringify(map, null, 2) + "\n", { mode: 0o600 });
+      rename(tmp, path);
+    } catch (err) {
+      logger.warn(`[Chorus] ${logPrefix}: failed to remove ${a} (${err})`);
+    }
+  };
+
+  return { mapPath, get, set, entries, remove };
 }

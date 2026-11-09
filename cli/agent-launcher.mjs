@@ -122,14 +122,16 @@ export function parseRunArgs(argv = []) {
     }
     if (tok === "--idea") {
       const v = argv[i + 1];
-      if (v === undefined || !v.trim()) return { ...out, error: `flag --idea needs a value` };
+      // A flag-looking next token (`--idea --no-sync`, `--idea --`) is a MISSING value,
+      // never the idea: consuming it would silently drop the user's opt-out/separator.
+      if (v === undefined || !v.trim() || v.trim().startsWith("-")) return { ...out, error: `flag --idea needs a value` };
       out.idea = v.trim();
       i += 1;
       continue;
     }
     if (tok.startsWith("--idea=")) {
       const v = tok.slice("--idea=".length).trim();
-      if (!v) return { ...out, error: `flag --idea needs a value` };
+      if (!v || v.startsWith("-")) return { ...out, error: `flag --idea needs a value` };
       out.idea = v;
       continue;
     }
